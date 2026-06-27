@@ -9,7 +9,7 @@
 ## DDD 结构
 
 ```text
-src/domain/                 领域类型、幂等策略、领域错误、repository contract
+src/domain/                 领域类型、幂等策略、领域错误、repository interface
 src/application/            支付用例
 src/infrastructure/prisma/  Prisma repository 实现
 src/interfaces/http/        HTTP API
@@ -38,6 +38,23 @@ POST /plans/upsert
 POST /orders
 POST /payment-events/record
 ```
+
+## 运行与部署
+
+```bash
+pnpm --filter @kokoro/payment dev
+pnpm --filter @kokoro/payment start
+```
+
+关键 env：
+
+```text
+DATABASE_URL_PAYMENT
+KOKORO_PAYMENT_PORT=4241
+KOKORO_PAYMENT_BASE_URL=http://kokoro-payment:4241
+```
+
+容器和 Kubernetes 中通过 `kokoro-payment` 服务名访问，不在服务间调用里写 `localhost`。provider event、order idempotency 和 webhook 重放状态必须落 MySQL，不能依赖单进程状态。
 
 ## 下一步补齐
 

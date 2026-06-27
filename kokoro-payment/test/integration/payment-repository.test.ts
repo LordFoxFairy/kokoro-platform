@@ -67,6 +67,35 @@ describe("PrismaPaymentRepository", () => {
     expect(second.status).toBe("pending");
   });
 
+  it("handles concurrent order creation with the same idempotency key", async () => {
+    const plan = await service.upsertPlan({
+      key: "creator_concurrent",
+      name: "Creator Concurrent",
+      currency: "USD",
+      amountMinor: "3900",
+      billingInterval: "month",
+    });
+
+    const [first, second] = await Promise.all([
+      service.createOrder({
+        teamId: "team_pay_concurrent",
+        planId: plan.id,
+        amountMinor: "3900",
+        currency: "USD",
+        idempotencyKey: "order_concurrent",
+      }),
+      service.createOrder({
+        teamId: "team_pay_concurrent",
+        planId: plan.id,
+        amountMinor: "3900",
+        currency: "USD",
+        idempotencyKey: "order_concurrent",
+      }),
+    ]);
+
+    expect(second.id).toBe(first.id);
+  });
+
   it("records provider payment events idempotently", async () => {
     const first = await service.recordPaymentEvent({
       provider: "stripe",
@@ -85,6 +114,29 @@ describe("PrismaPaymentRepository", () => {
         orderId: "order_external",
       },
     });
+
+    expect(second.id).toBe(first.id);
+  });
+
+  it("handles concurrent provider events with the same provider event id", async () => {
+    const [first, second] = await Promise.all([
+      service.recordPaymentEvent({
+        provider: "stripe",
+        eventId: "evt_concurrent",
+        eventType: "checkout.session.completed",
+        payload: {
+          orderId: "order_external_concurrent",
+        },
+      }),
+      service.recordPaymentEvent({
+        provider: "stripe",
+        eventId: "evt_concurrent",
+        eventType: "checkout.session.completed",
+        payload: {
+          orderId: "order_external_concurrent",
+        },
+      }),
+    ]);
 
     expect(second.id).toBe(first.id);
   });

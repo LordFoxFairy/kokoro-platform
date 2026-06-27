@@ -104,3 +104,30 @@ pnpm typecheck
 本地 `.env.example` 默认使用 `mysql://root:kokoro_root@127.0.0.1:3307/kokoro`，这样 Prisma `migrate dev` 可以创建 shadow database。生产环境必须替换为受限账号。生产可以继续单库，也可以在规模变大后拆库；拆库是部署拓扑变化，不应该改变模块内部领域边界。
 
 注意：共享单库 `kokoro` 上只跑 `pnpm db:migrate`。不要在平台根对共享库跑 `pnpm -r db:dev`，Prisma 会把其它子仓的表识别为 drift。需要为某个子仓生成新 migration 时，用该子仓自己的临时 scratch database 生成，再通过 `pnpm db:migrate` 部署到共享库。
+
+## 部署拓扑
+
+平台服务用稳定服务名互相发现，Docker Compose 和 Kubernetes 都不要求业务代码改地址：
+
+```text
+KOKORO_USER_BASE_URL=http://kokoro-user:4211
+KOKORO_MODEL_BASE_URL=http://kokoro-model:4221
+KOKORO_CREDIT_BASE_URL=http://kokoro-credit:4231
+KOKORO_PAYMENT_BASE_URL=http://kokoro-payment:4241
+```
+
+本地连同四个平台服务一起启动：
+
+```bash
+docker compose -f docker-compose.yml -f deploy/docker-compose.services.yml up --build
+```
+
+Kubernetes 样例：
+
+```bash
+kubectl apply -f deploy/k8s/platform-services.example.yaml
+```
+
+`deploy/k8s/platform-services.example.yaml` 只作为部署模板。生产环境的 Secret、Ingress、HPA、镜像 tag、资源限额应该由环境仓或 GitOps 仓维护。
+
+详细约束见 [docs/platform/deployment-topology.md](docs/platform/deployment-topology.md)。

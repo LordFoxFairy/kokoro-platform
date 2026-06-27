@@ -74,6 +74,10 @@ export function assertPlatformRegistryIntegrity(
     if (module.admin.mode === "manifest" && !module.admin.manifestExport) {
       throw new Error(`module ${module.id} admin manifest must declare manifestExport`);
     }
+
+    if (module.status === "active" && !module.service) {
+      throw new Error(`active module ${module.id} must declare service discovery metadata`);
+    }
   }
 }
 

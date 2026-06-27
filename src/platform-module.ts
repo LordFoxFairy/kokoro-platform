@@ -33,6 +33,13 @@ export interface PlatformModuleRuntime {
   notes: readonly string[];
 }
 
+export interface PlatformModuleService {
+  serviceName: string;
+  portEnv: string;
+  defaultPort: number;
+  baseUrlEnv: string;
+}
+
 export interface PlatformModuleBoundaries {
   owns: readonly string[];
   doesNotOwn: readonly string[];
@@ -49,6 +56,7 @@ export interface PlatformModuleDescriptor {
   storage: PlatformModuleStorage;
   admin: PlatformModuleAdmin;
   runtime: PlatformModuleRuntime;
+  service?: PlatformModuleService;
   dependencies: readonly string[];
   boundaries: PlatformModuleBoundaries;
 }

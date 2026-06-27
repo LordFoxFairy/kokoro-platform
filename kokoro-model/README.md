@@ -9,7 +9,7 @@
 ## DDD 结构
 
 ```text
-src/domain/                 领域类型、repository contract
+src/domain/                 领域类型、repository interface
 src/application/            模型配置用例
 src/infrastructure/prisma/  Prisma repository 实现
 src/interfaces/http/        HTTP API
@@ -38,6 +38,23 @@ POST /provider-accounts/ensure
 POST /model-bindings/ensure
 GET  /model-bindings
 ```
+
+## 运行与部署
+
+```bash
+pnpm --filter @kokoro/model dev
+pnpm --filter @kokoro/model start
+```
+
+关键 env：
+
+```text
+DATABASE_URL_MODEL
+KOKORO_MODEL_PORT=4221
+KOKORO_MODEL_BASE_URL=http://kokoro-model:4221
+```
+
+容器和 Kubernetes 中通过 `kokoro-model` 服务名访问，不在服务间调用里写 `localhost`。provider secret 只保存 `secretRef`，模块不保存明文密钥。
 
 ## 下一步补齐
 

@@ -9,7 +9,7 @@
 ## DDD 结构
 
 ```text
-src/domain/                 领域类型、repository contract
+src/domain/                 领域类型、repository interface
 src/application/            用户和团队用例
 src/infrastructure/prisma/  Prisma repository 实现
 src/interfaces/http/        HTTP API
@@ -37,6 +37,23 @@ GET  /healthz
 POST /users/ensure
 GET  /me/teams
 ```
+
+## 运行与部署
+
+```bash
+pnpm --filter @kokoro/user dev
+pnpm --filter @kokoro/user start
+```
+
+关键 env：
+
+```text
+DATABASE_URL_USER
+KOKORO_USER_PORT=4211
+KOKORO_USER_BASE_URL=http://kokoro-user:4211
+```
+
+容器和 Kubernetes 中通过 `kokoro-user` 服务名访问，不在服务间调用里写 `localhost`。模块本身不提供 InMemory fallback，多副本状态全部落 MySQL。
 
 ## 下一步补齐
 

@@ -36,104 +36,128 @@ export class PrismaCreditRepository implements CreditRepository {
   }
 
   async grantCredits(input: CreditAmountInput): Promise<CreditMutationResult> {
-    return this.prisma.$transaction(async (tx) => {
-      const existing = await this.findExistingEntry(tx, input.idempotencyKey);
-      if (existing) {
-        return existing;
-      }
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const existing = await this.findExistingEntry(tx, input.idempotencyKey);
+        if (existing) {
+          return existing;
+        }
 
-      const amount = parsePositiveBigIntString(input.amountMicros, "amountMicros");
-      const account = await tx.creditAccount.update({
-        where: {
-          id: input.accountId,
-        },
-        data: {
-          balanceMicros: {
-            increment: amount,
+        const amount = parsePositiveBigIntString(input.amountMicros, "amountMicros");
+        const account = await tx.creditAccount.update({
+          where: {
+            id: input.accountId,
           },
-        },
-      });
-      const entry = await tx.creditLedgerEntry.create({
-        data: {
-          accountId: account.id,
-          amountMicros: amount,
-          balanceAfterMicros: account.balanceMicros,
-          reason: input.reason,
-          idempotencyKey: input.idempotencyKey,
-          ...defined("requestId", input.requestId),
-        },
-      });
+          data: {
+            balanceMicros: {
+              increment: amount,
+            },
+          },
+        });
+        const entry = await tx.creditLedgerEntry.create({
+          data: {
+            accountId: account.id,
+            amountMicros: amount,
+            balanceAfterMicros: account.balanceMicros,
+            reason: input.reason,
+            idempotencyKey: input.idempotencyKey,
+            ...defined("requestId", input.requestId),
+          },
+        });
 
-      return {
-        account: mapCreditAccount(account),
-        entry: mapLedgerEntry(entry),
-      };
-    });
+        return {
+          account: mapCreditAccount(account),
+          entry: mapLedgerEntry(entry),
+        };
+      });
+    } catch (error) {
+      return this.findExistingEntryAfterUniqueConflict(error, input.idempotencyKey);
+    }
   }
 
   async spendCredits(input: CreditAmountInput): Promise<CreditMutationResult> {
-    return this.prisma.$transaction(async (tx) => {
-      const existing = await this.findExistingEntry(tx, input.idempotencyKey);
-      if (existing) {
-        return existing;
-      }
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const existing = await this.findExistingEntry(tx, input.idempotencyKey);
+        if (existing) {
+          return existing;
+        }
 
-      const amount = parsePositiveBigIntString(input.amountMicros, "amountMicros");
-      const update = await tx.creditAccount.updateMany({
-        where: {
-          id: input.accountId,
-          status: "active",
-          balanceMicros: {
-            gte: amount,
+        const amount = parsePositiveBigIntString(input.amountMicros, "amountMicros");
+        const update = await tx.creditAccount.updateMany({
+          where: {
+            id: input.accountId,
+            status: "active",
+            balanceMicros: {
+              gte: amount,
+            },
           },
-        },
-        data: {
-          balanceMicros: {
-            decrement: amount,
+          data: {
+            balanceMicros: {
+              decrement: amount,
+            },
           },
-        },
-      });
+        });
 
-      if (update.count === 0) {
-        const account = await tx.creditAccount.findUnique({
+        if (update.count === 0) {
+          const account = await tx.creditAccount.findUnique({
+            where: {
+              id: input.accountId,
+            },
+          });
+
+          if (!account) {
+            throw new CreditAccountNotFoundError(input.accountId);
+          }
+
+          assertCreditSpendAllowed(input.accountId, account.balanceMicros, amount);
+          throw new InsufficientCreditError(input.accountId);
+        }
+
+        const account = await tx.creditAccount.findUniqueOrThrow({
           where: {
             id: input.accountId,
           },
         });
+        const entry = await tx.creditLedgerEntry.create({
+          data: {
+            accountId: account.id,
+            amountMicros: -amount,
+            balanceAfterMicros: account.balanceMicros,
+            reason: input.reason,
+            idempotencyKey: input.idempotencyKey,
+            ...defined("requestId", input.requestId),
+          },
+        });
 
-        if (!account) {
-          throw new CreditAccountNotFoundError(input.accountId);
-        }
-
-        assertCreditSpendAllowed(input.accountId, account.balanceMicros, amount);
-        throw new InsufficientCreditError(input.accountId);
-      }
-
-      const account = await tx.creditAccount.findUniqueOrThrow({
-        where: {
-          id: input.accountId,
-        },
+        return {
+          account: mapCreditAccount(account),
+          entry: mapLedgerEntry(entry),
+        };
       });
-      const entry = await tx.creditLedgerEntry.create({
-        data: {
-          accountId: account.id,
-          amountMicros: -amount,
-          balanceAfterMicros: account.balanceMicros,
-          reason: input.reason,
-          idempotencyKey: input.idempotencyKey,
-          ...defined("requestId", input.requestId),
-        },
-      });
+    } catch (error) {
+      return this.findExistingEntryAfterUniqueConflict(error, input.idempotencyKey);
+    }
+  }
 
-      return {
-        account: mapCreditAccount(account),
-        entry: mapLedgerEntry(entry),
-      };
-    });
+  private async findExistingEntryAfterUniqueConflict(
+    error: unknown,
+    idempotencyKey: string,
+  ): Promise<CreditMutationResult> {
+    if (!isUniqueConstraintError(error)) {
+      throw error;
+    }
+
+    const existing = await this.findExistingEntry(this.prisma, idempotencyKey);
+    if (!existing) {
+      throw error;
+    }
+
+    return existing;
   }
 
   private async findExistingEntry(
-    tx: TransactionClient,
+    tx: TransactionClient | PrismaClient,
     idempotencyKey: string,
   ): Promise<CreditMutationResult | undefined> {
     const entry = await tx.creditLedgerEntry.findUnique({
@@ -154,6 +178,10 @@ export class PrismaCreditRepository implements CreditRepository {
       entry: mapLedgerEntry(entry),
     };
   }
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
 }
 
 function defined<Key extends string, Value>(

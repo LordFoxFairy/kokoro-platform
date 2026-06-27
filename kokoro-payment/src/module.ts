@@ -24,6 +24,12 @@ export const paymentPlatformModule = {
       "支付成功后只请求 credit 发放权益或积分，不直接写 credit 账本。",
     ],
   },
+  service: {
+    serviceName: "kokoro-payment",
+    portEnv: "KOKORO_PAYMENT_PORT",
+    defaultPort: 4241,
+    baseUrlEnv: "KOKORO_PAYMENT_BASE_URL",
+  },
   dependencies: ["user", "credit"],
   boundaries: {
     owns: ["plans", "orders", "subscriptions", "payment events", "invoices", "refunds"],

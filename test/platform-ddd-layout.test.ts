@@ -23,14 +23,14 @@ describe("platform module DDD layout", () => {
     }
   });
 
-  it("keeps admin adapters under interfaces and repository contracts under domain", () => {
+  it("keeps admin adapters under interfaces and repository interfaces under domain", () => {
     for (const moduleName of businessModules) {
       const sourceRoot = join(process.cwd(), moduleName, "src");
       const interfaceEntries = readdirSync(join(sourceRoot, "interfaces"));
       const domainEntries = readdirSync(join(sourceRoot, "domain"));
 
       expect(interfaceEntries, `${moduleName} exposes admin through interfaces/admin`).toContain("admin");
-      expect(domainEntries, `${moduleName} owns repository contracts in domain`).toContain("repository.ts");
+      expect(domainEntries, `${moduleName} owns repository interfaces in domain`).toContain("repository.ts");
     }
   });
 });

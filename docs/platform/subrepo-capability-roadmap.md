@@ -24,7 +24,7 @@ kokoro-user / model / credit / payment
 每个业务子仓固定四层 DDD：
 
 ```text
-src/domain          实体、值对象、领域错误、领域策略、repository contract
+src/domain          实体、值对象、领域错误、领域策略、repository interface
 src/application     用例编排，不直接关心 HTTP/Prisma/第三方 SDK
 src/infrastructure  Prisma、provider adapter、外部 SDK、队列实现
 src/interfaces      HTTP、admin manifest、未来 RPC/worker/consumer adapter
@@ -59,6 +59,38 @@ domain -> 不依赖外层
 - 需要生成新 migration 时，用该子仓自己的临时 scratch database 生成，再部署到共享库。
 
 后续如果业务变大，可以拆成多库。拆库是部署拓扑变化，不应改变 DDD 边界。
+
+## 部署策略
+
+每个业务子仓都必须能作为独立进程运行，也必须能在 Kubernetes 中多副本运行。
+
+统一运行面：
+
+```text
+kokoro-user      KOKORO_USER_PORT=4211
+kokoro-model     KOKORO_MODEL_PORT=4221
+kokoro-credit    KOKORO_CREDIT_PORT=4231
+kokoro-payment   KOKORO_PAYMENT_PORT=4241
+```
+
+统一内部服务地址：
+
+```text
+KOKORO_USER_BASE_URL=http://kokoro-user:4211
+KOKORO_MODEL_BASE_URL=http://kokoro-model:4221
+KOKORO_CREDIT_BASE_URL=http://kokoro-credit:4231
+KOKORO_PAYMENT_BASE_URL=http://kokoro-payment:4241
+```
+
+部署红线：
+
+- 子仓代码不写死 `localhost` 做服务间调用。
+- 子仓不依赖进程内缓存保存关键业务状态。
+- 子仓必须有 `/healthz`。
+- 子仓必须在关闭 HTTP server 时释放数据库连接。
+- credit/payment 这种涉及钱和积分的模块，所有关键写入都必须依赖数据库唯一索引、事务和幂等 key。
+
+详细部署拓扑见 `docs/platform/deployment-topology.md`。
 
 ## 管理后台策略
 
@@ -461,8 +493,8 @@ admin manifest schema
 
 ```text
 user/payment/model/credit DTO
-RPC contract
-OpenAPI contract
+RPC interface
+OpenAPI schema
 业务策略
 跨模块编排
 provider SDK
@@ -582,7 +614,7 @@ P3:
 ## 需要守住的红线
 
 - 不恢复 InMemory runtime fallback。
-- 不建中央业务 contract 子仓。
+- 不建中央业务契约子仓。
 - 不让 `kokoro-platform-kit` 放业务 DTO。
 - 不让每个业务子仓各自做完整后台 Web。
 - 不让 payment 直接改 credit 账本。

@@ -35,6 +35,12 @@ describe("platform module registry", () => {
         primary: "mysql",
         databaseEnv: "DATABASE_URL_CREDIT",
       },
+      service: {
+        serviceName: "kokoro-credit",
+        portEnv: "KOKORO_CREDIT_PORT",
+        defaultPort: 4231,
+        baseUrlEnv: "KOKORO_CREDIT_BASE_URL",
+      },
     });
   });
 });

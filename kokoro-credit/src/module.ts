@@ -24,6 +24,12 @@ export const creditPlatformModule = {
       "运行时调用通过预估、冻结、结算、补差或退款来闭环，避免双向循环依赖。",
     ],
   },
+  service: {
+    serviceName: "kokoro-credit",
+    portEnv: "KOKORO_CREDIT_PORT",
+    defaultPort: 4231,
+    baseUrlEnv: "KOKORO_CREDIT_BASE_URL",
+  },
   dependencies: ["user", "model"],
   boundaries: {
     owns: [

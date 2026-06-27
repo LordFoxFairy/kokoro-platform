@@ -29,6 +29,12 @@ export const modelPlatformModule = {
       "LiteLLM 只作为大模型网关，模型可见性、标签、排序、兜底账号仍由本模块治理。",
     ],
   },
+  service: {
+    serviceName: "kokoro-model",
+    portEnv: "KOKORO_MODEL_PORT",
+    defaultPort: 4221,
+    baseUrlEnv: "KOKORO_MODEL_BASE_URL",
+  },
   dependencies: ["user"],
   boundaries: {
     owns: [

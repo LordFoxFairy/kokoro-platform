@@ -24,6 +24,12 @@ export const userPlatformModule = {
       "其它平台模块通过 internal API 或后续 RPC 读取用户上下文，不直接写 user 数据表。",
     ],
   },
+  service: {
+    serviceName: "kokoro-user",
+    portEnv: "KOKORO_USER_PORT",
+    defaultPort: 4211,
+    baseUrlEnv: "KOKORO_USER_BASE_URL",
+  },
   dependencies: [],
   boundaries: {
     owns: ["users", "teams", "memberships", "roles", "invites", "service accounts", "audit logs"],

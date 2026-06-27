@@ -9,7 +9,7 @@
 ## DDD 结构
 
 ```text
-src/domain/                 领域类型、领域策略、领域错误、repository contract
+src/domain/                 领域类型、领域策略、领域错误、repository interface
 src/application/            积分用例
 src/infrastructure/prisma/  Prisma repository 实现
 src/interfaces/http/        HTTP API
@@ -39,6 +39,23 @@ POST /credit/accounts/ensure
 POST /credit/grant
 POST /credit/spend
 ```
+
+## 运行与部署
+
+```bash
+pnpm --filter @kokoro/credit dev
+pnpm --filter @kokoro/credit start
+```
+
+关键 env：
+
+```text
+DATABASE_URL_CREDIT
+KOKORO_CREDIT_PORT=4231
+KOKORO_CREDIT_BASE_URL=http://kokoro-credit:4231
+```
+
+容器和 Kubernetes 中通过 `kokoro-credit` 服务名访问，不在服务间调用里写 `localhost`。余额、账本、冻结、幂等状态必须全部落 MySQL，不能依赖单进程状态。
 
 ## 下一步补齐
 

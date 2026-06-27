@@ -1,0 +1,12 @@
+.git
+.env
+.env.local
+node_modules
+**/node_modules
+generated
+**/generated
+coverage
+dist
+*.log
+.DS_Store
+tmp

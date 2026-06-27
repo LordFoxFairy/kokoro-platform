@@ -63,16 +63,7 @@ export class PrismaPaymentRepository implements PaymentRepository {
       return mapOrder(existing);
     }
 
-    const order = await this.prisma.order.create({
-      data: {
-        teamId: input.teamId,
-        planId: input.planId,
-        amountMinor: parsePositiveBigIntString(input.amountMinor, "amountMinor"),
-        currency: input.currency,
-        idempotencyKey: input.idempotencyKey,
-        status: "pending",
-      },
-    });
+    const order = await this.createOrderOrReadExisting(input);
 
     return mapOrder(order);
   }
@@ -101,18 +92,91 @@ export class PrismaPaymentRepository implements PaymentRepository {
       return mapPaymentEvent(existing);
     }
 
-    const event = await this.prisma.paymentEvent.create({
-      data: {
-        provider: input.provider,
-        eventId: input.eventId,
-        eventType: input.eventType,
-        payload: toJson(input.payload),
-        status: "received",
-      },
-    });
+    const event = await this.createPaymentEventOrReadExisting(input);
 
     return mapPaymentEvent(event);
   }
+
+  private async createOrderOrReadExisting(input: CreateOrderInput) {
+    try {
+      return await this.prisma.order.create({
+        data: {
+          teamId: input.teamId,
+          planId: input.planId,
+          amountMinor: parsePositiveBigIntString(input.amountMinor, "amountMinor"),
+          currency: input.currency,
+          idempotencyKey: input.idempotencyKey,
+          status: "pending",
+        },
+      });
+    } catch (error) {
+      if (!isUniqueConstraintError(error)) {
+        throw error;
+      }
+
+      const existing = await this.prisma.order.findUniqueOrThrow({
+        where: {
+          idempotencyKey: input.idempotencyKey,
+        },
+      });
+
+      assertSameOrderIdempotencyTarget(
+        {
+          teamId: existing.teamId,
+          planId: existing.planId,
+          amountMinor: existing.amountMinor.toString(),
+          currency: existing.currency,
+          idempotencyKey: existing.idempotencyKey,
+        },
+        input,
+      );
+
+      return existing;
+    }
+  }
+
+  private async createPaymentEventOrReadExisting(input: RecordPaymentEventInput) {
+    try {
+      return await this.prisma.paymentEvent.create({
+        data: {
+          provider: input.provider,
+          eventId: input.eventId,
+          eventType: input.eventType,
+          payload: toJson(input.payload),
+          status: "received",
+        },
+      });
+    } catch (error) {
+      if (!isUniqueConstraintError(error)) {
+        throw error;
+      }
+
+      const existing = await this.prisma.paymentEvent.findUniqueOrThrow({
+        where: {
+          provider_eventId: {
+            provider: input.provider,
+            eventId: input.eventId,
+          },
+        },
+      });
+
+      assertSamePaymentEventIdempotencyTarget(
+        {
+          provider: existing.provider,
+          eventId: existing.eventId,
+          eventType: existing.eventType,
+          payload: existing.payload,
+        },
+        input,
+      );
+
+      return existing;
+    }
+  }
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
 }
 
 function toJson(value: unknown): Prisma.InputJsonValue {
