@@ -1,0 +1,130 @@
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL_CREDIT")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+model CreditAccount {
+  id             String              @id @default(cuid())
+  ownerKind      CreditOwnerKind
+  ownerId        String
+  status         CreditAccountStatus @default(active)
+  balanceMicros  BigInt              @default(0)
+  heldMicros     BigInt              @default(0)
+  metadata       Json?
+  holds          CreditHold[]
+  ledgerEntries  CreditLedgerEntry[]
+  usageRecords   UsageRecord[]
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  @@unique([ownerKind, ownerId])
+  @@index([status])
+  @@map("credit_accounts")
+}
+
+model CreditLedgerEntry {
+  id                String        @id @default(cuid())
+  accountId         String
+  amountMicros      BigInt
+  balanceAfterMicros BigInt
+  reason            CreditReason
+  idempotencyKey    String        @unique
+  requestId         String?
+  metadata          Json?
+  account           CreditAccount @relation(fields: [accountId], references: [id])
+  createdAt         DateTime      @default(now())
+
+  @@index([accountId, createdAt])
+  @@map("credit_ledger_entries")
+}
+
+model CreditHold {
+  id             String           @id @default(cuid())
+  accountId      String
+  amountMicros   BigInt
+  status         CreditHoldStatus @default(active)
+  idempotencyKey String           @unique
+  expiresAt      DateTime?
+  account        CreditAccount    @relation(fields: [accountId], references: [id])
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([accountId, status])
+  @@map("credit_holds")
+}
+
+model UsageRecord {
+  id             String            @id @default(cuid())
+  accountId      String?
+  featureKey     String
+  amountMicros   BigInt
+  modelBindingId String?
+  requestId      String?
+  idempotencyKey String?           @unique
+  status         UsageRecordStatus @default(recorded)
+  metadata       Json?
+  account        CreditAccount?    @relation(fields: [accountId], references: [id])
+  createdAt      DateTime          @default(now())
+
+  @@index([featureKey, createdAt])
+  @@index([accountId, createdAt])
+  @@map("credit_usage_records")
+}
+
+model PricingRule {
+  id             String            @id @default(cuid())
+  featureKey     String
+  labelKey       String?
+  unit           String
+  amountMicros   BigInt
+  status         PricingRuleStatus @default(active)
+  effectiveFrom  DateTime          @default(now())
+  effectiveUntil DateTime?
+  metadata       Json?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([featureKey, status])
+  @@map("credit_pricing_rules")
+}
+
+enum CreditOwnerKind {
+  user
+  team
+}
+
+enum CreditAccountStatus {
+  active
+  disabled
+}
+
+enum CreditReason {
+  manual_adjustment
+  subscription
+  model_call
+  tool_call
+  refund
+}
+
+enum CreditHoldStatus {
+  active
+  captured
+  released
+  expired
+}
+
+enum UsageRecordStatus {
+  recorded
+  settled
+  failed
+}
+
+enum PricingRuleStatus {
+  active
+  disabled
+}

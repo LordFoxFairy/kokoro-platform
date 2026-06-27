@@ -1,0 +1,190 @@
+import { parsePositiveBigIntString } from "@kokoro/platform-kit";
+import type { Prisma, PrismaClient } from "../../../generated/prisma/index.js";
+import {
+  assertSameOrderIdempotencyTarget,
+  assertSamePaymentEventIdempotencyTarget,
+} from "../../domain/idempotency.js";
+import type { Order, PaymentEvent, Plan } from "../../domain/payment.js";
+import type {
+  CreateOrderInput,
+  PaymentRepository,
+  RecordPaymentEventInput,
+  UpsertPlanInput,
+} from "../../domain/repository.js";
+
+export class PrismaPaymentRepository implements PaymentRepository {
+  constructor(private readonly prisma: PrismaClient) {}
+
+  async upsertPlan(input: UpsertPlanInput): Promise<Plan> {
+    const amountMinor = parsePositiveBigIntString(input.amountMinor, "amountMinor");
+    const plan = await this.prisma.plan.upsert({
+      where: {
+        key: input.key,
+      },
+      create: {
+        key: input.key,
+        name: input.name,
+        currency: input.currency,
+        amountMinor,
+        billingInterval: input.billingInterval,
+        status: "active",
+      },
+      update: {
+        name: input.name,
+        currency: input.currency,
+        amountMinor,
+        billingInterval: input.billingInterval,
+        status: "active",
+      },
+    });
+
+    return mapPlan(plan);
+  }
+
+  async createOrder(input: CreateOrderInput): Promise<Order> {
+    const existing = await this.prisma.order.findUnique({
+      where: {
+        idempotencyKey: input.idempotencyKey,
+      },
+    });
+
+    if (existing) {
+      assertSameOrderIdempotencyTarget(
+        {
+          teamId: existing.teamId,
+          planId: existing.planId,
+          amountMinor: existing.amountMinor.toString(),
+          currency: existing.currency,
+          idempotencyKey: existing.idempotencyKey,
+        },
+        input,
+      );
+
+      return mapOrder(existing);
+    }
+
+    const order = await this.prisma.order.create({
+      data: {
+        teamId: input.teamId,
+        planId: input.planId,
+        amountMinor: parsePositiveBigIntString(input.amountMinor, "amountMinor"),
+        currency: input.currency,
+        idempotencyKey: input.idempotencyKey,
+        status: "pending",
+      },
+    });
+
+    return mapOrder(order);
+  }
+
+  async recordPaymentEvent(input: RecordPaymentEventInput): Promise<PaymentEvent> {
+    const existing = await this.prisma.paymentEvent.findUnique({
+      where: {
+        provider_eventId: {
+          provider: input.provider,
+          eventId: input.eventId,
+        },
+      },
+    });
+
+    if (existing) {
+      assertSamePaymentEventIdempotencyTarget(
+        {
+          provider: existing.provider,
+          eventId: existing.eventId,
+          eventType: existing.eventType,
+          payload: existing.payload,
+        },
+        input,
+      );
+
+      return mapPaymentEvent(existing);
+    }
+
+    const event = await this.prisma.paymentEvent.create({
+      data: {
+        provider: input.provider,
+        eventId: input.eventId,
+        eventType: input.eventType,
+        payload: toJson(input.payload),
+        status: "received",
+      },
+    });
+
+    return mapPaymentEvent(event);
+  }
+}
+
+function toJson(value: unknown): Prisma.InputJsonValue {
+  return value === undefined ? {} : (value as Prisma.InputJsonValue);
+}
+
+function mapPlan(plan: {
+  id: string;
+  key: string;
+  name: string;
+  currency: string;
+  amountMinor: bigint;
+  billingInterval: "once" | "month" | "year";
+  status: "active" | "disabled";
+  createdAt: Date;
+  updatedAt: Date;
+}): Plan {
+  return {
+    id: plan.id,
+    key: plan.key,
+    name: plan.name,
+    currency: plan.currency,
+    amountMinor: plan.amountMinor.toString(),
+    billingInterval: plan.billingInterval,
+    status: plan.status,
+    createdAt: plan.createdAt,
+    updatedAt: plan.updatedAt,
+  };
+}
+
+function mapOrder(order: {
+  id: string;
+  teamId: string;
+  planId: string;
+  amountMinor: bigint;
+  currency: string;
+  status: "pending" | "paid" | "canceled" | "refunded";
+  idempotencyKey: string;
+  createdAt: Date;
+  updatedAt: Date;
+}): Order {
+  return {
+    id: order.id,
+    teamId: order.teamId,
+    planId: order.planId,
+    amountMinor: order.amountMinor.toString(),
+    currency: order.currency,
+    status: order.status,
+    idempotencyKey: order.idempotencyKey,
+    createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
+  };
+}
+
+function mapPaymentEvent(event: {
+  id: string;
+  provider: string;
+  eventId: string;
+  eventType: string;
+  payload: Prisma.JsonValue;
+  status: "received" | "processed" | "failed";
+  createdAt: Date;
+  updatedAt: Date;
+}): PaymentEvent {
+  return {
+    id: event.id,
+    provider: event.provider,
+    eventId: event.eventId,
+    eventType: event.eventType,
+    payload: event.payload,
+    status: event.status,
+    createdAt: event.createdAt,
+    updatedAt: event.updatedAt,
+  };
+}

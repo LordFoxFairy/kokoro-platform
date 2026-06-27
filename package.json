@@ -1,0 +1,39 @@
+{
+  "name": "kokoro-platform",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.2.2",
+  "scripts": {
+    "dev:db": "docker compose up -d mysql",
+    "dev:user": "pnpm --filter @kokoro/user dev",
+    "dev:model": "pnpm --filter @kokoro/model dev",
+    "dev:credit": "pnpm --filter @kokoro/credit dev",
+    "dev:payment": "pnpm --filter @kokoro/payment dev",
+    "db:generate": "pnpm -r db:generate",
+    "db:migrate": "pnpm -r db:migrate",
+    "db:reset": "pnpm -r db:reset",
+    "test:platform": "vitest run test/*.test.ts",
+    "test": "pnpm run test:platform && pnpm -r test",
+    "test:integration": "pnpm -r test:integration",
+    "typecheck:platform": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "pnpm run typecheck:platform && pnpm -r typecheck",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@kokoro/platform-kit": "workspace:*",
+    "@kokoro/credit": "workspace:*",
+    "@kokoro/model": "workspace:*",
+    "@kokoro/payment": "workspace:*",
+    "@kokoro/user": "workspace:*"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/node": "^22.19.1",
+    "eslint": "^9.39.1",
+    "prettier": "^3.7.4",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.62.0",
+    "tsx": "^4.21.0",
+    "vitest": "^2.1.9"
+  }
+}

@@ -1,0 +1,26 @@
+import { z } from "zod";
+
+const amountMinorSchema = z.string().regex(/^[1-9]\d*$/);
+
+export const upsertPlanRequestSchema = z.object({
+  key: z.string().min(1),
+  name: z.string().min(1),
+  currency: z.string().length(3),
+  amountMinor: amountMinorSchema,
+  billingInterval: z.enum(["once", "month", "year"]),
+});
+
+export const createOrderRequestSchema = z.object({
+  teamId: z.string().min(1),
+  planId: z.string().min(1),
+  amountMinor: amountMinorSchema,
+  currency: z.string().length(3),
+  idempotencyKey: z.string().min(1),
+});
+
+export const recordPaymentEventRequestSchema = z.object({
+  provider: z.string().min(1),
+  eventId: z.string().min(1),
+  eventType: z.string().min(1),
+  payload: z.unknown(),
+});

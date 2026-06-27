@@ -1,0 +1,19 @@
+services:
+  litellm:
+    image: ${LITELLM_IMAGE:-ghcr.io/berriai/litellm:main-stable}
+    env_file:
+      - .env
+    ports:
+      - "${LITELLM_PORT:-4000}:4000"
+    volumes:
+      - ./config/litellm.config.example.yaml:/app/config.yaml:ro
+    command:
+      - "--config=/app/config.yaml"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl -fsS http://127.0.0.1:4000/health/liveliness >/dev/null
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s

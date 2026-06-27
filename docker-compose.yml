@@ -1,0 +1,23 @@
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: kokoro_root
+      MYSQL_DATABASE: kokoro
+      MYSQL_USER: kokoro
+      MYSQL_PASSWORD: kokoro
+    ports:
+      - "3307:3306"
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -ukokoro -pkokoro --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - kokoro-platform-mysql:/var/lib/mysql
+
+volumes:
+  kokoro-platform-mysql:

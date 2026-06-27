@@ -1,0 +1,183 @@
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL_USER")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id             String           @id @default(cuid())
+  externalUserId String           @unique
+  email          String?
+  displayName    String?
+  avatarUrl      String?
+  status         UserStatus       @default(active)
+  disabledAt     DateTime?
+  lastSeenAt     DateTime?
+  metadata       Json?
+  memberships    Membership[]
+  ownedTeams     Team[]           @relation("TeamOwner")
+  serviceAccounts ServiceAccount[]
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([status])
+  @@map("users")
+}
+
+model Team {
+  id                  String       @id @default(cuid())
+  name                String
+  slug                String?      @unique
+  type                TeamType
+  ownerUserId         String
+  personalOwnerUserId String?      @unique
+  status              TeamStatus   @default(active)
+  disabledAt          DateTime?
+  metadata            Json?
+  owner               User         @relation("TeamOwner", fields: [ownerUserId], references: [id])
+  memberships         Membership[]
+  invites             Invite[]
+  serviceAccounts     ServiceAccount[]
+  roles               Role[]
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  @@index([ownerUserId])
+  @@index([status])
+  @@map("teams")
+}
+
+model Membership {
+  id         String           @id @default(cuid())
+  teamId     String
+  userId     String
+  role       MembershipRole   @default(member)
+  status     MembershipStatus @default(active)
+  disabledAt DateTime?
+  team       Team             @relation(fields: [teamId], references: [id])
+  user       User             @relation(fields: [userId], references: [id])
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  @@unique([teamId, userId])
+  @@index([userId, status])
+  @@map("memberships")
+}
+
+model Role {
+  id          String     @id @default(cuid())
+  teamId      String?
+  scopeKey    String
+  key         String
+  name        String
+  permissions Json
+  status      RoleStatus @default(active)
+  team        Team?      @relation(fields: [teamId], references: [id])
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@unique([scopeKey, key])
+  @@index([teamId])
+  @@map("roles")
+}
+
+model Invite {
+  id         String       @id @default(cuid())
+  teamId     String
+  email      String
+  role       MembershipRole
+  status     InviteStatus @default(pending)
+  tokenHash  String
+  expiresAt  DateTime
+  acceptedAt DateTime?
+  revokedAt  DateTime?
+  team       Team         @relation(fields: [teamId], references: [id])
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  @@index([teamId, status])
+  @@index([email])
+  @@map("invites")
+}
+
+model ServiceAccount {
+  id          String               @id @default(cuid())
+  teamId      String?
+  ownerUserId String?
+  name        String
+  tokenPrefix String
+  secretHash  String
+  status      ServiceAccountStatus @default(active)
+  lastUsedAt  DateTime?
+  team        Team?                @relation(fields: [teamId], references: [id])
+  ownerUser   User?                @relation(fields: [ownerUserId], references: [id])
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  @@unique([tokenPrefix])
+  @@index([teamId, status])
+  @@map("service_accounts")
+}
+
+model UserAuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String?
+  actorService String?
+  teamId      String?
+  action      String
+  targetType  String
+  targetId    String
+  metadata    Json?
+  requestId   String?
+  createdAt   DateTime @default(now())
+
+  @@index([teamId, createdAt])
+  @@index([targetType, targetId])
+  @@map("user_audit_logs")
+}
+
+enum UserStatus {
+  active
+  disabled
+}
+
+enum TeamType {
+  personal
+  team
+}
+
+enum TeamStatus {
+  active
+  disabled
+}
+
+enum MembershipRole {
+  owner
+  admin
+  member
+}
+
+enum MembershipStatus {
+  active
+  disabled
+}
+
+enum RoleStatus {
+  active
+  disabled
+}
+
+enum InviteStatus {
+  pending
+  accepted
+  revoked
+  expired
+}
+
+enum ServiceAccountStatus {
+  active
+  disabled
+}

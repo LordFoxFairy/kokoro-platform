@@ -1,0 +1,133 @@
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL_PAYMENT")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+model Plan {
+  id              String          @id @default(cuid())
+  key             String          @unique
+  name            String
+  currency        String
+  amountMinor     BigInt
+  billingInterval BillingInterval
+  status          PlanStatus      @default(active)
+  metadata        Json?
+  orders          Order[]
+  subscriptions   Subscription[]
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([status])
+  @@map("payment_plans")
+}
+
+model Order {
+  id             String      @id @default(cuid())
+  teamId         String
+  planId         String
+  amountMinor    BigInt
+  currency       String
+  status         OrderStatus @default(pending)
+  idempotencyKey String      @unique
+  provider       String?
+  providerOrderId String?
+  metadata       Json?
+  plan           Plan        @relation(fields: [planId], references: [id])
+  refunds        Refund[]
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@index([teamId, status])
+  @@index([planId])
+  @@map("payment_orders")
+}
+
+model Subscription {
+  id                     String             @id @default(cuid())
+  teamId                 String
+  planId                 String
+  status                 SubscriptionStatus @default(active)
+  provider               String?
+  providerSubscriptionId String?
+  currentPeriodStart     DateTime?
+  currentPeriodEnd       DateTime?
+  metadata               Json?
+  plan                   Plan               @relation(fields: [planId], references: [id])
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  @@index([teamId, status])
+  @@map("payment_subscriptions")
+}
+
+model PaymentEvent {
+  id        String             @id @default(cuid())
+  provider  String
+  eventId   String
+  eventType String
+  payload   Json
+  status    PaymentEventStatus @default(received)
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  @@unique([provider, eventId])
+  @@index([eventType])
+  @@map("payment_events")
+}
+
+model Refund {
+  id          String       @id @default(cuid())
+  orderId     String
+  amountMinor BigInt
+  currency    String
+  status      RefundStatus @default(pending)
+  reason      String?
+  metadata    Json?
+  order       Order        @relation(fields: [orderId], references: [id])
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([orderId, status])
+  @@map("payment_refunds")
+}
+
+enum BillingInterval {
+  once
+  month
+  year
+}
+
+enum PlanStatus {
+  active
+  disabled
+}
+
+enum OrderStatus {
+  pending
+  paid
+  canceled
+  refunded
+}
+
+enum SubscriptionStatus {
+  active
+  canceled
+  past_due
+}
+
+enum PaymentEventStatus {
+  received
+  processed
+  failed
+}
+
+enum RefundStatus {
+  pending
+  succeeded
+  failed
+}

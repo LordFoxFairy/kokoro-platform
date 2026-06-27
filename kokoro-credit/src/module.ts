@@ -1,0 +1,40 @@
+export const creditPlatformModule = {
+  id: "credit",
+  labelKey: "platform.modules.credit",
+  packageName: "@kokoro/credit",
+  directory: "kokoro-credit",
+  status: "active",
+  kind: "credit",
+  envFile: "kokoro-credit/.env.example",
+  storage: {
+    primary: "mysql",
+    databaseEnv: "DATABASE_URL_CREDIT",
+    ownsMigrations: true,
+  },
+  admin: {
+    mode: "manifest",
+    basePath: "/admin/credits",
+    manifestExport: "creditAdminManifest",
+  },
+  runtime: {
+    surfaces: ["http", "internal-api", "admin-manifest"],
+    routes: ["GET /healthz", "POST /credit/accounts/ensure", "POST /credit/grant", "POST /credit/spend"],
+    notes: [
+      "扣费权威只在 credit 模块，agent、session、model、payment 都不能直接改余额。",
+      "运行时调用通过预估、冻结、结算、补差或退款来闭环，避免双向循环依赖。",
+    ],
+  },
+  dependencies: ["user", "model"],
+  boundaries: {
+    owns: [
+      "credit accounts",
+      "holds",
+      "ledger entries",
+      "usage records",
+      "pricing rules",
+      "entitlements",
+      "spend limits",
+    ],
+    doesNotOwn: ["provider routing", "payment capture", "user identity"],
+  },
+} as const;
