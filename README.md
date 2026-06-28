@@ -56,6 +56,9 @@ docs/platform/deployment-topology.md
 
 docs/platform/multi-site-ai-product-architecture.md
   多站点 AI 产品工厂设计：siteId 隔离、同邮箱跨站独立账号、套餐/积分/模型/SEO 站点化。
+
+docs/platform/multi-site/
+  多站点设计分册，细化 site、user、payment、credit、model、agent、web、SEO 和落地路线。
 ```
 
 ## 平台根职责
