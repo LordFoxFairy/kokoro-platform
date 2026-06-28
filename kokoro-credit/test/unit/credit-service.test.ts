@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CreditService } from "../../src/application/credit-service.js";
-import type { CreditAccount, CreditMutationResult } from "../../src/domain/credit.js";
+import type { CreditAccount, CreditHold, CreditMutationResult } from "../../src/domain/credit.js";
 import type { CreditRepository } from "../../src/domain/repository.js";
 
 const account: CreditAccount = {
@@ -27,6 +27,17 @@ const result: CreditMutationResult = {
   },
 };
 
+const hold: CreditHold = {
+  id: "h1",
+  accountId: "a1",
+  amountMicros: "1",
+  status: "active",
+  idempotencyKey: "k1",
+  expiresAt: null,
+  createdAt: new Date(0),
+  updatedAt: new Date(0),
+};
+
 function trackingRepo(): { repo: CreditRepository; calls: string[] } {
   const calls: string[] = [];
   const repo: CreditRepository = {
@@ -41,6 +52,18 @@ function trackingRepo(): { repo: CreditRepository; calls: string[] } {
     spendCredits: async () => {
       calls.push("spendCredits");
       return result;
+    },
+    holdCredits: async () => {
+      calls.push("holdCredits");
+      return hold;
+    },
+    captureHold: async () => {
+      calls.push("captureHold");
+      return result;
+    },
+    releaseHold: async () => {
+      calls.push("releaseHold");
+      return hold;
     },
   };
   return { repo, calls };
@@ -97,6 +120,49 @@ describe("CreditService positive-amount guard", () => {
       reason: "model_call",
     });
     expect(calls).toContain("spendCredits");
+  });
+
+  it.each(["0", "-1", ""])("holdCredits rejects %j before repository", async (amountMicros) => {
+    const { repo, calls } = trackingRepo();
+    const service = new CreditService(repo);
+    await expect(
+      service.holdCredits({
+        accountId: "a1",
+        amountMicros,
+        idempotencyKey: "k1",
+      }),
+    ).rejects.toThrow("amountMicros must be positive");
+    expect(calls).not.toContain("holdCredits");
+  });
+
+  it.each(["0", "-1", ""])("captureHold rejects %j before repository", async (actualAmountMicros) => {
+    const { repo, calls } = trackingRepo();
+    const service = new CreditService(repo);
+    await expect(
+      service.captureHold({
+        holdId: "h1",
+        actualAmountMicros,
+        idempotencyKey: "k1",
+        reason: "model_call",
+        featureKey: "model.call",
+      }),
+    ).rejects.toThrow("actualAmountMicros must be positive");
+    expect(calls).not.toContain("captureHold");
+  });
+
+  it("passes valid hold/capture/release through to repository", async () => {
+    const { repo, calls } = trackingRepo();
+    const service = new CreditService(repo);
+    await service.holdCredits({ accountId: "a1", amountMicros: "100", idempotencyKey: "k1" });
+    await service.captureHold({
+      holdId: "h1",
+      actualAmountMicros: "50",
+      idempotencyKey: "k2",
+      reason: "model_call",
+      featureKey: "model.call",
+    });
+    await service.releaseHold({ holdId: "h1", idempotencyKey: "k3" });
+    expect(calls).toEqual(["holdCredits", "captureHold", "releaseHold"]);
   });
 
   it("delegates ensureAccount to repository", async () => {

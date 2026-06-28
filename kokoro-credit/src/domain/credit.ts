@@ -1,6 +1,7 @@
 export type CreditOwnerKind = "user" | "team";
 export type CreditAccountStatus = "active" | "disabled";
 export type CreditReason = "manual_adjustment" | "subscription" | "model_call" | "tool_call" | "refund";
+export type CreditHoldStatus = "active" | "captured" | "released" | "expired";
 
 export interface CreditAccount {
   id: string;
@@ -27,4 +28,15 @@ export interface CreditLedgerEntry {
 export interface CreditMutationResult {
   account: CreditAccount;
   entry: CreditLedgerEntry;
+}
+
+export interface CreditHold {
+  id: string;
+  accountId: string;
+  amountMicros: string;
+  status: CreditHoldStatus;
+  idempotencyKey: string;
+  expiresAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
 }

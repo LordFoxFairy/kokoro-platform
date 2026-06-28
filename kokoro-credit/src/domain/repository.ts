@@ -1,4 +1,10 @@
-import type { CreditAccount, CreditMutationResult, CreditOwnerKind, CreditReason } from "./credit.js";
+import type {
+  CreditAccount,
+  CreditHold,
+  CreditMutationResult,
+  CreditOwnerKind,
+  CreditReason,
+} from "./credit.js";
 
 export interface EnsureCreditAccountInput {
   ownerKind: CreditOwnerKind;
@@ -13,8 +19,33 @@ export interface CreditAmountInput {
   requestId?: string | undefined;
 }
 
+export interface HoldCreditInput {
+  accountId: string;
+  amountMicros: string;
+  idempotencyKey: string;
+  expiresAt?: Date | undefined;
+}
+
+export interface CaptureCreditInput {
+  holdId: string;
+  actualAmountMicros: string;
+  idempotencyKey: string;
+  reason: CreditReason;
+  featureKey: string;
+  modelBindingId?: string | undefined;
+  requestId?: string | undefined;
+}
+
+export interface ReleaseCreditInput {
+  holdId: string;
+  idempotencyKey: string;
+}
+
 export interface CreditRepository {
   ensureAccount(input: EnsureCreditAccountInput): Promise<CreditAccount>;
   grantCredits(input: CreditAmountInput): Promise<CreditMutationResult>;
   spendCredits(input: CreditAmountInput): Promise<CreditMutationResult>;
+  holdCredits(input: HoldCreditInput): Promise<CreditHold>;
+  captureHold(input: CaptureCreditInput): Promise<CreditMutationResult>;
+  releaseHold(input: ReleaseCreditInput): Promise<CreditHold>;
 }

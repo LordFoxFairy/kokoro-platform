@@ -81,4 +81,120 @@ describe("credit HTTP API", () => {
     expect(spendResponse.statusCode).toBe(402);
     expect(spendResponse.json().error.code).toBe("credit.insufficient");
   });
+
+  it("runs the hold/capture cycle through runtime APIs", async () => {
+    const accountResponse = await app.inject({
+      method: "POST",
+      url: "/credit/accounts/ensure",
+      payload: { ownerKind: "team", ownerId: "team_hold_api" },
+    });
+    const accountId = accountResponse.json().data.id;
+
+    await app.inject({
+      method: "POST",
+      url: "/credit/grant",
+      payload: {
+        accountId,
+        amountMicros: "9000000",
+        idempotencyKey: "api_hold_grant",
+        reason: "subscription",
+      },
+    });
+
+    const holdResponse = await app.inject({
+      method: "POST",
+      url: "/credit/hold",
+      payload: { accountId, amountMicros: "4000000", idempotencyKey: "api_hold" },
+    });
+    expect(holdResponse.statusCode).toBe(200);
+    const holdId = holdResponse.json().data.id;
+    expect(holdResponse.json().data.status).toBe("active");
+
+    const captureResponse = await app.inject({
+      method: "POST",
+      url: "/credit/capture",
+      payload: {
+        holdId,
+        actualAmountMicros: "3000000",
+        idempotencyKey: "api_capture",
+        reason: "model_call",
+        featureKey: "model.call",
+      },
+    });
+    expect(captureResponse.statusCode).toBe(200);
+    expect(captureResponse.json().data.account.balanceMicros).toBe("6000000");
+    expect(captureResponse.json().data.account.heldMicros).toBe("0");
+  });
+
+  it("maps insufficient hold to 402", async () => {
+    const accountResponse = await app.inject({
+      method: "POST",
+      url: "/credit/accounts/ensure",
+      payload: { ownerKind: "team", ownerId: "team_hold_overdraft_api" },
+    });
+
+    const holdResponse = await app.inject({
+      method: "POST",
+      url: "/credit/hold",
+      payload: {
+        accountId: accountResponse.json().data.id,
+        amountMicros: "1",
+        idempotencyKey: "api_hold_overdraft",
+      },
+    });
+
+    expect(holdResponse.statusCode).toBe(402);
+    expect(holdResponse.json().error.code).toBe("credit.insufficient");
+  });
+
+  it("maps unknown hold to 404 on release", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/credit/release",
+      payload: { holdId: "missing_hold", idempotencyKey: "api_release_missing" },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json().error.code).toBe("credit.hold_not_found");
+  });
+
+  it("maps over-capture to 400", async () => {
+    const accountResponse = await app.inject({
+      method: "POST",
+      url: "/credit/accounts/ensure",
+      payload: { ownerKind: "team", ownerId: "team_capture_exceeds_api" },
+    });
+    const accountId = accountResponse.json().data.id;
+
+    await app.inject({
+      method: "POST",
+      url: "/credit/grant",
+      payload: {
+        accountId,
+        amountMicros: "9000000",
+        idempotencyKey: "api_exceed_grant",
+        reason: "subscription",
+      },
+    });
+    const holdResponse = await app.inject({
+      method: "POST",
+      url: "/credit/hold",
+      payload: { accountId, amountMicros: "2000000", idempotencyKey: "api_exceed_hold" },
+    });
+
+    const captureResponse = await app.inject({
+      method: "POST",
+      url: "/credit/capture",
+      payload: {
+        holdId: holdResponse.json().data.id,
+        actualAmountMicros: "2000001",
+        idempotencyKey: "api_exceed_capture",
+        reason: "model_call",
+        featureKey: "model.call",
+      },
+    });
+
+    expect(captureResponse.statusCode).toBe(400);
+    expect(captureResponse.json().error.code).toBe("credit.capture_exceeds_hold");
+  });
 });

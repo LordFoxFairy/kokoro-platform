@@ -18,7 +18,15 @@ export const creditPlatformModule = {
   },
   runtime: {
     surfaces: ["http", "internal-api", "admin-manifest"],
-    routes: ["GET /healthz", "POST /credit/accounts/ensure", "POST /credit/grant", "POST /credit/spend"],
+    routes: [
+      "GET /healthz",
+      "POST /credit/accounts/ensure",
+      "POST /credit/grant",
+      "POST /credit/spend",
+      "POST /credit/hold",
+      "POST /credit/capture",
+      "POST /credit/release",
+    ],
     notes: [
       "扣费权威只在 credit 模块，agent、session、model、payment 都不能直接改余额。",
       "运行时调用通过预估、冻结、结算、补差或退款来闭环，避免双向循环依赖。",
