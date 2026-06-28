@@ -5,6 +5,7 @@ export interface UpsertPlanInput {
   name: string;
   currency: string;
   amountMinor: string;
+  creditMicros?: string | undefined;
   billingInterval: BillingInterval;
 }
 
@@ -27,4 +28,17 @@ export interface PaymentRepository {
   upsertPlan(input: UpsertPlanInput): Promise<Plan>;
   createOrder(input: CreateOrderInput): Promise<Order>;
   recordPaymentEvent(input: RecordPaymentEventInput): Promise<PaymentEvent>;
+  findOrderById(orderId: string): Promise<Order | null>;
+  findPlanById(planId: string): Promise<Plan | null>;
+  markOrderPaid(orderId: string): Promise<Order>;
 }
+
+export interface GrantPurchaseCreditsInput {
+  ownerKind: "team";
+  ownerId: string;
+  amountMicros: string;
+  idempotencyKey: string;
+  reason: "subscription";
+}
+
+export type GrantPurchaseCredits = (input: GrantPurchaseCreditsInput) => Promise<void>;

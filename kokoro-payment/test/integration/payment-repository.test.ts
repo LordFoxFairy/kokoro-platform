@@ -1,11 +1,11 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { PaymentService } from "../../src/application/payment-service.js";
 import { PrismaPaymentRepository } from "../../src/infrastructure/prisma/prisma-payment-repository.js";
-import { cleanPaymentDatabase, createTestPrismaClient } from "./helpers.js";
+import { cleanPaymentDatabase, createTestPrismaClient, recordingGrant } from "./helpers.js";
 
 const prisma = createTestPrismaClient();
 const repository = new PrismaPaymentRepository(prisma);
-const service = new PaymentService(repository);
+const service = new PaymentService(repository, recordingGrant().grantPurchaseCredits);
 
 describe("PrismaPaymentRepository", () => {
   beforeEach(async () => {

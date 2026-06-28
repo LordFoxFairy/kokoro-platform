@@ -1,5 +1,22 @@
 import { PrismaClient } from "../../generated/prisma/index.js";
 import { createPrismaClient } from "../../src/infrastructure/prisma/prisma-client.js";
+import type {
+  GrantPurchaseCredits,
+  GrantPurchaseCreditsInput,
+} from "../../src/domain/repository.js";
+
+export function recordingGrant(): {
+  grantPurchaseCredits: GrantPurchaseCredits;
+  grants: GrantPurchaseCreditsInput[];
+} {
+  const grants: GrantPurchaseCreditsInput[] = [];
+  return {
+    grants,
+    grantPurchaseCredits: async (input) => {
+      grants.push(input);
+    },
+  };
+}
 
 export function createTestPrismaClient(): PrismaClient {
   if (!process.env.DATABASE_URL_PAYMENT) {

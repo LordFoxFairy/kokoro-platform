@@ -57,6 +57,26 @@ describe("amountMinor boundaries (/^[1-9]\\d*$/)", () => {
   );
 });
 
+describe("plan creditMicros boundaries (/^\\d+$/, optional)", () => {
+  it("accepts omitted creditMicros", () => {
+    expect(upsertPlanRequestSchema.parse(validPlan).creditMicros).toBeUndefined();
+  });
+  it.each(["0", "1000000", "99999999999999999999999999"])(
+    "accepts non-negative integer string %j",
+    (creditMicros) => {
+      expect(upsertPlanRequestSchema.parse({ ...validPlan, creditMicros }).creditMicros).toBe(
+        creditMicros,
+      );
+    },
+  );
+  it.each(["-1", "1.5", "abc", "01x", " 5", "5 ", ""])(
+    "rejects invalid creditMicros %j",
+    (creditMicros) => {
+      expect(() => upsertPlanRequestSchema.parse({ ...validPlan, creditMicros })).toThrow();
+    },
+  );
+});
+
 describe("plan enum + required + length", () => {
   it.each(["weekly", "", "MONTH", "Once"])("rejects invalid billingInterval %j", (interval) => {
     expect(() => upsertPlanRequestSchema.parse({ ...validPlan, billingInterval: interval })).toThrow();

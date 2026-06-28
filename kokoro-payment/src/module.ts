@@ -18,7 +18,13 @@ export const paymentPlatformModule = {
   },
   runtime: {
     surfaces: ["http", "internal-api", "admin-manifest"],
-    routes: ["GET /healthz", "POST /plans/upsert", "POST /orders", "POST /payment-events/record"],
+    routes: [
+      "GET /healthz",
+      "POST /plans/upsert",
+      "POST /orders",
+      "POST /orders/:id/confirm",
+      "POST /payment-events/record",
+    ],
     notes: [
       "payment 是购买、订单、订阅和支付事件权威。",
       "支付成功后只请求 credit 发放权益或积分，不直接写 credit 账本。",

@@ -14,6 +14,7 @@ model Plan {
   name            String
   currency        String
   amountMinor     BigInt
+  creditMicros    BigInt          @default(0)
   billingInterval BillingInterval
   status          PlanStatus      @default(active)
   metadata        Json?

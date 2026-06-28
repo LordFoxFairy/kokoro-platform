@@ -1,13 +1,19 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { createPaymentServer } from "../../src/interfaces/http/server.js";
-import { cleanPaymentDatabase, createTestPrismaClient } from "./helpers.js";
+import {
+  cleanPaymentDatabase,
+  createTestPrismaClient,
+  recordingGrant,
+} from "./helpers.js";
 
 const prisma = createTestPrismaClient();
-const app = createPaymentServer({ prisma });
+const grant = recordingGrant();
+const app = createPaymentServer({ prisma, grantPurchaseCredits: grant.grantPurchaseCredits });
 
 describe("payment HTTP API", () => {
   beforeEach(async () => {
     await cleanPaymentDatabase(prisma);
+    grant.grants.length = 0;
   });
 
   afterAll(async () => {
@@ -135,5 +141,97 @@ describe("payment HTTP API", () => {
 
     expect(conflictResponse.statusCode).toBe(409);
     expect(conflictResponse.json().error.code).toBe("payment.idempotency_conflict");
+  });
+
+  async function seedPendingOrder(opts: {
+    planKey: string;
+    creditMicros?: string;
+    teamId: string;
+    idempotencyKey: string;
+  }): Promise<string> {
+    const planResponse = await app.inject({
+      method: "POST",
+      url: "/plans/upsert",
+      payload: {
+        key: opts.planKey,
+        name: opts.planKey,
+        currency: "USD",
+        amountMinor: "4900",
+        creditMicros: opts.creditMicros ?? "0",
+        billingInterval: "month",
+      },
+    });
+    const orderResponse = await app.inject({
+      method: "POST",
+      url: "/orders",
+      payload: {
+        teamId: opts.teamId,
+        planId: planResponse.json().data.id,
+        amountMinor: "4900",
+        currency: "USD",
+        idempotencyKey: opts.idempotencyKey,
+      },
+    });
+    return orderResponse.json().data.id;
+  }
+
+  it("confirms a pending order: grants credits and marks paid", async () => {
+    const orderId = await seedPendingOrder({
+      planKey: "confirm_grant",
+      creditMicros: "1000000",
+      teamId: "team_confirm",
+      idempotencyKey: "confirm_grant_order",
+    });
+
+    const response = await app.inject({ method: "POST", url: `/orders/${orderId}/confirm` });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.status).toBe("paid");
+    expect(grant.grants).toEqual([
+      {
+        ownerKind: "team",
+        ownerId: "team_confirm",
+        amountMicros: "1000000",
+        idempotencyKey: `order:${orderId}`,
+        reason: "subscription",
+      },
+    ]);
+  });
+
+  it("re-confirm does not re-grant credits", async () => {
+    const orderId = await seedPendingOrder({
+      planKey: "confirm_idem",
+      creditMicros: "1000000",
+      teamId: "team_idem",
+      idempotencyKey: "confirm_idem_order",
+    });
+
+    await app.inject({ method: "POST", url: `/orders/${orderId}/confirm` });
+    const second = await app.inject({ method: "POST", url: `/orders/${orderId}/confirm` });
+
+    expect(second.statusCode).toBe(200);
+    expect(second.json().data.status).toBe("paid");
+    expect(grant.grants).toHaveLength(1);
+  });
+
+  it("confirms a zero-credit plan order without granting", async () => {
+    const orderId = await seedPendingOrder({
+      planKey: "confirm_zero",
+      creditMicros: "0",
+      teamId: "team_zero",
+      idempotencyKey: "confirm_zero_order",
+    });
+
+    const response = await app.inject({ method: "POST", url: `/orders/${orderId}/confirm` });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.status).toBe("paid");
+    expect(grant.grants).toEqual([]);
+  });
+
+  it("returns 404 confirming a missing order", async () => {
+    const response = await app.inject({ method: "POST", url: "/orders/missing_order/confirm" });
+    expect(response.statusCode).toBe(404);
+    expect(response.json().error.code).toBe("payment.order_not_found");
   });
 });

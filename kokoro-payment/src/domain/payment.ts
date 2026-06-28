@@ -9,6 +9,7 @@ export interface Plan {
   name: string;
   currency: string;
   amountMinor: string;
+  creditMicros: string;
   billingInterval: BillingInterval;
   status: PlanStatus;
   createdAt: Date;

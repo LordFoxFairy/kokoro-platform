@@ -1,10 +1,12 @@
 import { parsePositiveBigIntString } from "@kokoro/platform-kit";
 import { z } from "zod";
 import type { Prisma, PrismaClient } from "../../../generated/prisma/index.js";
+import { parseNonNegativeBigIntString } from "../../domain/amount.js";
 import {
   assertSameOrderIdempotencyTarget,
   assertSamePaymentEventIdempotencyTarget,
 } from "../../domain/idempotency.js";
+import { OrderNotFoundError } from "../../domain/errors.js";
 import type { Order, PaymentEvent, Plan } from "../../domain/payment.js";
 import type {
   CreateOrderInput,
@@ -18,6 +20,7 @@ export class PrismaPaymentRepository implements PaymentRepository {
 
   async upsertPlan(input: UpsertPlanInput): Promise<Plan> {
     const amountMinor = parsePositiveBigIntString(input.amountMinor, "amountMinor");
+    const creditMicros = parseNonNegativeBigIntString(input.creditMicros ?? "0", "creditMicros");
     const plan = await this.prisma.plan.upsert({
       where: {
         key: input.key,
@@ -27,6 +30,7 @@ export class PrismaPaymentRepository implements PaymentRepository {
         name: input.name,
         currency: input.currency,
         amountMinor,
+        creditMicros,
         billingInterval: input.billingInterval,
         status: "active",
       },
@@ -34,12 +38,38 @@ export class PrismaPaymentRepository implements PaymentRepository {
         name: input.name,
         currency: input.currency,
         amountMinor,
+        creditMicros,
         billingInterval: input.billingInterval,
         status: "active",
       },
     });
 
     return mapPlan(plan);
+  }
+
+  async findOrderById(orderId: string): Promise<Order | null> {
+    const order = await this.prisma.order.findUnique({ where: { id: orderId } });
+    return order ? mapOrder(order) : null;
+  }
+
+  async findPlanById(planId: string): Promise<Plan | null> {
+    const plan = await this.prisma.plan.findUnique({ where: { id: planId } });
+    return plan ? mapPlan(plan) : null;
+  }
+
+  async markOrderPaid(orderId: string): Promise<Order> {
+    try {
+      const order = await this.prisma.order.update({
+        where: { id: orderId },
+        data: { status: "paid" },
+      });
+      return mapOrder(order);
+    } catch (error) {
+      if (isRecordNotFoundError(error)) {
+        throw new OrderNotFoundError(orderId);
+      }
+      throw error;
+    }
   }
 
   async createOrder(input: CreateOrderInput): Promise<Order> {
@@ -180,6 +210,10 @@ function isUniqueConstraintError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
 }
 
+function isRecordNotFoundError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "P2025";
+}
+
 // WHY: 序列化再回读，把不可信 payload 洗成纯 JSON 值，避免 InputJsonValue 断言。
 function toJson(value: unknown): Prisma.InputJsonValue {
   if (value === undefined) {
@@ -205,6 +239,7 @@ function mapPlan(plan: {
   name: string;
   currency: string;
   amountMinor: bigint;
+  creditMicros: bigint;
   billingInterval: "once" | "month" | "year";
   status: "active" | "disabled";
   createdAt: Date;
@@ -216,6 +251,7 @@ function mapPlan(plan: {
     name: plan.name,
     currency: plan.currency,
     amountMinor: plan.amountMinor.toString(),
+    creditMicros: plan.creditMicros.toString(),
     billingInterval: plan.billingInterval,
     status: plan.status,
     createdAt: plan.createdAt,

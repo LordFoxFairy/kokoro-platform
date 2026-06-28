@@ -1,9 +1,9 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { createPaymentServer } from "../../src/interfaces/http/server.js";
-import { cleanPaymentDatabase, createTestPrismaClient } from "./helpers.js";
+import { cleanPaymentDatabase, createTestPrismaClient, recordingGrant } from "./helpers.js";
 
 const prisma = createTestPrismaClient();
-const app = createPaymentServer({ prisma });
+const app = createPaymentServer({ prisma, grantPurchaseCredits: recordingGrant().grantPurchaseCredits });
 
 describe("payment HTTP strict boundary & payload wash", () => {
   beforeEach(async () => {
