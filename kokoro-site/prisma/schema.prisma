@@ -1,0 +1,160 @@
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL_SITE")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+model Site {
+  id             String            @id @default(cuid())
+  key            String            @unique
+  name           String
+  status         SiteStatus        @default(draft)
+  defaultLocale  String            @default("zh-CN")
+  timezone       String            @default("Asia/Shanghai")
+  metadata       Json?
+  domains        SiteDomain[]
+  apps           SiteApp[]
+  policies       SitePolicy[]
+  brandConfigs   SiteBrandConfig[]
+  seoConfigs     SiteSeoConfig[]
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([status])
+  @@map("site_sites")
+}
+
+model SiteDomain {
+  id            String           @id @default(cuid())
+  siteId        String
+  host          String           @unique
+  status        SiteDomainStatus @default(active)
+  isPrimary     Boolean          @default(false)
+  canonicalHost String?
+  metadata      Json?
+  site          Site             @relation(fields: [siteId], references: [id])
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@index([siteId, status])
+  @@map("site_domains")
+}
+
+model SiteApp {
+  id           String        @id @default(cuid())
+  siteId       String
+  appKey       String
+  surface      SiteSurface
+  status       SiteAppStatus @default(active)
+  defaultRoute String?
+  metadata     Json?
+  site         Site          @relation(fields: [siteId], references: [id])
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@unique([siteId, appKey, surface])
+  @@index([siteId, status])
+  @@map("site_apps")
+}
+
+model SitePolicy {
+  id        String           @id @default(cuid())
+  siteId    String
+  key       String
+  value     Json
+  status    SitePolicyStatus @default(active)
+  site      Site             @relation(fields: [siteId], references: [id])
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@unique([siteId, key])
+  @@index([siteId, status])
+  @@map("site_policies")
+}
+
+model SiteBrandConfig {
+  id            String                @id @default(cuid())
+  siteId        String
+  key           String
+  themeKey      String
+  logoUrl       String?
+  copyNamespace String?
+  layoutKey     String?
+  status        SiteBrandConfigStatus @default(active)
+  metadata      Json?
+  site          Site                  @relation(fields: [siteId], references: [id])
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  @@unique([siteId, key])
+  @@index([siteId, status])
+  @@map("site_brand_configs")
+}
+
+model SiteSeoConfig {
+  id                 String              @id @default(cuid())
+  siteId             String
+  routePattern       String
+  titleTemplate      String
+  descriptionTemplate String?
+  canonicalPolicy    String?
+  robotsPolicy       String?
+  structuredDataKind String?
+  sitemapPriority    Decimal?            @db.Decimal(2, 1)
+  status             SiteSeoConfigStatus @default(active)
+  metadata           Json?
+  site               Site                @relation(fields: [siteId], references: [id])
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  @@unique([siteId, routePattern])
+  @@index([siteId, status])
+  @@map("site_seo_configs")
+}
+
+enum SiteStatus {
+  draft
+  sandbox
+  beta
+  active
+  suspended
+  archived
+}
+
+enum SiteDomainStatus {
+  active
+  disabled
+  pending_verification
+}
+
+enum SiteSurface {
+  general
+  studio
+  api
+  admin
+  public_seo
+}
+
+enum SiteAppStatus {
+  active
+  disabled
+}
+
+enum SitePolicyStatus {
+  active
+  disabled
+}
+
+enum SiteBrandConfigStatus {
+  active
+  disabled
+}
+
+enum SiteSeoConfigStatus {
+  active
+  disabled
+}

@@ -1,4 +1,19 @@
 services:
+  kokoro-site:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile
+    environment:
+      KOKORO_SERVICE_PACKAGE: "@kokoro/site"
+      DATABASE_URL_SITE: mysql://root:kokoro_root@mysql:3306/kokoro
+      KOKORO_SITE_PORT: 4201
+      KOKORO_SITE_BASE_URL: http://kokoro-site:4201
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "4201:4201"
+
   kokoro-user:
     build:
       context: .
@@ -6,6 +21,7 @@ services:
     environment:
       KOKORO_SERVICE_PACKAGE: "@kokoro/user"
       DATABASE_URL_USER: mysql://root:kokoro_root@mysql:3306/kokoro
+      KOKORO_SITE_BASE_URL: http://kokoro-site:4201
       KOKORO_USER_PORT: 4211
       KOKORO_USER_BASE_URL: http://kokoro-user:4211
       KOKORO_MODEL_BASE_URL: http://kokoro-model:4221
@@ -24,6 +40,7 @@ services:
     environment:
       KOKORO_SERVICE_PACKAGE: "@kokoro/model"
       DATABASE_URL_MODEL: mysql://root:kokoro_root@mysql:3306/kokoro
+      KOKORO_SITE_BASE_URL: http://kokoro-site:4201
       KOKORO_MODEL_PORT: 4221
       KOKORO_USER_BASE_URL: http://kokoro-user:4211
       KOKORO_MODEL_BASE_URL: http://kokoro-model:4221
@@ -42,6 +59,7 @@ services:
     environment:
       KOKORO_SERVICE_PACKAGE: "@kokoro/credit"
       DATABASE_URL_CREDIT: mysql://root:kokoro_root@mysql:3306/kokoro
+      KOKORO_SITE_BASE_URL: http://kokoro-site:4201
       KOKORO_CREDIT_PORT: 4231
       KOKORO_USER_BASE_URL: http://kokoro-user:4211
       KOKORO_MODEL_BASE_URL: http://kokoro-model:4221
@@ -60,6 +78,7 @@ services:
     environment:
       KOKORO_SERVICE_PACKAGE: "@kokoro/payment"
       DATABASE_URL_PAYMENT: mysql://root:kokoro_root@mysql:3306/kokoro
+      KOKORO_SITE_BASE_URL: http://kokoro-site:4201
       KOKORO_PAYMENT_PORT: 4241
       KOKORO_USER_BASE_URL: http://kokoro-user:4211
       KOKORO_MODEL_BASE_URL: http://kokoro-model:4221

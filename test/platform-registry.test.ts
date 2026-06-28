@@ -13,6 +13,7 @@ describe("platform module registry", () => {
 
   it("registers implemented platform business modules as active", () => {
     expect(listActivePlatformModules().map((module) => module.id)).toEqual([
+      "site",
       "user",
       "model",
       "credit",
@@ -22,6 +23,7 @@ describe("platform module registry", () => {
 
   it("declares platform modules and keeps litellm external", () => {
     expect(listPlatformModules().map((module) => module.id)).toEqual([
+      "site",
       "user",
       "model",
       "credit",

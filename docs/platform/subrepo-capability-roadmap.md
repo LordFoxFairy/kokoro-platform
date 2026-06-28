@@ -15,7 +15,7 @@ kokoro-web / kokoro-admin
 kokoro-platform
   平台模块注册、统一验证、本地基础设施、边界约束
 
-kokoro-user / model / credit / payment
+kokoro-site / user / model / credit / payment
   各自拥有 domain、application、infrastructure、interfaces
   各自拥有 Prisma schema、migration、HTTP/internal API、admin manifest
 
@@ -62,6 +62,12 @@ domain -> 不依赖外层
 
 后续如果业务变大，可以拆成多库。拆库是部署拓扑变化，不应改变 DDD 边界。
 
+数据库选型约束：
+
+- 平台核心管理数据使用 MySQL：site、user、model、credit、payment。
+- 后续产物型数据使用 Mongo：artifact、job result、创作内容、非结构化上下文和大 JSON 状态。
+- 当前平台方案不引入 PostgreSQL，避免 MySQL/Mongo/PG 三套数据库同时维护。
+
 ## 部署策略
 
 每个业务子仓都必须能作为独立进程运行，也必须能在 Kubernetes 中多副本运行。
@@ -69,6 +75,7 @@ domain -> 不依赖外层
 统一运行面：
 
 ```text
+kokoro-site      KOKORO_SITE_PORT=4201
 kokoro-user      KOKORO_USER_PORT=4211
 kokoro-model     KOKORO_MODEL_PORT=4221
 kokoro-credit    KOKORO_CREDIT_PORT=4231
@@ -78,6 +85,7 @@ kokoro-payment   KOKORO_PAYMENT_PORT=4241
 统一内部服务地址：
 
 ```text
+KOKORO_SITE_BASE_URL=http://kokoro-site:4201
 KOKORO_USER_BASE_URL=http://kokoro-user:4211
 KOKORO_MODEL_BASE_URL=http://kokoro-model:4221
 KOKORO_CREDIT_BASE_URL=http://kokoro-credit:4231
@@ -125,6 +133,70 @@ Strapi 的官方插件和 Admin Panel API 允许插件向后台注册导航、�
 
 - https://docs.strapi.io/cms/plugins-development/admin-panel-api
 - https://docs.strapi.io/cms/admin-panel-customization
+
+## kokoro-site
+
+定位：站点、域名、应用开关、策略、品牌和 SEO 配置的权威模块。
+
+它存在的理由不是扩大平台复杂度，而是把 `domain -> siteId` 和站点配置收敛到一个可测试边界，避免 web、user、credit、payment、model 各自解析站点。
+
+已具备：
+
+- Site、SiteDomain、SiteApp、SitePolicy、SiteBrandConfig、SiteSeoConfig。
+- `GET /site-context/resolve`。
+- `GET /sites`。
+- `POST /sites/upsert`。
+- `POST /site-domains/upsert`。
+- `POST /site-apps/upsert`。
+- `POST /site-policies/upsert`。
+- admin manifest。
+
+边界：
+
+```text
+owns:
+  sites
+  site domains
+  site apps
+  site policies
+  site brand configs
+  site seo configs
+
+does not own:
+  users
+  teams/workspaces
+  credit ledger
+  payment orders
+  model provider secrets
+  agent jobs
+  generated artifacts
+```
+
+后续必须补齐：
+
+```text
+域名:
+  绑定审核
+  canonical host
+  pending_verification 状态流转
+  TLS/证书状态由部署层或 gateway 记录引用
+
+站点:
+  draft/sandbox/beta/active/suspended/archive 生命周期
+  创建站点默认 app/policy/brand/seo 初始化
+  禁用站点后 web/gateway 不再生成可写 SiteContext
+
+策略:
+  注册策略
+  默认套餐/免费额度策略
+  模型可见性策略
+  workspace/team 策略
+  SEO 策略
+
+缓存:
+  第一阶段可以由 web/gateway 缓存 resolve 结果
+  权威数据仍在 MySQL
+```
 
 ## kokoro-user
 

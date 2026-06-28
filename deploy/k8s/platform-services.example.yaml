@@ -1,6 +1,67 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  name: kokoro-site
+  labels:
+    app.kubernetes.io/name: kokoro-site
+    app.kubernetes.io/part-of: kokoro-platform
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kokoro-site
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kokoro-site
+        app.kubernetes.io/part-of: kokoro-platform
+    spec:
+      containers:
+        - name: kokoro-site
+          image: ghcr.io/lordfoxfairy/kokoro-platform-service:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: KOKORO_SERVICE_PACKAGE
+              value: "@kokoro/site"
+            - name: KOKORO_SITE_PORT
+              value: "4201"
+            - name: DATABASE_URL_SITE
+              valueFrom:
+                secretKeyRef:
+                  name: kokoro-platform-secrets
+                  key: DATABASE_URL_SITE
+            - name: KOKORO_SITE_BASE_URL
+              value: http://kokoro-site:4201
+          ports:
+            - name: http
+              containerPort: 4201
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kokoro-site
+  labels:
+    app.kubernetes.io/name: kokoro-site
+    app.kubernetes.io/part-of: kokoro-platform
+spec:
+  selector:
+    app.kubernetes.io/name: kokoro-site
+  ports:
+    - name: http
+      port: 4201
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
   name: kokoro-user
   labels:
     app.kubernetes.io/name: kokoro-user

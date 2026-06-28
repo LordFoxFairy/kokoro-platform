@@ -1,6 +1,7 @@
 export type PlatformModuleStatus = "active" | "planned" | "external";
 
 export type PlatformModuleKind =
+  | "site"
   | "identity"
   | "model-registry"
   | "credit"

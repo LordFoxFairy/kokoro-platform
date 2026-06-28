@@ -1,6 +1,7 @@
 import { creditPlatformModule } from "@kokoro/credit";
 import { modelPlatformModule } from "@kokoro/model";
 import { paymentPlatformModule } from "@kokoro/payment";
+import { sitePlatformModule } from "@kokoro/site";
 import { userPlatformModule } from "@kokoro/user";
 import type { PlatformModuleDescriptor } from "./platform-module.js";
 
@@ -34,6 +35,7 @@ const litellmPlatformModule = {
 } satisfies PlatformModuleDescriptor;
 
 export const platformModules = [
+  sitePlatformModule,
   userPlatformModule,
   modelPlatformModule,
   creditPlatformModule,

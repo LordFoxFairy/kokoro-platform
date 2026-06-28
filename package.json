@@ -5,6 +5,7 @@
   "packageManager": "pnpm@11.2.2",
   "scripts": {
     "dev:db": "docker compose up -d mysql",
+    "dev:site": "pnpm --filter @kokoro/site dev",
     "dev:user": "pnpm --filter @kokoro/user dev",
     "dev:model": "pnpm --filter @kokoro/model dev",
     "dev:credit": "pnpm --filter @kokoro/credit dev",
@@ -21,6 +22,7 @@
   },
   "dependencies": {
     "@kokoro/platform-kit": "workspace:*",
+    "@kokoro/site": "workspace:*",
     "@kokoro/credit": "workspace:*",
     "@kokoro/model": "workspace:*",
     "@kokoro/payment": "workspace:*",

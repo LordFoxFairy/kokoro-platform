@@ -2,7 +2,7 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const businessModules = ["kokoro-user", "kokoro-model", "kokoro-credit", "kokoro-payment"];
+const businessModules = ["kokoro-site", "kokoro-user", "kokoro-model", "kokoro-credit", "kokoro-payment"];
 const allowedTopLevelEntries = new Set([
   "application",
   "config",
