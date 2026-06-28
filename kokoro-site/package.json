@@ -19,7 +19,8 @@
     "test": "vitest run test/unit",
     "test:integration": "vitest run test/integration --no-file-parallelism",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "coverage": "vitest run --coverage --no-file-parallelism"
   },
   "dependencies": {
     "@kokoro/platform-kit": "workspace:*",

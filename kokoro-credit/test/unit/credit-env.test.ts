@@ -1,0 +1,30 @@
+import { describe, expect, it } from "vitest";
+import { creditEnvSchema, loadCreditEnv } from "../../src/config/env.js";
+
+const required = { DATABASE_URL_CREDIT: "mysql://root:pw@127.0.0.1:3306/credit" };
+
+describe("creditEnvSchema", () => {
+  it("applies defaults for optional vars", () => {
+    const env = loadCreditEnv(required);
+    expect(env.KOKORO_CREDIT_PORT).toBe(4231);
+    expect(env.KOKORO_USER_BASE_URL).toBe("http://kokoro-user:4211");
+  });
+
+  it("coerces port string and enforces range", () => {
+    expect(loadCreditEnv({ ...required, KOKORO_CREDIT_PORT: "5000" }).KOKORO_CREDIT_PORT).toBe(5000);
+    expect(() => loadCreditEnv({ ...required, KOKORO_CREDIT_PORT: "70000" })).toThrow();
+  });
+
+  it("rejects missing database url", () => {
+    expect(() => loadCreditEnv({})).toThrow();
+  });
+
+  it("rejects non-url database value", () => {
+    expect(() => loadCreditEnv({ DATABASE_URL_CREDIT: "not-a-url" })).toThrow();
+  });
+
+  it("strips unrelated process.env keys (intentional strip, not strict)", () => {
+    const parsed = creditEnvSchema.parse({ ...required, PATH: "/usr/bin", HOME: "/root" });
+    expect("PATH" in parsed).toBe(false);
+  });
+});

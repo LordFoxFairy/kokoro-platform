@@ -13,7 +13,8 @@
     "test": "vitest run test",
     "test:integration": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "coverage": "vitest run --coverage --no-file-parallelism"
   },
   "dependencies": {
     "fastify": "^5.6.2",
