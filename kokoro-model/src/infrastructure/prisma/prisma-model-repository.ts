@@ -5,6 +5,7 @@ import type {
   EnsureProviderAccountInput,
   ListModelBindingsFilter,
   ModelRepository,
+  ResolveModelInput,
 } from "../../domain/repository.js";
 
 export class PrismaModelRepository implements ModelRepository {
@@ -99,6 +100,22 @@ export class PrismaModelRepository implements ModelRepository {
     return bindings
       .map(mapModelBinding)
       .filter((binding) => !filter.labelKey || binding.labelKeys.includes(filter.labelKey));
+  }
+
+  async resolveModelBindings(input: ResolveModelInput): Promise<ModelBinding[]> {
+    const bindings = await this.prisma.modelBinding.findMany({
+      where: {
+        status: "active",
+        featureKey: input.featureKey,
+        ...defined("transportKind", input.transportKind),
+        providerAccount: { status: "active", healthStatus: { not: "down" } },
+      },
+      orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
+    });
+
+    return bindings
+      .map(mapModelBinding)
+      .filter((binding) => !input.labelKey || binding.labelKeys.includes(input.labelKey));
   }
 }
 

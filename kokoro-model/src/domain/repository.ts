@@ -28,8 +28,15 @@ export interface ListModelBindingsFilter {
   labelKey?: string | undefined;
 }
 
+export interface ResolveModelInput {
+  featureKey: string;
+  labelKey?: string | undefined;
+  transportKind?: ModelTransportKind | undefined;
+}
+
 export interface ModelRepository {
   ensureProviderAccount(input: EnsureProviderAccountInput): Promise<ProviderAccount>;
   ensureModelBinding(input: EnsureModelBindingInput): Promise<ModelBinding>;
   listModelBindings(filter: ListModelBindingsFilter): Promise<ModelBinding[]>;
+  resolveModelBindings(input: ResolveModelInput): Promise<ModelBinding[]>;
 }

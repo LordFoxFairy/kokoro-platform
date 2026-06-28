@@ -96,4 +96,71 @@ describe("PrismaModelRepository", () => {
 
     expect(bindings.map((binding) => binding.modelName)).toEqual(["musicgen"]);
   });
+
+  it("resolves only healthy providers ordered by priority, excluding down providers", async () => {
+    const healthy = await service.ensureProviderAccount({
+      provider: "openai",
+      key: "healthy",
+      label: "OpenAI Healthy",
+      secretRef: "secret://openai/healthy",
+      transportKind: "litellm",
+    });
+    const down = await service.ensureProviderAccount({
+      provider: "anthropic",
+      key: "down",
+      label: "Anthropic Down",
+      secretRef: "secret://anthropic/down",
+      transportKind: "litellm",
+    });
+    await prisma.providerAccount.update({
+      where: { id: down.id },
+      data: { healthStatus: "down" },
+    });
+
+    await service.ensureModelBinding({
+      providerAccountId: healthy.id,
+      modelName: "gpt-4o-mini",
+      displayName: "GPT-4o mini",
+      featureKey: "chat",
+      labelKeys: ["chat.default"],
+      inputModalities: ["text"],
+      outputModalities: ["text"],
+      priority: 30,
+      transportKind: "litellm",
+    });
+    await service.ensureModelBinding({
+      providerAccountId: healthy.id,
+      modelName: "gpt-4o",
+      displayName: "GPT-4o",
+      featureKey: "chat",
+      labelKeys: ["chat.default", "chat.premium"],
+      inputModalities: ["text"],
+      outputModalities: ["text"],
+      priority: 10,
+      transportKind: "direct",
+    });
+    await service.ensureModelBinding({
+      providerAccountId: down.id,
+      modelName: "claude-3",
+      displayName: "Claude 3",
+      featureKey: "chat",
+      labelKeys: ["chat.default"],
+      inputModalities: ["text"],
+      outputModalities: ["text"],
+      priority: 1,
+      transportKind: "litellm",
+    });
+
+    const resolved = await service.resolveModelBindings({ featureKey: "chat" });
+    expect(resolved.map((binding) => binding.modelName)).toEqual(["gpt-4o", "gpt-4o-mini"]);
+
+    const byLabel = await service.resolveModelBindings({ featureKey: "chat", labelKey: "chat.premium" });
+    expect(byLabel.map((binding) => binding.modelName)).toEqual(["gpt-4o"]);
+
+    const byTransport = await service.resolveModelBindings({ featureKey: "chat", transportKind: "litellm" });
+    expect(byTransport.map((binding) => binding.modelName)).toEqual(["gpt-4o-mini"]);
+
+    const none = await service.resolveModelBindings({ featureKey: "image" });
+    expect(none).toEqual([]);
+  });
 });

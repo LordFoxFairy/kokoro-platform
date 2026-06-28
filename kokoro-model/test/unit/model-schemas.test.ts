@@ -4,6 +4,7 @@ import {
   ensureProviderAccountRequestSchema,
   listModelBindingsQuerySchema,
   modelTransportKindSchema,
+  resolveModelBindingsQuerySchema,
 } from "../../src/interfaces/http/schemas.js";
 
 const validAccount = {
@@ -113,6 +114,29 @@ describe("listModelBindingsQuerySchema boundaries", () => {
   });
   it.each(["featureKey", "labelKey"])("rejects empty %s", (field) => {
     expect(() => listModelBindingsQuerySchema.parse({ [field]: "" })).toThrow();
+  });
+});
+
+describe("resolveModelBindingsQuerySchema boundaries", () => {
+  it("rejects missing featureKey", () => {
+    expect(() => resolveModelBindingsQuerySchema.parse({})).toThrow();
+  });
+  it("rejects empty featureKey", () => {
+    expect(() => resolveModelBindingsQuerySchema.parse({ featureKey: "" })).toThrow();
+  });
+  it("rejects unknown fields", () => {
+    expect(() => resolveModelBindingsQuerySchema.parse({ featureKey: "chat", junk: "x" })).toThrow();
+  });
+  it("rejects invalid transportKind", () => {
+    expect(() => resolveModelBindingsQuerySchema.parse({ featureKey: "chat", transportKind: "grpc" })).toThrow();
+  });
+  it("accepts featureKey only", () => {
+    expect(resolveModelBindingsQuerySchema.parse({ featureKey: "chat" })).toEqual({ featureKey: "chat" });
+  });
+  it("accepts featureKey + labelKey + transportKind", () => {
+    expect(
+      resolveModelBindingsQuerySchema.parse({ featureKey: "chat", labelKey: "chat.default", transportKind: "direct" }),
+    ).toEqual({ featureKey: "chat", labelKey: "chat.default", transportKind: "direct" });
   });
 });
 

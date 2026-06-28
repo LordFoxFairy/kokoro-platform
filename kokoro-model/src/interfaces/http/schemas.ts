@@ -35,3 +35,11 @@ export const listModelBindingsQuerySchema = z
     labelKey: z.string().min(1).optional(),
   })
   .strict();
+
+export const resolveModelBindingsQuerySchema = z
+  .object({
+    featureKey: z.string().min(1),
+    labelKey: z.string().min(1).optional(),
+    transportKind: modelTransportKindSchema.optional(),
+  })
+  .strict();

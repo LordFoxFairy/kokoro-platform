@@ -6,6 +6,7 @@ import {
   ensureModelBindingRequestSchema,
   ensureProviderAccountRequestSchema,
   listModelBindingsQuerySchema,
+  resolveModelBindingsQuerySchema,
 } from "./schemas.js";
 
 export function registerModelRoutes(app: FastifyInstance, service: ModelService): void {
@@ -38,6 +39,16 @@ export function registerModelRoutes(app: FastifyInstance, service: ModelService)
       return sendData(reply, result);
     } catch (error) {
       return handleModelError(error, reply, "model.binding_list_failed");
+    }
+  });
+
+  app.get("/model-bindings/resolve", async (request, reply) => {
+    try {
+      const query = resolveModelBindingsQuerySchema.parse(request.query);
+      const result = await service.resolveModelBindings(query);
+      return sendData(reply, result);
+    } catch (error) {
+      return handleModelError(error, reply, "model.binding_resolve_failed");
     }
   });
 }

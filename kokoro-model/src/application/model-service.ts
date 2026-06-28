@@ -3,6 +3,7 @@ import type {
   EnsureProviderAccountInput,
   ListModelBindingsFilter,
   ModelRepository,
+  ResolveModelInput,
 } from "../domain/repository.js";
 
 export class ModelService {
@@ -18,5 +19,9 @@ export class ModelService {
 
   async listModelBindings(filter: ListModelBindingsFilter) {
     return this.repository.listModelBindings(filter);
+  }
+
+  async resolveModelBindings(input: ResolveModelInput) {
+    return this.repository.resolveModelBindings(input);
   }
 }

@@ -6,6 +6,7 @@ import type {
   EnsureProviderAccountInput,
   ListModelBindingsFilter,
   ModelRepository,
+  ResolveModelInput,
 } from "../../src/domain/repository.js";
 
 const account: ProviderAccount = {
@@ -45,6 +46,7 @@ interface Captured {
   account?: EnsureProviderAccountInput;
   binding?: EnsureModelBindingInput;
   filter?: ListModelBindingsFilter;
+  resolve?: ResolveModelInput;
 }
 
 function trackingRepo(captured: Captured): ModelRepository {
@@ -59,6 +61,10 @@ function trackingRepo(captured: Captured): ModelRepository {
     },
     listModelBindings: async (filter) => {
       captured.filter = filter;
+      return [binding];
+    },
+    resolveModelBindings: async (input) => {
+      captured.resolve = input;
       return [binding];
     },
   };
@@ -103,5 +109,13 @@ describe("ModelService delegates to repository", () => {
     const filter: ListModelBindingsFilter = { featureKey: "chat", labelKey: "chat.default" };
     await expect(service.listModelBindings(filter)).resolves.toEqual([binding]);
     expect(captured.filter).toBe(filter);
+  });
+
+  it("forwards resolveModelBindings input and result", async () => {
+    const captured: Captured = {};
+    const service = new ModelService(trackingRepo(captured));
+    const input: ResolveModelInput = { featureKey: "chat", labelKey: "chat.default", transportKind: "litellm" };
+    await expect(service.resolveModelBindings(input)).resolves.toEqual([binding]);
+    expect(captured.resolve).toBe(input);
   });
 });

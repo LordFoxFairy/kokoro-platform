@@ -57,5 +57,15 @@ describe("model HTTP API", () => {
     expect(listResponse.json().data.map((binding: { modelName: string }) => binding.modelName)).toEqual([
       "tad-music-v1",
     ]);
+
+    const resolveResponse = await app.inject({
+      method: "GET",
+      url: "/model-bindings/resolve?featureKey=music&labelKey=music.default",
+    });
+
+    expect(resolveResponse.statusCode).toBe(200);
+    expect(resolveResponse.json().data.map((binding: { modelName: string }) => binding.modelName)).toEqual([
+      "tad-music-v1",
+    ]);
   });
 });
