@@ -4,6 +4,8 @@
 
 多站点 AI 产品工厂的总设计见 `docs/platform/multi-site-ai-product-architecture.md`。后续 user/payment/credit/model/agent/session/artifact 的站点化改造以该文档为准：`siteId` 是第一业务隔离边界，同邮箱跨站注册默认是不同用户。
 
+各子仓详细技术方案见 `docs/platform/modules/README.md`。
+
 ## 总原则
 
 平台采用“业务自治，入口统一”的形态：
