@@ -6,6 +6,7 @@ import type {
   CreditHoldStatus,
   CreditLedgerEntry,
   CreditMutationResult,
+  QuoteResult,
 } from "../../domain/credit.js";
 import { assertCreditSpendAllowed } from "../../domain/credit-policy.js";
 import {
@@ -14,6 +15,7 @@ import {
   CreditHoldNotActiveError,
   CreditHoldNotFoundError,
   InsufficientCreditError,
+  PricingRuleNotFoundError,
 } from "../../domain/errors.js";
 import type {
   CaptureCreditInput,
@@ -21,6 +23,7 @@ import type {
   CreditRepository,
   EnsureCreditAccountInput,
   HoldCreditInput,
+  QuoteInput,
   ReleaseCreditInput,
 } from "../../domain/repository.js";
 
@@ -322,6 +325,54 @@ export class PrismaCreditRepository implements CreditRepository {
       });
 
       return mapCreditHold(released);
+    });
+  }
+
+  async quote(input: QuoteInput): Promise<QuoteResult> {
+    const now = new Date();
+    const quantity = parsePositiveBigIntString(input.quantity, "quantity");
+
+    const rule =
+      (input.labelKey !== undefined
+        ? await this.findPricingRule(input.featureKey, input.labelKey, now)
+        : undefined) ?? (await this.findPricingRule(input.featureKey, null, now));
+
+    if (!rule) {
+      throw new PricingRuleNotFoundError(input.featureKey);
+    }
+
+    return {
+      featureKey: input.featureKey,
+      labelKey: input.labelKey ?? null,
+      unit: rule.unit,
+      unitAmountMicros: rule.amountMicros.toString(),
+      quantity: input.quantity,
+      amountMicros: (rule.amountMicros * quantity).toString(),
+    };
+  }
+
+  private async findPricingRule(
+    featureKey: string,
+    labelKey: string | null,
+    now: Date,
+  ): Promise<{ unit: string; amountMicros: bigint } | null> {
+    return this.prisma.pricingRule.findFirst({
+      where: {
+        featureKey,
+        labelKey,
+        status: "active",
+        effectiveFrom: {
+          lte: now,
+        },
+        OR: [{ effectiveUntil: null }, { effectiveUntil: { gt: now } }],
+      },
+      orderBy: {
+        effectiveFrom: "desc",
+      },
+      select: {
+        unit: true,
+        amountMicros: true,
+      },
     });
   }
 

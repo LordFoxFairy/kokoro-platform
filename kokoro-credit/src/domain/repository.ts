@@ -4,6 +4,7 @@ import type {
   CreditMutationResult,
   CreditOwnerKind,
   CreditReason,
+  QuoteResult,
 } from "./credit.js";
 
 export interface EnsureCreditAccountInput {
@@ -41,6 +42,12 @@ export interface ReleaseCreditInput {
   idempotencyKey: string;
 }
 
+export interface QuoteInput {
+  featureKey: string;
+  labelKey?: string | undefined;
+  quantity: string;
+}
+
 export interface CreditRepository {
   ensureAccount(input: EnsureCreditAccountInput): Promise<CreditAccount>;
   grantCredits(input: CreditAmountInput): Promise<CreditMutationResult>;
@@ -48,4 +55,5 @@ export interface CreditRepository {
   holdCredits(input: HoldCreditInput): Promise<CreditHold>;
   captureHold(input: CaptureCreditInput): Promise<CreditMutationResult>;
   releaseHold(input: ReleaseCreditInput): Promise<CreditHold>;
+  quote(input: QuoteInput): Promise<QuoteResult>;
 }

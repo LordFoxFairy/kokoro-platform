@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   creditMutationRequestSchema,
   ensureCreditAccountRequestSchema,
+  quoteRequestSchema,
 } from "../../src/interfaces/http/schemas.js";
 
 describe("credit HTTP schemas reject unknown fields", () => {
@@ -107,5 +108,40 @@ describe("credit schemas enum + required", () => {
         requestId: "",
       }),
     ).toThrow();
+  });
+});
+
+describe("quoteRequestSchema", () => {
+  it("rejects missing featureKey", () => {
+    expect(() => quoteRequestSchema.parse({ quantity: "1" })).toThrow();
+  });
+  it("rejects empty featureKey", () => {
+    expect(() => quoteRequestSchema.parse({ featureKey: "" })).toThrow();
+  });
+  it("rejects unknown fields", () => {
+    expect(() => quoteRequestSchema.parse({ featureKey: "model.call", bogus: 1 })).toThrow();
+  });
+  it.each(["0", "-1", "", "abc", "01", " 5", "1.5"])(
+    "rejects invalid quantity %j",
+    (quantity) => {
+      expect(() => quoteRequestSchema.parse({ featureKey: "model.call", quantity })).toThrow();
+    },
+  );
+  it("accepts minimal payload and leaves quantity/labelKey optional", () => {
+    const parsed = quoteRequestSchema.parse({ featureKey: "model.call" });
+    expect(parsed.quantity).toBeUndefined();
+    expect(parsed.labelKey).toBeUndefined();
+  });
+  it("accepts labelKey and positive quantity", () => {
+    const parsed = quoteRequestSchema.parse({
+      featureKey: "model.call",
+      labelKey: "gpt-4",
+      quantity: "10",
+    });
+    expect(parsed.labelKey).toBe("gpt-4");
+    expect(parsed.quantity).toBe("10");
+  });
+  it("rejects empty labelKey", () => {
+    expect(() => quoteRequestSchema.parse({ featureKey: "model.call", labelKey: "" })).toThrow();
   });
 });

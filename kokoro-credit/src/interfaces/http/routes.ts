@@ -8,12 +8,14 @@ import {
   CreditHoldNotActiveError,
   CreditHoldNotFoundError,
   InsufficientCreditError,
+  PricingRuleNotFoundError,
 } from "../../domain/errors.js";
 import {
   captureCreditRequestSchema,
   creditMutationRequestSchema,
   ensureCreditAccountRequestSchema,
   holdCreditRequestSchema,
+  quoteRequestSchema,
   releaseCreditRequestSchema,
 } from "./schemas.js";
 
@@ -70,6 +72,16 @@ export function registerCreditRoutes(app: FastifyInstance, service: CreditServic
     }
   });
 
+  app.post("/credit/quote", async (request, reply) => {
+    try {
+      const input = quoteRequestSchema.parse(request.body);
+      const result = await service.quote(input);
+      return sendData(reply, result);
+    } catch (error) {
+      return handleCreditError(error, reply, "credit.quote_failed");
+    }
+  });
+
   app.post("/credit/release", async (request, reply) => {
     try {
       const input = releaseCreditRequestSchema.parse(request.body);
@@ -96,6 +108,10 @@ function handleCreditError(error: unknown, reply: FastifyReply, fallbackCode: st
 
   if (error instanceof CreditHoldNotFoundError) {
     return sendError(reply, 404, "credit.hold_not_found", "冻结记录不存在");
+  }
+
+  if (error instanceof PricingRuleNotFoundError) {
+    return sendError(reply, 404, "credit.pricing_rule_not_found", "计价规则不存在");
   }
 
   if (error instanceof CreditCaptureExceedsHoldError) {

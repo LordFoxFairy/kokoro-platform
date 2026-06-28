@@ -5,8 +5,15 @@ import type {
   CreditRepository,
   EnsureCreditAccountInput,
   HoldCreditInput,
+  QuoteInput,
   ReleaseCreditInput,
 } from "../domain/repository.js";
+
+export interface QuoteCommand {
+  featureKey: string;
+  labelKey?: string | undefined;
+  quantity?: string | undefined;
+}
 
 export class CreditService {
   constructor(private readonly repository: CreditRepository) {}
@@ -37,5 +44,16 @@ export class CreditService {
 
   async releaseHold(input: ReleaseCreditInput) {
     return this.repository.releaseHold(input);
+  }
+
+  async quote(command: QuoteCommand) {
+    const quantity = command.quantity ?? "1";
+    parsePositiveBigIntString(quantity, "quantity");
+    const input: QuoteInput = {
+      featureKey: command.featureKey,
+      labelKey: command.labelKey,
+      quantity,
+    };
+    return this.repository.quote(input);
   }
 }

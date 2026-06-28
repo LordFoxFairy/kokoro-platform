@@ -32,3 +32,10 @@ export class CreditHoldNotActiveError extends Error {
     this.name = "CreditHoldNotActiveError";
   }
 }
+
+export class PricingRuleNotFoundError extends Error {
+  constructor(featureKey: string) {
+    super(`Pricing rule not found: ${featureKey}`);
+    this.name = "PricingRuleNotFoundError";
+  }
+}

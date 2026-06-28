@@ -14,4 +14,5 @@ export async function cleanCreditDatabase(prisma: PrismaClient): Promise<void> {
   await prisma.creditHold.deleteMany();
   await prisma.creditLedgerEntry.deleteMany();
   await prisma.creditAccount.deleteMany();
+  await prisma.pricingRule.deleteMany();
 }

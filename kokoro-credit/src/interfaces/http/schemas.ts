@@ -54,3 +54,11 @@ export const releaseCreditRequestSchema = z
     idempotencyKey: z.string().min(1),
   })
   .strict();
+
+export const quoteRequestSchema = z
+  .object({
+    featureKey: z.string().min(1),
+    labelKey: z.string().min(1).optional(),
+    quantity: amountMicrosSchema.optional(),
+  })
+  .strict();

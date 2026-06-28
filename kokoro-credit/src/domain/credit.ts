@@ -40,3 +40,12 @@ export interface CreditHold {
   createdAt: Date;
   updatedAt: Date;
 }
+
+export interface QuoteResult {
+  featureKey: string;
+  labelKey: string | null;
+  unit: string;
+  unitAmountMicros: string;
+  quantity: string;
+  amountMicros: string;
+}
