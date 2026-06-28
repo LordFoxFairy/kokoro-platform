@@ -21,21 +21,22 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "@kokoro/platform-kit": "workspace:*",
-    "@kokoro/site": "workspace:*",
     "@kokoro/credit": "workspace:*",
     "@kokoro/model": "workspace:*",
     "@kokoro/payment": "workspace:*",
+    "@kokoro/platform-kit": "workspace:*",
+    "@kokoro/site": "workspace:*",
     "@kokoro/user": "workspace:*"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
     "@types/node": "^22.19.1",
+    "@vitest/coverage-v8": "2.1.9",
     "eslint": "^9.39.1",
     "prettier": "^3.7.4",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.62.0",
-    "tsx": "^4.21.0",
     "vitest": "^2.1.9"
   }
 }

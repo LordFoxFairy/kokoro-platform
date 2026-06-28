@@ -54,10 +54,10 @@ function canonicalize(value: unknown): unknown {
   }
 
   if (value && typeof value === "object") {
-    return Object.keys(value)
-      .sort()
-      .reduce<Record<string, unknown>>((result, key) => {
-        result[key] = canonicalize((value as Record<string, unknown>)[key]);
+    return Object.entries(value)
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .reduce<Record<string, unknown>>((result, [key, entry]) => {
+        result[key] = canonicalize(entry);
         return result;
       }, {});
   }

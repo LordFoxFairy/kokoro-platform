@@ -7,6 +7,7 @@ import type {
   UpsertSiteInput,
   UpsertSitePolicyInput,
 } from "../../domain/repository.js";
+import type { JsonObject } from "../../domain/json.js";
 import type { ResolvedSiteContext } from "../../domain/site-context.js";
 import type { Site } from "../../domain/site.js";
 import type { SiteApp } from "../../domain/site-app.js";
@@ -104,11 +105,11 @@ export class PrismaSiteRepository implements SiteRepository {
       create: {
         siteId: input.siteId,
         key: input.key,
-        value: input.value as Prisma.InputJsonValue,
+        value: input.value,
         status: input.status ?? "active",
       },
       update: {
-        value: input.value as Prisma.InputJsonValue,
+        value: input.value,
         ...definedValue("status", input.status),
       },
     });
@@ -183,22 +184,37 @@ function normalizeOptionalHost(host: string | undefined): string | null {
 function definedValue<Key extends string, Value>(
   key: Key,
   value: Value | undefined,
-): Record<Key, Value> | Record<string, never> {
-  return value === undefined ? {} : { [key]: value } as Record<Key, Value>;
+): Partial<Record<Key, Value>> {
+  if (value === undefined) {
+    return {};
+  }
+  const out: Partial<Record<Key, Value>> = {};
+  out[key] = value;
+  return out;
 }
 
 function definedJson<Key extends string>(
   key: Key,
-  value: unknown,
-): Record<Key, Prisma.InputJsonValue> | Record<string, never> {
-  return value === undefined ? {} : { [key]: value as Prisma.InputJsonValue } as Record<Key, Prisma.InputJsonValue>;
+  value: JsonObject | undefined,
+): Partial<Record<Key, Prisma.InputJsonValue>> {
+  if (value === undefined) {
+    return {};
+  }
+  const out: Partial<Record<Key, Prisma.InputJsonValue>> = {};
+  out[key] = value;
+  return out;
 }
 
 function definedNullableHost<Key extends string>(
   key: Key,
   value: string | undefined,
-): Record<Key, string | null> | Record<string, never> {
-  return value === undefined ? {} : { [key]: normalizeOptionalHost(value) } as Record<Key, string | null>;
+): Partial<Record<Key, string | null>> {
+  if (value === undefined) {
+    return {};
+  }
+  const out: Partial<Record<Key, string | null>> = {};
+  out[key] = normalizeOptionalHost(value);
+  return out;
 }
 
 function mapSite(site: {

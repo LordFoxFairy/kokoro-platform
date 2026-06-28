@@ -1,3 +1,4 @@
+import type { JsonObject } from "./json.js";
 import type { ResolvedSiteContext } from "./site-context.js";
 import type { Site } from "./site.js";
 import type { SiteApp, SiteSurface } from "./site-app.js";
@@ -10,7 +11,7 @@ export interface UpsertSiteInput {
   status?: Site["status"] | undefined;
   defaultLocale?: string | undefined;
   timezone?: string | undefined;
-  metadata?: unknown;
+  metadata?: JsonObject | undefined;
 }
 
 export interface UpsertSiteDomainInput {
@@ -19,7 +20,7 @@ export interface UpsertSiteDomainInput {
   status?: SiteDomain["status"] | undefined;
   isPrimary?: boolean | undefined;
   canonicalHost?: string | undefined;
-  metadata?: unknown;
+  metadata?: JsonObject | undefined;
 }
 
 export interface UpsertSiteAppInput {
@@ -28,13 +29,13 @@ export interface UpsertSiteAppInput {
   surface: SiteSurface;
   status?: SiteApp["status"] | undefined;
   defaultRoute?: string | undefined;
-  metadata?: unknown;
+  metadata?: JsonObject | undefined;
 }
 
 export interface UpsertSitePolicyInput {
   siteId: string;
   key: string;
-  value: Record<string, unknown>;
+  value: JsonObject;
   status?: SitePolicy["status"] | undefined;
 }
 

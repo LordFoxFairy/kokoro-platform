@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+// 不 .strict()：parse process.env 超集，strict 会被 PATH/HOME 等无关变量拒绝
 export const userEnvSchema = z.object({
   DATABASE_URL_USER: z.string().url(),
   KOKORO_USER_PORT: z.coerce.number().int().min(1).max(65535).default(4211),

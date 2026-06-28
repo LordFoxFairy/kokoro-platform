@@ -187,8 +187,13 @@ function isUniqueConstraintError(error: unknown): boolean {
 function defined<Key extends string, Value>(
   key: Key,
   value: Value | undefined,
-): Record<Key, Value> | Record<string, never> {
-  return value === undefined ? {} : ({ [key]: value } as Record<Key, Value>);
+): Partial<Record<Key, Value>> {
+  if (value === undefined) {
+    return {};
+  }
+  const out: Partial<Record<Key, Value>> = {};
+  out[key] = value;
+  return out;
 }
 
 function mapCreditAccount(account: {

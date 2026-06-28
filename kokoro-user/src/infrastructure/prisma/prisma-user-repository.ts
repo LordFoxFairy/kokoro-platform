@@ -121,8 +121,13 @@ export class PrismaUserRepository implements UserRepository {
 function definedString<Key extends "email" | "displayName" | "avatarUrl">(
   key: Key,
   value: string | undefined,
-): Record<Key, string> | Record<string, never> {
-  return value === undefined ? {} : { [key]: value } as Record<Key, string>;
+): Partial<Record<Key, string>> {
+  if (value === undefined) {
+    return {};
+  }
+  const out: Partial<Record<Key, string>> = {};
+  out[key] = value;
+  return out;
 }
 
 function mapUser(user: {

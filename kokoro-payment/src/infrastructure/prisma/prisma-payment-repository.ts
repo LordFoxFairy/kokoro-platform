@@ -1,4 +1,5 @@
 import { parsePositiveBigIntString } from "@kokoro/platform-kit";
+import { z } from "zod";
 import type { Prisma, PrismaClient } from "../../../generated/prisma/index.js";
 import {
   assertSameOrderIdempotencyTarget,
@@ -179,9 +180,24 @@ function isUniqueConstraintError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
 }
 
+// WHY: 序列化再回读，把不可信 payload 洗成纯 JSON 值，避免 InputJsonValue 断言。
 function toJson(value: unknown): Prisma.InputJsonValue {
-  return value === undefined ? {} : (value as Prisma.InputJsonValue);
+  if (value === undefined) {
+    return {};
+  }
+  const washed: unknown = JSON.parse(JSON.stringify(value));
+  return jsonValueSchema.parse(washed);
 }
+
+const jsonValueSchema: z.ZodType<Prisma.InputJsonValue> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.array(jsonValueSchema),
+    z.record(jsonValueSchema),
+  ]),
+);
 
 function mapPlan(plan: {
   id: string;
