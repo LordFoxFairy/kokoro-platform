@@ -35,6 +35,24 @@ docs/platform/multi-site/05-web-admin-seo.md
 
 docs/platform/multi-site/06-roadmap-and-acceptance.md
   分阶段落地路线、反例测试、风险和完成定义。
+
+docs/platform/multi-site/07-site-lifecycle-and-operating-model.md
+  站点生命周期、上线清单、运营对象、下线策略。
+
+docs/platform/multi-site/08-data-governance-security-risk.md
+  数据分类、访问边界、审计、安全、风控和删除保留。
+
+docs/platform/multi-site/09-ai-capability-economics.md
+  AI 能力目录、成本、毛利、模型路由、免费额度经济性。
+
+docs/platform/multi-site/10-seo-content-operations.md
+  SEO 内容生产、页面质量、站点增长归因。
+
+docs/platform/multi-site/11-admin-observability-governance.md
+  后台分层、指标体系、可观测性、异常和配置治理。
+
+docs/platform/multi-site/12-architecture-decisions.md
+  关键架构决策和取舍。
 ```
 
 ## 为什么这样设计
