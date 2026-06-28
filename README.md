@@ -45,6 +45,19 @@ kokoro-payment
 
 LiteLLM、支付宝、微信支付、Stripe、Paddle、Strapi 等第三方能力不在平台内从 0 复刻。平台只保存自己的配置、映射、事件、审计和嵌入策略；能 OAuth 或 iframe/admin link 接入的，优先接入成熟系统。
 
+## 核心设计文档
+
+```text
+docs/platform/subrepo-capability-roadmap.md
+  平台子仓职责、DDD 边界、当前能力和后续补齐顺序。
+
+docs/platform/deployment-topology.md
+  Docker/Kubernetes、稳定服务名、多 Pod 运行约束。
+
+docs/platform/multi-site-ai-product-architecture.md
+  多站点 AI 产品工厂设计：siteId 隔离、同邮箱跨站独立账号、套餐/积分/模型/SEO 站点化。
+```
+
 ## 平台根职责
 
 平台根只做这些事：

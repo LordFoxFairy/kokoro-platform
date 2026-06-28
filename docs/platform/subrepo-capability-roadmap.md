@@ -2,6 +2,8 @@
 
 本文用于约束 `kokoro-platform` 下各子仓的职责、后续补齐顺序和跨模块关系。目标不是把所有业务一次写完，而是避免后续 music studio、video、image、agent、skill hub、mcp hub、支付、积分、模型管理接入时边界混乱。
 
+多站点 AI 产品工厂的总设计见 `docs/platform/multi-site-ai-product-architecture.md`。后续 user/payment/credit/model/agent/session/artifact 的站点化改造以该文档为准：`siteId` 是第一业务隔离边界，同邮箱跨站注册默认是不同用户。
+
 ## 总原则
 
 平台采用“业务自治，入口统一”的形态：
