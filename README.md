@@ -9,6 +9,7 @@ kokoro-platform
   src/                         平台模块注册表和主控约束
   test/                        平台注册表测试
   kokoro-platform-kit/         非业务技术工具包：HTTP envelope、healthz、启动器、admin manifest schema
+  kokoro-site/                 站点、域名、应用开关、策略、品牌和 SEO 配置
   kokoro-user/                 用户、团队、成员、角色、服务账号
   kokoro-model/                模型配置、provider account、模型标签和兜底策略
   kokoro-credit/               积分账户、扣减、账本、计价规则
@@ -35,11 +36,24 @@ MongoDB，后置:
 当前激活并可独立运行的模块：
 
 ```text
+kokoro-site
 kokoro-user
 kokoro-model
 kokoro-credit
 kokoro-payment
 ```
+
+核心业务链路已实现（具体能力见各模块章节与 `docs/platform/subrepo-capability-roadmap.md`）：
+
+```text
+credit   账户(balance/held)、grant/spend(可用额原子扣减)、quote/hold/capture/release，全幂等并发安全
+model    provider/binding upsert、/model-bindings/resolve（排除 down/disabled，priority 有序候选）
+payment  plan/order/event，confirmOrder 抢占式 pending->paid，并经 HTTP 向 credit grant 套餐积分
+site     site/domain/app/policy upsert、resolveSiteContext（host 规范化、未 active 返回 null）
+user     ensureUserWithPersonalTeam、listTeamsForUser
+```
+
+仍需产品决策的边界（hold 过期回收、refund 回链、PaymentEvent/webhook 驱动、Subscription、ModelLabel 解析、team/邀请/权限、品牌/SEO 投影等）见 `docs/platform/2026-06-29-audit-and-known-boundaries.md`。
 
 这些模块都必须自己持有 Prisma schema、migration、service、repository、HTTP/internal API、admin manifest 和 `.env.example`。平台根不写 InMemory fallback，也不保存各模块的业务建库 SQL。早期统一连接一个 MySQL database：`kokoro`，通过模块目录和表名隔离复杂度。
 
@@ -67,7 +81,7 @@ docs/platform/multi-site/
 
 ```text
 模块注册表:
-  src/platform-registry.ts 维护 user/model/credit/payment/litellm 的状态、存储、后台入口、运行面和边界。
+  src/platform-registry.ts 维护 site/user/model/credit/payment/litellm 的状态、存储、后台入口、运行面和边界。
 
 统一命令:
   pnpm test
@@ -94,6 +108,7 @@ docs/platform/multi-site/
 每个子仓自己管理 `.env.example`：
 
 ```text
+kokoro-site/.env.example
 kokoro-user/.env.example
 kokoro-model/.env.example
 kokoro-credit/.env.example

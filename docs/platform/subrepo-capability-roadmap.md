@@ -6,6 +6,8 @@
 
 各子仓详细技术方案见 `docs/platform/modules/README.md`。
 
+各模块「已闭环」与「刻意未做的边界」的逐项审计结论见 `docs/platform/2026-06-29-audit-and-known-boundaries.md`，本文与其互相呼应：本文给规划与边界，审计文给逐项闭环/边界清单。
+
 ## 总原则
 
 平台采用“业务自治，入口统一”的形态：
@@ -142,15 +144,12 @@ Strapi 的官方插件和 Admin Panel API 允许插件向后台注册导航、�
 
 它存在的理由不是扩大平台复杂度，而是把 `domain -> siteId` 和站点配置收敛到一个可测试边界，避免 web、user、credit、payment、model 各自解析站点。
 
-已具备：
+已实现：
 
-- Site、SiteDomain、SiteApp、SitePolicy、SiteBrandConfig、SiteSeoConfig。
-- `GET /site-context/resolve`。
+- Site、SiteDomain、SiteApp、SitePolicy、SiteBrandConfig、SiteSeoConfig schema。
+- `POST /sites/upsert`、`POST /site-domains/upsert`、`POST /site-apps/upsert`、`POST /site-policies/upsert`：site/domain/app/policy 的 upsert。
+- `GET /site-context/resolve`：按 host 规范化解析 SiteContext，未绑定/站点未 active 返回 null。
 - `GET /sites`。
-- `POST /sites/upsert`。
-- `POST /site-domains/upsert`。
-- `POST /site-apps/upsert`。
-- `POST /site-policies/upsert`。
 - admin manifest。
 
 边界：
@@ -174,26 +173,24 @@ does not own:
   generated artifacts
 ```
 
-后续必须补齐：
+后续/边界（需产品决策，schema/manifest 有、应用层逻辑空）：
 
 ```text
+品牌/SEO:
+  SiteBrandConfig / SiteSeoConfig 的解析投影（当前 resolve 不投影，表休眠）
+
 域名:
-  绑定审核
-  canonical host
-  pending_verification 状态流转
+  pending_verification -> active 验证流转
+  canonicalHost 输出给网关做重定向
   TLS/证书状态由部署层或 gateway 记录引用
 
-站点:
-  draft/sandbox/beta/active/suspended/archive 生命周期
-  创建站点默认 app/policy/brand/seo 初始化
-  禁用站点后 web/gateway 不再生成可写 SiteContext
-
 策略:
-  注册策略
-  默认套餐/免费额度策略
-  模型可见性策略
-  workspace/team 策略
-  SEO 策略
+  SitePolicy 在 resolve 中投影给下游（注册/默认套餐/免费额度/模型可见性/team 策略）
+
+站点:
+  多 app 站点的 primary 选择策略
+  draft/sandbox/beta/suspended/archive 完整生命周期
+  创建站点默认 app/policy/brand/seo 初始化
 
 缓存:
   第一阶段可以由 web/gateway 缓存 resolve 结果
@@ -204,49 +201,35 @@ does not own:
 
 定位：身份、团队、成员关系、角色、服务账号和审计的权威模块。
 
-已具备：
+已实现：
 
-- User、Team、Membership、Role、Invite、ServiceAccount、UserAuditLog。
-- `POST /users/ensure`。
-- `GET /me/teams`。
+- User、Team、Membership、Role、Invite、ServiceAccount、UserAuditLog schema。
+- `POST /users/ensure`：ensureUserWithPersonalTeam（user + personal team + owner membership；email trim+lowercase 规范化；ensure 不复活已 disabled 用户，管理员 disable 不被登录自动解禁）。
+- `GET /me/teams`：listTeamsForUser。
 - admin manifest。
 - MySQL + Prisma + integration tests。
 
-后续必须补齐：
+后续/边界（需产品决策，表/manifest 有、应用层逻辑空）：
 
 ```text
-用户:
-  禁用/启用用户
-  更新 profile
-  lastSeenAt 更新
-  external identity 映射策略
-
-团队:
-  创建 team workspace
-  修改 team name/slug
-  禁用/恢复团队
-  personal team 不可重复创建约束
-
-成员:
-  邀请成员
-  接受/撤销邀请
-  修改成员角色
-  移除成员
+团队/成员:
+  非个人 Team / Membership 管理（创建 workspace、改 name/slug、禁用/恢复、增删成员、改角色）
+  Invite 邀请（发起/接受/撤销）
 
 权限:
-  role -> permissions 的校验器
+  Role -> permission checker
   platform permission key registry
   admin action requiredPermission 校验
+  注：admin manifest 当前暴露的 change-role/disable/revoke 等动作后端尚无对应路由
 
 服务账号:
-  创建 token
-  rotate token
-  revoke token
-  token prefix + secret hash 校验
+  ServiceAccount token 创建/rotate/revoke、token prefix + secret hash 校验
+
+用户:
+  禁用/启用用户、更新 profile、lastSeenAt、external identity 映射
 
 审计:
-  用户/团队/成员/服务账号变更全部写审计
-  requestId 贯穿 HTTP/API
+  UserAuditLog 全模块写入、requestId 贯穿 HTTP/API
 ```
 
 不做：
@@ -276,15 +259,14 @@ admin:
 
 定位：模型配置、provider account、model binding、model label、功能可见模型列表的权威模块。
 
-已具备：
+已实现：
 
-- ProviderAccount。
-- ModelBinding。
-- ModelLabel。
-- `transportKind = litellm | direct | internal`。
-- `gatewayModelName` 支持接 LiteLLM model_name。
-- provider account priority、status、healthStatus。
-- model binding featureKey、labelKeys、priority。
+- ProviderAccount、ModelBinding、ModelLabel schema。
+- `transportKind = litellm | direct | internal`；litellm 绑定强制 `gatewayModelName`（缺失则不可路由，ensure 时拦截）。
+- `POST /provider-accounts/ensure`：ensureProviderAccount（priority、status、transportKind）。
+- `POST /model-bindings/ensure`：ensureModelBinding（featureKey、labelKeys、priority；同 providerAccountId + modelName + transportKind 唯一）。
+- `GET /model-bindings`：listModelBindings（active，priority asc）。
+- `GET /model-bindings/resolve`：resolveModelBindings——只取 active binding + provider status=active 且 healthStatus≠down，按 priority asc（createdAt 次序）返回有序候选，支持 labelKey / transportKind 过滤。
 - admin manifest。
 
 关键判断：
@@ -300,39 +282,27 @@ LiteLLM 官方文档显示它支持 virtual keys、模型访问控制、spend tr
 
 - https://docs.litellm.ai/docs/proxy/virtual_keys
 
-后续必须补齐：
+后续/边界（需产品决策）：
 
 ```text
+model label:
+  ModelLabel（defaultBindingId / tier）的 label -> binding 解析兜底（表休眠）
+  给前端和业务套餐用的稳定 label，不直接暴露 provider 内部命名
+
+resolve 排序:
+  degraded provider 是否在 resolve 中降权排序（当前仅排除 down，不区分 degraded）
+
 provider account:
-  主账号/兜底账号
-  启用/停用
-  priority 顺序
-  secretRef，不保存明文 secret
-  health check 结果写入 healthStatus
+  主账号/兜底账号语义、secretRef（不存明文）、health check 真实写入 healthStatus
 
 model binding:
-  featureKey: general-chat, music, video, image, code 等
-  labelKeys: fast, quality, cheap, pro, studio 等
-  input/output modalities
-  priority + fallback policy
-  同 providerAccountId + modelName + transportKind 唯一
-
-model label:
-  给前端和业务套餐用的稳定 label
-  不直接暴露 provider 内部命名
-  支持 defaultBindingId
+  input/output modalities、显式 fallback policy
 
 runtime query:
   list available models by featureKey + team plan + user permission
-  resolve binding by requested label/provider/model
-  fallback selection
 
 admin:
-  provider account 管理
-  binding 管理
-  label 管理
-  health 状态展示
-  secretRef 只显示引用，不显示 secret
+  provider/binding/label 管理 UI、health 状态展示、secretRef 只显示引用
 ```
 
 不做：
@@ -359,16 +329,18 @@ payment:
 
 定位：积分账户、扣费、用量、冻结、账本、计价规则的权威模块。
 
-已具备：
+已实现：
 
-- CreditAccount。
-- CreditLedgerEntry。
-- CreditHold。
-- UsageRecord。
-- PricingRule。
-- 余额不足领域策略。
-- grant/spend API。
-- 幂等 key。
+- 账户模型：CreditAccount 用 `balanceMicros` + `heldMicros`（无 bucket），`available = balance - held`。
+- CreditLedgerEntry、CreditHold、UsageRecord、PricingRule schema。
+- `POST /credit/accounts/ensure`：ensureAccount。
+- `POST /credit/grant`：grantCredits（balance += amount，正向 ledger）。
+- `POST /credit/spend`：spendCredits——按可用额 `balance - held >= amount` 原子条件更新，不动用已冻结资金。
+- `POST /credit/quote`：纯读计价。PricingRule 按 `featureKey + labelKey` 精确优先、`labelKey=null` 通用回退，限 effective 窗口（effectiveFrom ≤ now < effectiveUntil/null）；`amount = unitAmount × quantity`。
+- `POST /credit/hold`：holdCredits——原子条件 `available ≥ amount` 则 `held += amount`。
+- `POST /credit/capture`：captureHold——`actual ≤ hold.amount`，`balance -= actual`、`held -= hold.amount`，写负向 ledger + settled UsageRecord。
+- `POST /credit/release`：releaseHold（释放冻结）。
+- 全部幂等 + 并发原子安全（条件更新/转移），余额不足领域策略。
 - admin manifest。
 
 核心原则：
@@ -378,42 +350,27 @@ payment:
 - 所有余额变化必须有 ledger entry。
 - 用量记录和扣费可以先同步，后续再拆为事件/队列。
 
-后续必须补齐：
+后续/边界（需产品决策）：
 
 ```text
-账户:
-  ownerKind=user/team
-  禁用账户
-  账户余额查询
-  heldMicros 冻结额度
+hold 过期回收:
+  expiresAt / expired 字段休眠，需定惰性回收或后台 sweeper 策略
 
-扣费:
-  quote -> hold -> capture/release
-  spendCredits 保持原子扣减
-  idempotency conflict 检测
-  retry 安全
+refund:
+  退款专用入口及与原 ledger/usage 的回链（现 reason=refund 仅能裸 grant，无关联）
 
-计价:
-  PricingRule 按 featureKey + labelKey + unit
-  model_call/tool_call/music_generation/video_generation
-  effectiveFrom/effectiveUntil
-
-用量:
-  UsageRecord 记录 featureKey、amount、modelBindingId、requestId
-  failed/settled 状态
-  方便对账和重放
+计价/用量语义:
+  PricingRule.unit 的换算语义
+  UsageRecord 的 recorded / failed 状态路径
 
 权益:
-  Entitlement 后续加入
-  SpendLimit 后续加入
-  plan 对应额度、功能、周期
+  Entitlement / SpendLimit / plan 对应额度、功能、周期
+
+账户:
+  禁用账户、账户余额查询接口
 
 admin:
-  账户余额
-  账本流水
-  用量记录
-  pricing rule
-  人工调整入口
+  账户余额、账本流水、用量记录、pricing rule、人工调整入口 UI
 ```
 
 扣费入口建议：
@@ -456,15 +413,14 @@ agent/session:
 
 定位：套餐、订单、订阅、支付事件、退款记录、支付 provider 配置的权威模块。
 
-已具备：
+已实现：
 
-- Plan。
-- Order。
-- Subscription。
-- PaymentEvent。
-- Refund。
-- order idempotency conflict。
-- payment event idempotency conflict。
+- Plan（含 `creditMicros`）、Order、Subscription、PaymentEvent、Refund schema。
+- `POST /plans/upsert`：upsertPlan。
+- `POST /orders`：createOrder（按 idempotencyKey 幂等）。
+- `POST /orders/:id/confirm`：confirmOrder——`pending -> paid` 抢占式条件转移（并发确认仅一方生效、已 paid 幂等）；转 paid 前经 HTTP credit 客户端 ensure -> grant，把 `plan.creditMicros` 授予 team 账户，幂等键 `order:{id}`（先授予再标 paid，失败时 order 仍 pending、重试不重复发积分）。
+- `POST /payment-events/record`：recordPaymentEvent（provider + eventId 幂等）。
+- payment 不写 credit 表，授予经 HTTP 走 credit 服务（守 ADR-003）。
 - admin manifest。
 
 关键判断：
@@ -482,51 +438,28 @@ Stripe 官方文档提供 Checkout、订阅和 Webhooks 等完整能力，适合
 - https://docs.stripe.com/billing/subscriptions/build-subscriptions
 - https://docs.stripe.com/webhooks
 
-后续必须补齐：
+后续/边界（需产品决策，schema/manifest 有、逻辑空）：
 
 ```text
-plan:
-  plan key
-  price/currency/interval
-  feature bundle metadata
-  active/disabled
+webhook 驱动:
+  PaymentEvent -> order 关联，由 provider webhook 驱动 confirmOrder
+  （现确认靠直接 HTTP，需定签名/证书/映射）
 
 provider config:
   provider=stripe/alipay/wechat/paddle/lemon_squeezy
-  merchant/app id
-  secretRef/certRef
-  enabled status
-  webhook endpoint mapping
+  merchant/app id、secretRef/certRef、enabled、webhook endpoint mapping
 
 order:
-  create checkout/session
-  pending/paid/canceled/refunded
-  providerOrderId
-  idempotency conflict
+  create checkout/session、providerOrderId、canceled/refunded 流转
 
 subscription:
-  providerSubscriptionId
-  currentPeriodStart/currentPeriodEnd
-  active/canceled/past_due
-
-payment event:
-  provider + eventId 唯一
-  raw payload
-  received/processed/failed
-  可重放
+  Subscription 周期续费状态机（providerSubscriptionId、period、active/canceled/past_due）
 
 refund:
-  refund request
-  provider refund id
-  succeeded/failed
-  对应 credit refund 或权益回收
+  Refund 状态机（provider refund id、succeeded/failed）及对应 credit refund / 权益回收
 
 admin:
-  plan 管理
-  订单查询
-  订阅状态
-  支付事件重放
-  provider 配置状态
+  plan 管理、订单查询、订阅状态、支付事件重放、provider 配置状态 UI
 ```
 
 不做：
@@ -554,14 +487,14 @@ admin:
 
 定位：非业务技术工具包。
 
-可以放：
+可以放（已实现）：
 
 ```text
-HTTP envelope
+HTTP envelope / responses
 healthz
 startHttpServer
 admin manifest schema
-通用金额/BigInt parsing
+通用金额/BigInt parsing（parsePositiveBigIntString 加 /^\d+$/ 守卫，拒 0x/+/空白等钱款入参）
 通用错误 envelope 类型
 ```
 
@@ -659,32 +592,40 @@ admin/payment
 
 ## 近期实现顺序
 
-建议优先级：
+已完成（本轮已落地，标记不再列入待办）：
+
+```text
+[done] 子仓 README / DDD 四层结构
+[done] admin manifest schema 统一
+[done] idempotencyKey 贯穿 credit/payment 关键写入
+[done] model binding resolve API（/model-bindings/resolve）
+[done] credit quote / hold / capture / release（含原子条件更新 + 并发安全）
+[done] payment confirmOrder -> credit grant（经 HTTP，order:{id} 幂等）
+```
+
+剩余建议优先级：
 
 ```text
 P0:
-  子仓 README 更新到真实 DDD 结构
-  admin manifest 和权限 key 统一
-  requestId/idempotencyKey 贯穿
-  user role permission checker
+  user role permission checker + platform permission key registry
+  manifest 暴露动作（change-role/disable/revoke）补齐对应后端路由
+  requestId 全链路贯穿 HTTP/API
 
 P1:
-  model provider account 主账号/兜底账号/health check
-  model binding resolve API
-  credit quote/hold/capture/release
-  payment provider config 和 webhook replay skeleton
+  payment provider config 和 webhook-driven confirmOrder（签名/映射）
+  model provider account health check 真实写入 + secretRef
+  credit hold 过期回收策略（sweeper / 惰性）
 
 P2:
   admin web 统一壳子读取 manifest
-  plan -> entitlement/credit grant
-  model label -> plan feature bundle
-  usage record 对账
+  plan -> entitlement，model label -> plan feature bundle
+  usage record 对账、refund 回链语义
 
 P3:
-  payment provider adapters
+  payment provider adapters（stripe/alipay/wechat）
+  Subscription 周期续费、Refund 状态机
   LiteLLM virtual key 同步
-  service account runtime auth
-  audit log 全模块覆盖
+  service account runtime auth、audit log 全模块覆盖
 ```
 
 ## 需要守住的红线
