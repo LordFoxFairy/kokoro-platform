@@ -4,6 +4,7 @@ export * from "./application/credit-service.js";
 export * from "./config/env.js";
 export * from "./domain/credit.js";
 export * from "./domain/errors.js";
+export * from "./interfaces/http/admin-routes.js";
 export * from "./interfaces/http/server.js";
 export * from "./interfaces/http/schemas.js";
 export * from "./module.js";

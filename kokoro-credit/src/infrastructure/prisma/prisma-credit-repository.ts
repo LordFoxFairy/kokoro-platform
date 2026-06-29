@@ -6,7 +6,11 @@ import type {
   CreditHoldStatus,
   CreditLedgerEntry,
   CreditMutationResult,
+  PricingRule,
+  PricingRuleStatus,
   QuoteResult,
+  UsageRecord,
+  UsageRecordStatus,
 } from "../../domain/credit.js";
 import { assertCreditSpendAllowed } from "../../domain/credit-policy.js";
 import {
@@ -354,6 +358,38 @@ export class PrismaCreditRepository implements CreditRepository {
     };
   }
 
+  async listAccounts(): Promise<CreditAccount[]> {
+    const accounts = await this.prisma.creditAccount.findMany({
+      take: 100,
+      orderBy: { createdAt: "desc" },
+    });
+    return accounts.map(mapCreditAccount);
+  }
+
+  async listLedgerEntries(): Promise<CreditLedgerEntry[]> {
+    const entries = await this.prisma.creditLedgerEntry.findMany({
+      take: 100,
+      orderBy: { createdAt: "desc" },
+    });
+    return entries.map(mapLedgerEntry);
+  }
+
+  async listUsageRecords(): Promise<UsageRecord[]> {
+    const records = await this.prisma.usageRecord.findMany({
+      take: 100,
+      orderBy: { createdAt: "desc" },
+    });
+    return records.map(mapUsageRecord);
+  }
+
+  async listPricingRules(): Promise<PricingRule[]> {
+    const rules = await this.prisma.pricingRule.findMany({
+      take: 100,
+      orderBy: { createdAt: "desc" },
+    });
+    return rules.map(mapPricingRule);
+  }
+
   private async findPricingRule(
     featureKey: string,
     labelKey: string | null,
@@ -531,5 +567,55 @@ function mapLedgerEntry(entry: {
     idempotencyKey: entry.idempotencyKey,
     requestId: entry.requestId,
     createdAt: entry.createdAt,
+  };
+}
+
+function mapUsageRecord(record: {
+  id: string;
+  accountId: string | null;
+  featureKey: string;
+  amountMicros: bigint;
+  modelBindingId: string | null;
+  requestId: string | null;
+  idempotencyKey: string | null;
+  status: UsageRecordStatus;
+  createdAt: Date;
+}): UsageRecord {
+  return {
+    id: record.id,
+    accountId: record.accountId,
+    featureKey: record.featureKey,
+    amountMicros: record.amountMicros.toString(),
+    modelBindingId: record.modelBindingId,
+    requestId: record.requestId,
+    idempotencyKey: record.idempotencyKey,
+    status: record.status,
+    createdAt: record.createdAt,
+  };
+}
+
+function mapPricingRule(rule: {
+  id: string;
+  featureKey: string;
+  labelKey: string | null;
+  unit: string;
+  amountMicros: bigint;
+  status: PricingRuleStatus;
+  effectiveFrom: Date;
+  effectiveUntil: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}): PricingRule {
+  return {
+    id: rule.id,
+    featureKey: rule.featureKey,
+    labelKey: rule.labelKey,
+    unit: rule.unit,
+    amountMicros: rule.amountMicros.toString(),
+    status: rule.status,
+    effectiveFrom: rule.effectiveFrom,
+    effectiveUntil: rule.effectiveUntil,
+    createdAt: rule.createdAt,
+    updatedAt: rule.updatedAt,
   };
 }

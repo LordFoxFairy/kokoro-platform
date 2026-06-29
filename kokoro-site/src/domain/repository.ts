@@ -52,4 +52,8 @@ export interface SiteRepository {
   upsertSitePolicy(input: UpsertSitePolicyInput): Promise<SitePolicy>;
   resolveSiteContext(input: ResolveSiteContextInput): Promise<ResolvedSiteContext | null>;
   listSites(): Promise<Site[]>;
+  listAdminSites(): Promise<Site[]>;
+  listAdminSiteDomains(): Promise<SiteDomain[]>;
+  listAdminSiteApps(): Promise<SiteApp[]>;
+  listAdminSitePolicies(): Promise<SitePolicy[]>;
 }

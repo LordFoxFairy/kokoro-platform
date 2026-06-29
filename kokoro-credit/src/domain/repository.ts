@@ -1,10 +1,13 @@
 import type {
   CreditAccount,
   CreditHold,
+  CreditLedgerEntry,
   CreditMutationResult,
   CreditOwnerKind,
   CreditReason,
+  PricingRule,
   QuoteResult,
+  UsageRecord,
 } from "./credit.js";
 
 export interface EnsureCreditAccountInput {
@@ -56,4 +59,8 @@ export interface CreditRepository {
   captureHold(input: CaptureCreditInput): Promise<CreditMutationResult>;
   releaseHold(input: ReleaseCreditInput): Promise<CreditHold>;
   quote(input: QuoteInput): Promise<QuoteResult>;
+  listAccounts(): Promise<CreditAccount[]>;
+  listLedgerEntries(): Promise<CreditLedgerEntry[]>;
+  listUsageRecords(): Promise<UsageRecord[]>;
+  listPricingRules(): Promise<PricingRule[]>;
 }

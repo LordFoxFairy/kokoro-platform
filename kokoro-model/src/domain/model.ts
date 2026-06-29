@@ -2,6 +2,7 @@ export type ModelTransportKind = "litellm" | "direct" | "internal";
 export type ProviderAccountStatus = "active" | "disabled";
 export type ProviderHealthStatus = "unknown" | "healthy" | "degraded" | "down";
 export type ModelBindingStatus = "active" | "disabled";
+export type ModelLabelStatus = "active" | "disabled";
 
 export interface ProviderAccount {
   id: string;
@@ -32,6 +33,19 @@ export interface ModelBinding {
   contextWindow: number | null;
   priority: number;
   status: ModelBindingStatus;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ModelLabel {
+  id: string;
+  key: string;
+  displayName: string;
+  description: string | null;
+  featureKey: string;
+  tier: string | null;
+  defaultBindingId: string | null;
+  status: ModelLabelStatus;
   createdAt: Date;
   updatedAt: Date;
 }

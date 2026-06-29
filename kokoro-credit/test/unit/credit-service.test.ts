@@ -89,6 +89,22 @@ function trackingRepo(): {
       quoteInputs.push(input);
       return quoteResult;
     },
+    listAccounts: async () => {
+      calls.push("listAccounts");
+      return [];
+    },
+    listLedgerEntries: async () => {
+      calls.push("listLedgerEntries");
+      return [];
+    },
+    listUsageRecords: async () => {
+      calls.push("listUsageRecords");
+      return [];
+    },
+    listPricingRules: async () => {
+      calls.push("listPricingRules");
+      return [];
+    },
   };
   return { repo, calls, quoteInputs };
 }

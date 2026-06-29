@@ -3,6 +3,7 @@ import Fastify from "fastify";
 import { SiteService } from "../../application/site-service.js";
 import { createPrismaClient } from "../../infrastructure/prisma/prisma-client.js";
 import { PrismaSiteRepository } from "../../infrastructure/prisma/prisma-site-repository.js";
+import { registerSiteAdminRoutes } from "./admin-routes.js";
 import { registerSiteRoutes } from "./routes.js";
 
 export interface CreateSiteServerOptions {
@@ -19,6 +20,7 @@ export function createSiteServer(options: CreateSiteServerOptions = {}) {
   const service = new SiteService(repository);
 
   registerSiteRoutes(app, service);
+  registerSiteAdminRoutes(app, repository);
 
   app.addHook("onClose", async () => {
     if (!options.prisma) {

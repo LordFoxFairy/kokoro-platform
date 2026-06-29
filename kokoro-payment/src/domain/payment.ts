@@ -2,6 +2,8 @@ export type BillingInterval = "once" | "month" | "year";
 export type PlanStatus = "active" | "disabled";
 export type OrderStatus = "pending" | "paid" | "canceled" | "refunded";
 export type PaymentEventStatus = "received" | "processed" | "failed";
+export type SubscriptionStatus = "active" | "canceled" | "past_due";
+export type RefundStatus = "pending" | "succeeded" | "failed";
 
 export interface Plan {
   id: string;
@@ -35,6 +37,32 @@ export interface PaymentEvent {
   eventType: string;
   payload: unknown;
   status: PaymentEventStatus;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface Subscription {
+  id: string;
+  teamId: string;
+  planId: string;
+  status: SubscriptionStatus;
+  provider: string | null;
+  providerSubscriptionId: string | null;
+  currentPeriodStart: Date | null;
+  currentPeriodEnd: Date | null;
+  metadata: unknown;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface Refund {
+  id: string;
+  orderId: string;
+  amountMinor: string;
+  currency: string;
+  status: RefundStatus;
+  reason: string | null;
+  metadata: unknown;
   createdAt: Date;
   updatedAt: Date;
 }

@@ -7,7 +7,7 @@ import {
   assertSamePaymentEventIdempotencyTarget,
 } from "../../domain/idempotency.js";
 import { OrderNotConfirmableError, OrderNotFoundError } from "../../domain/errors.js";
-import type { Order, PaymentEvent, Plan } from "../../domain/payment.js";
+import type { Order, PaymentEvent, Plan, Refund, Subscription } from "../../domain/payment.js";
 import type {
   CreateOrderInput,
   PaymentRepository,
@@ -75,6 +75,40 @@ export class PrismaPaymentRepository implements PaymentRepository {
     }
     const order = await this.prisma.order.findUniqueOrThrow({ where: { id: orderId } });
     return mapOrder(order);
+  }
+
+  async listPlans(): Promise<Plan[]> {
+    const plans = await this.prisma.plan.findMany({ take: 100, orderBy: { createdAt: "desc" } });
+    return plans.map(mapPlan);
+  }
+
+  async listOrders(): Promise<Order[]> {
+    const orders = await this.prisma.order.findMany({ take: 100, orderBy: { createdAt: "desc" } });
+    return orders.map(mapOrder);
+  }
+
+  async listSubscriptions(): Promise<Subscription[]> {
+    const subscriptions = await this.prisma.subscription.findMany({
+      take: 100,
+      orderBy: { createdAt: "desc" },
+    });
+    return subscriptions.map(mapSubscription);
+  }
+
+  async listPaymentEvents(): Promise<PaymentEvent[]> {
+    const events = await this.prisma.paymentEvent.findMany({
+      take: 100,
+      orderBy: { createdAt: "desc" },
+    });
+    return events.map(mapPaymentEvent);
+  }
+
+  async listRefunds(): Promise<Refund[]> {
+    const refunds = await this.prisma.refund.findMany({
+      take: 100,
+      orderBy: { createdAt: "desc" },
+    });
+    return refunds.map(mapRefund);
   }
 
   async createOrder(input: CreateOrderInput): Promise<Order> {
@@ -305,5 +339,57 @@ function mapPaymentEvent(event: {
     status: event.status,
     createdAt: event.createdAt,
     updatedAt: event.updatedAt,
+  };
+}
+
+function mapSubscription(subscription: {
+  id: string;
+  teamId: string;
+  planId: string;
+  status: "active" | "canceled" | "past_due";
+  provider: string | null;
+  providerSubscriptionId: string | null;
+  currentPeriodStart: Date | null;
+  currentPeriodEnd: Date | null;
+  metadata: Prisma.JsonValue;
+  createdAt: Date;
+  updatedAt: Date;
+}): Subscription {
+  return {
+    id: subscription.id,
+    teamId: subscription.teamId,
+    planId: subscription.planId,
+    status: subscription.status,
+    provider: subscription.provider,
+    providerSubscriptionId: subscription.providerSubscriptionId,
+    currentPeriodStart: subscription.currentPeriodStart,
+    currentPeriodEnd: subscription.currentPeriodEnd,
+    metadata: subscription.metadata,
+    createdAt: subscription.createdAt,
+    updatedAt: subscription.updatedAt,
+  };
+}
+
+function mapRefund(refund: {
+  id: string;
+  orderId: string;
+  amountMinor: bigint;
+  currency: string;
+  status: "pending" | "succeeded" | "failed";
+  reason: string | null;
+  metadata: Prisma.JsonValue;
+  createdAt: Date;
+  updatedAt: Date;
+}): Refund {
+  return {
+    id: refund.id,
+    orderId: refund.orderId,
+    amountMinor: refund.amountMinor.toString(),
+    currency: refund.currency,
+    status: refund.status,
+    reason: refund.reason,
+    metadata: refund.metadata,
+    createdAt: refund.createdAt,
+    updatedAt: refund.updatedAt,
   };
 }

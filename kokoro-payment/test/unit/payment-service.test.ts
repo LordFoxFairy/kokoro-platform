@@ -94,6 +94,26 @@ function makeFakes(overrides: FakeOverrides = {}): Fakes {
       calls.push("markOrderPaid");
       return { ...order, id: orderId, status: "paid" };
     },
+    listPlans: async () => {
+      calls.push("listPlans");
+      return [plan];
+    },
+    listOrders: async () => {
+      calls.push("listOrders");
+      return [order];
+    },
+    listSubscriptions: async () => {
+      calls.push("listSubscriptions");
+      return [];
+    },
+    listPaymentEvents: async () => {
+      calls.push("listPaymentEvents");
+      return [event];
+    },
+    listRefunds: async () => {
+      calls.push("listRefunds");
+      return [];
+    },
   };
   return { repo, calls, grants, grantPurchaseCredits };
 }

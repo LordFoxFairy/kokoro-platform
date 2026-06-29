@@ -56,6 +56,10 @@ function trackingRepo(): { repo: UserRepository; calls: Array<{ name: string; ar
       };
       return [summary];
     },
+    listUsers: async () => [ensureResult.user],
+    listTeams: async () => [ensureResult.personalTeam],
+    listMemberships: async () => [ensureResult.membership],
+    listServiceAccounts: async () => [],
   };
   return { repo, calls };
 }

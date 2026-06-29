@@ -1,5 +1,5 @@
 import type { Prisma, PrismaClient } from "../../../generated/prisma/index.js";
-import type { ModelBinding, ProviderAccount } from "../../domain/model.js";
+import type { ModelBinding, ModelLabel, ProviderAccount } from "../../domain/model.js";
 import type {
   EnsureModelBindingInput,
   EnsureProviderAccountInput,
@@ -116,6 +116,46 @@ export class PrismaModelRepository implements ModelRepository {
     return bindings
       .map(mapModelBinding)
       .filter((binding) => !input.labelKey || binding.labelKeys.includes(input.labelKey));
+  }
+
+  async listProviderAccounts(): Promise<ProviderAccount[]> {
+    const accounts = await this.prisma.providerAccount.findMany({
+      orderBy: [{ priority: "asc" }, { createdAt: "desc" }],
+      take: 100,
+    });
+
+    return accounts.map(mapProviderAccount);
+  }
+
+  async listAllModelBindings(): Promise<ModelBinding[]> {
+    const bindings = await this.prisma.modelBinding.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    });
+
+    return bindings.map(mapModelBinding);
+  }
+
+  async listModelLabels(): Promise<ModelLabel[]> {
+    const labels = await this.prisma.modelLabel.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    });
+
+    return labels.map(
+      (label): ModelLabel => ({
+        id: label.id,
+        key: label.key,
+        displayName: label.displayName,
+        description: label.description,
+        featureKey: label.featureKey,
+        tier: label.tier,
+        defaultBindingId: label.defaultBindingId,
+        status: label.status,
+        createdAt: label.createdAt,
+        updatedAt: label.updatedAt,
+      }),
+    );
   }
 }
 

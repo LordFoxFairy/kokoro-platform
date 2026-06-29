@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import type { Membership } from "../../domain/membership.js";
+import type { ServiceAccount } from "../../domain/service-account.js";
 import type { Team } from "../../domain/team.js";
 import type { User } from "../../domain/user.js";
 import type {
@@ -8,6 +9,9 @@ import type {
   TeamSummary,
   UserRepository,
 } from "../../domain/repository.js";
+
+// WHY: admin 只读列表上限，避免全表扫描拖垮后台。
+const ADMIN_LIST_TAKE = 100;
 
 type TransactionClient = Prisma.TransactionClient;
 
@@ -49,6 +53,38 @@ export class PrismaUserRepository implements UserRepository {
       team: mapTeam(membership.team),
       membership: mapMembership(membership),
     }));
+  }
+
+  async listUsers(): Promise<User[]> {
+    const users = await this.prisma.user.findMany({
+      take: ADMIN_LIST_TAKE,
+      orderBy: { createdAt: "desc" },
+    });
+    return users.map(mapUser);
+  }
+
+  async listTeams(): Promise<Team[]> {
+    const teams = await this.prisma.team.findMany({
+      take: ADMIN_LIST_TAKE,
+      orderBy: { createdAt: "desc" },
+    });
+    return teams.map(mapTeam);
+  }
+
+  async listMemberships(): Promise<Membership[]> {
+    const memberships = await this.prisma.membership.findMany({
+      take: ADMIN_LIST_TAKE,
+      orderBy: { createdAt: "desc" },
+    });
+    return memberships.map(mapMembership);
+  }
+
+  async listServiceAccounts(): Promise<ServiceAccount[]> {
+    const accounts = await this.prisma.serviceAccount.findMany({
+      take: ADMIN_LIST_TAKE,
+      orderBy: { createdAt: "desc" },
+    });
+    return accounts.map(mapServiceAccount);
   }
 
   private async upsertUser(tx: TransactionClient, input: EnsureUserInput) {
@@ -190,5 +226,29 @@ function mapMembership(membership: {
     status: membership.status,
     createdAt: membership.createdAt,
     updatedAt: membership.updatedAt,
+  };
+}
+
+function mapServiceAccount(account: {
+  id: string;
+  teamId: string | null;
+  ownerUserId: string | null;
+  name: string;
+  tokenPrefix: string;
+  status: "active" | "disabled";
+  lastUsedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}): ServiceAccount {
+  return {
+    id: account.id,
+    teamId: account.teamId,
+    ownerUserId: account.ownerUserId,
+    name: account.name,
+    tokenPrefix: account.tokenPrefix,
+    status: account.status,
+    lastUsedAt: account.lastUsedAt,
+    createdAt: account.createdAt,
+    updatedAt: account.updatedAt,
   };
 }

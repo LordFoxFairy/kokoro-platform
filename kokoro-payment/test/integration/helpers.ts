@@ -27,6 +27,8 @@ export function createTestPrismaClient(): PrismaClient {
 }
 
 export async function cleanPaymentDatabase(prisma: PrismaClient): Promise<void> {
+  await prisma.refund.deleteMany();
+  await prisma.subscription.deleteMany();
   await prisma.paymentEvent.deleteMany();
   await prisma.order.deleteMany();
   await prisma.plan.deleteMany();

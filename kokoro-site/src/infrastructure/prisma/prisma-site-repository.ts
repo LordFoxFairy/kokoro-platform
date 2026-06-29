@@ -171,7 +171,45 @@ export class PrismaSiteRepository implements SiteRepository {
 
     return sites.map(mapSite);
   }
+
+  async listAdminSites(): Promise<Site[]> {
+    const sites = await this.prisma.site.findMany({
+      orderBy: { createdAt: "desc" },
+      take: ADMIN_LIST_LIMIT,
+    });
+
+    return sites.map(mapSite);
+  }
+
+  async listAdminSiteDomains(): Promise<SiteDomain[]> {
+    const domains = await this.prisma.siteDomain.findMany({
+      orderBy: { createdAt: "desc" },
+      take: ADMIN_LIST_LIMIT,
+    });
+
+    return domains.map(mapSiteDomain);
+  }
+
+  async listAdminSiteApps(): Promise<SiteApp[]> {
+    const apps = await this.prisma.siteApp.findMany({
+      orderBy: { createdAt: "desc" },
+      take: ADMIN_LIST_LIMIT,
+    });
+
+    return apps.map(mapSiteApp);
+  }
+
+  async listAdminSitePolicies(): Promise<SitePolicy[]> {
+    const policies = await this.prisma.sitePolicy.findMany({
+      orderBy: { createdAt: "desc" },
+      take: ADMIN_LIST_LIMIT,
+    });
+
+    return policies.map(mapSitePolicy);
+  }
 }
+
+const ADMIN_LIST_LIMIT = 100;
 
 function normalizeHost(host: string): string {
   return host.trim().toLowerCase();

@@ -1,4 +1,5 @@
 import type { Membership } from "./membership.js";
+import type { ServiceAccount } from "./service-account.js";
 import type { Team } from "./team.js";
 import type { User } from "./user.js";
 
@@ -23,4 +24,8 @@ export interface TeamSummary {
 export interface UserRepository {
   ensureUserWithPersonalTeam(input: EnsureUserInput): Promise<EnsureUserResult>;
   listTeamsForUser(userId: string): Promise<TeamSummary[]>;
+  listUsers(): Promise<User[]>;
+  listTeams(): Promise<Team[]>;
+  listMemberships(): Promise<Membership[]>;
+  listServiceAccounts(): Promise<ServiceAccount[]>;
 }

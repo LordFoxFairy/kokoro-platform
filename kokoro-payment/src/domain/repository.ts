@@ -1,4 +1,11 @@
-import type { BillingInterval, Order, PaymentEvent, Plan } from "./payment.js";
+import type {
+  BillingInterval,
+  Order,
+  PaymentEvent,
+  Plan,
+  Refund,
+  Subscription,
+} from "./payment.js";
 
 export interface UpsertPlanInput {
   key: string;
@@ -31,6 +38,11 @@ export interface PaymentRepository {
   findOrderById(orderId: string): Promise<Order | null>;
   findPlanById(planId: string): Promise<Plan | null>;
   markOrderPaid(orderId: string): Promise<Order>;
+  listPlans(): Promise<Plan[]>;
+  listOrders(): Promise<Order[]>;
+  listSubscriptions(): Promise<Subscription[]>;
+  listPaymentEvents(): Promise<PaymentEvent[]>;
+  listRefunds(): Promise<Refund[]>;
 }
 
 export interface GrantPurchaseCreditsInput {
