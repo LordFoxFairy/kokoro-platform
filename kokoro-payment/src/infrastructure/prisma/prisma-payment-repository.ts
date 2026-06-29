@@ -6,7 +6,7 @@ import {
   assertSameOrderIdempotencyTarget,
   assertSamePaymentEventIdempotencyTarget,
 } from "../../domain/idempotency.js";
-import { OrderNotFoundError } from "../../domain/errors.js";
+import { OrderNotConfirmableError, OrderNotFoundError } from "../../domain/errors.js";
 import type { Order, PaymentEvent, Plan } from "../../domain/payment.js";
 import type {
   CreateOrderInput,
@@ -58,18 +58,23 @@ export class PrismaPaymentRepository implements PaymentRepository {
   }
 
   async markOrderPaid(orderId: string): Promise<Order> {
-    try {
-      const order = await this.prisma.order.update({
-        where: { id: orderId },
-        data: { status: "paid" },
-      });
-      return mapOrder(order);
-    } catch (error) {
-      if (isRecordNotFoundError(error)) {
+    // WHY: 抢占式条件转移 pending→paid，并发确认只一方生效；已 paid 幂等返回，非 pending 拒绝。
+    const transition = await this.prisma.order.updateMany({
+      where: { id: orderId, status: "pending" },
+      data: { status: "paid" },
+    });
+    if (transition.count === 0) {
+      const order = await this.prisma.order.findUnique({ where: { id: orderId } });
+      if (!order) {
         throw new OrderNotFoundError(orderId);
       }
-      throw error;
+      if (order.status !== "paid") {
+        throw new OrderNotConfirmableError(orderId, order.status);
+      }
+      return mapOrder(order);
     }
+    const order = await this.prisma.order.findUniqueOrThrow({ where: { id: orderId } });
+    return mapOrder(order);
   }
 
   async createOrder(input: CreateOrderInput): Promise<Order> {
@@ -210,28 +215,26 @@ function isUniqueConstraintError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
 }
 
-function isRecordNotFoundError(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === "P2025";
-}
-
 // WHY: 序列化再回读，把不可信 payload 洗成纯 JSON 值，避免 InputJsonValue 断言。
 function toJson(value: unknown): Prisma.InputJsonValue {
-  if (value === undefined) {
+  if (value === undefined || value === null) {
     return {};
   }
   const washed: unknown = JSON.parse(JSON.stringify(value));
   return jsonValueSchema.parse(washed);
 }
 
-const jsonValueSchema: z.ZodType<Prisma.InputJsonValue> = z.lazy(() =>
-  z.union([
+// WHY: 容器内允许 JSON null（Prisma InputJsonObject/Array 的元素为 InputJsonValue | null）。
+const jsonValueSchema: z.ZodType<Prisma.InputJsonValue> = z.lazy(() => {
+  const nullableValue = z.union([jsonValueSchema, z.null()]);
+  return z.union([
     z.string(),
     z.number(),
     z.boolean(),
-    z.array(jsonValueSchema),
-    z.record(jsonValueSchema),
-  ]),
-);
+    z.array(nullableValue),
+    z.record(nullableValue),
+  ]);
+});
 
 function mapPlan(plan: {
   id: string;

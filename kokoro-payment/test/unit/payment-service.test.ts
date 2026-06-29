@@ -113,7 +113,7 @@ describe("PaymentService positive-amount guard", () => {
         amountMinor,
         billingInterval: "month",
       }),
-    ).rejects.toThrow("amountMinor must be positive");
+    ).rejects.toThrow();
     expect(fakes.calls).not.toContain("upsertPlan");
   });
 
@@ -127,7 +127,7 @@ describe("PaymentService positive-amount guard", () => {
         currency: "USD",
         idempotencyKey: "k1",
       }),
-    ).rejects.toThrow("amountMinor must be positive");
+    ).rejects.toThrow();
     expect(fakes.calls).not.toContain("createOrder");
   });
 

@@ -59,12 +59,11 @@ export class PrismaUserRepository implements UserRepository {
       ...definedString("avatarUrl", input.avatarUrl),
     };
 
+    // WHY: ensure 只刷新资料，不重置 status/disabledAt——否则被管理员 disable 的用户一登录就被自动解禁。
     const updateInput: Prisma.UserUpdateInput = {
       ...definedString("email", input.email),
       ...definedString("displayName", input.displayName),
       ...definedString("avatarUrl", input.avatarUrl),
-      status: "active",
-      disabledAt: null,
     };
 
     return tx.user.upsert({

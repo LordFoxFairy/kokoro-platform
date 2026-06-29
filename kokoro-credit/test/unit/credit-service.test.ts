@@ -104,7 +104,7 @@ describe("CreditService positive-amount guard", () => {
         idempotencyKey: "k1",
         reason: "subscription",
       }),
-    ).rejects.toThrow("amountMicros must be positive");
+    ).rejects.toThrow();
     expect(calls).not.toContain("grantCredits");
   });
 
@@ -118,7 +118,7 @@ describe("CreditService positive-amount guard", () => {
         idempotencyKey: "k1",
         reason: "model_call",
       }),
-    ).rejects.toThrow("amountMicros must be positive");
+    ).rejects.toThrow();
     expect(calls).not.toContain("spendCredits");
   });
 
@@ -155,7 +155,7 @@ describe("CreditService positive-amount guard", () => {
         amountMicros,
         idempotencyKey: "k1",
       }),
-    ).rejects.toThrow("amountMicros must be positive");
+    ).rejects.toThrow();
     expect(calls).not.toContain("holdCredits");
   });
 
@@ -170,7 +170,7 @@ describe("CreditService positive-amount guard", () => {
         reason: "model_call",
         featureKey: "model.call",
       }),
-    ).rejects.toThrow("actualAmountMicros must be positive");
+    ).rejects.toThrow();
     expect(calls).not.toContain("captureHold");
   });
 

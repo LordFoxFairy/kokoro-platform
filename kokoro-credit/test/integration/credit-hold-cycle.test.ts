@@ -57,6 +57,39 @@ describe("credit reserve-commit-refund cycle", () => {
     expect(stored.heldMicros).toBeLessThanOrEqual(stored.balanceMicros);
   });
 
+  it("spend cannot consume held (reserved) funds", async () => {
+    const account = await fundedAccount("spend_vs_held", "100");
+    await service.holdCredits({
+      accountId: account.id,
+      amountMicros: "60",
+      idempotencyKey: "svh_hold",
+    });
+
+    // available = 100 - 60 = 40; spend 50 必须失败，不得动用冻结资金
+    await expect(
+      service.spendCredits({
+        accountId: account.id,
+        amountMicros: "50",
+        idempotencyKey: "svh_spend_fail",
+        reason: "model_call",
+      }),
+    ).rejects.toThrow(InsufficientCreditError);
+
+    // spend 40（== available）成功
+    const result = await service.spendCredits({
+      accountId: account.id,
+      amountMicros: "40",
+      idempotencyKey: "svh_spend_ok",
+      reason: "model_call",
+    });
+    expect(result.account.balanceMicros).toBe("60");
+
+    const stored = await prisma.creditAccount.findUniqueOrThrow({ where: { id: account.id } });
+    expect(stored.balanceMicros).toBe(60n);
+    expect(stored.heldMicros).toBe(60n);
+    expect(stored.balanceMicros).toBeGreaterThanOrEqual(stored.heldMicros);
+  });
+
   it("holding lowers available without touching balance", async () => {
     const account = await fundedAccount("hold_lowers_available", "9000000");
 

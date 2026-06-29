@@ -102,22 +102,10 @@ export class PrismaCreditRepository implements CreditRepository {
         }
 
         const amount = parsePositiveBigIntString(input.amountMicros, "amountMicros");
-        const update = await tx.creditAccount.updateMany({
-          where: {
-            id: input.accountId,
-            status: "active",
-            balanceMicros: {
-              gte: amount,
-            },
-          },
-          data: {
-            balanceMicros: {
-              decrement: amount,
-            },
-          },
-        });
+        // WHY: 条件更新校验可用额(balance-held)≥amount——spend 不得动用已冻结资金，否则 capture 时余额会被扣成负。
+        const spent = await tx.$executeRaw`UPDATE credit_accounts SET balanceMicros = balanceMicros - ${amount} WHERE id = ${input.accountId} AND status = 'active' AND balanceMicros - heldMicros >= ${amount}`;
 
-        if (update.count === 0) {
+        if (spent === 0) {
           const account = await tx.creditAccount.findUnique({
             where: {
               id: input.accountId,
@@ -128,7 +116,7 @@ export class PrismaCreditRepository implements CreditRepository {
             throw new CreditAccountNotFoundError(input.accountId);
           }
 
-          assertCreditSpendAllowed(input.accountId, account.balanceMicros, amount);
+          assertCreditSpendAllowed(input.accountId, account.balanceMicros - account.heldMicros, amount);
           throw new InsufficientCreditError(input.accountId);
         }
 

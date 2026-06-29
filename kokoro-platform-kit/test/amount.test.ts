@@ -6,23 +6,32 @@ describe("parsePositiveBigIntString", () => {
     ["123", 123n],
     ["1", 1n],
     ["000123", 123n],
-    ["0x10", 16n], // BigInt() accepts radix prefixes
     ["99999999999999999999999999", 99999999999999999999999999n],
   ])("parses positive %s -> %s", (input, expected) => {
     expect(parsePositiveBigIntString(input, "amountMicros")).toBe(expected);
   });
 
-  it.each(["0", "-1", "-99999999999999999999"])(
-    "rejects non-positive %s",
-    (input) => {
-      expect(() => parsePositiveBigIntString(input, "amountMicros")).toThrow(
-        "amountMicros must be positive",
-      );
-    },
-  );
+  it("rejects zero with the positive message", () => {
+    expect(() => parsePositiveBigIntString("0", "amountMicros")).toThrow(
+      "amountMicros must be positive",
+    );
+  });
 
-  it.each(["", " ", "abc", "1.5", "12n", "1_000"])(
-    "throws on non-integer input %s",
+  it.each([
+    "",
+    " ",
+    "abc",
+    "1.5",
+    "12n",
+    "1_000",
+    "0x10",
+    "+5",
+    " 5 ",
+    "5 ",
+    "-1",
+    "-99999999999999999999",
+  ])(
+    "throws on non-decimal input %s",
     (input) => {
       expect(() => parsePositiveBigIntString(input, "amountMicros")).toThrow();
     },
