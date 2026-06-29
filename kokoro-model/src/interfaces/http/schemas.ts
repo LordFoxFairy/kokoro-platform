@@ -27,7 +27,17 @@ export const ensureModelBindingRequestSchema = z
     contextWindow: z.number().int().positive().optional(),
     priority: z.number().int().min(0).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    // WHY: litellm 传输必须有 gatewayModelName，否则绑定无法被网关路由（resolve 会返回不可用项）。
+    if (value.transportKind === "litellm" && value.gatewayModelName === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["gatewayModelName"],
+        message: "gatewayModelName is required when transportKind is litellm",
+      });
+    }
+  });
 
 export const listModelBindingsQuerySchema = z
   .object({

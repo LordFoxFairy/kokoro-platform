@@ -148,3 +148,34 @@ describe("modelTransportKindSchema", () => {
     expect(() => modelTransportKindSchema.parse(kind)).toThrow();
   });
 });
+
+describe("ensureModelBindingRequestSchema litellm gateway requirement", () => {
+  const base = {
+    providerAccountId: "p1",
+    modelName: "gpt-4o",
+    displayName: "GPT-4o",
+    featureKey: "chat",
+  };
+
+  it("rejects litellm binding without gatewayModelName", () => {
+    expect(() =>
+      ensureModelBindingRequestSchema.parse({ ...base, transportKind: "litellm" }),
+    ).toThrow();
+  });
+
+  it("accepts litellm binding with gatewayModelName", () => {
+    expect(
+      ensureModelBindingRequestSchema.parse({
+        ...base,
+        transportKind: "litellm",
+        gatewayModelName: "openai/gpt-4o",
+      }).gatewayModelName,
+    ).toBe("openai/gpt-4o");
+  });
+
+  it("accepts direct binding without gatewayModelName", () => {
+    expect(
+      ensureModelBindingRequestSchema.parse({ ...base, transportKind: "direct" }).transportKind,
+    ).toBe("direct");
+  });
+});
