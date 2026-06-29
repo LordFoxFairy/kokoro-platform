@@ -32,6 +32,31 @@ describe("credit reserve-commit-refund cycle", () => {
     await prisma.$disconnect();
   });
 
+  it("never over-reserves under concurrent holds (row lock serializes)", async () => {
+    const account = await fundedAccount("hold_concurrent", "100");
+
+    const attempts = await Promise.allSettled(
+      Array.from({ length: 10 }, (_unused, index) =>
+        service.holdCredits({
+          accountId: account.id,
+          amountMicros: "30",
+          idempotencyKey: `hold_concurrent_${index}`,
+        }),
+      ),
+    );
+
+    const succeeded = attempts.filter((result) => result.status === "fulfilled").length;
+    const rejectedInsufficient = attempts.filter(
+      (result) => result.status === "rejected" && result.reason instanceof InsufficientCreditError,
+    ).length;
+    const stored = await prisma.creditAccount.findUniqueOrThrow({ where: { id: account.id } });
+
+    expect(succeeded).toBe(3);
+    expect(rejectedInsufficient).toBe(7);
+    expect(stored.heldMicros).toBe(90n);
+    expect(stored.heldMicros).toBeLessThanOrEqual(stored.balanceMicros);
+  });
+
   it("holding lowers available without touching balance", async () => {
     const account = await fundedAccount("hold_lowers_available", "9000000");
 

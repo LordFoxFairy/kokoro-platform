@@ -167,34 +167,24 @@ export class PrismaCreditRepository implements CreditRepository {
         }
 
         const amount = parsePositiveBigIntString(input.amountMicros, "amountMicros");
-        const existingAccount = await tx.creditAccount.findUnique({
-          where: {
-            id: input.accountId,
-          },
-        });
-
-        if (!existingAccount) {
-          throw new CreditAccountNotFoundError(input.accountId);
-        }
-
-        const available = existingAccount.balanceMicros - existingAccount.heldMicros;
-        if (available < amount) {
+        // WHY: 原子条件更新——可用额(balance-held)≥amount 的判断与自增在 DB 同一条语句完成，
+        // 行写锁串行化并发，杜绝「读-判-写」竞态导致的超额冻结（同 spend 的条件更新模式）。
+        const reserved = await tx.$executeRaw`UPDATE credit_accounts SET heldMicros = heldMicros + ${amount} WHERE id = ${input.accountId} AND balanceMicros - heldMicros >= ${amount}`;
+        if (reserved === 0) {
+          const existingAccount = await tx.creditAccount.findUnique({
+            where: {
+              id: input.accountId,
+            },
+          });
+          if (!existingAccount) {
+            throw new CreditAccountNotFoundError(input.accountId);
+          }
           throw new InsufficientCreditError(input.accountId);
         }
 
-        const account = await tx.creditAccount.update({
-          where: {
-            id: input.accountId,
-          },
-          data: {
-            heldMicros: {
-              increment: amount,
-            },
-          },
-        });
         const hold = await tx.creditHold.create({
           data: {
-            accountId: account.id,
+            accountId: input.accountId,
             amountMicros: amount,
             status: "active",
             idempotencyKey: input.idempotencyKey,
@@ -234,6 +224,20 @@ export class PrismaCreditRepository implements CreditRepository {
           throw new CreditCaptureExceedsHoldError(input.holdId);
         }
 
+        // WHY: 原子条件转移 active→captured，防止并发对同一 hold 重复结算；只有抢到者继续扣账。
+        const transition = await tx.creditHold.updateMany({
+          where: {
+            id: hold.id,
+            status: "active",
+          },
+          data: {
+            status: "captured",
+          },
+        });
+        if (transition.count === 0) {
+          throw new CreditHoldNotActiveError(input.holdId, "captured");
+        }
+
         const account = await tx.creditAccount.update({
           where: {
             id: hold.accountId,
@@ -245,14 +249,6 @@ export class PrismaCreditRepository implements CreditRepository {
             heldMicros: {
               decrement: hold.amountMicros,
             },
-          },
-        });
-        await tx.creditHold.update({
-          where: {
-            id: hold.id,
-          },
-          data: {
-            status: "captured",
           },
         });
         const entry = await tx.creditLedgerEntry.create({
@@ -305,6 +301,28 @@ export class PrismaCreditRepository implements CreditRepository {
         throw new CreditHoldNotActiveError(input.holdId, hold.status);
       }
 
+      // WHY: 原子条件转移 active→released，防止与并发 capture/release 竞态重复释放冻结。
+      const transition = await tx.creditHold.updateMany({
+        where: {
+          id: hold.id,
+          status: "active",
+        },
+        data: {
+          status: "released",
+        },
+      });
+      if (transition.count === 0) {
+        const current = await tx.creditHold.findUniqueOrThrow({
+          where: {
+            id: hold.id,
+          },
+        });
+        if (current.status === "released") {
+          return mapCreditHold(current);
+        }
+        throw new CreditHoldNotActiveError(input.holdId, current.status);
+      }
+
       await tx.creditAccount.update({
         where: {
           id: hold.accountId,
@@ -315,12 +333,9 @@ export class PrismaCreditRepository implements CreditRepository {
           },
         },
       });
-      const released = await tx.creditHold.update({
+      const released = await tx.creditHold.findUniqueOrThrow({
         where: {
           id: hold.id,
-        },
-        data: {
-          status: "released",
         },
       });
 
