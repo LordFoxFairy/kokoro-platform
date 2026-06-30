@@ -1,4 +1,4 @@
-import { readRequestContext, registerHealthRoute, sendData, sendError, sendZodError } from "@kokoro/platform-kit";
+import { jsonSchema, readRequestContext, registerHealthRoute, sendData, sendError, sendZodError } from "@kokoro/platform-kit";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { ZodError } from "zod";
 import type { CreditService } from "../../application/credit-service.js";
@@ -22,7 +22,13 @@ import {
 export function registerCreditRoutes(app: FastifyInstance, service: CreditService): void {
   registerHealthRoute(app, "credit");
 
-  app.post("/credit/accounts/ensure", async (request, reply) => {
+  app.post("/credit/accounts/ensure", {
+    schema: {
+      tags: ["credit"],
+      summary: "确保积分账户存在（不存在则创建）",
+      body: jsonSchema(ensureCreditAccountRequestSchema),
+    },
+  }, async (request, reply) => {
     try {
       const ctx = readRequestContext(request.headers);
       if (ctx.siteId === null) {
@@ -36,7 +42,13 @@ export function registerCreditRoutes(app: FastifyInstance, service: CreditServic
     }
   });
 
-  app.post("/credit/grant", async (request, reply) => {
+  app.post("/credit/grant", {
+    schema: {
+      tags: ["credit"],
+      summary: "向账户发放积分",
+      body: jsonSchema(creditMutationRequestSchema),
+    },
+  }, async (request, reply) => {
     try {
       const input = creditMutationRequestSchema.parse(request.body);
       const result = await service.grantCredits(input);
@@ -46,7 +58,13 @@ export function registerCreditRoutes(app: FastifyInstance, service: CreditServic
     }
   });
 
-  app.post("/credit/spend", async (request, reply) => {
+  app.post("/credit/spend", {
+    schema: {
+      tags: ["credit"],
+      summary: "从账户扣除积分",
+      body: jsonSchema(creditMutationRequestSchema),
+    },
+  }, async (request, reply) => {
     try {
       const input = creditMutationRequestSchema.parse(request.body);
       const result = await service.spendCredits(input);
@@ -56,7 +74,13 @@ export function registerCreditRoutes(app: FastifyInstance, service: CreditServic
     }
   });
 
-  app.post("/credit/hold", async (request, reply) => {
+  app.post("/credit/hold", {
+    schema: {
+      tags: ["credit"],
+      summary: "冻结积分额度",
+      body: jsonSchema(holdCreditRequestSchema),
+    },
+  }, async (request, reply) => {
     try {
       const input = holdCreditRequestSchema.parse(request.body);
       const result = await service.holdCredits(input);
@@ -66,7 +90,13 @@ export function registerCreditRoutes(app: FastifyInstance, service: CreditServic
     }
   });
 
-  app.post("/credit/capture", async (request, reply) => {
+  app.post("/credit/capture", {
+    schema: {
+      tags: ["credit"],
+      summary: "结算冻结额度（实际扣费）",
+      body: jsonSchema(captureCreditRequestSchema),
+    },
+  }, async (request, reply) => {
     try {
       const input = captureCreditRequestSchema.parse(request.body);
       const result = await service.captureHold(input);
@@ -76,7 +106,13 @@ export function registerCreditRoutes(app: FastifyInstance, service: CreditServic
     }
   });
 
-  app.post("/credit/quote", async (request, reply) => {
+  app.post("/credit/quote", {
+    schema: {
+      tags: ["credit"],
+      summary: "按计价规则报价",
+      body: jsonSchema(quoteRequestSchema),
+    },
+  }, async (request, reply) => {
     try {
       const input = quoteRequestSchema.parse(request.body);
       const result = await service.quote(input);
@@ -86,7 +122,13 @@ export function registerCreditRoutes(app: FastifyInstance, service: CreditServic
     }
   });
 
-  app.post("/credit/release", async (request, reply) => {
+  app.post("/credit/release", {
+    schema: {
+      tags: ["credit"],
+      summary: "释放冻结额度",
+      body: jsonSchema(releaseCreditRequestSchema),
+    },
+  }, async (request, reply) => {
     try {
       const input = releaseCreditRequestSchema.parse(request.body);
       const result = await service.releaseHold(input);

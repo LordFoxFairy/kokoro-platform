@@ -1,4 +1,5 @@
 import {
+  jsonSchema,
   readRequestContext,
   registerHealthRoute,
   sendData,
@@ -13,7 +14,16 @@ import { ensureUserRequestSchema } from "./schemas.js";
 export function registerUserRoutes(app: FastifyInstance, service: UserService): void {
   registerHealthRoute(app, "user");
 
-  app.post("/users/ensure", async (request, reply) => {
+  app.post(
+    "/users/ensure",
+    {
+      schema: {
+        tags: ["user"],
+        summary: "确保用户存在并附带个人团队",
+        body: jsonSchema(ensureUserRequestSchema),
+      },
+    },
+    async (request, reply) => {
     const requestId = getRequestId(request.headers["x-request-id"]);
 
     // siteId 是上下文（来自 header），不是业务载荷，不进 body schema。
@@ -37,7 +47,10 @@ export function registerUserRoutes(app: FastifyInstance, service: UserService): 
     }
   });
 
-  app.get("/me/teams", async (request, reply) => {
+  app.get(
+    "/me/teams",
+    { schema: { tags: ["user"], summary: "列出当前用户所属团队" } },
+    async (request, reply) => {
     const requestId = getRequestId(request.headers["x-request-id"]);
     const userId = getSingleHeader(request.headers["x-user-id"]);
 

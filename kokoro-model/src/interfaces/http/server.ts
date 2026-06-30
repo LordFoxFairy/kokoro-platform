@@ -1,3 +1,4 @@
+import { registerOpenApi } from "@kokoro/platform-kit";
 import type { PrismaClient } from "../../../generated/prisma/index.js";
 import Fastify from "fastify";
 import { ModelService } from "../../application/model-service.js";
@@ -15,12 +16,18 @@ export function createModelServer(options: CreateModelServerOptions = {}) {
     logger: false,
   });
 
+  // WHY: swagger 的 onRoute 钩子须先于路由装好，故 registerOpenApi 须在任何路由注册前调用。
+  registerOpenApi(app, { title: "Kokoro Model API", version: "0.1.0" });
+
   const prisma = options.prisma ?? createPrismaClient();
   const repository = new PrismaModelRepository(prisma);
   const service = new ModelService(repository);
 
-  registerModelRoutes(app, service);
-  registerModelAdminRoutes(app, repository);
+  // WHY: 路由须包进异步 plugin，确保在 swagger(void register 入队)之后加载，否则 onRoute 漏采 → /docs/json paths 为空。
+  void app.register(async (instance) => {
+    registerModelRoutes(instance, service);
+    registerModelAdminRoutes(instance, repository);
+  });
 
   app.addHook("onClose", async () => {
     if (!options.prisma) {

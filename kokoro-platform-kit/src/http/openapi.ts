@@ -22,7 +22,40 @@ export function registerOpenApi(
   void app.register(fastifySwaggerUi, { routePrefix: "/docs" });
 }
 
-// 把 Zod schema 转成内联 JSON Schema，供 Fastify 路由 schema.body/response 使用。
+// Fastify 校验用 AJV(draft-07)，与 openApi3 方言有两处冲突，统一在此归一：
+// ① 删 additionalProperties:false —— 否则 AJV 抢先剥离多余字段，削弱各模块 Zod .strict() 这个唯一闸门；
+// ② exclusiveMinimum/Maximum 布尔(draft-4) → 数值(draft-07) —— 否则 AJV 构建校验器时抛错。
+// 结果：schema 仅做宽松校验+文档，真正的 strict 仍由模块 Zod .parse 把关。
+function toAjvSafe(node: unknown): unknown {
+  if (Array.isArray(node)) {
+    return node.map(toAjvSafe);
+  }
+  if (node === null || typeof node !== "object") {
+    return node;
+  }
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+    out[key] = toAjvSafe(value);
+  }
+  if (out.additionalProperties === false) {
+    delete out.additionalProperties;
+  }
+  if (out.exclusiveMinimum === true && typeof out.minimum === "number") {
+    out.exclusiveMinimum = out.minimum;
+    delete out.minimum;
+  } else if (typeof out.exclusiveMinimum === "boolean") {
+    delete out.exclusiveMinimum;
+  }
+  if (out.exclusiveMaximum === true && typeof out.maximum === "number") {
+    out.exclusiveMaximum = out.maximum;
+    delete out.maximum;
+  } else if (typeof out.exclusiveMaximum === "boolean") {
+    delete out.exclusiveMaximum;
+  }
+  return out;
+}
+
+// 把 Zod schema 转成 Fastify(AJV) 安全的内联 JSON Schema，供路由 schema.body 使用。
 export function jsonSchema(schema: ZodType): Record<string, unknown> {
-  return zodToJsonSchema(schema, { $refStrategy: "none", target: "openApi3" }) as Record<string, unknown>;
+  return toAjvSafe(zodToJsonSchema(schema, { $refStrategy: "none", target: "openApi3" })) as Record<string, unknown>;
 }

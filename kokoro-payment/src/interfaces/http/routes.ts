@@ -1,4 +1,5 @@
 import {
+  jsonSchema,
   readRequestContext,
   registerHealthRoute,
   sendData,
@@ -26,7 +27,13 @@ import {
 export function registerPaymentRoutes(app: FastifyInstance, service: PaymentService): void {
   registerHealthRoute(app, "payment");
 
-  app.post("/plans/upsert", async (request, reply) => {
+  app.post("/plans/upsert", {
+    schema: {
+      tags: ["payment"],
+      summary: "创建或更新套餐",
+      body: jsonSchema(upsertPlanRequestSchema),
+    },
+  }, async (request, reply) => {
     try {
       const ctx = readRequestContext(request.headers);
       if (ctx.siteId === null) {
@@ -40,7 +47,13 @@ export function registerPaymentRoutes(app: FastifyInstance, service: PaymentServ
     }
   });
 
-  app.post("/orders", async (request, reply) => {
+  app.post("/orders", {
+    schema: {
+      tags: ["payment"],
+      summary: "创建订单",
+      body: jsonSchema(createOrderRequestSchema),
+    },
+  }, async (request, reply) => {
     try {
       const ctx = readRequestContext(request.headers);
       if (ctx.siteId === null) {
@@ -54,7 +67,13 @@ export function registerPaymentRoutes(app: FastifyInstance, service: PaymentServ
     }
   });
 
-  app.post("/orders/:id/confirm", async (request, reply) => {
+  app.post("/orders/:id/confirm", {
+    schema: {
+      tags: ["payment"],
+      summary: "确认订单（发放积分并标记已付）",
+      params: jsonSchema(confirmOrderParamsSchema),
+    },
+  }, async (request, reply) => {
     try {
       const ctx = readRequestContext(request.headers);
       const { id } = confirmOrderParamsSchema.parse(request.params);
@@ -65,7 +84,13 @@ export function registerPaymentRoutes(app: FastifyInstance, service: PaymentServ
     }
   });
 
-  app.post("/orders/:id/refund", async (request, reply) => {
+  app.post("/orders/:id/refund", {
+    schema: {
+      tags: ["payment"],
+      summary: "退款订单（回滚积分）",
+      params: jsonSchema(refundOrderParamsSchema),
+    },
+  }, async (request, reply) => {
     try {
       const ctx = readRequestContext(request.headers);
       const { id } = refundOrderParamsSchema.parse(request.params);
@@ -76,7 +101,13 @@ export function registerPaymentRoutes(app: FastifyInstance, service: PaymentServ
     }
   });
 
-  app.post("/payment-events/record", async (request, reply) => {
+  app.post("/payment-events/record", {
+    schema: {
+      tags: ["payment"],
+      summary: "记录支付事件（webhook 幂等入库）",
+      body: jsonSchema(recordPaymentEventRequestSchema),
+    },
+  }, async (request, reply) => {
     try {
       const input = recordPaymentEventRequestSchema.parse(request.body);
       const result = await service.recordPaymentEvent(input);

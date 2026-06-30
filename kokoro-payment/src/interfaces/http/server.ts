@@ -1,3 +1,4 @@
+import { registerOpenApi } from "@kokoro/platform-kit";
 import type { PrismaClient } from "../../../generated/prisma/index.js";
 import Fastify from "fastify";
 import { PaymentService } from "../../application/payment-service.js";
@@ -18,6 +19,8 @@ export function createPaymentServer(options: CreatePaymentServerOptions) {
     logger: false,
   });
 
+  registerOpenApi(app, { title: "Kokoro Payment API", version: "0.1.0" });
+
   const prisma = options.prisma ?? createPrismaClient();
   const repository = new PrismaPaymentRepository(prisma);
   const service = new PaymentService(
@@ -26,8 +29,11 @@ export function createPaymentServer(options: CreatePaymentServerOptions) {
     options.reverseCredits,
   );
 
-  registerPaymentRoutes(app, service);
-  registerPaymentAdminRoutes(app, repository, service);
+  // WHY: 路由须在 swagger onRoute 钩子就绪后加载，故包进 register 而非直接挂 app。
+  void app.register(async (instance) => {
+    registerPaymentRoutes(instance, service);
+    registerPaymentAdminRoutes(instance, repository, service);
+  });
 
   app.addHook("onClose", async () => {
     if (!options.prisma) {

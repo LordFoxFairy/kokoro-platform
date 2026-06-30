@@ -1,3 +1,4 @@
+import { registerOpenApi } from "@kokoro/platform-kit";
 import type { PrismaClient } from "@prisma/client";
 import Fastify from "fastify";
 import { UserService } from "../../application/user-service.js";
@@ -15,12 +16,17 @@ export function createUserServer(options: CreateUserServerOptions = {}) {
     logger: false,
   });
 
+  registerOpenApi(app, { title: "Kokoro User API", version: "0.1.0" });
+
   const prisma = options.prisma ?? createPrismaClient();
   const repository = new PrismaUserRepository(prisma);
   const service = new UserService(repository);
 
-  registerUserRoutes(app, service);
-  registerUserAdminRoutes(app, repository, service);
+  // WHY: 路由须包进 register 闭包，确保在异步入队的 swagger 插件之后加载，否则 onRoute 钩子漏采。
+  void app.register(async (instance) => {
+    registerUserRoutes(instance, service);
+    registerUserAdminRoutes(instance, repository, service);
+  });
 
   app.addHook("onClose", async () => {
     if (!options.prisma) {

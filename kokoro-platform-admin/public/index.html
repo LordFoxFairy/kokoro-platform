@@ -114,6 +114,7 @@
 <div class="tabs">
   <div class="tab on" data-tab="desk">工作台</div>
   <div class="tab" id="tabAudit" data-tab="audit">审计流水</div>
+  <div class="tab" data-tab="docs">接口文档</div>
 </div>
 
 <main id="desk">
@@ -137,6 +138,11 @@
       <tbody id="auditRows"><tr><td colspan="6" class="empty">—</td></tr></tbody>
     </table>
   </div>
+</main>
+
+<main id="docs" class="hide">
+  <div class="bar"><span class="muted">各业务模块的 OpenAPI/Swagger 文档（在线模块可点开）。</span></div>
+  <div class="tw"><table><thead><tr><th>模块</th><th>状态</th><th>文档</th></tr></thead><tbody id="docsRows"><tr><td colspan="3" class="empty">—</td></tr></tbody></table></div>
 </main>
 
 <div class="scrim" id="scrim">
@@ -324,13 +330,20 @@ async function submitAction() {
   finally { $("#mSubmit").disabled = false; }
 }
 
+async function loadDocs() {
+  try {
+    const mods = await api("/api/manifests");
+    $("#docsRows").innerHTML = mods.map((m) => `<tr><td>${esc(m.id)}</td><td>${m.online ? '<span class="st ok">online</span>' : '<span class="st error">offline</span>'}</td><td>${m.online ? `<a href="${esc(m.baseUrl)}/docs" target="_blank" rel="noopener">${esc(m.baseUrl)}/docs</a>` : "—"}</td></tr>`).join("") || `<tr><td colspan="3" class="empty">无模块</td></tr>`;
+  } catch (e) { toast("err", "文档", e.message); }
+}
+
 // nav
 document.querySelectorAll(".tab").forEach((t) => t.onclick = () => {
   document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("on", x === t));
   const tab = t.dataset.tab;
-  $("#desk").classList.toggle("hide", tab !== "desk");
-  $("#audit").classList.toggle("hide", tab !== "audit");
+  ["desk", "audit", "docs"].forEach((id) => $("#" + id).classList.toggle("hide", tab !== id));
   if (tab === "audit") loadAudit();
+  if (tab === "docs") loadDocs();
 });
 async function loadMe() {
   try { ME = await api("/api/me"); } catch (e) { ME = null; toast("err", "身份", e.message); }

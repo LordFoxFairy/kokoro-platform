@@ -142,6 +142,17 @@
 
 ---
 
+## Phase 4：并行化剩余路线（子仓独立 → 可并发）
+
+**4a 可并行（Workflow 扇出，每个独立子仓一个 agent）**
+- 各模块 Swagger/OpenAPI：site/user/model/credit/payment 各接 `registerOpenApi`(kit) + 路由 schema + `/docs`；注入测试验 `/docs/json` paths 非空。零耦合。
+- 收尾(主控)：admin 控制台加各模块 `/docs` 链接。
+
+**4b 串行(单仓/跨切面，后续)**
+- role/operator 管理界面(admin 超管专属)；operator 真实登录认证(去 dev 默认)。
+- 审批流 maker-checker(payment/credit + admin)；风控；per-site 配额/flag(site+credit)。
+- SiteModelPolicy(model+site)；真实支付渠道(payment)。
+
 ## 自检（spec 对标）
 
 - 覆盖：siteId 化(user/credit/payment) ✓；用户360 ✓；4 操作 ✓；审计/理由/确认 ✓；站点感知 ✓；跨服务转发 ✓。model SiteModelPolicy/RBAC 完整/仪表盘 → 显式置于 Phase 3。
