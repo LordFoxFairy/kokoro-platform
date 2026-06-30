@@ -27,6 +27,21 @@ export const creditMutationRequestSchema = z
   })
   .strict();
 
+export const grantCreditRequestSchema = z
+  .object({
+    ownerKind: z.enum(["user", "team"]),
+    ownerId: z.string().min(1),
+    amountMicros: amountMicrosSchema,
+    reason: creditReasonSchema,
+  })
+  .strict();
+
+export const auditAccountParamsSchema = z
+  .object({
+    accountId: z.string().min(1),
+  })
+  .strict();
+
 export const holdCreditRequestSchema = z
   .object({
     accountId: z.string().min(1),

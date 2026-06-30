@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  auditAccountParamsSchema,
   creditMutationRequestSchema,
   ensureCreditAccountRequestSchema,
+  grantCreditRequestSchema,
   quoteRequestSchema,
 } from "../../src/interfaces/http/schemas.js";
 
@@ -108,6 +110,54 @@ describe("credit schemas enum + required", () => {
         requestId: "",
       }),
     ).toThrow();
+  });
+});
+
+describe("grantCreditRequestSchema (admin manual grant)", () => {
+  const base = { ownerKind: "user" as const, ownerId: "u1", amountMicros: "1000000", reason: "manual_adjustment" as const };
+
+  it("accepts a valid grant payload", () => {
+    expect(grantCreditRequestSchema.parse(base)).toEqual(base);
+  });
+  it("accepts reason=refund (退积分)", () => {
+    expect(grantCreditRequestSchema.parse({ ...base, reason: "refund" }).reason).toBe("refund");
+  });
+  it("rejects unknown fields", () => {
+    expect(() => grantCreditRequestSchema.parse({ ...base, accountId: "a1" })).toThrow();
+  });
+  it("rejects accountId-style body (must derive account from owner)", () => {
+    expect(() =>
+      grantCreditRequestSchema.parse({ accountId: "a1", amountMicros: "1", reason: "refund" }),
+    ).toThrow();
+  });
+  it.each(["0", "-1", "", "abc", "01", " 5", "1.5"])("rejects invalid amountMicros %j", (amountMicros) => {
+    expect(() => grantCreditRequestSchema.parse({ ...base, amountMicros })).toThrow();
+  });
+  it("rejects empty ownerId", () => {
+    expect(() => grantCreditRequestSchema.parse({ ...base, ownerId: "" })).toThrow();
+  });
+  it("rejects invalid ownerKind", () => {
+    expect(() => grantCreditRequestSchema.parse({ ...base, ownerKind: "org" })).toThrow();
+  });
+  it("rejects invalid reason", () => {
+    expect(() => grantCreditRequestSchema.parse({ ...base, reason: "gift" })).toThrow();
+  });
+  it("rejects missing amountMicros", () => {
+    expect(() =>
+      grantCreditRequestSchema.parse({ ownerKind: "user", ownerId: "u1", reason: "refund" }),
+    ).toThrow();
+  });
+});
+
+describe("auditAccountParamsSchema", () => {
+  it("accepts a non-empty accountId", () => {
+    expect(auditAccountParamsSchema.parse({ accountId: "a1" }).accountId).toBe("a1");
+  });
+  it("rejects empty accountId", () => {
+    expect(() => auditAccountParamsSchema.parse({ accountId: "" })).toThrow();
+  });
+  it("rejects unknown fields", () => {
+    expect(() => auditAccountParamsSchema.parse({ accountId: "a1", extra: 1 })).toThrow();
   });
 });
 

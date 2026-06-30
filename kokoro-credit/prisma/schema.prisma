@@ -10,6 +10,7 @@ generator client {
 
 model CreditAccount {
   id             String              @id @default(cuid())
+  siteId         String
   ownerKind      CreditOwnerKind
   ownerId        String
   status         CreditAccountStatus @default(active)
@@ -22,8 +23,8 @@ model CreditAccount {
   createdAt      DateTime            @default(now())
   updatedAt      DateTime            @updatedAt
 
-  @@unique([ownerKind, ownerId])
-  @@index([status])
+  @@unique([siteId, ownerKind, ownerId])
+  @@index([siteId, status])
   @@map("credit_accounts")
 }
 

@@ -1,11 +1,20 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { PaymentService } from "../../src/application/payment-service.js";
 import { PrismaPaymentRepository } from "../../src/infrastructure/prisma/prisma-payment-repository.js";
-import { cleanPaymentDatabase, createTestPrismaClient, recordingGrant } from "./helpers.js";
+import {
+  cleanPaymentDatabase,
+  createTestPrismaClient,
+  recordingGrant,
+  recordingReverse,
+} from "./helpers.js";
 
 const prisma = createTestPrismaClient();
 const repository = new PrismaPaymentRepository(prisma);
-const service = new PaymentService(repository, recordingGrant().grantPurchaseCredits);
+const service = new PaymentService(
+  repository,
+  recordingGrant().grantPurchaseCredits,
+  recordingReverse().reverseCredits,
+);
 
 describe("PrismaPaymentRepository", () => {
   beforeEach(async () => {
@@ -18,6 +27,7 @@ describe("PrismaPaymentRepository", () => {
 
   it("upserts plans by key", async () => {
     const first = await service.upsertPlan({
+      siteId: "site_1",
       key: "music_pro",
       name: "Music Pro",
       currency: "USD",
@@ -26,6 +36,7 @@ describe("PrismaPaymentRepository", () => {
     });
 
     const second = await service.upsertPlan({
+      siteId: "site_1",
       key: "music_pro",
       name: "Music Pro Updated",
       currency: "USD",
@@ -38,8 +49,34 @@ describe("PrismaPaymentRepository", () => {
     expect(second.amountMinor).toBe("2500");
   });
 
+  it("isolates plans per site: same key under two sites yields two plans", async () => {
+    const siteA = await service.upsertPlan({
+      siteId: "site_a",
+      key: "shared_key",
+      name: "Site A Plan",
+      currency: "USD",
+      amountMinor: "1000",
+      billingInterval: "month",
+    });
+    const siteB = await service.upsertPlan({
+      siteId: "site_b",
+      key: "shared_key",
+      name: "Site B Plan",
+      currency: "USD",
+      amountMinor: "2000",
+      billingInterval: "month",
+    });
+
+    expect(siteB.id).not.toBe(siteA.id);
+    expect(siteA.siteId).toBe("site_a");
+    expect(siteB.siteId).toBe("site_b");
+    expect(siteA.amountMinor).toBe("1000");
+    expect(siteB.amountMinor).toBe("2000");
+  });
+
   it("creates orders idempotently", async () => {
     const plan = await service.upsertPlan({
+      siteId: "site_1",
       key: "creator",
       name: "Creator",
       currency: "USD",
@@ -48,6 +85,7 @@ describe("PrismaPaymentRepository", () => {
     });
 
     const first = await service.createOrder({
+      siteId: "site_1",
       teamId: "team_pay",
       planId: plan.id,
       amountMinor: "2900",
@@ -56,6 +94,7 @@ describe("PrismaPaymentRepository", () => {
     });
 
     const second = await service.createOrder({
+      siteId: "site_1",
       teamId: "team_pay",
       planId: plan.id,
       amountMinor: "2900",
@@ -69,6 +108,7 @@ describe("PrismaPaymentRepository", () => {
 
   it("handles concurrent order creation with the same idempotency key", async () => {
     const plan = await service.upsertPlan({
+      siteId: "site_1",
       key: "creator_concurrent",
       name: "Creator Concurrent",
       currency: "USD",
@@ -78,6 +118,7 @@ describe("PrismaPaymentRepository", () => {
 
     const [first, second] = await Promise.all([
       service.createOrder({
+        siteId: "site_1",
         teamId: "team_pay_concurrent",
         planId: plan.id,
         amountMinor: "3900",
@@ -85,6 +126,7 @@ describe("PrismaPaymentRepository", () => {
         idempotencyKey: "order_concurrent",
       }),
       service.createOrder({
+        siteId: "site_1",
         teamId: "team_pay_concurrent",
         planId: plan.id,
         amountMinor: "3900",

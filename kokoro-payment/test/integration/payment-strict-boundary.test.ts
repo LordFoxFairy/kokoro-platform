@@ -1,9 +1,19 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { createPaymentServer } from "../../src/interfaces/http/server.js";
-import { cleanPaymentDatabase, createTestPrismaClient, recordingGrant } from "./helpers.js";
+import {
+  cleanPaymentDatabase,
+  createTestPrismaClient,
+  recordingGrant,
+  recordingReverse,
+  siteHeaders,
+} from "./helpers.js";
 
 const prisma = createTestPrismaClient();
-const app = createPaymentServer({ prisma, grantPurchaseCredits: recordingGrant().grantPurchaseCredits });
+const app = createPaymentServer({
+  prisma,
+  grantPurchaseCredits: recordingGrant().grantPurchaseCredits,
+  reverseCredits: recordingReverse().reverseCredits,
+});
 
 describe("payment HTTP strict boundary & payload wash", () => {
   beforeEach(async () => {
@@ -19,6 +29,7 @@ describe("payment HTTP strict boundary & payload wash", () => {
     const response = await app.inject({
       method: "POST",
       url: "/plans/upsert",
+      headers: siteHeaders,
       payload: {
         key: "strict_plan",
         name: "Strict Plan",
@@ -35,6 +46,7 @@ describe("payment HTTP strict boundary & payload wash", () => {
     const planResponse = await app.inject({
       method: "POST",
       url: "/plans/upsert",
+      headers: siteHeaders,
       payload: {
         key: "strict_order_plan",
         name: "Strict Order Plan",
@@ -46,6 +58,7 @@ describe("payment HTTP strict boundary & payload wash", () => {
     const response = await app.inject({
       method: "POST",
       url: "/orders",
+      headers: siteHeaders,
       payload: {
         teamId: "team_strict",
         planId: planResponse.json().data.id,

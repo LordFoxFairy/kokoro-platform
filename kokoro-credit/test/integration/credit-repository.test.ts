@@ -19,6 +19,7 @@ describe("PrismaCreditRepository", () => {
 
   it("ensures an account and grants credits idempotently", async () => {
     const account = await service.ensureAccount({
+      siteId: "site-default",
       ownerKind: "team",
       ownerId: "team_1",
     });
@@ -43,6 +44,7 @@ describe("PrismaCreditRepository", () => {
 
   it("handles concurrent grant requests with the same idempotency key", async () => {
     const account = await service.ensureAccount({
+      siteId: "site-default",
       ownerKind: "team",
       ownerId: "team_concurrent_grant",
     });
@@ -74,6 +76,7 @@ describe("PrismaCreditRepository", () => {
 
   it("spends credits and writes a negative ledger entry", async () => {
     const account = await service.ensureAccount({
+      siteId: "site-default",
       ownerKind: "team",
       ownerId: "team_2",
     });
@@ -98,6 +101,7 @@ describe("PrismaCreditRepository", () => {
 
   it("handles concurrent spend requests with the same idempotency key", async () => {
     const account = await service.ensureAccount({
+      siteId: "site-default",
       ownerKind: "team",
       ownerId: "team_concurrent_spend",
     });
@@ -136,6 +140,7 @@ describe("PrismaCreditRepository", () => {
 
   it("rejects spending more than the available balance", async () => {
     const account = await service.ensureAccount({
+      siteId: "site-default",
       ownerKind: "team",
       ownerId: "team_3",
     });
@@ -148,5 +153,57 @@ describe("PrismaCreditRepository", () => {
         reason: "model_call",
       }),
     ).rejects.toBeInstanceOf(InsufficientCreditError);
+  });
+
+  it("isolates accounts by siteId for the same (ownerKind, ownerId)", async () => {
+    const onA = await service.ensureAccount({ siteId: "site-a", ownerKind: "user", ownerId: "shared_owner" });
+    const onB = await service.ensureAccount({ siteId: "site-b", ownerKind: "user", ownerId: "shared_owner" });
+
+    expect(onA.id).not.toBe(onB.id);
+    expect(onA.siteId).toBe("site-a");
+    expect(onB.siteId).toBe("site-b");
+
+    await service.grantCredits({
+      accountId: onA.id,
+      amountMicros: "4000000",
+      idempotencyKey: "site_a_grant",
+      reason: "manual_adjustment",
+    });
+
+    const reloadedA = await repository.getAccountById(onA.id);
+    const reloadedB = await repository.getAccountById(onB.id);
+    expect(reloadedA?.balanceMicros).toBe("4000000");
+    expect(reloadedB?.balanceMicros).toBe("0");
+
+    const sameOwnerAgain = await service.ensureAccount({ siteId: "site-a", ownerKind: "user", ownerId: "shared_owner" });
+    expect(sameOwnerAgain.id).toBe(onA.id);
+  });
+
+  it("keeps hold accounting precise under concurrency within a single site", async () => {
+    const account = await service.ensureAccount({ siteId: "site-conc", ownerKind: "team", ownerId: "team_hold_race" });
+    await service.grantCredits({
+      accountId: account.id,
+      amountMicros: "5000000",
+      idempotencyKey: "hold_race_grant",
+      reason: "subscription",
+    });
+
+    // 6 个并发各冻结 1_000_000，可用额只够 5 个：原子条件更新必须恰好放行 5 个、拒 1 个。
+    const attempts = await Promise.allSettled(
+      Array.from({ length: 6 }, (_, index) =>
+        service.holdCredits({
+          accountId: account.id,
+          amountMicros: "1000000",
+          idempotencyKey: `hold_race_${index}`,
+        }),
+      ),
+    );
+
+    const granted = attempts.filter((a) => a.status === "fulfilled").length;
+    expect(granted).toBe(5);
+
+    const stored = await prisma.creditAccount.findUniqueOrThrow({ where: { id: account.id } });
+    expect(stored.heldMicros.toString()).toBe("5000000");
+    expect(stored.balanceMicros.toString()).toBe("5000000");
   });
 });

@@ -39,7 +39,7 @@ describe("credit admin read API", () => {
 
   it("surfaces seeded rows across the list endpoints", async () => {
     const account = await prisma.creditAccount.create({
-      data: { ownerKind: "team", ownerId: "team_admin", status: "active", balanceMicros: 5_000_000n },
+      data: { siteId: "site-default", ownerKind: "team", ownerId: "team_admin", status: "active", balanceMicros: 5_000_000n },
     });
     await prisma.creditLedgerEntry.create({
       data: {

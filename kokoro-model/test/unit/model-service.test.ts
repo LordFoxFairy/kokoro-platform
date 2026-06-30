@@ -70,6 +70,8 @@ function trackingRepo(captured: Captured): ModelRepository {
     listProviderAccounts: async () => [account],
     listAllModelBindings: async () => [binding],
     listModelLabels: async () => [],
+    setProviderAccountStatus: async () => account,
+    setModelBindingStatus: async () => binding,
   };
 }
 

@@ -2,7 +2,7 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import type { Membership } from "../../domain/membership.js";
 import type { ServiceAccount } from "../../domain/service-account.js";
 import type { Team } from "../../domain/team.js";
-import type { User } from "../../domain/user.js";
+import type { User, UserStatus } from "../../domain/user.js";
 import type {
   EnsureUserInput,
   EnsureUserResult,
@@ -32,6 +32,21 @@ export class PrismaUserRepository implements UserRepository {
     });
   }
 
+  async setUserStatus(userId: string, status: UserStatus): Promise<User | null> {
+    const existing = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!existing) {
+      return null;
+    }
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        status,
+        disabledAt: status === "disabled" ? new Date() : null,
+      },
+    });
+    return mapUser(updated);
+  }
+
   async listTeamsForUser(userId: string): Promise<TeamSummary[]> {
     const memberships = await this.prisma.membership.findMany({
       where: {
@@ -55,16 +70,18 @@ export class PrismaUserRepository implements UserRepository {
     }));
   }
 
-  async listUsers(): Promise<User[]> {
+  async listUsers(siteId?: string): Promise<User[]> {
     const users = await this.prisma.user.findMany({
+      ...(siteId === undefined ? {} : { where: { siteId } }),
       take: ADMIN_LIST_TAKE,
       orderBy: { createdAt: "desc" },
     });
     return users.map(mapUser);
   }
 
-  async listTeams(): Promise<Team[]> {
+  async listTeams(siteId?: string): Promise<Team[]> {
     const teams = await this.prisma.team.findMany({
+      ...(siteId === undefined ? {} : { where: { siteId } }),
       take: ADMIN_LIST_TAKE,
       orderBy: { createdAt: "desc" },
     });
@@ -89,6 +106,7 @@ export class PrismaUserRepository implements UserRepository {
 
   private async upsertUser(tx: TransactionClient, input: EnsureUserInput) {
     const createInput: Prisma.UserCreateInput = {
+      siteId: input.siteId,
       externalUserId: input.externalUserId,
       ...definedString("email", input.email),
       ...definedString("displayName", input.displayName),
@@ -104,19 +122,26 @@ export class PrismaUserRepository implements UserRepository {
 
     return tx.user.upsert({
       where: {
-        externalUserId: input.externalUserId,
+        siteId_externalUserId: {
+          siteId: input.siteId,
+          externalUserId: input.externalUserId,
+        },
       },
       create: createInput,
       update: updateInput,
     });
   }
 
-  private async upsertPersonalTeam(tx: TransactionClient, user: { id: string; displayName: string | null }) {
+  private async upsertPersonalTeam(
+    tx: TransactionClient,
+    user: { id: string; siteId: string; displayName: string | null },
+  ) {
     return tx.team.upsert({
       where: {
         personalOwnerUserId: user.id,
       },
       create: {
+        siteId: user.siteId,
         name: user.displayName ? `${user.displayName}'s Personal Team` : "Personal Team",
         type: "personal",
         ownerUserId: user.id,
@@ -167,21 +192,25 @@ function definedString<Key extends "email" | "displayName" | "avatarUrl">(
 
 function mapUser(user: {
   id: string;
+  siteId: string;
   externalUserId: string;
   email: string | null;
   displayName: string | null;
   avatarUrl: string | null;
   status: "active" | "disabled";
+  disabledAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }): User {
   return {
     id: user.id,
+    siteId: user.siteId,
     externalUserId: user.externalUserId,
     email: user.email,
     displayName: user.displayName,
     avatarUrl: user.avatarUrl,
     status: user.status,
+    disabledAt: user.disabledAt,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
   };
@@ -189,6 +218,7 @@ function mapUser(user: {
 
 function mapTeam(team: {
   id: string;
+  siteId: string;
   name: string;
   slug: string | null;
   type: "personal" | "team";
@@ -199,6 +229,7 @@ function mapTeam(team: {
 }): Team {
   return {
     id: team.id,
+    siteId: team.siteId,
     name: team.name,
     slug: team.slug,
     type: team.type,

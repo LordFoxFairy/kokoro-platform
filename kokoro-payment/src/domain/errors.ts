@@ -25,3 +25,10 @@ export class PlanNotFoundError extends Error {
     this.name = "PlanNotFoundError";
   }
 }
+
+export class OrderNotRefundableError extends Error {
+  constructor(orderId: string, status: string) {
+    super(`Order ${orderId} is not refundable from status ${status}`);
+    this.name = "OrderNotRefundableError";
+  }
+}

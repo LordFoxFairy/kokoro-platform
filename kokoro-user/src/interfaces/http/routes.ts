@@ -1,4 +1,10 @@
-import { registerHealthRoute, sendData, sendError, sendZodError } from "@kokoro/platform-kit";
+import {
+  readRequestContext,
+  registerHealthRoute,
+  sendData,
+  sendError,
+  sendZodError,
+} from "@kokoro/platform-kit";
 import type { FastifyInstance } from "fastify";
 import { ZodError } from "zod";
 import type { UserService } from "../../application/user-service.js";
@@ -10,9 +16,16 @@ export function registerUserRoutes(app: FastifyInstance, service: UserService): 
   app.post("/users/ensure", async (request, reply) => {
     const requestId = getRequestId(request.headers["x-request-id"]);
 
+    // siteId 是上下文（来自 header），不是业务载荷，不进 body schema。
+    const ctx = readRequestContext(request.headers);
+    if (ctx.siteId === null) {
+      return sendError(reply, 400, "context.site_required", "缺少站点上下文", undefined, requestId);
+    }
+    const siteId = ctx.siteId;
+
     try {
       const input = ensureUserRequestSchema.parse(request.body);
-      const result = await service.ensureUserWithPersonalTeam(input);
+      const result = await service.ensureUserWithPersonalTeam({ ...input, siteId });
       return sendData(reply, result, 200, requestId);
     } catch (error) {
       if (error instanceof ZodError) {

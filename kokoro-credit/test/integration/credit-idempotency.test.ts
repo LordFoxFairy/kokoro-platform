@@ -9,6 +9,7 @@ async function ensureAccount(ownerId: string): Promise<string> {
   const res = await app.inject({
     method: "POST",
     url: "/credit/accounts/ensure",
+    headers: { "x-kokoro-site-id": "site-default" },
     payload: { ownerKind: "team", ownerId },
   });
   return res.json().data.id;

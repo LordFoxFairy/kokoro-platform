@@ -9,12 +9,18 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 const grantInput = {
+  siteId: "site_1",
+  requestId: "req_1",
   ownerKind: "team",
   ownerId: "team_1",
   amountMicros: "1000000",
   idempotencyKey: "order:order_1",
   reason: "subscription",
 } as const;
+
+function headerOf(init: RequestInit | undefined, key: string): string | null {
+  return new Headers(init?.headers).get(key);
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -49,6 +55,12 @@ describe("createCreditGrantClient", () => {
       idempotencyKey: "order:order_1",
       reason: "subscription",
     });
+
+    // WHY: 两次 fetch 都须带站点/请求 id，credit 端据此落到正确站点账户。
+    for (const call of [ensureCall, grantCall]) {
+      expect(headerOf(call[1], "x-kokoro-site-id")).toBe("site_1");
+      expect(headerOf(call[1], "x-kokoro-request-id")).toBe("req_1");
+    }
   });
 
   it("throws when ensure responds non-2xx and never calls grant", async () => {

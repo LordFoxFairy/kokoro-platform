@@ -30,6 +30,19 @@ export const confirmOrderParamsSchema = z
   })
   .strict();
 
+export const refundOrderParamsSchema = z
+  .object({
+    id: z.string().min(1),
+  })
+  .strict();
+
+export const grantPlanRequestSchema = z
+  .object({
+    teamId: z.string().min(1),
+    planId: z.string().min(1),
+  })
+  .strict();
+
 export const recordPaymentEventRequestSchema = z
   .object({
     provider: z.string().min(1),

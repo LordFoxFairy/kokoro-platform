@@ -1,5 +1,11 @@
 import type { Prisma, PrismaClient } from "../../../generated/prisma/index.js";
-import type { ModelBinding, ModelLabel, ProviderAccount } from "../../domain/model.js";
+import type {
+  ModelBinding,
+  ModelBindingStatus,
+  ModelLabel,
+  ProviderAccount,
+  ProviderAccountStatus,
+} from "../../domain/model.js";
 import type {
   EnsureModelBindingInput,
   EnsureProviderAccountInput,
@@ -156,6 +162,40 @@ export class PrismaModelRepository implements ModelRepository {
         updatedAt: label.updatedAt,
       }),
     );
+  }
+
+  async setProviderAccountStatus(
+    id: string,
+    status: ProviderAccountStatus,
+  ): Promise<ProviderAccount | null> {
+    const account = await this.prisma.providerAccount.findUnique({ where: { id } });
+    if (account === null) {
+      return null;
+    }
+
+    const updated = await this.prisma.providerAccount.update({
+      where: { id },
+      data: { status },
+    });
+
+    return mapProviderAccount(updated);
+  }
+
+  async setModelBindingStatus(
+    id: string,
+    status: ModelBindingStatus,
+  ): Promise<ModelBinding | null> {
+    const binding = await this.prisma.modelBinding.findUnique({ where: { id } });
+    if (binding === null) {
+      return null;
+    }
+
+    const updated = await this.prisma.modelBinding.update({
+      where: { id },
+      data: { status },
+    });
+
+    return mapModelBinding(updated);
   }
 }
 

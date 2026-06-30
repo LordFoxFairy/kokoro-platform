@@ -1,4 +1,4 @@
-import { registerHealthRoute, sendData, sendError, sendZodError } from "@kokoro/platform-kit";
+import { readRequestContext, registerHealthRoute, sendData, sendError, sendZodError } from "@kokoro/platform-kit";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { ZodError } from "zod";
 import type { CreditService } from "../../application/credit-service.js";
@@ -24,8 +24,12 @@ export function registerCreditRoutes(app: FastifyInstance, service: CreditServic
 
   app.post("/credit/accounts/ensure", async (request, reply) => {
     try {
+      const ctx = readRequestContext(request.headers);
+      if (ctx.siteId === null) {
+        return sendError(reply, 400, "credit.site_required", "缺少站点上下文", undefined, ctx.requestId);
+      }
       const input = ensureCreditAccountRequestSchema.parse(request.body);
-      const result = await service.ensureAccount(input);
+      const result = await service.ensureAccount({ siteId: ctx.siteId, ...input });
       return sendData(reply, result);
     } catch (error) {
       return handleCreditError(error, reply, "credit.account_ensure_failed");

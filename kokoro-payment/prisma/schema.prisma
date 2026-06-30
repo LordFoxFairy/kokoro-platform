@@ -10,7 +10,8 @@ generator client {
 
 model Plan {
   id              String          @id @default(cuid())
-  key             String          @unique
+  siteId          String
+  key             String
   name            String
   currency        String
   amountMinor     BigInt
@@ -23,12 +24,14 @@ model Plan {
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
 
-  @@index([status])
+  @@unique([siteId, key])
+  @@index([siteId, status])
   @@map("payment_plans")
 }
 
 model Order {
   id             String      @id @default(cuid())
+  siteId         String
   teamId         String
   planId         String
   amountMinor    BigInt
@@ -43,7 +46,7 @@ model Order {
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
 
-  @@index([teamId, status])
+  @@index([siteId, teamId, status])
   @@index([planId])
   @@map("payment_orders")
 }

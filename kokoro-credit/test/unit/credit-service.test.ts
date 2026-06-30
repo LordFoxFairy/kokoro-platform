@@ -10,6 +10,7 @@ import type { CreditRepository, QuoteInput } from "../../src/domain/repository.j
 
 const account: CreditAccount = {
   id: "a1",
+  siteId: "s1",
   ownerKind: "user",
   ownerId: "u1",
   status: "active",
@@ -103,6 +104,22 @@ function trackingRepo(): {
     },
     listPricingRules: async () => {
       calls.push("listPricingRules");
+      return [];
+    },
+    getAccountById: async () => {
+      calls.push("getAccountById");
+      return account;
+    },
+    listLedgerByAccount: async () => {
+      calls.push("listLedgerByAccount");
+      return [];
+    },
+    listHoldsByAccount: async () => {
+      calls.push("listHoldsByAccount");
+      return [];
+    },
+    listUsageByAccount: async () => {
+      calls.push("listUsageByAccount");
       return [];
     },
   };
@@ -208,7 +225,7 @@ describe("CreditService positive-amount guard", () => {
   it("delegates ensureAccount to repository", async () => {
     const { repo, calls } = trackingRepo();
     const service = new CreditService(repo);
-    await service.ensureAccount({ ownerKind: "user", ownerId: "u1" });
+    await service.ensureAccount({ siteId: "s1", ownerKind: "user", ownerId: "u1" });
     expect(calls).toContain("ensureAccount");
   });
 

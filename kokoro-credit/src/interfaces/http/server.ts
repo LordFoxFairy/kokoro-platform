@@ -20,7 +20,7 @@ export function createCreditServer(options: CreateCreditServerOptions = {}) {
   const service = new CreditService(repository);
 
   registerCreditRoutes(app, service);
-  registerCreditAdminRoutes(app, repository);
+  registerCreditAdminRoutes(app, repository, service);
 
   app.addHook("onClose", async () => {
     if (!options.prisma) {

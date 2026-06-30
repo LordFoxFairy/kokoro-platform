@@ -20,7 +20,7 @@ export function createUserServer(options: CreateUserServerOptions = {}) {
   const service = new UserService(repository);
 
   registerUserRoutes(app, service);
-  registerUserAdminRoutes(app, repository);
+  registerUserAdminRoutes(app, repository, service);
 
   app.addHook("onClose", async () => {
     if (!options.prisma) {

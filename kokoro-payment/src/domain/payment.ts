@@ -7,6 +7,7 @@ export type RefundStatus = "pending" | "succeeded" | "failed";
 
 export interface Plan {
   id: string;
+  siteId: string;
   key: string;
   name: string;
   currency: string;
@@ -20,6 +21,7 @@ export interface Plan {
 
 export interface Order {
   id: string;
+  siteId: string;
   teamId: string;
   planId: string;
   amountMinor: string;

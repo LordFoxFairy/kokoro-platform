@@ -10,6 +10,7 @@ import { OrderNotConfirmableError, OrderNotFoundError } from "../../domain/error
 import type { Order, PaymentEvent, Plan, Refund, Subscription } from "../../domain/payment.js";
 import type {
   CreateOrderInput,
+  CreateRefundInput,
   PaymentRepository,
   RecordPaymentEventInput,
   UpsertPlanInput,
@@ -23,9 +24,10 @@ export class PrismaPaymentRepository implements PaymentRepository {
     const creditMicros = parseNonNegativeBigIntString(input.creditMicros ?? "0", "creditMicros");
     const plan = await this.prisma.plan.upsert({
       where: {
-        key: input.key,
+        siteId_key: { siteId: input.siteId, key: input.key },
       },
       create: {
+        siteId: input.siteId,
         key: input.key,
         name: input.name,
         currency: input.currency,
@@ -77,13 +79,43 @@ export class PrismaPaymentRepository implements PaymentRepository {
     return mapOrder(order);
   }
 
-  async listPlans(): Promise<Plan[]> {
-    const plans = await this.prisma.plan.findMany({ take: 100, orderBy: { createdAt: "desc" } });
+  async markOrderRefunded(orderId: string): Promise<number> {
+    // WHY: 条件转移 paid→refunded；count=0 表示已退款/非 paid，调用方据此幂等。
+    const transition = await this.prisma.order.updateMany({
+      where: { id: orderId, status: "paid" },
+      data: { status: "refunded" },
+    });
+    return transition.count;
+  }
+
+  async createRefund(input: CreateRefundInput): Promise<Refund> {
+    const refund = await this.prisma.refund.create({
+      data: {
+        orderId: input.orderId,
+        amountMinor: parsePositiveBigIntString(input.amountMinor, "amountMinor"),
+        currency: input.currency,
+        status: input.status,
+        reason: input.reason ?? null,
+      },
+    });
+    return mapRefund(refund);
+  }
+
+  async listPlans(siteId?: string): Promise<Plan[]> {
+    const plans = await this.prisma.plan.findMany({
+      ...(siteId === undefined ? {} : { where: { siteId } }),
+      take: 100,
+      orderBy: { createdAt: "desc" },
+    });
     return plans.map(mapPlan);
   }
 
-  async listOrders(): Promise<Order[]> {
-    const orders = await this.prisma.order.findMany({ take: 100, orderBy: { createdAt: "desc" } });
+  async listOrders(siteId?: string): Promise<Order[]> {
+    const orders = await this.prisma.order.findMany({
+      ...(siteId === undefined ? {} : { where: { siteId } }),
+      take: 100,
+      orderBy: { createdAt: "desc" },
+    });
     return orders.map(mapOrder);
   }
 
@@ -171,6 +203,7 @@ export class PrismaPaymentRepository implements PaymentRepository {
     try {
       return await this.prisma.order.create({
         data: {
+          siteId: input.siteId,
           teamId: input.teamId,
           planId: input.planId,
           amountMinor: parsePositiveBigIntString(input.amountMinor, "amountMinor"),
@@ -272,6 +305,7 @@ const jsonValueSchema: z.ZodType<Prisma.InputJsonValue> = z.lazy(() => {
 
 function mapPlan(plan: {
   id: string;
+  siteId: string;
   key: string;
   name: string;
   currency: string;
@@ -284,6 +318,7 @@ function mapPlan(plan: {
 }): Plan {
   return {
     id: plan.id,
+    siteId: plan.siteId,
     key: plan.key,
     name: plan.name,
     currency: plan.currency,
@@ -298,6 +333,7 @@ function mapPlan(plan: {
 
 function mapOrder(order: {
   id: string;
+  siteId: string;
   teamId: string;
   planId: string;
   amountMinor: bigint;
@@ -309,6 +345,7 @@ function mapOrder(order: {
 }): Order {
   return {
     id: order.id,
+    siteId: order.siteId,
     teamId: order.teamId,
     planId: order.planId,
     amountMinor: order.amountMinor.toString(),

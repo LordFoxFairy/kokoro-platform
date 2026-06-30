@@ -11,6 +11,7 @@ import type {
 } from "./credit.js";
 
 export interface EnsureCreditAccountInput {
+  siteId: string;
   ownerKind: CreditOwnerKind;
   ownerId: string;
 }
@@ -59,8 +60,12 @@ export interface CreditRepository {
   captureHold(input: CaptureCreditInput): Promise<CreditMutationResult>;
   releaseHold(input: ReleaseCreditInput): Promise<CreditHold>;
   quote(input: QuoteInput): Promise<QuoteResult>;
-  listAccounts(): Promise<CreditAccount[]>;
+  listAccounts(siteId?: string): Promise<CreditAccount[]>;
   listLedgerEntries(): Promise<CreditLedgerEntry[]>;
   listUsageRecords(): Promise<UsageRecord[]>;
   listPricingRules(): Promise<PricingRule[]>;
+  getAccountById(id: string): Promise<CreditAccount | null>;
+  listLedgerByAccount(accountId: string): Promise<CreditLedgerEntry[]>;
+  listHoldsByAccount(accountId: string): Promise<CreditHold[]>;
+  listUsageByAccount(accountId: string): Promise<UsageRecord[]>;
 }

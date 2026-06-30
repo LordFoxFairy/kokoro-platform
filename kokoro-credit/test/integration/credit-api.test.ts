@@ -19,6 +19,7 @@ describe("credit HTTP API", () => {
     const accountResponse = await app.inject({
       method: "POST",
       url: "/credit/accounts/ensure",
+      headers: { "x-kokoro-site-id": "site-default" },
       payload: {
         ownerKind: "team",
         ownerId: "team_api",
@@ -61,6 +62,7 @@ describe("credit HTTP API", () => {
     const accountResponse = await app.inject({
       method: "POST",
       url: "/credit/accounts/ensure",
+      headers: { "x-kokoro-site-id": "site-default" },
       payload: {
         ownerKind: "team",
         ownerId: "team_overdraft",
@@ -86,6 +88,7 @@ describe("credit HTTP API", () => {
     const accountResponse = await app.inject({
       method: "POST",
       url: "/credit/accounts/ensure",
+      headers: { "x-kokoro-site-id": "site-default" },
       payload: { ownerKind: "team", ownerId: "team_hold_api" },
     });
     const accountId = accountResponse.json().data.id;
@@ -130,6 +133,7 @@ describe("credit HTTP API", () => {
     const accountResponse = await app.inject({
       method: "POST",
       url: "/credit/accounts/ensure",
+      headers: { "x-kokoro-site-id": "site-default" },
       payload: { ownerKind: "team", ownerId: "team_hold_overdraft_api" },
     });
 
@@ -162,6 +166,7 @@ describe("credit HTTP API", () => {
     const accountResponse = await app.inject({
       method: "POST",
       url: "/credit/accounts/ensure",
+      headers: { "x-kokoro-site-id": "site-default" },
       payload: { ownerKind: "team", ownerId: "team_capture_exceeds_api" },
     });
     const accountId = accountResponse.json().data.id;

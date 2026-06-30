@@ -7,6 +7,7 @@ export type PricingRuleStatus = "active" | "disabled";
 
 export interface CreditAccount {
   id: string;
+  siteId: string;
   ownerKind: CreditOwnerKind;
   ownerId: string;
   status: CreditAccountStatus;
@@ -66,6 +67,13 @@ export interface PricingRule {
   effectiveUntil: Date | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface AccountAudit {
+  account: CreditAccount;
+  ledgerEntries: CreditLedgerEntry[];
+  holds: CreditHold[];
+  usageRecords: UsageRecord[];
 }
 
 export interface QuoteResult {

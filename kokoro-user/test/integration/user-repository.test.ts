@@ -16,12 +16,15 @@ describe("PrismaUserRepository", () => {
 
   it("creates a user, personal team, and owner membership", async () => {
     const result = await repository.ensureUserWithPersonalTeam({
+      siteId: "site-a",
       externalUserId: "auth0|repo-user",
       email: "repo@example.com",
       displayName: "Repo User",
     });
 
+    expect(result.user.siteId).toBe("site-a");
     expect(result.user.externalUserId).toBe("auth0|repo-user");
+    expect(result.personalTeam.siteId).toBe("site-a");
     expect(result.personalTeam.type).toBe("personal");
     expect(result.personalTeam.ownerUserId).toBe(result.user.id);
     expect(result.membership.role).toBe("owner");
@@ -31,11 +34,13 @@ describe("PrismaUserRepository", () => {
 
   it("is idempotent for the same external user", async () => {
     const first = await repository.ensureUserWithPersonalTeam({
+      siteId: "site-a",
       externalUserId: "auth0|stable-user",
       displayName: "Stable User",
     });
 
     const second = await repository.ensureUserWithPersonalTeam({
+      siteId: "site-a",
       externalUserId: "auth0|stable-user",
       email: "stable@example.com",
       displayName: "Stable User Updated",
@@ -56,6 +61,7 @@ describe("PrismaUserRepository", () => {
 
   it("lists active teams for a user", async () => {
     const result = await repository.ensureUserWithPersonalTeam({
+      siteId: "site-a",
       externalUserId: "auth0|teams-user",
       displayName: "Teams User",
     });
@@ -65,5 +71,30 @@ describe("PrismaUserRepository", () => {
     expect(teams).toHaveLength(1);
     expect(teams[0]?.team.id).toBe(result.personalTeam.id);
     expect(teams[0]?.membership.role).toBe("owner");
+  });
+
+  // 同一 externalUserId 跨两站隔离：复合唯一键保证生成两个独立 User。
+  it("isolates the same external user across sites", async () => {
+    const onA = await repository.ensureUserWithPersonalTeam({
+      siteId: "site-a",
+      externalUserId: "auth0|shared",
+      displayName: "Shared",
+    });
+    const onB = await repository.ensureUserWithPersonalTeam({
+      siteId: "site-b",
+      externalUserId: "auth0|shared",
+      displayName: "Shared",
+    });
+
+    expect(onA.user.id).not.toBe(onB.user.id);
+    expect(onA.user.siteId).toBe("site-a");
+    expect(onB.user.siteId).toBe("site-b");
+
+    const siteAUsers = await repository.listUsers("site-a");
+    expect(siteAUsers).toHaveLength(1);
+    expect(siteAUsers[0]?.id).toBe(onA.user.id);
+
+    const allUsers = await repository.listUsers();
+    expect(allUsers).toHaveLength(2);
   });
 });

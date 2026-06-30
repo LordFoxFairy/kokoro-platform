@@ -39,12 +39,14 @@ export class PrismaCreditRepository implements CreditRepository {
   async ensureAccount(input: EnsureCreditAccountInput): Promise<CreditAccount> {
     const account = await this.prisma.creditAccount.upsert({
       where: {
-        ownerKind_ownerId: {
+        siteId_ownerKind_ownerId: {
+          siteId: input.siteId,
           ownerKind: input.ownerKind,
           ownerId: input.ownerId,
         },
       },
       create: {
+        siteId: input.siteId,
         ownerKind: input.ownerKind,
         ownerId: input.ownerId,
         status: "active",
@@ -358,8 +360,9 @@ export class PrismaCreditRepository implements CreditRepository {
     };
   }
 
-  async listAccounts(): Promise<CreditAccount[]> {
+  async listAccounts(siteId?: string): Promise<CreditAccount[]> {
     const accounts = await this.prisma.creditAccount.findMany({
+      ...(siteId === undefined ? {} : { where: { siteId } }),
       take: 100,
       orderBy: { createdAt: "desc" },
     });
@@ -388,6 +391,38 @@ export class PrismaCreditRepository implements CreditRepository {
       orderBy: { createdAt: "desc" },
     });
     return rules.map(mapPricingRule);
+  }
+
+  async getAccountById(id: string): Promise<CreditAccount | null> {
+    const account = await this.prisma.creditAccount.findUnique({ where: { id } });
+    return account ? mapCreditAccount(account) : null;
+  }
+
+  async listLedgerByAccount(accountId: string): Promise<CreditLedgerEntry[]> {
+    const entries = await this.prisma.creditLedgerEntry.findMany({
+      where: { accountId },
+      take: 200,
+      orderBy: { createdAt: "desc" },
+    });
+    return entries.map(mapLedgerEntry);
+  }
+
+  async listHoldsByAccount(accountId: string): Promise<CreditHold[]> {
+    const holds = await this.prisma.creditHold.findMany({
+      where: { accountId },
+      take: 200,
+      orderBy: { createdAt: "desc" },
+    });
+    return holds.map(mapCreditHold);
+  }
+
+  async listUsageByAccount(accountId: string): Promise<UsageRecord[]> {
+    const records = await this.prisma.usageRecord.findMany({
+      where: { accountId },
+      take: 200,
+      orderBy: { createdAt: "desc" },
+    });
+    return records.map(mapUsageRecord);
   }
 
   private async findPricingRule(
@@ -506,6 +541,7 @@ function defined<Key extends string, Value>(
 
 function mapCreditAccount(account: {
   id: string;
+  siteId: string;
   ownerKind: "user" | "team";
   ownerId: string;
   status: "active" | "disabled";
@@ -516,6 +552,7 @@ function mapCreditAccount(account: {
 }): CreditAccount {
   return {
     id: account.id,
+    siteId: account.siteId,
     ownerKind: account.ownerKind,
     ownerId: account.ownerId,
     status: account.status,

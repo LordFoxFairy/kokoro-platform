@@ -13,7 +13,7 @@ const repository = new PrismaCreditRepository(prisma);
 const service = new CreditService(repository);
 
 async function fundedAccount(ownerId: string, grantMicros: string) {
-  const account = await service.ensureAccount({ ownerKind: "team", ownerId });
+  const account = await service.ensureAccount({ siteId: "site-default", ownerKind: "team", ownerId });
   await service.grantCredits({
     accountId: account.id,
     amountMicros: grantMicros,

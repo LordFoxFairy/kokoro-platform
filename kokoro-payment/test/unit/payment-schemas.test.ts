@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   createOrderRequestSchema,
+  grantPlanRequestSchema,
   recordPaymentEventRequestSchema,
+  refundOrderParamsSchema,
   upsertPlanRequestSchema,
 } from "../../src/interfaces/http/schemas.js";
 
@@ -109,6 +111,35 @@ describe("order required fields", () => {
   it("rejects missing planId", () => {
     const { planId: _planId, ...rest } = validOrder;
     expect(() => createOrderRequestSchema.parse(rest)).toThrow();
+  });
+});
+
+describe("grantPlanRequestSchema (.strict)", () => {
+  const validGrant = { teamId: "team_1", planId: "plan_1" };
+  it("accepts a valid body", () => {
+    expect(grantPlanRequestSchema.parse(validGrant)).toEqual(validGrant);
+  });
+  it("rejects extra keys", () => {
+    expect(() => grantPlanRequestSchema.parse({ ...validGrant, bogus: 1 })).toThrow();
+  });
+  it.each(["teamId", "planId"] as const)("rejects empty %s", (field) => {
+    expect(() => grantPlanRequestSchema.parse({ ...validGrant, [field]: "" })).toThrow();
+  });
+  it.each(["teamId", "planId"] as const)("rejects missing %s", (field) => {
+    const { [field]: _omit, ...rest } = validGrant;
+    expect(() => grantPlanRequestSchema.parse(rest)).toThrow();
+  });
+});
+
+describe("refundOrderParamsSchema (.strict)", () => {
+  it("accepts a valid id", () => {
+    expect(refundOrderParamsSchema.parse({ id: "order_1" }).id).toBe("order_1");
+  });
+  it("rejects empty id", () => {
+    expect(() => refundOrderParamsSchema.parse({ id: "" })).toThrow();
+  });
+  it("rejects extra keys", () => {
+    expect(() => refundOrderParamsSchema.parse({ id: "order_1", bogus: 1 })).toThrow();
   });
 });
 

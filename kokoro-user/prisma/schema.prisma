@@ -9,7 +9,8 @@ generator client {
 
 model User {
   id             String           @id @default(cuid())
-  externalUserId String           @unique
+  siteId         String
+  externalUserId String
   email          String?
   displayName    String?
   avatarUrl      String?
@@ -23,14 +24,16 @@ model User {
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
 
-  @@index([status])
+  @@unique([siteId, externalUserId])
+  @@index([siteId, status])
   @@map("users")
 }
 
 model Team {
   id                  String       @id @default(cuid())
+  siteId              String
   name                String
-  slug                String?      @unique
+  slug                String?
   type                TeamType
   ownerUserId         String
   personalOwnerUserId String?      @unique
@@ -45,8 +48,9 @@ model Team {
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
 
+  @@unique([siteId, slug])
   @@index([ownerUserId])
-  @@index([status])
+  @@index([siteId, status])
   @@map("teams")
 }
 

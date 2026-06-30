@@ -1,10 +1,17 @@
-import { registerHealthRoute, sendData, sendError, sendZodError } from "@kokoro/platform-kit";
+import {
+  readRequestContext,
+  registerHealthRoute,
+  sendData,
+  sendError,
+  sendZodError,
+} from "@kokoro/platform-kit";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { ZodError } from "zod";
 import type { PaymentService } from "../../application/payment-service.js";
 import {
   OrderNotConfirmableError,
   OrderNotFoundError,
+  OrderNotRefundableError,
   PaymentIdempotencyConflictError,
   PlanNotFoundError,
 } from "../../domain/errors.js";
@@ -12,6 +19,7 @@ import {
   confirmOrderParamsSchema,
   createOrderRequestSchema,
   recordPaymentEventRequestSchema,
+  refundOrderParamsSchema,
   upsertPlanRequestSchema,
 } from "./schemas.js";
 
@@ -20,8 +28,12 @@ export function registerPaymentRoutes(app: FastifyInstance, service: PaymentServ
 
   app.post("/plans/upsert", async (request, reply) => {
     try {
-      const input = upsertPlanRequestSchema.parse(request.body);
-      const result = await service.upsertPlan(input);
+      const ctx = readRequestContext(request.headers);
+      if (ctx.siteId === null) {
+        return sendError(reply, 400, "payment.site_required", "缺少站点上下文", undefined, ctx.requestId);
+      }
+      const body = upsertPlanRequestSchema.parse(request.body);
+      const result = await service.upsertPlan({ ...body, siteId: ctx.siteId });
       return sendData(reply, result);
     } catch (error) {
       return handlePaymentError(error, reply, "payment.plan_upsert_failed");
@@ -30,8 +42,12 @@ export function registerPaymentRoutes(app: FastifyInstance, service: PaymentServ
 
   app.post("/orders", async (request, reply) => {
     try {
-      const input = createOrderRequestSchema.parse(request.body);
-      const result = await service.createOrder(input);
+      const ctx = readRequestContext(request.headers);
+      if (ctx.siteId === null) {
+        return sendError(reply, 400, "payment.site_required", "缺少站点上下文", undefined, ctx.requestId);
+      }
+      const body = createOrderRequestSchema.parse(request.body);
+      const result = await service.createOrder({ ...body, siteId: ctx.siteId });
       return sendData(reply, result);
     } catch (error) {
       return handlePaymentError(error, reply, "payment.order_create_failed");
@@ -40,11 +56,23 @@ export function registerPaymentRoutes(app: FastifyInstance, service: PaymentServ
 
   app.post("/orders/:id/confirm", async (request, reply) => {
     try {
+      const ctx = readRequestContext(request.headers);
       const { id } = confirmOrderParamsSchema.parse(request.params);
-      const result = await service.confirmOrder(id);
+      const result = await service.confirmOrder(id, ctx.requestId);
       return sendData(reply, result);
     } catch (error) {
       return handlePaymentError(error, reply, "payment.order_confirm_failed");
+    }
+  });
+
+  app.post("/orders/:id/refund", async (request, reply) => {
+    try {
+      const ctx = readRequestContext(request.headers);
+      const { id } = refundOrderParamsSchema.parse(request.params);
+      const result = await service.refundOrder(id, ctx.requestId);
+      return sendData(reply, result);
+    } catch (error) {
+      return handlePaymentError(error, reply, "payment.order_refund_failed");
     }
   });
 
@@ -59,7 +87,7 @@ export function registerPaymentRoutes(app: FastifyInstance, service: PaymentServ
   });
 }
 
-function handlePaymentError(error: unknown, reply: FastifyReply, fallbackCode: string) {
+export function handlePaymentError(error: unknown, reply: FastifyReply, fallbackCode: string) {
   if (error instanceof ZodError) {
     return sendZodError(reply, error);
   }
@@ -78,6 +106,10 @@ function handlePaymentError(error: unknown, reply: FastifyReply, fallbackCode: s
 
   if (error instanceof OrderNotConfirmableError) {
     return sendError(reply, 409, "payment.order_not_confirmable", "订单当前状态不可确认");
+  }
+
+  if (error instanceof OrderNotRefundableError) {
+    return sendError(reply, 409, "payment.order_not_refundable", "订单当前状态不可退款");
   }
 
   return sendError(reply, 500, fallbackCode, "支付操作失败");

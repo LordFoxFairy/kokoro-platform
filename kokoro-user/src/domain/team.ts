@@ -3,6 +3,7 @@ export type TeamStatus = "active" | "disabled";
 
 export interface Team {
   id: string;
+  siteId: string;
   name: string;
   slug?: string | null;
   type: TeamType;

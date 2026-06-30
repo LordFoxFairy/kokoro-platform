@@ -1,14 +1,22 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { createPaymentServer } from "../../src/interfaces/http/server.js";
 import {
+  TEST_SITE_ID,
   cleanPaymentDatabase,
   createTestPrismaClient,
   recordingGrant,
+  recordingReverse,
+  siteHeaders,
 } from "./helpers.js";
 
 const prisma = createTestPrismaClient();
 const grant = recordingGrant();
-const app = createPaymentServer({ prisma, grantPurchaseCredits: grant.grantPurchaseCredits });
+const reverse = recordingReverse();
+const app = createPaymentServer({
+  prisma,
+  grantPurchaseCredits: grant.grantPurchaseCredits,
+  reverseCredits: reverse.reverseCredits,
+});
 
 describe("payment HTTP API", () => {
   beforeEach(async () => {
@@ -25,6 +33,7 @@ describe("payment HTTP API", () => {
     const planResponse = await app.inject({
       method: "POST",
       url: "/plans/upsert",
+      headers: siteHeaders,
       payload: {
         key: "studio_bundle",
         name: "Studio Bundle",
@@ -39,6 +48,7 @@ describe("payment HTTP API", () => {
     const orderResponse = await app.inject({
       method: "POST",
       url: "/orders",
+      headers: siteHeaders,
       payload: {
         teamId: "team_studio",
         planId: planResponse.json().data.id,
@@ -52,10 +62,43 @@ describe("payment HTTP API", () => {
     expect(orderResponse.json().data.status).toBe("pending");
   });
 
+  it("rejects plan upsert without a site header (400 site_required)", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/plans/upsert",
+      payload: {
+        key: "no_site_plan",
+        name: "No Site Plan",
+        currency: "USD",
+        amountMinor: "4900",
+        billingInterval: "month",
+      },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe("payment.site_required");
+  });
+
+  it("rejects order create without a site header (400 site_required)", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/orders",
+      payload: {
+        teamId: "team_no_site",
+        planId: "plan_x",
+        amountMinor: "4900",
+        currency: "USD",
+        idempotencyKey: "no_site_order",
+      },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe("payment.site_required");
+  });
+
   it("rejects order idempotency key reuse with different request data", async () => {
     const planResponse = await app.inject({
       method: "POST",
       url: "/plans/upsert",
+      headers: siteHeaders,
       payload: {
         key: "studio_conflict",
         name: "Studio Conflict",
@@ -69,6 +112,7 @@ describe("payment HTTP API", () => {
     await app.inject({
       method: "POST",
       url: "/orders",
+      headers: siteHeaders,
       payload: {
         teamId: "team_conflict",
         planId,
@@ -81,6 +125,7 @@ describe("payment HTTP API", () => {
     const conflictResponse = await app.inject({
       method: "POST",
       url: "/orders",
+      headers: siteHeaders,
       payload: {
         teamId: "team_conflict",
         planId,
@@ -152,6 +197,7 @@ describe("payment HTTP API", () => {
     const planResponse = await app.inject({
       method: "POST",
       url: "/plans/upsert",
+      headers: siteHeaders,
       payload: {
         key: opts.planKey,
         name: opts.planKey,
@@ -164,6 +210,7 @@ describe("payment HTTP API", () => {
     const orderResponse = await app.inject({
       method: "POST",
       url: "/orders",
+      headers: siteHeaders,
       payload: {
         teamId: opts.teamId,
         planId: planResponse.json().data.id,
@@ -183,12 +230,19 @@ describe("payment HTTP API", () => {
       idempotencyKey: "confirm_grant_order",
     });
 
-    const response = await app.inject({ method: "POST", url: `/orders/${orderId}/confirm` });
+    const response = await app.inject({
+      method: "POST",
+      url: `/orders/${orderId}/confirm`,
+      headers: { "x-kokoro-request-id": "req_confirm" },
+    });
 
     expect(response.statusCode).toBe(200);
     expect(response.json().data.status).toBe("paid");
+    // WHY: grant 须带 order.siteId 与请求 id，credit 端据此落到正确站点账户。
     expect(grant.grants).toEqual([
       {
+        siteId: TEST_SITE_ID,
+        requestId: "req_confirm",
         ownerKind: "team",
         ownerId: "team_confirm",
         amountMicros: "1000000",

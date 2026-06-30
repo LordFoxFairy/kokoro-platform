@@ -5,6 +5,12 @@ import { cleanUserDatabase, createTestPrismaClient } from "./helpers.js";
 const prisma = createTestPrismaClient();
 const app = createUserServer({ prisma });
 
+// 单个共享 app 在所有 describe 跑完后关闭一次，避免第二个 describe 复用已关闭实例。
+afterAll(async () => {
+  await app.close();
+  await prisma.$disconnect();
+});
+
 const listRoutes = [
   "/admin/users",
   "/admin/teams",
@@ -15,11 +21,6 @@ const listRoutes = [
 describe("user admin read-only API", () => {
   beforeEach(async () => {
     await cleanUserDatabase(prisma);
-  });
-
-  afterAll(async () => {
-    await app.close();
-    await prisma.$disconnect();
   });
 
   it("exposes the admin manifest", async () => {
@@ -48,6 +49,7 @@ describe("user admin read-only API", () => {
     await app.inject({
       method: "POST",
       url: "/users/ensure",
+      headers: { "x-kokoro-site-id": "site-a" },
       payload: {
         externalUserId: "auth0|admin-seed",
         email: "admin-seed@example.com",
@@ -73,6 +75,7 @@ describe("user admin read-only API", () => {
     const ensured = await app.inject({
       method: "POST",
       url: "/users/ensure",
+      headers: { "x-kokoro-site-id": "site-a" },
       payload: { externalUserId: "auth0|sa-owner", displayName: "SA Owner" },
     });
     const ownerUserId = ensured.json().data.user.id;
@@ -93,5 +96,95 @@ describe("user admin read-only API", () => {
     expect(response.json().data).toHaveLength(1);
     expect(response.json().data[0].name).toBe("ci-bot");
     expect(response.json().data[0].tokenPrefix).toBe("sk_test");
+  });
+});
+
+describe("user admin disable/enable", () => {
+  beforeEach(async () => {
+    await cleanUserDatabase(prisma);
+  });
+
+  async function seedUser(externalUserId: string): Promise<string> {
+    const ensured = await app.inject({
+      method: "POST",
+      url: "/users/ensure",
+      headers: { "x-kokoro-site-id": "site-a" },
+      payload: { externalUserId, displayName: "Target" },
+    });
+    return ensured.json().data.user.id;
+  }
+
+  it("disable sets status=disabled with a non-null disabledAt", async () => {
+    const userId = await seedUser("auth0|disable-me");
+
+    const response = await app.inject({ method: "POST", url: `/admin/users/${userId}/disable` });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.status).toBe("disabled");
+    expect(response.json().data.disabledAt).not.toBeNull();
+  });
+
+  it("is idempotent: disabling an already-disabled user stays disabled", async () => {
+    const userId = await seedUser("auth0|disable-twice");
+
+    await app.inject({ method: "POST", url: `/admin/users/${userId}/disable` });
+    const second = await app.inject({ method: "POST", url: `/admin/users/${userId}/disable` });
+
+    expect(second.statusCode).toBe(200);
+    expect(second.json().data.status).toBe("disabled");
+    expect(second.json().data.disabledAt).not.toBeNull();
+  });
+
+  it("ensure does not revive a disabled user (companion to the upsert fix)", async () => {
+    const externalUserId = "auth0|no-revive";
+    const userId = await seedUser(externalUserId);
+
+    await app.inject({ method: "POST", url: `/admin/users/${userId}/disable` });
+
+    // 同一 externalUserId 再 ensure，只刷资料，status 必须仍为 disabled。
+    const reEnsured = await app.inject({
+      method: "POST",
+      url: "/users/ensure",
+      headers: { "x-kokoro-site-id": "site-a" },
+      payload: { externalUserId, displayName: "Target Updated" },
+    });
+
+    expect(reEnsured.statusCode).toBe(200);
+    expect(reEnsured.json().data.user.status).toBe("disabled");
+  });
+
+  it("enable restores status=active and clears disabledAt", async () => {
+    const userId = await seedUser("auth0|enable-me");
+
+    await app.inject({ method: "POST", url: `/admin/users/${userId}/disable` });
+    const enabled = await app.inject({ method: "POST", url: `/admin/users/${userId}/enable` });
+
+    expect(enabled.statusCode).toBe(200);
+    expect(enabled.json().data.status).toBe("active");
+    expect(enabled.json().data.disabledAt).toBeNull();
+  });
+
+  it("enable is idempotent on an already-active user", async () => {
+    const userId = await seedUser("auth0|enable-twice");
+
+    const enabled = await app.inject({ method: "POST", url: `/admin/users/${userId}/enable` });
+
+    expect(enabled.statusCode).toBe(200);
+    expect(enabled.json().data.status).toBe("active");
+    expect(enabled.json().data.disabledAt).toBeNull();
+  });
+
+  it("returns 404 when disabling a non-existent user", async () => {
+    const response = await app.inject({ method: "POST", url: "/admin/users/nope/disable" });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json().error.code).toBe("user.not_found");
+  });
+
+  it("returns 404 when enabling a non-existent user", async () => {
+    const response = await app.inject({ method: "POST", url: "/admin/users/nope/enable" });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json().error.code).toBe("user.not_found");
   });
 });

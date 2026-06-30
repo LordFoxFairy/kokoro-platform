@@ -1,6 +1,7 @@
 export * from "./interfaces/admin/manifest.js";
 export * from "./interfaces/admin/schema.js";
 export * from "./application/user-service.js";
+export * from "./domain/errors.js";
 export * from "./domain/membership.js";
 export * from "./domain/team.js";
 export * from "./domain/user.js";

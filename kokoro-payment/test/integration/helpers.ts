@@ -3,6 +3,8 @@ import { createPrismaClient } from "../../src/infrastructure/prisma/prisma-clien
 import type {
   GrantPurchaseCredits,
   GrantPurchaseCreditsInput,
+  ReverseCredits,
+  ReverseCreditsInput,
 } from "../../src/domain/repository.js";
 
 export function recordingGrant(): {
@@ -17,6 +19,22 @@ export function recordingGrant(): {
     },
   };
 }
+
+export function recordingReverse(): {
+  reverseCredits: ReverseCredits;
+  reversals: ReverseCreditsInput[];
+} {
+  const reversals: ReverseCreditsInput[] = [];
+  return {
+    reversals,
+    reverseCredits: async (input) => {
+      reversals.push(input);
+    },
+  };
+}
+
+export const TEST_SITE_ID = "site_test";
+export const siteHeaders: Record<string, string> = { "x-kokoro-site-id": TEST_SITE_ID };
 
 export function createTestPrismaClient(): PrismaClient {
   if (!process.env.DATABASE_URL_PAYMENT) {

@@ -1,4 +1,11 @@
-import type { ModelBinding, ModelLabel, ModelTransportKind, ProviderAccount } from "./model.js";
+import type {
+  ModelBinding,
+  ModelBindingStatus,
+  ModelLabel,
+  ModelTransportKind,
+  ProviderAccount,
+  ProviderAccountStatus,
+} from "./model.js";
 
 export interface EnsureProviderAccountInput {
   provider: string;
@@ -42,4 +49,9 @@ export interface ModelRepository {
   listProviderAccounts(): Promise<ProviderAccount[]>;
   listAllModelBindings(): Promise<ModelBinding[]>;
   listModelLabels(): Promise<ModelLabel[]>;
+  setProviderAccountStatus(
+    id: string,
+    status: ProviderAccountStatus,
+  ): Promise<ProviderAccount | null>;
+  setModelBindingStatus(id: string, status: ModelBindingStatus): Promise<ModelBinding | null>;
 }
