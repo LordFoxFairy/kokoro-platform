@@ -15,5 +15,6 @@ await startHttpServer({
       audit: new PrismaAuditSink(prisma),
       resolveOperator: createOperatorLookup(prisma),
       prisma,
+      approvalGrantThresholdMicros: config.approvalGrantThresholdMicros,
     }),
 });

@@ -54,6 +54,42 @@ model AuditLog {
   @@map("audit_logs")
 }
 
+model ApprovalRequest {
+  id                 String         @id @default(cuid())
+  status             ApprovalStatus @default(pending)
+  moduleId           String
+  resourceId         String
+  actionId           String
+  params             Json?
+  body               Json?
+  siteId             String?
+  reason             String?
+  requiredPermission String
+  executionKey       String
+  requestedById      String
+  requestedByEmail   String
+  decidedById        String?
+  decidedByEmail     String?
+  decisionNote       String?
+  resultStatusCode   Int?
+  error              String?
+  requestedAt        DateTime       @default(now())
+  decidedAt          DateTime?
+  executedAt         DateTime?
+
+  @@index([status, requestedAt])
+  @@index([siteId])
+  @@map("approval_requests")
+}
+
+enum ApprovalStatus {
+  pending
+  approved
+  rejected
+  executed
+  failed
+}
+
 enum OperatorStatus {
   active
   disabled

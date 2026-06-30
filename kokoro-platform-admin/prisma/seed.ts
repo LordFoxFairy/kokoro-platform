@@ -3,9 +3,9 @@ import { createAdminPrisma } from "../src/prisma.js";
 // 运营角色矩阵（做什么）。superadmin 全通；其余按需，含 audit.read 才能看审计。
 const ROLES = [
   { key: "superadmin", name: "Superadmin", permissions: ["*"] },
-  { key: "ops", name: "Operations", permissions: ["credit.*", "payment.*", "user.*", "model.*", "audit.read"] },
-  { key: "finance", name: "Finance", permissions: ["payment.*", "credit.account.read", "credit.grant", "audit.read"] },
-  { key: "support", name: "Support", permissions: ["credit.account.read", "credit.grant", "user.read", "payment.order.read", "audit.read"] },
+  { key: "ops", name: "Operations", permissions: ["credit.*", "payment.*", "user.*", "model.*", "audit.read", "approval.read"] },
+  { key: "finance", name: "Finance", permissions: ["payment.*", "credit.account.read", "credit.grant", "audit.read", "approval.read"] },
+  { key: "support", name: "Support", permissions: ["credit.account.read", "credit.grant", "user.read", "payment.order.read", "audit.read", "approval.read"] },
   { key: "readonly", name: "Read-only", permissions: ["credit.account.read", "payment.order.read", "user.read", "audit.read"] },
 ];
 

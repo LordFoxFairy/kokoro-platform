@@ -19,6 +19,7 @@ function buildDeps(prisma: PrismaClient, operator: Operator | OperatorAuthError)
   return {
     audit: noopAudit,
     prisma,
+    approvalGrantThresholdMicros: 100_000_000n,
     resolveOperator: async () => {
       if (operator instanceof OperatorAuthError) throw operator;
       return operator;

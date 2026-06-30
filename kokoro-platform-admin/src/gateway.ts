@@ -136,14 +136,25 @@ function resolveRoute(template: string, params: Record<string, string>): string 
   });
 }
 
-// 写操作代理（守门人）：校验 action ∈ manifest、RBAC 鉴权、dangerMutation 强制 reason、带 siteId 转发、无论成败/拒绝都落一条审计。
-export async function proxyAction(
+type AuditBase = Omit<AuditEntry, "result" | "statusCode" | "requestId">;
+
+export interface PreparedAction {
+  module: ModuleConfig;
+  method: "POST";
+  route: string;
+  requiredPermission: string;
+  kind: "link" | "mutation" | "dangerMutation";
+  auditBase: AuditBase;
+}
+
+// 守门人前置：校验 action ∈ manifest + RBAC(权限/租户作用域) + dangerMutation 强制 reason；拒绝落审计后抛错。不执行。
+export async function prepareAction(
   modules: ModuleConfig[],
   audit: AuditSink,
   request: ActionRequest,
   requestId: string,
   operator: Operator,
-): Promise<unknown> {
+): Promise<PreparedAction> {
   const module = modules.find((candidate) => candidate.id === request.moduleId);
   if (!module) {
     throw new GatewayError(`unknown module: ${request.moduleId}`, 400);
@@ -164,7 +175,7 @@ export async function proxyAction(
   }
 
   const route = resolveRoute(action.route, request.params ?? {});
-  const auditBase = {
+  const auditBase: AuditBase = {
     actorOperatorId: operator.id,
     actorEmail: operator.email,
     moduleId: request.moduleId,
@@ -189,6 +200,23 @@ export async function proxyAction(
     throw new GatewayError(`reason required for dangerous action: ${request.actionId}`, 400);
   }
 
+  return {
+    module,
+    method: action.method,
+    route,
+    requiredPermission: action.requiredPermission,
+    kind: action.kind,
+    auditBase,
+  };
+}
+
+// 执行已 prepare 的 action：带 siteId/requestId 转发到模块，无论成败落一条审计。
+export async function executeAction(
+  prepared: PreparedAction,
+  audit: AuditSink,
+  request: ActionRequest,
+  requestId: string,
+): Promise<unknown> {
   const headers: Record<string, string> = { "content-type": "application/json", "x-kokoro-request-id": requestId };
   if (request.siteId !== undefined) {
     headers["x-kokoro-site-id"] = request.siteId;
@@ -196,24 +224,63 @@ export async function proxyAction(
 
   let response: Response;
   try {
-    response = await fetch(joinUrl(module.baseUrl, route), {
-      method: action.method,
+    response = await fetch(joinUrl(prepared.module.baseUrl, prepared.route), {
+      method: prepared.method,
       headers,
       body: JSON.stringify(request.body ?? {}),
     });
   } catch (error) {
-    await audit.record({ ...auditBase, result: "error", statusCode: 0, requestId });
+    await audit.record({ ...prepared.auditBase, result: "error", statusCode: 0, requestId });
     throw new GatewayError(error instanceof Error ? error.message : String(error), 502);
   }
 
   const body: unknown = await response.json().catch(() => null);
-  await audit.record({ ...auditBase, result: response.ok ? "ok" : "error", statusCode: response.status, requestId });
+  await audit.record({ ...prepared.auditBase, result: response.ok ? "ok" : "error", statusCode: response.status, requestId });
   if (!response.ok) {
     throw new GatewayError(`upstream returned HTTP ${response.status}`, 502);
   }
 
   const unwrapped = actionResultSchema.safeParse(body);
   return unwrapped.success ? unwrapped.data.data : body;
+}
+
+// 写操作代理（守门人）：prepare(校验+鉴权) 后立即 execute(转发+审计)。
+export async function proxyAction(
+  modules: ModuleConfig[],
+  audit: AuditSink,
+  request: ActionRequest,
+  requestId: string,
+  operator: Operator,
+): Promise<unknown> {
+  const prepared = await prepareAction(modules, audit, request, requestId, operator);
+  return executeAction(prepared, audit, request, requestId);
+}
+
+// 审批策略：dangerMutation 一律需审批；大额 grant(amountMicros 超阈值)需审批；其余直接执行。
+export function needsApproval(
+  kind: PreparedAction["kind"],
+  request: ActionRequest,
+  grantThresholdMicros: bigint,
+): boolean {
+  if (kind === "dangerMutation") {
+    return true;
+  }
+  if (request.actionId === "grant") {
+    const amount = readAmountMicros(request.body);
+    return amount !== null && amount > grantThresholdMicros;
+  }
+  return false;
+}
+
+function readAmountMicros(body: unknown): bigint | null {
+  if (typeof body !== "object" || body === null) {
+    return null;
+  }
+  const raw = (body as Record<string, unknown>).amountMicros;
+  if (typeof raw !== "string" || !/^\d+$/.test(raw)) {
+    return null;
+  }
+  return BigInt(raw);
 }
 
 // 站点选择器数据源；按 operator 租户作用域过滤（超级权限见全部）。

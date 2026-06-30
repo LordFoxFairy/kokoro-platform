@@ -5,6 +5,8 @@ import { z } from "zod";
 const envSchema = z.object({
   KOKORO_ADMIN_PORT: z.coerce.number().int().min(1).max(65535).default(4290),
   DATABASE_URL_ADMIN: z.string().min(1),
+  // 大额发积分审批阈值(micros)；超过即需二次审批。默认 100 积分。
+  KOKORO_APPROVAL_GRANT_THRESHOLD_MICROS: z.string().regex(/^\d+$/).default("100000000"),
   KOKORO_SITE_BASE_URL: z.string().url().default("http://kokoro-site:4201"),
   KOKORO_USER_BASE_URL: z.string().url().default("http://kokoro-user:4211"),
   KOKORO_MODEL_BASE_URL: z.string().url().default("http://kokoro-model:4221"),
@@ -24,6 +26,7 @@ export interface ModuleConfig {
 export interface AdminConfig {
   adminPort: number;
   adminDbUrl: string;
+  approvalGrantThresholdMicros: bigint;
   modules: ModuleConfig[];
 }
 
@@ -38,5 +41,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AdminConfig {
     { id: "payment", label: "Payments", baseUrl: parsed.KOKORO_PAYMENT_BASE_URL, manifestPath: "/admin/payments/manifest" },
   ];
 
-  return { adminPort: parsed.KOKORO_ADMIN_PORT, adminDbUrl: parsed.DATABASE_URL_ADMIN, modules };
+  return {
+    adminPort: parsed.KOKORO_ADMIN_PORT,
+    adminDbUrl: parsed.DATABASE_URL_ADMIN,
+    approvalGrantThresholdMicros: BigInt(parsed.KOKORO_APPROVAL_GRANT_THRESHOLD_MICROS),
+    modules,
+  };
 }

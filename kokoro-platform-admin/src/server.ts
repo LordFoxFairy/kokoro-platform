@@ -7,16 +7,27 @@ import type { PrismaClient } from "../generated/prisma/index.js";
 import { queryAudit } from "./audit.js";
 import type { ModuleConfig } from "./config.js";
 import {
+  executeAction,
   filterManifestForOperator,
   GatewayError,
   getManifests,
   getSites,
   getUser360,
-  proxyAction,
+  needsApproval,
+  prepareAction,
   proxyResource,
   type ActionRequest,
   type AuditSink,
 } from "./gateway.js";
+import {
+  ApprovalError,
+  approveRequest,
+  createApprovalRequest,
+  listApprovals,
+  rejectRequest,
+  type ApprovalExecutionResult,
+  type ApprovalStatusValue,
+} from "./approval.js";
 import {
   listOperators,
   listRoles,
@@ -43,7 +54,18 @@ export interface AdminServerDeps {
   audit: AuditSink;
   resolveOperator: OperatorLookup;
   prisma: PrismaClient;
+  approvalGrantThresholdMicros: bigint;
 }
+
+const approvalsQuerySchema = z
+  .object({
+    status: z.enum(["pending", "approved", "rejected", "executed", "failed"]).optional(),
+    siteId: z.string().min(1).optional(),
+  })
+  .strict();
+
+const approvalRejectBodySchema = z.object({ note: z.string().min(1).optional() }).strict();
+const approvalParamsSchema = z.object({ id: z.string().min(1) });
 
 const resourceQuerySchema = z.object({
   moduleId: z.string().min(1),
@@ -278,13 +300,101 @@ export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps
       ...(data.reason === undefined ? {} : { reason: data.reason }),
     };
     try {
-      const result = await proxyAction(modules, deps.audit, actionRequest, ctx.requestId, operator);
+      // 先 prepare(解析+鉴权+理由)；据 action 种类/金额判定是否需二次审批。
+      const prepared = await prepareAction(modules, deps.audit, actionRequest, ctx.requestId, operator);
+      if (needsApproval(prepared.kind, actionRequest, deps.approvalGrantThresholdMicros)) {
+        const approval = await createApprovalRequest(deps.prisma, {
+          request: actionRequest,
+          requiredPermission: prepared.requiredPermission,
+          operator,
+        });
+        await deps.audit.record({
+          ...prepared.auditBase,
+          result: "ok",
+          statusCode: 202,
+          requestId: ctx.requestId,
+        });
+        return sendData(reply, { pendingApproval: true, approvalId: approval.id }, 202, ctx.requestId);
+      }
+      const result = await executeAction(prepared, deps.audit, actionRequest, ctx.requestId);
       return sendData(reply, result, 200, ctx.requestId);
     } catch (error) {
       if (error instanceof GatewayError) {
         return sendError(reply, error.statusCode, "gateway.error", error.message, undefined, ctx.requestId);
       }
       return sendError(reply, 502, "gateway.error", error instanceof Error ? error.message : String(error), undefined, ctx.requestId);
+    }
+  });
+
+  app.get("/api/approvals", async (request, reply) => {
+    const operator = await requireOperator(request, reply);
+    if (!operator) return reply;
+    if (!permits(operator.permissions, "approval.read")) {
+      return sendError(reply, 403, "operator.auth", "无权查看审批");
+    }
+    const query = approvalsQuerySchema.safeParse(request.query);
+    if (!query.success) {
+      return sendError(reply, 400, "request.invalid", "无效的查询参数", { issues: query.error.issues });
+    }
+    const filter: { status?: ApprovalStatusValue; siteId?: string } = {
+      ...(query.data.status === undefined ? {} : { status: query.data.status }),
+      ...(query.data.siteId === undefined ? {} : { siteId: query.data.siteId }),
+    };
+    if (filter.siteId !== undefined && !permitsSite(operator.scopeSites, filter.siteId)) {
+      return sendError(reply, 403, "operator.auth", "租户超出作用域");
+    }
+    return sendData(reply, await listApprovals(deps.prisma, operator, filter));
+  });
+
+  app.post("/api/approvals/:id/approve", async (request, reply) => {
+    const operator = await requireOperator(request, reply);
+    if (!operator) return reply;
+    const params = approvalParamsSchema.safeParse(request.params);
+    if (!params.success) {
+      return sendError(reply, 400, "request.invalid", "无效的审批 id", { issues: params.error.issues });
+    }
+    const ctx = readRequestContext(request.headers);
+    // 复核执行：以 checker 身份原样重跑（prepare 会再校验权限/作用域并审计执行）。
+    const execute = async (held: ActionRequest): Promise<ApprovalExecutionResult> => {
+      try {
+        const prepared = await prepareAction(modules, deps.audit, held, ctx.requestId, operator);
+        await executeAction(prepared, deps.audit, held, ctx.requestId);
+        return { statusCode: 200 };
+      } catch (error) {
+        if (error instanceof GatewayError) {
+          return { statusCode: error.statusCode, error: error.message };
+        }
+        return { statusCode: 502, error: error instanceof Error ? error.message : String(error) };
+      }
+    };
+    try {
+      return sendData(reply, await approveRequest(deps.prisma, params.data.id, operator, execute));
+    } catch (error) {
+      if (error instanceof ApprovalError) {
+        return sendError(reply, error.statusCode, "approval.error", error.message);
+      }
+      throw error;
+    }
+  });
+
+  app.post("/api/approvals/:id/reject", async (request, reply) => {
+    const operator = await requireOperator(request, reply);
+    if (!operator) return reply;
+    const params = approvalParamsSchema.safeParse(request.params);
+    if (!params.success) {
+      return sendError(reply, 400, "request.invalid", "无效的审批 id", { issues: params.error.issues });
+    }
+    const body = approvalRejectBodySchema.safeParse(request.body ?? {});
+    if (!body.success) {
+      return sendError(reply, 400, "request.invalid", "无效的驳回理由", { issues: body.error.issues });
+    }
+    try {
+      return sendData(reply, await rejectRequest(deps.prisma, params.data.id, operator, body.data.note));
+    } catch (error) {
+      if (error instanceof ApprovalError) {
+        return sendError(reply, error.statusCode, "approval.error", error.message);
+      }
+      throw error;
     }
   });
 

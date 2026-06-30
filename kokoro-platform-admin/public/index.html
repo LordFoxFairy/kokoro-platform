@@ -113,6 +113,7 @@
 </div>
 <div class="tabs">
   <div class="tab on" data-tab="desk">工作台</div>
+  <div class="tab" id="tabApprovals" data-tab="approvals">审批</div>
   <div class="tab" id="tabAudit" data-tab="audit">审计流水</div>
   <div class="tab" id="tabPerms" data-tab="perms">权限管理</div>
   <div class="tab" data-tab="docs">接口文档</div>
@@ -137,6 +138,19 @@
     <table>
       <thead><tr><th>时间</th><th>操作员</th><th>动作</th><th>目标</th><th>结果</th><th>理由</th></tr></thead>
       <tbody id="auditRows"><tr><td colspan="6" class="empty">—</td></tr></tbody>
+    </table>
+  </div>
+</main>
+
+<main id="approvals" class="hide">
+  <div class="bar">
+    <button class="sec" id="approvalsReload">刷新</button>
+    <span class="muted">待复核的高危/大额操作（不能批自己提交的）。</span>
+  </div>
+  <div class="tw">
+    <table>
+      <thead><tr><th>时间</th><th>申请人</th><th>动作</th><th>目标</th><th>理由</th><th>状态</th><th></th></tr></thead>
+      <tbody id="approvalRows"><tr><td colspan="7" class="empty">—</td></tr></tbody>
     </table>
   </div>
 </main>
@@ -342,8 +356,12 @@ async function submitAction() {
   if (missing) { toast("err", "缺必填", "请填写 * 字段"); return; }
   $("#mSubmit").disabled = true;
   try {
-    await api("/api/action", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(pending.build(v)) });
-    toast("ok", pending.title, "成功 · 已留审计");
+    const res = await api("/api/action", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(pending.build(v)) });
+    if (res && res.pendingApproval) {
+      toast("ok", pending.title, "已提交审批，待复核");
+    } else {
+      toast("ok", pending.title, "成功 · 已留审计");
+    }
     closeModal();
     await lookup();
   } catch (e) { toast("err", pending.title + "失败", e.message); }
@@ -420,11 +438,40 @@ async function loadDocs() {
   } catch (e) { toast("err", "文档", e.message); }
 }
 
+async function loadApprovals() {
+  if (!SITE) { $("#approvalRows").innerHTML = `<tr><td colspan="7" class="empty">先选站点</td></tr>`; return; }
+  try {
+    const rows = await api("/api/approvals?" + new URLSearchParams({ siteId: SITE, status: "pending" }));
+    $("#approvalRows").innerHTML = rows.length
+      ? rows.map((r) => {
+          const mine = ME && r.requestedByEmail === ME.email;
+          const target = esc(r.actionId === "refund" && r.params ? (r.params.id || "") : (r.siteId || ""));
+          const act = mine
+            ? `<span class="muted">本人提交</span>`
+            : `<button class="sm" data-approve="${esc(r.id)}">批准</button> <button class="danger sm" data-reject="${esc(r.id)}">驳回</button>`;
+          return `<tr><td>${fmtTime(r.requestedAt)}</td><td>${esc(r.requestedByEmail)}</td><td>${esc(r.moduleId)}.${esc(r.actionId)}</td><td>${target}</td><td class="muted">${esc(r.reason || "")}</td><td>${stat(r.status)}</td><td>${act}</td></tr>`;
+        }).join("")
+      : `<tr><td colspan="7" class="empty">无待审批</td></tr>`;
+    $("#approvalRows").querySelectorAll("[data-approve]").forEach((b) => b.onclick = () => decideApproval(b.dataset.approve, "approve"));
+    $("#approvalRows").querySelectorAll("[data-reject]").forEach((b) => b.onclick = () => decideApproval(b.dataset.reject, "reject"));
+  } catch (e) { toast("err", "审批", e.message); }
+}
+
+async function decideApproval(id, kind) {
+  try {
+    const body = kind === "reject" ? JSON.stringify({}) : JSON.stringify({});
+    const res = await api("/api/approvals/" + encodeURIComponent(id) + "/" + kind, { method: "POST", headers: { "content-type": "application/json" }, body });
+    toast("ok", kind === "approve" ? "批准" : "驳回", res && res.status ? ("→ " + res.status) : "已处理");
+    await loadApprovals();
+  } catch (e) { toast("err", kind === "approve" ? "批准失败" : "驳回失败", e.message); }
+}
+
 // nav
 document.querySelectorAll(".tab").forEach((t) => t.onclick = () => {
   document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("on", x === t));
   const tab = t.dataset.tab;
-  ["desk", "audit", "perms", "docs"].forEach((id) => $("#" + id).classList.toggle("hide", tab !== id));
+  ["desk", "approvals", "audit", "perms", "docs"].forEach((id) => $("#" + id).classList.toggle("hide", tab !== id));
+  if (tab === "approvals") loadApprovals();
   if (tab === "audit") loadAudit();
   if (tab === "perms") loadPerms();
   if (tab === "docs") loadDocs();
@@ -433,6 +480,7 @@ async function loadMe() {
   try { ME = await api("/api/me"); } catch (e) { ME = null; toast("err", "身份", e.message); }
 }
 function applyVisibility() {
+  $("#tabApprovals").classList.toggle("hide", !can("approval.read"));
   $("#tabAudit").classList.toggle("hide", !can("audit.read"));
   $("#tabPerms").classList.toggle("hide", !can("operator.manage"));
 }
@@ -449,6 +497,7 @@ $("#operator").onchange = async (e) => { OPERATOR = e.target.value; await reload
 $("#lookup").onclick = lookup;
 $("#ownerId").addEventListener("keydown", (e) => { if (e.key === "Enter") lookup(); });
 $("#auditReload").onclick = loadAudit;
+$("#approvalsReload").onclick = loadApprovals;
 $("#permsReload").onclick = loadPerms;
 $("#newOp").onclick = openNewOperator;
 $("#mCancel").onclick = closeModal;
