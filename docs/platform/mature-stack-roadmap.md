@@ -10,20 +10,17 @@ Prisma(ORM/迁移) · Zod(校验) · Fastify(HTTP) · @fastify/swagger + swagger
 
 | 现状(手搓) | 成熟替代(自托管) | 状态 |
 |---|---|---|
-| operator 认证(dev header 占位) | **OIDC + 轻量 IdP(Logto，email 登录)**；网关 **jose + JWKS** 验 token（IdP 无关） | ← 已落地。认证永不手搓 |
-| 运营台 UI(vanilla HTML) | **React-Admin**（自定义页放用户360；数据源对接现有网关 API） | 待办。最大的轮子 |
+| operator 认证 + 运营台 UI | **Next.js + Auth.js**（Auth.js 是库非托管服务,email magic-link 内置,零外部 IdP）；网关 jose 验 Auth.js 签发的 JWT(seam 不变) | 认证与 UI 框架是同一件事,合并做 |
 | RBAC(permits glob + scopeSites) | **Casbin**（node-casbin，RBAC-with-domains 原生多租户；policy-as-code） | 可选。现状能用且测过 |
 
 ## 保留自研（成熟件过重）
 
 审计表(append-only) · 审批 maker-checker(领域逻辑，Temporal 过重) · 跨服务 saga 补偿(领域特定)。
 
-## 认证设计（本轮）
+## 认证设计（定稿：Auth.js，零外部托管）
 
-- **模式** `KOKORO_ADMIN_AUTH_MODE`：`oidc`(生产，验 JWT) | `dev`(本地，沿用 x-kokoro-operator 头)。默认 oidc。
-- **oidc**：请求带 `Authorization: Bearer <JWT>`；网关用 **jose** 拉 IdP 的 JWKS 验签（RS256，自动轮换 key）；校验 `iss`/`aud`；operator email 从可配 claim(默认 `email`)取 → 既有 `resolveOperator` 按 email 查 operator（身份认证归 IdP，授权/角色/租户作用域仍归我们 RBAC，职责清晰）。
-- **IdP 无关**：网关只验 JWKS，换任何 OIDC provider 零代码改动。
-- **email 登录(AI 产品玩法)**：选轻量 IdP **Logto**（Node、自托管、email magic-link/验证码登录开箱即用，比 Keycloak 轻一个量级）；Ory Kratos/Zitadel 亦可。用户邮箱登录拿 JWT → 网关验签。**不要上 Keycloak(JVM 企业级,过重)**。
-- **更轻路径**：UI 迁到框架后可用 **Auth.js** 这类库做 email magic-link，连独立 IdP 服务都省。
-- **dev**：无 IdP 时本地仍可用，x-kokoro-operator 头（仅 dev）。
-- **可控**：IdP 自托管（用户/登录策略在你手里）；网关只验签，不存密码、不发 token。
+- **Auth.js 是库不是服务**：跑在我们自己的 Next.js 运营台里，登录流程/会话/email 发送全在自己代码掌控，**不依赖任何外部 IdP/托管产品**。email magic-link(+可选社交登录)是其成熟内置。
+- **与 UI 框架合并做**：运营台 UI 从 vanilla HTML 迁到 **Next.js**，Auth.js 同时落地——认证与 UI 框架本就是一件事。
+- **网关职责不变(seam 留用)**：Next.js 运营台经 Auth.js 登录拿到会话/JWT；调网关 API 时带上；网关用 **jose** 验签取 operator email → 既有 `resolveOperator` + RBAC(角色/租户作用域)。身份归 Auth.js，授权归我们，职责分离。
+- **dev**：本地仍可 `KOKORO_ADMIN_AUTH_MODE=dev`（x-kokoro-operator 头）跑后端，不必起前端。
+- 当前网关已落地 jose 验签 + dev 模式；接 Auth.js 时只需把「验外部 JWKS」调成「验 Auth.js 签发的 JWT」(同一 jose 路径，小改)。
