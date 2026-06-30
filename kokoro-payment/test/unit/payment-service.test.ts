@@ -81,7 +81,8 @@ interface Fakes {
 interface FakeOverrides {
   order?: Order | null;
   plan?: Plan | null;
-  refundedCount?: number;
+  atomicTransitioned?: boolean;
+  existingRefund?: Refund | null;
   reverseThrows?: boolean;
 }
 
@@ -93,6 +94,7 @@ function makeFakes(overrides: FakeOverrides = {}): Fakes {
   };
   const reversals: ReverseCreditsInput[] = [];
   const reverseCredits: ReverseCredits = async (input) => {
+    calls.push("reverseCredits");
     if (overrides.reverseThrows) {
       throw new Error("insufficient credit");
     }
@@ -123,13 +125,14 @@ function makeFakes(overrides: FakeOverrides = {}): Fakes {
       calls.push("markOrderPaid");
       return { ...order, id: orderId, status: "paid" };
     },
-    markOrderRefunded: async (_orderId: string) => {
-      calls.push("markOrderRefunded");
-      return overrides.refundedCount ?? 1;
+    refundOrderAtomically: async (_orderId: string, _input: CreateRefundInput) => {
+      calls.push("refundOrderAtomically");
+      const transitioned = overrides.atomicTransitioned ?? true;
+      return { transitioned, refund: transitioned ? refund : null };
     },
-    createRefund: async (_input: CreateRefundInput) => {
-      calls.push("createRefund");
-      return refund;
+    findRefundByOrderId: async (_orderId: string) => {
+      calls.push("findRefundByOrderId");
+      return overrides.existingRefund ?? null;
     },
     listPlans: async () => {
       calls.push("listPlans");
@@ -328,7 +331,7 @@ describe("PaymentService grantPlanToTeam", () => {
 });
 
 describe("PaymentService refundOrder", () => {
-  it("marks refunded, reverses credits, then records a succeeded refund", async () => {
+  it("reverses credits first, then atomically marks refunded and records the refund", async () => {
     const fakes = makeFakes({ order: { ...order, status: "paid" } });
     const result = await service(fakes).refundOrder("order_1", "req_1");
     expect(result.order.status).toBe("refunded");
@@ -344,8 +347,9 @@ describe("PaymentService refundOrder", () => {
         reason: "refund",
       },
     ]);
-    expect(fakes.calls.indexOf("markOrderRefunded")).toBeLessThan(
-      fakes.calls.indexOf("createRefund"),
+    // 跨服务补偿(reverse)在同库提交(refundOrderAtomically)之前——保证「标退款」前积分已扣回。
+    expect(fakes.calls.indexOf("reverseCredits")).toBeLessThan(
+      fakes.calls.indexOf("refundOrderAtomically"),
     );
   });
 
@@ -357,39 +361,51 @@ describe("PaymentService refundOrder", () => {
     const result = await service(fakes).refundOrder("order_1", "req_1");
     expect(result.order.status).toBe("refunded");
     expect(fakes.reversals).toEqual([]);
-    expect(fakes.calls).toContain("createRefund");
+    expect(fakes.calls).toContain("refundOrderAtomically");
   });
 
   it("throws OrderNotFoundError when order is missing", async () => {
     const fakes = makeFakes({ order: null });
     await expect(service(fakes).refundOrder("missing", "req_1")).rejects.toBeInstanceOf(OrderNotFoundError);
-    expect(fakes.calls).not.toContain("markOrderRefunded");
+    expect(fakes.calls).not.toContain("refundOrderAtomically");
   });
 
-  it.each(["pending", "canceled", "refunded"] as const)(
-    "throws OrderNotRefundableError for %s order",
+  it.each(["pending", "canceled"] as const)(
+    "throws OrderNotRefundableError for %s order without touching credits",
     async (status) => {
       const fakes = makeFakes({ order: { ...order, status } });
       await expect(service(fakes).refundOrder("order_1", "req_1")).rejects.toBeInstanceOf(
         OrderNotRefundableError,
       );
-      expect(fakes.calls).not.toContain("markOrderRefunded");
+      expect(fakes.calls).not.toContain("reverseCredits");
+      expect(fakes.calls).not.toContain("refundOrderAtomically");
     },
   );
 
-  it("is idempotent: lost the paid→refunded race throws OrderNotRefundableError", async () => {
-    const fakes = makeFakes({ order: { ...order, status: "paid" }, refundedCount: 0 });
-    await expect(service(fakes).refundOrder("order_1", "req_1")).rejects.toBeInstanceOf(
-      OrderNotRefundableError,
-    );
+  it("is idempotent: an already-refunded order returns the existing refund without re-reversing", async () => {
+    const fakes = makeFakes({ order: { ...order, status: "refunded" }, existingRefund: refund });
+    const result = await service(fakes).refundOrder("order_1", "req_1");
+    expect(result.refund.id).toBe("refund_1");
     expect(fakes.reversals).toEqual([]);
-    expect(fakes.calls).not.toContain("createRefund");
+    expect(fakes.calls).not.toContain("refundOrderAtomically");
   });
 
-  it("propagates reverseCredits failure after marking refunded, without recording a refund", async () => {
+  it("on a lost paid→refunded race, returns the existing refund (reverse stays idempotent)", async () => {
+    const fakes = makeFakes({
+      order: { ...order, status: "paid" },
+      atomicTransitioned: false,
+      existingRefund: refund,
+    });
+    const result = await service(fakes).refundOrder("order_1", "req_1");
+    expect(result.refund.id).toBe("refund_1");
+    // reverse 仍在 atomic 之前执行，但同一幂等键保证只扣一次。
+    expect(fakes.reversals).toHaveLength(1);
+  });
+
+  it("propagates reverseCredits failure WITHOUT marking the order refunded (retryable)", async () => {
     const fakes = makeFakes({ order: { ...order, status: "paid" }, reverseThrows: true });
     await expect(service(fakes).refundOrder("order_1", "req_1")).rejects.toThrow("insufficient credit");
-    expect(fakes.calls).toContain("markOrderRefunded");
-    expect(fakes.calls).not.toContain("createRefund");
+    // 关键修复：reverse 失败时 order 未标退款、未建记录，可安全重试，不再卡死在不一致态。
+    expect(fakes.calls).not.toContain("refundOrderAtomically");
   });
 });

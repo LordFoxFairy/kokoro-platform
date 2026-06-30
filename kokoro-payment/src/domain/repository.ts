@@ -42,6 +42,12 @@ export interface CreateRefundInput {
   reason?: string | undefined;
 }
 
+// transitioned=false 表示 order 非 paid（已退款/被并发抢先），此时不建 Refund。
+export interface RefundTransition {
+  transitioned: boolean;
+  refund: Refund | null;
+}
+
 export interface PaymentRepository {
   upsertPlan(input: UpsertPlanInput): Promise<Plan>;
   createOrder(input: CreateOrderInput): Promise<Order>;
@@ -49,8 +55,9 @@ export interface PaymentRepository {
   findOrderById(orderId: string): Promise<Order | null>;
   findPlanById(planId: string): Promise<Plan | null>;
   markOrderPaid(orderId: string): Promise<Order>;
-  markOrderRefunded(orderId: string): Promise<number>;
-  createRefund(input: CreateRefundInput): Promise<Refund>;
+  // 同库原子：标 paid→refunded 与建 Refund 记录在一个事务，杜绝「标了退款却无记录」。
+  refundOrderAtomically(orderId: string, refund: CreateRefundInput): Promise<RefundTransition>;
+  findRefundByOrderId(orderId: string): Promise<Refund | null>;
   listPlans(siteId?: string): Promise<Plan[]>;
   listOrders(siteId?: string): Promise<Order[]>;
   listSubscriptions(): Promise<Subscription[]>;

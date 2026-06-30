@@ -13,6 +13,7 @@ import type {
   CreateRefundInput,
   PaymentRepository,
   RecordPaymentEventInput,
+  RefundTransition,
   UpsertPlanInput,
 } from "../../domain/repository.js";
 
@@ -79,26 +80,36 @@ export class PrismaPaymentRepository implements PaymentRepository {
     return mapOrder(order);
   }
 
-  async markOrderRefunded(orderId: string): Promise<number> {
-    // WHY: 条件转移 paid→refunded；count=0 表示已退款/非 paid，调用方据此幂等。
-    const transition = await this.prisma.order.updateMany({
-      where: { id: orderId, status: "paid" },
-      data: { status: "refunded" },
+  async refundOrderAtomically(orderId: string, input: CreateRefundInput): Promise<RefundTransition> {
+    const amountMinor = parsePositiveBigIntString(input.amountMinor, "amountMinor");
+    // WHY: 条件转移 paid→refunded 与建 Refund 同一事务原子；count=0(已退款/被并发抢先)则不建记录。
+    return this.prisma.$transaction(async (tx) => {
+      const transition = await tx.order.updateMany({
+        where: { id: orderId, status: "paid" },
+        data: { status: "refunded" },
+      });
+      if (transition.count === 0) {
+        return { transitioned: false, refund: null };
+      }
+      const refund = await tx.refund.create({
+        data: {
+          orderId: input.orderId,
+          amountMinor,
+          currency: input.currency,
+          status: input.status,
+          reason: input.reason ?? null,
+        },
+      });
+      return { transitioned: true, refund: mapRefund(refund) };
     });
-    return transition.count;
   }
 
-  async createRefund(input: CreateRefundInput): Promise<Refund> {
-    const refund = await this.prisma.refund.create({
-      data: {
-        orderId: input.orderId,
-        amountMinor: parsePositiveBigIntString(input.amountMinor, "amountMinor"),
-        currency: input.currency,
-        status: input.status,
-        reason: input.reason ?? null,
-      },
+  async findRefundByOrderId(orderId: string): Promise<Refund | null> {
+    const refund = await this.prisma.refund.findFirst({
+      where: { orderId },
+      orderBy: { createdAt: "desc" },
     });
-    return mapRefund(refund);
+    return refund ? mapRefund(refund) : null;
   }
 
   async listPlans(siteId?: string): Promise<Plan[]> {

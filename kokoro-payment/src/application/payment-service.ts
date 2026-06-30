@@ -104,6 +104,14 @@ export class PaymentService {
       throw new OrderNotFoundError(orderId);
     }
 
+    // 幂等：已退款则返回既有 Refund，不重复扣回。
+    if (order.status === "refunded") {
+      const existing = await this.repository.findRefundByOrderId(orderId);
+      if (existing) {
+        return { order, refund: existing };
+      }
+      throw new OrderNotRefundableError(orderId, order.status);
+    }
     if (order.status !== "paid") {
       throw new OrderNotRefundableError(orderId, order.status);
     }
@@ -113,13 +121,8 @@ export class PaymentService {
       throw new PlanNotFoundError(order.planId);
     }
 
-    // WHY: 原子条件转移 paid→refunded；count=0 说明已处理，幂等返回当前态。
-    const transitioned = await this.repository.markOrderRefunded(orderId);
-    if (transitioned === 0) {
-      throw new OrderNotRefundableError(orderId, order.status);
-    }
-
-    // WHY: 先标 refunded 再扣回；扣回失败抛错由管理员可见，order 已 refunded 不重复退。
+    // 1) 先做幂等的跨服务补偿——此刻 order 仍 paid；reverse 失败则 order 不变、可重试，
+    //    绝不出现「已标退款却没扣回积分」的不可自愈状态(跨库无分布式事务，靠顺序+幂等收敛)。
     if (BigInt(plan.creditMicros) > 0n) {
       await this.reverseCredits({
         siteId: order.siteId,
@@ -132,14 +135,23 @@ export class PaymentService {
       });
     }
 
-    const refund = await this.repository.createRefund({
+    // 2) payment 同库原子：标 refunded + 记 Refund(要么都成要么都不成)。
+    const result = await this.repository.refundOrderAtomically(orderId, {
       orderId,
       amountMinor: order.amountMinor,
       currency: order.currency,
       status: "succeeded",
       reason: "refund",
     });
+    if (!result.transitioned || !result.refund) {
+      // 并发败者：order 已被另一并发退款；reverse 幂等保证只扣一次，返回既有 Refund。
+      const existing = await this.repository.findRefundByOrderId(orderId);
+      if (existing) {
+        return { order: { ...order, status: "refunded" }, refund: existing };
+      }
+      throw new OrderNotRefundableError(orderId, "refunded");
+    }
 
-    return { order: { ...order, status: "refunded" }, refund };
+    return { order: { ...order, status: "refunded" }, refund: result.refund };
   }
 }
