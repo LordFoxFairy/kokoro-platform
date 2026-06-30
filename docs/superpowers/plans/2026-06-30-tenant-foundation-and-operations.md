@@ -8,6 +8,14 @@
 
 **技术栈**：Fastify 5 · Zod(.strict) · Prisma+MySQL · Vitest · TS NodeNext ESM · pnpm（**弃用 bun**）。
 
+## 进度（2026-06-30）
+
+- ✅ **Phase 0.1**：platform-kit `RequestContext`（principal 四类、`requireSite`、`contextHeaders` 透传）— 9 测试，已提交。
+- ✅ **Phase 1**：user/credit/payment siteId 化（schema + 3 迁移 + 全链路 threading + payment→credit 转发）；5 dev 库重置为零漂移干净基线；user 25 / credit 45 / payment 29 / model 15 integration 全绿，已提交。
+  - 实战修：integration 漏 `--no-file-parallelism` 假红；`user-admin`/`payment-admin` 测试共享 app 生命周期 bug。
+- ✅ **Phase 2.1（部分=2a）**：网关 `/api/action` 写代理 + 理由必填 + `AuditSink` seam（manifest action 加可选 `route`/`method`）— 11 测试，已提交。
+- ⬜ **剩余 Phase 2**：① 各模块 manifest 声明 action `route`（让 /api/action 端到端真通；注意 action id↔端点映射，如 refund 在 `/orders/:id/refund` 不在 /admin 下）② DB 持久化 AuditSink + OperatorAccount/Role（替换 ConsoleAuditSink）③ 平台 RBAC 强制 ④ 用户360 聚合端点 + 站点选择器 ⑤ 控制台 UI 升级为工作台（**上一版只读 UI 已被否，重建要走 frontend-design + Playwright 验**）。
+
 ## 全局约束
 
 - 不硬编码 127.0.0.1；用 `KOKORO_*_BASE_URL` 服务名，本地经 env 覆盖。
