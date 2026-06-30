@@ -16,7 +16,7 @@ import {
   type ActionRequest,
   type AuditSink,
 } from "./gateway.js";
-import { OperatorAuthError, type Operator, type OperatorLookup } from "./rbac.js";
+import { listOperators, OperatorAuthError, type Operator, type OperatorLookup } from "./rbac.js";
 
 // 开发期默认运营身份；生产由认证层经 x-kokoro-operator 注入。
 const DEFAULT_OPERATOR = "admin@kokoro.local";
@@ -78,6 +78,8 @@ export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps
   });
 
   app.get("/api/manifests", async (_request, reply) => sendData(reply, await getManifests(modules)));
+
+  app.get("/api/operators", async (_request, reply) => sendData(reply, await listOperators(deps.prisma)));
 
   app.get("/api/sites", async (_request, reply) => {
     try {

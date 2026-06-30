@@ -36,6 +36,13 @@ const permissionsSchema = z.array(z.string());
 
 export type OperatorLookup = (email: string) => Promise<Operator>;
 
+export function listOperators(prisma: PrismaClient) {
+  return prisma.operatorAccount.findMany({
+    select: { id: true, email: true, displayName: true, roleKey: true, status: true },
+    orderBy: { email: "asc" },
+  });
+}
+
 // DB 边界：role.permissions 是 Json，用 Zod 洗成 string[]。
 export function createOperatorLookup(prisma: PrismaClient): OperatorLookup {
   return async (email) => {
