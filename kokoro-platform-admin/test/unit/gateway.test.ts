@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModuleConfig } from "../../src/config.js";
-import { GatewayError, getManifests, proxyResource } from "../../src/gateway.js";
+import {
+  GatewayError,
+  getManifests,
+  proxyAction,
+  proxyResource,
+  type AuditEntry,
+  type AuditSink,
+} from "../../src/gateway.js";
 
 const modules: ModuleConfig[] = [
   { id: "credit", label: "Credits", baseUrl: "http://127.0.0.1:4231", manifestPath: "/admin/credits/manifest" },
@@ -108,5 +115,93 @@ describe("proxyResource", () => {
     await expect(proxyResource(modules, "credit", "/admin/credits/accounts")).rejects.toMatchObject({
       statusCode: 502,
     });
+  });
+});
+
+const userActionManifest = {
+  id: "kokoro-user",
+  labelKey: "admin.modules.user",
+  basePath: "/admin/users",
+  requiredPermission: "user.admin",
+  navItems: [],
+  resources: [
+    {
+      id: "users",
+      labelKey: "admin.user.resources.users",
+      route: "/admin/users",
+      requiredPermission: "user.read",
+      actions: [
+        {
+          id: "disable",
+          labelKey: "admin.user.actions.disable",
+          kind: "dangerMutation",
+          requiredPermission: "user.disable",
+          route: "/admin/users/:id/disable",
+          method: "POST",
+        },
+      ],
+    },
+  ],
+};
+
+class RecordingSink implements AuditSink {
+  readonly entries: AuditEntry[] = [];
+  async record(entry: AuditEntry): Promise<void> {
+    this.entries.push(entry);
+  }
+}
+
+describe("proxyAction", () => {
+  it("proxies a declared action, substitutes :param, forwards siteId, records an ok audit", async () => {
+    const sink = new RecordingSink();
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input).includes("/manifest")) return jsonResponse({ data: userActionManifest });
+      return jsonResponse({ data: { id: "u_1", status: "disabled" } });
+    });
+
+    const result = await proxyAction(
+      modules,
+      sink,
+      { moduleId: "user", resourceId: "users", actionId: "disable", params: { id: "u_1" }, siteId: "site_1", reason: "TOS" },
+      "req_1",
+    );
+
+    expect(result).toEqual({ id: "u_1", status: "disabled" });
+    const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/disable"));
+    expect(String(call?.[0])).toContain("/admin/users/u_1/disable");
+    const init = call?.[1] as RequestInit;
+    expect(init.method).toBe("POST");
+    expect((init.headers as Record<string, string>)["x-kokoro-site-id"]).toBe("site_1");
+    expect(sink.entries).toHaveLength(1);
+    expect(sink.entries[0]).toMatchObject({ result: "ok", statusCode: 200, targetRoute: "/admin/users/u_1/disable" });
+  });
+
+  it("rejects a dangerMutation without a reason and records nothing", async () => {
+    const sink = new RecordingSink();
+    fetchMock.mockResolvedValue(jsonResponse({ data: userActionManifest }));
+    await expect(
+      proxyAction(modules, sink, { moduleId: "user", resourceId: "users", actionId: "disable", params: { id: "u_1" } }, "req"),
+    ).rejects.toMatchObject({ statusCode: 400 });
+    expect(sink.entries).toHaveLength(0);
+  });
+
+  it("rejects an action absent from the manifest (anti open-proxy)", async () => {
+    const sink = new RecordingSink();
+    fetchMock.mockResolvedValue(jsonResponse({ data: userActionManifest }));
+    await expect(
+      proxyAction(modules, sink, { moduleId: "user", resourceId: "users", actionId: "nope", reason: "x" }, "req"),
+    ).rejects.toMatchObject({ statusCode: 403 });
+  });
+
+  it("records an error audit and surfaces 502 when the upstream rejects", async () => {
+    const sink = new RecordingSink();
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input).includes("/manifest")) return jsonResponse({ data: userActionManifest });
+      return jsonResponse({ error: { code: "x" } }, false, 409);
+    });
+    await expect(
+      proxyAction(modules, sink, { moduleId: "user", resourceId: "users", actionId: "disable", params: { id: "u_1" }, reason: "TOS" }, "req"),
+    ).rejects.toMatchObject({ statusCode: 502 });
+    expect(sink.entries[0]).toMatchObject({ result: "error", statusCode: 409 });
   });
 });

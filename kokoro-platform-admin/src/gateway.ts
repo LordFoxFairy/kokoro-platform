@@ -91,3 +91,108 @@ export async function proxyResource(
   const body: unknown = await response.json();
   return resourceEnvelopeSchema.parse(body).data;
 }
+
+export interface ActionRequest {
+  moduleId: string;
+  resourceId: string;
+  actionId: string;
+  params?: Record<string, string>;
+  body?: unknown;
+  siteId?: string;
+  reason?: string;
+}
+
+export interface AuditEntry {
+  moduleId: string;
+  resourceId: string;
+  actionId: string;
+  targetRoute: string;
+  siteId?: string;
+  reason?: string;
+  result: "ok" | "error";
+  statusCode: number;
+  requestId: string;
+}
+
+export interface AuditSink {
+  record(entry: AuditEntry): Promise<void>;
+}
+
+const actionResultSchema = z.object({ data: z.unknown() });
+
+// 安全：route 来自 manifest（受信合约），仅 :param 由客户端填且 encodeURIComponent，杜绝路径穿越/越权代理。
+function resolveRoute(template: string, params: Record<string, string>): string {
+  return template.replace(/:([A-Za-z0-9_]+)/g, (_match, key: string) => {
+    const value = params[key];
+    if (value === undefined) {
+      throw new GatewayError(`missing path param: ${key}`, 400);
+    }
+    return encodeURIComponent(value);
+  });
+}
+
+// 写操作代理：校验 action ∈ manifest、dangerMutation 强制 reason、带 siteId 转发、无论成败都落一条审计。
+export async function proxyAction(
+  modules: ModuleConfig[],
+  audit: AuditSink,
+  request: ActionRequest,
+  requestId: string,
+): Promise<unknown> {
+  const module = modules.find((candidate) => candidate.id === request.moduleId);
+  if (!module) {
+    throw new GatewayError(`unknown module: ${request.moduleId}`, 400);
+  }
+
+  const status = await fetchManifest(module);
+  if (!status.online) {
+    throw new GatewayError(`module offline: ${status.error}`, 502);
+  }
+
+  const resource = status.manifest.resources.find((candidate) => candidate.id === request.resourceId);
+  const action = resource?.actions.find((candidate) => candidate.id === request.actionId);
+  if (!action) {
+    throw new GatewayError(`unknown action: ${request.resourceId}/${request.actionId}`, 403);
+  }
+  if (action.route === undefined) {
+    throw new GatewayError(`action not proxyable (no route declared): ${request.actionId}`, 400);
+  }
+  if (action.kind === "dangerMutation" && (request.reason === undefined || request.reason.trim() === "")) {
+    throw new GatewayError(`reason required for dangerous action: ${request.actionId}`, 400);
+  }
+
+  const route = resolveRoute(action.route, request.params ?? {});
+  const auditBase = {
+    moduleId: request.moduleId,
+    resourceId: request.resourceId,
+    actionId: request.actionId,
+    targetRoute: route,
+    ...(request.siteId === undefined ? {} : { siteId: request.siteId }),
+    ...(request.reason === undefined ? {} : { reason: request.reason }),
+  };
+
+  const headers: Record<string, string> = { "content-type": "application/json", "x-kokoro-request-id": requestId };
+  if (request.siteId !== undefined) {
+    headers["x-kokoro-site-id"] = request.siteId;
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(joinUrl(module.baseUrl, route), {
+      method: action.method,
+      headers,
+      body: JSON.stringify(request.body ?? {}),
+    });
+  } catch (error) {
+    await audit.record({ ...auditBase, result: "error", statusCode: 0, requestId });
+    throw new GatewayError(error instanceof Error ? error.message : String(error), 502);
+  }
+
+  const body: unknown = await response.json().catch(() => null);
+  await audit.record({ ...auditBase, result: response.ok ? "ok" : "error", statusCode: response.status, requestId });
+  if (!response.ok) {
+    throw new GatewayError(`upstream returned HTTP ${response.status}`, 502);
+  }
+
+  const unwrapped = actionResultSchema.safeParse(body);
+  return unwrapped.success ? unwrapped.data.data : body;
+}
