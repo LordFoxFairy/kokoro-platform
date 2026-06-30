@@ -28,6 +28,7 @@ import {
   type ApprovalExecutionResult,
   type ApprovalStatusValue,
 } from "./approval.js";
+import { AuthError, type Authenticator } from "./auth.js";
 import {
   listOperators,
   listRoles,
@@ -41,18 +42,10 @@ import {
   type OperatorLookup,
 } from "./rbac.js";
 
-// 开发期默认运营身份；生产由认证层经 x-kokoro-operator 注入。
-const DEFAULT_OPERATOR = "admin@kokoro.local";
-
-function operatorEmail(request: FastifyRequest): string {
-  const raw = request.headers["x-kokoro-operator"];
-  const value = Array.isArray(raw) ? raw[0] : raw;
-  return value && value.length > 0 ? value : DEFAULT_OPERATOR;
-}
-
 export interface AdminServerDeps {
   audit: AuditSink;
   resolveOperator: OperatorLookup;
+  authenticate: Authenticator;
   prisma: PrismaClient;
   approvalGrantThresholdMicros: bigint;
 }
@@ -138,9 +131,10 @@ export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps
 
   const requireOperator = async (request: FastifyRequest, reply: FastifyReply): Promise<Operator | undefined> => {
     try {
-      return await deps.resolveOperator(operatorEmail(request));
+      const email = await deps.authenticate(request);
+      return await deps.resolveOperator(email);
     } catch (error) {
-      if (error instanceof OperatorAuthError) {
+      if (error instanceof AuthError || error instanceof OperatorAuthError) {
         await sendError(reply, error.statusCode, "operator.auth", error.message);
         return undefined;
       }
@@ -281,9 +275,10 @@ export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps
     const ctx = readRequestContext(request.headers);
     let operator: Operator;
     try {
-      operator = await deps.resolveOperator(operatorEmail(request));
+      const email = await deps.authenticate(request);
+      operator = await deps.resolveOperator(email);
     } catch (error) {
-      if (error instanceof OperatorAuthError) {
+      if (error instanceof AuthError || error instanceof OperatorAuthError) {
         return sendError(reply, error.statusCode, "operator.auth", error.message, undefined, ctx.requestId);
       }
       throw error;

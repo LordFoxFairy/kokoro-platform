@@ -1,5 +1,6 @@
 import { startHttpServer } from "@kokoro/platform-kit";
 import { PrismaAuditSink } from "./audit.js";
+import { createAuthenticator } from "./auth.js";
 import { loadConfig } from "./config.js";
 import { createAdminPrisma } from "./prisma.js";
 import { createOperatorLookup } from "./rbac.js";
@@ -14,6 +15,7 @@ await startHttpServer({
     createAdminServer(config.modules, {
       audit: new PrismaAuditSink(prisma),
       resolveOperator: createOperatorLookup(prisma),
+      authenticate: createAuthenticator(config.auth),
       prisma,
       approvalGrantThresholdMicros: config.approvalGrantThresholdMicros,
     }),

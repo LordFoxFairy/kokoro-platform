@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { AuthConfig } from "./auth.js";
 
 // 不 .strict()：parse process.env 超集，strict 会被 PATH/HOME 等无关变量拒绝。
 // 默认用稳定服务名(docker/k8s 内部 DNS)，本地开发经 env 覆盖；业务代码不写死 localhost。
@@ -7,6 +8,13 @@ const envSchema = z.object({
   DATABASE_URL_ADMIN: z.string().min(1),
   // 大额发积分审批阈值(micros)；超过即需二次审批。默认 100 积分。
   KOKORO_APPROVAL_GRANT_THRESHOLD_MICROS: z.string().regex(/^\d+$/).default("100000000"),
+  // 认证：oidc(生产,验 JWT)/dev(本地,x-kokoro-operator 头)。IdP 自托管 Keycloak。
+  KOKORO_ADMIN_AUTH_MODE: z.enum(["oidc", "dev"]).default("oidc"),
+  KOKORO_ADMIN_OIDC_JWKS_URL: z.string().url().optional(),
+  KOKORO_ADMIN_OIDC_ISSUER: z.string().min(1).optional(),
+  KOKORO_ADMIN_OIDC_AUDIENCE: z.string().min(1).optional(),
+  KOKORO_ADMIN_OIDC_EMAIL_CLAIM: z.string().min(1).default("email"),
+  KOKORO_ADMIN_DEV_OPERATOR: z.string().min(1).default("admin@kokoro.local"),
   KOKORO_SITE_BASE_URL: z.string().url().default("http://kokoro-site:4201"),
   KOKORO_USER_BASE_URL: z.string().url().default("http://kokoro-user:4211"),
   KOKORO_MODEL_BASE_URL: z.string().url().default("http://kokoro-model:4221"),
@@ -27,6 +35,7 @@ export interface AdminConfig {
   adminPort: number;
   adminDbUrl: string;
   approvalGrantThresholdMicros: bigint;
+  auth: AuthConfig;
   modules: ModuleConfig[];
 }
 
@@ -45,6 +54,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AdminConfig {
     adminPort: parsed.KOKORO_ADMIN_PORT,
     adminDbUrl: parsed.DATABASE_URL_ADMIN,
     approvalGrantThresholdMicros: BigInt(parsed.KOKORO_APPROVAL_GRANT_THRESHOLD_MICROS),
+    auth: {
+      mode: parsed.KOKORO_ADMIN_AUTH_MODE,
+      jwksUrl: parsed.KOKORO_ADMIN_OIDC_JWKS_URL,
+      issuer: parsed.KOKORO_ADMIN_OIDC_ISSUER,
+      audience: parsed.KOKORO_ADMIN_OIDC_AUDIENCE,
+      emailClaim: parsed.KOKORO_ADMIN_OIDC_EMAIL_CLAIM,
+      devOperator: parsed.KOKORO_ADMIN_DEV_OPERATOR,
+    },
     modules,
   };
 }
