@@ -17,7 +17,18 @@ import {
   type ActionRequest,
   type AuditSink,
 } from "./gateway.js";
-import { listOperators, OperatorAuthError, permits, permitsSite, type Operator, type OperatorLookup } from "./rbac.js";
+import {
+  listOperators,
+  listRoles,
+  OperatorAuthError,
+  permits,
+  permitsSite,
+  setOperatorStatus,
+  upsertOperator,
+  upsertRole,
+  type Operator,
+  type OperatorLookup,
+} from "./rbac.js";
 
 // 开发期默认运营身份；生产由认证层经 x-kokoro-operator 注入。
 const DEFAULT_OPERATOR = "admin@kokoro.local";
@@ -65,6 +76,31 @@ const auditQuerySchema = z
     limit: z.coerce.number().int().min(1).max(200).default(50),
   })
   .strict();
+
+const roleBodySchema = z
+  .object({
+    key: z.string().min(1),
+    name: z.string().min(1),
+    permissions: z.array(z.string()),
+  })
+  .strict();
+
+const operatorBodySchema = z
+  .object({
+    email: z.string().min(1),
+    displayName: z.string().min(1),
+    roleKey: z.string().min(1),
+    scopeSites: z.array(z.string()),
+  })
+  .strict();
+
+const operatorStatusBodySchema = z
+  .object({
+    status: z.enum(["active", "disabled"]),
+  })
+  .strict();
+
+const operatorParamsSchema = z.object({ id: z.string().min(1) });
 
 const indexHtmlPath = fileURLToPath(new URL("../public/index.html", import.meta.url));
 
@@ -119,6 +155,58 @@ export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps
       return sendError(reply, 403, "operator.auth", "无权查看操作员列表");
     }
     return sendData(reply, await listOperators(deps.prisma));
+  });
+
+  app.get("/api/roles", async (request, reply) => {
+    const operator = await requireOperator(request, reply);
+    if (!operator) return reply;
+    if (!permits(operator.permissions, "operator.manage")) {
+      return sendError(reply, 403, "operator.auth", "无权管理权限");
+    }
+    return sendData(reply, await listRoles(deps.prisma));
+  });
+
+  app.post("/api/roles", async (request, reply) => {
+    const operator = await requireOperator(request, reply);
+    if (!operator) return reply;
+    if (!permits(operator.permissions, "operator.manage")) {
+      return sendError(reply, 403, "operator.auth", "无权管理权限");
+    }
+    const parsed = roleBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return sendError(reply, 400, "request.invalid", "无效的角色定义", { issues: parsed.error.issues });
+    }
+    return sendData(reply, await upsertRole(deps.prisma, parsed.data));
+  });
+
+  app.post("/api/operators", async (request, reply) => {
+    const operator = await requireOperator(request, reply);
+    if (!operator) return reply;
+    if (!permits(operator.permissions, "operator.manage")) {
+      return sendError(reply, 403, "operator.auth", "无权管理操作员");
+    }
+    const parsed = operatorBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return sendError(reply, 400, "request.invalid", "无效的操作员定义", { issues: parsed.error.issues });
+    }
+    return sendData(reply, await upsertOperator(deps.prisma, parsed.data));
+  });
+
+  app.post("/api/operators/:id/status", async (request, reply) => {
+    const operator = await requireOperator(request, reply);
+    if (!operator) return reply;
+    if (!permits(operator.permissions, "operator.manage")) {
+      return sendError(reply, 403, "operator.auth", "无权管理操作员");
+    }
+    const params = operatorParamsSchema.safeParse(request.params);
+    if (!params.success) {
+      return sendError(reply, 400, "request.invalid", "无效的操作员 id", { issues: params.error.issues });
+    }
+    const parsed = operatorStatusBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return sendError(reply, 400, "request.invalid", "无效的状态", { issues: parsed.error.issues });
+    }
+    return sendData(reply, await setOperatorStatus(deps.prisma, params.data.id, parsed.data.status));
   });
 
   app.get("/api/sites", async (request, reply) => {

@@ -1,8 +1,10 @@
-import { registerAdminManifestRoute, sendData, sendError } from "@kokoro/platform-kit";
+import { registerAdminManifestRoute, sendData, sendError, sendZodError } from "@kokoro/platform-kit";
 import type { FastifyInstance, FastifyReply } from "fastify";
+import { ZodError } from "zod";
 import type { ModelBindingStatus, ProviderAccountStatus } from "../../domain/model.js";
 import type { ModelRepository } from "../../domain/repository.js";
 import { modelAdminManifest } from "../admin/manifest.js";
+import { upsertSiteModelPolicyRequestSchema } from "./schemas.js";
 
 interface IdParams {
   id: string;
@@ -22,6 +24,24 @@ export function registerModelAdminRoutes(app: FastifyInstance, repository: Model
   app.get("/admin/models/labels", async (_request, reply) =>
     sendData(reply, await repository.listModelLabels()),
   );
+
+  app.get<{ Querystring: { siteId?: string } }>(
+    "/admin/models/site-policies",
+    async (request, reply) =>
+      sendData(reply, await repository.listSiteModelPolicies(request.query.siteId)),
+  );
+
+  app.post("/admin/models/site-policies", async (request, reply) => {
+    try {
+      const input = upsertSiteModelPolicyRequestSchema.parse(request.body);
+      return sendData(reply, await repository.upsertSiteModelPolicy(input));
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return sendZodError(reply, error);
+      }
+      return sendError(reply, 500, "model.site_policy_upsert_failed", "站点模型策略写入失败");
+    }
+  });
 
   registerProviderAccountStatusRoute(app, repository, "disable", "disabled");
   registerProviderAccountStatusRoute(app, repository, "enable", "active");

@@ -58,5 +58,20 @@ export const modelAdminManifest: AdminModuleManifest = adminModuleManifestSchema
       requiredPermission: "model.label.read",
       actions: [],
     },
+    {
+      id: "site-policies",
+      labelKey: "admin.model.resources.sitePolicies",
+      route: "/admin/models/site-policies",
+      requiredPermission: "model.sitePolicy.read",
+      actions: [
+        {
+          id: "set",
+          labelKey: "admin.model.actions.setSitePolicy",
+          kind: "mutation",
+          requiredPermission: "model.sitePolicy.write",
+          route: "/admin/models/site-policies",
+        },
+      ],
+    },
   ],
 });

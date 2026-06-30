@@ -1,4 +1,11 @@
-import { jsonSchema, registerHealthRoute, sendData, sendError, sendZodError } from "@kokoro/platform-kit";
+import {
+  jsonSchema,
+  readRequestContext,
+  registerHealthRoute,
+  sendData,
+  sendError,
+  sendZodError,
+} from "@kokoro/platform-kit";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { ZodError } from "zod";
 import type { ModelService } from "../../application/model-service.js";
@@ -82,7 +89,9 @@ export function registerModelRoutes(app: FastifyInstance, service: ModelService)
     async (request, reply) => {
       try {
         const query = resolveModelBindingsQuerySchema.parse(request.query);
-        const result = await service.resolveModelBindings(query);
+        // siteId 来自 x-kokoro-site-id header（可空）；缺省时不按站过滤。
+        const siteId = readRequestContext(request.headers).siteId ?? undefined;
+        const result = await service.resolveModelBindings({ ...query, siteId });
         return sendData(reply, result);
       } catch (error) {
         return handleModelError(error, reply, "model.binding_resolve_failed");

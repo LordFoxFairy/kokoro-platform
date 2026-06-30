@@ -13,4 +13,5 @@ export async function cleanModelDatabase(prisma: PrismaClient): Promise<void> {
   await prisma.modelBinding.deleteMany();
   await prisma.modelLabel.deleteMany();
   await prisma.providerAccount.deleteMany();
+  await prisma.siteModelPolicy.deleteMany();
 }

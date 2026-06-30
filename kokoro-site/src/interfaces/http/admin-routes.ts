@@ -12,6 +12,7 @@ export function registerSiteAdminRoutes(app: FastifyInstance, repository: SiteRe
     domains: () => repository.listAdminSiteDomains(),
     apps: () => repository.listAdminSiteApps(),
     policies: () => repository.listAdminSitePolicies(),
+    "feature-flags": () => repository.listAdminSiteFeatureFlags(),
   };
 
   for (const resource of siteAdminManifest.resources) {

@@ -13,6 +13,7 @@ describe("siteAdminManifest", () => {
       "domains",
       "apps",
       "policies",
+      "feature-flags",
     ]);
   });
 

@@ -5,6 +5,7 @@ import type {
   ModelLabel,
   ProviderAccount,
   ProviderAccountStatus,
+  SiteModelPolicy,
 } from "../../domain/model.js";
 import type {
   EnsureModelBindingInput,
@@ -12,6 +13,7 @@ import type {
   ListModelBindingsFilter,
   ModelRepository,
   ResolveModelInput,
+  UpsertSiteModelPolicyInput,
 } from "../../domain/repository.js";
 
 export class PrismaModelRepository implements ModelRepository {
@@ -119,9 +121,23 @@ export class PrismaModelRepository implements ModelRepository {
       orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
     });
 
+    const hiddenLabels = await this.hiddenLabelKeys(input.siteId);
+
     return bindings
       .map(mapModelBinding)
-      .filter((binding) => !input.labelKey || binding.labelKeys.includes(input.labelKey));
+      .filter((binding) => !input.labelKey || binding.labelKeys.includes(input.labelKey))
+      .filter((binding) => !binding.labelKeys.some((key) => hiddenLabels.has(key)));
+  }
+
+  // 缺省 siteId 返回空集合 → resolve 行为同旧（不按站过滤）。
+  private async hiddenLabelKeys(siteId: string | undefined): Promise<Set<string>> {
+    if (siteId === undefined) {
+      return new Set();
+    }
+    const policies = await this.prisma.siteModelPolicy.findMany({
+      where: { siteId, status: "hidden" },
+    });
+    return new Set(policies.map((policy) => policy.labelKey));
   }
 
   async listProviderAccounts(): Promise<ProviderAccount[]> {
@@ -197,6 +213,46 @@ export class PrismaModelRepository implements ModelRepository {
 
     return mapModelBinding(updated);
   }
+
+  async upsertSiteModelPolicy(input: UpsertSiteModelPolicyInput): Promise<SiteModelPolicy> {
+    const policy = await this.prisma.siteModelPolicy.upsert({
+      where: {
+        siteId_labelKey: { siteId: input.siteId, labelKey: input.labelKey },
+      },
+      create: { siteId: input.siteId, labelKey: input.labelKey, status: input.status },
+      update: { status: input.status },
+    });
+
+    return mapSiteModelPolicy(policy);
+  }
+
+  async listSiteModelPolicies(siteId: string | undefined): Promise<SiteModelPolicy[]> {
+    const policies = await this.prisma.siteModelPolicy.findMany({
+      where: siteId === undefined ? {} : { siteId },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    });
+
+    return policies.map(mapSiteModelPolicy);
+  }
+}
+
+function mapSiteModelPolicy(policy: {
+  id: string;
+  siteId: string;
+  labelKey: string;
+  status: "visible" | "hidden";
+  createdAt: Date;
+  updatedAt: Date;
+}): SiteModelPolicy {
+  return {
+    id: policy.id,
+    siteId: policy.siteId,
+    labelKey: policy.labelKey,
+    status: policy.status,
+    createdAt: policy.createdAt,
+    updatedAt: policy.updatedAt,
+  };
 }
 
 function defined<Key extends string, Value>(

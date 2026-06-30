@@ -11,7 +11,14 @@ describe("model admin manifest", () => {
       "provider-accounts",
       "model-bindings",
       "model-labels",
+      "site-policies",
     ]);
+
+    const sitePolicies = parsed.resources.find((resource) => resource.id === "site-policies");
+    expect(sitePolicies?.requiredPermission).toBe("model.sitePolicy.read");
+    expect(sitePolicies?.actions.map((action) => action.id)).toEqual(["set"]);
+    expect(sitePolicies?.actions[0]?.requiredPermission).toBe("model.sitePolicy.write");
+    expect(sitePolicies?.actions[0]?.route).toBe("/admin/models/site-policies");
     expect(modelPlatformModule.admin).toMatchObject({
       mode: "manifest",
       basePath: modelAdminManifest.basePath,

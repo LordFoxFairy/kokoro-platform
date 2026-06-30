@@ -21,6 +21,7 @@ model Site {
   policies       SitePolicy[]
   brandConfigs   SiteBrandConfig[]
   seoConfigs     SiteSeoConfig[]
+  featureFlags   SiteFeatureFlag[]
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
 
@@ -114,6 +115,21 @@ model SiteSeoConfig {
   @@unique([siteId, routePattern])
   @@index([siteId, status])
   @@map("site_seo_configs")
+}
+
+model SiteFeatureFlag {
+  id        String   @id @default(cuid())
+  siteId    String
+  key       String
+  enabled   Boolean  @default(false)
+  metadata  Json?
+  site      Site     @relation(fields: [siteId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([siteId, key])
+  @@index([siteId])
+  @@map("site_feature_flags")
 }
 
 enum SiteStatus {

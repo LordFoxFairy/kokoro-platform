@@ -5,6 +5,8 @@ import type {
   ModelTransportKind,
   ProviderAccount,
   ProviderAccountStatus,
+  SiteModelPolicy,
+  SiteModelPolicyStatus,
 } from "./model.js";
 
 export interface EnsureProviderAccountInput {
@@ -39,6 +41,14 @@ export interface ResolveModelInput {
   featureKey: string;
   labelKey?: string | undefined;
   transportKind?: ModelTransportKind | undefined;
+  // 缺省 = 不按站过滤；提供时排除命中该站 hidden 策略的 binding。
+  siteId?: string | undefined;
+}
+
+export interface UpsertSiteModelPolicyInput {
+  siteId: string;
+  labelKey: string;
+  status: SiteModelPolicyStatus;
 }
 
 export interface ModelRepository {
@@ -54,4 +64,6 @@ export interface ModelRepository {
     status: ProviderAccountStatus,
   ): Promise<ProviderAccount | null>;
   setModelBindingStatus(id: string, status: ModelBindingStatus): Promise<ModelBinding | null>;
+  upsertSiteModelPolicy(input: UpsertSiteModelPolicyInput): Promise<SiteModelPolicy>;
+  listSiteModelPolicies(siteId?: string | undefined): Promise<SiteModelPolicy[]>;
 }

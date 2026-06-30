@@ -114,6 +114,7 @@
 <div class="tabs">
   <div class="tab on" data-tab="desk">工作台</div>
   <div class="tab" id="tabAudit" data-tab="audit">审计流水</div>
+  <div class="tab" id="tabPerms" data-tab="perms">权限管理</div>
   <div class="tab" data-tab="docs">接口文档</div>
 </div>
 
@@ -138,6 +139,24 @@
       <tbody id="auditRows"><tr><td colspan="6" class="empty">—</td></tr></tbody>
     </table>
   </div>
+</main>
+
+<main id="perms" class="hide">
+  <div class="bar">
+    <button class="sec" id="permsReload">刷新</button>
+    <button id="newOp">新建 operator</button>
+    <span class="muted">超管级：管理运营账号与角色权限。</span>
+  </div>
+  <div class="cap"><h2>Operators</h2><span class="n" id="opCount">—</span></div>
+  <div class="tw"><table>
+    <thead><tr><th>email</th><th>角色</th><th>作用域</th><th>状态</th><th></th></tr></thead>
+    <tbody id="opRows"><tr><td colspan="5" class="empty">—</td></tr></tbody>
+  </table></div>
+  <div class="cap" style="margin-top:16px"><h2>Roles</h2><span class="n" id="roleCount">—</span></div>
+  <div class="tw"><table>
+    <thead><tr><th>key</th><th>name</th><th>permissions</th></tr></thead>
+    <tbody id="roleRows"><tr><td colspan="3" class="empty">—</td></tr></tbody>
+  </table></div>
 </main>
 
 <main id="docs" class="hide">
@@ -313,6 +332,7 @@ function closeModal() { scrim.classList.remove("on"); pending = null; $("#mField
 
 async function submitAction() {
   if (!pending) return;
+  if (pending.perms) return submitNewOperator();
   const v = {}; let missing = false;
   $("#mFields").querySelectorAll("[data-f]").forEach((el) => {
     v[el.dataset.f] = typeof el.value === "string" ? el.value.trim() : el.value;
@@ -330,6 +350,69 @@ async function submitAction() {
   finally { $("#mSubmit").disabled = false; }
 }
 
+// perms (超管 CRUD operators/roles)
+let ROLES = [];
+async function loadPerms() {
+  try {
+    const [ops, roles] = await Promise.all([api("/api/operators"), api("/api/roles")]);
+    ROLES = roles;
+    $("#opCount").textContent = ops.length;
+    $("#opRows").innerHTML = ops.length
+      ? ops.map((o) => {
+          const scope = (o.scopeSites || []).join(", ") || "—";
+          const toggle = o.status === "active"
+            ? `<button class="danger sm" data-op-disable="${esc(o.id)}">禁用</button>`
+            : `<button class="sec sm" data-op-enable="${esc(o.id)}">启用</button>`;
+          return `<tr><td>${esc(o.email)}</td><td>${esc(o.roleKey)}</td><td>${esc(scope)}</td><td>${stat(o.status)}</td><td>${toggle}</td></tr>`;
+        }).join("")
+      : `<tr><td colspan="5" class="empty">无 operator</td></tr>`;
+    $("#roleCount").textContent = roles.length;
+    $("#roleRows").innerHTML = roles.length
+      ? roles.map((r) => `<tr><td>${esc(r.key)}</td><td>${esc(r.name)}</td><td>${esc((r.permissions || []).join(" "))}</td></tr>`).join("")
+      : `<tr><td colspan="3" class="empty">无角色</td></tr>`;
+    $("#opRows").querySelectorAll("[data-op-disable]").forEach((b) => b.onclick = () => setOpStatus(b.dataset.opDisable, "disabled"));
+    $("#opRows").querySelectorAll("[data-op-enable]").forEach((b) => b.onclick = () => setOpStatus(b.dataset.opEnable, "active"));
+  } catch (e) { toast("err", "权限管理", e.message); }
+}
+
+async function setOpStatus(id, status) {
+  try {
+    await api("/api/operators/" + encodeURIComponent(id) + "/status", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ status }) });
+    toast("ok", "操作员", status === "active" ? "已启用" : "已禁用");
+    await loadPerms();
+  } catch (e) { toast("err", "状态更新失败", e.message); }
+}
+
+function openNewOperator() {
+  pending = { perms: true, title: "新建 operator" };
+  $("#mTitle").textContent = "新建 operator";
+  $("#mCtx").textContent = "运营账号；scopeSites 用逗号分隔，* 表示跨租户。";
+  $("#mSubmit").className = "";
+  const roleOpts = ROLES.map((r) => `<option value="${esc(r.key)}">${esc(r.name)} · ${esc(r.key)}</option>`).join("");
+  $("#mFields").innerHTML = `
+    <div class="f"><label>email <span class="req">*</span></label><input data-pf="email" type="text" /></div>
+    <div class="f"><label>displayName <span class="req">*</span></label><input data-pf="displayName" type="text" /></div>
+    <div class="f"><label>角色 <span class="req">*</span></label><select data-pf="roleKey">${roleOpts}</select></div>
+    <div class="f"><label>scopeSites（逗号分隔）<span class="req">*</span></label><input data-pf="scopeSites" type="text" placeholder="site-demo, site-x  或  *" /></div>`;
+  scrim.classList.add("on");
+}
+
+async function submitNewOperator() {
+  const v = {};
+  $("#mFields").querySelectorAll("[data-pf]").forEach((el) => { v[el.dataset.pf] = el.value.trim(); });
+  if (!v.email || !v.displayName || !v.roleKey || !v.scopeSites) { toast("err", "缺必填", "请填写 * 字段"); return; }
+  const scopeSites = v.scopeSites.split(",").map((s) => s.trim()).filter(Boolean);
+  if (!scopeSites.length) { toast("err", "缺作用域", "至少一个 site，或填 *"); return; }
+  $("#mSubmit").disabled = true;
+  try {
+    await api("/api/operators", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: v.email, displayName: v.displayName, roleKey: v.roleKey, scopeSites }) });
+    toast("ok", "新建 operator", "成功");
+    closeModal();
+    await loadPerms();
+  } catch (e) { toast("err", "新建失败", e.message); }
+  finally { $("#mSubmit").disabled = false; }
+}
+
 async function loadDocs() {
   try {
     const mods = await api("/api/manifests");
@@ -341,8 +424,9 @@ async function loadDocs() {
 document.querySelectorAll(".tab").forEach((t) => t.onclick = () => {
   document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("on", x === t));
   const tab = t.dataset.tab;
-  ["desk", "audit", "docs"].forEach((id) => $("#" + id).classList.toggle("hide", tab !== id));
+  ["desk", "audit", "perms", "docs"].forEach((id) => $("#" + id).classList.toggle("hide", tab !== id));
   if (tab === "audit") loadAudit();
+  if (tab === "perms") loadPerms();
   if (tab === "docs") loadDocs();
 });
 async function loadMe() {
@@ -350,6 +434,7 @@ async function loadMe() {
 }
 function applyVisibility() {
   $("#tabAudit").classList.toggle("hide", !can("audit.read"));
+  $("#tabPerms").classList.toggle("hide", !can("operator.manage"));
 }
 async function reloadContext() {
   await loadMe();
@@ -364,6 +449,8 @@ $("#operator").onchange = async (e) => { OPERATOR = e.target.value; await reload
 $("#lookup").onclick = lookup;
 $("#ownerId").addEventListener("keydown", (e) => { if (e.key === "Enter") lookup(); });
 $("#auditReload").onclick = loadAudit;
+$("#permsReload").onclick = loadPerms;
+$("#newOp").onclick = openNewOperator;
 $("#mCancel").onclick = closeModal;
 $("#mSubmit").onclick = submitAction;
 scrim.addEventListener("click", (e) => { if (e.target === scrim) closeModal(); });

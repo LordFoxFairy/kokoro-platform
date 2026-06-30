@@ -4,6 +4,7 @@ import type {
   ListModelBindingsFilter,
   ModelRepository,
   ResolveModelInput,
+  UpsertSiteModelPolicyInput,
 } from "../domain/repository.js";
 
 export class ModelService {
@@ -23,5 +24,13 @@ export class ModelService {
 
   async resolveModelBindings(input: ResolveModelInput) {
     return this.repository.resolveModelBindings(input);
+  }
+
+  async upsertSiteModelPolicy(input: UpsertSiteModelPolicyInput) {
+    return this.repository.upsertSiteModelPolicy(input);
+  }
+
+  async listSiteModelPolicies(siteId?: string | undefined) {
+    return this.repository.listSiteModelPolicies(siteId);
   }
 }

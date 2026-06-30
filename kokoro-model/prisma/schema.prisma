@@ -71,6 +71,24 @@ model ModelLabel {
   @@map("model_labels")
 }
 
+model SiteModelPolicy {
+  id        String                @id @default(cuid())
+  siteId    String
+  labelKey  String
+  status    SiteModelPolicyStatus @default(visible)
+  createdAt DateTime              @default(now())
+  updatedAt DateTime              @updatedAt
+
+  @@unique([siteId, labelKey])
+  @@index([siteId])
+  @@map("model_site_policies")
+}
+
+enum SiteModelPolicyStatus {
+  visible
+  hidden
+}
+
 enum ProviderAccountStatus {
   active
   disabled

@@ -51,6 +51,21 @@ export const upsertSitePolicyRequestSchema = z
   })
   .strict();
 
+export const upsertSiteFeatureFlagRequestSchema = z
+  .object({
+    siteId: z.string().min(1),
+    key: z.string().min(1),
+    enabled: z.boolean(),
+    metadata: metadataSchema,
+  })
+  .strict();
+
+export const listSiteFeatureFlagsQuerySchema = z
+  .object({
+    siteId: z.string().min(1),
+  })
+  .strict();
+
 export const resolveSiteQuerySchema = z
   .object({
     host: z.string().min(1),

@@ -53,3 +53,13 @@ export const resolveModelBindingsQuerySchema = z
     transportKind: modelTransportKindSchema.optional(),
   })
   .strict();
+
+export const siteModelPolicyStatusSchema = z.enum(["visible", "hidden"]);
+
+export const upsertSiteModelPolicyRequestSchema = z
+  .object({
+    siteId: z.string().min(1),
+    labelKey: z.string().min(1),
+    status: siteModelPolicyStatusSchema,
+  })
+  .strict();

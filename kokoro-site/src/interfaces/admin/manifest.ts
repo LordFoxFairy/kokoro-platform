@@ -31,6 +31,12 @@ export const siteAdminManifest: AdminModuleManifest = adminModuleManifestSchema.
       route: "/admin/site-policies",
       requiredPermission: "sitePolicy.read",
     },
+    {
+      id: "feature-flags",
+      labelKey: "admin.site.resources.featureFlags",
+      route: "/admin/site-feature-flags",
+      requiredPermission: "siteFeatureFlag.read",
+    },
   ],
   resources: [
     {
@@ -86,6 +92,21 @@ export const siteAdminManifest: AdminModuleManifest = adminModuleManifestSchema.
           labelKey: "admin.site.actions.setPolicy",
           kind: "mutation",
           requiredPermission: "sitePolicy.write",
+        },
+      ],
+    },
+    {
+      id: "feature-flags",
+      labelKey: "admin.site.resources.featureFlags",
+      route: "/admin/site-feature-flags",
+      requiredPermission: "siteFeatureFlag.read",
+      actions: [
+        {
+          id: "toggle",
+          labelKey: "admin.site.actions.toggleFeatureFlag",
+          route: "/site-feature-flags/upsert",
+          kind: "mutation",
+          requiredPermission: "siteFeatureFlag.write",
         },
       ],
     },

@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  listSiteFeatureFlagsQuerySchema,
   resolveSiteQuerySchema,
   upsertSiteAppRequestSchema,
   upsertSiteDomainRequestSchema,
+  upsertSiteFeatureFlagRequestSchema,
   upsertSitePolicyRequestSchema,
   upsertSiteRequestSchema,
 } from "../../src/interfaces/http/schemas.js";
@@ -98,6 +100,50 @@ describe("upsertSitePolicyRequestSchema", () => {
     ["unknown field rejected by strict", { siteId: "s1", key: "k", value: {}, z: 1 }],
   ])("rejects %s", (_label, payload) => {
     expect(upsertSitePolicyRequestSchema.safeParse(payload).success).toBe(false);
+  });
+});
+
+describe("upsertSiteFeatureFlagRequestSchema", () => {
+  it("accepts a minimal valid payload", () => {
+    expect(
+      upsertSiteFeatureFlagRequestSchema.parse({ siteId: "s1", key: "video", enabled: true }),
+    ).toEqual({ siteId: "s1", key: "video", enabled: true });
+  });
+
+  it("accepts a payload with JSON metadata", () => {
+    const parsed = upsertSiteFeatureFlagRequestSchema.parse({
+      siteId: "s1",
+      key: "video",
+      enabled: false,
+      metadata: { rolloutPct: 25, cohorts: ["beta", null] },
+    });
+    expect(parsed.metadata).toEqual({ rolloutPct: 25, cohorts: ["beta", null] });
+  });
+
+  it.each([
+    ["missing siteId", { key: "video", enabled: true }],
+    ["missing key", { siteId: "s1", enabled: true }],
+    ["missing enabled", { siteId: "s1", key: "video" }],
+    ["empty key", { siteId: "s1", key: "", enabled: true }],
+    ["non-boolean enabled", { siteId: "s1", key: "video", enabled: "yes" }],
+    ["non-object metadata", { siteId: "s1", key: "video", enabled: true, metadata: [1] }],
+    ["unknown field rejected by strict", { siteId: "s1", key: "video", enabled: true, x: 1 }],
+  ])("rejects %s", (_label, payload) => {
+    expect(upsertSiteFeatureFlagRequestSchema.safeParse(payload).success).toBe(false);
+  });
+});
+
+describe("listSiteFeatureFlagsQuerySchema", () => {
+  it("accepts a siteId", () => {
+    expect(listSiteFeatureFlagsQuerySchema.parse({ siteId: "s1" })).toEqual({ siteId: "s1" });
+  });
+
+  it.each([
+    ["missing siteId", {}],
+    ["empty siteId", { siteId: "" }],
+    ["unknown field rejected by strict", { siteId: "s1", extra: 1 }],
+  ])("rejects %s", (_label, payload) => {
+    expect(listSiteFeatureFlagsQuerySchema.safeParse(payload).success).toBe(false);
   });
 });
 

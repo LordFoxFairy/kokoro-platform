@@ -44,9 +44,53 @@ export type OperatorLookup = (email: string) => Promise<Operator>;
 
 export function listOperators(prisma: PrismaClient) {
   return prisma.operatorAccount.findMany({
-    select: { id: true, email: true, displayName: true, roleKey: true, status: true },
+    select: { id: true, email: true, displayName: true, roleKey: true, scopeSites: true, status: true },
     orderBy: { email: "asc" },
   });
+}
+
+export function listRoles(prisma: PrismaClient) {
+  return prisma.operatorRole.findMany({
+    select: { key: true, name: true, permissions: true },
+    orderBy: { key: "asc" },
+  });
+}
+
+export interface RoleUpsert {
+  key: string;
+  name: string;
+  permissions: string[];
+}
+
+export function upsertRole(prisma: PrismaClient, input: RoleUpsert) {
+  const permissions = stringArraySchema.parse(input.permissions);
+  return prisma.operatorRole.upsert({
+    where: { key: input.key },
+    create: { key: input.key, name: input.name, permissions },
+    update: { name: input.name, permissions },
+  });
+}
+
+export interface OperatorUpsert {
+  email: string;
+  displayName: string;
+  roleKey: string;
+  scopeSites: string[];
+}
+
+export function upsertOperator(prisma: PrismaClient, input: OperatorUpsert) {
+  const scopeSites = stringArraySchema.parse(input.scopeSites);
+  return prisma.operatorAccount.upsert({
+    where: { email: input.email },
+    create: { email: input.email, displayName: input.displayName, roleKey: input.roleKey, scopeSites },
+    update: { displayName: input.displayName, roleKey: input.roleKey, scopeSites },
+  });
+}
+
+export type OperatorStatusValue = "active" | "disabled";
+
+export function setOperatorStatus(prisma: PrismaClient, id: string, status: OperatorStatusValue) {
+  return prisma.operatorAccount.update({ where: { id }, data: { status } });
 }
 
 // DB 边界：role.permissions 是 Json，用 Zod 洗成 string[]。

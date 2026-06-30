@@ -25,6 +25,8 @@ export const sitePlatformModule = {
       "POST /site-domains/upsert",
       "POST /site-apps/upsert",
       "POST /site-policies/upsert",
+      "POST /site-feature-flags/upsert",
+      "GET /site-feature-flags",
       "GET /site-context/resolve",
     ],
     notes: [
@@ -41,7 +43,15 @@ export const sitePlatformModule = {
   },
   dependencies: [],
   boundaries: {
-    owns: ["sites", "site domains", "site apps", "site policies", "site brand configs", "site seo configs"],
+    owns: [
+      "sites",
+      "site domains",
+      "site apps",
+      "site policies",
+      "site brand configs",
+      "site seo configs",
+      "site feature flags",
+    ],
     doesNotOwn: ["users", "teams", "credit ledger", "payment orders", "model provider secrets", "agent jobs"],
   },
 } as const;

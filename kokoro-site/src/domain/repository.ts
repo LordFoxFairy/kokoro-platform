@@ -3,6 +3,7 @@ import type { ResolvedSiteContext } from "./site-context.js";
 import type { Site } from "./site.js";
 import type { SiteApp, SiteSurface } from "./site-app.js";
 import type { SiteDomain } from "./site-domain.js";
+import type { SiteFeatureFlag } from "./site-feature-flag.js";
 import type { SitePolicy } from "./site-policy.js";
 
 export interface UpsertSiteInput {
@@ -39,6 +40,13 @@ export interface UpsertSitePolicyInput {
   status?: SitePolicy["status"] | undefined;
 }
 
+export interface UpsertSiteFeatureFlagInput {
+  siteId: string;
+  key: string;
+  enabled: boolean;
+  metadata?: JsonObject | undefined;
+}
+
 export interface ResolveSiteContextInput {
   host: string;
   appKey?: string | undefined;
@@ -50,10 +58,13 @@ export interface SiteRepository {
   upsertSiteDomain(input: UpsertSiteDomainInput): Promise<SiteDomain>;
   upsertSiteApp(input: UpsertSiteAppInput): Promise<SiteApp>;
   upsertSitePolicy(input: UpsertSitePolicyInput): Promise<SitePolicy>;
+  upsertSiteFeatureFlag(input: UpsertSiteFeatureFlagInput): Promise<SiteFeatureFlag>;
+  listSiteFeatureFlags(siteId: string): Promise<SiteFeatureFlag[]>;
   resolveSiteContext(input: ResolveSiteContextInput): Promise<ResolvedSiteContext | null>;
   listSites(): Promise<Site[]>;
   listAdminSites(): Promise<Site[]>;
   listAdminSiteDomains(): Promise<SiteDomain[]>;
   listAdminSiteApps(): Promise<SiteApp[]>;
   listAdminSitePolicies(): Promise<SitePolicy[]>;
+  listAdminSiteFeatureFlags(): Promise<SiteFeatureFlag[]>;
 }

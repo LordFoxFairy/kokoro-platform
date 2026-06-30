@@ -3,6 +3,7 @@ export type ProviderAccountStatus = "active" | "disabled";
 export type ProviderHealthStatus = "unknown" | "healthy" | "degraded" | "down";
 export type ModelBindingStatus = "active" | "disabled";
 export type ModelLabelStatus = "active" | "disabled";
+export type SiteModelPolicyStatus = "visible" | "hidden";
 
 export interface ProviderAccount {
   id: string;
@@ -46,6 +47,15 @@ export interface ModelLabel {
   tier: string | null;
   defaultBindingId: string | null;
   status: ModelLabelStatus;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface SiteModelPolicy {
+  id: string;
+  siteId: string;
+  labelKey: string;
+  status: SiteModelPolicyStatus;
   createdAt: Date;
   updatedAt: Date;
 }

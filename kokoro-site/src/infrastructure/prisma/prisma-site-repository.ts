@@ -4,14 +4,16 @@ import type {
   SiteRepository,
   UpsertSiteAppInput,
   UpsertSiteDomainInput,
+  UpsertSiteFeatureFlagInput,
   UpsertSiteInput,
   UpsertSitePolicyInput,
 } from "../../domain/repository.js";
-import type { JsonObject } from "../../domain/json.js";
+import { coerceJsonValue, type JsonObject } from "../../domain/json.js";
 import type { ResolvedSiteContext } from "../../domain/site-context.js";
 import type { Site } from "../../domain/site.js";
 import type { SiteApp } from "../../domain/site-app.js";
 import type { SiteDomain } from "../../domain/site-domain.js";
+import type { SiteFeatureFlag } from "../../domain/site-feature-flag.js";
 import type { SitePolicy } from "../../domain/site-policy.js";
 
 export class PrismaSiteRepository implements SiteRepository {
@@ -117,6 +119,38 @@ export class PrismaSiteRepository implements SiteRepository {
     return mapSitePolicy(policy);
   }
 
+  async upsertSiteFeatureFlag(input: UpsertSiteFeatureFlagInput): Promise<SiteFeatureFlag> {
+    const flag = await this.prisma.siteFeatureFlag.upsert({
+      where: {
+        siteId_key: {
+          siteId: input.siteId,
+          key: input.key,
+        },
+      },
+      create: {
+        siteId: input.siteId,
+        key: input.key,
+        enabled: input.enabled,
+        ...definedJson("metadata", input.metadata),
+      },
+      update: {
+        enabled: input.enabled,
+        ...definedJson("metadata", input.metadata),
+      },
+    });
+
+    return mapSiteFeatureFlag(flag);
+  }
+
+  async listSiteFeatureFlags(siteId: string): Promise<SiteFeatureFlag[]> {
+    const flags = await this.prisma.siteFeatureFlag.findMany({
+      where: { siteId },
+      orderBy: { key: "asc" },
+    });
+
+    return flags.map(mapSiteFeatureFlag);
+  }
+
   async resolveSiteContext(input: ResolveSiteContextInput): Promise<ResolvedSiteContext | null> {
     const domain = await this.prisma.siteDomain.findUnique({
       where: {
@@ -206,6 +240,15 @@ export class PrismaSiteRepository implements SiteRepository {
     });
 
     return policies.map(mapSitePolicy);
+  }
+
+  async listAdminSiteFeatureFlags(): Promise<SiteFeatureFlag[]> {
+    const flags = await this.prisma.siteFeatureFlag.findMany({
+      orderBy: { createdAt: "desc" },
+      take: ADMIN_LIST_LIMIT,
+    });
+
+    return flags.map(mapSiteFeatureFlag);
   }
 }
 
@@ -339,4 +382,30 @@ function mapSitePolicy(policy: {
     createdAt: policy.createdAt,
     updatedAt: policy.updatedAt,
   };
+}
+
+function mapSiteFeatureFlag(flag: {
+  id: string;
+  siteId: string;
+  key: string;
+  enabled: boolean;
+  metadata: Prisma.JsonValue;
+  createdAt: Date;
+  updatedAt: Date;
+}): SiteFeatureFlag {
+  return {
+    id: flag.id,
+    siteId: flag.siteId,
+    key: flag.key,
+    enabled: flag.enabled,
+    metadata: asJsonObject(flag.metadata),
+    createdAt: flag.createdAt,
+    updatedAt: flag.updatedAt,
+  };
+}
+
+// metadata 仅由 JsonObject 写入；非对象 JSON 视为缺省，归一为 null。
+function asJsonObject(value: Prisma.JsonValue): JsonObject | null {
+  const coerced = coerceJsonValue(value);
+  return coerced !== null && typeof coerced === "object" && !Array.isArray(coerced) ? coerced : null;
 }

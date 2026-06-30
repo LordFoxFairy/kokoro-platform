@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { ModelService } from "../../src/application/model-service.js";
-import type { ModelBinding, ProviderAccount } from "../../src/domain/model.js";
+import type { ModelBinding, ProviderAccount, SiteModelPolicy } from "../../src/domain/model.js";
 import type {
   EnsureModelBindingInput,
   EnsureProviderAccountInput,
   ListModelBindingsFilter,
   ModelRepository,
   ResolveModelInput,
+  UpsertSiteModelPolicyInput,
 } from "../../src/domain/repository.js";
 
 const account: ProviderAccount = {
@@ -42,11 +43,22 @@ const binding: ModelBinding = {
   updatedAt: new Date(0),
 };
 
+const policy: SiteModelPolicy = {
+  id: "sp1",
+  siteId: "site-a",
+  labelKey: "chat.premium",
+  status: "hidden",
+  createdAt: new Date(0),
+  updatedAt: new Date(0),
+};
+
 interface Captured {
   account?: EnsureProviderAccountInput;
   binding?: EnsureModelBindingInput;
   filter?: ListModelBindingsFilter;
   resolve?: ResolveModelInput;
+  policy?: UpsertSiteModelPolicyInput;
+  listPolicySiteId?: string | undefined;
 }
 
 function trackingRepo(captured: Captured): ModelRepository {
@@ -72,6 +84,14 @@ function trackingRepo(captured: Captured): ModelRepository {
     listModelLabels: async () => [],
     setProviderAccountStatus: async () => account,
     setModelBindingStatus: async () => binding,
+    upsertSiteModelPolicy: async (input) => {
+      captured.policy = input;
+      return policy;
+    },
+    listSiteModelPolicies: async (siteId) => {
+      captured.listPolicySiteId = siteId;
+      return [policy];
+    },
   };
 }
 
@@ -122,5 +142,38 @@ describe("ModelService delegates to repository", () => {
     const input: ResolveModelInput = { featureKey: "chat", labelKey: "chat.default", transportKind: "litellm" };
     await expect(service.resolveModelBindings(input)).resolves.toEqual([binding]);
     expect(captured.resolve).toBe(input);
+  });
+
+  it("forwards resolveModelBindings siteId to repository", async () => {
+    const captured: Captured = {};
+    const service = new ModelService(trackingRepo(captured));
+    await service.resolveModelBindings({ featureKey: "chat", siteId: "site-a" });
+    expect(captured.resolve?.siteId).toBe("site-a");
+  });
+
+  it("forwards upsertSiteModelPolicy input and result", async () => {
+    const captured: Captured = {};
+    const service = new ModelService(trackingRepo(captured));
+    const input: UpsertSiteModelPolicyInput = {
+      siteId: "site-a",
+      labelKey: "chat.premium",
+      status: "hidden",
+    };
+    await expect(service.upsertSiteModelPolicy(input)).resolves.toBe(policy);
+    expect(captured.policy).toBe(input);
+  });
+
+  it("forwards listSiteModelPolicies siteId and result", async () => {
+    const captured: Captured = {};
+    const service = new ModelService(trackingRepo(captured));
+    await expect(service.listSiteModelPolicies("site-a")).resolves.toEqual([policy]);
+    expect(captured.listPolicySiteId).toBe("site-a");
+  });
+
+  it("forwards listSiteModelPolicies with omitted siteId", async () => {
+    const captured: Captured = {};
+    const service = new ModelService(trackingRepo(captured));
+    await service.listSiteModelPolicies();
+    expect(captured.listPolicySiteId).toBeUndefined();
   });
 });
