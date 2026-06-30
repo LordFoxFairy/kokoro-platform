@@ -5,12 +5,29 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { z } from "zod";
 import { ConsoleAuditSink } from "./audit.js";
 import type { ModuleConfig } from "./config.js";
-import { GatewayError, getManifests, proxyAction, proxyResource, type ActionRequest, type AuditSink } from "./gateway.js";
+import {
+  GatewayError,
+  getManifests,
+  getSites,
+  getUser360,
+  proxyAction,
+  proxyResource,
+  type ActionRequest,
+  type AuditSink,
+} from "./gateway.js";
 
 const resourceQuerySchema = z.object({
   moduleId: z.string().min(1),
   route: z.string().min(1),
 });
+
+const user360QuerySchema = z
+  .object({
+    siteId: z.string().min(1),
+    ownerKind: z.enum(["user", "team"]),
+    ownerId: z.string().min(1),
+  })
+  .strict();
 
 const actionBodySchema = z
   .object({
@@ -37,6 +54,25 @@ export function createAdminServer(modules: ModuleConfig[], audit: AuditSink = ne
   });
 
   app.get("/api/manifests", async (_request, reply) => sendData(reply, await getManifests(modules)));
+
+  app.get("/api/sites", async (_request, reply) => {
+    try {
+      return sendData(reply, await getSites(modules));
+    } catch (error) {
+      if (error instanceof GatewayError) {
+        return sendError(reply, error.statusCode, "gateway.error", error.message);
+      }
+      return sendError(reply, 502, "gateway.error", error instanceof Error ? error.message : String(error));
+    }
+  });
+
+  app.get("/api/user360", async (request, reply) => {
+    const query = user360QuerySchema.safeParse(request.query);
+    if (!query.success) {
+      return sendError(reply, 400, "request.invalid", "无效的查询参数", { issues: query.error.issues });
+    }
+    return sendData(reply, await getUser360(modules, query.data));
+  });
 
   app.get("/api/resource", async (request, reply) => {
     const query = resourceQuerySchema.safeParse(request.query);

@@ -62,12 +62,14 @@ export class GatewayError extends Error {
   }
 }
 
+export type ResourceRow = Record<string, unknown>;
+
 // 校验 moduleId 已知 + route ∈ manifest.resources[].route，防开放代理/SSRF
 export async function proxyResource(
   modules: ModuleConfig[],
   moduleId: string,
   route: string,
-): Promise<unknown[]> {
+): Promise<ResourceRow[]> {
   const module = modules.find((candidate) => candidate.id === moduleId);
   if (!module) {
     throw new GatewayError(`unknown module: ${moduleId}`, 400);
@@ -195,4 +197,46 @@ export async function proxyAction(
 
   const unwrapped = actionResultSchema.safeParse(body);
   return unwrapped.success ? unwrapped.data.data : body;
+}
+
+// 站点选择器数据源。
+export async function getSites(modules: ModuleConfig[]): Promise<ResourceRow[]> {
+  return proxyResource(modules, "site", "/admin/sites");
+}
+
+export interface User360Query {
+  siteId: string;
+  ownerKind: "user" | "team";
+  ownerId: string;
+}
+
+export interface User360 {
+  creditAccount: ResourceRow | null;
+  orders: ResourceRow[];
+  identity: ResourceRow | null;
+}
+
+// 用户360：按 (siteId, owner) 聚合身份 + 积分账户 + 订单。复用各模块 list 端点 + 站内过滤；
+// 某模块离线则该段降级为空，不拖垮整体。
+export async function getUser360(modules: ModuleConfig[], query: User360Query): Promise<User360> {
+  const [accounts, orders, users] = await Promise.all([
+    proxyResource(modules, "credit", "/admin/credits/accounts").catch(() => [] as ResourceRow[]),
+    proxyResource(modules, "payment", "/admin/payments/orders").catch(() => [] as ResourceRow[]),
+    proxyResource(modules, "user", "/admin/users").catch(() => [] as ResourceRow[]),
+  ]);
+
+  const creditAccount =
+    accounts.find(
+      (row) => row.siteId === query.siteId && row.ownerKind === query.ownerKind && row.ownerId === query.ownerId,
+    ) ?? null;
+
+  const teamId = query.ownerKind === "team" ? query.ownerId : null;
+  const filteredOrders = orders.filter((row) => row.siteId === query.siteId && (teamId === null || row.teamId === teamId));
+
+  const identity =
+    query.ownerKind === "user"
+      ? (users.find((row) => row.siteId === query.siteId && row.id === query.ownerId) ?? null)
+      : null;
+
+  return { creditAccount, orders: filteredOrders, identity };
 }
