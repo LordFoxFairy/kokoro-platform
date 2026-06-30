@@ -1,12 +1,13 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { readRequestContext, registerHealthRoute, sendData, sendError } from "@kokoro/platform-kit";
-import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { PrismaClient } from "../generated/prisma/index.js";
 import { queryAudit } from "./audit.js";
 import type { ModuleConfig } from "./config.js";
 import {
+  filterManifestForOperator,
   GatewayError,
   getManifests,
   getSites,
@@ -16,7 +17,7 @@ import {
   type ActionRequest,
   type AuditSink,
 } from "./gateway.js";
-import { listOperators, OperatorAuthError, type Operator, type OperatorLookup } from "./rbac.js";
+import { listOperators, OperatorAuthError, permits, permitsSite, type Operator, type OperatorLookup } from "./rbac.js";
 
 // 开发期默认运营身份；生产由认证层经 x-kokoro-operator 注入。
 const DEFAULT_OPERATOR = "admin@kokoro.local";
@@ -77,13 +78,54 @@ export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps
     return reply.code(200).type("text/html").send(html);
   });
 
-  app.get("/api/manifests", async (_request, reply) => sendData(reply, await getManifests(modules)));
-
-  app.get("/api/operators", async (_request, reply) => sendData(reply, await listOperators(deps.prisma)));
-
-  app.get("/api/sites", async (_request, reply) => {
+  const requireOperator = async (request: FastifyRequest, reply: FastifyReply): Promise<Operator | undefined> => {
     try {
-      return sendData(reply, await getSites(modules));
+      return await deps.resolveOperator(operatorEmail(request));
+    } catch (error) {
+      if (error instanceof OperatorAuthError) {
+        await sendError(reply, error.statusCode, "operator.auth", error.message);
+        return undefined;
+      }
+      throw error;
+    }
+  };
+
+  // 当前操作员的能力面：UI 据此决定可见功能/页面/操作（服务端仍二次强制）。
+  app.get("/api/me", async (request, reply) => {
+    const operator = await requireOperator(request, reply);
+    if (!operator) return reply;
+    return sendData(reply, {
+      email: operator.email,
+      roleKey: operator.roleKey,
+      permissions: operator.permissions,
+      scopeSites: operator.scopeSites,
+    });
+  });
+
+  app.get("/api/manifests", async (request, reply) => {
+    const operator = await requireOperator(request, reply);
+    if (!operator) return reply;
+    const all = await getManifests(modules);
+    const scoped = all.map((status) =>
+      status.online ? { ...status, manifest: filterManifestForOperator(status.manifest, operator) } : status,
+    );
+    return sendData(reply, scoped);
+  });
+
+  app.get("/api/operators", async (request, reply) => {
+    const operator = await requireOperator(request, reply);
+    if (!operator) return reply;
+    if (!permits(operator.permissions, "operator.read")) {
+      return sendError(reply, 403, "operator.auth", "无权查看操作员列表");
+    }
+    return sendData(reply, await listOperators(deps.prisma));
+  });
+
+  app.get("/api/sites", async (request, reply) => {
+    const operator = await requireOperator(request, reply);
+    if (!operator) return reply;
+    try {
+      return sendData(reply, await getSites(modules, operator));
     } catch (error) {
       if (error instanceof GatewayError) {
         return sendError(reply, error.statusCode, "gateway.error", error.message);
@@ -93,9 +135,14 @@ export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps
   });
 
   app.get("/api/user360", async (request, reply) => {
+    const operator = await requireOperator(request, reply);
+    if (!operator) return reply;
     const query = user360QuerySchema.safeParse(request.query);
     if (!query.success) {
       return sendError(reply, 400, "request.invalid", "无效的查询参数", { issues: query.error.issues });
+    }
+    if (!permitsSite(operator.scopeSites, query.data.siteId)) {
+      return sendError(reply, 403, "operator.auth", "租户超出作用域");
     }
     return sendData(reply, await getUser360(modules, query.data));
   });
@@ -154,12 +201,27 @@ export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps
   });
 
   app.get("/api/audit", async (request, reply) => {
+    const operator = await requireOperator(request, reply);
+    if (!operator) return reply;
+    if (!permits(operator.permissions, "audit.read")) {
+      return sendError(reply, 403, "operator.auth", "无权查看审计");
+    }
     const query = auditQuerySchema.safeParse(request.query);
     if (!query.success) {
       return sendError(reply, 400, "request.invalid", "无效的查询参数", { issues: query.error.issues });
     }
     const { siteId, limit } = query.data;
-    return sendData(reply, await queryAudit(deps.prisma, siteId === undefined ? { limit } : { siteId, limit }));
+    if (siteId === undefined) {
+      // 无 siteId = 跨租户全量，仅超级权限可看。
+      if (!operator.scopeSites.includes("*")) {
+        return sendError(reply, 403, "operator.auth", "请指定本作用域内的站点");
+      }
+      return sendData(reply, await queryAudit(deps.prisma, { limit }));
+    }
+    if (!permitsSite(operator.scopeSites, siteId)) {
+      return sendError(reply, 403, "operator.auth", "租户超出作用域");
+    }
+    return sendData(reply, await queryAudit(deps.prisma, { siteId, limit }));
   });
 
   return app;

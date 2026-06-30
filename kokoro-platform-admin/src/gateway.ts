@@ -1,7 +1,7 @@
 import { adminModuleManifestSchema, type AdminModuleManifest } from "@kokoro/platform-kit";
 import { z } from "zod";
 import type { ModuleConfig } from "./config.js";
-import { permits, type Operator } from "./rbac.js";
+import { permits, permitsSite, type Operator } from "./rbac.js";
 
 // sendData 包装：所有模块端点响应都是 { data: <payload> }
 const manifestEnvelopeSchema = z.object({ data: adminModuleManifestSchema });
@@ -179,6 +179,12 @@ export async function proxyAction(
     await audit.record({ ...auditBase, result: "error", statusCode: 403, requestId });
     throw new GatewayError(`permission denied: ${action.requiredPermission}`, 403);
   }
+  const siteAllowed =
+    request.siteId === undefined ? operator.scopeSites.includes("*") : permitsSite(operator.scopeSites, request.siteId);
+  if (!siteAllowed) {
+    await audit.record({ ...auditBase, result: "error", statusCode: 403, requestId });
+    throw new GatewayError(`tenant out of scope: ${request.siteId ?? "platform"}`, 403);
+  }
   if (action.kind === "dangerMutation" && (request.reason === undefined || request.reason.trim() === "")) {
     throw new GatewayError(`reason required for dangerous action: ${request.actionId}`, 400);
   }
@@ -210,9 +216,27 @@ export async function proxyAction(
   return unwrapped.success ? unwrapped.data.data : body;
 }
 
-// 站点选择器数据源。
-export async function getSites(modules: ModuleConfig[]): Promise<ResourceRow[]> {
-  return proxyResource(modules, "site", "/admin/sites");
+// 站点选择器数据源；按 operator 租户作用域过滤（超级权限见全部）。
+export async function getSites(modules: ModuleConfig[], operator: Operator): Promise<ResourceRow[]> {
+  const sites = await proxyResource(modules, "site", "/admin/sites");
+  if (operator.scopeSites.includes("*")) {
+    return sites;
+  }
+  return sites.filter((row) => typeof row.id === "string" && permitsSite(operator.scopeSites, row.id));
+}
+
+// 功能/页面可见性：只保留 operator 有权读的 resource/nav 及其有权执行的 action。
+export function filterManifestForOperator(manifest: AdminModuleManifest, operator: Operator): AdminModuleManifest {
+  return {
+    ...manifest,
+    navItems: manifest.navItems.filter((item) => permits(operator.permissions, item.requiredPermission)),
+    resources: manifest.resources
+      .filter((resource) => permits(operator.permissions, resource.requiredPermission))
+      .map((resource) => ({
+        ...resource,
+        actions: resource.actions.filter((action) => permits(operator.permissions, action.requiredPermission)),
+      })),
+  };
 }
 
 export interface User360Query {

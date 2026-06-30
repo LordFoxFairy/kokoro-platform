@@ -12,8 +12,9 @@ import {
 } from "../../src/gateway.js";
 import type { Operator } from "../../src/rbac.js";
 
-const SUPER: Operator = { id: "op_super", email: "admin@kokoro.local", roleKey: "superadmin", permissions: ["*"] };
-const FINANCE: Operator = { id: "op_fin", email: "fin@kokoro.local", roleKey: "finance", permissions: ["payment.*", "credit.grant"] };
+const SUPER: Operator = { id: "op_super", email: "admin@kokoro.local", roleKey: "superadmin", permissions: ["*"], scopeSites: ["*"] };
+const FINANCE: Operator = { id: "op_fin", email: "fin@kokoro.local", roleKey: "finance", permissions: ["payment.*", "credit.grant"], scopeSites: ["site_1"] };
+const TENANT: Operator = { id: "op_t", email: "t@kokoro.local", roleKey: "support", permissions: ["user.disable"], scopeSites: ["site_2"] };
 
 const modules: ModuleConfig[] = [
   { id: "credit", label: "Credits", baseUrl: "http://127.0.0.1:4231", manifestPath: "/admin/credits/manifest" },
@@ -194,6 +195,16 @@ describe("proxyAction", () => {
     expect(fetchMock.mock.calls.every(([url]) => String(url).includes("/manifest"))).toBe(true);
   });
 
+  it("denies an operator acting outside its tenant scope and records a 403 audit", async () => {
+    const sink = new RecordingSink();
+    fetchMock.mockResolvedValue(jsonResponse({ data: userActionManifest }));
+    await expect(
+      proxyAction(modules, sink, { moduleId: "user", resourceId: "users", actionId: "disable", params: { id: "u_1" }, siteId: "site_1", reason: "TOS" }, "req", TENANT),
+    ).rejects.toMatchObject({ statusCode: 403 });
+    expect(sink.entries[0]).toMatchObject({ result: "error", statusCode: 403, siteId: "site_1" });
+    expect(fetchMock.mock.calls.every(([url]) => String(url).includes("/manifest"))).toBe(true);
+  });
+
   it("rejects a dangerMutation without a reason and records nothing", async () => {
     const sink = new RecordingSink();
     fetchMock.mockResolvedValue(jsonResponse({ data: userActionManifest }));
@@ -256,9 +267,17 @@ function aggregationFetch(input: string | URL | Request): Promise<Response> {
 }
 
 describe("getSites", () => {
-  it("proxies the site admin list", async () => {
+  it("returns all sites for a super-scoped operator", async () => {
     fetchMock.mockImplementation(aggregationFetch);
-    expect(await getSites(fullModules)).toEqual([{ id: "site1", key: "music" }]);
+    expect(await getSites(fullModules, SUPER)).toEqual([{ id: "site1", key: "music" }]);
+  });
+
+  it("filters to the operator's tenant scope", async () => {
+    fetchMock.mockImplementation(aggregationFetch);
+    const scoped = { id: "o", email: "e", roleKey: "support", permissions: [], scopeSites: ["site1"] };
+    const other = { id: "o2", email: "e2", roleKey: "support", permissions: [], scopeSites: ["site-x"] };
+    expect(await getSites(fullModules, scoped)).toEqual([{ id: "site1", key: "music" }]);
+    expect(await getSites(fullModules, other)).toEqual([]);
   });
 });
 

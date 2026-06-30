@@ -6,6 +6,7 @@ export interface Operator {
   email: string;
   roleKey: string;
   permissions: string[];
+  scopeSites: string[];
 }
 
 export class OperatorAuthError extends Error {
@@ -32,7 +33,12 @@ export function requirePermission(operator: Operator, required: string): void {
   }
 }
 
-const permissionsSchema = z.array(z.string());
+// 租户作用域：scope 含「*」=跨租户超级权限，否则限定到具体 siteId。
+export function permitsSite(scopeSites: string[], siteId: string): boolean {
+  return scopeSites.includes("*") || scopeSites.includes(siteId);
+}
+
+const stringArraySchema = z.array(z.string());
 
 export type OperatorLookup = (email: string) => Promise<Operator>;
 
@@ -54,7 +60,8 @@ export function createOperatorLookup(prisma: PrismaClient): OperatorLookup {
       id: account.id,
       email: account.email,
       roleKey: account.roleKey,
-      permissions: permissionsSchema.parse(account.role.permissions),
+      permissions: stringArraySchema.parse(account.role.permissions),
+      scopeSites: stringArraySchema.parse(account.scopeSites),
     };
   };
 }

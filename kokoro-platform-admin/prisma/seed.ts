@@ -1,12 +1,18 @@
 import { createAdminPrisma } from "../src/prisma.js";
 
-// 运营角色矩阵 + 默认 superadmin。幂等 upsert，可重复跑。
+// 运营角色矩阵（做什么）。superadmin 全通；其余按需，含 audit.read 才能看审计。
 const ROLES = [
   { key: "superadmin", name: "Superadmin", permissions: ["*"] },
-  { key: "ops", name: "Operations", permissions: ["credit.*", "payment.*", "user.*", "model.*"] },
-  { key: "finance", name: "Finance", permissions: ["payment.*", "credit.grant"] },
-  { key: "support", name: "Support", permissions: ["credit.grant", "user.disable", "payment.order.refund"] },
-  { key: "readonly", name: "Read-only", permissions: [] },
+  { key: "ops", name: "Operations", permissions: ["credit.*", "payment.*", "user.*", "model.*", "audit.read"] },
+  { key: "finance", name: "Finance", permissions: ["payment.*", "credit.account.read", "credit.grant", "audit.read"] },
+  { key: "support", name: "Support", permissions: ["credit.account.read", "credit.grant", "user.read", "payment.order.read", "audit.read"] },
+  { key: "readonly", name: "Read-only", permissions: ["credit.account.read", "payment.order.read", "user.read", "audit.read"] },
+];
+
+// operator（谁 + 哪个租户）。scopeSites ["*"]=跨租户超级；否则限定 siteId。
+const OPERATORS = [
+  { id: "op-superadmin", email: "admin@kokoro.local", displayName: "Platform Admin", roleKey: "superadmin", scopeSites: ["*"] },
+  { id: "op-support-demo", email: "support-demo@kokoro.local", displayName: "Support (site-demo)", roleKey: "support", scopeSites: ["site-demo"] },
 ];
 
 const url = process.env.DATABASE_URL_ADMIN;
@@ -22,9 +28,11 @@ for (const role of ROLES) {
     update: { name: role.name, permissions: role.permissions },
   });
 }
-await prisma.operatorAccount.upsert({
-  where: { email: "admin@kokoro.local" },
-  create: { email: "admin@kokoro.local", displayName: "Platform Admin", roleKey: "superadmin" },
-  update: {},
-});
+for (const op of OPERATORS) {
+  await prisma.operatorAccount.upsert({
+    where: { email: op.email },
+    create: op,
+    update: { roleKey: op.roleKey, scopeSites: op.scopeSites, displayName: op.displayName },
+  });
+}
 await prisma.$disconnect();

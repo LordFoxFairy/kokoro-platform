@@ -24,6 +24,7 @@ model OperatorAccount {
   email       String         @unique
   displayName String
   roleKey     String
+  scopeSites  Json
   status      OperatorStatus @default(active)
   role        OperatorRole   @relation(fields: [roleKey], references: [key])
   createdAt   DateTime       @default(now())

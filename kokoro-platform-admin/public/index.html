@@ -113,7 +113,7 @@
 </div>
 <div class="tabs">
   <div class="tab on" data-tab="desk">工作台</div>
-  <div class="tab" data-tab="audit">审计流水</div>
+  <div class="tab" id="tabAudit" data-tab="audit">审计流水</div>
 </div>
 
 <main id="desk">
@@ -157,6 +157,7 @@ const fmtTime = (s) => { const d = new Date(s); return Number.isNaN(d.getTime())
 let SITE = "";
 let OPERATOR = "";
 let CURRENT = null;
+let ME = null;
 
 function toast(kind, title, msg) {
   const el = document.createElement("div");
@@ -166,11 +167,19 @@ function toast(kind, title, msg) {
   setTimeout(() => el.remove(), 6000);
 }
 
-async function api(path, opts) {
-  const res = await fetch(path, opts);
+// 每个请求都带操作员身份，服务端据此做 RBAC + 租户作用域。
+async function api(path, opts = {}) {
+  const headers = { ...(opts.headers || {}) };
+  if (OPERATOR) headers["x-kokoro-operator"] = OPERATOR;
+  const res = await fetch(path, { ...opts, headers });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body?.error?.message || `HTTP ${res.status}`);
   return body.data;
+}
+
+// 权限 glob（与服务端 permits 一致）：* / 精确 / prefix.*。
+function can(p) {
+  return (ME?.permissions || []).some((g) => g === "*" || g === p || (g.endsWith(".*") && p.startsWith(g.slice(0, -1))));
 }
 
 async function loadSites() {
@@ -223,20 +232,25 @@ function render() {
        <dl class="kv"><dt>accountId</dt><dd>${esc(acc.id)}</dd><dt>状态</dt><dd>${stat(acc.status)}</dd></dl>`
     : `<div class="muted">站内暂无账户（发积分自动创建）</div>`;
 
+  const canRefund = can("payment.order.refund");
   const orders = data.orders || [];
   const orderRows = orders.length
-    ? orders.map((o) => `<tr><td>${esc(o.id)}</td><td>${esc(o.planId || "—")}</td><td>${esc(o.amountMinor)} ${esc(o.currency || "")}</td><td>${stat(o.status)}</td><td>${o.status === "paid" ? `<button class="danger sm" data-refund="${esc(o.id)}">退款</button>` : ""}</td></tr>`).join("")
+    ? orders.map((o) => `<tr><td>${esc(o.id)}</td><td>${esc(o.planId || "—")}</td><td>${esc(o.amountMinor)} ${esc(o.currency || "")}</td><td>${stat(o.status)}</td><td>${o.status === "paid" && canRefund ? `<button class="danger sm" data-refund="${esc(o.id)}">退款</button>` : ""}</td></tr>`).join("")
     : `<tr><td colspan="5" class="empty">无订单</td></tr>`;
+
+  const userToggle = ownerKind === "user" && id && can("user.disable")
+    ? (id.status === "active" ? `<button class="danger" data-act="disable-user">禁用用户</button>` : `<button class="sec" data-act="enable-user">启用用户</button>`) : "";
+  const acts = [
+    can("credit.grant") ? `<button data-act="grant">发积分</button>` : "",
+    ownerKind === "team" && can("payment.plan.grant") ? `<button class="sec" data-act="grant-plan">授予套餐</button>` : "",
+    userToggle,
+  ].filter(Boolean).join("");
 
   $("#result").innerHTML = `
     <div class="row2">
       <div class="box"><h3>${ownerKind === "user" ? "身份" : "团队"}</h3><dl class="kv">${idRows}</dl></div>
       <div class="box"><h3>积分账户</h3>${accBox}</div>
-      <div class="acts"><span class="lbl">操作</span>
-        <button data-act="grant">发积分</button>
-        ${ownerKind === "team" ? `<button class="sec" data-act="grant-plan">授予套餐</button>` : ""}
-        ${ownerKind === "user" && id ? (id.status === "active" ? `<button class="danger" data-act="disable-user">禁用用户</button>` : `<button class="sec" data-act="enable-user">启用用户</button>`) : ""}
-      </div>
+      <div class="acts"><span class="lbl">操作</span>${acts || '<span class="muted">无可用操作</span>'}</div>
     </div>
     <div class="cap"><h2>订单</h2><span class="n">${orders.length}</span></div>
     <div class="tw"><table><thead><tr><th>订单</th><th>套餐</th><th>金额</th><th>状态</th><th></th></tr></thead><tbody>${orderRows}</tbody></table></div>`;
@@ -302,7 +316,7 @@ async function submitAction() {
   if (missing) { toast("err", "缺必填", "请填写 * 字段"); return; }
   $("#mSubmit").disabled = true;
   try {
-    await api("/api/action", { method: "POST", headers: { "content-type": "application/json", "x-kokoro-operator": OPERATOR }, body: JSON.stringify(pending.build(v)) });
+    await api("/api/action", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(pending.build(v)) });
     toast("ok", pending.title, "成功 · 已留审计");
     closeModal();
     await lookup();
@@ -318,8 +332,22 @@ document.querySelectorAll(".tab").forEach((t) => t.onclick = () => {
   $("#audit").classList.toggle("hide", tab !== "audit");
   if (tab === "audit") loadAudit();
 });
+async function loadMe() {
+  try { ME = await api("/api/me"); } catch (e) { ME = null; toast("err", "身份", e.message); }
+}
+function applyVisibility() {
+  $("#tabAudit").classList.toggle("hide", !can("audit.read"));
+}
+async function reloadContext() {
+  await loadMe();
+  await loadSites();
+  applyVisibility();
+  CURRENT = null;
+  $("#result").innerHTML = `<div class="empty">选站点 + 填 owner，点查账。</div>`;
+}
+
 $("#site").onchange = (e) => { SITE = e.target.value; if (CURRENT) lookup(); };
-$("#operator").onchange = (e) => { OPERATOR = e.target.value; };
+$("#operator").onchange = async (e) => { OPERATOR = e.target.value; await reloadContext(); };
 $("#lookup").onclick = lookup;
 $("#ownerId").addEventListener("keydown", (e) => { if (e.key === "Enter") lookup(); });
 $("#auditReload").onclick = loadAudit;
@@ -327,8 +355,11 @@ $("#mCancel").onclick = closeModal;
 $("#mSubmit").onclick = submitAction;
 scrim.addEventListener("click", (e) => { if (e.target === scrim) closeModal(); });
 
-loadSites();
-loadOperators();
+(async () => {
+  await loadOperators();
+  OPERATOR = $("#operator").value;
+  await reloadContext();
+})();
 </script>
 </body>
 </html>

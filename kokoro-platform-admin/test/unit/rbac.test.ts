@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { permits, requirePermission, OperatorAuthError, type Operator } from "../../src/rbac.js";
+import { permits, permitsSite, requirePermission, OperatorAuthError, type Operator } from "../../src/rbac.js";
+
+describe("permitsSite", () => {
+  it.each([
+    [["*"], "site-a", true],
+    [["*"], "any-site", true],
+    [["site-a", "site-b"], "site-a", true],
+    [["site-a", "site-b"], "site-c", false],
+    [[], "site-a", false],
+  ])("scope %j vs %s -> %s", (scope, siteId, expected) => {
+    expect(permitsSite(scope as string[], siteId as string)).toBe(expected);
+  });
+});
 
 describe("permits", () => {
   it.each([
@@ -19,7 +31,7 @@ describe("permits", () => {
 });
 
 describe("requirePermission", () => {
-  const finance: Operator = { id: "o", email: "f@x.c", roleKey: "finance", permissions: ["payment.*", "credit.grant"] };
+  const finance: Operator = { id: "o", email: "f@x.c", roleKey: "finance", permissions: ["payment.*", "credit.grant"], scopeSites: ["site-a"] };
 
   it("passes when permitted", () => {
     expect(() => requirePermission(finance, "payment.order.refund")).not.toThrow();
