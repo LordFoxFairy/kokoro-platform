@@ -19,6 +19,13 @@ export const paymentAdminManifest: AdminModuleManifest = adminModuleManifestSche
           kind: "mutation",
           requiredPermission: "payment.plan.publish",
         },
+        {
+          id: "grant-to-team",
+          labelKey: "admin.payment.actions.grantPlanToTeam",
+          kind: "mutation",
+          requiredPermission: "payment.plan.grant",
+          route: "/admin/payments/grant-plan",
+        },
       ],
     },
     {
@@ -26,7 +33,15 @@ export const paymentAdminManifest: AdminModuleManifest = adminModuleManifestSche
       labelKey: "admin.payment.resources.orders",
       route: "/admin/payments/orders",
       requiredPermission: "payment.order.read",
-      actions: [],
+      actions: [
+        {
+          id: "refund",
+          labelKey: "admin.payment.actions.refundOrder",
+          kind: "dangerMutation",
+          requiredPermission: "payment.order.refund",
+          route: "/orders/:id/refund",
+        },
+      ],
     },
     {
       id: "subscriptions",

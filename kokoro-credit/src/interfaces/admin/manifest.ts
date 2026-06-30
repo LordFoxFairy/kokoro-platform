@@ -18,6 +18,7 @@ export const creditAdminManifest: AdminModuleManifest = adminModuleManifestSchem
           labelKey: "admin.credit.actions.grant",
           kind: "mutation",
           requiredPermission: "credit.grant",
+          route: "/admin/credits/grant",
         },
       ],
     },
