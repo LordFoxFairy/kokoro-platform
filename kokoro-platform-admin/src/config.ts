@@ -4,6 +4,7 @@ import { z } from "zod";
 // 默认用稳定服务名(docker/k8s 内部 DNS)，本地开发经 env 覆盖；业务代码不写死 localhost。
 const envSchema = z.object({
   KOKORO_ADMIN_PORT: z.coerce.number().int().min(1).max(65535).default(4290),
+  DATABASE_URL_ADMIN: z.string().min(1),
   KOKORO_SITE_BASE_URL: z.string().url().default("http://kokoro-site:4201"),
   KOKORO_USER_BASE_URL: z.string().url().default("http://kokoro-user:4211"),
   KOKORO_MODEL_BASE_URL: z.string().url().default("http://kokoro-model:4221"),
@@ -22,6 +23,7 @@ export interface ModuleConfig {
 
 export interface AdminConfig {
   adminPort: number;
+  adminDbUrl: string;
   modules: ModuleConfig[];
 }
 
@@ -36,5 +38,5 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AdminConfig {
     { id: "payment", label: "Payments", baseUrl: parsed.KOKORO_PAYMENT_BASE_URL, manifestPath: "/admin/payments/manifest" },
   ];
 
-  return { adminPort: parsed.KOKORO_ADMIN_PORT, modules };
+  return { adminPort: parsed.KOKORO_ADMIN_PORT, adminDbUrl: parsed.DATABASE_URL_ADMIN, modules };
 }

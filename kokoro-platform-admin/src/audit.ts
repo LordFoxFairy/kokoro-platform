@@ -1,11 +1,38 @@
+import type { PrismaClient } from "../generated/prisma/index.js";
 import type { AuditEntry, AuditSink } from "./gateway.js";
 
-// 运营审计落点的 seam。本增量：进程内留存 + stdout 落痕；持久化 DB sink 为下一增量替换实现。
-export class ConsoleAuditSink implements AuditSink {
-  readonly entries: AuditEntry[] = [];
+// 运营审计持久化：每个动作（含被拒）落 audit_logs，不可篡改、可追溯。
+export class PrismaAuditSink implements AuditSink {
+  constructor(private readonly prisma: PrismaClient) {}
 
   async record(entry: AuditEntry): Promise<void> {
-    this.entries.push(entry);
-    process.stdout.write(`[audit] ${JSON.stringify(entry)}\n`);
+    await this.prisma.auditLog.create({
+      data: {
+        actorOperatorId: entry.actorOperatorId ?? null,
+        actorEmail: entry.actorEmail ?? null,
+        moduleId: entry.moduleId,
+        resourceId: entry.resourceId,
+        actionId: entry.actionId,
+        targetRoute: entry.targetRoute,
+        siteId: entry.siteId ?? null,
+        reason: entry.reason ?? null,
+        result: entry.result,
+        statusCode: entry.statusCode,
+        requestId: entry.requestId,
+      },
+    });
   }
+}
+
+export interface AuditQuery {
+  siteId?: string;
+  limit: number;
+}
+
+export function queryAudit(prisma: PrismaClient, query: AuditQuery) {
+  return prisma.auditLog.findMany({
+    where: query.siteId === undefined ? {} : { siteId: query.siteId },
+    orderBy: { createdAt: "desc" },
+    take: query.limit,
+  });
 }

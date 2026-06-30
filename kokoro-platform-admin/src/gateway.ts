@@ -1,6 +1,7 @@
 import { adminModuleManifestSchema, type AdminModuleManifest } from "@kokoro/platform-kit";
 import { z } from "zod";
 import type { ModuleConfig } from "./config.js";
+import { permits, type Operator } from "./rbac.js";
 
 // sendData 包装：所有模块端点响应都是 { data: <payload> }
 const manifestEnvelopeSchema = z.object({ data: adminModuleManifestSchema });
@@ -105,6 +106,8 @@ export interface ActionRequest {
 }
 
 export interface AuditEntry {
+  actorOperatorId?: string;
+  actorEmail?: string;
   moduleId: string;
   resourceId: string;
   actionId: string;
@@ -133,12 +136,13 @@ function resolveRoute(template: string, params: Record<string, string>): string 
   });
 }
 
-// 写操作代理：校验 action ∈ manifest、dangerMutation 强制 reason、带 siteId 转发、无论成败都落一条审计。
+// 写操作代理（守门人）：校验 action ∈ manifest、RBAC 鉴权、dangerMutation 强制 reason、带 siteId 转发、无论成败/拒绝都落一条审计。
 export async function proxyAction(
   modules: ModuleConfig[],
   audit: AuditSink,
   request: ActionRequest,
   requestId: string,
+  operator: Operator,
 ): Promise<unknown> {
   const module = modules.find((candidate) => candidate.id === request.moduleId);
   if (!module) {
@@ -158,12 +162,11 @@ export async function proxyAction(
   if (action.route === undefined) {
     throw new GatewayError(`action not proxyable (no route declared): ${request.actionId}`, 400);
   }
-  if (action.kind === "dangerMutation" && (request.reason === undefined || request.reason.trim() === "")) {
-    throw new GatewayError(`reason required for dangerous action: ${request.actionId}`, 400);
-  }
 
   const route = resolveRoute(action.route, request.params ?? {});
   const auditBase = {
+    actorOperatorId: operator.id,
+    actorEmail: operator.email,
     moduleId: request.moduleId,
     resourceId: request.resourceId,
     actionId: request.actionId,
@@ -171,6 +174,14 @@ export async function proxyAction(
     ...(request.siteId === undefined ? {} : { siteId: request.siteId }),
     ...(request.reason === undefined ? {} : { reason: request.reason }),
   };
+
+  if (!permits(operator.permissions, action.requiredPermission)) {
+    await audit.record({ ...auditBase, result: "error", statusCode: 403, requestId });
+    throw new GatewayError(`permission denied: ${action.requiredPermission}`, 403);
+  }
+  if (action.kind === "dangerMutation" && (request.reason === undefined || request.reason.trim() === "")) {
+    throw new GatewayError(`reason required for dangerous action: ${request.actionId}`, 400);
+  }
 
   const headers: Record<string, string> = { "content-type": "application/json", "x-kokoro-request-id": requestId };
   if (request.siteId !== undefined) {

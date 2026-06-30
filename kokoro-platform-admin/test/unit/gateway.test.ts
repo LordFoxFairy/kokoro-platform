@@ -10,6 +10,10 @@ import {
   type AuditEntry,
   type AuditSink,
 } from "../../src/gateway.js";
+import type { Operator } from "../../src/rbac.js";
+
+const SUPER: Operator = { id: "op_super", email: "admin@kokoro.local", roleKey: "superadmin", permissions: ["*"] };
+const FINANCE: Operator = { id: "op_fin", email: "fin@kokoro.local", roleKey: "finance", permissions: ["payment.*", "credit.grant"] };
 
 const modules: ModuleConfig[] = [
   { id: "credit", label: "Credits", baseUrl: "http://127.0.0.1:4231", manifestPath: "/admin/credits/manifest" },
@@ -166,6 +170,7 @@ describe("proxyAction", () => {
       sink,
       { moduleId: "user", resourceId: "users", actionId: "disable", params: { id: "u_1" }, siteId: "site_1", reason: "TOS" },
       "req_1",
+      SUPER,
     );
 
     expect(result).toEqual({ id: "u_1", status: "disabled" });
@@ -175,14 +180,25 @@ describe("proxyAction", () => {
     expect(init.method).toBe("POST");
     expect((init.headers as Record<string, string>)["x-kokoro-site-id"]).toBe("site_1");
     expect(sink.entries).toHaveLength(1);
-    expect(sink.entries[0]).toMatchObject({ result: "ok", statusCode: 200, targetRoute: "/admin/users/u_1/disable" });
+    expect(sink.entries[0]).toMatchObject({ result: "ok", statusCode: 200, targetRoute: "/admin/users/u_1/disable", actorEmail: "admin@kokoro.local" });
+  });
+
+  it("denies an operator lacking the action permission and records a 403 audit", async () => {
+    const sink = new RecordingSink();
+    fetchMock.mockResolvedValue(jsonResponse({ data: userActionManifest }));
+    await expect(
+      proxyAction(modules, sink, { moduleId: "user", resourceId: "users", actionId: "disable", params: { id: "u_1" }, reason: "TOS" }, "req", FINANCE),
+    ).rejects.toMatchObject({ statusCode: 403 });
+    expect(sink.entries[0]).toMatchObject({ result: "error", statusCode: 403, actorEmail: "fin@kokoro.local" });
+    // 被拒后不得发往上游（只有 manifest 一次 fetch）。
+    expect(fetchMock.mock.calls.every(([url]) => String(url).includes("/manifest"))).toBe(true);
   });
 
   it("rejects a dangerMutation without a reason and records nothing", async () => {
     const sink = new RecordingSink();
     fetchMock.mockResolvedValue(jsonResponse({ data: userActionManifest }));
     await expect(
-      proxyAction(modules, sink, { moduleId: "user", resourceId: "users", actionId: "disable", params: { id: "u_1" } }, "req"),
+      proxyAction(modules, sink, { moduleId: "user", resourceId: "users", actionId: "disable", params: { id: "u_1" } }, "req", SUPER),
     ).rejects.toMatchObject({ statusCode: 400 });
     expect(sink.entries).toHaveLength(0);
   });
@@ -191,7 +207,7 @@ describe("proxyAction", () => {
     const sink = new RecordingSink();
     fetchMock.mockResolvedValue(jsonResponse({ data: userActionManifest }));
     await expect(
-      proxyAction(modules, sink, { moduleId: "user", resourceId: "users", actionId: "nope", reason: "x" }, "req"),
+      proxyAction(modules, sink, { moduleId: "user", resourceId: "users", actionId: "nope", reason: "x" }, "req", SUPER),
     ).rejects.toMatchObject({ statusCode: 403 });
   });
 
@@ -202,7 +218,7 @@ describe("proxyAction", () => {
       return jsonResponse({ error: { code: "x" } }, false, 409);
     });
     await expect(
-      proxyAction(modules, sink, { moduleId: "user", resourceId: "users", actionId: "disable", params: { id: "u_1" }, reason: "TOS" }, "req"),
+      proxyAction(modules, sink, { moduleId: "user", resourceId: "users", actionId: "disable", params: { id: "u_1" }, reason: "TOS" }, "req", SUPER),
     ).rejects.toMatchObject({ statusCode: 502 });
     expect(sink.entries[0]).toMatchObject({ result: "error", statusCode: 409 });
   });

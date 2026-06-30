@@ -1,9 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { readRequestContext, registerHealthRoute, sendData, sendError } from "@kokoro/platform-kit";
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { z } from "zod";
-import { ConsoleAuditSink } from "./audit.js";
+import type { PrismaClient } from "../generated/prisma/index.js";
+import { queryAudit } from "./audit.js";
 import type { ModuleConfig } from "./config.js";
 import {
   GatewayError,
@@ -15,6 +16,22 @@ import {
   type ActionRequest,
   type AuditSink,
 } from "./gateway.js";
+import { OperatorAuthError, type Operator, type OperatorLookup } from "./rbac.js";
+
+// 开发期默认运营身份；生产由认证层经 x-kokoro-operator 注入。
+const DEFAULT_OPERATOR = "admin@kokoro.local";
+
+function operatorEmail(request: FastifyRequest): string {
+  const raw = request.headers["x-kokoro-operator"];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return value && value.length > 0 ? value : DEFAULT_OPERATOR;
+}
+
+export interface AdminServerDeps {
+  audit: AuditSink;
+  resolveOperator: OperatorLookup;
+  prisma: PrismaClient;
+}
 
 const resourceQuerySchema = z.object({
   moduleId: z.string().min(1),
@@ -41,9 +58,16 @@ const actionBodySchema = z
   })
   .strict();
 
+const auditQuerySchema = z
+  .object({
+    siteId: z.string().min(1).optional(),
+    limit: z.coerce.number().int().min(1).max(200).default(50),
+  })
+  .strict();
+
 const indexHtmlPath = fileURLToPath(new URL("../public/index.html", import.meta.url));
 
-export function createAdminServer(modules: ModuleConfig[], audit: AuditSink = new ConsoleAuditSink()): FastifyInstance {
+export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps): FastifyInstance {
   const app = Fastify({ logger: false });
 
   registerHealthRoute(app, "kokoro-platform-admin");
@@ -96,6 +120,15 @@ export function createAdminServer(modules: ModuleConfig[], audit: AuditSink = ne
       return sendError(reply, 400, "request.invalid", "无效的操作请求", { issues: parsed.error.issues });
     }
     const ctx = readRequestContext(request.headers);
+    let operator: Operator;
+    try {
+      operator = await deps.resolveOperator(operatorEmail(request));
+    } catch (error) {
+      if (error instanceof OperatorAuthError) {
+        return sendError(reply, error.statusCode, "operator.auth", error.message, undefined, ctx.requestId);
+      }
+      throw error;
+    }
     // 条件 spread 丢掉 undefined 键，匹配 exactOptionalPropertyTypes 下的 ActionRequest。
     const data = parsed.data;
     const actionRequest: ActionRequest = {
@@ -108,7 +141,7 @@ export function createAdminServer(modules: ModuleConfig[], audit: AuditSink = ne
       ...(data.reason === undefined ? {} : { reason: data.reason }),
     };
     try {
-      const result = await proxyAction(modules, audit, actionRequest, ctx.requestId);
+      const result = await proxyAction(modules, deps.audit, actionRequest, ctx.requestId, operator);
       return sendData(reply, result, 200, ctx.requestId);
     } catch (error) {
       if (error instanceof GatewayError) {
@@ -116,6 +149,15 @@ export function createAdminServer(modules: ModuleConfig[], audit: AuditSink = ne
       }
       return sendError(reply, 502, "gateway.error", error instanceof Error ? error.message : String(error), undefined, ctx.requestId);
     }
+  });
+
+  app.get("/api/audit", async (request, reply) => {
+    const query = auditQuerySchema.safeParse(request.query);
+    if (!query.success) {
+      return sendError(reply, 400, "request.invalid", "无效的查询参数", { issues: query.error.issues });
+    }
+    const { siteId, limit } = query.data;
+    return sendData(reply, await queryAudit(deps.prisma, siteId === undefined ? { limit } : { siteId, limit }));
   });
 
   return app;

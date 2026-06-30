@@ -1,0 +1,64 @@
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL_ADMIN")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+model OperatorRole {
+  key         String            @id
+  name        String
+  permissions Json
+  operators   OperatorAccount[]
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@map("operator_roles")
+}
+
+model OperatorAccount {
+  id          String         @id @default(cuid())
+  email       String         @unique
+  displayName String
+  roleKey     String
+  status      OperatorStatus @default(active)
+  role        OperatorRole   @relation(fields: [roleKey], references: [key])
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([roleKey])
+  @@map("operator_accounts")
+}
+
+model AuditLog {
+  id              String      @id @default(cuid())
+  actorOperatorId String?
+  actorEmail      String?
+  moduleId        String
+  resourceId      String
+  actionId        String
+  targetRoute     String
+  siteId          String?
+  reason          String?
+  result          AuditResult
+  statusCode      Int
+  requestId       String
+  createdAt       DateTime    @default(now())
+
+  @@index([createdAt])
+  @@index([siteId, createdAt])
+  @@map("audit_logs")
+}
+
+enum OperatorStatus {
+  active
+  disabled
+}
+
+enum AuditResult {
+  ok
+  error
+}
