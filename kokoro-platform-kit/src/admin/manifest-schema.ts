@@ -9,7 +9,7 @@ export const adminActionManifestSchema = z
     kind: z.enum(["link", "mutation", "dangerMutation"]),
     requiredPermission: z.string().min(1),
     route: z.string().min(1).optional(),
-    method: z.enum(["POST"]).default("POST"),
+    method: z.enum(["POST", "DELETE"]).default("POST"),
   })
   .strict();
 

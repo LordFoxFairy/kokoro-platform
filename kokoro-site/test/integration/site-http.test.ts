@@ -13,6 +13,7 @@ function createTestPrismaClient(): PrismaClient {
 }
 
 async function reset(prisma: PrismaClient): Promise<void> {
+  await prisma.siteFeatureFlag.deleteMany();
   await prisma.sitePolicy.deleteMany();
   await prisma.siteApp.deleteMany();
   await prisma.siteDomain.deleteMany();
@@ -37,6 +38,22 @@ describe("site HTTP API", () => {
     await prisma.$disconnect();
   });
 
+  it("exposes site active over HTTP (true for active, false for suspended/missing)", async () => {
+    const active = await upsertSite({ key: "live", name: "Live", status: "active" });
+    const activeId = active.json().data.id as string;
+    const activeRes = await app.inject({ method: "GET", url: `/sites/${activeId}/active` });
+    expect(activeRes.statusCode).toBe(200);
+    expect(activeRes.json().data).toEqual({ active: true });
+
+    const suspended = await upsertSite({ key: "down", name: "Down", status: "suspended" });
+    const suspendedId = suspended.json().data.id as string;
+    const suspendedRes = await app.inject({ method: "GET", url: `/sites/${suspendedId}/active` });
+    expect(suspendedRes.json().data).toEqual({ active: false });
+
+    const missing = await app.inject({ method: "GET", url: "/sites/missing-id/active" });
+    expect(missing.json().data).toEqual({ active: false });
+  });
+
   it("upserts a site and lists it back", async () => {
     const created = await upsertSite({ key: "acme", name: "Acme", status: "active" });
     expect(created.statusCode).toBe(200);
@@ -53,6 +70,47 @@ describe("site HTTP API", () => {
     expect(list.statusCode).toBe(200);
     expect(list.json().data).toHaveLength(1);
     expect(list.json().data[0].id).toBe(siteId);
+  });
+
+  it("deletes and restores a site through HTTP without reusing its key", async () => {
+    const site = await upsertSite({ key: "acme", name: "Acme", status: "active" });
+    const siteId = site.json().data.id as string;
+    await app.inject({
+      method: "POST",
+      url: "/site-domains/upsert",
+      payload: { siteId, host: "a.com", status: "active" },
+    });
+
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: `/sites/${siteId}`,
+      payload: { deletedBy: "operator-1", reason: "tenant closed" },
+    });
+    expect(deleted.statusCode).toBe(200);
+    expect(deleted.json().data.id).toBe(siteId);
+    expect(deleted.json().data.deletedAt).toEqual(expect.any(String));
+    expect(deleted.json().data.deletedBy).toBe("operator-1");
+
+    const active = await app.inject({ method: "GET", url: `/sites/${siteId}/active` });
+    expect(active.json().data).toEqual({ active: false });
+
+    const list = await app.inject({ method: "GET", url: "/sites" });
+    expect(list.json().data).toEqual([]);
+
+    const resolved = await app.inject({ method: "GET", url: "/site-context/resolve", query: { host: "a.com" } });
+    expect(resolved.statusCode).toBe(404);
+
+    const duplicated = await upsertSite({ key: "acme", name: "Acme Recreated" });
+    expect(duplicated.statusCode).toBe(409);
+    expect(duplicated.json().error.code).toBe("site.deleted");
+
+    const restored = await app.inject({ method: "POST", url: `/sites/${siteId}/restore` });
+    expect(restored.statusCode).toBe(200);
+    expect(restored.json().data.deletedAt).toBeNull();
+
+    const renamed = await upsertSite({ key: "acme", name: "Acme Restored" });
+    expect(renamed.statusCode).toBe(200);
+    expect(renamed.json().data.id).toBe(siteId);
   });
 
   it("upserts domain, app and policy under a site", async () => {
@@ -85,6 +143,45 @@ describe("site HTTP API", () => {
     expect(policy.statusCode).toBe(200);
     expect(policy.json().data.key).toBe("rate");
     expect(policy.json().data.value).toEqual({ rpm: 60, burst: [1, null] });
+  });
+
+  it("deletes and restores a site domain through HTTP without reusing its host", async () => {
+    const site = await upsertSite({ key: "acme", name: "Acme", status: "active" });
+    const siteId = site.json().data.id as string;
+    const domain = await app.inject({
+      method: "POST",
+      url: "/site-domains/upsert",
+      payload: { siteId, host: "A.COM", status: "active", isPrimary: true },
+    });
+    const domainId = domain.json().data.id as string;
+
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: `/site-domains/${domainId}`,
+      payload: { deletedBy: "operator-1", reason: "domain retired" },
+    });
+    expect(deleted.statusCode).toBe(200);
+    expect(deleted.json().data.deletedAt).toEqual(expect.any(String));
+    expect(deleted.json().data.deleteReason).toBe("domain retired");
+
+    const resolved = await app.inject({ method: "GET", url: "/site-context/resolve", query: { host: "a.com" } });
+    expect(resolved.statusCode).toBe(404);
+
+    const duplicated = await app.inject({
+      method: "POST",
+      url: "/site-domains/upsert",
+      payload: { siteId, host: "a.com" },
+    });
+    expect(duplicated.statusCode).toBe(409);
+    expect(duplicated.json().error.code).toBe("site_domain.deleted");
+
+    const restored = await app.inject({ method: "POST", url: `/site-domains/${domainId}/restore` });
+    expect(restored.statusCode).toBe(200);
+    expect(restored.json().data.deletedAt).toBeNull();
+
+    const resolvedAgain = await app.inject({ method: "GET", url: "/site-context/resolve", query: { host: "a.com" } });
+    expect(resolvedAgain.statusCode).toBe(200);
+    expect(resolvedAgain.json().data.context.siteId).toBe(siteId);
   });
 
   it("resolves site context for an active domain on an active site (200)", async () => {

@@ -7,6 +7,7 @@ import type {
   UpsertSiteInput,
   UpsertSitePolicyInput,
 } from "../domain/repository.js";
+import type { DeleteInput, RestoreInput } from "../domain/site-deletion.js";
 
 export class SiteService {
   constructor(private readonly repository: SiteRepository) {}
@@ -15,8 +16,24 @@ export class SiteService {
     return this.repository.upsertSite(input);
   }
 
+  async deleteSite(input: DeleteInput) {
+    return this.repository.deleteSite(input);
+  }
+
+  async restoreSite(input: RestoreInput) {
+    return this.repository.restoreSite(input);
+  }
+
   async upsertSiteDomain(input: UpsertSiteDomainInput) {
     return this.repository.upsertSiteDomain(input);
+  }
+
+  async deleteSiteDomain(input: DeleteInput) {
+    return this.repository.deleteSiteDomain(input);
+  }
+
+  async restoreSiteDomain(input: RestoreInput) {
+    return this.repository.restoreSiteDomain(input);
   }
 
   async upsertSiteApp(input: UpsertSiteAppInput) {
@@ -47,6 +64,11 @@ export class SiteService {
 
   async resolveSiteContext(input: ResolveSiteContextInput) {
     return this.repository.resolveSiteContext(input);
+  }
+
+  // 下游记账前校验站点是否 active（停站即时生效）。
+  async resolveSiteActive(siteId: string): Promise<boolean> {
+    return this.repository.resolveSiteActive(siteId);
   }
 
   async listSites() {

@@ -1,5 +1,6 @@
 import type { JsonObject } from "./json.js";
 import type { ResolvedSiteContext } from "./site-context.js";
+import type { DeleteInput, ListOptions, RestoreInput } from "./site-deletion.js";
 import type { Site } from "./site.js";
 import type { SiteApp, SiteSurface } from "./site-app.js";
 import type { SiteDomain } from "./site-domain.js";
@@ -60,11 +61,17 @@ export interface SiteRepository {
   upsertSitePolicy(input: UpsertSitePolicyInput): Promise<SitePolicy>;
   upsertSiteFeatureFlag(input: UpsertSiteFeatureFlagInput): Promise<SiteFeatureFlag>;
   listSiteFeatureFlags(siteId: string): Promise<SiteFeatureFlag[]>;
+  deleteSite(input: DeleteInput): Promise<Site>;
+  restoreSite(input: RestoreInput): Promise<Site>;
+  deleteSiteDomain(input: DeleteInput): Promise<SiteDomain>;
+  restoreSiteDomain(input: RestoreInput): Promise<SiteDomain>;
   resolveSiteContext(input: ResolveSiteContextInput): Promise<ResolvedSiteContext | null>;
-  listSites(): Promise<Site[]>;
-  listAdminSites(): Promise<Site[]>;
-  listAdminSiteDomains(): Promise<SiteDomain[]>;
-  listAdminSiteApps(): Promise<SiteApp[]>;
-  listAdminSitePolicies(): Promise<SitePolicy[]>;
-  listAdminSiteFeatureFlags(): Promise<SiteFeatureFlag[]>;
+  // 下游记账前校验：siteId 对应站点是否 active；不存在/非 active 返回 false。
+  resolveSiteActive(siteId: string): Promise<boolean>;
+  listSites(options?: ListOptions): Promise<Site[]>;
+  listAdminSites(options?: ListOptions): Promise<Site[]>;
+  listAdminSiteDomains(options?: ListOptions): Promise<SiteDomain[]>;
+  listAdminSiteApps(options?: ListOptions): Promise<SiteApp[]>;
+  listAdminSitePolicies(options?: ListOptions): Promise<SitePolicy[]>;
+  listAdminSiteFeatureFlags(options?: ListOptions): Promise<SiteFeatureFlag[]>;
 }

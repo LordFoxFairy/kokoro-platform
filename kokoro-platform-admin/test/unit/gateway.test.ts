@@ -184,6 +184,44 @@ describe("proxyAction", () => {
     expect(sink.entries[0]).toMatchObject({ result: "ok", statusCode: 200, targetRoute: "/admin/users/u_1/disable", actorEmail: "admin@kokoro.local" });
   });
 
+  it("forwards DELETE when declared by the action manifest", async () => {
+    const sink = new RecordingSink();
+    const deleteManifest = {
+      ...userActionManifest,
+      resources: [
+        {
+          ...userActionManifest.resources[0],
+          actions: [
+            {
+              id: "delete",
+              labelKey: "admin.user.actions.delete",
+              kind: "dangerMutation",
+              requiredPermission: "user.disable",
+              route: "/admin/users/:id",
+              method: "DELETE",
+            },
+          ],
+        },
+      ],
+    };
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input).includes("/manifest")) return jsonResponse({ data: deleteManifest });
+      return jsonResponse({ data: { id: "u_1", deletedAt: "2026-07-02T00:00:00.000Z" } });
+    });
+
+    await proxyAction(
+      modules,
+      sink,
+      { moduleId: "user", resourceId: "users", actionId: "delete", params: { id: "u_1" }, reason: "cleanup" },
+      "req_1",
+      SUPER,
+    );
+
+    const call = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/admin/users/u_1"));
+    const init = call?.[1] as RequestInit;
+    expect(init.method).toBe("DELETE");
+  });
+
   it("denies an operator lacking the action permission and records a 403 audit", async () => {
     const sink = new RecordingSink();
     fetchMock.mockResolvedValue(jsonResponse({ data: userActionManifest }));

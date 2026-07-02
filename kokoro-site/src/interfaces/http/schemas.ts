@@ -9,6 +9,19 @@ const metadataSchema = jsonObjectSchema.optional();
 
 export const siteSurfaceSchema = z.enum(["general", "studio", "api", "admin", "public_seo"]);
 
+export const siteActiveParamsSchema = z.object({ siteId: z.string().min(1) }).strict();
+
+export const siteParamsSchema = z.object({ siteId: z.string().min(1) }).strict();
+
+export const siteDomainParamsSchema = z.object({ domainId: z.string().min(1) }).strict();
+
+export const deleteRequestSchema = z
+  .object({
+    deletedBy: z.string().min(1).optional(),
+    reason: z.string().min(1).optional(),
+  })
+  .strict();
+
 export const upsertSiteRequestSchema = z
   .object({
     key: z.string().min(1),

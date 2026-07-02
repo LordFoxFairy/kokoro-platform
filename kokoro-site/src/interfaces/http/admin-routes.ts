@@ -8,11 +8,11 @@ export function registerSiteAdminRoutes(app: FastifyInstance, repository: SiteRe
   registerAdminManifestRoute(app, siteAdminManifest);
 
   const listByResourceId: Record<string, () => Promise<unknown[]>> = {
-    sites: () => repository.listAdminSites(),
-    domains: () => repository.listAdminSiteDomains(),
-    apps: () => repository.listAdminSiteApps(),
-    policies: () => repository.listAdminSitePolicies(),
-    "feature-flags": () => repository.listAdminSiteFeatureFlags(),
+    sites: () => repository.listAdminSites({ includeDeleted: true }),
+    domains: () => repository.listAdminSiteDomains({ includeDeleted: true }),
+    apps: () => repository.listAdminSiteApps({ includeDeleted: true }),
+    policies: () => repository.listAdminSitePolicies({ includeDeleted: true }),
+    "feature-flags": () => repository.listAdminSiteFeatureFlags({ includeDeleted: true }),
   };
 
   for (const resource of siteAdminManifest.resources) {

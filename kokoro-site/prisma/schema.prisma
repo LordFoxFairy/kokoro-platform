@@ -9,23 +9,28 @@ generator client {
 }
 
 model Site {
-  id             String            @id @default(cuid())
-  key            String            @unique
-  name           String
-  status         SiteStatus        @default(draft)
-  defaultLocale  String            @default("zh-CN")
-  timezone       String            @default("Asia/Shanghai")
-  metadata       Json?
-  domains        SiteDomain[]
-  apps           SiteApp[]
-  policies       SitePolicy[]
-  brandConfigs   SiteBrandConfig[]
-  seoConfigs     SiteSeoConfig[]
-  featureFlags   SiteFeatureFlag[]
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
+  id            String            @id @default(cuid())
+  key           String            @unique
+  name          String
+  status        SiteStatus        @default(draft)
+  defaultLocale String            @default("zh-CN")
+  timezone      String            @default("Asia/Shanghai")
+  metadata      Json?
+  domains       SiteDomain[]
+  apps          SiteApp[]
+  policies      SitePolicy[]
+  brandConfigs  SiteBrandConfig[]
+  seoConfigs    SiteSeoConfig[]
+  featureFlags  SiteFeatureFlag[]
+  deletedAt     DateTime?
+  deletedBy     String?
+  deleteReason  String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
 
   @@index([status])
+  @@index([deletedAt])
+  @@index([status, deletedAt])
   @@map("site_sites")
 }
 
@@ -38,10 +43,15 @@ model SiteDomain {
   canonicalHost String?
   metadata      Json?
   site          Site             @relation(fields: [siteId], references: [id])
+  deletedAt     DateTime?
+  deletedBy     String?
+  deleteReason  String?
   createdAt     DateTime         @default(now())
   updatedAt     DateTime         @updatedAt
 
   @@index([siteId, status])
+  @@index([siteId, status, deletedAt])
+  @@index([deletedAt])
   @@map("site_domains")
 }
 
@@ -54,26 +64,36 @@ model SiteApp {
   defaultRoute String?
   metadata     Json?
   site         Site          @relation(fields: [siteId], references: [id])
+  deletedAt    DateTime?
+  deletedBy    String?
+  deleteReason String?
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 
   @@unique([siteId, appKey, surface])
   @@index([siteId, status])
+  @@index([siteId, status, deletedAt])
+  @@index([deletedAt])
   @@map("site_apps")
 }
 
 model SitePolicy {
-  id        String           @id @default(cuid())
-  siteId    String
-  key       String
-  value     Json
-  status    SitePolicyStatus @default(active)
-  site      Site             @relation(fields: [siteId], references: [id])
-  createdAt DateTime         @default(now())
-  updatedAt DateTime         @updatedAt
+  id           String           @id @default(cuid())
+  siteId       String
+  key          String
+  value        Json
+  status       SitePolicyStatus @default(active)
+  site         Site             @relation(fields: [siteId], references: [id])
+  deletedAt    DateTime?
+  deletedBy    String?
+  deleteReason String?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
 
   @@unique([siteId, key])
   @@index([siteId, status])
+  @@index([siteId, status, deletedAt])
+  @@index([deletedAt])
   @@map("site_policies")
 }
 
@@ -88,47 +108,62 @@ model SiteBrandConfig {
   status        SiteBrandConfigStatus @default(active)
   metadata      Json?
   site          Site                  @relation(fields: [siteId], references: [id])
+  deletedAt     DateTime?
+  deletedBy     String?
+  deleteReason  String?
   createdAt     DateTime              @default(now())
   updatedAt     DateTime              @updatedAt
 
   @@unique([siteId, key])
   @@index([siteId, status])
+  @@index([siteId, status, deletedAt])
+  @@index([deletedAt])
   @@map("site_brand_configs")
 }
 
 model SiteSeoConfig {
-  id                 String              @id @default(cuid())
-  siteId             String
-  routePattern       String
-  titleTemplate      String
+  id                  String              @id @default(cuid())
+  siteId              String
+  routePattern        String
+  titleTemplate       String
   descriptionTemplate String?
-  canonicalPolicy    String?
-  robotsPolicy       String?
-  structuredDataKind String?
-  sitemapPriority    Decimal?            @db.Decimal(2, 1)
-  status             SiteSeoConfigStatus @default(active)
-  metadata           Json?
-  site               Site                @relation(fields: [siteId], references: [id])
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
+  canonicalPolicy     String?
+  robotsPolicy        String?
+  structuredDataKind  String?
+  sitemapPriority     Decimal?            @db.Decimal(2, 1)
+  status              SiteSeoConfigStatus @default(active)
+  metadata            Json?
+  site                Site                @relation(fields: [siteId], references: [id])
+  deletedAt           DateTime?
+  deletedBy           String?
+  deleteReason        String?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
 
   @@unique([siteId, routePattern])
   @@index([siteId, status])
+  @@index([siteId, status, deletedAt])
+  @@index([deletedAt])
   @@map("site_seo_configs")
 }
 
 model SiteFeatureFlag {
-  id        String   @id @default(cuid())
-  siteId    String
-  key       String
-  enabled   Boolean  @default(false)
-  metadata  Json?
-  site      Site     @relation(fields: [siteId], references: [id])
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String    @id @default(cuid())
+  siteId       String
+  key          String
+  enabled      Boolean   @default(false)
+  metadata     Json?
+  site         Site      @relation(fields: [siteId], references: [id])
+  deletedAt    DateTime?
+  deletedBy    String?
+  deleteReason String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   @@unique([siteId, key])
   @@index([siteId])
+  @@index([siteId, deletedAt])
+  @@index([deletedAt])
   @@map("site_feature_flags")
 }
 

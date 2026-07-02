@@ -88,6 +88,19 @@ describe("adminModuleManifestSchema", () => {
 });
 
 describe("adminActionManifestSchema", () => {
+  it("accepts DELETE for proxyable destructive actions", () => {
+    expect(
+      adminActionManifestSchema.parse({
+        id: "delete",
+        labelKey: "admin.actions.delete",
+        kind: "dangerMutation",
+        requiredPermission: "site.delete",
+        route: "/sites/:siteId",
+        method: "DELETE",
+      }).method,
+    ).toBe("DELETE");
+  });
+
   it.each(["link", "mutation", "dangerMutation"])(
     "accepts kind %s",
     (kind) => {

@@ -10,6 +10,8 @@ import type {
 } from "../../domain/repository.js";
 import { coerceJsonValue, type JsonObject } from "../../domain/json.js";
 import type { ResolvedSiteContext } from "../../domain/site-context.js";
+import { SiteLifecycleError } from "../../domain/site-deletion.js";
+import type { DeleteInput, ListOptions, RestoreInput } from "../../domain/site-deletion.js";
 import type { Site } from "../../domain/site.js";
 import type { SiteApp } from "../../domain/site-app.js";
 import type { SiteDomain } from "../../domain/site-domain.js";
@@ -20,19 +22,31 @@ export class PrismaSiteRepository implements SiteRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
   async upsertSite(input: UpsertSiteInput): Promise<Site> {
-    const site = await this.prisma.site.upsert({
-      where: {
-        key: input.key,
-      },
-      create: {
-        key: input.key,
-        name: input.name,
-        status: input.status ?? "draft",
-        defaultLocale: input.defaultLocale ?? "zh-CN",
-        timezone: input.timezone ?? "Asia/Shanghai",
-        ...definedJson("metadata", input.metadata),
-      },
-      update: {
+    const key = normalizeKey(input.key);
+    const existing = await this.prisma.site.findUnique({ where: { key } });
+    if (existing?.deletedAt) {
+      throw new SiteLifecycleError("site.deleted", "站点已删除，请先恢复后再修改", 409);
+    }
+
+    if (!existing) {
+      const created = await this.prisma.site.create({
+        data: {
+          // siteId 契约：全平台租户主键 = `site-<key>`，人读且确定性，跨服务一致（不用 cuid）。
+          id: `site-${key}`,
+          key,
+          name: input.name,
+          status: input.status ?? "draft",
+          defaultLocale: input.defaultLocale ?? "zh-CN",
+          timezone: input.timezone ?? "Asia/Shanghai",
+          ...definedJson("metadata", input.metadata),
+        },
+      });
+      return mapSite(created);
+    }
+
+    const site = await this.prisma.site.update({
+      where: { id: existing.id },
+      data: {
         name: input.name,
         ...definedValue("status", input.status),
         ...definedValue("defaultLocale", input.defaultLocale),
@@ -44,20 +58,67 @@ export class PrismaSiteRepository implements SiteRepository {
     return mapSite(site);
   }
 
+  async deleteSite(input: DeleteInput): Promise<Site> {
+    const existing = await this.prisma.site.findUnique({ where: { id: input.id } });
+    if (!existing) {
+      throw new SiteLifecycleError("site.not_found", "站点不存在", 404);
+    }
+    if (existing.deletedAt) {
+      return mapSite(existing);
+    }
+
+    const site = await this.prisma.site.update({
+      where: { id: input.id },
+      data: deletionData(input),
+    });
+
+    return mapSite(site);
+  }
+
+  async restoreSite(input: RestoreInput): Promise<Site> {
+    const existing = await this.prisma.site.findUnique({ where: { id: input.id } });
+    if (!existing) {
+      throw new SiteLifecycleError("site.not_found", "站点不存在", 404);
+    }
+    if (!existing.deletedAt) {
+      return mapSite(existing);
+    }
+
+    const site = await this.prisma.site.update({
+      where: { id: input.id },
+      data: restoreData(),
+    });
+
+    return mapSite(site);
+  }
+
   async upsertSiteDomain(input: UpsertSiteDomainInput): Promise<SiteDomain> {
-    const domain = await this.prisma.siteDomain.upsert({
-      where: {
-        host: normalizeHost(input.host),
-      },
-      create: {
-        siteId: input.siteId,
-        host: normalizeHost(input.host),
-        status: input.status ?? "active",
-        isPrimary: input.isPrimary ?? false,
-        canonicalHost: normalizeOptionalHost(input.canonicalHost),
-        ...definedJson("metadata", input.metadata),
-      },
-      update: {
+    await this.assertWritableSite(input.siteId);
+
+    const host = normalizeHost(input.host);
+    const existing = await this.prisma.siteDomain.findUnique({ where: { host } });
+    if (existing?.deletedAt) {
+      throw new SiteLifecycleError("site_domain.deleted", "站点域名已删除，请先恢复后再修改", 409);
+    }
+
+    if (!existing) {
+      const created = await this.prisma.siteDomain.create({
+        data: {
+          siteId: input.siteId,
+          host,
+          status: input.status ?? "active",
+          isPrimary: input.isPrimary ?? false,
+          canonicalHost: normalizeOptionalHost(input.canonicalHost),
+          ...definedJson("metadata", input.metadata),
+        },
+      });
+
+      return mapSiteDomain(created);
+    }
+
+    const domain = await this.prisma.siteDomain.update({
+      where: { id: existing.id },
+      data: {
         siteId: input.siteId,
         ...definedValue("status", input.status),
         ...definedValue("isPrimary", input.isPrimary),
@@ -69,7 +130,56 @@ export class PrismaSiteRepository implements SiteRepository {
     return mapSiteDomain(domain);
   }
 
+  async deleteSiteDomain(input: DeleteInput): Promise<SiteDomain> {
+    const existing = await this.prisma.siteDomain.findUnique({ where: { id: input.id } });
+    if (!existing) {
+      throw new SiteLifecycleError("site_domain.not_found", "站点域名不存在", 404);
+    }
+    if (existing.deletedAt) {
+      return mapSiteDomain(existing);
+    }
+
+    const domain = await this.prisma.siteDomain.update({
+      where: { id: input.id },
+      data: deletionData(input),
+    });
+
+    return mapSiteDomain(domain);
+  }
+
+  async restoreSiteDomain(input: RestoreInput): Promise<SiteDomain> {
+    const existing = await this.prisma.siteDomain.findUnique({ where: { id: input.id } });
+    if (!existing) {
+      throw new SiteLifecycleError("site_domain.not_found", "站点域名不存在", 404);
+    }
+    if (!existing.deletedAt) {
+      return mapSiteDomain(existing);
+    }
+
+    const domain = await this.prisma.siteDomain.update({
+      where: { id: input.id },
+      data: restoreData(),
+    });
+
+    return mapSiteDomain(domain);
+  }
+
   async upsertSiteApp(input: UpsertSiteAppInput): Promise<SiteApp> {
+    await this.assertWritableSite(input.siteId);
+
+    const existing = await this.prisma.siteApp.findUnique({
+      where: {
+        siteId_appKey_surface: {
+          siteId: input.siteId,
+          appKey: input.appKey,
+          surface: input.surface,
+        },
+      },
+    });
+    if (existing?.deletedAt) {
+      throw new SiteLifecycleError("site_app.deleted", "站点应用已删除，请先恢复后再修改", 409);
+    }
+
     const app = await this.prisma.siteApp.upsert({
       where: {
         siteId_appKey_surface: {
@@ -97,6 +207,20 @@ export class PrismaSiteRepository implements SiteRepository {
   }
 
   async upsertSitePolicy(input: UpsertSitePolicyInput): Promise<SitePolicy> {
+    await this.assertWritableSite(input.siteId);
+
+    const existing = await this.prisma.sitePolicy.findUnique({
+      where: {
+        siteId_key: {
+          siteId: input.siteId,
+          key: input.key,
+        },
+      },
+    });
+    if (existing?.deletedAt) {
+      throw new SiteLifecycleError("site_policy.deleted", "站点策略已删除，请先恢复后再修改", 409);
+    }
+
     const policy = await this.prisma.sitePolicy.upsert({
       where: {
         siteId_key: {
@@ -120,6 +244,20 @@ export class PrismaSiteRepository implements SiteRepository {
   }
 
   async upsertSiteFeatureFlag(input: UpsertSiteFeatureFlagInput): Promise<SiteFeatureFlag> {
+    await this.assertWritableSite(input.siteId);
+
+    const existing = await this.prisma.siteFeatureFlag.findUnique({
+      where: {
+        siteId_key: {
+          siteId: input.siteId,
+          key: input.key,
+        },
+      },
+    });
+    if (existing?.deletedAt) {
+      throw new SiteLifecycleError("site_feature_flag.deleted", "站点功能开关已删除，请先恢复后再修改", 409);
+    }
+
     const flag = await this.prisma.siteFeatureFlag.upsert({
       where: {
         siteId_key: {
@@ -144,7 +282,7 @@ export class PrismaSiteRepository implements SiteRepository {
 
   async listSiteFeatureFlags(siteId: string): Promise<SiteFeatureFlag[]> {
     const flags = await this.prisma.siteFeatureFlag.findMany({
-      where: { siteId },
+      where: { siteId, deletedAt: null, site: { deletedAt: null } },
       orderBy: { key: "asc" },
     });
 
@@ -164,6 +302,7 @@ export class PrismaSiteRepository implements SiteRepository {
                 ...(input.appKey ? { appKey: input.appKey } : {}),
                 ...(input.surface ? { surface: input.surface } : {}),
                 status: "active",
+                deletedAt: null,
               },
               orderBy: {
                 createdAt: "asc",
@@ -175,7 +314,13 @@ export class PrismaSiteRepository implements SiteRepository {
       },
     });
 
-    if (!domain || domain.status !== "active" || domain.site.status !== "active") {
+    if (
+      !domain ||
+      domain.deletedAt ||
+      domain.status !== "active" ||
+      domain.site.deletedAt ||
+      domain.site.status !== "active"
+    ) {
       return null;
     }
 
@@ -196,8 +341,14 @@ export class PrismaSiteRepository implements SiteRepository {
     };
   }
 
-  async listSites(): Promise<Site[]> {
+  async resolveSiteActive(siteId: string): Promise<boolean> {
+    const site = await this.prisma.site.findFirst({ where: { id: siteId, deletedAt: null } });
+    return site !== null && site.status === "active";
+  }
+
+  async listSites(options?: ListOptions): Promise<Site[]> {
     const sites = await this.prisma.site.findMany({
+      where: visibleRows(options),
       orderBy: {
         createdAt: "asc",
       },
@@ -206,8 +357,9 @@ export class PrismaSiteRepository implements SiteRepository {
     return sites.map(mapSite);
   }
 
-  async listAdminSites(): Promise<Site[]> {
+  async listAdminSites(options?: ListOptions): Promise<Site[]> {
     const sites = await this.prisma.site.findMany({
+      where: visibleRows(options),
       orderBy: { createdAt: "desc" },
       take: ADMIN_LIST_LIMIT,
     });
@@ -215,8 +367,9 @@ export class PrismaSiteRepository implements SiteRepository {
     return sites.map(mapSite);
   }
 
-  async listAdminSiteDomains(): Promise<SiteDomain[]> {
+  async listAdminSiteDomains(options?: ListOptions): Promise<SiteDomain[]> {
     const domains = await this.prisma.siteDomain.findMany({
+      where: visibleChildRows(options),
       orderBy: { createdAt: "desc" },
       take: ADMIN_LIST_LIMIT,
     });
@@ -224,8 +377,9 @@ export class PrismaSiteRepository implements SiteRepository {
     return domains.map(mapSiteDomain);
   }
 
-  async listAdminSiteApps(): Promise<SiteApp[]> {
+  async listAdminSiteApps(options?: ListOptions): Promise<SiteApp[]> {
     const apps = await this.prisma.siteApp.findMany({
+      where: visibleChildRows(options),
       orderBy: { createdAt: "desc" },
       take: ADMIN_LIST_LIMIT,
     });
@@ -233,8 +387,9 @@ export class PrismaSiteRepository implements SiteRepository {
     return apps.map(mapSiteApp);
   }
 
-  async listAdminSitePolicies(): Promise<SitePolicy[]> {
+  async listAdminSitePolicies(options?: ListOptions): Promise<SitePolicy[]> {
     const policies = await this.prisma.sitePolicy.findMany({
+      where: visibleChildRows(options),
       orderBy: { createdAt: "desc" },
       take: ADMIN_LIST_LIMIT,
     });
@@ -242,13 +397,24 @@ export class PrismaSiteRepository implements SiteRepository {
     return policies.map(mapSitePolicy);
   }
 
-  async listAdminSiteFeatureFlags(): Promise<SiteFeatureFlag[]> {
+  async listAdminSiteFeatureFlags(options?: ListOptions): Promise<SiteFeatureFlag[]> {
     const flags = await this.prisma.siteFeatureFlag.findMany({
+      where: visibleChildRows(options),
       orderBy: { createdAt: "desc" },
       take: ADMIN_LIST_LIMIT,
     });
 
     return flags.map(mapSiteFeatureFlag);
+  }
+
+  private async assertWritableSite(siteId: string): Promise<void> {
+    const site = await this.prisma.site.findUnique({ where: { id: siteId } });
+    if (!site) {
+      throw new SiteLifecycleError("site.not_found", "站点不存在", 404);
+    }
+    if (site.deletedAt) {
+      throw new SiteLifecycleError("site.deleted", "站点已删除，请先恢复后再修改", 409);
+    }
   }
 }
 
@@ -256,6 +422,11 @@ const ADMIN_LIST_LIMIT = 100;
 
 function normalizeHost(host: string): string {
   return host.trim().toLowerCase();
+}
+
+// 站点 key 规范化（对齐 host），杜绝大小写/空格绕过 @unique 约束建出重复租户根。
+function normalizeKey(key: string): string {
+  return key.trim().toLowerCase();
 }
 
 function normalizeOptionalHost(host: string | undefined): string | null {
@@ -298,6 +469,57 @@ function definedNullableHost<Key extends string>(
   return out;
 }
 
+function visibleRows(options: ListOptions | undefined): { deletedAt?: null } {
+  return options?.includeDeleted ? {} : { deletedAt: null };
+}
+
+function visibleChildRows(options: ListOptions | undefined): {
+  deletedAt?: null;
+  site?: { deletedAt: null };
+} {
+  return options?.includeDeleted ? {} : { deletedAt: null, site: { deletedAt: null } };
+}
+
+function deletionData(input: DeleteInput): {
+  deletedAt: Date;
+  deletedBy: string | null;
+  deleteReason: string | null;
+} {
+  return {
+    deletedAt: new Date(),
+    deletedBy: input.deletedBy ?? null,
+    deleteReason: input.reason ?? null,
+  };
+}
+
+function restoreData(): {
+  deletedAt: null;
+  deletedBy: null;
+  deleteReason: null;
+} {
+  return {
+    deletedAt: null,
+    deletedBy: null,
+    deleteReason: null,
+  };
+}
+
+function mapDeletionAudit(record: {
+  deletedAt: Date | null;
+  deletedBy: string | null;
+  deleteReason: string | null;
+}): {
+  deletedAt: Date | null;
+  deletedBy: string | null;
+  deleteReason: string | null;
+} {
+  return {
+    deletedAt: record.deletedAt,
+    deletedBy: record.deletedBy,
+    deleteReason: record.deleteReason,
+  };
+}
+
 function mapSite(site: {
   id: string;
   key: string;
@@ -305,6 +527,9 @@ function mapSite(site: {
   status: Site["status"];
   defaultLocale: string;
   timezone: string;
+  deletedAt: Date | null;
+  deletedBy: string | null;
+  deleteReason: string | null;
   createdAt: Date;
   updatedAt: Date;
 }): Site {
@@ -315,6 +540,7 @@ function mapSite(site: {
     status: site.status,
     defaultLocale: site.defaultLocale,
     timezone: site.timezone,
+    ...mapDeletionAudit(site),
     createdAt: site.createdAt,
     updatedAt: site.updatedAt,
   };
@@ -327,6 +553,9 @@ function mapSiteDomain(domain: {
   status: SiteDomain["status"];
   isPrimary: boolean;
   canonicalHost: string | null;
+  deletedAt: Date | null;
+  deletedBy: string | null;
+  deleteReason: string | null;
   createdAt: Date;
   updatedAt: Date;
 }): SiteDomain {
@@ -337,6 +566,7 @@ function mapSiteDomain(domain: {
     status: domain.status,
     isPrimary: domain.isPrimary,
     canonicalHost: domain.canonicalHost,
+    ...mapDeletionAudit(domain),
     createdAt: domain.createdAt,
     updatedAt: domain.updatedAt,
   };
@@ -349,6 +579,9 @@ function mapSiteApp(app: {
   surface: SiteApp["surface"];
   status: SiteApp["status"];
   defaultRoute: string | null;
+  deletedAt: Date | null;
+  deletedBy: string | null;
+  deleteReason: string | null;
   createdAt: Date;
   updatedAt: Date;
 }): SiteApp {
@@ -359,6 +592,7 @@ function mapSiteApp(app: {
     surface: app.surface,
     status: app.status,
     defaultRoute: app.defaultRoute,
+    ...mapDeletionAudit(app),
     createdAt: app.createdAt,
     updatedAt: app.updatedAt,
   };
@@ -370,6 +604,9 @@ function mapSitePolicy(policy: {
   key: string;
   value: Prisma.JsonValue;
   status: SitePolicy["status"];
+  deletedAt: Date | null;
+  deletedBy: string | null;
+  deleteReason: string | null;
   createdAt: Date;
   updatedAt: Date;
 }): SitePolicy {
@@ -379,6 +616,7 @@ function mapSitePolicy(policy: {
     key: policy.key,
     value: policy.value,
     status: policy.status,
+    ...mapDeletionAudit(policy),
     createdAt: policy.createdAt,
     updatedAt: policy.updatedAt,
   };
@@ -389,7 +627,10 @@ function mapSiteFeatureFlag(flag: {
   siteId: string;
   key: string;
   enabled: boolean;
-  metadata: Prisma.JsonValue;
+  metadata: Prisma.JsonValue | null;
+  deletedAt: Date | null;
+  deletedBy: string | null;
+  deleteReason: string | null;
   createdAt: Date;
   updatedAt: Date;
 }): SiteFeatureFlag {
@@ -399,13 +640,14 @@ function mapSiteFeatureFlag(flag: {
     key: flag.key,
     enabled: flag.enabled,
     metadata: asJsonObject(flag.metadata),
+    ...mapDeletionAudit(flag),
     createdAt: flag.createdAt,
     updatedAt: flag.updatedAt,
   };
 }
 
 // metadata 仅由 JsonObject 写入；非对象 JSON 视为缺省，归一为 null。
-function asJsonObject(value: Prisma.JsonValue): JsonObject | null {
+function asJsonObject(value: Prisma.JsonValue | null): JsonObject | null {
   const coerced = coerceJsonValue(value);
   return coerced !== null && typeof coerced === "object" && !Array.isArray(coerced) ? coerced : null;
 }

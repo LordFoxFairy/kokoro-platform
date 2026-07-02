@@ -14,6 +14,7 @@ function createTestPrismaClient(): PrismaClient {
 }
 
 async function reset(prisma: PrismaClient): Promise<void> {
+  await prisma.siteFeatureFlag.deleteMany();
   await prisma.sitePolicy.deleteMany();
   await prisma.siteApp.deleteMany();
   await prisma.siteDomain.deleteMany();
@@ -47,6 +48,11 @@ async function seed(): Promise<void> {
     method: "POST",
     url: "/site-policies/upsert",
     payload: { siteId, key: "rate", value: { rpm: 60 } },
+  });
+  await app.inject({
+    method: "POST",
+    url: "/site-feature-flags/upsert",
+    payload: { siteId, key: "new-home", enabled: true },
   });
 }
 
@@ -99,5 +105,37 @@ describe("site admin read-only API", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json().data[0].key).toBe("rate");
     expect(response.json().data[0].value).toEqual({ rpm: 60 });
+  });
+
+  it("keeps deleted site and domain rows visible in admin lists for restore workflows", async () => {
+    await seed();
+
+    const sitesRoute = resourceRouteById.get("sites") as string;
+    const domainsRoute = resourceRouteById.get("domains") as string;
+    const sitesBefore = await app.inject({ method: "GET", url: sitesRoute });
+    const domainsBefore = await app.inject({ method: "GET", url: domainsRoute });
+    const siteId = sitesBefore.json().data[0].id as string;
+    const domainId = domainsBefore.json().data[0].id as string;
+
+    await app.inject({
+      method: "DELETE",
+      url: `/site-domains/${domainId}`,
+      payload: { reason: "admin restore test" },
+    });
+    await app.inject({
+      method: "DELETE",
+      url: `/sites/${siteId}`,
+      payload: { reason: "admin restore test" },
+    });
+
+    const sitesAfter = await app.inject({ method: "GET", url: sitesRoute });
+    const domainsAfter = await app.inject({ method: "GET", url: domainsRoute });
+
+    expect(sitesAfter.statusCode).toBe(200);
+    expect(sitesAfter.json().data).toHaveLength(1);
+    expect(sitesAfter.json().data[0].deletedAt).toEqual(expect.any(String));
+    expect(domainsAfter.statusCode).toBe(200);
+    expect(domainsAfter.json().data).toHaveLength(1);
+    expect(domainsAfter.json().data[0].deletedAt).toEqual(expect.any(String));
   });
 });

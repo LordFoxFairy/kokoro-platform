@@ -140,7 +140,7 @@ type AuditBase = Omit<AuditEntry, "result" | "statusCode" | "requestId">;
 
 export interface PreparedAction {
   module: ModuleConfig;
-  method: "POST";
+  method: "POST" | "DELETE";
   route: string;
   requiredPermission: string;
   kind: "link" | "mutation" | "dangerMutation";

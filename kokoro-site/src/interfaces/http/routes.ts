@@ -2,9 +2,14 @@ import { jsonSchema, registerHealthRoute, sendData, sendError, sendZodError } fr
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { ZodError } from "zod";
 import type { SiteService } from "../../application/site-service.js";
+import { isSiteLifecycleError } from "../../domain/site-deletion.js";
 import {
+  deleteRequestSchema,
   listSiteFeatureFlagsQuerySchema,
   resolveSiteQuerySchema,
+  siteActiveParamsSchema,
+  siteDomainParamsSchema,
+  siteParamsSchema,
   upsertSiteAppRequestSchema,
   upsertSiteDomainRequestSchema,
   upsertSiteFeatureFlagRequestSchema,
@@ -26,6 +31,54 @@ export function registerSiteRoutes(app: FastifyInstance, service: SiteService): 
       return sendError(reply, 500, "site.list_failed", "站点列表获取失败", undefined, requestId);
     }
   });
+
+  // 下游(credit/payment)记账前调用：校验站点是否 active。
+  app.get(
+    "/sites/:siteId/active",
+    { schema: { tags: ["site"], summary: "校验站点是否 active" } },
+    async (request, reply) => {
+      const requestId = getRequestId(request.headers["x-request-id"]);
+      const params = siteActiveParamsSchema.safeParse(request.params);
+      if (!params.success) {
+        return sendZodError(reply, params.error, requestId);
+      }
+      const active = await service.resolveSiteActive(params.data.siteId);
+      return sendData(reply, { active }, 200, requestId);
+    },
+  );
+
+  app.delete(
+    "/sites/:siteId",
+    { schema: { tags: ["site"], summary: "删除站点", body: jsonSchema(deleteRequestSchema) } },
+    async (request, reply) => {
+      const requestId = getRequestId(request.headers["x-request-id"]);
+
+      try {
+        const params = siteParamsSchema.parse(request.params);
+        const body = deleteRequestSchema.parse(request.body ?? {});
+        const site = await service.deleteSite({ id: params.siteId, ...body });
+        return sendData(reply, site, 200, requestId);
+      } catch (error) {
+        return handleRouteError(request, reply, error, requestId, "site.delete_failed", "站点删除失败");
+      }
+    },
+  );
+
+  app.post(
+    "/sites/:siteId/restore",
+    { schema: { tags: ["site"], summary: "恢复站点" } },
+    async (request, reply) => {
+      const requestId = getRequestId(request.headers["x-request-id"]);
+
+      try {
+        const params = siteParamsSchema.parse(request.params);
+        const site = await service.restoreSite({ id: params.siteId });
+        return sendData(reply, site, 200, requestId);
+      } catch (error) {
+        return handleRouteError(request, reply, error, requestId, "site.restore_failed", "站点恢复失败");
+      }
+    },
+  );
 
   app.post(
     "/sites/upsert",
@@ -55,6 +108,39 @@ export function registerSiteRoutes(app: FastifyInstance, service: SiteService): 
         return sendData(reply, domain, 200, requestId);
       } catch (error) {
         return handleRouteError(request, reply, error, requestId, "site_domain.upsert_failed", "站点域名保存失败");
+      }
+    },
+  );
+
+  app.delete(
+    "/site-domains/:domainId",
+    { schema: { tags: ["site"], summary: "删除站点域名", body: jsonSchema(deleteRequestSchema) } },
+    async (request, reply) => {
+      const requestId = getRequestId(request.headers["x-request-id"]);
+
+      try {
+        const params = siteDomainParamsSchema.parse(request.params);
+        const body = deleteRequestSchema.parse(request.body ?? {});
+        const domain = await service.deleteSiteDomain({ id: params.domainId, ...body });
+        return sendData(reply, domain, 200, requestId);
+      } catch (error) {
+        return handleRouteError(request, reply, error, requestId, "site_domain.delete_failed", "站点域名删除失败");
+      }
+    },
+  );
+
+  app.post(
+    "/site-domains/:domainId/restore",
+    { schema: { tags: ["site"], summary: "恢复站点域名" } },
+    async (request, reply) => {
+      const requestId = getRequestId(request.headers["x-request-id"]);
+
+      try {
+        const params = siteDomainParamsSchema.parse(request.params);
+        const domain = await service.restoreSiteDomain({ id: params.domainId });
+        return sendData(reply, domain, 200, requestId);
+      } catch (error) {
+        return handleRouteError(request, reply, error, requestId, "site_domain.restore_failed", "站点域名恢复失败");
       }
     },
   );
@@ -175,6 +261,10 @@ function handleRouteError(
 ) {
   if (error instanceof ZodError) {
     return sendZodError(reply, error, requestId);
+  }
+
+  if (isSiteLifecycleError(error)) {
+    return sendError(reply, error.statusCode, error.code, error.message, undefined, requestId);
   }
 
   request.log.error({ error }, message);
