@@ -30,6 +30,161 @@ describe("user HTTP API", () => {
     });
   });
 
+  it("exposes owner active over HTTP for user and team owners", async () => {
+    const ensured = await app.inject({
+      method: "POST",
+      url: "/users/ensure",
+      headers: { "x-request-id": "req_oa", "x-kokoro-site-id": "site-a" },
+      payload: { externalUserId: "auth0|owner-active-http", email: "oa@example.com", displayName: "OA" },
+    });
+    const { user, personalTeam } = ensured.json().data;
+
+    const userActive = await app.inject({
+      method: "GET",
+      url: `/owners/user/${user.id}/active`,
+      headers: { "x-kokoro-site-id": "site-a" },
+    });
+    expect(userActive.statusCode).toBe(200);
+    expect(userActive.json().data).toEqual({ active: true });
+
+    const teamActive = await app.inject({
+      method: "GET",
+      url: `/owners/team/${personalTeam.id}/active`,
+      headers: { "x-kokoro-site-id": "site-a" },
+    });
+    expect(teamActive.json().data).toEqual({ active: true });
+
+    const missing = await app.inject({
+      method: "GET",
+      url: "/owners/user/nope/active",
+      headers: { "x-kokoro-site-id": "site-a" },
+    });
+    expect(missing.json().data).toEqual({ active: false });
+
+    const noSite = await app.inject({ method: "GET", url: `/owners/user/${user.id}/active` });
+    expect(noSite.statusCode).toBe(400);
+  });
+
+  it("deletes and restores a user over HTTP", async () => {
+    const ensured = await app.inject({
+      method: "POST",
+      url: "/users/ensure",
+      headers: { "x-kokoro-site-id": "site-a" },
+      payload: { externalUserId: "auth0|delete-user-http", displayName: "Delete User" },
+    });
+    const { user } = ensured.json().data;
+
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: `/users/${user.id}`,
+      payload: { deletedBy: "operator-1", reason: "closed" },
+    });
+
+    expect(deleted.statusCode).toBe(200);
+    expect(deleted.json().data.deletedBy).toBe("operator-1");
+    expect(deleted.json().data.deleteReason).toBe("closed");
+    expect(deleted.json().data.deletedAt).toEqual(expect.any(String));
+
+    const inactive = await app.inject({
+      method: "GET",
+      url: `/owners/user/${user.id}/active`,
+      headers: { "x-kokoro-site-id": "site-a" },
+    });
+    expect(inactive.json().data).toEqual({ active: false });
+
+    const restored = await app.inject({
+      method: "POST",
+      url: `/users/${user.id}/restore`,
+    });
+
+    expect(restored.statusCode).toBe(200);
+    expect(restored.json().data.deletedAt).toBeNull();
+
+    const active = await app.inject({
+      method: "GET",
+      url: `/owners/user/${user.id}/active`,
+      headers: { "x-kokoro-site-id": "site-a" },
+    });
+    expect(active.json().data).toEqual({ active: true });
+  });
+
+  it("deletes and restores a team over HTTP", async () => {
+    const ensured = await app.inject({
+      method: "POST",
+      url: "/users/ensure",
+      headers: { "x-kokoro-site-id": "site-a" },
+      payload: { externalUserId: "auth0|team-delete-owner", displayName: "Team Owner" },
+    });
+    const { user } = ensured.json().data;
+    const created = await app.inject({
+      method: "POST",
+      url: "/teams/upsert",
+      headers: { "x-kokoro-site-id": "site-a" },
+      payload: { slug: "delete-team-http", name: "Delete Team", ownerUserId: user.id },
+    });
+    const team = created.json().data;
+
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: `/teams/${team.id}`,
+      payload: { deletedBy: "operator-1", reason: "retired" },
+    });
+
+    expect(deleted.statusCode).toBe(200);
+    expect(deleted.json().data.deletedAt).toEqual(expect.any(String));
+
+    const inactive = await app.inject({
+      method: "GET",
+      url: `/owners/team/${team.id}/active`,
+      headers: { "x-kokoro-site-id": "site-a" },
+    });
+    expect(inactive.json().data).toEqual({ active: false });
+
+    const restored = await app.inject({
+      method: "POST",
+      url: `/teams/${team.id}/restore`,
+    });
+
+    expect(restored.statusCode).toBe(200);
+    expect(restored.json().data.deletedAt).toBeNull();
+
+    const active = await app.inject({
+      method: "GET",
+      url: `/owners/team/${team.id}/active`,
+      headers: { "x-kokoro-site-id": "site-a" },
+    });
+    expect(active.json().data).toEqual({ active: true });
+  });
+
+  it("rejects a deleted owner in team upsert over HTTP", async () => {
+    const ensured = await app.inject({
+      method: "POST",
+      url: "/users/ensure",
+      headers: { "x-kokoro-site-id": "site-a" },
+      payload: { externalUserId: "auth0|deleted-owner-http", displayName: "Deleted Owner" },
+    });
+    const { user } = ensured.json().data;
+    await app.inject({
+      method: "DELETE",
+      url: `/users/${user.id}`,
+      payload: { deletedBy: "operator-1", reason: "closed" },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/teams/upsert",
+      headers: { "x-kokoro-site-id": "site-a" },
+      payload: { slug: "deleted-owner-team", name: "Deleted Owner Team", ownerUserId: user.id },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({
+      error: {
+        code: "user.deleted",
+      },
+    });
+  });
+
   it("ensures a user with a personal team", async () => {
     const response = await app.inject({
       method: "POST",

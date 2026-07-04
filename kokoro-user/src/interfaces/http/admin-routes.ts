@@ -15,13 +15,13 @@ function resourceLister(
 ): ((siteId?: string) => Promise<unknown[]>) | undefined {
   switch (resourceId) {
     case "users":
-      return (siteId) => repository.listUsers(siteId);
+      return (siteId) => repository.listUsers(siteId, { includeDeleted: true });
     case "teams":
-      return (siteId) => repository.listTeams(siteId);
+      return (siteId) => repository.listTeams(siteId, { includeDeleted: true });
     case "memberships":
-      return () => repository.listMemberships();
+      return () => repository.listMemberships({ includeDeleted: true });
     case "service-accounts":
-      return () => repository.listServiceAccounts();
+      return () => repository.listServiceAccounts({ includeDeleted: true });
     default:
       return undefined;
   }

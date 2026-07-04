@@ -97,6 +97,30 @@ describe("user admin read-only API", () => {
     expect(response.json().data[0].name).toBe("ci-bot");
     expect(response.json().data[0].tokenPrefix).toBe("sk_test");
   });
+
+  it("includes deleted rows in admin lists for restore workflows", async () => {
+    const ensured = await app.inject({
+      method: "POST",
+      url: "/users/ensure",
+      headers: { "x-kokoro-site-id": "site-a" },
+      payload: { externalUserId: "auth0|admin-deleted", displayName: "Admin Deleted" },
+    });
+    const { user, personalTeam } = ensured.json().data;
+
+    await app.inject({
+      method: "DELETE",
+      url: `/users/${user.id}`,
+      payload: { deletedBy: "operator-1", reason: "closed" },
+    });
+
+    const users = await app.inject({ method: "GET", url: "/admin/users" });
+    expect(users.statusCode).toBe(200);
+    expect(users.json().data).toContainEqual(expect.objectContaining({ id: user.id, deletedBy: "operator-1" }));
+
+    const teams = await app.inject({ method: "GET", url: "/admin/teams" });
+    expect(teams.statusCode).toBe(200);
+    expect(teams.json().data).toContainEqual(expect.objectContaining({ id: personalTeam.id, deletedBy: "operator-1" }));
+  });
 });
 
 describe("user admin disable/enable", () => {

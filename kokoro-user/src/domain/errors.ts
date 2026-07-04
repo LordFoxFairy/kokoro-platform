@@ -4,3 +4,10 @@ export class UserNotFoundError extends Error {
     this.name = "UserNotFoundError";
   }
 }
+
+export class TeamNotFoundError extends Error {
+  constructor(public readonly teamId: string) {
+    super(`team not found: ${teamId}`);
+    this.name = "TeamNotFoundError";
+  }
+}

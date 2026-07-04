@@ -1,7 +1,9 @@
+import type { DeletionAudit } from "./user-deletion.js";
+
 export type TeamType = "personal" | "team";
 export type TeamStatus = "active" | "disabled";
 
-export interface Team {
+export interface Team extends DeletionAudit {
   id: string;
   siteId: string;
   name: string;

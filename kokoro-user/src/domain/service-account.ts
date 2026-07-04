@@ -1,6 +1,8 @@
+import type { DeletionAudit } from "./user-deletion.js";
+
 export type ServiceAccountStatus = "active" | "disabled";
 
-export interface ServiceAccount {
+export interface ServiceAccount extends DeletionAudit {
   id: string;
   teamId?: string | null;
   ownerUserId?: string | null;

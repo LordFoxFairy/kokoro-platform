@@ -4,6 +4,7 @@ export * from "./application/user-service.js";
 export * from "./domain/errors.js";
 export * from "./domain/membership.js";
 export * from "./domain/team.js";
+export * from "./domain/user-deletion.js";
 export * from "./domain/user.js";
 export * from "./interfaces/http/server.js";
 export * from "./interfaces/http/schemas.js";
