@@ -206,4 +206,90 @@ describe("PrismaCreditRepository", () => {
     expect(stored.heldMicros.toString()).toBe("5000000");
     expect(stored.balanceMicros.toString()).toBe("5000000");
   });
+
+  it("deletes and restores an account without deleting ledger or usage facts", async () => {
+    const account = await service.ensureAccount({
+      siteId: "site-default",
+      ownerKind: "team",
+      ownerId: "team_delete_restore",
+    });
+    await service.grantCredits({
+      accountId: account.id,
+      amountMicros: "9000000",
+      idempotencyKey: "delete_restore_grant",
+      reason: "subscription",
+    });
+    const hold = await service.holdCredits({
+      accountId: account.id,
+      amountMicros: "3000000",
+      idempotencyKey: "delete_restore_hold",
+    });
+    await service.captureHold({
+      holdId: hold.id,
+      actualAmountMicros: "2000000",
+      idempotencyKey: "delete_restore_capture",
+      reason: "model_call",
+      featureKey: "model.call",
+      requestId: "req_delete_restore",
+    });
+
+    const deleted = await repository.deleteAccount({
+      id: account.id,
+      deletedBy: "operator-1",
+      reason: "owner closed",
+    });
+
+    expect(deleted.deletedAt).toBeInstanceOf(Date);
+    expect(deleted.deletedBy).toBe("operator-1");
+    expect(deleted.deleteReason).toBe("owner closed");
+    expect(await repository.listAccounts("site-default")).toEqual([]);
+    expect(await repository.listAccounts("site-default", { includeDeleted: true })).toContainEqual(
+      expect.objectContaining({ id: account.id, deletedBy: "operator-1" }),
+    );
+    expect(await repository.listLedgerByAccount(account.id)).toHaveLength(2);
+    expect(await repository.listUsageByAccount(account.id)).toHaveLength(1);
+
+    await expect(
+      service.ensureAccount({
+        siteId: "site-default",
+        ownerKind: "team",
+        ownerId: "team_delete_restore",
+      }),
+    ).rejects.toMatchObject({ code: "credit.account.deleted" });
+
+    const restored = await repository.restoreAccount({ id: account.id });
+    expect(restored.deletedAt).toBeNull();
+    expect(restored.deletedBy).toBeNull();
+    expect(restored.deleteReason).toBeNull();
+    expect(await repository.listAccounts("site-default")).toContainEqual(
+      expect.objectContaining({ id: account.id }),
+    );
+  });
+
+  it("rejects deleting an account while it has active holds", async () => {
+    const account = await service.ensureAccount({
+      siteId: "site-default",
+      ownerKind: "team",
+      ownerId: "team_delete_active_hold",
+    });
+    await service.grantCredits({
+      accountId: account.id,
+      amountMicros: "5000000",
+      idempotencyKey: "delete_active_hold_grant",
+      reason: "subscription",
+    });
+    await service.holdCredits({
+      accountId: account.id,
+      amountMicros: "1000000",
+      idempotencyKey: "delete_active_hold",
+    });
+
+    await expect(
+      repository.deleteAccount({
+        id: account.id,
+        deletedBy: "operator-1",
+        reason: "owner closed",
+      }),
+    ).rejects.toMatchObject({ code: "credit.account.active_hold_exists" });
+  });
 });

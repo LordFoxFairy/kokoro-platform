@@ -132,6 +132,57 @@ describe("credit quote", () => {
     );
   });
 
+  it("skips deleted pricing rules and falls back to generic rules", async () => {
+    const now = Date.now();
+    await prisma.pricingRule.create({
+      data: {
+        featureKey: "deleted.quote",
+        labelKey: null,
+        unit: "token",
+        amountMicros: 100n,
+        status: "active",
+        effectiveFrom: new Date(now - DAY),
+      },
+    });
+    const specific = await prisma.pricingRule.create({
+      data: {
+        featureKey: "deleted.quote",
+        labelKey: "premium",
+        unit: "token",
+        amountMicros: 900n,
+        status: "active",
+        effectiveFrom: new Date(now - DAY),
+      },
+    });
+
+    await repository.deletePricingRule({ id: specific.id, deletedBy: "operator-1", reason: "retired" });
+
+    const quote = await service.quote({ featureKey: "deleted.quote", labelKey: "premium", quantity: "2" });
+    expect(quote.unitAmountMicros).toBe("100");
+    expect(quote.amountMicros).toBe("200");
+  });
+
+  it("restores deleted pricing rules to quote eligibility", async () => {
+    const rule = await prisma.pricingRule.create({
+      data: {
+        featureKey: "restore.quote",
+        labelKey: null,
+        unit: "token",
+        amountMicros: 321n,
+        status: "active",
+        effectiveFrom: new Date(Date.now() - DAY),
+      },
+    });
+
+    await repository.deletePricingRule({ id: rule.id, deletedBy: "operator-1", reason: "retired" });
+    await expect(service.quote({ featureKey: "restore.quote" })).rejects.toBeInstanceOf(PricingRuleNotFoundError);
+
+    const restored = await repository.restorePricingRule({ id: rule.id });
+    expect(restored.deletedAt).toBeNull();
+    const quote = await service.quote({ featureKey: "restore.quote", quantity: "3" });
+    expect(quote.amountMicros).toBe("963");
+  });
+
   it("returns 200 with the computed quote over the HTTP route", async () => {
     const response = await app.inject({
       method: "POST",

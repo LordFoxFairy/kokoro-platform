@@ -80,4 +80,93 @@ describe("credit admin read API", () => {
     expect(pricing.json().data).toHaveLength(1);
     expect(pricing.json().data[0].amountMicros).toBe("10");
   });
+
+  it("includes deleted accounts and pricing rules for restore workflows", async () => {
+    await prisma.creditAccount.create({
+      data: {
+        siteId: "site-default",
+        ownerKind: "team",
+        ownerId: "team_deleted_admin",
+        status: "active",
+        deletedAt: new Date(),
+        deletedBy: "operator-1",
+        deleteReason: "closed",
+      },
+    });
+    await prisma.pricingRule.create({
+      data: {
+        featureKey: "admin.deleted.pricing",
+        unit: "token",
+        amountMicros: 10n,
+        status: "active",
+        deletedAt: new Date(),
+        deletedBy: "operator-1",
+        deleteReason: "retired",
+      },
+    });
+
+    const accounts = await app.inject({ method: "GET", url: "/admin/credits/accounts" });
+    expect(accounts.statusCode).toBe(200);
+    expect(accounts.json().data).toHaveLength(1);
+    expect(accounts.json().data[0].deletedBy).toBe("operator-1");
+
+    const pricing = await app.inject({ method: "GET", url: "/admin/credits/pricing" });
+    expect(pricing.statusCode).toBe(200);
+    expect(pricing.json().data).toHaveLength(1);
+    expect(pricing.json().data[0].deletedBy).toBe("operator-1");
+  });
+
+  it("runs admin account lifecycle action routes", async () => {
+    const accountResponse = await app.inject({
+      method: "POST",
+      url: "/credit/accounts/ensure",
+      headers: { "x-kokoro-site-id": "site-default" },
+      payload: { ownerKind: "team", ownerId: "team_admin_lifecycle" },
+    });
+    const accountId = accountResponse.json().data.id;
+
+    const deleteResponse = await app.inject({
+      method: "DELETE",
+      url: `/admin/credits/accounts/${accountId}`,
+      payload: { deletedBy: "operator-1", reason: "closed" },
+    });
+    expect(deleteResponse.statusCode).toBe(200);
+    expect(deleteResponse.json().data.deletedBy).toBe("operator-1");
+
+    const restoreResponse = await app.inject({
+      method: "POST",
+      url: `/admin/credits/accounts/${accountId}/restore`,
+    });
+    expect(restoreResponse.statusCode).toBe(200);
+    expect(restoreResponse.json().data.deletedAt).toBeNull();
+  });
+
+  it("runs admin pricing rule lifecycle action routes", async () => {
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/admin/credits/pricing-rules",
+      payload: {
+        featureKey: "admin.pricing.lifecycle",
+        unit: "token",
+        amountMicros: "55",
+      },
+    });
+    expect(createResponse.statusCode).toBe(200);
+    const pricingRuleId = createResponse.json().data.id;
+
+    const deleteResponse = await app.inject({
+      method: "DELETE",
+      url: `/admin/credits/pricing-rules/${pricingRuleId}`,
+      payload: { deletedBy: "operator-1", reason: "retired" },
+    });
+    expect(deleteResponse.statusCode).toBe(200);
+    expect(deleteResponse.json().data.deletedBy).toBe("operator-1");
+
+    const restoreResponse = await app.inject({
+      method: "POST",
+      url: `/admin/credits/pricing-rules/${pricingRuleId}/restore`,
+    });
+    expect(restoreResponse.statusCode).toBe(200);
+    expect(restoreResponse.json().data.deletedAt).toBeNull();
+  });
 });

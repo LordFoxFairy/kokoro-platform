@@ -1,4 +1,12 @@
-import { jsonSchema, readRequestContext, registerHealthRoute, sendData, sendError, sendZodError } from "@kokoro/platform-kit";
+import {
+  AppError,
+  jsonSchema,
+  readRequestContext,
+  registerHealthRoute,
+  sendData,
+  sendError,
+  sendZodError,
+} from "@kokoro/platform-kit";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { ZodError } from "zod";
 import type { CreditService } from "../../application/credit-service.js";
@@ -10,11 +18,16 @@ import {
   InsufficientCreditError,
   PricingRuleNotFoundError,
 } from "../../domain/errors.js";
+import { isCreditLifecycleError } from "../../domain/credit-lifecycle.js";
 import {
+  accountParamsSchema,
   captureCreditRequestSchema,
+  createPricingRuleRequestSchema,
   creditMutationRequestSchema,
+  deleteRequestSchema,
   ensureCreditAccountRequestSchema,
   holdCreditRequestSchema,
+  pricingRuleParamsSchema,
   quoteRequestSchema,
   releaseCreditRequestSchema,
 } from "./schemas.js";
@@ -39,6 +52,40 @@ export function registerCreditRoutes(app: FastifyInstance, service: CreditServic
       return sendData(reply, result);
     } catch (error) {
       return handleCreditError(error, reply, "credit.account_ensure_failed");
+    }
+  });
+
+  app.delete("/credit/accounts/:accountId", {
+    schema: {
+      tags: ["credit"],
+      summary: "删除积分账户",
+      params: jsonSchema(accountParamsSchema),
+      body: jsonSchema(deleteRequestSchema),
+    },
+  }, async (request, reply) => {
+    try {
+      const { accountId } = accountParamsSchema.parse(request.params);
+      const input = deleteRequestSchema.parse(request.body);
+      const result = await service.deleteAccount({ id: accountId, deletedBy: input.deletedBy, reason: input.reason });
+      return sendData(reply, result);
+    } catch (error) {
+      return handleCreditError(error, reply, "credit.account_delete_failed");
+    }
+  });
+
+  app.post("/credit/accounts/:accountId/restore", {
+    schema: {
+      tags: ["credit"],
+      summary: "恢复积分账户",
+      params: jsonSchema(accountParamsSchema),
+    },
+  }, async (request, reply) => {
+    try {
+      const { accountId } = accountParamsSchema.parse(request.params);
+      const result = await service.restoreAccount({ id: accountId });
+      return sendData(reply, result);
+    } catch (error) {
+      return handleCreditError(error, reply, "credit.account_restore_failed");
     }
   });
 
@@ -122,6 +169,60 @@ export function registerCreditRoutes(app: FastifyInstance, service: CreditServic
     }
   });
 
+  app.post("/credit/pricing-rules", {
+    schema: {
+      tags: ["credit"],
+      summary: "创建计价规则",
+      body: jsonSchema(createPricingRuleRequestSchema),
+    },
+  }, async (request, reply) => {
+    try {
+      const input = createPricingRuleRequestSchema.parse(request.body);
+      const result = await service.createPricingRule(input);
+      return sendData(reply, result);
+    } catch (error) {
+      return handleCreditError(error, reply, "credit.pricing_rule_create_failed");
+    }
+  });
+
+  app.delete("/credit/pricing-rules/:pricingRuleId", {
+    schema: {
+      tags: ["credit"],
+      summary: "删除计价规则",
+      params: jsonSchema(pricingRuleParamsSchema),
+      body: jsonSchema(deleteRequestSchema),
+    },
+  }, async (request, reply) => {
+    try {
+      const { pricingRuleId } = pricingRuleParamsSchema.parse(request.params);
+      const input = deleteRequestSchema.parse(request.body);
+      const result = await service.deletePricingRule({
+        id: pricingRuleId,
+        deletedBy: input.deletedBy,
+        reason: input.reason,
+      });
+      return sendData(reply, result);
+    } catch (error) {
+      return handleCreditError(error, reply, "credit.pricing_rule_delete_failed");
+    }
+  });
+
+  app.post("/credit/pricing-rules/:pricingRuleId/restore", {
+    schema: {
+      tags: ["credit"],
+      summary: "恢复计价规则",
+      params: jsonSchema(pricingRuleParamsSchema),
+    },
+  }, async (request, reply) => {
+    try {
+      const { pricingRuleId } = pricingRuleParamsSchema.parse(request.params);
+      const result = await service.restorePricingRule({ id: pricingRuleId });
+      return sendData(reply, result);
+    } catch (error) {
+      return handleCreditError(error, reply, "credit.pricing_rule_restore_failed");
+    }
+  });
+
   app.post("/credit/release", {
     schema: {
       tags: ["credit"],
@@ -142,6 +243,14 @@ export function registerCreditRoutes(app: FastifyInstance, service: CreditServic
 function handleCreditError(error: unknown, reply: FastifyReply, fallbackCode: string) {
   if (error instanceof ZodError) {
     return sendZodError(reply, error);
+  }
+
+  if (isCreditLifecycleError(error)) {
+    return sendError(reply, error.statusCode, error.code, error.message);
+  }
+
+  if (error instanceof AppError) {
+    return sendError(reply, error.httpStatus, error.code, error.message, error.details);
   }
 
   if (error instanceof InsufficientCreditError) {

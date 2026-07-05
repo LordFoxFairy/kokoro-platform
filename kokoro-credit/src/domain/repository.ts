@@ -9,6 +9,7 @@ import type {
   QuoteResult,
   UsageRecord,
 } from "./credit.js";
+import type { DeleteInput, ListOptions, RestoreInput } from "./credit-lifecycle.js";
 
 export interface EnsureCreditAccountInput {
   siteId: string;
@@ -52,6 +53,16 @@ export interface QuoteInput {
   quantity: string;
 }
 
+export interface CreatePricingRuleInput {
+  featureKey: string;
+  labelKey?: string | null | undefined;
+  unit: string;
+  amountMicros: string;
+  status?: PricingRule["status"] | undefined;
+  effectiveFrom?: Date | undefined;
+  effectiveUntil?: Date | null | undefined;
+}
+
 export interface CreditRepository {
   ensureAccount(input: EnsureCreditAccountInput): Promise<CreditAccount>;
   grantCredits(input: CreditAmountInput): Promise<CreditMutationResult>;
@@ -60,10 +71,15 @@ export interface CreditRepository {
   captureHold(input: CaptureCreditInput): Promise<CreditMutationResult>;
   releaseHold(input: ReleaseCreditInput): Promise<CreditHold>;
   quote(input: QuoteInput): Promise<QuoteResult>;
-  listAccounts(siteId?: string): Promise<CreditAccount[]>;
+  createPricingRule(input: CreatePricingRuleInput): Promise<PricingRule>;
+  deleteAccount(input: DeleteInput): Promise<CreditAccount>;
+  restoreAccount(input: RestoreInput): Promise<CreditAccount>;
+  deletePricingRule(input: DeleteInput): Promise<PricingRule>;
+  restorePricingRule(input: RestoreInput): Promise<PricingRule>;
+  listAccounts(siteId?: string, options?: ListOptions): Promise<CreditAccount[]>;
   listLedgerEntries(): Promise<CreditLedgerEntry[]>;
   listUsageRecords(): Promise<UsageRecord[]>;
-  listPricingRules(): Promise<PricingRule[]>;
+  listPricingRules(options?: ListOptions): Promise<PricingRule[]>;
   getAccountById(id: string): Promise<CreditAccount | null>;
   listLedgerByAccount(accountId: string): Promise<CreditLedgerEntry[]>;
   listHoldsByAccount(accountId: string): Promise<CreditHold[]>;

@@ -42,6 +42,25 @@ export const auditAccountParamsSchema = z
   })
   .strict();
 
+export const accountParamsSchema = z
+  .object({
+    accountId: z.string().min(1),
+  })
+  .strict();
+
+export const pricingRuleParamsSchema = z
+  .object({
+    pricingRuleId: z.string().min(1),
+  })
+  .strict();
+
+export const deleteRequestSchema = z
+  .object({
+    deletedBy: z.string().min(1),
+    reason: z.string().min(1).optional(),
+  })
+  .strict();
+
 export const holdCreditRequestSchema = z
   .object({
     accountId: z.string().min(1),
@@ -75,5 +94,17 @@ export const quoteRequestSchema = z
     featureKey: z.string().min(1),
     labelKey: z.string().min(1).optional(),
     quantity: amountMicrosSchema.optional(),
+  })
+  .strict();
+
+export const createPricingRuleRequestSchema = z
+  .object({
+    featureKey: z.string().min(1),
+    labelKey: z.string().min(1).optional(),
+    unit: z.string().min(1),
+    amountMicros: amountMicrosSchema,
+    status: z.enum(["active", "disabled"]).optional(),
+    effectiveFrom: z.coerce.date().optional(),
+    effectiveUntil: z.coerce.date().optional(),
   })
   .strict();

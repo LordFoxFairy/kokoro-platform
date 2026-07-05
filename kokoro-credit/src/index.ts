@@ -3,6 +3,7 @@ export * from "./interfaces/admin/schema.js";
 export * from "./application/credit-service.js";
 export * from "./config/env.js";
 export * from "./domain/credit.js";
+export * from "./domain/credit-lifecycle.js";
 export * from "./domain/errors.js";
 export * from "./interfaces/http/admin-routes.js";
 export * from "./interfaces/http/server.js";

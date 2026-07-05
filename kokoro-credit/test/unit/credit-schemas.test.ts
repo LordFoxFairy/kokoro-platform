@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  accountParamsSchema,
   auditAccountParamsSchema,
+  createPricingRuleRequestSchema,
   creditMutationRequestSchema,
+  deleteRequestSchema,
   ensureCreditAccountRequestSchema,
   grantCreditRequestSchema,
+  pricingRuleParamsSchema,
   quoteRequestSchema,
 } from "../../src/interfaces/http/schemas.js";
 
@@ -193,5 +197,71 @@ describe("quoteRequestSchema", () => {
   });
   it("rejects empty labelKey", () => {
     expect(() => quoteRequestSchema.parse({ featureKey: "model.call", labelKey: "" })).toThrow();
+  });
+});
+
+describe("lifecycle route schemas", () => {
+  it("accepts account and pricing params", () => {
+    expect(accountParamsSchema.parse({ accountId: "a1" })).toEqual({ accountId: "a1" });
+    expect(pricingRuleParamsSchema.parse({ pricingRuleId: "pr1" })).toEqual({ pricingRuleId: "pr1" });
+  });
+
+  it("rejects empty lifecycle params and unknown fields", () => {
+    expect(() => accountParamsSchema.parse({ accountId: "" })).toThrow();
+    expect(() => pricingRuleParamsSchema.parse({ pricingRuleId: "" })).toThrow();
+    expect(() => accountParamsSchema.parse({ accountId: "a1", extra: 1 })).toThrow();
+    expect(() => pricingRuleParamsSchema.parse({ pricingRuleId: "pr1", extra: 1 })).toThrow();
+  });
+
+  it("accepts delete audit payloads", () => {
+    expect(deleteRequestSchema.parse({ deletedBy: "operator-1", reason: "closed" })).toEqual({
+      deletedBy: "operator-1",
+      reason: "closed",
+    });
+    expect(deleteRequestSchema.parse({ deletedBy: "operator-1" })).toEqual({ deletedBy: "operator-1" });
+  });
+
+  it("rejects invalid delete audit payloads", () => {
+    expect(() => deleteRequestSchema.parse({ deletedBy: "" })).toThrow();
+    expect(() => deleteRequestSchema.parse({ deletedBy: "operator-1", reason: "" })).toThrow();
+    expect(() => deleteRequestSchema.parse({ deletedBy: "operator-1", extra: 1 })).toThrow();
+  });
+});
+
+describe("createPricingRuleRequestSchema", () => {
+  const base = {
+    featureKey: "model.call",
+    unit: "token",
+    amountMicros: "100",
+  };
+
+  it("accepts a minimal active pricing rule payload", () => {
+    expect(createPricingRuleRequestSchema.parse(base)).toEqual(base);
+  });
+
+  it("accepts optional label, status, and effective window", () => {
+    const parsed = createPricingRuleRequestSchema.parse({
+      ...base,
+      labelKey: "gpt-4",
+      status: "disabled",
+      effectiveFrom: "2026-07-04T00:00:00.000Z",
+      effectiveUntil: "2026-08-04T00:00:00.000Z",
+    });
+    expect(parsed.labelKey).toBe("gpt-4");
+    expect(parsed.status).toBe("disabled");
+    expect(parsed.effectiveFrom).toBeInstanceOf(Date);
+    expect(parsed.effectiveUntil).toBeInstanceOf(Date);
+  });
+
+  it.each(["0", "-1", "", "abc", "01", "1.5"])("rejects invalid amountMicros %j", (amountMicros) => {
+    expect(() => createPricingRuleRequestSchema.parse({ ...base, amountMicros })).toThrow();
+  });
+
+  it("rejects empty strings, invalid status, and unknown fields", () => {
+    expect(() => createPricingRuleRequestSchema.parse({ ...base, featureKey: "" })).toThrow();
+    expect(() => createPricingRuleRequestSchema.parse({ ...base, unit: "" })).toThrow();
+    expect(() => createPricingRuleRequestSchema.parse({ ...base, labelKey: "" })).toThrow();
+    expect(() => createPricingRuleRequestSchema.parse({ ...base, status: "archived" })).toThrow();
+    expect(() => createPricingRuleRequestSchema.parse({ ...base, extra: 1 })).toThrow();
   });
 });

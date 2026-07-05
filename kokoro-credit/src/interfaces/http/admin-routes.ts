@@ -1,13 +1,28 @@
 import { randomUUID } from "node:crypto";
-import { readRequestContext, registerAdminManifestRoute, sendData, sendError, sendZodError } from "@kokoro/platform-kit";
+import {
+  AppError,
+  readRequestContext,
+  registerAdminManifestRoute,
+  sendData,
+  sendError,
+  sendZodError,
+} from "@kokoro/platform-kit";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { ZodError } from "zod";
 import type { CreditService } from "../../application/credit-service.js";
 import type { AccountAudit } from "../../domain/credit.js";
+import { isCreditLifecycleError } from "../../domain/credit-lifecycle.js";
 import { CreditAccountNotFoundError, InsufficientCreditError } from "../../domain/errors.js";
 import type { CreditRepository } from "../../domain/repository.js";
 import { creditAdminManifest } from "../admin/manifest.js";
-import { auditAccountParamsSchema, grantCreditRequestSchema } from "./schemas.js";
+import {
+  accountParamsSchema,
+  auditAccountParamsSchema,
+  createPricingRuleRequestSchema,
+  deleteRequestSchema,
+  grantCreditRequestSchema,
+  pricingRuleParamsSchema,
+} from "./schemas.js";
 
 export function registerCreditAdminRoutes(
   app: FastifyInstance,
@@ -17,7 +32,7 @@ export function registerCreditAdminRoutes(
   registerAdminManifestRoute(app, creditAdminManifest);
 
   app.get("/admin/credits/accounts", async (_request, reply) =>
-    sendData(reply, await repository.listAccounts()),
+    sendData(reply, await repository.listAccounts(undefined, { includeDeleted: true })),
   );
 
   app.get("/admin/credits/ledger", async (_request, reply) =>
@@ -29,7 +44,7 @@ export function registerCreditAdminRoutes(
   );
 
   app.get("/admin/credits/pricing", async (_request, reply) =>
-    sendData(reply, await repository.listPricingRules()),
+    sendData(reply, await repository.listPricingRules({ includeDeleted: true })),
   );
 
   // WHY: 管理员手动发积分；reason=refund 即退积分。idempotencyKey 服务端生成（管理员动作非客户端重放）。
@@ -54,6 +69,62 @@ export function registerCreditAdminRoutes(
       return sendData(reply, result);
     } catch (error) {
       return handleAdminError(error, reply, "credit.admin_grant_failed");
+    }
+  });
+
+  app.delete("/admin/credits/accounts/:accountId", async (request, reply) => {
+    try {
+      const { accountId } = accountParamsSchema.parse(request.params);
+      const input = deleteRequestSchema.parse(request.body);
+      const result = await service.deleteAccount({ id: accountId, deletedBy: input.deletedBy, reason: input.reason });
+      return sendData(reply, result);
+    } catch (error) {
+      return handleAdminError(error, reply, "credit.admin_account_delete_failed");
+    }
+  });
+
+  app.post("/admin/credits/accounts/:accountId/restore", async (request, reply) => {
+    try {
+      const { accountId } = accountParamsSchema.parse(request.params);
+      const result = await service.restoreAccount({ id: accountId });
+      return sendData(reply, result);
+    } catch (error) {
+      return handleAdminError(error, reply, "credit.admin_account_restore_failed");
+    }
+  });
+
+  app.post("/admin/credits/pricing-rules", async (request, reply) => {
+    try {
+      const input = createPricingRuleRequestSchema.parse(request.body);
+      const result = await service.createPricingRule(input);
+      return sendData(reply, result);
+    } catch (error) {
+      return handleAdminError(error, reply, "credit.admin_pricing_rule_create_failed");
+    }
+  });
+
+  app.delete("/admin/credits/pricing-rules/:pricingRuleId", async (request, reply) => {
+    try {
+      const { pricingRuleId } = pricingRuleParamsSchema.parse(request.params);
+      const input = deleteRequestSchema.parse(request.body);
+      const result = await service.deletePricingRule({
+        id: pricingRuleId,
+        deletedBy: input.deletedBy,
+        reason: input.reason,
+      });
+      return sendData(reply, result);
+    } catch (error) {
+      return handleAdminError(error, reply, "credit.admin_pricing_rule_delete_failed");
+    }
+  });
+
+  app.post("/admin/credits/pricing-rules/:pricingRuleId/restore", async (request, reply) => {
+    try {
+      const { pricingRuleId } = pricingRuleParamsSchema.parse(request.params);
+      const result = await service.restorePricingRule({ id: pricingRuleId });
+      return sendData(reply, result);
+    } catch (error) {
+      return handleAdminError(error, reply, "credit.admin_pricing_rule_restore_failed");
     }
   });
 
@@ -82,6 +153,14 @@ export function registerCreditAdminRoutes(
 function handleAdminError(error: unknown, reply: FastifyReply, fallbackCode: string) {
   if (error instanceof ZodError) {
     return sendZodError(reply, error);
+  }
+
+  if (isCreditLifecycleError(error)) {
+    return sendError(reply, error.statusCode, error.code, error.message);
+  }
+
+  if (error instanceof AppError) {
+    return sendError(reply, error.httpStatus, error.code, error.message, error.details);
   }
 
   if (error instanceof InsufficientCreditError) {

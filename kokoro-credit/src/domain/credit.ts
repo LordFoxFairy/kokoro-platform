@@ -1,3 +1,5 @@
+import type { DeletionAudit } from "./credit-lifecycle.js";
+
 export type CreditOwnerKind = "user" | "team";
 export type CreditAccountStatus = "active" | "disabled";
 export type CreditReason = "manual_adjustment" | "subscription" | "model_call" | "tool_call" | "refund";
@@ -5,7 +7,7 @@ export type CreditHoldStatus = "active" | "captured" | "released" | "expired";
 export type UsageRecordStatus = "recorded" | "settled" | "failed";
 export type PricingRuleStatus = "active" | "disabled";
 
-export interface CreditAccount {
+export interface CreditAccount extends DeletionAudit {
   id: string;
   siteId: string;
   ownerKind: CreditOwnerKind;
@@ -56,7 +58,7 @@ export interface UsageRecord {
   createdAt: Date;
 }
 
-export interface PricingRule {
+export interface PricingRule extends DeletionAudit {
   id: string;
   featureKey: string;
   labelKey: string | null;

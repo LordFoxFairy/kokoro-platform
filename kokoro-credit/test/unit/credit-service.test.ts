@@ -1,12 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { CreditService } from "../../src/application/credit-service.js";
+import { AppError } from "@kokoro/platform-kit";
+import { CreditService, type OwnerSiteActiveChecker } from "../../src/application/credit-service.js";
 import type {
   CreditAccount,
   CreditHold,
   CreditMutationResult,
+  PricingRule,
   QuoteResult,
 } from "../../src/domain/credit.js";
+import type { DeleteInput, RestoreInput } from "../../src/domain/credit-lifecycle.js";
 import type { CreditRepository, QuoteInput } from "../../src/domain/repository.js";
+
+const deletionAudit = {
+  deletedAt: null,
+  deletedBy: null,
+  deleteReason: null,
+};
 
 const account: CreditAccount = {
   id: "a1",
@@ -16,6 +25,21 @@ const account: CreditAccount = {
   status: "active",
   balanceMicros: "0",
   heldMicros: "0",
+  ...deletionAudit,
+  createdAt: new Date(0),
+  updatedAt: new Date(0),
+};
+
+const pricingRule: PricingRule = {
+  id: "pr1",
+  featureKey: "model.call",
+  labelKey: null,
+  unit: "token",
+  amountMicros: "1",
+  status: "active",
+  effectiveFrom: new Date(0),
+  effectiveUntil: null,
+  ...deletionAudit,
   createdAt: new Date(0),
   updatedAt: new Date(0),
 };
@@ -84,6 +108,39 @@ function trackingRepo(): {
     releaseHold: async () => {
       calls.push("releaseHold");
       return hold;
+    },
+    deleteAccount: async (input: DeleteInput) => {
+      calls.push("deleteAccount");
+      return { ...account, id: input.id, deletedAt: new Date(1), deletedBy: input.deletedBy, deleteReason: input.reason ?? null };
+    },
+    restoreAccount: async (input: RestoreInput) => {
+      calls.push("restoreAccount");
+      return { ...account, id: input.id };
+    },
+    deletePricingRule: async (input: DeleteInput) => {
+      calls.push("deletePricingRule");
+      return {
+        ...pricingRule,
+        id: input.id,
+        deletedAt: new Date(1),
+        deletedBy: input.deletedBy,
+        deleteReason: input.reason ?? null,
+      };
+    },
+    restorePricingRule: async (input: RestoreInput) => {
+      calls.push("restorePricingRule");
+      return { ...pricingRule, id: input.id };
+    },
+    createPricingRule: async (input) => {
+      calls.push("createPricingRule");
+      return {
+        ...pricingRule,
+        ...input,
+        labelKey: input.labelKey ?? null,
+        status: input.status ?? "active",
+        effectiveFrom: input.effectiveFrom ?? new Date(0),
+        effectiveUntil: input.effectiveUntil ?? null,
+      };
     },
     quote: async (input) => {
       calls.push("quote");
@@ -179,6 +236,56 @@ describe("CreditService positive-amount guard", () => {
     expect(calls).toContain("spendCredits");
   });
 
+  it("rejects a mutation when the active checker reports owner/site inactive", async () => {
+    const { repo, calls } = trackingRepo();
+    const rejecting: OwnerSiteActiveChecker = {
+      async ensureAccountActive() {
+        throw new AppError("owner.inactive", 409, "owner disabled");
+      },
+    };
+    const service = new CreditService(repo, rejecting);
+    await expect(
+      service.spendCredits({ accountId: "a1", amountMicros: "100", idempotencyKey: "k1", reason: "model_call" }),
+    ).rejects.toMatchObject({ code: "owner.inactive", httpStatus: 409 });
+    expect(calls).not.toContain("spendCredits");
+  });
+
+  it("rejects a mutation when the account does not exist (404)", async () => {
+    const { repo } = trackingRepo();
+    const service = new CreditService({ ...repo, getAccountById: async () => null });
+    await expect(
+      service.spendCredits({ accountId: "nope", amountMicros: "100", idempotencyKey: "k1", reason: "model_call" }),
+    ).rejects.toMatchObject({ code: "resource.not_found", httpStatus: 404 });
+  });
+
+  it.each(["grantCredits", "spendCredits", "holdCredits"] as const)(
+    "%s rejects a deleted account before mutating",
+    async (method) => {
+      const { repo, calls } = trackingRepo();
+      const service = new CreditService({
+        ...repo,
+        getAccountById: async () => ({ ...account, deletedAt: new Date(1), deletedBy: "operator", deleteReason: "closed" }),
+      });
+
+      if (method === "holdCredits") {
+        await expect(
+          service.holdCredits({ accountId: "a1", amountMicros: "100", idempotencyKey: "hold_deleted" }),
+        ).rejects.toMatchObject({ code: "credit.account.deleted" });
+      } else {
+        await expect(
+          service[method]({
+            accountId: "a1",
+            amountMicros: "100",
+            idempotencyKey: `${method}_deleted`,
+            reason: method === "grantCredits" ? "manual_adjustment" : "model_call",
+          }),
+        ).rejects.toMatchObject({ code: "credit.account.deleted" });
+      }
+
+      expect(calls).not.toContain(method);
+    },
+  );
+
   it.each(["0", "-1", ""])("holdCredits rejects %j before repository", async (amountMicros) => {
     const { repo, calls } = trackingRepo();
     const service = new CreditService(repo);
@@ -219,7 +326,8 @@ describe("CreditService positive-amount guard", () => {
       featureKey: "model.call",
     });
     await service.releaseHold({ holdId: "h1", idempotencyKey: "k3" });
-    expect(calls).toEqual(["holdCredits", "captureHold", "releaseHold"]);
+    // holdCredits 前置 getAccountById（owner/site guard）；capture/release 走 holdId 不重复校验。
+    expect(calls).toEqual(["getAccountById", "holdCredits", "captureHold", "releaseHold"]);
   });
 
   it("delegates ensureAccount to repository", async () => {
@@ -227,6 +335,41 @@ describe("CreditService positive-amount guard", () => {
     const service = new CreditService(repo);
     await service.ensureAccount({ siteId: "s1", ownerKind: "user", ownerId: "u1" });
     expect(calls).toContain("ensureAccount");
+  });
+
+  it("rejects ensureAccount before repository when owner/site is inactive", async () => {
+    const { repo, calls } = trackingRepo();
+    const rejecting: OwnerSiteActiveChecker = {
+      async ensureAccountActive() {
+        throw new AppError("owner.inactive", 409, "owner disabled");
+      },
+    };
+    const service = new CreditService(repo, rejecting);
+
+    await expect(service.ensureAccount({ siteId: "s1", ownerKind: "user", ownerId: "u1" })).rejects.toMatchObject({
+      code: "owner.inactive",
+      httpStatus: 409,
+    });
+    expect(calls).not.toContain("ensureAccount");
+  });
+
+  it("delegates account and pricing lifecycle methods", async () => {
+    const { repo, calls } = trackingRepo();
+    const service = new CreditService(repo);
+
+    await service.deleteAccount({ id: "a1", deletedBy: "operator", reason: "closed" });
+    await service.restoreAccount({ id: "a1" });
+    await service.createPricingRule({ featureKey: "model.call", unit: "token", amountMicros: "1" });
+    await service.deletePricingRule({ id: "pr1", deletedBy: "operator" });
+    await service.restorePricingRule({ id: "pr1" });
+
+    expect(calls).toEqual([
+      "deleteAccount",
+      "restoreAccount",
+      "createPricingRule",
+      "deletePricingRule",
+      "restorePricingRule",
+    ]);
   });
 
   it("defaults quantity to 1 when omitted", async () => {

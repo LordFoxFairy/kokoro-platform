@@ -9,36 +9,41 @@ generator client {
 }
 
 model CreditAccount {
-  id             String              @id @default(cuid())
-  siteId         String
-  ownerKind      CreditOwnerKind
-  ownerId        String
-  status         CreditAccountStatus @default(active)
-  balanceMicros  BigInt              @default(0)
-  heldMicros     BigInt              @default(0)
-  metadata       Json?
-  holds          CreditHold[]
-  ledgerEntries  CreditLedgerEntry[]
-  usageRecords   UsageRecord[]
-  createdAt      DateTime            @default(now())
-  updatedAt      DateTime            @updatedAt
+  id            String              @id @default(cuid())
+  siteId        String
+  ownerKind     CreditOwnerKind
+  ownerId       String
+  status        CreditAccountStatus @default(active)
+  balanceMicros BigInt              @default(0)
+  heldMicros    BigInt              @default(0)
+  metadata      Json?
+  deletedAt     DateTime?
+  deletedBy     String?
+  deleteReason  String?
+  holds         CreditHold[]
+  ledgerEntries CreditLedgerEntry[]
+  usageRecords  UsageRecord[]
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
 
   @@unique([siteId, ownerKind, ownerId])
   @@index([siteId, status])
+  @@index([siteId, status, deletedAt])
+  @@index([deletedAt])
   @@map("credit_accounts")
 }
 
 model CreditLedgerEntry {
-  id                String        @id @default(cuid())
-  accountId         String
-  amountMicros      BigInt
+  id                 String        @id @default(cuid())
+  accountId          String
+  amountMicros       BigInt
   balanceAfterMicros BigInt
-  reason            CreditReason
-  idempotencyKey    String        @unique
-  requestId         String?
-  metadata          Json?
-  account           CreditAccount @relation(fields: [accountId], references: [id])
-  createdAt         DateTime      @default(now())
+  reason             CreditReason
+  idempotencyKey     String        @unique
+  requestId          String?
+  metadata           Json?
+  account            CreditAccount @relation(fields: [accountId], references: [id])
+  createdAt          DateTime      @default(now())
 
   @@index([accountId, createdAt])
   @@map("credit_ledger_entries")
@@ -87,10 +92,15 @@ model PricingRule {
   effectiveFrom  DateTime          @default(now())
   effectiveUntil DateTime?
   metadata       Json?
+  deletedAt      DateTime?
+  deletedBy      String?
+  deleteReason   String?
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
 
   @@index([featureKey, status])
+  @@index([featureKey, status, deletedAt])
+  @@index([deletedAt])
   @@map("credit_pricing_rules")
 }
 

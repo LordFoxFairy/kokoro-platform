@@ -23,6 +23,7 @@ import {
 } from "../../domain/errors.js";
 import type {
   CaptureCreditInput,
+  CreatePricingRuleInput,
   CreditAmountInput,
   CreditRepository,
   EnsureCreditAccountInput,
@@ -30,6 +31,12 @@ import type {
   QuoteInput,
   ReleaseCreditInput,
 } from "../../domain/repository.js";
+import {
+  CreditLifecycleError,
+  type DeleteInput,
+  type ListOptions,
+  type RestoreInput,
+} from "../../domain/credit-lifecycle.js";
 
 type TransactionClient = Prisma.TransactionClient;
 
@@ -37,24 +44,31 @@ export class PrismaCreditRepository implements CreditRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
   async ensureAccount(input: EnsureCreditAccountInput): Promise<CreditAccount> {
-    const account = await this.prisma.creditAccount.upsert({
-      where: {
-        siteId_ownerKind_ownerId: {
-          siteId: input.siteId,
-          ownerKind: input.ownerKind,
-          ownerId: input.ownerId,
-        },
-      },
-      create: {
+    const where = {
+      siteId_ownerKind_ownerId: {
         siteId: input.siteId,
         ownerKind: input.ownerKind,
         ownerId: input.ownerId,
-        status: "active",
       },
-      update: {
-        status: "active",
-      },
-    });
+    };
+    const existing = await this.prisma.creditAccount.findUnique({ where });
+    if (existing?.deletedAt) {
+      throw lifecycleError("credit.account.deleted", `credit account deleted: ${existing.id}`, 409);
+    }
+
+    const account = existing
+      ? await this.prisma.creditAccount.update({
+          where: { id: existing.id },
+          data: { status: "active" },
+        })
+      : await this.prisma.creditAccount.create({
+          data: {
+            siteId: input.siteId,
+            ownerKind: input.ownerKind,
+            ownerId: input.ownerId,
+            status: "active",
+          },
+        });
 
     return mapCreditAccount(account);
   }
@@ -68,6 +82,8 @@ export class PrismaCreditRepository implements CreditRepository {
         }
 
         const amount = parsePositiveBigIntString(input.amountMicros, "amountMicros");
+        const before = await tx.creditAccount.findUnique({ where: { id: input.accountId } });
+        assertWritableAccount(before, input.accountId);
         const account = await tx.creditAccount.update({
           where: {
             id: input.accountId,
@@ -109,7 +125,7 @@ export class PrismaCreditRepository implements CreditRepository {
 
         const amount = parsePositiveBigIntString(input.amountMicros, "amountMicros");
         // WHY: 条件更新校验可用额(balance-held)≥amount——spend 不得动用已冻结资金，否则 capture 时余额会被扣成负。
-        const spent = await tx.$executeRaw`UPDATE credit_accounts SET balanceMicros = balanceMicros - ${amount} WHERE id = ${input.accountId} AND status = 'active' AND balanceMicros - heldMicros >= ${amount}`;
+        const spent = await tx.$executeRaw`UPDATE credit_accounts SET balanceMicros = balanceMicros - ${amount} WHERE id = ${input.accountId} AND status = 'active' AND deletedAt IS NULL AND balanceMicros - heldMicros >= ${amount}`;
 
         if (spent === 0) {
           const account = await tx.creditAccount.findUnique({
@@ -120,6 +136,9 @@ export class PrismaCreditRepository implements CreditRepository {
 
           if (!account) {
             throw new CreditAccountNotFoundError(input.accountId);
+          }
+          if (account.deletedAt) {
+            throw lifecycleError("credit.account.deleted", `credit account deleted: ${input.accountId}`, 409);
           }
 
           assertCreditSpendAllowed(input.accountId, account.balanceMicros - account.heldMicros, amount);
@@ -163,7 +182,7 @@ export class PrismaCreditRepository implements CreditRepository {
         const amount = parsePositiveBigIntString(input.amountMicros, "amountMicros");
         // WHY: 原子条件更新——可用额(balance-held)≥amount 的判断与自增在 DB 同一条语句完成，
         // 行写锁串行化并发，杜绝「读-判-写」竞态导致的超额冻结（同 spend 的条件更新模式）。
-        const reserved = await tx.$executeRaw`UPDATE credit_accounts SET heldMicros = heldMicros + ${amount} WHERE id = ${input.accountId} AND balanceMicros - heldMicros >= ${amount}`;
+        const reserved = await tx.$executeRaw`UPDATE credit_accounts SET heldMicros = heldMicros + ${amount} WHERE id = ${input.accountId} AND status = 'active' AND deletedAt IS NULL AND balanceMicros - heldMicros >= ${amount}`;
         if (reserved === 0) {
           const existingAccount = await tx.creditAccount.findUnique({
             where: {
@@ -172,6 +191,9 @@ export class PrismaCreditRepository implements CreditRepository {
           });
           if (!existingAccount) {
             throw new CreditAccountNotFoundError(input.accountId);
+          }
+          if (existingAccount.deletedAt) {
+            throw lifecycleError("credit.account.deleted", `credit account deleted: ${input.accountId}`, 409);
           }
           throw new InsufficientCreditError(input.accountId);
         }
@@ -360,9 +382,105 @@ export class PrismaCreditRepository implements CreditRepository {
     };
   }
 
-  async listAccounts(siteId?: string): Promise<CreditAccount[]> {
+  async deleteAccount(input: DeleteInput): Promise<CreditAccount> {
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.creditAccount.findUnique({ where: { id: input.id } });
+      if (!existing) {
+        throw lifecycleError("credit.account.not_found", `credit account not found: ${input.id}`, 404);
+      }
+      if (existing.deletedAt) {
+        return mapCreditAccount(existing);
+      }
+
+      const activeHolds = await tx.creditHold.count({
+        where: {
+          accountId: input.id,
+          status: "active",
+        },
+      });
+      if (activeHolds > 0) {
+        throw lifecycleError(
+          "credit.account.active_hold_exists",
+          `credit account has active holds: ${input.id}`,
+          409,
+        );
+      }
+
+      const deleted = await tx.creditAccount.update({
+        where: { id: input.id },
+        data: deletionData(input),
+      });
+      return mapCreditAccount(deleted);
+    });
+  }
+
+  async restoreAccount(input: RestoreInput): Promise<CreditAccount> {
+    const existing = await this.prisma.creditAccount.findUnique({ where: { id: input.id } });
+    if (!existing) {
+      throw lifecycleError("credit.account.not_found", `credit account not found: ${input.id}`, 404);
+    }
+    if (!existing.deletedAt) {
+      return mapCreditAccount(existing);
+    }
+    const restored = await this.prisma.creditAccount.update({
+      where: { id: input.id },
+      data: restoreData(),
+    });
+    return mapCreditAccount(restored);
+  }
+
+  async createPricingRule(input: CreatePricingRuleInput): Promise<PricingRule> {
+    const amountMicros = parsePositiveBigIntString(input.amountMicros, "amountMicros");
+    const rule = await this.prisma.pricingRule.create({
+      data: {
+        featureKey: input.featureKey,
+        labelKey: input.labelKey ?? null,
+        unit: input.unit,
+        amountMicros,
+        status: input.status ?? "active",
+        effectiveFrom: input.effectiveFrom ?? new Date(),
+        ...defined("effectiveUntil", input.effectiveUntil ?? undefined),
+      },
+    });
+    return mapPricingRule(rule);
+  }
+
+  async deletePricingRule(input: DeleteInput): Promise<PricingRule> {
+    const existing = await this.prisma.pricingRule.findUnique({ where: { id: input.id } });
+    if (!existing) {
+      throw lifecycleError("credit.pricing_rule.not_found", `pricing rule not found: ${input.id}`, 404);
+    }
+    if (existing.deletedAt) {
+      return mapPricingRule(existing);
+    }
+    const deleted = await this.prisma.pricingRule.update({
+      where: { id: input.id },
+      data: deletionData(input),
+    });
+    return mapPricingRule(deleted);
+  }
+
+  async restorePricingRule(input: RestoreInput): Promise<PricingRule> {
+    const existing = await this.prisma.pricingRule.findUnique({ where: { id: input.id } });
+    if (!existing) {
+      throw lifecycleError("credit.pricing_rule.not_found", `pricing rule not found: ${input.id}`, 404);
+    }
+    if (!existing.deletedAt) {
+      return mapPricingRule(existing);
+    }
+    const restored = await this.prisma.pricingRule.update({
+      where: { id: input.id },
+      data: restoreData(),
+    });
+    return mapPricingRule(restored);
+  }
+
+  async listAccounts(siteId?: string, options?: ListOptions): Promise<CreditAccount[]> {
     const accounts = await this.prisma.creditAccount.findMany({
-      ...(siteId === undefined ? {} : { where: { siteId } }),
+      where: {
+        ...(siteId === undefined ? {} : { siteId }),
+        ...visibleRows(options),
+      },
       take: 100,
       orderBy: { createdAt: "desc" },
     });
@@ -385,8 +503,9 @@ export class PrismaCreditRepository implements CreditRepository {
     return records.map(mapUsageRecord);
   }
 
-  async listPricingRules(): Promise<PricingRule[]> {
+  async listPricingRules(options?: ListOptions): Promise<PricingRule[]> {
     const rules = await this.prisma.pricingRule.findMany({
+      where: visibleRows(options),
       take: 100,
       orderBy: { createdAt: "desc" },
     });
@@ -435,6 +554,7 @@ export class PrismaCreditRepository implements CreditRepository {
         featureKey,
         labelKey,
         status: "active",
+        deletedAt: null,
         effectiveFrom: {
           lte: now,
         },
@@ -539,6 +659,57 @@ function defined<Key extends string, Value>(
   return out;
 }
 
+function visibleRows(options: ListOptions | undefined): { deletedAt: null } | Record<string, never> {
+  return options?.includeDeleted === true ? {} : { deletedAt: null };
+}
+
+function deletionData(input: DeleteInput): {
+  deletedAt: Date;
+  deletedBy: string;
+  deleteReason: string | null;
+} {
+  return {
+    deletedAt: new Date(),
+    deletedBy: input.deletedBy,
+    deleteReason: input.reason ?? null,
+  };
+}
+
+function restoreData(): {
+  deletedAt: null;
+  deletedBy: null;
+  deleteReason: null;
+} {
+  return {
+    deletedAt: null,
+    deletedBy: null,
+    deleteReason: null,
+  };
+}
+
+function lifecycleError(
+  code: ConstructorParameters<typeof CreditLifecycleError>[0],
+  message: string,
+  statusCode: number,
+): CreditLifecycleError {
+  return new CreditLifecycleError(code, message, statusCode);
+}
+
+function assertWritableAccount(
+  account: {
+    id: string;
+    deletedAt: Date | null;
+  } | null,
+  accountId: string,
+): void {
+  if (!account) {
+    throw new CreditAccountNotFoundError(accountId);
+  }
+  if (account.deletedAt) {
+    throw lifecycleError("credit.account.deleted", `credit account deleted: ${accountId}`, 409);
+  }
+}
+
 function mapCreditAccount(account: {
   id: string;
   siteId: string;
@@ -547,6 +718,9 @@ function mapCreditAccount(account: {
   status: "active" | "disabled";
   balanceMicros: bigint;
   heldMicros: bigint;
+  deletedAt: Date | null;
+  deletedBy: string | null;
+  deleteReason: string | null;
   createdAt: Date;
   updatedAt: Date;
 }): CreditAccount {
@@ -558,6 +732,9 @@ function mapCreditAccount(account: {
     status: account.status,
     balanceMicros: account.balanceMicros.toString(),
     heldMicros: account.heldMicros.toString(),
+    deletedAt: account.deletedAt,
+    deletedBy: account.deletedBy,
+    deleteReason: account.deleteReason,
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,
   };
@@ -640,6 +817,9 @@ function mapPricingRule(rule: {
   status: PricingRuleStatus;
   effectiveFrom: Date;
   effectiveUntil: Date | null;
+  deletedAt: Date | null;
+  deletedBy: string | null;
+  deleteReason: string | null;
   createdAt: Date;
   updatedAt: Date;
 }): PricingRule {
@@ -652,6 +832,9 @@ function mapPricingRule(rule: {
     status: rule.status,
     effectiveFrom: rule.effectiveFrom,
     effectiveUntil: rule.effectiveUntil,
+    deletedAt: rule.deletedAt,
+    deletedBy: rule.deletedBy,
+    deleteReason: rule.deleteReason,
     createdAt: rule.createdAt,
     updatedAt: rule.updatedAt,
   };
