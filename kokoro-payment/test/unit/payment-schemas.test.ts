@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   createOrderRequestSchema,
+  deleteRequestSchema,
   grantPlanRequestSchema,
+  planParamsSchema,
   recordPaymentEventRequestSchema,
   refundOrderParamsSchema,
   upsertPlanRequestSchema,
@@ -140,6 +142,33 @@ describe("refundOrderParamsSchema (.strict)", () => {
   });
   it("rejects extra keys", () => {
     expect(() => refundOrderParamsSchema.parse({ id: "order_1", bogus: 1 })).toThrow();
+  });
+});
+
+describe("plan lifecycle schemas", () => {
+  it("accepts a non-empty plan id", () => {
+    expect(planParamsSchema.parse({ planId: "plan_1" })).toEqual({ planId: "plan_1" });
+  });
+
+  it("rejects empty plan id and unknown params", () => {
+    expect(() => planParamsSchema.parse({ planId: "" })).toThrow();
+    expect(() => planParamsSchema.parse({ planId: "plan_1", extra: 1 })).toThrow();
+  });
+
+  it("accepts delete audit payloads", () => {
+    expect(deleteRequestSchema.parse({ deletedBy: "operator-1", reason: "retired" })).toEqual({
+      deletedBy: "operator-1",
+      reason: "retired",
+    });
+    expect(deleteRequestSchema.parse({ deletedBy: "operator-1" })).toEqual({
+      deletedBy: "operator-1",
+    });
+  });
+
+  it("rejects invalid delete audit payloads", () => {
+    expect(() => deleteRequestSchema.parse({ deletedBy: "" })).toThrow();
+    expect(() => deleteRequestSchema.parse({ deletedBy: "operator-1", reason: "" })).toThrow();
+    expect(() => deleteRequestSchema.parse({ deletedBy: "operator-1", extra: 1 })).toThrow();
   });
 });
 

@@ -32,3 +32,10 @@ export class OrderNotRefundableError extends Error {
     this.name = "OrderNotRefundableError";
   }
 }
+
+export class OrderAmountMismatchError extends Error {
+  constructor(planId: string) {
+    super(`Order amount does not match plan pricing: ${planId}`);
+    this.name = "OrderAmountMismatchError";
+  }
+}

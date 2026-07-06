@@ -4,11 +4,11 @@ import type { PaymentService } from "../../application/payment-service.js";
 import { paymentAdminManifest } from "../admin/manifest.js";
 import type { PaymentRepository } from "../../domain/repository.js";
 import { handlePaymentError } from "./routes.js";
-import { grantPlanRequestSchema } from "./schemas.js";
+import { deleteRequestSchema, grantPlanRequestSchema, planParamsSchema } from "./schemas.js";
 
 // WHY: 资源 id → 只读 list 方法；按 manifest.resources 注册各资源 route 的 GET。
 const RESOURCE_LISTERS: Record<string, (repository: PaymentRepository) => Promise<unknown[]>> = {
-  plans: (repository) => repository.listPlans(),
+  plans: (repository) => repository.listPlans(undefined, { includeDeleted: true }),
   orders: (repository) => repository.listOrders(),
   subscriptions: (repository) => repository.listSubscriptions(),
   "payment-events": (repository) => repository.listPaymentEvents(),
@@ -41,6 +41,27 @@ export function registerPaymentAdminRoutes(
       return sendData(reply, order);
     } catch (error) {
       return handlePaymentError(error, reply, "payment.grant_plan_failed");
+    }
+  });
+
+  app.delete("/admin/payments/plans/:planId", async (request, reply) => {
+    try {
+      const { planId } = planParamsSchema.parse(request.params);
+      const input = deleteRequestSchema.parse(request.body);
+      const result = await service.deletePlan({ id: planId, deletedBy: input.deletedBy, reason: input.reason });
+      return sendData(reply, result);
+    } catch (error) {
+      return handlePaymentError(error, reply, "payment.plan_delete_failed");
+    }
+  });
+
+  app.post("/admin/payments/plans/:planId/restore", async (request, reply) => {
+    try {
+      const { planId } = planParamsSchema.parse(request.params);
+      const result = await service.restorePlan({ id: planId });
+      return sendData(reply, result);
+    } catch (error) {
+      return handlePaymentError(error, reply, "payment.plan_restore_failed");
     }
   });
 }

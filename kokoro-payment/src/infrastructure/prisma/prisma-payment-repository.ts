@@ -7,6 +7,12 @@ import {
   assertSamePaymentEventIdempotencyTarget,
 } from "../../domain/idempotency.js";
 import { OrderNotConfirmableError, OrderNotFoundError } from "../../domain/errors.js";
+import {
+  PaymentLifecycleError,
+  type DeleteInput,
+  type ListOptions,
+  type RestoreInput,
+} from "../../domain/payment-lifecycle.js";
 import type { Order, PaymentEvent, Plan, Refund, Subscription } from "../../domain/payment.js";
 import type {
   CreateOrderInput,
@@ -23,6 +29,15 @@ export class PrismaPaymentRepository implements PaymentRepository {
   async upsertPlan(input: UpsertPlanInput): Promise<Plan> {
     const amountMinor = parsePositiveBigIntString(input.amountMinor, "amountMinor");
     const creditMicros = parseNonNegativeBigIntString(input.creditMicros ?? "0", "creditMicros");
+    const existing = await this.prisma.plan.findUnique({
+      where: {
+        siteId_key: { siteId: input.siteId, key: input.key },
+      },
+    });
+    if (existing?.deletedAt) {
+      throw lifecycleError("payment.plan.deleted", `payment plan deleted: ${existing.id}`, 409);
+    }
+
     const plan = await this.prisma.plan.upsert({
       where: {
         siteId_key: { siteId: input.siteId, key: input.key },
@@ -112,9 +127,42 @@ export class PrismaPaymentRepository implements PaymentRepository {
     return refund ? mapRefund(refund) : null;
   }
 
-  async listPlans(siteId?: string): Promise<Plan[]> {
+  async deletePlan(input: DeleteInput): Promise<Plan> {
+    const existing = await this.prisma.plan.findUnique({ where: { id: input.id } });
+    if (!existing) {
+      throw lifecycleError("payment.plan.not_found", `payment plan not found: ${input.id}`, 404);
+    }
+    if (existing.deletedAt) {
+      return mapPlan(existing);
+    }
+    const deleted = await this.prisma.plan.update({
+      where: { id: input.id },
+      data: deletionData(input),
+    });
+    return mapPlan(deleted);
+  }
+
+  async restorePlan(input: RestoreInput): Promise<Plan> {
+    const existing = await this.prisma.plan.findUnique({ where: { id: input.id } });
+    if (!existing) {
+      throw lifecycleError("payment.plan.not_found", `payment plan not found: ${input.id}`, 404);
+    }
+    if (!existing.deletedAt) {
+      return mapPlan(existing);
+    }
+    const restored = await this.prisma.plan.update({
+      where: { id: input.id },
+      data: restoreData(),
+    });
+    return mapPlan(restored);
+  }
+
+  async listPlans(siteId?: string, options?: ListOptions): Promise<Plan[]> {
     const plans = await this.prisma.plan.findMany({
-      ...(siteId === undefined ? {} : { where: { siteId } }),
+      where: {
+        ...(siteId === undefined ? {} : { siteId }),
+        ...visibleRows(options),
+      },
       take: 100,
       orderBy: { createdAt: "desc" },
     });
@@ -293,6 +341,42 @@ function isUniqueConstraintError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
 }
 
+function visibleRows(options: ListOptions | undefined): { deletedAt: null } | Record<string, never> {
+  return options?.includeDeleted === true ? {} : { deletedAt: null };
+}
+
+function deletionData(input: DeleteInput): {
+  deletedAt: Date;
+  deletedBy: string;
+  deleteReason: string | null;
+} {
+  return {
+    deletedAt: new Date(),
+    deletedBy: input.deletedBy,
+    deleteReason: input.reason ?? null,
+  };
+}
+
+function restoreData(): {
+  deletedAt: null;
+  deletedBy: null;
+  deleteReason: null;
+} {
+  return {
+    deletedAt: null,
+    deletedBy: null,
+    deleteReason: null,
+  };
+}
+
+function lifecycleError(
+  code: ConstructorParameters<typeof PaymentLifecycleError>[0],
+  message: string,
+  statusCode: number,
+): PaymentLifecycleError {
+  return new PaymentLifecycleError(code, message, statusCode);
+}
+
 // WHY: 序列化再回读，把不可信 payload 洗成纯 JSON 值，避免 InputJsonValue 断言。
 function toJson(value: unknown): Prisma.InputJsonValue {
   if (value === undefined || value === null) {
@@ -324,6 +408,9 @@ function mapPlan(plan: {
   creditMicros: bigint;
   billingInterval: "once" | "month" | "year";
   status: "active" | "disabled";
+  deletedAt: Date | null;
+  deletedBy: string | null;
+  deleteReason: string | null;
   createdAt: Date;
   updatedAt: Date;
 }): Plan {
@@ -337,6 +424,9 @@ function mapPlan(plan: {
     creditMicros: plan.creditMicros.toString(),
     billingInterval: plan.billingInterval,
     status: plan.status,
+    deletedAt: plan.deletedAt,
+    deletedBy: plan.deletedBy,
+    deleteReason: plan.deleteReason,
     createdAt: plan.createdAt,
     updatedAt: plan.updatedAt,
   };

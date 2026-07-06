@@ -7,6 +7,7 @@ import type {
   RefundStatus,
   Subscription,
 } from "./payment.js";
+import type { DeleteInput, ListOptions, RestoreInput } from "./payment-lifecycle.js";
 
 export interface UpsertPlanInput {
   siteId: string;
@@ -58,7 +59,9 @@ export interface PaymentRepository {
   // 同库原子：标 paid→refunded 与建 Refund 记录在一个事务，杜绝「标了退款却无记录」。
   refundOrderAtomically(orderId: string, refund: CreateRefundInput): Promise<RefundTransition>;
   findRefundByOrderId(orderId: string): Promise<Refund | null>;
-  listPlans(siteId?: string): Promise<Plan[]>;
+  deletePlan(input: DeleteInput): Promise<Plan>;
+  restorePlan(input: RestoreInput): Promise<Plan>;
+  listPlans(siteId?: string, options?: ListOptions): Promise<Plan[]>;
   listOrders(siteId?: string): Promise<Order[]>;
   listSubscriptions(): Promise<Subscription[]>;
   listPaymentEvents(): Promise<PaymentEvent[]>;

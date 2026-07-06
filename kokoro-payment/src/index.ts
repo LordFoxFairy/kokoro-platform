@@ -3,6 +3,7 @@ export * from "./interfaces/admin/schema.js";
 export * from "./application/payment-service.js";
 export * from "./config/env.js";
 export * from "./domain/payment.js";
+export * from "./domain/payment-lifecycle.js";
 export * from "./interfaces/http/server.js";
 export * from "./interfaces/http/schemas.js";
 export * from "./module.js";

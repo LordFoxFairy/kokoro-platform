@@ -182,4 +182,68 @@ describe("PrismaPaymentRepository", () => {
 
     expect(second.id).toBe(first.id);
   });
+
+  it("deletes and restores a plan without deleting historical orders", async () => {
+    const plan = await service.upsertPlan({
+      siteId: "site_1",
+      key: "delete_restore_plan",
+      name: "Delete Restore Plan",
+      currency: "USD",
+      amountMinor: "4900",
+      billingInterval: "month",
+    });
+    const order = await service.createOrder({
+      siteId: "site_1",
+      teamId: "team_delete_restore",
+      planId: plan.id,
+      amountMinor: "4900",
+      currency: "USD",
+      idempotencyKey: "delete_restore_order",
+    });
+
+    const deleted = await repository.deletePlan({ id: plan.id, deletedBy: "operator-1", reason: "retired" });
+
+    expect(deleted.deletedAt).toBeInstanceOf(Date);
+    expect(deleted.deletedBy).toBe("operator-1");
+    expect(deleted.deleteReason).toBe("retired");
+    await expect(
+      service.upsertPlan({
+        siteId: "site_1",
+        key: "delete_restore_plan",
+        name: "Deleted Plan",
+        currency: "USD",
+        amountMinor: "5900",
+        billingInterval: "month",
+      }),
+    ).rejects.toMatchObject({ code: "payment.plan.deleted" });
+    await expect(
+      service.createOrder({
+        siteId: "site_1",
+        teamId: "team_deleted_plan",
+        planId: plan.id,
+        amountMinor: "4900",
+        currency: "USD",
+        idempotencyKey: "deleted_plan_order",
+      }),
+    ).rejects.toMatchObject({ code: "payment.plan.deleted" });
+
+    expect(await repository.listPlans("site_1")).toEqual([]);
+    const visibleToAdmin = await repository.listPlans("site_1", { includeDeleted: true });
+    expect(visibleToAdmin.map((item) => item.id)).toEqual([plan.id]);
+    expect(await repository.listOrders("site_1")).toMatchObject([{ id: order.id }]);
+
+    const restored = await repository.restorePlan({ id: plan.id });
+
+    expect(restored.deletedAt).toBeNull();
+    expect(await repository.listPlans("site_1")).toMatchObject([{ id: plan.id }]);
+  });
+
+  it("returns stable not-found lifecycle errors for missing plan restore/delete", async () => {
+    await expect(repository.deletePlan({ id: "missing_plan", deletedBy: "operator-1" })).rejects.toMatchObject({
+      code: "payment.plan.not_found",
+    });
+    await expect(repository.restorePlan({ id: "missing_plan" })).rejects.toMatchObject({
+      code: "payment.plan.not_found",
+    });
+  });
 });

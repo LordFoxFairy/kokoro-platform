@@ -127,9 +127,9 @@ describe("payment HTTP API", () => {
       url: "/orders",
       headers: siteHeaders,
       payload: {
-        teamId: "team_conflict",
+        teamId: "team_conflict_other",
         planId,
-        amountMinor: "9900",
+        amountMinor: "4900",
         currency: "USD",
         idempotencyKey: "api_order_conflict",
       },
@@ -287,5 +287,93 @@ describe("payment HTTP API", () => {
     const response = await app.inject({ method: "POST", url: "/orders/missing_order/confirm" });
     expect(response.statusCode).toBe(404);
     expect(response.json().error.code).toBe("payment.order_not_found");
+  });
+
+  it("deletes a plan and rejects future order creation from it", async () => {
+    const planResponse = await app.inject({
+      method: "POST",
+      url: "/plans/upsert",
+      headers: siteHeaders,
+      payload: {
+        key: "delete_plan_api",
+        name: "Delete Plan API",
+        currency: "USD",
+        amountMinor: "4900",
+        billingInterval: "month",
+      },
+    });
+    const planId = planResponse.json().data.id;
+
+    const deleteResponse = await app.inject({
+      method: "DELETE",
+      url: `/plans/${planId}`,
+      payload: { deletedBy: "operator-1", reason: "retired" },
+    });
+
+    expect(deleteResponse.statusCode).toBe(200);
+    expect(deleteResponse.json().data.deletedBy).toBe("operator-1");
+    expect(deleteResponse.json().data.deletedAt).toBeTypeOf("string");
+
+    const orderResponse = await app.inject({
+      method: "POST",
+      url: "/orders",
+      headers: siteHeaders,
+      payload: {
+        teamId: "team_deleted_plan_api",
+        planId,
+        amountMinor: "4900",
+        currency: "USD",
+        idempotencyKey: "api_deleted_plan_order",
+      },
+    });
+
+    expect(orderResponse.statusCode).toBe(409);
+    expect(orderResponse.json().error.code).toBe("payment.plan.deleted");
+  });
+
+  it("restores a deleted plan and allows order creation again", async () => {
+    const planResponse = await app.inject({
+      method: "POST",
+      url: "/plans/upsert",
+      headers: siteHeaders,
+      payload: {
+        key: "restore_plan_api",
+        name: "Restore Plan API",
+        currency: "USD",
+        amountMinor: "4900",
+        billingInterval: "month",
+      },
+    });
+    const planId = planResponse.json().data.id;
+
+    await app.inject({
+      method: "DELETE",
+      url: `/plans/${planId}`,
+      payload: { deletedBy: "operator-1", reason: "restore test" },
+    });
+
+    const restoreResponse = await app.inject({
+      method: "POST",
+      url: `/plans/${planId}/restore`,
+    });
+
+    expect(restoreResponse.statusCode).toBe(200);
+    expect(restoreResponse.json().data.deletedAt).toBeNull();
+
+    const orderResponse = await app.inject({
+      method: "POST",
+      url: "/orders",
+      headers: siteHeaders,
+      payload: {
+        teamId: "team_restored_plan_api",
+        planId,
+        amountMinor: "4900",
+        currency: "USD",
+        idempotencyKey: "api_restored_plan_order",
+      },
+    });
+
+    expect(orderResponse.statusCode).toBe(200);
+    expect(orderResponse.json().data.status).toBe("pending");
   });
 });

@@ -124,6 +124,30 @@ describe("payment admin read-only API", () => {
       expectations[resource.route]?.(response.json().data);
     }
   });
+
+  it("includes deleted plans for restore workflows", async () => {
+    await prisma.plan.create({
+      data: {
+        siteId: TEST_SITE_ID,
+        key: "admin_deleted_plan",
+        name: "Admin Deleted Plan",
+        currency: "USD",
+        amountMinor: 4900n,
+        creditMicros: 0n,
+        billingInterval: "month",
+        status: "active",
+        deletedAt: new Date(),
+        deletedBy: "operator-1",
+        deleteReason: "retired",
+      },
+    });
+
+    const response = await app.inject({ method: "GET", url: "/admin/payments/plans" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data).toHaveLength(1);
+    expect(response.json().data[0].deletedBy).toBe("operator-1");
+  });
 });
 
 describe("admin grant-plan + refund", () => {
@@ -176,6 +200,25 @@ describe("admin grant-plan + refund", () => {
     });
     expect(response.statusCode).toBe(404);
     expect(response.json().error.code).toBe("payment.plan_not_found");
+  });
+
+  it("admin plan delete and restore routes update lifecycle audit", async () => {
+    const plan = await seedPlan(0n);
+
+    const deleteResponse = await app.inject({
+      method: "DELETE",
+      url: `/admin/payments/plans/${plan.id}`,
+      payload: { deletedBy: "operator-1", reason: "retired" },
+    });
+    expect(deleteResponse.statusCode).toBe(200);
+    expect(deleteResponse.json().data.deletedBy).toBe("operator-1");
+
+    const restoreResponse = await app.inject({
+      method: "POST",
+      url: `/admin/payments/plans/${plan.id}/restore`,
+    });
+    expect(restoreResponse.statusCode).toBe(200);
+    expect(restoreResponse.json().data.deletedAt).toBeNull();
   });
 
   it("refund marks order refunded, reverses credits, and records a Refund row", async () => {

@@ -30,6 +30,19 @@ export const confirmOrderParamsSchema = z
   })
   .strict();
 
+export const planParamsSchema = z
+  .object({
+    planId: z.string().min(1),
+  })
+  .strict();
+
+export const deleteRequestSchema = z
+  .object({
+    deletedBy: z.string().min(1),
+    reason: z.string().min(1).optional(),
+  })
+  .strict();
+
 export const refundOrderParamsSchema = z
   .object({
     id: z.string().min(1),

@@ -19,6 +19,9 @@ model Plan {
   billingInterval BillingInterval
   status          PlanStatus      @default(active)
   metadata        Json?
+  deletedAt       DateTime?
+  deletedBy       String?
+  deleteReason    String?
   orders          Order[]
   subscriptions   Subscription[]
   createdAt       DateTime        @default(now())
@@ -26,25 +29,27 @@ model Plan {
 
   @@unique([siteId, key])
   @@index([siteId, status])
+  @@index([siteId, status, deletedAt])
+  @@index([deletedAt])
   @@map("payment_plans")
 }
 
 model Order {
-  id             String      @id @default(cuid())
-  siteId         String
-  teamId         String
-  planId         String
-  amountMinor    BigInt
-  currency       String
-  status         OrderStatus @default(pending)
-  idempotencyKey String      @unique
-  provider       String?
+  id              String      @id @default(cuid())
+  siteId          String
+  teamId          String
+  planId          String
+  amountMinor     BigInt
+  currency        String
+  status          OrderStatus @default(pending)
+  idempotencyKey  String      @unique
+  provider        String?
   providerOrderId String?
-  metadata       Json?
-  plan           Plan        @relation(fields: [planId], references: [id])
-  refunds        Refund[]
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
+  metadata        Json?
+  plan            Plan        @relation(fields: [planId], references: [id])
+  refunds         Refund[]
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
 
   @@index([siteId, teamId, status])
   @@index([planId])

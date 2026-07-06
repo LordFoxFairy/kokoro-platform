@@ -1,3 +1,5 @@
+import type { DeletionAudit } from "./payment-lifecycle.js";
+
 export type BillingInterval = "once" | "month" | "year";
 export type PlanStatus = "active" | "disabled";
 export type OrderStatus = "pending" | "paid" | "canceled" | "refunded";
@@ -5,7 +7,7 @@ export type PaymentEventStatus = "received" | "processed" | "failed";
 export type SubscriptionStatus = "active" | "canceled" | "past_due";
 export type RefundStatus = "pending" | "succeeded" | "failed";
 
-export interface Plan {
+export interface Plan extends DeletionAudit {
   id: string;
   siteId: string;
   key: string;

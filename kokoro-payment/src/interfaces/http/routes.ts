@@ -10,15 +10,19 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { ZodError } from "zod";
 import type { PaymentService } from "../../application/payment-service.js";
 import {
+  OrderAmountMismatchError,
   OrderNotConfirmableError,
   OrderNotFoundError,
   OrderNotRefundableError,
   PaymentIdempotencyConflictError,
   PlanNotFoundError,
 } from "../../domain/errors.js";
+import { isPaymentLifecycleError } from "../../domain/payment-lifecycle.js";
 import {
   confirmOrderParamsSchema,
   createOrderRequestSchema,
+  deleteRequestSchema,
+  planParamsSchema,
   recordPaymentEventRequestSchema,
   refundOrderParamsSchema,
   upsertPlanRequestSchema,
@@ -44,6 +48,40 @@ export function registerPaymentRoutes(app: FastifyInstance, service: PaymentServ
       return sendData(reply, result);
     } catch (error) {
       return handlePaymentError(error, reply, "payment.plan_upsert_failed");
+    }
+  });
+
+  app.delete("/plans/:planId", {
+    schema: {
+      tags: ["payment"],
+      summary: "删除套餐",
+      params: jsonSchema(planParamsSchema),
+      body: jsonSchema(deleteRequestSchema),
+    },
+  }, async (request, reply) => {
+    try {
+      const { planId } = planParamsSchema.parse(request.params);
+      const input = deleteRequestSchema.parse(request.body);
+      const result = await service.deletePlan({ id: planId, deletedBy: input.deletedBy, reason: input.reason });
+      return sendData(reply, result);
+    } catch (error) {
+      return handlePaymentError(error, reply, "payment.plan_delete_failed");
+    }
+  });
+
+  app.post("/plans/:planId/restore", {
+    schema: {
+      tags: ["payment"],
+      summary: "恢复套餐",
+      params: jsonSchema(planParamsSchema),
+    },
+  }, async (request, reply) => {
+    try {
+      const { planId } = planParamsSchema.parse(request.params);
+      const result = await service.restorePlan({ id: planId });
+      return sendData(reply, result);
+    } catch (error) {
+      return handlePaymentError(error, reply, "payment.plan_restore_failed");
     }
   });
 
@@ -127,6 +165,10 @@ export function handlePaymentError(error: unknown, reply: FastifyReply, fallback
     return sendError(reply, 409, "payment.idempotency_conflict", "幂等键已被不同请求使用");
   }
 
+  if (isPaymentLifecycleError(error)) {
+    return sendError(reply, error.statusCode, error.code, error.message);
+  }
+
   if (error instanceof OrderNotFoundError) {
     return sendError(reply, 404, "payment.order_not_found", "订单不存在");
   }
@@ -141,6 +183,10 @@ export function handlePaymentError(error: unknown, reply: FastifyReply, fallback
 
   if (error instanceof OrderNotRefundableError) {
     return sendError(reply, 409, "payment.order_not_refundable", "订单当前状态不可退款");
+  }
+
+  if (error instanceof OrderAmountMismatchError) {
+    return sendError(reply, 409, "payment.order_amount_mismatch", "订单金额与套餐定价不匹配");
   }
 
   return sendError(reply, 500, fallbackCode, "支付操作失败");

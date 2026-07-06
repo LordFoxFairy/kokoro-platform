@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { PaymentService } from "../../src/application/payment-service.js";
 import {
+  OrderAmountMismatchError,
   OrderNotConfirmableError,
   OrderNotFoundError,
   OrderNotRefundableError,
   PlanNotFoundError,
 } from "../../src/domain/errors.js";
 import type { Order, PaymentEvent, Plan, Refund } from "../../src/domain/payment.js";
+import type { DeleteInput, RestoreInput } from "../../src/domain/payment-lifecycle.js";
 import type {
   CreateOrderInput,
   CreateRefundInput,
@@ -19,6 +21,12 @@ import type {
   UpsertPlanInput,
 } from "../../src/domain/repository.js";
 
+const deletionAudit = {
+  deletedAt: null,
+  deletedBy: null,
+  deleteReason: null,
+};
+
 const plan: Plan = {
   id: "plan_1",
   siteId: "site_1",
@@ -29,6 +37,7 @@ const plan: Plan = {
   creditMicros: "1000000",
   billingInterval: "month",
   status: "active",
+  ...deletionAudit,
   createdAt: new Date(0),
   updatedAt: new Date(0),
 };
@@ -134,6 +143,20 @@ function makeFakes(overrides: FakeOverrides = {}): Fakes {
       calls.push("findRefundByOrderId");
       return overrides.existingRefund ?? null;
     },
+    deletePlan: async (input: DeleteInput) => {
+      calls.push("deletePlan");
+      return {
+        ...plan,
+        id: input.id,
+        deletedAt: new Date(1),
+        deletedBy: input.deletedBy,
+        deleteReason: input.reason ?? null,
+      };
+    },
+    restorePlan: async (input: RestoreInput) => {
+      calls.push("restorePlan");
+      return { ...plan, id: input.id };
+    },
     listPlans: async () => {
       calls.push("listPlans");
       return [plan];
@@ -204,6 +227,57 @@ describe("PaymentService positive-amount guard", () => {
       idempotencyKey: "k1",
     });
     expect(fakes.calls).toContain("createOrder");
+  });
+
+  it("rejects an order amount that does not match plan pricing (anchored pricing)", async () => {
+    const fakes = makeFakes();
+    await expect(
+      service(fakes).createOrder({
+        siteId: "site_1",
+        teamId: "team_1",
+        planId: "plan_1",
+        amountMinor: "100",
+        currency: "USD",
+        idempotencyKey: "k1",
+      }),
+    ).rejects.toBeInstanceOf(OrderAmountMismatchError);
+    expect(fakes.calls).not.toContain("createOrder");
+  });
+
+  it("rejects an order referencing a plan from another site", async () => {
+    const fakes = makeFakes({ plan: { ...plan, siteId: "site_2" } });
+    await expect(
+      service(fakes).createOrder({
+        siteId: "site_1",
+        teamId: "team_1",
+        planId: "plan_1",
+        amountMinor: "4900",
+        currency: "USD",
+        idempotencyKey: "k1",
+      }),
+    ).rejects.toBeInstanceOf(PlanNotFoundError);
+    expect(fakes.calls).not.toContain("createOrder");
+  });
+
+  it.each([
+    ["disabled", { ...plan, status: "disabled" as const }],
+    [
+      "deleted",
+      { ...plan, deletedAt: new Date(1), deletedBy: "operator-1", deleteReason: "retired" },
+    ],
+  ])("rejects an order referencing a %s plan", async (_label, guardedPlan) => {
+    const fakes = makeFakes({ plan: guardedPlan });
+    await expect(
+      service(fakes).createOrder({
+        siteId: "site_1",
+        teamId: "team_1",
+        planId: "plan_1",
+        amountMinor: "4900",
+        currency: "USD",
+        idempotencyKey: "k1",
+      }),
+    ).rejects.toThrow();
+    expect(fakes.calls).not.toContain("createOrder");
   });
 
   it("records payment events without amount guard", async () => {
@@ -327,6 +401,25 @@ describe("PaymentService grantPlanToTeam", () => {
       PlanNotFoundError,
     );
     expect(fakes.calls).not.toContain("createOrder");
+  });
+
+  it("rejects a plan from another site before creating an order", async () => {
+    const fakes = makeFakes({ plan: { ...plan, siteId: "site_2" } });
+    await expect(service(fakes).grantPlanToTeam("site_1", "team_1", "plan_1", "req_1")).rejects.toBeInstanceOf(
+      PlanNotFoundError,
+    );
+    expect(fakes.calls).not.toContain("createOrder");
+  });
+});
+
+describe("PaymentService plan lifecycle", () => {
+  it("delegates deletePlan and restorePlan to repository", async () => {
+    const fakes = makeFakes();
+
+    await service(fakes).deletePlan({ id: "plan_1", deletedBy: "operator-1", reason: "retired" });
+    await service(fakes).restorePlan({ id: "plan_1" });
+
+    expect(fakes.calls).toEqual(["deletePlan", "restorePlan"]);
   });
 });
 
