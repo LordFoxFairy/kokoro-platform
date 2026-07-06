@@ -1,8 +1,9 @@
 services:
   litellm:
     image: ${LITELLM_IMAGE:-ghcr.io/berriai/litellm:main-stable}
+    restart: unless-stopped
     env_file:
-      - .env
+      - ${LITELLM_ENV_FILE:-.env.example}
     ports:
       - "${LITELLM_PORT:-4000}:4000"
     volumes:
@@ -12,7 +13,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - curl -fsS http://127.0.0.1:4000/health/liveliness >/dev/null
+        - curl -fsS "$${LITELLM_HEALTH_URL:-http://127.0.0.1:4000/health/liveliness}" >/dev/null
       interval: 10s
       timeout: 5s
       retries: 5

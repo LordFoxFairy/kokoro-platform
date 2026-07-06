@@ -1,3 +1,5 @@
+# `model_name` is the stable gateway name used by Kokoro.
+# It must match `kokoro-model` ModelBinding.gatewayModelName.
 model_list:
   - model_name: kokoro-openai-gpt-4o-mini
     litellm_params:
@@ -16,8 +18,11 @@ model_list:
       api_key: os.environ/OPENAI_COMPAT_API_KEY
 
 litellm_settings:
+  # Keep client-specific unsupported params from breaking provider calls.
   drop_params: true
+  # Example config should not emit telemetry by default.
   telemetry: false
 
 general_settings:
+  # Do not commit real keys. Set this in .env or secret manager.
   master_key: os.environ/LITELLM_MASTER_KEY
