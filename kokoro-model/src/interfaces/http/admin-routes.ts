@@ -2,9 +2,15 @@ import { registerAdminManifestRoute, sendData, sendError, sendZodError } from "@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { ZodError } from "zod";
 import type { ModelBindingStatus, ProviderAccountStatus } from "../../domain/model.js";
+import { isModelLifecycleError } from "../../domain/model-lifecycle.js";
 import type { ModelRepository } from "../../domain/repository.js";
 import { modelAdminManifest } from "../admin/manifest.js";
-import { upsertSiteModelPolicyRequestSchema } from "./schemas.js";
+import {
+  deleteRequestSchema,
+  modelBindingParamsSchema,
+  providerAccountParamsSchema,
+  upsertSiteModelPolicyRequestSchema,
+} from "./schemas.js";
 
 interface IdParams {
   id: string;
@@ -14,11 +20,11 @@ export function registerModelAdminRoutes(app: FastifyInstance, repository: Model
   registerAdminManifestRoute(app, modelAdminManifest);
 
   app.get("/admin/models/provider-accounts", async (_request, reply) =>
-    sendData(reply, await repository.listProviderAccounts()),
+    sendData(reply, await repository.listProviderAccounts({ includeDeleted: true })),
   );
 
   app.get("/admin/models/bindings", async (_request, reply) =>
-    sendData(reply, await repository.listAllModelBindings()),
+    sendData(reply, await repository.listAllModelBindings({ includeDeleted: true })),
   );
 
   app.get("/admin/models/labels", async (_request, reply) =>
@@ -45,8 +51,10 @@ export function registerModelAdminRoutes(app: FastifyInstance, repository: Model
 
   registerProviderAccountStatusRoute(app, repository, "disable", "disabled");
   registerProviderAccountStatusRoute(app, repository, "enable", "active");
+  registerProviderAccountLifecycleRoutes(app, repository);
   registerModelBindingStatusRoute(app, repository, "disable", "disabled");
   registerModelBindingStatusRoute(app, repository, "enable", "active");
+  registerModelBindingLifecycleRoutes(app, repository);
 }
 
 function registerProviderAccountStatusRoute(
@@ -67,6 +75,33 @@ function registerProviderAccountStatusRoute(
   );
 }
 
+function registerProviderAccountLifecycleRoutes(app: FastifyInstance, repository: ModelRepository): void {
+  app.delete("/admin/models/provider-accounts/:providerAccountId", async (request, reply) => {
+    try {
+      const { providerAccountId } = providerAccountParamsSchema.parse(request.params);
+      const input = deleteRequestSchema.parse(request.body);
+      const result = await repository.deleteProviderAccount({
+        id: providerAccountId,
+        deletedBy: input.deletedBy,
+        reason: input.reason,
+      });
+      return sendData(reply, result);
+    } catch (error) {
+      return handleAdminModelError(error, reply, "model.provider_account_delete_failed");
+    }
+  });
+
+  app.post("/admin/models/provider-accounts/:providerAccountId/restore", async (request, reply) => {
+    try {
+      const { providerAccountId } = providerAccountParamsSchema.parse(request.params);
+      const result = await repository.restoreProviderAccount({ id: providerAccountId });
+      return sendData(reply, result);
+    } catch (error) {
+      return handleAdminModelError(error, reply, "model.provider_account_restore_failed");
+    }
+  });
+}
+
 function registerModelBindingStatusRoute(
   app: FastifyInstance,
   repository: ModelRepository,
@@ -83,6 +118,43 @@ function registerModelBindingStatusRoute(
       return sendData(reply, binding);
     },
   );
+}
+
+function registerModelBindingLifecycleRoutes(app: FastifyInstance, repository: ModelRepository): void {
+  app.delete("/admin/models/bindings/:modelBindingId", async (request, reply) => {
+    try {
+      const { modelBindingId } = modelBindingParamsSchema.parse(request.params);
+      const input = deleteRequestSchema.parse(request.body);
+      const result = await repository.deleteModelBinding({
+        id: modelBindingId,
+        deletedBy: input.deletedBy,
+        reason: input.reason,
+      });
+      return sendData(reply, result);
+    } catch (error) {
+      return handleAdminModelError(error, reply, "model.binding_delete_failed");
+    }
+  });
+
+  app.post("/admin/models/bindings/:modelBindingId/restore", async (request, reply) => {
+    try {
+      const { modelBindingId } = modelBindingParamsSchema.parse(request.params);
+      const result = await repository.restoreModelBinding({ id: modelBindingId });
+      return sendData(reply, result);
+    } catch (error) {
+      return handleAdminModelError(error, reply, "model.binding_restore_failed");
+    }
+  });
+}
+
+function handleAdminModelError(error: unknown, reply: FastifyReply, fallbackCode: string) {
+  if (error instanceof ZodError) {
+    return sendZodError(reply, error);
+  }
+  if (isModelLifecycleError(error)) {
+    return sendError(reply, error.statusCode, error.code, error.message);
+  }
+  return sendError(reply, 500, fallbackCode, "模型管理操作失败");
 }
 
 function sendProviderAccountNotFound(reply: FastifyReply) {

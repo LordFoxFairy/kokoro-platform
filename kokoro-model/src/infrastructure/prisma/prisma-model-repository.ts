@@ -7,6 +7,7 @@ import type {
   ProviderAccountStatus,
   SiteModelPolicy,
 } from "../../domain/model.js";
+import { ModelLifecycleError, type DeleteInput, type ListOptions, type RestoreInput } from "../../domain/model-lifecycle.js";
 import type {
   EnsureModelBindingInput,
   EnsureProviderAccountInput,
@@ -20,6 +21,22 @@ export class PrismaModelRepository implements ModelRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
   async ensureProviderAccount(input: EnsureProviderAccountInput): Promise<ProviderAccount> {
+    const existing = await this.prisma.providerAccount.findUnique({
+      where: {
+        provider_key: {
+          provider: input.provider,
+          key: input.key,
+        },
+      },
+    });
+    if (existing?.deletedAt) {
+      throw lifecycleError(
+        "model.provider_account.deleted",
+        `provider account deleted: ${existing.id}`,
+        409,
+      );
+    }
+
     const account = await this.prisma.providerAccount.upsert({
       where: {
         provider_key: {
@@ -44,16 +61,46 @@ export class PrismaModelRepository implements ModelRepository {
         status: "active",
       },
     });
+    if (account.deletedAt) {
+      throw lifecycleError("model.provider_account.deleted", `provider account deleted: ${account.id}`, 409);
+    }
 
     return mapProviderAccount(account);
   }
 
   async ensureModelBinding(input: EnsureModelBindingInput): Promise<ModelBinding> {
-    const account = await this.prisma.providerAccount.findUniqueOrThrow({
+    const account = await this.prisma.providerAccount.findUnique({
       where: {
         id: input.providerAccountId,
       },
     });
+    if (account === null) {
+      throw lifecycleError(
+        "model.provider_account.not_found",
+        `provider account not found: ${input.providerAccountId}`,
+        404,
+      );
+    }
+    if (account.deletedAt) {
+      throw lifecycleError(
+        "model.provider_account.deleted",
+        `provider account deleted: ${input.providerAccountId}`,
+        409,
+      );
+    }
+
+    const existing = await this.prisma.modelBinding.findUnique({
+      where: {
+        providerAccountId_modelName_transportKind: {
+          providerAccountId: input.providerAccountId,
+          modelName: input.modelName,
+          transportKind: input.transportKind,
+        },
+      },
+    });
+    if (existing?.deletedAt) {
+      throw lifecycleError("model.binding.deleted", `model binding deleted: ${existing.id}`, 409);
+    }
 
     const binding = await this.prisma.modelBinding.upsert({
       where: {
@@ -92,6 +139,9 @@ export class PrismaModelRepository implements ModelRepository {
         status: "active",
       },
     });
+    if (binding.deletedAt) {
+      throw lifecycleError("model.binding.deleted", `model binding deleted: ${binding.id}`, 409);
+    }
 
     return mapModelBinding(binding);
   }
@@ -100,6 +150,7 @@ export class PrismaModelRepository implements ModelRepository {
     const bindings = await this.prisma.modelBinding.findMany({
       where: {
         status: "active",
+        deletedAt: null,
         ...defined("featureKey", filter.featureKey),
       },
       orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
@@ -114,9 +165,10 @@ export class PrismaModelRepository implements ModelRepository {
     const bindings = await this.prisma.modelBinding.findMany({
       where: {
         status: "active",
+        deletedAt: null,
         featureKey: input.featureKey,
         ...defined("transportKind", input.transportKind),
-        providerAccount: { status: "active", healthStatus: { not: "down" } },
+        providerAccount: { status: "active", deletedAt: null, healthStatus: { not: "down" } },
       },
       orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
     });
@@ -140,8 +192,9 @@ export class PrismaModelRepository implements ModelRepository {
     return new Set(policies.map((policy) => policy.labelKey));
   }
 
-  async listProviderAccounts(): Promise<ProviderAccount[]> {
+  async listProviderAccounts(options?: ListOptions): Promise<ProviderAccount[]> {
     const accounts = await this.prisma.providerAccount.findMany({
+      where: visibleRows(options),
       orderBy: [{ priority: "asc" }, { createdAt: "desc" }],
       take: 100,
     });
@@ -149,8 +202,9 @@ export class PrismaModelRepository implements ModelRepository {
     return accounts.map(mapProviderAccount);
   }
 
-  async listAllModelBindings(): Promise<ModelBinding[]> {
+  async listAllModelBindings(options?: ListOptions): Promise<ModelBinding[]> {
     const bindings = await this.prisma.modelBinding.findMany({
+      where: visibleRows(options),
       orderBy: { createdAt: "desc" },
       take: 100,
     });
@@ -214,6 +268,74 @@ export class PrismaModelRepository implements ModelRepository {
     return mapModelBinding(updated);
   }
 
+  async deleteProviderAccount(input: DeleteInput): Promise<ProviderAccount> {
+    const existing = await this.prisma.providerAccount.findUnique({ where: { id: input.id } });
+    if (existing === null) {
+      throw lifecycleError("model.provider_account.not_found", `provider account not found: ${input.id}`, 404);
+    }
+    if (existing.deletedAt) {
+      return mapProviderAccount(existing);
+    }
+
+    const deleted = await this.prisma.providerAccount.update({
+      where: { id: input.id },
+      data: deletionData(input),
+    });
+
+    return mapProviderAccount(deleted);
+  }
+
+  async restoreProviderAccount(input: RestoreInput): Promise<ProviderAccount> {
+    const existing = await this.prisma.providerAccount.findUnique({ where: { id: input.id } });
+    if (existing === null) {
+      throw lifecycleError("model.provider_account.not_found", `provider account not found: ${input.id}`, 404);
+    }
+    if (!existing.deletedAt) {
+      return mapProviderAccount(existing);
+    }
+
+    const restored = await this.prisma.providerAccount.update({
+      where: { id: input.id },
+      data: restoreData(),
+    });
+
+    return mapProviderAccount(restored);
+  }
+
+  async deleteModelBinding(input: DeleteInput): Promise<ModelBinding> {
+    const existing = await this.prisma.modelBinding.findUnique({ where: { id: input.id } });
+    if (existing === null) {
+      throw lifecycleError("model.binding.not_found", `model binding not found: ${input.id}`, 404);
+    }
+    if (existing.deletedAt) {
+      return mapModelBinding(existing);
+    }
+
+    const deleted = await this.prisma.modelBinding.update({
+      where: { id: input.id },
+      data: deletionData(input),
+    });
+
+    return mapModelBinding(deleted);
+  }
+
+  async restoreModelBinding(input: RestoreInput): Promise<ModelBinding> {
+    const existing = await this.prisma.modelBinding.findUnique({ where: { id: input.id } });
+    if (existing === null) {
+      throw lifecycleError("model.binding.not_found", `model binding not found: ${input.id}`, 404);
+    }
+    if (!existing.deletedAt) {
+      return mapModelBinding(existing);
+    }
+
+    const restored = await this.prisma.modelBinding.update({
+      where: { id: input.id },
+      data: restoreData(),
+    });
+
+    return mapModelBinding(restored);
+  }
+
   async upsertSiteModelPolicy(input: UpsertSiteModelPolicyInput): Promise<SiteModelPolicy> {
     const policy = await this.prisma.siteModelPolicy.upsert({
       where: {
@@ -267,6 +389,42 @@ function defined<Key extends string, Value>(
   return out;
 }
 
+function visibleRows(options: ListOptions | undefined): { deletedAt: null } | Record<string, never> {
+  return options?.includeDeleted === true ? {} : { deletedAt: null };
+}
+
+function deletionData(input: DeleteInput): {
+  deletedAt: Date;
+  deletedBy: string;
+  deleteReason: string | null;
+} {
+  return {
+    deletedAt: new Date(),
+    deletedBy: input.deletedBy,
+    deleteReason: input.reason ?? null,
+  };
+}
+
+function restoreData(): {
+  deletedAt: null;
+  deletedBy: null;
+  deleteReason: null;
+} {
+  return {
+    deletedAt: null,
+    deletedBy: null,
+    deleteReason: null,
+  };
+}
+
+function lifecycleError(
+  code: ConstructorParameters<typeof ModelLifecycleError>[0],
+  message: string,
+  statusCode: number,
+): ModelLifecycleError {
+  return new ModelLifecycleError(code, message, statusCode);
+}
+
 function mapProviderAccount(account: {
   id: string;
   provider: string;
@@ -277,6 +435,9 @@ function mapProviderAccount(account: {
   priority: number;
   transportKind: "litellm" | "direct" | "internal";
   healthStatus: "unknown" | "healthy" | "degraded" | "down";
+  deletedAt: Date | null;
+  deletedBy: string | null;
+  deleteReason: string | null;
   createdAt: Date;
   updatedAt: Date;
 }): ProviderAccount {
@@ -290,6 +451,9 @@ function mapProviderAccount(account: {
     priority: account.priority,
     transportKind: account.transportKind,
     healthStatus: account.healthStatus,
+    deletedAt: account.deletedAt,
+    deletedBy: account.deletedBy,
+    deleteReason: account.deleteReason,
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,
   };
@@ -310,6 +474,9 @@ function mapModelBinding(binding: {
   contextWindow: number | null;
   priority: number;
   status: "active" | "disabled";
+  deletedAt: Date | null;
+  deletedBy: string | null;
+  deleteReason: string | null;
   createdAt: Date;
   updatedAt: Date;
 }): ModelBinding {
@@ -328,6 +495,9 @@ function mapModelBinding(binding: {
     contextWindow: binding.contextWindow,
     priority: binding.priority,
     status: binding.status,
+    deletedAt: binding.deletedAt,
+    deletedBy: binding.deletedBy,
+    deleteReason: binding.deleteReason,
     createdAt: binding.createdAt,
     updatedAt: binding.updatedAt,
   };

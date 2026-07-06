@@ -163,4 +163,137 @@ describe("PrismaModelRepository", () => {
     const none = await service.resolveModelBindings({ featureKey: "image" });
     expect(none).toEqual([]);
   });
+
+  it("deletes and restores provider accounts without hard deleting their bindings", async () => {
+    const account = await service.ensureProviderAccount({
+      provider: "openai",
+      key: "lifecycle",
+      label: "OpenAI Lifecycle",
+      secretRef: "secret://openai/lifecycle",
+      transportKind: "litellm",
+    });
+    const binding = await service.ensureModelBinding({
+      providerAccountId: account.id,
+      modelName: "gpt-4o",
+      displayName: "GPT-4o",
+      featureKey: "chat",
+      labelKeys: ["chat.default"],
+      inputModalities: ["text"],
+      outputModalities: ["text"],
+      transportKind: "litellm",
+      gatewayModelName: "openai/gpt-4o",
+    });
+
+    const deleted = await repository.deleteProviderAccount({
+      id: account.id,
+      deletedBy: "operator-1",
+      reason: "secret rotated",
+    });
+
+    expect(deleted.deletedAt).toBeInstanceOf(Date);
+    expect(deleted.deletedBy).toBe("operator-1");
+    expect(deleted.deleteReason).toBe("secret rotated");
+    await expect(
+      service.ensureProviderAccount({
+        provider: "openai",
+        key: "lifecycle",
+        label: "OpenAI Lifecycle Updated",
+        secretRef: "secret://openai/lifecycle-v2",
+        transportKind: "litellm",
+      }),
+    ).rejects.toMatchObject({ code: "model.provider_account.deleted" });
+    expect(await repository.listProviderAccounts()).toEqual([]);
+    expect((await repository.listProviderAccounts({ includeDeleted: true })).map((row) => row.id)).toEqual([
+      account.id,
+    ]);
+    expect(await service.resolveModelBindings({ featureKey: "chat" })).toEqual([]);
+    expect(await prisma.modelBinding.findUnique({ where: { id: binding.id } })).not.toBeNull();
+
+    const restored = await repository.restoreProviderAccount({ id: account.id });
+    expect(restored.deletedAt).toBeNull();
+    expect(restored.deletedBy).toBeNull();
+    expect(restored.deleteReason).toBeNull();
+    expect((await service.resolveModelBindings({ featureKey: "chat" })).map((row) => row.modelName)).toEqual([
+      "gpt-4o",
+    ]);
+  });
+
+  it("deletes and restores model bindings without affecting sibling bindings", async () => {
+    const account = await service.ensureProviderAccount({
+      provider: "openai",
+      key: "binding_lifecycle",
+      label: "OpenAI Binding Lifecycle",
+      secretRef: "secret://openai/binding-lifecycle",
+      transportKind: "litellm",
+    });
+    const primary = await service.ensureModelBinding({
+      providerAccountId: account.id,
+      modelName: "gpt-4o",
+      displayName: "GPT-4o",
+      featureKey: "chat",
+      labelKeys: ["chat.default"],
+      inputModalities: ["text"],
+      outputModalities: ["text"],
+      transportKind: "litellm",
+      gatewayModelName: "openai/gpt-4o",
+      priority: 10,
+    });
+    await service.ensureModelBinding({
+      providerAccountId: account.id,
+      modelName: "gpt-4o-mini",
+      displayName: "GPT-4o mini",
+      featureKey: "chat",
+      labelKeys: ["chat.default"],
+      inputModalities: ["text"],
+      outputModalities: ["text"],
+      transportKind: "litellm",
+      gatewayModelName: "openai/gpt-4o-mini",
+      priority: 20,
+    });
+
+    const deleted = await repository.deleteModelBinding({
+      id: primary.id,
+      deletedBy: "operator-1",
+      reason: "retired",
+    });
+
+    expect(deleted.deletedAt).toBeInstanceOf(Date);
+    expect(deleted.deletedBy).toBe("operator-1");
+    expect(deleted.deleteReason).toBe("retired");
+    await expect(
+      service.ensureModelBinding({
+        providerAccountId: account.id,
+        modelName: "gpt-4o",
+        displayName: "GPT-4o Updated",
+        featureKey: "chat",
+        labelKeys: ["chat.default"],
+        inputModalities: ["text"],
+        outputModalities: ["text"],
+        transportKind: "litellm",
+        gatewayModelName: "openai/gpt-4o",
+      }),
+    ).rejects.toMatchObject({ code: "model.binding.deleted" });
+    expect((await repository.listAllModelBindings()).map((row) => row.modelName)).toEqual([
+      "gpt-4o-mini",
+    ]);
+    expect((await repository.listAllModelBindings({ includeDeleted: true })).map((row) => row.modelName).sort()).toEqual([
+      "gpt-4o",
+      "gpt-4o-mini",
+    ]);
+    expect((await service.listModelBindings({ featureKey: "chat" })).map((row) => row.modelName)).toEqual([
+      "gpt-4o-mini",
+    ]);
+    expect((await service.resolveModelBindings({ featureKey: "chat" })).map((row) => row.modelName)).toEqual([
+      "gpt-4o-mini",
+    ]);
+
+    const restored = await repository.restoreModelBinding({ id: primary.id });
+    expect(restored.deletedAt).toBeNull();
+    expect(restored.deletedBy).toBeNull();
+    expect(restored.deleteReason).toBeNull();
+    expect((await service.resolveModelBindings({ featureKey: "chat" })).map((row) => row.modelName)).toEqual([
+      "gpt-4o",
+      "gpt-4o-mini",
+    ]);
+  });
 });

@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  deleteRequestSchema,
   ensureModelBindingRequestSchema,
   ensureProviderAccountRequestSchema,
   listModelBindingsQuerySchema,
+  modelBindingParamsSchema,
   modelTransportKindSchema,
+  providerAccountParamsSchema,
   resolveModelBindingsQuerySchema,
   siteModelPolicyStatusSchema,
   upsertSiteModelPolicyRequestSchema,
@@ -179,6 +182,40 @@ describe("modelTransportKindSchema", () => {
   });
   it.each(["", "rest", "DIRECT"])("rejects %j", (kind) => {
     expect(() => modelTransportKindSchema.parse(kind)).toThrow();
+  });
+});
+
+describe("model lifecycle schemas", () => {
+  it("accepts provider account and model binding params", () => {
+    expect(providerAccountParamsSchema.parse({ providerAccountId: "pa1" })).toEqual({
+      providerAccountId: "pa1",
+    });
+    expect(modelBindingParamsSchema.parse({ modelBindingId: "mb1" })).toEqual({
+      modelBindingId: "mb1",
+    });
+  });
+
+  it("rejects empty or extra params", () => {
+    expect(() => providerAccountParamsSchema.parse({ providerAccountId: "" })).toThrow();
+    expect(() => providerAccountParamsSchema.parse({ providerAccountId: "pa1", extra: true })).toThrow();
+    expect(() => modelBindingParamsSchema.parse({ modelBindingId: "" })).toThrow();
+    expect(() => modelBindingParamsSchema.parse({ modelBindingId: "mb1", extra: true })).toThrow();
+  });
+
+  it("accepts delete request audit fields", () => {
+    expect(deleteRequestSchema.parse({ deletedBy: "operator-1", reason: "retired" })).toEqual({
+      deletedBy: "operator-1",
+      reason: "retired",
+    });
+    expect(deleteRequestSchema.parse({ deletedBy: "operator-1" })).toEqual({
+      deletedBy: "operator-1",
+    });
+  });
+
+  it("rejects invalid delete request fields", () => {
+    expect(() => deleteRequestSchema.parse({ deletedBy: "" })).toThrow();
+    expect(() => deleteRequestSchema.parse({ deletedBy: "operator-1", reason: "" })).toThrow();
+    expect(() => deleteRequestSchema.parse({ deletedBy: "operator-1", extra: true })).toThrow();
   });
 });
 

@@ -9,19 +9,22 @@ generator client {
 }
 
 model ProviderAccount {
-  id            String               @id @default(cuid())
+  id            String                @id @default(cuid())
   provider      String
   key           String
   label         String
   secretRef     String
   status        ProviderAccountStatus @default(active)
-  priority      Int                  @default(100)
+  priority      Int                   @default(100)
   transportKind ModelTransportKind
-  healthStatus  ProviderHealthStatus @default(unknown)
+  healthStatus  ProviderHealthStatus  @default(unknown)
   metadata      Json?
   bindings      ModelBinding[]
-  createdAt     DateTime             @default(now())
-  updatedAt     DateTime             @updatedAt
+  deletedAt     DateTime?
+  deletedBy     String?
+  deleteReason  String?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
 
   @@unique([provider, key])
   @@index([status, priority])
@@ -45,11 +48,14 @@ model ModelBinding {
   status            ModelBindingStatus @default(active)
   metadata          Json?
   providerAccount   ProviderAccount    @relation(fields: [providerAccountId], references: [id])
+  deletedAt         DateTime?
+  deletedBy         String?
+  deleteReason      String?
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
 
   @@unique([providerAccountId, modelName, transportKind])
-  @@index([featureKey, status, priority])
+  @@index([featureKey, status, deletedAt, priority])
   @@index([provider, modelName])
   @@map("model_bindings")
 }

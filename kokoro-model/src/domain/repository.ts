@@ -8,6 +8,7 @@ import type {
   SiteModelPolicy,
   SiteModelPolicyStatus,
 } from "./model.js";
+import type { DeleteInput, ListOptions, RestoreInput } from "./model-lifecycle.js";
 
 export interface EnsureProviderAccountInput {
   provider: string;
@@ -56,14 +57,18 @@ export interface ModelRepository {
   ensureModelBinding(input: EnsureModelBindingInput): Promise<ModelBinding>;
   listModelBindings(filter: ListModelBindingsFilter): Promise<ModelBinding[]>;
   resolveModelBindings(input: ResolveModelInput): Promise<ModelBinding[]>;
-  listProviderAccounts(): Promise<ProviderAccount[]>;
-  listAllModelBindings(): Promise<ModelBinding[]>;
+  listProviderAccounts(options?: ListOptions): Promise<ProviderAccount[]>;
+  listAllModelBindings(options?: ListOptions): Promise<ModelBinding[]>;
   listModelLabels(): Promise<ModelLabel[]>;
   setProviderAccountStatus(
     id: string,
     status: ProviderAccountStatus,
   ): Promise<ProviderAccount | null>;
   setModelBindingStatus(id: string, status: ModelBindingStatus): Promise<ModelBinding | null>;
+  deleteProviderAccount(input: DeleteInput): Promise<ProviderAccount>;
+  restoreProviderAccount(input: RestoreInput): Promise<ProviderAccount>;
+  deleteModelBinding(input: DeleteInput): Promise<ModelBinding>;
+  restoreModelBinding(input: RestoreInput): Promise<ModelBinding>;
   upsertSiteModelPolicy(input: UpsertSiteModelPolicyInput): Promise<SiteModelPolicy>;
   listSiteModelPolicies(siteId?: string | undefined): Promise<SiteModelPolicy[]>;
 }

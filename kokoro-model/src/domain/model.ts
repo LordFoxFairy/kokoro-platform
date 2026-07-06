@@ -1,3 +1,5 @@
+import type { DeletionAudit } from "./model-lifecycle.js";
+
 export type ModelTransportKind = "litellm" | "direct" | "internal";
 export type ProviderAccountStatus = "active" | "disabled";
 export type ProviderHealthStatus = "unknown" | "healthy" | "degraded" | "down";
@@ -5,7 +7,7 @@ export type ModelBindingStatus = "active" | "disabled";
 export type ModelLabelStatus = "active" | "disabled";
 export type SiteModelPolicyStatus = "visible" | "hidden";
 
-export interface ProviderAccount {
+export interface ProviderAccount extends DeletionAudit {
   id: string;
   provider: string;
   key: string;
@@ -19,7 +21,7 @@ export interface ProviderAccount {
   updatedAt: Date;
 }
 
-export interface ModelBinding {
+export interface ModelBinding extends DeletionAudit {
   id: string;
   providerAccountId: string;
   provider: string;

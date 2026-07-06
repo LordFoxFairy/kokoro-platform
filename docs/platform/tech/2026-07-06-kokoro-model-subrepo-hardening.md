@@ -164,13 +164,10 @@ deleteReason String?
 
 ### 5.2 索引
 
-新增：
+新增/替换：
 
 ```prisma
-@@index([status, deletedAt, priority])              // ProviderAccount
-@@index([deletedAt])                                // ProviderAccount
-@@index([featureKey, status, deletedAt, priority])  // ModelBinding
-@@index([deletedAt])                                // ModelBinding
+@@index([featureKey, status, deletedAt, priority])  // ModelBinding, 替换旧的 featureKey/status/priority
 ```
 
 保留：
@@ -178,12 +175,13 @@ deleteReason String?
 - `ProviderAccount(provider,key)` 唯一约束。
 - `ModelBinding(providerAccountId,modelName,transportKind)` 唯一约束。
 - `SiteModelPolicy(siteId,labelKey)` 唯一约束。
+- `ProviderAccount(status,priority)` 既有索引。
 
 设计理由：
 
-- provider admin 列表、resolve 前置过滤都需要 status/deleted/priority。
-- binding 列表和 resolve 都按 feature/status/deleted/priority 过滤。
-- 单独 `deletedAt` 索引用于 admin restore workflow 和审计查询。
+- provider account 主要通过唯一键、PK 和 binding relation 读取，表规模也小；本轮不为 lifecycle 字段新增 provider 索引，避免为低选择性字段过度建索引。
+- binding resolve 是热路径，按 `featureKey/status/deletedAt` 做等值过滤，再按 `priority` 排序，因此用一个组合索引替换旧的 `featureKey/status/priority`。
+- admin restore workflow 目前是 include-all 列表，不存在单独按删除时间扫描的后台队列，因此不建单列 lifecycle 索引。
 
 ## 6. 核心业务链路
 

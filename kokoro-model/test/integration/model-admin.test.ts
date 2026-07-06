@@ -217,4 +217,106 @@ describe("model admin API", () => {
     expect(binding.statusCode).toBe(404);
     expect(binding.json().error.code).toBe("model.binding_not_found");
   });
+
+  it("includes deleted provider accounts and bindings for restore workflows", async () => {
+    const account = await prisma.providerAccount.create({
+      data: {
+        provider: "openai",
+        key: "admin_deleted",
+        label: "OpenAI Deleted",
+        secretRef: "secret://openai/admin-deleted",
+        transportKind: "litellm",
+        status: "active",
+        deletedAt: new Date(),
+        deletedBy: "operator-1",
+        deleteReason: "retired",
+      },
+    });
+    await prisma.modelBinding.create({
+      data: {
+        providerAccountId: account.id,
+        provider: "openai",
+        modelName: "gpt-4o",
+        displayName: "GPT-4o",
+        featureKey: "chat",
+        labelKeys: ["chat.default"],
+        inputModalities: ["text"],
+        outputModalities: ["text"],
+        transportKind: "litellm",
+        gatewayModelName: "openai/gpt-4o",
+        status: "active",
+        deletedAt: new Date(),
+        deletedBy: "operator-1",
+        deleteReason: "retired",
+      },
+    });
+
+    const accounts = await app.inject({ method: "GET", url: "/admin/models/provider-accounts" });
+    expect(accounts.statusCode).toBe(200);
+    expect(accounts.json().data.map((row: { id: string }) => row.id)).toEqual([account.id]);
+    expect(accounts.json().data[0].deletedBy).toBe("operator-1");
+
+    const bindings = await app.inject({ method: "GET", url: "/admin/models/bindings" });
+    expect(bindings.statusCode).toBe(200);
+    expect(bindings.json().data.map((row: { modelName: string }) => row.modelName)).toEqual(["gpt-4o"]);
+    expect(bindings.json().data[0].deletedBy).toBe("operator-1");
+  });
+
+  it("deletes and restores provider accounts and bindings through admin routes", async () => {
+    const account = await prisma.providerAccount.create({
+      data: {
+        provider: "openai",
+        key: "admin_lifecycle",
+        label: "OpenAI Admin Lifecycle",
+        secretRef: "secret://openai/admin-lifecycle",
+        transportKind: "litellm",
+        status: "active",
+      },
+    });
+    const binding = await prisma.modelBinding.create({
+      data: {
+        providerAccountId: account.id,
+        provider: "openai",
+        modelName: "gpt-4o",
+        displayName: "GPT-4o",
+        featureKey: "chat",
+        labelKeys: ["chat.default"],
+        inputModalities: ["text"],
+        outputModalities: ["text"],
+        transportKind: "litellm",
+        gatewayModelName: "openai/gpt-4o",
+        status: "active",
+      },
+    });
+
+    const deleteBinding = await app.inject({
+      method: "DELETE",
+      url: `/admin/models/bindings/${binding.id}`,
+      payload: { deletedBy: "operator-1", reason: "retired" },
+    });
+    expect(deleteBinding.statusCode).toBe(200);
+    expect(deleteBinding.json().data.deletedBy).toBe("operator-1");
+
+    const restoreBinding = await app.inject({
+      method: "POST",
+      url: `/admin/models/bindings/${binding.id}/restore`,
+    });
+    expect(restoreBinding.statusCode).toBe(200);
+    expect(restoreBinding.json().data.deletedAt).toBeNull();
+
+    const deleteProvider = await app.inject({
+      method: "DELETE",
+      url: `/admin/models/provider-accounts/${account.id}`,
+      payload: { deletedBy: "operator-1", reason: "secret rotated" },
+    });
+    expect(deleteProvider.statusCode).toBe(200);
+    expect(deleteProvider.json().data.deletedBy).toBe("operator-1");
+
+    const restoreProvider = await app.inject({
+      method: "POST",
+      url: `/admin/models/provider-accounts/${account.id}/restore`,
+    });
+    expect(restoreProvider.statusCode).toBe(200);
+    expect(restoreProvider.json().data.deletedAt).toBeNull();
+  });
 });

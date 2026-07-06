@@ -2,6 +2,25 @@ import { z } from "zod";
 
 export const modelTransportKindSchema = z.enum(["litellm", "direct", "internal"]);
 
+export const providerAccountParamsSchema = z
+  .object({
+    providerAccountId: z.string().min(1),
+  })
+  .strict();
+
+export const modelBindingParamsSchema = z
+  .object({
+    modelBindingId: z.string().min(1),
+  })
+  .strict();
+
+export const deleteRequestSchema = z
+  .object({
+    deletedBy: z.string().min(1),
+    reason: z.string().min(1).optional(),
+  })
+  .strict();
+
 export const ensureProviderAccountRequestSchema = z
   .object({
     provider: z.string().min(1),

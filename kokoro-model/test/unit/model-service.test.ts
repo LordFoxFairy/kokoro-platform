@@ -20,6 +20,9 @@ const account: ProviderAccount = {
   priority: 100,
   transportKind: "litellm",
   healthStatus: "unknown",
+  deletedAt: null,
+  deletedBy: null,
+  deleteReason: null,
   createdAt: new Date(0),
   updatedAt: new Date(0),
 };
@@ -39,6 +42,9 @@ const binding: ModelBinding = {
   contextWindow: null,
   priority: 100,
   status: "active",
+  deletedAt: null,
+  deletedBy: null,
+  deleteReason: null,
   createdAt: new Date(0),
   updatedAt: new Date(0),
 };
@@ -59,6 +65,10 @@ interface Captured {
   resolve?: ResolveModelInput;
   policy?: UpsertSiteModelPolicyInput;
   listPolicySiteId?: string | undefined;
+  deleteProviderAccount?: { id: string; deletedBy: string; reason?: string | undefined };
+  restoreProviderAccount?: { id: string };
+  deleteModelBinding?: { id: string; deletedBy: string; reason?: string | undefined };
+  restoreModelBinding?: { id: string };
 }
 
 function trackingRepo(captured: Captured): ModelRepository {
@@ -84,6 +94,22 @@ function trackingRepo(captured: Captured): ModelRepository {
     listModelLabels: async () => [],
     setProviderAccountStatus: async () => account,
     setModelBindingStatus: async () => binding,
+    deleteProviderAccount: async (input) => {
+      captured.deleteProviderAccount = input;
+      return { ...account, deletedAt: new Date(1), deletedBy: input.deletedBy, deleteReason: input.reason ?? null };
+    },
+    restoreProviderAccount: async (input) => {
+      captured.restoreProviderAccount = input;
+      return account;
+    },
+    deleteModelBinding: async (input) => {
+      captured.deleteModelBinding = input;
+      return { ...binding, deletedAt: new Date(1), deletedBy: input.deletedBy, deleteReason: input.reason ?? null };
+    },
+    restoreModelBinding: async (input) => {
+      captured.restoreModelBinding = input;
+      return binding;
+    },
     upsertSiteModelPolicy: async (input) => {
       captured.policy = input;
       return policy;
@@ -175,5 +201,39 @@ describe("ModelService delegates to repository", () => {
     const service = new ModelService(trackingRepo(captured));
     await service.listSiteModelPolicies();
     expect(captured.listPolicySiteId).toBeUndefined();
+  });
+
+  it("forwards provider account lifecycle inputs and results", async () => {
+    const captured: Captured = {};
+    const service = new ModelService(trackingRepo(captured));
+    const deleteInput = { id: "pa1", deletedBy: "operator-1", reason: "rotated" };
+
+    await expect(service.deleteProviderAccount(deleteInput)).resolves.toMatchObject({
+      id: "pa1",
+      deletedBy: "operator-1",
+      deleteReason: "rotated",
+    });
+    expect(captured.deleteProviderAccount).toBe(deleteInput);
+
+    const restoreInput = { id: "pa1" };
+    await expect(service.restoreProviderAccount(restoreInput)).resolves.toBe(account);
+    expect(captured.restoreProviderAccount).toBe(restoreInput);
+  });
+
+  it("forwards model binding lifecycle inputs and results", async () => {
+    const captured: Captured = {};
+    const service = new ModelService(trackingRepo(captured));
+    const deleteInput = { id: "mb1", deletedBy: "operator-1", reason: "retired" };
+
+    await expect(service.deleteModelBinding(deleteInput)).resolves.toMatchObject({
+      id: "mb1",
+      deletedBy: "operator-1",
+      deleteReason: "retired",
+    });
+    expect(captured.deleteModelBinding).toBe(deleteInput);
+
+    const restoreInput = { id: "mb1" };
+    await expect(service.restoreModelBinding(restoreInput)).resolves.toBe(binding);
+    expect(captured.restoreModelBinding).toBe(restoreInput);
   });
 });
