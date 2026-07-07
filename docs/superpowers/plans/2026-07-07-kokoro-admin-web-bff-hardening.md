@@ -49,14 +49,15 @@
 
 ## Chunk 1: Red Tests
 
-### Task 1: Env Production SMTP
+### Task 1: Build-safe Env And Runtime SMTP
 
 **Files:**
 - Add: `kokoro-admin-web/lib/env.test.ts`
 - Modify: `kokoro-admin-web/lib/env.ts`
 
 - [ ] Refactor env parsing into `parseEnv(source)` without changing `env = parseEnv(process.env)`.
-- [ ] Add failing test: production with missing SMTP host/port fails.
+- [ ] Add failing test: production email runtime with missing SMTP host/port fails.
+- [ ] Add passing test: production build-time parsing can omit runtime SMTP.
 - [ ] Add passing test: development can omit SMTP and keep console-link behavior.
 - [ ] Run:
 
@@ -64,7 +65,7 @@
 pnpm --filter @kokoro/admin-web exec vitest run lib/env.test.ts
 ```
 
-Expected: fail until production SMTP validation is implemented.
+Expected: fail until runtime SMTP validation is implemented without breaking `next build`.
 
 ### Task 2: Tenant Query Helpers
 

@@ -125,19 +125,18 @@ browser -> Next middleware -> Auth.js JWT session -> inject operator/proxy-secre
 
 理由：后端已经能按 siteId 强制过滤，前端应显式表达当前运营上下文。这样超级账号默认也不会误看全站数据。
 
-### D5. 生产 env fail-fast
+### D5. build-safe env 与生产发信运行时强制
 
-生产模式必须满足：
+构建期必须满足：
 
 - `AUTH_SECRET`
 - `DATABASE_URL_ADMIN`
 - `KOKORO_GATEWAY_URL`
 - `KOKORO_ADMIN_PROXY_SECRET`
-- SMTP host/port/from 至少齐全
 
-dev 模式允许 SMTP 留空，magic-link 输出到 server console。
+生产发信运行时必须满足 SMTP host/port/from。dev 模式允许 SMTP 留空，magic-link 输出到 server console。
 
-理由：登录链路是入口安全边界；生产不应因为 SMTP 缺失退化成 console link。
+理由：Next build 会 import App Route，但此时不应要求真实 SMTP secret。登录链路是入口安全边界，生产发信请求不能因为 SMTP 缺失退化成 console link。
 
 ### D6. Ant Design Pro 企业后台视觉
 
