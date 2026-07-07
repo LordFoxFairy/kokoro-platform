@@ -61,6 +61,9 @@ LiteLLM、支付宝、微信支付、Stripe、Paddle、Strapi 等第三方能力
 
 ## 核心设计文档
 
+顶层文档入口见 [docs/README.md](docs/README.md)。平台仓 docs 可以记录 platform
+父仓和平台模块自己的长期方案；跨仓总规则仍归根仓 `../docs/kokoro-handbook/`。
+
 ```text
 docs/platform/subrepo-capability-roadmap.md
   平台子仓职责、DDD 边界、当前能力和后续补齐顺序。
