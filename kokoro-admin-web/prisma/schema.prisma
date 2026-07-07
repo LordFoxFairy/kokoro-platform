@@ -6,6 +6,7 @@ datasource db {
 
 generator client {
   provider = "prisma-client-js"
+  output   = "../generated/prisma"
 }
 
 // 只读：magic-link 登录邮箱必须命中一个 active 的运营账号（授权仍由网关 RBAC 决定）。

@@ -2,11 +2,22 @@ import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 
 export default [
+  {
+    ignores: [
+      "dist/**",
+      "coverage/**",
+      "node_modules/**",
+      "**/node_modules/**",
+      "**/.next/**",
+      "**/out/**",
+      "**/build/**",
+      "**/generated/**",
+      "**/next-env.d.ts",
+      "**/*.tsbuildinfo",
+    ],
+  },
   js.configs.recommended,
   ...tseslint.configs.recommended,
-  {
-    ignores: ["dist/**", "coverage/**", "node_modules/**", "**/generated/**"],
-  },
   {
     files: ["**/*.ts"],
     rules: {

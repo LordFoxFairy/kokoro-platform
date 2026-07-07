@@ -56,7 +56,7 @@ export default function Page(): React.ReactElement {
           {me?.email ?? "…"}
           {me ? (
             <>
-              　<Tag color="green">{me.roleKey}</Tag>
+              <Tag color="green">{me.roleKey}</Tag>
               <span style={{ color: "rgba(0,0,0,0.45)" }}>作用域 {scope}</span>
             </>
           ) : null}
