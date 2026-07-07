@@ -8,13 +8,15 @@ const envSchema = z.object({
   DATABASE_URL_ADMIN: z.string().min(1),
   // 大额发积分审批阈值(micros)；超过即需二次审批。默认 100 积分。
   KOKORO_APPROVAL_GRANT_THRESHOLD_MICROS: z.string().regex(/^\d+$/).default("100000000"),
-  // 认证：oidc(生产,验 JWT)/dev(本地,x-kokoro-operator 头)。IdP 自托管 Keycloak。
-  KOKORO_ADMIN_AUTH_MODE: z.enum(["oidc", "dev"]).default("oidc"),
+  // 认证：proxy(生产,BFF 注入 x-kokoro-operator + 校 secret)/oidc(验 JWT,对接真 IdP)/dev(本地头,回退默认账号)。
+  KOKORO_ADMIN_AUTH_MODE: z.enum(["proxy", "oidc", "dev"]).default("oidc"),
   KOKORO_ADMIN_OIDC_JWKS_URL: z.string().url().optional(),
   KOKORO_ADMIN_OIDC_ISSUER: z.string().min(1).optional(),
   KOKORO_ADMIN_OIDC_AUDIENCE: z.string().min(1).optional(),
   KOKORO_ADMIN_OIDC_EMAIL_CLAIM: z.string().min(1).default("email"),
   KOKORO_ADMIN_DEV_OPERATOR: z.string().min(1).default("admin@kokoro.local"),
+  // BFF↔网关内部代理密钥，逗号分隔支持轮换（proxy 模式校验）。
+  KOKORO_ADMIN_PROXY_SECRETS: z.string().default(""),
   KOKORO_SITE_BASE_URL: z.string().url().default("http://kokoro-site:4201"),
   KOKORO_USER_BASE_URL: z.string().url().default("http://kokoro-user:4211"),
   KOKORO_MODEL_BASE_URL: z.string().url().default("http://kokoro-model:4221"),
@@ -61,6 +63,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AdminConfig {
       audience: parsed.KOKORO_ADMIN_OIDC_AUDIENCE,
       emailClaim: parsed.KOKORO_ADMIN_OIDC_EMAIL_CLAIM,
       devOperator: parsed.KOKORO_ADMIN_DEV_OPERATOR,
+      proxySecrets: parsed.KOKORO_ADMIN_PROXY_SECRETS.split(",")
+        .map((secret) => secret.trim())
+        .filter((secret) => secret.length > 0),
     },
     modules,
   };

@@ -82,6 +82,29 @@ model ApprovalRequest {
   @@map("approval_requests")
 }
 
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@index([expires])
+  @@map("verification_tokens")
+}
+
+model AuthEvent {
+  id        String   @id @default(cuid())
+  email     String
+  event     String
+  ip        String?
+  userAgent String?
+  reason    String?
+  createdAt DateTime @default(now())
+
+  @@index([email, createdAt])
+  @@map("auth_events")
+}
+
 enum ApprovalStatus {
   pending
   approved

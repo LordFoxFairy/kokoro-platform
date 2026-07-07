@@ -63,6 +63,7 @@ const approvalParamsSchema = z.object({ id: z.string().min(1) });
 const resourceQuerySchema = z.object({
   moduleId: z.string().min(1),
   route: z.string().min(1),
+  siteId: z.string().min(1).optional(),
 });
 
 const user360QuerySchema = z
@@ -252,12 +253,17 @@ export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps
   });
 
   app.get("/api/resource", async (request, reply) => {
+    const operator = await requireOperator(request, reply);
+    if (!operator) return reply;
     const query = resourceQuerySchema.safeParse(request.query);
     if (!query.success) {
       return sendError(reply, 400, "request.invalid", "无效的查询参数", { issues: query.error.issues });
     }
     try {
-      const rows = await proxyResource(modules, query.data.moduleId, query.data.route);
+      const rows = await proxyResource(modules, query.data.moduleId, query.data.route, {
+        operator,
+        ...(query.data.siteId === undefined ? {} : { siteId: query.data.siteId }),
+      });
       return sendData(reply, rows);
     } catch (error) {
       if (error instanceof GatewayError) {

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModuleConfig } from "../../src/config.js";
+import { createAdminServer, type AdminServerDeps } from "../../src/server.js";
 import {
   GatewayError,
   getManifests,
@@ -15,6 +16,7 @@ import type { Operator } from "../../src/rbac.js";
 const SUPER: Operator = { id: "op_super", email: "admin@kokoro.local", roleKey: "superadmin", permissions: ["*"], scopeSites: ["*"] };
 const FINANCE: Operator = { id: "op_fin", email: "fin@kokoro.local", roleKey: "finance", permissions: ["payment.*", "credit.grant"], scopeSites: ["site_1"] };
 const TENANT: Operator = { id: "op_t", email: "t@kokoro.local", roleKey: "support", permissions: ["user.disable"], scopeSites: ["site_2"] };
+const CREDIT_READER: Operator = { id: "op_credit", email: "credit@kokoro.local", roleKey: "support", permissions: ["credit.account.read"], scopeSites: ["site_1"] };
 
 const modules: ModuleConfig[] = [
   { id: "credit", label: "Credits", baseUrl: "http://127.0.0.1:4231", manifestPath: "/admin/credits/manifest" },
@@ -122,6 +124,142 @@ describe("proxyResource", () => {
     await expect(proxyResource(modules, "credit", "/admin/credits/accounts")).rejects.toMatchObject({
       statusCode: 502,
     });
+  });
+
+  it("enforces the resource requiredPermission when an operator is supplied (no anonymous proxy)", async () => {
+    const manifestThenRows = async (input: string | URL | Request): Promise<Response> =>
+      String(input).includes("/manifest")
+        ? jsonResponse({ data: creditManifest })
+        : jsonResponse({ data: [{ id: "acc_1" }] });
+
+    fetchMock.mockImplementation(manifestThenRows);
+    await expect(proxyResource(modules, "credit", "/admin/credits/accounts", SUPER)).resolves.toEqual([
+      { id: "acc_1" },
+    ]);
+
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(manifestThenRows);
+    // TENANT holds only user.disable, not credit.account.read → 403 before any upstream call.
+    await expect(
+      proxyResource(modules, "credit", "/admin/credits/accounts", TENANT),
+    ).rejects.toMatchObject({ statusCode: 403 });
+    expect(fetchMock.mock.calls.every(([url]) => String(url).includes("/manifest"))).toBe(true);
+  });
+
+  it("returns every declared row for a super-scoped operator when no siteId is requested", async () => {
+    const rows = [
+      { id: "acc_1", siteId: "site_1" },
+      { id: "acc_2", siteId: "site_2" },
+      { id: "acc_global" },
+    ];
+    fetchMock.mockImplementation(async (input) =>
+      String(input).includes("/manifest") ? jsonResponse({ data: creditManifest }) : jsonResponse({ data: rows }),
+    );
+
+    await expect(
+      proxyResource(modules, "credit", "/admin/credits/accounts", { operator: SUPER }),
+    ).resolves.toEqual(rows);
+  });
+
+  it("filters resource rows to the operator tenant scope and drops rows without siteId", async () => {
+    fetchMock.mockImplementation(async (input) =>
+      String(input).includes("/manifest")
+        ? jsonResponse({ data: creditManifest })
+        : jsonResponse({
+            data: [
+              { id: "acc_1", siteId: "site_1" },
+              { id: "acc_2", siteId: "site_2" },
+              { id: "acc_global" },
+            ],
+          }),
+    );
+
+    await expect(
+      proxyResource(modules, "credit", "/admin/credits/accounts", { operator: CREDIT_READER }),
+    ).resolves.toEqual([{ id: "acc_1", siteId: "site_1" }]);
+  });
+
+  it("honors an in-scope requested siteId", async () => {
+    fetchMock.mockImplementation(async (input) =>
+      String(input).includes("/manifest")
+        ? jsonResponse({ data: creditManifest })
+        : jsonResponse({
+            data: [
+              { id: "acc_1", siteId: "site_1" },
+              { id: "acc_2", siteId: "site_2" },
+            ],
+          }),
+    );
+
+    await expect(
+      proxyResource(modules, "credit", "/admin/credits/accounts", { operator: CREDIT_READER, siteId: "site_1" }),
+    ).resolves.toEqual([{ id: "acc_1", siteId: "site_1" }]);
+  });
+
+  it("rejects an out-of-scope requested siteId before fetching the upstream resource route", async () => {
+    fetchMock.mockImplementation(async (input) =>
+      String(input).includes("/manifest")
+        ? jsonResponse({ data: creditManifest })
+        : jsonResponse({ data: [{ id: "acc_2", siteId: "site_2" }] }),
+    );
+
+    await expect(
+      proxyResource(modules, "credit", "/admin/credits/accounts", { operator: CREDIT_READER, siteId: "site_2" }),
+    ).rejects.toMatchObject({ statusCode: 403 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/manifest");
+  });
+});
+
+function buildServerDeps(operator: Operator): AdminServerDeps {
+  return {
+    audit: { record: async () => {} },
+    resolveOperator: async () => operator,
+    authenticate: async () => operator.email,
+    prisma: {} as AdminServerDeps["prisma"],
+    approvalGrantThresholdMicros: 100_000_000n,
+  };
+}
+
+describe("/api/resource", () => {
+  it("passes the requested siteId into the service-side resource scope filter", async () => {
+    fetchMock.mockImplementation(async (input) =>
+      String(input).includes("/manifest")
+        ? jsonResponse({ data: creditManifest })
+        : jsonResponse({
+            data: [
+              { id: "acc_1", siteId: "site_1" },
+              { id: "acc_2", siteId: "site_2" },
+            ],
+          }),
+    );
+    const app = createAdminServer(modules, buildServerDeps(CREDIT_READER));
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/resource?moduleId=credit&route=%2Fadmin%2Fcredits%2Faccounts&siteId=site_1",
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data).toEqual([{ id: "acc_1", siteId: "site_1" }]);
+  });
+
+  it("rejects out-of-scope site reads through the HTTP route", async () => {
+    fetchMock.mockImplementation(async (input) =>
+      String(input).includes("/manifest")
+        ? jsonResponse({ data: creditManifest })
+        : jsonResponse({ data: [{ id: "acc_2", siteId: "site_2" }] }),
+    );
+    const app = createAdminServer(modules, buildServerDeps(CREDIT_READER));
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/resource?moduleId=credit&route=%2Fadmin%2Fcredits%2Faccounts&siteId=site_2",
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/manifest");
   });
 });
 

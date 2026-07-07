@@ -65,12 +65,42 @@ export class GatewayError extends Error {
 
 export type ResourceRow = Record<string, unknown>;
 
+export interface ResourceScopeOptions {
+  operator?: Operator;
+  siteId?: string;
+}
+
+function normalizeResourceScope(scope?: Operator | ResourceScopeOptions): ResourceScopeOptions {
+  if (scope === undefined) {
+    return {};
+  }
+  if ("permissions" in scope && "scopeSites" in scope) {
+    return { operator: scope };
+  }
+  return scope;
+}
+
+function filterResourceRows(rows: ResourceRow[], scope: ResourceScopeOptions): ResourceRow[] {
+  if (scope.siteId !== undefined) {
+    return rows.filter((row) => row.siteId === scope.siteId);
+  }
+
+  const operator = scope.operator;
+  if (operator === undefined || operator.scopeSites.includes("*")) {
+    return rows;
+  }
+
+  return rows.filter((row) => typeof row.siteId === "string" && permitsSite(operator.scopeSites, row.siteId));
+}
+
 // 校验 moduleId 已知 + route ∈ manifest.resources[].route，防开放代理/SSRF
 export async function proxyResource(
   modules: ModuleConfig[],
   moduleId: string,
   route: string,
+  scopeInput?: Operator | ResourceScopeOptions,
 ): Promise<ResourceRow[]> {
+  const scope = normalizeResourceScope(scopeInput);
   const module = modules.find((candidate) => candidate.id === moduleId);
   if (!module) {
     throw new GatewayError(`unknown module: ${moduleId}`, 400);
@@ -81,9 +111,16 @@ export async function proxyResource(
     throw new GatewayError(`module offline: ${status.error}`, 502);
   }
 
-  const allowed = status.manifest.resources.some((resource) => resource.route === route);
-  if (!allowed) {
+  // route 必须由 manifest 声明（防开放代理/SSRF）；传入 operator 时强制其对该 resource 的 requiredPermission。
+  const resource = status.manifest.resources.find((candidate) => candidate.route === route);
+  if (!resource) {
     throw new GatewayError(`route not allowed for module ${moduleId}: ${route}`, 403);
+  }
+  if (scope.operator && !permits(scope.operator.permissions, resource.requiredPermission)) {
+    throw new GatewayError(`permission denied: ${resource.requiredPermission}`, 403);
+  }
+  if (scope.operator && scope.siteId !== undefined && !permitsSite(scope.operator.scopeSites, scope.siteId)) {
+    throw new GatewayError(`tenant out of scope: ${scope.siteId}`, 403);
   }
 
   const response = await fetch(joinUrl(module.baseUrl, route));
@@ -92,7 +129,7 @@ export async function proxyResource(
   }
 
   const body: unknown = await response.json();
-  return resourceEnvelopeSchema.parse(body).data;
+  return filterResourceRows(resourceEnvelopeSchema.parse(body).data, scope);
 }
 
 export interface ActionRequest {
@@ -256,18 +293,18 @@ export async function proxyAction(
   return executeAction(prepared, audit, request, requestId);
 }
 
-// 审批策略：dangerMutation 一律需审批；大额 grant(amountMicros 超阈值)需审批；其余直接执行。
+// 审批策略：dangerMutation 一律需审批；任何含金额(amountMicros)的 mutation 超阈值需审批（按 kind+金额数据驱动，不依赖具体 actionId，杜绝危险动作漏标）；其余直接执行。
 export function needsApproval(
   kind: PreparedAction["kind"],
   request: ActionRequest,
-  grantThresholdMicros: bigint,
+  amountThresholdMicros: bigint,
 ): boolean {
   if (kind === "dangerMutation") {
     return true;
   }
-  if (request.actionId === "grant") {
+  if (kind === "mutation") {
     const amount = readAmountMicros(request.body);
-    return amount !== null && amount > grantThresholdMicros;
+    return amount !== null && amount > amountThresholdMicros;
   }
   return false;
 }

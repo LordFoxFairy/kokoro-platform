@@ -33,9 +33,15 @@ describe("needsApproval", () => {
   it("allows a grant under the threshold", () => {
     expect(needsApproval("mutation", makeRequest({ body: { amountMicros: "50000000" } }), T)).toBe(false);
   });
-  it("allows non-grant mutations and links", () => {
+  it("allows money-free mutations and links", () => {
     expect(needsApproval("mutation", makeRequest({ actionId: "publish" }), T)).toBe(false);
     expect(needsApproval("link", makeRequest(), T)).toBe(false);
+  });
+  it("requires approval for ANY over-threshold money mutation, not just grant", () => {
+    // 杜绝漏标：非 grant 的大额金额动作（调整/退积分等）也必须审批。
+    expect(
+      needsApproval("mutation", makeRequest({ actionId: "adjust", body: { amountMicros: "200000000" } }), T),
+    ).toBe(true);
   });
 });
 

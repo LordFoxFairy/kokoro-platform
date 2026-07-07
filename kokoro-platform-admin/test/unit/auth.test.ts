@@ -13,6 +13,7 @@ const devConfig: AuthConfig = {
   audience: undefined,
   emailClaim: "email",
   devOperator: "admin@kokoro.local",
+  proxySecrets: [],
 };
 
 const oidcConfig: AuthConfig = {
@@ -42,5 +43,37 @@ describe("createAuthenticator oidc mode", () => {
     const auth = createAuthenticator(oidcConfig);
     await expect(auth(req({}))).rejects.toBeInstanceOf(AuthError);
     await expect(auth(req({ authorization: "Basic abc" }))).rejects.toMatchObject({ statusCode: 401 });
+  });
+});
+
+const proxyConfig: AuthConfig = {
+  ...devConfig,
+  mode: "proxy",
+  proxySecrets: ["s3cr3t-a", "s3cr3t-b"],
+};
+
+describe("createAuthenticator proxy mode", () => {
+  it("returns the operator when both proxy secret and operator headers are valid", async () => {
+    const auth = createAuthenticator(proxyConfig);
+    expect(
+      await auth(req({ "x-kokoro-proxy-secret": "s3cr3t-b", "x-kokoro-operator": "ops@kokoro.local" })),
+    ).toBe("ops@kokoro.local");
+  });
+
+  it("rejects a missing or wrong proxy secret (401)", async () => {
+    const auth = createAuthenticator(proxyConfig);
+    await expect(auth(req({ "x-kokoro-operator": "ops@kokoro.local" }))).rejects.toMatchObject({
+      statusCode: 401,
+    });
+    await expect(
+      auth(req({ "x-kokoro-proxy-secret": "wrong", "x-kokoro-operator": "ops@kokoro.local" })),
+    ).rejects.toMatchObject({ statusCode: 401 });
+  });
+
+  it("rejects a missing operator header even with a valid secret (no fallback)", async () => {
+    const auth = createAuthenticator(proxyConfig);
+    await expect(auth(req({ "x-kokoro-proxy-secret": "s3cr3t-a" }))).rejects.toMatchObject({
+      statusCode: 401,
+    });
   });
 });
