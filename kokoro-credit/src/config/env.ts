@@ -11,6 +11,12 @@ export const creditEnvSchema = z.object({
   KOKORO_PAYMENT_BASE_URL: z.string().url().default("http://kokoro-payment:4241"),
   // 服务间认证密钥：记账前调 user/site active 时携带（user/site 未来校验，纵深防御）。
   KOKORO_INTERNAL_SECRET: z.string().default(""),
+  // 用量计费面：token 计价 unit、hold 预估用量、冻结冗余系数（估算冗余，先守不透支）。
+  KOKORO_CREDIT_USAGE_INPUT_UNIT: z.string().min(1).default("input_token"),
+  KOKORO_CREDIT_USAGE_OUTPUT_UNIT: z.string().min(1).default("output_token"),
+  KOKORO_CREDIT_HOLD_EST_INPUT_TOKENS: z.coerce.number().int().nonnegative().default(1000),
+  KOKORO_CREDIT_HOLD_EST_OUTPUT_TOKENS: z.coerce.number().int().nonnegative().default(1000),
+  KOKORO_CREDIT_HOLD_BUFFER_PERCENT: z.coerce.number().int().min(0).default(20),
 });
 
 export type CreditEnv = z.infer<typeof creditEnvSchema>;

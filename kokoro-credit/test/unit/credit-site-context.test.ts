@@ -31,6 +31,8 @@ function ensureOnlyRepo(seen: EnsureCreditAccountInput[]): CreditRepository {
     holdCredits: reject,
     captureHold: reject,
     releaseHold: reject,
+    getHoldById: reject,
+    priceUsage: reject,
     deleteAccount: reject,
     restoreAccount: reject,
     createPricingRule: reject,

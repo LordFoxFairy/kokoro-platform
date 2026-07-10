@@ -64,6 +64,10 @@ const hold: CreditHold = {
   status: "active",
   idempotencyKey: "k1",
   expiresAt: null,
+  featureKey: null,
+  labelKey: null,
+  modelBindingId: null,
+  requestId: null,
   createdAt: new Date(0),
   updatedAt: new Date(0),
 };
@@ -108,6 +112,14 @@ function trackingRepo(): {
     releaseHold: async () => {
       calls.push("releaseHold");
       return hold;
+    },
+    getHoldById: async () => {
+      calls.push("getHoldById");
+      return hold;
+    },
+    priceUsage: async () => {
+      calls.push("priceUsage");
+      return "1";
     },
     deleteAccount: async (input: DeleteInput) => {
       calls.push("deleteAccount");

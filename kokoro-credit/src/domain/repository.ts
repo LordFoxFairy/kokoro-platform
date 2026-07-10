@@ -30,6 +30,11 @@ export interface HoldCreditInput {
   amountMicros: string;
   idempotencyKey: string;
   expiresAt?: Date | undefined;
+  // 用量结算面在冻结时落 pricing_ref 与归属；raw hold 路径留空。
+  featureKey?: string | undefined;
+  labelKey?: string | undefined;
+  modelBindingId?: string | undefined;
+  requestId?: string | undefined;
 }
 
 export interface CaptureCreditInput {
@@ -53,6 +58,16 @@ export interface QuoteInput {
   quantity: string;
 }
 
+// 按 token 用量定价：input/output 各按其 unit 规则计价后求和。金额计算全在 credit。
+export interface PriceUsageInput {
+  featureKey: string;
+  labelKey?: string | undefined;
+  inputUnit: string;
+  outputUnit: string;
+  inputTokens: string;
+  outputTokens: string;
+}
+
 export interface CreatePricingRuleInput {
   featureKey: string;
   labelKey?: string | null | undefined;
@@ -70,7 +85,9 @@ export interface CreditRepository {
   holdCredits(input: HoldCreditInput): Promise<CreditHold>;
   captureHold(input: CaptureCreditInput): Promise<CreditMutationResult>;
   releaseHold(input: ReleaseCreditInput): Promise<CreditHold>;
+  getHoldById(id: string): Promise<CreditHold | null>;
   quote(input: QuoteInput): Promise<QuoteResult>;
+  priceUsage(input: PriceUsageInput): Promise<string>;
   createPricingRule(input: CreatePricingRuleInput): Promise<PricingRule>;
   deleteAccount(input: DeleteInput): Promise<CreditAccount>;
   restoreAccount(input: RestoreInput): Promise<CreditAccount>;

@@ -42,6 +42,10 @@ export interface CreditHold {
   status: CreditHoldStatus;
   idempotencyKey: string;
   expiresAt: Date | null;
+  featureKey: string | null;
+  labelKey: string | null;
+  modelBindingId: string | null;
+  requestId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -85,4 +89,12 @@ export interface QuoteResult {
   unitAmountMicros: string;
   quantity: string;
   amountMicros: string;
+}
+
+// 用量结算面结果：settle 要么 capture（实额入账）要么 release（零成本释放），统一回执给调用方。
+export interface UsageSettlementResult {
+  holdId: string;
+  outcome: "captured" | "released";
+  amountMicros: string;
+  account: CreditAccount;
 }

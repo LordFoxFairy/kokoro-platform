@@ -30,6 +30,8 @@ import {
   pricingRuleParamsSchema,
   quoteRequestSchema,
   releaseCreditRequestSchema,
+  usageHoldRequestSchema,
+  usageSettleRequestSchema,
 } from "./schemas.js";
 
 export function registerCreditRoutes(app: FastifyInstance, service: CreditService): void {
@@ -150,6 +152,47 @@ export function registerCreditRoutes(app: FastifyInstance, service: CreditServic
       return sendData(reply, result);
     } catch (error) {
       return handleCreditError(error, reply, "credit.capture_failed");
+    }
+  });
+
+  app.post("/credit/usage/hold", {
+    schema: {
+      tags: ["credit"],
+      summary: "run 受理冻结（按 pricing 预估用量算冻结额）",
+      body: jsonSchema(usageHoldRequestSchema),
+    },
+  }, async (request, reply) => {
+    try {
+      const ctx = readRequestContext(request.headers);
+      if (ctx.siteId === null) {
+        return sendError(reply, 400, "credit.site_required", "缺少站点上下文", undefined, ctx.requestId);
+      }
+      const input = usageHoldRequestSchema.parse(request.body);
+      const result = await service.holdForUsage({ siteId: ctx.siteId, ...input });
+      return sendData(reply, result);
+    } catch (error) {
+      return handleCreditError(error, reply, "credit.usage_hold_failed");
+    }
+  });
+
+  app.post("/credit/usage/settle", {
+    schema: {
+      tags: ["credit"],
+      summary: "run 终态结算（按 token 用量复算实额，clamp 到冻结额）",
+      body: jsonSchema(usageSettleRequestSchema),
+    },
+  }, async (request, reply) => {
+    try {
+      const input = usageSettleRequestSchema.parse(request.body);
+      const result = await service.settleUsage({
+        holdId: input.holdId,
+        inputTokens: String(input.usage.inputTokens),
+        outputTokens: String(input.usage.outputTokens),
+        idempotencyKey: input.idempotencyKey,
+      });
+      return sendData(reply, result);
+    } catch (error) {
+      return handleCreditError(error, reply, "credit.usage_settle_failed");
     }
   });
 

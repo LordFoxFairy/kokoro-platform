@@ -28,6 +28,7 @@ import type {
   CreditRepository,
   EnsureCreditAccountInput,
   HoldCreditInput,
+  PriceUsageInput,
   QuoteInput,
   ReleaseCreditInput,
 } from "../../domain/repository.js";
@@ -205,6 +206,10 @@ export class PrismaCreditRepository implements CreditRepository {
             status: "active",
             idempotencyKey: input.idempotencyKey,
             ...defined("expiresAt", input.expiresAt),
+            ...defined("featureKey", input.featureKey),
+            ...defined("labelKey", input.labelKey),
+            ...defined("modelBindingId", input.modelBindingId),
+            ...defined("requestId", input.requestId),
           },
         });
 
@@ -359,6 +364,11 @@ export class PrismaCreditRepository implements CreditRepository {
     });
   }
 
+  async getHoldById(id: string): Promise<CreditHold | null> {
+    const hold = await this.prisma.creditHold.findUnique({ where: { id } });
+    return hold ? mapCreditHold(hold) : null;
+  }
+
   async quote(input: QuoteInput): Promise<QuoteResult> {
     const now = new Date();
     const quantity = parsePositiveBigIntString(input.quantity, "quantity");
@@ -380,6 +390,39 @@ export class PrismaCreditRepository implements CreditRepository {
       quantity: input.quantity,
       amountMicros: (rule.amountMicros * quantity).toString(),
     };
+  }
+
+  // 按 token 用量定价：input/output 各按其 unit 规则计价后求和。0 token 的方向不入账、不要求规则；
+  // 有 token 的方向缺规则则抛 PricingRuleNotFoundError（fail-closed，misconfig 早暴露）。金额计算全在 credit。
+  async priceUsage(input: PriceUsageInput): Promise<string> {
+    const now = new Date();
+    const labelKey = input.labelKey ?? null;
+    const inputCost = await this.priceLine(input.featureKey, labelKey, input.inputUnit, input.inputTokens, now);
+    const outputCost = await this.priceLine(input.featureKey, labelKey, input.outputUnit, input.outputTokens, now);
+    return (inputCost + outputCost).toString();
+  }
+
+  private async priceLine(
+    featureKey: string,
+    labelKey: string | null,
+    unit: string,
+    tokens: string,
+    now: Date,
+  ): Promise<bigint> {
+    const quantity = BigInt(tokens);
+    if (quantity < 0n) {
+      throw new Error("token quantity must be non-negative");
+    }
+    if (quantity === 0n) {
+      return 0n;
+    }
+    const rule =
+      (labelKey !== null ? await this.findPricingRule(featureKey, labelKey, now, unit) : null) ??
+      (await this.findPricingRule(featureKey, null, now, unit));
+    if (!rule) {
+      throw new PricingRuleNotFoundError(featureKey);
+    }
+    return rule.amountMicros * quantity;
   }
 
   async deleteAccount(input: DeleteInput): Promise<CreditAccount> {
@@ -548,6 +591,7 @@ export class PrismaCreditRepository implements CreditRepository {
     featureKey: string,
     labelKey: string | null,
     now: Date,
+    unit?: string,
   ): Promise<{ unit: string; amountMicros: bigint } | null> {
     return this.prisma.pricingRule.findFirst({
       where: {
@@ -555,6 +599,7 @@ export class PrismaCreditRepository implements CreditRepository {
         labelKey,
         status: "active",
         deletedAt: null,
+        ...(unit === undefined ? {} : { unit }),
         effectiveFrom: {
           lte: now,
         },
@@ -747,6 +792,10 @@ function mapCreditHold(hold: {
   status: CreditHoldStatus;
   idempotencyKey: string;
   expiresAt: Date | null;
+  featureKey: string | null;
+  labelKey: string | null;
+  modelBindingId: string | null;
+  requestId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }): CreditHold {
@@ -757,6 +806,10 @@ function mapCreditHold(hold: {
     status: hold.status,
     idempotencyKey: hold.idempotencyKey,
     expiresAt: hold.expiresAt,
+    featureKey: hold.featureKey,
+    labelKey: hold.labelKey,
+    modelBindingId: hold.modelBindingId,
+    requestId: hold.requestId,
     createdAt: hold.createdAt,
     updatedAt: hold.updatedAt,
   };

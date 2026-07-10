@@ -56,6 +56,11 @@ model CreditHold {
   status         CreditHoldStatus @default(active)
   idempotencyKey String           @unique
   expiresAt      DateTime?
+  // 用量结算面(usage settle)在冻结时落 pricing_ref 与归属，settle 仅凭 holdId + usage 即可复算实额。
+  featureKey     String?
+  labelKey       String?
+  modelBindingId String?
+  requestId      String?
   account        CreditAccount    @relation(fields: [accountId], references: [id])
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt

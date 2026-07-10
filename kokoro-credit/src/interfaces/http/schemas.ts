@@ -97,6 +97,34 @@ export const quoteRequestSchema = z
   })
   .strict();
 
+// run 受理冻结：调用方只报 namespace(=teamId) + pricing_ref；siteId 从 x-kokoro-site-id header 取。
+export const usageHoldRequestSchema = z
+  .object({
+    namespace: z.string().min(1),
+    featureKey: z.string().min(1),
+    labelKey: z.string().min(1).optional(),
+    idempotencyKey: z.string().min(1),
+    modelBindingId: z.string().min(1).optional(),
+    requestId: z.string().min(1).optional(),
+  })
+  .strict();
+
+const tokenCountSchema = z.number().int().nonnegative();
+
+// run 终态结算：调用方只报 token 用量，金额由 credit 按 hold 上的 pricing_ref 复算。
+export const usageSettleRequestSchema = z
+  .object({
+    holdId: z.string().min(1),
+    usage: z
+      .object({
+        inputTokens: tokenCountSchema,
+        outputTokens: tokenCountSchema,
+      })
+      .strict(),
+    idempotencyKey: z.string().min(1),
+  })
+  .strict();
+
 export const createPricingRuleRequestSchema = z
   .object({
     featureKey: z.string().min(1),
