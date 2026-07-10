@@ -1,0 +1,27 @@
+# Dev 档网关：零真实凭据（mock 模型）。
+#   docker compose -f docker-compose.dev.yml up -d
+#   curl -H "Authorization: Bearer dev-master-key-not-real" \
+#     -d '{"model":"kokoro-dev-mock","messages":[{"role":"user","content":"ping"}]}' \
+#     -H 'content-type: application/json' http://127.0.0.1:4000/v1/chat/completions
+services:
+  litellm:
+    image: ${LITELLM_IMAGE:-ghcr.io/berriai/litellm:main-stable}
+    container_name: kokoro-litellm-dev
+    restart: unless-stopped
+    environment:
+      # dev 专用明显假值；生产走 secret 注入，绝不复用此值。
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-dev-master-key-not-real}
+    ports:
+      - "${LITELLM_PORT:-4000}:4000"
+    volumes:
+      - ./config/litellm.config.dev.yaml:/app/config.yaml:ro
+    command:
+      - "--config=/app/config.yaml"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl -fsS "http://127.0.0.1:4000/health/liveliness" >/dev/null
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s

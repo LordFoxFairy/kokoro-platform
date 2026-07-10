@@ -1,0 +1,17 @@
+# Dev 档网关配置：零真实凭据可跑（mock 模型），用于本地闭环与 agent litellm 档 smoke。
+# 真实 provider 接入请以 litellm.config.example.yaml 为模板另起部署档，勿在 dev 档填真 key。
+model_list:
+  # 稳定网关名：与 kokoro-model ModelBinding.gatewayModelName 对齐。
+  - model_name: kokoro-dev-mock
+    litellm_params:
+      model: openai/gpt-4o-mini
+      # litellm 内建 mock：不出网、不要 key，恒回固定文本——网关链路 smoke 专用。
+      mock_response: "kokoro litellm dev mock response"
+      api_key: example-not-used
+
+litellm_settings:
+  drop_params: true
+  telemetry: false
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
