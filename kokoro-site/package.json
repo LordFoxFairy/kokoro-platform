@@ -20,7 +20,8 @@
     "test:integration": "vitest run test/integration --no-file-parallelism",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "coverage": "vitest run --coverage --no-file-parallelism"
+    "coverage": "vitest run --coverage --no-file-parallelism",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@kokoro/platform-kit": "workspace:*",
