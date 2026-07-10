@@ -8,6 +8,11 @@ export const userEnvSchema = z.object({
   KOKORO_MODEL_BASE_URL: z.string().url().default("http://kokoro-model:4221"),
   KOKORO_CREDIT_BASE_URL: z.string().url().default("http://kokoro-credit:4231"),
   KOKORO_PAYMENT_BASE_URL: z.string().url().default("http://kokoro-payment:4241"),
+  // 终端用户会话签发密钥（HS256）：与 kokoro-session 同名同值部署，session 验签共享。
+  // 未配置 = /auth/sessions fail-closed（503），绝不签发未签名 token；其它路由不受影响。
+  KOKORO_AUTH_JWT_SECRET: z.string().min(1).optional(),
+  KOKORO_AUTH_JWT_TTL_SECONDS: z.coerce.number().int().min(60).max(86400).default(3600),
+  KOKORO_AUTH_JWT_ISSUER: z.string().min(1).default("kokoro-user"),
 });
 
 export type UserEnv = z.infer<typeof userEnvSchema>;

@@ -2,14 +2,26 @@ import { registerOpenApi, sendError } from "@kokoro/platform-kit";
 import type { PrismaClient } from "@prisma/client";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import Fastify from "fastify";
+import { SessionService } from "../../application/session-service.js";
 import { UserService } from "../../application/user-service.js";
+import { JoseSessionSigner } from "../../infrastructure/auth/jose-session-signer.js";
 import { createPrismaClient } from "../../infrastructure/prisma/prisma-client.js";
 import { PrismaUserRepository } from "../../infrastructure/prisma/prisma-user-repository.js";
 import { registerUserAdminRoutes } from "./admin-routes.js";
 import { registerUserRoutes } from "./routes.js";
+import { registerSessionRoutes } from "./session-routes.js";
+
+// 缺 secret 时 sessionSigning 省略 → /auth/sessions fail-closed（503），其它路由照常。
+export interface SessionSigningOptions {
+  secret: string;
+  ttlSeconds: number;
+  issuer: string;
+  now?: () => Date;
+}
 
 export interface CreateUserServerOptions {
   prisma?: PrismaClient;
+  sessionSigning?: SessionSigningOptions;
 }
 
 export function createUserServer(options: CreateUserServerOptions = {}) {
@@ -23,10 +35,19 @@ export function createUserServer(options: CreateUserServerOptions = {}) {
   const prisma = options.prisma ?? createPrismaClient();
   const repository = new PrismaUserRepository(prisma);
   const service = new UserService(repository);
+  const signing = options.sessionSigning;
+  const sessionService = signing
+    ? new SessionService(service, new JoseSessionSigner(signing.secret), {
+        issuer: signing.issuer,
+        ttlSeconds: signing.ttlSeconds,
+        ...(signing.now ? { now: signing.now } : {}),
+      })
+    : null;
 
   // WHY: 路由须包进 register 闭包，确保在异步入队的 swagger 插件之后加载，否则 onRoute 钩子漏采。
   void app.register(async (instance) => {
     registerUserRoutes(instance, service);
+    registerSessionRoutes(instance, sessionService);
     registerUserAdminRoutes(instance, repository, service);
   });
 

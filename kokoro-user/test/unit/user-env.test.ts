@@ -10,6 +10,21 @@ describe("userEnvSchema", () => {
     expect(env.KOKORO_CREDIT_BASE_URL).toBe("http://kokoro-credit:4231");
   });
 
+  it("defaults auth signing vars and leaves secret unset", () => {
+    const env = loadUserEnv(required);
+    expect(env.KOKORO_AUTH_JWT_SECRET).toBeUndefined();
+    expect(env.KOKORO_AUTH_JWT_TTL_SECONDS).toBe(3600);
+    expect(env.KOKORO_AUTH_JWT_ISSUER).toBe("kokoro-user");
+  });
+
+  it("coerces auth ttl and enforces its range", () => {
+    expect(
+      loadUserEnv({ ...required, KOKORO_AUTH_JWT_TTL_SECONDS: "900" }).KOKORO_AUTH_JWT_TTL_SECONDS,
+    ).toBe(900);
+    expect(() => loadUserEnv({ ...required, KOKORO_AUTH_JWT_TTL_SECONDS: "10" })).toThrow();
+    expect(() => loadUserEnv({ ...required, KOKORO_AUTH_JWT_TTL_SECONDS: "100000" })).toThrow();
+  });
+
   it("coerces port string and enforces range", () => {
     expect(loadUserEnv({ ...required, KOKORO_USER_PORT: "5000" }).KOKORO_USER_PORT).toBe(5000);
     expect(() => loadUserEnv({ ...required, KOKORO_USER_PORT: "70000" })).toThrow();

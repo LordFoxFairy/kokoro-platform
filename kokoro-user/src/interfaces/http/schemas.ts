@@ -57,3 +57,12 @@ export const setMembershipRoleRequestSchema = z
     role: z.enum(["owner", "admin", "member"]),
   })
   .strict();
+
+// 终端用户会话签发（web → user，服务间调用）。snake_case 外部契约，site_id 走 body（非 header）。
+export const issueSessionRequestSchema = z
+  .object({
+    site_id: z.string().trim().min(1),
+    external_user_id: z.string().min(1),
+    email: z.string().trim().toLowerCase().email().optional(),
+  })
+  .strict();

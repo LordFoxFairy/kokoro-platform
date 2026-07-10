@@ -6,5 +6,16 @@ const env = loadUserEnv();
 await startHttpServer({
   moduleName: "kokoro-user",
   port: env.KOKORO_USER_PORT,
-  createServer: createUserServer,
+  createServer: () =>
+    createUserServer(
+      env.KOKORO_AUTH_JWT_SECRET
+        ? {
+            sessionSigning: {
+              secret: env.KOKORO_AUTH_JWT_SECRET,
+              ttlSeconds: env.KOKORO_AUTH_JWT_TTL_SECONDS,
+              issuer: env.KOKORO_AUTH_JWT_ISSUER,
+            },
+          }
+        : {},
+    ),
 });

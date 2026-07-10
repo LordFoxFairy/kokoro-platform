@@ -36,7 +36,21 @@ UserAuditLog
 GET  /healthz
 POST /users/ensure
 GET  /me/teams
+POST /auth/sessions
 ```
+
+`POST /auth/sessions` 签发终端用户运行时会话 JWT（web → user，服务间调用）：
+
+```text
+入参(body,snake_case): { site_id, external_user_id, email? }
+出参:                  { token, namespace, user, team }
+行为: resolve-or-create user + personal team → 以 teamId 为 namespace 签 HS256 JWT
+声明: sub=teamId(namespace) / iss=kokoro-user / site_id / iat / exp
+```
+
+`token` 由 `kokoro-session` 用共享 `KOKORO_AUTH_JWT_SECRET` 验签消费；`sub`(teamId, cuid)
+天然不含 `user:/team:/site:` 等前缀，满足 session 的不透明 namespace 不变量。未配置签发密钥时
+该端点 fail-closed 返回 503，绝不签发未签名 token。
 
 ## 运行与部署
 
@@ -51,6 +65,9 @@ pnpm --filter @kokoro/user start
 DATABASE_URL_USER
 KOKORO_USER_PORT=4211
 KOKORO_USER_BASE_URL=http://kokoro-user:4211
+KOKORO_AUTH_JWT_SECRET       # 与 kokoro-session 同名同值；缺省时 /auth/sessions 返回 503
+KOKORO_AUTH_JWT_TTL_SECONDS  # 默认 3600
+KOKORO_AUTH_JWT_ISSUER       # 默认 kokoro-user
 ```
 
 容器和 Kubernetes 中通过 `kokoro-user` 服务名访问，不在服务间调用里写 `localhost`。模块本身不提供 InMemory fallback，多副本状态全部落 MySQL。
