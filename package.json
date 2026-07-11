@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@kokoro/credit": "workspace:*",
+    "@kokoro/hub": "workspace:*",
     "@kokoro/model": "workspace:*",
     "@kokoro/payment": "workspace:*",
     "@kokoro/platform-kit": "workspace:*",

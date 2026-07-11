@@ -1,4 +1,5 @@
 import { creditPlatformModule } from "@kokoro/credit";
+import { hubPlatformModule } from "@kokoro/hub";
 import { modelPlatformModule } from "@kokoro/model";
 import { paymentPlatformModule } from "@kokoro/payment";
 import { sitePlatformModule } from "@kokoro/site";
@@ -40,6 +41,7 @@ export const platformModules = [
   modelPlatformModule,
   creditPlatformModule,
   paymentPlatformModule,
+  hubPlatformModule,
   litellmPlatformModule,
 ] satisfies readonly PlatformModuleDescriptor[];
 

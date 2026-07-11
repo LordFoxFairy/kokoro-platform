@@ -6,9 +6,10 @@ export type PlatformModuleKind =
   | "model-registry"
   | "credit"
   | "payment"
-  | "gateway";
+  | "gateway"
+  | "capability-hub";
 
-export type PlatformStorageKind = "mysql" | "external" | "none";
+export type PlatformStorageKind = "mysql" | "mongo" | "external" | "none";
 
 export type PlatformRuntimeSurface =
   | "http"

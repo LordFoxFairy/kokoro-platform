@@ -3,6 +3,7 @@ packages:
   - "kokoro-platform-admin"
   - "kokoro-site"
   - "kokoro-user"
+  - "kokoro-hub"
   - "kokoro-model"
   - "kokoro-credit"
   - "kokoro-payment"

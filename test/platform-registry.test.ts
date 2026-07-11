@@ -18,6 +18,7 @@ describe("platform module registry", () => {
       "model",
       "credit",
       "payment",
+      "hub",
     ]);
   });
 
@@ -28,6 +29,7 @@ describe("platform module registry", () => {
       "model",
       "credit",
       "payment",
+      "hub",
       "litellm",
     ]);
 
