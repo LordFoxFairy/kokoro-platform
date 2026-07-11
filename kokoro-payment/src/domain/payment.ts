@@ -41,6 +41,8 @@ export interface PaymentEvent {
   eventType: string;
   payload: unknown;
   status: PaymentEventStatus;
+  // 最近一次处理失败的原因；processed/received 时为 null。
+  lastError: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

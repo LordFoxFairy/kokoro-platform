@@ -1,10 +1,18 @@
 import { readRequestContext, registerAdminManifestRoute, sendData, sendError } from "@kokoro/platform-kit";
 import type { FastifyInstance } from "fastify";
 import type { PaymentService } from "../../application/payment-service.js";
+import type { PaymentWebhookService } from "../../application/webhook-service.js";
 import { paymentAdminManifest } from "../admin/manifest.js";
 import type { PaymentRepository } from "../../domain/repository.js";
 import { handlePaymentError } from "./routes.js";
-import { deleteRequestSchema, grantPlanRequestSchema, planParamsSchema } from "./schemas.js";
+import {
+  deleteRequestSchema,
+  grantPlanRequestSchema,
+  planParamsSchema,
+  providerParamsSchema,
+  replayPaymentEventParamsSchema,
+  upsertProviderRequestSchema,
+} from "./schemas.js";
 
 // WHY: 资源 id → 只读 list 方法；按 manifest.resources 注册各资源 route 的 GET。
 const RESOURCE_LISTERS: Record<string, (repository: PaymentRepository) => Promise<unknown[]>> = {
@@ -13,12 +21,14 @@ const RESOURCE_LISTERS: Record<string, (repository: PaymentRepository) => Promis
   subscriptions: (repository) => repository.listSubscriptions(),
   "payment-events": (repository) => repository.listPaymentEvents(),
   refunds: (repository) => repository.listRefunds(),
+  providers: (repository) => repository.listProviders(),
 };
 
 export function registerPaymentAdminRoutes(
   app: FastifyInstance,
   repository: PaymentRepository,
   service: PaymentService,
+  webhookService: PaymentWebhookService,
 ): void {
   registerAdminManifestRoute(app, paymentAdminManifest);
 
@@ -62,6 +72,38 @@ export function registerPaymentAdminRoutes(
       return sendData(reply, result);
     } catch (error) {
       return handlePaymentError(error, reply, "payment.plan_restore_failed");
+    }
+  });
+
+  app.post("/admin/payments/providers/upsert", async (request, reply) => {
+    try {
+      const input = upsertProviderRequestSchema.parse(request.body);
+      const result = await webhookService.upsertProvider(input);
+      return sendData(reply, result);
+    } catch (error) {
+      return handlePaymentError(error, reply, "payment.provider_upsert_failed");
+    }
+  });
+
+  app.delete("/admin/payments/providers/:key", async (request, reply) => {
+    try {
+      const { key } = providerParamsSchema.parse(request.params);
+      const result = await webhookService.deleteProvider(key);
+      return sendData(reply, result);
+    } catch (error) {
+      return handlePaymentError(error, reply, "payment.provider_delete_failed");
+    }
+  });
+
+  // 失败事件手动重放：failed→processed|failed；processed 幂等返回。
+  app.post("/admin/payments/events/:id/replay", async (request, reply) => {
+    try {
+      const ctx = readRequestContext(request.headers);
+      const { id } = replayPaymentEventParamsSchema.parse(request.params);
+      const result = await webhookService.replayEvent(id, ctx.requestId);
+      return sendData(reply, result, 200, ctx.requestId);
+    } catch (error) {
+      return handlePaymentError(error, reply, "payment.event_replay_failed");
     }
   });
 }

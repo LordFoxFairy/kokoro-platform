@@ -64,3 +64,33 @@ export const recordPaymentEventRequestSchema = z
     payload: z.unknown(),
   })
   .strict();
+
+export const upsertProviderRequestSchema = z
+  .object({
+    key: z.string().regex(/^[a-z][a-z0-9_-]*$/, "provider key 只允许小写字母/数字/_-，且以字母开头"),
+    kind: z.enum(["stripe", "alipay", "wechat", "mock"]),
+    // 只收 env 变量名引用（大写蛇形）；形如密钥明文的值直接拒绝，保证密钥不落库。
+    webhookSecretRef: z
+      .string()
+      .regex(/^[A-Z][A-Z0-9_]*$/, "webhookSecretRef 必须是 env 变量名引用，不接受密钥明文"),
+    enabled: z.boolean().default(true),
+  })
+  .strict();
+
+export const providerParamsSchema = z
+  .object({
+    key: z.string().min(1),
+  })
+  .strict();
+
+export const webhookProviderParamsSchema = z
+  .object({
+    provider: z.string().min(1),
+  })
+  .strict();
+
+export const replayPaymentEventParamsSchema = z
+  .object({
+    id: z.string().min(1),
+  })
+  .strict();

@@ -13,6 +13,7 @@ describe("payment admin manifest", () => {
       "subscriptions",
       "payment-events",
       "refunds",
+      "providers",
     ]);
     expect(paymentPlatformModule.admin).toMatchObject({
       mode: "manifest",

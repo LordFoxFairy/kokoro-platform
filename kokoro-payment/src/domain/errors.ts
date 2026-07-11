@@ -39,3 +39,17 @@ export class OrderAmountMismatchError extends Error {
     this.name = "OrderAmountMismatchError";
   }
 }
+
+export class PaymentProviderNotFoundError extends Error {
+  constructor(key: string) {
+    super(`Payment provider not found: ${key}`);
+    this.name = "PaymentProviderNotFoundError";
+  }
+}
+
+export class PaymentEventNotFoundError extends Error {
+  constructor(id: string) {
+    super(`Payment event not found: ${id}`);
+    this.name = "PaymentEventNotFoundError";
+  }
+}

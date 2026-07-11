@@ -2,12 +2,14 @@ import type {
   BillingInterval,
   Order,
   PaymentEvent,
+  PaymentEventStatus,
   Plan,
   Refund,
   RefundStatus,
   Subscription,
 } from "./payment.js";
 import type { DeleteInput, ListOptions, RestoreInput } from "./payment-lifecycle.js";
+import type { PaymentProviderConfig, PaymentProviderKind } from "./provider.js";
 
 export interface UpsertPlanInput {
   siteId: string;
@@ -33,6 +35,14 @@ export interface RecordPaymentEventInput {
   eventId: string;
   eventType: string;
   payload?: unknown;
+}
+
+export interface UpsertProviderInput {
+  key: string;
+  kind: PaymentProviderKind;
+  // env 变量名引用；不接受密钥明文。
+  webhookSecretRef: string;
+  enabled: boolean;
 }
 
 export interface CreateRefundInput {
@@ -63,6 +73,18 @@ export interface PaymentRepository {
   // 同库原子：标 paid→refunded 与建 Refund 记录在一个事务，杜绝「标了退款却无记录」。
   refundOrderAtomically(orderId: string, refund: CreateRefundInput): Promise<RefundTransition>;
   findRefundByOrderId(orderId: string): Promise<Refund | null>;
+  upsertProvider(input: UpsertProviderInput): Promise<PaymentProviderConfig>;
+  findProviderByKey(key: string): Promise<PaymentProviderConfig | null>;
+  deleteProvider(key: string): Promise<PaymentProviderConfig>;
+  listProviders(): Promise<PaymentProviderConfig[]>;
+  findPaymentEventById(id: string): Promise<PaymentEvent | null>;
+  // 状态机条件转移：仅当当前状态 ∈ from 时推进到 to；并发败者拿到 null（勿覆盖赢家结果）。
+  transitionPaymentEventStatus(
+    id: string,
+    from: PaymentEventStatus[],
+    to: PaymentEventStatus,
+    lastError: string | null,
+  ): Promise<PaymentEvent | null>;
   deletePlan(input: DeleteInput): Promise<Plan>;
   restorePlan(input: RestoreInput): Promise<Plan>;
   listPlans(siteId?: string, options?: ListOptions): Promise<Plan[]>;

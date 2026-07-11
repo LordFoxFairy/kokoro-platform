@@ -24,10 +24,12 @@ export const paymentPlatformModule = {
       "POST /orders",
       "POST /orders/:id/confirm",
       "POST /payment-events/record",
+      "POST /payments/webhooks/:provider",
     ],
     notes: [
       "payment 是购买、订单、订阅和支付事件权威。",
       "支付成功后只请求 credit 发放权益或积分，不直接写 credit 账本。",
+      "webhook 验签覆盖原始字节；provider 配置只存 webhook secret 的 env 引用，不落明文。",
     ],
   },
   service: {

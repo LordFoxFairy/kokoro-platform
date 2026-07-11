@@ -81,12 +81,27 @@ model PaymentEvent {
   eventType String
   payload   Json
   status    PaymentEventStatus @default(received)
+  lastError String?            @db.Text
   createdAt DateTime           @default(now())
   updatedAt DateTime           @updatedAt
 
   @@unique([provider, eventId])
   @@index([eventType])
+  @@index([status])
   @@map("payment_events")
+}
+
+model PaymentProvider {
+  id               String              @id @default(cuid())
+  key              String              @unique
+  kind             PaymentProviderKind
+  // env 变量名引用；webhook 密钥明文只存在于运行环境，不落库。
+  webhookSecretRef String
+  enabled          Boolean             @default(true)
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  @@map("payment_providers")
 }
 
 model Refund {
@@ -134,6 +149,13 @@ enum PaymentEventStatus {
   received
   processed
   failed
+}
+
+enum PaymentProviderKind {
+  stripe
+  alipay
+  wechat
+  mock
 }
 
 enum RefundStatus {

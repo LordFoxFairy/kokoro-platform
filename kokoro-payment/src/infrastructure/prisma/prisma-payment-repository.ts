@@ -6,14 +6,26 @@ import {
   assertSameOrderIdempotencyTarget,
   assertSamePaymentEventIdempotencyTarget,
 } from "../../domain/idempotency.js";
-import { OrderNotConfirmableError, OrderNotFoundError } from "../../domain/errors.js";
+import {
+  OrderNotConfirmableError,
+  OrderNotFoundError,
+  PaymentProviderNotFoundError,
+} from "../../domain/errors.js";
 import {
   PaymentLifecycleError,
   type DeleteInput,
   type ListOptions,
   type RestoreInput,
 } from "../../domain/payment-lifecycle.js";
-import type { Order, PaymentEvent, Plan, Refund, Subscription } from "../../domain/payment.js";
+import type {
+  Order,
+  PaymentEvent,
+  PaymentEventStatus,
+  Plan,
+  Refund,
+  Subscription,
+} from "../../domain/payment.js";
+import type { PaymentProviderConfig } from "../../domain/provider.js";
 import type {
   CreateOrderInput,
   CreateRefundInput,
@@ -21,6 +33,7 @@ import type {
   RecordPaymentEventInput,
   RefundTransition,
   UpsertPlanInput,
+  UpsertProviderInput,
 } from "../../domain/repository.js";
 
 export class PrismaPaymentRepository implements PaymentRepository {
@@ -141,6 +154,69 @@ export class PrismaPaymentRepository implements PaymentRepository {
       });
       return { transitioned: true, refund: mapRefund(refund) };
     });
+  }
+
+  async upsertProvider(input: UpsertProviderInput): Promise<PaymentProviderConfig> {
+    const provider = await this.prisma.paymentProvider.upsert({
+      where: { key: input.key },
+      create: {
+        key: input.key,
+        kind: input.kind,
+        webhookSecretRef: input.webhookSecretRef,
+        enabled: input.enabled,
+      },
+      update: {
+        kind: input.kind,
+        webhookSecretRef: input.webhookSecretRef,
+        enabled: input.enabled,
+      },
+    });
+    return mapProvider(provider);
+  }
+
+  async findProviderByKey(key: string): Promise<PaymentProviderConfig | null> {
+    const provider = await this.prisma.paymentProvider.findUnique({ where: { key } });
+    return provider ? mapProvider(provider) : null;
+  }
+
+  async deleteProvider(key: string): Promise<PaymentProviderConfig> {
+    const existing = await this.prisma.paymentProvider.findUnique({ where: { key } });
+    if (!existing) {
+      throw new PaymentProviderNotFoundError(key);
+    }
+    const deleted = await this.prisma.paymentProvider.delete({ where: { key } });
+    return mapProvider(deleted);
+  }
+
+  async listProviders(): Promise<PaymentProviderConfig[]> {
+    const providers = await this.prisma.paymentProvider.findMany({
+      take: 100,
+      orderBy: { createdAt: "desc" },
+    });
+    return providers.map(mapProvider);
+  }
+
+  async findPaymentEventById(id: string): Promise<PaymentEvent | null> {
+    const event = await this.prisma.paymentEvent.findUnique({ where: { id } });
+    return event ? mapPaymentEvent(event) : null;
+  }
+
+  async transitionPaymentEventStatus(
+    id: string,
+    from: PaymentEventStatus[],
+    to: PaymentEventStatus,
+    lastError: string | null,
+  ): Promise<PaymentEvent | null> {
+    // 条件转移：并发处理同一事件时只一方生效，败者拿 null 不覆盖赢家结果。
+    const transition = await this.prisma.paymentEvent.updateMany({
+      where: { id, status: { in: from } },
+      data: { status: to, lastError },
+    });
+    if (transition.count === 0) {
+      return null;
+    }
+    const event = await this.prisma.paymentEvent.findUniqueOrThrow({ where: { id } });
+    return mapPaymentEvent(event);
   }
 
   async findRefundByOrderId(orderId: string): Promise<Refund | null> {
@@ -489,6 +565,7 @@ function mapPaymentEvent(event: {
   eventType: string;
   payload: Prisma.JsonValue;
   status: "received" | "processed" | "failed";
+  lastError: string | null;
   createdAt: Date;
   updatedAt: Date;
 }): PaymentEvent {
@@ -499,8 +576,29 @@ function mapPaymentEvent(event: {
     eventType: event.eventType,
     payload: event.payload,
     status: event.status,
+    lastError: event.lastError,
     createdAt: event.createdAt,
     updatedAt: event.updatedAt,
+  };
+}
+
+function mapProvider(provider: {
+  id: string;
+  key: string;
+  kind: "stripe" | "alipay" | "wechat" | "mock";
+  webhookSecretRef: string;
+  enabled: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}): PaymentProviderConfig {
+  return {
+    id: provider.id,
+    key: provider.key,
+    kind: provider.kind,
+    webhookSecretRef: provider.webhookSecretRef,
+    enabled: provider.enabled,
+    createdAt: provider.createdAt,
+    updatedAt: provider.updatedAt,
   };
 }
 

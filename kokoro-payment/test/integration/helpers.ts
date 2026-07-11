@@ -50,4 +50,5 @@ export async function cleanPaymentDatabase(prisma: PrismaClient): Promise<void> 
   await prisma.paymentEvent.deleteMany();
   await prisma.order.deleteMany();
   await prisma.plan.deleteMany();
+  await prisma.paymentProvider.deleteMany();
 }

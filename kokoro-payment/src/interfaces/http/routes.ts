@@ -14,10 +14,13 @@ import {
   OrderNotConfirmableError,
   OrderNotFoundError,
   OrderNotRefundableError,
+  PaymentEventNotFoundError,
   PaymentIdempotencyConflictError,
+  PaymentProviderNotFoundError,
   PlanNotFoundError,
 } from "../../domain/errors.js";
 import { isPaymentLifecycleError } from "../../domain/payment-lifecycle.js";
+import { isWebhookError } from "../../domain/webhook.js";
 import {
   confirmOrderParamsSchema,
   createOrderRequestSchema,
@@ -182,6 +185,18 @@ export function handlePaymentError(error: unknown, reply: FastifyReply, fallback
 
   if (isPaymentLifecycleError(error)) {
     return sendError(reply, error.statusCode, error.code, error.message);
+  }
+
+  if (isWebhookError(error)) {
+    return sendError(reply, error.statusCode, error.code, error.message);
+  }
+
+  if (error instanceof PaymentProviderNotFoundError) {
+    return sendError(reply, 404, "payment.provider_not_found", "支付 provider 配置不存在");
+  }
+
+  if (error instanceof PaymentEventNotFoundError) {
+    return sendError(reply, 404, "payment.event_not_found", "支付事件不存在");
   }
 
   if (error instanceof OrderNotFoundError) {

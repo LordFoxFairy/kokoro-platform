@@ -62,6 +62,7 @@ const event: PaymentEvent = {
   eventType: "invoice.paid",
   payload: { subscription: "sub_1" },
   status: "received",
+  lastError: null,
   createdAt: new Date(0),
   updatedAt: new Date(0),
 };
@@ -189,6 +190,38 @@ function makeFakes(overrides: FakeOverrides = {}): Fakes {
     listRefunds: async () => {
       calls.push("listRefunds");
       return [];
+    },
+    upsertProvider: async (input) => {
+      calls.push("upsertProvider");
+      return { id: "prov_1", ...input, createdAt: new Date(0), updatedAt: new Date(0) };
+    },
+    findProviderByKey: async (_key: string) => {
+      calls.push("findProviderByKey");
+      return null;
+    },
+    deleteProvider: async (key: string) => {
+      calls.push("deleteProvider");
+      return {
+        id: "prov_1",
+        key,
+        kind: "mock",
+        webhookSecretRef: "KOKORO_PAYMENT_WEBHOOK_SECRET_MOCK",
+        enabled: true,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+      };
+    },
+    listProviders: async () => {
+      calls.push("listProviders");
+      return [];
+    },
+    findPaymentEventById: async (_id: string) => {
+      calls.push("findPaymentEventById");
+      return event;
+    },
+    transitionPaymentEventStatus: async (_id, _from, to, lastError) => {
+      calls.push("transitionPaymentEventStatus");
+      return { ...event, status: to, lastError };
     },
   };
   return { repo, calls, grants, grantPurchaseCredits, reversals, reverseCredits };
