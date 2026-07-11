@@ -413,6 +413,45 @@ describe("proxyAction", () => {
   });
 });
 
+describe("executeAction 服务间转发头(内部密钥 + operator principal)", () => {
+  const actionReq = {
+    moduleId: "user",
+    resourceId: "users",
+    actionId: "disable",
+    params: { id: "u_1" },
+    siteId: "site_1",
+    reason: "TOS",
+  } as const;
+
+  async function forwardHeaders(internalSecret: string): Promise<Record<string, string>> {
+    const sink = new RecordingSink();
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input).includes("/manifest")) return jsonResponse({ data: userActionManifest });
+      return jsonResponse({ data: { id: "u_1", status: "disabled" } });
+    });
+    const prepared = await prepareAction(modules, sink, actionReq, "req_1", SUPER);
+    await executeAction(prepared, sink, actionReq, "req_1", internalSecret);
+    const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/disable"));
+    return (call?.[1] as RequestInit).headers as Record<string, string>;
+  }
+
+  it("配置 secret 时转发 x-kokoro-internal-secret，并带 operator principal 头", async () => {
+    const headers = await forwardHeaders("sec-42");
+    expect(headers["x-kokoro-internal-secret"]).toBe("sec-42");
+    expect(JSON.parse(String(headers["x-kokoro-principal"]))).toEqual({
+      kind: "operator",
+      operatorId: "op_super",
+      roleKey: "superadmin",
+    });
+  });
+
+  it("secret 为空串时不带内部密钥头，但仍带 operator principal 头", async () => {
+    const headers = await forwardHeaders("");
+    expect(headers["x-kokoro-internal-secret"]).toBeUndefined();
+    expect(headers["x-kokoro-principal"]).toBeDefined();
+  });
+});
+
 const fullModules: ModuleConfig[] = [
   { id: "site", label: "Sites", baseUrl: "http://127.0.0.1:4201", manifestPath: "/admin/sites/manifest" },
   { id: "user", label: "Users", baseUrl: "http://127.0.0.1:4211", manifestPath: "/admin/users/manifest" },

@@ -11,6 +11,10 @@ export const siteSurfaceSchema = z.enum(["general", "studio", "api", "admin", "p
 
 export const siteActiveParamsSchema = z.object({ siteId: z.string().min(1) }).strict();
 
+// GET /sites/:siteId/active 对外响应契约：credit 等下游经包入口 import 本 schema 消费，不手抄形状。
+export const siteActiveResponseSchema = z.object({ active: z.boolean() });
+export type SiteActiveResponse = z.infer<typeof siteActiveResponseSchema>;
+
 export const siteParamsSchema = z.object({ siteId: z.string().min(1) }).strict();
 
 export const siteDomainParamsSchema = z.object({ domainId: z.string().min(1) }).strict();

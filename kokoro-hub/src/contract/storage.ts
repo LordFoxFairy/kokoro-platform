@@ -51,6 +51,20 @@ export const skillStateDocSchema = z
   .strict()
 export type SkillStateDoc = z.infer<typeof skillStateDocSchema>
 
+export const skillRevisionDocSchema = z
+  .object({
+    scope: z.string().min(1),
+    name: z.string().min(1),
+    revision: z.number().int(),
+    content_hash: z.string().min(1),
+    package_size: z.number().int(),
+    source: z.enum(["deploy", "upload", "github"]),
+    created_at: z.number().int(),
+  })
+  .strict()
+export type SkillRevisionDoc = z.infer<typeof skillRevisionDocSchema>
+
+export const SKILL_REVISIONS_COLLECTION = "skill_revisions"
 export const SKILL_STATE_COLLECTION = "skill_state"
 export const SKILLS_COLLECTION = "skills"
 

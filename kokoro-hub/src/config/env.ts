@@ -14,6 +14,12 @@ export const hubEnvSchema = z.object({
     .int()
     .min(0)
     .default(200 * 1024 * 1024),
+  // ADR-009 存储 yaml（session/agent/hub 三侧读同一文件；hub 只取 hub 节做包体权威源）。
+  // 缺省 = 包体存储未配置：上传 confirm 面 503，其余面照常。
+  KOKORO_WORKSPACE_CONFIG: z.string().min(1).optional(),
+  // s3 档凭据（env-only，ADR-010；与 agent 侧同名复用 workspace 对，永不进配置文件/日志）。
+  KOKORO_WORKSPACE_S3_ACCESS_KEY: z.string().min(1).optional(),
+  KOKORO_WORKSPACE_S3_SECRET_KEY: z.string().min(1).optional(),
 });
 
 export type HubEnv = z.infer<typeof hubEnvSchema>;

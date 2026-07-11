@@ -15,6 +15,7 @@ import {
   deleteRequestSchema,
   ensureUserRequestSchema,
   ownerActiveParamsSchema,
+  type OwnerActiveResponse,
   serviceAccountParamsSchema,
   setMembershipRoleRequestSchema,
   teamParamsSchema,
@@ -138,7 +139,8 @@ export function registerUserRoutes(app: FastifyInstance, service: UserService): 
         ownerKind: params.data.ownerKind,
         ownerId: params.data.ownerId,
       });
-      return sendData(reply, { active }, 200, requestId);
+      // satisfies 把路由实际返回钉在对外契约上：形状漂移在本包 typecheck 先红。
+      return sendData(reply, { active } satisfies OwnerActiveResponse, 200, requestId);
     },
   );
 

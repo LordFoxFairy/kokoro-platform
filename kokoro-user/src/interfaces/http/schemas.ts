@@ -16,6 +16,10 @@ export const ownerActiveParamsSchema = z
   })
   .strict();
 
+// GET /owners/:ownerKind/:ownerId/active 对外响应契约：credit 等下游经包入口 import 本 schema 消费，不手抄形状。
+export const ownerActiveResponseSchema = z.object({ active: z.boolean() });
+export type OwnerActiveResponse = z.infer<typeof ownerActiveResponseSchema>;
+
 export const userParamsSchema = z
   .object({
     userId: z.string().min(1),

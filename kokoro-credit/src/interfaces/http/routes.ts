@@ -26,6 +26,7 @@ import {
   creditMutationRequestSchema,
   deleteRequestSchema,
   ensureCreditAccountRequestSchema,
+  type EnsureCreditAccountResponse,
   holdCreditRequestSchema,
   pricingRuleParamsSchema,
   quoteRequestSchema,
@@ -51,7 +52,8 @@ export function registerCreditRoutes(app: FastifyInstance, service: CreditServic
       }
       const input = ensureCreditAccountRequestSchema.parse(request.body);
       const result = await service.ensureAccount({ siteId: ctx.siteId, ...input });
-      return sendData(reply, result);
+      // satisfies 把响应钉在对外最小契约上：id 字段漂移在本包 typecheck 先红。
+      return sendData(reply, result satisfies EnsureCreditAccountResponse);
     } catch (error) {
       return handleCreditError(error, reply, "credit.account_ensure_failed");
     }

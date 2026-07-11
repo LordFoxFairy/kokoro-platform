@@ -8,6 +8,7 @@ import {
   listSiteFeatureFlagsQuerySchema,
   resolveSiteQuerySchema,
   siteActiveParamsSchema,
+  type SiteActiveResponse,
   siteDomainParamsSchema,
   siteParamsSchema,
   upsertSiteAppRequestSchema,
@@ -43,7 +44,8 @@ export function registerSiteRoutes(app: FastifyInstance, service: SiteService): 
         return sendZodError(reply, params.error, requestId);
       }
       const active = await service.resolveSiteActive(params.data.siteId);
-      return sendData(reply, { active }, 200, requestId);
+      // satisfies 把路由实际返回钉在对外契约上：形状漂移在本包 typecheck 先红。
+      return sendData(reply, { active } satisfies SiteActiveResponse, 200, requestId);
     },
   );
 

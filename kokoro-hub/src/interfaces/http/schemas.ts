@@ -26,6 +26,31 @@ export const enableBodySchema = z
   })
   .strict();
 
+// base64 zip 上传体（JSON 档；multipart 档在路由层解析后归一到同一形状）。
+// names 只在 confirm 使用：null/缺省 = 发布 zip 内全部候选。
+const base64Re = /^[A-Za-z0-9+/]+={0,2}$/;
+
+export const uploadJsonBodySchema = z
+  .object({
+    namespace: z.string().trim().min(1),
+    zip_base64: z
+      .string()
+      .min(1)
+      .refine((value) => value.length % 4 === 0 && base64Re.test(value), {
+        message: "zip_base64 must be valid base64",
+      }),
+    names: z.array(z.string().trim().min(1)).min(1).optional(),
+  })
+  .strict();
+
+// multipart 档的文本字段（file part 之外）：names 传 JSON 数组字符串。
+export const uploadMultipartFieldsSchema = z
+  .object({
+    namespace: z.string().trim().min(1),
+    names: z.array(z.string().trim().min(1)).min(1).optional(),
+  })
+  .strict();
+
 // 至少一个位存在，否则是无意义空更新（400）；两个位都可选，互不依赖。
 export const officialFlagsBodySchema = z
   .object({

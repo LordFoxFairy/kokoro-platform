@@ -1,9 +1,8 @@
+import { ensureCreditAccountResponseSchema } from "@kokoro/credit";
 import { callService, type RequestContext } from "@kokoro/platform-kit";
 import { z } from "zod";
 import type { GrantPurchaseCredits, ReverseCredits } from "../domain/repository.js";
 
-// callService 已剥 { data } 信封，故此处只校验内层 accountId。
-const ensureAccountSchema = z.object({ id: z.string().min(1) });
 const mutationResultSchema = z.unknown();
 
 // system principal + 站点/请求 id 透传：credit 端据 x-kokoro-site-id 落到正确站点账户，requestId 贯通链路。
@@ -23,11 +22,12 @@ async function ensureAccountId(
   ownerKind: "team",
   ownerId: string,
 ): Promise<string> {
+  // callService 已剥 { data } 信封；响应契约 import 自 @kokoro/credit，上游改形状此处 typecheck 红。
   const account = await callService(ctx, {
     baseUrl,
     method: "POST",
     path: "/credit/accounts/ensure",
-    schema: ensureAccountSchema,
+    schema: ensureCreditAccountResponseSchema,
     body: { ownerKind, ownerId },
     ...secretOpt(internalSecret),
   });

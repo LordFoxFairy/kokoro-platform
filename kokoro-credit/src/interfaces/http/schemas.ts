@@ -9,6 +9,11 @@ export const ensureCreditAccountRequestSchema = z
   })
   .strict();
 
+// POST /credit/accounts/ensure 对外响应契约（最小面）：实际响应是完整账户对象，
+// 下游（payment 等）只依赖 id；经包入口 import 本 schema 消费，不手抄形状。
+export const ensureCreditAccountResponseSchema = z.object({ id: z.string().min(1) });
+export type EnsureCreditAccountResponse = z.infer<typeof ensureCreditAccountResponseSchema>;
+
 const creditReasonSchema = z.enum([
   "manual_adjustment",
   "subscription",

@@ -25,6 +25,9 @@ export const hubPlatformModule = {
       "POST /hub/skills/:scope/:name/disable",
       "POST /hub/skills/:name/official-flags",
       "DELETE /hub/skills/:scope/:name",
+      "POST /hub/skills/upload/preview",
+      "POST /hub/skills/upload/confirm",
+      "GET /hub/skills/:scope/:name/revisions",
     ],
     notes: [
       "hub 是 skill/MCP 能力中台的管理写面权威（启停/官方位/软删/配额/池查询）。",
@@ -41,13 +44,14 @@ export const hubPlatformModule = {
   boundaries: {
     owns: [
       "skill registry write surface",
+      "skill upload write surface (preview/confirm, content-addressed package publish)",
+      "skill revision history (append-only)",
       "per-user skill enable/disable state",
       "skill official flags",
-      "namespace upload quota view",
+      "namespace upload quota view and enforcement",
     ],
     doesNotOwn: [
       "skill assembly hot path (kokoro-agent)",
-      "package body storage authority",
       "user identity",
       "namespace resolution",
     ],

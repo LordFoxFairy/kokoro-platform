@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "db:generate": "prisma generate",
+    "postinstall": "prisma generate",
     "prebuild": "prisma generate",
     "build": "next build",
     "start": "next start",

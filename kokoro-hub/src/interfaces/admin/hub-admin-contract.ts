@@ -60,6 +60,29 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
         },
       ],
     },
+    // HUB-2 上传写面独立成资源（skills 资源的动作序列是既有契约面，不追加扰动）。
+    {
+      id: "skill-uploads",
+      labelKey: "admin.hub.resources.skillUploads",
+      route: "/hub/skills/:scope/:name/revisions",
+      requiredPermission: "hub.skill.read",
+      actions: [
+        {
+          id: "upload-preview",
+          labelKey: "admin.hub.actions.uploadPreview",
+          kind: "mutation",
+          requiredPermission: "hub.skill.upload",
+          route: "/hub/skills/upload/preview",
+        },
+        {
+          id: "upload-confirm",
+          labelKey: "admin.hub.actions.uploadConfirm",
+          kind: "mutation",
+          requiredPermission: "hub.skill.upload",
+          route: "/hub/skills/upload/confirm",
+        },
+      ],
+    },
   ],
 });
 
@@ -70,6 +93,9 @@ const routes: HubAdminRoute[] = [
   { method: "POST", path: "/hub/skills/:scope/:name/disable" },
   { method: "POST", path: "/hub/skills/:name/official-flags" },
   { method: "DELETE", path: "/hub/skills/:scope/:name" },
+  { method: "POST", path: "/hub/skills/upload/preview" },
+  { method: "POST", path: "/hub/skills/upload/confirm" },
+  { method: "GET", path: "/hub/skills/:scope/:name/revisions" },
 ];
 
 export const hubAdminContract = {

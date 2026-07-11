@@ -36,6 +36,7 @@ export async function connectTestHub(dbName: string): Promise<TestHub> {
     clean: async () => {
       await collections.skills.deleteMany({});
       await collections.state.deleteMany({});
+      await collections.revisions.deleteMany({});
     },
   };
 }
