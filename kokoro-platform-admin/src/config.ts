@@ -24,6 +24,7 @@ const envSchema = z.object({
   KOKORO_MODEL_BASE_URL: z.string().url().default("http://kokoro-model:4221"),
   KOKORO_CREDIT_BASE_URL: z.string().url().default("http://kokoro-credit:4231"),
   KOKORO_PAYMENT_BASE_URL: z.string().url().default("http://kokoro-payment:4241"),
+  KOKORO_HUB_BASE_URL: z.string().url().default("http://kokoro-hub:4251"),
 });
 
 export type AdminEnv = z.infer<typeof envSchema>;
@@ -54,6 +55,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AdminConfig {
     { id: "model", label: "Models", baseUrl: parsed.KOKORO_MODEL_BASE_URL, manifestPath: "/admin/models/manifest" },
     { id: "credit", label: "Credits", baseUrl: parsed.KOKORO_CREDIT_BASE_URL, manifestPath: "/admin/credits/manifest" },
     { id: "payment", label: "Payments", baseUrl: parsed.KOKORO_PAYMENT_BASE_URL, manifestPath: "/admin/payments/manifest" },
+    { id: "hub", label: "Hub", baseUrl: parsed.KOKORO_HUB_BASE_URL, manifestPath: "/hub/admin/manifest" },
   ];
 
   return {

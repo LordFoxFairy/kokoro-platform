@@ -3,6 +3,7 @@ import { MongoClient } from "mongodb";
 import {
   hubCollections,
   type HubCollections,
+  type McpServerRecord,
   type SkillRecord,
 } from "../../src/infrastructure/mongo/mongo-client.js";
 
@@ -37,6 +38,7 @@ export async function connectTestHub(dbName: string): Promise<TestHub> {
       await collections.skills.deleteMany({});
       await collections.state.deleteMany({});
       await collections.revisions.deleteMany({});
+      await collections.mcpServers.deleteMany({});
     },
   };
 }
@@ -66,4 +68,27 @@ export async function insertSkill(
   overrides: Partial<SkillRecord> & Pick<SkillRecord, "scope" | "name">,
 ): Promise<void> {
   await collections.skills.insertOne(skillFixture(overrides));
+}
+
+// 完整合法 McpServerRecord 夹具（HUB-3）：直插构造池/启停/软删读场景，写面经 HTTP 注册。
+export function mcpServerFixture(
+  overrides: Partial<McpServerRecord> & Pick<McpServerRecord, "scope" | "name">,
+): McpServerRecord {
+  return {
+    transport: "http",
+    url: `https://mcp.example/${overrides.scope}/${overrides.name}`,
+    allowed_tools: [],
+    secret_ref: null,
+    enabled: true,
+    updated_at: Date.now(),
+    deleted_at: null,
+    ...overrides,
+  };
+}
+
+export async function insertMcpServer(
+  collections: HubCollections,
+  overrides: Partial<McpServerRecord> & Pick<McpServerRecord, "scope" | "name">,
+): Promise<void> {
+  await collections.mcpServers.insertOne(mcpServerFixture(overrides));
 }

@@ -1,4 +1,5 @@
 import { type Collection, type Db, MongoClient } from "mongodb";
+import { MCP_SERVERS_COLLECTION, type McpTransport } from "../../contract/mcp-storage.js";
 import { SKILL_REVISIONS_COLLECTION, SKILL_STATE_COLLECTION, SKILLS_COLLECTION } from "../../contract/storage.js";
 
 // Mongo 存储态记录（hub 写、agent 读，同库读写分离）。deleted_at 显式可空：
@@ -40,10 +41,27 @@ export interface SkillRevisionRecord {
   created_at: number;
 }
 
+// MCP server 注册表记录（HUB-3）：per-namespace + official scope，enabled 为文档级启停。
+// secret_ref 只存 env/secret 引用（形状在 http 边界钉死），绝不明文凭据。
+// TODO(主控): mcp_servers 文档 schema 收编进主仓 contract/spec/storage.yaml 单源后，
+// 本类型与 src/contract/mcp-storage.ts 改由 generate.py 生成镜像。
+export interface McpServerRecord {
+  scope: string;
+  name: string;
+  transport: McpTransport;
+  url: string;
+  allowed_tools: string[];
+  secret_ref: string | null;
+  enabled: boolean;
+  updated_at: number;
+  deleted_at: number | null;
+}
+
 export interface HubCollections {
   skills: Collection<SkillRecord>;
   state: Collection<SkillStateRecord>;
   revisions: Collection<SkillRevisionRecord>;
+  mcpServers: Collection<McpServerRecord>;
 }
 
 export function createMongoClient(url: string): MongoClient {
@@ -55,5 +73,6 @@ export function hubCollections(db: Db): HubCollections {
     skills: db.collection<SkillRecord>(SKILLS_COLLECTION),
     state: db.collection<SkillStateRecord>(SKILL_STATE_COLLECTION),
     revisions: db.collection<SkillRevisionRecord>(SKILL_REVISIONS_COLLECTION),
+    mcpServers: db.collection<McpServerRecord>(MCP_SERVERS_COLLECTION),
   };
 }

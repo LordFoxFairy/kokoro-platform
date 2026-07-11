@@ -37,3 +37,11 @@ export class QuotaExceededError extends Error {
     this.name = "QuotaExceededError";
   }
 }
+
+// MCP server 启停目标不存在或已软删（enabled 是文档级状态，无文档可翻）；路由映射 404。
+export class McpServerNotFoundError extends Error {
+  constructor(scope: string, name: string) {
+    super(`mcp server ${scope}/${name} not found`);
+    this.name = "McpServerNotFoundError";
+  }
+}

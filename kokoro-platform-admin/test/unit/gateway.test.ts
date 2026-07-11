@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ModuleConfig } from "../../src/config.js";
+import { loadConfig, type ModuleConfig } from "../../src/config.js";
 import { createAdminServer, type AdminServerDeps } from "../../src/server.js";
 import {
   executeAction,
@@ -521,5 +521,34 @@ describe("getUser360", () => {
     const result = await getUser360(fullModules, { siteId: "s1", ownerKind: "team", ownerId: "t1" });
     expect(result.creditAccount).toBeNull();
     expect(result.orders.map((order) => order.id)).toEqual(["o1"]);
+  });
+});
+
+// HUB-3 网关接入：hub 走 manifest 声明即接入的既有扩张模型（config 一行即生效）。
+describe("hub module wiring", () => {
+  it("declares hub in loadConfig and fetches its manifest at the declared path", async () => {
+    const config = loadConfig({ DATABASE_URL_ADMIN: "mysql://admin:example@localhost:3306/admin" });
+    const hubModules = config.modules.filter((module) => module.id === "hub");
+    expect(hubModules).toEqual([
+      { id: "hub", label: "Hub", baseUrl: "http://kokoro-hub:4251", manifestPath: "/hub/admin/manifest" },
+    ]);
+
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        data: {
+          id: "kokoro-hub",
+          labelKey: "admin.modules.hub",
+          basePath: "/hub/admin",
+          requiredPermission: "hub.admin",
+          navItems: [],
+          resources: [],
+        },
+      }),
+    );
+
+    const result = await getManifests(hubModules);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ id: "hub", online: true });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe("http://kokoro-hub:4251/hub/admin/manifest");
   });
 });

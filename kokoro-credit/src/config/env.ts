@@ -22,6 +22,10 @@ export const creditEnvSchema = z.object({
   KOKORO_CREDIT_HOLD_TTL_SECONDS: z.coerce.number().int().positive().default(86400),
   // 进程内过期回收 sweeper 周期；缺省 5 分钟。停机随进程退，不引外部调度。
   KOKORO_CREDIT_HOLD_SWEEP_INTERVAL_SECONDS: z.coerce.number().int().positive().default(300),
+  // owner/site active 正向缓存 TTL：只缓存 active=true，负向不缓存（fail-closed 不放松）。0=关闭缓存。
+  KOKORO_CREDIT_ACTIVE_CACHE_TTL_SECONDS: z.coerce.number().int().nonnegative().default(30),
+  // active 缓存条数上限，防无界膨胀；超限逐最旧。
+  KOKORO_CREDIT_ACTIVE_CACHE_MAX_ENTRIES: z.coerce.number().int().positive().default(10_000),
 });
 
 export type CreditEnv = z.infer<typeof creditEnvSchema>;

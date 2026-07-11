@@ -10,6 +10,11 @@ const activeChecker = new HttpOwnerSiteChecker(
   env.KOKORO_USER_BASE_URL,
   env.KOKORO_SITE_BASE_URL,
   env.KOKORO_INTERNAL_SECRET,
+  undefined,
+  {
+    ttlMs: env.KOKORO_CREDIT_ACTIVE_CACHE_TTL_SECONDS * 1000,
+    maxEntries: env.KOKORO_CREDIT_ACTIVE_CACHE_MAX_ENTRIES,
+  },
 );
 const runBilling: RunBillingConfig = {
   inputUnit: env.KOKORO_CREDIT_USAGE_INPUT_UNIT,

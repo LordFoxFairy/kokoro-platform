@@ -28,6 +28,11 @@ export const hubPlatformModule = {
       "POST /hub/skills/upload/preview",
       "POST /hub/skills/upload/confirm",
       "GET /hub/skills/:scope/:name/revisions",
+      "POST /hub/mcp/servers",
+      "GET /hub/mcp/servers",
+      "POST /hub/mcp/servers/:scope/:name/enable",
+      "POST /hub/mcp/servers/:scope/:name/disable",
+      "DELETE /hub/mcp/servers/:scope/:name",
     ],
     notes: [
       "hub 是 skill/MCP 能力中台的管理写面权威（启停/官方位/软删/配额/池查询）。",
@@ -49,6 +54,7 @@ export const hubPlatformModule = {
       "per-user skill enable/disable state",
       "skill official flags",
       "namespace upload quota view and enforcement",
+      "mcp server registry (register/pool/enable/disable/soft delete; secret refs only, no plaintext credentials)",
     ],
     doesNotOwn: [
       "skill assembly hot path (kokoro-agent)",

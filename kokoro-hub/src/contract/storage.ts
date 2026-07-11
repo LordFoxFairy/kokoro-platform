@@ -64,6 +64,22 @@ export const skillRevisionDocSchema = z
   .strict()
 export type SkillRevisionDoc = z.infer<typeof skillRevisionDocSchema>
 
+export const mcpServerDocSchema = z
+  .object({
+    scope: z.string().min(1),
+    name: z.string().min(1),
+    transport: z.enum(["http", "streamable_http"]),
+    url: z.string().min(1),
+    allowed_tools: z.array(z.string().min(1)),
+    secret_ref: z.string().min(1).nullable(),
+    enabled: z.boolean(),
+    updated_at: z.number().int(),
+    deleted_at: z.number().int().nullable(),
+  })
+  .strict()
+export type McpServerDoc = z.infer<typeof mcpServerDocSchema>
+
+export const MCP_SERVERS_COLLECTION = "mcp_servers"
 export const SKILL_REVISIONS_COLLECTION = "skill_revisions"
 export const SKILL_STATE_COLLECTION = "skill_state"
 export const SKILLS_COLLECTION = "skills"
