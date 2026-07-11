@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { REVIEW_STATUSES } from "../../contract/skill-curation-storage.js";
 
 // namespace 是不透明运行时隔离键（GA/agent 口径），hub 只做非空校验，不解析身份语义。
 export const namespaceQuerySchema = z
@@ -48,6 +49,27 @@ export const uploadMultipartFieldsSchema = z
   .object({
     namespace: z.string().trim().min(1),
     names: z.array(z.string().trim().min(1)).min(1).optional(),
+  })
+  .strict();
+
+// 运营位（HUB-4）：三个位都可选但至少一个（空更新 400）；category 传 null = 清除分类。
+export const curationBodySchema = z
+  .object({
+    display_weight: z.number().int().optional(),
+    pinned: z.boolean().optional(),
+    category: z.string().trim().min(1).nullable().optional(),
+  })
+  .strict()
+  .refine(
+    (body) =>
+      body.display_weight !== undefined || body.pinned !== undefined || body.category !== undefined,
+    { message: "at least one of display_weight/pinned/category is required" },
+  );
+
+// 审核状态机（HUB-4）：三态；V1 上传自动 approved，本 API 为后续人审留位。
+export const reviewBodySchema = z
+  .object({
+    status: z.enum(REVIEW_STATUSES),
   })
   .strict();
 

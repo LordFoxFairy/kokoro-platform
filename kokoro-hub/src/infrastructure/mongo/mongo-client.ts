@@ -1,5 +1,6 @@
 import { type Collection, type Db, MongoClient } from "mongodb";
 import { MCP_SERVERS_COLLECTION, type McpTransport } from "../../contract/mcp-storage.js";
+import type { ReviewStatus } from "../../contract/skill-curation-storage.js";
 import { SKILL_REVISIONS_COLLECTION, SKILL_STATE_COLLECTION, SKILLS_COLLECTION } from "../../contract/storage.js";
 
 // Mongo 存储态记录（hub 写、agent 读，同库读写分离）。deleted_at 显式可空：
@@ -20,6 +21,13 @@ export interface SkillRecord {
   official_required: boolean;
   updated_at: number;
   deleted_at: number | null;
+  // 运营位 + 审核态（HUB-4，旁注记 contract/skill-curation-storage.ts，待收编 storage.yaml）。
+  // 可选 = 存量文档缺字段；读侧按 SKILL_CURATION_DEFAULTS 补缺省（display_weight 0 / pinned false /
+  // category null / review_status approved），不做存量迁移写。
+  display_weight?: number;
+  pinned?: boolean;
+  category?: string | null;
+  review_status?: ReviewStatus;
 }
 
 export interface SkillStateRecord {

@@ -9,6 +9,12 @@ await startHttpServer({
   createServer: () =>
     createUserServer({
       internalSecret: env.KOKORO_INTERNAL_SECRET,
+      magicLinks: {
+        ttlSeconds: env.KOKORO_AUTH_MAGIC_TTL_SECONDS,
+        deliveryMode: env.KOKORO_AUTH_MAGIC_DELIVERY,
+        rateLimitMax: env.KOKORO_AUTH_MAGIC_RATE_MAX,
+        rateLimitWindowSeconds: env.KOKORO_AUTH_MAGIC_RATE_WINDOW_SECONDS,
+      },
       ...(env.KOKORO_AUTH_JWT_SECRET
         ? {
             sessionSigning: {

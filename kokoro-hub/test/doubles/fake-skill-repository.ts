@@ -1,6 +1,8 @@
-import { SkillRequiredError } from "../../src/domain/errors.js";
+import type { ReviewStatus } from "../../src/contract/skill-curation-storage.js";
+import { SkillNotFoundError, SkillRequiredError } from "../../src/domain/errors.js";
 import type {
   ActiveSkillSummary,
+  CurationInput,
   OfficialFlagsInput,
   PoolCard,
   QuotaUsage,
@@ -36,6 +38,26 @@ export class FakeSkillRepository implements SkillHubRepository {
 
   async markDeleted(scope: string, name: string): Promise<void> {
     this.deletedCalls.push({ scope, name });
+  }
+
+  // --- HUB-4 运营位 + 审核状态机（notFoundNames 命中 = 模拟目标缺失/软删 → 404 语义）---
+
+  readonly notFoundNames = new Set<string>();
+  readonly curationCalls: { scope: string; name: string; input: CurationInput }[] = [];
+  readonly reviewCalls: { scope: string; name: string; status: ReviewStatus }[] = [];
+
+  async setCuration(scope: string, name: string, input: CurationInput): Promise<void> {
+    if (this.notFoundNames.has(name)) {
+      throw new SkillNotFoundError(scope, name);
+    }
+    this.curationCalls.push({ scope, name, input });
+  }
+
+  async setReviewStatus(scope: string, name: string, status: ReviewStatus): Promise<void> {
+    if (this.notFoundNames.has(name)) {
+      throw new SkillNotFoundError(scope, name);
+    }
+    this.reviewCalls.push({ scope, name, status });
   }
 
   async quotaUsage(_namespace: string): Promise<QuotaUsage> {

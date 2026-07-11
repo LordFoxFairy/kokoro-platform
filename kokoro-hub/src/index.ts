@@ -4,6 +4,7 @@ export * from "./application/skill-upload-service.js";
 export * from "./config/env.js";
 export * from "./config/storage.js";
 export * from "./contract/mcp-storage.js";
+export * from "./contract/skill-curation-storage.js";
 export * from "./contract/storage.js";
 export * from "./domain/constants.js";
 export * from "./domain/errors.js";

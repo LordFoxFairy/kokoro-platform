@@ -1,7 +1,9 @@
+import { SKILL_CURATION_DEFAULTS, type ReviewStatus } from "../../contract/skill-curation-storage.js";
 import { OFFICIAL_SCOPE } from "../../domain/constants.js";
-import { ConcurrentWriteError, SkillRequiredError } from "../../domain/errors.js";
+import { ConcurrentWriteError, SkillNotFoundError, SkillRequiredError } from "../../domain/errors.js";
 import type {
   ActiveSkillSummary,
+  CurationInput,
   OfficialFlagsInput,
   PoolCard,
   QuotaUsage,
@@ -10,7 +12,7 @@ import type {
   UpsertSkillInput,
   UpsertSkillResult,
 } from "../../domain/repository.js";
-import type { HubCollections } from "./mongo-client.js";
+import type { HubCollections, SkillRecord } from "./mongo-client.js";
 
 function nowMs(): number {
   return Date.now();
@@ -40,13 +42,15 @@ export class MongoSkillRepository implements SkillHubRepository {
       disabled.add(doc.name);
     }
 
-    const cards: PoolCard[] = [];
+    // 运营排序键随卡片收集（不进对外卡片形状，池卡片契约 name/description/content_hash/scope 不变）。
+    const ranked: { card: PoolCard; pinned: boolean; weight: number }[] = [];
     const seen = new Set<string>();
     // namespace 覆盖 official：先收自有包，再补官方位（同名不重复）。
+    // 审核过滤：只出 approved；存量无 review_status 字段 = 视为 approved（backfill 读侧）。
     for (const scope of [namespace, OFFICIAL_SCOPE]) {
       const cursor = this.collections.skills
         .find(
-          { scope, deleted_at: null },
+          { scope, deleted_at: null, review_status: { $nin: ["pending", "rejected"] } },
           {
             projection: {
               name: 1,
@@ -54,6 +58,8 @@ export class MongoSkillRepository implements SkillHubRepository {
               content_hash: 1,
               official_enabled: 1,
               official_required: 1,
+              display_weight: 1,
+              pinned: 1,
             },
           },
         )
@@ -72,16 +78,31 @@ export class MongoSkillRepository implements SkillHubRepository {
             continue;
           }
         }
-        cards.push({
-          name,
-          description: doc.description,
-          content_hash: doc.content_hash,
-          scope,
+        ranked.push({
+          card: {
+            name,
+            description: doc.description,
+            content_hash: doc.content_hash,
+            scope,
+          },
+          pinned: doc.pinned ?? SKILL_CURATION_DEFAULTS.pinned,
+          weight: doc.display_weight ?? SKILL_CURATION_DEFAULTS.display_weight,
         });
         seen.add(name);
       }
     }
-    return cards;
+    // 运营排序：pinned desc → display_weight desc → name asc。
+    ranked.sort((a, b) => {
+      if (a.pinned !== b.pinned) {
+        return a.pinned ? -1 : 1;
+      }
+      if (a.weight !== b.weight) {
+        return b.weight - a.weight;
+      }
+      // 与 Mongo {name:1} 同为码位序，不用 localeCompare（避免 locale 依赖的次序漂移）。
+      return a.card.name < b.card.name ? -1 : a.card.name > b.card.name ? 1 : 0;
+    });
+    return ranked.map((entry) => entry.card);
   }
 
   async setEnabled(namespace: string, name: string, enabled: boolean): Promise<void> {
@@ -114,6 +135,43 @@ export class MongoSkillRepository implements SkillHubRepository {
       return;
     }
     await this.collections.skills.updateOne({ scope: OFFICIAL_SCOPE, name }, { $set: update });
+  }
+
+  // 运营位（HUB-4）：pinned/display_weight 驱动池排序；目标须为活跃文档（软删/缺失 = 404 语义）。
+  async setCuration(scope: string, name: string, input: CurationInput): Promise<void> {
+    await this.ensureIndexes();
+    const update: Partial<Pick<SkillRecord, "display_weight" | "pinned" | "category">> = {};
+    if (input.displayWeight !== undefined) {
+      update.display_weight = input.displayWeight;
+    }
+    if (input.pinned !== undefined) {
+      update.pinned = input.pinned;
+    }
+    if (input.category !== undefined) {
+      update.category = input.category;
+    }
+    if (Object.keys(update).length === 0) {
+      return;
+    }
+    const result = await this.collections.skills.updateOne(
+      { scope, name, deleted_at: null },
+      { $set: { ...update, updated_at: nowMs() } },
+    );
+    if (result.matchedCount === 0) {
+      throw new SkillNotFoundError(scope, name);
+    }
+  }
+
+  // 审核状态机（HUB-4）：三态直写；池查询读侧过滤非 approved。
+  async setReviewStatus(scope: string, name: string, status: ReviewStatus): Promise<void> {
+    await this.ensureIndexes();
+    const result = await this.collections.skills.updateOne(
+      { scope, name, deleted_at: null },
+      { $set: { review_status: status, updated_at: nowMs() } },
+    );
+    if (result.matchedCount === 0) {
+      throw new SkillNotFoundError(scope, name);
+    }
   }
 
   async markDeleted(scope: string, name: string): Promise<void> {
@@ -151,12 +209,18 @@ export class MongoSkillRepository implements SkillHubRepository {
           revision,
           updated_at: nowMs(),
           deleted_at: null,
+          // V1 审核自动过：每次真实写入（新内容 = 新审核对象）都置 approved；人审接入后改 pending。
+          review_status: "approved" as const,
         },
         $setOnInsert: {
           scope: input.scope,
           name: input.name,
           official_enabled: true,
           official_required: false,
+          // 运营位缺省（仅首插；升版本保留运营已设值）。
+          display_weight: SKILL_CURATION_DEFAULTS.display_weight,
+          pinned: SKILL_CURATION_DEFAULTS.pinned,
+          category: SKILL_CURATION_DEFAULTS.category,
         },
       },
       { upsert: current === null, returnDocument: "after" },

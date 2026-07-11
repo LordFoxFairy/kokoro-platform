@@ -89,6 +89,29 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
         },
       ],
     },
+    // HUB-4 运营位 + 审核状态机独立成资源（skills 资源的动作序列是既有契约面，不追加扰动）。
+    {
+      id: "skill-curation",
+      labelKey: "admin.hub.resources.skillCuration",
+      route: "/hub/skills/pool",
+      requiredPermission: "hub.skill.read",
+      actions: [
+        {
+          id: "curation",
+          labelKey: "admin.hub.actions.curation",
+          kind: "mutation",
+          requiredPermission: "hub.skill.curation",
+          route: "/hub/skills/:scope/:name/curation",
+        },
+        {
+          id: "review",
+          labelKey: "admin.hub.actions.review",
+          kind: "mutation",
+          requiredPermission: "hub.skill.review",
+          route: "/hub/skills/:scope/:name/review",
+        },
+      ],
+    },
     // HUB-3 MCP server 注册表（skills 面同构：注册/启停/软删；凭据只存 secret-ref）。
     {
       id: "mcp-servers",
@@ -137,6 +160,8 @@ const routes: HubAdminRoute[] = [
   { method: "POST", path: "/hub/skills/:scope/:name/disable" },
   { method: "POST", path: "/hub/skills/:name/official-flags" },
   { method: "DELETE", path: "/hub/skills/:scope/:name" },
+  { method: "POST", path: "/hub/skills/:scope/:name/curation" },
+  { method: "POST", path: "/hub/skills/:scope/:name/review" },
   { method: "POST", path: "/hub/skills/upload/preview" },
   { method: "POST", path: "/hub/skills/upload/confirm" },
   { method: "GET", path: "/hub/skills/:scope/:name/revisions" },

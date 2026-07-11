@@ -38,6 +38,14 @@ export class QuotaExceededError extends Error {
   }
 }
 
+// 运营位/审核操作目标技能不存在或已软删（写死状态无处可落）；路由映射 404。
+export class SkillNotFoundError extends Error {
+  constructor(scope: string, name: string) {
+    super(`skill ${scope}/${name} not found`);
+    this.name = "SkillNotFoundError";
+  }
+}
+
 // MCP server 启停目标不存在或已软删（enabled 是文档级状态，无文档可翻）；路由映射 404。
 export class McpServerNotFoundError extends Error {
   constructor(scope: string, name: string) {

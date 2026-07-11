@@ -38,6 +38,29 @@ describe("userEnvSchema", () => {
     expect(() => loadUserEnv({ DATABASE_URL_USER: "not-a-url" })).toThrow();
   });
 
+  it("defaults magic-link vars to the safe log delivery profile", () => {
+    const env = loadUserEnv(required);
+    expect(env.KOKORO_AUTH_MAGIC_TTL_SECONDS).toBe(900);
+    expect(env.KOKORO_AUTH_MAGIC_DELIVERY).toBe("log");
+    expect(env.KOKORO_AUTH_MAGIC_RATE_MAX).toBe(5);
+    expect(env.KOKORO_AUTH_MAGIC_RATE_WINDOW_SECONDS).toBe(900);
+  });
+
+  it("accepts the response delivery mode and rejects unknown modes", () => {
+    expect(
+      loadUserEnv({ ...required, KOKORO_AUTH_MAGIC_DELIVERY: "response" }).KOKORO_AUTH_MAGIC_DELIVERY,
+    ).toBe("response");
+    expect(() => loadUserEnv({ ...required, KOKORO_AUTH_MAGIC_DELIVERY: "smtp" })).toThrow();
+  });
+
+  it("coerces magic ttl and enforces its range", () => {
+    expect(
+      loadUserEnv({ ...required, KOKORO_AUTH_MAGIC_TTL_SECONDS: "120" }).KOKORO_AUTH_MAGIC_TTL_SECONDS,
+    ).toBe(120);
+    expect(() => loadUserEnv({ ...required, KOKORO_AUTH_MAGIC_TTL_SECONDS: "10" })).toThrow();
+    expect(() => loadUserEnv({ ...required, KOKORO_AUTH_MAGIC_TTL_SECONDS: "7200" })).toThrow();
+  });
+
   it("strips unrelated process.env keys (intentional strip, not strict)", () => {
     const parsed = userEnvSchema.parse({ ...required, PATH: "/usr/bin", HOME: "/root" });
     expect("PATH" in parsed).toBe(false);

@@ -1,4 +1,6 @@
+import type { ReviewStatus } from "../contract/skill-curation-storage.js";
 import type {
+  CurationInput,
   OfficialFlagsInput,
   PoolCard,
   SkillHubRepository,
@@ -39,6 +41,16 @@ export class SkillHubService {
 
   async markDeleted(scope: string, name: string): Promise<void> {
     await this.repository.markDeleted(scope, name);
+  }
+
+  // 运营位（HUB-4）：目标缺失/软删由仓储抛 SkillNotFoundError，路由映射 404。
+  async setCuration(scope: string, name: string, input: CurationInput): Promise<void> {
+    await this.repository.setCuration(scope, name, input);
+  }
+
+  // 审核状态机（HUB-4）：pending|approved|rejected；池查询只出 approved。
+  async setReviewStatus(scope: string, name: string, status: ReviewStatus): Promise<void> {
+    await this.repository.setReviewStatus(scope, name, status);
   }
 
   async quota(namespace: string): Promise<QuotaView> {

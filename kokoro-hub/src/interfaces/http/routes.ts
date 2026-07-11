@@ -10,13 +10,15 @@ import {
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { ZodError } from "zod";
 import type { SkillHubService } from "../../application/skill-hub-service.js";
-import { SkillRequiredError } from "../../domain/errors.js";
+import { SkillNotFoundError, SkillRequiredError } from "../../domain/errors.js";
 import { hubAdminManifest } from "../admin/manifest.js";
 import {
+  curationBodySchema,
   enableBodySchema,
   nameParamsSchema,
   namespaceQuerySchema,
   officialFlagsBodySchema,
+  reviewBodySchema,
   scopeNameParamsSchema,
 } from "./schemas.js";
 
@@ -98,6 +100,68 @@ export function registerHubRoutes(app: FastifyInstance, service: SkillHubService
         }
         request.log.error({ error }, "failed to set official flags");
         return sendError(reply, 500, "hub.official_flags_failed", "官方位更新失败", undefined, requestId);
+      }
+    },
+  );
+
+  app.post(
+    "/hub/skills/:scope/:name/curation",
+    {
+      schema: {
+        tags: ["hub"],
+        summary: "设置运营位（display_weight 排序权重 / pinned 置顶 / category 分类）",
+        body: jsonSchema(curationBodySchema),
+      },
+    },
+    async (request, reply) => {
+      const requestId = readRequestContext(request.headers).requestId;
+      try {
+        const params = scopeNameParamsSchema.parse(request.params);
+        const body = curationBodySchema.parse(request.body);
+        await service.setCuration(params.scope, params.name, {
+          displayWeight: body.display_weight,
+          pinned: body.pinned,
+          category: body.category,
+        });
+        return sendData(reply, { ok: true }, 200, requestId);
+      } catch (error) {
+        if (error instanceof ZodError) {
+          return sendZodError(reply, error, requestId);
+        }
+        if (error instanceof SkillNotFoundError) {
+          return sendError(reply, 404, "hub.skill_not_found", error.message, undefined, requestId);
+        }
+        request.log.error({ error }, "failed to set skill curation");
+        return sendError(reply, 500, "hub.curation_failed", "运营位更新失败", undefined, requestId);
+      }
+    },
+  );
+
+  app.post(
+    "/hub/skills/:scope/:name/review",
+    {
+      schema: {
+        tags: ["hub"],
+        summary: "设置审核状态（pending|approved|rejected；池查询只出 approved）",
+        body: jsonSchema(reviewBodySchema),
+      },
+    },
+    async (request, reply) => {
+      const requestId = readRequestContext(request.headers).requestId;
+      try {
+        const params = scopeNameParamsSchema.parse(request.params);
+        const body = reviewBodySchema.parse(request.body);
+        await service.setReviewStatus(params.scope, params.name, body.status);
+        return sendData(reply, { ok: true }, 200, requestId);
+      } catch (error) {
+        if (error instanceof ZodError) {
+          return sendZodError(reply, error, requestId);
+        }
+        if (error instanceof SkillNotFoundError) {
+          return sendError(reply, 404, "hub.skill_not_found", error.message, undefined, requestId);
+        }
+        request.log.error({ error }, "failed to set skill review status");
+        return sendError(reply, 500, "hub.review_failed", "审核状态更新失败", undefined, requestId);
       }
     },
   );

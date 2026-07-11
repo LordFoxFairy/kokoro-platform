@@ -70,3 +70,18 @@ export const issueSessionRequestSchema = z
     email: z.string().trim().toLowerCase().email().optional(),
   })
   .strict();
+
+// magic-link 申请（web → user）。email 归一化（trim+小写）后即身份键，限频与旧链作废都按它算。
+export const requestMagicLinkRequestSchema = z
+  .object({
+    site_id: z.string().trim().min(1),
+    email: z.string().trim().toLowerCase().email(),
+  })
+  .strict();
+
+// magic-link 消费：token 即链接中的一次性原文（base64url），服务端只比对哈希。
+export const consumeMagicLinkRequestSchema = z
+  .object({
+    token: z.string().trim().min(1),
+  })
+  .strict();

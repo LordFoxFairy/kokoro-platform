@@ -154,6 +154,22 @@ model ServiceAccount {
   @@map("service_accounts")
 }
 
+// magic-link 一次性登录链接：只存 token 哈希不存原文；同 (siteId,email) 新链签发时旧未消费链置 supersededAt。
+model MagicLink {
+  id           String    @id @default(cuid())
+  siteId       String
+  email        String
+  tokenHash    String    @unique
+  expiresAt    DateTime
+  consumedAt   DateTime?
+  supersededAt DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([siteId, email, consumedAt, supersededAt])
+  @@map("magic_links")
+}
+
 model UserAuditLog {
   id           String   @id @default(cuid())
   actorUserId  String?

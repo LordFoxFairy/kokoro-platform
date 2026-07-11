@@ -2,12 +2,16 @@ import { registerInternalSecretGuard, registerOpenApi, sendError } from "@kokoro
 import type { PrismaClient } from "@prisma/client";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import Fastify from "fastify";
+import { MagicLinkService } from "../../application/magic-link-service.js";
 import { SessionService } from "../../application/session-service.js";
 import { UserService } from "../../application/user-service.js";
+import type { MagicLinkDeliveryMode } from "../../domain/magic-link.js";
 import { JoseSessionSigner } from "../../infrastructure/auth/jose-session-signer.js";
 import { createPrismaClient } from "../../infrastructure/prisma/prisma-client.js";
+import { PrismaMagicLinkRepository } from "../../infrastructure/prisma/prisma-magic-link-repository.js";
 import { PrismaUserRepository } from "../../infrastructure/prisma/prisma-user-repository.js";
 import { registerUserAdminRoutes } from "./admin-routes.js";
+import { registerMagicLinkRoutes } from "./magic-link-routes.js";
 import { registerUserRoutes } from "./routes.js";
 import { registerSessionRoutes } from "./session-routes.js";
 
@@ -19,9 +23,19 @@ export interface SessionSigningOptions {
   now?: () => Date;
 }
 
+// 缺省与 env schema 缺省一致；deliveryMode 缺省 log（最安全档，token 不回体）。
+export interface MagicLinkServerOptions {
+  ttlSeconds?: number;
+  deliveryMode?: MagicLinkDeliveryMode;
+  rateLimitMax?: number;
+  rateLimitWindowSeconds?: number;
+  now?: () => Date;
+}
+
 export interface CreateUserServerOptions {
   prisma?: PrismaClient;
   sessionSigning?: SessionSigningOptions;
+  magicLinks?: MagicLinkServerOptions;
   // 入站信任密钥；不传/空串=受保护端点直通（测试/本地）；生产由 main.ts 从 env 注入启用 fail-closed。
   internalSecret?: string;
 }
@@ -52,10 +66,23 @@ export function createUserServer(options: CreateUserServerOptions = {}) {
       })
     : null;
 
+  const magicLinkDefaults = options.magicLinks ?? {};
+  const magicLinkNow = magicLinkDefaults.now;
+  const magicLinkService = new MagicLinkService(new PrismaMagicLinkRepository(prisma), {
+    ttlSeconds: magicLinkDefaults.ttlSeconds ?? 900,
+    rateLimitMax: magicLinkDefaults.rateLimitMax ?? 5,
+    rateLimitWindowSeconds: magicLinkDefaults.rateLimitWindowSeconds ?? 900,
+    ...(magicLinkNow ? { now: magicLinkNow } : {}),
+  });
+  const magicLinkDeliveryMode: MagicLinkDeliveryMode = magicLinkDefaults.deliveryMode ?? "log";
+
   // WHY: 路由须包进 register 闭包，确保在异步入队的 swagger 插件之后加载，否则 onRoute 钩子漏采。
   void app.register(async (instance) => {
     registerUserRoutes(instance, service);
     registerSessionRoutes(instance, sessionService);
+    registerMagicLinkRoutes(instance, magicLinkService, sessionService, {
+      deliveryMode: magicLinkDeliveryMode,
+    });
     registerUserAdminRoutes(instance, repository, service);
   });
 

@@ -1,0 +1,32 @@
+// skills 文档「运营位 + 审核状态」扩展字段旁注记（HUB-4，已收编主仓 contract/spec/storage.yaml 单源(SkillDoc 四字段+review_status 枚举,经 generate.py 进 ./storage.ts)）。
+// 本文件保留 curation 便捷子 schema 与常量;字段形状真源=生成镜像 storage.ts 的 SkillDoc。
+//
+// 语义：
+// - display_weight: 运营排序权重，越大越靠前；缺省 0。
+// - pinned: 置顶位，排序最高优先；缺省 false。
+// - category: 运营分类标签（自由字符串）；null = 未分类。
+// - review_status: 审核三态 pending|approved|rejected；V1 上传 confirm 自动 approved（字段先落，
+//   为后续人审留位）。池查询只出 approved；存量文档无字段 = 视为 approved（backfill 在读侧）。
+
+import { z } from "zod";
+
+export const REVIEW_STATUSES = ["pending", "approved", "rejected"] as const;
+export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
+
+export const skillCurationFieldsSchema = z
+  .object({
+    display_weight: z.number().int(),
+    pinned: z.boolean(),
+    category: z.string().min(1).nullable(),
+    review_status: z.enum(REVIEW_STATUSES),
+  })
+  .strict();
+export type SkillCurationFields = z.infer<typeof skillCurationFieldsSchema>;
+
+// 存量文档缺字段时的读侧缺省(backfill):运营零位+自动过审。
+export const SKILL_CURATION_DEFAULTS: SkillCurationFields = {
+  display_weight: 0,
+  pinned: false,
+  category: null,
+  review_status: "approved",
+};
