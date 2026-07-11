@@ -1,5 +1,5 @@
 import type { PrismaClient } from "../../../generated/prisma/index.js";
-import { registerOpenApi } from "@kokoro/platform-kit";
+import { registerInternalSecretGuard, registerOpenApi } from "@kokoro/platform-kit";
 import Fastify from "fastify";
 import { SiteService } from "../../application/site-service.js";
 import { createPrismaClient } from "../../infrastructure/prisma/prisma-client.js";
@@ -9,6 +9,8 @@ import { registerSiteRoutes } from "./routes.js";
 
 export interface CreateSiteServerOptions {
   prisma?: PrismaClient;
+  // 入站信任密钥；不传/空串=受保护端点直通（测试/本地）；生产由 main.ts 从 env 注入启用 fail-closed。
+  internalSecret?: string;
 }
 
 export function createSiteServer(options: CreateSiteServerOptions = {}) {
@@ -17,6 +19,12 @@ export function createSiteServer(options: CreateSiteServerOptions = {}) {
   });
 
   registerOpenApi(app, { title: "Kokoro Site API", version: "0.1.0" });
+
+  // 服务间被调面：/admin(网关) 与 /sites(credit 查 active) 校验内部密钥；未配置直通。
+  registerInternalSecretGuard(app, {
+    secret: options.internalSecret ?? "",
+    protectedPrefixes: ["/admin", "/sites"],
+  });
 
   const prisma = options.prisma ?? createPrismaClient();
   const repository = new PrismaSiteRepository(prisma);

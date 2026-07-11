@@ -130,4 +130,25 @@ describe("session issuance HTTP API", () => {
     expect(response.statusCode).toBe(503);
     expect(response.json()).toMatchObject({ error: { code: "auth.not_configured" } });
   });
+
+  // requestId 头统一：新头 x-kokoro-request-id 优先，旧头 x-request-id 回退（两头都读，外部旧调用方不破）。
+  // 走 503 路径断言，回显的 requestId 即 getRequestId 选中的头，无需落库。
+  it("prefers x-kokoro-request-id over legacy x-request-id, still honoring legacy alone", async () => {
+    const both = await appNoSigning.inject({
+      method: "POST",
+      url: "/auth/sessions",
+      headers: { "x-kokoro-request-id": "req_new", "x-request-id": "req_old" },
+      payload: { site_id: "site-a", external_user_id: "auth0|rid" },
+    });
+    expect(both.statusCode).toBe(503);
+    expect(both.json().requestId).toBe("req_new");
+
+    const legacyOnly = await appNoSigning.inject({
+      method: "POST",
+      url: "/auth/sessions",
+      headers: { "x-request-id": "req_old" },
+      payload: { site_id: "site-a", external_user_id: "auth0|rid" },
+    });
+    expect(legacyOnly.json().requestId).toBe("req_old");
+  });
 });

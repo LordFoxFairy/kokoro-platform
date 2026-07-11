@@ -6,6 +6,7 @@ export * from "./domain/errors.js";
 export * from "./http/request-context.js";
 export * from "./http/error-handler.js";
 export * from "./http/internal-client.js";
+export * from "./http/internal-secret-guard.js";
 export * from "./http/responses.js";
 export * from "./http/start-server.js";
 export * from "./http/openapi.js";

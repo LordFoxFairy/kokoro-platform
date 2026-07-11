@@ -2,10 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModuleConfig } from "../../src/config.js";
 import { createAdminServer, type AdminServerDeps } from "../../src/server.js";
 import {
+  executeAction,
   GatewayError,
   getManifests,
   getSites,
   getUser360,
+  prepareAction,
   proxyAction,
   proxyResource,
   type AuditEntry,

@@ -1,3 +1,4 @@
+import { AppError } from "@kokoro/platform-kit";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCreditGrantClient } from "../../src/infrastructure/credit-grant-client.js";
 
@@ -34,7 +35,7 @@ describe("createCreditGrantClient", () => {
       .mockResolvedValueOnce(jsonResponse({ data: { id: "entry_1" } }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await createCreditGrantClient("http://credit:4231/")(grantInput);
+    await createCreditGrantClient("http://credit:4231/", "sec")(grantInput);
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const ensureCall = fetchMock.mock.calls[0];
@@ -56,33 +57,41 @@ describe("createCreditGrantClient", () => {
       reason: "subscription",
     });
 
-    // WHY: 两次 fetch 都须带站点/请求 id，credit 端据此落到正确站点账户。
+    // 归队 callService 后：两次调用都须带站点/请求 id + 内部密钥 + system principal(链路 + 服务间认证)。
     for (const call of [ensureCall, grantCall]) {
       expect(headerOf(call[1], "x-kokoro-site-id")).toBe("site_1");
       expect(headerOf(call[1], "x-kokoro-request-id")).toBe("req_1");
+      expect(headerOf(call[1], "x-kokoro-internal-secret")).toBe("sec");
+      expect(JSON.parse(String(headerOf(call[1], "x-kokoro-principal")))).toEqual({ kind: "system" });
     }
   });
 
-  it("throws when ensure responds non-2xx and never calls grant", async () => {
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(jsonResponse({}, 500));
+  it("maps non-2xx ensure to an AppError via callService envelope and never calls grant", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        jsonResponse({ error: { code: "credit.site_required", message: "缺少站点上下文" } }, 400),
+      );
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(createCreditGrantClient("http://credit:4231")(grantInput)).rejects.toThrow(
-      "credit ensure failed: 500",
-    );
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // 错误信封被 callService 解析回 AppError(code/httpStatus 保真)，而非旧的裸 Error 字符串。
+    const error = await createCreditGrantClient("http://credit:4231")(grantInput).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(AppError);
+    expect(error).toMatchObject({ code: "credit.site_required", httpStatus: 400 });
+    expect(fetchMock).toHaveBeenCalledTimes(1); // 只打了 ensure，未触及 grant
   });
 
-  it("throws when grant responds non-2xx", async () => {
+  it("maps non-2xx grant to an AppError", async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(jsonResponse({ data: { id: "acc_42" } }))
-      .mockResolvedValueOnce(jsonResponse({}, 402));
+      .mockResolvedValueOnce(
+        jsonResponse({ error: { code: "credit.insufficient", message: "积分余额不足" } }, 402),
+      );
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(createCreditGrantClient("http://credit:4231")(grantInput)).rejects.toThrow(
-      "credit grant failed: 402",
-    );
+    const error = await createCreditGrantClient("http://credit:4231")(grantInput).catch((e: unknown) => e);
+    expect(error).toMatchObject({ code: "credit.insufficient", httpStatus: 402 });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
@@ -92,5 +101,18 @@ describe("createCreditGrantClient", () => {
 
     await expect(createCreditGrantClient("http://credit:4231")(grantInput)).rejects.toThrow();
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("omits internal-secret header when secret unconfigured", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ data: { id: "acc_42" } }))
+      .mockResolvedValueOnce(jsonResponse({ data: { id: "entry_1" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await createCreditGrantClient("http://credit:4231")(grantInput);
+
+    const ensureCall = fetchMock.mock.calls[0];
+    expect(headerOf(ensureCall?.[1], "x-kokoro-internal-secret")).toBeNull();
   });
 });

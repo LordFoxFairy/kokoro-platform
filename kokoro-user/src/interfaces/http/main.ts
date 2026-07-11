@@ -7,8 +7,9 @@ await startHttpServer({
   moduleName: "kokoro-user",
   port: env.KOKORO_USER_PORT,
   createServer: () =>
-    createUserServer(
-      env.KOKORO_AUTH_JWT_SECRET
+    createUserServer({
+      internalSecret: env.KOKORO_INTERNAL_SECRET,
+      ...(env.KOKORO_AUTH_JWT_SECRET
         ? {
             sessionSigning: {
               secret: env.KOKORO_AUTH_JWT_SECRET,
@@ -16,6 +17,6 @@ await startHttpServer({
               issuer: env.KOKORO_AUTH_JWT_ISSUER,
             },
           }
-        : {},
-    ),
+        : {}),
+    }),
 });

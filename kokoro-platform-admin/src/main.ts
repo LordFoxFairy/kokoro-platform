@@ -18,5 +18,6 @@ await startHttpServer({
       authenticate: createAuthenticator(config.auth),
       prisma,
       approvalGrantThresholdMicros: config.approvalGrantThresholdMicros,
+      internalSecret: config.internalSecret,
     }),
 });

@@ -6,5 +6,5 @@ const env = loadSiteEnv();
 await startHttpServer({
   moduleName: "kokoro-site",
   port: env.KOKORO_SITE_PORT,
-  createServer: createSiteServer,
+  createServer: () => createSiteServer({ internalSecret: env.KOKORO_INTERNAL_SECRET }),
 });

@@ -182,6 +182,8 @@ export interface PreparedAction {
   requiredPermission: string;
   kind: "link" | "mutation" | "dangerMutation";
   auditBase: AuditBase;
+  // 转发时落 x-kokoro-operator：模块侧审计不再归 system,归真实操作者。
+  operator: Operator;
 }
 
 // 守门人前置：校验 action ∈ manifest + RBAC(权限/租户作用域) + dangerMutation 强制 reason；拒绝落审计后抛错。不执行。
@@ -244,6 +246,7 @@ export async function prepareAction(
     requiredPermission: action.requiredPermission,
     kind: action.kind,
     auditBase,
+    operator,
   };
 }
 
@@ -253,11 +256,22 @@ export async function executeAction(
   audit: AuditSink,
   request: ActionRequest,
   requestId: string,
+  // 服务间共享密钥(x-kokoro-internal-secret)：模块侧 guard 校验;空串=部署未启用,不发头。
+  internalSecret = "",
 ): Promise<unknown> {
   const headers: Record<string, string> = { "content-type": "application/json", "x-kokoro-request-id": requestId };
   if (request.siteId !== undefined) {
     headers["x-kokoro-site-id"] = request.siteId;
   }
+  if (internalSecret.length > 0) {
+    headers["x-kokoro-internal-secret"] = internalSecret;
+  }
+  // operator principal 头：模块经 platform-kit readRequestContext 解析，审计归因到真实操作者(kind=operator)而非 system。
+  headers["x-kokoro-principal"] = JSON.stringify({
+    kind: "operator",
+    operatorId: prepared.operator.id,
+    roleKey: prepared.operator.roleKey,
+  });
 
   let response: Response;
   try {

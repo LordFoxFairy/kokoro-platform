@@ -21,7 +21,7 @@ export function registerSessionRoutes(
       },
     },
     async (request, reply) => {
-      const requestId = getRequestId(request.headers["x-request-id"]);
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
 
       // fail-closed：未配置签发密钥绝不签发未签名 token。
       if (sessionService === null) {

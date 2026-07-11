@@ -1,4 +1,4 @@
-import { registerOpenApi } from "@kokoro/platform-kit";
+import { registerInternalSecretGuard, registerOpenApi } from "@kokoro/platform-kit";
 import type { PrismaClient } from "../../../generated/prisma/index.js";
 import Fastify from "fastify";
 import { ModelService } from "../../application/model-service.js";
@@ -9,6 +9,8 @@ import { registerModelRoutes } from "./routes.js";
 
 export interface CreateModelServerOptions {
   prisma?: PrismaClient;
+  // 入站信任密钥；不传/空串=受保护端点直通（测试/本地）；生产由 main.ts 从 env 注入启用 fail-closed。
+  internalSecret?: string;
 }
 
 export function createModelServer(options: CreateModelServerOptions = {}) {
@@ -18,6 +20,12 @@ export function createModelServer(options: CreateModelServerOptions = {}) {
 
   // WHY: swagger 的 onRoute 钩子须先于路由装好，故 registerOpenApi 须在任何路由注册前调用。
   registerOpenApi(app, { title: "Kokoro Model API", version: "0.1.0" });
+
+  // 服务间被调面：/admin(网关) 校验内部密钥；未配置直通。
+  registerInternalSecretGuard(app, {
+    secret: options.internalSecret ?? "",
+    protectedPrefixes: ["/admin"],
+  });
 
   const prisma = options.prisma ?? createPrismaClient();
   const repository = new PrismaModelRepository(prisma);

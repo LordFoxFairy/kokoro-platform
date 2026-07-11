@@ -22,7 +22,7 @@ export function registerSiteAdminRoutes(app: FastifyInstance, repository: SiteRe
     }
 
     app.get(resource.route, async (request, reply) => {
-      const requestId = getRequestId(request.headers["x-request-id"]);
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
 
       try {
         return sendData(reply, await list(), 200, requestId);

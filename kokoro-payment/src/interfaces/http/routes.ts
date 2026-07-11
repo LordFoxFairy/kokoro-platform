@@ -105,6 +105,21 @@ export function registerPaymentRoutes(app: FastifyInstance, service: PaymentServ
     }
   });
 
+  app.post("/orders/sweep", {
+    schema: {
+      tags: ["payment"],
+      summary: "收尾悬挂的 confirming 订单（确认中途崩溃的重放,幂等）",
+    },
+  }, async (request, reply) => {
+    try {
+      const ctx = readRequestContext(request.headers);
+      const recovered = await service.sweepStaleConfirmingOrders(120_000, ctx.requestId);
+      return sendData(reply, { recovered }, 200, ctx.requestId);
+    } catch (error) {
+      return handlePaymentError(error, reply, "payment.confirm_sweep_failed");
+    }
+  });
+
   app.post("/orders/:id/confirm", {
     schema: {
       tags: ["payment"],

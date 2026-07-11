@@ -9,7 +9,8 @@ export const creditEnvSchema = z.object({
   KOKORO_MODEL_BASE_URL: z.string().url().default("http://kokoro-model:4221"),
   KOKORO_CREDIT_BASE_URL: z.string().url().default("http://kokoro-credit:4231"),
   KOKORO_PAYMENT_BASE_URL: z.string().url().default("http://kokoro-payment:4241"),
-  // 服务间认证密钥：记账前调 user/site active 时携带（user/site 未来校验，纵深防御）。
+  // 服务间共享密钥：出站(调 user/site active 携带)与入站(守门 /admin、/credit)同一把。
+  // 空串=未配置语义：入站受保护端点直通并告警，出站不带头；配置后入站 fail-closed 校验。
   KOKORO_INTERNAL_SECRET: z.string().default(""),
   // 用量计费面：token 计价 unit、hold 预估用量、冻结冗余系数（估算冗余，先守不透支）。
   KOKORO_CREDIT_USAGE_INPUT_UNIT: z.string().min(1).default("input_token"),

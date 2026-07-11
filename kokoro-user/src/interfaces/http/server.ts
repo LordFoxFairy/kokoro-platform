@@ -1,4 +1,4 @@
-import { registerOpenApi, sendError } from "@kokoro/platform-kit";
+import { registerInternalSecretGuard, registerOpenApi, sendError } from "@kokoro/platform-kit";
 import type { PrismaClient } from "@prisma/client";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import Fastify from "fastify";
@@ -22,6 +22,8 @@ export interface SessionSigningOptions {
 export interface CreateUserServerOptions {
   prisma?: PrismaClient;
   sessionSigning?: SessionSigningOptions;
+  // 入站信任密钥；不传/空串=受保护端点直通（测试/本地）；生产由 main.ts 从 env 注入启用 fail-closed。
+  internalSecret?: string;
 }
 
 export function createUserServer(options: CreateUserServerOptions = {}) {
@@ -31,6 +33,12 @@ export function createUserServer(options: CreateUserServerOptions = {}) {
 
   registerOpenApi(app, { title: "Kokoro User API", version: "0.1.0" });
   registerUserErrorHandler(app);
+
+  // 服务间被调面：/admin(网关) 与 /owners(credit 查 active) 校验内部密钥；未配置直通。
+  registerInternalSecretGuard(app, {
+    secret: options.internalSecret ?? "",
+    protectedPrefixes: ["/admin", "/owners"],
+  });
 
   const prisma = options.prisma ?? createPrismaClient();
   const repository = new PrismaUserRepository(prisma);

@@ -93,6 +93,8 @@ interface FakeOverrides {
   atomicTransitioned?: boolean;
   existingRefund?: Refund | null;
   reverseThrows?: boolean;
+  markPaidThrows?: boolean;
+  staleConfirming?: Order[];
 }
 
 function makeFakes(overrides: FakeOverrides = {}): Fakes {
@@ -130,8 +132,19 @@ function makeFakes(overrides: FakeOverrides = {}): Fakes {
       calls.push("findPlanById");
       return overrides.plan === undefined ? plan : overrides.plan;
     },
+    markOrderConfirming: async (orderId: string) => {
+      calls.push("markOrderConfirming");
+      return { ...order, id: orderId, status: "confirming" };
+    },
+    listStaleConfirmingOrders: async (_before: Date) => {
+      calls.push("listStaleConfirmingOrders");
+      return overrides.staleConfirming ?? [];
+    },
     markOrderPaid: async (orderId: string) => {
       calls.push("markOrderPaid");
+      if (overrides.markPaidThrows) {
+        throw new Error("db down");
+      }
       return { ...order, id: orderId, status: "paid" };
     },
     refundOrderAtomically: async (_orderId: string, _input: CreateRefundInput) => {
@@ -500,5 +513,38 @@ describe("PaymentService refundOrder", () => {
     await expect(service(fakes).refundOrder("order_1", "req_1")).rejects.toThrow("insufficient credit");
     // 关键修复：reverse 失败时 order 未标退款、未建记录，可安全重试，不再卡死在不一致态。
     expect(fakes.calls).not.toContain("refundOrderAtomically");
+  });
+});
+
+describe("PaymentService confirm outbox(确认意图落库+sweep 收尾)", () => {
+  it("confirmOrder 先落 confirming 再发放再标 paid(顺序断言)", async () => {
+    const fakes = makeFakes();
+    await service(fakes).confirmOrder("order_1", "req_1");
+    expect(fakes.calls.indexOf("markOrderConfirming")).toBeGreaterThan(-1);
+    expect(fakes.calls.indexOf("markOrderConfirming")).toBeLessThan(fakes.calls.indexOf("markOrderPaid"));
+  });
+
+  it("markPaid 崩溃时订单停在 confirming(grant 已发,幂等键不变)", async () => {
+    const fakes = makeFakes({ markPaidThrows: true });
+    await expect(service(fakes).confirmOrder("order_1", "req_1")).rejects.toThrow("db down");
+    expect(fakes.grants).toHaveLength(1);
+    expect(fakes.grants[0]?.idempotencyKey).toBe("order:order_1");
+  });
+
+  it("sweep 收尾悬挂 confirming:重放同幂等键 grant+标 paid,计数返回", async () => {
+    const stale = { ...order, id: "order_9", status: "confirming" as const };
+    const fakes = makeFakes({ staleConfirming: [stale], order: stale });
+    const recovered = await service(fakes).sweepStaleConfirmingOrders(1000, "req_sweep");
+    expect(recovered).toBe(1);
+    expect(fakes.grants).toHaveLength(1);
+    expect(fakes.grants[0]?.idempotencyKey).toBe("order:order_9");
+    expect(fakes.calls).toContain("markOrderPaid");
+  });
+
+  it("sweep 单笔失败不阻断整批", async () => {
+    const bad = { ...order, id: "order_bad", status: "confirming" as const };
+    const fakes = makeFakes({ staleConfirming: [bad], order: bad, markPaidThrows: true });
+    const recovered = await service(fakes).sweepStaleConfirmingOrders(1000, "req_sweep");
+    expect(recovered).toBe(0);
   });
 });

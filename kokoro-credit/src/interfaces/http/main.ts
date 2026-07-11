@@ -23,5 +23,11 @@ const sweepIntervalMs = env.KOKORO_CREDIT_HOLD_SWEEP_INTERVAL_SECONDS * 1000;
 await startHttpServer({
   moduleName: "kokoro-credit",
   port: env.KOKORO_CREDIT_PORT,
-  createServer: () => createCreditServer({ activeChecker, runBilling, sweepIntervalMs }),
+  createServer: () =>
+    createCreditServer({
+      activeChecker,
+      runBilling,
+      sweepIntervalMs,
+      internalSecret: env.KOKORO_INTERNAL_SECRET,
+    }),
 });

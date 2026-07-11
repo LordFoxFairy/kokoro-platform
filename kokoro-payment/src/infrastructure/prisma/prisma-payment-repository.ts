@@ -75,10 +75,34 @@ export class PrismaPaymentRepository implements PaymentRepository {
     return plan ? mapPlan(plan) : null;
   }
 
-  async markOrderPaid(orderId: string): Promise<Order> {
-    // WHY: 抢占式条件转移 pending→paid，并发确认只一方生效；已 paid 幂等返回，非 pending 拒绝。
-    const transition = await this.prisma.order.updateMany({
+  async markOrderConfirming(orderId: string): Promise<Order> {
+    // 确认意图先落库：pending→confirming 条件转移；已 confirming(重试)/已 paid(幂等)直接返回。
+    await this.prisma.order.updateMany({
       where: { id: orderId, status: "pending" },
+      data: { status: "confirming" },
+    });
+    const order = await this.prisma.order.findUnique({ where: { id: orderId } });
+    if (!order) {
+      throw new OrderNotFoundError(orderId);
+    }
+    if (order.status !== "confirming" && order.status !== "paid") {
+      throw new OrderNotConfirmableError(orderId, order.status);
+    }
+    return mapOrder(order);
+  }
+
+  async listStaleConfirmingOrders(before: Date): Promise<Order[]> {
+    const rows = await this.prisma.order.findMany({
+      where: { status: "confirming", updatedAt: { lt: before } },
+      orderBy: { updatedAt: "asc" },
+    });
+    return rows.map(mapOrder);
+  }
+
+  async markOrderPaid(orderId: string): Promise<Order> {
+    // WHY: 抢占式条件转移 pending|confirming→paid，并发确认只一方生效；已 paid 幂等返回，其余拒绝。
+    const transition = await this.prisma.order.updateMany({
+      where: { id: orderId, status: { in: ["pending", "confirming"] } },
       data: { status: "paid" },
     });
     if (transition.count === 0) {
@@ -439,7 +463,7 @@ function mapOrder(order: {
   planId: string;
   amountMinor: bigint;
   currency: string;
-  status: "pending" | "paid" | "canceled" | "refunded";
+  status: "pending" | "confirming" | "paid" | "canceled" | "refunded";
   idempotencyKey: string;
   createdAt: Date;
   updatedAt: Date;

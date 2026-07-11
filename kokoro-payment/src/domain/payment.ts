@@ -2,7 +2,7 @@ import type { DeletionAudit } from "./payment-lifecycle.js";
 
 export type BillingInterval = "once" | "month" | "year";
 export type PlanStatus = "active" | "disabled";
-export type OrderStatus = "pending" | "paid" | "canceled" | "refunded";
+export type OrderStatus = "pending" | "confirming" | "paid" | "canceled" | "refunded";
 export type PaymentEventStatus = "received" | "processed" | "failed";
 export type SubscriptionStatus = "active" | "canceled" | "past_due";
 export type RefundStatus = "pending" | "succeeded" | "failed";

@@ -21,7 +21,7 @@ export function registerSiteRoutes(app: FastifyInstance, service: SiteService): 
   registerHealthRoute(app, "site");
 
   app.get("/sites", { schema: { tags: ["site"], summary: "列出所有站点" } }, async (request, reply) => {
-    const requestId = getRequestId(request.headers["x-request-id"]);
+    const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
 
     try {
       const sites = await service.listSites();
@@ -37,7 +37,7 @@ export function registerSiteRoutes(app: FastifyInstance, service: SiteService): 
     "/sites/:siteId/active",
     { schema: { tags: ["site"], summary: "校验站点是否 active" } },
     async (request, reply) => {
-      const requestId = getRequestId(request.headers["x-request-id"]);
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
       const params = siteActiveParamsSchema.safeParse(request.params);
       if (!params.success) {
         return sendZodError(reply, params.error, requestId);
@@ -51,7 +51,7 @@ export function registerSiteRoutes(app: FastifyInstance, service: SiteService): 
     "/sites/:siteId",
     { schema: { tags: ["site"], summary: "删除站点", body: jsonSchema(deleteRequestSchema) } },
     async (request, reply) => {
-      const requestId = getRequestId(request.headers["x-request-id"]);
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
 
       try {
         const params = siteParamsSchema.parse(request.params);
@@ -68,7 +68,7 @@ export function registerSiteRoutes(app: FastifyInstance, service: SiteService): 
     "/sites/:siteId/restore",
     { schema: { tags: ["site"], summary: "恢复站点" } },
     async (request, reply) => {
-      const requestId = getRequestId(request.headers["x-request-id"]);
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
 
       try {
         const params = siteParamsSchema.parse(request.params);
@@ -84,7 +84,7 @@ export function registerSiteRoutes(app: FastifyInstance, service: SiteService): 
     "/sites/upsert",
     { schema: { tags: ["site"], summary: "创建或更新站点", body: jsonSchema(upsertSiteRequestSchema) } },
     async (request, reply) => {
-      const requestId = getRequestId(request.headers["x-request-id"]);
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
 
       try {
         const input = upsertSiteRequestSchema.parse(request.body);
@@ -100,7 +100,7 @@ export function registerSiteRoutes(app: FastifyInstance, service: SiteService): 
     "/site-domains/upsert",
     { schema: { tags: ["site"], summary: "创建或更新站点域名", body: jsonSchema(upsertSiteDomainRequestSchema) } },
     async (request, reply) => {
-      const requestId = getRequestId(request.headers["x-request-id"]);
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
 
       try {
         const input = upsertSiteDomainRequestSchema.parse(request.body);
@@ -116,7 +116,7 @@ export function registerSiteRoutes(app: FastifyInstance, service: SiteService): 
     "/site-domains/:domainId",
     { schema: { tags: ["site"], summary: "删除站点域名", body: jsonSchema(deleteRequestSchema) } },
     async (request, reply) => {
-      const requestId = getRequestId(request.headers["x-request-id"]);
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
 
       try {
         const params = siteDomainParamsSchema.parse(request.params);
@@ -133,7 +133,7 @@ export function registerSiteRoutes(app: FastifyInstance, service: SiteService): 
     "/site-domains/:domainId/restore",
     { schema: { tags: ["site"], summary: "恢复站点域名" } },
     async (request, reply) => {
-      const requestId = getRequestId(request.headers["x-request-id"]);
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
 
       try {
         const params = siteDomainParamsSchema.parse(request.params);
@@ -149,7 +149,7 @@ export function registerSiteRoutes(app: FastifyInstance, service: SiteService): 
     "/site-apps/upsert",
     { schema: { tags: ["site"], summary: "创建或更新站点应用", body: jsonSchema(upsertSiteAppRequestSchema) } },
     async (request, reply) => {
-      const requestId = getRequestId(request.headers["x-request-id"]);
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
 
       try {
         const input = upsertSiteAppRequestSchema.parse(request.body);
@@ -165,7 +165,7 @@ export function registerSiteRoutes(app: FastifyInstance, service: SiteService): 
     "/site-policies/upsert",
     { schema: { tags: ["site"], summary: "创建或更新站点策略", body: jsonSchema(upsertSitePolicyRequestSchema) } },
     async (request, reply) => {
-      const requestId = getRequestId(request.headers["x-request-id"]);
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
 
       try {
         const input = upsertSitePolicyRequestSchema.parse(request.body);
@@ -187,7 +187,7 @@ export function registerSiteRoutes(app: FastifyInstance, service: SiteService): 
       },
     },
     async (request, reply) => {
-      const requestId = getRequestId(request.headers["x-request-id"]);
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
 
       try {
         const input = upsertSiteFeatureFlagRequestSchema.parse(request.body);
@@ -210,7 +210,7 @@ export function registerSiteRoutes(app: FastifyInstance, service: SiteService): 
     "/site-feature-flags",
     { schema: { tags: ["site"], summary: "列出站点功能开关" } },
     async (request, reply) => {
-      const requestId = getRequestId(request.headers["x-request-id"]);
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
 
       try {
         const input = listSiteFeatureFlagsQuerySchema.parse(withHeaderSiteId(request));
@@ -233,7 +233,7 @@ export function registerSiteRoutes(app: FastifyInstance, service: SiteService): 
     "/site-context/resolve",
     { schema: { tags: ["site"], summary: "按域名解析站点上下文" } },
     async (request, reply) => {
-      const requestId = getRequestId(request.headers["x-request-id"]);
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
 
       try {
         const input = resolveSiteQuerySchema.parse(request.query);

@@ -65,7 +65,8 @@ export class PaymentService {
       return order;
     }
 
-    if (order.status !== "pending") {
+    // confirming=上次确认中途崩溃(意图已落库)，允许重入收尾；其余非 pending 拒绝。
+    if (order.status !== "pending" && order.status !== "confirming") {
       throw new OrderNotConfirmableError(orderId, order.status);
     }
 
@@ -75,8 +76,11 @@ export class PaymentService {
     }
     assertPlanNotDeleted(plan);
 
+    // outbox 最小型：确认意图先落库(pending→confirming)，此后任何一步崩溃都由 sweep 按幂等键收尾。
+    await this.repository.markOrderConfirming(orderId);
+
     if (BigInt(plan.creditMicros) > 0n) {
-      // WHY: 先授予再标 paid；失败时 order 仍 pending，重试用同一幂等键不会重复发积分。
+      // WHY: 先授予再标 paid；失败时 order 停在 confirming，sweep/重试用同一幂等键不会重复发积分。
       await this.grantPurchaseCredits({
         siteId: order.siteId,
         requestId,
@@ -89,6 +93,23 @@ export class PaymentService {
     }
 
     return this.repository.markOrderPaid(orderId);
+  }
+
+  // 悬挂确认收尾：confirming 且早于阈值的订单(确认中途崩溃)重放 grant(幂等键=order:<id>)+标 paid。
+  // 单笔失败不阻断整批;返回收尾计数供手动端点/巡检可观测。
+  async sweepStaleConfirmingOrders(thresholdMs: number, requestId: string): Promise<number> {
+    const before = new Date(Date.now() - thresholdMs);
+    const stale = await this.repository.listStaleConfirmingOrders(before);
+    let recovered = 0;
+    for (const order of stale) {
+      try {
+        await this.confirmOrder(order.id, requestId);
+        recovered += 1;
+      } catch (error) {
+        console.error("payment confirm sweep failed", order.id, error);
+      }
+    }
+    return recovered;
   }
 
   // WHY: 管理员不走支付直接发权益：建单后立即确认，复用既有发放路径。

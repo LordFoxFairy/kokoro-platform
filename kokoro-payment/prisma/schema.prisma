@@ -118,6 +118,7 @@ enum PlanStatus {
 
 enum OrderStatus {
   pending
+  confirming
   paid
   canceled
   refunded

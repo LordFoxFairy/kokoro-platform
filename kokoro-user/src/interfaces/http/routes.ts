@@ -35,7 +35,7 @@ export function registerUserRoutes(app: FastifyInstance, service: UserService): 
       },
     },
     async (request, reply) => {
-      const requestId = getRequestId(request.headers["x-request-id"]);
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
 
       // siteId 是上下文（来自 header），不是业务载荷，不进 body schema。
       const ctx = readRequestContext(request.headers);
@@ -72,7 +72,7 @@ export function registerUserRoutes(app: FastifyInstance, service: UserService): 
       },
     },
     async (request, reply) => {
-      const requestId = getRequestId(request.headers["x-request-id"]);
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
       try {
         const params = userParamsSchema.parse(request.params);
         const body = deleteRequestSchema.parse(request.body);
@@ -100,7 +100,7 @@ export function registerUserRoutes(app: FastifyInstance, service: UserService): 
     "/users/:userId/restore",
     { schema: { tags: ["user"], summary: "恢复用户" } },
     async (request, reply) => {
-      const requestId = getRequestId(request.headers["x-request-id"]);
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
       try {
         const params = userParamsSchema.parse(request.params);
         const user = await service.restoreUser({ id: params.userId });
@@ -124,7 +124,7 @@ export function registerUserRoutes(app: FastifyInstance, service: UserService): 
     "/owners/:ownerKind/:ownerId/active",
     { schema: { tags: ["user"], summary: "校验 owner 是否 active" } },
     async (request, reply) => {
-      const requestId = getRequestId(request.headers["x-request-id"]);
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
       const ctx = readRequestContext(request.headers);
       if (ctx.siteId === null) {
         return sendError(reply, 400, "context.site_required", "缺少站点上下文", undefined, requestId);
@@ -146,7 +146,7 @@ export function registerUserRoutes(app: FastifyInstance, service: UserService): 
     "/me/teams",
     { schema: { tags: ["user"], summary: "列出当前用户所属团队" } },
     async (request, reply) => {
-      const requestId = getRequestId(request.headers["x-request-id"]);
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
       const userId = getSingleHeader(request.headers["x-user-id"]);
 
       if (!userId) {
@@ -173,7 +173,7 @@ export function registerUserRoutes(app: FastifyInstance, service: UserService): 
       },
     },
     async (request, reply) => {
-      const requestId = getRequestId(request.headers["x-request-id"]);
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
       const ctx = readRequestContext(request.headers);
       if (ctx.siteId === null) {
         return sendError(reply, 400, "context.site_required", "缺少站点上下文", undefined, requestId);
@@ -206,7 +206,7 @@ export function registerUserRoutes(app: FastifyInstance, service: UserService): 
       },
     },
     async (request, reply) => {
-      const requestId = getRequestId(request.headers["x-request-id"]);
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
       try {
         const params = teamParamsSchema.parse(request.params);
         const body = deleteRequestSchema.parse(request.body);
@@ -234,7 +234,7 @@ export function registerUserRoutes(app: FastifyInstance, service: UserService): 
     "/teams/:teamId/restore",
     { schema: { tags: ["user"], summary: "恢复团队" } },
     async (request, reply) => {
-      const requestId = getRequestId(request.headers["x-request-id"]);
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
       try {
         const params = teamParamsSchema.parse(request.params);
         const team = await service.restoreTeam({ id: params.teamId });
@@ -263,7 +263,7 @@ export function registerUserRoutes(app: FastifyInstance, service: UserService): 
       },
     },
     async (request, reply) => {
-      const requestId = getRequestId(request.headers["x-request-id"]);
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
       try {
         const params = serviceAccountParamsSchema.parse(request.params);
         const body = deleteRequestSchema.parse(request.body);
@@ -304,7 +304,7 @@ export function registerUserRoutes(app: FastifyInstance, service: UserService): 
       },
     },
     async (request, reply) => {
-      const requestId = getRequestId(request.headers["x-request-id"]);
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
       try {
         const input = setMembershipRoleRequestSchema.parse(request.body);
         const membership = await service.setMembershipRole(input);

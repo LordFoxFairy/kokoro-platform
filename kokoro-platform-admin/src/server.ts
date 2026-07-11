@@ -48,6 +48,8 @@ export interface AdminServerDeps {
   authenticate: Authenticator;
   prisma: PrismaClient;
   approvalGrantThresholdMicros: bigint;
+  // 服务间共享密钥：executeAction 转发时带 x-kokoro-internal-secret(空串=未启用)。
+  internalSecret?: string;
 }
 
 const approvalsQuerySchema = z
@@ -317,7 +319,7 @@ export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps
         });
         return sendData(reply, { pendingApproval: true, approvalId: approval.id }, 202, ctx.requestId);
       }
-      const result = await executeAction(prepared, deps.audit, actionRequest, ctx.requestId);
+      const result = await executeAction(prepared, deps.audit, actionRequest, ctx.requestId, deps.internalSecret ?? "");
       return sendData(reply, result, 200, ctx.requestId);
     } catch (error) {
       if (error instanceof GatewayError) {
@@ -359,7 +361,7 @@ export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps
     const execute = async (held: ActionRequest): Promise<ApprovalExecutionResult> => {
       try {
         const prepared = await prepareAction(modules, deps.audit, held, ctx.requestId, operator);
-        await executeAction(prepared, deps.audit, held, ctx.requestId);
+        await executeAction(prepared, deps.audit, held, ctx.requestId, deps.internalSecret ?? "");
         return { statusCode: 200 };
       } catch (error) {
         if (error instanceof GatewayError) {
