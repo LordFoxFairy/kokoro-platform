@@ -85,6 +85,8 @@ export interface CreditRepository {
   holdCredits(input: HoldCreditInput): Promise<CreditHold>;
   captureHold(input: CaptureCreditInput): Promise<CreditMutationResult>;
   releaseHold(input: ReleaseCreditInput): Promise<CreditHold>;
+  // 过期回收：expiresAt < now 且仍 active 的 hold → 退冻结额、status 置 expired。返回回收条数。幂等、与 capture/release 竞争只赢一个。
+  sweepExpiredHolds(now?: Date): Promise<number>;
   getHoldById(id: string): Promise<CreditHold | null>;
   quote(input: QuoteInput): Promise<QuoteResult>;
   priceUsage(input: PriceUsageInput): Promise<string>;

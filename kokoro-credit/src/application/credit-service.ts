@@ -38,13 +38,15 @@ export interface SettleUsageCommand {
   idempotencyKey: string;
 }
 
-// 用量计费面配置：token 计价 unit、hold 预估用量、冻结冗余系数。全部来自 env，默认值面向 dev。
+// 用量计费面配置：token 计价 unit、hold 预估用量、冻结冗余系数、冻结 TTL。全部来自 env，默认值面向 dev。
 export interface RunBillingConfig {
   inputUnit: string;
   outputUnit: string;
   estInputTokens: string;
   estOutputTokens: string;
   bufferPercent: number;
+  // 用量冻结 TTL（秒）：hold 落 expiresAt = now + TTL，供过期回收兜底调用方崩溃后的悬挂冻结。
+  holdTtlSeconds: number;
 }
 
 export const DEFAULT_RUN_BILLING_CONFIG: RunBillingConfig = {
@@ -53,6 +55,7 @@ export const DEFAULT_RUN_BILLING_CONFIG: RunBillingConfig = {
   estInputTokens: "1000",
   estOutputTokens: "1000",
   bufferPercent: 20,
+  holdTtlSeconds: 86400,
 };
 
 export type OwnerSiteRef = Pick<CreditAccount, "siteId" | "ownerKind" | "ownerId">;
@@ -169,16 +172,24 @@ export class CreditService {
     const buffered = applyBufferPercent(BigInt(estimate), this.runBilling.bufferPercent);
     // 冻结额至少 1 micro：预估或价格算出 0 时也占位一分钱，避免 holdCredits 的正数守卫抛错。
     const amountMicros = (buffered > 0n ? buffered : 1n).toString();
+    // 落 expiresAt = now + TTL：调用方崩溃后 settle 未至时，由过期回收兜底退还悬挂冻结。
+    const expiresAt = new Date(Date.now() + this.runBilling.holdTtlSeconds * 1000);
     const hold = await this.repository.holdCredits({
       accountId: account.id,
       amountMicros,
       idempotencyKey: command.idempotencyKey,
+      expiresAt,
       featureKey: command.featureKey,
       labelKey: command.labelKey,
       modelBindingId: command.modelBindingId,
       requestId: command.requestId,
     });
     return { holdId: hold.id, accountId: account.id, amountMicros: hold.amountMicros };
+  }
+
+  // 过期回收：退还 expiresAt 已过的悬挂冻结（status active→expired）。定时 sweeper 与 /credit/holds/sweep 共用。
+  async sweepExpiredHolds(now?: Date): Promise<number> {
+    return this.repository.sweepExpiredHolds(now);
   }
 
   // run 终态：按 hold 上的 pricing_ref 与真实 token 用量复算实额，clamp 到冻结额（先守不透支），capture 入账。

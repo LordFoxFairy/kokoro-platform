@@ -17,6 +17,9 @@ export interface CreateCreditServerOptions {
   activeChecker?: OwnerSiteActiveChecker;
   // 不传则用 DEFAULT_RUN_BILLING_CONFIG（面向 dev）；生产由 main.ts 从 env 注入。
   runBilling?: RunBillingConfig;
+  // 不传则不起进程内过期回收 sweeper（测试/本地）；生产由 main.ts 按 env 周期注入。
+  // sweeper 只是 /credit/holds/sweep 的定时调用方，停机随 app.close 清理。
+  sweepIntervalMs?: number;
 }
 
 export function createCreditServer(options: CreateCreditServerOptions = {}) {
@@ -36,7 +39,21 @@ export function createCreditServer(options: CreateCreditServerOptions = {}) {
     registerCreditAdminRoutes(instance, repository, service);
   });
 
+  // 进程内过期回收 sweeper：仅在注入周期时启动。unref 不阻止进程退出；SIGINT/SIGTERM→app.close→onClose 清理。
+  const sweepTimer =
+    options.sweepIntervalMs === undefined
+      ? undefined
+      : setInterval(() => {
+          void service.sweepExpiredHolds().catch((error) => {
+            console.error("credit hold sweep failed", error);
+          });
+        }, options.sweepIntervalMs);
+  sweepTimer?.unref();
+
   app.addHook("onClose", async () => {
+    if (sweepTimer) {
+      clearInterval(sweepTimer);
+    }
     if (!options.prisma) {
       await prisma.$disconnect();
     }

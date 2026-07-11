@@ -17,6 +17,10 @@ export const creditEnvSchema = z.object({
   KOKORO_CREDIT_HOLD_EST_INPUT_TOKENS: z.coerce.number().int().nonnegative().default(1000),
   KOKORO_CREDIT_HOLD_EST_OUTPUT_TOKENS: z.coerce.number().int().nonnegative().default(1000),
   KOKORO_CREDIT_HOLD_BUFFER_PERCENT: z.coerce.number().int().min(0).default(20),
+  // 用量冻结 TTL：hold 落 expiresAt = now + TTL，供过期回收兜底调用方崩溃后的悬挂冻结。缺省 24h。
+  KOKORO_CREDIT_HOLD_TTL_SECONDS: z.coerce.number().int().positive().default(86400),
+  // 进程内过期回收 sweeper 周期；缺省 5 分钟。停机随进程退，不引外部调度。
+  KOKORO_CREDIT_HOLD_SWEEP_INTERVAL_SECONDS: z.coerce.number().int().positive().default(300),
 });
 
 export type CreditEnv = z.infer<typeof creditEnvSchema>;

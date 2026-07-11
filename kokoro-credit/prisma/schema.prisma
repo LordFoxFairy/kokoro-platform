@@ -66,6 +66,8 @@ model CreditHold {
   updatedAt      DateTime         @updatedAt
 
   @@index([accountId, status])
+  // 过期回收 sweep 的驱动查询：status='active' AND expiresAt < now。
+  @@index([status, expiresAt])
   @@map("credit_holds")
 }
 

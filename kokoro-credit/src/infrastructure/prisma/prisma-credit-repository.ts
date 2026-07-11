@@ -364,6 +364,52 @@ export class PrismaCreditRepository implements CreditRepository {
     });
   }
 
+  // 过期回收：扫出 expiresAt < now 且仍 active 的 hold，逐条在独立事务里回收（短锁、单条失败不牵连其余）。
+  // 返回真正回收（本次赢下 active→expired 转移）的条数。
+  async sweepExpiredHolds(now: Date = new Date()): Promise<number> {
+    const expired = await this.prisma.creditHold.findMany({
+      where: {
+        status: "active",
+        // NULL expiresAt 的 hold 不设 TTL，lt 比较天然排除。
+        expiresAt: { lt: now },
+      },
+      select: { id: true },
+    });
+
+    let reclaimed = 0;
+    for (const { id } of expired) {
+      if (await this.reclaimExpiredHold(id, now)) {
+        reclaimed += 1;
+      }
+    }
+    return reclaimed;
+  }
+
+  private async reclaimExpiredHold(holdId: string, now: Date): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      const hold = await tx.creditHold.findUnique({ where: { id: holdId } });
+      // 竞态：扫描后可能已被 capture/release 抢走，或 expiresAt 被改。已非过期 active 则跳过，不动余额。
+      if (!hold || hold.status !== "active" || hold.expiresAt === null || hold.expiresAt >= now) {
+        return false;
+      }
+
+      // WHY: 原子条件转移 active→expired，与并发 capture/release/其他 sweep 竞争只赢一个；只有抢到者退冻结额，杜绝双释。
+      const transition = await tx.creditHold.updateMany({
+        where: { id: holdId, status: "active" },
+        data: { status: "expired" },
+      });
+      if (transition.count === 0) {
+        return false;
+      }
+
+      await tx.creditAccount.update({
+        where: { id: hold.accountId },
+        data: { heldMicros: { decrement: hold.amountMicros } },
+      });
+      return true;
+    });
+  }
+
   async getHoldById(id: string): Promise<CreditHold | null> {
     const hold = await this.prisma.creditHold.findUnique({ where: { id } });
     return hold ? mapCreditHold(hold) : null;

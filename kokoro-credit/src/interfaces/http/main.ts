@@ -17,9 +17,11 @@ const runBilling: RunBillingConfig = {
   estInputTokens: String(env.KOKORO_CREDIT_HOLD_EST_INPUT_TOKENS),
   estOutputTokens: String(env.KOKORO_CREDIT_HOLD_EST_OUTPUT_TOKENS),
   bufferPercent: env.KOKORO_CREDIT_HOLD_BUFFER_PERCENT,
+  holdTtlSeconds: env.KOKORO_CREDIT_HOLD_TTL_SECONDS,
 };
+const sweepIntervalMs = env.KOKORO_CREDIT_HOLD_SWEEP_INTERVAL_SECONDS * 1000;
 await startHttpServer({
   moduleName: "kokoro-credit",
   port: env.KOKORO_CREDIT_PORT,
-  createServer: () => createCreditServer({ activeChecker, runBilling }),
+  createServer: () => createCreditServer({ activeChecker, runBilling, sweepIntervalMs }),
 });

@@ -113,6 +113,10 @@ function trackingRepo(): {
       calls.push("releaseHold");
       return hold;
     },
+    sweepExpiredHolds: async () => {
+      calls.push("sweepExpiredHolds");
+      return 0;
+    },
     getHoldById: async () => {
       calls.push("getHoldById");
       return hold;
@@ -340,6 +344,12 @@ describe("CreditService positive-amount guard", () => {
     await service.releaseHold({ holdId: "h1", idempotencyKey: "k3" });
     // holdCredits 前置 getAccountById（owner/site guard）；capture/release 走 holdId 不重复校验。
     expect(calls).toEqual(["getAccountById", "holdCredits", "captureHold", "releaseHold"]);
+  });
+
+  it("delegates sweepExpiredHolds to repository and returns the reclaimed count", async () => {
+    const { repo } = trackingRepo();
+    const service = new CreditService({ ...repo, sweepExpiredHolds: async () => 4 });
+    expect(await service.sweepExpiredHolds()).toBe(4);
   });
 
   it("delegates ensureAccount to repository", async () => {

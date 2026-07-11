@@ -28,6 +28,7 @@ export const creditPlatformModule = {
       "POST /credit/release",
       "POST /credit/usage/hold",
       "POST /credit/usage/settle",
+      "POST /credit/holds/sweep",
     ],
     notes: [
       "扣费权威只在 credit 模块，agent、session、model、payment 都不能直接改余额。",

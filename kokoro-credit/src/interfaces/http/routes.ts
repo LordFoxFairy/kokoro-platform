@@ -266,6 +266,20 @@ export function registerCreditRoutes(app: FastifyInstance, service: CreditServic
     }
   });
 
+  app.post("/credit/holds/sweep", {
+    schema: {
+      tags: ["credit"],
+      summary: "回收已过期的悬挂冻结（运维/测试手动触发；定时 sweeper 亦调此逻辑）",
+    },
+  }, async (_request, reply) => {
+    try {
+      const reclaimed = await service.sweepExpiredHolds();
+      return sendData(reply, { reclaimed });
+    } catch (error) {
+      return handleCreditError(error, reply, "credit.holds_sweep_failed");
+    }
+  });
+
   app.post("/credit/release", {
     schema: {
       tags: ["credit"],
