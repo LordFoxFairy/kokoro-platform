@@ -79,7 +79,9 @@ export class HttpOwnerSiteChecker implements OwnerSiteActiveChecker {
       this.siteCache.set(siteKey);
     }
 
-    const ownerKey = `${account.ownerKind}:${account.ownerId}`;
+    // owner 缓存键含 siteId：ownerId 只在 site 内唯一，跨 site 复用同一 (ownerKind,ownerId)
+    // 缓存会串站——site A 暖缓存后 site B 同 owner 必须重新校验（纲领 §8.2-4）。
+    const ownerKey = `${account.siteId}:${account.ownerKind}:${account.ownerId}`;
     if (!this.ownerCache.has(ownerKey)) {
       const owner = await callService(ctx, {
         baseUrl: this.userBaseUrl,

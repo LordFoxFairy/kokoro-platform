@@ -143,6 +143,28 @@ describe("HttpOwnerSiteChecker active cache", () => {
     expect(calls[2]).toContain("/sites/s2/");
   });
 
+  it("does not leak the owner cache across sites: same owner re-verified per site (纲领 §8.2-4)", async () => {
+    // owner active 随出站次数翻转：site A 出站得 active（暖缓存），site B 出站得 inactive。
+    let ownerActive = true;
+    const { fetchImpl, calls } = countingFetch((url) => (url.includes("/owners/") ? ownerActive : true));
+    const checker = new HttpOwnerSiteChecker("http://user", "http://site", "sec", fetchImpl, cacheOpts);
+    const teamAccount = { ...account, siteId: "sA", ownerKind: "team" as const, ownerId: "X" };
+
+    // site A：(team,X) active → 暖 site+owner 缓存
+    await checker.ensureAccountActive(teamAccount);
+    expect(calls).toHaveLength(2);
+
+    // site B 同 (team,X)：owner 在 B 站语境 inactive → 必须重新出站并按 B 站结果裁决，不吃 A 站缓存
+    ownerActive = false;
+    await expect(checker.ensureAccountActive({ ...teamAccount, siteId: "sB" })).rejects.toMatchObject({
+      code: "owner.inactive",
+      httpStatus: 409,
+    });
+    // fetch spy：site(sB) + owner(sB) 二次出站；owner 共两次，B 站结果未被 A 站缓存串走
+    expect(calls).toHaveLength(4);
+    expect(calls.filter((u) => u.includes("/owners/"))).toHaveLength(2);
+  });
+
   it("evicts oldest entries beyond maxEntries instead of growing unbounded", async () => {
     const { fetchImpl, calls } = countingFetch(() => true);
     const checker = new HttpOwnerSiteChecker("http://user", "http://site", "sec", fetchImpl, {
@@ -153,10 +175,11 @@ describe("HttpOwnerSiteChecker active cache", () => {
     await checker.ensureAccountActive({ ...account, siteId: "s2" });
     await checker.ensureAccountActive({ ...account, siteId: "s3" });
     const before = calls.length;
-    // s1 已被逐出 → 重新出站；owner 仍在缓存
+    // s1 的 site 与 owner 条目均已被逐出（owner 现按 site 维度缓存，随 site 一起淘汰）→ 两者都重新出站
     await checker.ensureAccountActive({ ...account, siteId: "s1" });
-    expect(calls.length).toBe(before + 1);
-    expect(calls[calls.length - 1]).toContain("/sites/s1/");
+    expect(calls.length).toBe(before + 2);
+    expect(calls[calls.length - 2]).toContain("/sites/s1/");
+    expect(calls[calls.length - 1]).toContain("/owners/");
   });
 
   it("bypasses the cache entirely when ttlMs is 0", async () => {
