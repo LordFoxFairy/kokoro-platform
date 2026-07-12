@@ -1,5 +1,11 @@
 import type { PrismaClient } from "../../../generated/prisma/index.js";
-import { registerInternalSecretGuard, registerOpenApi } from "@kokoro/platform-kit";
+import {
+  declareRouteAccess,
+  registerOpenApi,
+  registerRouteAccess,
+  type RouteAccessConfig,
+  type ServiceCaller,
+} from "@kokoro/platform-kit";
 import Fastify from "fastify";
 import {
   CreditService,
@@ -20,9 +26,12 @@ export interface CreateCreditServerOptions {
   // 不传则不起进程内过期回收 sweeper（测试/本地）；生产由 main.ts 按 env 周期注入。
   // sweeper 只是 /credit/holds/sweep 的定时调用方，停机随 app.close 清理。
   sweepIntervalMs?: number;
-  // 入站信任密钥；不传/空串=受保护端点直通（测试/本地）；生产由 main.ts 从 env 注入启用 fail-closed。
-  internalSecret?: string;
+  // 入站访问控制配置；不传=空 secret + 非生产=dev 直通（测试/本地）；生产由 main.ts 注入 per-caller secret。
+  routeAccess?: RouteAccessConfig;
 }
+
+// credit 所需 caller 凭据：session(用量记账)/payment(充值授信)/admin(网关) 入站 + credit(自身出站查 site/user active)。
+const CREDIT_REQUIRED_CALLERS: ServiceCaller[] = ["session", "payment", "admin", "credit"];
 
 export function createCreditServer(options: CreateCreditServerOptions = {}) {
   const app = Fastify({
@@ -31,11 +40,13 @@ export function createCreditServer(options: CreateCreditServerOptions = {}) {
 
   registerOpenApi(app, { title: "Kokoro Credit API", version: "0.1.0" });
 
-  // 服务间被调面：/admin(网关) 与 /credit(payment/agent 记账) 校验内部密钥；未配置直通。
-  registerInternalSecretGuard(app, {
-    secret: options.internalSecret ?? "",
-    protectedPrefixes: ["/admin", "/credit"],
-  });
+  // 服务间被调面：default-internal。/healthz 公开；/admin 仅 admin 网关；/credit 归 runtime-internal。
+  const ra = options.routeAccess ?? { secrets: {}, isProduction: false };
+  registerRouteAccess(app, { ...ra, requiredCallers: CREDIT_REQUIRED_CALLERS });
+  declareRouteAccess(app, { path: "/healthz", exact: true }, "public");
+  declareRouteAccess(app, "/admin", "admin");
+  declareRouteAccess(app, "/credit", "runtime-internal");
+  declareRouteAccess(app, "/docs", "runtime-internal");
 
   const prisma = options.prisma ?? createPrismaClient();
   const repository = new PrismaCreditRepository(prisma);

@@ -1,14 +1,15 @@
-import { startHttpServer } from "@kokoro/platform-kit";
+import { isProductionEnv, loadCallerSecrets, startHttpServer } from "@kokoro/platform-kit";
 import { loadUserEnv } from "../../config/env.js";
 import { createUserServer } from "./server.js";
 
 const env = loadUserEnv();
+const callerSecrets = loadCallerSecrets();
 await startHttpServer({
   moduleName: "kokoro-user",
   port: env.KOKORO_USER_PORT,
   createServer: () =>
     createUserServer({
-      internalSecret: env.KOKORO_INTERNAL_SECRET,
+      routeAccess: { secrets: callerSecrets, isProduction: isProductionEnv() },
       magicLinks: {
         ttlSeconds: env.KOKORO_AUTH_MAGIC_TTL_SECONDS,
         deliveryMode: env.KOKORO_AUTH_MAGIC_DELIVERY,

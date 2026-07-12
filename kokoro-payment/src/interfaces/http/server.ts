@@ -1,4 +1,10 @@
-import { registerInternalSecretGuard, registerOpenApi } from "@kokoro/platform-kit";
+import {
+  declareRouteAccess,
+  registerOpenApi,
+  registerRouteAccess,
+  type RouteAccessConfig,
+  type ServiceCaller,
+} from "@kokoro/platform-kit";
 import type { PrismaClient } from "../../../generated/prisma/index.js";
 import Fastify from "fastify";
 import { PaymentService } from "../../application/payment-service.js";
@@ -15,14 +21,17 @@ export interface CreatePaymentServerOptions {
   prisma?: PrismaClient;
   grantPurchaseCredits: GrantPurchaseCredits;
   reverseCredits: ReverseCredits;
-  // 入站信任密钥；不传/空串=受保护端点直通（测试/本地）；生产由 main.ts 从 env 注入启用 fail-closed。
-  internalSecret?: string;
+  // 入站访问控制配置；不传=空 secret + 非生产=dev 直通（测试/本地）；生产由 main.ts 注入 per-caller secret。
+  routeAccess?: RouteAccessConfig;
   // confirming 悬挂收尾定时器：仅注入周期时启动(测试不注入=无后台 timer)。
   confirmSweepIntervalMs?: number;
   confirmStaleMs?: number;
   // provider webhookSecretRef(env 变量名) → 密钥明文；默认读 process.env。
   webhookSecretResolver?: WebhookSecretResolver;
 }
+
+// payment 所需 caller 凭据：admin(网关) 入站 + payment(自身出站调 credit 授信) 身份。
+const PAYMENT_REQUIRED_CALLERS: ServiceCaller[] = ["admin", "payment"];
 
 export function createPaymentServer(options: CreatePaymentServerOptions) {
   const app = Fastify({
@@ -31,11 +40,17 @@ export function createPaymentServer(options: CreatePaymentServerOptions) {
 
   registerOpenApi(app, { title: "Kokoro Payment API", version: "0.1.0" });
 
-  // 服务间被调面：/admin(网关) 校验内部密钥；未配置直通。
-  registerInternalSecretGuard(app, {
-    secret: options.internalSecret ?? "",
-    protectedPrefixes: ["/admin"],
-  });
+  // 服务间被调面：default-internal。/healthz 与 /payments/webhooks(另验 provider 签名) 公开；
+  // /admin 仅 admin 网关；orders/plans/payment-events 归 runtime-internal。
+  const ra = options.routeAccess ?? { secrets: {}, isProduction: false };
+  registerRouteAccess(app, { ...ra, requiredCallers: PAYMENT_REQUIRED_CALLERS });
+  declareRouteAccess(app, { path: "/healthz", exact: true }, "public");
+  declareRouteAccess(app, "/payments/webhooks", "public");
+  declareRouteAccess(app, "/admin", "admin");
+  declareRouteAccess(app, "/orders", "runtime-internal");
+  declareRouteAccess(app, "/plans", "runtime-internal");
+  declareRouteAccess(app, "/payment-events", "runtime-internal");
+  declareRouteAccess(app, "/docs", "runtime-internal");
 
   const prisma = options.prisma ?? createPrismaClient();
   const repository = new PrismaPaymentRepository(prisma);

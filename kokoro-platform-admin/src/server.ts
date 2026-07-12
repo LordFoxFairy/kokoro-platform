@@ -48,7 +48,7 @@ export interface AdminServerDeps {
   authenticate: Authenticator;
   prisma: PrismaClient;
   approvalGrantThresholdMicros: bigint;
-  // 服务间共享密钥：executeAction 转发时带 x-kokoro-internal-secret(空串=未启用)。
+  // 网关出站身份凭据：转发/拉 manifest/查资源时带 x-kokoro-service:admin + 此 secret（空串=未启用，dev 直通）。
   internalSecret?: string;
 }
 
@@ -160,7 +160,7 @@ export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps
   app.get("/api/manifests", async (request, reply) => {
     const operator = await requireOperator(request, reply);
     if (!operator) return reply;
-    const all = await getManifests(modules);
+    const all = await getManifests(modules, deps.internalSecret ?? "");
     const scoped = all.map((status) =>
       status.online ? { ...status, manifest: filterManifestForOperator(status.manifest, operator) } : status,
     );
@@ -232,7 +232,7 @@ export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps
     const operator = await requireOperator(request, reply);
     if (!operator) return reply;
     try {
-      return sendData(reply, await getSites(modules, operator));
+      return sendData(reply, await getSites(modules, operator, deps.internalSecret ?? ""));
     } catch (error) {
       if (error instanceof GatewayError) {
         return sendError(reply, error.statusCode, "gateway.error", error.message);
@@ -251,7 +251,7 @@ export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps
     if (!permitsSite(operator.scopeSites, query.data.siteId)) {
       return sendError(reply, 403, "operator.auth", "租户超出作用域");
     }
-    return sendData(reply, await getUser360(modules, query.data));
+    return sendData(reply, await getUser360(modules, query.data, deps.internalSecret ?? ""));
   });
 
   app.get("/api/resource", async (request, reply) => {
@@ -262,10 +262,16 @@ export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps
       return sendError(reply, 400, "request.invalid", "无效的查询参数", { issues: query.error.issues });
     }
     try {
-      const rows = await proxyResource(modules, query.data.moduleId, query.data.route, {
-        operator,
-        ...(query.data.siteId === undefined ? {} : { siteId: query.data.siteId }),
-      });
+      const rows = await proxyResource(
+        modules,
+        query.data.moduleId,
+        query.data.route,
+        {
+          operator,
+          ...(query.data.siteId === undefined ? {} : { siteId: query.data.siteId }),
+        },
+        deps.internalSecret ?? "",
+      );
       return sendData(reply, rows);
     } catch (error) {
       if (error instanceof GatewayError) {
@@ -304,7 +310,7 @@ export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps
     };
     try {
       // 先 prepare(解析+鉴权+理由)；据 action 种类/金额判定是否需二次审批。
-      const prepared = await prepareAction(modules, deps.audit, actionRequest, ctx.requestId, operator);
+      const prepared = await prepareAction(modules, deps.audit, actionRequest, ctx.requestId, operator, deps.internalSecret ?? "");
       if (needsApproval(prepared.kind, actionRequest, deps.approvalGrantThresholdMicros)) {
         const approval = await createApprovalRequest(deps.prisma, {
           request: actionRequest,
@@ -360,7 +366,7 @@ export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps
     // 复核执行：以 checker 身份原样重跑（prepare 会再校验权限/作用域并审计执行）。
     const execute = async (held: ActionRequest): Promise<ApprovalExecutionResult> => {
       try {
-        const prepared = await prepareAction(modules, deps.audit, held, ctx.requestId, operator);
+        const prepared = await prepareAction(modules, deps.audit, held, ctx.requestId, operator, deps.internalSecret ?? "");
         await executeAction(prepared, deps.audit, held, ctx.requestId, deps.internalSecret ?? "");
         return { statusCode: 200 };
       } catch (error) {

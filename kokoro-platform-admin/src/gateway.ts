@@ -29,9 +29,19 @@ function joinUrl(baseUrl: string, path: string): string {
   return new URL(path, baseUrl).toString();
 }
 
-async function fetchManifest(module: ModuleConfig): Promise<ModuleStatus> {
+// 网关出站身份=admin：非空 secret 时带 x-kokoro-service:admin + 内部密钥，供模块 route-access 校验 admin 等级。
+function adminCallerHeaders(internalSecret: string): Record<string, string> {
+  if (internalSecret.length === 0) {
+    return {};
+  }
+  return { "x-kokoro-service": "admin", "x-kokoro-internal-secret": internalSecret };
+}
+
+async function fetchManifest(module: ModuleConfig, internalSecret = ""): Promise<ModuleStatus> {
   try {
-    const response = await fetch(joinUrl(module.baseUrl, module.manifestPath));
+    const response = await fetch(joinUrl(module.baseUrl, module.manifestPath), {
+      headers: adminCallerHeaders(internalSecret),
+    });
     if (!response.ok) {
       return { id: module.id, label: module.label, baseUrl: module.baseUrl, online: false, error: `HTTP ${response.status}` };
     }
@@ -49,8 +59,8 @@ async function fetchManifest(module: ModuleConfig): Promise<ModuleStatus> {
   }
 }
 
-export async function getManifests(modules: ModuleConfig[]): Promise<ModuleStatus[]> {
-  return Promise.all(modules.map(fetchManifest));
+export async function getManifests(modules: ModuleConfig[], internalSecret = ""): Promise<ModuleStatus[]> {
+  return Promise.all(modules.map((module) => fetchManifest(module, internalSecret)));
 }
 
 export class GatewayError extends Error {
@@ -99,6 +109,7 @@ export async function proxyResource(
   moduleId: string,
   route: string,
   scopeInput?: Operator | ResourceScopeOptions,
+  internalSecret = "",
 ): Promise<ResourceRow[]> {
   const scope = normalizeResourceScope(scopeInput);
   const module = modules.find((candidate) => candidate.id === moduleId);
@@ -106,7 +117,7 @@ export async function proxyResource(
     throw new GatewayError(`unknown module: ${moduleId}`, 400);
   }
 
-  const status = await fetchManifest(module);
+  const status = await fetchManifest(module, internalSecret);
   if (!status.online) {
     throw new GatewayError(`module offline: ${status.error}`, 502);
   }
@@ -123,7 +134,9 @@ export async function proxyResource(
     throw new GatewayError(`tenant out of scope: ${scope.siteId}`, 403);
   }
 
-  const response = await fetch(joinUrl(module.baseUrl, route));
+  const response = await fetch(joinUrl(module.baseUrl, route), {
+    headers: adminCallerHeaders(internalSecret),
+  });
   if (!response.ok) {
     throw new GatewayError(`upstream returned HTTP ${response.status}`, 502);
   }
@@ -193,13 +206,14 @@ export async function prepareAction(
   request: ActionRequest,
   requestId: string,
   operator: Operator,
+  internalSecret = "",
 ): Promise<PreparedAction> {
   const module = modules.find((candidate) => candidate.id === request.moduleId);
   if (!module) {
     throw new GatewayError(`unknown module: ${request.moduleId}`, 400);
   }
 
-  const status = await fetchManifest(module);
+  const status = await fetchManifest(module, internalSecret);
   if (!status.online) {
     throw new GatewayError(`module offline: ${status.error}`, 502);
   }
@@ -264,6 +278,8 @@ export async function executeAction(
     headers["x-kokoro-site-id"] = request.siteId;
   }
   if (internalSecret.length > 0) {
+    // 出站身份=admin：模块 route-access 校验 (caller=admin) ∧ (secret 匹配 admin)。
+    headers["x-kokoro-service"] = "admin";
     headers["x-kokoro-internal-secret"] = internalSecret;
   }
   // operator principal 头：模块经 platform-kit readRequestContext 解析，审计归因到真实操作者(kind=operator)而非 system。
@@ -335,8 +351,12 @@ function readAmountMicros(body: unknown): bigint | null {
 }
 
 // 站点选择器数据源；按 operator 租户作用域过滤（超级权限见全部）。
-export async function getSites(modules: ModuleConfig[], operator: Operator): Promise<ResourceRow[]> {
-  const sites = await proxyResource(modules, "site", "/admin/sites");
+export async function getSites(
+  modules: ModuleConfig[],
+  operator: Operator,
+  internalSecret = "",
+): Promise<ResourceRow[]> {
+  const sites = await proxyResource(modules, "site", "/admin/sites", undefined, internalSecret);
   if (operator.scopeSites.includes("*")) {
     return sites;
   }
@@ -371,11 +391,15 @@ export interface User360 {
 
 // 用户360：按 (siteId, owner) 聚合身份 + 积分账户 + 订单。复用各模块 list 端点 + 站内过滤；
 // 某模块离线则该段降级为空，不拖垮整体。
-export async function getUser360(modules: ModuleConfig[], query: User360Query): Promise<User360> {
+export async function getUser360(
+  modules: ModuleConfig[],
+  query: User360Query,
+  internalSecret = "",
+): Promise<User360> {
   const [accounts, orders, users] = await Promise.all([
-    proxyResource(modules, "credit", "/admin/credits/accounts").catch(() => [] as ResourceRow[]),
-    proxyResource(modules, "payment", "/admin/payments/orders").catch(() => [] as ResourceRow[]),
-    proxyResource(modules, "user", "/admin/users").catch(() => [] as ResourceRow[]),
+    proxyResource(modules, "credit", "/admin/credits/accounts", undefined, internalSecret).catch(() => [] as ResourceRow[]),
+    proxyResource(modules, "payment", "/admin/payments/orders", undefined, internalSecret).catch(() => [] as ResourceRow[]),
+    proxyResource(modules, "user", "/admin/users", undefined, internalSecret).catch(() => [] as ResourceRow[]),
   ]);
 
   const creditAccount =

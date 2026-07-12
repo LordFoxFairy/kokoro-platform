@@ -1,15 +1,19 @@
-import { startHttpServer } from "@kokoro/platform-kit";
+import { isProductionEnv, loadCallerSecrets, startHttpServer } from "@kokoro/platform-kit";
 import type { RunBillingConfig } from "../../application/credit-service.js";
 import { loadCreditEnv } from "../../config/env.js";
 import { HttpOwnerSiteChecker } from "../../infrastructure/http/owner-site-checker.js";
 import { createCreditServer } from "./server.js";
 
 const env = loadCreditEnv();
+const callerSecrets = loadCallerSecrets();
+// credit 出站身份=credit；调 user/site active 时带 x-kokoro-service:credit + 该 caller secret。
+// 遗留单一 KOKORO_INTERNAL_SECRET 作缺失回退，便于灰度迁移。
+const creditOutboundSecret = callerSecrets.credit ?? env.KOKORO_INTERNAL_SECRET;
 // 生产启用跨服务 enforcement：记账前校验 owner/site active。
 const activeChecker = new HttpOwnerSiteChecker(
   env.KOKORO_USER_BASE_URL,
   env.KOKORO_SITE_BASE_URL,
-  env.KOKORO_INTERNAL_SECRET,
+  creditOutboundSecret,
   undefined,
   {
     ttlMs: env.KOKORO_CREDIT_ACTIVE_CACHE_TTL_SECONDS * 1000,
@@ -33,6 +37,6 @@ await startHttpServer({
       activeChecker,
       runBilling,
       sweepIntervalMs,
-      internalSecret: env.KOKORO_INTERNAL_SECRET,
+      routeAccess: { secrets: callerSecrets, isProduction: isProductionEnv() },
     }),
 });

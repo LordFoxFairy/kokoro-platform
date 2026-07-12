@@ -1,5 +1,11 @@
 import type { PrismaClient } from "../../../generated/prisma/index.js";
-import { registerInternalSecretGuard, registerOpenApi } from "@kokoro/platform-kit";
+import {
+  declareRouteAccess,
+  registerOpenApi,
+  registerRouteAccess,
+  type RouteAccessConfig,
+  type ServiceCaller,
+} from "@kokoro/platform-kit";
 import Fastify from "fastify";
 import { SiteService } from "../../application/site-service.js";
 import { createPrismaClient } from "../../infrastructure/prisma/prisma-client.js";
@@ -9,9 +15,12 @@ import { registerSiteRoutes } from "./routes.js";
 
 export interface CreateSiteServerOptions {
   prisma?: PrismaClient;
-  // 入站信任密钥；不传/空串=受保护端点直通（测试/本地）；生产由 main.ts 从 env 注入启用 fail-closed。
-  internalSecret?: string;
+  // 入站访问控制配置；不传=空 secret + 非生产=dev 直通（测试/本地）；生产由 main.ts 注入 per-caller secret。
+  routeAccess?: RouteAccessConfig;
 }
+
+// site 所需 caller 凭据：credit(查 owner/site active) + admin(网关) 入站。site 无出站。
+const SITE_REQUIRED_CALLERS: ServiceCaller[] = ["credit", "admin"];
 
 export function createSiteServer(options: CreateSiteServerOptions = {}) {
   const app = Fastify({
@@ -20,11 +29,18 @@ export function createSiteServer(options: CreateSiteServerOptions = {}) {
 
   registerOpenApi(app, { title: "Kokoro Site API", version: "0.1.0" });
 
-  // 服务间被调面：/admin(网关) 与 /sites(credit 查 active) 校验内部密钥；未配置直通。
-  registerInternalSecretGuard(app, {
-    secret: options.internalSecret ?? "",
-    protectedPrefixes: ["/admin", "/sites"],
-  });
+  // 服务间被调面：default-internal。/healthz 公开；/admin 仅 admin 网关；其余（含 /sites）归 runtime-internal。
+  const ra = options.routeAccess ?? { secrets: {}, isProduction: false };
+  registerRouteAccess(app, { ...ra, requiredCallers: SITE_REQUIRED_CALLERS });
+  declareRouteAccess(app, { path: "/healthz", exact: true }, "public");
+  declareRouteAccess(app, "/admin", "admin");
+  declareRouteAccess(app, "/sites", "runtime-internal");
+  declareRouteAccess(app, "/site-domains", "runtime-internal");
+  declareRouteAccess(app, "/site-apps", "runtime-internal");
+  declareRouteAccess(app, "/site-policies", "runtime-internal");
+  declareRouteAccess(app, "/site-feature-flags", "runtime-internal");
+  declareRouteAccess(app, "/site-context", "runtime-internal");
+  declareRouteAccess(app, "/docs", "runtime-internal");
 
   const prisma = options.prisma ?? createPrismaClient();
   const repository = new PrismaSiteRepository(prisma);

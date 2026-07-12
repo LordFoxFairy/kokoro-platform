@@ -1,4 +1,4 @@
-import { startHttpServer } from "@kokoro/platform-kit";
+import { isProductionEnv, loadCallerSecrets, startHttpServer } from "@kokoro/platform-kit";
 import { loadHubEnv } from "../../config/env.js";
 import { loadHubStoreLocation } from "../../config/storage.js";
 import { createMongoClient, hubCollections } from "../../infrastructure/mongo/mongo-client.js";
@@ -8,6 +8,7 @@ import { makePackageStore } from "../../infrastructure/packages/package-store.js
 import { createHubServer } from "./server.js";
 
 const env = loadHubEnv();
+const callerSecrets = loadCallerSecrets();
 const client = createMongoClient(env.KOKORO_HUB_MONGO_URL);
 await client.connect();
 const collections = hubCollections(client.db(env.KOKORO_HUB_MONGO_DB));
@@ -42,6 +43,7 @@ await startHttpServer({
         maxPackages: env.KOKORO_HUB_QUOTA_MAX_PACKAGES,
         maxBytes: env.KOKORO_HUB_QUOTA_MAX_BYTES,
       },
+      routeAccess: { secrets: callerSecrets, isProduction: isProductionEnv() },
       onClose: () => client.close(),
     }),
 });

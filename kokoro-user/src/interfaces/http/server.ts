@@ -1,4 +1,11 @@
-import { registerInternalSecretGuard, registerOpenApi, sendError } from "@kokoro/platform-kit";
+import {
+  declareRouteAccess,
+  registerOpenApi,
+  registerRouteAccess,
+  sendError,
+  type RouteAccessConfig,
+  type ServiceCaller,
+} from "@kokoro/platform-kit";
 import type { PrismaClient } from "@prisma/client";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import Fastify from "fastify";
@@ -36,9 +43,12 @@ export interface CreateUserServerOptions {
   prisma?: PrismaClient;
   sessionSigning?: SessionSigningOptions;
   magicLinks?: MagicLinkServerOptions;
-  // 入站信任密钥；不传/空串=受保护端点直通（测试/本地）；生产由 main.ts 从 env 注入启用 fail-closed。
-  internalSecret?: string;
+  // 入站访问控制配置；不传=空 secret + 非生产=dev 直通（测试/本地）；生产由 main.ts 注入 per-caller secret。
+  routeAccess?: RouteAccessConfig;
 }
+
+// user 所需 caller 凭据：credit(查 owner active)/web-bff(magic-links)/session(收编的 /auth/sessions)/admin(网关) 入站。
+const USER_REQUIRED_CALLERS: ServiceCaller[] = ["credit", "web-bff", "session", "admin"];
 
 export function createUserServer(options: CreateUserServerOptions = {}) {
   const app = Fastify({
@@ -48,11 +58,21 @@ export function createUserServer(options: CreateUserServerOptions = {}) {
   registerOpenApi(app, { title: "Kokoro User API", version: "0.1.0" });
   registerUserErrorHandler(app);
 
-  // 服务间被调面：/admin(网关) 与 /owners(credit 查 active) 校验内部密钥；未配置直通。
-  registerInternalSecretGuard(app, {
-    secret: options.internalSecret ?? "",
-    protectedPrefixes: ["/admin", "/owners"],
-  });
+  // 服务间被调面：default-internal。/healthz 公开；/auth/magic-links 仅 web-bff；
+  // /auth/sessions 收编 runtime-internal（纲领 §5.1：不再任意签发 oracle）；/admin 仅 admin 网关；其余归 runtime-internal。
+  const ra = options.routeAccess ?? { secrets: {}, isProduction: false };
+  registerRouteAccess(app, { ...ra, requiredCallers: USER_REQUIRED_CALLERS });
+  declareRouteAccess(app, { path: "/healthz", exact: true }, "public");
+  declareRouteAccess(app, "/auth/magic-links", "web-bff");
+  declareRouteAccess(app, "/auth/sessions", "runtime-internal");
+  declareRouteAccess(app, "/owners", "runtime-internal");
+  declareRouteAccess(app, "/users", "runtime-internal");
+  declareRouteAccess(app, "/me", "runtime-internal");
+  declareRouteAccess(app, "/teams", "runtime-internal");
+  declareRouteAccess(app, "/service-accounts", "runtime-internal");
+  declareRouteAccess(app, "/memberships", "runtime-internal");
+  declareRouteAccess(app, "/admin", "admin");
+  declareRouteAccess(app, "/docs", "runtime-internal");
 
   const prisma = options.prisma ?? createPrismaClient();
   const repository = new PrismaUserRepository(prisma);

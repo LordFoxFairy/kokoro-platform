@@ -1,5 +1,12 @@
 import multipart from "@fastify/multipart";
-import { registerErrorHandler, registerOpenApi } from "@kokoro/platform-kit";
+import {
+  declareRouteAccess,
+  registerErrorHandler,
+  registerOpenApi,
+  registerRouteAccess,
+  type RouteAccessConfig,
+  type ServiceCaller,
+} from "@kokoro/platform-kit";
 import Fastify from "fastify";
 import { McpHubService } from "../../application/mcp-hub-service.js";
 import { SkillHubService, type QuotaLimits } from "../../application/skill-hub-service.js";
@@ -21,7 +28,13 @@ export interface CreateHubServerOptions {
   packageStore?: PackageStore | null;
   // 关闭 Mongo 连接等外部资源；由 main 注入（测试自管连接则省略）。
   onClose?: () => Promise<void>;
+  // 入站访问控制配置；不传=空 secret + 非生产=dev 直通（测试/本地）；生产由 main.ts 注入 per-caller secret。
+  routeAccess?: RouteAccessConfig;
 }
+
+// hub 所需 caller 凭据：session(运行时 pool 解析) + admin(网关 manifest/审核/运营) 入站。
+// 注：self-service(web-bff) 三面细分留待 HUB-AUTHZ；本项先把整个 /hub 归 runtime-internal，堵住无鉴权缺口。
+const HUB_REQUIRED_CALLERS: ServiceCaller[] = ["session", "admin"];
 
 export function createHubServer(options: CreateHubServerOptions) {
   const app = Fastify({ logger: false });
@@ -30,6 +43,13 @@ export function createHubServer(options: CreateHubServerOptions) {
   registerErrorHandler(app, (error, request) => {
     request.log.error({ error }, "unexpected hub http error");
   });
+
+  // 服务间被调面：default-internal。/healthz 公开；其余 /hub/** 归 runtime-internal（session 读 pool / admin 网关运营）。
+  const ra = options.routeAccess ?? { secrets: {}, isProduction: false };
+  registerRouteAccess(app, { ...ra, requiredCallers: HUB_REQUIRED_CALLERS });
+  declareRouteAccess(app, { path: "/healthz", exact: true }, "public");
+  declareRouteAccess(app, "/hub", "runtime-internal");
+  declareRouteAccess(app, "/docs", "runtime-internal");
   // multipart 档上传（zip 单文件）；JSON base64 档限制在上传路由 bodyLimit。
   void app.register(multipart, { limits: { files: 1, fileSize: MAX_UPLOAD_ZIP_BYTES } });
 

@@ -1,6 +1,7 @@
 import { z, type ZodType } from "zod";
 import { AppError } from "../domain/errors.js";
 import { contextHeaders, type RequestContext } from "./request-context.js";
+import { SERVICE_CALLER_HEADER, type ServiceCaller } from "./route-access.js";
 
 export interface CallServiceOptions<T> {
   baseUrl: string;
@@ -8,7 +9,10 @@ export interface CallServiceOptions<T> {
   path: string;
   schema: ZodType<T>;
   body?: unknown;
-  // 内部信任头：网关/服务间认证，proxy 模式校验。
+  // 出站调用方身份：携带 x-kokoro-service 让下游按访问等级 allowlist 校验。
+  // 与 internalSecret 配套（internalSecret 应为该 caller 的独立 secret）。
+  caller?: ServiceCaller;
+  // 内部信任头：per-caller secret。@deprecated 不带 caller 时为 legacy 单 secret 模式（下游按旧共享密钥比对）。
   internalSecret?: string;
   // 可注入便于测试；默认全局 fetch。
   fetchImpl?: typeof fetch;
@@ -23,6 +27,9 @@ const dataEnvelope = z.object({ data: z.unknown() });
 export async function callService<T>(ctx: RequestContext, opts: CallServiceOptions<T>): Promise<T> {
   const doFetch = opts.fetchImpl ?? fetch;
   const headers: Record<string, string> = { ...contextHeaders(ctx) };
+  if (opts.caller !== undefined) {
+    headers[SERVICE_CALLER_HEADER] = opts.caller;
+  }
   if (opts.internalSecret !== undefined) {
     headers["x-kokoro-internal-secret"] = opts.internalSecret;
   }

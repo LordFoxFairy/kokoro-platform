@@ -29,6 +29,7 @@ async function ensureAccountId(
     path: "/credit/accounts/ensure",
     schema: ensureCreditAccountResponseSchema,
     body: { ownerKind, ownerId },
+    caller: "payment",
     ...secretOpt(internalSecret),
   });
   return account.id;
@@ -54,6 +55,7 @@ export function createCreditGrantClient(
         idempotencyKey: input.idempotencyKey,
         reason: input.reason,
       },
+      caller: "payment",
       ...secretOpt(internalSecret),
     });
   };
@@ -79,6 +81,7 @@ export function createCreditReverseClient(
         idempotencyKey: input.idempotencyKey,
         reason: input.reason,
       },
+      caller: "payment",
       ...secretOpt(internalSecret),
     });
   };

@@ -17,7 +17,9 @@ const envSchema = z.object({
   KOKORO_ADMIN_DEV_OPERATOR: z.string().min(1).default("admin@kokoro.local"),
   // BFF↔网关内部代理密钥，逗号分隔支持轮换（proxy 模式校验）。
   KOKORO_ADMIN_PROXY_SECRETS: z.string().default(""),
-  // 服务间共享密钥(转发到模块时携带,模块侧 internal-secret-guard 校验);空=未启用。
+  // admin 网关出站身份凭据：转发到模块时带 x-kokoro-service:admin + 此 secret，模块 route-access 校验 admin 等级。
+  KOKORO_INTERNAL_SECRET_ADMIN: z.string().default(""),
+  // @deprecated 遗留单一共享密钥，仅作 KOKORO_INTERNAL_SECRET_ADMIN 缺失时的回退。
   KOKORO_INTERNAL_SECRET: z.string().default(""),
   KOKORO_SITE_BASE_URL: z.string().url().default("http://kokoro-site:4201"),
   KOKORO_USER_BASE_URL: z.string().url().default("http://kokoro-user:4211"),
@@ -39,7 +41,7 @@ export interface ModuleConfig {
 export interface AdminConfig {
   adminPort: number;
   adminDbUrl: string;
-  // 服务间共享密钥：executeAction 转发时带 x-kokoro-internal-secret;空串=未启用。
+  // 网关出站身份凭据（KOKORO_INTERNAL_SECRET_ADMIN）：转发/拉 manifest/查资源时带 x-kokoro-service:admin + 此 secret。
   internalSecret: string;
   approvalGrantThresholdMicros: bigint;
   auth: AuthConfig;
@@ -61,7 +63,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AdminConfig {
   return {
     adminPort: parsed.KOKORO_ADMIN_PORT,
     adminDbUrl: parsed.DATABASE_URL_ADMIN,
-    internalSecret: parsed.KOKORO_INTERNAL_SECRET,
+    // per-caller admin secret 优先，遗留单一密钥作回退（灰度迁移）。
+    internalSecret: parsed.KOKORO_INTERNAL_SECRET_ADMIN || parsed.KOKORO_INTERNAL_SECRET,
     approvalGrantThresholdMicros: BigInt(parsed.KOKORO_APPROVAL_GRANT_THRESHOLD_MICROS),
     auth: {
       mode: parsed.KOKORO_ADMIN_AUTH_MODE,

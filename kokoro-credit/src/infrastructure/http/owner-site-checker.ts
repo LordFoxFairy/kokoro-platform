@@ -70,6 +70,7 @@ export class HttpOwnerSiteChecker implements OwnerSiteActiveChecker {
         method: "GET",
         path: `/sites/${account.siteId}/active`,
         schema: siteActiveResponseSchema,
+        caller: "credit",
         internalSecret: this.internalSecret,
         ...fetchOpt,
       });
@@ -88,6 +89,7 @@ export class HttpOwnerSiteChecker implements OwnerSiteActiveChecker {
         method: "GET",
         path: `/owners/${account.ownerKind}/${account.ownerId}/active`,
         schema: ownerActiveResponseSchema,
+        caller: "credit",
         internalSecret: this.internalSecret,
         ...fetchOpt,
       });
