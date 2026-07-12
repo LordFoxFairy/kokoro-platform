@@ -22,7 +22,7 @@ async function init(): Promise<void> {
 const ready = init();
 
 async function poolNames(): Promise<string[]> {
-  const response = await app.inject({ method: "GET", url: "/hub/skills/pool", query: { namespace: NS } });
+  const response = await app.inject({ method: "GET", url: "/hub/admin/skills/pool", query: { namespace: NS } });
   expect(response.statusCode).toBe(200);
   return response.json().data.skills.map((skill: { name: string }) => skill.name);
 }
@@ -64,7 +64,7 @@ describe("hub curation + review (real mongo)", () => {
     await insertSkill(hub.collections, { scope: NS, name: "writer" });
     await insertSkill(hub.collections, { scope: NS, name: "mine", pinned: true });
 
-    const response = await app.inject({ method: "GET", url: "/hub/skills/pool", query: { namespace: NS } });
+    const response = await app.inject({ method: "GET", url: "/hub/admin/skills/pool", query: { namespace: NS } });
     const skills = response.json().data.skills;
     expect(skills.map((skill: { name: string; scope: string }) => [skill.name, skill.scope])).toEqual([
       ["mine", NS],
@@ -88,7 +88,7 @@ describe("hub curation + review (real mongo)", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/official/beta/curation",
+      url: "/hub/admin/skills/official/beta/curation",
       payload: { pinned: true, display_weight: 7, category: "featured" },
     });
     expect(response.statusCode).toBe(200);
@@ -102,7 +102,7 @@ describe("hub curation + review (real mongo)", () => {
   it("returns 404 when curating a missing or soft-deleted skill", async () => {
     const missing = await app.inject({
       method: "POST",
-      url: "/hub/skills/official/ghost/curation",
+      url: "/hub/admin/skills/official/ghost/curation",
       payload: { pinned: true },
     });
     expect(missing.statusCode).toBe(404);
@@ -111,7 +111,7 @@ describe("hub curation + review (real mongo)", () => {
     await insertSkill(hub.collections, { scope: "official", name: "gone", deleted_at: Date.now() });
     const deleted = await app.inject({
       method: "POST",
-      url: "/hub/skills/official/gone/curation",
+      url: "/hub/admin/skills/official/gone/curation",
       payload: { pinned: true },
     });
     expect(deleted.statusCode).toBe(404);
@@ -123,7 +123,7 @@ describe("hub curation + review (real mongo)", () => {
 
     const rejected = await app.inject({
       method: "POST",
-      url: "/hub/skills/official/writer/review",
+      url: "/hub/admin/skills/official/writer/review",
       payload: { status: "rejected" },
     });
     expect(rejected.statusCode).toBe(200);
@@ -131,7 +131,7 @@ describe("hub curation + review (real mongo)", () => {
 
     const approved = await app.inject({
       method: "POST",
-      url: "/hub/skills/official/writer/review",
+      url: "/hub/admin/skills/official/writer/review",
       payload: { status: "approved" },
     });
     expect(approved.statusCode).toBe(200);
@@ -141,7 +141,7 @@ describe("hub curation + review (real mongo)", () => {
   it("returns 404 when reviewing a missing skill", async () => {
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/official/ghost/review",
+      url: "/hub/admin/skills/official/ghost/review",
       payload: { status: "pending" },
     });
     expect(response.statusCode).toBe(404);

@@ -48,7 +48,7 @@ describe("hub HTTP API (real mongo)", () => {
 
     const response = await app.inject({
       method: "GET",
-      url: "/hub/skills/pool",
+      url: "/hub/admin/skills/pool",
       query: { namespace: NS },
       headers: { "x-kokoro-request-id": "req_pool" },
     });
@@ -62,7 +62,7 @@ describe("hub HTTP API (real mongo)", () => {
   });
 
   it("rejects a pool query without a namespace", async () => {
-    const response = await app.inject({ method: "GET", url: "/hub/skills/pool" });
+    const response = await app.inject({ method: "GET", url: "/hub/admin/skills/pool" });
     expect(response.statusCode).toBe(400);
     expect(response.json().error.code).toBe("request.invalid");
   });
@@ -72,13 +72,13 @@ describe("hub HTTP API (real mongo)", () => {
 
     const disabled = await app.inject({
       method: "POST",
-      url: "/hub/skills/official/writer/disable",
+      url: "/hub/admin/skills/official/writer/disable",
       payload: { namespace: NS },
     });
     expect(disabled.statusCode).toBe(200);
     expect(disabled.json().data).toEqual({ ok: true });
 
-    const pool = await app.inject({ method: "GET", url: "/hub/skills/pool", query: { namespace: NS } });
+    const pool = await app.inject({ method: "GET", url: "/hub/admin/skills/pool", query: { namespace: NS } });
     expect(pool.json().data.skills).toEqual([]);
   });
 
@@ -91,7 +91,7 @@ describe("hub HTTP API (real mongo)", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/official/guard/disable",
+      url: "/hub/admin/skills/official/guard/disable",
       payload: { namespace: NS },
     });
 
@@ -104,7 +104,7 @@ describe("hub HTTP API (real mongo)", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/writer/official-flags",
+      url: "/hub/admin/skills/writer/official-flags",
       payload: { required: true },
     });
     expect(response.statusCode).toBe(200);
@@ -112,7 +112,7 @@ describe("hub HTTP API (real mongo)", () => {
     // now required: a disable attempt is rejected
     const disabled = await app.inject({
       method: "POST",
-      url: "/hub/skills/official/writer/disable",
+      url: "/hub/admin/skills/official/writer/disable",
       payload: { namespace: NS },
     });
     expect(disabled.statusCode).toBe(409);
@@ -121,7 +121,7 @@ describe("hub HTTP API (real mongo)", () => {
   it("rejects an empty official-flags body", async () => {
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/writer/official-flags",
+      url: "/hub/admin/skills/writer/official-flags",
       payload: {},
     });
     expect(response.statusCode).toBe(400);
@@ -130,11 +130,11 @@ describe("hub HTTP API (real mongo)", () => {
   it("soft deletes a skill", async () => {
     await insertSkill(hub.collections, { scope: NS, name: "mine" });
 
-    const deleted = await app.inject({ method: "DELETE", url: `/hub/skills/${NS}/mine` });
+    const deleted = await app.inject({ method: "DELETE", url: `/hub/admin/skills/${NS}/mine` });
     expect(deleted.statusCode).toBe(200);
     expect(deleted.json().data).toEqual({ ok: true });
 
-    const pool = await app.inject({ method: "GET", url: "/hub/skills/pool", query: { namespace: NS } });
+    const pool = await app.inject({ method: "GET", url: "/hub/admin/skills/pool", query: { namespace: NS } });
     expect(pool.json().data.skills).toEqual([]);
   });
 
@@ -142,7 +142,7 @@ describe("hub HTTP API (real mongo)", () => {
     await insertSkill(hub.collections, { scope: NS, name: "one", package_size: 100 });
     await insertSkill(hub.collections, { scope: NS, name: "two", package_size: 250 });
 
-    const response = await app.inject({ method: "GET", url: "/hub/skills/quota", query: { namespace: NS } });
+    const response = await app.inject({ method: "GET", url: "/hub/admin/skills/quota", query: { namespace: NS } });
     expect(response.statusCode).toBe(200);
     expect(response.json().data).toEqual({
       namespace: NS,

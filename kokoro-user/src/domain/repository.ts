@@ -4,6 +4,12 @@ import type { Team } from "./team.js";
 import type { DeleteInput, ListOptions, RestoreInput } from "./user-deletion.js";
 import type { User, UserStatus } from "./user.js";
 
+// hub self 面授权用窄口结果：active=该 user 是所属 team 的活跃成员（team 也活跃）；role=其角色或 null。
+export interface MembershipCheckResult {
+  active: boolean;
+  role: MembershipRole | null;
+}
+
 export interface EnsureUserInput {
   siteId: string;
   externalUserId: string;
@@ -62,6 +68,8 @@ export interface UserRepository {
   setMembershipRole(input: SetMembershipRoleInput): Promise<SetMembershipRoleResult>;
   // 下游记账前校验：(siteId,ownerKind,ownerId) 对应实体是否 active；不存在/跨站/禁用均返回 false。
   resolveOwnerActive(query: OwnerActiveQuery): Promise<boolean>;
+  // hub self 面授权窄口：(teamId,userId) 是否活跃成员及角色；无成员关系/team 非活跃均 fail-closed 为 inactive。
+  checkMembership(teamId: string, userId: string): Promise<MembershipCheckResult>;
   // 管理员显式改 status；返回 null 表示用户不存在。disabled→disabledAt=now，active→disabledAt=null。
   setUserStatus(userId: string, status: UserStatus): Promise<User | null>;
   deleteUser(input: DeleteInput): Promise<User>;

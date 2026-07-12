@@ -134,7 +134,7 @@ describe("hub upload API (real mongo + real minio)", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/upload/preview",
+      url: "/hub/admin/skills/upload/preview",
       payload: jsonUpload(zipOf({ writer: files })),
       headers: { "x-kokoro-request-id": "req_preview" },
     });
@@ -161,7 +161,7 @@ describe("hub upload API (real mongo + real minio)", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/upload/preview",
+      url: "/hub/admin/skills/upload/preview",
       payload: multipartBody(boundary, { namespace: NS }, zipOf({ writer: files })),
       headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
     });
@@ -180,7 +180,7 @@ describe("hub upload API (real mongo + real minio)", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/upload/confirm",
+      url: "/hub/admin/skills/upload/confirm",
       payload: jsonUpload(zipOf({ writer: files })),
     });
 
@@ -208,7 +208,7 @@ describe("hub upload API (real mongo + real minio)", () => {
     // 版本历史：append-only 一条。
     const revisions = await app.inject({
       method: "GET",
-      url: `/hub/skills/${NS}/writer/revisions`,
+      url: `/hub/admin/skills/${NS}/writer/revisions`,
     });
     expect(revisions.statusCode).toBe(200);
     expect(revisions.json().data.revisions).toHaveLength(1);
@@ -223,16 +223,16 @@ describe("hub upload API (real mongo + real minio)", () => {
 
   it("republishing identical content is idempotent (unchanged, no new history)", async () => {
     const zip = zipOf({ writer: { "SKILL.md": skillMd("writer") } });
-    await app.inject({ method: "POST", url: "/hub/skills/upload/confirm", payload: jsonUpload(zip) });
+    await app.inject({ method: "POST", url: "/hub/admin/skills/upload/confirm", payload: jsonUpload(zip) });
 
     const again = await app.inject({
       method: "POST",
-      url: "/hub/skills/upload/confirm",
+      url: "/hub/admin/skills/upload/confirm",
       payload: jsonUpload(zip),
     });
     expect(again.json().data.results[0]).toMatchObject({ status: "unchanged", revision: 1 });
 
-    const revisions = await app.inject({ method: "GET", url: `/hub/skills/${NS}/writer/revisions` });
+    const revisions = await app.inject({ method: "GET", url: `/hub/admin/skills/${NS}/writer/revisions` });
     expect(revisions.json().data.revisions).toHaveLength(1);
   });
 
@@ -241,17 +241,17 @@ describe("hub upload API (real mongo + real minio)", () => {
     const v2 = { "SKILL.md": skillMd("writer", "v2") };
     await app.inject({
       method: "POST",
-      url: "/hub/skills/upload/confirm",
+      url: "/hub/admin/skills/upload/confirm",
       payload: jsonUpload(zipOf({ writer: v1 })),
     });
     const second = await app.inject({
       method: "POST",
-      url: "/hub/skills/upload/confirm",
+      url: "/hub/admin/skills/upload/confirm",
       payload: jsonUpload(zipOf({ writer: v2 })),
     });
     expect(second.json().data.results[0]).toMatchObject({ status: "published", revision: 2 });
 
-    const revisions = await app.inject({ method: "GET", url: `/hub/skills/${NS}/writer/revisions` });
+    const revisions = await app.inject({ method: "GET", url: `/hub/admin/skills/${NS}/writer/revisions` });
     expect(revisions.json().data.revisions.map((row: { revision: number }) => row.revision)).toEqual([2, 1]);
 
     // 旧 zip 永存（内容寻址）=回滚零成本。
@@ -266,7 +266,7 @@ describe("hub upload API (real mongo + real minio)", () => {
     });
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/upload/confirm",
+      url: "/hub/admin/skills/upload/confirm",
       payload: jsonUpload(zip),
     });
     const results = response.json().data.results as { name: string; status: string; error: string | null }[];
@@ -281,11 +281,11 @@ describe("hub upload API (real mongo + real minio)", () => {
     await insertSkill(hub.collections, { scope: "official", name: "writer" });
     await app.inject({
       method: "POST",
-      url: "/hub/skills/upload/confirm",
+      url: "/hub/admin/skills/upload/confirm",
       payload: jsonUpload(zipOf({ writer: { "SKILL.md": skillMd("writer") } })),
     });
 
-    const pool = await app.inject({ method: "GET", url: "/hub/skills/pool", query: { namespace: NS } });
+    const pool = await app.inject({ method: "GET", url: "/hub/admin/skills/pool", query: { namespace: NS } });
     const cards = pool.json().data.skills as { name: string; scope: string }[];
     expect(cards).toHaveLength(1);
     expect(cards[0]).toMatchObject({ name: "writer", scope: NS });
@@ -296,7 +296,7 @@ describe("hub upload API (real mongo + real minio)", () => {
   it("rejects a path traversal entry inside a skill directory", async () => {
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/upload/confirm",
+      url: "/hub/admin/skills/upload/confirm",
       payload: jsonUpload(zipOf({ writer: { "SKILL.md": skillMd("writer"), "../escape.py": "x" } })),
     });
     expect(response.statusCode).toBe(200);
@@ -311,7 +311,7 @@ describe("hub upload API (real mongo + real minio)", () => {
     });
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/upload/confirm",
+      url: "/hub/admin/skills/upload/confirm",
       payload: jsonUpload(zip),
     });
     expect(response.json().data.results[0].status).toBe("failed");
@@ -321,7 +321,7 @@ describe("hub upload API (real mongo + real minio)", () => {
   it("rejects a reserved skill name", async () => {
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/upload/confirm",
+      url: "/hub/admin/skills/upload/confirm",
       payload: jsonUpload(zipOf({ skills: { "SKILL.md": skillMd("skills") } })),
     });
     expect(response.json().data.results[0].error).toMatch(/reserved/);
@@ -330,7 +330,7 @@ describe("hub upload API (real mongo + real minio)", () => {
   it("rejects angle bracket injection in the description", async () => {
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/upload/confirm",
+      url: "/hub/admin/skills/upload/confirm",
       payload: jsonUpload(
         zipOf({ writer: { "SKILL.md": "---\nname: writer\ndescription: 有<注入>风险\n---\nx" } }),
       ),
@@ -341,7 +341,7 @@ describe("hub upload API (real mongo + real minio)", () => {
   it("rejects a zip whose root holds loose files", async () => {
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/upload/preview",
+      url: "/hub/admin/skills/upload/preview",
       payload: jsonUpload(zipTextFiles({ "SKILL.md": skillMd("writer") })),
     });
     expect(response.statusCode).toBe(400);
@@ -351,7 +351,7 @@ describe("hub upload API (real mongo + real minio)", () => {
   it("rejects a payload that is not a zip archive", async () => {
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/upload/preview",
+      url: "/hub/admin/skills/upload/preview",
       payload: { namespace: NS, zip_base64: Buffer.from("garbage").toString("base64") },
     });
     expect(response.statusCode).toBe(400);
@@ -361,7 +361,7 @@ describe("hub upload API (real mongo + real minio)", () => {
   it("rejects malformed base64 at the schema boundary", async () => {
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/upload/preview",
+      url: "/hub/admin/skills/upload/preview",
       payload: { namespace: NS, zip_base64: "!!not-base64!!" },
     });
     expect(response.statusCode).toBe(400);
@@ -371,7 +371,7 @@ describe("hub upload API (real mongo + real minio)", () => {
   it("returns 503 when the package store is unconfigured", async () => {
     const response = await appWithoutStore.inject({
       method: "POST",
-      url: "/hub/skills/upload/confirm",
+      url: "/hub/admin/skills/upload/confirm",
       payload: jsonUpload(zipOf({ writer: { "SKILL.md": skillMd("writer") } })),
     });
     expect(response.statusCode).toBe(503);
@@ -385,7 +385,7 @@ describe("hub upload API (real mongo + real minio)", () => {
     });
     const response = await appTightQuota.inject({
       method: "POST",
-      url: "/hub/skills/upload/confirm",
+      url: "/hub/admin/skills/upload/confirm",
       payload: { namespace: NS, zip_base64: zip.toString("base64"), names: ["writer", "helper"] },
     });
     const results = response.json().data.results as { status: string; error: string | null }[];

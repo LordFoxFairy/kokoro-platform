@@ -3,6 +3,7 @@ import type { Membership } from "../domain/membership.js";
 import type {
   EnsureUserInput,
   EnsureUserResult,
+  MembershipCheckResult,
   OwnerActiveQuery,
   SetMembershipRoleInput,
   TeamSummary,
@@ -86,6 +87,11 @@ export class UserService {
   // 下游记账前校验 owner 是否 active（封号/级联禁用即时生效）。
   async resolveOwnerActive(query: OwnerActiveQuery): Promise<boolean> {
     return this.repository.resolveOwnerActive(query);
+  }
+
+  // hub self 面授权：校验 (teamId,userId) 活跃成员关系与角色（读=member，写=owner/admin 由调用方判定）。
+  async checkMembership(teamId: string, userId: string): Promise<MembershipCheckResult> {
+    return this.repository.checkMembership(teamId, userId);
   }
 
   private requireUser(userId: string, user: User | null): User {

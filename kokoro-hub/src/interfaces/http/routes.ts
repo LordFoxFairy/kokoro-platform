@@ -27,7 +27,7 @@ export function registerHubRoutes(app: FastifyInstance, service: SkillHubService
   registerAdminManifestRoute(app, hubAdminManifest);
 
   app.get(
-    "/hub/skills/pool",
+    "/hub/admin/skills/pool",
     { schema: { tags: ["hub"], summary: "查询某 namespace 的可用技能池" } },
     async (request, reply) => {
       const requestId = readRequestContext(request.headers).requestId;
@@ -41,7 +41,7 @@ export function registerHubRoutes(app: FastifyInstance, service: SkillHubService
   );
 
   app.get(
-    "/hub/skills/quota",
+    "/hub/admin/skills/quota",
     { schema: { tags: ["hub"], summary: "查询某 namespace 的上传配额视图" } },
     async (request, reply) => {
       const requestId = readRequestContext(request.headers).requestId;
@@ -55,7 +55,7 @@ export function registerHubRoutes(app: FastifyInstance, service: SkillHubService
   );
 
   app.post(
-    "/hub/skills/:scope/:name/enable",
+    "/hub/admin/skills/:scope/:name/enable",
     {
       schema: {
         tags: ["hub"],
@@ -67,7 +67,7 @@ export function registerHubRoutes(app: FastifyInstance, service: SkillHubService
   );
 
   app.post(
-    "/hub/skills/:scope/:name/disable",
+    "/hub/admin/skills/:scope/:name/disable",
     {
       schema: {
         tags: ["hub"],
@@ -79,7 +79,7 @@ export function registerHubRoutes(app: FastifyInstance, service: SkillHubService
   );
 
   app.post(
-    "/hub/skills/:name/official-flags",
+    "/hub/admin/skills/:name/official-flags",
     {
       schema: {
         tags: ["hub"],
@@ -105,7 +105,7 @@ export function registerHubRoutes(app: FastifyInstance, service: SkillHubService
   );
 
   app.post(
-    "/hub/skills/:scope/:name/curation",
+    "/hub/admin/skills/:scope/:name/curation",
     {
       schema: {
         tags: ["hub"],
@@ -138,7 +138,7 @@ export function registerHubRoutes(app: FastifyInstance, service: SkillHubService
   );
 
   app.post(
-    "/hub/skills/:scope/:name/review",
+    "/hub/admin/skills/:scope/:name/review",
     {
       schema: {
         tags: ["hub"],
@@ -167,7 +167,7 @@ export function registerHubRoutes(app: FastifyInstance, service: SkillHubService
   );
 
   app.delete(
-    "/hub/skills/:scope/:name",
+    "/hub/admin/skills/:scope/:name",
     { schema: { tags: ["hub"], summary: "软删某技能（置 deleted_at，包体永存）" } },
     async (request, reply) => {
       const requestId = readRequestContext(request.headers).requestId;

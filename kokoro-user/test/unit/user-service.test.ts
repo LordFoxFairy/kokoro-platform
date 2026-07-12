@@ -82,6 +82,10 @@ function trackingRepo(
       return { outcome: membershipOutcome };
     },
     resolveOwnerActive: async () => userExists,
+    checkMembership: async (teamId: string, userId: string) => {
+      calls.push({ name: "checkMembership", arg: { teamId, userId } });
+      return userExists ? { active: true, role: "owner" } : { active: false, role: null };
+    },
     setUserStatus: async (userId: string, status: UserStatus) => {
       calls.push({ name: "setUserStatus", arg: { userId, status } });
       if (!userExists) {

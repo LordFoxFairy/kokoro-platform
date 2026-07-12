@@ -23,6 +23,7 @@ export * from "./interfaces/admin/hub-admin-contract.js";
 export * from "./interfaces/admin/manifest.js";
 export * from "./interfaces/admin/schema.js";
 export * from "./interfaces/http/mcp-schemas.js";
+export * from "./interfaces/http/membership-authorizer.js";
 export * from "./interfaces/http/schemas.js";
 export * from "./interfaces/http/server.js";
 export * from "./module.js";

@@ -83,7 +83,23 @@ export const mcpServerDocSchema = z
   .strict()
 export type McpServerDoc = z.infer<typeof mcpServerDocSchema>
 
+export const runDispatchDocSchema = z
+  .object({
+    run_id: z.string().min(1),
+    session_id: z.string().min(1),
+    namespace: z.string().min(1),
+    fence: z.string().min(1),
+    status: z.enum(["pending", "claimed", "expired"]),
+    deadline_at: z.number().int(),
+    claimed_by: z.string().min(1).nullable().optional(),
+    created_at: z.number().int(),
+    updated_at: z.number().int(),
+  })
+  .strict()
+export type RunDispatchDoc = z.infer<typeof runDispatchDocSchema>
+
 export const MCP_SERVERS_COLLECTION = "mcp_servers"
+export const RUN_DISPATCHES_COLLECTION = "run_dispatches"
 export const SKILL_REVISIONS_COLLECTION = "skill_revisions"
 export const SKILL_STATE_COLLECTION = "skill_state"
 export const SKILLS_COLLECTION = "skills"

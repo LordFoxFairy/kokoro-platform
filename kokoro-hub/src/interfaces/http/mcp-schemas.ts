@@ -32,7 +32,7 @@ const mcpUrlSchema = z
     }
   });
 
-// 注册/更新体（POST /hub/mcp/servers）。allowed_tools 空数组 = 不限制（对齐 agent 侧缺省全量）；
+// 注册/更新体（POST /hub/admin/mcp/servers）。allowed_tools 空数组 = 不限制（对齐 agent 侧缺省全量）；
 // 非空 = 白名单，名单外工具在 list/describe/call 全不可见（mcp-design §3）。
 export const registerMcpServerBodySchema = z
   .object({

@@ -18,13 +18,13 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
     {
       id: "skills",
       labelKey: "admin.hub.resources.skills",
-      route: "/hub/skills/pool",
+      route: "/hub/admin/skills/pool",
       requiredPermission: "hub.skill.read",
     },
     {
       id: "mcp-servers",
       labelKey: "admin.hub.resources.mcpServers",
-      route: "/hub/mcp/servers",
+      route: "/hub/admin/mcp/servers",
       requiredPermission: "hub.mcp.read",
     },
   ],
@@ -32,7 +32,7 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
     {
       id: "skills",
       labelKey: "admin.hub.resources.skills",
-      route: "/hub/skills/pool",
+      route: "/hub/admin/skills/pool",
       requiredPermission: "hub.skill.read",
       actions: [
         {
@@ -40,28 +40,28 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
           labelKey: "admin.hub.actions.enable",
           kind: "mutation",
           requiredPermission: "hub.skill.toggle",
-          route: "/hub/skills/:scope/:name/enable",
+          route: "/hub/admin/skills/:scope/:name/enable",
         },
         {
           id: "disable",
           labelKey: "admin.hub.actions.disable",
           kind: "mutation",
           requiredPermission: "hub.skill.toggle",
-          route: "/hub/skills/:scope/:name/disable",
+          route: "/hub/admin/skills/:scope/:name/disable",
         },
         {
           id: "official-flags",
           labelKey: "admin.hub.actions.officialFlags",
           kind: "mutation",
           requiredPermission: "hub.skill.official",
-          route: "/hub/skills/:name/official-flags",
+          route: "/hub/admin/skills/:name/official-flags",
         },
         {
           id: "delete",
           labelKey: "admin.hub.actions.delete",
           kind: "dangerMutation",
           requiredPermission: "hub.skill.delete",
-          route: "/hub/skills/:scope/:name",
+          route: "/hub/admin/skills/:scope/:name",
           method: "DELETE",
         },
       ],
@@ -70,7 +70,7 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
     {
       id: "skill-uploads",
       labelKey: "admin.hub.resources.skillUploads",
-      route: "/hub/skills/:scope/:name/revisions",
+      route: "/hub/admin/skills/:scope/:name/revisions",
       requiredPermission: "hub.skill.read",
       actions: [
         {
@@ -78,14 +78,14 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
           labelKey: "admin.hub.actions.uploadPreview",
           kind: "mutation",
           requiredPermission: "hub.skill.upload",
-          route: "/hub/skills/upload/preview",
+          route: "/hub/admin/skills/upload/preview",
         },
         {
           id: "upload-confirm",
           labelKey: "admin.hub.actions.uploadConfirm",
           kind: "mutation",
           requiredPermission: "hub.skill.upload",
-          route: "/hub/skills/upload/confirm",
+          route: "/hub/admin/skills/upload/confirm",
         },
       ],
     },
@@ -93,7 +93,7 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
     {
       id: "skill-curation",
       labelKey: "admin.hub.resources.skillCuration",
-      route: "/hub/skills/pool",
+      route: "/hub/admin/skills/pool",
       requiredPermission: "hub.skill.read",
       actions: [
         {
@@ -101,14 +101,14 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
           labelKey: "admin.hub.actions.curation",
           kind: "mutation",
           requiredPermission: "hub.skill.curation",
-          route: "/hub/skills/:scope/:name/curation",
+          route: "/hub/admin/skills/:scope/:name/curation",
         },
         {
           id: "review",
           labelKey: "admin.hub.actions.review",
           kind: "mutation",
           requiredPermission: "hub.skill.review",
-          route: "/hub/skills/:scope/:name/review",
+          route: "/hub/admin/skills/:scope/:name/review",
         },
       ],
     },
@@ -116,7 +116,7 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
     {
       id: "mcp-servers",
       labelKey: "admin.hub.resources.mcpServers",
-      route: "/hub/mcp/servers",
+      route: "/hub/admin/mcp/servers",
       requiredPermission: "hub.mcp.read",
       actions: [
         {
@@ -124,28 +124,28 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
           labelKey: "admin.hub.actions.mcpRegister",
           kind: "mutation",
           requiredPermission: "hub.mcp.register",
-          route: "/hub/mcp/servers",
+          route: "/hub/admin/mcp/servers",
         },
         {
           id: "enable",
           labelKey: "admin.hub.actions.mcpEnable",
           kind: "mutation",
           requiredPermission: "hub.mcp.toggle",
-          route: "/hub/mcp/servers/:scope/:name/enable",
+          route: "/hub/admin/mcp/servers/:scope/:name/enable",
         },
         {
           id: "disable",
           labelKey: "admin.hub.actions.mcpDisable",
           kind: "mutation",
           requiredPermission: "hub.mcp.toggle",
-          route: "/hub/mcp/servers/:scope/:name/disable",
+          route: "/hub/admin/mcp/servers/:scope/:name/disable",
         },
         {
           id: "delete",
           labelKey: "admin.hub.actions.mcpDelete",
           kind: "dangerMutation",
           requiredPermission: "hub.mcp.delete",
-          route: "/hub/mcp/servers/:scope/:name",
+          route: "/hub/admin/mcp/servers/:scope/:name",
           method: "DELETE",
         },
       ],
@@ -154,22 +154,22 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
 });
 
 const routes: HubAdminRoute[] = [
-  { method: "GET", path: "/hub/skills/pool" },
-  { method: "GET", path: "/hub/skills/quota" },
-  { method: "POST", path: "/hub/skills/:scope/:name/enable" },
-  { method: "POST", path: "/hub/skills/:scope/:name/disable" },
-  { method: "POST", path: "/hub/skills/:name/official-flags" },
-  { method: "DELETE", path: "/hub/skills/:scope/:name" },
-  { method: "POST", path: "/hub/skills/:scope/:name/curation" },
-  { method: "POST", path: "/hub/skills/:scope/:name/review" },
-  { method: "POST", path: "/hub/skills/upload/preview" },
-  { method: "POST", path: "/hub/skills/upload/confirm" },
-  { method: "GET", path: "/hub/skills/:scope/:name/revisions" },
-  { method: "POST", path: "/hub/mcp/servers" },
-  { method: "GET", path: "/hub/mcp/servers" },
-  { method: "POST", path: "/hub/mcp/servers/:scope/:name/enable" },
-  { method: "POST", path: "/hub/mcp/servers/:scope/:name/disable" },
-  { method: "DELETE", path: "/hub/mcp/servers/:scope/:name" },
+  { method: "GET", path: "/hub/admin/skills/pool" },
+  { method: "GET", path: "/hub/admin/skills/quota" },
+  { method: "POST", path: "/hub/admin/skills/:scope/:name/enable" },
+  { method: "POST", path: "/hub/admin/skills/:scope/:name/disable" },
+  { method: "POST", path: "/hub/admin/skills/:name/official-flags" },
+  { method: "DELETE", path: "/hub/admin/skills/:scope/:name" },
+  { method: "POST", path: "/hub/admin/skills/:scope/:name/curation" },
+  { method: "POST", path: "/hub/admin/skills/:scope/:name/review" },
+  { method: "POST", path: "/hub/admin/skills/upload/preview" },
+  { method: "POST", path: "/hub/admin/skills/upload/confirm" },
+  { method: "GET", path: "/hub/admin/skills/:scope/:name/revisions" },
+  { method: "POST", path: "/hub/admin/mcp/servers" },
+  { method: "GET", path: "/hub/admin/mcp/servers" },
+  { method: "POST", path: "/hub/admin/mcp/servers/:scope/:name/enable" },
+  { method: "POST", path: "/hub/admin/mcp/servers/:scope/:name/disable" },
+  { method: "DELETE", path: "/hub/admin/mcp/servers/:scope/:name" },
 ];
 
 export const hubAdminContract = {

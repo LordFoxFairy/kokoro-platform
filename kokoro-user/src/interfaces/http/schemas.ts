@@ -62,6 +62,21 @@ export const setMembershipRoleRequestSchema = z
   })
   .strict();
 
+// GET /memberships/check 入参：hub self 面授权窄口，只收 teamId+userId（scope 语义由上游解析后传入）。
+export const membershipCheckQuerySchema = z
+  .object({
+    teamId: z.string().trim().min(1),
+    userId: z.string().trim().min(1),
+  })
+  .strict();
+
+// 对外响应契约：hub 经包入口 import 本 schema 消费，不手抄形状。role=null 表示非活跃成员。
+export const membershipCheckResponseSchema = z.object({
+  active: z.boolean(),
+  role: z.enum(["owner", "admin", "member"]).nullable(),
+});
+export type MembershipCheckResponse = z.infer<typeof membershipCheckResponseSchema>;
+
 // 终端用户会话签发（web → user，服务间调用）。snake_case 外部契约，site_id 走 body（非 header）。
 export const issueSessionRequestSchema = z
   .object({

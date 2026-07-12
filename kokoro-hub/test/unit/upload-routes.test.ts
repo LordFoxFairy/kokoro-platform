@@ -58,7 +58,7 @@ describe("upload routes request-shape negatives", () => {
     const { payload, headers } = multipart({ namespace: NS });
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/upload/preview",
+      url: "/hub/admin/skills/upload/preview",
       payload,
       headers,
     });
@@ -71,7 +71,7 @@ describe("upload routes request-shape negatives", () => {
     const { payload, headers } = multipart({ namespace: NS }, { fieldname: "zip", data: validZip() });
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/upload/preview",
+      url: "/hub/admin/skills/upload/preview",
       payload,
       headers,
     });
@@ -86,7 +86,7 @@ describe("upload routes request-shape negatives", () => {
     );
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/upload/confirm",
+      url: "/hub/admin/skills/upload/confirm",
       payload,
       headers,
     });
@@ -101,7 +101,7 @@ describe("upload routes request-shape negatives", () => {
     );
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/upload/confirm",
+      url: "/hub/admin/skills/upload/confirm",
       payload,
       headers,
     });
@@ -113,7 +113,7 @@ describe("upload routes request-shape negatives", () => {
     const { payload, headers } = multipart({}, { fieldname: "file", data: validZip() });
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/upload/preview",
+      url: "/hub/admin/skills/upload/preview",
       payload,
       headers,
     });
@@ -128,7 +128,7 @@ describe("upload routes request-shape negatives", () => {
     );
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/upload/confirm",
+      url: "/hub/admin/skills/upload/confirm",
       payload,
       headers,
     });
@@ -139,7 +139,7 @@ describe("upload routes request-shape negatives", () => {
   it("rejects a strict-unknown key in the json body", async () => {
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/upload/preview",
+      url: "/hub/admin/skills/upload/preview",
       payload: { namespace: NS, zip_base64: validZip().toString("base64"), extra: true },
     });
     expect(response.statusCode).toBe(400);
@@ -147,7 +147,7 @@ describe("upload routes request-shape negatives", () => {
   });
 
   it("rejects empty scope params on the revisions route", async () => {
-    const response = await app.inject({ method: "GET", url: "/hub/skills/%20/writer/revisions" });
+    const response = await app.inject({ method: "GET", url: "/hub/admin/skills/%20/writer/revisions" });
     expect(response.statusCode).toBe(400);
     expect(response.json().error.code).toBe("request.invalid");
   });
@@ -164,7 +164,7 @@ describe("upload routes request-shape negatives", () => {
     });
     const response = await failingApp.inject({
       method: "POST",
-      url: "/hub/skills/upload/preview",
+      url: "/hub/admin/skills/upload/preview",
       payload: { namespace: NS, zip_base64: validZip().toString("base64") },
     });
     expect(response.statusCode).toBe(500);
@@ -184,7 +184,7 @@ describe("upload routes request-shape negatives", () => {
     });
     const response = await failingApp.inject({
       method: "POST",
-      url: "/hub/skills/upload/confirm",
+      url: "/hub/admin/skills/upload/confirm",
       payload: { namespace: NS, zip_base64: validZip().toString("base64") },
     });
     expect(response.statusCode).toBe(500);

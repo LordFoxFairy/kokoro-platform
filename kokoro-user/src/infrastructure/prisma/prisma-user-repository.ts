@@ -12,6 +12,7 @@ import type { User, UserStatus } from "../../domain/user.js";
 import type {
   EnsureUserInput,
   EnsureUserResult,
+  MembershipCheckResult,
   OwnerActiveQuery,
   SetMembershipRoleInput,
   SetMembershipRoleResult,
@@ -284,6 +285,22 @@ export class PrismaUserRepository implements UserRepository {
     }
     const team = await this.prisma.team.findUnique({ where: { id: query.ownerId } });
     return team !== null && team.siteId === query.siteId && team.status === "active" && team.deletedAt === null;
+  }
+
+  async checkMembership(teamId: string, userId: string): Promise<MembershipCheckResult> {
+    // fail-closed：成员行与所属 team 均须活跃未软删，任一不满足即视为非活跃成员。
+    const membership = await this.prisma.membership.findFirst({
+      where: {
+        teamId,
+        userId,
+        status: "active",
+        deletedAt: null,
+        team: { status: "active", deletedAt: null },
+      },
+    });
+    return membership === null
+      ? { active: false, role: null }
+      : { active: true, role: membership.role };
   }
 
   async listTeamsForUser(userId: string): Promise<TeamSummary[]> {

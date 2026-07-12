@@ -29,43 +29,43 @@ describe("mcp routes error mapping", () => {
 
   it("maps a McpServerNotFoundError from the toggle to 404", async () => {
     mcpRepo.failNextWith = new McpServerNotFoundError("ns-a", "ghost");
-    const response = await app.inject({ method: "POST", url: "/hub/mcp/servers/ns-a/ghost/disable" });
+    const response = await app.inject({ method: "POST", url: "/hub/admin/mcp/servers/ns-a/ghost/disable" });
     expect(response.statusCode).toBe(404);
     expect(response.json().error.code).toBe("hub.mcp_server_not_found");
   });
 
   it("maps an unexpected register failure to 500", async () => {
     mcpRepo.failNextWith = new Error("mongo down");
-    const response = await app.inject({ method: "POST", url: "/hub/mcp/servers", payload: registerPayload });
+    const response = await app.inject({ method: "POST", url: "/hub/admin/mcp/servers", payload: registerPayload });
     expect(response.statusCode).toBe(500);
     expect(response.json().error.code).toBe("hub.mcp_register_failed");
   });
 
   it("maps an unexpected toggle failure to 500", async () => {
     mcpRepo.failNextWith = new Error("mongo down");
-    const response = await app.inject({ method: "POST", url: "/hub/mcp/servers/ns-a/github/enable" });
+    const response = await app.inject({ method: "POST", url: "/hub/admin/mcp/servers/ns-a/github/enable" });
     expect(response.statusCode).toBe(500);
     expect(response.json().error.code).toBe("hub.mcp_toggle_failed");
   });
 
   it("maps an unexpected delete failure to 500", async () => {
     mcpRepo.failNextWith = new Error("mongo down");
-    const response = await app.inject({ method: "DELETE", url: "/hub/mcp/servers/ns-a/github" });
+    const response = await app.inject({ method: "DELETE", url: "/hub/admin/mcp/servers/ns-a/github" });
     expect(response.statusCode).toBe(500);
     expect(response.json().error.code).toBe("hub.mcp_delete_failed");
   });
 
   it("rejects whitespace-only path params on toggle and delete (zod trim guard)", async () => {
-    const toggled = await app.inject({ method: "POST", url: "/hub/mcp/servers/%20/github/enable" });
+    const toggled = await app.inject({ method: "POST", url: "/hub/admin/mcp/servers/%20/github/enable" });
     expect(toggled.statusCode).toBe(400);
-    const deleted = await app.inject({ method: "DELETE", url: "/hub/mcp/servers/%20/github" });
+    const deleted = await app.inject({ method: "DELETE", url: "/hub/admin/mcp/servers/%20/github" });
     expect(deleted.statusCode).toBe(400);
   });
 
   it("registers through the service and echoes the stored view", async () => {
     const response = await app.inject({
       method: "POST",
-      url: "/hub/mcp/servers",
+      url: "/hub/admin/mcp/servers",
       payload: { ...registerPayload, secret_ref: "env:GH_MCP_TOKEN" },
     });
     expect(response.statusCode).toBe(201);

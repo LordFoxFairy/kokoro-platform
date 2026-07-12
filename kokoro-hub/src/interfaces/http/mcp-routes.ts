@@ -17,7 +17,7 @@ import { namespaceQuerySchema, scopeNameParamsSchema } from "./schemas.js";
 
 export function registerMcpRoutes(app: FastifyInstance, service: McpHubService): void {
   app.post(
-    "/hub/mcp/servers",
+    "/hub/admin/mcp/servers",
     {
       schema: {
         tags: ["hub"],
@@ -49,7 +49,7 @@ export function registerMcpRoutes(app: FastifyInstance, service: McpHubService):
   );
 
   app.get(
-    "/hub/mcp/servers",
+    "/hub/admin/mcp/servers",
     { schema: { tags: ["hub"], summary: "查询某 namespace 的可用 MCP server 池" } },
     async (request, reply) => {
       const requestId = readRequestContext(request.headers).requestId;
@@ -63,19 +63,19 @@ export function registerMcpRoutes(app: FastifyInstance, service: McpHubService):
   );
 
   app.post(
-    "/hub/mcp/servers/:scope/:name/enable",
+    "/hub/admin/mcp/servers/:scope/:name/enable",
     { schema: { tags: ["hub"], summary: "启用某 MCP server（文档级开关）" } },
     (request, reply) => toggleEnabled(service, request, reply, true),
   );
 
   app.post(
-    "/hub/mcp/servers/:scope/:name/disable",
+    "/hub/admin/mcp/servers/:scope/:name/disable",
     { schema: { tags: ["hub"], summary: "停用某 MCP server（文档级开关）" } },
     (request, reply) => toggleEnabled(service, request, reply, false),
   );
 
   app.delete(
-    "/hub/mcp/servers/:scope/:name",
+    "/hub/admin/mcp/servers/:scope/:name",
     { schema: { tags: ["hub"], summary: "软删某 MCP server（置 deleted_at；重注册可复活）" } },
     async (request, reply) => {
       const requestId = readRequestContext(request.headers).requestId;

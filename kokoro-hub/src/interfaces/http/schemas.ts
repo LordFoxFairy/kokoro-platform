@@ -52,6 +52,26 @@ export const uploadMultipartFieldsSchema = z
   })
   .strict();
 
+// self 面上传（HUB-AUTHZ）：scope 恒取自信封头，body 不收 namespace（strict → 收到即 400 伪造）。
+export const selfUploadJsonBodySchema = z
+  .object({
+    zip_base64: z
+      .string()
+      .min(1)
+      .refine((value) => value.length % 4 === 0 && base64Re.test(value), {
+        message: "zip_base64 must be valid base64",
+      }),
+    names: z.array(z.string().trim().min(1)).min(1).optional(),
+  })
+  .strict();
+
+// self multipart 文本字段：只允许 names（namespace/scope 由 strict 拒绝，防信封外伪造 scope）。
+export const selfUploadMultipartFieldsSchema = z
+  .object({
+    names: z.array(z.string().trim().min(1)).min(1).optional(),
+  })
+  .strict();
+
 // 运营位（HUB-4）：三个位都可选但至少一个（空更新 400）；category 传 null = 清除分类。
 export const curationBodySchema = z
   .object({

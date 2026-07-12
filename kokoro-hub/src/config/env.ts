@@ -4,6 +4,8 @@ import { z } from "zod";
 export const hubEnvSchema = z.object({
   KOKORO_HUB_PORT: z.coerce.number().int().min(1).max(65535).default(4251),
   KOKORO_HUB_BASE_URL: z.string().url().default("http://kokoro-hub:4251"),
+  // user 服务基址：self 面成员校验经 caller=hub 调其 /memberships/check（HUB-AUTHZ）。
+  KOKORO_USER_BASE_URL: z.string().url().default("http://kokoro-user:4211"),
   // 能力中台元数据库（Mongo，与 agent 装配读路同库，hub 写 / agent 读）。
   KOKORO_HUB_MONGO_URL: z.string().min(1).default("mongodb://127.0.0.1:27017"),
   KOKORO_HUB_MONGO_DB: z.string().min(1).default("kokoro_hub"),

@@ -14,6 +14,8 @@ import { isUserLifecycleError } from "../../domain/user-deletion.js";
 import {
   deleteRequestSchema,
   ensureUserRequestSchema,
+  membershipCheckQuerySchema,
+  type MembershipCheckResponse,
   ownerActiveParamsSchema,
   type OwnerActiveResponse,
   serviceAccountParamsSchema,
@@ -293,6 +295,22 @@ export function registerUserRoutes(app: FastifyInstance, service: UserService): 
           requestId,
         );
       }
+    },
+  );
+
+  // hub self 面授权窄口：以 (teamId,userId) 判定活跃成员关系与角色。scope→teamId 映射由上游(hub)完成。
+  app.get(
+    "/memberships/check",
+    { schema: { tags: ["user"], summary: "校验某 user 在某 team 的活跃成员关系与角色" } },
+    async (request, reply) => {
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
+      const query = membershipCheckQuerySchema.safeParse(request.query);
+      if (!query.success) {
+        return sendZodError(reply, query.error, requestId);
+      }
+      const result = await service.checkMembership(query.data.teamId, query.data.userId);
+      // satisfies 把路由实际返回钉在对外契约上：形状漂移在本包 typecheck 先红。
+      return sendData(reply, result satisfies MembershipCheckResponse, 200, requestId);
     },
   );
 

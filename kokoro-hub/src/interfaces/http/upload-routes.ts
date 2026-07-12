@@ -9,6 +9,8 @@ import { PackageStoreError, SkillValidationError } from "../../domain/errors.js"
 import { MAX_UPLOAD_ZIP_BYTES } from "../../domain/validation.js";
 import {
   scopeNameParamsSchema,
+  selfUploadJsonBodySchema,
+  selfUploadMultipartFieldsSchema,
   uploadJsonBodySchema,
   uploadMultipartFieldsSchema,
 } from "./schemas.js";
@@ -22,7 +24,13 @@ interface UploadPayload {
   names: string[] | null;
 }
 
-class UploadRequestError extends Error {
+// self 面上传载荷：namespace 由信封头注入，不在 body 内。
+export interface UploadZipPayload {
+  zip: Buffer;
+  names: string[] | null;
+}
+
+export class UploadRequestError extends Error {
   constructor(
     public readonly statusCode: number,
     public readonly code: string,
@@ -92,8 +100,66 @@ async function readUploadPayload(request: FastifyRequest): Promise<UploadPayload
   return readJsonUpload(request.body);
 }
 
+// self 面上传：只取 zip+names，namespace 恒来自信封头；body/multipart 携带 namespace/scope 视为伪造(400)。
+async function readSelfMultipartUpload(request: FastifyRequest): Promise<UploadZipPayload> {
+  let zip: Buffer | null = null;
+  const fields: Record<string, string> = {};
+  for await (const part of request.parts()) {
+    if (part.type === "file") {
+      if (part.fieldname !== "file" || zip !== null) {
+        throw new UploadRequestError(400, "hub.upload_invalid", "expect exactly one file part named 'file'");
+      }
+      try {
+        zip = await part.toBuffer();
+      } catch {
+        throw new UploadRequestError(
+          413,
+          "hub.upload_too_large",
+          `zip exceeds ${MAX_UPLOAD_ZIP_BYTES} bytes`,
+        );
+      }
+    } else if (typeof part.value === "string") {
+      fields[part.fieldname] = part.value;
+    }
+  }
+  if (zip === null) {
+    throw new UploadRequestError(400, "hub.upload_invalid", "missing zip file part 'file'");
+  }
+  let names: unknown;
+  if (fields.names !== undefined) {
+    try {
+      names = JSON.parse(fields.names);
+    } catch {
+      throw new UploadRequestError(400, "hub.upload_invalid", "field 'names' must be a JSON array");
+    }
+  }
+  // selfUploadMultipartFieldsSchema strict → namespace/scope 字段一律拒收（scope 恒取信封头）。
+  const parsed = selfUploadMultipartFieldsSchema.parse(names === undefined ? {} : { names });
+  return { zip, names: parsed.names ?? null };
+}
+
+function readSelfJsonUpload(body: unknown): UploadZipPayload {
+  const parsed = selfUploadJsonBodySchema.parse(body);
+  const zip = Buffer.from(parsed.zip_base64, "base64");
+  if (zip.byteLength > MAX_UPLOAD_ZIP_BYTES) {
+    throw new UploadRequestError(
+      413,
+      "hub.upload_too_large",
+      `zip exceeds ${MAX_UPLOAD_ZIP_BYTES} bytes`,
+    );
+  }
+  return { zip, names: parsed.names ?? null };
+}
+
+export async function readSelfUploadPayload(request: FastifyRequest): Promise<UploadZipPayload> {
+  if (request.isMultipart()) {
+    return readSelfMultipartUpload(request);
+  }
+  return readSelfJsonUpload(request.body);
+}
+
 // 上传面错误归口：请求形状 400/413、坏 zip 400、存储未配置 503；其余抛回全局 handler。
-function replyUploadError(
+export function replyUploadError(
   reply: FastifyReply,
   error: unknown,
   requestId: string | undefined,
@@ -115,11 +181,11 @@ function replyUploadError(
 
 export function registerUploadRoutes(app: FastifyInstance, service: SkillUploadService): void {
   app.post(
-    "/hub/skills/upload/preview",
+    "/hub/admin/skills/upload/preview",
     {
       bodyLimit: UPLOAD_BODY_LIMIT,
       schema: {
-        tags: ["hub"],
+        tags: ["hub-admin"],
         summary: "上传预检：解包校验（不落库），返回候选清单与归属冲突",
       },
     },
@@ -141,11 +207,11 @@ export function registerUploadRoutes(app: FastifyInstance, service: SkillUploadS
   );
 
   app.post(
-    "/hub/skills/upload/confirm",
+    "/hub/admin/skills/upload/confirm",
     {
       bodyLimit: UPLOAD_BODY_LIMIT,
       schema: {
-        tags: ["hub"],
+        tags: ["hub-admin"],
         summary: "上传发布：逐项 S3 内容寻址包体 + Mongo upsert（允许部分成功）",
       },
     },
@@ -167,8 +233,8 @@ export function registerUploadRoutes(app: FastifyInstance, service: SkillUploadS
   );
 
   app.get(
-    "/hub/skills/:scope/:name/revisions",
-    { schema: { tags: ["hub"], summary: "版本历史（append-only，revision 降序）" } },
+    "/hub/admin/skills/:scope/:name/revisions",
+    { schema: { tags: ["hub-admin"], summary: "版本历史（append-only，revision 降序）" } },
     async (request, reply) => {
       const requestId = readRequestContext(request.headers).requestId;
       const params = scopeNameParamsSchema.safeParse(request.params);

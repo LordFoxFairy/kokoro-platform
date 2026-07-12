@@ -80,7 +80,7 @@ describe("curation/review HTTP routes (fake repository)", () => {
   it("sets curation fields and maps snake_case body to the repository input", async () => {
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/ns-a/writer/curation",
+      url: "/hub/admin/skills/ns-a/writer/curation",
       payload: { display_weight: 5, pinned: true, category: "writing" },
     });
 
@@ -98,7 +98,7 @@ describe("curation/review HTTP routes (fake repository)", () => {
   it("rejects an empty curation body with 400", async () => {
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/ns-a/writer/curation",
+      url: "/hub/admin/skills/ns-a/writer/curation",
       payload: {},
     });
     expect(response.statusCode).toBe(400);
@@ -109,7 +109,7 @@ describe("curation/review HTTP routes (fake repository)", () => {
     repository.notFoundNames.add("ghost");
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/ns-a/ghost/curation",
+      url: "/hub/admin/skills/ns-a/ghost/curation",
       payload: { pinned: true },
     });
     expect(response.statusCode).toBe(404);
@@ -119,7 +119,7 @@ describe("curation/review HTTP routes (fake repository)", () => {
   it("sets the review status", async () => {
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/ns-a/writer/review",
+      url: "/hub/admin/skills/ns-a/writer/review",
       payload: { status: "rejected" },
     });
 
@@ -131,7 +131,7 @@ describe("curation/review HTTP routes (fake repository)", () => {
   it("rejects an invalid review status with 400", async () => {
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/ns-a/writer/review",
+      url: "/hub/admin/skills/ns-a/writer/review",
       payload: { status: "nope" },
     });
     expect(response.statusCode).toBe(400);
@@ -142,7 +142,7 @@ describe("curation/review HTTP routes (fake repository)", () => {
     repository.notFoundNames.add("ghost");
     const response = await app.inject({
       method: "POST",
-      url: "/hub/skills/ns-a/ghost/review",
+      url: "/hub/admin/skills/ns-a/ghost/review",
       payload: { status: "approved" },
     });
     expect(response.statusCode).toBe(404);
@@ -152,11 +152,11 @@ describe("curation/review HTTP routes (fake repository)", () => {
   it("declares the curation/review routes in the admin contract surface", () => {
     expect(hubAdminContract.routes).toContainEqual({
       method: "POST",
-      path: "/hub/skills/:scope/:name/curation",
+      path: "/hub/admin/skills/:scope/:name/curation",
     });
     expect(hubAdminContract.routes).toContainEqual({
       method: "POST",
-      path: "/hub/skills/:scope/:name/review",
+      path: "/hub/admin/skills/:scope/:name/review",
     });
   });
 });

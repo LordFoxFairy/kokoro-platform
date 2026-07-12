@@ -21,14 +21,14 @@ describe("hub admin contract", () => {
   });
 
   it("keeps the route list aligned with the API surface", () => {
-    expect(hubAdminContract.routes).toContainEqual({ method: "GET", path: "/hub/skills/pool" });
+    expect(hubAdminContract.routes).toContainEqual({ method: "GET", path: "/hub/admin/skills/pool" });
     expect(hubAdminContract.routes).toContainEqual({
       method: "POST",
-      path: "/hub/skills/:scope/:name/enable",
+      path: "/hub/admin/skills/:scope/:name/enable",
     });
     expect(hubAdminContract.routes).toContainEqual({
       method: "DELETE",
-      path: "/hub/skills/:scope/:name",
+      path: "/hub/admin/skills/:scope/:name",
     });
   });
 });

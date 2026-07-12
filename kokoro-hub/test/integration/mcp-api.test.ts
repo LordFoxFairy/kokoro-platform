@@ -36,7 +36,7 @@ describe("hub MCP server registry API (real mongo)", () => {
   it("registers a server and returns the stored view", async () => {
     const response = await app.inject({
       method: "POST",
-      url: "/hub/mcp/servers",
+      url: "/hub/admin/mcp/servers",
       headers: { "x-kokoro-request-id": "req_mcp_reg" },
       payload: {
         scope: NS,
@@ -70,7 +70,7 @@ describe("hub MCP server registry API (real mongo)", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/hub/mcp/servers",
+      url: "/hub/admin/mcp/servers",
       payload: {
         scope: NS,
         name: "github",
@@ -101,7 +101,7 @@ describe("hub MCP server registry API (real mongo)", () => {
       url: "https://mcp.example/mine/github",
     });
 
-    const response = await app.inject({ method: "GET", url: "/hub/mcp/servers", query: { namespace: NS } });
+    const response = await app.inject({ method: "GET", url: "/hub/admin/mcp/servers", query: { namespace: NS } });
 
     expect(response.statusCode).toBe(200);
     const servers = response.json().data.servers;
@@ -116,12 +116,12 @@ describe("hub MCP server registry API (real mongo)", () => {
     await insertMcpServer(hub.collections, { scope: "official", name: "github" });
     await insertMcpServer(hub.collections, { scope: NS, name: "github", enabled: false });
 
-    const response = await app.inject({ method: "GET", url: "/hub/mcp/servers", query: { namespace: NS } });
+    const response = await app.inject({ method: "GET", url: "/hub/admin/mcp/servers", query: { namespace: NS } });
     expect(response.json().data.servers).toEqual([]);
   });
 
   it("rejects a pool query without a namespace", async () => {
-    const response = await app.inject({ method: "GET", url: "/hub/mcp/servers" });
+    const response = await app.inject({ method: "GET", url: "/hub/admin/mcp/servers" });
     expect(response.statusCode).toBe(400);
     expect(response.json().error.code).toBe("request.invalid");
   });
@@ -129,22 +129,22 @@ describe("hub MCP server registry API (real mongo)", () => {
   it("disables and re-enables a server via the toggle routes", async () => {
     await insertMcpServer(hub.collections, { scope: NS, name: "github" });
 
-    const disabled = await app.inject({ method: "POST", url: `/hub/mcp/servers/${NS}/github/disable` });
+    const disabled = await app.inject({ method: "POST", url: `/hub/admin/mcp/servers/${NS}/github/disable` });
     expect(disabled.statusCode).toBe(200);
     expect(disabled.json().data).toEqual({ ok: true });
 
-    let pool = await app.inject({ method: "GET", url: "/hub/mcp/servers", query: { namespace: NS } });
+    let pool = await app.inject({ method: "GET", url: "/hub/admin/mcp/servers", query: { namespace: NS } });
     expect(pool.json().data.servers).toEqual([]);
 
-    const enabled = await app.inject({ method: "POST", url: `/hub/mcp/servers/${NS}/github/enable` });
+    const enabled = await app.inject({ method: "POST", url: `/hub/admin/mcp/servers/${NS}/github/enable` });
     expect(enabled.statusCode).toBe(200);
 
-    pool = await app.inject({ method: "GET", url: "/hub/mcp/servers", query: { namespace: NS } });
+    pool = await app.inject({ method: "GET", url: "/hub/admin/mcp/servers", query: { namespace: NS } });
     expect(pool.json().data.servers).toHaveLength(1);
   });
 
   it("returns 404 when toggling a server that does not exist", async () => {
-    const response = await app.inject({ method: "POST", url: `/hub/mcp/servers/${NS}/ghost/enable` });
+    const response = await app.inject({ method: "POST", url: `/hub/admin/mcp/servers/${NS}/ghost/enable` });
     expect(response.statusCode).toBe(404);
     expect(response.json().error.code).toBe("hub.mcp_server_not_found");
   });
@@ -152,16 +152,16 @@ describe("hub MCP server registry API (real mongo)", () => {
   it("soft deletes a server and lets a re-registration revive it", async () => {
     await insertMcpServer(hub.collections, { scope: NS, name: "github" });
 
-    const deleted = await app.inject({ method: "DELETE", url: `/hub/mcp/servers/${NS}/github` });
+    const deleted = await app.inject({ method: "DELETE", url: `/hub/admin/mcp/servers/${NS}/github` });
     expect(deleted.statusCode).toBe(200);
     expect(deleted.json().data).toEqual({ ok: true });
 
-    const pool = await app.inject({ method: "GET", url: "/hub/mcp/servers", query: { namespace: NS } });
+    const pool = await app.inject({ method: "GET", url: "/hub/admin/mcp/servers", query: { namespace: NS } });
     expect(pool.json().data.servers).toEqual([]);
 
     const revived = await app.inject({
       method: "POST",
-      url: "/hub/mcp/servers",
+      url: "/hub/admin/mcp/servers",
       payload: { scope: NS, name: "github", transport: "http", url: "https://mcp.example/github", allowed_tools: [] },
     });
     expect(revived.statusCode).toBe(201);
@@ -175,7 +175,7 @@ describe("hub MCP server registry API (real mongo)", () => {
   it("rejects a plaintext credential in secret_ref", async () => {
     const response = await app.inject({
       method: "POST",
-      url: "/hub/mcp/servers",
+      url: "/hub/admin/mcp/servers",
       payload: {
         scope: NS,
         name: "github",
@@ -193,7 +193,7 @@ describe("hub MCP server registry API (real mongo)", () => {
   it("rejects a url that embeds credentials (userinfo is a plaintext channel)", async () => {
     const response = await app.inject({
       method: "POST",
-      url: "/hub/mcp/servers",
+      url: "/hub/admin/mcp/servers",
       payload: {
         scope: NS,
         name: "github",
@@ -210,7 +210,7 @@ describe("hub MCP server registry API (real mongo)", () => {
     for (const url of ["not-a-url", "ftp://mcp.example/github"]) {
       const response = await app.inject({
         method: "POST",
-        url: "/hub/mcp/servers",
+        url: "/hub/admin/mcp/servers",
         payload: { scope: NS, name: "github", transport: "http", url, allowed_tools: [] },
       });
       expect(response.statusCode).toBe(400);
@@ -221,7 +221,7 @@ describe("hub MCP server registry API (real mongo)", () => {
   it("rejects an unknown transport", async () => {
     const response = await app.inject({
       method: "POST",
-      url: "/hub/mcp/servers",
+      url: "/hub/admin/mcp/servers",
       payload: {
         scope: NS,
         name: "github",
