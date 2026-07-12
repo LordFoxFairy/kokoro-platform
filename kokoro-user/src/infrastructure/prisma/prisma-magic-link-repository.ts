@@ -25,17 +25,21 @@ export class PrismaMagicLinkRepository implements MagicLinkRepository {
           siteId: input.siteId,
           email: input.email,
           tokenHash: input.tokenHash,
+          nonceHash: input.nonceHash,
           expiresAt: input.expiresAt,
         },
       });
     });
   }
 
-  async consume(tokenHash: string, now: Date): Promise<MagicLinkRecord | null> {
+  async consume(tokenHash: string, nonceHash: string | null, now: Date): Promise<MagicLinkRecord | null> {
     // 条件转移：updateMany 的 where 即消费前置条件，MySQL 行锁保证并发双花只有一方 count=1。
+    // nonceHash 进 where：绑定链要求恰好等值（null 匹配 IS NULL），跨设备/nonce 不符 → count 0 → null，
+    // 且不写 consumedAt（不烧毁链，合法设备仍可再消费），与 token 无效同样一个不透明结果。
     const transferred = await this.prisma.magicLink.updateMany({
       where: {
         tokenHash,
+        nonceHash,
         consumedAt: null,
         supersededAt: null,
         expiresAt: { gt: now },

@@ -278,4 +278,48 @@ describe("magic link HTTP API", () => {
     expect(denied.statusCode).toBe(409);
     expect(denied.json()).toMatchObject({ error: { code: "user.deleted" } });
   });
+
+  it("binds a link to its nonce: matching consumes, wrong/missing stays invalid without burning", async () => {
+    const nonceHash = createHash("sha256").update("device-nonce").digest("hex");
+    const issued = await app.inject({
+      method: "POST",
+      url: "/auth/magic-links",
+      payload: { site_id: "site-a", email: "bound@example.com", nonce_hash: nonceHash },
+    });
+    expect(issued.statusCode).toBe(200);
+    const linkToken = issued.json().data.link_token as string;
+
+    // 库里落了 nonceHash（绑定链）。
+    const stored = await prisma.magicLink.findMany({ where: { email: "bound@example.com" } });
+    expect(stored[0]!.nonceHash).toBe(nonceHash);
+
+    // 缺 nonce（跨设备打开链接：无 nonce cookie）→ 统一 invalid。
+    const missing = await app.inject({
+      method: "POST",
+      url: "/auth/magic-links/consume",
+      payload: { token: linkToken },
+    });
+    expect(missing.statusCode).toBe(401);
+    expect(missing.json()).toMatchObject({ error: { code: "auth.magic_link_invalid" } });
+
+    // 错 nonce → 同一个不透明 invalid。
+    const wrong = await app.inject({
+      method: "POST",
+      url: "/auth/magic-links/consume",
+      payload: {
+        token: linkToken,
+        nonce_hash: createHash("sha256").update("other-device").digest("hex"),
+      },
+    });
+    expect(wrong.statusCode).toBe(401);
+
+    // 对 nonce → 成功，证明前两次未烧毁链（合法设备仍可消费）。
+    const ok = await app.inject({
+      method: "POST",
+      url: "/auth/magic-links/consume",
+      payload: { token: linkToken, nonce_hash: nonceHash },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().data.user.email).toBe("bound@example.com");
+  });
 });

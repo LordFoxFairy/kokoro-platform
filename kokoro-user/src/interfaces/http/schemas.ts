@@ -87,16 +87,20 @@ export const issueSessionRequestSchema = z
   .strict();
 
 // magic-link 申请（web → user）。email 归一化（trim+小写）后即身份键，限频与旧链作废都按它算。
+// nonce_hash：签发方设一次性 nonce cookie 后交来的哈希（sha256 hex，签发方持原文），可选=不绑定设备。
 export const requestMagicLinkRequestSchema = z
   .object({
     site_id: z.string().trim().min(1),
     email: z.string().trim().toLowerCase().email(),
+    nonce_hash: z.string().trim().min(1).max(128).optional(),
   })
   .strict();
 
 // magic-link 消费：token 即链接中的一次性原文（base64url），服务端只比对哈希。
+// nonce_hash 必须与申请时同值才转移（跨设备/缺失 → 统一 invalid）；可选以兼容未绑定链。
 export const consumeMagicLinkRequestSchema = z
   .object({
     token: z.string().trim().min(1),
+    nonce_hash: z.string().trim().min(1).max(128).optional(),
   })
   .strict();

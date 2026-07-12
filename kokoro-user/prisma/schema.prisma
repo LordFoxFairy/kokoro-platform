@@ -160,6 +160,9 @@ model MagicLink {
   siteId       String
   email        String
   tokenHash    String    @unique
+  // 可选设备绑定：签发方（web BFF）设一次性 nonce cookie，把 nonce 哈希随申请交来落库，
+  // 消费时必须再次带同哈希才转移。NULL = 未绑定（旧链/无 nonce 的直连调用），保持向后兼容。
+  nonceHash    String?
   expiresAt    DateTime
   consumedAt   DateTime?
   supersededAt DateTime?

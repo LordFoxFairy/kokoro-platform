@@ -17,6 +17,8 @@ export interface MagicLinkServiceOptions {
 export interface RequestMagicLinkInput {
   siteId: string;
   email: string;
+  // 签发方（web BFF）给的一次性 nonce 哈希；省略/null = 不绑定设备（直连调用）。
+  nonceHash?: string | null;
 }
 
 export interface RequestedMagicLink {
@@ -53,14 +55,16 @@ export class MagicLinkService {
       siteId: input.siteId,
       email: input.email,
       tokenHash: hashMagicLinkToken(linkToken),
+      nonceHash: input.nonceHash ?? null,
       expiresAt: new Date(now.getTime() + this.options.ttlSeconds * 1000),
       now,
     });
     return { record, linkToken };
   }
 
-  async consume(token: string): Promise<MagicLinkRecord> {
-    const record = await this.repository.consume(hashMagicLinkToken(token), this.now());
+  // nonceHash 缺省 null：与未绑定链匹配；绑定链要求消费方带回同一 nonce 哈希，否则统一 invalid。
+  async consume(token: string, nonceHash: string | null = null): Promise<MagicLinkRecord> {
+    const record = await this.repository.consume(hashMagicLinkToken(token), nonceHash, this.now());
     if (record === null) {
       throw new MagicLinkInvalidError();
     }

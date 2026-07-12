@@ -10,6 +10,8 @@ export interface MagicLinkRecord {
   siteId: string;
   email: string;
   tokenHash: string;
+  // 设备绑定 nonce 的哈希；null = 未绑定链。
+  nonceHash: string | null;
   expiresAt: Date;
   consumedAt: Date | null;
   supersededAt: Date | null;
@@ -20,6 +22,8 @@ export interface IssueMagicLinkInput {
   siteId: string;
   email: string;
   tokenHash: string;
+  // 签发方给的一次性 nonce 哈希；null = 不绑定设备。
+  nonceHash: string | null;
   expiresAt: Date;
   now: Date;
 }
@@ -27,8 +31,9 @@ export interface IssueMagicLinkInput {
 export interface MagicLinkRepository {
   // 原子签发：同 (siteId,email) 未消费未作废旧链全部置 supersededAt=now，再落新链。
   issue(input: IssueMagicLinkInput): Promise<MagicLinkRecord>;
-  // 条件转移消费：仅当 未消费+未作废+未过期 时置 consumedAt；否则返回 null（并发双花只赢一次）。
-  consume(tokenHash: string, now: Date): Promise<MagicLinkRecord | null>;
+  // 条件转移消费：仅当 未消费+未作废+未过期 且 nonceHash 恰好等于入参（null 对 null）时置 consumedAt；
+  // 否则返回 null（并发双花只赢一次，跨设备/nonce 不符与 token 无效同样一个不透明结果）。
+  consume(tokenHash: string, nonceHash: string | null, now: Date): Promise<MagicLinkRecord | null>;
 }
 
 // 消费失败统一一个错误，不区分 过期/已消费/已作废/不存在，避免给探测者 oracle。

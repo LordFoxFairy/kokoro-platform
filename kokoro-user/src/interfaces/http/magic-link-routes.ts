@@ -41,6 +41,7 @@ export function registerMagicLinkRoutes(
         const issued = await magicLinkService.request({
           siteId: input.site_id,
           email: input.email,
+          nonceHash: input.nonce_hash ?? null,
         });
 
         // V1 dev 投递两档。邮件投递（SMTP/供应商）后续接在这里，替换 log 档落点，本仓不臆造 SMTP。
@@ -57,10 +58,15 @@ export function registerMagicLinkRoutes(
             requestId,
           );
         }
-        // log 档即投递通道本身：token 原文只出现在服务日志，响应体不回。
+        // log 档：原文 token 绝不落日志（纲领：magic-link 原文不进日志）。只记哈希前缀做审计关联，
+        // 无法从中还原链接——真正的邮件投递接入时替换此落点。dev 端到端用 response 档取可点链。
         request.log.info(
-          { siteId: issued.record.siteId, email: issued.record.email, linkToken: issued.linkToken },
-          "magic link issued (log delivery)",
+          {
+            siteId: issued.record.siteId,
+            email: issued.record.email,
+            tokenHashPrefix: issued.record.tokenHash.slice(0, 12),
+          },
+          "magic link issued (log delivery, hash prefix only)",
         );
         return sendData(
           reply,
@@ -100,7 +106,7 @@ export function registerMagicLinkRoutes(
 
       try {
         const input = consumeMagicLinkRequestSchema.parse(request.body);
-        const link = await magicLinkService.consume(input.token);
+        const link = await magicLinkService.consume(input.token, input.nonce_hash ?? null);
         // 复用 /auth/sessions 语义：resolve-or-create user+personal team → 签发；返回形状同 /auth/sessions。
         const issued = await sessionService.issue({
           siteId: link.siteId,

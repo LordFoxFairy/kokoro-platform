@@ -18,6 +18,7 @@ function record(overrides: Partial<MagicLinkRecord> = {}): MagicLinkRecord {
     siteId: "site-a",
     email: "user@example.com",
     tokenHash: "hash",
+    nonceHash: null,
     expiresAt: new Date(t0.getTime() + 900_000),
     consumedAt: null,
     supersededAt: null,
@@ -29,17 +30,21 @@ function record(overrides: Partial<MagicLinkRecord> = {}): MagicLinkRecord {
 function fakeRepository(consumeResult: MagicLinkRecord | null = null): {
   repository: MagicLinkRepository;
   issueCalls: IssueMagicLinkInput[];
-  consumeCalls: { tokenHash: string; now: Date }[];
+  consumeCalls: { tokenHash: string; nonceHash: string | null; now: Date }[];
 } {
   const issueCalls: IssueMagicLinkInput[] = [];
-  const consumeCalls: { tokenHash: string; now: Date }[] = [];
+  const consumeCalls: { tokenHash: string; nonceHash: string | null; now: Date }[] = [];
   const repository: MagicLinkRepository = {
     issue: async (input) => {
       issueCalls.push(input);
-      return record({ tokenHash: input.tokenHash, expiresAt: input.expiresAt });
+      return record({
+        tokenHash: input.tokenHash,
+        nonceHash: input.nonceHash,
+        expiresAt: input.expiresAt,
+      });
     },
-    consume: async (tokenHash, now) => {
-      consumeCalls.push({ tokenHash, now });
+    consume: async (tokenHash, nonceHash, now) => {
+      consumeCalls.push({ tokenHash, nonceHash, now });
       return consumeResult;
     },
   };
@@ -117,8 +122,22 @@ describe("MagicLinkService.consume", () => {
 
     const consumed = await service(repository, () => t0).consume("raw-token");
 
-    expect(consumeCalls).toEqual([{ tokenHash: hashMagicLinkToken("raw-token"), now: t0 }]);
+    // 未传 nonce → 以 null 匹配未绑定链。
+    expect(consumeCalls).toEqual([
+      { tokenHash: hashMagicLinkToken("raw-token"), nonceHash: null, now: t0 },
+    ]);
     expect(consumed).toBe(stored);
+  });
+
+  it("forwards the nonce hash verbatim so the repository can enforce device binding", async () => {
+    const stored = record({ tokenHash: hashMagicLinkToken("raw-token"), nonceHash: "nonce-hash" });
+    const { repository, consumeCalls } = fakeRepository(stored);
+
+    await service(repository, () => t0).consume("raw-token", "nonce-hash");
+
+    expect(consumeCalls).toEqual([
+      { tokenHash: hashMagicLinkToken("raw-token"), nonceHash: "nonce-hash", now: t0 },
+    ]);
   });
 
   it("throws a single opaque error when the conditional transfer misses", async () => {
@@ -126,6 +145,19 @@ describe("MagicLinkService.consume", () => {
     await expect(service(repository, () => t0).consume("whatever")).rejects.toBeInstanceOf(
       MagicLinkInvalidError,
     );
+  });
+});
+
+describe("MagicLinkService.request nonce binding", () => {
+  it("stores the nonce hash on issue when provided, null otherwise", async () => {
+    const { repository, issueCalls } = fakeRepository();
+    const svc = service(repository, () => t0);
+
+    await svc.request({ siteId: "site-a", email: "bound@example.com", nonceHash: "nh" });
+    await svc.request({ siteId: "site-a", email: "free@example.com" });
+
+    expect(issueCalls[0]!.nonceHash).toBe("nh");
+    expect(issueCalls[1]!.nonceHash).toBeNull();
   });
 });
 
