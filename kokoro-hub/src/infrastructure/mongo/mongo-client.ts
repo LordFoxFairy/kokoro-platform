@@ -1,4 +1,5 @@
 import { type Collection, type Db, MongoClient } from "mongodb";
+import { MCP_SECRETS_COLLECTION } from "../../contract/mcp-secret-storage.js";
 import { MCP_SERVERS_COLLECTION, type McpTransport } from "../../contract/mcp-storage.js";
 import type { ReviewStatus } from "../../contract/skill-curation-storage.js";
 import { SKILL_REVISIONS_COLLECTION, SKILL_STATE_COLLECTION, SKILLS_COLLECTION } from "../../contract/storage.js";
@@ -65,11 +66,26 @@ export interface McpServerRecord {
   deleted_at: number | null;
 }
 
+// MCP secret 记录（MCP-SECRET HUB 半场）：明文绝不落库——ciphertext 是 AES-256-GCM 信封串，
+// key_id 是加密所用主密钥指纹（轮换双读定位键）。handle 是对外唯一暴露的不透明句柄。
+// TODO(主控): mcp_secrets 文档 schema 收编进主仓 contract/spec/storage.yaml 单源后，
+// 本类型与 src/contract/mcp-secret-storage.ts 改由 generate.py 生成镜像（参照 mcp_servers 先例）。
+export interface McpSecretRecord {
+  scope: string;
+  handle: string;
+  name: string;
+  ciphertext: string;
+  key_id: string;
+  created_at: number;
+  deleted_at: number | null;
+}
+
 export interface HubCollections {
   skills: Collection<SkillRecord>;
   state: Collection<SkillStateRecord>;
   revisions: Collection<SkillRevisionRecord>;
   mcpServers: Collection<McpServerRecord>;
+  mcpSecrets: Collection<McpSecretRecord>;
 }
 
 export function createMongoClient(url: string): MongoClient {
@@ -82,5 +98,6 @@ export function hubCollections(db: Db): HubCollections {
     state: db.collection<SkillStateRecord>(SKILL_STATE_COLLECTION),
     revisions: db.collection<SkillRevisionRecord>(SKILL_REVISIONS_COLLECTION),
     mcpServers: db.collection<McpServerRecord>(MCP_SERVERS_COLLECTION),
+    mcpSecrets: db.collection<McpSecretRecord>(MCP_SECRETS_COLLECTION),
   };
 }

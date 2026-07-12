@@ -1,8 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { MongoClient } from "mongodb";
 import {
+  AesGcmSecretCipher,
+  makeSecretKeyring,
+} from "../../src/infrastructure/crypto/aes-gcm-secret-cipher.js";
+import {
   hubCollections,
   type HubCollections,
+  type McpSecretRecord,
   type McpServerRecord,
   type SkillRecord,
 } from "../../src/infrastructure/mongo/mongo-client.js";
@@ -39,8 +44,39 @@ export async function connectTestHub(dbName: string): Promise<TestHub> {
       await collections.state.deleteMany({});
       await collections.revisions.deleteMany({});
       await collections.mcpServers.deleteMany({});
+      await collections.mcpSecrets.deleteMany({});
     },
   };
+}
+
+// 固定 32B 测试主密钥（明显假值，仅测试用）：构造真 AES-256-GCM cipher 走完整加解密回环。
+const TEST_MASTER_KEY = Buffer.alloc(32, 7);
+
+export function testSecretCipher(extraKeys: readonly Buffer[] = []): AesGcmSecretCipher {
+  const keyring = makeSecretKeyring([TEST_MASTER_KEY, ...extraKeys]);
+  if (keyring === null) {
+    throw new Error("test keyring must not be empty");
+  }
+  return new AesGcmSecretCipher(keyring);
+}
+
+// 直插一条已加密 secret 记录（用真 cipher 封值）：构造 resolve/list/软删读场景。
+export async function insertMcpSecret(
+  collections: HubCollections,
+  cipher: AesGcmSecretCipher,
+  overrides: Partial<Omit<McpSecretRecord, "ciphertext" | "key_id">> &
+    Pick<McpSecretRecord, "scope" | "handle" | "name"> & { value: string },
+): Promise<void> {
+  const { value, ...rest } = overrides;
+  const encrypted = cipher.encrypt(value);
+  const doc: McpSecretRecord = {
+    created_at: Date.now(),
+    deleted_at: null,
+    ...rest,
+    ciphertext: encrypted.ciphertext,
+    key_id: encrypted.keyId,
+  };
+  await collections.mcpSecrets.insertOne(doc);
 }
 
 // 完整合法 SkillRecord 夹具（上传写面在 HUB-2，本期测试直插固定数据构造读/写场景）。

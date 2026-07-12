@@ -9,10 +9,13 @@ import {
 } from "@kokoro/platform-kit";
 import Fastify from "fastify";
 import { McpHubService } from "../../application/mcp-hub-service.js";
+import { McpSecretService } from "../../application/mcp-secret-service.js";
 import { SkillHubService, type QuotaLimits } from "../../application/skill-hub-service.js";
 import { SkillUploadService } from "../../application/skill-upload-service.js";
+import type { McpSecretRepository } from "../../domain/mcp-secret-repository.js";
 import type { McpServerRepository } from "../../domain/mcp-repository.js";
 import type { SkillHubRepository } from "../../domain/repository.js";
+import type { SecretCipher } from "../../domain/secret-cipher.js";
 import { MAX_UPLOAD_ZIP_BYTES } from "../../domain/validation.js";
 import type { PackageStore } from "../../infrastructure/packages/package-store.js";
 import { denyAllMembershipAuthorizer, type MembershipAuthorizer } from "./membership-authorizer.js";
@@ -27,6 +30,10 @@ export interface CreateHubServerOptions {
   quotaLimits: QuotaLimits;
   // MCP server 注册表（HUB-3）；缺省 = 不挂 MCP 路由（skills-only 测试可省略，main 恒注入）。
   mcpRepository?: McpServerRepository | null;
+  // MCP secret 仓储 + 信封 cipher（MCP-SECRET 半场）；两者齐备才启用 secret broker，
+  // 缺任一 = secret 面 503 fail-loud（绝不无密钥明文落库）。
+  secretRepository?: McpSecretRepository | null;
+  secretCipher?: SecretCipher | null;
   // 包体存储（内容寻址 zip，ADR-009 hub 节）；缺省 null = 上传 confirm 面 503 fail-loud。
   packageStore?: PackageStore | null;
   // 关闭 Mongo 连接等外部资源；由 main 注入（测试自管连接则省略）。
@@ -75,14 +82,28 @@ export function createHubServer(options: CreateHubServerOptions) {
       ? null
       : new McpHubService(options.mcpRepository);
 
+  // secret broker：仓储 + cipher 齐备才启用；缺任一 = null → secret 面 503 fail-loud。
+  const secretRepository = options.secretRepository ?? null;
+  const secretCipher = options.secretCipher ?? null;
+  const secretService =
+    secretRepository !== null && secretCipher !== null
+      ? new McpSecretService(secretRepository, secretCipher)
+      : null;
+
   const authorizer = options.membershipAuthorizer ?? denyAllMembershipAuthorizer;
 
   // WHY: 路由须包进 register 闭包，确保在异步入队的 swagger 插件之后加载，否则 onRoute 钩子漏采。
   void app.register(async (instance) => {
-    // runtime 面（session/agent）：按已验 namespace 读池 + 聚合 resolve。
-    registerRuntimeRoutes(instance, service, mcpService);
-    // self 面（web-bff）：信封 scope + 成员校验；MCP 只读，mutation 恒 503。
-    registerSelfRoutes(instance, { skillService: service, uploadService, mcpService, authorizer });
+    // runtime 面（session/agent）：按已验 namespace 读池 + 聚合 resolve + secret 明文解析出口。
+    registerRuntimeRoutes(instance, { skillService: service, mcpService, secretService });
+    // self 面（web-bff）：信封 scope + 成员校验；MCP 只读，mutation 恒 503；secret broker CRUD。
+    registerSelfRoutes(instance, {
+      skillService: service,
+      uploadService,
+      mcpService,
+      secretService,
+      authorizer,
+    });
     // admin 面（网关）：健康检查/manifest/审核/运营/官方位/软删/上传/MCP 管理（现管理面全量迁 /hub/admin）。
     registerHubRoutes(instance, service);
     registerUploadRoutes(instance, uploadService);

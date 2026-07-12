@@ -98,6 +98,20 @@ export const runDispatchDocSchema = z
   .strict()
 export type RunDispatchDoc = z.infer<typeof runDispatchDocSchema>
 
+export const mcpSecretDocSchema = z
+  .object({
+    scope: z.string().min(1),
+    handle: z.string().min(1),
+    name: z.string().min(1),
+    ciphertext: z.string().min(1),
+    key_id: z.string().min(1),
+    created_at: z.number().int(),
+    deleted_at: z.number().int().nullable(),
+  })
+  .strict()
+export type McpSecretDoc = z.infer<typeof mcpSecretDocSchema>
+
+export const MCP_SECRETS_COLLECTION = "mcp_secrets"
 export const MCP_SERVERS_COLLECTION = "mcp_servers"
 export const RUN_DISPATCHES_COLLECTION = "run_dispatches"
 export const SKILL_REVISIONS_COLLECTION = "skill_revisions"

@@ -53,3 +53,12 @@ export class McpServerNotFoundError extends Error {
     this.name = "McpServerNotFoundError";
   }
 }
+
+// resolve 命中不全（请求句柄有的不属本 namespace 或已软删/不存在）：路由映射 404。
+// 全有或全无、且绝不回显是哪个句柄——跨 namespace 与纯粹不存在返回同一面，不泄露存在性。
+export class SecretNotResolvableError extends Error {
+  constructor() {
+    super("one or more secrets are not resolvable in this namespace");
+    this.name = "SecretNotResolvableError";
+  }
+}

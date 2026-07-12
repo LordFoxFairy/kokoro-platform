@@ -19,9 +19,10 @@ export const hubPlatformModule = {
     surfaces: ["http", "internal-api", "admin-manifest"],
     routes: [
       "GET /healthz",
-      // runtime 面（runtime-internal：session/agent）：按已验 namespace 读池 + 聚合 resolve。
+      // runtime 面（runtime-internal：session/agent）：按已验 namespace 读池 + 聚合 resolve + secret 明文出口。
       "GET /hub/runtime/skills/pool",
       "GET /hub/runtime/resolve",
+      "POST /hub/runtime/mcp/secrets/resolve",
       // self 面（web-bff：信封 scope + user 成员校验）；MCP 只读，mutation 恒 503 capability_registration_disabled。
       "GET /hub/self/skills/pool",
       "GET /hub/self/skills/quota",
@@ -35,6 +36,9 @@ export const hubPlatformModule = {
       "POST /hub/self/mcp/servers/:name/enable (503)",
       "POST /hub/self/mcp/servers/:name/disable (503)",
       "DELETE /hub/self/mcp/servers/:name (503)",
+      "POST /hub/self/mcp/secrets",
+      "GET /hub/self/mcp/secrets",
+      "DELETE /hub/self/mcp/secrets/:handle",
       // admin 面（admin 网关）：manifest/审核/运营/官方位/软删/上传/MCP 管理。
       "GET /hub/admin/manifest",
       "GET /hub/admin/skills/pool",
@@ -78,6 +82,7 @@ export const hubPlatformModule = {
       "skill review status machine (pending/approved/rejected; V1 auto-approve on publish)",
       "namespace upload quota view and enforcement",
       "mcp server registry (register/pool/enable/disable/soft delete; secret refs only, no plaintext credentials)",
+      "mcp secret broker (envelope AES-256-GCM at rest; opaque handle in/out; runtime resolve is the sole plaintext egress; per-namespace isolation)",
     ],
     doesNotOwn: [
       "skill assembly hot path (kokoro-agent)",

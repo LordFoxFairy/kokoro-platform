@@ -22,6 +22,15 @@ export const hubEnvSchema = z.object({
   // s3 档凭据（env-only，ADR-010；与 agent 侧同名复用 workspace 对，永不进配置文件/日志）。
   KOKORO_WORKSPACE_S3_ACCESS_KEY: z.string().min(1).optional(),
   KOKORO_WORKSPACE_S3_SECRET_KEY: z.string().min(1).optional(),
+  // MCP secret 信封加密主密钥（32B base64；env-only，永不进配置/日志/响应）。
+  // 缺省 = secret broker 未配置：self/runtime secret 面 503 fail-loud，其余面照常（生产由 main fail-fast）。
+  KOKORO_HUB_SECRET_MASTER_KEY: z.string().min(1).optional(),
+  // 轮换双读的历史主密钥（逗号分隔 base64，各 32B）：新写用 primary，旧信封按 key_id 仍可解。
+  KOKORO_HUB_SECRET_MASTER_KEY_PREVIOUS: z.string().min(1).optional(),
+  // mcp_servers admin/official 面 env: 引用白名单（逗号分隔 VAR 名）；不在表的 env:VAR 注册 400。
+  KOKORO_HUB_ENV_REF_ALLOWLIST: z.string().min(1).optional(),
+  // 放行 http/localhost/私网 url 注册（仅 admin 面 + 本地/test profile）；"1" 开启，缺省关闭。
+  KOKORO_HUB_ALLOW_INSECURE_URL: z.string().optional(),
 });
 
 export type HubEnv = z.infer<typeof hubEnvSchema>;

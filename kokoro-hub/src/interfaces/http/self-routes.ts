@@ -13,10 +13,13 @@ import {
   sendZodError,
 } from "@kokoro/platform-kit";
 import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerHookHandler } from "fastify";
+import { ZodError } from "zod";
 import type { McpHubService } from "../../application/mcp-hub-service.js";
+import type { McpSecretService } from "../../application/mcp-secret-service.js";
 import type { SkillHubService } from "../../application/skill-hub-service.js";
 import type { SkillUploadService } from "../../application/skill-upload-service.js";
 import { SkillRequiredError } from "../../domain/errors.js";
+import { createSecretBodySchema, secretHandleParamsSchema } from "./mcp-secret-schemas.js";
 import type { MembershipAuthorizer } from "./membership-authorizer.js";
 import { nameParamsSchema } from "./schemas.js";
 import { readSelfUploadPayload, replyUploadError, UPLOAD_BODY_LIMIT } from "./upload-routes.js";
@@ -25,12 +28,16 @@ const NAMESPACE_HEADER = "x-kokoro-namespace";
 const USER_ID_HEADER = "x-kokoro-user-id";
 // MCP 注册 fail-closed 门的稳定错误码（BFF/UI 据此显示“能力注册暂未开放”，而非当作 404）。
 const CAPABILITY_DISABLED_CODE = "capability_registration_disabled";
+// secret broker 未配置（无主密钥）时的稳定错误码：BFF/UI 据此显示“凭据保管未开放”。
+const SECRET_BROKER_DISABLED_CODE = "secret_broker_disabled";
 
 export interface SelfRouteServices {
   skillService: SkillHubService;
   uploadService: SkillUploadService;
   // 缺省 null = 无 MCP 仓储：MCP 只读面返回空池（mutation 仍恒 503）。
   mcpService: McpHubService | null;
+  // 缺省 null = secret broker 未配置（无主密钥/仓储）：secret 面 503 fail-loud。
+  secretService: McpSecretService | null;
   authorizer: MembershipAuthorizer;
 }
 
@@ -106,7 +113,7 @@ function capabilityDisabled(reply: FastifyReply, requestId: string): FastifyRepl
 }
 
 export function registerSelfRoutes(app: FastifyInstance, services: SelfRouteServices): void {
-  const { skillService, uploadService, mcpService, authorizer } = services;
+  const { skillService, uploadService, mcpService, secretService, authorizer } = services;
   const readGuard = membershipGuard(authorizer, "read");
   const writeGuard = membershipGuard(authorizer, "write");
 
@@ -225,6 +232,84 @@ export function registerSelfRoutes(app: FastifyInstance, services: SelfRouteServ
   app.post("/hub/self/mcp/servers/:name/enable", { schema: { tags: ["hub-self"], summary: "启用 MCP server（fail-closed，恒 503）" } }, mcpDisabled);
   app.post("/hub/self/mcp/servers/:name/disable", { schema: { tags: ["hub-self"], summary: "停用 MCP server（fail-closed，恒 503）" } }, mcpDisabled);
   app.delete("/hub/self/mcp/servers/:name", { schema: { tags: ["hub-self"], summary: "删除 MCP server（fail-closed，恒 503）" } }, mcpDisabled);
+
+  // ---- MCP secret broker（self 面）：创建（写）/ 列表（读）/ 软删（写）----
+  // 明文只进不出：创建收 value 即加密落库，响应只回句柄；列表/删除面绝不含值或密文。
+  app.post(
+    "/hub/self/mcp/secrets",
+    { preHandler: writeGuard, schema: { tags: ["hub-self"], summary: "保管一条 MCP 凭据（value 只进不出，回不透明句柄）" } },
+    (request, reply) => createSecret(secretService, request, reply),
+  );
+  app.get(
+    "/hub/self/mcp/secrets",
+    { preHandler: readGuard, schema: { tags: ["hub-self"], summary: "列出本 namespace 已保管凭据（只出句柄/命名/创建时间）" } },
+    async (request, reply) => {
+      const requestId = readRequestContext(request.headers).requestId;
+      if (secretService === null) {
+        return secretBrokerDisabled(reply, requestId);
+      }
+      const secrets = await secretService.list(selfScope(request));
+      return sendData(reply, { secrets }, 200, requestId);
+    },
+  );
+  app.delete(
+    "/hub/self/mcp/secrets/:handle",
+    { preHandler: writeGuard, schema: { tags: ["hub-self"], summary: "软删一条已保管凭据（幂等，仅限本 namespace）" } },
+    (request, reply) => deleteSecret(secretService, request, reply),
+  );
+}
+
+function secretBrokerDisabled(reply: FastifyReply, requestId: string): FastifyReply {
+  return sendError(
+    reply,
+    503,
+    SECRET_BROKER_DISABLED_CODE,
+    "凭据保管暂未开放（未配置 secret 主密钥）",
+    undefined,
+    requestId,
+  );
+}
+
+// self 创建凭据：scope=信封头，value 只进不出——错误面绝不回显 value/密文。
+async function createSecret(
+  secretService: McpSecretService | null,
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<FastifyReply> {
+  const requestId = readRequestContext(request.headers).requestId;
+  if (secretService === null) {
+    return secretBrokerDisabled(reply, requestId);
+  }
+  try {
+    const body = createSecretBodySchema.parse(request.body);
+    const created = await secretService.create(selfScope(request), body.name, body.value);
+    return sendData(reply, created, 201, requestId);
+  } catch (error) {
+    if (error instanceof ZodError) {
+      return sendZodError(reply, error, requestId);
+    }
+    // 绝不把 error（可能内联 body/value）带进日志或响应：只记 handle 无关的通用面。
+    request.log.error("failed to store mcp secret");
+    return sendError(reply, 500, "hub.secret_store_failed", "凭据保管失败", undefined, requestId);
+  }
+}
+
+// self 软删凭据：句柄形状钉死，幂等（不存在/跨 scope 静默通过，不泄露存在性）。
+async function deleteSecret(
+  secretService: McpSecretService | null,
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<FastifyReply> {
+  const requestId = readRequestContext(request.headers).requestId;
+  if (secretService === null) {
+    return secretBrokerDisabled(reply, requestId);
+  }
+  const params = secretHandleParamsSchema.safeParse(request.params);
+  if (!params.success) {
+    return sendZodError(reply, params.error, requestId);
+  }
+  await secretService.delete(selfScope(request), params.data.handle);
+  return sendData(reply, { ok: true }, 200, requestId);
 }
 
 // self 启停：scope=信封头，name 从路径；required 官方技能拒关抛 SkillRequiredError → 409。
