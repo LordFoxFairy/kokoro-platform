@@ -13,8 +13,17 @@ export const userEnvSchema = z.object({
   KOKORO_CREDIT_BASE_URL: z.string().url().default("http://kokoro-credit:4231"),
   KOKORO_PAYMENT_BASE_URL: z.string().url().default("http://kokoro-payment:4241"),
   // 终端用户会话签发密钥（HS256）：与 kokoro-session 同名同值部署，session 验签共享。
-  // 未配置 = /auth/sessions fail-closed（503），绝不签发未签名 token；其它路由不受影响。
+  // 生产禁用（未配私钥即 fail-fast，见 resolveUserSigning）；仅 dev/test 退化档。
+  // 未配置且无私钥（非生产）= /auth/sessions fail-closed（503），绝不签发未签名 token。
   KOKORO_AUTH_JWT_SECRET: z.string().min(1).optional(),
+  // RS256 签发私钥（PEM/PKCS8）：生产签发链正解。配置即以 RS256 签发，kid=公钥 SPKI 指纹前 16hex，
+  // 经 GET /.well-known/jwks.json 暴露公钥供 session 验签。生产必配，否则启动 fail-fast。
+  KOKORO_USER_JWT_PRIVATE_KEY: z.string().min(1).optional(),
+  // 轮换用上一把私钥（PEM/PKCS8，可选）：其公钥一并进 JWKS，令旧 kid 的在飞 token 平滑过渡。
+  KOKORO_USER_JWT_PRIVATE_KEY_PREVIOUS: z.string().min(1).optional(),
+  // magic-link 限频后端：配置即用 Redis 固定窗口计数（多副本一致），Redis 不可达 fail-open 放行+WARN；
+  // 未配置=进程内存计数（单副本 dev）。
+  KOKORO_REDIS_URL: z.string().min(1).optional(),
   KOKORO_AUTH_JWT_TTL_SECONDS: z.coerce.number().int().min(60).max(86400).default(3600),
   KOKORO_AUTH_JWT_ISSUER: z.string().min(1).default("kokoro-user"),
   // magic-link 一次性 token 存活时长。
@@ -22,8 +31,10 @@ export const userEnvSchema = z.object({
   // V1 dev 投递档：response=token 回响应体（仅限 dev 部署），log=只写服务日志不回体（缺省，最安全档）。
   // 邮件投递接口留位：SMTP/供应商接入时新增档位替换 log 落点，此处不臆造 SMTP 配置。
   KOKORO_AUTH_MAGIC_DELIVERY: z.enum(magicLinkDeliveryModes).default("log"),
-  // 同邮箱固定窗口限频（进程内存计数；生产多副本应换 redis）。
+  // email+ip 两维固定窗口限频。RATE_MAX=单邮箱阈值；RATE_IP_MAX=单 IP 阈值（缺省 = RATE_MAX*10，
+  // IP 合法服务多用户须远宽于单邮箱）。配 KOKORO_REDIS_URL 即多副本一致，否则进程内存。
   KOKORO_AUTH_MAGIC_RATE_MAX: z.coerce.number().int().min(1).default(5),
+  KOKORO_AUTH_MAGIC_RATE_IP_MAX: z.coerce.number().int().min(1).optional(),
   KOKORO_AUTH_MAGIC_RATE_WINDOW_SECONDS: z.coerce.number().int().min(60).default(900),
   // 团队邀请存活时长；缺省 7 天。
   KOKORO_TEAM_INVITE_TTL_SECONDS: z.coerce.number().int().min(300).max(2592000).default(604800),

@@ -1,5 +1,6 @@
 export * from "./interfaces/admin/manifest.js";
 export * from "./interfaces/admin/schema.js";
+export * from "./application/magic-link-rate-limiter.js";
 export * from "./application/magic-link-service.js";
 export * from "./application/session-service.js";
 export * from "./application/team-service.js";
@@ -13,6 +14,8 @@ export * from "./domain/team.js";
 export * from "./domain/user-deletion.js";
 export * from "./domain/user.js";
 export * from "./infrastructure/auth/jose-session-signer.js";
+export * from "./infrastructure/auth/rsa-keys.js";
+export * from "./infrastructure/auth/signing.js";
 export * from "./interfaces/http/server.js";
 export * from "./interfaces/http/schemas.js";
 export * from "./module.js";

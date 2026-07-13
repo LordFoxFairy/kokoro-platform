@@ -42,6 +42,8 @@ export function registerMagicLinkRoutes(
           siteId: input.site_id,
           email: input.email,
           nonceHash: input.nonce_hash ?? null,
+          // email+ip 两维限频；request.ip 由 fastify 从 socket/信任代理解析。
+          ip: request.ip,
         });
 
         // V1 dev 投递两档。邮件投递（SMTP/供应商）后续接在这里，替换 log 档落点，本仓不臆造 SMTP。

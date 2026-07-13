@@ -5,11 +5,19 @@ import {
   type MagicLinkRecord,
   type MagicLinkRepository,
 } from "../domain/magic-link.js";
+import {
+  InMemoryMagicLinkRateLimiter,
+  type MagicLinkRateLimiter,
+} from "./magic-link-rate-limiter.js";
 
 export interface MagicLinkServiceOptions {
   ttlSeconds: number;
   rateLimitMax: number;
+  // 单 IP 阈值：缺省 = rateLimitMax * 10（IP 合法服务多用户，阈值须远宽于单邮箱）。
+  rateLimitIpMax?: number;
   rateLimitWindowSeconds: number;
+  // 限频后端注入：缺省=进程内存固定窗口（单副本 dev）；生产注入 Redis 档。
+  rateLimiter?: MagicLinkRateLimiter;
   // 可注入时钟，便于测试确定 expiresAt/限频窗口；缺省真实时间。
   now?: () => Date;
 }
@@ -19,6 +27,8 @@ export interface RequestMagicLinkInput {
   email: string;
   // 签发方（web BFF）给的一次性 nonce 哈希；省略/null = 不绑定设备（直连调用）。
   nonceHash?: string | null;
+  // 调用方来源 IP：参与 email+ip 两维限频；省略/null = 仅按 email 维度限（直连/测试）。
+  ip?: string | null;
 }
 
 export interface RequestedMagicLink {
@@ -34,20 +44,29 @@ export function hashMagicLinkToken(token: string): string {
 // magic-link 编排：签发（限频+旧链作废+哈希落库）与消费（条件转移，失败统一 invalid）。
 export class MagicLinkService {
   private readonly now: () => Date;
-  // 同邮箱固定窗口限频，进程内存计数即可（单实例 dev/P2 面）。
-  // 生产多副本部署时应换 redis 计数器（INCR+EXPIRE），此 Map 不跨实例。
-  private readonly requestWindows = new Map<string, { windowStartMs: number; count: number }>();
+  // 限频后端：缺省进程内存固定窗口（单副本 dev）；生产注入 Redis 档（多副本一致）。
+  private readonly rateLimiter: MagicLinkRateLimiter;
 
   constructor(
     private readonly repository: MagicLinkRepository,
     private readonly options: MagicLinkServiceOptions,
   ) {
     this.now = options.now ?? (() => new Date());
+    this.rateLimiter =
+      options.rateLimiter ??
+      new InMemoryMagicLinkRateLimiter({
+        max: options.rateLimitMax,
+        ipMax: options.rateLimitIpMax ?? options.rateLimitMax * 10,
+        windowSeconds: options.rateLimitWindowSeconds,
+      });
   }
 
   async request(input: RequestMagicLinkInput): Promise<RequestedMagicLink> {
     const now = this.now();
-    this.enforceRateLimit(input.email, now);
+    const allowed = await this.rateLimiter.consume({ email: input.email, ip: input.ip ?? null }, now);
+    if (!allowed) {
+      throw new MagicLinkRateLimitedError(input.email);
+    }
 
     // 32 字节 CSPRNG，base64url 无填充；哈希后才落库。
     const linkToken = randomBytes(32).toString("base64url");
@@ -69,26 +88,5 @@ export class MagicLinkService {
       throw new MagicLinkInvalidError();
     }
     return record;
-  }
-
-  private enforceRateLimit(email: string, now: Date): void {
-    const nowMs = now.getTime();
-    const windowMs = this.options.rateLimitWindowSeconds * 1000;
-    // 顺手清过期窗口，Map 不随邮箱数无界增长。
-    for (const [key, window] of this.requestWindows) {
-      if (nowMs - window.windowStartMs >= windowMs) {
-        this.requestWindows.delete(key);
-      }
-    }
-
-    const current = this.requestWindows.get(email);
-    if (!current || nowMs - current.windowStartMs >= windowMs) {
-      this.requestWindows.set(email, { windowStartMs: nowMs, count: 1 });
-      return;
-    }
-    if (current.count >= this.options.rateLimitMax) {
-      throw new MagicLinkRateLimitedError(email);
-    }
-    current.count += 1;
   }
 }
