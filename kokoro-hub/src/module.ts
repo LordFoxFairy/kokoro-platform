@@ -22,8 +22,9 @@ export const hubPlatformModule = {
       // runtime 面（runtime-internal：session/agent）：按已验 namespace 读池 + 聚合 resolve + secret 明文出口。
       "GET /hub/runtime/skills/pool",
       "GET /hub/runtime/resolve",
+      "GET /hub/runtime/mcp/servers/:scope/:name/revisions/:revision",
       "POST /hub/runtime/mcp/secrets/resolve",
-      // self 面（web-bff：信封 scope + user 成员校验）；MCP 只读，mutation 恒 503 capability_registration_disabled。
+      // self 面（web-bff：信封 scope + user 成员校验）；MCP mutation 受部署门 KOKORO_HUB_MCP_MUTATION 控（off 恒 503）。
       "GET /hub/self/skills/pool",
       "GET /hub/self/skills/quota",
       "GET /hub/self/skills/:name/revisions",
@@ -32,10 +33,10 @@ export const hubPlatformModule = {
       "POST /hub/self/skills/upload/preview",
       "POST /hub/self/skills/upload/confirm",
       "GET /hub/self/mcp/servers",
-      "POST /hub/self/mcp/servers (503)",
-      "POST /hub/self/mcp/servers/:name/enable (503)",
-      "POST /hub/self/mcp/servers/:name/disable (503)",
-      "DELETE /hub/self/mcp/servers/:name (503)",
+      "POST /hub/self/mcp/servers (gated: KOKORO_HUB_MCP_MUTATION)",
+      "POST /hub/self/mcp/servers/:name/enable (gated: KOKORO_HUB_MCP_MUTATION)",
+      "POST /hub/self/mcp/servers/:name/disable (gated: KOKORO_HUB_MCP_MUTATION)",
+      "DELETE /hub/self/mcp/servers/:name (gated: KOKORO_HUB_MCP_MUTATION)",
       "POST /hub/self/mcp/secrets",
       "GET /hub/self/mcp/secrets",
       "DELETE /hub/self/mcp/secrets/:handle",

@@ -21,6 +21,9 @@ import type { SkillUploadService } from "../../application/skill-upload-service.
 import { SkillRequiredError } from "../../domain/errors.js";
 import { createSecretBodySchema, secretHandleParamsSchema } from "./mcp-secret-schemas.js";
 import type { MembershipAuthorizer } from "./membership-authorizer.js";
+import { parseSecretRef, selfRegisterMcpServerBodySchema } from "./mcp-server-ref.js";
+import { validateMcpServerUrl } from "./mcp-url-guard.js";
+import { McpServerNotFoundError } from "../../domain/errors.js";
 import { nameParamsSchema } from "./schemas.js";
 import { readSelfUploadPayload, replyUploadError, UPLOAD_BODY_LIMIT } from "./upload-routes.js";
 
@@ -39,6 +42,10 @@ export interface SelfRouteServices {
   // 缺省 null = secret broker 未配置（无主密钥/仓储）：secret 面 503 fail-loud。
   secretService: McpSecretService | null;
   authorizer: MembershipAuthorizer;
+  // MCP mutation 部署门（HUB-CONSIST 跨仓 E2E 过后开）：false = register/enable/disable/delete 恒 503。
+  mcpMutationEnabled: boolean;
+  // URL 预校验解析器注入口（测试用）；缺省用真 DNS（mcp-url-guard defaultResolver）。
+  mcpUrlResolver?: (hostname: string) => Promise<string[]>;
 }
 
 function headerValue(request: FastifyRequest, key: string): string | undefined {
@@ -113,7 +120,8 @@ function capabilityDisabled(reply: FastifyReply, requestId: string): FastifyRepl
 }
 
 export function registerSelfRoutes(app: FastifyInstance, services: SelfRouteServices): void {
-  const { skillService, uploadService, mcpService, secretService, authorizer } = services;
+  const { skillService, uploadService, mcpService, secretService, authorizer, mcpMutationEnabled } =
+    services;
   const readGuard = membershipGuard(authorizer, "read");
   const writeGuard = membershipGuard(authorizer, "write");
 
@@ -225,13 +233,39 @@ export function registerSelfRoutes(app: FastifyInstance, services: SelfRouteServ
     },
   );
 
-  // ---- MCP mutation：恒 503 fail-closed（register/update/enable/disable/delete）----
+  // ---- MCP mutation（register/enable/disable/delete）----
+  // 部署门 KOKORO_HUB_MCP_MUTATION：off → 恒 503 capability_registration_disabled（fail-closed）；
+  // on → 经 writeGuard(owner/admin) + 全量防线（secret_ref 只收本 namespace handle: / URL 预校验）。
   const mcpDisabled = async (request: FastifyRequest, reply: FastifyReply) =>
     capabilityDisabled(reply, readRequestContext(request.headers).requestId);
-  app.post("/hub/self/mcp/servers", { schema: { tags: ["hub-self"], summary: "注册 MCP server（fail-closed，恒 503）" } }, mcpDisabled);
-  app.post("/hub/self/mcp/servers/:name/enable", { schema: { tags: ["hub-self"], summary: "启用 MCP server（fail-closed，恒 503）" } }, mcpDisabled);
-  app.post("/hub/self/mcp/servers/:name/disable", { schema: { tags: ["hub-self"], summary: "停用 MCP server（fail-closed，恒 503）" } }, mcpDisabled);
-  app.delete("/hub/self/mcp/servers/:name", { schema: { tags: ["hub-self"], summary: "删除 MCP server（fail-closed，恒 503）" } }, mcpDisabled);
+  if (!mcpMutationEnabled || mcpService === null) {
+    app.post("/hub/self/mcp/servers", { schema: { tags: ["hub-self"], summary: "注册 MCP server（fail-closed，恒 503）" } }, mcpDisabled);
+    app.post("/hub/self/mcp/servers/:name/enable", { schema: { tags: ["hub-self"], summary: "启用 MCP server（fail-closed，恒 503）" } }, mcpDisabled);
+    app.post("/hub/self/mcp/servers/:name/disable", { schema: { tags: ["hub-self"], summary: "停用 MCP server（fail-closed，恒 503）" } }, mcpDisabled);
+    app.delete("/hub/self/mcp/servers/:name", { schema: { tags: ["hub-self"], summary: "删除 MCP server（fail-closed，恒 503）" } }, mcpDisabled);
+  } else {
+    const mcp = mcpService;
+    app.post(
+      "/hub/self/mcp/servers",
+      { preHandler: writeGuard, schema: { tags: ["hub-self"], summary: "注册本 namespace MCP server（scope=信封头；secret_ref 仅 handle:；URL 预校验）" } },
+      (request, reply) => selfRegisterMcp(mcp, secretService, services.mcpUrlResolver, request, reply),
+    );
+    app.post(
+      "/hub/self/mcp/servers/:name/enable",
+      { preHandler: writeGuard, schema: { tags: ["hub-self"], summary: "启用本 namespace MCP server（文档级开关）" } },
+      (request, reply) => selfToggleMcp(mcp, request, reply, true),
+    );
+    app.post(
+      "/hub/self/mcp/servers/:name/disable",
+      { preHandler: writeGuard, schema: { tags: ["hub-self"], summary: "停用本 namespace MCP server（文档级开关，对旧会话即刻 fail-closed）" } },
+      (request, reply) => selfToggleMcp(mcp, request, reply, false),
+    );
+    app.delete(
+      "/hub/self/mcp/servers/:name",
+      { preHandler: writeGuard, schema: { tags: ["hub-self"], summary: "软删本 namespace MCP server（置 deleted_at，旧会话即刻 fail-closed）" } },
+      (request, reply) => selfDeleteMcp(mcp, request, reply),
+    );
+  }
 
   // ---- MCP secret broker（self 面）：创建（写）/ 列表（读）/ 软删（写）----
   // 明文只进不出：创建收 value 即加密落库，响应只回句柄；列表/删除面绝不含值或密文。
@@ -309,6 +343,92 @@ async function deleteSecret(
     return sendZodError(reply, params.error, requestId);
   }
   await secretService.delete(selfScope(request), params.data.handle);
+  return sendData(reply, { ok: true }, 200, requestId);
+}
+
+// self 注册 MCP server（门后）：scope=信封头，body 不收 scope（strict）；secret_ref 仅 handle: 且须∈本 namespace；
+// URL 静态预校验（https + 解析后不落私网/元数据网段）。凭据本体绝不入库，只存 handle 引用。
+async function selfRegisterMcp(
+  mcpService: McpHubService,
+  secretService: McpSecretService | null,
+  urlResolver: ((hostname: string) => Promise<string[]>) | undefined,
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<FastifyReply> {
+  const requestId = readRequestContext(request.headers).requestId;
+  const parsed = selfRegisterMcpServerBodySchema.safeParse(request.body);
+  if (!parsed.success) {
+    return sendZodError(reply, parsed.error, requestId);
+  }
+  const body = parsed.data;
+  const scope = selfScope(request);
+  // secret_ref 归属校验：handle: 形状已由 schema 保证；此处核验句柄属本 namespace 且活跃。
+  const secretRef = body.secret_ref ?? null;
+  if (secretRef !== null) {
+    const ref = parseSecretRef(secretRef);
+    if (ref.kind !== "handle") {
+      return sendError(reply, 400, "hub.mcp_secret_ref_invalid", "self secret_ref 仅接受本 namespace 的 handle: 引用", undefined, requestId);
+    }
+    const owned = secretService !== null && (await secretService.owns(scope, ref.handle));
+    if (!owned) {
+      return sendError(reply, 400, "hub.mcp_secret_ref_unknown", "secret_ref 句柄不属本 namespace 或不存在", undefined, requestId);
+    }
+  }
+  // URL 预校验（self 面恒 https，不放行私网/元数据）：DNS 全量解析逐 IP 判网段。
+  const urlCheck = await validateMcpServerUrl(body.url, {
+    allowInsecure: false,
+    ...(urlResolver !== undefined ? { resolver: urlResolver } : {}),
+  });
+  if (!urlCheck.ok) {
+    return sendError(reply, 400, "hub.mcp_url_forbidden", `MCP url 预校验未通过：${urlCheck.reason}`, undefined, requestId);
+  }
+  const server = await mcpService.register({
+    scope,
+    name: body.name,
+    transport: body.transport,
+    url: body.url,
+    allowedTools: body.allowed_tools,
+    secretRef,
+  });
+  return sendData(reply, { server }, 201, requestId);
+}
+
+// self 启停 MCP server：scope=信封头，name 从路径；目标不存在/已软删 → 404。
+async function selfToggleMcp(
+  mcpService: McpHubService,
+  request: FastifyRequest,
+  reply: FastifyReply,
+  enabled: boolean,
+): Promise<FastifyReply> {
+  const requestId = readRequestContext(request.headers).requestId;
+  const params = nameParamsSchema.safeParse(request.params);
+  if (!params.success) {
+    return sendZodError(reply, params.error, requestId);
+  }
+  try {
+    await mcpService.setEnabled(selfScope(request), params.data.name, enabled);
+    return sendData(reply, { ok: true }, 200, requestId);
+  } catch (error) {
+    if (error instanceof McpServerNotFoundError) {
+      return sendError(reply, 404, "hub.mcp_server_not_found", error.message, undefined, requestId);
+    }
+    request.log.error({ error }, "failed to toggle self mcp server");
+    return sendError(reply, 500, "hub.mcp_toggle_failed", "MCP server 启停失败", undefined, requestId);
+  }
+}
+
+// self 软删 MCP server：scope=信封头，name 从路径；幂等（对齐 admin 面）。
+async function selfDeleteMcp(
+  mcpService: McpHubService,
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<FastifyReply> {
+  const requestId = readRequestContext(request.headers).requestId;
+  const params = nameParamsSchema.safeParse(request.params);
+  if (!params.success) {
+    return sendZodError(reply, params.error, requestId);
+  }
+  await mcpService.markDeleted(selfScope(request), params.data.name);
   return sendData(reply, { ok: true }, 200, requestId);
 }
 

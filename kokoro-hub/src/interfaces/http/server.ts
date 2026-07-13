@@ -42,6 +42,10 @@ export interface CreateHubServerOptions {
   routeAccess?: RouteAccessConfig;
   // self 面成员校验器；缺省 fail-closed(一切 self 请求 403)。main 注入 HTTP 版(调 user /memberships/check)，测试注入 fake。
   membershipAuthorizer?: MembershipAuthorizer;
+  // self 面 MCP mutation 部署门（KOKORO_HUB_MCP_MUTATION=on）；缺省 false = mutation 恒 503 fail-closed。
+  mcpMutationEnabled?: boolean;
+  // self 面 URL 预校验解析器注入（测试用）；缺省用真 DNS。
+  mcpUrlResolver?: (hostname: string) => Promise<string[]>;
 }
 
 // hub 所需 caller 凭据（HUB-AUTHZ 三面）：
@@ -103,6 +107,8 @@ export function createHubServer(options: CreateHubServerOptions) {
       mcpService,
       secretService,
       authorizer,
+      mcpMutationEnabled: options.mcpMutationEnabled ?? false,
+      ...(options.mcpUrlResolver !== undefined ? { mcpUrlResolver: options.mcpUrlResolver } : {}),
     });
     // admin 面（网关）：健康检查/manifest/审核/运营/官方位/软删/上传/MCP 管理（现管理面全量迁 /hub/admin）。
     registerHubRoutes(instance, service);

@@ -31,6 +31,10 @@ export const hubEnvSchema = z.object({
   KOKORO_HUB_ENV_REF_ALLOWLIST: z.string().min(1).optional(),
   // 放行 http/localhost/私网 url 注册（仅 admin 面 + 本地/test profile）；"1" 开启，缺省关闭。
   KOKORO_HUB_ALLOW_INSECURE_URL: z.string().optional(),
+  // namespace self 面 MCP mutation 部署门（HUB-CONSIST 跨仓 E2E 过后才开）：
+  // "on" 开启 self 注册/启停/软删（仍全量强制 secret_ref handle 归属 / URL 预校验防线）；
+  // 缺省 = off → mutation 恒 503 capability_registration_disabled（fail-closed）。
+  KOKORO_HUB_MCP_MUTATION: z.string().optional(),
 });
 
 export type HubEnv = z.infer<typeof hubEnvSchema>;

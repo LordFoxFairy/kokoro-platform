@@ -8,9 +8,12 @@
 // - deleted_at: 软删毫秒时间戳；null = 活跃。
 
 export {
+  MCP_SERVER_REVISIONS_COLLECTION,
   MCP_SERVERS_COLLECTION,
   mcpServerDocSchema,
+  mcpServerRevisionDocSchema,
   type McpServerDoc,
+  type McpServerRevisionDoc,
 } from "./storage.js";
 
 export const MCP_TRANSPORTS = ["http", "streamable_http"] as const;

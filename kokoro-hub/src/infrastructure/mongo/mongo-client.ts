@@ -1,6 +1,10 @@
 import { type Collection, type Db, MongoClient } from "mongodb";
 import { MCP_SECRETS_COLLECTION } from "../../contract/mcp-secret-storage.js";
-import { MCP_SERVERS_COLLECTION, type McpTransport } from "../../contract/mcp-storage.js";
+import {
+  MCP_SERVER_REVISIONS_COLLECTION,
+  MCP_SERVERS_COLLECTION,
+  type McpTransport,
+} from "../../contract/mcp-storage.js";
 import type { ReviewStatus } from "../../contract/skill-curation-storage.js";
 import { SKILL_REVISIONS_COLLECTION, SKILL_STATE_COLLECTION, SKILLS_COLLECTION } from "../../contract/storage.js";
 
@@ -57,6 +61,8 @@ export interface SkillRevisionRecord {
 export interface McpServerRecord {
   scope: string;
   name: string;
+  // revision = 当前版号（MCP-REVISION）。存量文档无此字段：读侧按 revision=1 补齐并 append 快照行（迁移语义）。
+  revision?: number;
   transport: McpTransport;
   url: string;
   allowed_tools: string[];
@@ -64,6 +70,21 @@ export interface McpServerRecord {
   enabled: boolean;
   updated_at: number;
   deleted_at: number | null;
+}
+
+// MCP server 版本快照记录（MCP-REVISION，append-only 同 skill_revisions）：define/update 内容变化时
+// 落一格不可变快照。行永不改写；grant 按 (scope,name,revision) 取此行定死会话内容，disable/revoke
+// 是活文档（McpServerRecord）的事，快照只保真历史。config_hash=规范化配置 sha256（内容锁）。
+export interface McpServerRevisionRecord {
+  scope: string;
+  name: string;
+  revision: number;
+  config_hash: string;
+  transport: McpTransport;
+  url: string;
+  allowed_tools: string[];
+  secret_ref: string | null;
+  created_at: number;
 }
 
 // MCP secret 记录（MCP-SECRET HUB 半场）：明文绝不落库——ciphertext 是 AES-256-GCM 信封串，
@@ -85,6 +106,7 @@ export interface HubCollections {
   state: Collection<SkillStateRecord>;
   revisions: Collection<SkillRevisionRecord>;
   mcpServers: Collection<McpServerRecord>;
+  mcpServerRevisions: Collection<McpServerRevisionRecord>;
   mcpSecrets: Collection<McpSecretRecord>;
 }
 
@@ -98,6 +120,7 @@ export function hubCollections(db: Db): HubCollections {
     state: db.collection<SkillStateRecord>(SKILL_STATE_COLLECTION),
     revisions: db.collection<SkillRevisionRecord>(SKILL_REVISIONS_COLLECTION),
     mcpServers: db.collection<McpServerRecord>(MCP_SERVERS_COLLECTION),
+    mcpServerRevisions: db.collection<McpServerRevisionRecord>(MCP_SERVER_REVISIONS_COLLECTION),
     mcpSecrets: db.collection<McpSecretRecord>(MCP_SECRETS_COLLECTION),
   };
 }

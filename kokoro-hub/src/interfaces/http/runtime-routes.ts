@@ -1,6 +1,7 @@
 // runtime 面路由（HUB-AUTHZ）：仅 runtime caller(session/agent)。按已验 namespace 返回有效池。
-// /hub/runtime/skills/pool 迁自旧 /hub/skills/pool；/hub/runtime/resolve 是聚合出口，
-// 为 HUB-CONSIST 的 session 单解析器准备（先返回 skills 卡片 + 现 mcp_servers names 视图）。
+// /hub/runtime/skills/pool 迁自旧 /hub/skills/pool；/hub/runtime/resolve 是聚合出口（session 建
+// 会话快照单解析器）：返回 skills 卡片 + mcp_servers McpGrant[]（含 revision + config_hash）。
+// /hub/runtime/mcp/servers/:scope/:name/revisions/:revision 是 agent 装配取不可变快照 + 活文档现况的口。
 // /hub/runtime/mcp/secrets/resolve 是 secret 明文的唯一授权出口（装配期换明文进 headers）。
 
 import { readRequestContext, sendData, sendError, sendZodError } from "@kokoro/platform-kit";
@@ -12,7 +13,7 @@ import type { SkillHubService } from "../../application/skill-hub-service.js";
 import { SecretNotResolvableError } from "../../domain/errors.js";
 import { SecretDecryptError } from "../../domain/secret-cipher.js";
 import { resolveSecretsBodySchema } from "./mcp-secret-schemas.js";
-import { namespaceQuerySchema } from "./schemas.js";
+import { namespaceQuerySchema, scopeNameRevisionParamsSchema } from "./schemas.js";
 
 export interface RuntimeRouteServices {
   skillService: SkillHubService;
@@ -43,7 +44,7 @@ export function registerRuntimeRoutes(app: FastifyInstance, services: RuntimeRou
     {
       schema: {
         tags: ["hub-runtime"],
-        summary: "运行时聚合解析：按 namespace 返回有效 skills + mcp_servers 名称视图",
+        summary: "运行时聚合解析：按 namespace 返回有效 skills + mcp_servers McpGrant[]（含 revision/config_hash）",
       },
     },
     async (request, reply) => {
@@ -53,10 +54,40 @@ export function registerRuntimeRoutes(app: FastifyInstance, services: RuntimeRou
         return sendZodError(reply, query.error, requestId);
       }
       const skills = await skillService.listPool(query.data.namespace);
-      // 现阶段只出 names 视图；HUB-CONSIST 落 McpGrant{scope,name,revision,config_hash} 后再扩展。
-      const servers = mcpService === null ? [] : await mcpService.listPool(query.data.namespace);
-      const mcpServers = servers.map((server) => server.name);
+      // McpGrant{scope,name,revision,config_hash}：session 锁进会话快照，内容锁在 config_hash。
+      const mcpServers = mcpService === null ? [] : await mcpService.resolveGrants(query.data.namespace);
       return sendData(reply, { skills, mcp_servers: mcpServers }, 200, requestId);
+    },
+  );
+
+  // agent 装配取回：按 (scope,name,revision) 返回不可变快照 + 活文档现况（enabled/deleted）。
+  // 快照缺失（未知 revision）→ 404，agent fail-closed 拒装；活文档 disable/revoke → live 现况即刻反映。
+  app.get(
+    "/hub/runtime/mcp/servers/:scope/:name/revisions/:revision",
+    {
+      schema: {
+        tags: ["hub-runtime"],
+        summary: "运行时取 MCP server 版本快照 + 活文档现况（agent 按 revision 装配，fail-closed）",
+      },
+    },
+    async (request, reply) => {
+      const requestId = readRequestContext(request.headers).requestId;
+      if (mcpService === null) {
+        return sendError(reply, 404, "hub.mcp_revision_not_found", "MCP server 版本快照不存在", undefined, requestId);
+      }
+      const params = scopeNameRevisionParamsSchema.safeParse(request.params);
+      if (!params.success) {
+        return sendZodError(reply, params.error, requestId);
+      }
+      const resolution = await mcpService.getRevisionSnapshot(
+        params.data.scope,
+        params.data.name,
+        params.data.revision,
+      );
+      if (resolution === null) {
+        return sendError(reply, 404, "hub.mcp_revision_not_found", "MCP server 版本快照不存在", undefined, requestId);
+      }
+      return sendData(reply, resolution, 200, requestId);
     },
   );
 

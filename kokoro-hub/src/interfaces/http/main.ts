@@ -65,6 +65,8 @@ await startHttpServer({
       },
       routeAccess: { secrets: callerSecrets, isProduction: isProductionEnv() },
       membershipAuthorizer,
+      // self 面 MCP mutation 部署门：KOKORO_HUB_MCP_MUTATION=on 才开（HUB-CONSIST 跨仓 E2E 过后）。
+      mcpMutationEnabled: env.KOKORO_HUB_MCP_MUTATION === "on",
       onClose: () => client.close(),
     }),
 });

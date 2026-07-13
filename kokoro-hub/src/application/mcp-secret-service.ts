@@ -35,6 +35,13 @@ export class McpSecretService {
     await this.repository.softDelete(scope, handle);
   }
 
+  // 归属校验（MCP 注册 secret_ref=handle: 时用）：句柄须属本 namespace 且活跃。
+  // 走 resolve 的密文命中判定，绝不解密——只回真/假，不泄露值。
+  async owns(scope: string, handle: string): Promise<boolean> {
+    const found = await this.repository.resolve(scope, [handle]);
+    return found.length === 1;
+  }
+
   // runtime 面解析（唯一明文出口）：全有或全无——任一句柄不属本 namespace 或不可解，
   // 一律抛 SecretNotResolvableError（路由 404，不回显句柄），跨 namespace 不泄露存在性。
   async resolve(scope: string, handles: readonly string[]): Promise<Record<string, string>> {

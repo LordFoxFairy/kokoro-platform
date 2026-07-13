@@ -72,6 +72,7 @@ export const mcpServerDocSchema = z
   .object({
     scope: z.string().min(1),
     name: z.string().min(1),
+    revision: z.number().int(),
     transport: z.enum(["http", "streamable_http"]),
     url: z.string().min(1),
     allowed_tools: z.array(z.string().min(1)),
@@ -82,6 +83,21 @@ export const mcpServerDocSchema = z
   })
   .strict()
 export type McpServerDoc = z.infer<typeof mcpServerDocSchema>
+
+export const mcpServerRevisionDocSchema = z
+  .object({
+    scope: z.string().min(1),
+    name: z.string().min(1),
+    revision: z.number().int(),
+    config_hash: z.string().min(1),
+    transport: z.enum(["http", "streamable_http"]),
+    url: z.string().min(1),
+    allowed_tools: z.array(z.string().min(1)),
+    secret_ref: z.string().min(1).nullable(),
+    created_at: z.number().int(),
+  })
+  .strict()
+export type McpServerRevisionDoc = z.infer<typeof mcpServerRevisionDocSchema>
 
 export const runDispatchDocSchema = z
   .object({
@@ -112,6 +128,7 @@ export const mcpSecretDocSchema = z
 export type McpSecretDoc = z.infer<typeof mcpSecretDocSchema>
 
 export const MCP_SECRETS_COLLECTION = "mcp_secrets"
+export const MCP_SERVER_REVISIONS_COLLECTION = "mcp_server_revisions"
 export const MCP_SERVERS_COLLECTION = "mcp_servers"
 export const RUN_DISPATCHES_COLLECTION = "run_dispatches"
 export const SKILL_REVISIONS_COLLECTION = "skill_revisions"

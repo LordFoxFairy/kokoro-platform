@@ -54,6 +54,7 @@ describe("hub MCP server registry API (real mongo)", () => {
     expect(body.data.server).toEqual({
       scope: NS,
       name: "github",
+      revision: 1,
       transport: "streamable_http",
       url: "https://mcp.example/github",
       allowed_tools: ["search_issues", "create_issue"],

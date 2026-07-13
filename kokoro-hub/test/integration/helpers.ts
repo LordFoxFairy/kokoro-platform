@@ -44,6 +44,7 @@ export async function connectTestHub(dbName: string): Promise<TestHub> {
       await collections.state.deleteMany({});
       await collections.revisions.deleteMany({});
       await collections.mcpServers.deleteMany({});
+      await collections.mcpServerRevisions.deleteMany({});
       await collections.mcpSecrets.deleteMany({});
     },
   };

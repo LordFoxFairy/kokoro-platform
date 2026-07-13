@@ -21,6 +21,16 @@ export const nameParamsSchema = z
   })
   .strict();
 
+// runtime 版本快照取回（agent 装配）：按 (scope,name,revision) 定位不可变快照行。
+// revision 走路径段，coerce 成非负整数（路径参数天然是串）。
+export const scopeNameRevisionParamsSchema = z
+  .object({
+    scope: z.string().trim().min(1),
+    name: z.string().trim().min(1),
+    revision: z.coerce.number().int().min(1),
+  })
+  .strict();
+
 export const enableBodySchema = z
   .object({
     namespace: z.string().trim().min(1),
