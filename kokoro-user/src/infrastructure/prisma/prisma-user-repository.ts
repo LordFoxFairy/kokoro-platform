@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
+import type { Invite } from "../../domain/invite.js";
 import type { Membership } from "../../domain/membership.js";
 import type { ServiceAccount } from "../../domain/service-account.js";
 import type { Team } from "../../domain/team.js";
@@ -10,12 +11,27 @@ import {
 } from "../../domain/user-deletion.js";
 import type { User, UserStatus } from "../../domain/user.js";
 import type {
+  AcceptInviteInput,
+  AcceptInviteResult,
+  ChangeMemberRoleInput,
+  ChangeMemberRoleResult,
+  CreateInviteInput,
+  CreateInviteResult,
+  DeclineInviteInput,
+  DeclineInviteResult,
   EnsureUserInput,
   EnsureUserResult,
+  MemberTeamContext,
   MembershipCheckResult,
   OwnerActiveQuery,
+  PendingInviteView,
+  RemoveMemberInput,
+  RemoveMemberResult,
   SetMembershipRoleInput,
   SetMembershipRoleResult,
+  TeamDetailResult,
+  TeamInviteView,
+  TeamMemberView,
   TeamSummary,
   UpsertTeamInput,
   UserRepository,
@@ -123,6 +139,298 @@ export class PrismaUserRepository implements UserRepository {
       },
     });
     return { outcome: "ok", membership: mapMembership(membership) };
+  }
+
+  async createInvite(input: CreateInviteInput): Promise<CreateInviteResult> {
+    return this.prisma.$transaction(async (tx) => {
+      const team = await tx.team.findUnique({ where: { id: input.teamId } });
+      if (!team || team.deletedAt !== null || team.status !== "active") {
+        return { outcome: "team_not_found" };
+      }
+      const actor = await tx.membership.findFirst({
+        where: { teamId: input.teamId, userId: input.actorUserId, status: "active", deletedAt: null },
+      });
+      if (!actor || (actor.role !== "owner" && actor.role !== "admin")) {
+        return { outcome: "not_authorized" };
+      }
+      // 幂等：同 (team,email) 已有 pending 邀请则刷新（角色/token/过期），避免重复行堆积。
+      const existing = await tx.invite.findFirst({
+        where: { teamId: input.teamId, email: input.email, status: "pending", deletedAt: null },
+      });
+      const invite = existing
+        ? await tx.invite.update({
+            where: { id: existing.id },
+            data: { role: input.role, tokenHash: input.tokenHash, expiresAt: input.expiresAt },
+          })
+        : await tx.invite.create({
+            data: {
+              teamId: input.teamId,
+              email: input.email,
+              role: input.role,
+              status: "pending",
+              tokenHash: input.tokenHash,
+              expiresAt: input.expiresAt,
+            },
+          });
+      return { outcome: "ok", invite: mapInvite(invite) };
+    });
+  }
+
+  async getTeamDetailForViewer(teamId: string, viewerUserId: string): Promise<TeamDetailResult> {
+    const team = await this.prisma.team.findFirst({
+      where: { id: teamId, deletedAt: null, status: "active" },
+    });
+    if (!team) {
+      // team 缺失/停用不泄露存在性：与非成员同归 not_member。
+      return { outcome: "not_member" };
+    }
+    const viewer = await this.prisma.membership.findFirst({
+      where: { teamId, userId: viewerUserId, status: "active", deletedAt: null },
+    });
+    if (!viewer) {
+      return { outcome: "not_member" };
+    }
+    const memberships = await this.prisma.membership.findMany({
+      where: { teamId, status: "active", deletedAt: null },
+      include: { user: true },
+      orderBy: { createdAt: "asc" },
+    });
+    const members: TeamMemberView[] = memberships.map((m) => ({
+      userId: m.userId,
+      email: m.user.email,
+      displayName: m.user.displayName,
+      role: m.role,
+      status: m.status,
+      joinedAt: m.createdAt,
+    }));
+    const canManage = viewer.role === "owner" || viewer.role === "admin";
+    const invites: TeamInviteView[] = canManage
+      ? (
+          await this.prisma.invite.findMany({
+            where: { teamId, status: "pending", deletedAt: null },
+            orderBy: { createdAt: "desc" },
+          })
+        ).map((i) => ({
+          id: i.id,
+          email: i.email,
+          role: i.role,
+          status: i.status,
+          expiresAt: i.expiresAt,
+          createdAt: i.createdAt,
+        }))
+      : [];
+    return { outcome: "ok", team: mapTeam(team), viewerRole: viewer.role, members, invites };
+  }
+
+  async listPendingInvitesForUser(userId: string): Promise<PendingInviteView[]> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || user.email === null || user.deletedAt !== null || user.status !== "active") {
+      return [];
+    }
+    const invites = await this.prisma.invite.findMany({
+      where: {
+        email: user.email,
+        status: "pending",
+        deletedAt: null,
+        expiresAt: { gt: new Date() },
+        team: { siteId: user.siteId, status: "active", deletedAt: null },
+      },
+      include: { team: true },
+      orderBy: { createdAt: "desc" },
+    });
+    return invites.map((i) => ({
+      id: i.id,
+      teamId: i.teamId,
+      teamName: i.team.name,
+      role: i.role,
+      expiresAt: i.expiresAt,
+      createdAt: i.createdAt,
+    }));
+  }
+
+  async acceptInvite(input: AcceptInviteInput): Promise<AcceptInviteResult> {
+    return this.prisma.$transaction(async (tx) => {
+      const invite = await tx.invite.findUnique({ where: { id: input.inviteId } });
+      if (!invite || invite.deletedAt !== null) {
+        return { outcome: "invite_not_found" };
+      }
+      const user = await tx.user.findUnique({ where: { id: input.userId } });
+      if (!user || user.deletedAt !== null || user.status !== "active" || user.email === null) {
+        return { outcome: "not_invitee" };
+      }
+      const team = await tx.team.findUnique({ where: { id: invite.teamId } });
+      if (!team || team.deletedAt !== null || team.status !== "active" || team.siteId !== user.siteId) {
+        return { outcome: "team_unavailable" };
+      }
+      if (invite.email.toLowerCase() !== user.email.toLowerCase()) {
+        return { outcome: "not_invitee" };
+      }
+      // 已接受：幂等——确保成员活跃，不重复消费。
+      if (invite.status === "accepted") {
+        const membership = await this.upsertActiveMembership(tx, team.id, user.id, invite.role, false);
+        return { outcome: "ok", membership: mapMembership(membership), team: mapTeam(team) };
+      }
+      if (invite.status !== "pending") {
+        return { outcome: "not_pending" };
+      }
+      if (invite.expiresAt.getTime() <= Date.now()) {
+        await tx.invite.update({ where: { id: invite.id }, data: { status: "expired" } });
+        return { outcome: "expired" };
+      }
+      const membership = await this.upsertActiveMembership(tx, team.id, user.id, invite.role, true);
+      await tx.invite.update({
+        where: { id: invite.id },
+        data: { status: "accepted", acceptedAt: new Date() },
+      });
+      return { outcome: "ok", membership: mapMembership(membership), team: mapTeam(team) };
+    });
+  }
+
+  async declineInvite(input: DeclineInviteInput): Promise<DeclineInviteResult> {
+    return this.prisma.$transaction(async (tx) => {
+      const invite = await tx.invite.findUnique({ where: { id: input.inviteId } });
+      if (!invite || invite.deletedAt !== null) {
+        return { outcome: "invite_not_found" };
+      }
+      const user = await tx.user.findUnique({ where: { id: input.userId } });
+      if (!user || user.email === null || invite.email.toLowerCase() !== user.email.toLowerCase()) {
+        return { outcome: "not_invitee" };
+      }
+      // 已接受不可撤回；已 revoke/expire 视为幂等 ok。
+      if (invite.status === "accepted") {
+        return { outcome: "not_pending" };
+      }
+      if (invite.status === "pending") {
+        await tx.invite.update({
+          where: { id: invite.id },
+          data: { status: "revoked", revokedAt: new Date() },
+        });
+      }
+      return { outcome: "ok" };
+    });
+  }
+
+  async changeMemberRole(input: ChangeMemberRoleInput): Promise<ChangeMemberRoleResult> {
+    return this.prisma.$transaction(async (tx) => {
+      const team = await tx.team.findUnique({ where: { id: input.teamId } });
+      if (!team || team.deletedAt !== null || team.status !== "active") {
+        return { outcome: "team_not_found" };
+      }
+      const actor = await tx.membership.findFirst({
+        where: { teamId: input.teamId, userId: input.actorUserId, status: "active", deletedAt: null },
+      });
+      if (!actor || actor.role !== "owner") {
+        return { outcome: "not_authorized" };
+      }
+      const target = await tx.membership.findFirst({
+        where: { teamId: input.teamId, userId: input.targetUserId, status: "active", deletedAt: null },
+      });
+      if (!target) {
+        return { outcome: "target_not_member" };
+      }
+      if (target.role === "owner" && input.role !== "owner") {
+        const owners = await this.countActiveOwners(tx, input.teamId);
+        if (owners <= 1) {
+          return { outcome: "last_owner" };
+        }
+      }
+      const membership = await tx.membership.update({
+        where: { id: target.id },
+        data: { role: input.role },
+      });
+      return { outcome: "ok", membership: mapMembership(membership) };
+    });
+  }
+
+  async removeMember(input: RemoveMemberInput): Promise<RemoveMemberResult> {
+    return this.prisma.$transaction(async (tx) => {
+      const team = await tx.team.findUnique({ where: { id: input.teamId } });
+      if (!team || team.deletedAt !== null || team.status !== "active") {
+        return { outcome: "team_not_found" };
+      }
+      const actor = await tx.membership.findFirst({
+        where: { teamId: input.teamId, userId: input.actorUserId, status: "active", deletedAt: null },
+      });
+      if (!actor || (actor.role !== "owner" && actor.role !== "admin")) {
+        return { outcome: "not_authorized" };
+      }
+      const target = await tx.membership.findFirst({
+        where: { teamId: input.teamId, userId: input.targetUserId, status: "active", deletedAt: null },
+      });
+      if (!target) {
+        return { outcome: "target_not_member" };
+      }
+      // admin 只能移除 member（不能动 owner/admin）。
+      if (actor.role === "admin" && target.role !== "member") {
+        return { outcome: "not_authorized" };
+      }
+      if (target.role === "owner") {
+        const owners = await this.countActiveOwners(tx, input.teamId);
+        if (owners <= 1) {
+          return { outcome: "last_owner" };
+        }
+      }
+      // 置 inactive（软离队）：checkMembership fail-closed，hub authorizer 即时失效。
+      await tx.membership.update({
+        where: { id: target.id },
+        data: { status: "disabled", disabledAt: new Date() },
+      });
+      return { outcome: "ok" };
+    });
+  }
+
+  async resolveMemberTeamContext(userId: string, teamId: string): Promise<MemberTeamContext | null> {
+    const membership = await this.prisma.membership.findFirst({
+      where: {
+        teamId,
+        userId,
+        status: "active",
+        deletedAt: null,
+        team: { status: "active", deletedAt: null },
+      },
+      include: { team: true, user: true },
+    });
+    if (!membership || membership.user.deletedAt !== null || membership.user.status !== "active") {
+      return null;
+    }
+    return {
+      user: mapUser(membership.user),
+      team: mapTeam(membership.team),
+      role: membership.role,
+    };
+  }
+
+  private async countActiveOwners(tx: TransactionClient, teamId: string): Promise<number> {
+    return tx.membership.count({
+      where: { teamId, role: "owner", status: "active", deletedAt: null },
+    });
+  }
+
+  // 接受邀请写成员：新建=invite.role；已存在时可选是否重写角色（幂等分支不动既有角色，避免误降级）。
+  private async upsertActiveMembership(
+    tx: TransactionClient,
+    teamId: string,
+    userId: string,
+    role: "owner" | "admin" | "member",
+    overwriteRole: boolean,
+  ) {
+    const existing = await tx.membership.findUnique({
+      where: { teamId_userId: { teamId, userId } },
+    });
+    if (existing) {
+      return tx.membership.update({
+        where: { id: existing.id },
+        data: {
+          status: "active",
+          disabledAt: null,
+          ...(overwriteRole ? { role } : {}),
+          ...restoreData(),
+        },
+      });
+    }
+    return tx.membership.create({
+      data: { teamId, userId, role, status: "active" },
+    });
   }
 
   async setUserStatus(userId: string, status: UserStatus): Promise<User | null> {
@@ -638,6 +946,30 @@ function mapMembership(membership: {
     deleteReason: membership.deleteReason,
     createdAt: membership.createdAt,
     updatedAt: membership.updatedAt,
+  };
+}
+
+function mapInvite(invite: {
+  id: string;
+  teamId: string;
+  email: string;
+  role: "owner" | "admin" | "member";
+  status: "pending" | "accepted" | "revoked" | "expired";
+  expiresAt: Date;
+  acceptedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}): Invite {
+  return {
+    id: invite.id,
+    teamId: invite.teamId,
+    email: invite.email,
+    role: invite.role,
+    status: invite.status,
+    expiresAt: invite.expiresAt,
+    acceptedAt: invite.acceptedAt,
+    createdAt: invite.createdAt,
+    updatedAt: invite.updatedAt,
   };
 }
 

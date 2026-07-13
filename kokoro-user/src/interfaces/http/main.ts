@@ -16,6 +16,9 @@ await startHttpServer({
         rateLimitMax: env.KOKORO_AUTH_MAGIC_RATE_MAX,
         rateLimitWindowSeconds: env.KOKORO_AUTH_MAGIC_RATE_WINDOW_SECONDS,
       },
+      teams: {
+        inviteTtlSeconds: env.KOKORO_TEAM_INVITE_TTL_SECONDS,
+      },
       ...(env.KOKORO_AUTH_JWT_SECRET
         ? {
             sessionSigning: {

@@ -11,6 +11,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import Fastify from "fastify";
 import { MagicLinkService } from "../../application/magic-link-service.js";
 import { SessionService } from "../../application/session-service.js";
+import { TeamService } from "../../application/team-service.js";
 import { UserService } from "../../application/user-service.js";
 import type { MagicLinkDeliveryMode } from "../../domain/magic-link.js";
 import { JoseSessionSigner } from "../../infrastructure/auth/jose-session-signer.js";
@@ -18,6 +19,7 @@ import { createPrismaClient } from "../../infrastructure/prisma/prisma-client.js
 import { PrismaMagicLinkRepository } from "../../infrastructure/prisma/prisma-magic-link-repository.js";
 import { PrismaUserRepository } from "../../infrastructure/prisma/prisma-user-repository.js";
 import { registerUserAdminRoutes } from "./admin-routes.js";
+import { registerBffRoutes } from "./bff-routes.js";
 import { registerMagicLinkRoutes } from "./magic-link-routes.js";
 import { registerUserRoutes } from "./routes.js";
 import { registerSessionRoutes } from "./session-routes.js";
@@ -39,10 +41,17 @@ export interface MagicLinkServerOptions {
   now?: () => Date;
 }
 
+// 团队自助面配置：邀请 TTL；缺省 7 天。
+export interface TeamServerOptions {
+  inviteTtlSeconds?: number;
+  now?: () => Date;
+}
+
 export interface CreateUserServerOptions {
   prisma?: PrismaClient;
   sessionSigning?: SessionSigningOptions;
   magicLinks?: MagicLinkServerOptions;
+  teams?: TeamServerOptions;
   // 入站访问控制配置；不传=空 secret + 非生产=dev 直通（测试/本地）；生产由 main.ts 注入 per-caller secret。
   routeAccess?: RouteAccessConfig;
 }
@@ -71,6 +80,8 @@ export function createUserServer(options: CreateUserServerOptions = {}) {
   declareRouteAccess(app, "/teams", "runtime-internal");
   declareRouteAccess(app, "/service-accounts", "runtime-internal");
   declareRouteAccess(app, "/memberships", "runtime-internal");
+  // 团队自助面：仅 web-bff（携 user principal）。与 runtime-internal 互不越界，user principal 不下传 runtime。
+  declareRouteAccess(app, "/bff", "web-bff");
   declareRouteAccess(app, "/admin", "admin");
   declareRouteAccess(app, "/docs", "runtime-internal");
 
@@ -96,10 +107,17 @@ export function createUserServer(options: CreateUserServerOptions = {}) {
   });
   const magicLinkDeliveryMode: MagicLinkDeliveryMode = magicLinkDefaults.deliveryMode ?? "log";
 
+  const teamDefaults = options.teams ?? {};
+  const teamService = new TeamService(repository, {
+    inviteTtlSeconds: teamDefaults.inviteTtlSeconds ?? 604800,
+    ...(teamDefaults.now ? { now: teamDefaults.now } : {}),
+  });
+
   // WHY: 路由须包进 register 闭包，确保在异步入队的 swagger 插件之后加载，否则 onRoute 钩子漏采。
   void app.register(async (instance) => {
     registerUserRoutes(instance, service);
     registerSessionRoutes(instance, sessionService);
+    registerBffRoutes(instance, teamService, sessionService);
     registerMagicLinkRoutes(instance, magicLinkService, sessionService, {
       deliveryMode: magicLinkDeliveryMode,
     });

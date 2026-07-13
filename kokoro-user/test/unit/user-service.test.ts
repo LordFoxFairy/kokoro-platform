@@ -142,6 +142,19 @@ function trackingRepo(
     listTeams: async () => [ensureResult.personalTeam],
     listMemberships: async () => [ensureResult.membership],
     listServiceAccounts: async () => [],
+    createInvite: async () => ({ outcome: "team_not_found" }),
+    getTeamDetailForViewer: async () => ({ outcome: "not_member" }),
+    listPendingInvitesForUser: async () => [],
+    acceptInvite: async () => ({ outcome: "invite_not_found" }),
+    declineInvite: async () => ({ outcome: "invite_not_found" }),
+    changeMemberRole: async () => ({ outcome: "team_not_found" }),
+    removeMember: async () => ({ outcome: "team_not_found" }),
+    resolveMemberTeamContext: async (userId: string, teamId: string) => {
+      calls.push({ name: "resolveMemberTeamContext", arg: { userId, teamId } });
+      return userExists
+        ? { user: ensureResult.user, team: ensureResult.personalTeam, role: "owner" }
+        : null;
+    },
   };
   return { repo, calls };
 }

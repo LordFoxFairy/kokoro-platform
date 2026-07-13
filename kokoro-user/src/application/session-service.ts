@@ -1,6 +1,8 @@
 import {
   assertRuntimeNamespace,
+  NotTeamMemberError,
   type IssueSessionInput,
+  type IssueTeamSessionInput,
   type IssuedSession,
   type SessionSigner,
 } from "../domain/session.js";
@@ -46,5 +48,28 @@ export class SessionService {
     });
 
     return { token, namespace, user, team: personalTeam };
+  }
+
+  // 团队换签：校验 caller 是目标 team 活跃成员 → 以 teamId 为 namespace 重签 runtime token。
+  // 非活跃成员 → NotTeamMemberError（路由映射 403）。user principal 不下传：sub 仍为不透明 namespace。
+  async issueForTeam(input: IssueTeamSessionInput): Promise<IssuedSession> {
+    const context = await this.userService.resolveMemberTeamContext(input.userId, input.teamId);
+    if (context === null) {
+      throw new NotTeamMemberError(input.userId, input.teamId);
+    }
+
+    const namespace = context.team.id;
+    assertRuntimeNamespace(namespace);
+
+    const issuedAtSeconds = Math.floor(this.now().getTime() / 1000);
+    const token = await this.signer.sign({
+      sub: namespace,
+      iss: this.options.issuer,
+      siteId: context.team.siteId,
+      issuedAtSeconds,
+      expiresAtSeconds: issuedAtSeconds + this.options.ttlSeconds,
+    });
+
+    return { token, namespace, user: context.user, team: context.team };
   }
 }

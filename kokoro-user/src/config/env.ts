@@ -25,6 +25,8 @@ export const userEnvSchema = z.object({
   // 同邮箱固定窗口限频（进程内存计数；生产多副本应换 redis）。
   KOKORO_AUTH_MAGIC_RATE_MAX: z.coerce.number().int().min(1).default(5),
   KOKORO_AUTH_MAGIC_RATE_WINDOW_SECONDS: z.coerce.number().int().min(60).default(900),
+  // 团队邀请存活时长；缺省 7 天。
+  KOKORO_TEAM_INVITE_TTL_SECONDS: z.coerce.number().int().min(300).max(2592000).default(604800),
 });
 
 export type UserEnv = z.infer<typeof userEnvSchema>;

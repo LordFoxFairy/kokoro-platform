@@ -96,6 +96,40 @@ export const requestMagicLinkRequestSchema = z
   })
   .strict();
 
+// ── 团队自助面（/bff/*，web-bff 携 user principal 调用）──────────────────────────
+
+// 邀请入参：teamId 走 path；email 归一化（trim+小写）；role 限 admin/member（不可邀 owner）。
+export const createInviteRequestSchema = z
+  .object({
+    email: z.string().trim().toLowerCase().email(),
+    role: z.enum(["admin", "member"]),
+  })
+  .strict();
+
+// 改角色：targetUserId 目标成员，role 三档全量（含升 owner）。teamId 走 path，actor 走 x-user-id。
+export const bffChangeRoleRequestSchema = z
+  .object({
+    targetUserId: z.string().trim().min(1),
+    role: z.enum(["owner", "admin", "member"]),
+  })
+  .strict();
+
+export const bffRemoveMemberRequestSchema = z
+  .object({
+    targetUserId: z.string().trim().min(1),
+  })
+  .strict();
+
+// 团队换签：snake_case 外部契约，team_id 走 body；caller principal 走 x-user-id header。
+export const issueTeamSessionRequestSchema = z
+  .object({
+    team_id: z.string().trim().min(1),
+  })
+  .strict();
+
+export const teamIdParamsSchema = z.object({ teamId: z.string().min(1) }).strict();
+export const inviteIdParamsSchema = z.object({ inviteId: z.string().min(1) }).strict();
+
 // magic-link 消费：token 即链接中的一次性原文（base64url），服务端只比对哈希。
 // nonce_hash 必须与申请时同值才转移（跨设备/缺失 → 统一 invalid）；可选以兼容未绑定链。
 export const consumeMagicLinkRequestSchema = z

@@ -31,6 +31,23 @@ export interface IssueSessionInput {
   email?: string | undefined;
 }
 
+// 团队换签入参：以已知 user principal + 目标 teamId 换取该 namespace 的 runtime token。
+export interface IssueTeamSessionInput {
+  userId: string;
+  teamId: string;
+}
+
+// 换签时 caller 非目标 team 活跃成员：路由映射 403（不泄露 team 是否存在）。
+export class NotTeamMemberError extends Error {
+  constructor(
+    readonly userId: string,
+    readonly teamId: string,
+  ) {
+    super("caller is not an active member of the target team");
+    this.name = "NotTeamMemberError";
+  }
+}
+
 // 签入 JWT 的声明。sub=namespace(teamId)；session 只强校验 sub/exp，其余 passthrough。
 export interface SessionTokenClaims {
   sub: string;
