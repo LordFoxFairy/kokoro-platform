@@ -9,6 +9,7 @@ import zhCN from "antd/locale/zh_CN";
 import { ProLayout } from "@ant-design/pro-components";
 import {
   ApiOutlined,
+  AppstoreOutlined,
   CheckCircleOutlined,
   CreditCardOutlined,
   DashboardOutlined,
@@ -31,6 +32,8 @@ import {
   type Site,
 } from "@/lib/schemas";
 import { antdTheme, proLayoutToken } from "@/lib/theme";
+import { LocaleProvider, useLocale, useT } from "@/lib/i18n/context";
+import type { MessageKey } from "@/lib/i18n/messages";
 
 interface AdminCtx {
   me: Me | null;
@@ -51,31 +54,33 @@ export function useAdmin(): AdminCtx {
 }
 
 interface NavItem {
-  label: string;
+  labelKey: MessageKey;
   href: string;
   icon: React.ReactNode;
   perm: string | null;
 }
 
-const NAV: { group: string | null; items: NavItem[] }[] = [
-  { group: null, items: [{ label: "概览", href: "/", icon: <DashboardOutlined />, perm: null }] },
+// 导航文案走 i18n（labelKey）；此处只声明结构，渲染时经 useT 解析。
+const NAV: { groupKey: MessageKey | null; items: NavItem[] }[] = [
+  { groupKey: null, items: [{ labelKey: "nav.overview", href: "/", icon: <DashboardOutlined />, perm: null }] },
   {
-    group: "业务",
+    groupKey: "nav.group.business",
     items: [
-      { label: "用户", href: "/users", icon: <UserOutlined />, perm: null },
-      { label: "团队", href: "/teams", icon: <TeamOutlined />, perm: null },
-      { label: "积分", href: "/credit", icon: <WalletOutlined />, perm: "credit.account.read" },
-      { label: "支付", href: "/payment", icon: <CreditCardOutlined />, perm: "payment.order.read" },
-      { label: "站点", href: "/sites", icon: <GlobalOutlined />, perm: "site.read" },
-      { label: "模型", href: "/models", icon: <ApiOutlined />, perm: "model.read" },
+      { labelKey: "nav.users", href: "/users", icon: <UserOutlined />, perm: null },
+      { labelKey: "nav.teams", href: "/teams", icon: <TeamOutlined />, perm: null },
+      { labelKey: "nav.credit", href: "/credit", icon: <WalletOutlined />, perm: "credit.account.read" },
+      { labelKey: "nav.payment", href: "/payment", icon: <CreditCardOutlined />, perm: "payment.order.read" },
+      { labelKey: "nav.sites", href: "/sites", icon: <GlobalOutlined />, perm: "site.read" },
+      { labelKey: "nav.models", href: "/models", icon: <ApiOutlined />, perm: "model.read" },
+      { labelKey: "nav.hub", href: "/hub", icon: <AppstoreOutlined />, perm: "hub.skill.read" },
     ],
   },
   {
-    group: "运营",
+    groupKey: "nav.group.ops",
     items: [
-      { label: "审批", href: "/approvals", icon: <CheckCircleOutlined />, perm: null },
-      { label: "审计", href: "/audit", icon: <FileTextOutlined />, perm: null },
-      { label: "操作员", href: "/operators", icon: <SafetyOutlined />, perm: "operator.read" },
+      { labelKey: "nav.approvals", href: "/approvals", icon: <CheckCircleOutlined />, perm: null },
+      { labelKey: "nav.audit", href: "/audit", icon: <FileTextOutlined />, perm: null },
+      { labelKey: "nav.operators", href: "/operators", icon: <SafetyOutlined />, perm: "operator.read" },
     ],
   },
 ];
@@ -87,7 +92,9 @@ interface MenuRoute {
   routes?: MenuRoute[];
 }
 
-export function AppShell({ children }: { children: React.ReactNode }): React.ReactElement {
+function AppShellInner({ children }: { children: React.ReactNode }): React.ReactElement {
+  const t = useT();
+  const { locale, setLocale } = useLocale();
   const [me, setMe] = useState<Me | null>(null);
   const [sites, setSites] = useState<Site[]>([]);
   const [siteId, setSiteId] = useState("");
@@ -128,8 +135,10 @@ export function AppShell({ children }: { children: React.ReactNode }): React.Rea
   const routes: MenuRoute[] = NAV.flatMap((section): MenuRoute[] => {
     const items = section.items.filter((i) => can(i.perm));
     if (items.length === 0) return [];
-    const mapped: MenuRoute[] = items.map((i) => ({ path: i.href, name: i.label, icon: i.icon }));
-    return section.group ? [{ path: `/__${section.group}`, name: section.group, routes: mapped }] : mapped;
+    const mapped: MenuRoute[] = items.map((i) => ({ path: i.href, name: t(i.labelKey), icon: i.icon }));
+    return section.groupKey
+      ? [{ path: `/__${section.groupKey}`, name: t(section.groupKey), routes: mapped }]
+      : mapped;
   });
 
   return (
@@ -161,7 +170,7 @@ export function AppShell({ children }: { children: React.ReactNode }): React.Rea
                       {
                         key: "logout",
                         icon: <LogoutOutlined />,
-                        label: "退出登录",
+                        label: t("ui.logout"),
                         onClick: () => signOut({ callbackUrl: "/login" }),
                       },
                     ],
@@ -176,11 +185,23 @@ export function AppShell({ children }: { children: React.ReactNode }): React.Rea
                 key="site"
                 value={siteId || undefined}
                 onChange={setSiteId}
-                placeholder="选择站点"
+                placeholder={t("ui.selectSite")}
                 style={{ width: 200 }}
                 variant="filled"
                 options={sites.map((s) => ({ value: s.id, label: s.name ?? s.key ?? s.id }))}
-                notFoundContent="无站点"
+                notFoundContent={t("ui.noSite")}
+              />,
+              <Select
+                key="locale"
+                aria-label={t("ui.language")}
+                value={locale}
+                onChange={setLocale}
+                style={{ width: 92 }}
+                variant="filled"
+                options={[
+                  { value: "zh", label: "中文" },
+                  { value: "en", label: "English" },
+                ]}
               />,
             ]}
           >
@@ -189,5 +210,13 @@ export function AppShell({ children }: { children: React.ReactNode }): React.Rea
         </AdminContext.Provider>
       </App>
     </ConfigProvider>
+  );
+}
+
+export function AppShell({ children }: { children: React.ReactNode }): React.ReactElement {
+  return (
+    <LocaleProvider>
+      <AppShellInner>{children}</AppShellInner>
+    </LocaleProvider>
   );
 }

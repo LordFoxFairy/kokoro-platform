@@ -1,5 +1,6 @@
 packages:
   - "kokoro-platform-kit"
+  - "kokoro-i18n"
   - "kokoro-platform-admin"
   - "kokoro-site"
   - "kokoro-user"
