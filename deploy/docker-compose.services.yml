@@ -89,3 +89,18 @@ services:
         condition: service_healthy
     ports:
       - "4241:4241"
+
+  # 能力中台(Wave6 部署面补齐):Mongo 元数据 + MCP mutation 门缺省关(fail-closed 503)。
+  # secret 主密钥/S3 凭据走 env_file 注入,不落 compose 字面。
+  kokoro-hub:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile
+    environment:
+      KOKORO_SERVICE_PACKAGE: "@kokoro/hub"
+      KOKORO_HUB_PORT: 4251
+      KOKORO_HUB_BASE_URL: http://kokoro-hub:4251
+      KOKORO_HUB_MONGO_URL: mongodb://mongo:27017
+      KOKORO_HUB_MONGO_DB: kokoro_hub
+    ports:
+      - "4251:4251"
