@@ -23,6 +23,7 @@ export type SiteLifecycleErrorCode =
   | "site.deleted"
   | "site_domain.not_found"
   | "site_domain.deleted"
+  | "site_domain.not_local"
   | "site_app.deleted"
   | "site_policy.deleted"
   | "site_feature_flag.deleted";
@@ -31,7 +32,7 @@ export class SiteLifecycleError extends Error {
   constructor(
     readonly code: SiteLifecycleErrorCode,
     message: string,
-    readonly statusCode: 404 | 409,
+    readonly statusCode: 400 | 404 | 409,
   ) {
     super(message);
     this.name = "SiteLifecycleError";

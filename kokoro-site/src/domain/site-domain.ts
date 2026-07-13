@@ -9,6 +9,9 @@ export interface SiteDomain extends DeletionAudit {
   status: SiteDomainStatus;
   isPrimary: boolean;
   canonicalHost: string | null;
+  // TXT 记录值（展示给运营），create 时生成；status=active 即已验证。
+  verificationToken: string | null;
+  verifiedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }

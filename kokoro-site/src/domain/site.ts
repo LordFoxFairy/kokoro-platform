@@ -9,6 +9,8 @@ export interface Site extends DeletionAudit {
   status: SiteStatus;
   defaultLocale: string;
   timezone: string;
+  brandLogoUrl: string | null;
+  brandThemeColor: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

@@ -24,7 +24,8 @@ async function reset(prisma: PrismaClient): Promise<void> {
 
 const prisma = createTestPrismaClient();
 const app = createSiteServer({ prisma });
-const service = new SiteService(new PrismaSiteRepository(prisma));
+// 本套件只测 feature-flag 投影，不触域名验证：注入 no-op verifier。
+const service = new SiteService(new PrismaSiteRepository(prisma), { lookupTxt: async () => [] });
 
 async function createSite(key: string): Promise<string> {
   const site = await app.inject({

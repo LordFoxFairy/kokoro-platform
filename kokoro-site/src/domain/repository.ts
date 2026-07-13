@@ -13,6 +13,8 @@ export interface UpsertSiteInput {
   status?: Site["status"] | undefined;
   defaultLocale?: string | undefined;
   timezone?: string | undefined;
+  brandLogoUrl?: string | undefined;
+  brandThemeColor?: string | undefined;
   metadata?: JsonObject | undefined;
 }
 
@@ -65,6 +67,9 @@ export interface SiteRepository {
   restoreSite(input: RestoreInput): Promise<Site>;
   deleteSiteDomain(input: DeleteInput): Promise<SiteDomain>;
   restoreSiteDomain(input: RestoreInput): Promise<SiteDomain>;
+  getSiteDomainById(id: string): Promise<SiteDomain | null>;
+  // 域名验证通过：status→active + verifiedAt=now（DNS 命中或本地域直标共用）。
+  markSiteDomainVerified(id: string): Promise<SiteDomain>;
   resolveSiteContext(input: ResolveSiteContextInput): Promise<ResolvedSiteContext | null>;
   // 下游记账前校验：siteId 对应站点是否 active；不存在/非 active 返回 false。
   resolveSiteActive(siteId: string): Promise<boolean>;

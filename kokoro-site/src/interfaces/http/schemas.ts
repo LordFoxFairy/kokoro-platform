@@ -33,9 +33,19 @@ export const upsertSiteRequestSchema = z
     status: z.enum(["draft", "sandbox", "beta", "active", "suspended", "archived"]).optional(),
     defaultLocale: z.string().min(2).optional(),
     timezone: z.string().min(1).optional(),
+    // 品牌最小面（SITE-REAL）：logo 与主题色，均可空。
+    brandLogoUrl: z.string().min(1).optional(),
+    brandThemeColor: z.string().min(1).optional(),
     metadata: metadataSchema,
   })
   .strict();
+
+// POST /site-domains/:domainId/verify 响应契约：verified + 未通过原因（留 pending 时给运营）。
+export const verifySiteDomainResponseSchema = z.object({
+  verified: z.boolean(),
+  reason: z.string().optional(),
+});
+export type VerifySiteDomainResponse = z.infer<typeof verifySiteDomainResponseSchema>;
 
 export const upsertSiteDomainRequestSchema = z
   .object({

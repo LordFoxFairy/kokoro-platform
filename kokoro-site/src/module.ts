@@ -23,6 +23,8 @@ export const sitePlatformModule = {
       "GET /sites",
       "POST /sites/upsert",
       "POST /site-domains/upsert",
+      "POST /site-domains/:domainId/verify",
+      "POST /site-domains/:domainId/mark-verified",
       "POST /site-apps/upsert",
       "POST /site-policies/upsert",
       "POST /site-feature-flags/upsert",

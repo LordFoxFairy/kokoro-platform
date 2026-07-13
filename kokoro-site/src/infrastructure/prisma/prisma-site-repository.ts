@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Prisma, PrismaClient } from "../../../generated/prisma/index.js";
 import type {
   ResolveSiteContextInput,
@@ -38,6 +39,8 @@ export class PrismaSiteRepository implements SiteRepository {
           status: input.status ?? "draft",
           defaultLocale: input.defaultLocale ?? "zh-CN",
           timezone: input.timezone ?? "Asia/Shanghai",
+          brandLogoUrl: input.brandLogoUrl ?? null,
+          brandThemeColor: input.brandThemeColor ?? null,
           ...definedJson("metadata", input.metadata),
         },
       });
@@ -51,6 +54,8 @@ export class PrismaSiteRepository implements SiteRepository {
         ...definedValue("status", input.status),
         ...definedValue("defaultLocale", input.defaultLocale),
         ...definedValue("timezone", input.timezone),
+        ...definedValue("brandLogoUrl", input.brandLogoUrl),
+        ...definedValue("brandThemeColor", input.brandThemeColor),
         ...definedJson("metadata", input.metadata),
       },
     });
@@ -109,6 +114,8 @@ export class PrismaSiteRepository implements SiteRepository {
           status: input.status ?? "active",
           isPrimary: input.isPrimary ?? false,
           canonicalHost: normalizeOptionalHost(input.canonicalHost),
+          // 每个新域名生成一次性 TXT 验证令牌供运营公示；已 active 的域名也带令牌以便未来复验。
+          verificationToken: generateVerificationToken(),
           ...definedJson("metadata", input.metadata),
         },
       });
@@ -159,6 +166,28 @@ export class PrismaSiteRepository implements SiteRepository {
     const domain = await this.prisma.siteDomain.update({
       where: { id: input.id },
       data: restoreData(),
+    });
+
+    return mapSiteDomain(domain);
+  }
+
+  async getSiteDomainById(id: string): Promise<SiteDomain | null> {
+    const domain = await this.prisma.siteDomain.findUnique({ where: { id } });
+    if (!domain || domain.deletedAt) {
+      return null;
+    }
+    return mapSiteDomain(domain);
+  }
+
+  async markSiteDomainVerified(id: string): Promise<SiteDomain> {
+    const existing = await this.prisma.siteDomain.findUnique({ where: { id } });
+    if (!existing || existing.deletedAt) {
+      throw new SiteLifecycleError("site_domain.not_found", "站点域名不存在", 404);
+    }
+
+    const domain = await this.prisma.siteDomain.update({
+      where: { id },
+      data: { status: "active", verifiedAt: new Date() },
     });
 
     return mapSiteDomain(domain);
@@ -325,18 +354,24 @@ export class PrismaSiteRepository implements SiteRepository {
     }
 
     const app = domain.site.apps[0];
+    const site = mapSite(domain.site);
 
     return {
-      site: mapSite(domain.site),
+      site,
       app: app ? mapSiteApp(app) : undefined,
       context: {
-        siteId: domain.site.id,
-        siteKey: domain.site.key,
+        siteId: site.id,
+        siteKey: site.key,
         host: domain.host,
         appKey: app?.appKey ?? input.appKey,
         surface: app?.surface ?? input.surface,
-        defaultLocale: domain.site.defaultLocale,
-        timezone: domain.site.timezone,
+        defaultLocale: site.defaultLocale,
+        timezone: site.timezone,
+        brand: {
+          name: site.name,
+          logoUrl: site.brandLogoUrl,
+          themeColor: site.brandThemeColor,
+        },
       },
     };
   }
@@ -419,6 +454,11 @@ export class PrismaSiteRepository implements SiteRepository {
 }
 
 const ADMIN_LIST_LIMIT = 100;
+
+// TXT 记录值：运营把它加到域名 DNS，verify 时比对。前缀让运营一眼识别归属。
+function generateVerificationToken(): string {
+  return `kokoro-site-verification=${randomUUID()}`;
+}
 
 function normalizeHost(host: string): string {
   return host.trim().toLowerCase();
@@ -527,6 +567,8 @@ function mapSite(site: {
   status: Site["status"];
   defaultLocale: string;
   timezone: string;
+  brandLogoUrl: string | null;
+  brandThemeColor: string | null;
   deletedAt: Date | null;
   deletedBy: string | null;
   deleteReason: string | null;
@@ -540,6 +582,8 @@ function mapSite(site: {
     status: site.status,
     defaultLocale: site.defaultLocale,
     timezone: site.timezone,
+    brandLogoUrl: site.brandLogoUrl,
+    brandThemeColor: site.brandThemeColor,
     ...mapDeletionAudit(site),
     createdAt: site.createdAt,
     updatedAt: site.updatedAt,
@@ -553,6 +597,8 @@ function mapSiteDomain(domain: {
   status: SiteDomain["status"];
   isPrimary: boolean;
   canonicalHost: string | null;
+  verificationToken: string | null;
+  verifiedAt: Date | null;
   deletedAt: Date | null;
   deletedBy: string | null;
   deleteReason: string | null;
@@ -566,6 +612,8 @@ function mapSiteDomain(domain: {
     status: domain.status,
     isPrimary: domain.isPrimary,
     canonicalHost: domain.canonicalHost,
+    verificationToken: domain.verificationToken,
+    verifiedAt: domain.verifiedAt,
     ...mapDeletionAudit(domain),
     createdAt: domain.createdAt,
     updatedAt: domain.updatedAt,

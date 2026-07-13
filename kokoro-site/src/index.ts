@@ -1,4 +1,5 @@
 export * from "./application/site-service.js";
+export * from "./domain/domain-verifier.js";
 export * from "./domain/repository.js";
 export * from "./domain/site.js";
 export * from "./domain/site-app.js";

@@ -16,6 +16,7 @@ import {
   upsertSiteFeatureFlagRequestSchema,
   upsertSitePolicyRequestSchema,
   upsertSiteRequestSchema,
+  type VerifySiteDomainResponse,
 } from "./schemas.js";
 
 export function registerSiteRoutes(app: FastifyInstance, service: SiteService): void {
@@ -143,6 +144,43 @@ export function registerSiteRoutes(app: FastifyInstance, service: SiteService): 
         return sendData(reply, domain, 200, requestId);
       } catch (error) {
         return handleRouteError(request, reply, error, requestId, "site_domain.restore_failed", "站点域名恢复失败");
+      }
+    },
+  );
+
+  // 运营触发 DNS 归属验证：查 TXT 记录匹配 token → verified；未匹配 200 返 {verified:false, reason}。
+  app.post(
+    "/site-domains/:domainId/verify",
+    { schema: { tags: ["site"], summary: "DNS 验证站点域名归属" } },
+    async (request, reply) => {
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
+
+      try {
+        const params = siteDomainParamsSchema.parse(request.params);
+        const result = await service.verifySiteDomain(params.domainId);
+        const body: VerifySiteDomainResponse = result.verified
+          ? { verified: true }
+          : { verified: false, reason: result.reason };
+        return sendData(reply, body, 200, requestId);
+      } catch (error) {
+        return handleRouteError(request, reply, error, requestId, "site_domain.verify_failed", "站点域名验证失败");
+      }
+    },
+  );
+
+  // 本地/开发域直标 verified（显式动作）：非本地 host → 400。
+  app.post(
+    "/site-domains/:domainId/mark-verified",
+    { schema: { tags: ["site"], summary: "本地域名直标已验证" } },
+    async (request, reply) => {
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
+
+      try {
+        const params = siteDomainParamsSchema.parse(request.params);
+        const domain = await service.markSiteDomainVerified(params.domainId);
+        return sendData(reply, domain, 200, requestId);
+      } catch (error) {
+        return handleRouteError(request, reply, error, requestId, "site_domain.mark_verified_failed", "站点域名直标验证失败");
       }
     },
   );

@@ -8,6 +8,7 @@ import {
 } from "@kokoro/platform-kit";
 import Fastify from "fastify";
 import { SiteService } from "../../application/site-service.js";
+import { NodeDnsVerifier } from "../../infrastructure/dns/node-dns-verifier.js";
 import { createPrismaClient } from "../../infrastructure/prisma/prisma-client.js";
 import { PrismaSiteRepository } from "../../infrastructure/prisma/prisma-site-repository.js";
 import { registerSiteAdminRoutes } from "./admin-routes.js";
@@ -44,7 +45,7 @@ export function createSiteServer(options: CreateSiteServerOptions = {}) {
 
   const prisma = options.prisma ?? createPrismaClient();
   const repository = new PrismaSiteRepository(prisma);
-  const service = new SiteService(repository);
+  const service = new SiteService(repository, new NodeDnsVerifier());
 
   // 路由须晚于 swagger 插件加载，否则 onRoute 钩子漏采 → /docs/json paths 为空。
   void app.register(async (instance) => {

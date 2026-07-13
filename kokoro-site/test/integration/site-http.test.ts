@@ -209,6 +209,72 @@ describe("site HTTP API", () => {
     expect(resolved.json().data.app.appKey).toBe("web");
   });
 
+  it("marks a local domain verified over HTTP and exposes brand in resolve", async () => {
+    const site = await upsertSite({
+      key: "brandco",
+      name: "Brand Co",
+      status: "active",
+      brandThemeColor: "#ff5722",
+    });
+    const siteId = site.json().data.id as string;
+
+    const domain = await app.inject({
+      method: "POST",
+      url: "/site-domains/upsert",
+      payload: { siteId, host: "localhost", status: "pending_verification" },
+    });
+    const domainId = domain.json().data.id as string;
+    expect(domain.json().data.verificationToken).toMatch(/^kokoro-site-verification=/);
+
+    // pending 域名不解析。
+    const beforeMark = await app.inject({ method: "GET", url: "/site-context/resolve", query: { host: "localhost" } });
+    expect(beforeMark.statusCode).toBe(404);
+
+    const marked = await app.inject({ method: "POST", url: `/site-domains/${domainId}/mark-verified` });
+    expect(marked.statusCode).toBe(200);
+    expect(marked.json().data.status).toBe("active");
+    expect(marked.json().data.verifiedAt).toEqual(expect.any(String));
+
+    const resolved = await app.inject({ method: "GET", url: "/site-context/resolve", query: { host: "localhost" } });
+    expect(resolved.statusCode).toBe(200);
+    expect(resolved.json().data.context.brand).toEqual({
+      name: "Brand Co",
+      logoUrl: null,
+      themeColor: "#ff5722",
+    });
+  });
+
+  it("rejects mark-verified on a public host with a 400", async () => {
+    const site = await upsertSite({ key: "acme", name: "Acme", status: "active" });
+    const siteId = site.json().data.id as string;
+    const domain = await app.inject({
+      method: "POST",
+      url: "/site-domains/upsert",
+      payload: { siteId, host: "public.com", status: "pending_verification" },
+    });
+    const domainId = domain.json().data.id as string;
+
+    const marked = await app.inject({ method: "POST", url: `/site-domains/${domainId}/mark-verified` });
+    expect(marked.statusCode).toBe(400);
+    expect(marked.json().error.code).toBe("site_domain.not_local");
+  });
+
+  it("returns verified=false with a reason when DNS verification finds no TXT record", async () => {
+    const site = await upsertSite({ key: "acme", name: "Acme", status: "active" });
+    const siteId = site.json().data.id as string;
+    const domain = await app.inject({
+      method: "POST",
+      url: "/site-domains/upsert",
+      payload: { siteId, host: "no-such-domain.invalid", status: "pending_verification" },
+    });
+    const domainId = domain.json().data.id as string;
+
+    const verify = await app.inject({ method: "POST", url: `/site-domains/${domainId}/verify` });
+    expect(verify.statusCode).toBe(200);
+    expect(verify.json().data.verified).toBe(false);
+    expect(verify.json().data.reason).toBe("txt_record_not_found");
+  });
+
   it("returns 404 when host is not bound to any site", async () => {
     const resolved = await app.inject({
       method: "GET",

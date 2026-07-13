@@ -15,6 +15,9 @@ model Site {
   status        SiteStatus        @default(draft)
   defaultLocale String            @default("zh-CN")
   timezone      String            @default("Asia/Shanghai")
+  // 品牌最小面（SITE-REAL）：host resolve 直接投影给 web 渲染，不经 brandConfigs 生命周期。
+  brandLogoUrl    String?
+  brandThemeColor String?
   metadata      Json?
   domains       SiteDomain[]
   apps          SiteApp[]
@@ -41,6 +44,10 @@ model SiteDomain {
   status        SiteDomainStatus @default(active)
   isPrimary     Boolean          @default(false)
   canonicalHost String?
+  // 域名归属验证（SITE-REAL）：token=展示给运营的 TXT 记录值；verifiedAt=通过时刻。
+  // status=active 即「已验证/可解析」，pending_verification 即「待验证/不解析」。
+  verificationToken String?
+  verifiedAt        DateTime?
   metadata      Json?
   site          Site             @relation(fields: [siteId], references: [id])
   deletedAt     DateTime?
