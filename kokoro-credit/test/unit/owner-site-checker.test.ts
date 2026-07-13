@@ -10,6 +10,8 @@ const account: CreditAccount = {
   status: "active",
   balanceMicros: "0",
   heldMicros: "0",
+  quotaMicros: null,
+  quotaPeriod: null,
   deletedAt: null,
   deletedBy: null,
   deleteReason: null,

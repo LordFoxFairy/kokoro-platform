@@ -17,6 +17,7 @@ import {
   CreditHoldNotFoundError,
   InsufficientCreditError,
   PricingRuleNotFoundError,
+  QuotaExceededError,
 } from "../../domain/errors.js";
 import { isCreditLifecycleError } from "../../domain/credit-lifecycle.js";
 import {
@@ -401,6 +402,11 @@ function handleCreditError(error: unknown, reply: FastifyReply, fallbackCode: st
 
   if (error instanceof InsufficientCreditError) {
     return sendError(reply, 402, "credit.insufficient", "积分余额不足");
+  }
+
+  // 配额超限专用码：与 credit.insufficient 区分（余额够但本周期消费上限已满）。
+  if (error instanceof QuotaExceededError) {
+    return sendError(reply, 402, "credit.quota_exceeded", "本周期消费配额已用尽");
   }
 
   if (error instanceof CreditAccountNotFoundError) {

@@ -6,7 +6,11 @@ import {
   type RunBillingConfig,
 } from "../../src/application/credit-service.js";
 import type { CreditAccount, CreditHold, CreditMutationResult } from "../../src/domain/credit.js";
-import { CreditAccountNotFoundError, CreditHoldNotFoundError } from "../../src/domain/errors.js";
+import {
+  CreditAccountNotFoundError,
+  CreditHoldNotFoundError,
+  QuotaExceededError,
+} from "../../src/domain/errors.js";
 import type {
   CaptureCreditInput,
   CreditRepository,
@@ -23,6 +27,8 @@ const account: CreditAccount = {
   status: "active",
   balanceMicros: "1000000",
   heldMicros: "0",
+  quotaMicros: null,
+  quotaPeriod: null,
   deletedAt: null,
   deletedBy: null,
   deleteReason: null,
@@ -253,5 +259,73 @@ describe("settleUsage", () => {
     const service = serviceWith({ getHoldById: async () => usageHold({ featureKey: null }) });
     const error = await service.settleUsage({ holdId: "h1", inputTokens: "1", outputTokens: "1", idempotencyKey: "run_1" }).catch((e) => e);
     expect(error).toBeInstanceOf(AppError);
+  });
+});
+
+describe("holdForUsage organisation quota gate", () => {
+  const quotaAccount = { ...account, quotaMicros: "10000", quotaPeriod: "monthly" as const };
+
+  function usageCommand() {
+    return {
+      siteId: "s1",
+      namespace: "team_ns",
+      featureKey: "model.run",
+      labelKey: "gpt-4",
+      idempotencyKey: "run_1",
+    };
+  }
+
+  it("does not query period usage when the account has no quota (unset = unlimited)", async () => {
+    let sumCalled = false;
+    const service = serviceWith({
+      ensureAccount: async () => account, // quotaMicros=null
+      priceUsage: async () => "8000",
+      sumCapturedUsageSince: async () => {
+        sumCalled = true;
+        return "0";
+      },
+      holdCredits: async (input) => usageHold({ amountMicros: input.amountMicros }),
+    });
+    await service.holdForUsage(usageCommand());
+    expect(sumCalled).toBe(false);
+  });
+
+  it("holds when settled + held + incoming stays within the quota", async () => {
+    // quota 10000；本周期已结算 500 + 在持 0 + 本次冻结 9600 = 10100 > 10000？不，8000×1.2=9600 → 500+9600=10100>10000 会拒。
+    // 用较小已结算额验证放行：settled=100 → 100+9600=9700 <= 10000。
+    const service = serviceWith({
+      ensureAccount: async () => quotaAccount,
+      priceUsage: async () => "8000",
+      sumCapturedUsageSince: async () => "100",
+      holdCredits: async (input) => usageHold({ amountMicros: input.amountMicros }),
+    });
+    const result = await service.holdForUsage(usageCommand());
+    expect(result.amountMicros).toBe("9600");
+  });
+
+  it("rejects with QuotaExceededError when settled + held + incoming exceeds the quota", async () => {
+    // settled=1000 + held(account.heldMicros=0) + incoming 9600 = 10600 > 10000 → 拒。
+    const service = serviceWith({
+      ensureAccount: async () => quotaAccount,
+      priceUsage: async () => "8000",
+      sumCapturedUsageSince: async () => "1000",
+      holdCredits: async () => {
+        throw new Error("hold should never run once quota is exceeded");
+      },
+    });
+    await expect(service.holdForUsage(usageCommand())).rejects.toBeInstanceOf(QuotaExceededError);
+  });
+
+  it("counts in-flight holds toward the quota (settle clamp keeps them from double-counting)", async () => {
+    // heldMicros=5000（在持）+ settled 0 + incoming 9600 = 14600 > 10000 → 拒（在持 hold 计入本周期）。
+    const service = serviceWith({
+      ensureAccount: async () => ({ ...quotaAccount, heldMicros: "5000" }),
+      priceUsage: async () => "8000",
+      sumCapturedUsageSince: async () => "0",
+      holdCredits: async () => {
+        throw new Error("hold should never run once quota is exceeded");
+      },
+    });
+    await expect(service.holdForUsage(usageCommand())).rejects.toBeInstanceOf(QuotaExceededError);
   });
 });

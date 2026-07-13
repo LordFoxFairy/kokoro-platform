@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { CreditAccountNotFoundError, InsufficientCreditError } from "../../src/domain/errors.js";
+import {
+  CreditAccountNotFoundError,
+  InsufficientCreditError,
+  QuotaExceededError,
+} from "../../src/domain/errors.js";
 
 describe("credit domain errors", () => {
   it("CreditAccountNotFoundError carries account id and name", () => {
@@ -14,5 +18,12 @@ describe("credit domain errors", () => {
     expect(err).toBeInstanceOf(Error);
     expect(err.name).toBe("InsufficientCreditError");
     expect(err.message).toContain("acc_2");
+  });
+
+  it("QuotaExceededError carries account id and a distinct name", () => {
+    const err = new QuotaExceededError("acc_3");
+    expect(err).toBeInstanceOf(Error);
+    expect(err.name).toBe("QuotaExceededError");
+    expect(err.message).toContain("acc_3");
   });
 });

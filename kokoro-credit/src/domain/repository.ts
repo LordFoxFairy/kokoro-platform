@@ -4,6 +4,7 @@ import type {
   CreditLedgerEntry,
   CreditMutationResult,
   CreditOwnerKind,
+  CreditQuotaPeriod,
   CreditReason,
   PricingRule,
   QuoteResult,
@@ -68,6 +69,13 @@ export interface PriceUsageInput {
   outputTokens: string;
 }
 
+// 组织级配额设置：quotaMicros=null 清除配额（回退不限）；非空则连同周期口径落账户。
+export interface SetAccountQuotaInput {
+  accountId: string;
+  quotaMicros: string | null;
+  quotaPeriod: CreditQuotaPeriod;
+}
+
 export interface CreatePricingRuleInput {
   featureKey: string;
   labelKey?: string | null | undefined;
@@ -100,6 +108,11 @@ export interface CreditRepository {
   listUsageRecords(): Promise<UsageRecord[]>;
   listPricingRules(options?: ListOptions): Promise<PricingRule[]>;
   getAccountById(id: string): Promise<CreditAccount | null>;
+  // 组织级配额落账户（admin 面）：quotaMicros=null 清除、非空则设本周期上限。
+  setAccountQuota(input: SetAccountQuotaInput): Promise<CreditAccount>;
+  // 本周期已结算消费累计（既有 ledger 聚合，不建新表）：sum |amountMicros| of 用量 capture
+  // （reason∈model_call/tool_call）since 周期起点。返回微单位字符串（>=0）。
+  sumCapturedUsageSince(accountId: string, since: Date): Promise<string>;
   // 只读按 owner 三元组定位账户（不建账、不复活软删）：命中活跃账户返之，缺失/已软删→null。
   findActiveAccountByOwner(input: EnsureCreditAccountInput): Promise<CreditAccount | null>;
   listLedgerByAccount(accountId: string): Promise<CreditLedgerEntry[]>;

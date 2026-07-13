@@ -32,7 +32,7 @@ describe("credit admin contract", () => {
       .find((resource) => resource.id === "pricing-rules")
       ?.actions.map((action) => action.id);
 
-    expect(accountActions).toEqual(["grant", "delete", "restore"]);
+    expect(accountActions).toEqual(["grant", "set-quota", "delete", "restore"]);
     expect(pricingActions).toEqual(["create", "delete", "restore"]);
   });
 });

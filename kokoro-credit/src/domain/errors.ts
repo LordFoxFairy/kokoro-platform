@@ -12,6 +12,15 @@ export class InsufficientCreditError extends Error {
   }
 }
 
+// 组织级配额超限：与余额不足（InsufficientCreditError）区分——余额够但本周期消费上限已满。
+// 路由映射为 402 credit.quota_exceeded（专用码，session 透传，web ERROR-UX 文案后补）。
+export class QuotaExceededError extends Error {
+  constructor(accountId: string) {
+    super(`Credit quota exceeded for period: ${accountId}`);
+    this.name = "QuotaExceededError";
+  }
+}
+
 export class CreditHoldNotFoundError extends Error {
   constructor(holdId: string) {
     super(`Credit hold not found: ${holdId}`);

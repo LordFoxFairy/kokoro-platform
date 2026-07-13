@@ -22,6 +22,7 @@ import {
   deleteRequestSchema,
   grantCreditRequestSchema,
   pricingRuleParamsSchema,
+  setAccountQuotaRequestSchema,
 } from "./schemas.js";
 
 export function registerCreditAdminRoutes(
@@ -69,6 +70,22 @@ export function registerCreditAdminRoutes(
       return sendData(reply, result);
     } catch (error) {
       return handleAdminError(error, reply, "credit.admin_grant_failed");
+    }
+  });
+
+  // WHY: 管理员设组织级消费配额；quotaMicros=null 清除（回退不限），周期 V1 仅 monthly。
+  app.post("/admin/credits/accounts/:accountId/quota", async (request, reply) => {
+    try {
+      const { accountId } = accountParamsSchema.parse(request.params);
+      const input = setAccountQuotaRequestSchema.parse(request.body);
+      const result = await service.setAccountQuota({
+        accountId,
+        quotaMicros: input.quotaMicros,
+        quotaPeriod: input.quotaPeriod ?? "monthly",
+      });
+      return sendData(reply, result);
+    } catch (error) {
+      return handleAdminError(error, reply, "credit.admin_set_quota_failed");
     }
   });
 

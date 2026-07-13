@@ -31,6 +31,7 @@ import type {
   PriceUsageInput,
   QuoteInput,
   ReleaseCreditInput,
+  SetAccountQuotaInput,
 } from "../../domain/repository.js";
 import {
   CreditLifecycleError,
@@ -623,6 +624,38 @@ export class PrismaCreditRepository implements CreditRepository {
     return mapCreditAccount(account);
   }
 
+  async setAccountQuota(input: SetAccountQuotaInput): Promise<CreditAccount> {
+    const account = await this.prisma.creditAccount.findUnique({ where: { id: input.accountId } });
+    if (!account || account.deletedAt) {
+      throw new CreditAccountNotFoundError(input.accountId);
+    }
+    // quotaMicros=null 清除配额（周期口径也一并置空，回退不限）；非空则连同周期落账户。
+    const quotaMicros = input.quotaMicros === null ? null : BigInt(input.quotaMicros);
+    const updated = await this.prisma.creditAccount.update({
+      where: { id: input.accountId },
+      data: {
+        quotaMicros,
+        quotaPeriod: quotaMicros === null ? null : input.quotaPeriod,
+      },
+    });
+    return mapCreditAccount(updated);
+  }
+
+  async sumCapturedUsageSince(accountId: string, since: Date): Promise<string> {
+    // 本周期已结算消费=用量 capture 的账本借记（reason∈model_call/tool_call，amountMicros<0）。
+    // 走 (accountId, createdAt) 索引聚合；负数求和取绝对值即消费额（无记录→0）。
+    const aggregate = await this.prisma.creditLedgerEntry.aggregate({
+      _sum: { amountMicros: true },
+      where: {
+        accountId,
+        reason: { in: ["model_call", "tool_call"] },
+        createdAt: { gte: since },
+      },
+    });
+    const sum = aggregate._sum.amountMicros ?? 0n;
+    return (sum < 0n ? -sum : sum).toString();
+  }
+
   async listLedgerPage(
     accountId: string,
     opts: { limit: number; cursor?: { createdAt: Date; id: string } },
@@ -850,6 +883,8 @@ function mapCreditAccount(account: {
   status: "active" | "disabled";
   balanceMicros: bigint;
   heldMicros: bigint;
+  quotaMicros: bigint | null;
+  quotaPeriod: "monthly" | null;
   deletedAt: Date | null;
   deletedBy: string | null;
   deleteReason: string | null;
@@ -864,6 +899,8 @@ function mapCreditAccount(account: {
     status: account.status,
     balanceMicros: account.balanceMicros.toString(),
     heldMicros: account.heldMicros.toString(),
+    quotaMicros: account.quotaMicros === null ? null : account.quotaMicros.toString(),
+    quotaPeriod: account.quotaPeriod,
     deletedAt: account.deletedAt,
     deletedBy: account.deletedBy,
     deleteReason: account.deleteReason,

@@ -1,7 +1,7 @@
 import { AppError, parsePositiveBigIntString } from "@kokoro/platform-kit";
 import type { CreditAccount, CreditLedgerEntry, PricingRule, UsageSettlementResult } from "../domain/credit.js";
 import { CreditLifecycleError, type DeleteInput, type RestoreInput } from "../domain/credit-lifecycle.js";
-import { CreditAccountNotFoundError, CreditHoldNotFoundError } from "../domain/errors.js";
+import { CreditAccountNotFoundError, CreditHoldNotFoundError, QuotaExceededError } from "../domain/errors.js";
 import type {
   CaptureCreditInput,
   CreatePricingRuleInput,
@@ -11,6 +11,7 @@ import type {
   HoldCreditInput,
   QuoteInput,
   ReleaseCreditInput,
+  SetAccountQuotaInput,
 } from "../domain/repository.js";
 
 export interface QuoteCommand {
@@ -134,6 +135,28 @@ export class CreditService {
     return this.repository.holdCredits(input);
   }
 
+  // 组织级配额设置（admin 面）：quotaMicros=null 清除（回退不限）；非空须正整数微单位字符串。
+  async setAccountQuota(input: SetAccountQuotaInput): Promise<CreditAccount> {
+    if (input.quotaMicros !== null) {
+      parsePositiveBigIntString(input.quotaMicros, "quotaMicros");
+    }
+    await this.ensureAccountActive(input.accountId);
+    return this.repository.setAccountQuota(input);
+  }
+
+  // 配额闸：未设配额直接放行；否则本周期(自然月 UTC)已结算消费 + 在持 hold + 本次冻结超上限即抛。
+  private async assertWithinQuota(account: CreditAccount, incomingHoldMicros: bigint): Promise<void> {
+    if (account.quotaMicros === null) {
+      return;
+    }
+    const periodStart = monthStartUtc(new Date());
+    const settled = BigInt(await this.repository.sumCapturedUsageSince(account.id, periodStart));
+    const held = BigInt(account.heldMicros);
+    if (settled + held + incomingHoldMicros > BigInt(account.quotaMicros)) {
+      throw new QuotaExceededError(account.id);
+    }
+  }
+
   async captureHold(input: CaptureCreditInput) {
     parsePositiveBigIntString(input.actualAmountMicros, "actualAmountMicros");
     return this.repository.captureHold(input);
@@ -185,6 +208,9 @@ export class CreditService {
     const buffered = applyBufferPercent(BigInt(estimate), this.runBilling.bufferPercent);
     // 冻结额至少 1 micro：预估或价格算出 0 时也占位一分钱，避免 holdCredits 的正数守卫抛错。
     const amountMicros = (buffered > 0n ? buffered : 1n).toString();
+    // 组织级配额闸（余额闸之外的独立上限）：本周期已结算消费 + 在持 hold + 本次冻结 > 上限 → 402 quota_exceeded。
+    // 未设配额（quotaMicros=null）不查不拦（现状）。settle clamp 保证 capture≤hold，故不与在持 hold 双算。
+    await this.assertWithinQuota(account, BigInt(amountMicros));
     // 落 expiresAt = now + TTL：调用方崩溃后 settle 未至时，由过期回收兜底退还悬挂冻结。
     const expiresAt = new Date(Date.now() + this.runBilling.holdTtlSeconds * 1000);
     const hold = await this.repository.holdCredits({
@@ -295,4 +321,9 @@ export class CreditService {
 // 冻结额冗余：base × (100 + percent) / 100，整数截断。percent=20 → +20% 头寸。
 function applyBufferPercent(base: bigint, percent: number): bigint {
   return (base * BigInt(100 + percent)) / 100n;
+}
+
+// 自然月起点（UTC）：配额周期口径 V1=monthly。周期切换即新月从零累计，上月消费不计入。
+function monthStartUtc(now: Date): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
 }

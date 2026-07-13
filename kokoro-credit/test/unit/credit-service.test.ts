@@ -25,6 +25,8 @@ const account: CreditAccount = {
   status: "active",
   balanceMicros: "0",
   heldMicros: "0",
+  quotaMicros: null,
+  quotaPeriod: null,
   ...deletionAudit,
   createdAt: new Date(0),
   updatedAt: new Date(0),
@@ -182,6 +184,14 @@ function trackingRepo(): {
     getAccountById: async () => {
       calls.push("getAccountById");
       return account;
+    },
+    setAccountQuota: async () => {
+      calls.push("setAccountQuota");
+      return account;
+    },
+    sumCapturedUsageSince: async () => {
+      calls.push("sumCapturedUsageSince");
+      return "0";
     },
     findActiveAccountByOwner: async () => {
       calls.push("findActiveAccountByOwner");

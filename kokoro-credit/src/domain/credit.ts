@@ -2,6 +2,8 @@ import type { DeletionAudit } from "./credit-lifecycle.js";
 
 export type CreditOwnerKind = "user" | "team";
 export type CreditAccountStatus = "active" | "disabled";
+// 组织级配额周期：V1 仅自然月（UTC）。未设配额=不限（现状）。
+export type CreditQuotaPeriod = "monthly";
 export type CreditReason = "manual_adjustment" | "subscription" | "model_call" | "tool_call" | "refund";
 export type CreditHoldStatus = "active" | "captured" | "released" | "expired";
 export type UsageRecordStatus = "recorded" | "settled" | "failed";
@@ -15,6 +17,9 @@ export interface CreditAccount extends DeletionAudit {
   status: CreditAccountStatus;
   balanceMicros: string;
   heldMicros: string;
+  // 组织级消费上限（周期上限，微单位字符串）+ 周期口径；null=不限（现状）。admin 面设置。
+  quotaMicros: string | null;
+  quotaPeriod: CreditQuotaPeriod | null;
   createdAt: Date;
   updatedAt: Date;
 }

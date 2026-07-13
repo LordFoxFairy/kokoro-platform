@@ -66,6 +66,14 @@ export const deleteRequestSchema = z
   })
   .strict();
 
+// 组织级配额设置：quotaMicros=null 清除（回退不限）；非空须正整数微单位字符串。周期 V1 仅 monthly，默认之。
+export const setAccountQuotaRequestSchema = z
+  .object({
+    quotaMicros: amountMicrosSchema.nullable(),
+    quotaPeriod: z.enum(["monthly"]).optional(),
+  })
+  .strict();
+
 export const holdCreditRequestSchema = z
   .object({
     accountId: z.string().min(1),
