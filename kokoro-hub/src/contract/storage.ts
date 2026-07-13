@@ -127,10 +127,39 @@ export const mcpSecretDocSchema = z
   .strict()
 export type McpSecretDoc = z.infer<typeof mcpSecretDocSchema>
 
+export const runEventReceiptDocSchema = z
+  .object({
+    run_id: z.string().min(1),
+    durable_seq: z.number().int(),
+    event_id: z.string().min(1),
+    status: z.enum(["persisted", "rejected", "superseded"]),
+    reason: z.string().min(1).nullable().optional(),
+    created_at: z.number().int(),
+  })
+  .strict()
+export type RunEventReceiptDoc = z.infer<typeof runEventReceiptDocSchema>
+
+export const runReceiptManifestDocSchema = z
+  .object({
+    run_id: z.string().min(1),
+    persisted_seq: z.number().int(),
+    projected_seq: z.number().int(),
+    consumed_seq: z.number().int(),
+    terminal_fence_seq: z.number().int().nullable().optional(),
+    superseded_from: z.number().int().nullable().optional(),
+    producer_close_requested: z.boolean(),
+    producer_closed: z.boolean(),
+    updated_at: z.number().int(),
+  })
+  .strict()
+export type RunReceiptManifestDoc = z.infer<typeof runReceiptManifestDocSchema>
+
 export const MCP_SECRETS_COLLECTION = "mcp_secrets"
 export const MCP_SERVER_REVISIONS_COLLECTION = "mcp_server_revisions"
 export const MCP_SERVERS_COLLECTION = "mcp_servers"
 export const RUN_DISPATCHES_COLLECTION = "run_dispatches"
+export const RUN_EVENT_RECEIPTS_COLLECTION = "run_event_receipts"
+export const RUN_RECEIPT_MANIFESTS_COLLECTION = "run_receipt_manifests"
 export const SKILL_REVISIONS_COLLECTION = "skill_revisions"
 export const SKILL_STATE_COLLECTION = "skill_state"
 export const SKILLS_COLLECTION = "skills"
