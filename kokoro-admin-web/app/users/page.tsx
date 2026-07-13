@@ -1,5 +1,7 @@
 "use client";
 
+// manifest 外专属页：用户 360 聚合视图（跨模块身份+积分+订单 + 专属运营动作），
+// 非通用列表/动作可表达，故不走 ResourceTable 通用渲染。
 import { useState } from "react";
 import { App, Button, Descriptions, Empty, Input, Segmented, Space, Tag } from "antd";
 import {

@@ -19,42 +19,16 @@ import { z } from "zod";
 import { apiGet, apiPost, queryString } from "@/lib/api";
 import { actionResultSchema, permits, type ModuleManifest } from "@/lib/schemas";
 import { useAdmin } from "@/components/shell/app-shell";
+import { useT } from "@/lib/i18n/context";
+import type { MessageKey } from "@/lib/i18n/messages";
 import { RESOURCE_FORMS, type FormField } from "@/lib/resource-forms";
 
+// 资源/动作文案一律取自 manifest 声明的 labelKey（经 i18n 解析），前端不再维护标签映射表。
+// 本集合只做「行内单目标动作 vs 走表单的写动作」的行为分类，与显示文案无关。
 const SIMPLE_ACTIONS = new Set(["enable", "disable", "toggle", "refund", "revoke", "approve", "publish", "delete", "restore"]);
-const ACTION_LABELS: Record<string, string> = {
-  enable: "启用",
-  disable: "禁用",
-  toggle: "切换",
-  refund: "退款",
-  revoke: "吊销",
-  approve: "批准",
-  publish: "发布",
-  delete: "删除",
-  restore: "恢复",
-};
-const RESOURCE_LABELS: Record<string, string> = {
-  sites: "站点",
-  domains: "域名",
-  apps: "应用",
-  policies: "策略",
-  "feature-flags": "功能开关",
-  "credit-accounts": "积分账户",
-  "ledger-entries": "流水",
-  "usage-records": "用量",
-  "pricing-rules": "定价规则",
-  orders: "订单",
-  plans: "套餐",
-  refunds: "退款",
-  users: "用户",
-  teams: "团队",
-  models: "模型",
-  "model-bindings": "模型绑定",
-  "provider-accounts": "供应商账号",
-  bindings: "绑定",
-};
 
 type Row = Record<string, unknown>;
+type Translate = (key: MessageKey, vars?: Readonly<Record<string, string | number>>) => string;
 
 const NUMERIC = /micros|amount|minor|balance|price|qty|count|total|held|score|num$/i;
 const DATEISH = /(at|date|time)$/i;
@@ -88,11 +62,18 @@ const STATUS_COLOR: Record<string, string> = {
   expired: "red",
 };
 
-function buildColumns(rows: Row[]): ProColumns<Row>[] {
+// 列头：优先 i18n 通用列名 col.<key>，词典无此 key 时引擎回传 key 本身 → 回退原始字段名。
+// 列的「类型」仍按字段名启发式推断（manifest 未声明每列类型；补充需模块侧 manifest 扩列元数据）。
+function columnTitle(t: Translate, key: string): string {
+  const resolved = t(`col.${key}` as MessageKey);
+  return resolved === `col.${key}` ? key : resolved;
+}
+
+function buildColumns(rows: Row[], t: Translate): ProColumns<Row>[] {
   const keys = new Set<string>();
   rows.slice(0, 30).forEach((r) => Object.keys(r).forEach((k) => keys.add(k)));
   return [...keys].map((key) => {
-    const col: ProColumns<Row> = { title: key, dataIndex: key, ellipsis: true };
+    const col: ProColumns<Row> = { title: columnTitle(t, key), dataIndex: key, ellipsis: true };
     if (STATUS.test(key)) {
       col.render = (_, r) => {
         const v = r[key];
@@ -140,11 +121,12 @@ function FormFields({
   manifests: ModuleManifest[];
   siteId: string;
 }): React.ReactElement {
+  const t = useT();
   return (
     <>
       {fields.map((f) => {
         const disabled = editMode && f.editable === false;
-        const rules = f.required ? [{ required: true, message: `请填写${f.label}` }] : undefined;
+        const rules = f.required ? [{ required: true, message: t("ui.required", { label: f.label }) }] : undefined;
         if (f.optionsFrom) {
           const of = f.optionsFrom;
           return (
@@ -155,7 +137,7 @@ function FormFields({
               tooltip={f.tip}
               rules={rules}
               disabled={disabled}
-              placeholder="选择…"
+              placeholder={t("ui.selectPlaceholder")}
               showSearch
               request={async () => {
                 if (of.siteScoped && !siteId) return [];
@@ -205,9 +187,10 @@ export function ResourceTable({
   subtitle: string;
 }): React.ReactElement {
   const { me, siteId, manifests, reloadSites } = useAdmin();
+  const t = useT();
   const { message } = App.useApp();
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [cols, setCols] = useState<ProColumns<Row>[]>([]);
+  const [sampleRows, setSampleRows] = useState<Row[]>([]);
   const [simple, setSimple] = useState<{ actionId: string; label: string; danger: boolean; rowId: string; paramName: string } | null>(null);
   const [form, setForm] = useState<{ mode: "create" | "edit"; row?: Row } | null>(null);
   const actionRef = useRef<ActionType>();
@@ -228,34 +211,40 @@ export function ResourceTable({
       (a) => a.id === resourceForm.actionId && a.route && (!a.requiredPermission || permits(me?.permissions ?? [], a.requiredPermission)),
     );
 
+  // 动作按钮文案取 manifest 声明的 labelKey（i18n 解析）；无对应词典项时回退 key 本身。
   const rowActions = useMemo(() => {
     if (!active) return [];
     return (active.actions ?? [])
       .filter((a) => SIMPLE_ACTIONS.has(a.id) && a.route && (!a.requiredPermission || permits(me?.permissions ?? [], a.requiredPermission)))
-      .map((a) => ({ id: a.id, label: ACTION_LABELS[a.id] ?? a.id, danger: a.kind === "dangerMutation", paramName: firstRouteParam(a.route) }));
+      .map((a) => ({ id: a.id, labelKey: a.labelKey, danger: a.kind === "dangerMutation", paramName: firstRouteParam(a.route) }));
   }, [active, me]);
+
+  const baseCols = useMemo(() => buildColumns(sampleRows, t), [sampleRows, t]);
 
   const columns: ProColumns<Row>[] = useMemo(() => {
     const hasOps = rowActions.length > 0 || upsertAvailable;
-    if (!hasOps) return cols;
+    if (!hasOps) return baseCols;
     return [
-      ...cols,
+      ...baseCols,
       {
-        title: "操作",
+        title: t("ui.actionsColumn"),
         valueType: "option",
         fixed: "right",
         width: 80 + (rowActions.length + (upsertAvailable ? 1 : 0)) * 44,
         render: (_dom, row) => [
-          ...(upsertAvailable ? [<a key="edit" onClick={() => setForm({ mode: "edit", row })}>编辑</a>] : []),
-          ...rowActions.map((a) => (
-            <a key={a.id} style={a.danger ? { color: "#c2410c" } : undefined} onClick={() => setSimple({ actionId: a.id, label: a.label, danger: a.danger, rowId: String(row.id ?? ""), paramName: a.paramName })}>
-              {a.label}
-            </a>
-          )),
+          ...(upsertAvailable ? [<a key="edit" onClick={() => setForm({ mode: "edit", row })}>{t("ui.edit")}</a>] : []),
+          ...rowActions.map((a) => {
+            const label = t(a.labelKey as MessageKey);
+            return (
+              <a key={a.id} style={a.danger ? { color: "#c2410c" } : undefined} onClick={() => setSimple({ actionId: a.id, label, danger: a.danger, rowId: String(row.id ?? ""), paramName: a.paramName })}>
+                {label}
+              </a>
+            );
+          }),
         ],
       },
     ];
-  }, [cols, rowActions, upsertAvailable]);
+  }, [baseCols, rowActions, upsertAvailable, t]);
 
   async function dispatchAction(actionId: string, extra: { params?: Record<string, string>; body?: Record<string, unknown>; reason?: string }): Promise<boolean> {
     try {
@@ -264,20 +253,24 @@ export function ResourceTable({
         { moduleId, resourceId: active?.id, actionId, siteId, ...extra },
         actionResultSchema,
       );
-      message.success(res.pendingApproval ? "已提交审批，待复核" : "成功 · 已留审计");
+      message.success(res.pendingApproval ? t("ui.pendingApproval") : t("ui.success"));
       actionRef.current?.reload();
       if (moduleId === "site") reloadSites();
       return true;
     } catch (e) {
-      message.error(e instanceof Error ? e.message : "操作失败");
+      message.error(e instanceof Error ? e.message : t("ui.actionFailed"));
       return false;
     }
   }
 
+  // 新建/编辑按钮与弹窗标题：取该写动作 manifest 声明的 labelKey，前端不再硬编码。
+  const createAction = active?.actions?.find((a) => a.id === resourceForm?.actionId);
+  const createLabel = createAction ? t(createAction.labelKey as MessageKey) : t("ui.create");
+
   if (online === false) {
     return (
       <PageContainer header={{ title }} content={subtitle}>
-        <Empty description="模块当前离线" style={{ padding: "64px 0" }} />
+        <Empty description={t("ui.moduleOffline")} style={{ padding: "64px 0" }} />
       </PageContainer>
     );
   }
@@ -286,7 +279,7 @@ export function ResourceTable({
     <PageContainer
       header={{ title }}
       content={subtitle}
-      tabList={resources.length > 1 ? resources.map((r) => ({ tab: RESOURCE_LABELS[r.id] ?? r.id, key: r.id })) : undefined}
+      tabList={resources.length > 1 ? resources.map((r) => ({ tab: t(r.labelKey as MessageKey), key: r.id })) : undefined}
       onTabChange={setActiveId}
       tabActiveKey={active?.id}
     >
@@ -303,7 +296,7 @@ export function ResourceTable({
           upsertAvailable && resourceForm
             ? [
                 <Button key="create" type="primary" icon={<PlusOutlined />} onClick={() => setForm({ mode: "create" })}>
-                  {resourceForm.createLabel}
+                  {createLabel}
                 </Button>,
               ]
             : []
@@ -318,10 +311,10 @@ export function ResourceTable({
               `/api/resource?${queryString(resourceQueryParams(moduleId, active.id, active.route, siteId))}`,
               z.array(z.record(z.unknown())),
             );
-            setCols(buildColumns(raw));
+            setSampleRows(raw);
             return { data: raw, success: true, total: raw.length };
           } catch (e) {
-            message.error(e instanceof Error ? e.message : "加载失败");
+            message.error(e instanceof Error ? e.message : t("ui.loadFailed"));
             return { data: [], success: false, total: 0 };
           }
         }}
@@ -333,7 +326,7 @@ export function ResourceTable({
         title={simple?.label}
         width={420}
         onOpenChange={(o) => !o && setSimple(null)}
-        modalProps={{ destroyOnHidden: true, okText: "确认", cancelText: "取消", okButtonProps: { danger: simple?.danger } }}
+        modalProps={{ destroyOnHidden: true, okText: t("ui.confirm"), cancelText: t("ui.cancel"), okButtonProps: { danger: simple?.danger } }}
         onFinish={async (values) => {
           if (!simple) return false;
           const reason = String(values.reason ?? "");
@@ -346,10 +339,10 @@ export function ResourceTable({
         }}
       >
         {simple?.danger ? (
-          <ProFormText name="reason" label="原因" rules={[{ required: true, message: "危险操作需填写理由" }]} />
+          <ProFormText name="reason" label={t("ui.reason")} rules={[{ required: true, message: t("ui.reasonRequired") }]} />
         ) : (
           <div style={{ padding: "8px 0", color: "rgba(0,0,0,0.65)" }}>
-            确认对 <b>{simple?.rowId}</b> 执行「{simple?.label}」？
+            {t("ui.confirmAction", { id: simple?.rowId ?? "", label: simple?.label ?? "" })}
           </div>
         )}
       </ModalForm>
@@ -358,11 +351,11 @@ export function ResourceTable({
       {resourceForm ? (
         <ModalForm
           open={form !== null}
-          title={form?.mode === "edit" ? `编辑${resourceForm.createLabel.replace(/^新建/, "")}` : resourceForm.createLabel}
+          title={form?.mode === "edit" ? t("ui.edit") : createLabel}
           width={480}
           initialValues={form?.mode === "edit" ? form.row : undefined}
           onOpenChange={(o) => !o && setForm(null)}
-          modalProps={{ destroyOnHidden: true, okText: "保存", cancelText: "取消" }}
+          modalProps={{ destroyOnHidden: true, okText: t("ui.save"), cancelText: t("ui.cancel") }}
           onFinish={async (values) => {
             const ok = await dispatchAction(resourceForm.actionId, { body: resourceForm.buildBody(values, { siteId }) });
             if (ok) setForm(null);

@@ -1,5 +1,6 @@
 "use client";
 
+// manifest 外专属页：审批工作流（网关本地 /api/approvals 状态机 + 复核动作），非模块 manifest 资源。
 import { useRef, useState } from "react";
 import { App, Tag } from "antd";
 import {

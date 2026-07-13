@@ -63,6 +63,7 @@ export type Me = z.infer<typeof meSchema>;
 // /api/manifests：模块 + 资源 + 动作。shell 拉一次共享，省去每个资源页重复扇出。
 export const actionMetaSchema = z.object({
   id: z.string(),
+  labelKey: z.string(),
   kind: z.string(),
   requiredPermission: z.string().optional(),
   route: z.string().nullish(),
