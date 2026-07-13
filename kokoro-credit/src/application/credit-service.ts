@@ -1,5 +1,5 @@
 import { AppError, parsePositiveBigIntString } from "@kokoro/platform-kit";
-import type { CreditAccount, PricingRule, UsageSettlementResult } from "../domain/credit.js";
+import type { CreditAccount, CreditLedgerEntry, PricingRule, UsageSettlementResult } from "../domain/credit.js";
 import { CreditLifecycleError, type DeleteInput, type RestoreInput } from "../domain/credit-lifecycle.js";
 import { CreditAccountNotFoundError, CreditHoldNotFoundError } from "../domain/errors.js";
 import type {
@@ -36,6 +36,19 @@ export interface SettleUsageCommand {
   inputTokens: string;
   outputTokens: string;
   idempotencyKey: string;
+}
+
+// run 计费面只读窄读：账户从 namespace 派生 team 账户（同 hold），siteId 从 header 取。
+export interface ReadUsageSummaryCommand {
+  siteId: string;
+  namespace: string;
+}
+
+export interface ReadUsageLedgerCommand {
+  siteId: string;
+  namespace: string;
+  limit: number;
+  cursor?: { createdAt: Date; id: string } | undefined;
 }
 
 // 用量计费面配置：token 计价 unit、hold 预估用量、冻结冗余系数、冻结 TTL。全部来自 env，默认值面向 dev。
@@ -185,6 +198,39 @@ export class CreditService {
       requestId: command.requestId,
     });
     return { holdId: hold.id, accountId: account.id, amountMicros: hold.amountMicros };
+  }
+
+  // run 计费面只读：解析 namespace→team 账户余额+held 聚合（account.heldMicros 为域内原子维护的活跃冻结总额）。
+  // 只读不建账：无账户（或已软删）→零额。
+  async readUsageSummary(command: ReadUsageSummaryCommand): Promise<{ balanceMicros: string; heldMicros: string }> {
+    const account = await this.repository.findActiveAccountByOwner({
+      siteId: command.siteId,
+      ownerKind: "team",
+      ownerId: command.namespace,
+    });
+    if (!account) {
+      return { balanceMicros: "0", heldMicros: "0" };
+    }
+    return { balanceMicros: account.balanceMicros, heldMicros: account.heldMicros };
+  }
+
+  // run 计费面只读：解析 namespace→team 账户流水分页（复合游标）。只读不建账：无账户→空流水。
+  // 多取一条判 hasMore（供 route 生成 next_cursor）。
+  async readUsageLedger(command: ReadUsageLedgerCommand): Promise<{ entries: CreditLedgerEntry[]; hasMore: boolean }> {
+    const account = await this.repository.findActiveAccountByOwner({
+      siteId: command.siteId,
+      ownerKind: "team",
+      ownerId: command.namespace,
+    });
+    if (!account) {
+      return { entries: [], hasMore: false };
+    }
+    const rows = await this.repository.listLedgerPage(account.id, {
+      limit: command.limit + 1,
+      ...(command.cursor === undefined ? {} : { cursor: command.cursor }),
+    });
+    const hasMore = rows.length > command.limit;
+    return { entries: hasMore ? rows.slice(0, command.limit) : rows, hasMore };
   }
 
   // 过期回收：退还 expiresAt 已过的悬挂冻结（status active→expired）。定时 sweeper 与 /credit/holds/sweep 共用。

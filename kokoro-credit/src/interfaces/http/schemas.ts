@@ -114,6 +114,19 @@ export const usageHoldRequestSchema = z
   })
   .strict();
 
+// run 计费面只读窄读：账户从 namespace 派生 team 账户（同 usage/hold），siteId 从 header 取。
+// 无账户→零额空流水（只读不建账）。query 默认 strip 未知键。
+export const usageSummaryQuerySchema = z.object({
+  namespace: z.string().min(1),
+});
+
+export const usageLedgerQuerySchema = z.object({
+  namespace: z.string().min(1),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  // 不透明游标（credit 生成，(createdAt,id) base64url）：结构非法由 route decode 判 400。
+  cursor: z.string().min(1).optional(),
+});
+
 const tokenCountSchema = z.number().int().nonnegative();
 
 // run 终态结算：调用方只报 token 用量，金额由 credit 按 hold 上的 pricing_ref 复算。

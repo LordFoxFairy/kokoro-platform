@@ -606,6 +606,47 @@ export class PrismaCreditRepository implements CreditRepository {
     return account ? mapCreditAccount(account) : null;
   }
 
+  async findActiveAccountByOwner(input: EnsureCreditAccountInput): Promise<CreditAccount | null> {
+    const account = await this.prisma.creditAccount.findUnique({
+      where: {
+        siteId_ownerKind_ownerId: {
+          siteId: input.siteId,
+          ownerKind: input.ownerKind,
+          ownerId: input.ownerId,
+        },
+      },
+    });
+    // 只读不建账、不复活：软删账户视同不存在（读面零额空流水）。
+    if (!account || account.deletedAt) {
+      return null;
+    }
+    return mapCreditAccount(account);
+  }
+
+  async listLedgerPage(
+    accountId: string,
+    opts: { limit: number; cursor?: { createdAt: Date; id: string } },
+  ): Promise<CreditLedgerEntry[]> {
+    const cursor = opts.cursor;
+    // 复合游标：严格晚于（更旧于）游标位——createdAt 更小，或 createdAt 相等且 id 更小。
+    const entries = await this.prisma.creditLedgerEntry.findMany({
+      where: {
+        accountId,
+        ...(cursor === undefined
+          ? {}
+          : {
+              OR: [
+                { createdAt: { lt: cursor.createdAt } },
+                { createdAt: cursor.createdAt, id: { lt: cursor.id } },
+              ],
+            }),
+      },
+      take: opts.limit,
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    });
+    return entries.map(mapLedgerEntry);
+  }
+
   async listLedgerByAccount(accountId: string): Promise<CreditLedgerEntry[]> {
     const entries = await this.prisma.creditLedgerEntry.findMany({
       where: { accountId },

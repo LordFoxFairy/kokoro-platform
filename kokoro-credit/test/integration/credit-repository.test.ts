@@ -292,4 +292,64 @@ describe("PrismaCreditRepository", () => {
       }),
     ).rejects.toMatchObject({ code: "credit.account.active_hold_exists" });
   });
+
+  it("run 计费只读面：readUsageSummary 无账户→零额、有账户→真数；只读不建账", async () => {
+    // 未建账 → 零额（且不隐式建账：随后 findActiveAccountByOwner 仍 null）。
+    const empty = await service.readUsageSummary({ siteId: "site-default", namespace: "team_read_none" });
+    expect(empty).toEqual({ balanceMicros: "0", heldMicros: "0" });
+    expect(
+      await repository.findActiveAccountByOwner({ siteId: "site-default", ownerKind: "team", ownerId: "team_read_none" }),
+    ).toBeNull();
+
+    const account = await service.ensureAccount({ siteId: "site-default", ownerKind: "team", ownerId: "team_read_1" });
+    await service.grantCredits({
+      accountId: account.id,
+      amountMicros: "8000000",
+      idempotencyKey: "read_grant_1",
+      reason: "manual_adjustment",
+    });
+    const summary = await service.readUsageSummary({ siteId: "site-default", namespace: "team_read_1" });
+    expect(summary).toEqual({ balanceMicros: "8000000", heldMicros: "0" });
+  });
+
+  it("run 计费只读面：readUsageLedger 复合游标分页（createdAt/id desc）逐页翻到底", async () => {
+    const account = await service.ensureAccount({ siteId: "site-default", ownerKind: "team", ownerId: "team_read_led" });
+    for (const [i, key] of ["led_1", "led_2", "led_3"].entries()) {
+      await service.grantCredits({
+        accountId: account.id,
+        amountMicros: String((i + 1) * 1_000_000),
+        idempotencyKey: key,
+        reason: "manual_adjustment",
+      });
+    }
+    const seen: string[] = [];
+    let cursor: { createdAt: Date; id: string } | undefined;
+    for (let i = 0; i < 5; i++) {
+      const page = await service.readUsageLedger({
+        siteId: "site-default",
+        namespace: "team_read_led",
+        limit: 2,
+        cursor,
+      });
+      seen.push(...page.entries.map((e) => e.idempotencyKey));
+      if (!page.hasMore) break;
+      const last = page.entries[page.entries.length - 1]!;
+      cursor = { createdAt: last.createdAt, id: last.id };
+    }
+    // 三条流水全部翻出（顺序为 createdAt desc，具体取决于落库时序，此处只断言集合完整、无重复、无遗漏）。
+    expect(seen.length).toBe(3);
+    expect(new Set(seen)).toEqual(new Set(["led_1", "led_2", "led_3"]));
+  });
+
+  it("run 计费只读面：软删账户视同不存在（findActiveAccountByOwner→null、summary 零额）", async () => {
+    const account = await service.ensureAccount({ siteId: "site-default", ownerKind: "team", ownerId: "team_read_del" });
+    await repository.deleteAccount({ id: account.id, deletedBy: "operator-1", reason: "closed" });
+    expect(
+      await repository.findActiveAccountByOwner({ siteId: "site-default", ownerKind: "team", ownerId: "team_read_del" }),
+    ).toBeNull();
+    expect(await service.readUsageSummary({ siteId: "site-default", namespace: "team_read_del" })).toEqual({
+      balanceMicros: "0",
+      heldMicros: "0",
+    });
+  });
 });

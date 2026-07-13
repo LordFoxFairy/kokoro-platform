@@ -183,8 +183,16 @@ function trackingRepo(): {
       calls.push("getAccountById");
       return account;
     },
+    findActiveAccountByOwner: async () => {
+      calls.push("findActiveAccountByOwner");
+      return account;
+    },
     listLedgerByAccount: async () => {
       calls.push("listLedgerByAccount");
+      return [];
+    },
+    listLedgerPage: async () => {
+      calls.push("listLedgerPage");
       return [];
     },
     listHoldsByAccount: async () => {

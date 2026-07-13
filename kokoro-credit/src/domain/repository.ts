@@ -100,7 +100,14 @@ export interface CreditRepository {
   listUsageRecords(): Promise<UsageRecord[]>;
   listPricingRules(options?: ListOptions): Promise<PricingRule[]>;
   getAccountById(id: string): Promise<CreditAccount | null>;
+  // 只读按 owner 三元组定位账户（不建账、不复活软删）：命中活跃账户返之，缺失/已软删→null。
+  findActiveAccountByOwner(input: EnsureCreditAccountInput): Promise<CreditAccount | null>;
   listLedgerByAccount(accountId: string): Promise<CreditLedgerEntry[]>;
+  // 流水复合游标分页（createdAt desc、id desc 稳定序）：cursor 之后（更旧于）至多 limit 条。
+  listLedgerPage(
+    accountId: string,
+    opts: { limit: number; cursor?: { createdAt: Date; id: string } },
+  ): Promise<CreditLedgerEntry[]>;
   listHoldsByAccount(accountId: string): Promise<CreditHold[]>;
   listUsageByAccount(accountId: string): Promise<UsageRecord[]>;
 }

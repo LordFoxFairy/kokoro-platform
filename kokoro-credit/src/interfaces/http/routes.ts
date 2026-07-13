@@ -32,8 +32,30 @@ import {
   quoteRequestSchema,
   releaseCreditRequestSchema,
   usageHoldRequestSchema,
+  usageLedgerQuerySchema,
   usageSettleRequestSchema,
+  usageSummaryQuerySchema,
 } from "./schemas.js";
+
+// 流水复合游标 (createdAt,id) ↔ 不透明 base64url（空格分隔，ISO 时间戳无空格、id 无空格）。
+function encodeLedgerCursor(createdAt: Date, id: string): string {
+  return Buffer.from(`${createdAt.toISOString()} ${id}`, "utf8").toString("base64url");
+}
+
+// 解析不透明游标；结构非法（无分隔/时间非法/空 id）→ undefined（route 据此回 400）。
+function decodeLedgerCursor(raw: string): { createdAt: Date; id: string } | undefined {
+  const decoded = Buffer.from(raw, "base64url").toString("utf8");
+  const sep = decoded.indexOf(" ");
+  if (sep <= 0) {
+    return undefined;
+  }
+  const createdAt = new Date(decoded.slice(0, sep));
+  const id = decoded.slice(sep + 1);
+  if (Number.isNaN(createdAt.getTime()) || id.length === 0) {
+    return undefined;
+  }
+  return { createdAt, id };
+}
 
 export function registerCreditRoutes(app: FastifyInstance, service: CreditService): void {
   registerHealthRoute(app, "credit");
@@ -195,6 +217,71 @@ export function registerCreditRoutes(app: FastifyInstance, service: CreditServic
       return sendData(reply, result);
     } catch (error) {
       return handleCreditError(error, reply, "credit.usage_settle_failed");
+    }
+  });
+
+  app.get("/credit/usage/summary", {
+    schema: {
+      tags: ["credit"],
+      summary: "run 计费面只读：账户余额 + held 聚合（namespace 派生 team 账户，无账户→零额）",
+    },
+  }, async (request, reply) => {
+    try {
+      const ctx = readRequestContext(request.headers);
+      if (ctx.siteId === null) {
+        return sendError(reply, 400, "credit.site_required", "缺少站点上下文", undefined, ctx.requestId);
+      }
+      const query = usageSummaryQuerySchema.parse(request.query);
+      const result = await service.readUsageSummary({ siteId: ctx.siteId, namespace: query.namespace });
+      return sendData(reply, result);
+    } catch (error) {
+      return handleCreditError(error, reply, "credit.usage_summary_failed");
+    }
+  });
+
+  app.get("/credit/usage/ledger", {
+    schema: {
+      tags: ["credit"],
+      summary: "run 计费面只读：账户流水分页（复合游标，namespace 派生 team 账户，无账户→空流水）",
+    },
+  }, async (request, reply) => {
+    try {
+      const ctx = readRequestContext(request.headers);
+      if (ctx.siteId === null) {
+        return sendError(reply, 400, "credit.site_required", "缺少站点上下文", undefined, ctx.requestId);
+      }
+      const query = usageLedgerQuerySchema.parse(request.query);
+      let cursor: { createdAt: Date; id: string } | undefined;
+      if (query.cursor !== undefined) {
+        cursor = decodeLedgerCursor(query.cursor);
+        if (cursor === undefined) {
+          return sendError(reply, 400, "credit.invalid_cursor", "游标非法");
+        }
+      }
+      const limit = query.limit ?? 50;
+      const { entries, hasMore } = await service.readUsageLedger({
+        siteId: ctx.siteId,
+        namespace: query.namespace,
+        limit,
+        cursor,
+      });
+      const last = entries[entries.length - 1];
+      // 微单位含符号字符串直透；createdAt→epoch ms；runId=ledger 行 requestId（受理 hold 带 run_id，capture 贯通）。
+      const data = {
+        entries: entries.map((entry) => ({
+          entryId: entry.id,
+          deltaMicros: entry.amountMicros,
+          reason: entry.reason,
+          createdAt: entry.createdAt.getTime(),
+          runId: entry.requestId,
+        })),
+        ...(hasMore && last !== undefined
+          ? { nextCursor: encodeLedgerCursor(last.createdAt, last.id) }
+          : {}),
+      };
+      return sendData(reply, data);
+    } catch (error) {
+      return handleCreditError(error, reply, "credit.usage_ledger_failed");
     }
   });
 
