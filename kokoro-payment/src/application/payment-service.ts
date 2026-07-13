@@ -2,13 +2,14 @@ import { randomUUID } from "node:crypto";
 import { parsePositiveBigIntString } from "@kokoro/platform-kit";
 import { parseNonNegativeBigIntString } from "../domain/amount.js";
 import {
+  CheckoutUnavailableError,
   OrderAmountMismatchError,
   OrderNotConfirmableError,
   OrderNotFoundError,
   OrderNotRefundableError,
   PlanNotFoundError,
 } from "../domain/errors.js";
-import type { Order, Refund, Subscription } from "../domain/payment.js";
+import type { Order, Plan, Refund, Subscription } from "../domain/payment.js";
 import { PaymentLifecycleError, type DeleteInput, type RestoreInput } from "../domain/payment-lifecycle.js";
 import type {
   CreateOrderInput,
@@ -42,6 +43,23 @@ export class PaymentService {
       throw new OrderAmountMismatchError(input.planId);
     }
     return this.repository.createOrder(input);
+  }
+
+  // 在售套餐目录（PAY-2 storefront 读面）：仅暴露本站 active 且未删除的套餐，供 web 价格页枚举，
+  // web 不再硬编码价格。软删除行由 listPlans 默认排除；此处再滤 status，草稿/停售套餐不进店面。
+  async listSellablePlans(siteId: string): Promise<Plan[]> {
+    const plans = await this.repository.listPlans(siteId);
+    return plans.filter((plan) => plan.status === "active" && !plan.deletedAt);
+  }
+
+  // 收银台意图（PAY-2）：校验套餐可售（不存在/他站/停售/已删 → 404），再向 provider 取托管收银台跳转。
+  // V1 现状：无任何 provider 接入托管收银台会话创建（既有 provider 仅做 webhook 验签），故诚实返回
+  // 501——web 据此渲染「支付暂未开通」禁用态（状态真来自后端，非假按钮）。provider 托管收银台落地后，
+  // happy path 在此接入：建单 + 生成 provider checkout URL 返回。
+  async startCheckout(input: { siteId: string; teamId: string; planId: string }): Promise<never> {
+    const plan = await this.repository.findPlanById(input.planId);
+    assertPlanSellable(plan, input.siteId, input.planId);
+    throw new CheckoutUnavailableError();
   }
 
   async deletePlan(input: DeleteInput) {

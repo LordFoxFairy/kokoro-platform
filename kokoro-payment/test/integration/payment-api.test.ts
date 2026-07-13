@@ -29,6 +29,66 @@ describe("payment HTTP API", () => {
     await prisma.$disconnect();
   });
 
+  it("GET /plans 目录只列本站在售套餐（草稿/软删不进店面），字段为 storefront 子集", async () => {
+    const active = await app.inject({
+      method: "POST",
+      url: "/plans/upsert",
+      headers: siteHeaders,
+      payload: { key: "catalog_active", name: "Catalog Active", currency: "USD", amountMinor: "4900", creditMicros: "1000000", billingInterval: "month" },
+    });
+    const softDeleted = await app.inject({
+      method: "POST",
+      url: "/plans/upsert",
+      headers: siteHeaders,
+      payload: { key: "catalog_deleted", name: "Catalog Deleted", currency: "USD", amountMinor: "9900", billingInterval: "month" },
+    });
+    await app.inject({
+      method: "DELETE",
+      url: `/plans/${softDeleted.json().data.id}`,
+      payload: { deletedBy: "operator-1", reason: "retired" },
+    });
+
+    const listRes = await app.inject({ method: "GET", url: "/plans", headers: siteHeaders });
+    expect(listRes.statusCode).toBe(200);
+    const catalog = listRes.json().data.plans as Array<Record<string, unknown>>;
+    expect(catalog.map((p) => p.key)).toEqual(["catalog_active"]);
+    const entry = catalog[0]!;
+    // 只投 storefront 子集：审计/软删字段不外泄。
+    expect(Object.keys(entry).sort()).toEqual(
+      ["amountMinor", "billingInterval", "creditMicros", "currency", "id", "key", "name"],
+    );
+    expect(entry).toMatchObject({ key: "catalog_active", amountMinor: "4900", creditMicros: "1000000" });
+    void active;
+  });
+
+  it("POST /orders/checkout 套餐可售 → 501 诚实态（V1 未接入托管收银台）", async () => {
+    const planResponse = await app.inject({
+      method: "POST",
+      url: "/plans/upsert",
+      headers: siteHeaders,
+      payload: { key: "checkout_plan", name: "Checkout Plan", currency: "USD", amountMinor: "4900", billingInterval: "month" },
+    });
+    const res = await app.inject({
+      method: "POST",
+      url: "/orders/checkout",
+      headers: siteHeaders,
+      payload: { teamId: "team_checkout", planId: planResponse.json().data.id },
+    });
+    expect(res.statusCode).toBe(501);
+    expect(res.json().error.code).toBe("payment.checkout_unavailable");
+  });
+
+  it("POST /orders/checkout 未知套餐 → 404（先校验套餐，收银台不建单）", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/orders/checkout",
+      headers: siteHeaders,
+      payload: { teamId: "team_x", planId: "nonexistent" },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe("payment.plan_not_found");
+  });
+
   it("upserts a plan and creates an order", async () => {
     const planResponse = await app.inject({
       method: "POST",

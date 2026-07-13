@@ -53,3 +53,12 @@ export class PaymentEventNotFoundError extends Error {
     this.name = "PaymentEventNotFoundError";
   }
 }
+
+// 托管收银台不可用（PAY-2）：本站未接入可托管收银台会话的 provider → 501 未实现。
+// 语义即诚实态权威——web 据此渲染「支付暂未开通」禁用态。
+export class CheckoutUnavailableError extends Error {
+  constructor() {
+    super("Hosted checkout is not configured for this site");
+    this.name = "CheckoutUnavailableError";
+  }
+}

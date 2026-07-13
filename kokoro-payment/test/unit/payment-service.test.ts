@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { PaymentService } from "../../src/application/payment-service.js";
 import {
+  CheckoutUnavailableError,
   OrderAmountMismatchError,
   OrderNotConfirmableError,
   OrderNotFoundError,
@@ -96,6 +97,7 @@ interface FakeOverrides {
   reverseThrows?: boolean;
   markPaidThrows?: boolean;
   staleConfirming?: Order[];
+  plansList?: Plan[];
 }
 
 function makeFakes(overrides: FakeOverrides = {}): Fakes {
@@ -189,7 +191,7 @@ function makeFakes(overrides: FakeOverrides = {}): Fakes {
     },
     listPlans: async () => {
       calls.push("listPlans");
-      return [plan];
+      return overrides.plansList ?? [plan];
     },
     listOrders: async () => {
       calls.push("listOrders");
@@ -595,5 +597,58 @@ describe("PaymentService confirm outbox(确认意图落库+sweep 收尾)", () =>
     const fakes = makeFakes({ staleConfirming: [bad], order: bad, markPaidThrows: true });
     const recovered = await service(fakes).sweepStaleConfirmingOrders(1000, "req_sweep");
     expect(recovered).toBe(0);
+  });
+});
+
+describe("PaymentService listSellablePlans（storefront 目录）", () => {
+  const disabled: Plan = { ...plan, id: "plan_disabled", status: "disabled" };
+  const deleted: Plan = { ...plan, id: "plan_deleted", deletedAt: new Date(1), deletedBy: "op", deleteReason: "retired" };
+  const active2: Plan = { ...plan, id: "plan_2", key: "pro" };
+
+  it("按站点透传并只保留 active 未删套餐（草稿/停售/软删不进店面）", async () => {
+    const fakes = makeFakes({ plansList: [plan, disabled, deleted, active2] });
+    const result = await service(fakes).listSellablePlans("site_1");
+    expect(result.map((p) => p.id)).toEqual(["plan_1", "plan_2"]);
+    expect(fakes.calls).toContain("listPlans");
+  });
+
+  it("无在售套餐 → 空目录", async () => {
+    const fakes = makeFakes({ plansList: [disabled, deleted] });
+    expect(await service(fakes).listSellablePlans("site_1")).toEqual([]);
+  });
+});
+
+describe("PaymentService startCheckout（诚实态：V1 未接入托管收银台 → 501）", () => {
+  it("套餐可售 → 抛 CheckoutUnavailableError（不建单）", async () => {
+    const fakes = makeFakes();
+    await expect(
+      service(fakes).startCheckout({ siteId: "site_1", teamId: "team_1", planId: "plan_1" }),
+    ).rejects.toBeInstanceOf(CheckoutUnavailableError);
+    expect(fakes.calls).not.toContain("createOrder");
+  });
+
+  it("套餐不存在 → PlanNotFoundError（先校验，不进收银台）", async () => {
+    const fakes = makeFakes({ plan: null });
+    await expect(
+      service(fakes).startCheckout({ siteId: "site_1", teamId: "team_1", planId: "missing" }),
+    ).rejects.toBeInstanceOf(PlanNotFoundError);
+  });
+
+  it("他站套餐不可伪造 → PlanNotFoundError（不泄露他站套餐存在）", async () => {
+    const fakes = makeFakes({ plan: { ...plan, siteId: "site_2" } });
+    await expect(
+      service(fakes).startCheckout({ siteId: "site_1", teamId: "team_1", planId: "plan_1" }),
+    ).rejects.toBeInstanceOf(PlanNotFoundError);
+  });
+
+  it.each([
+    ["disabled", { ...plan, status: "disabled" as const }],
+    ["deleted", { ...plan, deletedAt: new Date(1), deletedBy: "op", deleteReason: "retired" }],
+  ])("停售/软删套餐 %s → 不可结账", async (_label, guarded) => {
+    const fakes = makeFakes({ plan: guarded });
+    await expect(
+      service(fakes).startCheckout({ siteId: "site_1", teamId: "team_1", planId: "plan_1" }),
+    ).rejects.toThrow();
+    expect(fakes.calls).not.toContain("createOrder");
   });
 });

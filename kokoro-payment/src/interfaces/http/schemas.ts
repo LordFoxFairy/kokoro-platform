@@ -24,6 +24,13 @@ export const createOrderRequestSchema = z
   })
   .strict();
 
+export const checkoutRequestSchema = z
+  .object({
+    teamId: z.string().min(1),
+    planId: z.string().min(1),
+  })
+  .strict();
+
 export const confirmOrderParamsSchema = z
   .object({
     id: z.string().min(1),

@@ -10,6 +10,7 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { ZodError } from "zod";
 import type { PaymentService } from "../../application/payment-service.js";
 import {
+  CheckoutUnavailableError,
   OrderAmountMismatchError,
   OrderNotConfirmableError,
   OrderNotFoundError,
@@ -22,6 +23,7 @@ import {
 import { isPaymentLifecycleError } from "../../domain/payment-lifecycle.js";
 import { isWebhookError } from "../../domain/webhook.js";
 import {
+  checkoutRequestSchema,
   confirmOrderParamsSchema,
   createOrderRequestSchema,
   deleteRequestSchema,
@@ -85,6 +87,55 @@ export function registerPaymentRoutes(app: FastifyInstance, service: PaymentServ
       return sendData(reply, result);
     } catch (error) {
       return handlePaymentError(error, reply, "payment.plan_restore_failed");
+    }
+  });
+
+  app.get("/plans", {
+    schema: {
+      tags: ["payment"],
+      summary: "在售套餐目录（storefront 读面）",
+    },
+  }, async (request, reply) => {
+    try {
+      const ctx = readRequestContext(request.headers);
+      if (ctx.siteId === null) {
+        return sendError(reply, 400, "payment.site_required", "缺少站点上下文", undefined, ctx.requestId);
+      }
+      const plans = await service.listSellablePlans(ctx.siteId);
+      // 只投当店面所需字段；内部审计/软删字段（deletedBy 等）不外泄到 web。
+      const catalog = plans.map((plan) => ({
+        id: plan.id,
+        key: plan.key,
+        name: plan.name,
+        currency: plan.currency,
+        amountMinor: plan.amountMinor,
+        creditMicros: plan.creditMicros,
+        billingInterval: plan.billingInterval,
+      }));
+      return sendData(reply, { plans: catalog }, 200, ctx.requestId);
+    } catch (error) {
+      return handlePaymentError(error, reply, "payment.plan_list_failed");
+    }
+  });
+
+  app.post("/orders/checkout", {
+    schema: {
+      tags: ["payment"],
+      summary: "创建收银台会话（V1 未接入托管收银台 → 501）",
+      body: jsonSchema(checkoutRequestSchema),
+    },
+  }, async (request, reply) => {
+    try {
+      const ctx = readRequestContext(request.headers);
+      if (ctx.siteId === null) {
+        return sendError(reply, 400, "payment.site_required", "缺少站点上下文", undefined, ctx.requestId);
+      }
+      const body = checkoutRequestSchema.parse(request.body);
+      // startCheckout 校验套餐可售后恒抛 501（V1 无托管收银台）；由 handlePaymentError 归一成 501 响应。
+      await service.startCheckout({ ...body, siteId: ctx.siteId });
+      return sendError(reply, 501, "payment.checkout_unavailable", "支付渠道未配置", undefined, ctx.requestId);
+    } catch (error) {
+      return handlePaymentError(error, reply, "payment.checkout_failed");
     }
   });
 
@@ -217,6 +268,11 @@ export function handlePaymentError(error: unknown, reply: FastifyReply, fallback
 
   if (error instanceof OrderAmountMismatchError) {
     return sendError(reply, 409, "payment.order_amount_mismatch", "订单金额与套餐定价不匹配");
+  }
+
+  if (error instanceof CheckoutUnavailableError) {
+    // 501 未实现：本站未接入托管收银台 provider（诚实态，web 据此禁用购买按钮）。
+    return sendError(reply, 501, "payment.checkout_unavailable", "支付渠道未配置");
   }
 
   return sendError(reply, 500, fallbackCode, "支付操作失败");
