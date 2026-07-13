@@ -3,7 +3,7 @@ import { PaymentEventNotFoundError } from "../domain/errors.js";
 import type { PaymentEvent } from "../domain/payment.js";
 import type { PaymentProviderConfig } from "../domain/provider.js";
 import type { ParsedWebhookEvent, PaymentWebhookProvider } from "../domain/webhook.js";
-import { WebhookError } from "../domain/webhook.js";
+import { WEBHOOK_EVENT, WebhookError } from "../domain/webhook.js";
 import type { PaymentRepository, UpsertProviderInput } from "../domain/repository.js";
 import type { WebhookProviderRegistry } from "../infrastructure/webhook/webhook-provider-registry.js";
 import type { PaymentService } from "./payment-service.js";
@@ -68,9 +68,10 @@ export class PaymentWebhookService {
 
     let payload: unknown;
     try {
-      payload = JSON.parse(rawBody.toString("utf8"));
+      // provider 自定义 body 解码（默认 JSON；表单编码渠道如 alipay 覆盖）。
+      payload = provider.decodeBody ? provider.decodeBody(rawBody) : JSON.parse(rawBody.toString("utf8"));
     } catch {
-      throw new WebhookError("payment.webhook_payload_invalid", "webhook body is not valid JSON", 400);
+      throw new WebhookError("payment.webhook_payload_invalid", "webhook body could not be decoded", 400);
     }
     const parsed = provider.parseEvent(payload);
 
@@ -129,12 +130,24 @@ export class PaymentWebhookService {
     requestId: string,
   ): Promise<PaymentEvent> {
     try {
-      if (parsed.eventType === "payment_succeeded") {
+      if (parsed.eventType === WEBHOOK_EVENT.paymentSucceeded) {
         if (!parsed.orderId) {
-          throw new Error("payment_succeeded event is missing data.orderId");
+          throw new Error("payment_succeeded event is missing orderId");
         }
         // 复用既有幂等确认链：grant 幂等键=order:<id>，重复处理不会重复发积分。
         await this.paymentService.confirmOrder(parsed.orderId, requestId);
+      } else if (parsed.eventType === WEBHOOK_EVENT.refundSucceeded) {
+        if (!parsed.orderId) {
+          throw new Error("refund_succeeded event is missing orderId");
+        }
+        // 复用既有退款回链：reverse 幂等键=order-refund:<id>，已退款订单幂等返回不重复扣回。
+        await this.paymentService.refundOrder(parsed.orderId, requestId);
+      } else if (parsed.eventType === WEBHOOK_EVENT.subscriptionUpdated) {
+        if (!parsed.subscription) {
+          throw new Error("subscription_updated event is missing subscription fields (teamId/planId)");
+        }
+        // 订阅写路径：幂等 upsert 订阅行 + 激活/续期发放本周期积分（grant 幂等键含周期）。
+        await this.paymentService.applySubscriptionEvent(event.provider, parsed.subscription, requestId);
       }
       // 其余事件类型当前无订单联动：直接 ack 为 processed（与主流网关对未订阅事件的处理一致）。
       const processed = await this.repository.transitionPaymentEventStatus(

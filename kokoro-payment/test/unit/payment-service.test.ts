@@ -148,6 +148,22 @@ function makeFakes(overrides: FakeOverrides = {}): Fakes {
       }
       return { ...order, id: orderId, status: "paid" };
     },
+    upsertSubscription: async (input) => {
+      calls.push("upsertSubscription");
+      return {
+        id: "sub_1",
+        teamId: input.teamId,
+        planId: input.planId,
+        status: input.status,
+        provider: input.provider,
+        providerSubscriptionId: input.providerSubscriptionId,
+        currentPeriodStart: input.currentPeriodStart,
+        currentPeriodEnd: input.currentPeriodEnd,
+        metadata: null,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+      };
+    },
     refundOrderAtomically: async (_orderId: string, _input: CreateRefundInput) => {
       calls.push("refundOrderAtomically");
       const transitioned = overrides.atomicTransitioned ?? true;

@@ -2,9 +2,19 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
 import { z } from "zod";
 import type { ParsedWebhookEvent, PaymentWebhookProvider } from "../../domain/webhook.js";
-import { WebhookError } from "../../domain/webhook.js";
+import { WEBHOOK_EVENT, WebhookError } from "../../domain/webhook.js";
 
 export const MOCK_WEBHOOK_SIGNATURE_HEADER = "x-kokoro-webhook-signature";
+
+// mock 订阅子信封：直接携带归一化订阅字段（mock 是可控的开发/测试驱动，不模拟真实网关编码）。
+const mockSubscriptionSchema = z.object({
+  providerSubscriptionId: z.string().min(1),
+  teamId: z.string().min(1),
+  planId: z.string().min(1),
+  status: z.enum(["active", "past_due", "canceled"]),
+  currentPeriodStart: z.string().datetime().optional(),
+  currentPeriodEnd: z.string().datetime().optional(),
+});
 
 // mock 事件信封：容忍 provider 附带的额外字段（passthrough），只取归一化所需字段。
 const mockWebhookEventSchema = z
@@ -14,6 +24,7 @@ const mockWebhookEventSchema = z
     data: z
       .object({
         orderId: z.string().min(1).optional(),
+        subscription: mockSubscriptionSchema.optional(),
       })
       .passthrough()
       .optional(),
@@ -49,10 +60,23 @@ export class MockWebhookProvider implements PaymentWebhookProvider {
         400,
       );
     }
+    const sub = parsed.data.data?.subscription;
     return {
       eventId: parsed.data.eventId,
       eventType: parsed.data.eventType,
       orderId: parsed.data.data?.orderId ?? null,
+      subscription:
+        parsed.data.eventType === WEBHOOK_EVENT.subscriptionUpdated && sub
+          ? {
+              providerSubscriptionId: sub.providerSubscriptionId,
+              teamId: sub.teamId,
+              planId: sub.planId,
+              status: sub.status,
+              currentPeriodStart: sub.currentPeriodStart ? new Date(sub.currentPeriodStart) : null,
+              currentPeriodEnd: sub.currentPeriodEnd ? new Date(sub.currentPeriodEnd) : null,
+              grantCredits: sub.status === "active",
+            }
+          : null,
     };
   }
 }

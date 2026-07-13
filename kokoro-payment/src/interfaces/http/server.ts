@@ -12,6 +12,7 @@ import { PaymentWebhookService, type WebhookSecretResolver } from "../../applica
 import { createPrismaClient } from "../../infrastructure/prisma/prisma-client.js";
 import { PrismaPaymentRepository } from "../../infrastructure/prisma/prisma-payment-repository.js";
 import { createWebhookProviderRegistry } from "../../infrastructure/webhook/webhook-provider-registry.js";
+import type { PaymentProviderKind } from "../../domain/provider.js";
 import type { GrantPurchaseCredits, ReverseCredits } from "../../domain/repository.js";
 import { registerPaymentAdminRoutes } from "./admin-routes.js";
 import { registerPaymentRoutes } from "./routes.js";
@@ -28,6 +29,8 @@ export interface CreatePaymentServerOptions {
   confirmStaleMs?: number;
   // provider webhookSecretRef(env 变量名) → 密钥明文；默认读 process.env。
   webhookSecretResolver?: WebhookSecretResolver;
+  // 启用真实验签的渠道 kind；未列出者注册表留空→501。默认只 mock。
+  enabledProviderKinds?: PaymentProviderKind[];
 }
 
 // payment 所需 caller 凭据：admin(网关) 入站 + payment(自身出站调 credit 授信) 身份。
@@ -62,7 +65,7 @@ export function createPaymentServer(options: CreatePaymentServerOptions) {
   const webhookService = new PaymentWebhookService(
     repository,
     service,
-    createWebhookProviderRegistry(),
+    createWebhookProviderRegistry(options.enabledProviderKinds ?? []),
     options.webhookSecretResolver ?? ((secretRef) => process.env[secretRef]),
   );
 

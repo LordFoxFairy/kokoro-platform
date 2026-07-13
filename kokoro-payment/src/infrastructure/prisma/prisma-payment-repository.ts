@@ -34,6 +34,7 @@ import type {
   RefundTransition,
   UpsertPlanInput,
   UpsertProviderInput,
+  UpsertSubscriptionInput,
 } from "../../domain/repository.js";
 
 export class PrismaPaymentRepository implements PaymentRepository {
@@ -130,6 +131,33 @@ export class PrismaPaymentRepository implements PaymentRepository {
     }
     const order = await this.prisma.order.findUniqueOrThrow({ where: { id: orderId } });
     return mapOrder(order);
+  }
+
+  async upsertSubscription(input: UpsertSubscriptionInput): Promise<Subscription> {
+    // 幂等键 (provider, providerSubscriptionId)：续期只推状态与周期，不重建行。
+    const subscription = await this.prisma.subscription.upsert({
+      where: {
+        provider_providerSubscriptionId: {
+          provider: input.provider,
+          providerSubscriptionId: input.providerSubscriptionId,
+        },
+      },
+      create: {
+        provider: input.provider,
+        providerSubscriptionId: input.providerSubscriptionId,
+        teamId: input.teamId,
+        planId: input.planId,
+        status: input.status,
+        currentPeriodStart: input.currentPeriodStart,
+        currentPeriodEnd: input.currentPeriodEnd,
+      },
+      update: {
+        status: input.status,
+        currentPeriodStart: input.currentPeriodStart,
+        currentPeriodEnd: input.currentPeriodEnd,
+      },
+    });
+    return mapSubscription(subscription);
   }
 
   async refundOrderAtomically(orderId: string, input: CreateRefundInput): Promise<RefundTransition> {

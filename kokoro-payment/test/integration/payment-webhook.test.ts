@@ -4,11 +4,16 @@ import {
   MOCK_WEBHOOK_SIGNATURE_HEADER,
   signMockWebhook,
 } from "../../src/infrastructure/webhook/mock-webhook-provider.js";
+import {
+  STRIPE_SIGNATURE_HEADER,
+  signStripeWebhook,
+} from "../../src/infrastructure/webhook/stripe-webhook-provider.js";
 import type { GrantPurchaseCreditsInput } from "../../src/domain/repository.js";
 import {
   TEST_SITE_ID,
   cleanPaymentDatabase,
   createTestPrismaClient,
+  recordingGrant,
   recordingReverse,
 } from "./helpers.js";
 
@@ -284,5 +289,143 @@ describe("payment webhook surface (real mysql)", () => {
     expect(response.statusCode).toBe(400);
     expect(response.json().error.code).toBe("payment.webhook_payload_invalid");
     expect(await prisma.paymentEvent.count()).toBe(0);
+  });
+
+  it("subscription_updated active persists a subscription row and grants period credits", async () => {
+    await seedProvider();
+    const plan = await prisma.plan.create({
+      data: {
+        siteId: TEST_SITE_ID,
+        key: "sub_plan",
+        name: "Sub Plan",
+        currency: "USD",
+        amountMinor: 4900n,
+        creditMicros: 1_000_000n,
+        billingInterval: "month",
+        status: "active",
+      },
+    });
+    const body = JSON.stringify({
+      eventId: "evt_sub",
+      eventType: "subscription_updated",
+      data: {
+        subscription: {
+          providerSubscriptionId: "psub_int_1",
+          teamId: "team_sub",
+          planId: plan.id,
+          status: "active",
+          currentPeriodStart: "2026-07-01T00:00:00.000Z",
+        },
+      },
+    });
+
+    const response = await signedPost("mockpay", body);
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.event.status).toBe("processed");
+
+    const stored = await prisma.subscription.findUniqueOrThrow({
+      where: { provider_providerSubscriptionId: { provider: "mockpay", providerSubscriptionId: "psub_int_1" } },
+    });
+    expect(stored.status).toBe("active");
+    expect(stored.planId).toBe(plan.id);
+    expect(grants).toHaveLength(1);
+    expect(grants[0]?.idempotencyKey).toBe("subscription:mockpay:psub_int_1:2026-07-01T00:00:00.000Z");
+  });
+
+  it("refund_succeeded webhook reverses a paid order and records a refund", async () => {
+    await seedProvider();
+    const plan = await prisma.plan.create({
+      data: {
+        siteId: TEST_SITE_ID,
+        key: "refund_plan",
+        name: "Refund Plan",
+        currency: "USD",
+        amountMinor: 4900n,
+        creditMicros: 1_000_000n,
+        billingInterval: "once",
+        status: "active",
+      },
+    });
+    const order = await prisma.order.create({
+      data: {
+        siteId: TEST_SITE_ID,
+        teamId: "team_refund",
+        planId: plan.id,
+        amountMinor: 4900n,
+        currency: "USD",
+        idempotencyKey: "refund_flow",
+        status: "paid",
+      },
+    });
+    const body = JSON.stringify({
+      eventId: "evt_refund_int",
+      eventType: "refund_succeeded",
+      data: { orderId: order.id },
+    });
+
+    const response = await signedPost("mockpay", body);
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.event.status).toBe("processed");
+
+    const storedOrder = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
+    expect(storedOrder.status).toBe("refunded");
+    const refunds = await prisma.refund.findMany({ where: { orderId: order.id } });
+    expect(refunds).toHaveLength(1);
+    expect(refunds[0]?.status).toBe("succeeded");
+  });
+});
+
+describe("payment webhook real provider gating (stripe enabled)", () => {
+  const STRIPE_SECRET_ENV = "KOKORO_PAYMENT_WEBHOOK_SECRET_STRIPE_ITEST";
+  const STRIPE_SECRET = "whsec_example-token";
+  process.env[STRIPE_SECRET_ENV] = STRIPE_SECRET;
+
+  const stripePrisma = createTestPrismaClient();
+  const stripeApp = createPaymentServer({
+    prisma: stripePrisma,
+    grantPurchaseCredits: recordingGrant().grantPurchaseCredits,
+    reverseCredits: recordingReverse().reverseCredits,
+    enabledProviderKinds: ["stripe"],
+  });
+
+  beforeEach(async () => {
+    await cleanPaymentDatabase(stripePrisma);
+    await stripeApp.inject({
+      method: "POST",
+      url: "/admin/payments/providers/upsert",
+      payload: { key: "stripe_main", kind: "stripe", webhookSecretRef: STRIPE_SECRET_ENV, enabled: true },
+    });
+  });
+
+  afterAll(async () => {
+    delete process.env[STRIPE_SECRET_ENV];
+    await stripeApp.close();
+    await stripePrisma.$disconnect();
+  });
+
+  it("accepts a genuinely stripe-signed webhook once the kind is enabled", async () => {
+    const body = JSON.stringify({ id: "evt_stripe_ok", type: "customer.subscription.created" });
+    const timestamp = Math.floor(Date.now() / 1000);
+    const response = await stripeApp.inject({
+      method: "POST",
+      url: "/payments/webhooks/stripe_main",
+      headers: { "content-type": "application/json", [STRIPE_SIGNATURE_HEADER]: signStripeWebhook(body, STRIPE_SECRET, timestamp) },
+      payload: body,
+    });
+    expect(response.statusCode).toBe(200);
+    // 无 team/plan metadata 的订阅事件 → subscription 为 null → 处理失败(fail-loud)，但已验签入库。
+    expect(response.json().data.event.status).toBe("failed");
+  });
+
+  it("rejects a stripe webhook with a bad signature (401)", async () => {
+    const body = JSON.stringify({ id: "evt_stripe_bad", type: "payment_intent.succeeded" });
+    const response = await stripeApp.inject({
+      method: "POST",
+      url: "/payments/webhooks/stripe_main",
+      headers: { "content-type": "application/json", [STRIPE_SIGNATURE_HEADER]: signStripeWebhook(body, "whsec_wrong", Math.floor(Date.now() / 1000)) },
+      payload: body,
+    });
+    expect(response.statusCode).toBe(401);
+    expect(response.json().error.code).toBe("payment.webhook_signature_invalid");
   });
 });

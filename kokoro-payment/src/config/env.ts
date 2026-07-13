@@ -1,9 +1,31 @@
 import { z } from "zod";
+import type { PaymentProviderKind } from "../domain/provider.js";
+
+const REAL_PROVIDER_KINDS: readonly PaymentProviderKind[] = ["stripe", "alipay", "wechat"];
+
+// 部署启用清单：逗号分隔的真实渠道 kind。未列出的 kind 走注册表 501（fail-loud，不假绿）。
+// 空/缺省=只 mock。非法 kind 直接抛错，避免拼写错误被静默吞掉。
+export function parseEnabledProviders(raw: string): PaymentProviderKind[] {
+  const kinds: PaymentProviderKind[] = [];
+  for (const token of raw.split(",")) {
+    const kind = token.trim();
+    if (kind === "") {
+      continue;
+    }
+    if (!REAL_PROVIDER_KINDS.includes(kind as PaymentProviderKind)) {
+      throw new Error(`unknown payment provider kind in KOKORO_PAYMENT_ENABLED_PROVIDERS: ${kind}`);
+    }
+    kinds.push(kind as PaymentProviderKind);
+  }
+  return kinds;
+}
 
 // WHY: 解析 process.env 超集，故意保留 strip；strict 会被 PATH/HOME 等无关变量拒绝。
 export const paymentEnvSchema = z.object({
   DATABASE_URL_PAYMENT: z.string().url(),
   KOKORO_PAYMENT_PORT: z.coerce.number().int().min(1).max(65535).default(4241),
+  // 启用真实 webhook 验签的渠道清单（逗号分隔，如 "stripe,alipay"）；未列出者恒 501。
+  KOKORO_PAYMENT_ENABLED_PROVIDERS: z.string().default(""),
   // @deprecated 遗留单一共享密钥，仅作 per-caller secret（KOKORO_INTERNAL_SECRET_PAYMENT）缺失时的出站回退。
   // 入站校验已改由 route-access 的 per-caller 注册表（loadCallerSecrets）执行。
   KOKORO_INTERNAL_SECRET: z.string().default(""),

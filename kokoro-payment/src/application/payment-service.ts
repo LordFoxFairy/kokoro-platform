@@ -8,7 +8,7 @@ import {
   OrderNotRefundableError,
   PlanNotFoundError,
 } from "../domain/errors.js";
-import type { Order, Refund } from "../domain/payment.js";
+import type { Order, Refund, Subscription } from "../domain/payment.js";
 import { PaymentLifecycleError, type DeleteInput, type RestoreInput } from "../domain/payment-lifecycle.js";
 import type {
   CreateOrderInput,
@@ -18,6 +18,7 @@ import type {
   ReverseCredits,
   UpsertPlanInput,
 } from "../domain/repository.js";
+import type { ParsedSubscriptionEvent } from "../domain/webhook.js";
 
 export class PaymentService {
   constructor(
@@ -135,6 +136,48 @@ export class PaymentService {
     });
 
     return this.confirmOrder(order.id, requestId);
+  }
+
+  // 订阅事件写路径：幂等 upsert 订阅行(active/past_due/canceled)，激活/续期时发放本周期积分。
+  // 周期驱动:V1 靠事件(不做本地定时续费)。grant 幂等键含 providerSubscriptionId + 周期起点,
+  // 同周期重复事件不重复发放，新周期(续期)产生新键触发新发放。
+  async applySubscriptionEvent(
+    provider: string,
+    event: ParsedSubscriptionEvent,
+    requestId: string,
+  ): Promise<Subscription> {
+    const plan = await this.repository.findPlanById(event.planId);
+    if (!plan) {
+      throw new PlanNotFoundError(event.planId);
+    }
+    assertPlanNotDeleted(plan);
+
+    const subscription = await this.repository.upsertSubscription({
+      provider,
+      providerSubscriptionId: event.providerSubscriptionId,
+      teamId: event.teamId,
+      planId: event.planId,
+      status: event.status,
+      currentPeriodStart: event.currentPeriodStart,
+      currentPeriodEnd: event.currentPeriodEnd,
+    });
+
+    if (event.grantCredits && BigInt(plan.creditMicros) > 0n) {
+      const periodKey = event.currentPeriodStart
+        ? event.currentPeriodStart.toISOString()
+        : subscription.id;
+      await this.grantPurchaseCredits({
+        siteId: plan.siteId,
+        requestId,
+        ownerKind: "team",
+        ownerId: event.teamId,
+        amountMicros: plan.creditMicros,
+        idempotencyKey: `subscription:${provider}:${event.providerSubscriptionId}:${periodKey}`,
+        reason: "subscription",
+      });
+    }
+
+    return subscription;
   }
 
   async refundOrder(orderId: string, requestId: string): Promise<{ order: Order; refund: Refund }> {

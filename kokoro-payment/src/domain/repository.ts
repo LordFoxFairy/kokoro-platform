@@ -7,6 +7,7 @@ import type {
   Refund,
   RefundStatus,
   Subscription,
+  SubscriptionStatus,
 } from "./payment.js";
 import type { DeleteInput, ListOptions, RestoreInput } from "./payment-lifecycle.js";
 import type { PaymentProviderConfig, PaymentProviderKind } from "./provider.js";
@@ -45,6 +46,17 @@ export interface UpsertProviderInput {
   enabled: boolean;
 }
 
+// 订阅写路径入参：按 (provider, providerSubscriptionId) 幂等 upsert，续期只推状态与周期。
+export interface UpsertSubscriptionInput {
+  provider: string;
+  providerSubscriptionId: string;
+  teamId: string;
+  planId: string;
+  status: SubscriptionStatus;
+  currentPeriodStart: Date | null;
+  currentPeriodEnd: Date | null;
+}
+
 export interface CreateRefundInput {
   orderId: string;
   amountMinor: string;
@@ -70,6 +82,8 @@ export interface PaymentRepository {
   listStaleConfirmingOrders(before: Date): Promise<Order[]>;
   findPlanById(planId: string): Promise<Plan | null>;
   markOrderPaid(orderId: string): Promise<Order>;
+  // 订阅事件写路径：按 (provider, providerSubscriptionId) 幂等 upsert（续期只推状态/周期）。
+  upsertSubscription(input: UpsertSubscriptionInput): Promise<Subscription>;
   // 同库原子：标 paid→refunded 与建 Refund 记录在一个事务，杜绝「标了退款却无记录」。
   refundOrderAtomically(orderId: string, refund: CreateRefundInput): Promise<RefundTransition>;
   findRefundByOrderId(orderId: string): Promise<Refund | null>;

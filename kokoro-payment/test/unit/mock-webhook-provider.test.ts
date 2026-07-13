@@ -53,12 +53,17 @@ describe("MockWebhookProvider parseEvent", () => {
       data: { orderId: "order_1", extra: "ok" },
       vendorField: 1,
     });
-    expect(parsed).toEqual({ eventId: "evt_1", eventType: "payment_succeeded", orderId: "order_1" });
+    expect(parsed).toEqual({
+      eventId: "evt_1",
+      eventType: "payment_succeeded",
+      orderId: "order_1",
+      subscription: null,
+    });
   });
 
   it("returns orderId null when data.orderId is absent", () => {
     const parsed = provider.parseEvent({ eventId: "evt_2", eventType: "ping" });
-    expect(parsed).toEqual({ eventId: "evt_2", eventType: "ping", orderId: null });
+    expect(parsed).toEqual({ eventId: "evt_2", eventType: "ping", orderId: null, subscription: null });
   });
 
   it.each([null, "text", 42, {}, { eventId: "evt_x" }, { eventId: "", eventType: "t" }])(

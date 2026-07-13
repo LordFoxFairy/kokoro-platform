@@ -2,17 +2,26 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { PaymentService } from "../../src/application/payment-service.js";
 import { PaymentWebhookService } from "../../src/application/webhook-service.js";
 import { PaymentEventNotFoundError } from "../../src/domain/errors.js";
-import type { Order, PaymentEvent, PaymentEventStatus, Plan } from "../../src/domain/payment.js";
+import type {
+  Order,
+  PaymentEvent,
+  PaymentEventStatus,
+  Plan,
+  Refund,
+  Subscription,
+} from "../../src/domain/payment.js";
 import type { PaymentProviderConfig } from "../../src/domain/provider.js";
-import { WebhookError } from "../../src/domain/webhook.js";
+import { WEBHOOK_EVENT, WebhookError } from "../../src/domain/webhook.js";
 import type {
   CreateOrderInput,
   CreateRefundInput,
   GrantPurchaseCreditsInput,
   PaymentRepository,
   RecordPaymentEventInput,
+  RefundTransition,
   UpsertPlanInput,
   UpsertProviderInput,
+  UpsertSubscriptionInput,
 } from "../../src/domain/repository.js";
 import type { DeleteInput, RestoreInput } from "../../src/domain/payment-lifecycle.js";
 import {
@@ -46,6 +55,8 @@ class InMemoryWebhookRepository implements PaymentRepository {
   providers = new Map<string, PaymentProviderConfig>();
   events = new Map<string, PaymentEvent>();
   orders = new Map<string, Order>();
+  subscriptions = new Map<string, Subscription>();
+  refunds = new Map<string, Refund>();
   private sequence = 0;
 
   async upsertProvider(input: UpsertProviderInput): Promise<PaymentProviderConfig> {
@@ -143,6 +154,51 @@ class InMemoryWebhookRepository implements PaymentRepository {
     return updated;
   }
 
+  async upsertSubscription(input: UpsertSubscriptionInput): Promise<Subscription> {
+    const key = `${input.provider}:${input.providerSubscriptionId}`;
+    const existing = this.subscriptions.get(key);
+    const subscription: Subscription = {
+      id: existing?.id ?? `sub_${(this.sequence += 1)}`,
+      teamId: input.teamId,
+      planId: input.planId,
+      status: input.status,
+      provider: input.provider,
+      providerSubscriptionId: input.providerSubscriptionId,
+      currentPeriodStart: input.currentPeriodStart,
+      currentPeriodEnd: input.currentPeriodEnd,
+      metadata: null,
+      createdAt: existing?.createdAt ?? new Date(0),
+      updatedAt: new Date(0),
+    };
+    this.subscriptions.set(key, subscription);
+    return subscription;
+  }
+
+  async refundOrderAtomically(orderId: string, input: CreateRefundInput): Promise<RefundTransition> {
+    const order = this.orders.get(orderId);
+    if (!order || order.status !== "paid") {
+      return { transitioned: false, refund: null };
+    }
+    this.orders.set(orderId, { ...order, status: "refunded" });
+    const refund: Refund = {
+      id: `refund_${(this.sequence += 1)}`,
+      orderId,
+      amountMinor: input.amountMinor,
+      currency: input.currency,
+      status: input.status,
+      reason: input.reason ?? null,
+      metadata: null,
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    };
+    this.refunds.set(orderId, refund);
+    return { transitioned: true, refund };
+  }
+
+  async findRefundByOrderId(orderId: string): Promise<Refund | null> {
+    return this.refunds.get(orderId) ?? null;
+  }
+
   async upsertPlan(_input: UpsertPlanInput): Promise<Plan> {
     throw new Error("not used in webhook tests");
   }
@@ -150,12 +206,6 @@ class InMemoryWebhookRepository implements PaymentRepository {
     throw new Error("not used in webhook tests");
   }
   async listStaleConfirmingOrders(_before: Date): Promise<Order[]> {
-    throw new Error("not used in webhook tests");
-  }
-  async refundOrderAtomically(_orderId: string, _refund: CreateRefundInput): Promise<never> {
-    throw new Error("not used in webhook tests");
-  }
-  async findRefundByOrderId(_orderId: string): Promise<never> {
     throw new Error("not used in webhook tests");
   }
   async deletePlan(_input: DeleteInput): Promise<Plan> {
@@ -373,6 +423,118 @@ describe("PaymentWebhookService state machine", () => {
     const second = await harness.service.receiveWebhook("mockpay", signedHeaders(body), body, "req_2");
     expect(second.duplicate).toBe(true);
     expect(second.event.status).toBe("failed");
+  });
+});
+
+function subscriptionBody(
+  eventId: string,
+  subscription: {
+    providerSubscriptionId: string;
+    teamId: string;
+    planId: string;
+    status: "active" | "past_due" | "canceled";
+    currentPeriodStart?: string;
+  },
+): Buffer {
+  return Buffer.from(
+    JSON.stringify({
+      eventId,
+      eventType: WEBHOOK_EVENT.subscriptionUpdated,
+      data: { subscription },
+    }),
+  );
+}
+
+describe("PaymentWebhookService refund events", () => {
+  function seedPaidOrder(repo: InMemoryWebhookRepository, id = "order_paid"): Order {
+    const order = seedOrder(repo, id);
+    repo.orders.set(id, { ...order, status: "paid" });
+    return repo.orders.get(id) as Order;
+  }
+
+  it("refund_succeeded reverses a paid order and lands processed", async () => {
+    seedPaidOrder(harness.repo);
+    const body = webhookBody("evt_refund", WEBHOOK_EVENT.refundSucceeded, "order_paid");
+    const receipt = await harness.service.receiveWebhook("mockpay", signedHeaders(body), body, "req_1");
+    expect(receipt.event.status).toBe("processed");
+    expect(harness.repo.orders.get("order_paid")?.status).toBe("refunded");
+    expect(harness.repo.refunds.get("order_paid")).toBeDefined();
+  });
+
+  it("marks refund_succeeded without orderId as failed", async () => {
+    const body = webhookBody("evt_refund_noorder", WEBHOOK_EVENT.refundSucceeded);
+    const receipt = await harness.service.receiveWebhook("mockpay", signedHeaders(body), body, "req_1");
+    expect(receipt.event.status).toBe("failed");
+    expect(receipt.event.lastError).toContain("orderId");
+  });
+
+  it("is idempotent on replay: refund event replays without a second reversal", async () => {
+    seedPaidOrder(harness.repo);
+    const body = webhookBody("evt_refund_dup", WEBHOOK_EVENT.refundSucceeded, "order_paid");
+    const first = await harness.service.receiveWebhook("mockpay", signedHeaders(body), body, "req_1");
+    const replayed = await harness.service.replayEvent(first.event.id, "req_2");
+    expect(replayed.status).toBe("processed");
+    // 仍只有一条退款记录（order-refund:<id> 幂等 + refunded 幂等返回既有 Refund）。
+    expect(harness.repo.refunds.size).toBe(1);
+  });
+});
+
+describe("PaymentWebhookService subscription events", () => {
+  it("subscription_updated active upserts the subscription and grants period credits", async () => {
+    const body = subscriptionBody("evt_sub", {
+      providerSubscriptionId: "psub_1",
+      teamId: "team_1",
+      planId: plan.id,
+      status: "active",
+      currentPeriodStart: "2026-07-01T00:00:00.000Z",
+    });
+    const receipt = await harness.service.receiveWebhook("mockpay", signedHeaders(body), body, "req_1");
+    expect(receipt.event.status).toBe("processed");
+    const sub = harness.repo.subscriptions.get("mockpay:psub_1");
+    expect(sub?.status).toBe("active");
+    expect(harness.grants).toHaveLength(1);
+    expect(harness.grants[0]?.idempotencyKey).toBe(
+      "subscription:mockpay:psub_1:2026-07-01T00:00:00.000Z",
+    );
+    expect(harness.grants[0]?.reason).toBe("subscription");
+  });
+
+  it("subscription_updated past_due推状态但不发放积分", async () => {
+    const body = subscriptionBody("evt_sub_pd", {
+      providerSubscriptionId: "psub_2",
+      teamId: "team_1",
+      planId: plan.id,
+      status: "past_due",
+    });
+    const receipt = await harness.service.receiveWebhook("mockpay", signedHeaders(body), body, "req_1");
+    expect(receipt.event.status).toBe("processed");
+    expect(harness.repo.subscriptions.get("mockpay:psub_2")?.status).toBe("past_due");
+    expect(harness.grants).toHaveLength(0);
+  });
+
+  it("续期新周期产生新的幂等键触发再次发放", async () => {
+    const first = subscriptionBody("evt_sub_p1", {
+      providerSubscriptionId: "psub_3",
+      teamId: "team_1",
+      planId: plan.id,
+      status: "active",
+      currentPeriodStart: "2026-07-01T00:00:00.000Z",
+    });
+    const second = subscriptionBody("evt_sub_p2", {
+      providerSubscriptionId: "psub_3",
+      teamId: "team_1",
+      planId: plan.id,
+      status: "active",
+      currentPeriodStart: "2026-08-01T00:00:00.000Z",
+    });
+    await harness.service.receiveWebhook("mockpay", signedHeaders(first), first, "req_1");
+    await harness.service.receiveWebhook("mockpay", signedHeaders(second), second, "req_2");
+    expect(harness.grants.map((grant) => grant.idempotencyKey)).toEqual([
+      "subscription:mockpay:psub_3:2026-07-01T00:00:00.000Z",
+      "subscription:mockpay:psub_3:2026-08-01T00:00:00.000Z",
+    ]);
+    // 同一订阅行被更新而非重建。
+    expect(harness.repo.subscriptions.size).toBe(1);
   });
 });
 

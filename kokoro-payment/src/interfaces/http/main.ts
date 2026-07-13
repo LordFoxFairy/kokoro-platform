@@ -1,5 +1,5 @@
 import { isProductionEnv, loadCallerSecrets, startHttpServer } from "@kokoro/platform-kit";
-import { loadPaymentEnv } from "../../config/env.js";
+import { loadPaymentEnv, parseEnabledProviders } from "../../config/env.js";
 import {
   createCreditGrantClient,
   createCreditReverseClient,
@@ -26,6 +26,7 @@ await startHttpServer({
     createPaymentServer({
       grantPurchaseCredits,
       reverseCredits,
+      enabledProviderKinds: parseEnabledProviders(env.KOKORO_PAYMENT_ENABLED_PROVIDERS),
       routeAccess: { secrets: callerSecrets, isProduction: isProductionEnv() },
       ...(env.KOKORO_PAYMENT_CONFIRM_SWEEP_INTERVAL_SECONDS > 0
         ? { confirmSweepIntervalMs: env.KOKORO_PAYMENT_CONFIRM_SWEEP_INTERVAL_SECONDS * 1000 }
