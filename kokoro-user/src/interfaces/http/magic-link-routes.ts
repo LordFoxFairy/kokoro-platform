@@ -122,6 +122,8 @@ export function registerMagicLinkRoutes(
             namespace: issued.namespace,
             user: issued.user,
             team: issued.team,
+            refresh_token: issued.refreshToken,
+            refresh_expires_at: issued.refreshExpiresAt.toISOString(),
           },
           200,
           requestId,

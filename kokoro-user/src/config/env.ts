@@ -38,6 +38,8 @@ export const userEnvSchema = z.object({
   KOKORO_AUTH_MAGIC_RATE_WINDOW_SECONDS: z.coerce.number().int().min(60).default(900),
   // 团队邀请存活时长；缺省 7 天。
   KOKORO_TEAM_INVITE_TTL_SECONDS: z.coerce.number().int().min(300).max(2592000).default(604800),
+  // 长效 refresh token 存活时长；缺省 30 天（下限 1 小时，上限 90 天）。持久层只存 SHA-256 哈希，可吊销可轮换。
+  KOKORO_AUTH_REFRESH_TTL_SECONDS: z.coerce.number().int().min(3600).max(7776000).default(2592000),
 });
 
 export type UserEnv = z.infer<typeof userEnvSchema>;

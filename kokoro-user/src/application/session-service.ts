@@ -6,6 +6,7 @@ import {
   type IssuedSession,
   type SessionSigner,
 } from "../domain/session.js";
+import type { RefreshService } from "./refresh-service.js";
 import type { UserService } from "./user-service.js";
 
 export interface SessionServiceOptions {
@@ -22,6 +23,7 @@ export class SessionService {
   constructor(
     private readonly userService: UserService,
     private readonly signer: SessionSigner,
+    private readonly refreshService: RefreshService,
     private readonly options: SessionServiceOptions,
   ) {
     this.now = options.now ?? (() => new Date());
@@ -47,7 +49,17 @@ export class SessionService {
       expiresAtSeconds: issuedAtSeconds + this.options.ttlSeconds,
     });
 
-    return { token, namespace, user, team: personalTeam };
+    // 并行签发长效 refresh（只落哈希）：与 access 同 namespace/siteId。
+    const refresh = await this.refreshService.issue(namespace, input.siteId);
+
+    return {
+      token,
+      namespace,
+      user,
+      team: personalTeam,
+      refreshToken: refresh.refreshToken,
+      refreshExpiresAt: refresh.expiresAt,
+    };
   }
 
   // 团队换签：校验 caller 是目标 team 活跃成员 → 以 teamId 为 namespace 重签 runtime token。
@@ -70,6 +82,15 @@ export class SessionService {
       expiresAtSeconds: issuedAtSeconds + this.options.ttlSeconds,
     });
 
-    return { token, namespace, user: context.user, team: context.team };
+    const refresh = await this.refreshService.issue(namespace, context.team.siteId);
+
+    return {
+      token,
+      namespace,
+      user: context.user,
+      team: context.team,
+      refreshToken: refresh.refreshToken,
+      refreshExpiresAt: refresh.expiresAt,
+    };
   }
 }

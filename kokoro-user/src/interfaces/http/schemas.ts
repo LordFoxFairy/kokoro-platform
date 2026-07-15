@@ -130,6 +130,13 @@ export const issueTeamSessionRequestSchema = z
 export const teamIdParamsSchema = z.object({ teamId: z.string().min(1) }).strict();
 export const inviteIdParamsSchema = z.object({ inviteId: z.string().min(1) }).strict();
 
+// refresh 换签：refresh_token 即登录时下发的一次性原文（base64url），服务端只比对哈希。
+export const refreshSessionRequestSchema = z
+  .object({
+    refresh_token: z.string().trim().min(1),
+  })
+  .strict();
+
 // magic-link 消费：token 即链接中的一次性原文（base64url），服务端只比对哈希。
 // nonce_hash 必须与申请时同值才转移（跨设备/缺失 → 统一 invalid）；可选以兼容未绑定链。
 export const consumeMagicLinkRequestSchema = z

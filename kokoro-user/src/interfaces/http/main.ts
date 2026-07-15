@@ -35,6 +35,7 @@ await startHttpServer({
             sessionSigning: {
               ttlSeconds: env.KOKORO_AUTH_JWT_TTL_SECONDS,
               issuer: env.KOKORO_AUTH_JWT_ISSUER,
+              refreshTtlSeconds: env.KOKORO_AUTH_REFRESH_TTL_SECONDS,
               isProduction,
               ...(env.KOKORO_AUTH_JWT_SECRET ? { secret: env.KOKORO_AUTH_JWT_SECRET } : {}),
               ...(env.KOKORO_USER_JWT_PRIVATE_KEY

@@ -66,4 +66,7 @@ export interface IssuedSession {
   namespace: string;
   user: User;
   team: Team;
+  // 与 access JWT 并行签发的长效 refresh 原文（仅此刻，持久层只存哈希）+ 其过期时刻。
+  refreshToken: string;
+  refreshExpiresAt: Date;
 }

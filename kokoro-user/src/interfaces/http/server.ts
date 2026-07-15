@@ -11,10 +11,12 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import Fastify from "fastify";
 import { Redis } from "ioredis";
 import {
+  InMemoryMagicLinkRateLimiter,
   RedisMagicLinkRateLimiter,
   type MagicLinkRateLimiter,
 } from "../../application/magic-link-rate-limiter.js";
 import { MagicLinkService } from "../../application/magic-link-service.js";
+import { RefreshService } from "../../application/refresh-service.js";
 import { SessionService } from "../../application/session-service.js";
 import { TeamService } from "../../application/team-service.js";
 import { UserService } from "../../application/user-service.js";
@@ -22,11 +24,13 @@ import type { MagicLinkDeliveryMode } from "../../domain/magic-link.js";
 import { resolveSessionSigning } from "../../infrastructure/auth/signing.js";
 import { createPrismaClient } from "../../infrastructure/prisma/prisma-client.js";
 import { PrismaMagicLinkRepository } from "../../infrastructure/prisma/prisma-magic-link-repository.js";
+import { PrismaRefreshTokenRepository } from "../../infrastructure/prisma/prisma-refresh-token-repository.js";
 import { PrismaUserRepository } from "../../infrastructure/prisma/prisma-user-repository.js";
 import { registerUserAdminRoutes } from "./admin-routes.js";
 import { registerBffRoutes } from "./bff-routes.js";
 import { registerJwksRoutes } from "./jwks-routes.js";
 import { registerMagicLinkRoutes } from "./magic-link-routes.js";
+import { registerRefreshRoutes } from "./refresh-routes.js";
 import { registerUserRoutes } from "./routes.js";
 import { registerSessionRoutes } from "./session-routes.js";
 
@@ -41,6 +45,8 @@ export interface SessionSigningOptions {
   privateKeyPem?: string;
   previousPrivateKeyPem?: string;
   isProduction?: boolean;
+  // 长效 refresh token 存活时长（秒）；缺省 30 天。仅在签发档存在时生效（refreshService 与 sessionService 同生同灭）。
+  refreshTtlSeconds?: number;
 }
 
 // 缺省与 env schema 缺省一致；deliveryMode 缺省 log（最安全档，token 不回体）。
@@ -90,6 +96,8 @@ export function createUserServer(options: CreateUserServerOptions = {}) {
   // JWKS 公钥集：公开面（session 验签方无凭据抓取）。RS256 档才真有内容，HS256/未配档不注册路由。
   declareRouteAccess(app, { path: "/.well-known/jwks.json", exact: true }, "public");
   declareRouteAccess(app, "/auth/magic-links", "web-bff");
+  // refresh 换签：仅 web-bff（与 magic-links 同鉴权面，web BFF 对接）。
+  declareRouteAccess(app, "/auth/refresh", "web-bff");
   declareRouteAccess(app, "/auth/sessions", "runtime-internal");
   declareRouteAccess(app, "/owners", "runtime-internal");
   declareRouteAccess(app, "/users", "runtime-internal");
@@ -115,9 +123,19 @@ export function createUserServer(options: CreateUserServerOptions = {}) {
         isProduction: signing.isProduction ?? false,
       })
     : null;
-  const sessionService =
+  // refreshService 与 sessionService 同生同灭（都需签发密钥）：无签发档 → 两者皆 null → /auth/refresh 503。
+  const refreshService =
     signing && resolvedSigning
-      ? new SessionService(service, resolvedSigning.signer, {
+      ? new RefreshService(new PrismaRefreshTokenRepository(prisma), resolvedSigning.signer, {
+          issuer: signing.issuer,
+          jwtTtlSeconds: signing.ttlSeconds,
+          refreshTtlSeconds: signing.refreshTtlSeconds ?? 2592000,
+          ...(signing.now ? { now: signing.now } : {}),
+        })
+      : null;
+  const sessionService =
+    signing && resolvedSigning && refreshService
+      ? new SessionService(service, resolvedSigning.signer, refreshService, {
           issuer: signing.issuer,
           ttlSeconds: signing.ttlSeconds,
           ...(signing.now ? { now: signing.now } : {}),
@@ -161,6 +179,16 @@ export function createUserServer(options: CreateUserServerOptions = {}) {
   });
   const magicLinkDeliveryMode: MagicLinkDeliveryMode = magicLinkDefaults.deliveryMode ?? "log";
 
+  // refresh 端点限频复用 magic-link 限频器：有显式/Redis 档则复用（键前缀 refresh-ip: 不与 email 交叉），
+  // 否则给 refresh 一个独立进程内存实例（单副本 dev）。配置数值沿用 magic-link（不新增 env）。
+  const refreshRateLimiter: MagicLinkRateLimiter =
+    magicLinkRateLimiter ??
+    new InMemoryMagicLinkRateLimiter({
+      max: rateLimitMax,
+      ipMax: rateLimitIpMax,
+      windowSeconds: rateLimitWindowSeconds,
+    });
+
   const teamDefaults = options.teams ?? {};
   const teamService = new TeamService(repository, {
     inviteTtlSeconds: teamDefaults.inviteTtlSeconds ?? 604800,
@@ -174,6 +202,10 @@ export function createUserServer(options: CreateUserServerOptions = {}) {
     registerBffRoutes(instance, teamService, sessionService);
     registerMagicLinkRoutes(instance, magicLinkService, sessionService, {
       deliveryMode: magicLinkDeliveryMode,
+    });
+    registerRefreshRoutes(instance, refreshService, {
+      rateLimiter: refreshRateLimiter,
+      ...(magicLinkNow ? { now: magicLinkNow } : {}),
     });
     if (jwksProvider) {
       registerJwksRoutes(instance, jwksProvider);

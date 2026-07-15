@@ -251,7 +251,14 @@ export function registerBffRoutes(
         const issued = await sessionService.issueForTeam({ userId, teamId: body.team_id });
         return sendData(
           reply,
-          { token: issued.token, namespace: issued.namespace, user: issued.user, team: issued.team },
+          {
+            token: issued.token,
+            namespace: issued.namespace,
+            user: issued.user,
+            team: issued.team,
+            refresh_token: issued.refreshToken,
+            refresh_expires_at: issued.refreshExpiresAt.toISOString(),
+          },
           200,
           requestId,
         );

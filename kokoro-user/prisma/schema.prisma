@@ -173,6 +173,25 @@ model MagicLink {
   @@map("magic_links")
 }
 
+// 长效 refresh token：只存 token 哈希不存原文；消费=一次性条件转移（防并发/重放），轮换成链，可整族吊销。
+model RefreshToken {
+  id           String    @id @default(cuid())
+  namespace    String    // = team.id（session 的 sub，不透明）
+  siteId       String
+  tokenHash    String    @unique
+  tokenPrefix  String    // 明文前 12 字符，仅审计/查找（非密）
+  expiresAt    DateTime
+  consumedAt   DateTime? // 轮换：消费即置（一次性）
+  revokedAt    DateTime? // 吊销
+  replacedById String?   // 轮换链：被哪个新 token 取代（重放检测用）
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([namespace, revokedAt])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
 model UserAuditLog {
   id           String   @id @default(cuid())
   actorUserId  String?
