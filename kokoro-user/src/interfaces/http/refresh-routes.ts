@@ -77,6 +77,43 @@ export function registerRefreshRoutes(
       }
     },
   );
+
+  app.post(
+    "/auth/refresh/revoke",
+    {
+      schema: {
+        tags: ["auth"],
+        summary: "登出：吊销该 refresh 所属 namespace 的全部活 refresh",
+        body: jsonSchema(refreshSessionRequestSchema),
+      },
+    },
+    async (request, reply) => {
+      const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);
+
+      // 未配置签发 = 无可吊销：登出幂等成功（204），不 fail-closed（清 cookie 已断本浏览器）。
+      if (refreshService === null) {
+        return reply.status(204).send();
+      }
+
+      const allowed = await options.rateLimiter.consume(refreshRateKey(request.ip), now());
+      if (!allowed) {
+        return sendError(reply, 429, "auth.refresh_rate_limited", "refresh 请求过于频繁", undefined, requestId);
+      }
+
+      try {
+        const input = refreshSessionRequestSchema.parse(request.body);
+        // 幂等：无效/未知 token 也当作已登出，静默成功——不给探测者 oracle。
+        await refreshService.revoke(input.refresh_token);
+        return reply.status(204).send();
+      } catch (error) {
+        if (error instanceof ZodError) {
+          return sendZodError(reply, error, requestId);
+        }
+        request.log.error({ error }, "failed to revoke refresh token");
+        return sendError(reply, 500, "auth.refresh_revoke_failed", "refresh 吊销失败", undefined, requestId);
+      }
+    },
+  );
 }
 
 function getRequestId(value: string | string[] | undefined): string {

@@ -82,6 +82,16 @@ export class RefreshService {
     };
   }
 
+  // 登出/吊销：作废该 refresh 所属 namespace 的全部活 refresh（一次登出即整条会话链失效，
+  // 不等 30 天 exp 自然到期）。幂等——无此 token（已轮换/伪造）静默返回，登出不因未知 token 报错。
+  async revoke(refreshToken: string): Promise<void> {
+    const record = await this.repository.findByHash(hashRefreshToken(refreshToken));
+    if (record === null) {
+      return;
+    }
+    await this.repository.revokeAllForNamespace(record.namespace, this.now());
+  }
+
   private async mint(
     namespace: string,
     siteId: string,

@@ -28,17 +28,24 @@ function record(overrides: Partial<RefreshTokenRecord> = {}): RefreshTokenRecord
   };
 }
 
-function fakeRepository(consumeResult: RefreshTokenRecord | null = null): {
+function fakeRepository(
+  consumeResult: RefreshTokenRecord | null = null,
+  findByHashResult: RefreshTokenRecord | null = null,
+): {
   repository: RefreshTokenRepository;
   issueCalls: IssueRefreshTokenInput[];
   consumeCalls: { tokenHash: string; now: Date }[];
   markReplacedCalls: { oldId: string; newId: string }[];
   issuedIds: string[];
+  revokeCalls: { namespace: string; now: Date }[];
+  findByHashCalls: string[];
 } {
   const issueCalls: IssueRefreshTokenInput[] = [];
   const consumeCalls: { tokenHash: string; now: Date }[] = [];
   const markReplacedCalls: { oldId: string; newId: string }[] = [];
   const issuedIds: string[] = [];
+  const revokeCalls: { namespace: string; now: Date }[] = [];
+  const findByHashCalls: string[] = [];
   let seq = 0;
   const repository: RefreshTokenRepository = {
     issue: async (input) => {
@@ -54,10 +61,15 @@ function fakeRepository(consumeResult: RefreshTokenRecord | null = null): {
     markReplaced: async (oldId, newId) => {
       markReplacedCalls.push({ oldId, newId });
     },
-    revokeAllForNamespace: async () => {},
-    findByHash: async () => null,
+    revokeAllForNamespace: async (namespace, now) => {
+      revokeCalls.push({ namespace, now });
+    },
+    findByHash: async (tokenHash) => {
+      findByHashCalls.push(tokenHash);
+      return findByHashResult;
+    },
   };
-  return { repository, issueCalls, consumeCalls, markReplacedCalls, issuedIds };
+  return { repository, issueCalls, consumeCalls, markReplacedCalls, issuedIds, revokeCalls, findByHashCalls };
 }
 
 function captureSigner(): { sign: (c: SessionTokenClaims) => Promise<string>; claims: SessionTokenClaims[] } {
@@ -155,5 +167,23 @@ describe("RefreshService.rotate", () => {
     expect(signer.claims).toHaveLength(0);
     expect(issueCalls).toHaveLength(0);
     expect(markReplacedCalls).toHaveLength(0);
+  });
+});
+
+describe("RefreshService.revoke", () => {
+  it("revokes all live refresh for the token's namespace when the token is found", async () => {
+    const found = record({ id: "rt-x", namespace: "clteam0009", tokenHash: hashRefreshToken("plain-x") });
+    const { repository, revokeCalls, findByHashCalls } = fakeRepository(null, found);
+    await service(repository, captureSigner(), () => t0).revoke("plain-x");
+    // 按哈希查记录 → 吊销该 namespace 全部活 refresh（一次登出即整条会话链失效）。
+    expect(findByHashCalls).toEqual([hashRefreshToken("plain-x")]);
+    expect(revokeCalls).toEqual([{ namespace: "clteam0009", now: t0 }]);
+  });
+
+  it("is idempotent: unknown/already-rotated token → no revoke, no throw", async () => {
+    const { repository, revokeCalls, findByHashCalls } = fakeRepository(null, null);
+    await expect(service(repository, captureSigner(), () => t0).revoke("ghost")).resolves.toBeUndefined();
+    expect(findByHashCalls).toEqual([hashRefreshToken("ghost")]);
+    expect(revokeCalls).toHaveLength(0);
   });
 });

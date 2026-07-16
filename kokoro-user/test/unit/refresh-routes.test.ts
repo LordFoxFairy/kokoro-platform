@@ -17,6 +17,7 @@ function okRefreshService(): RefreshService {
       refreshToken: "rotated-plain",
       refreshExpiresAt,
     }),
+    revoke: async (): Promise<void> => {},
   } as unknown as RefreshService;
 }
 
@@ -113,5 +114,41 @@ describe("POST /auth/refresh", () => {
     expect([first.statusCode, second.statusCode]).toEqual([200, 200]);
     expect(third.statusCode).toBe(429);
     expect(third.json().error.code).toBe("auth.refresh_rate_limited");
+  });
+});
+
+describe("POST /auth/refresh/revoke", () => {
+  it("revokes the token and returns 204", async () => {
+    const revoked: string[] = [];
+    const svc = { revoke: async (t: string) => void revoked.push(t) } as unknown as RefreshService;
+    const app = track(buildApp(svc));
+    const res = await app.inject({
+      method: "POST",
+      url: "/auth/refresh/revoke",
+      payload: { refresh_token: "logout-me" },
+    });
+    expect(res.statusCode).toBe(204);
+    expect(revoked).toEqual(["logout-me"]);
+  });
+
+  it("is idempotent 204 even when refresh signing is not configured", async () => {
+    const app = track(buildApp(null));
+    const res = await app.inject({
+      method: "POST",
+      url: "/auth/refresh/revoke",
+      payload: { refresh_token: "x" },
+    });
+    expect(res.statusCode).toBe(204);
+  });
+
+  it("rejects an invalid body with 400", async () => {
+    const app = track(buildApp(okRefreshService()));
+    const res = await app.inject({
+      method: "POST",
+      url: "/auth/refresh/revoke",
+      payload: { refresh_token: "" },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe("request.invalid");
   });
 });
