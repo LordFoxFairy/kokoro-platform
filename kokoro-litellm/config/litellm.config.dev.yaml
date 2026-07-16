@@ -9,6 +9,15 @@ model_list:
       mock_response: "kokoro litellm dev mock response"
       api_key: example-not-used
 
+  # 对外别名 claude-code → 内部真后端(openai 兼容)。model/base/key 全 env 注入(closure-up 决定):
+  # GLM 凭据有效→走 GLM;GLM 不可用但本机 ollama 在→回落本地真模型;两者皆无→上游 fake。
+  # 「对外 claude-code 名不变、网关侧一处换后端」就是这里——凭据绝不落此文件。
+  - model_name: claude-code
+    litellm_params:
+      model: os.environ/CLAUDE_CODE_MODEL
+      api_base: os.environ/CLAUDE_CODE_BASE_URL
+      api_key: os.environ/CLAUDE_CODE_API_KEY
+
 litellm_settings:
   drop_params: true
   telemetry: false

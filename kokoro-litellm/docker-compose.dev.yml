@@ -11,6 +11,11 @@ services:
     environment:
       # dev 专用明显假值；生产走 secret 注入，绝不复用此值。
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-dev-master-key-not-real}
+      # claude-code 别名的真后端（model/base/key）：由启动方（closure-up）注入进程 env 透传，
+      # GLM 有效走 GLM、否则回落本机 ollama；缺省空=claude-code 不可用（mock 仍可跑）。凭据不落文件。
+      CLAUDE_CODE_MODEL: ${CLAUDE_CODE_MODEL:-}
+      CLAUDE_CODE_BASE_URL: ${CLAUDE_CODE_BASE_URL:-}
+      CLAUDE_CODE_API_KEY: ${CLAUDE_CODE_API_KEY:-}
     ports:
       - "${LITELLM_PORT:-4000}:4000"
     volumes:
