@@ -18,7 +18,7 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
     {
       id: "skills",
       labelKey: "admin.hub.resources.skills",
-      route: "/hub/admin/skills/pool",
+      route: "/hub/admin/official/skills",
       requiredPermission: "hub.skill.read",
     },
     {
@@ -32,7 +32,7 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
     {
       id: "skills",
       labelKey: "admin.hub.resources.skills",
-      route: "/hub/admin/skills/pool",
+      route: "/hub/admin/official/skills",
       requiredPermission: "hub.skill.read",
       actions: [
         {
@@ -93,7 +93,7 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
     {
       id: "skill-curation",
       labelKey: "admin.hub.resources.skillCuration",
-      route: "/hub/admin/skills/pool",
+      route: "/hub/admin/official/skills",
       requiredPermission: "hub.skill.read",
       actions: [
         {

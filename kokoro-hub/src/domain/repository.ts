@@ -8,6 +8,20 @@ export interface PoolCard {
   scope: string;
 }
 
+// 官方目录卡（运营 admin 面）：列全部官方技能（不论上架/审核态,运营方要看全并处置）+ 运营位与审核态。
+// 与 PoolCard（租户可用池）不同:这里是运营视角的官方目录治理视图。
+export interface OfficialCatalogCard {
+  name: string;
+  description: string;
+  content_hash: string;
+  official_enabled: boolean;
+  official_required: boolean;
+  pinned: boolean;
+  display_weight: number;
+  category: string | null;
+  review_status: ReviewStatus;
+}
+
 export interface OfficialFlagsInput {
   enabled?: boolean | undefined;
   required?: boolean | undefined;
@@ -67,6 +81,8 @@ export interface SkillRevisionView {
 export interface SkillHubRepository {
   // 该主体可用池：official（official_enabled ∧ 用户偏好未关；required 恒含）+ 本 namespace 自有包（覆盖同名 official）。
   listPool(namespace: string): Promise<PoolCard[]>;
+  // 运营 admin 面：列全部官方技能（scope=official 且未软删,不论上架/审核态）+ 运营/审核字段,供后台治理。
+  listOfficialCatalog(): Promise<OfficialCatalogCard[]>;
   // per-user 启停偏好（独立 skill_state 表，键 = namespace+name）；关闭 required 官方技能抛 SkillRequiredError。
   setEnabled(namespace: string, name: string, enabled: boolean): Promise<void>;
   // 官方位（管理面）：official_enabled=全局上架开关；official_required=恒注入且拒绝用户关闭。

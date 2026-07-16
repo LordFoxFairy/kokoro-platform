@@ -4,6 +4,7 @@ import { ConcurrentWriteError, SkillNotFoundError, SkillRequiredError } from "..
 import type {
   ActiveSkillSummary,
   CurationInput,
+  OfficialCatalogCard,
   OfficialFlagsInput,
   PoolCard,
   QuotaUsage,
@@ -103,6 +104,49 @@ export class MongoSkillRepository implements SkillHubRepository {
       return a.card.name < b.card.name ? -1 : a.card.name > b.card.name ? 1 : 0;
     });
     return ranked.map((entry) => entry.card);
+  }
+
+  // 运营 admin 面:列全部官方技能（scope=official 且未软删,不论上架/审核态——运营方要看全并处置）。
+  // 返回运营/审核字段;排序 pinned desc → display_weight desc → name asc（与租户池一致）。
+  async listOfficialCatalog(): Promise<OfficialCatalogCard[]> {
+    await this.ensureIndexes();
+    const cards: OfficialCatalogCard[] = [];
+    const cursor = this.collections.skills.find(
+      { scope: OFFICIAL_SCOPE, deleted_at: null },
+      {
+        projection: {
+          name: 1,
+          description: 1,
+          content_hash: 1,
+          official_enabled: 1,
+          official_required: 1,
+          display_weight: 1,
+          pinned: 1,
+          category: 1,
+          review_status: 1,
+        },
+      },
+    );
+    for await (const doc of cursor) {
+      cards.push({
+        name: doc.name,
+        description: doc.description,
+        content_hash: doc.content_hash,
+        official_enabled: Boolean(doc.official_enabled),
+        official_required: Boolean(doc.official_required),
+        pinned: doc.pinned ?? SKILL_CURATION_DEFAULTS.pinned,
+        display_weight: doc.display_weight ?? SKILL_CURATION_DEFAULTS.display_weight,
+        category: doc.category ?? null,
+        // 存量无字段 = 视为 approved（与池读侧 backfill 一致）。
+        review_status: (doc.review_status ?? "approved") as ReviewStatus,
+      });
+    }
+    cards.sort((a, b) => {
+      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+      if (a.display_weight !== b.display_weight) return b.display_weight - a.display_weight;
+      return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+    });
+    return cards;
   }
 
   async setEnabled(namespace: string, name: string, enabled: boolean): Promise<void> {

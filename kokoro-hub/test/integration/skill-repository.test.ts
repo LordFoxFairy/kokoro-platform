@@ -35,6 +35,33 @@ describe("MongoSkillRepository (real mongo)", () => {
     ]);
   });
 
+  it("official catalog: 列全部官方技能(含未上架),排除自有与软删,带 admin 字段,pinned 优先", async () => {
+    await insertSkill(hub.collections, { scope: "official", name: "writer", official_enabled: true });
+    await insertSkill(hub.collections, { scope: "official", name: "beta", official_enabled: false });
+    await insertSkill(hub.collections, {
+      scope: "official",
+      name: "top",
+      official_enabled: true,
+      pinned: true,
+      display_weight: 5,
+      category: "docs",
+      review_status: "approved",
+    });
+    await insertSkill(hub.collections, { scope: NS, name: "mine" }); // 自有——不出目录
+    await insertSkill(hub.collections, { scope: "official", name: "gone", deleted_at: 123 }); // 软删——不出
+
+    const catalog = await repo.listOfficialCatalog();
+    // 官方全出(含 official_enabled=false，与租户池不同)；pinned 优先，其余按名。
+    expect(catalog.map((c) => c.name)).toEqual(["top", "beta", "writer"]);
+    expect(catalog.find((c) => c.name === "beta")?.official_enabled).toBe(false);
+    expect(catalog.find((c) => c.name === "top")).toMatchObject({
+      pinned: true,
+      display_weight: 5,
+      category: "docs",
+      review_status: "approved",
+    });
+  });
+
   it("lets a namespace-owned skill override the official skill of the same name", async () => {
     await insertSkill(hub.collections, { scope: "official", name: "writer" });
     await insertSkill(hub.collections, { scope: NS, name: "writer" });

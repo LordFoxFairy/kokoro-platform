@@ -3,6 +3,7 @@ import { SkillNotFoundError, SkillRequiredError } from "../../src/domain/errors.
 import type {
   ActiveSkillSummary,
   CurationInput,
+  OfficialCatalogCard,
   OfficialFlagsInput,
   PoolCard,
   QuotaUsage,
@@ -15,6 +16,7 @@ import type {
 // 服务层单测用的内存替身（test-only；生产只用真 Mongo 实现）。
 export class FakeSkillRepository implements SkillHubRepository {
   pool: PoolCard[] = [];
+  officialCatalog: OfficialCatalogCard[] = [];
   usage: QuotaUsage = { packageCount: 0, packageBytes: 0 };
   readonly requiredNames = new Set<string>();
   readonly enabledCalls: { namespace: string; name: string; enabled: boolean }[] = [];
@@ -23,6 +25,10 @@ export class FakeSkillRepository implements SkillHubRepository {
 
   async listPool(_namespace: string): Promise<PoolCard[]> {
     return this.pool;
+  }
+
+  async listOfficialCatalog(): Promise<OfficialCatalogCard[]> {
+    return this.officialCatalog;
   }
 
   async setEnabled(namespace: string, name: string, enabled: boolean): Promise<void> {

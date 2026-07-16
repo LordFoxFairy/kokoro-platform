@@ -40,6 +40,18 @@ export function registerHubRoutes(app: FastifyInstance, service: SkillHubService
     },
   );
 
+  // 运营 admin 面:全部官方技能目录（namespace-free,治理视图）。数组直包 data,对齐通用运营网关
+  // resourceEnvelope { data: [...] };行内动作(official-flags/curation/review/delete)以 :name 单参操作。
+  app.get(
+    "/hub/admin/official/skills",
+    { schema: { tags: ["hub"], summary: "运营:全部官方技能目录（治理视图）" } },
+    async (request, reply) => {
+      const requestId = readRequestContext(request.headers).requestId;
+      const cards = await service.listOfficialCatalog();
+      return sendData(reply, cards, 200, requestId);
+    },
+  );
+
   app.get(
     "/hub/admin/skills/quota",
     { schema: { tags: ["hub"], summary: "查询某 namespace 的上传配额视图" } },

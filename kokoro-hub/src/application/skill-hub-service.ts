@@ -1,6 +1,7 @@
 import type { ReviewStatus } from "../contract/skill-curation-storage.js";
 import type {
   CurationInput,
+  OfficialCatalogCard,
   OfficialFlagsInput,
   PoolCard,
   SkillHubRepository,
@@ -28,6 +29,11 @@ export class SkillHubService {
 
   async listPool(namespace: string): Promise<PoolCard[]> {
     return this.repository.listPool(namespace);
+  }
+
+  // 运营 admin 面:全部官方技能目录（治理视图,不论上架/审核态）。
+  async listOfficialCatalog(): Promise<OfficialCatalogCard[]> {
+    return this.repository.listOfficialCatalog();
   }
 
   // required 官方技能拒关由仓储抛 SkillRequiredError，路由映射 409。
