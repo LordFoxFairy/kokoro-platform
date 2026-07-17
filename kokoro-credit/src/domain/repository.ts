@@ -26,6 +26,15 @@ export interface CreditAmountInput {
   requestId?: string | undefined;
 }
 
+// 重置余额到目标值（运营/测试纠偏）：不直接改余额留白，而是落一条带符号调整分录（target-before）。
+export interface ResetBalanceInput {
+  accountId: string;
+  targetMicros: string; // 非负目标余额；不得低于已冻结额 heldMicros。
+  idempotencyKey: string;
+  reason: CreditReason;
+  requestId?: string | undefined;
+}
+
 export interface HoldCreditInput {
   accountId: string;
   amountMicros: string;
@@ -90,6 +99,7 @@ export interface CreditRepository {
   ensureAccount(input: EnsureCreditAccountInput): Promise<CreditAccount>;
   grantCredits(input: CreditAmountInput): Promise<CreditMutationResult>;
   spendCredits(input: CreditAmountInput): Promise<CreditMutationResult>;
+  resetBalance(input: ResetBalanceInput): Promise<CreditMutationResult>;
   holdCredits(input: HoldCreditInput): Promise<CreditHold>;
   captureHold(input: CaptureCreditInput): Promise<CreditMutationResult>;
   releaseHold(input: ReleaseCreditInput): Promise<CreditHold>;

@@ -38,6 +38,38 @@ describe("credit admin operations API", () => {
     expect(ledger.json().data[0].accountId).toBe(data.account.id);
   });
 
+  it("resets balance to a target (set-to-value) with a signed adjustment entry", async () => {
+    // 先发放到 2,500,000，再重置到 1,000,000 → 落一条 -1,500,000 调整分录。
+    await app.inject({
+      method: "POST",
+      url: "/admin/credits/grant",
+      headers: { "x-kokoro-site-id": "site-default" },
+      payload: { ownerKind: "team", ownerId: "t_reset", amountMicros: "2500000", reason: "manual_adjustment" },
+    });
+    const reset = await app.inject({
+      method: "POST",
+      url: "/admin/credits/reset",
+      headers: { "x-kokoro-site-id": "site-default" },
+      payload: { ownerKind: "team", ownerId: "t_reset", targetMicros: "1000000", reason: "manual_adjustment" },
+    });
+    expect(reset.statusCode).toBe(200);
+    const data = reset.json().data;
+    expect(data.account.balanceMicros).toBe("1000000");
+    expect(data.entry.amountMicros).toBe("-1500000"); // 带符号调整额 = target - before
+    expect(data.entry.balanceAfterMicros).toBe("1000000");
+
+    // 再重置到 0（清零，向下也可）。
+    const zero = await app.inject({
+      method: "POST",
+      url: "/admin/credits/reset",
+      headers: { "x-kokoro-site-id": "site-default" },
+      payload: { ownerKind: "team", ownerId: "t_reset", targetMicros: "0", reason: "manual_adjustment" },
+    });
+    expect(zero.statusCode).toBe(200);
+    expect(zero.json().data.account.balanceMicros).toBe("0");
+    expect(zero.json().data.entry.amountMicros).toBe("-1000000");
+  });
+
   it("grants a refund (退积分) which also adds positive balance", async () => {
     const response = await app.inject({
       method: "POST",

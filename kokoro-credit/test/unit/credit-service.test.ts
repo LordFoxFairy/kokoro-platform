@@ -103,6 +103,10 @@ function trackingRepo(): {
       calls.push("spendCredits");
       return result;
     },
+    resetBalance: async () => {
+      calls.push("resetBalance");
+      return result;
+    },
     holdCredits: async () => {
       calls.push("holdCredits");
       return hold;

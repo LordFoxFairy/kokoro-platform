@@ -1,4 +1,5 @@
 import { AppError, parsePositiveBigIntString } from "@kokoro/platform-kit";
+import { parseNonNegativeBigIntString } from "../domain/amount.js";
 import type { CreditAccount, CreditLedgerEntry, PricingRule, UsageSettlementResult } from "../domain/credit.js";
 import { CreditLifecycleError, type DeleteInput, type RestoreInput } from "../domain/credit-lifecycle.js";
 import { CreditAccountNotFoundError, CreditHoldNotFoundError, QuotaExceededError } from "../domain/errors.js";
@@ -11,6 +12,7 @@ import type {
   HoldCreditInput,
   QuoteInput,
   ReleaseCreditInput,
+  ResetBalanceInput,
   SetAccountQuotaInput,
 } from "../domain/repository.js";
 
@@ -127,6 +129,12 @@ export class CreditService {
     parsePositiveBigIntString(input.amountMicros, "amountMicros");
     await this.ensureAccountActive(input.accountId);
     return this.repository.spendCredits(input);
+  }
+
+  async resetBalance(input: ResetBalanceInput) {
+    parseNonNegativeBigIntString(input.targetMicros, "targetMicros");
+    await this.ensureAccountActive(input.accountId);
+    return this.repository.resetBalance(input);
   }
 
   async holdCredits(input: HoldCreditInput) {
@@ -289,6 +297,8 @@ export class CreditService {
     });
     const holdAmount = BigInt(hold.amountMicros);
     const actualAmount = BigInt(actual);
+    // NOTE(PRD §4 挂点)：house-favor 向上取整到整积分（ceilToCreditMicros）待整体把测试夹具从亚积分
+    // micro-pricing 升到积分尺度后再启用——见 2026-07-17-credit-pricing-strategy.md。当前按实额 clamp。
     const clamped = actualAmount < holdAmount ? actualAmount : holdAmount;
 
     if (clamped === 0n) {

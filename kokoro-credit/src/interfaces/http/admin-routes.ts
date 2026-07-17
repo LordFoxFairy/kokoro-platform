@@ -22,6 +22,7 @@ import {
   deleteRequestSchema,
   grantCreditRequestSchema,
   pricingRuleParamsSchema,
+  resetCreditRequestSchema,
   setAccountQuotaRequestSchema,
 } from "./schemas.js";
 
@@ -70,6 +71,31 @@ export function registerCreditAdminRoutes(
       return sendData(reply, result);
     } catch (error) {
       return handleAdminError(error, reply, "credit.admin_grant_failed");
+    }
+  });
+
+  // 重置余额到目标值（运营/测试纠偏）：按 owner ensure 账户后 set-to-value，落带符号调整分录（留痕）。
+  app.post("/admin/credits/reset", async (request, reply) => {
+    try {
+      const ctx = readRequestContext(request.headers);
+      if (ctx.siteId === null) {
+        return sendError(reply, 400, "credit.site_required", "缺少站点上下文", undefined, ctx.requestId);
+      }
+      const input = resetCreditRequestSchema.parse(request.body);
+      const account = await service.ensureAccount({
+        siteId: ctx.siteId,
+        ownerKind: input.ownerKind,
+        ownerId: input.ownerId,
+      });
+      const result = await service.resetBalance({
+        accountId: account.id,
+        targetMicros: input.targetMicros,
+        idempotencyKey: randomUUID(),
+        reason: input.reason,
+      });
+      return sendData(reply, result);
+    } catch (error) {
+      return handleAdminError(error, reply, "credit.admin_reset_failed");
     }
   });
 

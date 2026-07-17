@@ -91,6 +91,7 @@ function readRepo(hasAccount: boolean): CreditRepository {
     ensureAccount: reject,
     grantCredits: reject,
     spendCredits: reject,
+    resetBalance: reject,
     holdCredits: reject,
     captureHold: reject,
     releaseHold: reject,

@@ -1,5 +1,6 @@
-import { parsePositiveBigIntString } from "@kokoro/platform-kit";
+import { AppError, parsePositiveBigIntString } from "@kokoro/platform-kit";
 import type { Prisma, PrismaClient } from "../../../generated/prisma/index.js";
+import { parseNonNegativeBigIntString } from "../../domain/amount.js";
 import type {
   CreditAccount,
   CreditHold,
@@ -31,6 +32,7 @@ import type {
   PriceUsageInput,
   QuoteInput,
   ReleaseCreditInput,
+  ResetBalanceInput,
   SetAccountQuotaInput,
 } from "../../domain/repository.js";
 import {
@@ -167,6 +169,52 @@ export class PrismaCreditRepository implements CreditRepository {
           account: mapCreditAccount(account),
           entry: mapLedgerEntry(entry),
         };
+      });
+    } catch (error) {
+      return this.findExistingEntryAfterUniqueConflict(error, input.idempotencyKey);
+    }
+  }
+
+  async resetBalance(input: ResetBalanceInput): Promise<CreditMutationResult> {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const existing = await this.findExistingEntry(tx, input.idempotencyKey);
+        if (existing) {
+          return existing;
+        }
+
+        // 目标非负；不得设到低于已冻结额（否则 capture 会把余额扣成负）。
+        const target = parseNonNegativeBigIntString(input.targetMicros, "targetMicros");
+        const before = await tx.creditAccount.findUnique({ where: { id: input.accountId } });
+        if (!before) {
+          throw new CreditAccountNotFoundError(input.accountId);
+        }
+        if (before.deletedAt) {
+          throw lifecycleError("credit.account.deleted", `credit account deleted: ${input.accountId}`, 409);
+        }
+        if (target < before.heldMicros) {
+          throw new AppError(
+            "credit.reset.below_held",
+            409,
+            `reset target ${target} below held ${before.heldMicros} on ${input.accountId}`,
+          );
+        }
+        const delta = target - before.balanceMicros; // 带符号调整额（可正可负），留痕不改余额于无形。
+        const account = await tx.creditAccount.update({
+          where: { id: input.accountId },
+          data: { balanceMicros: target },
+        });
+        const entry = await tx.creditLedgerEntry.create({
+          data: {
+            accountId: account.id,
+            amountMicros: delta,
+            balanceAfterMicros: account.balanceMicros,
+            reason: input.reason,
+            idempotencyKey: input.idempotencyKey,
+            ...defined("requestId", input.requestId),
+          },
+        });
+        return { account: mapCreditAccount(account), entry: mapLedgerEntry(entry) };
       });
     } catch (error) {
       return this.findExistingEntryAfterUniqueConflict(error, input.idempotencyKey);

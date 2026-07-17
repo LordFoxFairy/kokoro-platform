@@ -30,6 +30,7 @@ function ensureOnlyRepo(seen: EnsureCreditAccountInput[]): CreditRepository {
     },
     grantCredits: reject,
     spendCredits: reject,
+    resetBalance: reject,
     holdCredits: reject,
     captureHold: reject,
     releaseHold: reject,

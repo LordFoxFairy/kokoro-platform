@@ -41,6 +41,17 @@ export const grantCreditRequestSchema = z
   })
   .strict();
 
+// 重置余额到目标值（运营/测试）：targetMicros 非负（允许 0 清零）。
+const targetMicrosSchema = z.string().regex(/^\d+$/);
+export const resetCreditRequestSchema = z
+  .object({
+    ownerKind: z.enum(["user", "team"]),
+    ownerId: z.string().min(1),
+    targetMicros: targetMicrosSchema,
+    reason: creditReasonSchema,
+  })
+  .strict();
+
 export const auditAccountParamsSchema = z
   .object({
     accountId: z.string().min(1),
