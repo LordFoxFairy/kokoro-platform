@@ -10,6 +10,7 @@ import {
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { ZodError } from "zod";
 import type { SkillHubService } from "../../application/skill-hub-service.js";
+import { OFFICIAL_SCOPE } from "../../domain/constants.js";
 import { SkillNotFoundError, SkillRequiredError } from "../../domain/errors.js";
 import { hubAdminManifest } from "../admin/manifest.js";
 import {
@@ -192,6 +193,69 @@ export function registerHubRoutes(app: FastifyInstance, service: SkillHubService
           return sendZodError(reply, error, requestId);
         }
         request.log.error({ error }, "failed to soft delete skill");
+        return sendError(reply, 500, "hub.delete_failed", "技能删除失败", undefined, requestId);
+      }
+    },
+  );
+
+  // —— 运营 admin 面:单参官方动作(scope=official 隐含,对齐通用运营网关单 :name 键)。
+  // 底层 setCuration/setReviewStatus/markDeleted 复用;既有双参路由保留(供直调/租户)。
+  app.post(
+    "/hub/admin/official/skills/:name/curation",
+    { schema: { tags: ["hub"], summary: "运营:官方技能运营位(单参)", body: jsonSchema(curationBodySchema) } },
+    async (request, reply) => {
+      const requestId = readRequestContext(request.headers).requestId;
+      try {
+        const params = nameParamsSchema.parse(request.params);
+        const body = curationBodySchema.parse(request.body);
+        await service.setCuration(OFFICIAL_SCOPE, params.name, {
+          displayWeight: body.display_weight,
+          pinned: body.pinned,
+          category: body.category,
+        });
+        return sendData(reply, { ok: true }, 200, requestId);
+      } catch (error) {
+        if (error instanceof ZodError) return sendZodError(reply, error, requestId);
+        if (error instanceof SkillNotFoundError)
+          return sendError(reply, 404, "hub.skill_not_found", error.message, undefined, requestId);
+        request.log.error({ error }, "failed to set official skill curation");
+        return sendError(reply, 500, "hub.curation_failed", "运营位更新失败", undefined, requestId);
+      }
+    },
+  );
+
+  app.post(
+    "/hub/admin/official/skills/:name/review",
+    { schema: { tags: ["hub"], summary: "运营:官方技能审核态(单参)", body: jsonSchema(reviewBodySchema) } },
+    async (request, reply) => {
+      const requestId = readRequestContext(request.headers).requestId;
+      try {
+        const params = nameParamsSchema.parse(request.params);
+        const body = reviewBodySchema.parse(request.body);
+        await service.setReviewStatus(OFFICIAL_SCOPE, params.name, body.status);
+        return sendData(reply, { ok: true }, 200, requestId);
+      } catch (error) {
+        if (error instanceof ZodError) return sendZodError(reply, error, requestId);
+        if (error instanceof SkillNotFoundError)
+          return sendError(reply, 404, "hub.skill_not_found", error.message, undefined, requestId);
+        request.log.error({ error }, "failed to set official skill review");
+        return sendError(reply, 500, "hub.review_failed", "审核状态更新失败", undefined, requestId);
+      }
+    },
+  );
+
+  app.delete(
+    "/hub/admin/official/skills/:name",
+    { schema: { tags: ["hub"], summary: "运营:软删官方技能(单参)" } },
+    async (request, reply) => {
+      const requestId = readRequestContext(request.headers).requestId;
+      try {
+        const params = nameParamsSchema.parse(request.params);
+        await service.markDeleted(OFFICIAL_SCOPE, params.name);
+        return sendData(reply, { ok: true }, 200, requestId);
+      } catch (error) {
+        if (error instanceof ZodError) return sendZodError(reply, error, requestId);
+        request.log.error({ error }, "failed to soft delete official skill");
         return sendError(reply, 500, "hub.delete_failed", "技能删除失败", undefined, requestId);
       }
     },

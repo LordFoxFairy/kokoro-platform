@@ -39,6 +39,48 @@ describe("hub curation + review (real mongo)", () => {
     await hub.client.close();
   });
 
+  it("运营 admin:官方目录 GET + 单参 curation/review/delete 端到端", async () => {
+    await insertSkill(hub.collections, { scope: "official", name: "writer", official_enabled: true });
+    await insertSkill(hub.collections, { scope: "official", name: "beta", official_enabled: false });
+
+    // 目录 GET：data 直包数组(对齐通用网关信封),含未上架项 + admin 字段。
+    const list = await app.inject({ method: "GET", url: "/hub/admin/official/skills" });
+    expect(list.statusCode).toBe(200);
+    const cards = list.json().data as { name: string; official_enabled: boolean }[];
+    expect(cards.map((c) => c.name).sort()).toEqual(["beta", "writer"]);
+    expect(cards.find((c) => c.name === "beta")?.official_enabled).toBe(false);
+
+    // 单参 curation(scope=official 隐含)。
+    const cur = await app.inject({
+      method: "POST",
+      url: "/hub/admin/official/skills/writer/curation",
+      payload: { pinned: true, display_weight: 9 },
+    });
+    expect(cur.statusCode).toBe(200);
+    // 单参 review。
+    const rev = await app.inject({
+      method: "POST",
+      url: "/hub/admin/official/skills/beta/review",
+      payload: { status: "rejected" },
+    });
+    expect(rev.statusCode).toBe(200);
+    const after = (await app.inject({ method: "GET", url: "/hub/admin/official/skills" })).json().data as {
+      name: string;
+      pinned: boolean;
+      review_status: string;
+    }[];
+    expect(after.find((c) => c.name === "writer")).toMatchObject({ pinned: true });
+    expect(after.find((c) => c.name === "beta")?.review_status).toBe("rejected");
+
+    // 单参软删 → 离目录。
+    const del = await app.inject({ method: "DELETE", url: "/hub/admin/official/skills/writer" });
+    expect(del.statusCode).toBe(200);
+    const final = (await app.inject({ method: "GET", url: "/hub/admin/official/skills" })).json().data as {
+      name: string;
+    }[];
+    expect(final.map((c) => c.name)).toEqual(["beta"]);
+  });
+
   it("orders the pool by pinned desc, display_weight desc, name asc", async () => {
     // pinned 压制一切权重；同 pinned 档内权重降序；同权重按名字升序。
     await insertSkill(hub.collections, { scope: "official", name: "heavy", display_weight: 50 });

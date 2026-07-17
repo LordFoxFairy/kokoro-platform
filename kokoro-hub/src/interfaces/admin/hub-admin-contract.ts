@@ -34,21 +34,9 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
       labelKey: "admin.hub.resources.skills",
       route: "/hub/admin/official/skills",
       requiredPermission: "hub.skill.read",
+      // 运营动作(官方目录治理):official-flags 上架/下架/required + 软删。均单参 :name(scope=official 隐含)。
+      // 租户 per-user enable/disable 不属运营面,不在此暴露。
       actions: [
-        {
-          id: "enable",
-          labelKey: "admin.hub.actions.enable",
-          kind: "mutation",
-          requiredPermission: "hub.skill.toggle",
-          route: "/hub/admin/skills/:scope/:name/enable",
-        },
-        {
-          id: "disable",
-          labelKey: "admin.hub.actions.disable",
-          kind: "mutation",
-          requiredPermission: "hub.skill.toggle",
-          route: "/hub/admin/skills/:scope/:name/disable",
-        },
         {
           id: "official-flags",
           labelKey: "admin.hub.actions.officialFlags",
@@ -61,7 +49,7 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
           labelKey: "admin.hub.actions.delete",
           kind: "dangerMutation",
           requiredPermission: "hub.skill.delete",
-          route: "/hub/admin/skills/:scope/:name",
+          route: "/hub/admin/official/skills/:name",
           method: "DELETE",
         },
       ],
@@ -101,14 +89,14 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
           labelKey: "admin.hub.actions.curation",
           kind: "mutation",
           requiredPermission: "hub.skill.curation",
-          route: "/hub/admin/skills/:scope/:name/curation",
+          route: "/hub/admin/official/skills/:name/curation",
         },
         {
           id: "review",
           labelKey: "admin.hub.actions.review",
           kind: "mutation",
           requiredPermission: "hub.skill.review",
-          route: "/hub/admin/skills/:scope/:name/review",
+          route: "/hub/admin/official/skills/:name/review",
         },
       ],
     },
