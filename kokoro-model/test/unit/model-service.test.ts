@@ -190,6 +190,20 @@ describe("ModelService delegates to repository", () => {
     await expect(service.listModelLabels()).resolves.toEqual([label]);
   });
 
+  it("listActiveModelLabels filters out disabled and by featureKey", async () => {
+    const labels: ModelLabel[] = [
+      { ...label, key: "chat.active", featureKey: "chat", status: "active" },
+      { ...label, key: "chat.off", featureKey: "chat", status: "disabled" },
+      { ...label, key: "embed.active", featureKey: "embedding", status: "active" },
+    ];
+    const repo = { ...trackingRepo({}), listModelLabels: async () => labels };
+    const service = new ModelService(repo);
+    // featureKey 过滤 + 只出 active。
+    expect((await service.listActiveModelLabels("chat")).map((l) => l.key)).toEqual(["chat.active"]);
+    // 无 featureKey = 只按 active 过滤,跨 feature。
+    expect((await service.listActiveModelLabels()).map((l) => l.key)).toEqual(["chat.active", "embed.active"]);
+  });
+
   it("forwards listModelBindings filter and result", async () => {
     const captured: Captured = {};
     const service = new ModelService(trackingRepo(captured));

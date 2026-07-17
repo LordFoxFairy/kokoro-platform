@@ -73,6 +73,13 @@ export const ensureModelLabelRequestSchema = z
   })
   .strict();
 
+// 运行时目录查询（session 消费侧拉「用户可选模型目录」）：featureKey 可选过滤;只出 active。
+export const listModelLabelsQuerySchema = z
+  .object({
+    featureKey: z.string().min(1).optional(),
+  })
+  .strict();
+
 export const listModelBindingsQuerySchema = z
   .object({
     featureKey: z.string().min(1).optional(),

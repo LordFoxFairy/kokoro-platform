@@ -37,6 +37,7 @@ export function createModelServer(options: CreateModelServerOptions = {}) {
   declareRouteAccess(app, "/admin", "admin");
   declareRouteAccess(app, "/provider-accounts", "runtime-internal");
   declareRouteAccess(app, "/model-bindings", "runtime-internal");
+  declareRouteAccess(app, "/model-labels", "runtime-internal");
   declareRouteAccess(app, "/docs", "runtime-internal");
 
   const prisma = options.prisma ?? createPrismaClient();

@@ -16,6 +16,7 @@ import {
   ensureModelLabelRequestSchema,
   ensureProviderAccountRequestSchema,
   listModelBindingsQuerySchema,
+  listModelLabelsQuerySchema,
   modelBindingParamsSchema,
   providerAccountParamsSchema,
   resolveModelBindingsQuerySchema,
@@ -126,6 +127,26 @@ export function registerModelRoutes(app: FastifyInstance, service: ModelService)
         return sendData(reply, result);
       } catch (error) {
         return handleModelError(error, reply, "model.label_ensure_failed");
+      }
+    },
+  );
+
+  app.get(
+    "/model-labels",
+    {
+      schema: {
+        tags: ["model"],
+        summary: "列出用户可选模型目录（运行时消费，只出 active，可按 featureKey 过滤）",
+        querystring: jsonSchema(listModelLabelsQuerySchema),
+      },
+    },
+    async (request, reply) => {
+      try {
+        const query = listModelLabelsQuerySchema.parse(request.query);
+        const labels = await service.listActiveModelLabels(query.featureKey);
+        return sendData(reply, labels);
+      } catch (error) {
+        return handleModelError(error, reply, "model.label_list_failed");
       }
     },
   );

@@ -5,6 +5,7 @@ import {
   ensureModelLabelRequestSchema,
   ensureProviderAccountRequestSchema,
   listModelBindingsQuerySchema,
+  listModelLabelsQuerySchema,
   modelBindingParamsSchema,
   modelTransportKindSchema,
   providerAccountParamsSchema,
@@ -279,5 +280,16 @@ describe("ensureModelLabelRequestSchema", () => {
 
   it("rejects unknown fields (strict)", () => {
     expect(() => ensureModelLabelRequestSchema.parse({ ...base, extra: 1 })).toThrow();
+  });
+});
+
+describe("listModelLabelsQuerySchema", () => {
+  it("accepts empty query and a featureKey", () => {
+    expect(listModelLabelsQuerySchema.parse({})).toEqual({});
+    expect(listModelLabelsQuerySchema.parse({ featureKey: "chat" })).toEqual({ featureKey: "chat" });
+  });
+  it("rejects empty featureKey and unknown fields", () => {
+    expect(() => listModelLabelsQuerySchema.parse({ featureKey: "" })).toThrow();
+    expect(() => listModelLabelsQuerySchema.parse({ junk: 1 })).toThrow();
   });
 });
