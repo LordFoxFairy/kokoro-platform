@@ -40,7 +40,7 @@ describe("model admin contract", () => {
 
     expect(providerActions).toEqual(["create", "delete", "restore", "disable", "enable"]);
     expect(bindingActions).toEqual(["create", "delete", "restore", "disable", "enable"]);
-    expect(labelActions).toEqual([]);
+    expect(labelActions).toEqual(["create"]);
     expect(policyActions).toEqual(["set"]);
   });
 });

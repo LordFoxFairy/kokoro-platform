@@ -55,6 +55,34 @@ describe("PrismaModelRepository", () => {
     expect(second.priority).toBe(5);
   });
 
+  it("ensures a model label idempotently (upsert on key) and lists it", async () => {
+    const first = await service.ensureModelLabel({
+      key: "chat.default",
+      displayName: "Kokoro 默认",
+      featureKey: "chat",
+    });
+    expect(first.status).toBe("active");
+    expect(first.description).toBeNull();
+
+    // 同 key 再 ensure = 更新;description/tier 显式赋值,status 切 disabled。
+    const second = await service.ensureModelLabel({
+      key: "chat.default",
+      displayName: "Kokoro 默认（改）",
+      description: "平台内置默认模型",
+      featureKey: "chat",
+      tier: "standard",
+      status: "disabled",
+    });
+    expect(second.id).toBe(first.id);
+    expect(second.displayName).toBe("Kokoro 默认（改）");
+    expect(second.description).toBe("平台内置默认模型");
+    expect(second.tier).toBe("standard");
+    expect(second.status).toBe("disabled");
+
+    const labels = await service.listModelLabels();
+    expect(labels.map((l) => l.key)).toEqual(["chat.default"]);
+  });
+
   it("lists active model bindings by feature and label", async () => {
     const account = await service.ensureProviderAccount({
       provider: "replicate",

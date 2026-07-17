@@ -2,6 +2,7 @@ import type {
   ModelBinding,
   ModelBindingStatus,
   ModelLabel,
+  ModelLabelStatus,
   ModelTransportKind,
   ProviderAccount,
   ProviderAccountStatus,
@@ -46,6 +47,16 @@ export interface ResolveModelInput {
   siteId?: string | undefined;
 }
 
+export interface EnsureModelLabelInput {
+  key: string;
+  displayName: string;
+  description?: string | null | undefined;
+  featureKey: string;
+  tier?: string | null | undefined;
+  defaultBindingId?: string | null | undefined;
+  status?: ModelLabelStatus | undefined;
+}
+
 export interface UpsertSiteModelPolicyInput {
   siteId: string;
   labelKey: string;
@@ -60,6 +71,7 @@ export interface ModelRepository {
   listProviderAccounts(options?: ListOptions): Promise<ProviderAccount[]>;
   listAllModelBindings(options?: ListOptions): Promise<ModelBinding[]>;
   listModelLabels(): Promise<ModelLabel[]>;
+  ensureModelLabel(input: EnsureModelLabelInput): Promise<ModelLabel>;
   setProviderAccountStatus(
     id: string,
     status: ProviderAccountStatus,

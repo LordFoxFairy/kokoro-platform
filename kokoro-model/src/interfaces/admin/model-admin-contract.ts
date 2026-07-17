@@ -21,6 +21,7 @@ export const modelAdminContract: {
     { method: "POST", route: "/admin/models/provider-accounts/:id/disable" },
     { method: "POST", route: "/admin/models/provider-accounts/:id/enable" },
     { method: "POST", route: "/model-bindings/ensure" },
+    { method: "POST", route: "/model-labels/ensure" },
     { method: "DELETE", route: "/admin/models/bindings/:modelBindingId" },
     { method: "POST", route: "/admin/models/bindings/:modelBindingId/restore" },
     { method: "POST", route: "/admin/models/bindings/:id/disable" },
@@ -134,7 +135,16 @@ export const modelAdminContract: {
         labelKey: "admin.model.resources.modelLabels",
         route: "/admin/models/labels",
         requiredPermission: "model.label.read",
-        actions: [],
+        actions: [
+          {
+            id: "create",
+            labelKey: "admin.model.actions.createLabel",
+            kind: "mutation",
+            requiredPermission: "model.label.write",
+            route: "/model-labels/ensure",
+            method: "POST",
+          },
+        ],
       },
       {
         id: "site-policies",

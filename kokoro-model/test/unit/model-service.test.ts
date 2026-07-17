@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { ModelService } from "../../src/application/model-service.js";
-import type { ModelBinding, ProviderAccount, SiteModelPolicy } from "../../src/domain/model.js";
+import type { ModelBinding, ModelLabel, ProviderAccount, SiteModelPolicy } from "../../src/domain/model.js";
 import type {
   EnsureModelBindingInput,
+  EnsureModelLabelInput,
   EnsureProviderAccountInput,
   ListModelBindingsFilter,
   ModelRepository,
@@ -49,6 +50,19 @@ const binding: ModelBinding = {
   updatedAt: new Date(0),
 };
 
+const label: ModelLabel = {
+  id: "ml1",
+  key: "chat.default",
+  displayName: "Kokoro 默认",
+  description: null,
+  featureKey: "chat",
+  tier: null,
+  defaultBindingId: null,
+  status: "active",
+  createdAt: new Date(0),
+  updatedAt: new Date(0),
+};
+
 const policy: SiteModelPolicy = {
   id: "sp1",
   siteId: "site-a",
@@ -63,6 +77,7 @@ interface Captured {
   binding?: EnsureModelBindingInput;
   filter?: ListModelBindingsFilter;
   resolve?: ResolveModelInput;
+  label?: EnsureModelLabelInput;
   policy?: UpsertSiteModelPolicyInput;
   listPolicySiteId?: string | undefined;
   deleteProviderAccount?: { id: string; deletedBy: string; reason?: string | undefined };
@@ -91,7 +106,11 @@ function trackingRepo(captured: Captured): ModelRepository {
     },
     listProviderAccounts: async () => [account],
     listAllModelBindings: async () => [binding],
-    listModelLabels: async () => [],
+    listModelLabels: async () => [label],
+    ensureModelLabel: async (input) => {
+      captured.label = input;
+      return label;
+    },
     setProviderAccountStatus: async () => account,
     setModelBindingStatus: async () => binding,
     deleteProviderAccount: async (input) => {
@@ -152,6 +171,23 @@ describe("ModelService delegates to repository", () => {
     const service = new ModelService(trackingRepo(captured));
     await expect(service.ensureModelBinding(bindingInput)).resolves.toBe(binding);
     expect(captured.binding).toBe(bindingInput);
+  });
+
+  it("forwards ensureModelLabel input and result", async () => {
+    const captured: Captured = {};
+    const service = new ModelService(trackingRepo(captured));
+    const labelInput: EnsureModelLabelInput = {
+      key: "chat.default",
+      displayName: "Kokoro 默认",
+      featureKey: "chat",
+    };
+    await expect(service.ensureModelLabel(labelInput)).resolves.toBe(label);
+    expect(captured.label).toBe(labelInput);
+  });
+
+  it("forwards listModelLabels result", async () => {
+    const service = new ModelService(trackingRepo({}));
+    await expect(service.listModelLabels()).resolves.toEqual([label]);
   });
 
   it("forwards listModelBindings filter and result", async () => {

@@ -13,6 +13,7 @@ import { isModelLifecycleError } from "../../domain/model-lifecycle.js";
 import {
   deleteRequestSchema,
   ensureModelBindingRequestSchema,
+  ensureModelLabelRequestSchema,
   ensureProviderAccountRequestSchema,
   listModelBindingsQuerySchema,
   modelBindingParamsSchema,
@@ -105,6 +106,26 @@ export function registerModelRoutes(app: FastifyInstance, service: ModelService)
         return sendData(reply, result);
       } catch (error) {
         return handleModelError(error, reply, "model.binding_ensure_failed");
+      }
+    },
+  );
+
+  app.post(
+    "/model-labels/ensure",
+    {
+      schema: {
+        tags: ["model"],
+        summary: "确保模型标签存在（用户可选模型目录项，幂等 upsert on key）",
+        body: jsonSchema(ensureModelLabelRequestSchema),
+      },
+    },
+    async (request, reply) => {
+      try {
+        const input = ensureModelLabelRequestSchema.parse(request.body);
+        const result = await service.ensureModelLabel(input);
+        return sendData(reply, result);
+      } catch (error) {
+        return handleModelError(error, reply, "model.label_ensure_failed");
       }
     },
   );

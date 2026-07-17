@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   deleteRequestSchema,
   ensureModelBindingRequestSchema,
+  ensureModelLabelRequestSchema,
   ensureProviderAccountRequestSchema,
   listModelBindingsQuerySchema,
   modelBindingParamsSchema,
@@ -247,5 +248,36 @@ describe("ensureModelBindingRequestSchema litellm gateway requirement", () => {
     expect(
       ensureModelBindingRequestSchema.parse({ ...base, transportKind: "direct" }).transportKind,
     ).toBe("direct");
+  });
+});
+
+describe("ensureModelLabelRequestSchema", () => {
+  const base = { key: "chat.default", displayName: "Kokoro 默认", featureKey: "chat" };
+
+  it("accepts a minimal label and defaults status omitted", () => {
+    const parsed = ensureModelLabelRequestSchema.parse(base);
+    expect(parsed.key).toBe("chat.default");
+    expect(parsed.status).toBeUndefined();
+  });
+
+  it("accepts nullable description/tier/defaultBindingId and a status", () => {
+    const parsed = ensureModelLabelRequestSchema.parse({
+      ...base,
+      description: null,
+      tier: null,
+      defaultBindingId: null,
+      status: "disabled",
+    });
+    expect(parsed.status).toBe("disabled");
+    expect(parsed.description).toBeNull();
+  });
+
+  it("rejects unknown status and empty key", () => {
+    expect(() => ensureModelLabelRequestSchema.parse({ ...base, status: "archived" })).toThrow();
+    expect(() => ensureModelLabelRequestSchema.parse({ ...base, key: "" })).toThrow();
+  });
+
+  it("rejects unknown fields (strict)", () => {
+    expect(() => ensureModelLabelRequestSchema.parse({ ...base, extra: 1 })).toThrow();
   });
 });

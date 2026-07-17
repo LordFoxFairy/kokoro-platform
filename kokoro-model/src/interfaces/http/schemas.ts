@@ -58,6 +58,21 @@ export const ensureModelBindingRequestSchema = z
     }
   });
 
+export const modelLabelStatusSchema = z.enum(["active", "disabled"]);
+
+// 用户可选「模型标签」= 面向用户的模型目录项;key 唯一(幂等 upsert),featureKey 归类(chat/embedding…)。
+export const ensureModelLabelRequestSchema = z
+  .object({
+    key: z.string().min(1),
+    displayName: z.string().min(1),
+    description: z.string().min(1).nullable().optional(),
+    featureKey: z.string().min(1),
+    tier: z.string().min(1).nullable().optional(),
+    defaultBindingId: z.string().min(1).nullable().optional(),
+    status: modelLabelStatusSchema.optional(),
+  })
+  .strict();
+
 export const listModelBindingsQuerySchema = z
   .object({
     featureKey: z.string().min(1).optional(),

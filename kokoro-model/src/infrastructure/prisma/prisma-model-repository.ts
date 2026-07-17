@@ -10,6 +10,7 @@ import type {
 import { ModelLifecycleError, type DeleteInput, type ListOptions, type RestoreInput } from "../../domain/model-lifecycle.js";
 import type {
   EnsureModelBindingInput,
+  EnsureModelLabelInput,
   EnsureProviderAccountInput,
   ListModelBindingsFilter,
   ModelRepository,
@@ -218,20 +219,32 @@ export class PrismaModelRepository implements ModelRepository {
       take: 100,
     });
 
-    return labels.map(
-      (label): ModelLabel => ({
-        id: label.id,
-        key: label.key,
-        displayName: label.displayName,
-        description: label.description,
-        featureKey: label.featureKey,
-        tier: label.tier,
-        defaultBindingId: label.defaultBindingId,
-        status: label.status,
-        createdAt: label.createdAt,
-        updatedAt: label.updatedAt,
-      }),
-    );
+    return labels.map(mapModelLabel);
+  }
+
+  async ensureModelLabel(input: EnsureModelLabelInput): Promise<ModelLabel> {
+    // key 唯一 → 幂等 upsert；description/tier/defaultBindingId 显式可空（传 null 即清除）。
+    const label = await this.prisma.modelLabel.upsert({
+      where: { key: input.key },
+      create: {
+        key: input.key,
+        displayName: input.displayName,
+        description: input.description ?? null,
+        featureKey: input.featureKey,
+        tier: input.tier ?? null,
+        defaultBindingId: input.defaultBindingId ?? null,
+        status: input.status ?? "active",
+      },
+      update: {
+        displayName: input.displayName,
+        description: input.description ?? null,
+        featureKey: input.featureKey,
+        tier: input.tier ?? null,
+        defaultBindingId: input.defaultBindingId ?? null,
+        ...defined("status", input.status),
+      },
+    });
+    return mapModelLabel(label);
   }
 
   async setProviderAccountStatus(
@@ -456,6 +469,32 @@ function mapProviderAccount(account: {
     deleteReason: account.deleteReason,
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,
+  };
+}
+
+function mapModelLabel(label: {
+  id: string;
+  key: string;
+  displayName: string;
+  description: string | null;
+  featureKey: string;
+  tier: string | null;
+  defaultBindingId: string | null;
+  status: "active" | "disabled";
+  createdAt: Date;
+  updatedAt: Date;
+}): ModelLabel {
+  return {
+    id: label.id,
+    key: label.key,
+    displayName: label.displayName,
+    description: label.description,
+    featureKey: label.featureKey,
+    tier: label.tier,
+    defaultBindingId: label.defaultBindingId,
+    status: label.status,
+    createdAt: label.createdAt,
+    updatedAt: label.updatedAt,
   };
 }
 

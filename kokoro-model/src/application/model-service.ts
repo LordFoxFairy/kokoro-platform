@@ -1,5 +1,6 @@
 import type {
   EnsureModelBindingInput,
+  EnsureModelLabelInput,
   EnsureProviderAccountInput,
   ListModelBindingsFilter,
   ModelRepository,
@@ -21,6 +22,14 @@ export class ModelService {
 
   async listModelBindings(filter: ListModelBindingsFilter) {
     return this.repository.listModelBindings(filter);
+  }
+
+  async listModelLabels() {
+    return this.repository.listModelLabels();
+  }
+
+  async ensureModelLabel(input: EnsureModelLabelInput) {
+    return this.repository.ensureModelLabel(input);
   }
 
   async resolveModelBindings(input: ResolveModelInput) {

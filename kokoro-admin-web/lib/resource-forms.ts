@@ -259,6 +259,32 @@ export const RESOURCE_FORMS: Record<string, ResourceForm> = {
       return b;
     },
   },
+  "model:model-labels": {
+    actionId: "create",
+    createLabel: "新建模型标签",
+    keyField: "key",
+    fields: [
+      { name: "key", label: "标签键 (key)", type: "text", required: true, editable: false, placeholder: "如 chat.default（唯一，编辑不可改）" },
+      { name: "displayName", label: "显示名（用户可见）", type: "text", required: true, placeholder: "如 Kokoro 默认 / GLM-4.6" },
+      { name: "featureKey", label: "能力键", type: "text", required: true, placeholder: "chat / embedding" },
+      { name: "defaultBindingId", label: "默认绑定", type: "select", optionsFrom: { moduleId: "model", resourceId: "model-bindings", labelKeys: ["displayName", "modelName", "id"] }, tip: "标签解析时的兜底 binding" },
+      { name: "tier", label: "档位", type: "text", placeholder: "如 standard / premium（可空）" },
+      { name: "description", label: "描述", type: "text" },
+      { name: "status", label: "状态", type: "select", options: [{ label: "启用 active", value: "active" }, { label: "停用 disabled", value: "disabled" }] },
+    ],
+    buildBody: (v) => {
+      const b: Record<string, unknown> = {
+        key: str(v.key),
+        displayName: str(v.displayName),
+        featureKey: str(v.featureKey),
+      };
+      b.description = has(v.description) ? str(v.description) : null;
+      b.tier = has(v.tier) ? str(v.tier) : null;
+      b.defaultBindingId = has(v.defaultBindingId) ? str(v.defaultBindingId) : null;
+      if (has(v.status)) b.status = str(v.status);
+      return b;
+    },
+  },
   "model:site-policies": {
     actionId: "set",
     createLabel: "设置站点模型策略",
