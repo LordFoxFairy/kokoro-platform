@@ -269,6 +269,35 @@ export const RESOURCE_FORMS: Record<string, ResourceForm> = {
     ],
     buildBody: (v, ctx) => ({ siteId: ctx.siteId, labelKey: str(v.labelKey), status: str(v.status) }),
   },
+  // ── HUB 官方 MCP server 注册（运营写官方目录）──
+  // 凭据只收 env:/secret: 引用(明文由 hub 拒收);allowed_tools 逗号分隔 → 数组;scope 固定 official。
+  "hub:mcp-servers": {
+    actionId: "register",
+    createLabel: "注册官方 MCP server",
+    keyField: "name",
+    fields: [
+      { name: "name", label: "server 名", type: "text", required: true, editable: false, placeholder: "小写字母/连字符，如 github", tip: "2-64 位，小写字母开头，仅 a-z 0-9 -" },
+      { name: "transport", label: "传输方式", type: "select", required: true, options: [{ label: "http", value: "http" }, { label: "streamable_http", value: "streamable_http" }] },
+      { name: "url", label: "端点 URL", type: "text", required: true, placeholder: "https://mcp.example/github" },
+      { name: "allowedTools", label: "放行工具（逗号分隔，留空=全放行）", type: "text", placeholder: "search_issues, create_issue" },
+      { name: "secretRef", label: "凭据引用", type: "text", placeholder: "env:GH_MCP_TOKEN 或 secret:path/to/key", tip: "只收 env:/secret: 引用，明文凭据会被拒收" },
+    ],
+    buildBody: (v) => {
+      const tools = str(v.allowedTools)
+        .split(",")
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0);
+      const b: Record<string, unknown> = {
+        scope: "official",
+        name: str(v.name),
+        transport: str(v.transport),
+        url: str(v.url),
+        allowed_tools: tools,
+      };
+      if (has(v.secretRef)) b.secret_ref = str(v.secretRef);
+      return b;
+    },
+  },
 };
 
 // —— 行级 typed 小表单（ROW_ACTION_FORMS）：manifest 里非 SIMPLE_ACTIONS、需 typed body 的「行级动作」

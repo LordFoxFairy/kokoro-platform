@@ -78,4 +78,7 @@ export interface McpServerRepository {
   setEnabled(scope: string, name: string, enabled: boolean): Promise<void>;
   // 软删：置 deleted_at，池即刻不可见；幂等（不存在静默通过，对齐 skills 面）。
   markDeleted(scope: string, name: string): Promise<void>;
+  // 运营官方目录：只出 official scope、未软删，含禁用项（运营要看到停用的 server 才能重启），按 name 升序。
+  // 不做 namespace 合并（这是运营视角，非租户有效池）。
+  listOfficialCatalog(): Promise<McpServerView[]>;
 }

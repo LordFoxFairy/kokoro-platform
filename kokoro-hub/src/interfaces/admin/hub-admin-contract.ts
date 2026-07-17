@@ -24,7 +24,7 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
     {
       id: "mcp-servers",
       labelKey: "admin.hub.resources.mcpServers",
-      route: "/hub/admin/mcp/servers",
+      route: "/hub/admin/official/mcp/servers",
       requiredPermission: "hub.mcp.read",
     },
   ],
@@ -104,8 +104,10 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
     {
       id: "mcp-servers",
       labelKey: "admin.hub.resources.mcpServers",
-      route: "/hub/admin/mcp/servers",
+      route: "/hub/admin/official/mcp/servers",
       requiredPermission: "hub.mcp.read",
+      // 运营动作(官方目录治理):注册(namespace-free 写入官方 scope)/启停/软删。
+      // 启停/软删均单参 :name(scope=official 隐含);租户合并池不属运营面。
       actions: [
         {
           id: "register",
@@ -119,21 +121,21 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
           labelKey: "admin.hub.actions.mcpEnable",
           kind: "mutation",
           requiredPermission: "hub.mcp.toggle",
-          route: "/hub/admin/mcp/servers/:scope/:name/enable",
+          route: "/hub/admin/official/mcp/servers/:name/enable",
         },
         {
           id: "disable",
           labelKey: "admin.hub.actions.mcpDisable",
           kind: "mutation",
           requiredPermission: "hub.mcp.toggle",
-          route: "/hub/admin/mcp/servers/:scope/:name/disable",
+          route: "/hub/admin/official/mcp/servers/:name/disable",
         },
         {
           id: "delete",
           labelKey: "admin.hub.actions.mcpDelete",
           kind: "dangerMutation",
           requiredPermission: "hub.mcp.delete",
-          route: "/hub/admin/mcp/servers/:scope/:name",
+          route: "/hub/admin/official/mcp/servers/:name",
           method: "DELETE",
         },
       ],
@@ -158,6 +160,10 @@ const routes: HubAdminRoute[] = [
   { method: "POST", path: "/hub/admin/mcp/servers/:scope/:name/enable" },
   { method: "POST", path: "/hub/admin/mcp/servers/:scope/:name/disable" },
   { method: "DELETE", path: "/hub/admin/mcp/servers/:scope/:name" },
+  { method: "GET", path: "/hub/admin/official/mcp/servers" },
+  { method: "POST", path: "/hub/admin/official/mcp/servers/:name/enable" },
+  { method: "POST", path: "/hub/admin/official/mcp/servers/:name/disable" },
+  { method: "DELETE", path: "/hub/admin/official/mcp/servers/:name" },
 ];
 
 export const hubAdminContract = {

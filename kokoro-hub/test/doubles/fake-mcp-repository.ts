@@ -10,6 +10,7 @@ import type {
 // 路由错误映射单测用的内存替身（test-only；生产只用真 Mongo 实现，见 integration/mcp-api）。
 export class FakeMcpServerRepository implements McpServerRepository {
   pool: McpServerView[] = [];
+  officialCatalog: McpServerView[] = [];
   grants: McpGrantView[] = [];
   snapshot: McpServerRevisionResolution | null = null;
   failNextWith: Error | null = null;
@@ -27,6 +28,11 @@ export class FakeMcpServerRepository implements McpServerRepository {
   async listPool(_namespace: string): Promise<McpServerView[]> {
     this.throwIfArmed();
     return this.pool;
+  }
+
+  async listOfficialCatalog(): Promise<McpServerView[]> {
+    this.throwIfArmed();
+    return this.officialCatalog;
   }
 
   async resolveGrants(_namespace: string): Promise<McpGrantView[]> {

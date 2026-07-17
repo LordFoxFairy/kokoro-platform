@@ -12,8 +12,9 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { ZodError } from "zod";
 import type { McpHubService } from "../../application/mcp-hub-service.js";
 import { McpServerNotFoundError } from "../../domain/errors.js";
+import { OFFICIAL_SCOPE } from "../../domain/constants.js";
 import { registerMcpServerBodySchema } from "./mcp-schemas.js";
-import { namespaceQuerySchema, scopeNameParamsSchema } from "./schemas.js";
+import { nameParamsSchema, namespaceQuerySchema, scopeNameParamsSchema } from "./schemas.js";
 
 export function registerMcpRoutes(app: FastifyInstance, service: McpHubService): void {
   app.post(
@@ -62,6 +63,50 @@ export function registerMcpRoutes(app: FastifyInstance, service: McpHubService):
     },
   );
 
+  // 运营 admin 面:全部官方 MCP server 目录（namespace-free,治理视图,含禁用项）。数组直包 data,
+  // 对齐通用运营网关 resourceEnvelope { data: [...] };行内动作(enable/disable/delete)以 :name 单参操作。
+  app.get(
+    "/hub/admin/official/mcp/servers",
+    { schema: { tags: ["hub"], summary: "运营:全部官方 MCP server 目录（治理视图）" } },
+    async (request, reply) => {
+      const requestId = readRequestContext(request.headers).requestId;
+      const cards = await service.listOfficialCatalog();
+      return sendData(reply, cards, 200, requestId);
+    },
+  );
+
+  // 单参官方启停/软删（scope=official 隐含）：通用网关按 :name 解析，无需在 UI 拼 scope。
+  app.post(
+    "/hub/admin/official/mcp/servers/:name/enable",
+    { schema: { tags: ["hub"], summary: "运营:启用官方 MCP server（文档级开关）" } },
+    (request, reply) => toggleOfficialEnabled(service, request, reply, true),
+  );
+
+  app.post(
+    "/hub/admin/official/mcp/servers/:name/disable",
+    { schema: { tags: ["hub"], summary: "运营:停用官方 MCP server（文档级开关）" } },
+    (request, reply) => toggleOfficialEnabled(service, request, reply, false),
+  );
+
+  app.delete(
+    "/hub/admin/official/mcp/servers/:name",
+    { schema: { tags: ["hub"], summary: "运营:软删官方 MCP server（置 deleted_at；重注册可复活）" } },
+    async (request, reply) => {
+      const requestId = readRequestContext(request.headers).requestId;
+      try {
+        const params = nameParamsSchema.parse(request.params);
+        await service.markDeleted(OFFICIAL_SCOPE, params.name);
+        return sendData(reply, { ok: true }, 200, requestId);
+      } catch (error) {
+        if (error instanceof ZodError) {
+          return sendZodError(reply, error, requestId);
+        }
+        request.log.error({ error }, "failed to soft delete official mcp server");
+        return sendError(reply, 500, "hub.mcp_delete_failed", "MCP server 删除失败", undefined, requestId);
+      }
+    },
+  );
+
   app.post(
     "/hub/admin/mcp/servers/:scope/:name/enable",
     { schema: { tags: ["hub"], summary: "启用某 MCP server（文档级开关）" } },
@@ -92,6 +137,30 @@ export function registerMcpRoutes(app: FastifyInstance, service: McpHubService):
       }
     },
   );
+}
+
+// 运营单参启停：scope=official 隐含,复用文档级启停语义。
+async function toggleOfficialEnabled(
+  service: McpHubService,
+  request: FastifyRequest,
+  reply: FastifyReply,
+  enabled: boolean,
+) {
+  const requestId = readRequestContext(request.headers).requestId;
+  try {
+    const params = nameParamsSchema.parse(request.params);
+    await service.setEnabled(OFFICIAL_SCOPE, params.name, enabled);
+    return sendData(reply, { ok: true }, 200, requestId);
+  } catch (error) {
+    if (error instanceof ZodError) {
+      return sendZodError(reply, error, requestId);
+    }
+    if (error instanceof McpServerNotFoundError) {
+      return sendError(reply, 404, "hub.mcp_server_not_found", error.message, undefined, requestId);
+    }
+    request.log.error({ error }, "failed to toggle official mcp server enabled");
+    return sendError(reply, 500, "hub.mcp_toggle_failed", "MCP server 启停失败", undefined, requestId);
+  }
 }
 
 // 启停共用：enabled 是文档级状态（键 = scope+name），与 skills 的 per-user 偏好轴不同，无需 body。

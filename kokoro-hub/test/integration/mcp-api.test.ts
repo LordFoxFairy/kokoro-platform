@@ -33,6 +33,48 @@ describe("hub MCP server registry API (real mongo)", () => {
     await hub.client.close();
   });
 
+  it("运营 admin:官方目录 GET + 单参 enable/disable/delete 端到端", async () => {
+    await insertMcpServer(hub.collections, { scope: "official", name: "github", enabled: true });
+    await insertMcpServer(hub.collections, { scope: "official", name: "slack", enabled: false });
+    // 租户自有 server 不进运营官方目录。
+    await insertMcpServer(hub.collections, { scope: NS, name: "mine", enabled: true });
+
+    // 目录 GET:data 直包数组(对齐通用网关信封),含禁用项 + 全字段,只出 official。
+    const list = await app.inject({ method: "GET", url: "/hub/admin/official/mcp/servers" });
+    expect(list.statusCode).toBe(200);
+    const cards = list.json().data as { scope: string; name: string; enabled: boolean }[];
+    expect(cards.map((c) => c.name)).toEqual(["github", "slack"]);
+    expect(cards.every((c) => c.scope === "official")).toBe(true);
+    expect(cards.find((c) => c.name === "slack")?.enabled).toBe(false);
+
+    // 单参 disable(scope=official 隐含)。
+    const disable = await app.inject({ method: "POST", url: "/hub/admin/official/mcp/servers/github/disable" });
+    expect(disable.statusCode).toBe(200);
+    // 单参 enable 复活 slack。
+    const enable = await app.inject({ method: "POST", url: "/hub/admin/official/mcp/servers/slack/enable" });
+    expect(enable.statusCode).toBe(200);
+    const after = (await app.inject({ method: "GET", url: "/hub/admin/official/mcp/servers" })).json().data as {
+      name: string;
+      enabled: boolean;
+    }[];
+    expect(after.find((c) => c.name === "github")?.enabled).toBe(false);
+    expect(after.find((c) => c.name === "slack")?.enabled).toBe(true);
+
+    // 单参软删 → 离目录。
+    const del = await app.inject({ method: "DELETE", url: "/hub/admin/official/mcp/servers/github" });
+    expect(del.statusCode).toBe(200);
+    const final = (await app.inject({ method: "GET", url: "/hub/admin/official/mcp/servers" })).json().data as {
+      name: string;
+    }[];
+    expect(final.map((c) => c.name)).toEqual(["slack"]);
+  });
+
+  it("单参 enable/disable 目标不存在 → 404", async () => {
+    const missing = await app.inject({ method: "POST", url: "/hub/admin/official/mcp/servers/ghost/enable" });
+    expect(missing.statusCode).toBe(404);
+    expect(missing.json().error.code).toBe("hub.mcp_server_not_found");
+  });
+
   it("registers a server and returns the stored view", async () => {
     const response = await app.inject({
       method: "POST",

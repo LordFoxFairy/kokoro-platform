@@ -16,6 +16,11 @@ export class McpHubService {
     return this.repository.listPool(namespace);
   }
 
+  // 运营官方目录（admin 面用）：官方 scope 全量含禁用，非租户合并池。
+  async listOfficialCatalog(): Promise<McpServerView[]> {
+    return this.repository.listOfficialCatalog();
+  }
+
   // 会话快照解析（session 建会话用）：有效池收敛成 McpGrant（含 revision + config_hash）。
   async resolveGrants(namespace: string): Promise<McpGrantView[]> {
     return this.repository.resolveGrants(namespace);

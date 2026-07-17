@@ -127,6 +127,17 @@ export class MongoMcpServerRepository implements McpServerRepository {
     return active.map(toView);
   }
 
+  async listOfficialCatalog(): Promise<McpServerView[]> {
+    await this.ensureIndexes();
+    // 运营目录：官方 scope 全量(含禁用),读侧顺手迁移存量,按 name 升序。
+    const cards: McpServerView[] = [];
+    const cursor = this.collections.mcpServers.find({ scope: OFFICIAL_SCOPE, deleted_at: null }).sort({ name: 1 });
+    for await (const doc of cursor) {
+      cards.push(toView(await this.ensureMigrated(doc)));
+    }
+    return cards;
+  }
+
   async resolveGrants(namespace: string): Promise<McpGrantView[]> {
     const active = await this.mergedActive(namespace);
     return active.map((doc) => ({

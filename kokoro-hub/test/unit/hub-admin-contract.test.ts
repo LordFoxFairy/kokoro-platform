@@ -25,6 +25,22 @@ describe("hub admin contract", () => {
     expect(del?.route).toBe("/hub/admin/official/skills/:name");
   });
 
+  it("declares the operator mcp actions with single-param official proxy routes", () => {
+    const mcp = hubAdminManifest.resources.find((resource) => resource.id === "mcp-servers");
+    const actionIds = mcp?.actions.map((action) => action.id);
+    // 运营面:注册(namespace-free 写官方 scope) + 官方目录启停/软删。
+    expect(actionIds).toEqual(["register", "enable", "disable", "delete"]);
+    // 读路由对齐通用网关(namespace-free 官方目录)。
+    expect(mcp?.route).toBe("/hub/admin/official/mcp/servers");
+
+    // 启停/软删单参 :name(scope=official 隐含);注册仍 namespace-free 写面。
+    const enable = mcp?.actions.find((action) => action.id === "enable");
+    expect(enable?.route).toBe("/hub/admin/official/mcp/servers/:name/enable");
+    const del = mcp?.actions.find((action) => action.id === "delete");
+    expect(del?.method).toBe("DELETE");
+    expect(del?.route).toBe("/hub/admin/official/mcp/servers/:name");
+  });
+
   it("keeps the route list aligned with the API surface", () => {
     expect(hubAdminContract.routes).toContainEqual({ method: "GET", path: "/hub/admin/skills/pool" });
     expect(hubAdminContract.routes).toContainEqual({

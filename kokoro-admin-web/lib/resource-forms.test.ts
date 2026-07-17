@@ -1,6 +1,37 @@
 import { describe, expect, it } from "vitest";
 
-import { ROW_ACTION_FORMS } from "./resource-forms";
+import { RESOURCE_FORMS, ROW_ACTION_FORMS } from "./resource-forms";
+
+// 官方 MCP 注册 body 构造(纯函数):坐实与 hub registerMcpServerBodySchema 对齐。
+describe("RESOURCE_FORMS hub:mcp-servers buildBody", () => {
+  const form = RESOURCE_FORMS["hub:mcp-servers"]!;
+  const ctx = { siteId: "" };
+
+  it("scope 固定 official、allowedTools 逗号切数组去空、secretRef 空则省略", () => {
+    expect(
+      form.buildBody({ name: "github", transport: "http", url: "https://mcp.example/github", allowedTools: "a, b ,, c" }, ctx),
+    ).toEqual({
+      scope: "official",
+      name: "github",
+      transport: "http",
+      url: "https://mcp.example/github",
+      allowed_tools: ["a", "b", "c"],
+    });
+  });
+
+  it("留空 allowedTools → 空数组(全放行);有 secretRef → 带上", () => {
+    expect(
+      form.buildBody({ name: "slack", transport: "streamable_http", url: "https://mcp.example/slack", allowedTools: "", secretRef: "env:SLACK_TOKEN" }, ctx),
+    ).toEqual({
+      scope: "official",
+      name: "slack",
+      transport: "streamable_http",
+      url: "https://mcp.example/slack",
+      allowed_tools: [],
+      secret_ref: "env:SLACK_TOKEN",
+    });
+  });
+});
 
 // 行级 typed 小表单的 body 构造(纯函数):坐实与 hub 各动作 body schema 对齐。
 describe("ROW_ACTION_FORMS buildBody", () => {
