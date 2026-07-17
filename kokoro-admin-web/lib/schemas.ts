@@ -49,6 +49,41 @@ export const actionResultSchema = z.object({
 });
 export type ActionResult = z.infer<typeof actionResultSchema>;
 
+// 技能上传预览响应（hub UploadPreview）：网关经 /api/action 透传上游 data。
+export const skillUploadPreviewSchema = z.object({
+  namespace: z.string(),
+  candidates: z.array(
+    z.object({
+      name: z.string(),
+      valid: z.boolean(),
+      errors: z.array(z.string()),
+      description: z.string().nullable(),
+      content_hash: z.string().nullable(),
+      package_size: z.number(),
+      file_count: z.number(),
+      files: z.array(z.object({ path: z.string(), size: z.number() })),
+      conflicts: z.object({ official: z.boolean(), namespace: z.boolean() }),
+    }),
+  ),
+});
+export type SkillUploadPreview = z.infer<typeof skillUploadPreviewSchema>;
+export type SkillUploadCandidate = SkillUploadPreview["candidates"][number];
+
+// 技能上传确认响应（hub ConfirmResult[]）：逐项允许 published/unchanged/failed 局部成功。
+export const skillUploadConfirmSchema = z.object({
+  namespace: z.string(),
+  results: z.array(
+    z.object({
+      name: z.string(),
+      status: z.enum(["published", "unchanged", "failed"]),
+      revision: z.number().nullable(),
+      content_hash: z.string().nullable(),
+      error: z.string().nullable(),
+    }),
+  ),
+});
+export type SkillUploadConfirm = z.infer<typeof skillUploadConfirmSchema>;
+
 export type OwnerKind = "team" | "user";
 
 // /api/me：当前操作员能力面，UI 据此决定可见操作（服务端仍二次强制）。

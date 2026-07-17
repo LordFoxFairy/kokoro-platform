@@ -14,7 +14,7 @@ import {
   type ActionType,
   type ProColumns,
 } from "@ant-design/pro-components";
-import { PlusOutlined } from "@ant-design/icons";
+import { PlusOutlined, UploadOutlined } from "@ant-design/icons";
 import { z } from "zod";
 import { apiGet, apiPost, queryString } from "@/lib/api";
 import { actionResultSchema, permits, type ModuleManifest } from "@/lib/schemas";
@@ -22,6 +22,7 @@ import { useAdmin } from "@/components/shell/app-shell";
 import { useT } from "@/lib/i18n/context";
 import type { MessageKey } from "@/lib/i18n/messages";
 import { RESOURCE_FORMS, ROW_ACTION_FORMS, type FormField, type RowActionForm } from "@/lib/resource-forms";
+import { SkillUploadModal } from "@/components/shell/skill-upload-modal";
 
 // 资源/动作文案一律取自 manifest 声明的 labelKey（经 i18n 解析），前端不再维护标签映射表。
 // 本集合只做「行内单目标动作 vs 走表单的写动作」的行为分类，与显示文案无关。
@@ -195,6 +196,8 @@ export function ResourceTable({
   const [form, setForm] = useState<{ mode: "create" | "edit"; row?: Row } | null>(null);
   // 行级 typed 小表单(ROW_ACTION_FORMS)当前打开态:行级动作 + typed body。
   const [rowForm, setRowForm] = useState<{ actionId: string; label: string; form: RowActionForm; row: Row; paramName: string } | null>(null);
+  // bespoke 技能上传两步流开关（文件+预览+逐项确认，通用表单覆盖不了）。
+  const [uploadOpen, setUploadOpen] = useState(false);
   const actionRef = useRef<ActionType>();
 
   const mod = manifests.find((m) => m.id === moduleId);
@@ -212,6 +215,10 @@ export function ResourceTable({
     (active?.actions ?? []).some(
       (a) => a.id === resourceForm.actionId && a.route && (!a.requiredPermission || permits(me?.permissions ?? [], a.requiredPermission)),
     );
+  // 技能上传：资源声明了 upload-preview 动作且操作员有权 → 亮 bespoke 上传按钮。
+  const uploadAvailable = (active?.actions ?? []).some(
+    (a) => a.id === "upload-preview" && a.route && (!a.requiredPermission || permits(me?.permissions ?? [], a.requiredPermission)),
+  );
 
   // 动作按钮文案取 manifest 声明的 labelKey（i18n 解析）；无对应词典项时回退 key 本身。
   const rowActions = useMemo(() => {
@@ -321,15 +328,22 @@ export function ResourceTable({
         pagination={{ pageSize: 20, showSizeChanger: true }}
         dateFormatter="string"
         headerTitle={title}
-        toolBarRender={() =>
-          upsertAvailable && resourceForm
+        toolBarRender={() => [
+          ...(upsertAvailable && resourceForm
             ? [
                 <Button key="create" type="primary" icon={<PlusOutlined />} onClick={() => setForm({ mode: "create" })}>
                   {createLabel}
                 </Button>,
               ]
-            : []
-        }
+            : []),
+          ...(uploadAvailable
+            ? [
+                <Button key="skill-upload" type="primary" icon={<UploadOutlined />} onClick={() => setUploadOpen(true)}>
+                  {t("ui.skillUpload.button")}
+                </Button>,
+              ]
+            : []),
+        ]}
         request={async () => {
           if (!active) return { data: [], success: true, total: 0 };
           if (!shouldSendSiteId(moduleId, active.id, siteId) && !(moduleId === "site" && active.id === "sites")) {
@@ -416,6 +430,11 @@ export function ResourceTable({
       >
         {rowForm ? <FormFields fields={rowForm.form.fields} editMode={false} manifests={manifests} siteId={siteId} /> : null}
       </ModalForm>
+
+      {/* bespoke 技能上传两步流 */}
+      {uploadAvailable ? (
+        <SkillUploadModal open={uploadOpen} onClose={() => setUploadOpen(false)} onDone={() => actionRef.current?.reload()} />
+      ) : null}
     </PageContainer>
   );
 }
