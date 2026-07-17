@@ -270,3 +270,48 @@ export const RESOURCE_FORMS: Record<string, ResourceForm> = {
     buildBody: (v, ctx) => ({ siteId: ctx.siteId, labelKey: str(v.labelKey), status: str(v.status) }),
   },
 };
+
+// —— 行级 typed 小表单（ROW_ACTION_FORMS）：manifest 里非 SIMPLE_ACTIONS、需 typed body 的「行级动作」
+// 在此声明字段。点行内动作即开小表单(初值由行当前值预填),提交发
+// { params: { [firstRouteParam]: row.id }, body: buildBody(values) }，享网关 RBAC/审批/审计。
+// 键 = `${moduleId}:${resourceId}:${actionId}`。
+export interface RowActionForm {
+  fields: FormField[];
+  buildBody: (values: Record<string, unknown>) => Record<string, unknown>;
+}
+
+const REVIEW_STATUS = [
+  { label: "待审 pending", value: "pending" },
+  { label: "通过 approved", value: "approved" },
+  { label: "拒绝 rejected", value: "rejected" },
+];
+
+export const ROW_ACTION_FORMS: Record<string, RowActionForm> = {
+  // 官方位:上架开关 + 必备位（恒发两布尔,后端 superRefine「至少一个」满足;字段名对齐目录行,初值预填）。
+  "hub:skills:official-flags": {
+    fields: [
+      { name: "official_enabled", label: "上架 official_enabled", type: "switch", tip: "全局上架开关" },
+      { name: "official_required", label: "必备 official_required", type: "switch", tip: "恒注入,拒绝用户关闭" },
+    ],
+    buildBody: (v) => ({ enabled: Boolean(v.official_enabled), required: Boolean(v.official_required) }),
+  },
+  // 运营位:置顶/权重/分类（留空 category = 清除分类）。
+  "hub:skill-curation:curation": {
+    fields: [
+      { name: "pinned", label: "置顶 pinned", type: "switch" },
+      { name: "display_weight", label: "排序权重 display_weight", type: "number" },
+      { name: "category", label: "分类 category", type: "text", placeholder: "留空 = 清除分类" },
+    ],
+    buildBody: (v) => {
+      const body: Record<string, unknown> = { pinned: Boolean(v.pinned) };
+      if (has(v.display_weight)) body.display_weight = Number(v.display_weight);
+      body.category = str(v.category) === "" ? null : str(v.category);
+      return body;
+    },
+  },
+  // 审核态:单选（字段名 review_status 对齐目录行,初值预填;body 映射为 status）。
+  "hub:skill-curation:review": {
+    fields: [{ name: "review_status", label: "审核态", type: "select", required: true, options: REVIEW_STATUS }],
+    buildBody: (v) => ({ status: str(v.review_status) }),
+  },
+};

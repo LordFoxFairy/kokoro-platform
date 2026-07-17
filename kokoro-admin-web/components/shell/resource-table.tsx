@@ -21,7 +21,7 @@ import { actionResultSchema, permits, type ModuleManifest } from "@/lib/schemas"
 import { useAdmin } from "@/components/shell/app-shell";
 import { useT } from "@/lib/i18n/context";
 import type { MessageKey } from "@/lib/i18n/messages";
-import { RESOURCE_FORMS, type FormField } from "@/lib/resource-forms";
+import { RESOURCE_FORMS, ROW_ACTION_FORMS, type FormField, type RowActionForm } from "@/lib/resource-forms";
 
 // 资源/动作文案一律取自 manifest 声明的 labelKey（经 i18n 解析），前端不再维护标签映射表。
 // 本集合只做「行内单目标动作 vs 走表单的写动作」的行为分类，与显示文案无关。
@@ -193,6 +193,8 @@ export function ResourceTable({
   const [sampleRows, setSampleRows] = useState<Row[]>([]);
   const [simple, setSimple] = useState<{ actionId: string; label: string; danger: boolean; rowId: string; paramName: string } | null>(null);
   const [form, setForm] = useState<{ mode: "create" | "edit"; row?: Row } | null>(null);
+  // 行级 typed 小表单(ROW_ACTION_FORMS)当前打开态:行级动作 + typed body。
+  const [rowForm, setRowForm] = useState<{ actionId: string; label: string; form: RowActionForm; row: Row; paramName: string } | null>(null);
   const actionRef = useRef<ActionType>();
 
   const mod = manifests.find((m) => m.id === moduleId);
@@ -219,10 +221,29 @@ export function ResourceTable({
       .map((a) => ({ id: a.id, labelKey: a.labelKey, danger: a.kind === "dangerMutation", paramName: firstRouteParam(a.route) }));
   }, [active, me]);
 
+  // 行级 typed 小表单动作:manifest 里非 SIMPLE_ACTIONS 但在 ROW_ACTION_FORMS 声明了字段的行级动作。
+  const rowFormActions = useMemo(() => {
+    if (!active) return [];
+    return (active.actions ?? [])
+      .filter(
+        (a) =>
+          !SIMPLE_ACTIONS.has(a.id) &&
+          a.route &&
+          ROW_ACTION_FORMS[`${moduleId}:${active.id}:${a.id}`] != null &&
+          (!a.requiredPermission || permits(me?.permissions ?? [], a.requiredPermission)),
+      )
+      .map((a) => ({
+        id: a.id,
+        labelKey: a.labelKey,
+        form: ROW_ACTION_FORMS[`${moduleId}:${active.id}:${a.id}`]!,
+        paramName: firstRouteParam(a.route),
+      }));
+  }, [active, me, moduleId]);
+
   const baseCols = useMemo(() => buildColumns(sampleRows, t), [sampleRows, t]);
 
   const columns: ProColumns<Row>[] = useMemo(() => {
-    const hasOps = rowActions.length > 0 || upsertAvailable;
+    const hasOps = rowActions.length > 0 || rowFormActions.length > 0 || upsertAvailable;
     if (!hasOps) return baseCols;
     return [
       ...baseCols,
@@ -230,13 +251,21 @@ export function ResourceTable({
         title: t("ui.actionsColumn"),
         valueType: "option",
         fixed: "right",
-        width: 80 + (rowActions.length + (upsertAvailable ? 1 : 0)) * 44,
+        width: 80 + (rowActions.length + rowFormActions.length + (upsertAvailable ? 1 : 0)) * 44,
         render: (_dom, row) => [
           ...(upsertAvailable ? [<a key="edit" onClick={() => setForm({ mode: "edit", row })}>{t("ui.edit")}</a>] : []),
           ...rowActions.map((a) => {
             const label = t(a.labelKey as MessageKey);
             return (
-              <a key={a.id} style={a.danger ? { color: "#c2410c" } : undefined} onClick={() => setSimple({ actionId: a.id, label, danger: a.danger, rowId: String(row.id ?? ""), paramName: a.paramName })}>
+              <a key={a.id} style={a.danger ? { color: "#c2410c" } : undefined} onClick={() => setSimple({ actionId: a.id, label, danger: a.danger, rowId: String(row[a.paramName] ?? row.id ?? ""), paramName: a.paramName })}>
+                {label}
+              </a>
+            );
+          }),
+          ...rowFormActions.map((a) => {
+            const label = t(a.labelKey as MessageKey);
+            return (
+              <a key={a.id} onClick={() => setRowForm({ actionId: a.id, label, form: a.form, row, paramName: a.paramName })}>
                 {label}
               </a>
             );
@@ -244,7 +273,7 @@ export function ResourceTable({
         ],
       },
     ];
-  }, [baseCols, rowActions, upsertAvailable, t]);
+  }, [baseCols, rowActions, rowFormActions, upsertAvailable, t]);
 
   async function dispatchAction(actionId: string, extra: { params?: Record<string, string>; body?: Record<string, unknown>; reason?: string }): Promise<boolean> {
     try {
@@ -365,6 +394,28 @@ export function ResourceTable({
           <FormFields fields={resourceForm.fields} editMode={form?.mode === "edit"} manifests={manifests} siteId={siteId} />
         </ModalForm>
       ) : null}
+
+      {/* 行级 typed 小表单(ROW_ACTION_FORMS):初值由行当前值预填;提交发 params(单/首 :param) + typed body。 */}
+      <ModalForm
+        open={rowForm !== null}
+        title={rowForm?.label}
+        width={440}
+        initialValues={rowForm?.row}
+        onOpenChange={(o) => !o && setRowForm(null)}
+        modalProps={{ destroyOnHidden: true, okText: t("ui.save"), cancelText: t("ui.cancel") }}
+        onFinish={async (values) => {
+          if (!rowForm) return false;
+          const paramValue = String(rowForm.row[rowForm.paramName] ?? rowForm.row.id ?? "");
+          const ok = await dispatchAction(rowForm.actionId, {
+            params: { [rowForm.paramName]: paramValue },
+            body: rowForm.form.buildBody(values),
+          });
+          if (ok) setRowForm(null);
+          return ok;
+        }}
+      >
+        {rowForm ? <FormFields fields={rowForm.form.fields} editMode={false} manifests={manifests} siteId={siteId} /> : null}
+      </ModalForm>
     </PageContainer>
   );
 }
