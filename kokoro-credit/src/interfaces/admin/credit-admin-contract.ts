@@ -16,6 +16,7 @@ export const creditAdminContract: {
     { method: "GET", route: "/admin/credits/usage" },
     { method: "GET", route: "/admin/credits/pricing" },
     { method: "POST", route: "/admin/credits/grant" },
+    { method: "POST", route: "/admin/credits/reset" },
     { method: "POST", route: "/admin/credits/accounts/:accountId/quota" },
     { method: "DELETE", route: "/admin/credits/accounts/:accountId" },
     { method: "POST", route: "/admin/credits/accounts/:accountId/restore" },
@@ -41,6 +42,14 @@ export const creditAdminContract: {
             kind: "mutation",
             requiredPermission: "credit.grant",
             route: "/admin/credits/grant",
+            method: "POST",
+          },
+          {
+            id: "reset",
+            labelKey: "admin.credit.actions.reset",
+            kind: "mutation",
+            requiredPermission: "credit.grant",
+            route: "/admin/credits/reset",
             method: "POST",
           },
           {

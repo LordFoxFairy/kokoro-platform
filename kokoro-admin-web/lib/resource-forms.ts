@@ -52,6 +52,17 @@ const TRANSPORT = [
   { label: "internal", value: "internal" },
 ];
 
+// 1 积分 = 10000 micros（与 kokoro-credit domain/amount + PRD 一致）。运营按整数积分录入，落 micros。
+const MICROS_PER_CREDIT = 10000;
+function creditsToMicros(v: unknown): string {
+  return String(Math.round(Number(v) * MICROS_PER_CREDIT));
+}
+const CREDIT_REASONS = [
+  { label: "手动调整 manual_adjustment", value: "manual_adjustment" },
+  { label: "退款 refund", value: "refund" },
+  { label: "订阅 subscription", value: "subscription" },
+];
+
 function str(v: unknown): string {
   return v === undefined || v === null ? "" : String(v);
 }
@@ -368,5 +379,35 @@ export const ROW_ACTION_FORMS: Record<string, RowActionForm> = {
   "hub:skill-curation:review": {
     fields: [{ name: "review_status", label: "审核态", type: "select", required: true, options: REVIEW_STATUS }],
     buildBody: (v) => ({ status: str(v.review_status) }),
+  },
+  // 积分手动充值（by owner，测试便利）：ownerKind/ownerId 由账户行预填只读；运营录入整数积分 → micros 增量。
+  "credit:credit-accounts:grant": {
+    fields: [
+      { name: "ownerKind", label: "账户类型", type: "text", editable: false },
+      { name: "ownerId", label: "账户 ownerId", type: "text", editable: false },
+      { name: "amountCredits", label: "充值积分（整数）", type: "number", required: true, tip: "1 积分 = 0.01 元；落 micros = 积分 × 10000" },
+      { name: "reason", label: "原因", type: "select", required: true, options: CREDIT_REASONS },
+    ],
+    buildBody: (v) => ({
+      ownerKind: str(v.ownerKind),
+      ownerId: str(v.ownerId),
+      amountMicros: creditsToMicros(v.amountCredits),
+      reason: str(v.reason) || "manual_adjustment",
+    }),
+  },
+  // 积分重置（set-to-value，测试纠偏）：把余额设到目标积分（可清零），落带符号调整分录。
+  "credit:credit-accounts:reset": {
+    fields: [
+      { name: "ownerKind", label: "账户类型", type: "text", editable: false },
+      { name: "ownerId", label: "账户 ownerId", type: "text", editable: false },
+      { name: "targetCredits", label: "目标积分（整数，可为 0）", type: "number", required: true, tip: "把余额设到该值；不得低于已冻结额" },
+      { name: "reason", label: "原因", type: "select", required: true, options: CREDIT_REASONS },
+    ],
+    buildBody: (v) => ({
+      ownerKind: str(v.ownerKind),
+      ownerId: str(v.ownerId),
+      targetMicros: creditsToMicros(v.targetCredits),
+      reason: str(v.reason) || "manual_adjustment",
+    }),
   },
 };

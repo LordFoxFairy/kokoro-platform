@@ -80,6 +80,7 @@ export const zh = {
   "admin.credit.resources.usageRecords": "用量",
   "admin.credit.resources.pricingRules": "定价规则",
   "admin.credit.actions.grant": "发放积分",
+  "admin.credit.actions.reset": "重置余额",
   "admin.credit.actions.setQuota": "设置配额",
   "admin.credit.actions.delete": "删除",
   "admin.credit.actions.restore": "恢复",

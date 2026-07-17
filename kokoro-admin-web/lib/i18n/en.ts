@@ -72,6 +72,7 @@ export const en: Partial<Record<MessageKey, string>> = {
   "admin.credit.resources.usageRecords": "Usage",
   "admin.credit.resources.pricingRules": "Pricing Rules",
   "admin.credit.actions.grant": "Grant Credits",
+  "admin.credit.actions.reset": "Reset Balance",
   "admin.credit.actions.setQuota": "Set Quota",
   "admin.credit.actions.delete": "Delete",
   "admin.credit.actions.restore": "Restore",

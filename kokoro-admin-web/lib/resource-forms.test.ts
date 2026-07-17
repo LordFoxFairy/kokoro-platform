@@ -59,4 +59,24 @@ describe("ROW_ACTION_FORMS buildBody", () => {
     const form = ROW_ACTION_FORMS["hub:skill-curation:review"]!;
     expect(form.buildBody({ review_status: "rejected" })).toEqual({ status: "rejected" });
   });
+
+  it("credit grant: 整数积分 → micros(×10000)、owner 由行预填透传", () => {
+    const form = ROW_ACTION_FORMS["credit:credit-accounts:grant"]!;
+    expect(form.buildBody({ ownerKind: "team", ownerId: "t1", amountCredits: "100", reason: "manual_adjustment" })).toEqual({
+      ownerKind: "team",
+      ownerId: "t1",
+      amountMicros: "1000000",
+      reason: "manual_adjustment",
+    });
+  });
+
+  it("credit reset: 目标积分 → targetMicros(可清零)、reason 缺省 manual_adjustment", () => {
+    const form = ROW_ACTION_FORMS["credit:credit-accounts:reset"]!;
+    expect(form.buildBody({ ownerKind: "user", ownerId: "u1", targetCredits: "0" })).toEqual({
+      ownerKind: "user",
+      ownerId: "u1",
+      targetMicros: "0",
+      reason: "manual_adjustment",
+    });
+  });
 });
