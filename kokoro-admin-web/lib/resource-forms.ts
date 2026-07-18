@@ -27,6 +27,9 @@ export interface ResourceForm {
   keyField: string;
   fields: FormField[];
   buildBody: (values: Record<string, unknown>, ctx: { siteId: string }) => Record<string, unknown>;
+  // 仅供「新建」，不提供行内「编辑」：当 actionId 是非幂等 create（有独立 update 动作/路由）时置真，
+  // 避免行内 Edit 误走 create 造成重复建。编辑走对应 ROW_ACTION_FORMS 的 update 行动作。
+  createOnly?: boolean;
 }
 
 const SITE_STATUS = [
@@ -186,6 +189,28 @@ export const RESOURCE_FORMS: Record<string, ResourceForm> = {
         billingInterval: str(v.billingInterval),
       };
       if (has(v.creditMicros)) b.creditMicros = str(v.creditMicros);
+      return b;
+    },
+  },
+
+  // 定价规则新建（B3 定价治理）：(featureKey × labelKey? × unit) → 定额 amountMicros(每单位价,微单位)。
+  // 无加价倍率概念,毛利靠定高 amountMicros。create 非幂等 → createOnly,编辑走 update 行动作。
+  "credit:pricing-rules": {
+    actionId: "create",
+    createLabel: "新建定价规则",
+    keyField: "featureKey",
+    createOnly: true,
+    fields: [
+      { name: "featureKey", label: "功能键 featureKey", type: "text", required: true, placeholder: "如 chat.input_token / chat.output_token" },
+      { name: "labelKey", label: "模型标签 labelKey", type: "text", placeholder: "留空 = 该 feature 缺省价（不限模型）" },
+      { name: "unit", label: "计量单位 unit", type: "text", required: true, placeholder: "如 token" },
+      { name: "amountMicros", label: "单价（micros/单位）", type: "number", required: true, tip: "每单位价,微单位。如 40=每 token 40 micros。毛利靠定高此值。" },
+      { name: "status", label: "状态", type: "select", options: ONOFF },
+    ],
+    buildBody: (v) => {
+      const b: Record<string, unknown> = { featureKey: str(v.featureKey), unit: str(v.unit), amountMicros: str(v.amountMicros) };
+      if (has(v.labelKey)) b.labelKey = str(v.labelKey);
+      if (has(v.status)) b.status = str(v.status);
       return b;
     },
   },
@@ -409,5 +434,28 @@ export const ROW_ACTION_FORMS: Record<string, RowActionForm> = {
       targetMicros: creditsToMicros(v.targetCredits),
       reason: str(v.reason) || "manual_adjustment",
     }),
+  },
+  // 组织级配额（B3）：留空 = 清除配额（不限）；填整数积分 = 设本周期上限（V1 仅 monthly）。
+  "credit:credit-accounts:set-quota": {
+    fields: [
+      { name: "quotaCredits", label: "周期配额积分（留空=清除/不限）", type: "number", tip: "本周期消费上限；留空清除。1 积分=10000 micros" },
+    ],
+    buildBody: (v) => ({
+      quotaMicros: has(v.quotaCredits) ? creditsToMicros(v.quotaCredits) : null,
+      quotaPeriod: "monthly",
+    }),
+  },
+  // 定价规则编辑（B3 定价治理）：改单价（micros/单位，行值预填）+ 状态；身份键不可变故不在表单。
+  "credit:pricing-rules:update": {
+    fields: [
+      { name: "amountMicros", label: "单价（micros/单位）", type: "number", required: true, tip: "每单位价,微单位。毛利靠定高此值。" },
+      { name: "status", label: "状态", type: "select", options: ONOFF },
+    ],
+    buildBody: (v) => {
+      const b: Record<string, unknown> = {};
+      if (has(v.amountMicros)) b.amountMicros = str(v.amountMicros);
+      if (has(v.status)) b.status = str(v.status);
+      return b;
+    },
   },
 };

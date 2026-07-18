@@ -79,4 +79,42 @@ describe("ROW_ACTION_FORMS buildBody", () => {
       reason: "manual_adjustment",
     });
   });
+
+  it("credit set-quota: 填积分 → quotaMicros(×10000)+monthly；留空 → null 清除", () => {
+    const form = ROW_ACTION_FORMS["credit:credit-accounts:set-quota"]!;
+    expect(form.buildBody({ quotaCredits: "5000" })).toEqual({ quotaMicros: "50000000", quotaPeriod: "monthly" });
+    expect(form.buildBody({})).toEqual({ quotaMicros: null, quotaPeriod: "monthly" });
+  });
+
+  it("pricing update: 单价/状态直透，缺省字段省略（部分更新）", () => {
+    const form = ROW_ACTION_FORMS["credit:pricing-rules:update"]!;
+    expect(form.buildBody({ amountMicros: "480", status: "disabled" })).toEqual({ amountMicros: "480", status: "disabled" });
+    expect(form.buildBody({ amountMicros: "40" })).toEqual({ amountMicros: "40" });
+  });
+});
+
+describe("RESOURCE_FORMS credit:pricing-rules buildBody", () => {
+  const form = RESOURCE_FORMS["credit:pricing-rules"]!;
+  const ctx = { siteId: "" };
+
+  it("createOnly + 必填直透，labelKey/status 缺省省略", () => {
+    expect(form.createOnly).toBe(true);
+    expect(form.buildBody({ featureKey: "chat.input_token", unit: "token", amountMicros: "40" }, ctx)).toEqual({
+      featureKey: "chat.input_token",
+      unit: "token",
+      amountMicros: "40",
+    });
+  });
+
+  it("带 labelKey/status 时并入", () => {
+    expect(
+      form.buildBody({ featureKey: "chat.output_token", labelKey: "claude-code", unit: "token", amountMicros: "120", status: "active" }, ctx),
+    ).toEqual({
+      featureKey: "chat.output_token",
+      labelKey: "claude-code",
+      unit: "token",
+      amountMicros: "120",
+      status: "active",
+    });
+  });
 });

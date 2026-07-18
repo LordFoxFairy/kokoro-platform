@@ -260,7 +260,9 @@ export function ResourceTable({
         fixed: "right",
         width: 80 + (rowActions.length + rowFormActions.length + (upsertAvailable ? 1 : 0)) * 44,
         render: (_dom, row) => [
-          ...(upsertAvailable ? [<a key="edit" onClick={() => setForm({ mode: "edit", row })}>{t("ui.edit")}</a>] : []),
+          ...(upsertAvailable && !resourceForm?.createOnly
+            ? [<a key="edit" onClick={() => setForm({ mode: "edit", row })}>{t("ui.edit")}</a>]
+            : []),
           ...rowActions.map((a) => {
             const label = t(a.labelKey as MessageKey);
             return (
