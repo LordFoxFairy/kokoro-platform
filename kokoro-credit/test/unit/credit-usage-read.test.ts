@@ -139,7 +139,7 @@ describe("GET /credit/usage/summary", () => {
       headers: SITE,
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json().data).toEqual({ balanceMicros: "0", heldMicros: "0" });
+    expect(res.json().data).toEqual({ balanceMicros: "0", heldMicros: "0", quotaMicros: null, quotaPeriod: null });
   });
 
   it("有账户 → 余额 + held 聚合微单位字符串直透", async () => {
@@ -149,7 +149,12 @@ describe("GET /credit/usage/summary", () => {
       headers: SITE,
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json().data).toEqual({ balanceMicros: "95000000", heldMicros: "250000" });
+    expect(res.json().data).toEqual({
+      balanceMicros: "95000000",
+      heldMicros: "250000",
+      quotaMicros: null,
+      quotaPeriod: null,
+    });
   });
 });
 
@@ -177,6 +182,7 @@ describe("GET /credit/usage/ledger", () => {
     expect(d1.entries[0]).toEqual({
       entryId: "e3",
       deltaMicros: "-3000000",
+      balanceAfterMicros: "95000000",
       reason: "model_call",
       createdAt: new Date("2026-01-01T00:00:03.000Z").getTime(),
       runId: "run_z",

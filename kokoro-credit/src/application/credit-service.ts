@@ -1,6 +1,6 @@
 import { AppError, parsePositiveBigIntString } from "@kokoro/platform-kit";
 import { parseNonNegativeBigIntString } from "../domain/amount.js";
-import type { CreditAccount, CreditLedgerEntry, PricingRule, UsageSettlementResult } from "../domain/credit.js";
+import type { CreditAccount, CreditLedgerEntry, CreditQuotaPeriod, PricingRule, UsageSettlementResult } from "../domain/credit.js";
 import { CreditLifecycleError, type DeleteInput, type RestoreInput } from "../domain/credit-lifecycle.js";
 import { CreditAccountNotFoundError, CreditHoldNotFoundError, QuotaExceededError } from "../domain/errors.js";
 import type {
@@ -236,16 +236,27 @@ export class CreditService {
 
   // run 计费面只读：解析 namespace→team 账户余额+held 聚合（account.heldMicros 为域内原子维护的活跃冻结总额）。
   // 只读不建账：无账户（或已软删）→零额。
-  async readUsageSummary(command: ReadUsageSummaryCommand): Promise<{ balanceMicros: string; heldMicros: string }> {
+  async readUsageSummary(command: ReadUsageSummaryCommand): Promise<{
+    balanceMicros: string;
+    heldMicros: string;
+    quotaMicros: string | null;
+    quotaPeriod: CreditQuotaPeriod | null;
+  }> {
     const account = await this.repository.findActiveAccountByOwner({
       siteId: command.siteId,
       ownerKind: "team",
       ownerId: command.namespace,
     });
     if (!account) {
-      return { balanceMicros: "0", heldMicros: "0" };
+      return { balanceMicros: "0", heldMicros: "0", quotaMicros: null, quotaPeriod: null };
     }
-    return { balanceMicros: account.balanceMicros, heldMicros: account.heldMicros };
+    // quota 透出供用户面「配额已用/预警」：null=未设配额(不限)。
+    return {
+      balanceMicros: account.balanceMicros,
+      heldMicros: account.heldMicros,
+      quotaMicros: account.quotaMicros,
+      quotaPeriod: account.quotaPeriod,
+    };
   }
 
   // run 计费面只读：解析 namespace→team 账户流水分页（复合游标）。只读不建账：无账户→空流水。

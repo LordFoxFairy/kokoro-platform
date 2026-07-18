@@ -268,10 +268,12 @@ export function registerCreditRoutes(app: FastifyInstance, service: CreditServic
       });
       const last = entries[entries.length - 1];
       // 微单位含符号字符串直透；createdAt→epoch ms；runId=ledger 行 requestId（受理 hold 带 run_id，capture 贯通）。
+      // balanceAfterMicros=入账后余额快照，供用户面「余额趋势」逐点重建。
       const data = {
         entries: entries.map((entry) => ({
           entryId: entry.id,
           deltaMicros: entry.amountMicros,
+          balanceAfterMicros: entry.balanceAfterMicros,
           reason: entry.reason,
           createdAt: entry.createdAt.getTime(),
           runId: entry.requestId,
