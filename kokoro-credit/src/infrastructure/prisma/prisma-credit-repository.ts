@@ -3,6 +3,7 @@ import type { Prisma, PrismaClient } from "../../../generated/prisma/index.js";
 import { parseNonNegativeBigIntString } from "../../domain/amount.js";
 import type {
   CreditAccount,
+  CreditAdminStats,
   CreditHold,
   CreditHoldStatus,
   CreditLedgerEntry,
@@ -652,6 +653,36 @@ export class PrismaCreditRepository implements CreditRepository {
       orderBy: { createdAt: "desc" },
     });
     return accounts.map(mapCreditAccount);
+  }
+
+  // 运营台聚合：存活账户计数 + 余额/冻结求和 + ledger 按符号聚合发放/消费（DB 侧 aggregate,不拉全量）。
+  async readAdminStats(): Promise<CreditAdminStats> {
+    const [accountsTotal, accountsActive, liveSum, granted, spent] = await Promise.all([
+      this.prisma.creditAccount.count({ where: { deletedAt: null } }),
+      this.prisma.creditAccount.count({ where: { deletedAt: null, status: "active" } }),
+      this.prisma.creditAccount.aggregate({
+        where: { deletedAt: null },
+        _sum: { balanceMicros: true, heldMicros: true },
+      }),
+      this.prisma.creditLedgerEntry.aggregate({
+        where: { amountMicros: { gt: 0 } },
+        _sum: { amountMicros: true },
+      }),
+      this.prisma.creditLedgerEntry.aggregate({
+        where: { amountMicros: { lt: 0 } },
+        _sum: { amountMicros: true },
+      }),
+    ]);
+    const spentSum = spent._sum.amountMicros ?? 0n;
+    return {
+      accountsTotal,
+      accountsActive,
+      balanceSumMicros: (liveSum._sum.balanceMicros ?? 0n).toString(),
+      heldSumMicros: (liveSum._sum.heldMicros ?? 0n).toString(),
+      grantedTotalMicros: (granted._sum.amountMicros ?? 0n).toString(),
+      // spent 分录为负,取绝对值呈现「累计消费」。
+      spentTotalMicros: (spentSum < 0n ? -spentSum : spentSum).toString(),
+    };
   }
 
   async listLedgerEntries(): Promise<CreditLedgerEntry[]> {

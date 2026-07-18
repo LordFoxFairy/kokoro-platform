@@ -209,6 +209,17 @@ function makeFakes(overrides: FakeOverrides = {}): Fakes {
       calls.push("listRefunds");
       return [];
     },
+    readAdminStats: async () => {
+      calls.push("readAdminStats");
+      return {
+        ordersTotal: 0,
+        ordersPaid: 0,
+        ordersPending: 0,
+        ordersRefunded: 0,
+        ordersCanceled: 0,
+        revenueByCurrency: [],
+      };
+    },
     upsertProvider: async (input) => {
       calls.push("upsertProvider");
       return { id: "prov_1", ...input, createdAt: new Date(0), updatedAt: new Date(0) };

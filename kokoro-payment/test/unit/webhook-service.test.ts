@@ -229,6 +229,9 @@ class InMemoryWebhookRepository implements PaymentRepository {
   async listRefunds(): Promise<never[]> {
     throw new Error("not used in webhook tests");
   }
+  async readAdminStats(): Promise<never> {
+    throw new Error("not used in webhook tests");
+  }
 }
 
 interface Harness {

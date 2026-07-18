@@ -1,6 +1,6 @@
 import { AppError, parsePositiveBigIntString } from "@kokoro/platform-kit";
 import { parseNonNegativeBigIntString } from "../domain/amount.js";
-import type { CreditAccount, CreditLedgerEntry, CreditQuotaPeriod, PricingRule, UsageSettlementResult } from "../domain/credit.js";
+import type { CreditAccount, CreditAdminStats, CreditLedgerEntry, CreditQuotaPeriod, PricingRule, UsageSettlementResult } from "../domain/credit.js";
 import { CreditLifecycleError, type DeleteInput, type RestoreInput } from "../domain/credit-lifecycle.js";
 import { CreditAccountNotFoundError, CreditHoldNotFoundError, QuotaExceededError } from "../domain/errors.js";
 import type {
@@ -118,6 +118,11 @@ export class CreditService {
       parsePositiveBigIntString(input.amountMicros, "amountMicros");
     }
     return this.repository.updatePricingRule(input);
+  }
+
+  // 运营台聚合总览（admin B2）：账户与流水汇总，供运营台卡片。
+  async readAdminStats(): Promise<CreditAdminStats> {
+    return this.repository.readAdminStats();
   }
 
   async deletePricingRule(input: DeleteInput): Promise<PricingRule> {

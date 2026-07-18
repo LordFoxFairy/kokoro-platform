@@ -184,6 +184,17 @@ function trackingRepo(): {
       calls.push("listAccounts");
       return [];
     },
+    readAdminStats: async () => {
+      calls.push("readAdminStats");
+      return {
+        accountsTotal: 0,
+        accountsActive: 0,
+        balanceSumMicros: "0",
+        heldSumMicros: "0",
+        grantedTotalMicros: "0",
+        spentTotalMicros: "0",
+      };
+    },
     listLedgerEntries: async () => {
       calls.push("listLedgerEntries");
       return [];

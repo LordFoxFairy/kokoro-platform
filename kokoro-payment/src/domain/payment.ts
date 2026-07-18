@@ -72,3 +72,14 @@ export interface Refund {
   createdAt: Date;
   updatedAt: Date;
 }
+
+// 运营台聚合总览（admin B2）：订单按状态计数 + 已支付营收按币种汇总（amountMinor 最小货币单位字符串）。
+// 营收按币种分组——多币种不可直加。
+export interface PaymentAdminStats {
+  ordersTotal: number;
+  ordersPaid: number;
+  ordersPending: number;
+  ordersRefunded: number;
+  ordersCanceled: number;
+  revenueByCurrency: { currency: string; amountMinor: string }[];
+}

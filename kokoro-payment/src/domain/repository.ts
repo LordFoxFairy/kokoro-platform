@@ -1,6 +1,7 @@
 import type {
   BillingInterval,
   Order,
+  PaymentAdminStats,
   PaymentEvent,
   PaymentEventStatus,
   Plan,
@@ -106,6 +107,8 @@ export interface PaymentRepository {
   listSubscriptions(): Promise<Subscription[]>;
   listPaymentEvents(): Promise<PaymentEvent[]>;
   listRefunds(): Promise<Refund[]>;
+  // 运营台聚合总览（admin B2）：订单按状态计数 + 已支付营收按币种。
+  readAdminStats(): Promise<PaymentAdminStats>;
 }
 
 export interface GrantPurchaseCreditsInput {

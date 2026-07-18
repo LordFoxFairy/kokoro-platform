@@ -45,6 +45,7 @@ function ensureOnlyRepo(seen: EnsureCreditAccountInput[]): CreditRepository {
     restorePricingRule: reject,
     quote: reject,
     listAccounts: reject,
+    readAdminStats: reject,
     listLedgerEntries: reject,
     listUsageRecords: reject,
     listPricingRules: reject,

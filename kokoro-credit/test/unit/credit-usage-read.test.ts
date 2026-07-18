@@ -106,6 +106,7 @@ function readRepo(hasAccount: boolean): CreditRepository {
     restorePricingRule: reject,
     quote: reject,
     listAccounts: reject,
+    readAdminStats: reject,
     listLedgerEntries: reject,
     listUsageRecords: reject,
     listPricingRules: reject,

@@ -1,5 +1,6 @@
 import type {
   CreditAccount,
+  CreditAdminStats,
   CreditHold,
   CreditLedgerEntry,
   CreditMutationResult,
@@ -125,6 +126,8 @@ export interface CreditRepository {
   deletePricingRule(input: DeleteInput): Promise<PricingRule>;
   restorePricingRule(input: RestoreInput): Promise<PricingRule>;
   listAccounts(siteId?: string, options?: ListOptions): Promise<CreditAccount[]>;
+  // 运营台聚合总览（admin B2）：账户计数 + 余额/冻结/发放/消费汇总（全站）。
+  readAdminStats(): Promise<CreditAdminStats>;
   listLedgerEntries(): Promise<CreditLedgerEntry[]>;
   listUsageRecords(): Promise<UsageRecord[]>;
   listPricingRules(options?: ListOptions): Promise<PricingRule[]>;

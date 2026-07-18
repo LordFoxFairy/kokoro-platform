@@ -19,6 +19,7 @@ import {
 } from "../../domain/payment-lifecycle.js";
 import type {
   Order,
+  PaymentAdminStats,
   PaymentEvent,
   PaymentEventStatus,
   Plan,
@@ -312,6 +313,26 @@ export class PrismaPaymentRepository implements PaymentRepository {
       orderBy: { createdAt: "desc" },
     });
     return subscriptions.map(mapSubscription);
+  }
+
+  // 运营台聚合：订单按状态计数 + 已支付营收按币种（DB 侧 groupBy,不拉全量）。多币种不可直加。
+  async readAdminStats(): Promise<PaymentAdminStats> {
+    const [byStatus, byCurrency] = await Promise.all([
+      this.prisma.order.groupBy({ by: ["status"], _count: { _all: true } }),
+      this.prisma.order.groupBy({ by: ["currency"], where: { status: "paid" }, _sum: { amountMinor: true } }),
+    ]);
+    const count = (status: string): number => byStatus.find((r) => r.status === status)?._count._all ?? 0;
+    return {
+      ordersTotal: byStatus.reduce((sum, r) => sum + r._count._all, 0),
+      ordersPaid: count("paid"),
+      ordersPending: count("pending") + count("confirming"),
+      ordersRefunded: count("refunded"),
+      ordersCanceled: count("canceled"),
+      revenueByCurrency: byCurrency.map((r) => ({
+        currency: r.currency,
+        amountMinor: (r._sum.amountMinor ?? BigInt(0)).toString(),
+      })),
+    };
   }
 
   async listPaymentEvents(): Promise<PaymentEvent[]> {

@@ -15,6 +15,7 @@ export const creditAdminContract: {
     { method: "GET", route: "/admin/credits/ledger" },
     { method: "GET", route: "/admin/credits/usage" },
     { method: "GET", route: "/admin/credits/pricing" },
+    { method: "GET", route: "/admin/credits/stats" },
     { method: "POST", route: "/admin/credits/grant" },
     { method: "POST", route: "/admin/credits/reset" },
     { method: "POST", route: "/admin/credits/accounts/:accountId/quota" },

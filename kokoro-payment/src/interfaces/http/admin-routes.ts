@@ -40,6 +40,9 @@ export function registerPaymentAdminRoutes(
     app.get(resource.route, async (_request, reply) => sendData(reply, await lister(repository)));
   }
 
+  // 运营台聚合总览（B2）：订单按状态计数 + 已支付营收按币种。
+  app.get("/admin/payments/stats", async (_request, reply) => sendData(reply, await repository.readAdminStats()));
+
   app.post("/admin/payments/grant-plan", async (request, reply) => {
     try {
       const ctx = readRequestContext(request.headers);

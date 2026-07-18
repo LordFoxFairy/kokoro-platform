@@ -50,6 +50,11 @@ export function registerCreditAdminRoutes(
     sendData(reply, await repository.listPricingRules({ includeDeleted: true })),
   );
 
+  // 运营台聚合总览（B2）：账户计数 + 余额/冻结/发放/消费汇总（全站，DB 侧 aggregate）。
+  app.get("/admin/credits/stats", async (_request, reply) =>
+    sendData(reply, await service.readAdminStats()),
+  );
+
   // WHY: 管理员手动发积分；reason=refund 即退积分。idempotencyKey 服务端生成（管理员动作非客户端重放）。
   app.post("/admin/credits/grant", async (request, reply) => {
     try {

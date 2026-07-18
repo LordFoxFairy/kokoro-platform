@@ -87,6 +87,18 @@ export interface AccountAudit {
   usageRecords: UsageRecord[];
 }
 
+// 运营台聚合总览（admin B2）：全站维度的账户与流水汇总。微单位字符串（BigInt 安全）。
+// 发放/消费从 ledger 分录符号聚合（正=发放/授信、负=消费/扣减,spent 取绝对值）；
+// 余额/冻结从存活账户求和（软删账户不计入负债）。
+export interface CreditAdminStats {
+  accountsTotal: number;
+  accountsActive: number;
+  balanceSumMicros: string;
+  heldSumMicros: string;
+  grantedTotalMicros: string;
+  spentTotalMicros: string;
+}
+
 export interface QuoteResult {
   featureKey: string;
   labelKey: string | null;

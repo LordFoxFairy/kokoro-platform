@@ -17,6 +17,7 @@ export const paymentAdminContract: {
     { method: "GET", route: "/admin/payments/events" },
     { method: "GET", route: "/admin/payments/refunds" },
     { method: "GET", route: "/admin/payments/providers" },
+    { method: "GET", route: "/admin/payments/stats" },
     { method: "POST", route: "/plans/upsert" },
     { method: "DELETE", route: "/admin/payments/plans/:planId" },
     { method: "POST", route: "/admin/payments/plans/:planId/restore" },
