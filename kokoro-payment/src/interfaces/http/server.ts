@@ -33,8 +33,8 @@ export interface CreatePaymentServerOptions {
   enabledProviderKinds?: PaymentProviderKind[];
 }
 
-// payment 所需 caller 凭据：admin(网关) 入站 + payment(自身出站调 credit 授信) 身份。
-const PAYMENT_REQUIRED_CALLERS: ServiceCaller[] = ["admin", "payment"];
+// payment 所需 caller 凭据：admin(网关) + payment(自身出站调 credit) + web-bff(用户面店面/结账)。
+const PAYMENT_REQUIRED_CALLERS: ServiceCaller[] = ["admin", "payment", "web-bff"];
 
 export function createPaymentServer(options: CreatePaymentServerOptions) {
   const app = Fastify({
@@ -49,6 +49,11 @@ export function createPaymentServer(options: CreatePaymentServerOptions) {
   registerRouteAccess(app, { ...ra, requiredCallers: PAYMENT_REQUIRED_CALLERS });
   declareRouteAccess(app, { path: "/healthz", exact: true }, "public");
   declareRouteAccess(app, "/payments/webhooks", "public");
+  // 用户面（web-bff）：店面目录 GET /plans（exact）+ 结账 POST /orders/checkout。须先于下方 /plans、
+  // /orders 前缀声明——resolveLevel 最长路径优先、同长先声明者胜：/orders/checkout(16) 长于 /orders(7)
+  // 恒胜；exact /plans(6) 与前缀 /plans(6) 同长,故此处先声明以在 GET /plans 上胜出。upsert/:id 仍归内部。
+  declareRouteAccess(app, { path: "/plans", exact: true }, "web-bff");
+  declareRouteAccess(app, "/orders/checkout", "web-bff");
   declareRouteAccess(app, "/admin", "admin");
   declareRouteAccess(app, "/orders", "runtime-internal");
   declareRouteAccess(app, "/plans", "runtime-internal");
