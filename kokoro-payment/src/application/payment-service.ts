@@ -56,10 +56,31 @@ export class PaymentService {
   // V1 现状：无任何 provider 接入托管收银台会话创建（既有 provider 仅做 webhook 验签），故诚实返回
   // 501——web 据此渲染「支付暂未开通」禁用态（状态真来自后端，非假按钮）。provider 托管收银台落地后，
   // happy path 在此接入：建单 + 生成 provider checkout URL 返回。
-  async startCheckout(input: { siteId: string; teamId: string; planId: string }): Promise<never> {
+  // 收银台会话：套餐可售校验后，向可用收银台 provider 取跳转 URL。
+  // dev/mock 档：mock provider 已启用 → 建单 + 返回 web 模拟收银台 URL（用户在此确认支付 → mock webhook
+  // → confirmOrder 到账）。真托管收银台（Stripe/支付宝/微信）在此按 provider 创建真 session 并返回其 URL。
+  // 无任何可用收银台 provider → 诚实 501（web 渲染「支付暂未开通」）。
+  async startCheckout(input: {
+    siteId: string;
+    teamId: string;
+    planId: string;
+  }): Promise<{ orderId: string; checkoutUrl: string }> {
     const plan = await this.repository.findPlanById(input.planId);
     assertPlanSellable(plan, input.siteId, input.planId);
-    throw new CheckoutUnavailableError();
+    const mock = await this.repository.findProviderByKey("mock");
+    if (!mock || !mock.enabled) {
+      throw new CheckoutUnavailableError();
+    }
+    const order = await this.repository.createOrder({
+      siteId: input.siteId,
+      teamId: input.teamId,
+      planId: input.planId,
+      amountMinor: plan.amountMinor,
+      currency: plan.currency,
+      idempotencyKey: `checkout:${input.teamId}:${input.planId}:${randomUUID()}`,
+    });
+    // 相对路径（web 同源）：dev 模拟收银台页 /billing/pay/<orderId>。
+    return { orderId: order.id, checkoutUrl: `/billing/pay/${order.id}` };
   }
 
   async deletePlan(input: DeleteInput) {

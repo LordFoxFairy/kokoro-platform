@@ -131,9 +131,10 @@ export function registerPaymentRoutes(app: FastifyInstance, service: PaymentServ
         return sendError(reply, 400, "payment.site_required", "缺少站点上下文", undefined, ctx.requestId);
       }
       const body = checkoutRequestSchema.parse(request.body);
-      // startCheckout 校验套餐可售后恒抛 501（V1 无托管收银台）；由 handlePaymentError 归一成 501 响应。
-      await service.startCheckout({ ...body, siteId: ctx.siteId });
-      return sendError(reply, 501, "payment.checkout_unavailable", "支付渠道未配置", undefined, ctx.requestId);
+      // 有可用收银台 provider（dev=mock）→ 建单 + 返回 checkoutUrl；无 → startCheckout 抛
+      // CheckoutUnavailableError，handlePaymentError 归一成 501（web 渲染「支付暂未开通」）。
+      const result = await service.startCheckout({ ...body, siteId: ctx.siteId });
+      return sendData(reply, { checkoutUrl: result.checkoutUrl }, 200, ctx.requestId);
     } catch (error) {
       return handlePaymentError(error, reply, "payment.checkout_failed");
     }

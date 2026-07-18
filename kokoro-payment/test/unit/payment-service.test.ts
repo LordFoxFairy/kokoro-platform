@@ -627,6 +627,24 @@ describe("PaymentService startCheckout（诚实态：V1 未接入托管收银台
     expect(fakes.calls).not.toContain("createOrder");
   });
 
+  it("mock provider 已启用 → 建单 + 返回模拟收银台 checkoutUrl", async () => {
+    const fakes = makeFakes();
+    // dev mock 收银台可用：findProviderByKey('mock') 返回启用行。
+    fakes.repo.findProviderByKey = async () => ({
+      id: "prov_mock",
+      key: "mock",
+      kind: "mock",
+      webhookSecretRef: "KOKORO_PAYMENT_MOCK_WEBHOOK_SECRET",
+      enabled: true,
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+    const result = await service(fakes).startCheckout({ siteId: "site_1", teamId: "team_1", planId: "plan_1" });
+    expect(result.orderId).toBe(order.id);
+    expect(result.checkoutUrl).toBe(`/billing/pay/${order.id}`);
+    expect(fakes.calls).toContain("createOrder");
+  });
+
   it("套餐不存在 → PlanNotFoundError（先校验，不进收银台）", async () => {
     const fakes = makeFakes({ plan: null });
     await expect(
