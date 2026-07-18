@@ -31,9 +31,39 @@ const ENTRIES = [
 
 const pendingSchema = z.array(z.object({ status: z.string() }).passthrough());
 
+// 运营台计费总览（B2c）：网关聚合 credit + payment stats；某模块离线段为 null。
+const billingOverviewSchema = z.object({
+  credit: z
+    .object({
+      accountsTotal: z.number(),
+      accountsActive: z.number(),
+      balanceSumMicros: z.string(),
+      heldSumMicros: z.string(),
+      grantedTotalMicros: z.string(),
+      spentTotalMicros: z.string(),
+    })
+    .nullable(),
+  payment: z
+    .object({
+      ordersTotal: z.number(),
+      ordersPaid: z.number(),
+      ordersPending: z.number(),
+      ordersRefunded: z.number(),
+      ordersCanceled: z.number(),
+      revenueByCurrency: z.array(z.object({ currency: z.string(), amountMinor: z.string() })),
+    })
+    .nullable(),
+});
+type BillingOverview = z.infer<typeof billingOverviewSchema>;
+
+// 微单位 → 积分（÷10000）；最小货币单位 → 金额（÷100）。仅展示用（admin 量级 Number 足够）。
+const toCredits = (micros: string): string => (Number(micros) / 10000).toLocaleString(undefined, { maximumFractionDigits: 2 });
+const toMoney = (minor: string): string => (Number(minor) / 100).toFixed(2);
+
 export default function Page(): React.ReactElement {
   const { me, sites } = useAdmin();
   const [pending, setPending] = useState<number | null>(null);
+  const [billing, setBilling] = useState<BillingOverview | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -44,7 +74,19 @@ export default function Page(): React.ReactElement {
         setPending(null);
       }
     })();
+    (async () => {
+      try {
+        setBilling(await apiGet("/api/billing-overview", billingOverviewSchema));
+      } catch {
+        setBilling(null);
+      }
+    })();
   }, []);
+
+  const revenueText =
+    billing?.payment && billing.payment.revenueByCurrency.length > 0
+      ? billing.payment.revenueByCurrency.map((r) => `${toMoney(r.amountMinor)} ${r.currency}`).join(" · ")
+      : "—";
 
   const scope = me?.scopeSites?.includes("*") ? "全部站点" : `${me?.scopeSites?.length ?? 0} 个站点`;
 
@@ -79,6 +121,48 @@ export default function Page(): React.ReactElement {
         <StatisticCard.Divider />
         <StatisticCard statistic={{ title: "我的角色", value: me?.roleKey ?? "—" }} />
       </StatisticCard.Group>
+
+      {/* 计费总览（B2c）：营收 / 累计发放·消费 / 当前余额 / 订单 / 账户。模块离线段显 —。 */}
+      <ProCard title="计费总览" bordered headerBordered style={{ marginBottom: 16 }}>
+        <StatisticCard.Group direction="row">
+          <StatisticCard
+            statistic={{ title: "已支付营收", value: revenueText, description: <span style={{ color: "rgba(0,0,0,0.45)" }}>paid 订单合计</span> }}
+          />
+          <StatisticCard.Divider />
+          <StatisticCard
+            statistic={{
+              title: "订单",
+              value: billing?.payment ? `${billing.payment.ordersPaid}/${billing.payment.ordersTotal}` : "—",
+              description: <span style={{ color: "rgba(0,0,0,0.45)" }}>已付/总 · 待付 {billing?.payment?.ordersPending ?? "—"}</span>,
+            }}
+          />
+          <StatisticCard.Divider />
+          <StatisticCard
+            statistic={{ title: "累计发放", value: billing?.credit ? toCredits(billing.credit.grantedTotalMicros) : "—", suffix: "积分" }}
+          />
+          <StatisticCard.Divider />
+          <StatisticCard
+            statistic={{ title: "累计消费", value: billing?.credit ? toCredits(billing.credit.spentTotalMicros) : "—", suffix: "积分" }}
+          />
+          <StatisticCard.Divider />
+          <StatisticCard
+            statistic={{
+              title: "当前余额总额",
+              value: billing?.credit ? toCredits(billing.credit.balanceSumMicros) : "—",
+              suffix: "积分",
+              description: <span style={{ color: "rgba(0,0,0,0.45)" }}>冻结 {billing?.credit ? toCredits(billing.credit.heldSumMicros) : "—"}</span>,
+            }}
+          />
+          <StatisticCard.Divider />
+          <StatisticCard
+            statistic={{
+              title: "积分账户",
+              value: billing?.credit ? `${billing.credit.accountsActive}/${billing.credit.accountsTotal}` : "—",
+              description: <span style={{ color: "rgba(0,0,0,0.45)" }}>活跃/总</span>,
+            }}
+          />
+        </StatisticCard.Group>
+      </ProCard>
 
       <ProCard title="快捷入口" bordered headerBordered>
         <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))" }}>

@@ -417,3 +417,61 @@ export async function getUser360(
 
   return { creditAccount, orders: filteredOrders, identity };
 }
+
+// —— 运营台聚合总览（B2c）：聚合 credit + payment 的 stats 端点为一屏卡片数据。 ——
+// 单对象聚合面（非表资源列表），故不走 proxyResource 的 manifest-资源校验；route 为网关内可信常量
+// （非客户端输入,无 SSRF/开放代理风险,与 getUser360 硬编码 route 同信任级）。某模块离线/报错→该段 null,不拖垮整体。
+
+const creditStatsSchema = z.object({
+  accountsTotal: z.number(),
+  accountsActive: z.number(),
+  balanceSumMicros: z.string(),
+  heldSumMicros: z.string(),
+  grantedTotalMicros: z.string(),
+  spentTotalMicros: z.string(),
+});
+const paymentStatsSchema = z.object({
+  ordersTotal: z.number(),
+  ordersPaid: z.number(),
+  ordersPending: z.number(),
+  ordersRefunded: z.number(),
+  ordersCanceled: z.number(),
+  revenueByCurrency: z.array(z.object({ currency: z.string(), amountMinor: z.string() })),
+});
+export type CreditStats = z.infer<typeof creditStatsSchema>;
+export type PaymentStats = z.infer<typeof paymentStatsSchema>;
+
+export interface BillingOverview {
+  credit: CreditStats | null;
+  payment: PaymentStats | null;
+}
+
+async function fetchStats<T>(
+  modules: ModuleConfig[],
+  moduleId: string,
+  route: string,
+  schema: z.ZodType<T>,
+  internalSecret: string,
+): Promise<T> {
+  const module = modules.find((candidate) => candidate.id === moduleId);
+  if (!module) {
+    throw new GatewayError(`unknown module: ${moduleId}`, 400);
+  }
+  const response = await fetch(joinUrl(module.baseUrl, route), { headers: adminCallerHeaders(internalSecret) });
+  if (!response.ok) {
+    throw new GatewayError(`upstream returned HTTP ${response.status}`, 502);
+  }
+  const body: unknown = await response.json();
+  return schema.parse(z.object({ data: z.unknown() }).parse(body).data);
+}
+
+export async function getBillingOverview(
+  modules: ModuleConfig[],
+  internalSecret = "",
+): Promise<BillingOverview> {
+  const [credit, payment] = await Promise.all([
+    fetchStats(modules, "credit", "/admin/credits/stats", creditStatsSchema, internalSecret).catch(() => null),
+    fetchStats(modules, "payment", "/admin/payments/stats", paymentStatsSchema, internalSecret).catch(() => null),
+  ]);
+  return { credit, payment };
+}

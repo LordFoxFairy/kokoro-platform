@@ -4,6 +4,7 @@ import { createAdminServer, type AdminServerDeps } from "../../src/server.js";
 import {
   executeAction,
   GatewayError,
+  getBillingOverview,
   getManifests,
   getSites,
   getUser360,
@@ -550,5 +551,52 @@ describe("hub module wiring", () => {
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({ id: "hub", online: true });
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe("http://kokoro-hub:4251/hub/admin/manifest");
+  });
+});
+
+describe("getBillingOverview", () => {
+  const billingModules: ModuleConfig[] = [
+    { id: "credit", label: "Credits", baseUrl: "http://127.0.0.1:4231", manifestPath: "/admin/credits/manifest" },
+    { id: "payment", label: "Payments", baseUrl: "http://127.0.0.1:4241", manifestPath: "/admin/payments/manifest" },
+  ];
+  const creditStats = {
+    accountsTotal: 6,
+    accountsActive: 6,
+    balanceSumMicros: "42459200",
+    heldSumMicros: "0",
+    grantedTotalMicros: "47000000",
+    spentTotalMicros: "4540800",
+  };
+  const paymentStats = {
+    ordersTotal: 5,
+    ordersPaid: 4,
+    ordersPending: 1,
+    ordersRefunded: 0,
+    ordersCanceled: 0,
+    revenueByCurrency: [{ currency: "CNY", amountMinor: "3450" }],
+  };
+
+  it("aggregates credit + payment stats (直取,不经 manifest 资源校验)", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/admin/credits/stats")) return jsonResponse({ data: creditStats });
+      if (url.endsWith("/admin/payments/stats")) return jsonResponse({ data: paymentStats });
+      throw new Error(`unexpected ${url}`);
+    });
+    const result = await getBillingOverview(billingModules);
+    expect(result.credit).toEqual(creditStats);
+    expect(result.payment).toEqual(paymentStats);
+  });
+
+  it("degrades a segment to null on upstream error (不拖垮整体)", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/admin/credits/stats")) return jsonResponse({ data: creditStats });
+      if (url.endsWith("/admin/payments/stats")) return jsonResponse({}, false, 502);
+      throw new Error(`unexpected ${url}`);
+    });
+    const result = await getBillingOverview(billingModules);
+    expect(result.credit).toEqual(creditStats);
+    expect(result.payment).toBeNull();
   });
 });

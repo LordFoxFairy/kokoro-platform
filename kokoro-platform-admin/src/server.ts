@@ -10,6 +10,7 @@ import {
   executeAction,
   filterManifestForOperator,
   GatewayError,
+  getBillingOverview,
   getManifests,
   getSites,
   getUser360,
@@ -233,6 +234,20 @@ export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps
     if (!operator) return reply;
     try {
       return sendData(reply, await getSites(modules, operator, deps.internalSecret ?? ""));
+    } catch (error) {
+      if (error instanceof GatewayError) {
+        return sendError(reply, error.statusCode, "gateway.error", error.message);
+      }
+      return sendError(reply, 502, "gateway.error", error instanceof Error ? error.message : String(error));
+    }
+  });
+
+  // 运营台总览（B2c）：聚合 credit + payment stats 为一屏卡片。需登录操作员；模块离线段降级 null。
+  app.get("/api/billing-overview", async (request, reply) => {
+    const operator = await requireOperator(request, reply);
+    if (!operator) return reply;
+    try {
+      return sendData(reply, await getBillingOverview(modules, deps.internalSecret ?? ""));
     } catch (error) {
       if (error instanceof GatewayError) {
         return sendError(reply, error.statusCode, "gateway.error", error.message);
