@@ -21,6 +21,7 @@ export const creditAdminContract: {
     { method: "DELETE", route: "/admin/credits/accounts/:accountId" },
     { method: "POST", route: "/admin/credits/accounts/:accountId/restore" },
     { method: "POST", route: "/admin/credits/pricing-rules" },
+    { method: "POST", route: "/admin/credits/pricing-rules/:pricingRuleId" },
     { method: "DELETE", route: "/admin/credits/pricing-rules/:pricingRuleId" },
     { method: "POST", route: "/admin/credits/pricing-rules/:pricingRuleId/restore" },
   ],
@@ -104,6 +105,14 @@ export const creditAdminContract: {
             kind: "mutation",
             requiredPermission: "credit.pricing.create",
             route: "/admin/credits/pricing-rules",
+            method: "POST",
+          },
+          {
+            id: "update",
+            labelKey: "admin.credit.actions.updatePricingRule",
+            kind: "mutation",
+            requiredPermission: "credit.pricing.create",
+            route: "/admin/credits/pricing-rules/:pricingRuleId",
             method: "POST",
           },
           {

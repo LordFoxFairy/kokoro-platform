@@ -85,6 +85,7 @@ export const zh = {
   "admin.credit.actions.delete": "删除",
   "admin.credit.actions.restore": "恢复",
   "admin.credit.actions.createPricingRule": "新建定价规则",
+  "admin.credit.actions.updatePricingRule": "编辑定价规则",
   "admin.credit.actions.deletePricingRule": "删除定价规则",
   "admin.credit.actions.restorePricingRule": "恢复定价规则",
 

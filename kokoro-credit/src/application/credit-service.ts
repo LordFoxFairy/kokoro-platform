@@ -6,6 +6,7 @@ import { CreditAccountNotFoundError, CreditHoldNotFoundError, QuotaExceededError
 import type {
   CaptureCreditInput,
   CreatePricingRuleInput,
+  UpdatePricingRuleInput,
   CreditAmountInput,
   CreditRepository,
   EnsureCreditAccountInput,
@@ -109,6 +110,14 @@ export class CreditService {
   async createPricingRule(input: CreatePricingRuleInput): Promise<PricingRule> {
     parsePositiveBigIntString(input.amountMicros, "amountMicros");
     return this.repository.createPricingRule(input);
+  }
+
+  // 定价编辑（admin 治理）：改价则校验正整数微单位；身份键不可变（换维度=另建）。
+  async updatePricingRule(input: UpdatePricingRuleInput): Promise<PricingRule> {
+    if (input.amountMicros !== undefined) {
+      parsePositiveBigIntString(input.amountMicros, "amountMicros");
+    }
+    return this.repository.updatePricingRule(input);
   }
 
   async deletePricingRule(input: DeleteInput): Promise<PricingRule> {

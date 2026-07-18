@@ -19,6 +19,7 @@ import {
   accountParamsSchema,
   auditAccountParamsSchema,
   createPricingRuleRequestSchema,
+  updatePricingRuleRequestSchema,
   deleteRequestSchema,
   grantCreditRequestSchema,
   pricingRuleParamsSchema,
@@ -143,6 +144,18 @@ export function registerCreditAdminRoutes(
       return sendData(reply, result);
     } catch (error) {
       return handleAdminError(error, reply, "credit.admin_pricing_rule_create_failed");
+    }
+  });
+
+  // 定价编辑（治理）：改价/状态/生效窗;身份键不可变。POST 到条目(契约仅 GET|POST|DELETE,无 PATCH)。
+  app.post("/admin/credits/pricing-rules/:pricingRuleId", async (request, reply) => {
+    try {
+      const { pricingRuleId } = pricingRuleParamsSchema.parse(request.params);
+      const input = updatePricingRuleRequestSchema.parse(request.body);
+      const result = await service.updatePricingRule({ id: pricingRuleId, ...input });
+      return sendData(reply, result);
+    } catch (error) {
+      return handleAdminError(error, reply, "credit.admin_pricing_rule_update_failed");
     }
   });
 

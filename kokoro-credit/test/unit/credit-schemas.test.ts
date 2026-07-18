@@ -3,6 +3,7 @@ import {
   accountParamsSchema,
   auditAccountParamsSchema,
   createPricingRuleRequestSchema,
+  updatePricingRuleRequestSchema,
   creditMutationRequestSchema,
   deleteRequestSchema,
   ensureCreditAccountRequestSchema,
@@ -263,5 +264,31 @@ describe("createPricingRuleRequestSchema", () => {
     expect(() => createPricingRuleRequestSchema.parse({ ...base, labelKey: "" })).toThrow();
     expect(() => createPricingRuleRequestSchema.parse({ ...base, status: "archived" })).toThrow();
     expect(() => createPricingRuleRequestSchema.parse({ ...base, extra: 1 })).toThrow();
+  });
+});
+
+describe("updatePricingRuleRequestSchema", () => {
+  it("accepts a partial edit (empty = no-op) and full mutable set", () => {
+    expect(updatePricingRuleRequestSchema.parse({})).toEqual({});
+    const parsed = updatePricingRuleRequestSchema.parse({
+      amountMicros: "480",
+      status: "disabled",
+      effectiveFrom: "2026-07-04T00:00:00.000Z",
+      effectiveUntil: null,
+    });
+    expect(parsed.amountMicros).toBe("480");
+    expect(parsed.status).toBe("disabled");
+    expect(parsed.effectiveFrom).toBeInstanceOf(Date);
+    expect(parsed.effectiveUntil).toBeNull();
+  });
+
+  it.each(["0", "-1", "abc", "1.5"])("rejects invalid amountMicros %j", (amountMicros) => {
+    expect(() => updatePricingRuleRequestSchema.parse({ amountMicros })).toThrow();
+  });
+
+  it("rejects identity keys and unknown fields (身份键不可变)", () => {
+    expect(() => updatePricingRuleRequestSchema.parse({ featureKey: "x" })).toThrow();
+    expect(() => updatePricingRuleRequestSchema.parse({ unit: "token" })).toThrow();
+    expect(() => updatePricingRuleRequestSchema.parse({ status: "archived" })).toThrow();
   });
 });

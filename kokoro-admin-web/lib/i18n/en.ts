@@ -77,6 +77,7 @@ export const en: Partial<Record<MessageKey, string>> = {
   "admin.credit.actions.delete": "Delete",
   "admin.credit.actions.restore": "Restore",
   "admin.credit.actions.createPricingRule": "New Pricing Rule",
+  "admin.credit.actions.updatePricingRule": "Edit Pricing Rule",
   "admin.credit.actions.deletePricingRule": "Delete Pricing Rule",
   "admin.credit.actions.restorePricingRule": "Restore Pricing Rule",
 

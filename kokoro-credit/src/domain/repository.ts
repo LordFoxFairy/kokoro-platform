@@ -95,6 +95,16 @@ export interface CreatePricingRuleInput {
   effectiveUntil?: Date | null | undefined;
 }
 
+// 定价规则编辑（admin 治理）：仅改可变字段（价/状态/生效窗），身份键（featureKey/labelKey/unit）不可变——
+// 换维度=另建规则。字段皆可选（缺省不动）；effectiveUntil=null 显式清除截止。
+export interface UpdatePricingRuleInput {
+  id: string;
+  amountMicros?: string | undefined;
+  status?: PricingRule["status"] | undefined;
+  effectiveFrom?: Date | undefined;
+  effectiveUntil?: Date | null | undefined;
+}
+
 export interface CreditRepository {
   ensureAccount(input: EnsureCreditAccountInput): Promise<CreditAccount>;
   grantCredits(input: CreditAmountInput): Promise<CreditMutationResult>;
@@ -109,6 +119,7 @@ export interface CreditRepository {
   quote(input: QuoteInput): Promise<QuoteResult>;
   priceUsage(input: PriceUsageInput): Promise<string>;
   createPricingRule(input: CreatePricingRuleInput): Promise<PricingRule>;
+  updatePricingRule(input: UpdatePricingRuleInput): Promise<PricingRule>;
   deleteAccount(input: DeleteInput): Promise<CreditAccount>;
   restoreAccount(input: RestoreInput): Promise<CreditAccount>;
   deletePricingRule(input: DeleteInput): Promise<PricingRule>;

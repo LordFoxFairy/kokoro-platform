@@ -164,6 +164,17 @@ function trackingRepo(): {
         effectiveUntil: input.effectiveUntil ?? null,
       };
     },
+    updatePricingRule: async (input) => {
+      calls.push("updatePricingRule");
+      return {
+        ...pricingRule,
+        id: input.id,
+        ...(input.amountMicros !== undefined ? { amountMicros: input.amountMicros } : {}),
+        ...(input.status !== undefined ? { status: input.status } : {}),
+        ...(input.effectiveFrom !== undefined ? { effectiveFrom: input.effectiveFrom } : {}),
+        ...(input.effectiveUntil !== undefined ? { effectiveUntil: input.effectiveUntil } : {}),
+      };
+    },
     quote: async (input) => {
       calls.push("quote");
       quoteInputs.push(input);
@@ -404,6 +415,7 @@ describe("CreditService positive-amount guard", () => {
     await service.deleteAccount({ id: "a1", deletedBy: "operator", reason: "closed" });
     await service.restoreAccount({ id: "a1" });
     await service.createPricingRule({ featureKey: "model.call", unit: "token", amountMicros: "1" });
+    await service.updatePricingRule({ id: "pr1", amountMicros: "480" });
     await service.deletePricingRule({ id: "pr1", deletedBy: "operator" });
     await service.restorePricingRule({ id: "pr1" });
 
@@ -411,9 +423,17 @@ describe("CreditService positive-amount guard", () => {
       "deleteAccount",
       "restoreAccount",
       "createPricingRule",
+      "updatePricingRule",
       "deletePricingRule",
       "restorePricingRule",
     ]);
+  });
+
+  it("updatePricingRule rejects non-positive amountMicros before hitting repo", async () => {
+    const { repo, calls } = trackingRepo();
+    const service = new CreditService(repo);
+    await expect(service.updatePricingRule({ id: "pr1", amountMicros: "0" })).rejects.toThrow();
+    expect(calls).not.toContain("updatePricingRule");
   });
 
   it("defaults quantity to 1 when omitted", async () => {

@@ -173,3 +173,14 @@ export const createPricingRuleRequestSchema = z
     effectiveUntil: z.coerce.date().optional(),
   })
   .strict();
+
+// 定价编辑（admin 治理）：仅可变字段，皆可选（缺省不动）；身份键（featureKey/labelKey/unit）不在此，不可变。
+// effectiveUntil 可显式传 null 清除截止。
+export const updatePricingRuleRequestSchema = z
+  .object({
+    amountMicros: amountMicrosSchema.optional(),
+    status: z.enum(["active", "disabled"]).optional(),
+    effectiveFrom: z.coerce.date().optional(),
+    effectiveUntil: z.coerce.date().nullable().optional(),
+  })
+  .strict();

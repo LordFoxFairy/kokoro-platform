@@ -25,6 +25,7 @@ import {
 import type {
   CaptureCreditInput,
   CreatePricingRuleInput,
+  UpdatePricingRuleInput,
   CreditAmountInput,
   CreditRepository,
   EnsureCreditAccountInput,
@@ -581,6 +582,34 @@ export class PrismaCreditRepository implements CreditRepository {
       },
     });
     return mapPricingRule(rule);
+  }
+
+  // 定价编辑：仅改传入的可变字段（价校验为正整数微单位）；身份键不可变。effectiveUntil=null 清除截止。
+  async updatePricingRule(input: UpdatePricingRuleInput): Promise<PricingRule> {
+    const existing = await this.prisma.pricingRule.findUnique({ where: { id: input.id } });
+    if (!existing) {
+      throw lifecycleError("credit.pricing_rule.not_found", `pricing rule not found: ${input.id}`, 404);
+    }
+    const data: {
+      amountMicros?: bigint;
+      status?: PricingRuleStatus;
+      effectiveFrom?: Date;
+      effectiveUntil?: Date | null;
+    } = {};
+    if (input.amountMicros !== undefined) {
+      data.amountMicros = parsePositiveBigIntString(input.amountMicros, "amountMicros");
+    }
+    if (input.status !== undefined) {
+      data.status = input.status;
+    }
+    if (input.effectiveFrom !== undefined) {
+      data.effectiveFrom = input.effectiveFrom;
+    }
+    if (input.effectiveUntil !== undefined) {
+      data.effectiveUntil = input.effectiveUntil;
+    }
+    const updated = await this.prisma.pricingRule.update({ where: { id: input.id }, data });
+    return mapPricingRule(updated);
   }
 
   async deletePricingRule(input: DeleteInput): Promise<PricingRule> {
