@@ -11,10 +11,14 @@ import {
 } from "../../domain/magic-link.js";
 import { InvalidRuntimeNamespaceError } from "../../domain/session.js";
 import { isUserLifecycleError } from "../../domain/user-deletion.js";
+import type { MagicLinkMailer } from "../../infrastructure/email/magic-link-mailer.js";
 import { consumeMagicLinkRequestSchema, requestMagicLinkRequestSchema } from "./schemas.js";
 
 export interface MagicLinkRouteOptions {
   deliveryMode: MagicLinkDeliveryMode;
+  // smtp 档必备：发信器 + 登录链基址（main.ts 在 mode=smtp 时装配并已 fail-fast 校验齐全）。
+  mailer?: MagicLinkMailer | undefined;
+  linkBaseUrl?: string | undefined;
 }
 
 // sessionService=null 表示未配置签发密钥：申请仍可落链，消费命中即 503（与 /auth/sessions 同 fail-closed 语义）。
@@ -46,9 +50,8 @@ export function registerMagicLinkRoutes(
           ip: request.ip,
         });
 
-        // V1 dev 投递两档。邮件投递（SMTP/供应商）后续接在这里，替换 log 档落点，本仓不臆造 SMTP。
         if (options.deliveryMode === "response") {
-          // response 档仅限 dev 部署：一次性原文 token 直接回响应体。
+          // response 档仅限 dev 部署（生产 main.ts fail-fast 禁用）：一次性原文 token 直接回响应体。
           return sendData(
             reply,
             {
@@ -60,8 +63,32 @@ export function registerMagicLinkRoutes(
             requestId,
           );
         }
-        // log 档：原文 token 绝不落日志（纲领：magic-link 原文不进日志）。只记哈希前缀做审计关联，
-        // 无法从中还原链接——真正的邮件投递接入时替换此落点。dev 端到端用 response 档取可点链。
+        if (options.deliveryMode === "smtp") {
+          // smtp 档：原文 token 只进邮件（不回体、不落日志）。链 = <base>?token=<原文>。
+          if (!options.mailer || !options.linkBaseUrl) {
+            request.log.error("smtp delivery misconfigured: missing mailer/linkBaseUrl");
+            return sendError(reply, 500, "auth.magic_link_delivery_misconfigured", "登录邮件投递未配置", undefined, requestId);
+          }
+          const url = `${options.linkBaseUrl}?token=${encodeURIComponent(issued.linkToken)}`;
+          const expiresInSeconds = Math.max(
+            1,
+            Math.round((issued.record.expiresAt.getTime() - Date.now()) / 1000),
+          );
+          try {
+            await options.mailer.send({ to: issued.record.email, url, expiresInSeconds });
+          } catch (mailError) {
+            // 发信失败不泄露账户存在性细节给客户端；只上抛 502 + 服务端记因。
+            request.log.error({ mailError }, "failed to send magic link email");
+            return sendError(reply, 502, "auth.magic_link_delivery_failed", "登录邮件发送失败", undefined, requestId);
+          }
+          return sendData(
+            reply,
+            { email: issued.record.email, expires_at: issued.record.expiresAt.toISOString() },
+            200,
+            requestId,
+          );
+        }
+        // log 档（缺省）：原文 token 绝不落日志（纲领：magic-link 原文不进日志）。只记哈希前缀做审计关联。
         request.log.info(
           {
             siteId: issued.record.siteId,

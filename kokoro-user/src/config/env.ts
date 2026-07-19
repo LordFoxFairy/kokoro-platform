@@ -28,9 +28,18 @@ export const userEnvSchema = z.object({
   KOKORO_AUTH_JWT_ISSUER: z.string().min(1).default("kokoro-user"),
   // magic-link 一次性 token 存活时长。
   KOKORO_AUTH_MAGIC_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(900),
-  // V1 dev 投递档：response=token 回响应体（仅限 dev 部署），log=只写服务日志不回体（缺省，最安全档）。
-  // 邮件投递接口留位：SMTP/供应商接入时新增档位替换 log 落点，此处不臆造 SMTP 配置。
+  // 投递档：response=token 回响应体（仅 dev；生产 fail-fast 禁用）、log=只写日志哈希前缀（缺省）、
+  // smtp=经 SMTP 发登录邮件（生产档，须配下方 SMTP_* 与 MAGIC_LINK_BASE_URL）。
   KOKORO_AUTH_MAGIC_DELIVERY: z.enum(magicLinkDeliveryModes).default("log"),
+  // 登录链基址（smtp 档必配）：邮件里的可点链 = <此值>?token=<原文 token>。
+  // 通常指向 web 回调端点，如 https://your-domain/api/auth/callback。
+  KOKORO_AUTH_MAGIC_LINK_BASE_URL: z.string().url().optional(),
+  // SMTP 投递（smtp 档必配 HOST/FROM；AUTH 视服务器要求）。465=隐式 TLS,其余 STARTTLS。
+  KOKORO_SMTP_HOST: z.string().min(1).optional(),
+  KOKORO_SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(587),
+  KOKORO_SMTP_USER: z.string().min(1).optional(),
+  KOKORO_SMTP_PASSWORD: z.string().min(1).optional(),
+  KOKORO_SMTP_FROM: z.string().min(1).optional(),
   // email+ip 两维固定窗口限频。RATE_MAX=单邮箱阈值；RATE_IP_MAX=单 IP 阈值（缺省 = RATE_MAX*10，
   // IP 合法服务多用户须远宽于单邮箱）。配 KOKORO_REDIS_URL 即多副本一致，否则进程内存。
   KOKORO_AUTH_MAGIC_RATE_MAX: z.coerce.number().int().min(1).default(5),

@@ -1,8 +1,9 @@
 // magic-link 一次性登录：持久层只存 token 哈希不存原文；消费=条件转移（防并发双花）。
 
-export const magicLinkDeliveryModes = ["response", "log"] as const;
-// response=开发档：一次性 token 直接回响应体（仅限 dev 环境部署）。
-// log=只写服务日志（运维/开发从日志取链）；生产邮件投递接入时替换此档落点，本仓不臆造 SMTP。
+export const magicLinkDeliveryModes = ["response", "log", "smtp"] as const;
+// response=开发档：一次性 token 直接回响应体（仅限 dev 环境部署；生产 fail-fast 禁用）。
+// log=只写服务日志哈希前缀（原文不落日志）；运维/开发从别处取链，无邮件时的最安全档。
+// smtp=生产档：经 SMTP 把可点登录链发到用户邮箱（链接 = <linkBaseUrl>?token=<原文>）。
 export type MagicLinkDeliveryMode = (typeof magicLinkDeliveryModes)[number];
 
 export interface MagicLinkRecord {

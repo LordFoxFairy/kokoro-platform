@@ -46,11 +46,14 @@ describe("userEnvSchema", () => {
     expect(env.KOKORO_AUTH_MAGIC_RATE_WINDOW_SECONDS).toBe(900);
   });
 
-  it("accepts the response delivery mode and rejects unknown modes", () => {
+  it("accepts response/log/smtp delivery modes and rejects unknown modes", () => {
     expect(
       loadUserEnv({ ...required, KOKORO_AUTH_MAGIC_DELIVERY: "response" }).KOKORO_AUTH_MAGIC_DELIVERY,
     ).toBe("response");
-    expect(() => loadUserEnv({ ...required, KOKORO_AUTH_MAGIC_DELIVERY: "smtp" })).toThrow();
+    expect(
+      loadUserEnv({ ...required, KOKORO_AUTH_MAGIC_DELIVERY: "smtp" }).KOKORO_AUTH_MAGIC_DELIVERY,
+    ).toBe("smtp");
+    expect(() => loadUserEnv({ ...required, KOKORO_AUTH_MAGIC_DELIVERY: "carrier-pigeon" })).toThrow();
   });
 
   it("coerces magic ttl and enforces its range", () => {

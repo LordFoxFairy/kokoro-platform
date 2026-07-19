@@ -29,6 +29,7 @@ import { PrismaUserRepository } from "../../infrastructure/prisma/prisma-user-re
 import { registerUserAdminRoutes } from "./admin-routes.js";
 import { registerBffRoutes } from "./bff-routes.js";
 import { registerJwksRoutes } from "./jwks-routes.js";
+import type { MagicLinkMailer } from "../../infrastructure/email/magic-link-mailer.js";
 import { registerMagicLinkRoutes } from "./magic-link-routes.js";
 import { registerRefreshRoutes } from "./refresh-routes.js";
 import { registerUserRoutes } from "./routes.js";
@@ -53,6 +54,9 @@ export interface SessionSigningOptions {
 export interface MagicLinkServerOptions {
   ttlSeconds?: number;
   deliveryMode?: MagicLinkDeliveryMode;
+  // smtp 档：发信器 + 登录链基址（main.ts 依 env 装配并 fail-fast 校验）。
+  mailer?: MagicLinkMailer;
+  linkBaseUrl?: string;
   rateLimitMax?: number;
   rateLimitIpMax?: number;
   rateLimitWindowSeconds?: number;
@@ -202,6 +206,8 @@ export function createUserServer(options: CreateUserServerOptions = {}) {
     registerBffRoutes(instance, teamService, sessionService);
     registerMagicLinkRoutes(instance, magicLinkService, sessionService, {
       deliveryMode: magicLinkDeliveryMode,
+      ...(magicLinkDefaults.mailer ? { mailer: magicLinkDefaults.mailer } : {}),
+      ...(magicLinkDefaults.linkBaseUrl ? { linkBaseUrl: magicLinkDefaults.linkBaseUrl } : {}),
     });
     registerRefreshRoutes(instance, refreshService, {
       rateLimiter: refreshRateLimiter,
