@@ -219,6 +219,10 @@ function trackingRepo(): {
       calls.push("sumCapturedUsageSince");
       return "0";
     },
+    sumUsageByModelSince: async () => {
+      calls.push("sumUsageByModelSince");
+      return [];
+    },
     findActiveAccountByOwner: async () => {
       calls.push("findActiveAccountByOwner");
       return account;

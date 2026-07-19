@@ -9,6 +9,7 @@ import type {
   CreditReason,
   PricingRule,
   QuoteResult,
+  UsageByModelItem,
   UsageRecord,
 } from "./credit.js";
 import type { DeleteInput, ListOptions, RestoreInput } from "./credit-lifecycle.js";
@@ -138,6 +139,8 @@ export interface CreditRepository {
   // 本周期已结算消费累计（既有 ledger 聚合，不建新表）：sum |amountMicros| of 用量 capture
   // （reason∈model_call/tool_call）since 周期起点。返回微单位字符串（>=0）。
   sumCapturedUsageSince(accountId: string, since: Date): Promise<string>;
+  // 按 modelBindingId 聚合周期内已结算(settled)用量的消费额与 run 数（B1d 按模型消费分解）。
+  sumUsageByModelSince(accountId: string, since: Date): Promise<UsageByModelItem[]>;
   // 只读按 owner 三元组定位账户（不建账、不复活软删）：命中活跃账户返之，缺失/已软删→null。
   findActiveAccountByOwner(input: EnsureCreditAccountInput): Promise<CreditAccount | null>;
   listLedgerByAccount(accountId: string): Promise<CreditLedgerEntry[]>;

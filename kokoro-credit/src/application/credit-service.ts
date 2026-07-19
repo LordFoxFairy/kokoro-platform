@@ -1,6 +1,6 @@
 import { AppError, parsePositiveBigIntString } from "@kokoro/platform-kit";
 import { parseNonNegativeBigIntString } from "../domain/amount.js";
-import type { CreditAccount, CreditAdminStats, CreditLedgerEntry, CreditQuotaPeriod, PricingRule, UsageSettlementResult } from "../domain/credit.js";
+import type { CreditAccount, CreditAdminStats, CreditLedgerEntry, CreditQuotaPeriod, PricingRule, UsageByModelItem, UsageSettlementResult } from "../domain/credit.js";
 import { CreditLifecycleError, type DeleteInput, type RestoreInput } from "../domain/credit-lifecycle.js";
 import { CreditAccountNotFoundError, CreditHoldNotFoundError, QuotaExceededError } from "../domain/errors.js";
 import type {
@@ -44,6 +44,11 @@ export interface SettleUsageCommand {
 
 // run 计费面只读窄读：账户从 namespace 派生 team 账户（同 hold），siteId 从 header 取。
 export interface ReadUsageSummaryCommand {
+  siteId: string;
+  namespace: string;
+}
+
+export interface ReadUsageByModelCommand {
   siteId: string;
   namespace: string;
 }
@@ -284,6 +289,24 @@ export class CreditService {
       quotaMicros: account.quotaMicros,
       quotaPeriod: account.quotaPeriod,
     };
+  }
+
+  // run 计费面只读：按模型分解本周期(自然月 UTC)已结算消费（B1d）。只读不建账：无账户→空清单。
+  // 返回 modelBindingId + 消费额 + run 数；模型名由上游（session）跨 kokoro-model 解析。
+  async readUsageByModel(
+    command: ReadUsageByModelCommand,
+  ): Promise<{ periodStart: string; items: UsageByModelItem[] }> {
+    const periodStart = monthStartUtc(new Date());
+    const account = await this.repository.findActiveAccountByOwner({
+      siteId: command.siteId,
+      ownerKind: "team",
+      ownerId: command.namespace,
+    });
+    if (!account) {
+      return { periodStart: periodStart.toISOString(), items: [] };
+    }
+    const items = await this.repository.sumUsageByModelSince(account.id, periodStart);
+    return { periodStart: periodStart.toISOString(), items };
   }
 
   // run 计费面只读：解析 namespace→team 账户流水分页（复合游标）。只读不建账：无账户→空流水。

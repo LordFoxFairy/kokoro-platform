@@ -46,6 +46,14 @@ export interface CreditMutationResult {
   entry: CreditLedgerEntry;
 }
 
+// 按模型消费分解单项（B1d）：某 modelBindingId 在周期内已结算用量的消费额与 run 数。
+// modelBindingId=null 表示无模型归属（如本地预览/工具调用未绑模型）。名称解析由上游（session）跨 model 完成。
+export interface UsageByModelItem {
+  modelBindingId: string | null;
+  spentMicros: string;
+  runCount: number;
+}
+
 export interface CreditHold {
   id: string;
   accountId: string;

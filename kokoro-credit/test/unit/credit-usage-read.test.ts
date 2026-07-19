@@ -113,6 +113,7 @@ function readRepo(hasAccount: boolean): CreditRepository {
     getAccountById: reject,
     setAccountQuota: reject,
     sumCapturedUsageSince: reject,
+    sumUsageByModelSince: reject,
     listLedgerByAccount: reject,
     listHoldsByAccount: reject,
     listUsageByAccount: reject,

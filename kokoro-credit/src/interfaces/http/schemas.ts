@@ -140,6 +140,11 @@ export const usageSummaryQuerySchema = z.object({
   namespace: z.string().min(1),
 });
 
+// GET /credit/usage/by-model：按模型分解本周期已结算消费（B1d）。
+export const usageByModelQuerySchema = z.object({
+  namespace: z.string().min(1),
+});
+
 export const usageLedgerQuerySchema = z.object({
   namespace: z.string().min(1),
   limit: z.coerce.number().int().min(1).max(200).optional(),

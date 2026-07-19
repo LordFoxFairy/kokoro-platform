@@ -52,6 +52,7 @@ function ensureOnlyRepo(seen: EnsureCreditAccountInput[]): CreditRepository {
     getAccountById: reject,
     setAccountQuota: reject,
     sumCapturedUsageSince: reject,
+    sumUsageByModelSince: reject,
     findActiveAccountByOwner: reject,
     listLedgerByAccount: reject,
     listLedgerPage: reject,

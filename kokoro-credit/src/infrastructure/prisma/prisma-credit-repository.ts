@@ -12,6 +12,7 @@ import type {
   PricingRule,
   PricingRuleStatus,
   QuoteResult,
+  UsageByModelItem,
   UsageRecord,
   UsageRecordStatus,
 } from "../../domain/credit.js";
@@ -763,6 +764,24 @@ export class PrismaCreditRepository implements CreditRepository {
     });
     const sum = aggregate._sum.amountMicros ?? 0n;
     return (sum < 0n ? -sum : sum).toString();
+  }
+
+  async sumUsageByModelSince(accountId: string, since: Date): Promise<UsageByModelItem[]> {
+    // 按 modelBindingId 聚合已结算(settled)用量：usage_records.amountMicros 为正消费额。
+    // 走 (accountId, createdAt) 索引；modelBindingId=null 单独成组（无模型归属）。降序按消费额。
+    const groups = await this.prisma.usageRecord.groupBy({
+      by: ["modelBindingId"],
+      where: { accountId, status: "settled", createdAt: { gte: since } },
+      _sum: { amountMicros: true },
+      _count: { _all: true },
+    });
+    return groups
+      .map((g) => ({
+        modelBindingId: g.modelBindingId,
+        spentMicros: (g._sum.amountMicros ?? 0n).toString(),
+        runCount: g._count._all,
+      }))
+      .sort((a, b) => (BigInt(a.spentMicros) < BigInt(b.spentMicros) ? 1 : -1));
   }
 
   async listLedgerPage(

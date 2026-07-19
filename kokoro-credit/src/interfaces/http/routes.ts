@@ -35,6 +35,7 @@ import {
   usageHoldRequestSchema,
   usageLedgerQuerySchema,
   usageSettleRequestSchema,
+  usageByModelQuerySchema,
   usageSummaryQuerySchema,
 } from "./schemas.js";
 
@@ -237,6 +238,25 @@ export function registerCreditRoutes(app: FastifyInstance, service: CreditServic
       return sendData(reply, result);
     } catch (error) {
       return handleCreditError(error, reply, "credit.usage_summary_failed");
+    }
+  });
+
+  app.get("/credit/usage/by-model", {
+    schema: {
+      tags: ["credit"],
+      summary: "run 计费面只读：本周期按模型消费分解（namespace 派生 team 账户，无账户→空清单）",
+    },
+  }, async (request, reply) => {
+    try {
+      const ctx = readRequestContext(request.headers);
+      if (ctx.siteId === null) {
+        return sendError(reply, 400, "credit.site_required", "缺少站点上下文", undefined, ctx.requestId);
+      }
+      const query = usageByModelQuerySchema.parse(request.query);
+      const result = await service.readUsageByModel({ siteId: ctx.siteId, namespace: query.namespace });
+      return sendData(reply, result);
+    } catch (error) {
+      return handleCreditError(error, reply, "credit.usage_by_model_failed");
     }
   });
 
