@@ -134,6 +134,7 @@ enum CreditReason {
   model_call
   tool_call
   refund
+  welcome
 }
 
 enum CreditHoldStatus {

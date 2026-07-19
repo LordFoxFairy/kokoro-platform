@@ -27,6 +27,8 @@ export const creditEnvSchema = z.object({
   KOKORO_CREDIT_ACTIVE_CACHE_TTL_SECONDS: z.coerce.number().int().nonnegative().default(30),
   // active 缓存条数上限，防无界膨胀；超限逐最旧。
   KOKORO_CREDIT_ACTIVE_CACHE_MAX_ENTRIES: z.coerce.number().int().positive().default(10_000),
+  // 新账户首次开通即发放的 welcome 授信（微单位字符串）。0=关闭。产品默认：新用户送 100 积分=1000000。
+  KOKORO_CREDIT_WELCOME_MICROS: z.string().regex(/^\d+$/).default("0"),
 });
 
 export type CreditEnv = z.infer<typeof creditEnvSchema>;

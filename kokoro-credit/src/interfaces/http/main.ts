@@ -37,6 +37,7 @@ await startHttpServer({
       activeChecker,
       runBilling,
       sweepIntervalMs,
+      welcomeGrantMicros: BigInt(env.KOKORO_CREDIT_WELCOME_MICROS),
       routeAccess: { secrets: callerSecrets, isProduction: isProductionEnv() },
     }),
 });

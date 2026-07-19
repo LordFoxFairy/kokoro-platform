@@ -28,6 +28,8 @@ export interface CreateCreditServerOptions {
   sweepIntervalMs?: number;
   // 入站访问控制配置；不传=空 secret + 非生产=dev 直通（测试/本地）；生产由 main.ts 注入 per-caller secret。
   routeAccess?: RouteAccessConfig;
+  // 新账户首次开通即发放的 welcome 授信（微单位）；不传=0=关闭。生产/dev 由 main.ts 从 env 注入。
+  welcomeGrantMicros?: bigint;
 }
 
 // credit 所需 caller 凭据：session(用量记账)/payment(充值授信)/admin(网关) 入站 + credit(自身出站查 site/user active)。
@@ -50,7 +52,12 @@ export function createCreditServer(options: CreateCreditServerOptions = {}) {
 
   const prisma = options.prisma ?? createPrismaClient();
   const repository = new PrismaCreditRepository(prisma);
-  const service = new CreditService(repository, options.activeChecker, options.runBilling);
+  const service = new CreditService(
+    repository,
+    options.activeChecker,
+    options.runBilling,
+    options.welcomeGrantMicros ?? 0n,
+  );
 
   // WHY: 包进 register 确保路由在 swagger onRoute 钩子就绪后加载，否则 /docs/json paths 漏采。
   void app.register(async (instance) => {

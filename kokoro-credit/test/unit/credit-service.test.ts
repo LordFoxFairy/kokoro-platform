@@ -93,7 +93,7 @@ function trackingRepo(): {
   const repo: CreditRepository = {
     ensureAccount: async () => {
       calls.push("ensureAccount");
-      return account;
+      return { account, created: false };
     },
     grantCredits: async () => {
       calls.push("grantCredits");

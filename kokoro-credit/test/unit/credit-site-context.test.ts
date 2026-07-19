@@ -26,7 +26,7 @@ function ensureOnlyRepo(seen: EnsureCreditAccountInput[]): CreditRepository {
         createdAt: new Date(0),
         updatedAt: new Date(0),
       };
-      return account;
+      return { account, created: false };
     },
     grantCredits: reject,
     spendCredits: reject,

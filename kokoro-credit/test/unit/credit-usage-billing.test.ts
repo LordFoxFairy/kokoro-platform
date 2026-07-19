@@ -88,7 +88,7 @@ describe("holdForUsage", () => {
     const holdInputs: HoldCreditInput[] = [];
     const priceInputs: PriceUsageInput[] = [];
     const service = serviceWith({
-      ensureAccount: async () => account,
+      ensureAccount: async () => ({ account, created: false }),
       priceUsage: async (input) => {
         priceInputs.push(input);
         return "8000";
@@ -131,7 +131,7 @@ describe("holdForUsage", () => {
     const holdInputs: HoldCreditInput[] = [];
     const service = serviceWith(
       {
-        ensureAccount: async () => account,
+        ensureAccount: async () => ({ account, created: false }),
         priceUsage: async () => "0",
         holdCredits: async (input) => {
           holdInputs.push(input);
@@ -278,7 +278,7 @@ describe("holdForUsage organisation quota gate", () => {
   it("does not query period usage when the account has no quota (unset = unlimited)", async () => {
     let sumCalled = false;
     const service = serviceWith({
-      ensureAccount: async () => account, // quotaMicros=null
+      ensureAccount: async () => ({ account, created: false }), // quotaMicros=null
       priceUsage: async () => "8000",
       sumCapturedUsageSince: async () => {
         sumCalled = true;
@@ -294,7 +294,7 @@ describe("holdForUsage organisation quota gate", () => {
     // quota 10000；本周期已结算 500 + 在持 0 + 本次冻结 9600 = 10100 > 10000？不，8000×1.2=9600 → 500+9600=10100>10000 会拒。
     // 用较小已结算额验证放行：settled=100 → 100+9600=9700 <= 10000。
     const service = serviceWith({
-      ensureAccount: async () => quotaAccount,
+      ensureAccount: async () => ({ account: quotaAccount, created: false }),
       priceUsage: async () => "8000",
       sumCapturedUsageSince: async () => "100",
       holdCredits: async (input) => usageHold({ amountMicros: input.amountMicros }),
@@ -306,7 +306,7 @@ describe("holdForUsage organisation quota gate", () => {
   it("rejects with QuotaExceededError when settled + held + incoming exceeds the quota", async () => {
     // settled=1000 + held(account.heldMicros=0) + incoming 9600 = 10600 > 10000 → 拒。
     const service = serviceWith({
-      ensureAccount: async () => quotaAccount,
+      ensureAccount: async () => ({ account: quotaAccount, created: false }),
       priceUsage: async () => "8000",
       sumCapturedUsageSince: async () => "1000",
       holdCredits: async () => {
@@ -319,7 +319,7 @@ describe("holdForUsage organisation quota gate", () => {
   it("counts in-flight holds toward the quota (settle clamp keeps them from double-counting)", async () => {
     // heldMicros=5000（在持）+ settled 0 + incoming 9600 = 14600 > 10000 → 拒（在持 hold 计入本周期）。
     const service = serviceWith({
-      ensureAccount: async () => ({ ...quotaAccount, heldMicros: "5000" }),
+      ensureAccount: async () => ({ account: { ...quotaAccount, heldMicros: "5000" }, created: false }),
       priceUsage: async () => "8000",
       sumCapturedUsageSince: async () => "0",
       holdCredits: async () => {

@@ -107,7 +107,8 @@ export interface UpdatePricingRuleInput {
 }
 
 export interface CreditRepository {
-  ensureAccount(input: EnsureCreditAccountInput): Promise<CreditAccount>;
+  // created=true 表示本次新建（供上层做「新账户首次开通」策略，如 welcome 授信）；找到即 false。
+  ensureAccount(input: EnsureCreditAccountInput): Promise<{ account: CreditAccount; created: boolean }>;
   grantCredits(input: CreditAmountInput): Promise<CreditMutationResult>;
   spendCredits(input: CreditAmountInput): Promise<CreditMutationResult>;
   resetBalance(input: ResetBalanceInput): Promise<CreditMutationResult>;

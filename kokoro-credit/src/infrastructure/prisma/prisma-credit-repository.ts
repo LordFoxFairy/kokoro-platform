@@ -8,6 +8,7 @@ import type {
   CreditHoldStatus,
   CreditLedgerEntry,
   CreditMutationResult,
+  CreditReason,
   PricingRule,
   PricingRuleStatus,
   QuoteResult,
@@ -49,7 +50,7 @@ type TransactionClient = Prisma.TransactionClient;
 export class PrismaCreditRepository implements CreditRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
-  async ensureAccount(input: EnsureCreditAccountInput): Promise<CreditAccount> {
+  async ensureAccount(input: EnsureCreditAccountInput): Promise<{ account: CreditAccount; created: boolean }> {
     const where = {
       siteId_ownerKind_ownerId: {
         siteId: input.siteId,
@@ -76,7 +77,7 @@ export class PrismaCreditRepository implements CreditRepository {
           },
         });
 
-    return mapCreditAccount(account);
+    return { account: mapCreditAccount(account), created: !existing };
   }
 
   async grantCredits(input: CreditAmountInput): Promise<CreditMutationResult> {
@@ -1052,7 +1053,7 @@ function mapLedgerEntry(entry: {
   accountId: string;
   amountMicros: bigint;
   balanceAfterMicros: bigint;
-  reason: "manual_adjustment" | "subscription" | "model_call" | "tool_call" | "refund";
+  reason: CreditReason;
   idempotencyKey: string;
   requestId: string | null;
   createdAt: Date;

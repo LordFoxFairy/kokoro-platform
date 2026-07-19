@@ -4,7 +4,13 @@ export type CreditOwnerKind = "user" | "team";
 export type CreditAccountStatus = "active" | "disabled";
 // 组织级配额周期：V1 仅自然月（UTC）。未设配额=不限（现状）。
 export type CreditQuotaPeriod = "monthly";
-export type CreditReason = "manual_adjustment" | "subscription" | "model_call" | "tool_call" | "refund";
+export type CreditReason =
+  | "manual_adjustment"
+  | "subscription"
+  | "model_call"
+  | "tool_call"
+  | "refund"
+  | "welcome";
 export type CreditHoldStatus = "active" | "captured" | "released" | "expired";
 export type UsageRecordStatus = "recorded" | "settled" | "failed";
 export type PricingRuleStatus = "active" | "disabled";

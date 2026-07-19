@@ -20,6 +20,7 @@ const creditReasonSchema = z.enum([
   "model_call",
   "tool_call",
   "refund",
+  "welcome",
 ]);
 
 export const creditMutationRequestSchema = z

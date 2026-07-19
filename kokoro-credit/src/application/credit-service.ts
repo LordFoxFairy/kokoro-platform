@@ -92,11 +92,24 @@ export class CreditService {
     private readonly repository: CreditRepository,
     private readonly activeChecker: OwnerSiteActiveChecker = ALWAYS_ACTIVE_CHECKER,
     private readonly runBilling: RunBillingConfig = DEFAULT_RUN_BILLING_CONFIG,
+    // 新账户首次开通即发放的 welcome 授信（微单位）。0=关闭。产品决策：新用户送 100 积分 = 1_000_000。
+    private readonly welcomeGrantMicros: bigint = 0n,
   ) {}
 
-  async ensureAccount(input: EnsureCreditAccountInput) {
+  async ensureAccount(input: EnsureCreditAccountInput): Promise<CreditAccount> {
     await this.activeChecker.ensureAccountActive(input);
-    return this.repository.ensureAccount(input);
+    const { account, created } = await this.repository.ensureAccount(input);
+    // 新账户首次开通发放 welcome 授信。幂等键 welcome:<accountId> 保证并发/重放也恰一次。
+    // 直接走 repo.grantCredits：ensureAccount 上一步已校验 owner/site active，无需再查（省一次 HTTP）。
+    if (created && this.welcomeGrantMicros > 0n) {
+      await this.repository.grantCredits({
+        accountId: account.id,
+        amountMicros: this.welcomeGrantMicros.toString(),
+        idempotencyKey: `welcome:${account.id}`,
+        reason: "welcome",
+      });
+    }
+    return account;
   }
 
   async deleteAccount(input: DeleteInput): Promise<CreditAccount> {
