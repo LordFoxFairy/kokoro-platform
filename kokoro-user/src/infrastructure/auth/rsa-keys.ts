@@ -25,8 +25,11 @@ export function deriveKid(publicKey: KeyObject): string {
 }
 
 // 从 PEM/PKCS8 私钥物料化 RS256 签发键。非 RSA 或畸形 PEM 即 fail-loud（启动期暴露配置错误）。
+// 单行注入兼容：docker env_file / k8s env 不支持多行值,故容忍把 PEM 换行写成字面 "\n"(常见形态),
+// 此处归一化回真换行再交 createPrivateKey。已是真换行的 PEM 不受影响。
 export function loadRsaSigningKey(pem: string): RsaSigningKey {
-  const privateKey = createPrivateKey(pem);
+  const normalized = pem.includes("\\n") ? pem.replace(/\\n/g, "\n") : pem;
+  const privateKey = createPrivateKey(normalized);
   if (privateKey.asymmetricKeyType !== "rsa") {
     throw new Error(`KOKORO_USER_JWT_PRIVATE_KEY must be an RSA key, got ${privateKey.asymmetricKeyType ?? "unknown"}`);
   }

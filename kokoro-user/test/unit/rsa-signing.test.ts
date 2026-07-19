@@ -33,6 +33,15 @@ describe("loadRsaSigningKey", () => {
   it("rejects malformed PEM", () => {
     expect(() => loadRsaSigningKey("not-a-key")).toThrow();
   });
+
+  it("accepts a single-line PEM with literal \\n (docker env_file / k8s env 注入形态)", () => {
+    const pem = rsaPem();
+    const oneLine = pem.replace(/\n/g, "\\n");
+    expect(oneLine).not.toContain("\n"); // 确是单行
+    const key = loadRsaSigningKey(oneLine);
+    // 与真换行 PEM 推出同一 kid（归一化等价）。
+    expect(key.kid).toBe(loadRsaSigningKey(pem).kid);
+  });
 });
 
 describe("JwksProvider", () => {
