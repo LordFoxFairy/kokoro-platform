@@ -1,5 +1,5 @@
 import { AppError, parsePositiveBigIntString } from "@kokoro/platform-kit";
-import { parseNonNegativeBigIntString } from "../domain/amount.js";
+import { ceilToCreditMicros, parseNonNegativeBigIntString } from "../domain/amount.js";
 import type { CreditAccount, CreditAdminStats, CreditLedgerEntry, CreditQuotaPeriod, PricingRule, UsageByModelItem, UsageSettlementResult } from "../domain/credit.js";
 import { CreditLifecycleError, type DeleteInput, type RestoreInput } from "../domain/credit-lifecycle.js";
 import { CreditAccountNotFoundError, CreditHoldNotFoundError, QuotaExceededError } from "../domain/errors.js";
@@ -246,8 +246,9 @@ export class CreditService {
       outputTokens: this.runBilling.estOutputTokens,
     });
     const buffered = applyBufferPercent(BigInt(estimate), this.runBilling.bufferPercent);
-    // 冻结额至少 1 micro：预估或价格算出 0 时也占位一分钱，避免 holdCredits 的正数守卫抛错。
-    const amountMicros = (buffered > 0n ? buffered : 1n).toString();
+    // 冻结额向上取整到整积分（house-favor + 用户面整数）：任何正额→≥1 积分，故新用户/首 run 至少冻 1 积分。
+    // 与 settle 的 ceilToCreditMicros 一致，保证冻结/扣费全程是整积分（1 积分=10000 micros）。
+    const amountMicros = ceilToCreditMicros(buffered > 0n ? buffered : 1n).toString();
     // 组织级配额闸（余额闸之外的独立上限）：本周期已结算消费 + 在持 hold + 本次冻结 > 上限 → 402 quota_exceeded。
     // 未设配额（quotaMicros=null）不查不拦（现状）。settle clamp 保证 capture≤hold，故不与在持 hold 双算。
     await this.assertWithinQuota(account, BigInt(amountMicros));
@@ -357,9 +358,9 @@ export class CreditService {
       outputTokens: command.outputTokens,
     });
     const holdAmount = BigInt(hold.amountMicros);
-    const actualAmount = BigInt(actual);
-    // NOTE(PRD §4 挂点)：house-favor 向上取整到整积分（ceilToCreditMicros）待整体把测试夹具从亚积分
-    // micro-pricing 升到积分尺度后再启用——见 2026-07-17-credit-pricing-strategy.md。当前按实额 clamp。
+    // house-favor 向上取整到整积分（每次扣最小 1 积分、向上取）：任何正消费→≥1 积分整数；0 消费→下方 release。
+    // 见 2026-07-17-credit-pricing-strategy.md §4。clamp 到冻结额守不透支（冻结亦为整积分，见 holdForUsage）。
+    const actualAmount = ceilToCreditMicros(BigInt(actual));
     const clamped = actualAmount < holdAmount ? actualAmount : holdAmount;
 
     if (clamped === 0n) {

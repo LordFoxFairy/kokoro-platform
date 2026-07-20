@@ -109,11 +109,11 @@ describe("holdForUsage", () => {
       requestId: "run_1",
     });
 
-    // 8000 × (100+20)/100 = 9600
-    expect(result.amountMicros).toBe("9600");
+    // 8000 × (100+20)/100 = 9600 micros → 向上取整到整积分 = 10000（1 积分）
+    expect(result.amountMicros).toBe("10000");
     expect(result.holdId).toBe("h9");
     expect(holdInputs[0]).toMatchObject({
-      amountMicros: "9600",
+      amountMicros: "10000",
       featureKey: "model.run",
       labelKey: "gpt-4",
       modelBindingId: "binding_1",
@@ -127,7 +127,7 @@ describe("holdForUsage", () => {
     });
   });
 
-  it("floors the hold to 1 micro when the estimate prices to zero", async () => {
+  it("floors the hold to 1 credit (min charge) when the estimate prices to zero", async () => {
     const holdInputs: HoldCreditInput[] = [];
     const service = serviceWith(
       {
@@ -148,8 +148,8 @@ describe("holdForUsage", () => {
       idempotencyKey: "run_1",
     });
 
-    expect(result.amountMicros).toBe("1");
-    expect(holdInputs[0]).toMatchObject({ amountMicros: "1" });
+    expect(result.amountMicros).toBe("10000");
+    expect(holdInputs[0]).toMatchObject({ amountMicros: "10000" });
   });
 });
 
@@ -157,7 +157,7 @@ describe("settleUsage", () => {
   it("captures the actual cost when it is below the hold", async () => {
     const captureInputs: CaptureCreditInput[] = [];
     const service = serviceWith({
-      getHoldById: async () => usageHold(),
+      getHoldById: async () => usageHold({ amountMicros: "30000" }),
       priceUsage: async () => "2200",
       captureHold: async (input) => {
         captureInputs.push(input);
@@ -172,10 +172,11 @@ describe("settleUsage", () => {
       idempotencyKey: "run_1",
     });
 
+    // 实额 2200 micros → 向上取整 1 积分 = 10000（< 冻结 30000，不被 clamp）
     expect(result.outcome).toBe("captured");
-    expect(result.amountMicros).toBe("2200");
+    expect(result.amountMicros).toBe("10000");
     expect(captureInputs[0]).toMatchObject({
-      actualAmountMicros: "2200",
+      actualAmountMicros: "10000",
       reason: "model_call",
       featureKey: "model.run",
       modelBindingId: "binding_1",
@@ -291,16 +292,15 @@ describe("holdForUsage organisation quota gate", () => {
   });
 
   it("holds when settled + held + incoming stays within the quota", async () => {
-    // quota 10000；本周期已结算 500 + 在持 0 + 本次冻结 9600 = 10100 > 10000？不，8000×1.2=9600 → 500+9600=10100>10000 会拒。
-    // 用较小已结算额验证放行：settled=100 → 100+9600=9700 <= 10000。
+    // quota 10000；本次冻结 8000×1.2=9600 → 向上取整整积分 = 10000。已结算 0 + 在持 0 + 10000 = 10000，不超上限 → 放行。
     const service = serviceWith({
       ensureAccount: async () => ({ account: quotaAccount, created: false }),
       priceUsage: async () => "8000",
-      sumCapturedUsageSince: async () => "100",
+      sumCapturedUsageSince: async () => "0",
       holdCredits: async (input) => usageHold({ amountMicros: input.amountMicros }),
     });
     const result = await service.holdForUsage(usageCommand());
-    expect(result.amountMicros).toBe("9600");
+    expect(result.amountMicros).toBe("10000");
   });
 
   it("rejects with QuotaExceededError when settled + held + incoming exceeds the quota", async () => {
