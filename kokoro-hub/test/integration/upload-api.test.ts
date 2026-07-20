@@ -14,6 +14,9 @@ import type { FastifyInstance } from "fastify";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { contentHashOf, packageRef } from "../../src/domain/package.js";
 import { MAX_SKILL_PACKAGE_BYTES } from "../../src/domain/validation.js";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { MongoSkillRepository } from "../../src/infrastructure/mongo/mongo-skill-repository.js";
 import { S3PackageStore } from "../../src/infrastructure/packages/s3-package-store.js";
 import { unzipTextFiles, zipTextFiles } from "../../src/infrastructure/zip.js";
@@ -21,8 +24,25 @@ import { createHubServer } from "../../src/interfaces/http/server.js";
 import { connectTestHub, hubTestDbName, insertSkill, type TestHub } from "./helpers.js";
 
 const NS = "ns-upload-http";
-const MINIO_ENDPOINT = "http://127.0.0.1:9100";
-const MINIO_CREDENTIALS = { accessKeyId: "kokoro", secretAccessKey: "kokoro-secret" };
+const MINIO_ENDPOINT = process.env.KOKORO_TEST_MINIO_URL ?? "http://127.0.0.1:9100";
+
+// 凭据取真源、不写死进仓：优先 env，否则读 gitignored 的 deploy/.env.dev（dev infra 单一事实来源）。
+// 曾写死 kokoro-secret 与真 dev minio 对不上 → 建桶失败、整组 16 条恒红。
+function devEnv(name: string): string {
+  const fromEnv = process.env[name];
+  if (fromEnv !== undefined && fromEnv !== "") return fromEnv;
+  try {
+    const file = readFileSync(resolve(import.meta.dirname, "../../../../deploy/.env.dev"), "utf8");
+    return file.match(new RegExp(`^${name}=(.*)$`, "m"))?.[1]?.trim() ?? "";
+  } catch {
+    return "";
+  }
+}
+
+const MINIO_CREDENTIALS = {
+  accessKeyId: devEnv("MINIO_ROOT_USER"),
+  secretAccessKey: devEnv("MINIO_ROOT_PASSWORD"),
+};
 
 let hub: TestHub;
 let app: FastifyInstance;

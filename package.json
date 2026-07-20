@@ -18,7 +18,8 @@
     "test:integration": "pnpm -r test:integration",
     "typecheck:platform": "tsc -p tsconfig.json --noEmit",
     "typecheck": "pnpm run typecheck:platform && pnpm -r typecheck",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test:integration:dev": "node scripts/integration-dev.mjs"
   },
   "dependencies": {
     "@kokoro/credit": "workspace:*",

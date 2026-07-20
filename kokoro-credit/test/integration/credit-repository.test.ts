@@ -296,7 +296,7 @@ describe("PrismaCreditRepository", () => {
   it("run 计费只读面：readUsageSummary 无账户→零额、有账户→真数；只读不建账", async () => {
     // 未建账 → 零额（且不隐式建账：随后 findActiveAccountByOwner 仍 null）。
     const empty = await service.readUsageSummary({ siteId: "site-default", namespace: "team_read_none" });
-    expect(empty).toEqual({ balanceMicros: "0", heldMicros: "0" });
+    expect(empty).toEqual({ balanceMicros: "0", heldMicros: "0", quotaMicros: null, quotaPeriod: null });
     expect(
       await repository.findActiveAccountByOwner({ siteId: "site-default", ownerKind: "team", ownerId: "team_read_none" }),
     ).toBeNull();
@@ -309,7 +309,7 @@ describe("PrismaCreditRepository", () => {
       reason: "manual_adjustment",
     });
     const summary = await service.readUsageSummary({ siteId: "site-default", namespace: "team_read_1" });
-    expect(summary).toEqual({ balanceMicros: "8000000", heldMicros: "0" });
+    expect(summary).toEqual({ balanceMicros: "8000000", heldMicros: "0", quotaMicros: null, quotaPeriod: null });
   });
 
   it("run 计费只读面：readUsageLedger 复合游标分页（createdAt/id desc）逐页翻到底", async () => {
@@ -350,6 +350,8 @@ describe("PrismaCreditRepository", () => {
     expect(await service.readUsageSummary({ siteId: "site-default", namespace: "team_read_del" })).toEqual({
       balanceMicros: "0",
       heldMicros: "0",
+      quotaMicros: null,
+      quotaPeriod: null,
     });
   });
 });

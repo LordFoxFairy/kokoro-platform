@@ -13,7 +13,7 @@ const SITE = "site-default";
 const DAY = 24 * 60 * 60 * 1000;
 
 // 默认配置：estInput=1000, estOutput=1000, buffer=20%，input_token/output_token 计价 unit。
-// gpt-4: in=2,out=6 → hold est = (1000*2 + 1000*6) * 120/100 = 9600。
+// gpt-4: in=2,out=6 → 原始 est = (1000*2 + 1000*6) * 120/100 = 9600;整积分扣费向上取整 → 冻结 10000（=1 积分）。
 async function seedPricing(): Promise<void> {
   const from = new Date(Date.now() - DAY);
   await prisma.pricingRule.createMany({
@@ -76,11 +76,11 @@ describe("credit usage billing face (run hold/settle)", () => {
 
     expect(response.statusCode).toBe(200);
     const data = response.json().data;
-    expect(data.amountMicros).toBe("9600");
+    expect(data.amountMicros).toBe("10000");
     expect(data.accountId).toBe(account.id);
 
     const storedAccount = await prisma.creditAccount.findUniqueOrThrow({ where: { id: account.id } });
-    expect(storedAccount.heldMicros.toString()).toBe("9600");
+    expect(storedAccount.heldMicros.toString()).toBe("10000");
 
     const storedHold = await prisma.creditHold.findUniqueOrThrow({ where: { id: data.holdId } });
     expect(storedHold.featureKey).toBe("model.run");
@@ -115,7 +115,7 @@ describe("credit usage billing face (run hold/settle)", () => {
 
     expect(second.json().data.holdId).toBe(first.json().data.holdId);
     const stored = await prisma.creditAccount.findUniqueOrThrow({ where: { id: account.id } });
-    expect(stored.heldMicros.toString()).toBe("9600");
+    expect(stored.heldMicros.toString()).toBe("10000");
   });
 
   it("settles by real usage: captures actual cost, clears the hold, writes a settled usage record", async () => {
@@ -123,7 +123,7 @@ describe("credit usage billing face (run hold/settle)", () => {
     const held = await hold({ namespace: "team_settle", featureKey: "model.run", labelKey: "gpt-4", idempotencyKey: "run_settle" });
     const holdId = held.json().data.holdId;
 
-    // actual = 500*2 + 200*6 = 2200 (< hold 9600)
+    // actual 原始 = 500*2 + 200*6 = 2200 → 向上取整到 1 积分 = 10000（< hold 10000，不超冻结）
     const response = await settle({
       holdId,
       usage: { inputTokens: 500, outputTokens: 200 },
@@ -133,19 +133,19 @@ describe("credit usage billing face (run hold/settle)", () => {
     expect(response.statusCode).toBe(200);
     const data = response.json().data;
     expect(data.outcome).toBe("captured");
-    expect(data.amountMicros).toBe("2200");
-    expect(data.account.balanceMicros).toBe("97800");
+    expect(data.amountMicros).toBe("10000");
+    expect(data.account.balanceMicros).toBe("90000");
     expect(data.account.heldMicros).toBe("0");
 
     const storedHold = await prisma.creditHold.findUniqueOrThrow({ where: { id: holdId } });
     expect(storedHold.status).toBe("captured");
     const usage = await prisma.usageRecord.findUniqueOrThrow({ where: { idempotencyKey: "run_settle:usage" } });
     expect(usage.status).toBe("settled");
-    expect(usage.amountMicros.toString()).toBe("2200");
+    expect(usage.amountMicros.toString()).toBe("10000");
     expect(usage.featureKey).toBe("model.run");
     expect(usage.modelBindingId).toBeNull();
     const stored = await prisma.creditAccount.findUniqueOrThrow({ where: { id: account.id } });
-    expect(stored.balanceMicros.toString()).toBe("97800");
+    expect(stored.balanceMicros.toString()).toBe("90000");
     expect(stored.heldMicros.toString()).toBe("0");
   });
 
@@ -161,7 +161,7 @@ describe("credit usage billing face (run hold/settle)", () => {
     const usageCount = await prisma.usageRecord.count({ where: { accountId: account.id } });
     expect(usageCount).toBe(1);
     const stored = await prisma.creditAccount.findUniqueOrThrow({ where: { id: account.id } });
-    expect(stored.balanceMicros.toString()).toBe("97800");
+    expect(stored.balanceMicros.toString()).toBe("90000");
     expect(stored.heldMicros.toString()).toBe("0");
   });
 
@@ -170,16 +170,16 @@ describe("credit usage billing face (run hold/settle)", () => {
     const held = await hold({ namespace: "team_clamp", featureKey: "model.run", labelKey: "gpt-4", idempotencyKey: "run_clamp" });
     const holdId = held.json().data.holdId;
 
-    // actual = 100000*2 + 100000*6 = 800000 >> hold 9600 → clamp to 9600
+    // actual 原始 = 800000 >> hold 10000 → clamp 到冻结额 10000（绝不超收）
     const response = await settle({
       holdId,
       usage: { inputTokens: 100000, outputTokens: 100000 },
       idempotencyKey: "run_clamp",
     });
 
-    expect(response.json().data.amountMicros).toBe("9600");
+    expect(response.json().data.amountMicros).toBe("10000");
     const stored = await prisma.creditAccount.findUniqueOrThrow({ where: { id: account.id } });
-    expect(stored.balanceMicros.toString()).toBe("90400");
+    expect(stored.balanceMicros.toString()).toBe("90000");
     expect(stored.heldMicros.toString()).toBe("0");
   });
 
@@ -203,9 +203,9 @@ describe("credit usage billing face (run hold/settle)", () => {
 
   it("falls back to the generic (null-label) pricing rules when the label has no rule", async () => {
     await fundedTeam("team_fallback", "100000");
-    // 通用规则 in=1,out=3 → est = (1000*1 + 1000*3) * 120/100 = 4800
+    // 通用规则 in=1,out=3 → 原始 est = 4800 → 向上取整到 1 积分 = 10000
     const response = await hold({ namespace: "team_fallback", featureKey: "model.run", labelKey: "no-such-label", idempotencyKey: "run_fb" });
-    expect(response.json().data.amountMicros).toBe("4800");
+    expect(response.json().data.amountMicros).toBe("10000");
   });
 
   it("maps a missing pricing rule to 404 at hold time", async () => {
@@ -244,7 +244,7 @@ describe("credit usage billing face (run hold/settle)", () => {
     const storedHold = await prisma.creditHold.findUniqueOrThrow({ where: { id: holdId } });
     expect(storedHold.status).toBe("active");
     const stored = await prisma.creditAccount.findUniqueOrThrow({ where: { id: account.id } });
-    expect(stored.heldMicros.toString()).toBe("9600");
+    expect(stored.heldMicros.toString()).toBe("10000");
     expect(stored.balanceMicros.toString()).toBe("100000");
   });
 
