@@ -2,6 +2,7 @@ import {
   jsonSchema,
   readRequestContext,
   registerHealthRoute,
+  registerMetricsRoute,
   sendData,
   sendError,
   sendZodError,
@@ -24,6 +25,7 @@ import {
 
 export function registerModelRoutes(app: FastifyInstance, service: ModelService): void {
   registerHealthRoute(app, "model");
+  registerMetricsRoute(app, "model");
 
   app.post(
     "/provider-accounts/ensure",

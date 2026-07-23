@@ -67,6 +67,7 @@ export function createHubServer(options: CreateHubServerOptions) {
   const ra = options.routeAccess ?? { secrets: {}, isProduction: false };
   registerRouteAccess(app, { ...ra, requiredCallers: HUB_REQUIRED_CALLERS });
   declareRouteAccess(app, { path: "/healthz", exact: true }, "public");
+  declareRouteAccess(app, { path: "/metrics", exact: true }, "public");
   declareRouteAccess(app, "/hub/runtime", "runtime-internal");
   declareRouteAccess(app, "/hub/self", "web-bff");
   declareRouteAccess(app, "/hub/admin", "admin");

@@ -97,6 +97,7 @@ export function createUserServer(options: CreateUserServerOptions = {}) {
   const ra = options.routeAccess ?? { secrets: {}, isProduction: false };
   registerRouteAccess(app, { ...ra, requiredCallers: USER_REQUIRED_CALLERS });
   declareRouteAccess(app, { path: "/healthz", exact: true }, "public");
+  declareRouteAccess(app, { path: "/metrics", exact: true }, "public");
   // JWKS 公钥集：公开面（session 验签方无凭据抓取）。RS256 档才真有内容，HS256/未配档不注册路由。
   declareRouteAccess(app, { path: "/.well-known/jwks.json", exact: true }, "public");
   declareRouteAccess(app, "/auth/magic-links", "web-bff");

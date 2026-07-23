@@ -34,6 +34,7 @@ export function createModelServer(options: CreateModelServerOptions = {}) {
   const ra = options.routeAccess ?? { secrets: {}, isProduction: false };
   registerRouteAccess(app, { ...ra, requiredCallers: MODEL_REQUIRED_CALLERS });
   declareRouteAccess(app, { path: "/healthz", exact: true }, "public");
+  declareRouteAccess(app, { path: "/metrics", exact: true }, "public");
   declareRouteAccess(app, "/admin", "admin");
   declareRouteAccess(app, "/provider-accounts", "runtime-internal");
   declareRouteAccess(app, "/model-bindings", "runtime-internal");

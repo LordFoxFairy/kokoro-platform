@@ -1,4 +1,4 @@
-import { jsonSchema, registerHealthRoute, sendData, sendError, sendZodError } from "@kokoro/platform-kit";
+import { jsonSchema, registerHealthRoute, registerMetricsRoute, sendData, sendError, sendZodError } from "@kokoro/platform-kit";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { ZodError } from "zod";
 import type { SiteService } from "../../application/site-service.js";
@@ -21,6 +21,7 @@ import {
 
 export function registerSiteRoutes(app: FastifyInstance, service: SiteService): void {
   registerHealthRoute(app, "site");
+  registerMetricsRoute(app, "site");
 
   app.get("/sites", { schema: { tags: ["site"], summary: "列出所有站点" } }, async (request, reply) => {
     const requestId = getRequestId(request.headers["x-kokoro-request-id"] ?? request.headers["x-request-id"]);

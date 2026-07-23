@@ -2,6 +2,7 @@ import {
   jsonSchema,
   readRequestContext,
   registerHealthRoute,
+  registerMetricsRoute,
   sendData,
   sendError,
   sendZodError,
@@ -35,6 +36,7 @@ import {
 
 export function registerPaymentRoutes(app: FastifyInstance, service: PaymentService): void {
   registerHealthRoute(app, "payment");
+  registerMetricsRoute(app, "payment");
 
   app.post("/plans/upsert", {
     schema: {

@@ -3,6 +3,7 @@ import {
   readRequestContext,
   registerAdminManifestRoute,
   registerHealthRoute,
+  registerMetricsRoute,
   sendData,
   sendError,
   sendZodError,
@@ -25,6 +26,7 @@ import {
 
 export function registerHubRoutes(app: FastifyInstance, service: SkillHubService): void {
   registerHealthRoute(app, "hub");
+  registerMetricsRoute(app, "hub");
   registerAdminManifestRoute(app, hubAdminManifest);
 
   app.get(

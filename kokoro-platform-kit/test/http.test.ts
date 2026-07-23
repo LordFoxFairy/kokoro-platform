@@ -9,6 +9,7 @@ import {
   sendUnknownError,
   sendZodError,
 } from "../src/http/responses.js";
+import { registerMetricsRoute } from "../src/http/metrics.js";
 
 describe("HTTP helpers", () => {
   it("registers consistent health output", async () => {
@@ -21,6 +22,19 @@ describe("HTTP helpers", () => {
     expect(response.json()).toEqual({
       data: { module: "model", status: "ok" },
     });
+  });
+
+  it("exposes prometheus /metrics with default process metrics + module label", async () => {
+    const app = Fastify({ logger: false });
+    registerMetricsRoute(app, "model");
+
+    const response = await app.inject({ method: "GET", url: "/metrics" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["content-type"]).toContain("text/plain");
+    // 默认进程指标存在 + module 标签注入（一进程一模块）。
+    expect(response.body).toContain("process_cpu_user_seconds_total");
+    expect(response.body).toContain('module="model"');
   });
 
   it("sends consistent data and error envelopes", async () => {

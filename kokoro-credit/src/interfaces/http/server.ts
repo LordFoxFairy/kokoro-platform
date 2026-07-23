@@ -46,6 +46,7 @@ export function createCreditServer(options: CreateCreditServerOptions = {}) {
   const ra = options.routeAccess ?? { secrets: {}, isProduction: false };
   registerRouteAccess(app, { ...ra, requiredCallers: CREDIT_REQUIRED_CALLERS });
   declareRouteAccess(app, { path: "/healthz", exact: true }, "public");
+  declareRouteAccess(app, { path: "/metrics", exact: true }, "public");
   declareRouteAccess(app, "/admin", "admin");
   declareRouteAccess(app, "/credit", "runtime-internal");
   declareRouteAccess(app, "/docs", "runtime-internal");

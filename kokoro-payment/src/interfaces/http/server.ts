@@ -48,6 +48,7 @@ export function createPaymentServer(options: CreatePaymentServerOptions) {
   const ra = options.routeAccess ?? { secrets: {}, isProduction: false };
   registerRouteAccess(app, { ...ra, requiredCallers: PAYMENT_REQUIRED_CALLERS });
   declareRouteAccess(app, { path: "/healthz", exact: true }, "public");
+  declareRouteAccess(app, { path: "/metrics", exact: true }, "public");
   declareRouteAccess(app, "/payments/webhooks", "public");
   // 用户面（web-bff）：店面目录 GET /plans（exact）+ 结账 POST /orders/checkout。须先于下方 /plans、
   // /orders 前缀声明——resolveLevel 最长路径优先、同长先声明者胜：/orders/checkout(16) 长于 /orders(7)

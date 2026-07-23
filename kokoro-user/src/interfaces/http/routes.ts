@@ -2,6 +2,7 @@ import {
   jsonSchema,
   readRequestContext,
   registerHealthRoute,
+  registerMetricsRoute,
   sendData,
   sendError,
   sendZodError,
@@ -27,6 +28,7 @@ import {
 
 export function registerUserRoutes(app: FastifyInstance, service: UserService): void {
   registerHealthRoute(app, "user");
+  registerMetricsRoute(app, "user");
 
   app.post(
     "/users/ensure",

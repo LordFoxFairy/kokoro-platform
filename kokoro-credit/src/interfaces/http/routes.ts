@@ -3,6 +3,7 @@ import {
   jsonSchema,
   readRequestContext,
   registerHealthRoute,
+  registerMetricsRoute,
   sendData,
   sendError,
   sendZodError,
@@ -61,6 +62,7 @@ function decodeLedgerCursor(raw: string): { createdAt: Date; id: string } | unde
 
 export function registerCreditRoutes(app: FastifyInstance, service: CreditService): void {
   registerHealthRoute(app, "credit");
+  registerMetricsRoute(app, "credit");
 
   app.post("/credit/accounts/ensure", {
     schema: {
