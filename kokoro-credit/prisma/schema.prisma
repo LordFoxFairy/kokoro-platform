@@ -22,6 +22,9 @@ model CreditAccount {
   dailyResetOn  DateTime?
   periodMicros  BigInt              @default(0)
   periodResetOn DateTime?
+  // 时间桶当期额度（懒刷新的重置目标 + release/refund 归还的夹紧上限）。L3.2 由生效 Plan 填；现恒 0。
+  dailyAllowanceMicros  BigInt      @default(0)
+  periodAllowanceMicros BigInt      @default(0)
   // 组织级消费上限（周期上限微单位）+ 周期口径；null=不限。admin 面设置。
   quotaMicros   BigInt?
   quotaPeriod   CreditQuotaPeriod?
@@ -62,6 +65,11 @@ model CreditHold {
   id             String           @id @default(cuid())
   accountId      String
   amountMicros   BigInt
+  // B1 三桶预留明细：hold 时从各桶按序（过期先扣）扣走的量，三者之和=amountMicros。
+  // settle/release 据此把未用差额按夹紧规则归还各桶；无此明细则无法知道该退回哪个桶。
+  reservedDailyMicros     BigInt @default(0)
+  reservedPeriodMicros    BigInt @default(0)
+  reservedPermanentMicros BigInt @default(0)
   status         CreditHoldStatus @default(active)
   idempotencyKey String           @unique
   expiresAt      DateTime?

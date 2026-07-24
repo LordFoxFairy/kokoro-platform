@@ -54,7 +54,9 @@ describe("credit reserve-commit-refund cycle", () => {
     expect(succeeded).toBe(3);
     expect(rejectedInsufficient).toBe(7);
     expect(stored.heldMicros).toBe(90n);
-    expect(stored.heldMicros).toBeLessThanOrEqual(stored.balanceMicros);
+    // B1：预留在 hold 时按序移出桶——3×30=90 全从永久桶移出，永久桶精确剩 10、绝不透支（无超额预留）。
+    expect(stored.balanceMicros).toBe(10n);
+    expect(stored.dailyMicros + stored.periodMicros + stored.balanceMicros).toBe(10n); // 可用总额=10
   });
 
   it("spend cannot consume held (reserved) funds", async () => {
@@ -82,15 +84,17 @@ describe("credit reserve-commit-refund cycle", () => {
       idempotencyKey: "svh_spend_ok",
       reason: "model_call",
     });
-    expect(result.account.balanceMicros).toBe("60");
+    // B1：hold 已把 60 移出永久桶（100→40），spend 40 再扣光永久桶→0；balanceMicros=永久桶=0。
+    expect(result.account.balanceMicros).toBe("0");
 
     const stored = await prisma.creditAccount.findUniqueOrThrow({ where: { id: account.id } });
-    expect(stored.balanceMicros).toBe(60n);
+    expect(stored.balanceMicros).toBe(0n);
+    // 冻结的 60 分文未动（spend 只能消费桶内可用额，预留已移出桶）——这就是「不得动用已冻结」。
     expect(stored.heldMicros).toBe(60n);
-    expect(stored.balanceMicros).toBeGreaterThanOrEqual(stored.heldMicros);
+    expect(stored.dailyMicros + stored.periodMicros + stored.balanceMicros).toBe(0n); // 可用总额已扣光
   });
 
-  it("holding lowers available without touching balance", async () => {
+  it("holding lowers available and moves funds out of the bucket (B1 decrement-at-hold)", async () => {
     const account = await fundedAccount("hold_lowers_available", "9000000");
 
     const hold = await service.holdCredits({
@@ -102,10 +106,10 @@ describe("credit reserve-commit-refund cycle", () => {
     const stored = await prisma.creditAccount.findUniqueOrThrow({ where: { id: account.id } });
     expect(hold.status).toBe("active");
     expect(hold.amountMicros).toBe("4000000");
-    expect(stored.balanceMicros.toString()).toBe("9000000");
+    // B1：预留在 hold 时就从永久桶移出（9M→5M），held 记 4M；available=桶之和=5M。
+    expect(stored.balanceMicros.toString()).toBe("5000000");
     expect(stored.heldMicros.toString()).toBe("4000000");
-    // available = balance - held = 5000000
-    expect((stored.balanceMicros - stored.heldMicros).toString()).toBe("5000000");
+    expect((stored.dailyMicros + stored.periodMicros + stored.balanceMicros).toString()).toBe("5000000");
   });
 
   it("rejects a hold that exceeds available credit", async () => {
@@ -233,7 +237,8 @@ describe("credit reserve-commit-refund cycle", () => {
     ).rejects.toBeInstanceOf(CreditCaptureExceedsHoldError);
 
     const stored = await prisma.creditAccount.findUniqueOrThrow({ where: { id: account.id } });
-    expect(stored.balanceMicros.toString()).toBe("9000000");
+    // B1：hold 已把 2M 从永久桶移出（9M→7M）；capture 被拒不改状态，桶维持 7M、held 维持 2M。
+    expect(stored.balanceMicros.toString()).toBe("7000000");
     expect(stored.heldMicros.toString()).toBe("2000000");
   });
 

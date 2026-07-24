@@ -16,7 +16,7 @@ import type {
   UsageRecord,
   UsageRecordStatus,
 } from "../../domain/credit.js";
-import { assertCreditSpendAllowed } from "../../domain/credit-policy.js";
+import { available, creditBack, debit } from "../../domain/buckets.js";
 import {
   CreditAccountNotFoundError,
   CreditCaptureExceedsHoldError,
@@ -48,8 +48,58 @@ import {
 
 type TransactionClient = Prisma.TransactionClient;
 
+// FOR UPDATE 行读的三桶快照（hold 准入判定用）。
+interface AccountBucketRow {
+  dailyMicros: bigint;
+  periodMicros: bigint;
+  balanceMicros: bigint;
+  status: string;
+  deletedAt: Date | null;
+}
+
+// FOR UPDATE 行读的三桶 + 当期额度（settle/release 归还夹紧用）。
+interface AccountReturnRow {
+  dailyMicros: bigint;
+  periodMicros: bigint;
+  balanceMicros: bigint;
+  dailyAllowanceMicros: bigint;
+  periodAllowanceMicros: bigint;
+}
+
 export class PrismaCreditRepository implements CreditRepository {
   constructor(private readonly prisma: PrismaClient) {}
+
+  // B1 归还：把 returned（未用差额 / 全额预留）夹紧归还各桶，并把 held 减去释放的预留总额。
+  // capture（returned=reserved-spent）/ release / expire（returned=reserved 全额）共用，归还逻辑单点维护。
+  // 调用方须已在同一事务内完成 hold 状态转移（active→captured/released/expired），此处只动账户桶。
+  private async applyBucketReturn(
+    tx: Prisma.TransactionClient,
+    accountId: string,
+    returned: { daily: bigint; period: bigint; permanent: bigint },
+    heldDecrement: bigint,
+  ): Promise<Prisma.CreditAccountGetPayload<Record<string, never>>> {
+    const rows = await tx.$queryRaw<AccountReturnRow[]>`
+      SELECT dailyMicros, periodMicros, balanceMicros, dailyAllowanceMicros, periodAllowanceMicros
+      FROM credit_accounts WHERE id = ${accountId} FOR UPDATE`;
+    const acct = rows[0];
+    if (!acct) {
+      throw new CreditAccountNotFoundError(accountId);
+    }
+    const next = creditBack(
+      { daily: acct.dailyMicros, period: acct.periodMicros, permanent: acct.balanceMicros },
+      returned,
+      { daily: acct.dailyAllowanceMicros, period: acct.periodAllowanceMicros },
+    );
+    return tx.creditAccount.update({
+      where: { id: accountId },
+      data: {
+        dailyMicros: next.daily,
+        periodMicros: next.period,
+        balanceMicros: next.permanent,
+        heldMicros: { decrement: heldDecrement },
+      },
+    });
+  }
 
   async ensureAccount(input: EnsureCreditAccountInput): Promise<{ account: CreditAccount; created: boolean }> {
     const where = {
@@ -132,37 +182,44 @@ export class PrismaCreditRepository implements CreditRepository {
         }
 
         const amount = parsePositiveBigIntString(input.amountMicros, "amountMicros");
-        // WHY: 条件更新校验可用额(balance-held)≥amount——spend 不得动用已冻结资金，否则 capture 时余额会被扣成负。
-        const spent = await tx.$executeRaw`UPDATE credit_accounts SET balanceMicros = balanceMicros - ${amount} WHERE id = ${input.accountId} AND status = 'active' AND deletedAt IS NULL AND balanceMicros - heldMicros >= ${amount}`;
-
-        if (spent === 0) {
-          const account = await tx.creditAccount.findUnique({
-            where: {
-              id: input.accountId,
-            },
-          });
-
-          if (!account) {
-            throw new CreditAccountNotFoundError(input.accountId);
-          }
-          if (account.deletedAt) {
-            throw lifecycleError("credit.account.deleted", `credit account deleted: ${input.accountId}`, 409);
-          }
-
-          assertCreditSpendAllowed(input.accountId, account.balanceMicros - account.heldMicros, amount);
+        // B1：直接扣费按过期先扣（daily→period→permanent）消费三桶。预留资金已在 hold 时移出桶，
+        // 故可用额=桶之和天然不含冻结——「spend 不得动用已冻结资金」由桶模型自动保证，无需再引 held。
+        // FOR UPDATE 行锁串行化并发，域 debit 为扣减顺序唯一事实源。
+        const rows = await tx.$queryRaw<AccountBucketRow[]>`
+          SELECT dailyMicros, periodMicros, balanceMicros, status, deletedAt
+          FROM credit_accounts WHERE id = ${input.accountId} FOR UPDATE`;
+        const row = rows[0];
+        if (!row) {
+          throw new CreditAccountNotFoundError(input.accountId);
+        }
+        if (row.deletedAt) {
+          throw lifecycleError("credit.account.deleted", `credit account deleted: ${input.accountId}`, 409);
+        }
+        if (row.status !== "active") {
+          throw new InsufficientCreditError(input.accountId);
+        }
+        const d = debit({ daily: row.dailyMicros, period: row.periodMicros, permanent: row.balanceMicros }, amount);
+        if (d.shortfall > 0n) {
           throw new InsufficientCreditError(input.accountId);
         }
 
-        const account = await tx.creditAccount.findUniqueOrThrow({
-          where: {
-            id: input.accountId,
+        const account = await tx.creditAccount.update({
+          where: { id: input.accountId },
+          data: {
+            dailyMicros: { decrement: d.daily },
+            periodMicros: { decrement: d.period },
+            balanceMicros: { decrement: d.permanent },
           },
         });
         const entry = await tx.creditLedgerEntry.create({
           data: {
             accountId: account.id,
             amountMicros: -amount,
-            balanceAfterMicros: account.balanceMicros,
+            balanceAfterMicros: available({
+              daily: account.dailyMicros,
+              period: account.periodMicros,
+              permanent: account.balanceMicros,
+            }),
             reason: input.reason,
             idempotencyKey: input.idempotencyKey,
             ...defined("requestId", input.requestId),
@@ -234,28 +291,43 @@ export class PrismaCreditRepository implements CreditRepository {
         }
 
         const amount = parsePositiveBigIntString(input.amountMicros, "amountMicros");
-        // WHY: 原子条件更新——可用额(balance-held)≥amount 的判断与自增在 DB 同一条语句完成，
-        // 行写锁串行化并发，杜绝「读-判-写」竞态导致的超额冻结（同 spend 的条件更新模式）。
-        const reserved = await tx.$executeRaw`UPDATE credit_accounts SET heldMicros = heldMicros + ${amount} WHERE id = ${input.accountId} AND status = 'active' AND deletedAt IS NULL AND balanceMicros - heldMicros >= ${amount}`;
-        if (reserved === 0) {
-          const existingAccount = await tx.creditAccount.findUnique({
-            where: {
-              id: input.accountId,
-            },
-          });
-          if (!existingAccount) {
-            throw new CreditAccountNotFoundError(input.accountId);
-          }
-          if (existingAccount.deletedAt) {
-            throw lifecycleError("credit.account.deleted", `credit account deleted: ${input.accountId}`, 409);
-          }
+        // B1 三桶预留：FOR UPDATE 行锁串行化并发 hold → 读三桶 → 域 debit 按过期先扣（daily→period→permanent）
+        // 算每桶扣减 → shortfall>0 即可用额不足。域函数是扣减顺序的唯一事实源，不在 SQL 里重复该逻辑。
+        const rows = await tx.$queryRaw<AccountBucketRow[]>`
+          SELECT dailyMicros, periodMicros, balanceMicros, status, deletedAt
+          FROM credit_accounts WHERE id = ${input.accountId} FOR UPDATE`;
+        const row = rows[0];
+        if (!row) {
+          throw new CreditAccountNotFoundError(input.accountId);
+        }
+        if (row.deletedAt) {
+          throw lifecycleError("credit.account.deleted", `credit account deleted: ${input.accountId}`, 409);
+        }
+        if (row.status !== "active") {
           throw new InsufficientCreditError(input.accountId);
         }
+        const d = debit({ daily: row.dailyMicros, period: row.periodMicros, permanent: row.balanceMicros }, amount);
+        if (d.shortfall > 0n) {
+          throw new InsufficientCreditError(input.accountId);
+        }
+
+        await tx.creditAccount.update({
+          where: { id: input.accountId },
+          data: {
+            dailyMicros: { decrement: d.daily },
+            periodMicros: { decrement: d.period },
+            balanceMicros: { decrement: d.permanent },
+            heldMicros: { increment: amount },
+          },
+        });
 
         const hold = await tx.creditHold.create({
           data: {
             accountId: input.accountId,
             amountMicros: amount,
+            reservedDailyMicros: d.daily,
+            reservedPeriodMicros: d.period,
+            reservedPermanentMicros: d.permanent,
             status: "active",
             idempotencyKey: input.idempotencyKey,
             ...defined("expiresAt", input.expiresAt),
@@ -312,24 +384,30 @@ export class PrismaCreditRepository implements CreditRepository {
           throw new CreditHoldNotActiveError(input.holdId, "captured");
         }
 
-        const account = await tx.creditAccount.update({
-          where: {
-            id: hold.accountId,
-          },
-          data: {
-            balanceMicros: {
-              decrement: actualAmount,
-            },
-            heldMicros: {
-              decrement: hold.amountMicros,
-            },
-          },
-        });
+        // 实额按预留明细顺序（过期先扣）分摊为 spent；未用差额 returned=reserved-spent 夹紧归还各桶。
+        // spent 已在 hold 时从桶扣走、就此定为消费；此处只补回未用部分并释放 held。
+        const reserved = {
+          daily: hold.reservedDailyMicros,
+          period: hold.reservedPeriodMicros,
+          permanent: hold.reservedPermanentMicros,
+        };
+        const spent = debit(reserved, actualAmount);
+        const returned = {
+          daily: reserved.daily - spent.daily,
+          period: reserved.period - spent.period,
+          permanent: reserved.permanent - spent.permanent,
+        };
+        const account = await this.applyBucketReturn(tx, hold.accountId, returned, hold.amountMicros);
         const entry = await tx.creditLedgerEntry.create({
           data: {
             accountId: account.id,
             amountMicros: -actualAmount,
-            balanceAfterMicros: account.balanceMicros,
+            // balanceAfter = 结算后可用总额（三桶之和）；daily/period=0 时等同永久桶余额（向后兼容）。
+            balanceAfterMicros: available({
+              daily: account.dailyMicros,
+              period: account.periodMicros,
+              permanent: account.balanceMicros,
+            }),
             reason: input.reason,
             idempotencyKey: input.idempotencyKey,
             ...defined("requestId", input.requestId),
@@ -397,16 +475,17 @@ export class PrismaCreditRepository implements CreditRepository {
         throw new CreditHoldNotActiveError(input.holdId, current.status);
       }
 
-      await tx.creditAccount.update({
-        where: {
-          id: hold.accountId,
+      // 全额归还预留到各桶（夹紧到当期额度），释放 held。零成本释放：无消费、无 ledger 分录。
+      await this.applyBucketReturn(
+        tx,
+        hold.accountId,
+        {
+          daily: hold.reservedDailyMicros,
+          period: hold.reservedPeriodMicros,
+          permanent: hold.reservedPermanentMicros,
         },
-        data: {
-          heldMicros: {
-            decrement: hold.amountMicros,
-          },
-        },
-      });
+        hold.amountMicros,
+      );
       const released = await tx.creditHold.findUniqueOrThrow({
         where: {
           id: hold.id,
@@ -455,10 +534,17 @@ export class PrismaCreditRepository implements CreditRepository {
         return false;
       }
 
-      await tx.creditAccount.update({
-        where: { id: hold.accountId },
-        data: { heldMicros: { decrement: hold.amountMicros } },
-      });
+      // 过期回收 = 全额归还预留到各桶（夹紧到当期额度）+ 释放 held，同 release 语义。
+      await this.applyBucketReturn(
+        tx,
+        hold.accountId,
+        {
+          daily: hold.reservedDailyMicros,
+          period: hold.reservedPeriodMicros,
+          permanent: hold.reservedPermanentMicros,
+        },
+        hold.amountMicros,
+      );
       return true;
     });
   }
@@ -1015,6 +1101,8 @@ function mapCreditAccount(account: {
   dailyResetOn: Date | null;
   periodMicros: bigint;
   periodResetOn: Date | null;
+  dailyAllowanceMicros: bigint;
+  periodAllowanceMicros: bigint;
   quotaMicros: bigint | null;
   quotaPeriod: "monthly" | null;
   deletedAt: Date | null;
@@ -1035,6 +1123,8 @@ function mapCreditAccount(account: {
     dailyResetOn: account.dailyResetOn,
     periodMicros: account.periodMicros.toString(),
     periodResetOn: account.periodResetOn,
+    dailyAllowanceMicros: account.dailyAllowanceMicros.toString(),
+    periodAllowanceMicros: account.periodAllowanceMicros.toString(),
     quotaMicros: account.quotaMicros === null ? null : account.quotaMicros.toString(),
     quotaPeriod: account.quotaPeriod,
     deletedAt: account.deletedAt,
@@ -1049,6 +1139,9 @@ function mapCreditHold(hold: {
   id: string;
   accountId: string;
   amountMicros: bigint;
+  reservedDailyMicros: bigint;
+  reservedPeriodMicros: bigint;
+  reservedPermanentMicros: bigint;
   status: CreditHoldStatus;
   idempotencyKey: string;
   expiresAt: Date | null;
@@ -1063,6 +1156,9 @@ function mapCreditHold(hold: {
     id: hold.id,
     accountId: hold.accountId,
     amountMicros: hold.amountMicros.toString(),
+    reservedDailyMicros: hold.reservedDailyMicros.toString(),
+    reservedPeriodMicros: hold.reservedPeriodMicros.toString(),
+    reservedPermanentMicros: hold.reservedPermanentMicros.toString(),
     status: hold.status,
     idempotencyKey: hold.idempotencyKey,
     expiresAt: hold.expiresAt,

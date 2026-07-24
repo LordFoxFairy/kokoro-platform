@@ -20,6 +20,8 @@ function account(): CreditAccount {
     dailyResetOn: null,
     periodMicros: "0",
     periodResetOn: null,
+    dailyAllowanceMicros: "0",
+    periodAllowanceMicros: "0",
     quotaMicros: null,
     quotaPeriod: null,
     deletedAt: null,

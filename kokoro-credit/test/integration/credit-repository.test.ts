@@ -204,7 +204,9 @@ describe("PrismaCreditRepository", () => {
 
     const stored = await prisma.creditAccount.findUniqueOrThrow({ where: { id: account.id } });
     expect(stored.heldMicros.toString()).toBe("5000000");
-    expect(stored.balanceMicros.toString()).toBe("5000000");
+    // B1：5×1M 全从永久桶按序移出，永久桶精确剩 0、绝不透支；可用总额=0（恰好放行 5、无超额预留）。
+    expect(stored.balanceMicros.toString()).toBe("0");
+    expect((stored.dailyMicros + stored.periodMicros + stored.balanceMicros).toString()).toBe("0");
   });
 
   it("deletes and restores an account without deleting ledger or usage facts", async () => {

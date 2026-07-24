@@ -22,6 +22,8 @@ function ensureOnlyRepo(seen: EnsureCreditAccountInput[]): CreditRepository {
         dailyResetOn: null,
         periodMicros: "0",
         periodResetOn: null,
+        dailyAllowanceMicros: "0",
+        periodAllowanceMicros: "0",
         quotaMicros: null,
         quotaPeriod: null,
         deletedAt: null,

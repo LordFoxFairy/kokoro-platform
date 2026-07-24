@@ -29,6 +29,9 @@ export interface CreditAccount extends DeletionAudit {
   dailyResetOn: Date | null;
   periodMicros: string;
   periodResetOn: Date | null;
+  // 时间桶当期额度（懒刷新重置目标 + release/refund 归还夹紧上限）。L3.2 由生效 Plan 填；现恒 0。
+  dailyAllowanceMicros: string;
+  periodAllowanceMicros: string;
   // 组织级消费上限（周期上限，微单位字符串）+ 周期口径；null=不限（现状）。admin 面设置。
   quotaMicros: string | null;
   quotaPeriod: CreditQuotaPeriod | null;
@@ -64,6 +67,10 @@ export interface CreditHold {
   id: string;
   accountId: string;
   amountMicros: string;
+  // B1 三桶预留明细：hold 时从各桶按序扣走的量，三者之和=amountMicros；settle/release 据此夹紧归还。
+  reservedDailyMicros: string;
+  reservedPeriodMicros: string;
+  reservedPermanentMicros: string;
   status: CreditHoldStatus;
   idempotencyKey: string;
   expiresAt: Date | null;

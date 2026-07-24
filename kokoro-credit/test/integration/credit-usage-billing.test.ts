@@ -240,12 +240,12 @@ describe("credit usage billing face (run hold/settle)", () => {
     const fractional = await settle({ holdId, usage: { inputTokens: 1.5, outputTokens: 1 }, idempotencyKey: "run_bad_frac" });
     expect(fractional.statusCode).toBe(400);
 
-    // 边界拒绝后冻结未动、未入账。
+    // 边界拒绝后冻结未动、未入账。B1：hold 已把 10000 从永久桶移出（100000→90000）且保持预留，settle 被拒不改动。
     const storedHold = await prisma.creditHold.findUniqueOrThrow({ where: { id: holdId } });
     expect(storedHold.status).toBe("active");
     const stored = await prisma.creditAccount.findUniqueOrThrow({ where: { id: account.id } });
     expect(stored.heldMicros.toString()).toBe("10000");
-    expect(stored.balanceMicros.toString()).toBe("100000");
+    expect(stored.balanceMicros.toString()).toBe("90000");
   });
 
   it("prices usage directly: single direction, both directions, and rejects negative tokens", async () => {

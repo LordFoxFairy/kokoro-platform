@@ -284,8 +284,11 @@ export class CreditService {
       return { balanceMicros: "0", heldMicros: "0", quotaMicros: null, quotaPeriod: null };
     }
     // quota 透出供用户面「配额已用/预警」：null=未设配额(不限)。
+    // balanceMicros=可用总额（三桶之和；预留已在 hold 时移出桶）；daily/period=0 时等同永久桶（向后兼容）。
+    // heldMicros=活跃冻结总额（域内原子维护的预留缓存）。
+    const availableMicros = BigInt(account.dailyMicros) + BigInt(account.periodMicros) + BigInt(account.balanceMicros);
     return {
-      balanceMicros: account.balanceMicros,
+      balanceMicros: availableMicros.toString(),
       heldMicros: account.heldMicros,
       quotaMicros: account.quotaMicros,
       quotaPeriod: account.quotaPeriod,
