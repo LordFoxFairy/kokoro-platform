@@ -63,14 +63,21 @@ export function refresh(
   };
 }
 
-// 归还：settle 释放 hold 未用差额时，按扣减来源逆向补回各桶。
+// 归还：settle 释放 hold 未用差额 / refund 反转时，按扣减来源补回各桶。
+//
+// 「心黑但合理」决策#3：时间型桶（每日/周期）归还必须夹紧到当期额度——绝不复活已过期的赠额。
+// 日界翻页时最关键：昨日 hold 的未用差额今日结算，此时桶可能已被 ensureAllowancesFresh 重置到满额，
+// 无脑相加会让用户凭空多出赠额（房吃亏）。夹紧到额度后，过期赠额自然作废，房不吃亏、用户不损当期额度。
+// 永久桶是付费积分，无"当期额度"概念，照单全收不夹。
 export function creditBack(
   b: Buckets,
   delta: { daily: bigint; period: bigint; permanent: bigint },
+  allowances: Allowances,
 ): Buckets {
+  const clamp = (value: bigint, cap: bigint): bigint => (value < cap ? value : cap);
   return {
-    daily: b.daily + delta.daily,
-    period: b.period + delta.period,
+    daily: clamp(b.daily + delta.daily, allowances.daily),
+    period: clamp(b.period + delta.period, allowances.period),
     permanent: b.permanent + delta.permanent,
   };
 }

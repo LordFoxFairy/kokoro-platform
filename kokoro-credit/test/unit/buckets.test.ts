@@ -84,13 +84,42 @@ describe("refresh（惰性刷新：到新周期则重置，reset 非累加）", 
   });
 });
 
-describe("creditBack（settle 释放差额：按来源归还各桶）", () => {
-  it("把 hold 未用的差额按桶归还", () => {
-    // 当前桶 + 归还 {daily:10, period:20, permanent:5}
-    expect(creditBack(B(40n, 180n, 300n), { daily: 10n, period: 20n, permanent: 5n })).toEqual(B(50n, 200n, 305n));
+describe("creditBack（settle 释放差额：按来源归还各桶，时间桶夹紧到当期额度）", () => {
+  // 决策#3「心黑但合理」：release/refund 归还时间桶必须夹紧到当期额度——
+  // 不复活已过期的每日/周期赠额（日界翻页时最关键）；永久桶付费不夹。allowances 传入当期额度。
+  const A = (daily: bigint, period: bigint) => ({ daily, period });
+
+  it("差额未超额度：正常按桶归还（不触发夹紧）", () => {
+    // 当前桶 + 归还 {daily:10, period:20, permanent:5}，都在额度内
+    expect(creditBack(B(40n, 180n, 300n), { daily: 10n, period: 20n, permanent: 5n }, A(50n, 500n))).toEqual(
+      B(50n, 200n, 305n),
+    );
   });
 
   it("零归还不动", () => {
-    expect(creditBack(B(40n, 180n, 300n), { daily: 0n, period: 0n, permanent: 0n })).toEqual(B(40n, 180n, 300n));
+    expect(creditBack(B(40n, 180n, 300n), { daily: 0n, period: 0n, permanent: 0n }, A(50n, 500n))).toEqual(
+      B(40n, 180n, 300n),
+    );
+  });
+
+  it("归还使每日超额度：夹紧到日额度（不复活过期赠额）", () => {
+    // daily 45+10=55 > 额度 50 → 夹到 50；period 490+20=510 > 500 → 夹到 500；永久不夹
+    expect(creditBack(B(45n, 490n, 300n), { daily: 10n, period: 20n, permanent: 5n }, A(50n, 500n))).toEqual(
+      B(50n, 500n, 305n),
+    );
+  });
+
+  it("日界翻页：桶已刷新到满额，昨日 run 释放的赠额全部夹掉（房不吃亏）", () => {
+    // ensureAllowancesFresh 已把 daily/period 重置到满额；此时释放昨天 hold 的未用差额 → 全部被夹掉
+    expect(creditBack(B(50n, 500n, 300n), { daily: 30n, period: 100n, permanent: 0n }, A(50n, 500n))).toEqual(
+      B(50n, 500n, 300n),
+    );
+  });
+
+  it("永久桶不夹：付费积分归还不受额度限制", () => {
+    // permanent 大额归还照单全收（付费的，无当期额度概念）
+    expect(creditBack(B(0n, 0n, 1000n), { daily: 0n, period: 0n, permanent: 500n }, A(50n, 500n))).toEqual(
+      B(0n, 0n, 1500n),
+    );
   });
 });
