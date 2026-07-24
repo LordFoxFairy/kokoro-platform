@@ -14,8 +14,14 @@ model CreditAccount {
   ownerKind     CreditOwnerKind
   ownerId       String
   status        CreditAccountStatus @default(active)
+  // 三桶（按过期节奏，L3.1）：balanceMicros=永久桶（积分包/欢迎，不过期）。
+  // 以下为时间型桶，懒刷新（access 时按水位重置，use-or-lose，非 cron）；allowance 由生效 Plan 供给（L3.2 前恒 0）。
   balanceMicros BigInt              @default(0)
   heldMicros    BigInt              @default(0)
+  dailyMicros   BigInt              @default(0)
+  dailyResetOn  DateTime?
+  periodMicros  BigInt              @default(0)
+  periodResetOn DateTime?
   // 组织级消费上限（周期上限微单位）+ 周期口径；null=不限。admin 面设置。
   quotaMicros   BigInt?
   quotaPeriod   CreditQuotaPeriod?

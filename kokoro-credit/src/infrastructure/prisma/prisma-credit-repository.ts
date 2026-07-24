@@ -1011,6 +1011,10 @@ function mapCreditAccount(account: {
   status: "active" | "disabled";
   balanceMicros: bigint;
   heldMicros: bigint;
+  dailyMicros: bigint;
+  dailyResetOn: Date | null;
+  periodMicros: bigint;
+  periodResetOn: Date | null;
   quotaMicros: bigint | null;
   quotaPeriod: "monthly" | null;
   deletedAt: Date | null;
@@ -1027,6 +1031,10 @@ function mapCreditAccount(account: {
     status: account.status,
     balanceMicros: account.balanceMicros.toString(),
     heldMicros: account.heldMicros.toString(),
+    dailyMicros: account.dailyMicros.toString(),
+    dailyResetOn: account.dailyResetOn,
+    periodMicros: account.periodMicros.toString(),
+    periodResetOn: account.periodResetOn,
     quotaMicros: account.quotaMicros === null ? null : account.quotaMicros.toString(),
     quotaPeriod: account.quotaPeriod,
     deletedAt: account.deletedAt,

@@ -21,8 +21,14 @@ export interface CreditAccount extends DeletionAudit {
   ownerKind: CreditOwnerKind;
   ownerId: string;
   status: CreditAccountStatus;
+  // 三桶（L3.1，按过期节奏）：balanceMicros=永久桶（积分包/欢迎，不过期）；
+  // dailyMicros/periodMicros=时间型桶（懒刷新，use-or-lose）；*ResetOn=各桶水位（null=未初始化/无订阅）。
   balanceMicros: string;
   heldMicros: string;
+  dailyMicros: string;
+  dailyResetOn: Date | null;
+  periodMicros: string;
+  periodResetOn: Date | null;
   // 组织级消费上限（周期上限，微单位字符串）+ 周期口径；null=不限（现状）。admin 面设置。
   quotaMicros: string | null;
   quotaPeriod: CreditQuotaPeriod | null;
