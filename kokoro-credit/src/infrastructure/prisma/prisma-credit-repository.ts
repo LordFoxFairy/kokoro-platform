@@ -16,7 +16,8 @@ import type {
   UsageRecord,
   UsageRecordStatus,
 } from "../../domain/credit.js";
-import { available, creditBack, debit } from "../../domain/buckets.js";
+import { available, creditBack, debit, refresh, type Buckets } from "../../domain/buckets.js";
+import { dailyBoundary, isStale, periodBoundary } from "../../domain/reset-boundary.js";
 import {
   CreditAccountNotFoundError,
   CreditCaptureExceedsHoldError,
@@ -53,8 +54,34 @@ interface AccountBucketRow {
   dailyMicros: bigint;
   periodMicros: bigint;
   balanceMicros: bigint;
+  dailyResetOn: Date | null;
+  periodResetOn: Date | null;
+  dailyAllowanceMicros: bigint;
+  periodAllowanceMicros: bigint;
   status: string;
   deletedAt: Date | null;
+}
+
+// 懒刷新：把行读到的桶值按水位（对比 UTC 自然日/自然月边界）刷新为额度（reset 非累加）。
+// 域 refresh() 是刷新逻辑唯一事实源；此处只做 now→边界→stale 标志的换算（时区决策落这一点，见 reset-boundary.ts）。
+function refreshRow(
+  row: Pick<AccountBucketRow, "dailyMicros" | "periodMicros" | "balanceMicros" | "dailyResetOn" | "periodResetOn" | "dailyAllowanceMicros" | "periodAllowanceMicros">,
+  now: Date,
+): { buckets: Buckets; dailyResetOn: Date; periodResetOn: Date } {
+  const dailyBoundaryNow = dailyBoundary(now);
+  const periodBoundaryNow = periodBoundary(now);
+  const dailyStale = isStale(row.dailyResetOn, dailyBoundaryNow);
+  const periodStale = isStale(row.periodResetOn, periodBoundaryNow);
+  const buckets = refresh(
+    { daily: row.dailyMicros, period: row.periodMicros, permanent: row.balanceMicros },
+    { daily: row.dailyAllowanceMicros, period: row.periodAllowanceMicros },
+    { dailyStale, periodStale },
+  );
+  return {
+    buckets,
+    dailyResetOn: dailyStale ? dailyBoundaryNow : (row.dailyResetOn ?? dailyBoundaryNow),
+    periodResetOn: periodStale ? periodBoundaryNow : (row.periodResetOn ?? periodBoundaryNow),
+  };
 }
 
 // FOR UPDATE 行读的三桶 + 当期额度（settle/release 归还夹紧用）。
@@ -173,7 +200,7 @@ export class PrismaCreditRepository implements CreditRepository {
     }
   }
 
-  async spendCredits(input: CreditAmountInput): Promise<CreditMutationResult> {
+  async spendCredits(input: CreditAmountInput, now: Date = new Date()): Promise<CreditMutationResult> {
     try {
       return await this.prisma.$transaction(async (tx) => {
         const existing = await this.findExistingEntry(tx, input.idempotencyKey);
@@ -182,11 +209,12 @@ export class PrismaCreditRepository implements CreditRepository {
         }
 
         const amount = parsePositiveBigIntString(input.amountMicros, "amountMicros");
-        // B1：直接扣费按过期先扣（daily→period→permanent）消费三桶。预留资金已在 hold 时移出桶，
-        // 故可用额=桶之和天然不含冻结——「spend 不得动用已冻结资金」由桶模型自动保证，无需再引 held。
-        // FOR UPDATE 行锁串行化并发，域 debit 为扣减顺序唯一事实源。
+        // B1：直接扣费先懒刷新（access 触发，reset 非累加）再按过期先扣（daily→period→permanent）消费三桶。
+        // 预留资金已在 hold 时移出桶，故可用额=桶之和天然不含冻结——「spend 不得动用已冻结资金」由桶模型
+        // 自动保证，无需再引 held。FOR UPDATE 行锁串行化并发，域函数为刷新/扣减顺序唯一事实源。
         const rows = await tx.$queryRaw<AccountBucketRow[]>`
-          SELECT dailyMicros, periodMicros, balanceMicros, status, deletedAt
+          SELECT dailyMicros, periodMicros, balanceMicros, dailyResetOn, periodResetOn,
+                 dailyAllowanceMicros, periodAllowanceMicros, status, deletedAt
           FROM credit_accounts WHERE id = ${input.accountId} FOR UPDATE`;
         const row = rows[0];
         if (!row) {
@@ -198,7 +226,8 @@ export class PrismaCreditRepository implements CreditRepository {
         if (row.status !== "active") {
           throw new InsufficientCreditError(input.accountId);
         }
-        const d = debit({ daily: row.dailyMicros, period: row.periodMicros, permanent: row.balanceMicros }, amount);
+        const fresh = refreshRow(row, now);
+        const d = debit(fresh.buckets, amount);
         if (d.shortfall > 0n) {
           throw new InsufficientCreditError(input.accountId);
         }
@@ -206,9 +235,11 @@ export class PrismaCreditRepository implements CreditRepository {
         const account = await tx.creditAccount.update({
           where: { id: input.accountId },
           data: {
-            dailyMicros: { decrement: d.daily },
-            periodMicros: { decrement: d.period },
-            balanceMicros: { decrement: d.permanent },
+            dailyMicros: fresh.buckets.daily - d.daily,
+            periodMicros: fresh.buckets.period - d.period,
+            balanceMicros: fresh.buckets.permanent - d.permanent,
+            dailyResetOn: fresh.dailyResetOn,
+            periodResetOn: fresh.periodResetOn,
           },
         });
         const entry = await tx.creditLedgerEntry.create({
@@ -282,7 +313,7 @@ export class PrismaCreditRepository implements CreditRepository {
     }
   }
 
-  async holdCredits(input: HoldCreditInput): Promise<CreditHold> {
+  async holdCredits(input: HoldCreditInput, now: Date = new Date()): Promise<CreditHold> {
     try {
       return await this.prisma.$transaction(async (tx) => {
         const existing = await this.findExistingHold(tx, input.idempotencyKey);
@@ -291,10 +322,12 @@ export class PrismaCreditRepository implements CreditRepository {
         }
 
         const amount = parsePositiveBigIntString(input.amountMicros, "amountMicros");
-        // B1 三桶预留：FOR UPDATE 行锁串行化并发 hold → 读三桶 → 域 debit 按过期先扣（daily→period→permanent）
-        // 算每桶扣减 → shortfall>0 即可用额不足。域函数是扣减顺序的唯一事实源，不在 SQL 里重复该逻辑。
+        // B1 三桶预留：FOR UPDATE 行锁串行化并发 hold → 读三桶+水位 → 懒刷新（access 触发，reset 非累加）→
+        // 域 debit 按过期先扣（daily→period→permanent）算每桶扣减 → shortfall>0 即可用额不足。
+        // 域函数是刷新/扣减顺序的唯一事实源，不在 SQL 里重复该逻辑；刷新与扣减在同一行锁内一次写完。
         const rows = await tx.$queryRaw<AccountBucketRow[]>`
-          SELECT dailyMicros, periodMicros, balanceMicros, status, deletedAt
+          SELECT dailyMicros, periodMicros, balanceMicros, dailyResetOn, periodResetOn,
+                 dailyAllowanceMicros, periodAllowanceMicros, status, deletedAt
           FROM credit_accounts WHERE id = ${input.accountId} FOR UPDATE`;
         const row = rows[0];
         if (!row) {
@@ -306,7 +339,8 @@ export class PrismaCreditRepository implements CreditRepository {
         if (row.status !== "active") {
           throw new InsufficientCreditError(input.accountId);
         }
-        const d = debit({ daily: row.dailyMicros, period: row.periodMicros, permanent: row.balanceMicros }, amount);
+        const fresh = refreshRow(row, now);
+        const d = debit(fresh.buckets, amount);
         if (d.shortfall > 0n) {
           throw new InsufficientCreditError(input.accountId);
         }
@@ -314,9 +348,11 @@ export class PrismaCreditRepository implements CreditRepository {
         await tx.creditAccount.update({
           where: { id: input.accountId },
           data: {
-            dailyMicros: { decrement: d.daily },
-            periodMicros: { decrement: d.period },
-            balanceMicros: { decrement: d.permanent },
+            dailyMicros: fresh.buckets.daily - d.daily,
+            periodMicros: fresh.buckets.period - d.period,
+            balanceMicros: fresh.buckets.permanent - d.permanent,
+            dailyResetOn: fresh.dailyResetOn,
+            periodResetOn: fresh.periodResetOn,
             heldMicros: { increment: amount },
           },
         });
@@ -493,6 +529,39 @@ export class PrismaCreditRepository implements CreditRepository {
       });
 
       return mapCreditHold(released);
+    });
+  }
+
+  // 懒刷新（只读路径）：FOR UPDATE 锁行 → 按水位刷新时间桶（惰性，未过期则不动/不写）→ 持久化 → 返回新账户。
+  // 与 hold/spend 内联的刷新同用 refreshRow，逻辑单点维护；这里独立成短事务供纯读路径（如余额查询）调用。
+  async refreshAllowances(accountId: string, now: Date = new Date()): Promise<CreditAccount> {
+    return this.prisma.$transaction(async (tx) => {
+      const rows = await tx.$queryRaw<AccountBucketRow[]>`
+        SELECT dailyMicros, periodMicros, balanceMicros, dailyResetOn, periodResetOn,
+               dailyAllowanceMicros, periodAllowanceMicros, status, deletedAt
+        FROM credit_accounts WHERE id = ${accountId} FOR UPDATE`;
+      const row = rows[0];
+      if (!row) {
+        throw new CreditAccountNotFoundError(accountId);
+      }
+      const dailyBoundaryNow = dailyBoundary(now);
+      const periodBoundaryNow = periodBoundary(now);
+      const dailyStale = isStale(row.dailyResetOn, dailyBoundaryNow);
+      const periodStale = isStale(row.periodResetOn, periodBoundaryNow);
+      if (!dailyStale && !periodStale) {
+        return mapCreditAccount(await tx.creditAccount.findUniqueOrThrow({ where: { id: accountId } }));
+      }
+      const fresh = refreshRow(row, now);
+      const updated = await tx.creditAccount.update({
+        where: { id: accountId },
+        data: {
+          dailyMicros: fresh.buckets.daily,
+          periodMicros: fresh.buckets.period,
+          dailyResetOn: fresh.dailyResetOn,
+          periodResetOn: fresh.periodResetOn,
+        },
+      });
+      return mapCreditAccount(updated);
     });
   }
 

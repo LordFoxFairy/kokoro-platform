@@ -8,6 +8,7 @@ import { registerCreditRoutes } from "../../src/interfaces/http/routes.js";
 function ensureOnlyRepo(seen: EnsureCreditAccountInput[]): CreditRepository {
   const reject = () => Promise.reject(new Error("not implemented"));
   return {
+    refreshAllowances: reject,
     ensureAccount: async (input) => {
       seen.push(input);
       const account: CreditAccount = {

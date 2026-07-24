@@ -111,13 +111,17 @@ export interface CreditRepository {
   // created=true 表示本次新建（供上层做「新账户首次开通」策略，如 welcome 授信）；找到即 false。
   ensureAccount(input: EnsureCreditAccountInput): Promise<{ account: CreditAccount; created: boolean }>;
   grantCredits(input: CreditAmountInput): Promise<CreditMutationResult>;
-  spendCredits(input: CreditAmountInput): Promise<CreditMutationResult>;
+  // 消费前懒刷新时间桶（access 触发，reset 非累加；now 缺省=系统时钟）。
+  spendCredits(input: CreditAmountInput, now?: Date): Promise<CreditMutationResult>;
   resetBalance(input: ResetBalanceInput): Promise<CreditMutationResult>;
-  holdCredits(input: HoldCreditInput): Promise<CreditHold>;
+  holdCredits(input: HoldCreditInput, now?: Date): Promise<CreditHold>;
   captureHold(input: CaptureCreditInput): Promise<CreditMutationResult>;
   releaseHold(input: ReleaseCreditInput): Promise<CreditHold>;
   // 过期回收：expiresAt < now 且仍 active 的 hold → 退冻结额、status 置 expired。返回回收条数。幂等、与 capture/release 竞争只赢一个。
   sweepExpiredHolds(now?: Date): Promise<number>;
+  // 懒刷新（只读路径用）：把时间桶按水位刷新为额度并持久化，返回刷新后账户。供 balance 查询等非消费路径
+  // 在展示前让数据保持"当访问就新鲜"，不必等到下次 hold/spend 才更新存量。
+  refreshAllowances(accountId: string, now?: Date): Promise<CreditAccount>;
   getHoldById(id: string): Promise<CreditHold | null>;
   quote(input: QuoteInput): Promise<QuoteResult>;
   priceUsage(input: PriceUsageInput): Promise<string>;

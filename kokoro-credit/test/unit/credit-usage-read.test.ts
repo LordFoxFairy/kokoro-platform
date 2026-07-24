@@ -76,6 +76,10 @@ function readRepo(hasAccount: boolean): CreditRepository {
     async findActiveAccountByOwner(input: EnsureCreditAccountInput) {
       return hasAccount && input.ownerId === NS ? account() : null;
     },
+    // 读前懒刷新：fixture 时间桶恒 0/allowance 恒 0，刷新为无操作，原样回显。
+    async refreshAllowances() {
+      return account();
+    },
     async listLedgerPage(_accountId, opts) {
       // createdAt desc、id desc 稳定序 + 复合游标：严格晚于（更旧于）游标位。
       const sorted = [...rows].sort((a, b) =>

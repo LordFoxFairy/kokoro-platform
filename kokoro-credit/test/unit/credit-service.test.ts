@@ -104,6 +104,10 @@ function trackingRepo(): {
       calls.push("ensureAccount");
       return { account, created: false };
     },
+    refreshAllowances: async () => {
+      calls.push("refreshAllowances");
+      return account;
+    },
     grantCredits: async () => {
       calls.push("grantCredits");
       return result;
