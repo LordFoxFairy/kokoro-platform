@@ -3,8 +3,10 @@ import { fastifyConnectPlugin } from "@connectrpc/connect-fastify";
 import { createValidateInterceptor } from "@connectrpc/validate";
 import {
   createRpcErrorInterceptor,
+  createRpcTelemetryInterceptor,
   createWorkloadAuthInterceptor,
   type RpcOutgoingDetails,
+  type RpcTelemetryOptions,
   type SafeRpcErrorDetail,
   type WorkloadAuthOptions,
 } from "@kokoro/platform-kit";
@@ -20,6 +22,7 @@ import type { AdminAuthStore } from "./admin-auth-store.js";
 export interface AdminAuthConnectConfig {
   store: AdminAuthStore;
   workload: WorkloadAuthOptions;
+  telemetry: Omit<RpcTelemetryOptions, "identity">;
   service?: AdminAuthServiceOptions;
 }
 
@@ -56,6 +59,7 @@ export function registerAdminAuthConnect(app: FastifyInstance, config: AdminAuth
     grpcWeb: false,
     routes: (router) => router.service(AdminAuthService, createAdminAuthService(config.store, config.service)),
     interceptors: [
+      createRpcTelemetryInterceptor({ ...config.telemetry, identity: config.workload }),
       createRpcErrorInterceptor({ createDetails: createAdminAuthErrorDetails }),
       createWorkloadAuthInterceptor(config.workload),
       createValidateInterceptor(),

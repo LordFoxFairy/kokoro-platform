@@ -14,4 +14,5 @@ export * from "./http/responses.js";
 export * from "./http/start-server.js";
 export * from "./http/openapi.js";
 export * from "./rpc/errors.js";
+export * from "./rpc/telemetry.js";
 export * from "./rpc/workload-auth.js";

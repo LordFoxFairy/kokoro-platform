@@ -6,6 +6,8 @@ import {
   WORKLOAD_ENVIRONMENT_HEADER,
   WORKLOAD_ID_HEADER,
   WORKLOAD_SECRET_HEADER,
+  type RpcMetricLabels,
+  type RpcSecurityAuditRecord,
 } from "@kokoro/platform-kit";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
@@ -127,9 +129,13 @@ describe("Admin Auth generated Connect provider over HTTP/1.1", () => {
   let app: FastifyInstance;
   let baseUrl: string;
   let store: ConnectTestStore;
+  let rpcMetrics: RpcMetricLabels[];
+  let rpcAudit: RpcSecurityAuditRecord[];
 
   beforeEach(async () => {
     store = new ConnectTestStore();
+    rpcMetrics = [];
+    rpcAudit = [];
     app = createAdminServer([], {
       audit: { record: async () => undefined },
       resolveOperator: async () => {
@@ -148,6 +154,19 @@ describe("Admin Auth generated Connect provider over HTTP/1.1", () => {
           environment: "test",
           secrets: [currentSecret, "test-previous-secret"],
         },
+        telemetry: {
+          metrics: {
+            recordRequest: (labels) => {
+              rpcMetrics.push(labels);
+            },
+            observeDuration: () => undefined,
+          },
+          audit: {
+            record: (record) => {
+              rpcAudit.push(record);
+            },
+          },
+        },
       },
     } as AdminServerDeps);
     baseUrl = await app.listen({ host: "127.0.0.1", port: 0 });
@@ -161,6 +180,13 @@ describe("Admin Auth generated Connect provider over HTTP/1.1", () => {
     const client = makeClient(baseUrl, [metadata()]);
     const response = await client.getOperatorByEmail({ email: "Operator@Example.Test" });
     expect(response.operator?.email).toBe("operator@example.test");
+  });
+
+  it("exposes the Prometheus scrape surface", async () => {
+    const response = await fetch(`${baseUrl}/metrics`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/plain");
   });
 
   it("returns canonical codes for missing credentials, wrong audience, and deadline", async () => {
@@ -188,6 +214,32 @@ describe("Admin Auth generated Connect provider over HTTP/1.1", () => {
       { domainCode: "request.invalid", safeMessage: "Invalid request" },
     ]);
     expect(error.rawMessage).not.toContain("pi");
+  });
+
+  it("records safe auth, validation, and success RPC outcomes", async () => {
+    await codeOf(makeClient(baseUrl).getOperator({ id: "secret-command-id" }));
+    await codeOf(makeClient(baseUrl, [metadata()]).getOperatorByEmail({ email: "pi" }));
+    await makeClient(baseUrl, [metadata()]).getOperatorByEmail({ email: "private-operator@example.test" });
+
+    expect(rpcAudit.map((record) => record.event)).toEqual([
+      "workload_auth_failure",
+      "rpc_outcome",
+      "validation_failure",
+      "rpc_outcome",
+      "rpc_outcome",
+    ]);
+    expect(rpcMetrics.map((labels) => labels.code)).toEqual(["unauthenticated", "invalid_argument", "ok"]);
+    expect(rpcMetrics).toHaveLength(3);
+    const serialized = JSON.stringify({ rpcMetrics, rpcAudit });
+    for (const value of [
+      currentSecret,
+      "private-operator@example.test",
+      "raw-verification-token",
+      "secret-command-id",
+      "a".repeat(64),
+    ]) {
+      expect(serialized).not.toContain(value);
+    }
   });
 
   it("rejects an oversized unauthenticated message before handler dispatch", async () => {

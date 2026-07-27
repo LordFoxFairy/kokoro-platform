@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { readRequestContext, registerHealthRoute, sendData, sendError } from "@kokoro/platform-kit";
+import { readRequestContext, registerHealthRoute, registerMetricsRoute, sendData, sendError } from "@kokoro/platform-kit";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { PrismaClient } from "../generated/prisma/index.js";
@@ -129,6 +129,7 @@ export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps
   const app = Fastify({ logger: false });
 
   registerHealthRoute(app, "kokoro-platform-admin");
+  registerMetricsRoute(app, "kokoro-platform-admin");
   if (deps.adminAuth !== undefined) registerAdminAuthConnect(app, deps.adminAuth);
 
   app.get("/", async (_request, reply) => {

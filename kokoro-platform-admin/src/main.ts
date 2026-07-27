@@ -1,4 +1,9 @@
-import { isProductionEnv, startHttpServer } from "@kokoro/platform-kit";
+import {
+  createPrometheusRpcMetrics,
+  isProductionEnv,
+  startHttpServer,
+  type RpcSecurityAuditSink,
+} from "@kokoro/platform-kit";
 import { PrismaAuditSink } from "./audit.js";
 import { createAuthenticator } from "./auth.js";
 import { makePrismaAdminAuthStore } from "./admin-auth-store.js";
@@ -13,6 +18,10 @@ if (isProductionEnv() && config.internalSecret.length === 0) {
   throw new Error("生产环境缺少 admin 调用方凭据：请配置 KOKORO_INTERNAL_SECRET_ADMIN");
 }
 const prisma = createAdminPrisma(config.adminDbUrl);
+const rpcMetrics = createPrometheusRpcMetrics();
+const rpcSecurityAudit: RpcSecurityAuditSink = {
+  record: (record) => console.info(JSON.stringify({ type: "rpc_security_audit", ...record })),
+};
 await startHttpServer({
   moduleName: "kokoro-platform-admin",
   port: config.adminPort,
@@ -31,6 +40,10 @@ await startHttpServer({
           audience: "admin-web",
           environment: process.env.NODE_ENV ?? "development",
           secrets: config.auth.proxySecrets,
+        },
+        telemetry: {
+          metrics: rpcMetrics,
+          audit: rpcSecurityAudit,
         },
       },
     }),
