@@ -14,7 +14,7 @@ Own current user identity, authentication-related application workflows, email a
 User does not own Admin operators, Session messages, Site Web cookies, or cross-Site account federation by implicit shared rows.
 
 ## Public boundary
-Application services and `src/interfaces/http`/`admin` expose supported operations; persistence/auth/email adapters remain private.
+`UserService`, `TeamService`, `SessionService`, `RefreshService`, and `MagicLinkService` (`src/application/`) are the application services. HTTP splits into an internal surface (`/users/ensure`, `/users/:userId` delete/restore, `/owners/:ownerKind/:ownerId/active`, `/teams/upsert`, `/teams/:teamId` delete/restore, `/memberships/check`, `/memberships/change-role`, `/service-accounts/:serviceAccountId`, `/me/teams`), an auth surface (`/auth/sessions`, `/auth/magic-links` + `/consume`, `/auth/refresh` + `/revoke`, `GET /.well-known/jwks.json`), a team self-service BFF surface keyed by the `x-user-id` principal the Web BFF injects (`/bff/me/teams`, `/bff/me/invites`, `/bff/teams/:teamId`, `/bff/teams/:teamId/invites`, `/bff/teams/:teamId/members/change-role|remove`, `/bff/invites/:inviteId/accept|decline`, `/bff/auth/team-sessions`), and admin (`/admin/users/:id/disable|enable` plus the `userAdminManifest` lists). `src/index.ts` re-exports the services above except `RefreshService`, plus `createUserServer`, `userAdminManifest`, `userPlatformModule`, the HTTP schemas, the JOSE signing helpers, and the domain/repository contracts; persistence and email adapters stay private.
 
 ## Callers and dependencies
 Platform identity orchestration and trusted Web backends call this module through declared APIs.
@@ -23,7 +23,7 @@ Platform identity orchestration and trusted Web backends call this module throug
 This package owns user/auth records, subject generation, migrations, and user-domain events within its current schema.
 
 ## Runtime and security
-Authentication inputs are untrusted, tokens require expiry/audience policy, and Site/account association is resolved server-side.
+`DATABASE_URL_USER` is this package's private Prisma datasource; `KOKORO_USER_PORT` (4211) binds the service and `KOKORO_USER_BASE_URL` is its advertised address. Session issuance is RS256 via `KOKORO_USER_JWT_PRIVATE_KEY` (`_PREVIOUS` keeps the rotated public key in JWKS); `KOKORO_AUTH_JWT_SECRET` is the dev-only HS256 fallback and production fails fast without a private key. `KOKORO_AUTH_JWT_ISSUER`, `KOKORO_AUTH_JWT_TTL_SECONDS`, `KOKORO_AUTH_REFRESH_TTL_SECONDS`, and `KOKORO_TEAM_INVITE_TTL_SECONDS` set lifetimes. Magic links read `KOKORO_AUTH_MAGIC_DELIVERY` (`response` is refused in production), `KOKORO_AUTH_MAGIC_TTL_SECONDS`, `KOKORO_AUTH_MAGIC_LINK_BASE_URL`, `KOKORO_SMTP_*`, `KOKORO_AUTH_MAGIC_RATE_*`, and optional `KOKORO_REDIS_URL` for multi-replica rate limiting. Authentication inputs are untrusted, tokens require expiry/audience policy, and Site/account association is resolved server-side.
 
 ## Idempotency, failure, and recovery
 Identity effects require stable command identity, unique constraints, token one-time semantics, and auditable recovery.

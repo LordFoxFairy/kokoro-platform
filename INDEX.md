@@ -14,10 +14,10 @@ Own shared Site, identity, model-control, credit, commerce, capability, and priv
 Platform does not execute Agent graphs, own Session messages/SSE, render Site Web applications, or absorb child repository lifecycles.
 
 ## Public boundary
-Workspace packages expose HTTP/Connect adapters from `interfaces/`; the deployment image is built by `deploy/docker/Dockerfile`.
+Business packages expose Fastify HTTP adapters from `src/interfaces/http` (plus `admin`/`cli`); Connect/protobuf covers `kokoro.platform.admin.v1.AdminAuthService` only. The remaining cross-service traffic splits two ways: business modules call each other through `callService` plus a hand-written Zod schema, while the Admin gateway issues raw `fetch` with caller headers (`gateway.ts`). Root `src/index.ts` re-exports the module registry (`platformModules`, `listPlatformModules`, `getPlatformModule`, `listActivePlatformModules`, `assertPlatformRegistryIntegrity`, `PlatformModuleDescriptor`); the deployment image is built by `deploy/docker/Dockerfile`.
 
 ## Callers and dependencies
-Web Admin calls generated Connect services; Session consumes versioned internal APIs; Agent reaches model/capability backends only through approved runtime protocols.
+Web Admin calls the Admin gateway's `/api/*` endpoints and the generated Admin Auth Connect service; Session consumes versioned internal APIs; Agent reaches model/capability backends only through approved runtime protocols.
 
 ## Data ownership and events
 Each module owns its schema/migrations and domain events. Cross-module orchestration must use application ports and an explicit Platform transaction boundary.
@@ -32,7 +32,7 @@ Effect commands use durable receipts, stable idempotency keys, transactional wri
 Keep domain/application independent of transport and persistence. Add deployable adapters inside the owning module; do not create a new Git repository solely for directory separation.
 
 ## Current gotchas
-Admin Auth Connect is implemented; general Admission, redeem fulfillment, and Model Gateway production contracts remain later waves.
+General Admission, redeem fulfillment, and Model Gateway production contracts remain later waves.
 
 ## Verification
 Run `pnpm lint`, `pnpm typecheck`, `pnpm test`, and dependency-backed `pnpm test:integration` before release.

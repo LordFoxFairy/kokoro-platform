@@ -14,25 +14,25 @@ Expose privileged Platform administration APIs, own Admin Auth persistence/effec
 Admin Web does not share this service's database, and this service does not render UI or own public Site sessions.
 
 ## Public boundary
-Generated Connect services and explicitly registered administrative HTTP endpoints are the only remote boundary; see [`src/INDEX.md`](src/INDEX.md).
+Two remote surfaces: the `createAdminServer` gateway's explicitly registered `/api/*` endpoints (`me`, `manifests`, `operators`, `roles`, `sites`, `billing-overview`, `user360`, `resource`, `action`, `approvals`, `audit`) and the generated Admin Auth Connect provider — see [`src/INDEX.md`](src/INDEX.md) for its contract, digest, and receipt rules.
 
 ## Callers and dependencies
-Admin Web calls through workload-authenticated generated clients. The service invokes Platform application/module ports.
+Admin Web calls both surfaces; the gateway fans out to the site/user/model/credit/payment/hub module manifests with raw `fetch` in `gateway.ts`, stamping `x-kokoro-service: admin` plus the internal secret so each module's `registerRouteAccess` can authorize it.
 
 ## Data ownership and events
-This package owns operator, verification-token effect, auth event, command receipt, and its Prisma migrations.
+This package owns operator, RBAC, approval, and audit records, plus the Admin Auth tables listed in `src/INDEX.md`, and its Prisma migrations.
 
 ## Runtime and security
-Workload identity, audience/environment checks, bounded requests, typed safe errors, security audit, and secret rotation fail closed.
+`DATABASE_URL_ADMIN` is this package's private Prisma datasource; `KOKORO_ADMIN_PORT` (4290) binds the service. Operator authentication is `KOKORO_ADMIN_AUTH_MODE` = `oidc` (default; `KOKORO_ADMIN_OIDC_*`), `proxy` (`KOKORO_ADMIN_PROXY_SECRETS`, comma-separated for rotation), or `dev` (`KOKORO_ADMIN_DEV_OPERATOR`). Outbound module calls carry `KOKORO_INTERNAL_SECRET_ADMIN` — production refuses to boot without it — and `KOKORO_APPROVAL_GRANT_THRESHOLD_MICROS` forces second approval on large grants. Peer addresses come from `KOKORO_{SITE,USER,MODEL,CREDIT,PAYMENT,HUB}_BASE_URL`.
 
 ## Idempotency, failure, and recovery
-Effect commands persist canonical protobuf digests and receipts transactionally; clients reconcile timeout-after-commit by receipt query.
+`/api/action` runs prepare → permission check → approval gate → execute, and `gateway.ts` writes an `AuditLog` row for every denial, transport failure, and completed forward. Admin Auth effect-command idempotency is documented in `src/INDEX.md`.
 
 ## Extension rules and forbidden dependencies
-Add privileged workflows through application services and generated contracts. Never restore Web Prisma access or hand-written transport schemas.
+Add privileged workflows through application services and generated contracts. Admin Web must reach Platform data only through this service, never through its own Prisma client.
 
 ## Current gotchas
-Admin Auth is the Connect pilot; other Platform modules remain local or legacy protocol until their approved wave.
+Gateway `/api/*` endpoints are hand-written Fastify routes with Zod-shaped payloads; only Admin Auth has a generated contract.
 
 ## Verification
 Run package unit/integration tests, typecheck/lint, fresh migrations, and Root Admin Auth compatibility.

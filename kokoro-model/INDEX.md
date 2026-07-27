@@ -14,16 +14,16 @@ Own model/provider catalog records, logical model options, policy selection, ava
 Model does not execute Agent graphs, own provider proxy attempts, settle credit, or choose browser UI state.
 
 ## Public boundary
-Application services plus `src/interfaces/http`, `admin`, and `cli` are the supported entrypoints.
+`ModelService` (`src/application/model-service.ts`) is the only application service. HTTP serves `/provider-accounts/ensure|:providerAccountId|:providerAccountId/restore`, `/model-bindings` (list, `ensure`, `resolve`, delete/restore by id), and `/model-labels` (list, `ensure`), plus the `/admin/models/*` manifest surface (lists for provider-accounts/bindings/labels/site-policies, and provider-account and binding delete/restore); `src/interfaces/cli/seed-builtin.ts` seeds the builtin catalog. `src/index.ts` re-exports `ModelService`, `createModelServer`, `modelAdminManifest`, `modelPlatformModule`, the HTTP schemas, and the domain/repository contracts.
 
 ## Callers and dependencies
-Platform Admission and Admin call this module. Persistence is private to its Prisma schema; runtime invocation is a later Model Gateway boundary.
+Session's model catalog client and the Admin gateway call this module; a general Platform Admission boundary is a later wave and has no implementation today. Persistence is private to its Prisma schema; runtime invocation is a later Model Gateway boundary.
 
 ## Data ownership and events
 This package owns model/provider metadata, policy records, migrations, and model-control events.
 
 ## Runtime and security
-Provider credentials are referenced indirectly and never returned through public model lists; Site/plan policy is resolved server-side.
+`DATABASE_URL_MODEL` is this package's private Prisma datasource; `KOKORO_MODEL_PORT` (4221) binds the service, and `KOKORO_USER_BASE_URL`/`KOKORO_CREDIT_BASE_URL`/`KOKORO_PAYMENT_BASE_URL` name peer services. Inbound calls are authenticated by the per-caller registry (`KOKORO_INTERNAL_SECRET_<CALLER>`); the single legacy `KOKORO_INTERNAL_SECRET` is template compatibility only. Provider credentials are referenced indirectly and never returned through public model lists; Site/plan policy is resolved server-side.
 
 ## Idempotency, failure, and recovery
 Catalog publication and policy changes require stable identities, revisions, audit history, and deterministic fallback selection.

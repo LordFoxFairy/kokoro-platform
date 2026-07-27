@@ -23,7 +23,7 @@ Only `src/index.ts` re-exports are supported. It spans six subtrees:
 - `http/` — `callService` (see below), request context (`readRequestContext`, `requireSite`, `contextHeaders`), `registerErrorHandler`, route access (`registerRouteAccess`, `declareRouteAccess`, `loadCallerSecrets`, `SERVICE_CALLER_HEADER`, `INTERNAL_SECRET_HEADER`), `registerHealthRoute`, `registerMetricsRoute`, `registerOpenApi`, `startHttpServer`, and the `sendData`/`sendError` response helpers.
 - `rpc/` — Connect interceptors and workload auth; specifics in [`src/rpc/INDEX.md`](src/rpc/INDEX.md).
 
-`callService` is the only supported outbound cross-service entry point. Its `caller` argument is required, so every request carries `x-kokoro-service`; `registerRouteAccess` answers 401 when that header is missing. No shared-secret fallback exists: the caller-less `internal-secret-guard` module was removed once it had zero consumers, and `INTERNAL_SECRET_HEADER` now belongs to `http/route-access.ts`.
+`callService` is the supported outbound cross-service entry point for business modules; the Admin gateway is the one caller that issues raw `fetch` instead. `caller` is required, so every `callService` request carries `x-kokoro-service`, and `registerRouteAccess` answers 401 when that header is absent. There is no shared-secret fallback path, and `INTERNAL_SECRET_HEADER` is owned by `http/route-access.ts`.
 
 ## Callers and dependencies
 Platform business modules may depend on Kit; Kit must not depend back on those modules.
@@ -41,7 +41,7 @@ Shared helpers are deterministic; receipt and transaction semantics remain in ow
 Add a helper only when reused and policy-neutral. Do not move module-specific logic here to avoid a proper dependency direction.
 
 ## Current gotchas
-RPC helpers currently support the Admin Auth pilot and are intended for reuse by later generated internal services.
+`contract/platform-runtime.ts` schemas are shared request/response shapes only — they carry no policy, so a module that imports them still owns its own authorization and settlement decisions.
 
 ## Verification
 Run `pnpm --filter @kokoro/platform-kit test`, typecheck, and lint.
