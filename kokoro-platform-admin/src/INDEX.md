@@ -1,4 +1,13 @@
+---
+architectureIndex: 1
+rootId: platform.admin.src
+owners:
+  - "@LordFoxFairy"
+---
+
 # Platform Admin source map
+
+## Responsibilities
 
 Admin Auth is exposed only through the generated `kokoro.platform.admin.v1.AdminAuthService` Connect provider:
 
@@ -11,3 +20,30 @@ Admin Auth is exposed only through the generated `kokoro.platform.admin.v1.Admin
 Command receipts persist both `digestAlgorithm=sha256_protobuf_v1` and the 64-character digest. Proto request bounds match the MySQL `VARCHAR(191)` owner schema, so contract-valid input cannot fail later only because an indexed auth field is too wide.
 
 The package version (`.v1`) is the contract version. There is no custom version header or hand-written Admin Auth HTTP route.
+
+## Non-responsibilities
+This source tree does not render Admin Web, expose Platform tables, or define Root protobuf sources.
+
+## Public boundary
+The generated `kokoro.platform.admin.v1.AdminAuthService` Connect provider is the current public service boundary.
+
+## Callers and dependencies
+Admin Web calls the provider; handlers depend on generated contracts, Platform Kit interceptors, and the package-owned store.
+
+## Data ownership and events
+The package owns operator, token-effect, auth-event, and command-receipt persistence.
+
+## Runtime and security
+Protovalidate, workload identity, safe typed errors, bounded inputs, metrics, and fixed-field security audit protect the boundary.
+
+## Idempotency, failure, and recovery
+Canonical protobuf digest plus transactional receipts detect duplicates/conflicts and recover timeout-after-commit outcomes.
+
+## Extension rules and forbidden dependencies
+Modify Root protobuf first and regenerate mirrors. Never hand-edit generated code or restore Web database access.
+
+## Current gotchas
+Only Admin Auth has completed this generated Connect migration.
+
+## Verification
+Run Admin unit/integration tests, typecheck/lint, fresh migrations, and Root `platform-admin-auth` compatibility.
