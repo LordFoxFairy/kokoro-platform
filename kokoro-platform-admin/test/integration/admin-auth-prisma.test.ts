@@ -23,16 +23,23 @@ import {
 } from "../../src/generated/contracts/kokoro/platform/admin/v1/admin_auth_pb.js";
 import { createAdminPrisma } from "../../src/prisma.js";
 
-// 这组用例会清空 operator/auth 全部表再落回执，所以只允许打本机一次性隔离库。
+// 这组用例会清空 operator/auth 全部表再落回执，所以只允许打 admin 专属的一次性库。
 // 该保护原本是 describe.skipIf：环境不对时 5 条一条不跑却仍报绿，真实覆盖为零。
 // 改为 fail-loud——缺什么直接说，让「跑了多少条」这个数字可信。
 // 错误信息只暴露 host 与库名，绝不回显含密码的完整 URL。
+//
+// 允许两个库名而非一个字面量：CI 按 <service>_test 约定建库(kokoro_admin_test)，
+// 本地按 kokoro_admin_verify。两者都是 admin 专属的抛弃式库，符合本守卫的真实意图；
+// 只钉死本地那个名字会让这 5 条在 CI 恒不通过——这正是 skipIf 时代它们从未在 CI 跑过的原因。
+// 共享库(如 kokoro)一律拒绝：truncate 会波及其它服务的表。
+const ISOLATED_ADMIN_DATABASES = ["kokoro_admin_verify", "kokoro_admin_test"];
+
 function requireIsolatedAdminDatabase(): string {
   const url = process.env.DATABASE_URL_ADMIN;
   if (url === undefined || url === "") {
     throw new Error(
       "DATABASE_URL_ADMIN is required for Admin Auth Prisma integration tests. " +
-        "Point it at an isolated local database: " +
+        "Point it at an admin-only throwaway database: " +
         "DATABASE_URL_ADMIN=mysql://root:<password>@127.0.0.1:3307/kokoro_admin_verify",
     );
   }
@@ -47,11 +54,12 @@ function requireIsolatedAdminDatabase(): string {
     throw new Error("DATABASE_URL_ADMIN is not a valid URL; expected mysql://<user>:<password>@<host>:<port>/<database>");
   }
 
-  if ((host !== "127.0.0.1" && host !== "localhost") || database !== "kokoro_admin_verify") {
+  if ((host !== "127.0.0.1" && host !== "localhost") || !ISOLATED_ADMIN_DATABASES.includes(database)) {
     throw new Error(
-      "Admin Auth Prisma integration tests truncate operator/auth tables, so they refuse to run outside an isolated " +
-        `local database. Expected host 127.0.0.1 or localhost and database "kokoro_admin_verify", got host "${host}" ` +
-        `and database "${database}". Create and migrate it first: ` +
+      "Admin Auth Prisma integration tests truncate operator/auth tables, so they refuse to run outside an " +
+        `admin-only throwaway database. Expected host 127.0.0.1 or localhost and database one of ` +
+        `${ISOLATED_ADMIN_DATABASES.join(" | ")}, got host "${host}" and database "${database}". ` +
+        "Create and migrate it first: " +
         "DATABASE_URL_ADMIN=mysql://root:<password>@127.0.0.1:3307/kokoro_admin_verify pnpm --filter @kokoro/platform-admin db:migrate",
     );
   }
