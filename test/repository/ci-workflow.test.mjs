@@ -33,10 +33,15 @@ test("the root test gate executes repository governance checks", async () => {
 
 test("platform CI builds the repository-owned deployment artifact", async () => {
   const workflow = await readFile(resolve(root, ".github/workflows/ci.yml"), "utf8");
+  const dockerignore = await readFile(resolve(root, ".dockerignore"), "utf8");
 
   assert.match(workflow, /^\s{2}artifact:/mu);
   assert.match(workflow, /needs:\s*\[gates, integration\]/u);
   assert.match(workflow, /docker build/u);
   assert.match(workflow, /--file deploy\/docker\/Dockerfile/u);
   assert.match(workflow, /--tag kokoro-platform:\$\{\{ github\.sha \}\}/u);
+  assert.match(
+    dockerignore,
+    /!kokoro-platform-admin\/src\/generated\n!kokoro-platform-admin\/src\/generated\/contracts\n!kokoro-platform-admin\/src\/generated\/contracts\/\*\*/u,
+  );
 });

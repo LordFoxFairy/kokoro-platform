@@ -5,6 +5,9 @@ node_modules
 **/node_modules
 generated
 **/generated
+!kokoro-platform-admin/src/generated
+!kokoro-platform-admin/src/generated/contracts
+!kokoro-platform-admin/src/generated/contracts/**
 coverage
 dist
 *.log
