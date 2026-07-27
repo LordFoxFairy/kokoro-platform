@@ -6,8 +6,8 @@
 // 注意：这里只声明「平台内置默认」这一档；dev-only 的离线假模型（kokoro-dev-mock）属编排层
 // dev 便利，不进平台内置目录（生产不该出现「Dev Mock」标签）。
 
-import type { ModelService } from "../application/model-service.js";
-import type { ModelLabel } from "../domain/model.js";
+import type { ModelService } from "../../application/model-service.js";
+import type { ModelLabel } from "../../domain/model.js";
 
 // 网关 provider 账号：litellm 传输，凭据只存 env 引用（明文不入库，ADR-010）。
 const BUILTIN_PROVIDER = {

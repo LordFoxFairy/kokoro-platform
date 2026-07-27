@@ -6,8 +6,8 @@
 //
 // id 约定：仓库层用 `site-${key}` 生成站点 id（见 prisma-site-repository）。故从 KOKORO_SITE_ID 去掉
 // 前缀 `site-` 反推 key，确保 upsert 出的 id 与消费侧（web 回退 / 账户 siteId）一致。
-import { createPrismaClient } from "../infrastructure/prisma/prisma-client.js";
-import { PrismaSiteRepository } from "../infrastructure/prisma/prisma-site-repository.js";
+import { createPrismaClient } from "../../infrastructure/prisma/prisma-client.js";
+import { PrismaSiteRepository } from "../../infrastructure/prisma/prisma-site-repository.js";
 
 const siteId = process.env.KOKORO_SITE_ID ?? "site-dev";
 const siteName = process.env.KOKORO_SITE_NAME ?? "Kokoro";

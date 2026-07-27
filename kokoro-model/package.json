@@ -16,7 +16,7 @@
     "db:migrate": "prisma migrate deploy",
     "db:dev": "prisma migrate dev",
     "db:reset": "prisma migrate reset --force",
-    "seed:builtin": "tsx src/bootstrap/seed-builtin.ts",
+    "seed:builtin": "tsx src/interfaces/cli/seed-builtin.ts",
     "test": "vitest run test/unit",
     "test:integration": "vitest run test/integration --no-file-parallelism",
     "typecheck": "tsc --noEmit",

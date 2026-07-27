@@ -14,7 +14,7 @@
     "start": "tsx src/interfaces/http/main.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
-    "seed:pricing": "tsx src/bootstrap/seed-pricing.ts",
+    "seed:pricing": "tsx src/interfaces/cli/seed-pricing.ts",
     "db:dev": "prisma migrate dev",
     "db:reset": "prisma migrate reset --force",
     "test": "vitest run test/unit",

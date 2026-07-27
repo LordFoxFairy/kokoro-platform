@@ -23,3 +23,20 @@ test("platform CI is lock-driven and separates local from integration gates", as
   assert.match(workflow, /redis:/u);
   assert.match(workflow, /minio:/u);
 });
+
+test("the root test gate executes repository governance checks", async () => {
+  const packageJson = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
+
+  assert.equal(packageJson.scripts["test:repository"], "node --test test/repository/*.test.mjs");
+  assert.match(packageJson.scripts.test, /pnpm run test:repository/u);
+});
+
+test("platform CI builds the repository-owned deployment artifact", async () => {
+  const workflow = await readFile(resolve(root, ".github/workflows/ci.yml"), "utf8");
+
+  assert.match(workflow, /^\s{2}artifact:/mu);
+  assert.match(workflow, /needs:\s*\[gates, integration\]/u);
+  assert.match(workflow, /docker build/u);
+  assert.match(workflow, /--file deploy\/docker\/Dockerfile/u);
+  assert.match(workflow, /--tag kokoro-platform:\$\{\{ github\.sha \}\}/u);
+});

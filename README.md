@@ -87,6 +87,7 @@ docs/platform/multi-site/
   src/platform-registry.ts 维护 site/user/model/credit/payment/litellm 的状态、存储、后台入口、运行面和边界。
 
 统一命令:
+  pnpm test:repository
   pnpm test
   pnpm test:integration
   pnpm typecheck
@@ -165,3 +166,7 @@ kubectl apply -f deploy/k8s/platform-services.example.yaml
 `deploy/k8s/platform-services.example.yaml` 只作为部署模板。生产环境的 Secret、Ingress、HPA、镜像 tag、资源限额应该由环境仓或 GitOps 仓维护。
 
 详细约束见 [docs/platform/deployment-topology.md](docs/platform/deployment-topology.md)。
+
+仓库 CI 在 lint、typecheck、unit 和独立 integration gate 通过后，使用
+`deploy/docker/Dockerfile` 构建以 commit SHA 标记的 Platform deployment image，确保子仓自己的
+lock、源码和部署入口能够独立产出 artifact。镜像发布与环境提升仍由受管 release 流程负责。

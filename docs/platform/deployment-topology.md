@@ -86,6 +86,10 @@ kokoro-payment
 
 第一阶段镜像使用 workspace 依赖和 `tsx` 入口启动，保证和当前 TypeScript 源码结构一致。后续如果要压缩镜像体积，再切为 `tsc` build + `node dist`，但不能牺牲子仓自治和 package exports 的清晰度。
 
+Platform 子仓 CI 会在本仓 lint、typecheck、unit 与 integration gate 全绿后，独立构建
+`deploy/docker/Dockerfile`。该 gate 只证明当前 commit 能产出 deployment image；推送 registry、签名、环境提升和回滚
+仍由 release 流程负责，不能由根仓替代。
+
 ## Kubernetes
 
 `deploy/k8s/platform-services.example.yaml` 是部署样例，不是生产机密文件。生产 Secret、Ingress、HPA、镜像 tag 和资源限额由环境仓或 GitOps 仓维护。
@@ -183,6 +187,7 @@ DATABASE_URL_PAYMENT
 每次修改平台部署或子仓公共能力后至少运行：
 
 ```bash
+pnpm test:repository
 pnpm run test:platform
 pnpm typecheck
 pnpm test

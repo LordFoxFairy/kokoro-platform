@@ -3,8 +3,8 @@
 // 为什么需要：run 受理冻结按 pricing × 预估用量算冻结额；缺计价规则则 run 无法正确计价。
 // PRD 2026-07-17-credit-pricing-strategy §7 内置默认档：chat input 40 / output 120 micros/token。
 // 1 积分=10000 micros；典型 500+500 token 对话 ≈ (500×40+500×120)/10000 = 8 积分。
-import { createPrismaClient } from "../infrastructure/prisma/prisma-client.js";
-import { PrismaCreditRepository } from "../infrastructure/prisma/prisma-credit-repository.js";
+import { createPrismaClient } from "../../infrastructure/prisma/prisma-client.js";
+import { PrismaCreditRepository } from "../../infrastructure/prisma/prisma-credit-repository.js";
 
 const DEFAULT_PRICING = [
   { featureKey: "chat", unit: "input_token", amountMicros: "40" },

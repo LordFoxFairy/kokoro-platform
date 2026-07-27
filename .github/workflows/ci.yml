@@ -95,3 +95,13 @@ jobs:
       - run: pnpm db:migrate
       - name: integration tests
         run: pnpm test:integration
+
+  artifact:
+    needs: [gates, integration]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build deployment image
+        run: >-
+          docker build --file deploy/docker/Dockerfile
+          --tag kokoro-platform:${{ github.sha }} .

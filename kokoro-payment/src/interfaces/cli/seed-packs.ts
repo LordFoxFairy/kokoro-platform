@@ -3,8 +3,8 @@
 // 为什么需要：用户自助购买积分包 → 支付成功到账 credit。缺套餐则充值页「暂无套餐」，新用户额度用完无法续。
 // PRD §2 量折扣（¥0.01/积分，大包更省；1 积分=10000 micros）。billingInterval=once。
 // mock 网关：dev/演示用模拟收银台；webhookSecretRef 指向 env 名（不落密钥明文）。
-import { createPrismaClient } from "../infrastructure/prisma/prisma-client.js";
-import { PrismaPaymentRepository } from "../infrastructure/prisma/prisma-payment-repository.js";
+import { createPrismaClient } from "../../infrastructure/prisma/prisma-client.js";
+import { PrismaPaymentRepository } from "../../infrastructure/prisma/prisma-payment-repository.js";
 
 const siteId = process.env.KOKORO_SITE_ID ?? "site-dev";
 
