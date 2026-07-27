@@ -19,6 +19,8 @@ Hub does not execute Agent tools, own GA graph nodes, or sit on every-run capabi
 ## Callers and dependencies
 Admin and Platform orchestration write through Hub. Agent runtime consumes immutable grants/snapshots through its declared read boundary.
 
+Hub calls `kokoro-user` at `GET /memberships/check` to authorize `self` requests, and binds that response through `@kokoro/user/contract` rather than a local copy of the shape — a rename on the provider now fails this package's typecheck instead of surfacing as a runtime parse error. The import is the narrow contract entry, so none of user's Prisma/Fastify/mail stack is pulled in. This is the only edge Hub has beyond `platform.kit`, and it makes an existing wire dependency visible to the dependency gate rather than leaving it implicit.
+
 ## Data ownership and events
 Hub owns capability catalog/revision metadata and package references in Mongo/S3-compatible storage.
 

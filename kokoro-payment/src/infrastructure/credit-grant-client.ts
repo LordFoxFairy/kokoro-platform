@@ -1,4 +1,4 @@
-import { ensureCreditAccountResponseSchema } from "@kokoro/credit";
+import { ensureCreditAccountResponseSchema } from "@kokoro/credit/contract";
 import { callService, type RequestContext } from "@kokoro/platform-kit";
 import { z } from "zod";
 import type { GrantPurchaseCredits, ReverseCredits } from "../domain/repository.js";

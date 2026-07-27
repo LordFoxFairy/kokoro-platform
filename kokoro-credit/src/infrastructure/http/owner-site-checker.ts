@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { AppError, callService, type RequestContext } from "@kokoro/platform-kit";
-import { siteActiveResponseSchema } from "@kokoro/site";
-import { ownerActiveResponseSchema } from "@kokoro/user";
+import { siteActiveResponseSchema } from "@kokoro/site/contract";
+import { ownerActiveResponseSchema } from "@kokoro/user/contract";
 import type { OwnerSiteActiveChecker, OwnerSiteRef } from "../../application/credit-service.js";
 
 export interface ActiveCacheOptions {

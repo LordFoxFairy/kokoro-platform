@@ -3,7 +3,9 @@
 // （当前 personal-team 期 namespace 即 teamId，见 user session-service）。
 
 import { callService, type RequestContext, type ServiceCaller } from "@kokoro/platform-kit";
-import { z } from "zod";
+// 契约单源在 provider：user 改形状，本包 typecheck 立刻红，而不是运行期才发现。
+// 走 @kokoro/user/contract 窄入口，不把 user 的 prisma/fastify/nodemailer 拖进 hub。
+import { membershipCheckResponseSchema } from "@kokoro/user/contract";
 
 export type MembershipRole = "owner" | "admin" | "member";
 
@@ -16,12 +18,6 @@ export interface MembershipAuthorizer {
   // teamId 由 self 路由从信封 namespace 头映射得到；userId 来自信封 x-kokoro-user-id 头。
   check(ctx: RequestContext, teamId: string, userId: string): Promise<MembershipCheck>;
 }
-
-// user /memberships/check 响应契约的 hub 侧镜像（单源在 kokoro-user schemas；此处独立洗净下游响应）。
-const membershipCheckSchema = z.object({
-  active: z.boolean(),
-  role: z.enum(["owner", "admin", "member"]).nullable(),
-});
 
 export interface HttpMembershipAuthorizerOptions {
   userBaseUrl: string;
@@ -42,7 +38,7 @@ export class HttpMembershipAuthorizer implements MembershipAuthorizer {
       baseUrl: this.options.userBaseUrl,
       method: "GET",
       path: `/memberships/check?${query}`,
-      schema: membershipCheckSchema,
+      schema: membershipCheckResponseSchema,
       caller: this.caller,
       ...(this.options.internalSecret !== undefined ? { internalSecret: this.options.internalSecret } : {}),
       ...(this.options.fetchImpl !== undefined ? { fetchImpl: this.options.fetchImpl } : {}),
