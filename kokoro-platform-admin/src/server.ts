@@ -30,6 +30,7 @@ import {
   type ApprovalStatusValue,
 } from "./approval.js";
 import { AuthError, type Authenticator } from "./auth.js";
+import { registerAdminAuthConnect, type AdminAuthConnectConfig } from "./admin-auth-connect.js";
 import {
   listOperators,
   listRoles,
@@ -51,6 +52,7 @@ export interface AdminServerDeps {
   approvalGrantThresholdMicros: bigint;
   // 网关出站身份凭据：转发/拉 manifest/查资源时带 x-kokoro-service:admin + 此 secret（空串=未启用，dev 直通）。
   internalSecret?: string;
+  adminAuth?: AdminAuthConnectConfig;
 }
 
 const approvalsQuerySchema = z
@@ -127,6 +129,7 @@ export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps
   const app = Fastify({ logger: false });
 
   registerHealthRoute(app, "kokoro-platform-admin");
+  if (deps.adminAuth !== undefined) registerAdminAuthConnect(app, deps.adminAuth);
 
   app.get("/", async (_request, reply) => {
     const html = await readFile(indexHtmlPath, "utf8");

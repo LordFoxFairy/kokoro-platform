@@ -3,6 +3,10 @@ dist/
 coverage/
 generated/
 **/generated/
+!kokoro-platform-admin/src/generated/
+kokoro-platform-admin/src/generated/*
+!kokoro-platform-admin/src/generated/contracts/
+!kokoro-platform-admin/src/generated/contracts/**
 .env
 .env.local
 *.log

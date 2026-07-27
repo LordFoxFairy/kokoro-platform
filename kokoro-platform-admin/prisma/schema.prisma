@@ -93,16 +93,31 @@ model VerificationToken {
 }
 
 model AuthEvent {
-  id        String   @id @default(cuid())
-  email     String
-  event     String
-  ip        String?
-  userAgent String?
-  reason    String?
-  createdAt DateTime @default(now())
+  id         String   @id @default(cuid())
+  email      String
+  event      String
+  ip         String?
+  userAgent  String?
+  reason     String?
+  occurredAt DateTime @default(now())
+  createdAt  DateTime @default(now())
 
   @@index([email, createdAt])
   @@map("auth_events")
+}
+
+model AdminAuthCommandReceipt {
+  commandId      String                       @id
+  idempotencyKey String                       @unique
+  requestDigest  String
+  operation      String
+  state          AdminAuthCommandReceiptState @default(accepted)
+  result         Json?
+  createdAt      DateTime                     @default(now())
+  updatedAt      DateTime                     @updatedAt
+
+  @@index([updatedAt])
+  @@map("admin_auth_command_receipts")
 }
 
 enum ApprovalStatus {
@@ -121,4 +136,11 @@ enum OperatorStatus {
 enum AuditResult {
   ok
   error
+}
+
+enum AdminAuthCommandReceiptState {
+  accepted
+  committed
+  rejected
+  outcome_unknown
 }

@@ -1,6 +1,7 @@
 import { isProductionEnv, startHttpServer } from "@kokoro/platform-kit";
 import { PrismaAuditSink } from "./audit.js";
 import { createAuthenticator } from "./auth.js";
+import { makePrismaAdminAuthStore } from "./admin-auth-store.js";
 import { loadConfig } from "./config.js";
 import { createAdminPrisma } from "./prisma.js";
 import { createOperatorLookup } from "./rbac.js";
@@ -23,5 +24,14 @@ await startHttpServer({
       prisma,
       approvalGrantThresholdMicros: config.approvalGrantThresholdMicros,
       internalSecret: config.internalSecret,
+      adminAuth: {
+        store: makePrismaAdminAuthStore(prisma),
+        workload: {
+          workload: "admin-web",
+          audience: "admin-web",
+          environment: process.env.NODE_ENV ?? "development",
+          secrets: config.auth.proxySecrets,
+        },
+      },
     }),
 });
