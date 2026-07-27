@@ -1,6 +1,7 @@
 export * from "./admin/manifest-schema.js";
 export * from "./admin/manifest-route.js";
 export * from "./config/env.js";
+export * from "./contract/platform-runtime.js";
 export * from "./domain/amount.js";
 export * from "./domain/errors.js";
 export * from "./http/request-context.js";
