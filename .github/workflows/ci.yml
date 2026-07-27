@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: corepack enable
+      - run: corepack prepare pnpm@11.2.2 --activate
+      - run: pnpm install --frozen-lockfile
+      - name: lint
+        run: pnpm lint
+      - name: typecheck
+        run: pnpm typecheck
+      - name: unit tests
+        run: pnpm test
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4@sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d
+        env:
+          MYSQL_ROOT_PASSWORD: example-root
+          MYSQL_DATABASE: kokoro_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pexample-root --silent"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+      redis:
+        image: redis:7@sha256:a8f08480e1f88f2647fed492d1178c06abb0d0c1fbf02c682a61e2f483fb3954
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 30
+      mongo:
+        image: mongo:7@sha256:340c1c56fb10e95cf79ff547f8664b96bc6ead9909bc355238cbf865a9695a6f
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1}).ok'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      DATABASE_URL_SITE: mysql://root:example-root@127.0.0.1:3306/kokoro_site_test
+      DATABASE_URL_USER: mysql://root:example-root@127.0.0.1:3306/kokoro_user_test
+      DATABASE_URL_MODEL: mysql://root:example-root@127.0.0.1:3306/kokoro_model_test
+      DATABASE_URL_CREDIT: mysql://root:example-root@127.0.0.1:3306/kokoro_credit_test
+      DATABASE_URL_PAYMENT: mysql://root:example-root@127.0.0.1:3306/kokoro_payment_test
+      DATABASE_URL_ADMIN: mysql://root:example-root@127.0.0.1:3306/kokoro_admin_test
+      KOKORO_REDIS_URL: redis://127.0.0.1:6379/0
+      KOKORO_HUB_MONGO_URL: mongodb://127.0.0.1:27017
+      KOKORO_TEST_MINIO_URL: http://127.0.0.1:9100
+      MINIO_ROOT_USER: example-minio
+      MINIO_ROOT_PASSWORD: example-minio-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: corepack enable
+      - run: corepack prepare pnpm@11.2.2 --activate
+      - run: pnpm install --frozen-lockfile
+      - name: create isolated databases
+        run: >-
+          docker exec "${{ job.services.mysql.id }}" mysql -uroot -pexample-root -e
+          "CREATE DATABASE kokoro_site_test; CREATE DATABASE kokoro_user_test;
+          CREATE DATABASE kokoro_model_test; CREATE DATABASE kokoro_credit_test;
+          CREATE DATABASE kokoro_payment_test; CREATE DATABASE kokoro_admin_test;"
+      - name: start minio
+        run: >-
+          docker run --detach --name kokoro-ci-minio -p 9100:9100
+          -e MINIO_ROOT_USER=example-minio -e MINIO_ROOT_PASSWORD=example-minio-secret
+          minio/minio:latest@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+          server /data --address :9100
+      - name: wait for minio
+        run: >-
+          for attempt in $(seq 1 30); do curl -fsS http://127.0.0.1:9100/minio/health/live && exit 0;
+          sleep 2; done; exit 1
+      - run: pnpm db:generate
+      - run: pnpm db:migrate
+      - name: integration tests
+        run: pnpm test:integration
