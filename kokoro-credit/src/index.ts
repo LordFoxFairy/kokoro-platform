@@ -7,6 +7,5 @@ export * from "./domain/credit-lifecycle.js";
 export * from "./domain/errors.js";
 export * from "./interfaces/http/admin-routes.js";
 export * from "./interfaces/http/server.js";
-export * from "./interfaces/http/schemas.js";
 export * from "./module.js";
 export * from "./domain/repository.js";

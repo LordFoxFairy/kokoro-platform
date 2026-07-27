@@ -8,5 +8,4 @@ export * from "./domain/site-domain.js";
 export * from "./domain/site-feature-flag.js";
 export * from "./domain/site-policy.js";
 export * from "./interfaces/admin/manifest.js";
-export * from "./interfaces/http/schemas.js";
 export * from "./module.js";

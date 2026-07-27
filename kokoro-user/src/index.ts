@@ -17,6 +17,5 @@ export * from "./infrastructure/auth/jose-session-signer.js";
 export * from "./infrastructure/auth/rsa-keys.js";
 export * from "./infrastructure/auth/signing.js";
 export * from "./interfaces/http/server.js";
-export * from "./interfaces/http/schemas.js";
 export * from "./module.js";
 export * from "./domain/repository.js";
