@@ -9,8 +9,8 @@ import { createPaymentServer } from "./server.js";
 const env = loadPaymentEnv();
 const callerSecrets = loadCallerSecrets();
 // payment 出站身份=payment；调 credit 授信/退回时带 x-kokoro-service:payment + 该 caller secret。
-// 遗留单一 KOKORO_INTERNAL_SECRET 作缺失回退，便于灰度迁移。
-const paymentOutboundSecret = callerSecrets.payment ?? env.KOKORO_INTERNAL_SECRET;
+// 未配即不带该头：接收端只认 per-caller secret，空值头一律 401。
+const paymentOutboundSecret = callerSecrets.payment;
 const grantPurchaseCredits = createCreditGrantClient(
   env.KOKORO_CREDIT_BASE_URL,
   paymentOutboundSecret,

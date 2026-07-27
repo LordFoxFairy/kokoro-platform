@@ -207,4 +207,17 @@ describe("loadCallerSecrets", () => {
     });
     expect(secrets).toEqual({ session: "s1", "web-bff": "s2" });
   });
+
+  // 遗留的共享单密钥 KOKORO_INTERNAL_SECRET 已从各服务删除。这里锁住删除的前提：
+  // 接收端只认 per-caller 变量，共享密钥从来不参与任何一次成功认证——所以出站再带它也没用。
+  // 若有人日后把它当回退加回来，配了它的服务只会带上一个下游必拒的头。
+  it("忽略遗留的共享 KOKORO_INTERNAL_SECRET", () => {
+    expect(loadCallerSecrets({ KOKORO_INTERNAL_SECRET: "legacy-shared" })).toEqual({});
+    expect(
+      loadCallerSecrets({
+        KOKORO_INTERNAL_SECRET: "legacy-shared",
+        KOKORO_INTERNAL_SECRET_CREDIT: "per-caller",
+      }),
+    ).toEqual({ credit: "per-caller" });
+  });
 });

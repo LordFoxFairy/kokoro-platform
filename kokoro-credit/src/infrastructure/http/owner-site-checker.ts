@@ -47,7 +47,8 @@ export class HttpOwnerSiteChecker implements OwnerSiteActiveChecker {
   constructor(
     private readonly userBaseUrl: string,
     private readonly siteBaseUrl: string,
-    private readonly internalSecret: string,
+    // 未配 per-caller secret 时为 undefined：callService 据此不带该头，而不是带一个空值头。
+    private readonly internalSecret: string | undefined,
     private readonly fetchImpl?: typeof fetch,
     cacheOptions: ActiveCacheOptions = { ttlMs: 30_000, maxEntries: 10_000 },
   ) {

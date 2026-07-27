@@ -13,8 +13,9 @@ export interface CallServiceOptions<T> {
   // 下游 route-access 缺 caller 头即 401，省略只会得到一个注定被拒的请求。
   caller: ServiceCaller;
   // 内部信任头：该 caller 的独立 secret（env KOKORO_INTERNAL_SECRET_<CALLER>）。
-  // 缺省=未配置，下游 dev 直通、生产 401。
-  internalSecret?: string;
+  // 缺省=未配置，下游 dev 直通、生产 401。显式 `| undefined`：exactOptionalPropertyTypes 下
+  // 「省略」与「传 undefined」是两回事，而下面本就按 `!== undefined` 判定，调用方可直接透传未配的值。
+  internalSecret?: string | undefined;
   // 可注入便于测试；默认全局 fetch。
   fetchImpl?: typeof fetch;
 }

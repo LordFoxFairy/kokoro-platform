@@ -7,8 +7,8 @@ import { createCreditServer } from "./server.js";
 const env = loadCreditEnv();
 const callerSecrets = loadCallerSecrets();
 // credit 出站身份=credit；调 user/site active 时带 x-kokoro-service:credit + 该 caller secret。
-// 遗留单一 KOKORO_INTERNAL_SECRET 作缺失回退，便于灰度迁移。
-const creditOutboundSecret = callerSecrets.credit ?? env.KOKORO_INTERNAL_SECRET;
+// 未配即不带该头：接收端只认 per-caller secret，空值头一律 401。
+const creditOutboundSecret = callerSecrets.credit;
 // 生产启用跨服务 enforcement：记账前校验 owner/site active。
 const activeChecker = new HttpOwnerSiteChecker(
   env.KOKORO_USER_BASE_URL,

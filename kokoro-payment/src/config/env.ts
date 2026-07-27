@@ -26,9 +26,6 @@ export const paymentEnvSchema = z.object({
   KOKORO_PAYMENT_PORT: z.coerce.number().int().min(1).max(65535).default(4241),
   // 启用真实 webhook 验签的渠道清单（逗号分隔，如 "stripe,alipay"）；未列出者恒 501。
   KOKORO_PAYMENT_ENABLED_PROVIDERS: z.string().default(""),
-  // @deprecated 遗留单一共享密钥，仅作 per-caller secret（KOKORO_INTERNAL_SECRET_PAYMENT）缺失时的出站回退。
-  // 入站校验已改由 route-access 的 per-caller 注册表（loadCallerSecrets）执行。
-  KOKORO_INTERNAL_SECRET: z.string().default(""),
   // confirming 悬挂收尾:sweep 周期(0=关)与判定阈值(updatedAt 早于此秒数才算悬挂,避开正常确认在途窗口)。
   KOKORO_PAYMENT_CONFIRM_SWEEP_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(300),
   KOKORO_PAYMENT_CONFIRM_STALE_SECONDS: z.coerce.number().int().min(1).default(120),
