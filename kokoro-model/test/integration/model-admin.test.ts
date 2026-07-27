@@ -112,7 +112,7 @@ describe("model admin API", () => {
 
     const before = await app.inject({
       method: "GET",
-      url: "/model-bindings/resolve?featureKey=chat",
+      url: "/model-bindings/resolve?siteId=site-a&featureKey=chat",
     });
     expect(before.json().data.map((row: { modelName: string }) => row.modelName)).toEqual([
       "gpt-4o",
@@ -127,7 +127,7 @@ describe("model admin API", () => {
 
     const afterDisable = await app.inject({
       method: "GET",
-      url: "/model-bindings/resolve?featureKey=chat",
+      url: "/model-bindings/resolve?siteId=site-a&featureKey=chat",
     });
     expect(afterDisable.json().data).toHaveLength(0);
 
@@ -140,7 +140,7 @@ describe("model admin API", () => {
 
     const afterEnable = await app.inject({
       method: "GET",
-      url: "/model-bindings/resolve?featureKey=chat",
+      url: "/model-bindings/resolve?siteId=site-a&featureKey=chat",
     });
     expect(afterEnable.json().data.map((row: { modelName: string }) => row.modelName)).toEqual([
       "gpt-4o",
@@ -190,7 +190,7 @@ describe("model admin API", () => {
 
     const afterDisable = await app.inject({
       method: "GET",
-      url: "/model-bindings/resolve?featureKey=chat",
+      url: "/model-bindings/resolve?siteId=site-a&featureKey=chat",
     });
     expect(afterDisable.json().data).toHaveLength(0);
 

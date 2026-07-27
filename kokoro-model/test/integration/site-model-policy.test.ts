@@ -107,9 +107,9 @@ describe("site model policy API", () => {
     // site-a: gpt-4o carries chat.premium (hidden) → excluded; mini stays.
     const siteA = await app.inject({
       method: "GET",
-      url: "/model-bindings/resolve?featureKey=chat",
-      headers: { "x-kokoro-site-id": "site-a" },
+      url: "/model-bindings/resolve?siteId=site-a&featureKey=chat",
     });
+    expect(siteA.statusCode).toBe(200);
     expect(siteA.json().data.map((row: { modelName: string }) => row.modelName)).toEqual([
       "gpt-4o-mini",
     ]);
@@ -117,23 +117,61 @@ describe("site model policy API", () => {
     // site-b: no policy → both visible.
     const siteB = await app.inject({
       method: "GET",
-      url: "/model-bindings/resolve?featureKey=chat",
-      headers: { "x-kokoro-site-id": "site-b" },
+      url: "/model-bindings/resolve?siteId=site-b&featureKey=chat",
     });
     expect(siteB.json().data.map((row: { modelName: string }) => row.modelName).sort()).toEqual([
       "gpt-4o",
       "gpt-4o-mini",
     ]);
+  });
 
-    // no site header → legacy behaviour, no filtering.
+  // 回归：修复前 siteId 取自可空 header，省略即「不按站过滤」，调用方能拿到该站已隐藏的 label。
+  // 现在 siteId 是必填 query，缺失被 schema 拒绝——「不过滤」这条路不再存在。
+  it("rejects resolve without siteId instead of returning unfiltered bindings", async () => {
+    await seedChatBindings();
+
+    await app.inject({
+      method: "POST",
+      url: "/admin/models/site-policies",
+      payload: { siteId: "site-a", labelKey: "chat.premium", status: "hidden" },
+    });
+
     const noSite = await app.inject({
       method: "GET",
       url: "/model-bindings/resolve?featureKey=chat",
     });
-    expect(noSite.json().data.map((row: { modelName: string }) => row.modelName).sort()).toEqual([
-      "gpt-4o",
-      "gpt-4o-mini",
-    ]);
+    expect(noSite.statusCode).toBe(400);
+    expect(noSite.json().error.code).toBe("request.invalid");
+
+    // 发 header 也不行：header 不是权威来源，不能替代 query 参数。
+    const headerOnly = await app.inject({
+      method: "GET",
+      url: "/model-bindings/resolve?featureKey=chat",
+      headers: { "x-kokoro-site-id": "site-a" },
+    });
+    expect(headerOnly.statusCode).toBe(400);
+    expect(headerOnly.json().error.code).toBe("request.invalid");
+  });
+
+  // header 与 query 都给且互相矛盾 = 调用方身份混淆，两边都不可信 → 硬拒，不挑一个信。
+  it("rejects a site header that contradicts the query siteId", async () => {
+    await seedChatBindings();
+
+    const mismatch = await app.inject({
+      method: "GET",
+      url: "/model-bindings/resolve?siteId=site-a&featureKey=chat",
+      headers: { "x-kokoro-site-id": "site-b" },
+    });
+    expect(mismatch.statusCode).toBe(400);
+    expect(mismatch.json().error.code).toBe("model.site_mismatch");
+
+    // 一致则放行。
+    const agreeing = await app.inject({
+      method: "GET",
+      url: "/model-bindings/resolve?siteId=site-a&featureKey=chat",
+      headers: { "x-kokoro-site-id": "site-a" },
+    });
+    expect(agreeing.statusCode).toBe(200);
   });
 
   it("visible policy does not hide the label", async () => {
@@ -147,8 +185,7 @@ describe("site model policy API", () => {
 
     const siteA = await app.inject({
       method: "GET",
-      url: "/model-bindings/resolve?featureKey=chat",
-      headers: { "x-kokoro-site-id": "site-a" },
+      url: "/model-bindings/resolve?siteId=site-a&featureKey=chat",
     });
     expect(siteA.json().data.map((row: { modelName: string }) => row.modelName).sort()).toEqual([
       "gpt-4o",

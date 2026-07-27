@@ -97,7 +97,7 @@ describe("model HTTP API", () => {
 
     const resolveResponse = await app.inject({
       method: "GET",
-      url: "/model-bindings/resolve?featureKey=music&labelKey=music.default",
+      url: "/model-bindings/resolve?siteId=site-a&featureKey=music&labelKey=music.default",
     });
 
     expect(resolveResponse.statusCode).toBe(200);
@@ -135,7 +135,7 @@ describe("model HTTP API", () => {
 
     const afterDelete = await app.inject({
       method: "GET",
-      url: "/model-bindings/resolve?featureKey=chat",
+      url: "/model-bindings/resolve?siteId=site-a&featureKey=chat",
     });
     expect(afterDelete.json().data).toEqual([]);
 
@@ -148,7 +148,7 @@ describe("model HTTP API", () => {
 
     const afterRestore = await app.inject({
       method: "GET",
-      url: "/model-bindings/resolve?featureKey=chat",
+      url: "/model-bindings/resolve?siteId=site-a&featureKey=chat",
     });
     expect(afterRestore.json().data.map((row: { modelName: string }) => row.modelName)).toEqual([
       "gpt-4o",
@@ -200,7 +200,7 @@ describe("model HTTP API", () => {
 
     const resolveAfterRestore = await app.inject({
       method: "GET",
-      url: "/model-bindings/resolve?featureKey=chat",
+      url: "/model-bindings/resolve?siteId=site-a&featureKey=chat",
     });
     expect(resolveAfterRestore.json().data.map((row: { modelName: string }) => row.modelName)).toEqual([
       "gpt-4o",

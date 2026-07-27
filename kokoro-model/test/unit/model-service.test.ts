@@ -215,7 +215,12 @@ describe("ModelService delegates to repository", () => {
   it("forwards resolveModelBindings input and result", async () => {
     const captured: Captured = {};
     const service = new ModelService(trackingRepo(captured));
-    const input: ResolveModelInput = { featureKey: "chat", labelKey: "chat.default", transportKind: "litellm" };
+    const input: ResolveModelInput = {
+      featureKey: "chat",
+      labelKey: "chat.default",
+      transportKind: "litellm",
+      siteId: "site-a",
+    };
     await expect(service.resolveModelBindings(input)).resolves.toEqual([binding]);
     expect(captured.resolve).toBe(input);
   });

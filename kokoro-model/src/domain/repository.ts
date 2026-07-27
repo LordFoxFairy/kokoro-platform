@@ -43,8 +43,10 @@ export interface ResolveModelInput {
   featureKey: string;
   labelKey?: string | undefined;
   transportKind?: ModelTransportKind | undefined;
-  // 缺省 = 不按站过滤；提供时排除命中该站 hidden 策略的 binding。
-  siteId?: string | undefined;
+  // 必填：站点隔离键，排除命中该站 hidden 策略的 binding。
+  // WHY 不可选：可选等于「不传就不过滤」，调用方只要省略即可绕过该站的模型隐藏策略（fail-open）。
+  // 必填后类型系统在每个 callsite 强制给出归属站点，"无站点的 resolve" 不再可表达。
+  siteId: string;
 }
 
 export interface EnsureModelLabelInput {

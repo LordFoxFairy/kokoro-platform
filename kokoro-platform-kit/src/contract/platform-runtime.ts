@@ -46,6 +46,7 @@ export type ReleaseCreditRequest = z.infer<typeof releaseCreditRequestSchema>
 
 export const resolveModelBindingsQuerySchema = z
   .object({
+    siteId: z.string().min(1),
     featureKey: z.string().min(1),
     labelKey: z.string().min(1).optional(),
     transportKind: z.enum(["litellm", "direct", "internal"]).optional(),

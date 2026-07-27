@@ -7,6 +7,10 @@ const prisma = createTestPrismaClient();
 const repository = new PrismaModelRepository(prisma);
 const service = new ModelService(repository);
 
+// resolve 的 siteId 必填。以下用例不关心站点策略（没有 seed 任何 SiteModelPolicy），
+// 只需一个归属站点让筛选逻辑有据可依；站点隔离本身由 site-model-policy 用例覆盖。
+const SITE = "site-a";
+
 describe("PrismaModelRepository", () => {
   beforeEach(async () => {
     await cleanModelDatabase(prisma);
@@ -179,16 +183,16 @@ describe("PrismaModelRepository", () => {
       transportKind: "litellm",
     });
 
-    const resolved = await service.resolveModelBindings({ featureKey: "chat" });
+    const resolved = await service.resolveModelBindings({ featureKey: "chat", siteId: SITE });
     expect(resolved.map((binding) => binding.modelName)).toEqual(["gpt-4o", "gpt-4o-mini"]);
 
-    const byLabel = await service.resolveModelBindings({ featureKey: "chat", labelKey: "chat.premium" });
+    const byLabel = await service.resolveModelBindings({ featureKey: "chat", labelKey: "chat.premium", siteId: SITE });
     expect(byLabel.map((binding) => binding.modelName)).toEqual(["gpt-4o"]);
 
-    const byTransport = await service.resolveModelBindings({ featureKey: "chat", transportKind: "litellm" });
+    const byTransport = await service.resolveModelBindings({ featureKey: "chat", transportKind: "litellm", siteId: SITE });
     expect(byTransport.map((binding) => binding.modelName)).toEqual(["gpt-4o-mini"]);
 
-    const none = await service.resolveModelBindings({ featureKey: "image" });
+    const none = await service.resolveModelBindings({ featureKey: "image", siteId: SITE });
     expect(none).toEqual([]);
   });
 
@@ -234,14 +238,14 @@ describe("PrismaModelRepository", () => {
     expect((await repository.listProviderAccounts({ includeDeleted: true })).map((row) => row.id)).toEqual([
       account.id,
     ]);
-    expect(await service.resolveModelBindings({ featureKey: "chat" })).toEqual([]);
+    expect(await service.resolveModelBindings({ featureKey: "chat", siteId: SITE })).toEqual([]);
     expect(await prisma.modelBinding.findUnique({ where: { id: binding.id } })).not.toBeNull();
 
     const restored = await repository.restoreProviderAccount({ id: account.id });
     expect(restored.deletedAt).toBeNull();
     expect(restored.deletedBy).toBeNull();
     expect(restored.deleteReason).toBeNull();
-    expect((await service.resolveModelBindings({ featureKey: "chat" })).map((row) => row.modelName)).toEqual([
+    expect((await service.resolveModelBindings({ featureKey: "chat", siteId: SITE })).map((row) => row.modelName)).toEqual([
       "gpt-4o",
     ]);
   });
@@ -311,7 +315,7 @@ describe("PrismaModelRepository", () => {
     expect((await service.listModelBindings({ featureKey: "chat" })).map((row) => row.modelName)).toEqual([
       "gpt-4o-mini",
     ]);
-    expect((await service.resolveModelBindings({ featureKey: "chat" })).map((row) => row.modelName)).toEqual([
+    expect((await service.resolveModelBindings({ featureKey: "chat", siteId: SITE })).map((row) => row.modelName)).toEqual([
       "gpt-4o-mini",
     ]);
 
@@ -319,7 +323,7 @@ describe("PrismaModelRepository", () => {
     expect(restored.deletedAt).toBeNull();
     expect(restored.deletedBy).toBeNull();
     expect(restored.deleteReason).toBeNull();
-    expect((await service.resolveModelBindings({ featureKey: "chat" })).map((row) => row.modelName)).toEqual([
+    expect((await service.resolveModelBindings({ featureKey: "chat", siteId: SITE })).map((row) => row.modelName)).toEqual([
       "gpt-4o",
       "gpt-4o-mini",
     ]);

@@ -182,11 +182,10 @@ export class PrismaModelRepository implements ModelRepository {
       .filter((binding) => !binding.labelKeys.some((key) => hiddenLabels.has(key)));
   }
 
-  // 缺省 siteId 返回空集合 → resolve 行为同旧（不按站过滤）。
-  private async hiddenLabelKeys(siteId: string | undefined): Promise<Set<string>> {
-    if (siteId === undefined) {
-      return new Set();
-    }
+  // 该站被标记 hidden 的 labelKey 集合；无策略记录 = 空集合 = 该站不隐藏任何 label。
+  // siteId 必填（非 `string | undefined`）：这里曾有一条 `undefined → 返回空集合` 的分支，
+  // 效果是无站点上下文时一个都不过滤，等于把「是否应用站点策略」交给调用方决定。签名收紧后该分支不可表达。
+  private async hiddenLabelKeys(siteId: string): Promise<Set<string>> {
     const policies = await this.prisma.siteModelPolicy.findMany({
       where: { siteId, status: "hidden" },
     });

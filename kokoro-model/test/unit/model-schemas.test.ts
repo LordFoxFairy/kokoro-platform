@@ -129,21 +129,40 @@ describe("resolveModelBindingsQuerySchema boundaries", () => {
     expect(() => resolveModelBindingsQuerySchema.parse({})).toThrow();
   });
   it("rejects empty featureKey", () => {
-    expect(() => resolveModelBindingsQuerySchema.parse({ featureKey: "" })).toThrow();
+    expect(() => resolveModelBindingsQuerySchema.parse({ siteId: "site-a", featureKey: "" })).toThrow();
+  });
+  // siteId 必填是隔离边界：可选意味着调用方省略参数即可绕过该站的模型隐藏策略（fail-open）。
+  it("rejects missing siteId", () => {
+    expect(() => resolveModelBindingsQuerySchema.parse({ featureKey: "chat" })).toThrow();
+  });
+  it("rejects empty siteId", () => {
+    expect(() => resolveModelBindingsQuerySchema.parse({ siteId: "", featureKey: "chat" })).toThrow();
   });
   it("rejects unknown fields", () => {
-    expect(() => resolveModelBindingsQuerySchema.parse({ featureKey: "chat", junk: "x" })).toThrow();
+    expect(() =>
+      resolveModelBindingsQuerySchema.parse({ siteId: "site-a", featureKey: "chat", junk: "x" }),
+    ).toThrow();
   });
   it("rejects invalid transportKind", () => {
-    expect(() => resolveModelBindingsQuerySchema.parse({ featureKey: "chat", transportKind: "grpc" })).toThrow();
+    expect(() =>
+      resolveModelBindingsQuerySchema.parse({ siteId: "site-a", featureKey: "chat", transportKind: "grpc" }),
+    ).toThrow();
   });
-  it("accepts featureKey only", () => {
-    expect(resolveModelBindingsQuerySchema.parse({ featureKey: "chat" })).toEqual({ featureKey: "chat" });
+  it("accepts siteId + featureKey only", () => {
+    expect(resolveModelBindingsQuerySchema.parse({ siteId: "site-a", featureKey: "chat" })).toEqual({
+      siteId: "site-a",
+      featureKey: "chat",
+    });
   });
-  it("accepts featureKey + labelKey + transportKind", () => {
+  it("accepts siteId + featureKey + labelKey + transportKind", () => {
     expect(
-      resolveModelBindingsQuerySchema.parse({ featureKey: "chat", labelKey: "chat.default", transportKind: "direct" }),
-    ).toEqual({ featureKey: "chat", labelKey: "chat.default", transportKind: "direct" });
+      resolveModelBindingsQuerySchema.parse({
+        siteId: "site-a",
+        featureKey: "chat",
+        labelKey: "chat.default",
+        transportKind: "direct",
+      }),
+    ).toEqual({ siteId: "site-a", featureKey: "chat", labelKey: "chat.default", transportKind: "direct" });
   });
 });
 
