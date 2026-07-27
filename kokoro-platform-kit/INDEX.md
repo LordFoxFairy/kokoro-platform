@@ -14,7 +14,16 @@ Provide narrow shared Platform primitives for configuration, request context, do
 Kit does not own business entities, orchestration, persistence schemas, provider policy, or service startup.
 
 ## Public boundary
-Only exports from `src/index.ts` are supported; RPC specifics are documented in [`src/rpc/INDEX.md`](src/rpc/INDEX.md).
+Only `src/index.ts` re-exports are supported. It spans six subtrees:
+
+- `admin/` — Admin module manifest schemas (`adminModuleManifestSchema` and friends) and `registerAdminManifestRoute`.
+- `config/` — `defineEnv` and `EnvValidationError`.
+- `contract/` — Platform runtime request/response schemas and their inferred types: usage hold/settle, credit release, model binding and label queries.
+- `domain/` — `AppError`, `appError`, `ERROR_STATUS`, `ErrorCode`, `parsePositiveBigIntString`.
+- `http/` — `callService` (see below), request context (`readRequestContext`, `requireSite`, `contextHeaders`), `registerErrorHandler`, route access (`registerRouteAccess`, `declareRouteAccess`, `loadCallerSecrets`, `SERVICE_CALLER_HEADER`, `INTERNAL_SECRET_HEADER`), `registerHealthRoute`, `registerMetricsRoute`, `registerOpenApi`, `startHttpServer`, and the `sendData`/`sendError` response helpers.
+- `rpc/` — Connect interceptors and workload auth; specifics in [`src/rpc/INDEX.md`](src/rpc/INDEX.md).
+
+`callService` is the only supported outbound cross-service entry point. Its `caller` argument is required, so every request carries `x-kokoro-service`; `registerRouteAccess` answers 401 when that header is missing. No shared-secret fallback exists: the caller-less `internal-secret-guard` module was removed once it had zero consumers, and `INTERNAL_SECRET_HEADER` now belongs to `http/route-access.ts`.
 
 ## Callers and dependencies
 Platform business modules may depend on Kit; Kit must not depend back on those modules.

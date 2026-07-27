@@ -23,14 +23,43 @@ import {
 } from "../../src/generated/contracts/kokoro/platform/admin/v1/admin_auth_pb.js";
 import { createAdminPrisma } from "../../src/prisma.js";
 
-const databaseUrl = process.env.DATABASE_URL_ADMIN;
-const isolatedDatabase =
-  databaseUrl !== undefined &&
-  (databaseUrl.includes("@127.0.0.1:") || databaseUrl.includes("@localhost:")) &&
-  new URL(databaseUrl).pathname === "/kokoro_admin_verify";
+// 这组用例会清空 operator/auth 全部表再落回执，所以只允许打本机一次性隔离库。
+// 该保护原本是 describe.skipIf：环境不对时 5 条一条不跑却仍报绿，真实覆盖为零。
+// 改为 fail-loud——缺什么直接说，让「跑了多少条」这个数字可信。
+// 错误信息只暴露 host 与库名，绝不回显含密码的完整 URL。
+function requireIsolatedAdminDatabase(): string {
+  const url = process.env.DATABASE_URL_ADMIN;
+  if (url === undefined || url === "") {
+    throw new Error(
+      "DATABASE_URL_ADMIN is required for Admin Auth Prisma integration tests. " +
+        "Point it at an isolated local database: " +
+        "DATABASE_URL_ADMIN=mysql://root:<password>@127.0.0.1:3307/kokoro_admin_verify",
+    );
+  }
 
-describe.skipIf(!isolatedDatabase)("Admin Auth Prisma receipts", () => {
-  const prisma = createAdminPrisma(databaseUrl ?? "mysql://invalid/disabled");
+  let host: string;
+  let database: string;
+  try {
+    const parsed = new URL(url);
+    host = parsed.hostname;
+    database = parsed.pathname.replace(/^\//, "");
+  } catch {
+    throw new Error("DATABASE_URL_ADMIN is not a valid URL; expected mysql://<user>:<password>@<host>:<port>/<database>");
+  }
+
+  if ((host !== "127.0.0.1" && host !== "localhost") || database !== "kokoro_admin_verify") {
+    throw new Error(
+      "Admin Auth Prisma integration tests truncate operator/auth tables, so they refuse to run outside an isolated " +
+        `local database. Expected host 127.0.0.1 or localhost and database "kokoro_admin_verify", got host "${host}" ` +
+        `and database "${database}". Create and migrate it first: ` +
+        "DATABASE_URL_ADMIN=mysql://root:<password>@127.0.0.1:3307/kokoro_admin_verify pnpm --filter @kokoro/platform-admin db:migrate",
+    );
+  }
+  return url;
+}
+
+describe("Admin Auth Prisma receipts", () => {
+  const prisma = createAdminPrisma(requireIsolatedAdminDatabase());
   const store = makePrismaAdminAuthStore(prisma);
   const now = new Date("2030-01-02T03:04:05.000Z");
   const expires = new Date("2030-01-02T03:14:05.000Z");

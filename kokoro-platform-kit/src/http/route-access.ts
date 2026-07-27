@@ -1,9 +1,11 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { INTERNAL_SECRET_HEADER } from "./internal-secret-guard.js";
 import { sendError } from "./responses.js";
 
 // 调用方声明自己的服务身份；服务端据此在等级 allowlist 内定位该 caller 的期望 secret。
 export const SERVICE_CALLER_HEADER = "x-kokoro-service";
+
+// 内部信任头：承载该 caller 的独立 secret，与 SERVICE_CALLER_HEADER 成对校验。
+export const INTERNAL_SECRET_HEADER = "x-kokoro-internal-secret";
 
 // 四类访问等级（D2）：public 无需凭据；其余按 caller allowlist + per-caller secret 校验。
 export const ACCESS_LEVELS = ["public", "runtime-internal", "web-bff", "admin"] as const;

@@ -18,7 +18,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe("callService", () => {
-  it("returns schema-validated data and transmits context + internal secret headers", async () => {
+  it("returns schema-validated data and transmits context + caller + internal secret headers", async () => {
     let capturedUrl = "";
     let capturedHeaders = new Headers();
     const fetchImpl: typeof fetch = async (url, init) => {
@@ -31,6 +31,7 @@ describe("callService", () => {
       method: "GET",
       path: "/x",
       schema: z.object({ ok: z.boolean() }),
+      caller: "payment",
       internalSecret: "s3cr3t",
       fetchImpl,
     });
@@ -39,6 +40,8 @@ describe("callService", () => {
     expect(capturedHeaders.get("x-kokoro-request-id")).toBe("req-1");
     expect(capturedHeaders.get("x-kokoro-site-id")).toBe("site-x");
     expect(capturedHeaders.get("x-kokoro-internal-secret")).toBe("s3cr3t");
+    // caller 头必发：下游 route-access 缺它即 401，漏发等于整条链路恒红。
+    expect(capturedHeaders.get("x-kokoro-service")).toBe("payment");
   });
 
   it.each([
@@ -55,6 +58,7 @@ describe("callService", () => {
       method: "GET",
       path,
       schema: z.object({ ok: z.boolean() }),
+      caller: "payment",
       fetchImpl,
     });
     expect(capturedUrl).toBe(expectedUrl);
@@ -74,6 +78,7 @@ describe("callService", () => {
       path: "/create",
       body: { name: "a" },
       schema: z.object({ id: z.string() }),
+      caller: "payment",
       fetchImpl,
     });
     expect(JSON.parse(capturedBody)).toEqual({ name: "a" });
@@ -88,6 +93,7 @@ describe("callService", () => {
       method: "GET",
       path: "/x",
       schema: z.object({}),
+      caller: "payment",
       fetchImpl,
     }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(AppError);
@@ -106,6 +112,7 @@ describe("callService", () => {
         method: "GET",
         path: "/x",
         schema: z.object({ ok: z.boolean() }),
+        caller: "payment",
         fetchImpl,
       }),
     ).rejects.toThrow();
@@ -120,6 +127,7 @@ describe("callService", () => {
       method: "GET",
       path: "/x",
       schema: z.object({}),
+      caller: "payment",
       fetchImpl,
     }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(AppError);

@@ -2,13 +2,13 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   declareRouteAccess,
+  INTERNAL_SECRET_HEADER,
   loadCallerSecrets,
   MissingCallerCredentialError,
   registerRouteAccess,
   SERVICE_CALLER_HEADER,
   type RouteAccessConfig,
 } from "../src/http/route-access.js";
-import { INTERNAL_SECRET_HEADER } from "../src/http/internal-secret-guard.js";
 
 let app: FastifyInstance | undefined;
 

@@ -35,6 +35,11 @@ for (const svc of ["SITE", "USER", "MODEL", "CREDIT", "PAYMENT", "HUB"]) {
   env[`DATABASE_URL_${svc}`] = url
 }
 
+// platform-admin 的回执用例会清空 operator/auth 全部表,故只肯打独立库 kokoro_admin_verify
+// (见 kokoro-platform-admin/test/integration/admin-auth-prisma.test.ts 的 fail-loud 守卫)。
+// 不注入这条,那 5 条会明确报错而不是静默不跑;该库需先 db:migrate 建好。
+env.DATABASE_URL_ADMIN = `mysql://root:${password}@127.0.0.1:${port}/kokoro_admin_verify`
+
 const packages = process.argv.slice(2)
 const args =
   packages.length > 0

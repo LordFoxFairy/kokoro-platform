@@ -41,5 +41,7 @@ Keep helpers policy-neutral and generated-detail aware. Do not parse hand-writte
 ## Current gotchas
 Caller identity is recorded only after the configured workload boundary has authenticated it.
 
+Connect/protobuf currently covers `platform-admin-auth v1` only; every other cross-service call still goes through `callService` plus a hand-written Zod response schema. Do not read this component as evidence that internal traffic has migrated to RPC.
+
 ## Verification
 Run `pnpm --filter @kokoro/platform-kit test`, typecheck, and lint.

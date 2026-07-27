@@ -9,10 +9,11 @@ export interface CallServiceOptions<T> {
   path: string;
   schema: ZodType<T>;
   body?: unknown;
-  // 出站调用方身份：携带 x-kokoro-service 让下游按访问等级 allowlist 校验。
-  // 与 internalSecret 配套（internalSecret 应为该 caller 的独立 secret）。
-  caller?: ServiceCaller;
-  // 内部信任头：per-caller secret。@deprecated 不带 caller 时为 legacy 单 secret 模式（下游按旧共享密钥比对）。
+  // 出站调用方身份：携带 x-kokoro-service 让下游按访问等级 allowlist 校验。必填——
+  // 下游 route-access 缺 caller 头即 401，省略只会得到一个注定被拒的请求。
+  caller: ServiceCaller;
+  // 内部信任头：该 caller 的独立 secret（env KOKORO_INTERNAL_SECRET_<CALLER>）。
+  // 缺省=未配置，下游 dev 直通、生产 401。
   internalSecret?: string;
   // 可注入便于测试；默认全局 fetch。
   fetchImpl?: typeof fetch;
@@ -26,10 +27,7 @@ const dataEnvelope = z.object({ data: z.unknown() });
 // 跨服务调用：透传上下文头（requestId/siteId/principal）+ 内部密钥；非 2xx 映射 AppError，响应经 schema 洗净。
 export async function callService<T>(ctx: RequestContext, opts: CallServiceOptions<T>): Promise<T> {
   const doFetch = opts.fetchImpl ?? fetch;
-  const headers: Record<string, string> = { ...contextHeaders(ctx) };
-  if (opts.caller !== undefined) {
-    headers[SERVICE_CALLER_HEADER] = opts.caller;
-  }
+  const headers: Record<string, string> = { ...contextHeaders(ctx), [SERVICE_CALLER_HEADER]: opts.caller };
   if (opts.internalSecret !== undefined) {
     headers["x-kokoro-internal-secret"] = opts.internalSecret;
   }
