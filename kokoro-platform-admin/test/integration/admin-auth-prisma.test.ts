@@ -1,13 +1,24 @@
-import { createHash } from "node:crypto";
 import { create } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createAdminAuthService } from "../../src/admin-auth-service.js";
 import { makePrismaAdminAuthStore } from "../../src/admin-auth-store.js";
 import {
+  canonicalizeConsumeVerificationTokenEffect,
+  canonicalizeCreateVerificationTokenEffect,
+  canonicalizeRecordAuthEventEffect,
+  consumeVerificationTokenEffectDigest,
+  createVerificationTokenEffectDigest,
+  recordAuthEventEffectDigest,
+} from "../../src/generated/contracts/admin-auth-effect-digest.js";
+import { CommandDigestAlgorithm } from "../../src/generated/contracts/kokoro/common/v1/receipt_pb.js";
+import {
   AuthEventKind,
+  ConsumeVerificationTokenEffectSchema,
   ConsumeVerificationTokenRequestSchema,
+  CreateVerificationTokenEffectSchema,
   CreateVerificationTokenRequestSchema,
+  RecordAuthEventEffectSchema,
   RecordAuthEventRequestSchema,
 } from "../../src/generated/contracts/kokoro/platform/admin/v1/admin_auth_pb.js";
 import { createAdminPrisma } from "../../src/prisma.js";
@@ -25,12 +36,13 @@ describe.skipIf(!isolatedDatabase)("Admin Auth Prisma receipts", () => {
   const expires = new Date("2030-01-02T03:14:05.000Z");
   const service = createAdminAuthService(store, { now: () => now });
 
-  function digest(operation: string, payload: Record<string, string>): string {
-    return createHash("sha256").update(JSON.stringify({ operation, payload }), "utf8").digest("hex");
-  }
-
   function command(commandId: string, requestDigest: string) {
-    return { commandId, idempotencyKey: `idempotency-${commandId}`, requestDigest };
+    return {
+      commandId,
+      idempotencyKey: `idempotency-${commandId}`,
+      digestAlgorithm: CommandDigestAlgorithm.SHA256_PROTOBUF_V1,
+      requestDigest,
+    };
   }
 
   beforeAll(async () => {
@@ -56,21 +68,26 @@ describe.skipIf(!isolatedDatabase)("Admin Auth Prisma receipts", () => {
   });
 
   it("commits create effect and receipt once, then reconciles without persisting the token", async () => {
-    const requestDigest = digest("admin_auth.create_verification_token", {
-      identifier: "operator@example.test",
-      token: "raw-verification-token",
-      expires: expires.toISOString(),
-    });
+    const effect = canonicalizeCreateVerificationTokenEffect(
+      create(CreateVerificationTokenEffectSchema, {
+        identifier: "Operator@Example.Test",
+        token: "raw-verification-token",
+        expires: timestampFromDate(expires),
+      }),
+    );
+    const requestDigest = createVerificationTokenEffectDigest(effect);
     const request = create(CreateVerificationTokenRequestSchema, {
       command: command("create-db-1", requestDigest),
-      identifier: "Operator@Example.Test",
-      token: "raw-verification-token",
-      expires: timestampFromDate(expires),
+      effect,
     });
     const first = await service.createVerificationToken(request, {} as never);
     const replay = await service.createVerificationToken(request, {} as never);
     const reconciled = await service.getCommandReceipt(
-      { commandId: "create-db-1", requestDigest } as never,
+      {
+        commandId: "create-db-1",
+        digestAlgorithm: CommandDigestAlgorithm.SHA256_PROTOBUF_V1,
+        requestDigest,
+      } as never,
       {} as never,
     );
     expect(replay.receipt).toEqual(first.receipt);
@@ -81,18 +98,16 @@ describe.skipIf(!isolatedDatabase)("Admin Auth Prisma receipts", () => {
   });
 
   it("rejects digest mismatch before another effect", async () => {
+    const effect = canonicalizeCreateVerificationTokenEffect(
+      create(CreateVerificationTokenEffectSchema, {
+        identifier: "operator@example.test",
+        token: "different-token",
+        expires: timestampFromDate(expires),
+      }),
+    );
     const mismatched = create(CreateVerificationTokenRequestSchema, {
-      command: command(
-        "create-db-1",
-        digest("admin_auth.create_verification_token", {
-          identifier: "operator@example.test",
-          token: "different-token",
-          expires: expires.toISOString(),
-        }),
-      ),
-      identifier: "operator@example.test",
-      token: "different-token",
-      expires: timestampFromDate(expires),
+      command: command("create-db-1", createVerificationTokenEffectDigest(effect)),
+      effect,
     });
     await expect(Promise.resolve(service.createVerificationToken(mismatched, {} as never))).rejects.toMatchObject({
       domainCode: "command.digest_conflict",
@@ -101,32 +116,30 @@ describe.skipIf(!isolatedDatabase)("Admin Auth Prisma receipts", () => {
   });
 
   it("rolls back a failed consume receipt and atomically replays a successful consume", async () => {
+    const missingEffect = canonicalizeConsumeVerificationTokenEffect(
+      create(ConsumeVerificationTokenEffectSchema, {
+        identifier: "operator@example.test",
+        token: "missing-token",
+      }),
+    );
     const missing = create(ConsumeVerificationTokenRequestSchema, {
-      command: command(
-        "consume-missing",
-        digest("admin_auth.consume_verification_token", {
-          identifier: "operator@example.test",
-          token: "missing-token",
-        }),
-      ),
-      identifier: "operator@example.test",
-      token: "missing-token",
+      command: command("consume-missing", consumeVerificationTokenEffectDigest(missingEffect)),
+      effect: missingEffect,
     });
     await expect(Promise.resolve(service.consumeVerificationToken(missing, {} as never))).rejects.toMatchObject({
       domainCode: "verification_token.not_found",
     });
     expect(await prisma.adminAuthCommandReceipt.findUnique({ where: { commandId: "consume-missing" } })).toBeNull();
 
+    const effect = canonicalizeConsumeVerificationTokenEffect(
+      create(ConsumeVerificationTokenEffectSchema, {
+        identifier: "operator@example.test",
+        token: "raw-verification-token",
+      }),
+    );
     const request = create(ConsumeVerificationTokenRequestSchema, {
-      command: command(
-        "consume-db-1",
-        digest("admin_auth.consume_verification_token", {
-          identifier: "operator@example.test",
-          token: "raw-verification-token",
-        }),
-      ),
-      identifier: "operator@example.test",
-      token: "raw-verification-token",
+      command: command("consume-db-1", consumeVerificationTokenEffectDigest(effect)),
+      effect,
     });
     const first = await service.consumeVerificationToken(request, {} as never);
     const replay = await service.consumeVerificationToken(request, {} as never);
@@ -136,19 +149,16 @@ describe.skipIf(!isolatedDatabase)("Admin Auth Prisma receipts", () => {
   });
 
   it("deduplicates an auth event through the same command receipt", async () => {
+    const effect = canonicalizeRecordAuthEventEffect(
+      create(RecordAuthEventEffectSchema, {
+        email: "Operator@Example.Test",
+        event: AuthEventKind.SIGN_IN,
+        occurredAt: timestampFromDate(now),
+      }),
+    );
     const request = create(RecordAuthEventRequestSchema, {
-      command: command(
-        "event-db-1",
-        digest("admin_auth.record_auth_event", {
-          email: "operator@example.test",
-          event: "signin",
-          reason: "",
-          occurredAt: now.toISOString(),
-        }),
-      ),
-      email: "Operator@Example.Test",
-      event: AuthEventKind.SIGN_IN,
-      occurredAt: timestampFromDate(now),
+      command: command("event-db-1", recordAuthEventEffectDigest(effect)),
+      effect,
     });
     await service.recordAuthEvent(request, {} as never);
     await service.recordAuthEvent(request, {} as never);
@@ -157,18 +167,16 @@ describe.skipIf(!isolatedDatabase)("Admin Auth Prisma receipts", () => {
   });
 
   it("serializes simultaneous same-command writers through one effect and receipt", async () => {
+    const effect = canonicalizeCreateVerificationTokenEffect(
+      create(CreateVerificationTokenEffectSchema, {
+        identifier: "Operator@Example.Test",
+        token: "race-verification-token",
+        expires: timestampFromDate(expires),
+      }),
+    );
     const request = create(CreateVerificationTokenRequestSchema, {
-      command: command(
-        "create-race-1",
-        digest("admin_auth.create_verification_token", {
-          identifier: "operator@example.test",
-          token: "race-verification-token",
-          expires: expires.toISOString(),
-        }),
-      ),
-      identifier: "Operator@Example.Test",
-      token: "race-verification-token",
-      expires: timestampFromDate(expires),
+      command: command("create-race-1", createVerificationTokenEffectDigest(effect)),
+      effect,
     });
     const [left, right] = await Promise.all([
       service.createVerificationToken(request, {} as never),

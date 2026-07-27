@@ -69,6 +69,7 @@ function parseResult(value: Prisma.JsonValue | null): AdminAuthReceiptResult | n
 function mapReceipt(value: {
   commandId: string;
   idempotencyKey: string;
+  digestAlgorithm: "sha256_protobuf_v1";
   requestDigest: string;
   operation: string;
   state: "accepted" | "committed" | "rejected" | "outcome_unknown";
@@ -78,6 +79,7 @@ function mapReceipt(value: {
   return {
     commandId: value.commandId,
     idempotencyKey: value.idempotencyKey,
+    digestAlgorithm: value.digestAlgorithm,
     requestDigest: value.requestDigest,
     operation: value.operation,
     state: value.state,
@@ -89,6 +91,7 @@ function mapReceipt(value: {
 const receiptSelect = {
   commandId: true,
   idempotencyKey: true,
+  digestAlgorithm: true,
   requestDigest: true,
   operation: true,
   state: true,
@@ -119,6 +122,7 @@ function makeTransaction(transaction: PrismaTransaction): AdminAuthTransaction {
             data: {
               commandId: receipt.commandId,
               idempotencyKey: receipt.idempotencyKey,
+              digestAlgorithm: receipt.digestAlgorithm,
               requestDigest: receipt.requestDigest,
               operation: receipt.operation,
               state: "accepted",

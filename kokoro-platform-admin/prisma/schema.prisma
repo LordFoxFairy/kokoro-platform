@@ -107,17 +107,22 @@ model AuthEvent {
 }
 
 model AdminAuthCommandReceipt {
-  commandId      String                       @id
-  idempotencyKey String                       @unique
-  requestDigest  String
-  operation      String
-  state          AdminAuthCommandReceiptState @default(accepted)
-  result         Json?
-  createdAt      DateTime                     @default(now())
-  updatedAt      DateTime                     @updatedAt
+  commandId       String                          @id
+  idempotencyKey  String                          @unique
+  digestAlgorithm AdminAuthCommandDigestAlgorithm @default(sha256_protobuf_v1)
+  requestDigest   String
+  operation       String
+  state           AdminAuthCommandReceiptState    @default(accepted)
+  result          Json?
+  createdAt       DateTime                        @default(now())
+  updatedAt       DateTime                        @updatedAt
 
   @@index([updatedAt])
   @@map("admin_auth_command_receipts")
+}
+
+enum AdminAuthCommandDigestAlgorithm {
+  sha256_protobuf_v1
 }
 
 enum ApprovalStatus {

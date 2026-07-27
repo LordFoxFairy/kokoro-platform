@@ -15,7 +15,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file kokoro/common/v1/receipt.proto.
  */
 export const file_kokoro_common_v1_receipt: GenFile = /*@__PURE__*/
-  fileDesc("Ch5rb2tvcm8vY29tbW9uL3YxL3JlY2VpcHQucHJvdG8SEGtva29yby5jb21tb24udjEiegoPQ29tbWFuZElkZW50aXR5Eh4KCmNvbW1hbmRfaWQYASABKAlCCrpIB3IFEAEYgAESIwoPaWRlbXBvdGVuY3lfa2V5GAIgASgJQgq6SAdyBRABGIACEiIKDnJlcXVlc3RfZGlnZXN0GAMgASgJQgq6SAdyBRAgGIABIqoCCg5Db21tYW5kUmVjZWlwdBI7CghpZGVudGl0eRgBIAEoCzIhLmtva29yby5jb21tb24udjEuQ29tbWFuZElkZW50aXR5Qga6SAPIAQESHQoJb3BlcmF0aW9uGAIgASgJQgq6SAdyBRABGIABEkAKBXN0YXRlGAMgASgOMiUua29rb3JvLmNvbW1vbi52MS5Db21tYW5kUmVjZWlwdFN0YXRlQgq6SAeCAQQQASAAEjcKC3JlY29yZGVkX2F0GAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEIGukgDyAEBEjcKBWVycm9yGAUgASgLMiMua29rb3JvLmNvbW1vbi52MS5Lb2tvcm9FcnJvckRldGFpbEgAiAEBQggKBl9lcnJvcirUAQoTQ29tbWFuZFJlY2VpcHRTdGF0ZRIlCiFDT01NQU5EX1JFQ0VJUFRfU1RBVEVfVU5TUEVDSUZJRUQQABIiCh5DT01NQU5EX1JFQ0VJUFRfU1RBVEVfQUNDRVBURUQQARIjCh9DT01NQU5EX1JFQ0VJUFRfU1RBVEVfQ09NTUlUVEVEEAISIgoeQ09NTUFORF9SRUNFSVBUX1NUQVRFX1JFSkVDVEVEEAMSKQolQ09NTUFORF9SRUNFSVBUX1NUQVRFX09VVENPTUVfVU5LTk9XThAEYgZwcm90bzM", [file_buf_validate_validate, file_google_protobuf_timestamp, file_kokoro_common_v1_error]);
+  fileDesc("Ch5rb2tvcm8vY29tbW9uL3YxL3JlY2VpcHQucHJvdG8SEGtva29yby5jb21tb24udjEi2AEKD0NvbW1hbmRJZGVudGl0eRIeCgpjb21tYW5kX2lkGAEgASgJQgq6SAdyBRABGIABEiMKD2lkZW1wb3RlbmN5X2tleRgCIAEoCUIKukgHcgUQARi/ARJOChBkaWdlc3RfYWxnb3JpdGhtGAMgASgOMigua29rb3JvLmNvbW1vbi52MS5Db21tYW5kRGlnZXN0QWxnb3JpdGhtQgq6SAeCAQQQASAAEjAKDnJlcXVlc3RfZGlnZXN0GAQgASgJQhi6SBVyEzIOXlswLTlhLWZdezY0fSSYAUAiqgIKDkNvbW1hbmRSZWNlaXB0EjsKCGlkZW50aXR5GAEgASgLMiEua29rb3JvLmNvbW1vbi52MS5Db21tYW5kSWRlbnRpdHlCBrpIA8gBARIdCglvcGVyYXRpb24YAiABKAlCCrpIB3IFEAEYgAESQAoFc3RhdGUYAyABKA4yJS5rb2tvcm8uY29tbW9uLnYxLkNvbW1hbmRSZWNlaXB0U3RhdGVCCrpIB4IBBBABIAASNwoLcmVjb3JkZWRfYXQYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wQga6SAPIAQESNwoFZXJyb3IYBSABKAsyIy5rb2tvcm8uY29tbW9uLnYxLktva29yb0Vycm9yRGV0YWlsSACIAQFCCAoGX2Vycm9yKnMKFkNvbW1hbmREaWdlc3RBbGdvcml0aG0SKAokQ09NTUFORF9ESUdFU1RfQUxHT1JJVEhNX1VOU1BFQ0lGSUVEEAASLworQ09NTUFORF9ESUdFU1RfQUxHT1JJVEhNX1NIQTI1Nl9QUk9UT0JVRl9WMRABKtQBChNDb21tYW5kUmVjZWlwdFN0YXRlEiUKIUNPTU1BTkRfUkVDRUlQVF9TVEFURV9VTlNQRUNJRklFRBAAEiIKHkNPTU1BTkRfUkVDRUlQVF9TVEFURV9BQ0NFUFRFRBABEiMKH0NPTU1BTkRfUkVDRUlQVF9TVEFURV9DT01NSVRURUQQAhIiCh5DT01NQU5EX1JFQ0VJUFRfU1RBVEVfUkVKRUNURUQQAxIpCiVDT01NQU5EX1JFQ0VJUFRfU1RBVEVfT1VUQ09NRV9VTktOT1dOEARiBnByb3RvMw", [file_buf_validate_validate, file_google_protobuf_timestamp, file_kokoro_common_v1_error]);
 
 /**
  * @generated from message kokoro.common.v1.CommandIdentity
@@ -32,7 +32,12 @@ export type CommandIdentity = Message<"kokoro.common.v1.CommandIdentity"> & {
   idempotencyKey: string;
 
   /**
-   * @generated from field: string request_digest = 3;
+   * @generated from field: kokoro.common.v1.CommandDigestAlgorithm digest_algorithm = 3;
+   */
+  digestAlgorithm: CommandDigestAlgorithm;
+
+  /**
+   * @generated from field: string request_digest = 4;
    */
   requestDigest: string;
 };
@@ -82,6 +87,31 @@ export const CommandReceiptSchema: GenMessage<CommandReceipt> = /*@__PURE__*/
   messageDesc(file_kokoro_common_v1_receipt, 1);
 
 /**
+ * @generated from enum kokoro.common.v1.CommandDigestAlgorithm
+ */
+export enum CommandDigestAlgorithm {
+  /**
+   * @generated from enum value: COMMAND_DIGEST_ALGORITHM_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * SHA-256(type_name + NUL + canonical known-field protobuf bytes), encoded as lowercase hex.
+   * The method-specific Effect message is normalized before serialization, contains no maps,
+   * and is serialized in ascending field-number order with unknown fields discarded.
+   *
+   * @generated from enum value: COMMAND_DIGEST_ALGORITHM_SHA256_PROTOBUF_V1 = 1;
+   */
+  SHA256_PROTOBUF_V1 = 1,
+}
+
+/**
+ * Describes the enum kokoro.common.v1.CommandDigestAlgorithm.
+ */
+export const CommandDigestAlgorithmSchema: GenEnum<CommandDigestAlgorithm> = /*@__PURE__*/
+  enumDesc(file_kokoro_common_v1_receipt, 0);
+
+/**
  * @generated from enum kokoro.common.v1.CommandReceiptState
  */
 export enum CommandReceiptState {
@@ -115,5 +145,5 @@ export enum CommandReceiptState {
  * Describes the enum kokoro.common.v1.CommandReceiptState.
  */
 export const CommandReceiptStateSchema: GenEnum<CommandReceiptState> = /*@__PURE__*/
-  enumDesc(file_kokoro_common_v1_receipt, 0);
+  enumDesc(file_kokoro_common_v1_receipt, 1);
 

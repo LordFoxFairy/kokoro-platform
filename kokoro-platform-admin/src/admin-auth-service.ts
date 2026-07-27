@@ -1,12 +1,21 @@
-import { createHash } from "node:crypto";
 import { create } from "@bufbuild/protobuf";
 import { timestampDate, timestampFromDate } from "@bufbuild/protobuf/wkt";
 import type { ServiceImpl } from "@connectrpc/connect";
 import { RpcFailure } from "@kokoro/platform-kit";
 import {
+  CommandDigestAlgorithm,
   CommandReceiptSchema,
   CommandReceiptState,
+  type CommandIdentity as WireCommandIdentity,
 } from "./generated/contracts/kokoro/common/v1/receipt_pb.js";
+import {
+  canonicalizeConsumeVerificationTokenEffect,
+  canonicalizeCreateVerificationTokenEffect,
+  canonicalizeRecordAuthEventEffect,
+  consumeVerificationTokenEffectDigest,
+  createVerificationTokenEffectDigest,
+  recordAuthEventEffectDigest,
+} from "./generated/contracts/admin-auth-effect-digest.js";
 import {
   AdminAuthService,
   AuthEventKind,
@@ -30,10 +39,6 @@ const CREATE_TOKEN_OPERATION = "admin_auth.create_verification_token";
 const CONSUME_TOKEN_OPERATION = "admin_auth.consume_verification_token";
 const RECORD_EVENT_OPERATION = "admin_auth.record_auth_event";
 
-function payloadDigest(operation: string, payload: Record<string, string>): string {
-  return createHash("sha256").update(JSON.stringify({ operation, payload }), "utf8").digest("hex");
-}
-
 function requirePayloadDigest(identity: AdminAuthCommandIdentity, expected: string): void {
   if (identity.requestDigest !== expected) {
     throw new RpcFailure("validation", "command.digest_invalid", "Command digest does not match request");
@@ -44,11 +49,12 @@ function normalizeEmail(value: string): string {
   return value.trim().toLowerCase();
 }
 
-function requireIdentity(command: AdminAuthCommandIdentity | undefined): AdminAuthCommandIdentity {
+function requireIdentity(command: WireCommandIdentity | undefined): AdminAuthCommandIdentity {
   if (
     command === undefined ||
     command.commandId.length === 0 ||
     command.idempotencyKey.length === 0 ||
+    command.digestAlgorithm !== CommandDigestAlgorithm.SHA256_PROTOBUF_V1 ||
     command.requestDigest.length === 0
   ) {
     throw new RpcFailure("validation", "command.invalid", "Command identity is required");
@@ -56,6 +62,7 @@ function requireIdentity(command: AdminAuthCommandIdentity | undefined): AdminAu
   return {
     commandId: command.commandId,
     idempotencyKey: command.idempotencyKey,
+    digestAlgorithm: "sha256_protobuf_v1",
     requestDigest: command.requestDigest,
   };
 }
@@ -78,6 +85,7 @@ function receiptMessage(receipt: AdminAuthReceiptRecord) {
     identity: {
       commandId: receipt.commandId,
       idempotencyKey: receipt.idempotencyKey,
+      digestAlgorithm: CommandDigestAlgorithm.SHA256_PROTOBUF_V1,
       requestDigest: receipt.requestDigest,
     },
     operation: receipt.operation,
@@ -179,20 +187,13 @@ export function createAdminAuthService(
       };
     },
     async createVerificationToken(request) {
-      if (request.expires === undefined) {
+      if (request.effect?.expires === undefined) {
         throw new RpcFailure("validation", "verification_token.invalid", "Verification token expiry is required");
       }
       const identity = requireIdentity(request.command);
-      const expires = timestampDate(request.expires);
-      const identifier = normalizeEmail(request.identifier);
-      requirePayloadDigest(
-        identity,
-        payloadDigest(CREATE_TOKEN_OPERATION, {
-          identifier,
-          token: request.token,
-          expires: expires.toISOString(),
-        }),
-      );
+      const effect = canonicalizeCreateVerificationTokenEffect(request.effect);
+      const expires = timestampDate(effect.expires!);
+      requirePayloadDigest(identity, createVerificationTokenEffectDigest(effect));
       const receipt = await executeAdminAuthCommand(
         store,
         identity,
@@ -200,8 +201,8 @@ export function createAdminAuthService(
         currentTime(),
         async (transaction) => {
           const created = await transaction.createVerificationToken({
-            identifier,
-            token: request.token,
+            identifier: effect.identifier,
+            token: effect.token,
             expires,
           });
           return { kind: "verification_token", identifier: created.identifier, expires: created.expires, consumed: false };
@@ -211,16 +212,19 @@ export function createAdminAuthService(
       return {
         verificationToken: {
           identifier: result.identifier,
-          token: request.token,
+          token: effect.token,
           expires: timestampFromDate(result.expires),
         },
         receipt: receiptMessage(receipt),
       };
     },
     async consumeVerificationToken(request) {
+      if (request.effect === undefined) {
+        throw new RpcFailure("validation", "verification_token.invalid", "Verification token effect is required");
+      }
       const identity = requireIdentity(request.command);
-      const identifier = normalizeEmail(request.identifier);
-      requirePayloadDigest(identity, payloadDigest(CONSUME_TOKEN_OPERATION, { identifier, token: request.token }));
+      const effect = canonicalizeConsumeVerificationTokenEffect(request.effect);
+      requirePayloadDigest(identity, consumeVerificationTokenEffectDigest(effect));
       const receipt = await executeAdminAuthCommand(
         store,
         identity,
@@ -228,8 +232,8 @@ export function createAdminAuthService(
         currentTime(),
         async (transaction) => {
           const consumed = await transaction.consumeVerificationToken({
-            identifier,
-            token: request.token,
+            identifier: effect.identifier,
+            token: effect.token,
           });
           if (consumed === null) {
             throw new RpcFailure("not_found", "verification_token.not_found", "Verification token not found");
@@ -241,29 +245,21 @@ export function createAdminAuthService(
       return {
         verificationToken: {
           identifier: result.identifier,
-          token: request.token,
+          token: effect.token,
           expires: timestampFromDate(result.expires),
         },
         receipt: receiptMessage(receipt),
       };
     },
     async recordAuthEvent(request) {
-      if (request.occurredAt === undefined) {
+      if (request.effect?.occurredAt === undefined) {
         throw new RpcFailure("validation", "auth_event.invalid", "Auth event timestamp is required");
       }
       const identity = requireIdentity(request.command);
-      const event = eventValue(request.event);
-      const occurredAt = timestampDate(request.occurredAt);
-      const email = normalizeEmail(request.email);
-      requirePayloadDigest(
-        identity,
-        payloadDigest(RECORD_EVENT_OPERATION, {
-          email,
-          event,
-          reason: request.reason ?? "",
-          occurredAt: occurredAt.toISOString(),
-        }),
-      );
+      const effect = canonicalizeRecordAuthEventEffect(request.effect);
+      const event = eventValue(effect.event);
+      const occurredAt = timestampDate(effect.occurredAt!);
+      requirePayloadDigest(identity, recordAuthEventEffectDigest(effect));
       const receipt = await executeAdminAuthCommand(
         store,
         identity,
@@ -271,9 +267,9 @@ export function createAdminAuthService(
         currentTime(),
         async (transaction) => {
           await transaction.recordAuthEvent({
-            email,
+            email: effect.email,
             event,
-            reason: request.reason ?? null,
+            reason: effect.reason ?? null,
             occurredAt,
           });
           return { kind: "auth_event", event, occurredAt };
@@ -282,9 +278,12 @@ export function createAdminAuthService(
       return { receipt: receiptMessage(receipt) };
     },
     async getCommandReceipt(request) {
+      if (request.digestAlgorithm !== CommandDigestAlgorithm.SHA256_PROTOBUF_V1) {
+        throw new RpcFailure("validation", "command.digest_algorithm_invalid", "Command digest algorithm is invalid");
+      }
       const receipt = await safeQuery(() => store.findReceiptByCommandId(request.commandId));
       if (receipt === null) throw new RpcFailure("not_found", "command.receipt_not_found", "Command receipt not found");
-      if (receipt.requestDigest !== request.requestDigest) {
+      if (receipt.digestAlgorithm !== "sha256_protobuf_v1" || receipt.requestDigest !== request.requestDigest) {
         throw new RpcFailure("conflict", "command.digest_conflict", "Command digest conflict");
       }
       return receiptResponse(receipt);

@@ -1,14 +1,28 @@
-import { createHash } from "node:crypto";
 import { create } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { Code } from "@connectrpc/connect";
 import { toConnectError } from "@kokoro/platform-kit";
 import { describe, expect, it, vi } from "vitest";
 import {
+  canonicalizeConsumeVerificationTokenEffect,
+  canonicalizeCreateVerificationTokenEffect,
+  canonicalizeRecordAuthEventEffect,
+  consumeVerificationTokenEffectDigest,
+  createVerificationTokenEffectDigest,
+  recordAuthEventEffectDigest,
+} from "../../src/generated/contracts/admin-auth-effect-digest.js";
+import {
+  CommandDigestAlgorithm,
+  CommandIdentitySchema,
+} from "../../src/generated/contracts/kokoro/common/v1/receipt_pb.js";
+import {
   AuthEventKind,
+  ConsumeVerificationTokenEffectSchema,
   ConsumeVerificationTokenRequestSchema,
+  CreateVerificationTokenEffectSchema,
   CreateVerificationTokenRequestSchema,
   OperatorStatus,
+  RecordAuthEventEffectSchema,
   RecordAuthEventRequestSchema,
 } from "../../src/generated/contracts/kokoro/platform/admin/v1/admin_auth_pb.js";
 import { createAdminAuthService } from "../../src/admin-auth-service.js";
@@ -105,28 +119,25 @@ class MemoryAdminAuthStore implements AdminAuthStore {
 }
 
 function command(commandId: string, digest: string) {
-  return { commandId, idempotencyKey: `idempotency-${commandId}`, requestDigest: digest };
-}
-
-function digest(operation: string, payload: Record<string, string>): string {
-  return createHash("sha256").update(JSON.stringify({ operation, payload }), "utf8").digest("hex");
+  return create(CommandIdentitySchema, {
+    commandId,
+    idempotencyKey: `idempotency-${commandId}`,
+    digestAlgorithm: CommandDigestAlgorithm.SHA256_PROTOBUF_V1,
+    requestDigest: digest,
+  });
 }
 
 function createTokenRequest(commandId = "create-1", digestOverride?: string, token = "raw-verification-token") {
-  const identifier = "active@example.test";
+  const effect = canonicalizeCreateVerificationTokenEffect(
+    create(CreateVerificationTokenEffectSchema, {
+      identifier: " Active@Example.Test ",
+      token,
+      expires: timestampFromDate(expires),
+    }),
+  );
   return create(CreateVerificationTokenRequestSchema, {
-    command: command(
-      commandId,
-      digestOverride ??
-        digest("admin_auth.create_verification_token", {
-          identifier,
-          token,
-          expires: expires.toISOString(),
-        }),
-    ),
-    identifier: " Active@Example.Test ",
-    token,
-    expires: timestampFromDate(expires),
+    command: command(commandId, digestOverride ?? createVerificationTokenEffectDigest(effect)),
+    effect,
   });
 }
 
@@ -169,6 +180,19 @@ describe("Admin Auth application service", () => {
     expect(store.createTokenEffects).toBe(0);
   });
 
+  it("rejects an unsupported digest algorithm before applying an effect", async () => {
+    const store = new MemoryAdminAuthStore();
+    const service = createAdminAuthService(store, { now: () => now });
+    const request = createTokenRequest("invalid-algorithm");
+    request.command!.digestAlgorithm = CommandDigestAlgorithm.UNSPECIFIED;
+
+    await expect(Promise.resolve(service.createVerificationToken(request, {} as never))).rejects.toMatchObject({
+      kind: "validation",
+      domainCode: "command.invalid",
+    });
+    expect(store.createTokenEffects).toBe(0);
+  });
+
   it("rejects a digest mismatch before applying another effect", async () => {
     const store = new MemoryAdminAuthStore();
     const service = createAdminAuthService(store, { now: () => now });
@@ -190,16 +214,14 @@ describe("Admin Auth application service", () => {
     });
     const service = createAdminAuthService(store, { now: () => now });
     const request = create(ConsumeVerificationTokenRequestSchema, {
-      command: command(
-        "consume-1",
-        digest("admin_auth.consume_verification_token", {
-          identifier: "active@example.test",
+      effect: canonicalizeConsumeVerificationTokenEffect(
+        create(ConsumeVerificationTokenEffectSchema, {
+          identifier: "Active@Example.Test",
           token: "raw-verification-token",
         }),
       ),
-      identifier: "Active@Example.Test",
-      token: "raw-verification-token",
     });
+    request.command = command("consume-1", consumeVerificationTokenEffectDigest(request.effect!));
     const first = await service.consumeVerificationToken(request, {} as never);
     const replay = await service.consumeVerificationToken(request, {} as never);
     expect(store.consumeTokenEffects).toBe(1);
@@ -211,23 +233,23 @@ describe("Admin Auth application service", () => {
     const store = new MemoryAdminAuthStore();
     const service = createAdminAuthService(store, { now: () => now });
     const request = create(RecordAuthEventRequestSchema, {
-      command: command(
-        "event-1",
-        digest("admin_auth.record_auth_event", {
-          email: "active@example.test",
-          event: "signin",
-          reason: "",
-          occurredAt: now.toISOString(),
+      effect: canonicalizeRecordAuthEventEffect(
+        create(RecordAuthEventEffectSchema, {
+          email: "Active@Example.Test",
+          event: AuthEventKind.SIGN_IN,
+          occurredAt: timestampFromDate(now),
         }),
       ),
-      email: "Active@Example.Test",
-      event: AuthEventKind.SIGN_IN,
-      occurredAt: timestampFromDate(now),
     });
+    request.command = command("event-1", recordAuthEventEffectDigest(request.effect!));
     await service.recordAuthEvent(request, {} as never);
     await service.recordAuthEvent(request, {} as never);
     const receipt = await service.getCommandReceipt(
-      { commandId: "event-1", requestDigest: request.command?.requestDigest ?? "" } as never,
+      {
+        commandId: "event-1",
+        digestAlgorithm: CommandDigestAlgorithm.SHA256_PROTOBUF_V1,
+        requestDigest: request.command?.requestDigest ?? "",
+      } as never,
       {} as never,
     );
     expect(store.authEventEffects).toBe(1);

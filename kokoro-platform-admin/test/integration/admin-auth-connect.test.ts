@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { create } from "@bufbuild/protobuf";
 import { createClient, Code, ConnectError, type Interceptor } from "@connectrpc/connect";
 import { createConnectTransport } from "@connectrpc/connect-node";
 import {
@@ -12,7 +12,15 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
-import { AdminAuthService } from "../../src/generated/contracts/kokoro/platform/admin/v1/admin_auth_pb.js";
+import {
+  canonicalizeCreateVerificationTokenEffect,
+  createVerificationTokenEffectDigest,
+} from "../../src/generated/contracts/admin-auth-effect-digest.js";
+import { CommandDigestAlgorithm } from "../../src/generated/contracts/kokoro/common/v1/receipt_pb.js";
+import {
+  AdminAuthService,
+  CreateVerificationTokenEffectSchema,
+} from "../../src/generated/contracts/kokoro/platform/admin/v1/admin_auth_pb.js";
 import { KokoroErrorDetailSchema } from "../../src/generated/contracts/kokoro/common/v1/error_pb.js";
 import { createAdminServer, type AdminServerDeps } from "../../src/server.js";
 import type {
@@ -99,10 +107,6 @@ function makeClient(baseUrl: string, interceptors: Interceptor[] = []) {
     AdminAuthService,
     createConnectTransport({ baseUrl, httpVersion: "1.1", interceptors }),
   );
-}
-
-function digest(operation: string, payload: Record<string, string>): string {
-  return createHash("sha256").update(JSON.stringify({ operation, payload }), "utf8").digest("hex");
 }
 
 async function codeOf(promise: Promise<unknown>): Promise<Code> {
@@ -250,18 +254,28 @@ describe("Admin Auth generated Connect provider over HTTP/1.1", () => {
 
   it("reconciles a committed effect through GetCommandReceipt without returning the token", async () => {
     const client = makeClient(baseUrl, [metadata()]);
-    const requestDigest = digest("admin_auth.create_verification_token", {
-      identifier: "operator@example.test",
-      token: "raw-verification-token",
-      expires: expires.toISOString(),
-    });
+    const effect = canonicalizeCreateVerificationTokenEffect(
+      create(CreateVerificationTokenEffectSchema, {
+        identifier: "Operator@Example.Test",
+        token: "raw-verification-token",
+        expires: timestampFromDate(expires),
+      }),
+    );
+    const requestDigest = createVerificationTokenEffectDigest(effect);
     await client.createVerificationToken({
-      command: { commandId: "command-1", idempotencyKey: "idempotency-1", requestDigest },
-      identifier: "Operator@Example.Test",
-      token: "raw-verification-token",
-      expires: timestampFromDate(expires),
+      command: {
+        commandId: "command-1",
+        idempotencyKey: "idempotency-1",
+        digestAlgorithm: CommandDigestAlgorithm.SHA256_PROTOBUF_V1,
+        requestDigest,
+      },
+      effect,
     });
-    const receipt = await client.getCommandReceipt({ commandId: "command-1", requestDigest });
+    const receipt = await client.getCommandReceipt({
+      commandId: "command-1",
+      digestAlgorithm: CommandDigestAlgorithm.SHA256_PROTOBUF_V1,
+      requestDigest,
+    });
     expect(receipt.receipt?.state).not.toBe(0);
     expect(receipt.result.case).toBe("verificationToken");
     expect(JSON.stringify(receipt, (_key, value: unknown) => (typeof value === "bigint" ? value.toString() : value))).not.toContain(

@@ -7,7 +7,7 @@ import { enumDesc, fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf
 import { file_buf_validate_validate } from "../../../../buf/validate/validate_pb.js";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
-import type { CommandIdentity, CommandReceipt } from "../../../common/v1/receipt_pb.js";
+import type { CommandDigestAlgorithm, CommandIdentity, CommandReceipt } from "../../../common/v1/receipt_pb.js";
 import { file_kokoro_common_v1_receipt } from "../../../common/v1/receipt_pb.js";
 import type { Message } from "@bufbuild/protobuf";
 
@@ -15,7 +15,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file kokoro/platform/admin/v1/admin_auth.proto.
  */
 export const file_kokoro_platform_admin_v1_admin_auth: GenFile = /*@__PURE__*/
-  fileDesc("Cilrb2tvcm8vcGxhdGZvcm0vYWRtaW4vdjEvYWRtaW5fYXV0aC5wcm90bxIYa29rb3JvLnBsYXRmb3JtLmFkbWluLnYxIqUBCghPcGVyYXRvchIWCgJpZBgBIAEoCUIKukgHcgUQARiAARIZCgVlbWFpbBgCIAEoCUIKukgHcgUQAxjAAhIgCgxkaXNwbGF5X25hbWUYAyABKAlCCrpIB3IFEAEYgAISRAoGc3RhdHVzGAQgASgOMigua29rb3JvLnBsYXRmb3JtLmFkbWluLnYxLk9wZXJhdG9yU3RhdHVzQgq6SAeCAQQQASAAIoMBChFWZXJpZmljYXRpb25Ub2tlbhIeCgppZGVudGlmaWVyGAEgASgJQgq6SAdyBRADGMACEhkKBXRva2VuGAIgASgJQgq6SAdyBRABGIAQEjMKB2V4cGlyZXMYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wQga6SAPIAQEiNgoZR2V0T3BlcmF0b3JCeUVtYWlsUmVxdWVzdBIZCgVlbWFpbBgBIAEoCUIKukgHcgUQAxjAAiIsChJHZXRPcGVyYXRvclJlcXVlc3QSFgoCaWQYASABKAlCCrpIB3IFEAEYgAEiWgoaR2V0T3BlcmF0b3JCeUVtYWlsUmVzcG9uc2USPAoIb3BlcmF0b3IYASABKAsyIi5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjEuT3BlcmF0b3JCBrpIA8gBASJTChNHZXRPcGVyYXRvclJlc3BvbnNlEjwKCG9wZXJhdG9yGAEgASgLMiIua29rb3JvLnBsYXRmb3JtLmFkbWluLnYxLk9wZXJhdG9yQga6SAPIAQEizAEKHkNyZWF0ZVZlcmlmaWNhdGlvblRva2VuUmVxdWVzdBI6Cgdjb21tYW5kGAEgASgLMiEua29rb3JvLmNvbW1vbi52MS5Db21tYW5kSWRlbnRpdHlCBrpIA8gBARIeCgppZGVudGlmaWVyGAIgASgJQgq6SAdyBRADGMACEhkKBXRva2VuGAMgASgJQgq6SAdyBRABGIAQEjMKB2V4cGlyZXMYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wQga6SAPIAQEimAEKH0NvbnN1bWVWZXJpZmljYXRpb25Ub2tlblJlcXVlc3QSOgoHY29tbWFuZBgBIAEoCzIhLmtva29yby5jb21tb24udjEuQ29tbWFuZElkZW50aXR5Qga6SAPIAQESHgoKaWRlbnRpZmllchgCIAEoCUIKukgHcgUQAxjAAhIZCgV0b2tlbhgDIAEoCUIKukgHcgUQARiAECKtAQofQ3JlYXRlVmVyaWZpY2F0aW9uVG9rZW5SZXNwb25zZRJPChJ2ZXJpZmljYXRpb25fdG9rZW4YASABKAsyKy5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjEuVmVyaWZpY2F0aW9uVG9rZW5CBrpIA8gBARI5CgdyZWNlaXB0GAIgASgLMiAua29rb3JvLmNvbW1vbi52MS5Db21tYW5kUmVjZWlwdEIGukgDyAEBIq4BCiBDb25zdW1lVmVyaWZpY2F0aW9uVG9rZW5SZXNwb25zZRJPChJ2ZXJpZmljYXRpb25fdG9rZW4YASABKAsyKy5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjEuVmVyaWZpY2F0aW9uVG9rZW5CBrpIA8gBARI5CgdyZWNlaXB0GAIgASgLMiAua29rb3JvLmNvbW1vbi52MS5Db21tYW5kUmVjZWlwdEIGukgDyAEBIpYCChZSZWNvcmRBdXRoRXZlbnRSZXF1ZXN0EjoKB2NvbW1hbmQYASABKAsyIS5rb2tvcm8uY29tbW9uLnYxLkNvbW1hbmRJZGVudGl0eUIGukgDyAEBEhkKBWVtYWlsGAIgASgJQgq6SAdyBRADGMACEkIKBWV2ZW50GAMgASgOMicua29rb3JvLnBsYXRmb3JtLmFkbWluLnYxLkF1dGhFdmVudEtpbmRCCrpIB4IBBBABIAASHQoGcmVhc29uGAQgASgJQgi6SAVyAxiABEgAiAEBEjcKC29jY3VycmVkX2F0GAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEIGukgDyAEBQgkKB19yZWFzb24iVAoXUmVjb3JkQXV0aEV2ZW50UmVzcG9uc2USOQoHcmVjZWlwdBgBIAEoCzIgLmtva29yby5jb21tb24udjEuQ29tbWFuZFJlY2VpcHRCBrpIA8gBASJeChhHZXRDb21tYW5kUmVjZWlwdFJlcXVlc3QSHgoKY29tbWFuZF9pZBgBIAEoCUIKukgHcgUQARiAARIiCg5yZXF1ZXN0X2RpZ2VzdBgCIAEoCUIKukgHcgUQIBiAASJ9Ch5WZXJpZmljYXRpb25Ub2tlblJlY2VpcHRSZXN1bHQSHAoKaWRlbnRpZmllchgBIAEoCUIIukgFcgMYwAISKwoHZXhwaXJlcxgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEAoIY29uc3VtZWQYAyABKAgigQEKFkF1dGhFdmVudFJlY2VpcHRSZXN1bHQSNgoFZXZlbnQYASABKA4yJy5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjEuQXV0aEV2ZW50S2luZBIvCgtvY2N1cnJlZF9hdBgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAigAIKGUdldENvbW1hbmRSZWNlaXB0UmVzcG9uc2USOQoHcmVjZWlwdBgBIAEoCzIgLmtva29yby5jb21tb24udjEuQ29tbWFuZFJlY2VpcHRCBrpIA8gBARJWChJ2ZXJpZmljYXRpb25fdG9rZW4YAiABKAsyOC5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjEuVmVyaWZpY2F0aW9uVG9rZW5SZWNlaXB0UmVzdWx0SAASRgoKYXV0aF9ldmVudBgDIAEoCzIwLmtva29yby5wbGF0Zm9ybS5hZG1pbi52MS5BdXRoRXZlbnRSZWNlaXB0UmVzdWx0SABCCAoGcmVzdWx0KmsKDk9wZXJhdG9yU3RhdHVzEh8KG09QRVJBVE9SX1NUQVRVU19VTlNQRUNJRklFRBAAEhoKFk9QRVJBVE9SX1NUQVRVU19BQ1RJVkUQARIcChhPUEVSQVRPUl9TVEFUVVNfRElTQUJMRUQQAiqHAQoNQXV0aEV2ZW50S2luZBIfChtBVVRIX0VWRU5UX0tJTkRfVU5TUEVDSUZJRUQQABIbChdBVVRIX0VWRU5UX0tJTkRfU0lHTl9JThABEhwKGEFVVEhfRVZFTlRfS0lORF9TSUdOX09VVBACEhoKFkFVVEhfRVZFTlRfS0lORF9ERU5JRUQQAzKnBgoQQWRtaW5BdXRoU2VydmljZRKBAQoSR2V0T3BlcmF0b3JCeUVtYWlsEjMua29rb3JvLnBsYXRmb3JtLmFkbWluLnYxLkdldE9wZXJhdG9yQnlFbWFpbFJlcXVlc3QaNC5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjEuR2V0T3BlcmF0b3JCeUVtYWlsUmVzcG9uc2UiABJsCgtHZXRPcGVyYXRvchIsLmtva29yby5wbGF0Zm9ybS5hZG1pbi52MS5HZXRPcGVyYXRvclJlcXVlc3QaLS5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjEuR2V0T3BlcmF0b3JSZXNwb25zZSIAEpABChdDcmVhdGVWZXJpZmljYXRpb25Ub2tlbhI4Lmtva29yby5wbGF0Zm9ybS5hZG1pbi52MS5DcmVhdGVWZXJpZmljYXRpb25Ub2tlblJlcXVlc3QaOS5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjEuQ3JlYXRlVmVyaWZpY2F0aW9uVG9rZW5SZXNwb25zZSIAEpMBChhDb25zdW1lVmVyaWZpY2F0aW9uVG9rZW4SOS5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjEuQ29uc3VtZVZlcmlmaWNhdGlvblRva2VuUmVxdWVzdBo6Lmtva29yby5wbGF0Zm9ybS5hZG1pbi52MS5Db25zdW1lVmVyaWZpY2F0aW9uVG9rZW5SZXNwb25zZSIAEngKD1JlY29yZEF1dGhFdmVudBIwLmtva29yby5wbGF0Zm9ybS5hZG1pbi52MS5SZWNvcmRBdXRoRXZlbnRSZXF1ZXN0GjEua29rb3JvLnBsYXRmb3JtLmFkbWluLnYxLlJlY29yZEF1dGhFdmVudFJlc3BvbnNlIgASfgoRR2V0Q29tbWFuZFJlY2VpcHQSMi5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjEuR2V0Q29tbWFuZFJlY2VpcHRSZXF1ZXN0GjMua29rb3JvLnBsYXRmb3JtLmFkbWluLnYxLkdldENvbW1hbmRSZWNlaXB0UmVzcG9uc2UiAGIGcHJvdG8z", [file_buf_validate_validate, file_google_protobuf_timestamp, file_kokoro_common_v1_receipt]);
+  fileDesc("Cilrb2tvcm8vcGxhdGZvcm0vYWRtaW4vdjEvYWRtaW5fYXV0aC5wcm90bxIYa29rb3JvLnBsYXRmb3JtLmFkbWluLnYxIqUBCghPcGVyYXRvchIWCgJpZBgBIAEoCUIKukgHcgUQARiAARIZCgVlbWFpbBgCIAEoCUIKukgHcgUQAxi/ARIgCgxkaXNwbGF5X25hbWUYAyABKAlCCrpIB3IFEAEYvwESRAoGc3RhdHVzGAQgASgOMigua29rb3JvLnBsYXRmb3JtLmFkbWluLnYxLk9wZXJhdG9yU3RhdHVzQgq6SAeCAQQQASAAIoMBChFWZXJpZmljYXRpb25Ub2tlbhIeCgppZGVudGlmaWVyGAEgASgJQgq6SAdyBRADGL8BEhkKBXRva2VuGAIgASgJQgq6SAdyBRABGL8BEjMKB2V4cGlyZXMYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wQga6SAPIAQEiNgoZR2V0T3BlcmF0b3JCeUVtYWlsUmVxdWVzdBIZCgVlbWFpbBgBIAEoCUIKukgHcgUQAxi/ASIsChJHZXRPcGVyYXRvclJlcXVlc3QSFgoCaWQYASABKAlCCrpIB3IFEAEYgAEiWgoaR2V0T3BlcmF0b3JCeUVtYWlsUmVzcG9uc2USPAoIb3BlcmF0b3IYASABKAsyIi5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjEuT3BlcmF0b3JCBrpIA8gBASJTChNHZXRPcGVyYXRvclJlc3BvbnNlEjwKCG9wZXJhdG9yGAEgASgLMiIua29rb3JvLnBsYXRmb3JtLmFkbWluLnYxLk9wZXJhdG9yQga6SAPIAQEijwEKHUNyZWF0ZVZlcmlmaWNhdGlvblRva2VuRWZmZWN0Eh4KCmlkZW50aWZpZXIYASABKAlCCrpIB3IFEAMYvwESGQoFdG9rZW4YAiABKAlCCrpIB3IFEAEYvwESMwoHZXhwaXJlcxgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBCBrpIA8gBASKtAQoeQ3JlYXRlVmVyaWZpY2F0aW9uVG9rZW5SZXF1ZXN0EjoKB2NvbW1hbmQYASABKAsyIS5rb2tvcm8uY29tbW9uLnYxLkNvbW1hbmRJZGVudGl0eUIGukgDyAEBEk8KBmVmZmVjdBgCIAEoCzI3Lmtva29yby5wbGF0Zm9ybS5hZG1pbi52MS5DcmVhdGVWZXJpZmljYXRpb25Ub2tlbkVmZmVjdEIGukgDyAEBIlsKHkNvbnN1bWVWZXJpZmljYXRpb25Ub2tlbkVmZmVjdBIeCgppZGVudGlmaWVyGAEgASgJQgq6SAdyBRADGL8BEhkKBXRva2VuGAIgASgJQgq6SAdyBRABGL8BIq8BCh9Db25zdW1lVmVyaWZpY2F0aW9uVG9rZW5SZXF1ZXN0EjoKB2NvbW1hbmQYASABKAsyIS5rb2tvcm8uY29tbW9uLnYxLkNvbW1hbmRJZGVudGl0eUIGukgDyAEBElAKBmVmZmVjdBgCIAEoCzI4Lmtva29yby5wbGF0Zm9ybS5hZG1pbi52MS5Db25zdW1lVmVyaWZpY2F0aW9uVG9rZW5FZmZlY3RCBrpIA8gBASKtAQofQ3JlYXRlVmVyaWZpY2F0aW9uVG9rZW5SZXNwb25zZRJPChJ2ZXJpZmljYXRpb25fdG9rZW4YASABKAsyKy5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjEuVmVyaWZpY2F0aW9uVG9rZW5CBrpIA8gBARI5CgdyZWNlaXB0GAIgASgLMiAua29rb3JvLmNvbW1vbi52MS5Db21tYW5kUmVjZWlwdEIGukgDyAEBIq4BCiBDb25zdW1lVmVyaWZpY2F0aW9uVG9rZW5SZXNwb25zZRJPChJ2ZXJpZmljYXRpb25fdG9rZW4YASABKAsyKy5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjEuVmVyaWZpY2F0aW9uVG9rZW5CBrpIA8gBARI5CgdyZWNlaXB0GAIgASgLMiAua29rb3JvLmNvbW1vbi52MS5Db21tYW5kUmVjZWlwdEIGukgDyAEBItkBChVSZWNvcmRBdXRoRXZlbnRFZmZlY3QSGQoFZW1haWwYASABKAlCCrpIB3IFEAMYvwESQgoFZXZlbnQYAiABKA4yJy5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjEuQXV0aEV2ZW50S2luZEIKukgHggEEEAEgABIdCgZyZWFzb24YAyABKAlCCLpIBXIDGL8BSACIAQESNwoLb2NjdXJyZWRfYXQYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wQga6SAPIAQFCCQoHX3JlYXNvbiKdAQoWUmVjb3JkQXV0aEV2ZW50UmVxdWVzdBI6Cgdjb21tYW5kGAEgASgLMiEua29rb3JvLmNvbW1vbi52MS5Db21tYW5kSWRlbnRpdHlCBrpIA8gBARJHCgZlZmZlY3QYAiABKAsyLy5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjEuUmVjb3JkQXV0aEV2ZW50RWZmZWN0Qga6SAPIAQEiVAoXUmVjb3JkQXV0aEV2ZW50UmVzcG9uc2USOQoHcmVjZWlwdBgBIAEoCzIgLmtva29yby5jb21tb24udjEuQ29tbWFuZFJlY2VpcHRCBrpIA8gBASK8AQoYR2V0Q29tbWFuZFJlY2VpcHRSZXF1ZXN0Eh4KCmNvbW1hbmRfaWQYASABKAlCCrpIB3IFEAEYgAESTgoQZGlnZXN0X2FsZ29yaXRobRgCIAEoDjIoLmtva29yby5jb21tb24udjEuQ29tbWFuZERpZ2VzdEFsZ29yaXRobUIKukgHggEEEAEgABIwCg5yZXF1ZXN0X2RpZ2VzdBgDIAEoCUIYukgVchMyDl5bMC05YS1mXXs2NH0kmAFAIn0KHlZlcmlmaWNhdGlvblRva2VuUmVjZWlwdFJlc3VsdBIcCgppZGVudGlmaWVyGAEgASgJQgi6SAVyAxi/ARIrCgdleHBpcmVzGAIgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIQCghjb25zdW1lZBgDIAEoCCKBAQoWQXV0aEV2ZW50UmVjZWlwdFJlc3VsdBI2CgVldmVudBgBIAEoDjInLmtva29yby5wbGF0Zm9ybS5hZG1pbi52MS5BdXRoRXZlbnRLaW5kEi8KC29jY3VycmVkX2F0GAIgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCKAAgoZR2V0Q29tbWFuZFJlY2VpcHRSZXNwb25zZRI5CgdyZWNlaXB0GAEgASgLMiAua29rb3JvLmNvbW1vbi52MS5Db21tYW5kUmVjZWlwdEIGukgDyAEBElYKEnZlcmlmaWNhdGlvbl90b2tlbhgCIAEoCzI4Lmtva29yby5wbGF0Zm9ybS5hZG1pbi52MS5WZXJpZmljYXRpb25Ub2tlblJlY2VpcHRSZXN1bHRIABJGCgphdXRoX2V2ZW50GAMgASgLMjAua29rb3JvLnBsYXRmb3JtLmFkbWluLnYxLkF1dGhFdmVudFJlY2VpcHRSZXN1bHRIAEIICgZyZXN1bHQqawoOT3BlcmF0b3JTdGF0dXMSHwobT1BFUkFUT1JfU1RBVFVTX1VOU1BFQ0lGSUVEEAASGgoWT1BFUkFUT1JfU1RBVFVTX0FDVElWRRABEhwKGE9QRVJBVE9SX1NUQVRVU19ESVNBQkxFRBACKocBCg1BdXRoRXZlbnRLaW5kEh8KG0FVVEhfRVZFTlRfS0lORF9VTlNQRUNJRklFRBAAEhsKF0FVVEhfRVZFTlRfS0lORF9TSUdOX0lOEAESHAoYQVVUSF9FVkVOVF9LSU5EX1NJR05fT1VUEAISGgoWQVVUSF9FVkVOVF9LSU5EX0RFTklFRBADMqcGChBBZG1pbkF1dGhTZXJ2aWNlEoEBChJHZXRPcGVyYXRvckJ5RW1haWwSMy5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjEuR2V0T3BlcmF0b3JCeUVtYWlsUmVxdWVzdBo0Lmtva29yby5wbGF0Zm9ybS5hZG1pbi52MS5HZXRPcGVyYXRvckJ5RW1haWxSZXNwb25zZSIAEmwKC0dldE9wZXJhdG9yEiwua29rb3JvLnBsYXRmb3JtLmFkbWluLnYxLkdldE9wZXJhdG9yUmVxdWVzdBotLmtva29yby5wbGF0Zm9ybS5hZG1pbi52MS5HZXRPcGVyYXRvclJlc3BvbnNlIgASkAEKF0NyZWF0ZVZlcmlmaWNhdGlvblRva2VuEjgua29rb3JvLnBsYXRmb3JtLmFkbWluLnYxLkNyZWF0ZVZlcmlmaWNhdGlvblRva2VuUmVxdWVzdBo5Lmtva29yby5wbGF0Zm9ybS5hZG1pbi52MS5DcmVhdGVWZXJpZmljYXRpb25Ub2tlblJlc3BvbnNlIgASkwEKGENvbnN1bWVWZXJpZmljYXRpb25Ub2tlbhI5Lmtva29yby5wbGF0Zm9ybS5hZG1pbi52MS5Db25zdW1lVmVyaWZpY2F0aW9uVG9rZW5SZXF1ZXN0Gjoua29rb3JvLnBsYXRmb3JtLmFkbWluLnYxLkNvbnN1bWVWZXJpZmljYXRpb25Ub2tlblJlc3BvbnNlIgASeAoPUmVjb3JkQXV0aEV2ZW50EjAua29rb3JvLnBsYXRmb3JtLmFkbWluLnYxLlJlY29yZEF1dGhFdmVudFJlcXVlc3QaMS5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjEuUmVjb3JkQXV0aEV2ZW50UmVzcG9uc2UiABJ+ChFHZXRDb21tYW5kUmVjZWlwdBIyLmtva29yby5wbGF0Zm9ybS5hZG1pbi52MS5HZXRDb21tYW5kUmVjZWlwdFJlcXVlc3QaMy5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjEuR2V0Q29tbWFuZFJlY2VpcHRSZXNwb25zZSIAYgZwcm90bzM", [file_buf_validate_validate, file_google_protobuf_timestamp, file_kokoro_common_v1_receipt]);
 
 /**
  * @generated from message kokoro.platform.admin.v1.Operator
@@ -145,6 +145,33 @@ export const GetOperatorResponseSchema: GenMessage<GetOperatorResponse> = /*@__P
   messageDesc(file_kokoro_platform_admin_v1_admin_auth, 5);
 
 /**
+ * @generated from message kokoro.platform.admin.v1.CreateVerificationTokenEffect
+ */
+export type CreateVerificationTokenEffect = Message<"kokoro.platform.admin.v1.CreateVerificationTokenEffect"> & {
+  /**
+   * @generated from field: string identifier = 1;
+   */
+  identifier: string;
+
+  /**
+   * @generated from field: string token = 2;
+   */
+  token: string;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp expires = 3;
+   */
+  expires?: Timestamp | undefined;
+};
+
+/**
+ * Describes the message kokoro.platform.admin.v1.CreateVerificationTokenEffect.
+ * Use `create(CreateVerificationTokenEffectSchema)` to create a new message.
+ */
+export const CreateVerificationTokenEffectSchema: GenMessage<CreateVerificationTokenEffect> = /*@__PURE__*/
+  messageDesc(file_kokoro_platform_admin_v1_admin_auth, 6);
+
+/**
  * @generated from message kokoro.platform.admin.v1.CreateVerificationTokenRequest
  */
 export type CreateVerificationTokenRequest = Message<"kokoro.platform.admin.v1.CreateVerificationTokenRequest"> & {
@@ -154,19 +181,9 @@ export type CreateVerificationTokenRequest = Message<"kokoro.platform.admin.v1.C
   command?: CommandIdentity | undefined;
 
   /**
-   * @generated from field: string identifier = 2;
+   * @generated from field: kokoro.platform.admin.v1.CreateVerificationTokenEffect effect = 2;
    */
-  identifier: string;
-
-  /**
-   * @generated from field: string token = 3;
-   */
-  token: string;
-
-  /**
-   * @generated from field: google.protobuf.Timestamp expires = 4;
-   */
-  expires?: Timestamp | undefined;
+  effect?: CreateVerificationTokenEffect | undefined;
 };
 
 /**
@@ -174,7 +191,29 @@ export type CreateVerificationTokenRequest = Message<"kokoro.platform.admin.v1.C
  * Use `create(CreateVerificationTokenRequestSchema)` to create a new message.
  */
 export const CreateVerificationTokenRequestSchema: GenMessage<CreateVerificationTokenRequest> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v1_admin_auth, 6);
+  messageDesc(file_kokoro_platform_admin_v1_admin_auth, 7);
+
+/**
+ * @generated from message kokoro.platform.admin.v1.ConsumeVerificationTokenEffect
+ */
+export type ConsumeVerificationTokenEffect = Message<"kokoro.platform.admin.v1.ConsumeVerificationTokenEffect"> & {
+  /**
+   * @generated from field: string identifier = 1;
+   */
+  identifier: string;
+
+  /**
+   * @generated from field: string token = 2;
+   */
+  token: string;
+};
+
+/**
+ * Describes the message kokoro.platform.admin.v1.ConsumeVerificationTokenEffect.
+ * Use `create(ConsumeVerificationTokenEffectSchema)` to create a new message.
+ */
+export const ConsumeVerificationTokenEffectSchema: GenMessage<ConsumeVerificationTokenEffect> = /*@__PURE__*/
+  messageDesc(file_kokoro_platform_admin_v1_admin_auth, 8);
 
 /**
  * @generated from message kokoro.platform.admin.v1.ConsumeVerificationTokenRequest
@@ -186,14 +225,9 @@ export type ConsumeVerificationTokenRequest = Message<"kokoro.platform.admin.v1.
   command?: CommandIdentity | undefined;
 
   /**
-   * @generated from field: string identifier = 2;
+   * @generated from field: kokoro.platform.admin.v1.ConsumeVerificationTokenEffect effect = 2;
    */
-  identifier: string;
-
-  /**
-   * @generated from field: string token = 3;
-   */
-  token: string;
+  effect?: ConsumeVerificationTokenEffect | undefined;
 };
 
 /**
@@ -201,7 +235,7 @@ export type ConsumeVerificationTokenRequest = Message<"kokoro.platform.admin.v1.
  * Use `create(ConsumeVerificationTokenRequestSchema)` to create a new message.
  */
 export const ConsumeVerificationTokenRequestSchema: GenMessage<ConsumeVerificationTokenRequest> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v1_admin_auth, 7);
+  messageDesc(file_kokoro_platform_admin_v1_admin_auth, 9);
 
 /**
  * @generated from message kokoro.platform.admin.v1.CreateVerificationTokenResponse
@@ -223,7 +257,7 @@ export type CreateVerificationTokenResponse = Message<"kokoro.platform.admin.v1.
  * Use `create(CreateVerificationTokenResponseSchema)` to create a new message.
  */
 export const CreateVerificationTokenResponseSchema: GenMessage<CreateVerificationTokenResponse> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v1_admin_auth, 8);
+  messageDesc(file_kokoro_platform_admin_v1_admin_auth, 10);
 
 /**
  * @generated from message kokoro.platform.admin.v1.ConsumeVerificationTokenResponse
@@ -245,7 +279,39 @@ export type ConsumeVerificationTokenResponse = Message<"kokoro.platform.admin.v1
  * Use `create(ConsumeVerificationTokenResponseSchema)` to create a new message.
  */
 export const ConsumeVerificationTokenResponseSchema: GenMessage<ConsumeVerificationTokenResponse> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v1_admin_auth, 9);
+  messageDesc(file_kokoro_platform_admin_v1_admin_auth, 11);
+
+/**
+ * @generated from message kokoro.platform.admin.v1.RecordAuthEventEffect
+ */
+export type RecordAuthEventEffect = Message<"kokoro.platform.admin.v1.RecordAuthEventEffect"> & {
+  /**
+   * @generated from field: string email = 1;
+   */
+  email: string;
+
+  /**
+   * @generated from field: kokoro.platform.admin.v1.AuthEventKind event = 2;
+   */
+  event: AuthEventKind;
+
+  /**
+   * @generated from field: optional string reason = 3;
+   */
+  reason?: string | undefined;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp occurred_at = 4;
+   */
+  occurredAt?: Timestamp | undefined;
+};
+
+/**
+ * Describes the message kokoro.platform.admin.v1.RecordAuthEventEffect.
+ * Use `create(RecordAuthEventEffectSchema)` to create a new message.
+ */
+export const RecordAuthEventEffectSchema: GenMessage<RecordAuthEventEffect> = /*@__PURE__*/
+  messageDesc(file_kokoro_platform_admin_v1_admin_auth, 12);
 
 /**
  * @generated from message kokoro.platform.admin.v1.RecordAuthEventRequest
@@ -257,24 +323,9 @@ export type RecordAuthEventRequest = Message<"kokoro.platform.admin.v1.RecordAut
   command?: CommandIdentity | undefined;
 
   /**
-   * @generated from field: string email = 2;
+   * @generated from field: kokoro.platform.admin.v1.RecordAuthEventEffect effect = 2;
    */
-  email: string;
-
-  /**
-   * @generated from field: kokoro.platform.admin.v1.AuthEventKind event = 3;
-   */
-  event: AuthEventKind;
-
-  /**
-   * @generated from field: optional string reason = 4;
-   */
-  reason?: string | undefined;
-
-  /**
-   * @generated from field: google.protobuf.Timestamp occurred_at = 5;
-   */
-  occurredAt?: Timestamp | undefined;
+  effect?: RecordAuthEventEffect | undefined;
 };
 
 /**
@@ -282,7 +333,7 @@ export type RecordAuthEventRequest = Message<"kokoro.platform.admin.v1.RecordAut
  * Use `create(RecordAuthEventRequestSchema)` to create a new message.
  */
 export const RecordAuthEventRequestSchema: GenMessage<RecordAuthEventRequest> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v1_admin_auth, 10);
+  messageDesc(file_kokoro_platform_admin_v1_admin_auth, 13);
 
 /**
  * @generated from message kokoro.platform.admin.v1.RecordAuthEventResponse
@@ -299,7 +350,7 @@ export type RecordAuthEventResponse = Message<"kokoro.platform.admin.v1.RecordAu
  * Use `create(RecordAuthEventResponseSchema)` to create a new message.
  */
 export const RecordAuthEventResponseSchema: GenMessage<RecordAuthEventResponse> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v1_admin_auth, 11);
+  messageDesc(file_kokoro_platform_admin_v1_admin_auth, 14);
 
 /**
  * @generated from message kokoro.platform.admin.v1.GetCommandReceiptRequest
@@ -311,7 +362,12 @@ export type GetCommandReceiptRequest = Message<"kokoro.platform.admin.v1.GetComm
   commandId: string;
 
   /**
-   * @generated from field: string request_digest = 2;
+   * @generated from field: kokoro.common.v1.CommandDigestAlgorithm digest_algorithm = 2;
+   */
+  digestAlgorithm: CommandDigestAlgorithm;
+
+  /**
+   * @generated from field: string request_digest = 3;
    */
   requestDigest: string;
 };
@@ -321,7 +377,7 @@ export type GetCommandReceiptRequest = Message<"kokoro.platform.admin.v1.GetComm
  * Use `create(GetCommandReceiptRequestSchema)` to create a new message.
  */
 export const GetCommandReceiptRequestSchema: GenMessage<GetCommandReceiptRequest> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v1_admin_auth, 12);
+  messageDesc(file_kokoro_platform_admin_v1_admin_auth, 15);
 
 /**
  * @generated from message kokoro.platform.admin.v1.VerificationTokenReceiptResult
@@ -348,7 +404,7 @@ export type VerificationTokenReceiptResult = Message<"kokoro.platform.admin.v1.V
  * Use `create(VerificationTokenReceiptResultSchema)` to create a new message.
  */
 export const VerificationTokenReceiptResultSchema: GenMessage<VerificationTokenReceiptResult> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v1_admin_auth, 13);
+  messageDesc(file_kokoro_platform_admin_v1_admin_auth, 16);
 
 /**
  * @generated from message kokoro.platform.admin.v1.AuthEventReceiptResult
@@ -370,7 +426,7 @@ export type AuthEventReceiptResult = Message<"kokoro.platform.admin.v1.AuthEvent
  * Use `create(AuthEventReceiptResultSchema)` to create a new message.
  */
 export const AuthEventReceiptResultSchema: GenMessage<AuthEventReceiptResult> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v1_admin_auth, 14);
+  messageDesc(file_kokoro_platform_admin_v1_admin_auth, 17);
 
 /**
  * @generated from message kokoro.platform.admin.v1.GetCommandReceiptResponse
@@ -404,7 +460,7 @@ export type GetCommandReceiptResponse = Message<"kokoro.platform.admin.v1.GetCom
  * Use `create(GetCommandReceiptResponseSchema)` to create a new message.
  */
 export const GetCommandReceiptResponseSchema: GenMessage<GetCommandReceiptResponse> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v1_admin_auth, 15);
+  messageDesc(file_kokoro_platform_admin_v1_admin_auth, 18);
 
 /**
  * @generated from enum kokoro.platform.admin.v1.OperatorStatus

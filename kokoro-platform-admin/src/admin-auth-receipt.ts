@@ -3,6 +3,7 @@ import { RpcFailure } from "@kokoro/platform-kit";
 export interface AdminAuthCommandIdentity {
   commandId: string;
   idempotencyKey: string;
+  digestAlgorithm: "sha256_protobuf_v1";
   requestDigest: string;
 }
 
@@ -77,6 +78,7 @@ function replayOrConflict(
   if (
     receipt.commandId !== identity.commandId ||
     receipt.idempotencyKey !== identity.idempotencyKey ||
+    receipt.digestAlgorithm !== identity.digestAlgorithm ||
     receipt.operation !== operation
   ) {
     throw new RpcFailure("conflict", "command.identity_conflict", "Command identity conflict");
