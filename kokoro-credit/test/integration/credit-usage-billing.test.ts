@@ -38,17 +38,22 @@ async function fundedTeam(namespace: string, grantMicros: string) {
   return account;
 }
 
+// 计费写路由的 siteId 由请求体承载（权威来源）；这里同时带上一致的 header，走常规交叉校验通过的路径。
 function hold(payload: Record<string, unknown>) {
   return app.inject({
     method: "POST",
     url: "/credit/usage/hold",
     headers: { "x-kokoro-site-id": SITE },
-    payload,
+    payload: { siteId: SITE, ...payload },
   });
 }
 
 function settle(payload: Record<string, unknown>) {
-  return app.inject({ method: "POST", url: "/credit/usage/settle", payload });
+  return app.inject({
+    method: "POST",
+    url: "/credit/usage/settle",
+    payload: { siteId: SITE, ...payload },
+  });
 }
 
 describe("credit usage billing face (run hold/settle)", () => {
@@ -282,14 +287,43 @@ describe("credit usage billing face (run hold/settle)", () => {
     ).rejects.toThrow(/non-negative/);
   });
 
-  it("requires the site header at hold time", async () => {
-    await fundedTeam("team_nosite", "100000");
+  it("holds against the body siteId without a site header, and persists the account under it", async () => {
+    const account = await fundedTeam("team_nosite", "100000");
     const response = await app.inject({
       method: "POST",
       url: "/credit/usage/hold",
-      payload: { namespace: "team_nosite", featureKey: "model.run", labelKey: "gpt-4", idempotencyKey: "run_nosite" },
+      payload: {
+        siteId: SITE,
+        namespace: "team_nosite",
+        featureKey: "model.run",
+        labelKey: "gpt-4",
+        idempotencyKey: "run_nosite",
+      },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.accountId).toBe(account.id);
+    const storedAccount = await prisma.creditAccount.findUniqueOrThrow({ where: { id: account.id } });
+    expect(storedAccount.siteId).toBe(SITE);
+  });
+
+  it("rejects a site header that contradicts the body without touching the account", async () => {
+    const account = await fundedTeam("team_sitemix", "100000");
+    const response = await app.inject({
+      method: "POST",
+      url: "/credit/usage/hold",
+      headers: { "x-kokoro-site-id": "site-other" },
+      payload: {
+        siteId: SITE,
+        namespace: "team_sitemix",
+        featureKey: "model.run",
+        labelKey: "gpt-4",
+        idempotencyKey: "run_sitemix",
+      },
     });
     expect(response.statusCode).toBe(400);
-    expect(response.json().error.code).toBe("credit.site_required");
+    expect(response.json().error.code).toBe("credit.site_mismatch");
+    const stored = await prisma.creditAccount.findUniqueOrThrow({ where: { id: account.id } });
+    expect(stored.heldMicros.toString()).toBe("0");
+    expect(await prisma.creditHold.count({ where: { accountId: account.id } })).toBe(0);
   });
 });

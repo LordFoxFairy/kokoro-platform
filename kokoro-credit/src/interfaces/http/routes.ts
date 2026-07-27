@@ -8,7 +8,7 @@ import {
   sendError,
   sendZodError,
 } from "@kokoro/platform-kit";
-import type { FastifyInstance, FastifyReply } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { ZodError } from "zod";
 import type { CreditService } from "../../application/credit-service.js";
 import {
@@ -58,6 +58,31 @@ function decodeLedgerCursor(raw: string): { createdAt: Date; id: string } | unde
     return undefined;
   }
   return { createdAt, id };
+}
+
+// 计费写路由（usage/hold、usage/settle、release）的站点归属：请求体的 siteId 是权威来源——
+// 它随请求落库、可在 effect point 被强制，而 header 只是调用方对自身 site 的裸断言，不足以承担隔离边界。
+// header 若同时存在则只做交叉校验：与 body 不一致意味着调用方身份混淆（confused deputy），
+// 两边都不可信，硬拒而非挑一个信。header 缺失不构成拒绝理由——body 已经给出权威归属。
+// 400 而非 403：这是请求自身自相矛盾（同 credit.site_required 的 400），不是站点授权判定，
+// 也不向调用方泄漏我们认可哪一侧。
+function rejectSiteMismatch(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  bodySiteId: string,
+): FastifyReply | undefined {
+  const ctx = readRequestContext(request.headers);
+  if (ctx.siteId !== null && ctx.siteId !== bodySiteId) {
+    return sendError(
+      reply,
+      400,
+      "credit.site_mismatch",
+      "站点上下文与请求体不一致",
+      undefined,
+      ctx.requestId,
+    );
+  }
+  return undefined;
 }
 
 export function registerCreditRoutes(app: FastifyInstance, service: CreditService): void {
@@ -191,12 +216,12 @@ export function registerCreditRoutes(app: FastifyInstance, service: CreditServic
     },
   }, async (request, reply) => {
     try {
-      const ctx = readRequestContext(request.headers);
-      if (ctx.siteId === null) {
-        return sendError(reply, 400, "credit.site_required", "缺少站点上下文", undefined, ctx.requestId);
-      }
       const input = usageHoldRequestSchema.parse(request.body);
-      const result = await service.holdForUsage({ siteId: ctx.siteId, ...input });
+      const mismatch = rejectSiteMismatch(request, reply, input.siteId);
+      if (mismatch) {
+        return mismatch;
+      }
+      const result = await service.holdForUsage(input);
       return sendData(reply, result);
     } catch (error) {
       return handleCreditError(error, reply, "credit.usage_hold_failed");
@@ -212,6 +237,10 @@ export function registerCreditRoutes(app: FastifyInstance, service: CreditServic
   }, async (request, reply) => {
     try {
       const input = usageSettleRequestSchema.parse(request.body);
+      const mismatch = rejectSiteMismatch(request, reply, input.siteId);
+      if (mismatch) {
+        return mismatch;
+      }
       const result = await service.settleUsage({
         holdId: input.holdId,
         inputTokens: String(input.usage.inputTokens),
@@ -403,7 +432,14 @@ export function registerCreditRoutes(app: FastifyInstance, service: CreditServic
   }, async (request, reply) => {
     try {
       const input = releaseCreditRequestSchema.parse(request.body);
-      const result = await service.releaseHold(input);
+      const mismatch = rejectSiteMismatch(request, reply, input.siteId);
+      if (mismatch) {
+        return mismatch;
+      }
+      const result = await service.releaseHold({
+        holdId: input.holdId,
+        idempotencyKey: input.idempotencyKey,
+      });
       return sendData(reply, result);
     } catch (error) {
       return handleCreditError(error, reply, "credit.release_failed");

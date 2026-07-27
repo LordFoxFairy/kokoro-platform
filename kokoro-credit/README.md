@@ -51,18 +51,21 @@ POST /credit/pricing-rules   创建计价规则
 
 ```text
 POST /credit/usage/hold
-  入参 {namespace, featureKey, labelKey?, idempotencyKey, modelBindingId?, requestId?}
-       siteId 从 x-kokoro-site-id header；namespace(=teamId) → (siteId, team, namespace) 账户
+  入参 {siteId, namespace, featureKey, labelKey?, idempotencyKey, modelBindingId?, requestId?}
+       siteId 以请求体为权威；namespace(=teamId) → (siteId, team, namespace) 账户
   行为 按 pricing × 配置化预估用量 × (1 + buffer%) 算冻结额，落 pricing_ref 到 hold
   出参 {holdId, accountId, amountMicros}；余额不足 → 402 credit.insufficient
 
 POST /credit/usage/settle
-  入参 {holdId, usage:{inputTokens, outputTokens}, idempotencyKey}
+  入参 {siteId, holdId, usage:{inputTokens, outputTokens}, idempotencyKey}
   行为 按 hold 上的 pricing_ref 与真实 token 复算实额，clamp 到冻结额（先守不透支），capture 入账
        实额为 0 → 释放冻结不入账；idempotencyKey=run_id，重放同结果
   出参 {holdId, outcome: captured|released, amountMicros, account}
 
-失败/取消复用 POST /credit/release。
+失败/取消复用 POST /credit/release（入参 {siteId, holdId, idempotencyKey}）。
+
+计费写路由（usage/hold、usage/settle、release）的 siteId 一律以请求体为权威来源；
+x-kokoro-site-id header 若同时存在只做交叉校验，与请求体不一致 → 400 credit.site_mismatch。
 ```
 
 ## 运行与部署

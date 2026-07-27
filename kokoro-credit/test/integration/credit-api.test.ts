@@ -156,7 +156,8 @@ describe("credit HTTP API", () => {
     const response = await app.inject({
       method: "POST",
       url: "/credit/release",
-      payload: { holdId: "missing_hold", idempotencyKey: "api_release_missing" },
+      // siteId 由请求体承载（权威来源），与 hold/settle 同规。
+      payload: { siteId: "site-default", holdId: "missing_hold", idempotencyKey: "api_release_missing" },
     });
 
     expect(response.statusCode).toBe(404);

@@ -41,12 +41,13 @@ function setQuota(accountId: string, body: Record<string, unknown>) {
   return app.inject({ method: "POST", url: `/admin/credits/accounts/${accountId}/quota`, payload: body });
 }
 
+// 计费写路由的 siteId 由请求体承载（权威来源）；header 保持一致，走交叉校验通过的常规路径。
 function hold(namespace: string, idempotencyKey: string, labelKey = "gpt-4") {
   return app.inject({
     method: "POST",
     url: "/credit/usage/hold",
     headers: { "x-kokoro-site-id": SITE },
-    payload: { namespace, featureKey: "model.run", labelKey, idempotencyKey },
+    payload: { siteId: SITE, namespace, featureKey: "model.run", labelKey, idempotencyKey },
   });
 }
 
@@ -54,7 +55,7 @@ function settle(holdId: string, idempotencyKey: string, inputTokens: number, out
   return app.inject({
     method: "POST",
     url: "/credit/usage/settle",
-    payload: { holdId, usage: { inputTokens, outputTokens }, idempotencyKey },
+    payload: { siteId: SITE, holdId, usage: { inputTokens, outputTokens }, idempotencyKey },
   });
 }
 

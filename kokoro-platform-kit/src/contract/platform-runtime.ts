@@ -6,6 +6,7 @@ export const modelTransportKindSchema = z.enum(["litellm", "direct", "internal"]
 
 export const usageHoldRequestSchema = z
   .object({
+    siteId: z.string().min(1),
     namespace: z.string().min(1),
     featureKey: z.string().min(1),
     labelKey: z.string().min(1).optional(),
@@ -26,6 +27,7 @@ export type UsageSettleUsage = z.infer<typeof usageSettleUsageSchema>
 
 export const usageSettleRequestSchema = z
   .object({
+    siteId: z.string().min(1),
     holdId: z.string().min(1),
     usage: usageSettleUsageSchema,
     idempotencyKey: z.string().min(1),
@@ -35,6 +37,7 @@ export type UsageSettleRequest = z.infer<typeof usageSettleRequestSchema>
 
 export const releaseCreditRequestSchema = z
   .object({
+    siteId: z.string().min(1),
     holdId: z.string().min(1),
     idempotencyKey: z.string().min(1),
   })
