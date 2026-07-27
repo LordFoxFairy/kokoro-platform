@@ -164,14 +164,22 @@ export function registerModelRoutes(app: FastifyInstance, service: ModelService)
     {
       schema: {
         tags: ["model"],
-        summary: "列出用户可选模型目录（运行时消费，只出 active，可按 featureKey 过滤）",
-        querystring: jsonSchema(listModelLabelsQuerySchema),
+        summary: "列出该站可选模型目录（运行时消费，siteId 必填，应用该站隐藏策略）",
       },
     },
     async (request, reply) => {
       try {
+        // 与 resolve 同样在 handler 内 parse，而不是交给 fastify 的 querystring 校验：
+        // fastify 校验失败走它自己的错误形状，与本服务 sendError 的 {error:{code}} 信封不一致，
+        // 同一类失败（缺 siteId）在两个姊妹端点上会长得不一样。查询形状的权威在根仓
+        // contract/spec/platform-runtime.yaml，由 boundary registry gate 校验，这里不重复声明。
         const query = listModelLabelsQuerySchema.parse(request.query);
-        const labels = await service.listActiveModelLabels(query.featureKey);
+        // 与 resolve 同一套站点判定：目录和 resolve 必须对同一站点给出一致答案。
+        const mismatch = rejectSiteMismatch(request, reply, query.siteId);
+        if (mismatch) {
+          return mismatch;
+        }
+        const labels = await service.listActiveModelLabels(query);
         return sendData(reply, labels);
       } catch (error) {
         return handleModelError(error, reply, "model.label_list_failed");

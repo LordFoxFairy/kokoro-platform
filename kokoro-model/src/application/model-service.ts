@@ -3,6 +3,7 @@ import type {
   EnsureModelLabelInput,
   EnsureProviderAccountInput,
   ListModelBindingsFilter,
+  ListSiteModelCatalogInput,
   ModelRepository,
   ResolveModelInput,
   UpsertSiteModelPolicyInput,
@@ -28,12 +29,10 @@ export class ModelService {
     return this.repository.listModelLabels();
   }
 
-  // 运行时目录（session 消费）：只出 active，可按 featureKey 过滤。目录空/过滤后空都合法（消费侧回落）。
-  async listActiveModelLabels(featureKey?: string | undefined) {
-    const labels = await this.repository.listModelLabels();
-    return labels.filter(
-      (label) => label.status === "active" && (featureKey === undefined || label.featureKey === featureKey),
-    );
+  // 运行时目录（session 消费）：只出该站未隐藏的 active label，可按 featureKey 过滤。
+  // 目录空/过滤后空都合法（消费侧回落）。siteId 必填，理由见 ListSiteModelCatalogInput。
+  async listActiveModelLabels(input: ListSiteModelCatalogInput) {
+    return this.repository.listSiteModelCatalog(input);
   }
 
   async ensureModelLabel(input: EnsureModelLabelInput) {

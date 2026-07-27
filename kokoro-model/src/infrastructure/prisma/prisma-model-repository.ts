@@ -13,6 +13,7 @@ import type {
   EnsureModelLabelInput,
   EnsureProviderAccountInput,
   ListModelBindingsFilter,
+  ListSiteModelCatalogInput,
   ModelRepository,
   ResolveModelInput,
   UpsertSiteModelPolicyInput,
@@ -219,6 +220,21 @@ export class PrismaModelRepository implements ModelRepository {
     });
 
     return labels.map(mapModelLabel);
+  }
+
+  // 与 resolveModelBindings 用同一份 hidden 集合：目录里出现的 label，resolve 必须也能解出来。
+  async listSiteModelCatalog(input: ListSiteModelCatalogInput): Promise<ModelLabel[]> {
+    const hiddenLabels = await this.hiddenLabelKeys(input.siteId);
+    const labels = await this.prisma.modelLabel.findMany({
+      where: {
+        status: "active",
+        ...(input.featureKey === undefined ? {} : { featureKey: input.featureKey }),
+      },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    });
+
+    return labels.map(mapModelLabel).filter((label) => !hiddenLabels.has(label.key));
   }
 
   async ensureModelLabel(input: EnsureModelLabelInput): Promise<ModelLabel> {

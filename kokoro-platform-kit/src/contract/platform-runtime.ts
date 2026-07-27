@@ -56,6 +56,7 @@ export type ResolveModelBindingsQuery = z.infer<typeof resolveModelBindingsQuery
 
 export const listModelLabelsQuerySchema = z
   .object({
+    siteId: z.string().min(1),
     featureKey: z.string().min(1).optional(),
   })
   .strict()

@@ -84,6 +84,7 @@ function captureRepo(captured: {
     listProviderAccounts: async () => [account],
     listAllModelBindings: async () => [binding],
     listModelLabels: async () => [label],
+    listSiteModelCatalog: async () => [label],
     setProviderAccountStatus: async () => account,
     setModelBindingStatus: async () => binding,
     deleteProviderAccount: async () => account,

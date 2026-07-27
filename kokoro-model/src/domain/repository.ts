@@ -49,6 +49,15 @@ export interface ResolveModelInput {
   siteId: string;
 }
 
+// 运行时目录（session 消费）。与 ResolveModelInput 同样必填 siteId，且必须是同一个值：
+// 目录和 resolve 对「该站隐藏了哪些 label」必须给出一致答案，否则用户能选中一个选不动的模型。
+// 与 listModelLabels() 的区别是信任面不同：那个是 admin 运维面，按设计看得到全部 label；
+// 这个是站点用户面，只能看到该站允许的部分。
+export interface ListSiteModelCatalogInput {
+  siteId: string;
+  featureKey?: string | undefined;
+}
+
 export interface EnsureModelLabelInput {
   key: string;
   displayName: string;
@@ -72,7 +81,10 @@ export interface ModelRepository {
   resolveModelBindings(input: ResolveModelInput): Promise<ModelBinding[]>;
   listProviderAccounts(options?: ListOptions): Promise<ProviderAccount[]>;
   listAllModelBindings(options?: ListOptions): Promise<ModelBinding[]>;
+  // admin 运维面：不按站点过滤。
   listModelLabels(): Promise<ModelLabel[]>;
+  // 站点用户面：只出该站未隐藏的 active label。
+  listSiteModelCatalog(input: ListSiteModelCatalogInput): Promise<ModelLabel[]>;
   ensureModelLabel(input: EnsureModelLabelInput): Promise<ModelLabel>;
   setProviderAccountStatus(
     id: string,

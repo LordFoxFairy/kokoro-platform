@@ -6,6 +6,7 @@ import type {
   EnsureModelLabelInput,
   EnsureProviderAccountInput,
   ListModelBindingsFilter,
+  ListSiteModelCatalogInput,
   ModelRepository,
   ResolveModelInput,
   UpsertSiteModelPolicyInput,
@@ -84,6 +85,7 @@ interface Captured {
   restoreProviderAccount?: { id: string };
   deleteModelBinding?: { id: string; deletedBy: string; reason?: string | undefined };
   restoreModelBinding?: { id: string };
+  catalog?: ListSiteModelCatalogInput;
 }
 
 function trackingRepo(captured: Captured): ModelRepository {
@@ -107,6 +109,10 @@ function trackingRepo(captured: Captured): ModelRepository {
     listProviderAccounts: async () => [account],
     listAllModelBindings: async () => [binding],
     listModelLabels: async () => [label],
+    listSiteModelCatalog: async (input) => {
+      captured.catalog = input;
+      return [label];
+    },
     ensureModelLabel: async (input) => {
       captured.label = input;
       return label;
@@ -190,18 +196,13 @@ describe("ModelService delegates to repository", () => {
     await expect(service.listModelLabels()).resolves.toEqual([label]);
   });
 
-  it("listActiveModelLabels filters out disabled and by featureKey", async () => {
-    const labels: ModelLabel[] = [
-      { ...label, key: "chat.active", featureKey: "chat", status: "active" },
-      { ...label, key: "chat.off", featureKey: "chat", status: "disabled" },
-      { ...label, key: "embed.active", featureKey: "embedding", status: "active" },
-    ];
-    const repo = { ...trackingRepo({}), listModelLabels: async () => labels };
-    const service = new ModelService(repo);
-    // featureKey 过滤 + 只出 active。
-    expect((await service.listActiveModelLabels("chat")).map((l) => l.key)).toEqual(["chat.active"]);
-    // 无 featureKey = 只按 active 过滤,跨 feature。
-    expect((await service.listActiveModelLabels()).map((l) => l.key)).toEqual(["chat.active", "embed.active"]);
+  // active/featureKey/hidden 的实际过滤下沉到仓储，与 resolve 共用同一份 hidden 集合，
+  // 由 site-model-policy 集成用例针对真实库验证。这里只证服务层原样透传站点，不再自己过滤。
+  it("forwards listActiveModelLabels siteId to repository", async () => {
+    const captured: Captured = {};
+    const service = new ModelService(trackingRepo(captured));
+    await service.listActiveModelLabels({ siteId: "site-a", featureKey: "chat" });
+    expect(captured.catalog).toEqual({ siteId: "site-a", featureKey: "chat" });
   });
 
   it("forwards listModelBindings filter and result", async () => {

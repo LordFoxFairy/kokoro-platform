@@ -303,12 +303,21 @@ describe("ensureModelLabelRequestSchema", () => {
 });
 
 describe("listModelLabelsQuerySchema", () => {
-  it("accepts empty query and a featureKey", () => {
-    expect(listModelLabelsQuerySchema.parse({})).toEqual({});
-    expect(listModelLabelsQuerySchema.parse({ featureKey: "chat" })).toEqual({ featureKey: "chat" });
+  it("accepts a siteId alone and with a featureKey", () => {
+    expect(listModelLabelsQuerySchema.parse({ siteId: "site-a" })).toEqual({ siteId: "site-a" });
+    expect(listModelLabelsQuerySchema.parse({ siteId: "site-a", featureKey: "chat" })).toEqual({
+      siteId: "site-a",
+      featureKey: "chat",
+    });
+  });
+  // siteId 必填是隔离边界本身：缺失过去等于「不按站过滤」，目录会列出该站已隐藏的 label。
+  it("rejects a missing or empty siteId", () => {
+    expect(() => listModelLabelsQuerySchema.parse({})).toThrow();
+    expect(() => listModelLabelsQuerySchema.parse({ featureKey: "chat" })).toThrow();
+    expect(() => listModelLabelsQuerySchema.parse({ siteId: "" })).toThrow();
   });
   it("rejects empty featureKey and unknown fields", () => {
-    expect(() => listModelLabelsQuerySchema.parse({ featureKey: "" })).toThrow();
-    expect(() => listModelLabelsQuerySchema.parse({ junk: 1 })).toThrow();
+    expect(() => listModelLabelsQuerySchema.parse({ siteId: "site-a", featureKey: "" })).toThrow();
+    expect(() => listModelLabelsQuerySchema.parse({ siteId: "site-a", junk: 1 })).toThrow();
   });
 });

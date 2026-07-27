@@ -48,6 +48,16 @@ async function seedChatBindings(): Promise<void> {
   });
 }
 
+// 目录读的是 modelLabel 表本身，与 binding 无关，所以单独播种。
+async function seedChatLabels(): Promise<void> {
+  await prisma.modelLabel.createMany({
+    data: [
+      { key: "chat.default", displayName: "Kokoro 默认", featureKey: "chat", status: "active" },
+      { key: "chat.premium", displayName: "Kokoro 高级", featureKey: "chat", status: "active" },
+    ],
+  });
+}
+
 describe("site model policy API", () => {
   beforeEach(async () => {
     await cleanModelDatabase(prisma);
@@ -172,6 +182,90 @@ describe("site model policy API", () => {
       headers: { "x-kokoro-site-id": "site-a" },
     });
     expect(agreeing.statusCode).toBe(200);
+  });
+
+  // 目录与 resolve 必须对同一站点给出一致答案：目录若列出该站已隐藏的 label，
+  // 用户能选中一个 resolve 必然拒绝的模型。修复前目录完全不按站点过滤。
+  it("catalogue hides the same labels resolve hides, per site", async () => {
+    await seedChatLabels();
+
+    await app.inject({
+      method: "POST",
+      url: "/admin/models/site-policies",
+      payload: { siteId: "site-a", labelKey: "chat.premium", status: "hidden" },
+    });
+
+    const siteA = await app.inject({ method: "GET", url: "/model-labels?siteId=site-a&featureKey=chat" });
+    expect(siteA.statusCode).toBe(200);
+    expect(siteA.json().data.map((row: { key: string }) => row.key)).toEqual(["chat.default"]);
+
+    // site-b 无策略 → 两个都可见，证明过滤按站点而非全局。
+    const siteB = await app.inject({ method: "GET", url: "/model-labels?siteId=site-b&featureKey=chat" });
+    expect(siteB.json().data.map((row: { key: string }) => row.key).sort()).toEqual([
+      "chat.default",
+      "chat.premium",
+    ]);
+  });
+
+  // 回归：修复前 siteId 不是目录的参数，省略即「不按站过滤」。现在缺失被 schema 拒绝。
+  it("rejects a catalogue request without siteId instead of returning every label", async () => {
+    await seedChatLabels();
+
+    await app.inject({
+      method: "POST",
+      url: "/admin/models/site-policies",
+      payload: { siteId: "site-a", labelKey: "chat.premium", status: "hidden" },
+    });
+
+    const noSite = await app.inject({ method: "GET", url: "/model-labels?featureKey=chat" });
+    expect(noSite.statusCode).toBe(400);
+    expect(noSite.json().error.code).toBe("request.invalid");
+
+    // 只发 header 同样不行：header 不是权威来源。修复前 session 正是只发 header，服务端整个忽略。
+    const headerOnly = await app.inject({
+      method: "GET",
+      url: "/model-labels?featureKey=chat",
+      headers: { "x-kokoro-site-id": "site-a" },
+    });
+    expect(headerOnly.statusCode).toBe(400);
+    expect(headerOnly.json().error.code).toBe("request.invalid");
+  });
+
+  it("rejects a catalogue site header that contradicts the query siteId", async () => {
+    await seedChatLabels();
+
+    const mismatch = await app.inject({
+      method: "GET",
+      url: "/model-labels?siteId=site-a&featureKey=chat",
+      headers: { "x-kokoro-site-id": "site-b" },
+    });
+    expect(mismatch.statusCode).toBe(400);
+    expect(mismatch.json().error.code).toBe("model.site_mismatch");
+  });
+
+  // 目录只出 active：disabled 的 label 不该进用户选择器，与站点策略正交。
+  it("catalogue excludes disabled labels and filters by featureKey", async () => {
+    await seedChatLabels();
+    await prisma.modelLabel.createMany({
+      data: [
+        { key: "chat.retired", displayName: "Retired", featureKey: "chat", status: "disabled" },
+        { key: "embed.default", displayName: "Embedding", featureKey: "embedding", status: "active" },
+      ],
+    });
+
+    const chat = await app.inject({ method: "GET", url: "/model-labels?siteId=site-a&featureKey=chat" });
+    expect(chat.json().data.map((row: { key: string }) => row.key).sort()).toEqual([
+      "chat.default",
+      "chat.premium",
+    ]);
+
+    // 不带 featureKey = 跨 feature，但仍然只出 active。
+    const all = await app.inject({ method: "GET", url: "/model-labels?siteId=site-a" });
+    expect(all.json().data.map((row: { key: string }) => row.key).sort()).toEqual([
+      "chat.default",
+      "chat.premium",
+      "embed.default",
+    ]);
   });
 
   it("visible policy does not hide the label", async () => {
