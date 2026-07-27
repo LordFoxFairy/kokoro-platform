@@ -15,6 +15,7 @@ describe("readRequestContext", () => {
       { kind: "service", serviceAccountId: "sa_1" },
       { kind: "operator", operatorId: "op_1", roleKey: "ops" },
       { kind: "system" },
+      { kind: "anonymous" },
     ];
     for (const principal of kinds) {
       const ctx = readRequestContext({ "x-kokoro-principal": JSON.stringify(principal) });
@@ -27,16 +28,16 @@ describe("readRequestContext", () => {
     expect(readRequestContext({}).requestId).toMatch(/.+/);
   });
 
-  it("defaults siteId to null and principal to system when headers are absent", () => {
+  it("defaults siteId to null and principal to anonymous when headers are absent", () => {
     const ctx = readRequestContext({});
     expect(ctx.siteId).toBeNull();
-    expect(ctx.principal).toEqual({ kind: "system" });
+    expect(ctx.principal).toEqual({ kind: "anonymous" });
     expect(ctx.teamId).toBeUndefined();
   });
 
-  it("downgrades a malformed principal header to system rather than throwing", () => {
-    expect(readRequestContext({ "x-kokoro-principal": "{not-json" }).principal).toEqual({ kind: "system" });
-    expect(readRequestContext({ "x-kokoro-principal": '{"kind":"alien"}' }).principal).toEqual({ kind: "system" });
+  it("fails closed to anonymous for a malformed or unsupported principal header", () => {
+    expect(readRequestContext({ "x-kokoro-principal": "{not-json" }).principal).toEqual({ kind: "anonymous" });
+    expect(readRequestContext({ "x-kokoro-principal": '{"kind":"alien"}' }).principal).toEqual({ kind: "anonymous" });
   });
 
   it("reads a single value when a header arrives as an array", () => {
