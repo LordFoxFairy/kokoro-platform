@@ -138,8 +138,15 @@ describe("Admin Auth generated Connect provider over HTTP/1.1", () => {
 
   beforeEach(async () => {
     store = new ConnectTestStore();
-    rpcMetrics = [];
-    rpcAudit = [];
+    // 每个 server 实例记录进自己的数组，再暴露给用例读。
+    // WHY 不直接 push 外层 let：deadline 用例用 timeoutMs:1 放弃一个 handler 里 sleep 50ms 的调用，
+    // 客户端早已断开但服务端仍会跑完并记一条 rpc_outcome。若闭包捕获的是外层变量，那条迟到记录会
+    // 落进下一个用例 beforeEach 新建的数组里，让断言多出一条 rpc_outcome——同一 SHA 时绿时红。
+    // 绑定到本次实例的局部数组后，迟到记录只能落回它自己的数组，跨用例泄漏不可表达。
+    const metrics: RpcMetricLabels[] = [];
+    const audit: RpcSecurityAuditRecord[] = [];
+    rpcMetrics = metrics;
+    rpcAudit = audit;
     app = createAdminServer([], {
       audit: { record: async () => undefined },
       resolveOperator: async () => {
@@ -161,13 +168,13 @@ describe("Admin Auth generated Connect provider over HTTP/1.1", () => {
         telemetry: {
           metrics: {
             recordRequest: (labels) => {
-              rpcMetrics.push(labels);
+              metrics.push(labels);
             },
             observeDuration: () => undefined,
           },
           audit: {
             record: (record) => {
-              rpcAudit.push(record);
+              audit.push(record);
             },
           },
         },
