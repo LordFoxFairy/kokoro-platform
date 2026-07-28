@@ -1,9 +1,13 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { createPaymentServer } from "../../src/interfaces/http/server.js";
-import { cleanPaymentDatabase, createTestPrismaClient } from "./helpers.js";
+import {
+  cleanPaymentDatabase,
+  createTestPrismaClient,
+  paymentReadCapabilities,
+} from "./helpers.js";
 
 const prisma = createTestPrismaClient();
-const app = createPaymentServer({ prisma });
+const app = createPaymentServer({ readCapabilities: paymentReadCapabilities(prisma) });
 
 describe("provider ingress is inert during redeem-only launch (real mysql)", () => {
   beforeEach(async () => {

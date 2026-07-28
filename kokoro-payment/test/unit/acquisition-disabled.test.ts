@@ -1,5 +1,6 @@
 import type { PrismaClient } from "../../generated/prisma/index.js";
 import { describe, expect, it, vi } from "vitest";
+import { createPrismaPaymentReadCapabilities } from "../../src/infrastructure/prisma/prisma-payment-read-repository.js";
 import { createPaymentServer } from "../../src/interfaces/http/server.js";
 
 const DISABLED_CODE = "ACQUISITION_CHANNEL_DISABLED";
@@ -66,7 +67,7 @@ describe("redeem-only payment acquisition shutdown", () => {
   it.each(disabledRuntimeRequests)("returns the stable disabled envelope for $method $url without touching persistence", async (request) => {
     const databaseCalls: string[] = [];
     const app = createPaymentServer({
-      prisma: noDatabasePrisma(databaseCalls),
+      readCapabilities: createPrismaPaymentReadCapabilities(noDatabasePrisma(databaseCalls)),
     });
     try {
       const response = await app.inject({
@@ -86,7 +87,7 @@ describe("redeem-only payment acquisition shutdown", () => {
   it("rejects provider form payloads with the same envelope without touching persistence", async () => {
     const databaseCalls: string[] = [];
     const app = createPaymentServer({
-      prisma: noDatabasePrisma(databaseCalls),
+      readCapabilities: createPrismaPaymentReadCapabilities(noDatabasePrisma(databaseCalls)),
     });
     try {
       const response = await app.inject({
@@ -106,7 +107,7 @@ describe("redeem-only payment acquisition shutdown", () => {
   it("preserves Web BFF checkout and Session order boundaries while denying acquisition", async () => {
     const databaseCalls: string[] = [];
     const app = createPaymentServer({
-      prisma: noDatabasePrisma(databaseCalls),
+      readCapabilities: createPrismaPaymentReadCapabilities(noDatabasePrisma(databaseCalls)),
       routeAccess: {
         secrets: { "web-bff": "web-secret", session: "session-secret" },
         isProduction: false,
@@ -143,7 +144,7 @@ describe("redeem-only payment acquisition shutdown", () => {
   it("allows a Site-less global history read only through the explicit Admin plane", async () => {
     const databaseCalls: string[] = [];
     const app = createPaymentServer({
-      prisma: globalReadPrisma(databaseCalls),
+      readCapabilities: createPrismaPaymentReadCapabilities(globalReadPrisma(databaseCalls)),
       routeAccess: {
         secrets: { admin: "admin-secret", "web-bff": "web-secret" },
         isProduction: false,
@@ -174,7 +175,7 @@ describe("redeem-only payment acquisition shutdown", () => {
   it.each(absentAdminMutationRequests)("does not register $method $url", async (request) => {
     const databaseCalls: string[] = [];
     const app = createPaymentServer({
-      prisma: noDatabasePrisma(databaseCalls),
+      readCapabilities: createPrismaPaymentReadCapabilities(noDatabasePrisma(databaseCalls)),
     });
     try {
       const response = await app.inject({

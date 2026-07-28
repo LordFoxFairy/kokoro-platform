@@ -77,7 +77,8 @@ services:
       dockerfile: deploy/docker/Dockerfile
     environment:
       KOKORO_SERVICE_PACKAGE: "@kokoro/payment"
-      DATABASE_URL_PAYMENT: mysql://root:kokoro_root@mysql:3306/kokoro
+      # Local-only convenience. Production must inject a SELECT-only payment reader role.
+      DATABASE_URL_PAYMENT_READ: mysql://root:kokoro_root@mysql:3306/kokoro
       KOKORO_SITE_BASE_URL: http://kokoro-site:4201
       KOKORO_PAYMENT_PORT: 4241
       KOKORO_USER_BASE_URL: http://kokoro-user:4211

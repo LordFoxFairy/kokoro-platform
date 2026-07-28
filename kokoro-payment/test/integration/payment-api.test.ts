@@ -4,11 +4,12 @@ import {
   TEST_SITE_ID,
   cleanPaymentDatabase,
   createTestPrismaClient,
+  paymentReadCapabilities,
   siteHeaders,
 } from "./helpers.js";
 
 const prisma = createTestPrismaClient();
-const app = createPaymentServer({ prisma });
+const app = createPaymentServer({ readCapabilities: paymentReadCapabilities(prisma) });
 
 const disabledRequests = [
   ["/orders/checkout", { teamId: "team-1", planId: "plan-1" }],

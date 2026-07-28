@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { loadPaymentEnv, paymentEnvSchema } from "../../src/config/env.js";
 
-const required = { DATABASE_URL_PAYMENT: "mysql://root:pw@127.0.0.1:3306/payment" };
+const required = {
+  DATABASE_URL_PAYMENT_READ: "mysql://payment_reader:pw@127.0.0.1:3306/payment",
+};
 
 describe("paymentEnvSchema", () => {
   it("applies defaults for optional vars", () => {
@@ -22,7 +24,13 @@ describe("paymentEnvSchema", () => {
   });
 
   it("rejects non-url database value", () => {
-    expect(() => loadPaymentEnv({ DATABASE_URL_PAYMENT: "not-a-url" })).toThrow();
+    expect(() => loadPaymentEnv({ DATABASE_URL_PAYMENT_READ: "not-a-url" })).toThrow();
+  });
+
+  it("does not accept the migration/write datasource as the HTTP read credential", () => {
+    expect(() =>
+      loadPaymentEnv({ DATABASE_URL_PAYMENT: "mysql://root:pw@127.0.0.1:3306/payment" }),
+    ).toThrow();
   });
 
   it("strips unrelated process.env keys (intentional strip, not strict)", () => {

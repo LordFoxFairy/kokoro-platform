@@ -160,11 +160,12 @@ DATABASE_URL_USER
 DATABASE_URL_MODEL
 DATABASE_URL_CREDIT
 DATABASE_URL_PAYMENT
+DATABASE_URL_PAYMENT_READ
 ```
 
-四个 env 可以指向同一个库，也可以在未来部署层拆成不同库。拆库不能改变模块的领域边界。
+各模块 datasource 可以指向同一个库，也可以在未来部署层拆成不同库。拆库不能改变模块的领域边界。`DATABASE_URL_PAYMENT` 仅供 migration、CLI 与离线维护；Payment HTTP 进程只接受 `DATABASE_URL_PAYMENT_READ`，生产必须绑定数据库层 SELECT-only 角色且不得回退写账号。
 
-生产环境不要使用 root 账号。每个模块可以使用受限数据库账号，但表结构仍由各自 Prisma migration 管理。
+生产环境不要使用 root 账号。每个模块可以使用受限数据库账号，但表结构仍由各自 Prisma migration 管理。Payment 上线验证必须以租用测试库证明 reader 查询成功且 `INSERT`、`UPDATE`、`DELETE` 均被数据库拒绝。
 
 数据库组合：
 

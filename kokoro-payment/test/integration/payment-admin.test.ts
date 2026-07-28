@@ -1,10 +1,15 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { paymentAdminManifest } from "../../src/interfaces/admin/manifest.js";
 import { createPaymentServer } from "../../src/interfaces/http/server.js";
-import { TEST_SITE_ID, cleanPaymentDatabase, createTestPrismaClient } from "./helpers.js";
+import {
+  TEST_SITE_ID,
+  cleanPaymentDatabase,
+  createTestPrismaClient,
+  paymentReadCapabilities,
+} from "./helpers.js";
 
 const prisma = createTestPrismaClient();
-const app = createPaymentServer({ prisma });
+const app = createPaymentServer({ readCapabilities: paymentReadCapabilities(prisma) });
 
 describe("payment read-only Admin API (real mysql)", () => {
   beforeEach(() => cleanPaymentDatabase(prisma));

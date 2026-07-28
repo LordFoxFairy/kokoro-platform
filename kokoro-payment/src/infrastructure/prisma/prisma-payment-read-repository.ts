@@ -8,14 +8,22 @@ import type {
   Refund,
   Subscription,
 } from "../../domain/payment.js";
-import type { PaymentAdminRepository } from "../../domain/read-repository.js";
+import type {
+  PaymentAdminRepository,
+  PaymentReadCapabilities,
+} from "../../domain/read-repository.js";
 import type { PaymentProviderConfig } from "../../domain/provider.js";
+import { createPrismaClient } from "./prisma-client.js";
 
 export class PrismaPaymentReadRepository implements PaymentAdminRepository {
-  constructor(protected readonly prisma: PrismaClient) {}
+  readonly #prisma: PrismaClient;
+
+  constructor(prisma: PrismaClient) {
+    this.#prisma = prisma;
+  }
 
   async listPlans(siteId?: string, options?: ListOptions): Promise<Plan[]> {
-    const plans = await this.prisma.plan.findMany({
+    const plans = await this.#prisma.plan.findMany({
       where: {
         ...(siteId === undefined ? {} : { siteId }),
         ...visibleRows(options),
@@ -27,7 +35,7 @@ export class PrismaPaymentReadRepository implements PaymentAdminRepository {
   }
 
   async listOrders(siteId?: string): Promise<Order[]> {
-    const orders = await this.prisma.order.findMany({
+    const orders = await this.#prisma.order.findMany({
       ...(siteId === undefined ? {} : { where: { siteId } }),
       take: 100,
       orderBy: { createdAt: "desc" },
@@ -36,7 +44,7 @@ export class PrismaPaymentReadRepository implements PaymentAdminRepository {
   }
 
   async listSubscriptions(siteId?: string) {
-    const subscriptions = await this.prisma.subscription.findMany({
+    const subscriptions = await this.#prisma.subscription.findMany({
       where: siteId === undefined ? {} : { plan: { siteId } },
       include: { plan: { select: { siteId: true } } },
       take: 100,
@@ -50,8 +58,8 @@ export class PrismaPaymentReadRepository implements PaymentAdminRepository {
 
   async readAdminStats(siteId: string): Promise<PaymentAdminStats> {
     const [byStatus, byCurrency] = await Promise.all([
-      this.prisma.order.groupBy({ by: ["status"], where: { siteId }, _count: { _all: true } }),
-      this.prisma.order.groupBy({
+      this.#prisma.order.groupBy({ by: ["status"], where: { siteId }, _count: { _all: true } }),
+      this.#prisma.order.groupBy({
         by: ["currency"],
         where: { siteId, status: "paid" },
         _sum: { amountMinor: true },
@@ -73,7 +81,7 @@ export class PrismaPaymentReadRepository implements PaymentAdminRepository {
   }
 
   async listPaymentEvents(): Promise<PaymentEvent[]> {
-    const events = await this.prisma.paymentEvent.findMany({
+    const events = await this.#prisma.paymentEvent.findMany({
       take: 100,
       orderBy: { createdAt: "desc" },
     });
@@ -81,7 +89,7 @@ export class PrismaPaymentReadRepository implements PaymentAdminRepository {
   }
 
   async listRefunds(siteId?: string) {
-    const refunds = await this.prisma.refund.findMany({
+    const refunds = await this.#prisma.refund.findMany({
       where: siteId === undefined ? {} : { order: { siteId } },
       include: { order: { select: { siteId: true } } },
       take: 100,
@@ -91,12 +99,42 @@ export class PrismaPaymentReadRepository implements PaymentAdminRepository {
   }
 
   async listProviders(): Promise<PaymentProviderConfig[]> {
-    const providers = await this.prisma.paymentProvider.findMany({
+    const providers = await this.#prisma.paymentProvider.findMany({
       take: 100,
       orderBy: { createdAt: "desc" },
     });
     return providers.map(mapProvider);
   }
+}
+
+export interface PrismaPaymentReadStore {
+  readonly capabilities: PaymentReadCapabilities;
+  readonly close: () => Promise<void>;
+}
+
+export function createPrismaPaymentReadCapabilities(prisma: PrismaClient): PaymentReadCapabilities {
+  const repository = new PrismaPaymentReadRepository(prisma);
+  const listPlans = repository.listPlans.bind(repository);
+  const catalog = Object.freeze({ listPlans });
+  const admin = Object.freeze({
+    listOrders: repository.listOrders.bind(repository),
+    listPaymentEvents: repository.listPaymentEvents.bind(repository),
+    listPlans,
+    listProviders: repository.listProviders.bind(repository),
+    listRefunds: repository.listRefunds.bind(repository),
+    listSubscriptions: repository.listSubscriptions.bind(repository),
+    readAdminStats: repository.readAdminStats.bind(repository),
+  });
+  return Object.freeze({ catalog, admin });
+}
+
+export function openPrismaPaymentReadStore(databaseUrl: string): PrismaPaymentReadStore {
+  const prisma = createPrismaClient(databaseUrl);
+  const capabilities = createPrismaPaymentReadCapabilities(prisma);
+  return Object.freeze({
+    capabilities,
+    close: () => prisma.$disconnect(),
+  });
 }
 
 function visibleRows(options: ListOptions | undefined): { deletedAt: null } | Record<string, never> {

@@ -287,11 +287,11 @@ spec:
               value: "@kokoro/payment"
             - name: KOKORO_PAYMENT_PORT
               value: "4241"
-            - name: DATABASE_URL_PAYMENT
+            - name: DATABASE_URL_PAYMENT_READ
               valueFrom:
                 secretKeyRef:
                   name: kokoro-platform-secrets
-                  key: DATABASE_URL_PAYMENT
+                  key: DATABASE_URL_PAYMENT_READ
             - name: KOKORO_USER_BASE_URL
               value: http://kokoro-user:4211
             - name: KOKORO_MODEL_BASE_URL

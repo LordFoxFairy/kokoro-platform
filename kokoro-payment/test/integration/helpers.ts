@@ -1,5 +1,7 @@
 import { PrismaClient } from "../../generated/prisma/index.js";
 import { createPrismaClient } from "../../src/infrastructure/prisma/prisma-client.js";
+import { createPrismaPaymentReadCapabilities } from "../../src/infrastructure/prisma/prisma-payment-read-repository.js";
+import type { PaymentReadCapabilities } from "../../src/domain/read-repository.js";
 import type {
   GrantPurchaseCredits,
   GrantPurchaseCreditsInput,
@@ -42,6 +44,10 @@ export function createTestPrismaClient(): PrismaClient {
   }
 
   return createPrismaClient(process.env.DATABASE_URL_PAYMENT);
+}
+
+export function paymentReadCapabilities(prisma: PrismaClient): PaymentReadCapabilities {
+  return createPrismaPaymentReadCapabilities(prisma);
 }
 
 export async function cleanPaymentDatabase(prisma: PrismaClient): Promise<void> {

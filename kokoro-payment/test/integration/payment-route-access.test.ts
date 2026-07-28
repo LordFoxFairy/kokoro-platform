@@ -1,12 +1,12 @@
 import type { FastifyInstance } from "fastify";
 import { afterAll, describe, expect, it } from "vitest";
 import { createPaymentServer } from "../../src/interfaces/http/server.js";
-import { createTestPrismaClient } from "./helpers.js";
+import { createTestPrismaClient, paymentReadCapabilities } from "./helpers.js";
 
 const prisma = createTestPrismaClient();
 const SECRETS = { admin: "sec-admin", "web-bff": "sec-web", session: "sec-session" } as const;
 const app: FastifyInstance = createPaymentServer({
-  prisma,
+  readCapabilities: paymentReadCapabilities(prisma),
   routeAccess: { secrets: SECRETS, isProduction: false },
 });
 const SVC = "x-kokoro-service";

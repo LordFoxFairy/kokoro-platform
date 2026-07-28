@@ -1,9 +1,14 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { createPaymentServer } from "../../src/interfaces/http/server.js";
-import { cleanPaymentDatabase, createTestPrismaClient, siteHeaders } from "./helpers.js";
+import {
+  cleanPaymentDatabase,
+  createTestPrismaClient,
+  paymentReadCapabilities,
+  siteHeaders,
+} from "./helpers.js";
 
 const prisma = createTestPrismaClient();
-const app = createPaymentServer({ prisma });
+const app = createPaymentServer({ readCapabilities: paymentReadCapabilities(prisma) });
 
 describe("disabled acquisition rejects before payload interpretation (real mysql)", () => {
   beforeEach(() => cleanPaymentDatabase(prisma));

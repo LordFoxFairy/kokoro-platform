@@ -4,7 +4,7 @@ import { z } from "zod";
 // rejected before Zod parsing so a stale deployment cannot look healthy while carrying
 // provider, worker, or webhook-secret configuration that the runtime refuses to use.
 export const paymentEnvSchema = z.object({
-  DATABASE_URL_PAYMENT: z.string().url(),
+  DATABASE_URL_PAYMENT_READ: z.string().url(),
   KOKORO_PAYMENT_PORT: z.coerce.number().int().min(1).max(65535).default(4241),
 });
 

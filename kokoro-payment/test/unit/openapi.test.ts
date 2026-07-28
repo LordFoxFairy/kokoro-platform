@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createPrismaClient } from "../../src/infrastructure/prisma/prisma-client.js";
+import { createPrismaPaymentReadCapabilities } from "../../src/infrastructure/prisma/prisma-payment-read-repository.js";
 import { createPaymentServer } from "../../src/interfaces/http/server.js";
 
 // WHY: /docs/json 不触发任何查询，dummy URL 的 client 不会真实连接。
@@ -47,18 +48,37 @@ function inventoryDiff(paths: Record<string, Record<string, unknown>>) {
 }
 
 describe("payment OpenAPI", () => {
-  it("serves /docs/json with collected route paths", async () => {
-    const app = createPaymentServer({ prisma });
-    try {
-      const response = await app.inject({ method: "GET", url: "/docs/json" });
-      expect(response.statusCode).toBe(200);
-      const body = response.json<{ openapi?: string; paths: Record<string, Record<string, unknown>> }>();
-      expect(body.openapi).toBeTruthy();
-      expect(inventoryDiff(body.paths)).toEqual({ missing: [], unexpected: [] });
-    } finally {
-      await app.close();
-    }
-  });
+  it.each([false, true])(
+    "serves the exact /docs/json route inventory when isProduction=%s",
+    async (isProduction) => {
+      const app = createPaymentServer({
+        readCapabilities: createPrismaPaymentReadCapabilities(prisma),
+        routeAccess: {
+          secrets: { admin: "admin-secret", "web-bff": "web-secret" },
+          isProduction,
+        },
+      });
+      try {
+        const response = await app.inject({
+          method: "GET",
+          url: "/docs/json",
+          headers: {
+            "x-kokoro-service": "admin",
+            "x-kokoro-internal-secret": "admin-secret",
+          },
+        });
+        expect(response.statusCode).toBe(200);
+        const body = response.json<{
+          openapi?: string;
+          paths: Record<string, Record<string, unknown>>;
+        }>();
+        expect(body.openapi).toBeTruthy();
+        expect(inventoryDiff(body.paths)).toEqual({ missing: [], unexpected: [] });
+      } finally {
+        await app.close();
+      }
+    },
+  );
 
   it("makes every extra, removed, or method-changed route fail the inventory", () => {
     const baseline = Object.fromEntries(

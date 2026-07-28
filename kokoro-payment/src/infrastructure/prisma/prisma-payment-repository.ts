@@ -46,7 +46,7 @@ import {
 } from "./prisma-payment-read-repository.js";
 
 export class PrismaPaymentRepository extends PrismaPaymentReadRepository implements PaymentRepository {
-  constructor(prisma: PrismaClient) {
+  constructor(private readonly prisma: PrismaClient) {
     super(prisma);
   }
 
