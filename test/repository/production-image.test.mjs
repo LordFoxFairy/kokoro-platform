@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
 import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -17,6 +18,46 @@ const workspaces = Object.freeze([
   "kokoro-credit",
   "kokoro-payment",
 ]);
+const debianPrismaEngine = "libquery_engine-debian-openssl-3.0.x.so.node";
+const validPrismaPackage = Object.freeze({
+  name: "prisma-client-bd010cc3e43281e2eea859ccf831a3d2246b75993ee63faf03053dde6c1a2739",
+  main: "index.js",
+  types: "index.d.ts",
+  browser: "default.js",
+  version: "6.19.3",
+  sideEffects: false,
+});
+
+async function writeMinimalImageLayout(imageRoot) {
+  await mkdir(resolve(imageRoot, "node_modules/.pnpm/fastify@5.10.0"), { recursive: true });
+  for (const entry of [
+    "deploy/docker/runtime-entrypoint.mjs",
+    "kokoro-platform-kit/dist/index.js",
+    "kokoro-site/dist/interfaces/http/main.js",
+    "kokoro-user/dist/interfaces/http/main.js",
+    "kokoro-model/dist/interfaces/http/main.js",
+    "kokoro-credit/dist/interfaces/http/main.js",
+    "kokoro-payment/dist/interfaces/http/main.js",
+    "kokoro-hub/dist/interfaces/http/main.js",
+    "kokoro-platform-admin/dist/main.js",
+  ]) {
+    await mkdir(resolve(imageRoot, entry, ".."), { recursive: true });
+    await writeFile(resolve(imageRoot, entry), "export {};\n");
+  }
+}
+
+async function writeValidPrismaFixture(imageRoot) {
+  const prismaRoot = resolve(imageRoot, "kokoro-user/generated/prisma");
+  await mkdir(resolve(prismaRoot, "runtime"), { recursive: true });
+  await writeFile(resolve(prismaRoot, "index.js"), "module.exports = { PrismaClient: class PrismaClient {} };\n");
+  await writeFile(resolve(prismaRoot, "index.d.ts"), "export declare class PrismaClient {}\n");
+  await writeFile(resolve(prismaRoot, "package.json"), `${JSON.stringify(validPrismaPackage)}\n`);
+  await writeFile(resolve(prismaRoot, "schema.prisma"), "generator client { provider = \"prisma-client-js\" }\n");
+  await writeFile(resolve(prismaRoot, "runtime/library.js"), "module.exports = { getPrismaClient() {} };\n");
+  await writeFile(resolve(prismaRoot, debianPrismaEngine), Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x01]));
+  await writeFile(resolve(prismaRoot, "query_engine_bg.wasm"), Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01]));
+  return prismaRoot;
+}
 
 function assertProductionDockerfile(dockerfile) {
   assert.match(dockerfile, /^FROM .* AS build$/mu);
@@ -265,11 +306,19 @@ test("the image verifier recursively rejects source artifacts and disguised dev 
     "kokoro-user/generated/prisma/index.d.ts",
     "kokoro-user/generated/prisma/package.json",
     "kokoro-user/generated/prisma/schema.prisma",
-    "kokoro-user/generated/prisma/libquery_engine-test.so.node",
+    `kokoro-user/generated/prisma/${debianPrismaEngine}`,
+    "kokoro-user/generated/prisma/query_engine_bg.wasm",
     "kokoro-user/generated/prisma/runtime/library.js",
   ]) {
     await mkdir(resolve(imageRoot, entry, ".."), { recursive: true });
-    await writeFile(resolve(imageRoot, entry), "");
+    const content = entry.endsWith(debianPrismaEngine)
+      ? Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x01])
+      : entry.endsWith("query_engine_bg.wasm")
+        ? Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01])
+        : entry.endsWith("package.json")
+          ? `${JSON.stringify(validPrismaPackage)}\n`
+          : "export {};\n";
+    await writeFile(resolve(imageRoot, entry), content);
   }
   await verifyProductionImage(imageRoot);
 
@@ -301,9 +350,88 @@ test("the image verifier recursively rejects source artifacts and disguised dev 
   const generatedClient = resolve(imageRoot, "kokoro-user/generated/prisma/index.js");
   await rm(generatedClient);
   await assert.rejects(() => verifyProductionImage(imageRoot), /missing generated Prisma runtime/u);
-  await writeFile(generatedClient, "");
+  await writeFile(generatedClient, "export {};\n");
 
-  const generatedEngine = resolve(imageRoot, "kokoro-user/generated/prisma/libquery_engine-test.so.node");
+  const generatedEngine = resolve(imageRoot, `kokoro-user/generated/prisma/${debianPrismaEngine}`);
   await rm(generatedEngine);
   await assert.rejects(() => verifyProductionImage(imageRoot), /missing generated Prisma engine/u);
+});
+
+test("the image verifier rejects counterfeit or corrupt Prisma runtime artifacts", async (context) => {
+  const cases = [
+    {
+      name: "zero-byte client entrypoint",
+      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, "index.js"), ""),
+      error: /empty generated Prisma runtime/u,
+    },
+    {
+      name: "zero-byte runtime library",
+      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, "runtime/library.js"), ""),
+      error: /empty generated Prisma runtime/u,
+    },
+    {
+      name: "zero-byte package metadata",
+      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, "package.json"), ""),
+      error: /invalid generated Prisma package/u,
+    },
+    {
+      name: "malformed package metadata",
+      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, "package.json"), "{"),
+      error: /invalid generated Prisma package/u,
+    },
+    {
+      name: "semantically invalid package metadata",
+      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, "package.json"), "{}\n"),
+      error: /invalid generated Prisma package/u,
+    },
+    {
+      name: "zero-byte native engine",
+      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, debianPrismaEngine), ""),
+      error: /invalid generated Prisma native engine/u,
+    },
+    {
+      name: "non-ELF native engine",
+      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, debianPrismaEngine), "not-elf"),
+      error: /invalid generated Prisma native engine/u,
+    },
+    {
+      name: "fake native engine name",
+      mutate: async (prismaRoot) => {
+        await rm(resolve(prismaRoot, debianPrismaEngine));
+        await writeFile(resolve(prismaRoot, "libquery_engine-test.so.node"), Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x01]));
+      },
+      error: /unexpected generated Prisma native engine/u,
+    },
+    {
+      name: "duplicate native engine",
+      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, "libquery_engine-copy.so.node"), Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x01])),
+      error: /unexpected generated Prisma native engine/u,
+    },
+    {
+      name: "zero-byte Wasm engine",
+      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, "query_engine_bg.wasm"), ""),
+      error: /invalid generated Prisma Wasm engine/u,
+    },
+    {
+      name: "non-Wasm engine",
+      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, "query_engine_bg.wasm"), "not-wasm"),
+      error: /invalid generated Prisma Wasm engine/u,
+    },
+    {
+      name: "duplicate Wasm engine",
+      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, "query_engine_copy.wasm"), Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01])),
+      error: /unexpected generated Prisma Wasm engine/u,
+    },
+  ];
+
+  for (const fixture of cases) {
+    await context.test(fixture.name, async (childContext) => {
+      const imageRoot = await mkdtemp(resolve(tmpdir(), "kokoro-platform-prisma-artifact-"));
+      childContext.after(async () => rm(imageRoot, { recursive: true, force: true }));
+      await writeMinimalImageLayout(imageRoot);
+      const prismaRoot = await writeValidPrismaFixture(imageRoot);
+      await fixture.mutate(prismaRoot);
+      await assert.rejects(() => verifyProductionImage(imageRoot), fixture.error);
+    });
+  }
 });
