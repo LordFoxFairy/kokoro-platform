@@ -1,4 +1,6 @@
 import type {
+  AdminRefund,
+  AdminSubscription,
   BillingInterval,
   Order,
   PaymentAdminStats,
@@ -106,11 +108,11 @@ export interface PaymentRepository {
   restorePlan(input: RestoreInput): Promise<Plan>;
   listPlans(siteId?: string, options?: ListOptions): Promise<Plan[]>;
   listOrders(siteId?: string): Promise<Order[]>;
-  listSubscriptions(): Promise<Subscription[]>;
+  listSubscriptions(siteId?: string): Promise<AdminSubscription[]>;
   listPaymentEvents(): Promise<PaymentEvent[]>;
-  listRefunds(): Promise<Refund[]>;
+  listRefunds(siteId?: string): Promise<AdminRefund[]>;
   // 运营台聚合总览（admin B2）：订单按状态计数 + 已支付营收按币种。
-  readAdminStats(): Promise<PaymentAdminStats>;
+  readAdminStats(siteId: string): Promise<PaymentAdminStats>;
 }
 
 export interface GrantPurchaseCreditsInput {

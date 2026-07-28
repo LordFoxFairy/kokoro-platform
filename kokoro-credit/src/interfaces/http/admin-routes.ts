@@ -8,7 +8,7 @@ import {
   sendZodError,
 } from "@kokoro/platform-kit";
 import type { FastifyInstance, FastifyReply } from "fastify";
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
 import type { CreditService } from "../../application/credit-service.js";
 import type { AccountAudit } from "../../domain/credit.js";
 import { isCreditLifecycleError } from "../../domain/credit-lifecycle.js";
@@ -34,26 +34,36 @@ export function registerCreditAdminRoutes(
 ): void {
   registerAdminManifestRoute(app, creditAdminManifest);
 
-  app.get("/admin/credits/accounts", async (_request, reply) =>
-    sendData(reply, await repository.listAccounts(undefined, { includeDeleted: true })),
-  );
+  app.get("/admin/credits/accounts", async (request, reply) => {
+    const query = adminSiteListQuerySchema.safeParse(request.query);
+    if (!query.success) return sendZodError(reply, query.error);
+    return sendData(reply, await repository.listAccounts(query.data.siteId, { includeDeleted: true }));
+  });
 
-  app.get("/admin/credits/ledger", async (_request, reply) =>
-    sendData(reply, await repository.listLedgerEntries()),
-  );
+  app.get("/admin/credits/ledger", async (request, reply) => {
+    const query = adminSiteListQuerySchema.safeParse(request.query);
+    if (!query.success) return sendZodError(reply, query.error);
+    return sendData(reply, await repository.listLedgerEntries(query.data.siteId));
+  });
 
-  app.get("/admin/credits/usage", async (_request, reply) =>
-    sendData(reply, await repository.listUsageRecords()),
-  );
+  app.get("/admin/credits/usage", async (request, reply) => {
+    const query = adminSiteListQuerySchema.safeParse(request.query);
+    if (!query.success) return sendZodError(reply, query.error);
+    return sendData(reply, await repository.listUsageRecords(query.data.siteId));
+  });
 
-  app.get("/admin/credits/pricing", async (_request, reply) =>
-    sendData(reply, await repository.listPricingRules({ includeDeleted: true })),
-  );
+  app.get("/admin/credits/pricing", async (request, reply) => {
+    const query = globalAdminListQuerySchema.safeParse(request.query);
+    if (!query.success) return sendZodError(reply, query.error);
+    return sendData(reply, await repository.listPricingRules({ includeDeleted: true }));
+  });
 
   // 运营台聚合总览（B2）：账户计数 + 余额/冻结/发放/消费汇总（全站，DB 侧 aggregate）。
-  app.get("/admin/credits/stats", async (_request, reply) =>
-    sendData(reply, await service.readAdminStats()),
-  );
+  app.get("/admin/credits/stats", async (request, reply) => {
+    const query = requiredAdminSiteQuerySchema.safeParse(request.query);
+    if (!query.success) return sendZodError(reply, query.error);
+    return sendData(reply, await service.readAdminStats(query.data.siteId));
+  });
 
   // WHY: 管理员手动发积分；reason=refund 即退积分。idempotencyKey 服务端生成（管理员动作非客户端重放）。
   app.post("/admin/credits/grant", async (request, reply) => {
@@ -210,6 +220,10 @@ export function registerCreditAdminRoutes(
     }
   });
 }
+
+const adminSiteListQuerySchema = z.object({ siteId: z.string().trim().min(1).optional() }).strict();
+const requiredAdminSiteQuerySchema = z.object({ siteId: z.string().trim().min(1) }).strict();
+const globalAdminListQuerySchema = z.object({}).strict();
 
 function handleAdminError(error: unknown, reply: FastifyReply, fallbackCode: string) {
   if (error instanceof ZodError) {

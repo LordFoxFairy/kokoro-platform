@@ -1,4 +1,6 @@
 import type {
+  AdminCreditLedgerEntry,
+  AdminUsageRecord,
   CreditAccount,
   CreditAdminStats,
   CreditHold,
@@ -133,9 +135,9 @@ export interface CreditRepository {
   restorePricingRule(input: RestoreInput): Promise<PricingRule>;
   listAccounts(siteId?: string, options?: ListOptions): Promise<CreditAccount[]>;
   // 运营台聚合总览（admin B2）：账户计数 + 余额/冻结/发放/消费汇总（全站）。
-  readAdminStats(): Promise<CreditAdminStats>;
-  listLedgerEntries(): Promise<CreditLedgerEntry[]>;
-  listUsageRecords(): Promise<UsageRecord[]>;
+  readAdminStats(siteId: string): Promise<CreditAdminStats>;
+  listLedgerEntries(siteId?: string): Promise<AdminCreditLedgerEntry[]>;
+  listUsageRecords(siteId?: string): Promise<AdminUsageRecord[]>;
   listPricingRules(options?: ListOptions): Promise<PricingRule[]>;
   getAccountById(id: string): Promise<CreditAccount | null>;
   // 组织级配额落账户（admin 面）：quotaMicros=null 清除、非空则设本周期上限。

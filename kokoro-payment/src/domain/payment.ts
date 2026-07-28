@@ -61,6 +61,10 @@ export interface Subscription {
   updatedAt: Date;
 }
 
+export interface AdminSubscription extends Subscription {
+  siteId: string;
+}
+
 export interface Refund {
   id: string;
   orderId: string;
@@ -71,6 +75,10 @@ export interface Refund {
   metadata: unknown;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface AdminRefund extends Refund {
+  siteId: string;
 }
 
 // 运营台聚合总览（admin B2）：订单按状态计数 + 已支付营收按币种汇总（amountMinor 最小货币单位字符串）。

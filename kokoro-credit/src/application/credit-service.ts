@@ -139,8 +139,8 @@ export class CreditService {
   }
 
   // 运营台聚合总览（admin B2）：账户与流水汇总，供运营台卡片。
-  async readAdminStats(): Promise<CreditAdminStats> {
-    return this.repository.readAdminStats();
+  async readAdminStats(siteId: string): Promise<CreditAdminStats> {
+    return this.repository.readAdminStats(siteId);
   }
 
   async deletePricingRule(input: DeleteInput): Promise<PricingRule> {

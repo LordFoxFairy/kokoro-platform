@@ -1,5 +1,6 @@
-import { readRequestContext, registerAdminManifestRoute, sendData, sendError } from "@kokoro/platform-kit";
+import { readRequestContext, registerAdminManifestRoute, sendData, sendError, sendZodError } from "@kokoro/platform-kit";
 import type { FastifyInstance } from "fastify";
+import { z } from "zod";
 import type { PaymentService } from "../../application/payment-service.js";
 import type { PaymentWebhookService } from "../../application/webhook-service.js";
 import { paymentAdminManifest } from "../admin/manifest.js";
@@ -15,12 +16,12 @@ import {
 } from "./schemas.js";
 
 // WHY: 资源 id → 只读 list 方法；按 manifest.resources 注册各资源 route 的 GET。
-const RESOURCE_LISTERS: Record<string, (repository: PaymentRepository) => Promise<unknown[]>> = {
-  plans: (repository) => repository.listPlans(undefined, { includeDeleted: true }),
-  orders: (repository) => repository.listOrders(),
-  subscriptions: (repository) => repository.listSubscriptions(),
+const RESOURCE_LISTERS: Record<string, (repository: PaymentRepository, siteId?: string) => Promise<unknown[]>> = {
+  plans: (repository, siteId) => repository.listPlans(siteId, { includeDeleted: true }),
+  orders: (repository, siteId) => repository.listOrders(siteId),
+  subscriptions: (repository, siteId) => repository.listSubscriptions(siteId),
   "payment-events": (repository) => repository.listPaymentEvents(),
-  refunds: (repository) => repository.listRefunds(),
+  refunds: (repository, siteId) => repository.listRefunds(siteId),
   providers: (repository) => repository.listProviders(),
 };
 
@@ -37,11 +38,26 @@ export function registerPaymentAdminRoutes(
     if (!lister) {
       continue;
     }
-    app.get(resource.route, async (_request, reply) => sendData(reply, await lister(repository)));
+    app.get(resource.route, async (request, reply) => {
+      let siteId: string | undefined;
+      if (resource.siteScopeField === null) {
+        const query = globalAdminListQuerySchema.safeParse(request.query);
+        if (!query.success) return sendZodError(reply, query.error);
+      } else {
+        const query = adminSiteListQuerySchema.safeParse(request.query);
+        if (!query.success) return sendZodError(reply, query.error);
+        siteId = query.data.siteId;
+      }
+      return sendData(reply, await lister(repository, siteId));
+    });
   }
 
   // 运营台聚合总览（B2）：订单按状态计数 + 已支付营收按币种。
-  app.get("/admin/payments/stats", async (_request, reply) => sendData(reply, await repository.readAdminStats()));
+  app.get("/admin/payments/stats", async (request, reply) => {
+    const query = requiredAdminSiteQuerySchema.safeParse(request.query);
+    if (!query.success) return sendZodError(reply, query.error);
+    return sendData(reply, await repository.readAdminStats(query.data.siteId));
+  });
 
   app.post("/admin/payments/grant-plan", async (request, reply) => {
     const ctx = readRequestContext(request.headers);
@@ -110,3 +126,7 @@ export function registerPaymentAdminRoutes(
     }
   });
 }
+
+const adminSiteListQuerySchema = z.object({ siteId: z.string().trim().min(1).optional() }).strict();
+const requiredAdminSiteQuerySchema = z.object({ siteId: z.string().trim().min(1) }).strict();
+const globalAdminListQuerySchema = z.object({}).strict();

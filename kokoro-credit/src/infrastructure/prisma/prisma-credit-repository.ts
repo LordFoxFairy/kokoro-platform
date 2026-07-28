@@ -813,20 +813,20 @@ export class PrismaCreditRepository implements CreditRepository {
   }
 
   // 运营台聚合：存活账户计数 + 余额/冻结求和 + ledger 按符号聚合发放/消费（DB 侧 aggregate,不拉全量）。
-  async readAdminStats(): Promise<CreditAdminStats> {
+  async readAdminStats(siteId: string): Promise<CreditAdminStats> {
     const [accountsTotal, accountsActive, liveSum, granted, spent] = await Promise.all([
-      this.prisma.creditAccount.count({ where: { deletedAt: null } }),
-      this.prisma.creditAccount.count({ where: { deletedAt: null, status: "active" } }),
+      this.prisma.creditAccount.count({ where: { deletedAt: null, siteId } }),
+      this.prisma.creditAccount.count({ where: { deletedAt: null, status: "active", siteId } }),
       this.prisma.creditAccount.aggregate({
-        where: { deletedAt: null },
+        where: { deletedAt: null, siteId },
         _sum: { balanceMicros: true, heldMicros: true },
       }),
       this.prisma.creditLedgerEntry.aggregate({
-        where: { amountMicros: { gt: 0 } },
+        where: { amountMicros: { gt: 0 }, account: { siteId } },
         _sum: { amountMicros: true },
       }),
       this.prisma.creditLedgerEntry.aggregate({
-        where: { amountMicros: { lt: 0 } },
+        where: { amountMicros: { lt: 0 }, account: { siteId } },
         _sum: { amountMicros: true },
       }),
     ]);
@@ -842,20 +842,26 @@ export class PrismaCreditRepository implements CreditRepository {
     };
   }
 
-  async listLedgerEntries(): Promise<CreditLedgerEntry[]> {
+  async listLedgerEntries(siteId?: string) {
     const entries = await this.prisma.creditLedgerEntry.findMany({
+      where: siteId === undefined ? {} : { account: { siteId } },
+      include: { account: { select: { siteId: true } } },
       take: 100,
       orderBy: { createdAt: "desc" },
     });
-    return entries.map(mapLedgerEntry);
+    return entries.map((entry) => ({ ...mapLedgerEntry(entry), siteId: entry.account.siteId }));
   }
 
-  async listUsageRecords(): Promise<UsageRecord[]> {
+  async listUsageRecords(siteId?: string) {
     const records = await this.prisma.usageRecord.findMany({
+      where: siteId === undefined ? { account: { isNot: null } } : { account: { siteId } },
+      include: { account: { select: { siteId: true } } },
       take: 100,
       orderBy: { createdAt: "desc" },
     });
-    return records.map(mapUsageRecord);
+    return records.flatMap((record) =>
+      record.account === null ? [] : [{ ...mapUsageRecord(record), siteId: record.account.siteId }],
+    );
   }
 
   async listPricingRules(options?: ListOptions): Promise<PricingRule[]> {

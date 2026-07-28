@@ -50,6 +50,10 @@ export interface CreditLedgerEntry {
   createdAt: Date;
 }
 
+export interface AdminCreditLedgerEntry extends CreditLedgerEntry {
+  siteId: string;
+}
+
 export interface CreditMutationResult {
   account: CreditAccount;
   entry: CreditLedgerEntry;
@@ -92,6 +96,10 @@ export interface UsageRecord {
   idempotencyKey: string | null;
   status: UsageRecordStatus;
   createdAt: Date;
+}
+
+export interface AdminUsageRecord extends UsageRecord {
+  siteId: string;
 }
 
 export interface PricingRule extends DeletionAudit {

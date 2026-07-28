@@ -312,19 +312,24 @@ export class PrismaPaymentRepository implements PaymentRepository {
     return orders.map(mapOrder);
   }
 
-  async listSubscriptions(): Promise<Subscription[]> {
+  async listSubscriptions(siteId?: string) {
     const subscriptions = await this.prisma.subscription.findMany({
+      where: siteId === undefined ? {} : { plan: { siteId } },
+      include: { plan: { select: { siteId: true } } },
       take: 100,
       orderBy: { createdAt: "desc" },
     });
-    return subscriptions.map(mapSubscription);
+    return subscriptions.map((subscription) => ({
+      ...mapSubscription(subscription),
+      siteId: subscription.plan.siteId,
+    }));
   }
 
   // 运营台聚合：订单按状态计数 + 已支付营收按币种（DB 侧 groupBy,不拉全量）。多币种不可直加。
-  async readAdminStats(): Promise<PaymentAdminStats> {
+  async readAdminStats(siteId: string): Promise<PaymentAdminStats> {
     const [byStatus, byCurrency] = await Promise.all([
-      this.prisma.order.groupBy({ by: ["status"], _count: { _all: true } }),
-      this.prisma.order.groupBy({ by: ["currency"], where: { status: "paid" }, _sum: { amountMinor: true } }),
+      this.prisma.order.groupBy({ by: ["status"], where: { siteId }, _count: { _all: true } }),
+      this.prisma.order.groupBy({ by: ["currency"], where: { siteId, status: "paid" }, _sum: { amountMinor: true } }),
     ]);
     const count = (status: string): number => byStatus.find((r) => r.status === status)?._count._all ?? 0;
     return {
@@ -348,12 +353,14 @@ export class PrismaPaymentRepository implements PaymentRepository {
     return events.map(mapPaymentEvent);
   }
 
-  async listRefunds(): Promise<Refund[]> {
+  async listRefunds(siteId?: string) {
     const refunds = await this.prisma.refund.findMany({
+      where: siteId === undefined ? {} : { order: { siteId } },
+      include: { order: { select: { siteId: true } } },
       take: 100,
       orderBy: { createdAt: "desc" },
     });
-    return refunds.map(mapRefund);
+    return refunds.map((refund) => ({ ...mapRefund(refund), siteId: refund.order.siteId }));
   }
 
   async createOrder(input: CreateOrderInput): Promise<Order> {
