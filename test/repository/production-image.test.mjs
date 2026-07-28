@@ -18,7 +18,17 @@ const workspaces = Object.freeze([
   "kokoro-credit",
   "kokoro-payment",
 ]);
-const debianPrismaEngine = "libquery_engine-debian-openssl-3.0.x.so.node";
+const prismaNativeEngines = Object.freeze({
+  x86_64: Object.freeze({
+    filename: "libquery_engine-debian-openssl-3.0.x.so.node",
+    machine: 62,
+  }),
+  aarch64: Object.freeze({
+    filename: "libquery_engine-linux-arm64-openssl-3.0.x.so.node",
+    machine: 183,
+  }),
+});
+const debianPrismaEngine = prismaNativeEngines.x86_64.filename;
 const validPrismaPackage = Object.freeze({
   name: "prisma-client-bd010cc3e43281e2eea859ccf831a3d2246b75993ee63faf03053dde6c1a2739",
   main: "index.js",
@@ -27,6 +37,22 @@ const validPrismaPackage = Object.freeze({
   version: "6.19.3",
   sideEffects: false,
 });
+
+function createElf64Header(machine = 62) {
+  const header = Buffer.alloc(64);
+  header.set([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01]);
+  header.writeUInt16LE(3, 16);
+  header.writeUInt16LE(machine, 18);
+  header.writeUInt32LE(1, 20);
+  header.writeUInt16LE(64, 52);
+  header.writeUInt16LE(56, 54);
+  header.writeUInt16LE(64, 58);
+  return header;
+}
+
+function createMinimalWasmModule() {
+  return Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+}
 
 async function writeMinimalImageLayout(imageRoot) {
   await mkdir(resolve(imageRoot, "node_modules/.pnpm/fastify@5.10.0"), { recursive: true });
@@ -46,7 +72,7 @@ async function writeMinimalImageLayout(imageRoot) {
   }
 }
 
-async function writeValidPrismaFixture(imageRoot) {
+async function writeValidPrismaFixture(imageRoot, nativeEngine = prismaNativeEngines.x86_64) {
   const prismaRoot = resolve(imageRoot, "kokoro-user/generated/prisma");
   await mkdir(resolve(prismaRoot, "runtime"), { recursive: true });
   await writeFile(resolve(prismaRoot, "index.js"), "module.exports = { PrismaClient: class PrismaClient {} };\n");
@@ -54,8 +80,8 @@ async function writeValidPrismaFixture(imageRoot) {
   await writeFile(resolve(prismaRoot, "package.json"), `${JSON.stringify(validPrismaPackage)}\n`);
   await writeFile(resolve(prismaRoot, "schema.prisma"), "generator client { provider = \"prisma-client-js\" }\n");
   await writeFile(resolve(prismaRoot, "runtime/library.js"), "module.exports = { getPrismaClient() {} };\n");
-  await writeFile(resolve(prismaRoot, debianPrismaEngine), Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x01]));
-  await writeFile(resolve(prismaRoot, "query_engine_bg.wasm"), Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01]));
+  await writeFile(resolve(prismaRoot, nativeEngine.filename), createElf64Header(nativeEngine.machine));
+  await writeFile(resolve(prismaRoot, "query_engine_bg.wasm"), createMinimalWasmModule());
   return prismaRoot;
 }
 
@@ -312,9 +338,9 @@ test("the image verifier recursively rejects source artifacts and disguised dev 
   ]) {
     await mkdir(resolve(imageRoot, entry, ".."), { recursive: true });
     const content = entry.endsWith(debianPrismaEngine)
-      ? Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x01])
+      ? createElf64Header()
       : entry.endsWith("query_engine_bg.wasm")
-        ? Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01])
+        ? createMinimalWasmModule()
         : entry.endsWith("package.json")
           ? `${JSON.stringify(validPrismaPackage)}\n`
           : "export {};\n";
@@ -395,16 +421,72 @@ test("the image verifier rejects counterfeit or corrupt Prisma runtime artifacts
       error: /invalid generated Prisma native engine/u,
     },
     {
+      name: "magic-only native engine",
+      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, debianPrismaEngine), Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x01])),
+      error: /invalid generated Prisma native engine/u,
+    },
+    {
+      name: "truncated ELF64 header",
+      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, debianPrismaEngine), createElf64Header().subarray(0, 63)),
+      error: /invalid generated Prisma native engine/u,
+    },
+    {
+      name: "invalid ELF class",
+      mutate: (prismaRoot) => {
+        const header = createElf64Header();
+        header[4] = 1;
+        return writeFile(resolve(prismaRoot, debianPrismaEngine), header);
+      },
+      error: /invalid generated Prisma native engine/u,
+    },
+    {
+      name: "invalid ELF byte order",
+      mutate: (prismaRoot) => {
+        const header = createElf64Header();
+        header[5] = 2;
+        return writeFile(resolve(prismaRoot, debianPrismaEngine), header);
+      },
+      error: /invalid generated Prisma native engine/u,
+    },
+    {
+      name: "invalid ELF identity version",
+      mutate: (prismaRoot) => {
+        const header = createElf64Header();
+        header[6] = 2;
+        return writeFile(resolve(prismaRoot, debianPrismaEngine), header);
+      },
+      error: /invalid generated Prisma native engine/u,
+    },
+    {
+      name: "invalid ELF header version",
+      mutate: (prismaRoot) => {
+        const header = createElf64Header();
+        header.writeUInt32LE(2, 20);
+        return writeFile(resolve(prismaRoot, debianPrismaEngine), header);
+      },
+      error: /invalid generated Prisma native engine/u,
+    },
+    {
+      name: "unsupported ELF machine",
+      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, debianPrismaEngine), createElf64Header(3)),
+      error: /invalid generated Prisma native engine/u,
+    },
+    {
+      name: "ELF machine does not match engine target",
+      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, debianPrismaEngine), createElf64Header(183)),
+      error: /invalid generated Prisma native engine/u,
+    },
+    {
       name: "fake native engine name",
       mutate: async (prismaRoot) => {
         await rm(resolve(prismaRoot, debianPrismaEngine));
-        await writeFile(resolve(prismaRoot, "libquery_engine-test.so.node"), Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x01]));
+        await writeFile(resolve(prismaRoot, "libquery_engine-test.so.node"), createElf64Header());
       },
       error: /unexpected generated Prisma native engine/u,
     },
     {
       name: "duplicate native engine",
-      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, "libquery_engine-copy.so.node"), Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x01])),
+      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, "libquery_engine-copy.so.node"), createElf64Header()),
       error: /unexpected generated Prisma native engine/u,
     },
     {
@@ -418,8 +500,32 @@ test("the image verifier rejects counterfeit or corrupt Prisma runtime artifacts
       error: /invalid generated Prisma Wasm engine/u,
     },
     {
+      name: "magic-only Wasm engine",
+      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, "query_engine_bg.wasm"), Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01])),
+      error: /invalid generated Prisma Wasm engine/u,
+    },
+    {
+      name: "truncated Wasm header",
+      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, "query_engine_bg.wasm"), createMinimalWasmModule().subarray(0, 7)),
+      error: /invalid generated Prisma Wasm engine/u,
+    },
+    {
+      name: "invalid Wasm version",
+      mutate: (prismaRoot) => {
+        const module = createMinimalWasmModule();
+        module[4] = 2;
+        return writeFile(resolve(prismaRoot, "query_engine_bg.wasm"), module);
+      },
+      error: /invalid generated Prisma Wasm engine/u,
+    },
+    {
+      name: "invalid Wasm module body",
+      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, "query_engine_bg.wasm"), Buffer.concat([createMinimalWasmModule(), Buffer.from([0xff])])),
+      error: /invalid generated Prisma Wasm engine/u,
+    },
+    {
       name: "duplicate Wasm engine",
-      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, "query_engine_copy.wasm"), Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01])),
+      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, "query_engine_copy.wasm"), createMinimalWasmModule()),
       error: /unexpected generated Prisma Wasm engine/u,
     },
   ];
@@ -432,6 +538,18 @@ test("the image verifier rejects counterfeit or corrupt Prisma runtime artifacts
       const prismaRoot = await writeValidPrismaFixture(imageRoot);
       await fixture.mutate(prismaRoot);
       await assert.rejects(() => verifyProductionImage(imageRoot), fixture.error);
+    });
+  }
+});
+
+test("the image verifier accepts Prisma native engines for supported Linux architectures", async (context) => {
+  for (const [architecture, nativeEngine] of Object.entries(prismaNativeEngines)) {
+    await context.test(architecture, async (childContext) => {
+      const imageRoot = await mkdtemp(resolve(tmpdir(), "kokoro-platform-prisma-architecture-"));
+      childContext.after(async () => rm(imageRoot, { recursive: true, force: true }));
+      await writeMinimalImageLayout(imageRoot);
+      await writeValidPrismaFixture(imageRoot, nativeEngine);
+      await verifyProductionImage(imageRoot);
     });
   }
 });

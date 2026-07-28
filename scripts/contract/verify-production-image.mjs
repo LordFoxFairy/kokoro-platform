@@ -55,11 +55,14 @@ const prismaRuntimeFiles = new Set([
   "wasm-compiler-edge.js",
   "wasm-engine-edge.js",
 ]);
-const prismaNativeEngine = "libquery_engine-debian-openssl-3.0.x.so.node";
+const prismaNativeEngines = new Map([
+  ["libquery_engine-debian-openssl-3.0.x.so.node", 62],
+  ["libquery_engine-linux-arm64-openssl-3.0.x.so.node", 183],
+]);
 const prismaWasmEngine = "query_engine_bg.wasm";
 const prismaClientVersion = "6.19.3";
 const elfMagic = Buffer.from([0x7f, 0x45, 0x4c, 0x46]);
-const wasmMagic = Buffer.from([0x00, 0x61, 0x73, 0x6d]);
+const wasmHeader = Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
 const requiredEntries = Object.freeze([
   "deploy/docker/runtime-entrypoint.mjs",
   "kokoro-platform-kit/dist/index.js",
@@ -113,17 +116,43 @@ async function assertNonEmptyFile(path, label) {
   }
 }
 
-async function assertBinaryMagic(path, expectedMagic, label) {
+async function assertElf64Engine(path, expectedMachine, label) {
   const handle = await open(path, "r");
   try {
     const metadata = await handle.stat();
-    const prefix = Buffer.alloc(expectedMagic.length);
-    const { bytesRead } = await handle.read(prefix, 0, prefix.length, 0);
-    if (metadata.size <= expectedMagic.length || bytesRead !== expectedMagic.length || !prefix.equals(expectedMagic)) {
-      throw new Error(`Production image contains invalid generated Prisma ${label}`);
+    const header = Buffer.alloc(64);
+    const { bytesRead } = await handle.read(header, 0, header.length, 0);
+    const valid =
+      metadata.size >= header.length &&
+      bytesRead === header.length &&
+      header.subarray(0, elfMagic.length).equals(elfMagic) &&
+      header[4] === 2 &&
+      header[5] === 1 &&
+      header[6] === 1 &&
+      header.readUInt16LE(16) === 3 &&
+      header.readUInt16LE(18) === expectedMachine &&
+      header.readUInt32LE(20) === 1 &&
+      header.readUInt16LE(52) === 64;
+    if (!valid) {
+      throw new Error(`Production image contains invalid generated Prisma native engine: ${label}`);
     }
   } finally {
     await handle.close();
+  }
+}
+
+async function assertWasmEngine(path, label) {
+  const bytes = await readFile(path);
+  let valid = bytes.length >= wasmHeader.length && bytes.subarray(0, wasmHeader.length).equals(wasmHeader);
+  if (valid) {
+    try {
+      valid = globalThis.WebAssembly.validate(bytes);
+    } catch {
+      valid = false;
+    }
+  }
+  if (!valid) {
+    throw new Error(`Production image contains invalid generated Prisma Wasm engine: ${label}`);
   }
 }
 
@@ -165,6 +194,8 @@ async function assertGeneratedPrisma(directory, label) {
   const prismaDirectory = resolve(directory, "prisma");
   const rootFiles = new Set();
   let hasRuntimeLibrary = false;
+  let nativeEngine;
+  let hasWasmEngine = false;
   for (const entry of await readdir(prismaDirectory, { withFileTypes: true })) {
     if (entry.isDirectory()) {
       if (entry.name !== "runtime") {
@@ -181,16 +212,18 @@ async function assertGeneratedPrisma(directory, label) {
       continue;
     }
     if (entry.name.endsWith(".node")) {
-      if (!entry.isFile() || entry.name !== prismaNativeEngine) {
+      if (!entry.isFile() || !prismaNativeEngines.has(entry.name) || nativeEngine !== undefined) {
         throw new Error(`Production image contains unexpected generated Prisma native engine: ${label}/prisma/${entry.name}`);
       }
+      nativeEngine = entry.name;
       rootFiles.add(entry.name);
       continue;
     }
     if (entry.name.endsWith(".wasm")) {
-      if (!entry.isFile() || entry.name !== prismaWasmEngine) {
+      if (!entry.isFile() || entry.name !== prismaWasmEngine || hasWasmEngine) {
         throw new Error(`Production image contains unexpected generated Prisma Wasm engine: ${label}/prisma/${entry.name}`);
       }
+      hasWasmEngine = true;
       rootFiles.add(entry.name);
       continue;
     }
@@ -207,10 +240,10 @@ async function assertGeneratedPrisma(directory, label) {
   if (!hasRuntimeLibrary) {
     throw new Error(`Production image is missing generated Prisma runtime: ${label}/prisma/runtime/library.js`);
   }
-  if (!rootFiles.has(prismaNativeEngine)) {
+  if (nativeEngine === undefined) {
     throw new Error(`Production image is missing generated Prisma engine: ${label}/prisma`);
   }
-  if (!rootFiles.has(prismaWasmEngine)) {
+  if (!hasWasmEngine) {
     throw new Error(`Production image is missing generated Prisma Wasm engine: ${label}/prisma`);
   }
 
@@ -220,15 +253,14 @@ async function assertGeneratedPrisma(directory, label) {
     `${label}/prisma/runtime/library.js`,
   );
   await assertPrismaPackage(resolve(prismaDirectory, "package.json"), `${label}/prisma/package.json`);
-  await assertBinaryMagic(
-    resolve(prismaDirectory, prismaNativeEngine),
-    elfMagic,
-    `native engine: ${label}/prisma/${prismaNativeEngine}`,
+  await assertElf64Engine(
+    resolve(prismaDirectory, nativeEngine),
+    prismaNativeEngines.get(nativeEngine),
+    `${label}/prisma/${nativeEngine}`,
   );
-  await assertBinaryMagic(
+  await assertWasmEngine(
     resolve(prismaDirectory, prismaWasmEngine),
-    wasmMagic,
-    `Wasm engine: ${label}/prisma/${prismaWasmEngine}`,
+    `${label}/prisma/${prismaWasmEngine}`,
   );
 }
 
