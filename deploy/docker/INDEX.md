@@ -8,7 +8,7 @@ owners:
 # Platform deployment image
 
 ## Responsibilities
-Build the independently deployable Platform artifact from this repository's lock, source, migrations, and generated contracts.
+Build the independently deployable, production-only Platform artifact from this repository's lock, source, migrations, and generated contracts.
 
 ## Non-responsibilities
 The image does not embed sibling repositories, Root contract source, production secrets, or Root Infra orchestration.
@@ -23,7 +23,7 @@ Platform CI and release automation build the image after local gates and integra
 The image owns no data; runtime modules own schemas/migrations and external stores own durable bytes.
 
 ## Runtime and security
-Build context excludes development artifacts while explicitly retaining the generated Admin RPC contract mirror.
+The multi-stage build installs full dependencies only in the build stage, compiles each runnable package, installs production dependencies in an isolated stage, and assembles a non-root runtime image without source or test trees. A build-time verifier rejects development toolchains such as TypeScript, tsx, Vitest, Vite, and ESLint from the final image. The fixed runtime entrypoint maps `KOKORO_SERVICE_PACKAGE` only to known compiled service entries; it does not evaluate arbitrary module paths.
 
 ## Idempotency, failure, and recovery
 The same commit/lock inputs must produce a traceable artifact; release rollback selects a previous verified digest.

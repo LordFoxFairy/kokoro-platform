@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/main.ts",
-    "start": "tsx src/main.ts",
+    "start": "node --conditions=kokoro-runtime dist/main.js",
+    "build:runtime": "tsc -p tsconfig.runtime.json",
     "db:generate": "prisma generate",
     "postinstall": "prisma generate",
     "db:migrate": "prisma migrate deploy",

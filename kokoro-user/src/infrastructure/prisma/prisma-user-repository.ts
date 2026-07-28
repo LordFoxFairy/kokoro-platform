@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient } from "@prisma/client";
+import { Prisma, type PrismaClient } from "../../../generated/prisma/index.js";
 import type { Invite } from "../../domain/invite.js";
 import type { Membership } from "../../domain/membership.js";
 import type { ServiceAccount } from "../../domain/service-account.js";

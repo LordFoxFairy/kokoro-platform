@@ -116,7 +116,7 @@
   <div class="tab" id="tabApprovals" data-tab="approvals">审批</div>
   <div class="tab" id="tabAudit" data-tab="audit">审计流水</div>
   <div class="tab" id="tabPerms" data-tab="perms">权限管理</div>
-  <div class="tab" data-tab="docs">接口文档</div>
+  <div class="tab" id="tabDocs" data-tab="docs">接口文档</div>
 </div>
 
 <main id="desk">
@@ -434,7 +434,7 @@ async function submitNewOperator() {
 async function loadDocs() {
   try {
     const mods = await api("/api/manifests");
-    $("#docsRows").innerHTML = mods.map((m) => `<tr><td>${esc(m.id)}</td><td>${m.online ? '<span class="st ok">online</span>' : '<span class="st error">offline</span>'}</td><td>${m.online ? `<a href="${esc(m.baseUrl)}/docs/json" target="_blank" rel="noopener">${esc(m.baseUrl)}/docs/json</a>` : "—"}</td></tr>`).join("") || `<tr><td colspan="3" class="empty">无模块</td></tr>`;
+    $("#docsRows").innerHTML = mods.map((m) => `<tr><td>${esc(m.id)}</td><td>${m.online ? '<span class="st ok">online</span>' : '<span class="st error">offline</span>'}</td><td>${m.online ? `<a href="/api/openapi/${encodeURIComponent(m.id)}" target="_blank" rel="noopener">OpenAPI JSON</a>` : "—"}</td></tr>`).join("") || `<tr><td colspan="3" class="empty">无模块</td></tr>`;
   } catch (e) { toast("err", "文档", e.message); }
 }
 
@@ -483,6 +483,7 @@ function applyVisibility() {
   $("#tabApprovals").classList.toggle("hide", !can("approval.read"));
   $("#tabAudit").classList.toggle("hide", !can("audit.read"));
   $("#tabPerms").classList.toggle("hide", !can("operator.manage"));
+  $("#tabDocs").classList.toggle("hide", !can("docs.read"));
 }
 async function reloadContext() {
   await loadMe();

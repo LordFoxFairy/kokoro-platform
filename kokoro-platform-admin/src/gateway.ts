@@ -37,6 +37,103 @@ function adminCallerHeaders(internalSecret: string): Record<string, string> {
   return { "x-kokoro-service": "admin", "x-kokoro-internal-secret": internalSecret };
 }
 
+export interface OpenApiProxyOptions {
+  timeoutMs: number;
+  maxBytes: number;
+}
+
+export interface OpenApiContract {
+  bytes: Uint8Array;
+  moduleId: string;
+}
+
+export async function proxyOpenApiContract(
+  modules: ModuleConfig[],
+  moduleId: string,
+  internalSecret: string,
+  options: OpenApiProxyOptions,
+): Promise<OpenApiContract> {
+  const module = modules.find((candidate) => candidate.id === moduleId);
+  if (module === undefined) {
+    throw new GatewayError("unknown OpenAPI module", 400, "gateway.openapi_module_invalid");
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
+  try {
+    const response = await fetch(joinUrl(module.baseUrl, "/docs/json"), {
+      headers: adminCallerHeaders(internalSecret),
+      redirect: "error",
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new GatewayError(`OpenAPI upstream returned HTTP ${response.status}`, 502, "gateway.openapi_upstream");
+    }
+    const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+    if (contentType !== "application/json" && contentType !== "application/openapi+json") {
+      throw new GatewayError("OpenAPI upstream returned a non-JSON response", 502, "gateway.openapi_invalid");
+    }
+    const declaredLength = response.headers.get("content-length");
+    if (declaredLength !== null) {
+      if (!/^\d+$/u.test(declaredLength) || Number(declaredLength) > options.maxBytes) {
+        throw new GatewayError("OpenAPI upstream response is too large", 502, "gateway.openapi_too_large");
+      }
+    }
+    if (response.body === null) {
+      throw new GatewayError("OpenAPI upstream returned an empty body", 502, "gateway.openapi_invalid");
+    }
+
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    while (true) {
+      const result = await reader.read();
+      if (result.done) break;
+      total += result.value.byteLength;
+      if (total > options.maxBytes) {
+        controller.abort();
+        await reader.cancel().catch(() => undefined);
+        throw new GatewayError("OpenAPI upstream response is too large", 502, "gateway.openapi_too_large");
+      }
+      chunks.push(result.value);
+    }
+
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    let document: unknown;
+    try {
+      document = JSON.parse(new TextDecoder().decode(bytes));
+    } catch {
+      throw new GatewayError("OpenAPI upstream returned invalid JSON", 502, "gateway.openapi_invalid");
+    }
+    if (
+      typeof document !== "object" ||
+      document === null ||
+      !("openapi" in document) ||
+      typeof document.openapi !== "string"
+    ) {
+      throw new GatewayError("OpenAPI upstream returned an invalid contract", 502, "gateway.openapi_invalid");
+    }
+    return { bytes, moduleId: module.id };
+  } catch (error) {
+    if (error instanceof GatewayError) throw error;
+    if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) {
+      throw new GatewayError("OpenAPI upstream timed out", 504, "gateway.openapi_timeout");
+    }
+    throw new GatewayError(
+      `OpenAPI upstream unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      502,
+      "gateway.openapi_upstream",
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function fetchManifest(module: ModuleConfig, internalSecret = ""): Promise<ModuleStatus> {
   try {
     const response = await fetch(joinUrl(module.baseUrl, module.manifestPath), {

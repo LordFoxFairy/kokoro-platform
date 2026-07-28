@@ -17,6 +17,7 @@ export default [
   {
     ignores: [
       "dist/**",
+      "**/dist/**",
       "coverage/**",
       "node_modules/**",
       "**/node_modules/**",

@@ -6,12 +6,14 @@
   "exports": {
     ".": {
       "types": "./src/index.ts",
+      "kokoro-runtime": "./dist/index.js",
       "import": "./src/index.ts"
     }
   },
   "scripts": {
     "dev": "tsx src/interfaces/http/main.ts",
-    "start": "tsx src/interfaces/http/main.ts",
+    "start": "node --conditions=kokoro-runtime dist/interfaces/http/main.js",
+    "build:runtime": "tsc -p tsconfig.runtime.json",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:dev": "prisma migrate dev",

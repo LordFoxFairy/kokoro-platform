@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "../../../generated/prisma/index.js";
 
 export function createPrismaClient(databaseUrl = process.env.DATABASE_URL_USER): PrismaClient {
   if (!databaseUrl) {

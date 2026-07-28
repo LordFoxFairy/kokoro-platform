@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "../../generated/prisma/index.js";
 import { beforeEach, describe, expect, it } from "vitest";
 import { PrismaRefreshTokenRepository } from "../../src/infrastructure/prisma/prisma-refresh-token-repository.js";
 

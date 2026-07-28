@@ -3,10 +3,10 @@ import { createAdminPrisma } from "../src/prisma.js";
 // 运营角色矩阵（做什么）。superadmin 全通；其余按需，含 audit.read 才能看审计。
 const ROLES = [
   { key: "superadmin", name: "Superadmin", permissions: ["*"] },
-  { key: "ops", name: "Operations", permissions: ["credit.*", "payment.*", "user.*", "model.*", "billing.read", "audit.read", "approval.read"] },
+  { key: "ops", name: "Operations", permissions: ["credit.*", "payment.*", "user.*", "model.*", "billing.read", "audit.read", "approval.read", "docs.read"] },
   { key: "finance", name: "Finance", permissions: ["payment.*", "credit.account.read", "credit.grant", "billing.read", "audit.read", "approval.read"] },
   { key: "support", name: "Support", permissions: ["credit.account.read", "credit.grant", "user.read", "payment.order.read", "audit.read", "approval.read"] },
-  { key: "readonly", name: "Read-only", permissions: ["credit.account.read", "payment.order.read", "user.read", "billing.read", "audit.read"] },
+  { key: "readonly", name: "Read-only", permissions: ["credit.account.read", "payment.order.read", "user.read", "billing.read", "audit.read", "docs.read"] },
 ];
 
 // operator（谁 + 哪个租户）。scopeSites ["*"]=跨租户超级；否则限定 siteId。

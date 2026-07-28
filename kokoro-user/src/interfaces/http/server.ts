@@ -6,7 +6,7 @@ import {
   type RouteAccessConfig,
   type ServiceCaller,
 } from "@kokoro/platform-kit";
-import type { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "../../../generated/prisma/index.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import Fastify from "fastify";
 import { Redis } from "ioredis";

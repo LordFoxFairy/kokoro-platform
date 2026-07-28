@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "../../generated/prisma/index.js";
 import { createPrismaClient } from "../../src/infrastructure/prisma/prisma-client.js";
 
 export function createTestPrismaClient(): PrismaClient {

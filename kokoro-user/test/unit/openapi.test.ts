@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "../../generated/prisma/index.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { createUserServer } from "../../src/interfaces/http/server.js";

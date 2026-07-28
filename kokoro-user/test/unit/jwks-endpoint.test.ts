@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from "node:crypto";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "../../generated/prisma/index.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { loadRsaSigningKey } from "../../src/infrastructure/auth/rsa-keys.js";

@@ -16,6 +16,7 @@ import {
   getUser360,
   needsApproval,
   prepareAction,
+  proxyOpenApiContract,
   proxyResource,
   type ActionRequest,
   type AuditSink,
@@ -53,6 +54,7 @@ export interface AdminServerDeps {
   // 网关出站身份凭据：转发/拉 manifest/查资源时带 x-kokoro-service:admin + 此 secret（空串=未启用，dev 直通）。
   internalSecret?: string;
   adminAuth?: AdminAuthConnectConfig;
+  openApi?: { timeoutMs: number; maxBytes: number };
 }
 
 const approvalsQuerySchema = z
@@ -170,10 +172,43 @@ export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps
     const operator = await requireOperator(request, reply);
     if (!operator) return reply;
     const all = await getManifests(modules, deps.internalSecret ?? "");
-    const scoped = all.map((status) =>
-      status.online ? { ...status, manifest: filterManifestForOperator(status.manifest, operator) } : status,
-    );
+    const scoped = all.map((status) => {
+      const { baseUrl: _privateBaseUrl, ...publicStatus } = status;
+      return status.online
+        ? { ...publicStatus, manifest: filterManifestForOperator(status.manifest, operator) }
+        : publicStatus;
+    });
     return sendData(reply, scoped);
+  });
+
+  app.get("/api/openapi/:moduleId", async (request, reply) => {
+    const operator = await requireOperator(request, reply);
+    if (!operator) return reply;
+    if (!permits(operator.permissions, "docs.read")) {
+      return sendError(reply, 403, "operator.auth", "无权查看接口契约");
+    }
+    const params = z.object({ moduleId: z.string().min(1) }).strict().safeParse(request.params);
+    if (!params.success) {
+      return sendError(reply, 400, "request.invalid", "无效的模块 id", { issues: params.error.issues });
+    }
+    try {
+      const contract = await proxyOpenApiContract(
+        modules,
+        params.data.moduleId,
+        deps.internalSecret ?? "",
+        deps.openApi ?? { timeoutMs: 3_000, maxBytes: 2 * 1024 * 1024 },
+      );
+      return reply
+        .code(200)
+        .type("application/json; charset=utf-8")
+        .header("content-disposition", `inline; filename="${contract.moduleId}-openapi.json"`)
+        .send(Buffer.from(contract.bytes));
+    } catch (error) {
+      if (error instanceof GatewayError) {
+        return sendError(reply, error.statusCode, error.code, error.message);
+      }
+      return sendError(reply, 502, "gateway.error", error instanceof Error ? error.message : String(error));
+    }
   });
 
   app.get("/api/operators", async (request, reply) => {

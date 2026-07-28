@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "../../generated/prisma/index.js";
 import Fastify from "fastify";
 import { describe, expect, it, vi } from "vitest";
 import type { UserService } from "../../src/application/user-service.js";

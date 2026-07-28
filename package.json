@@ -17,6 +17,7 @@
     "test:platform": "vitest run test/*.test.ts",
     "test": "pnpm run test:repository && pnpm run test:platform && pnpm -r test",
     "test:integration": "pnpm -r test:integration",
+    "build:runtime": "pnpm -r --if-present build:runtime",
     "typecheck:platform": "tsc -p tsconfig.json --noEmit",
     "typecheck": "pnpm run typecheck:platform && pnpm -r typecheck",
     "lint": "eslint .",
@@ -40,6 +41,7 @@
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.62.0",
-    "vitest": "^2.1.9"
+    "vitest": "^2.1.9",
+    "yaml": "^2.9.0"
   }
 }

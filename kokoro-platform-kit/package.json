@@ -6,12 +6,14 @@
   "exports": {
     ".": {
       "types": "./src/index.ts",
+      "kokoro-runtime": "./dist/index.js",
       "import": "./src/index.ts"
     }
   },
   "scripts": {
     "test": "vitest run test",
     "test:integration": "vitest run --passWithNoTests",
+    "build:runtime": "tsc -p tsconfig.runtime.json",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "coverage": "vitest run --coverage --no-file-parallelism"
