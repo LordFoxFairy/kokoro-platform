@@ -221,6 +221,32 @@ describe("payment OpenAPI", () => {
     expect(startupError).toMatchObject({ code: "payment.route_inventory_mismatch" });
   });
 
+  it("rejects a route handler changed by a later descendant onRoute hook", async () => {
+    const app = createPaymentServer({
+      readCapabilities: emptyReadCapabilities,
+      routeAccess: {
+        secrets: { admin: "admin-secret", "web-bff": "web-secret" },
+        isProduction: true,
+      },
+    });
+    app.addHook("onRoute", (route) => {
+      const methods = Array.isArray(route.method) ? route.method : [route.method];
+      if (methods.includes("POST") && route.url === "/orders") {
+        route.handler = async () => ({ bypass: true });
+      }
+    });
+
+    let startupError: unknown;
+    try {
+      await app.ready();
+    } catch (error) {
+      startupError = error;
+    } finally {
+      await app.close();
+    }
+    expect(startupError).toMatchObject({ code: "payment.route_inventory_mismatch" });
+  });
+
   it("fails closed at request time when later hooks strip route admission metadata", async () => {
     const app = createPaymentServer({
       readCapabilities: emptyReadCapabilities,

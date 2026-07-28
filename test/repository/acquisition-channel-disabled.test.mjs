@@ -216,6 +216,7 @@ function functionParameterType(source, functionName, parameterIndex) {
 function prismaReadAdapterViolations(source) {
   const violations = [];
   const ast = sourceFile("prisma-payment-read-repository.ts", source);
+  const constructorAssignments = new Set();
 
   const outerParentheses = (node) => {
     let current = node;
@@ -225,26 +226,12 @@ function prismaReadAdapterViolations(source) {
     return current;
   };
 
-  const enclosingConstructor = (node) => {
-    let current = node.parent;
-    while (current !== undefined) {
-      if (ts.isConstructorDeclaration(current)) return current;
-      if (ts.isMethodDeclaration(current) || ts.isClassDeclaration(current)) return undefined;
-      current = current.parent;
-    }
-    return undefined;
-  };
-
   const isConstructorInitialization = (rawClient) => {
-    const clientExpression = outerParentheses(rawClient);
-    const assignment = clientExpression.parent;
+    const assignment = rawClient.parent;
     return (
       ts.isBinaryExpression(assignment) &&
-      assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      assignment.left === clientExpression &&
-      ts.isIdentifier(assignment.right) &&
-      assignment.right.text === "prisma" &&
-      enclosingConstructor(assignment) !== undefined
+      assignment.left === rawClient &&
+      constructorAssignments.has(assignment)
     );
   };
 
@@ -270,6 +257,44 @@ function prismaReadAdapterViolations(source) {
   };
 
   const visit = (node) => {
+    if (ts.isClassDeclaration(node) && node.name?.text === "PrismaPaymentReadRepository") {
+      const constructors = node.members.filter(ts.isConstructorDeclaration);
+      if (constructors.length !== 1) {
+        violations.push("adapter: class must have exactly one Prisma constructor");
+      } else {
+        const constructor = constructors[0];
+        const parameter = constructor.parameters[0];
+        const statement = constructor.body?.statements[0];
+        const assignment = statement && ts.isExpressionStatement(statement)
+          ? statement.expression
+          : undefined;
+        const exactParameter =
+          constructor.parameters.length === 1 &&
+          parameter !== undefined &&
+          ts.isIdentifier(parameter.name) &&
+          parameter.name.text === "prisma" &&
+          parameter.initializer === undefined &&
+          parameter.dotDotDotToken === undefined &&
+          parameter.questionToken === undefined &&
+          (parameter.modifiers?.length ?? 0) === 0;
+        const exactAssignment =
+          constructor.body?.statements.length === 1 &&
+          assignment !== undefined &&
+          ts.isBinaryExpression(assignment) &&
+          assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          ts.isPropertyAccessExpression(assignment.left) &&
+          assignment.left.expression.kind === ts.SyntaxKind.ThisKeyword &&
+          ts.isPrivateIdentifier(assignment.left.name) &&
+          assignment.left.name.text === "#prisma" &&
+          ts.isIdentifier(assignment.right) &&
+          assignment.right.text === "prisma";
+        if (!exactParameter || !exactAssignment) {
+          violations.push("adapter: constructor must only assign this.#prisma = prisma");
+        } else {
+          constructorAssignments.add(assignment);
+        }
+      }
+    }
     if (
       ts.isPropertyAccessExpression(node) &&
       node.expression.kind === ts.SyntaxKind.ThisKeyword &&
@@ -618,6 +643,34 @@ test("read-boundary detector bears weight against full-repository and adapter-sh
     ["adapter-parenthesized-computed-client", "adapter", adapter.replace(
       "this.#prisma.plan.findMany",
       "(this.#prisma)[\"plan\"].create",
+    )],
+    ["adapter-constructor-parameter-write", "adapter", adapter.replace(
+      "    this.#prisma = prisma;",
+      "    this.#prisma = prisma;\n    void prisma.order.create({});",
+    )],
+    ["adapter-constructor-assignment-result-alias", "adapter", adapter.replace(
+      "    this.#prisma = prisma;",
+      "    const db = (this.#prisma = prisma);\n    void db.order.create({});",
+    )],
+    ["adapter-constructor-declaration-alias", "adapter", adapter.replace(
+      "    this.#prisma = prisma;",
+      "    const db = prisma;\n    this.#prisma = prisma;\n    void db.order.create({});",
+    )],
+    ["adapter-constructor-assignment-alias", "adapter", adapter.replace(
+      "    this.#prisma = prisma;",
+      "    let db;\n    db = prisma;\n    this.#prisma = prisma;\n    void db.order.create({});",
+    )],
+    ["adapter-constructor-destructuring-alias", "adapter", adapter.replace(
+      "    this.#prisma = prisma;",
+      "    const { order } = prisma;\n    this.#prisma = prisma;\n    void order.create({});",
+    )],
+    ["adapter-constructor-callback-alias", "adapter", adapter.replace(
+      "    this.#prisma = prisma;",
+      "    this.#prisma = prisma;\n    void [prisma].map((db) => db.order.create({}));",
+    )],
+    ["adapter-constructor-return-alias", "adapter", adapter.replace(
+      "    this.#prisma = prisma;",
+      "    this.#prisma = prisma;\n    return prisma;",
     )],
     ["port-constant", "port", port.replace('  "readAdminStats",', '  "createOrder",\n  "readAdminStats",')],
     ["server-raw-client", "server", server.replace("readCapabilities: PaymentReadCapabilities", "prisma: PrismaClient")],

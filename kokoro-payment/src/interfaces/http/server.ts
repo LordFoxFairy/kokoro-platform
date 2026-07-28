@@ -93,6 +93,7 @@ function registerPaymentRouteInventory(app: FastifyInstance): void {
   const observed = new Map<string, number>();
   const routingMetadata = new Set<string>();
   const admissions = new WeakSet<object>();
+  const originalHandlers = new Map<string, unknown>();
   const finalHandlers = new Map<string, unknown>();
 
   // onRoute observes Fastify's real registration path, including encapsulated plugins,
@@ -102,7 +103,20 @@ function registerPaymentRouteInventory(app: FastifyInstance): void {
     const routeKeys = methods.map((method) => `${method.toUpperCase()} ${route.url}`);
     for (const routeKey of routeKeys) {
       observed.set(routeKey, (observed.get(routeKey) ?? 0) + 1);
+      if (!originalHandlers.has(routeKey)) originalHandlers.set(routeKey, route.handler);
     }
+
+    const originalHandler = route.handler;
+    const handlerDescriptor = Object.getOwnPropertyDescriptor(route, "handler");
+    Object.defineProperty(route, "handler", {
+      configurable: false,
+      enumerable: handlerDescriptor?.enumerable ?? true,
+      get: () => originalHandler,
+      set: (replacement) => {
+        if (replacement === originalHandler) return;
+        for (const routeKey of routeKeys) routingMetadata.add(`${routeKey}:handler`);
+      },
+    });
 
     if (route.constraints !== undefined && Reflect.ownKeys(route.constraints).length > 0) {
       routingMetadata.add(`${routeKeys.join("|")}:constraints`);
@@ -151,6 +165,7 @@ function registerPaymentRouteInventory(app: FastifyInstance): void {
         missing.add(route);
         continue;
       }
+      if (!originalHandlers.has(route)) routingMetadata.add(`${route}:handler`);
       finalHandlers.set(route, found.handler);
     }
 
