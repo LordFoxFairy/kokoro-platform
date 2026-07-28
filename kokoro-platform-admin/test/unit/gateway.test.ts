@@ -107,7 +107,10 @@ describe("proxyResource", () => {
       return jsonResponse({ data: rows });
     });
 
-    const result = await proxyResource(modules, "credit", "/admin/credits/accounts", { operator: SUPER });
+    const result = await proxyResource(modules, "credit", "/admin/credits/accounts", {
+      operator: SUPER,
+      siteId: "site_1",
+    });
     expect(result).toEqual(rows);
   });
 
@@ -138,7 +141,10 @@ describe("proxyResource", () => {
         : jsonResponse({ data: [{ id: "acc_1", siteId: "site_1" }] });
 
     fetchMock.mockImplementation(manifestThenRows);
-    await expect(proxyResource(modules, "credit", "/admin/credits/accounts", SUPER)).resolves.toEqual([
+    await expect(proxyResource(modules, "credit", "/admin/credits/accounts", {
+      operator: SUPER,
+      siteId: "site_1",
+    })).resolves.toEqual([
       { id: "acc_1", siteId: "site_1" },
     ]);
 
@@ -151,37 +157,29 @@ describe("proxyResource", () => {
     expect(fetchMock.mock.calls.every(([url]) => String(url).includes("/manifest"))).toBe(true);
   });
 
-  it("returns every valid scoped row for a super-scoped operator when no siteId is requested", async () => {
-    const rows = [
-      { id: "acc_1", siteId: "site_1" },
-      { id: "acc_2", siteId: "site_2" },
-      { id: "acc_global" },
-    ];
-    fetchMock.mockImplementation(async (input) =>
-      String(input).includes("/manifest") ? jsonResponse({ data: creditManifest }) : jsonResponse({ data: rows }),
-    );
+  it.each([undefined, "", "   "])(
+    "requires an explicit non-blank siteId for a Site-scoped resource (%j)",
+    async (siteId) => {
+      fetchMock.mockResolvedValue(jsonResponse({ data: creditManifest }));
+
+      await expect(
+        proxyResource(modules, "credit", "/admin/credits/accounts", {
+          operator: SUPER,
+          ...(siteId === undefined ? {} : { siteId }),
+        }),
+      ).rejects.toMatchObject({ statusCode: 400, code: "site_required" });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/manifest");
+    },
+  );
+
+  it("rejects wildcard as a concrete Site selector on the generic resource gateway", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: creditManifest }));
 
     await expect(
-      proxyResource(modules, "credit", "/admin/credits/accounts", { operator: SUPER }),
-    ).resolves.toEqual(rows.slice(0, 2));
-  });
-
-  it("filters resource rows to the operator tenant scope and drops rows without siteId", async () => {
-    fetchMock.mockImplementation(async (input) =>
-      String(input).includes("/manifest")
-        ? jsonResponse({ data: creditManifest })
-        : jsonResponse({
-            data: [
-              { id: "acc_1", siteId: "site_1" },
-              { id: "acc_2", siteId: "site_2" },
-              { id: "acc_global" },
-            ],
-          }),
-    );
-
-    await expect(
-      proxyResource(modules, "credit", "/admin/credits/accounts", { operator: CREDIT_READER }),
-    ).resolves.toEqual([{ id: "acc_1", siteId: "site_1" }]);
+      proxyResource(modules, "credit", "/admin/credits/accounts", { operator: SUPER, siteId: "*" }),
+    ).rejects.toMatchObject({ statusCode: 400, code: "site_required" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("honors an in-scope requested siteId", async () => {
@@ -221,23 +219,14 @@ describe("proxyResource", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("fans a finite multi-Site scope out to provider filters before take", async () => {
+  it("does not infer or fan out a finite multi-Site scope when siteId is omitted", async () => {
     const multi: Operator = { ...CREDIT_READER, scopeSites: ["site_a", "site_b"] };
-    fetchMock.mockImplementation(async (input) => {
-      const url = new URL(String(input));
-      if (url.pathname.endsWith("/manifest")) return jsonResponse({ data: creditManifest });
-      const siteId = url.searchParams.get("siteId");
-      return jsonResponse({ data: siteId === null ? Array.from({ length: 100 }, (_, i) => ({ id: `other_${i}`, siteId: "site_other" })) : [{ id: `account_${siteId}`, siteId }] });
-    });
+    fetchMock.mockResolvedValue(jsonResponse({ data: creditManifest }));
 
-    await expect(proxyResource(modules, "credit", "/admin/credits/accounts", { operator: multi })).resolves.toEqual([
-      { id: "account_site_a", siteId: "site_a" },
-      { id: "account_site_b", siteId: "site_b" },
-    ]);
-    const resourceUrls = fetchMock.mock.calls.slice(1).map(([input]) => String(input));
-    expect(resourceUrls).toHaveLength(2);
-    expect(resourceUrls.some((url) => url.includes("siteId=site_a"))).toBe(true);
-    expect(resourceUrls.some((url) => url.includes("siteId=site_b"))).toBe(true);
+    await expect(
+      proxyResource(modules, "credit", "/admin/credits/accounts", { operator: multi }),
+    ).rejects.toMatchObject({ statusCode: 400, code: "site_required" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("allows platform-global resources only to wildcard-scoped operators", async () => {
@@ -251,6 +240,57 @@ describe("proxyResource", () => {
 
     await expect(proxyResource(modules, "credit", "/admin/global", { operator: CREDIT_READER })).rejects.toMatchObject({ statusCode: 403 });
     await expect(proxyResource(modules, "credit", "/admin/global", { operator: SUPER })).resolves.toEqual([{ id: "global" }]);
+  });
+
+  it("honors the Payment manifest contract: orders require Site while events remain global", async () => {
+    const paymentModule: ModuleConfig = {
+      id: "payment",
+      label: "Payments",
+      baseUrl: "http://127.0.0.1:4241",
+      manifestPath: "/admin/payments/manifest",
+    };
+    const paymentManifest = {
+      id: "kokoro-payment",
+      labelKey: "admin.modules.payment",
+      basePath: "/admin/payments",
+      requiredPermission: "payment.admin",
+      navItems: [],
+      resources: [
+        {
+          id: "orders",
+          labelKey: "admin.payment.resources.orders",
+          route: "/admin/payments/orders",
+          requiredPermission: "payment.order.read",
+          siteScopeField: "siteId",
+          actions: [],
+        },
+        {
+          id: "events",
+          labelKey: "admin.payment.resources.events",
+          route: "/admin/payments/events",
+          requiredPermission: "payment.event.read",
+          siteScopeField: null,
+          actions: [],
+        },
+      ],
+    };
+    fetchMock.mockImplementation(async (input) =>
+      String(input).includes("/manifest")
+        ? jsonResponse({ data: paymentManifest })
+        : jsonResponse({ data: [{ id: "evt_1" }] }),
+    );
+
+    await expect(
+      proxyResource([paymentModule], "payment", "/admin/payments/orders", { operator: SUPER }),
+    ).rejects.toMatchObject({ statusCode: 400, code: "site_required" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    fetchMock.mockClear();
+    await expect(
+      proxyResource([paymentModule], "payment", "/admin/payments/events", { operator: SUPER }),
+    ).resolves.toEqual([{ id: "evt_1" }]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1]?.[0])).not.toContain("siteId=");
   });
 });
 
@@ -301,6 +341,21 @@ describe("/api/resource", () => {
     });
 
     expect(res.statusCode).toBe(403);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/manifest");
+  });
+
+  it("returns stable site_required before fetching a Site-scoped provider resource", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: creditManifest }));
+    const app = createAdminServer(modules, buildServerDeps(SUPER));
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/resource?moduleId=credit&route=%2Fadmin%2Fcredits%2Faccounts",
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: { code: "site_required" } });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/manifest");
   });
@@ -537,6 +592,7 @@ describe("getSites", () => {
   it("returns all sites for a super-scoped operator", async () => {
     fetchMock.mockImplementation(aggregationFetch);
     expect(await getSites(fullModules, SUPER)).toEqual([{ id: "site1", key: "music" }]);
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("siteId="))).toBe(false);
   });
 
   it("filters to the operator's tenant scope", async () => {

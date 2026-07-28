@@ -7,10 +7,10 @@ import {
 } from "@kokoro/platform-kit";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
-import type { PaymentRepository } from "../../domain/repository.js";
 import { paymentAdminManifest } from "../admin/manifest.js";
+import type { PaymentAdminRepository } from "./read-repository.js";
 
-const RESOURCE_LISTERS: Record<string, (repository: PaymentRepository, siteId?: string) => Promise<unknown[]>> = {
+const RESOURCE_LISTERS: Record<string, (repository: PaymentAdminRepository, siteId?: string) => Promise<unknown[]>> = {
   plans: (repository, siteId) => repository.listPlans(siteId, { includeDeleted: true }),
   orders: (repository, siteId) => repository.listOrders(siteId),
   subscriptions: (repository, siteId) => repository.listSubscriptions(siteId),
@@ -21,7 +21,7 @@ const RESOURCE_LISTERS: Record<string, (repository: PaymentRepository, siteId?: 
 
 export function registerPaymentAdminRoutes(
   app: FastifyInstance,
-  repository: PaymentRepository,
+  repository: PaymentAdminRepository,
 ): void {
   registerAdminManifestRoute(app, paymentAdminManifest);
 

@@ -11,6 +11,7 @@ import type { PrismaClient } from "../../../generated/prisma/index.js";
 import { createPrismaClient } from "../../infrastructure/prisma/prisma-client.js";
 import { PrismaPaymentRepository } from "../../infrastructure/prisma/prisma-payment-repository.js";
 import { registerPaymentAdminRoutes } from "./admin-routes.js";
+import { createPaymentReadRepository } from "./read-repository.js";
 import { registerPaymentRoutes } from "./routes.js";
 import { registerPaymentWebhookRoutes } from "./webhook-routes.js";
 
@@ -40,7 +41,7 @@ export function createPaymentServer(options: CreatePaymentServerOptions = {}) {
   declareRouteAccess(app, "/docs", "admin");
 
   const prisma = options.prisma ?? createPrismaClient();
-  const repository = new PrismaPaymentRepository(prisma);
+  const repository = createPaymentReadRepository(new PrismaPaymentRepository(prisma));
 
   void app.register(async (instance) => {
     registerPaymentRoutes(instance, repository);

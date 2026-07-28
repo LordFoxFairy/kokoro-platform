@@ -40,6 +40,9 @@ describe("paymentEnvSchema", () => {
     ["KOKORO_PAYMENT_WECHAT_PLATFORM_CERT", "certificate"],
     ["STRIPE_WEBHOOK_SECRET", "secret"],
     ["PAYPAL_WEBHOOK_SECRET", "secret"],
+    ["WEBHOOK_SECRET", "secret"],
+    ["KOKORO_PAYMENT_WEBHOOK_SIGNING_SECRET", "secret"],
+    ["STRIPE_WEBHOOK_SIGNING_SECRET", "secret"],
   ])("fails fast with a stable error when deprecated acquisition variable %s is non-empty", (key, value) => {
     let thrown: unknown;
     try {
@@ -50,6 +53,16 @@ describe("paymentEnvSchema", () => {
     expect(thrown).toMatchObject({
       code: "payment.acquisition_env_forbidden",
       variables: [key],
+    });
+  });
+
+  it.each([
+    ["WEBHOOK_URL", "https://example.test/hooks"],
+    ["SECRET_ROTATION_ID", "rotation-1"],
+  ])("does not reject unrelated variable %s", (key, value) => {
+    expect(loadPaymentEnv({ ...required, [key]: value })).toEqual({
+      ...required,
+      KOKORO_PAYMENT_PORT: 4241,
     });
   });
 

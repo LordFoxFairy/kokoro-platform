@@ -6,7 +6,7 @@ import {
   sendError,
 } from "@kokoro/platform-kit";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { PaymentRepository } from "../../domain/repository.js";
+import type { PaymentCatalogRepository } from "./read-repository.js";
 
 export const ACQUISITION_CHANNEL_DISABLED = "ACQUISITION_CHANNEL_DISABLED";
 
@@ -26,7 +26,7 @@ function acquisitionDisabled(request: FastifyRequest, reply: FastifyReply): Fast
   return sendError(reply, 503, ACQUISITION_CHANNEL_DISABLED, DISABLED_MESSAGE, undefined, requestId);
 }
 
-export function registerPaymentRoutes(app: FastifyInstance, repository: PaymentRepository): void {
+export function registerPaymentRoutes(app: FastifyInstance, repository: PaymentCatalogRepository): void {
   registerHealthRoute(app, "payment");
   registerMetricsRoute(app, "payment");
 

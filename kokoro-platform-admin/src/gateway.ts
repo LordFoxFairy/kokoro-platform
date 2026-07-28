@@ -67,6 +67,7 @@ export class GatewayError extends Error {
   constructor(
     message: string,
     readonly statusCode: number,
+    readonly code = "gateway.error",
   ) {
     super(message);
     this.name = "GatewayError";
@@ -141,9 +142,6 @@ export async function proxyResource(
   if (scope.operator && !permits(scope.operator.permissions, resource.requiredPermission)) {
     throw new GatewayError(`permission denied: ${resource.requiredPermission}`, 403);
   }
-  if (scope.operator && scope.siteId !== undefined && !permitsSite(scope.operator.scopeSites, scope.siteId)) {
-    throw new GatewayError(`tenant out of scope: ${scope.siteId}`, 403);
-  }
   const operator = scope.operator;
   if (operator === undefined) {
     throw new GatewayError("operator required for resource access", 403);
@@ -157,22 +155,19 @@ export async function proxyResource(
     return fetchResourceRows(module, route, internalSecret);
   }
 
-  const requestedSites =
-    scope.siteId !== undefined
-      ? [scope.siteId]
-      : operator.scopeSites.includes("*")
-        ? [undefined]
-        : [...new Set(operator.scopeSites)];
-  const batches = await Promise.all(
-    requestedSites.map(async (siteId) => {
-      const rows = await fetchResourceRows(module, route, internalSecret, siteId);
-      return rows.filter((row) => {
-        const rowSiteId = row[scopeField];
-        return typeof rowSiteId === "string" && (siteId === undefined || rowSiteId === siteId);
-      });
-    }),
-  );
-  return batches.flat();
+  const siteId = scope.siteId?.trim();
+  if (!siteId || siteId === "*") {
+    throw new GatewayError("siteId is required for Site-scoped resources", 400, "site_required");
+  }
+  if (!permitsSite(operator.scopeSites, siteId)) {
+    throw new GatewayError(`tenant out of scope: ${siteId}`, 403);
+  }
+
+  const rows = await fetchResourceRows(module, route, internalSecret, siteId);
+  return rows.filter((row) => {
+    const rowSiteId = row[scopeField];
+    return typeof rowSiteId === "string" && rowSiteId === siteId;
+  });
 }
 
 export interface ActionRequest {
@@ -386,7 +381,31 @@ export async function getSites(
   operator: Operator,
   internalSecret = "",
 ): Promise<ResourceRow[]> {
-  return proxyResource(modules, "site", "/admin/sites", { operator }, internalSecret);
+  if (operator.scopeSites.includes("*")) {
+    const module = modules.find((candidate) => candidate.id === "site");
+    if (!module) throw new GatewayError("unknown module: site", 400);
+    const status = await fetchManifest(module, internalSecret);
+    if (!status.online) throw new GatewayError(`module offline: ${status.error}`, 502);
+    const resource = status.manifest.resources.find((candidate) => candidate.route === "/admin/sites");
+    if (!resource) throw new GatewayError("route not allowed for module site: /admin/sites", 403);
+    if (!permits(operator.permissions, resource.requiredPermission)) {
+      throw new GatewayError(`permission denied: ${resource.requiredPermission}`, 403);
+    }
+    const scopeField = resource.siteScopeField;
+    if (scopeField === null) {
+      throw new GatewayError("Site directory must declare its row scope field", 502);
+    }
+    const rows = await fetchResourceRows(module, resource.route, internalSecret);
+    return rows.filter((row) => typeof row[scopeField] === "string");
+  }
+
+  const requestedSites = [...new Set(operator.scopeSites.map((siteId) => siteId.trim()).filter(Boolean))];
+  const batches = await Promise.all(
+    requestedSites.map((siteId) =>
+      proxyResource(modules, "site", "/admin/sites", { operator, siteId }, internalSecret),
+    ),
+  );
+  return batches.flat();
 }
 
 // 功能/页面可见性：只保留 operator 有权读的 resource/nav 及其有权执行的 action。

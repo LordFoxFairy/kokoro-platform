@@ -62,6 +62,18 @@ describe("Site admin list query", () => {
     await app.close();
   });
 
+  it("rejects a wildcard Site selector before reaching the repository", async () => {
+    const listAdminSites = vi.fn().mockResolvedValue([]);
+    const app = Fastify();
+    registerSiteAdminRoutes(app, { listAdminSites } as unknown as SiteRepository);
+
+    const response = await app.inject({ method: "GET", url: "/admin/sites?siteId=*" });
+
+    expect(response.statusCode).toBe(400);
+    expect(listAdminSites).not.toHaveBeenCalled();
+    await app.close();
+  });
+
   it("rejects unknown query keys without reaching the repository", async () => {
     const listAdminSites = vi.fn().mockResolvedValue([]);
     const app = Fastify();

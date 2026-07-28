@@ -12,6 +12,7 @@ const PAYMENT_SOURCE_ROOT = "kokoro-payment/src";
 const HTTP_SOURCE_ALLOWLIST = [
   "kokoro-payment/src/interfaces/http/admin-routes.ts",
   "kokoro-payment/src/interfaces/http/main.ts",
+  "kokoro-payment/src/interfaces/http/read-repository.ts",
   "kokoro-payment/src/interfaces/http/routes.ts",
   "kokoro-payment/src/interfaces/http/schemas.ts",
   "kokoro-payment/src/interfaces/http/server.ts",
@@ -21,6 +22,7 @@ const HTTP_SOURCE_ALLOWLIST = [
 const RUNTIME_ROOTS = [
   "kokoro-payment/src/index.ts",
   "kokoro-payment/src/interfaces/http/main.ts",
+  "kokoro-payment/src/interfaces/http/read-repository.ts",
   "kokoro-payment/src/interfaces/http/server.ts",
   "kokoro-payment/src/module.ts",
   "kokoro-payment/src/interfaces/http/routes.ts",
@@ -46,6 +48,7 @@ const RUNTIME_GRAPH_ALLOWLIST = [
   "kokoro-payment/src/interfaces/admin/schema.ts",
   "kokoro-payment/src/interfaces/http/admin-routes.ts",
   "kokoro-payment/src/interfaces/http/main.ts",
+  "kokoro-payment/src/interfaces/http/read-repository.ts",
   "kokoro-payment/src/interfaces/http/routes.ts",
   "kokoro-payment/src/interfaces/http/schemas.ts",
   "kokoro-payment/src/interfaces/http/server.ts",
@@ -61,6 +64,7 @@ const ACTIVE_POLICY_FILES = [
   "kokoro-payment/src/interfaces/admin/payment-admin-contract.ts",
   "kokoro-payment/src/interfaces/http/admin-routes.ts",
   "kokoro-payment/src/interfaces/http/main.ts",
+  "kokoro-payment/src/interfaces/http/read-repository.ts",
   "kokoro-payment/src/interfaces/http/routes.ts",
   "kokoro-payment/src/interfaces/http/server.ts",
   "kokoro-payment/src/interfaces/http/webhook-routes.ts",
@@ -70,10 +74,11 @@ const ACTIVE_POLICY_FILES = [
 const ACTIVE_IMPORT_ALLOWLIST = new Map([
   ["kokoro-payment/src/index.ts", ["./config/env.js", "./domain/payment-lifecycle.js", "./domain/payment.js", "./domain/provider.js", "./domain/repository.js", "./domain/webhook.js", "./interfaces/admin/manifest.js", "./interfaces/admin/schema.js", "./interfaces/http/schemas.js", "./interfaces/http/server.js", "./module.js"]],
   ["kokoro-payment/src/interfaces/admin/payment-admin-contract.ts", ["./schema.js"]],
-  ["kokoro-payment/src/interfaces/http/admin-routes.ts", ["../../domain/repository.js", "../admin/manifest.js", "@kokoro/platform-kit", "fastify", "zod"]],
+  ["kokoro-payment/src/interfaces/http/admin-routes.ts", ["../admin/manifest.js", "./read-repository.js", "@kokoro/platform-kit", "fastify", "zod"]],
   ["kokoro-payment/src/interfaces/http/main.ts", ["../../config/env.js", "./server.js", "@kokoro/platform-kit"]],
-  ["kokoro-payment/src/interfaces/http/routes.ts", ["../../domain/repository.js", "@kokoro/platform-kit", "fastify"]],
-  ["kokoro-payment/src/interfaces/http/server.ts", ["../../../generated/prisma/index.js", "../../infrastructure/prisma/prisma-client.js", "../../infrastructure/prisma/prisma-payment-repository.js", "./admin-routes.js", "./routes.js", "./webhook-routes.js", "@kokoro/platform-kit", "fastify"]],
+  ["kokoro-payment/src/interfaces/http/read-repository.ts", ["../../domain/repository.js"]],
+  ["kokoro-payment/src/interfaces/http/routes.ts", ["./read-repository.js", "@kokoro/platform-kit", "fastify"]],
+  ["kokoro-payment/src/interfaces/http/server.ts", ["../../../generated/prisma/index.js", "../../infrastructure/prisma/prisma-client.js", "../../infrastructure/prisma/prisma-payment-repository.js", "./admin-routes.js", "./read-repository.js", "./routes.js", "./webhook-routes.js", "@kokoro/platform-kit", "fastify"]],
   ["kokoro-payment/src/interfaces/http/webhook-routes.ts", ["./routes.js", "@kokoro/platform-kit", "fastify"]],
   ["kokoro-payment/src/module.ts", []],
 ]);
@@ -93,6 +98,16 @@ const MUTATING_REPOSITORY_MEMBERS = new Set([
   "upsertSubscription",
 ]);
 
+const PAYMENT_READ_METHODS = [
+  "listOrders",
+  "listPaymentEvents",
+  "listPlans",
+  "listProviders",
+  "listRefunds",
+  "listSubscriptions",
+  "readAdminStats",
+];
+
 const FORBIDDEN_RUNTIME_IDENTIFIERS = new Set([
   "PaymentService",
   "PaymentWebhookService",
@@ -102,8 +117,10 @@ const FORBIDDEN_RUNTIME_IDENTIFIERS = new Set([
   "createWebhookProviderRegistry",
   "enabledProviderKinds",
   "fetch",
+  "globalThis",
   "grantPurchaseCredits",
   "providerSdkFactory",
+  "Reflect",
   "reverseCredits",
   "setInterval",
   "webhookSecretResolver",
@@ -124,7 +141,6 @@ const ALLOWED_DYNAMIC_ROUTE_REGISTRATIONS = new Set([
   "kokoro-payment/src/interfaces/http/routes.ts:POST:route",
 ]);
 
-const DEPRECATED_ENV_PATTERN = /^(?:KOKORO_(?:USER|MODEL|CREDIT|PAYMENT)_BASE_URL|KOKORO_PAYMENT_(?:ENABLED_PROVIDERS|CONFIRM_.+|.*WEBHOOK_SECRET.*|ALIPAY_PUBLIC_KEY|WECHAT_PLATFORM_CERT)|[A-Z][A-Z0-9_]*_WEBHOOK_SECRET)=/mu;
 const FORBIDDEN_SEED_MEMBER = /\.(?:createOrder|recordPaymentEvent|upsertProvider|upsertSubscription|refundOrderAtomically)\s*\(/u;
 
 function normalized(path) {
@@ -209,14 +225,7 @@ function runtimeContentViolations(file, source) {
     if (ts.isIdentifier(node) && FORBIDDEN_RUNTIME_IDENTIFIERS.has(node.text)) {
       violations.push(`${file}: forbidden runtime identifier ${node.text}`);
     }
-    if (
-      !RUNTIME_ENV_READ_ALLOWLIST.has(file) &&
-      ts.isPropertyAccessExpression(node) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      ts.isIdentifier(node.expression.expression) &&
-      node.expression.expression.text === "process" &&
-      node.expression.name.text === "env"
-    ) {
+    if (!RUNTIME_ENV_READ_ALLOWLIST.has(file) && isProcessEnvAccess(node)) {
       violations.push(`${file}: direct environment read ${node.getText(ast)}`);
     }
     ts.forEachChild(node, visit);
@@ -225,10 +234,36 @@ function runtimeContentViolations(file, source) {
   return [...new Set(violations)].sort();
 }
 
+function isProcessEnvAccess(node) {
+  return (
+    ts.isPropertyAccessExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "process" &&
+    node.name.text === "env"
+  );
+}
+
+function bindingPropertyName(node) {
+  const property = node.propertyName ?? node.name;
+  if (ts.isIdentifier(property) || ts.isStringLiteral(property) || ts.isNumericLiteral(property)) {
+    return property.text;
+  }
+  if (ts.isComputedPropertyName(property) && ts.isStringLiteral(property.expression)) {
+    return property.expression.text;
+  }
+  return undefined;
+}
+
 function productionSourceViolations(file, source) {
   const violations = runtimeContentViolations(file, source);
   const ast = sourceFile(file, source);
   const visit = (node) => {
+    if (ts.isBindingElement(node)) {
+      const member = bindingPropertyName(node);
+      if (member && MUTATING_REPOSITORY_MEMBERS.has(member)) {
+        violations.push(`${file}: mutating member ${member}`);
+      }
+    }
     if (ts.isPropertyAccessExpression(node) && MUTATING_REPOSITORY_MEMBERS.has(node.name.text)) {
       violations.push(`${file}: mutating member ${node.name.text}`);
     }
@@ -259,7 +294,100 @@ function productionSourceViolations(file, source) {
 }
 
 function deploymentTemplateViolations(source) {
-  return DEPRECATED_ENV_PATTERN.test(source) ? ["deprecated acquisition setting in .env.example"] : [];
+  for (const line of source.split(/\r?\n/u)) {
+    const match = /^\s*([A-Z][A-Z0-9_]*)\s*=/u.exec(line);
+    if (!match) continue;
+    const key = match[1];
+    if (
+      (key.includes("WEBHOOK") && key.includes("SECRET")) ||
+      /^KOKORO_(?:USER|MODEL|CREDIT|PAYMENT)_BASE_URL$/u.test(key) ||
+      /^KOKORO_PAYMENT_(?:ENABLED_PROVIDERS|CONFIRM_.+|ALIPAY_PUBLIC_KEY|WECHAT_PLATFORM_CERT)$/u.test(key)
+    ) {
+      return ["deprecated acquisition setting in .env.example"];
+    }
+  }
+  return [];
+}
+
+function functionParameterType(source, functionName, parameterIndex) {
+  const ast = sourceFile("fixture.ts", source);
+  let result;
+  const visit = (node) => {
+    if (
+      ts.isFunctionDeclaration(node) &&
+      node.name?.text === functionName &&
+      node.parameters[parameterIndex]?.type
+    ) {
+      result = node.parameters[parameterIndex].type.getText(ast);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(ast);
+  return result;
+}
+
+function paymentReadBoundaryViolations(sources) {
+  const violations = [];
+  const routes = sources.get("routes") ?? "";
+  const adminRoutes = sources.get("adminRoutes") ?? "";
+  const adapter = sources.get("adapter") ?? "";
+  const server = sources.get("server") ?? "";
+
+  for (const [name, source, functionName, expectedType] of [
+    ["routes", routes, "registerPaymentRoutes", "PaymentCatalogRepository"],
+    ["admin-routes", adminRoutes, "registerPaymentAdminRoutes", "PaymentAdminRepository"],
+  ]) {
+    const parsed = importsFrom(`${name}.ts`, source);
+    if (parsed.imports.includes("../../domain/repository.js")) {
+      violations.push(`${name}: full PaymentRepository import is forbidden`);
+    }
+    if (!parsed.imports.includes("./read-repository.js")) {
+      violations.push(`${name}: named read repository port import is required`);
+    }
+    if (functionParameterType(source, functionName, 1) !== expectedType) {
+      violations.push(`${name}: repository parameter must be ${expectedType}`);
+    }
+  }
+
+  const adapterAst = sourceFile("read-repository.ts", adapter);
+  let declaredMethods = [];
+  let exposedMethods = [];
+  const visitAdapter = (node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === "PAYMENT_READ_METHODS") {
+      let initializer = node.initializer;
+      if (initializer && ts.isAsExpression(initializer)) initializer = initializer.expression;
+      if (initializer && ts.isArrayLiteralExpression(initializer)) {
+        declaredMethods = initializer.elements.filter(ts.isStringLiteral).map((entry) => entry.text).sort();
+      }
+    }
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === "Object" &&
+      node.expression.name.text === "freeze" &&
+      node.arguments[0] &&
+      ts.isObjectLiteralExpression(node.arguments[0])
+    ) {
+      exposedMethods = node.arguments[0].properties
+        .map((property) => property.name)
+        .filter(Boolean)
+        .map((name) => name.text)
+        .sort();
+    }
+    ts.forEachChild(node, visitAdapter);
+  };
+  visitAdapter(adapterAst);
+  if (JSON.stringify(declaredMethods) !== JSON.stringify(PAYMENT_READ_METHODS)) {
+    violations.push("adapter: PAYMENT_READ_METHODS must be exact");
+  }
+  if (JSON.stringify(exposedMethods) !== JSON.stringify(PAYMENT_READ_METHODS)) {
+    violations.push("adapter: runtime facade must expose exactly the read methods");
+  }
+  if (!server.includes("const repository = createPaymentReadRepository(new PrismaPaymentRepository(prisma));")) {
+    violations.push("server: full repository must be narrowed at construction");
+  }
+  return violations.sort();
 }
 
 function seedViolations(source) {
@@ -303,6 +431,18 @@ test("every active composition file has an exact direct-import allowlist", async
     const parsed = importsFrom(file, await readFile(resolve(ROOT, file), "utf8"));
     assert.deepEqual([...new Set(parsed.imports)].sort(), allowed, file);
   }
+});
+
+test("Payment HTTP composition exposes only exact read repository ports", async () => {
+  assert.deepEqual(
+    paymentReadBoundaryViolations(new Map([
+      ["routes", await readFile(resolve(ROOT, "kokoro-payment/src/interfaces/http/routes.ts"), "utf8")],
+      ["adminRoutes", await readFile(resolve(ROOT, "kokoro-payment/src/interfaces/http/admin-routes.ts"), "utf8")],
+      ["adapter", await readFile(resolve(ROOT, "kokoro-payment/src/interfaces/http/read-repository.ts"), "utf8")],
+      ["server", await readFile(resolve(ROOT, "kokoro-payment/src/interfaces/http/server.ts"), "utf8")],
+    ])),
+    [],
+  );
 });
 
 test("deployment template and catalogue seed remain acquisition-free", async () => {
@@ -353,6 +493,15 @@ test("production policy detector bears weight for every acquisition mutation and
     ...[...MUTATING_REPOSITORY_MEMBERS].map((member) => `await repository.${member}({});`),
     ...[...FORBIDDEN_RUNTIME_IDENTIFIERS].map((identifier) => `void ${identifier};`),
     "void process.env.STRIPE_WEBHOOK_SECRET;",
+    "void process.env['STRIPE_WEBHOOK_SECRET'];",
+    "const env = process.env; void env['STRIPE_WEBHOOK_SECRET'];",
+    "void globalThis.fetch;",
+    "void globalThis['fetch'];",
+    "const send = globalThis['fetch']; void send;",
+    "const { createOrder: write } = repository; void write;",
+    "const { ['createOrder']: write } = repository; void write;",
+    "const get = Reflect.get; void get(repository, 'createOrder');",
+    "void Reflect.get(repository, 'createOrder');",
     "app.post('/orders/reopen', async () => {});",
     "app.options('/orders', async () => {});",
     "app.post(buildRoute(), async () => {});",
@@ -382,10 +531,47 @@ test("template and seed detectors bear weight against provider, worker, secret, 
     "KOKORO_PAYMENT_WEBHOOK_SECRET_STRIPE=secret",
     "STRIPE_WEBHOOK_SECRET=secret",
     "PAYPAL_WEBHOOK_SECRET=secret",
+    "WEBHOOK_SECRET=secret",
+    "KOKORO_PAYMENT_WEBHOOK_SIGNING_SECRET=secret",
+    "STRIPE_WEBHOOK_SIGNING_SECRET=secret",
   ]) {
     assert.deepEqual(deploymentTemplateViolations(fixture), ["deprecated acquisition setting in .env.example"]);
   }
+  for (const fixture of ["WEBHOOK_URL=https://example.test/hooks", "SECRET_ROTATION_ID=rotation-1"]) {
+    assert.deepEqual(deploymentTemplateViolations(fixture), []);
+  }
   for (const member of ["createOrder", "recordPaymentEvent", "upsertProvider", "upsertSubscription", "refundOrderAtomically"]) {
     assert.deepEqual(seedViolations(`await repo.${member}({});`), ["catalog seed contains acquisition mutation"]);
+  }
+});
+
+test("read-boundary detector bears weight against full-repository and adapter-shape regressions", async () => {
+  const routes = await readFile(resolve(ROOT, "kokoro-payment/src/interfaces/http/routes.ts"), "utf8");
+  const adminRoutes = await readFile(resolve(ROOT, "kokoro-payment/src/interfaces/http/admin-routes.ts"), "utf8");
+  const server = await readFile(resolve(ROOT, "kokoro-payment/src/interfaces/http/server.ts"), "utf8");
+  const safeAdapter = `
+    export const PAYMENT_READ_METHODS = ${JSON.stringify(PAYMENT_READ_METHODS)} as const;
+    export function createPaymentReadRepository(repository) {
+      return Object.freeze({
+        listOrders: repository.listOrders,
+        listPaymentEvents: repository.listPaymentEvents,
+        listPlans: repository.listPlans,
+        listProviders: repository.listProviders,
+        listRefunds: repository.listRefunds,
+        listSubscriptions: repository.listSubscriptions,
+        readAdminStats: repository.readAdminStats,
+      });
+    }
+  `;
+  for (const adapter of [
+    safeAdapter.replace("readAdminStats: repository.readAdminStats,", "createOrder: repository.createOrder,"),
+    safeAdapter.replace('"readAdminStats"]', '"readAdminStats","createOrder"]'),
+  ]) {
+    assert.ok(paymentReadBoundaryViolations(new Map([
+      ["routes", routes],
+      ["adminRoutes", adminRoutes],
+      ["adapter", adapter],
+      ["server", server],
+    ])).length > 0);
   }
 });

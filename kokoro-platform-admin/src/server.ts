@@ -244,7 +244,7 @@ export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps
       return sendData(reply, await getSites(modules, operator, deps.internalSecret ?? ""));
     } catch (error) {
       if (error instanceof GatewayError) {
-        return sendError(reply, error.statusCode, "gateway.error", error.message);
+        return sendError(reply, error.statusCode, error.code, error.message);
       }
       return sendError(reply, 502, "gateway.error", error instanceof Error ? error.message : String(error));
     }
@@ -265,7 +265,7 @@ export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps
       );
     } catch (error) {
       if (error instanceof GatewayError) {
-        return sendError(reply, error.statusCode, "gateway.error", error.message);
+        return sendError(reply, error.statusCode, error.code, error.message);
       }
       return sendError(reply, 502, "gateway.error", error instanceof Error ? error.message : String(error));
     }
@@ -305,7 +305,7 @@ export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps
       return sendData(reply, rows);
     } catch (error) {
       if (error instanceof GatewayError) {
-        return sendError(reply, error.statusCode, "gateway.error", error.message);
+        return sendError(reply, error.statusCode, error.code, error.message);
       }
       return sendError(reply, 502, "gateway.error", error instanceof Error ? error.message : String(error));
     }
@@ -359,7 +359,7 @@ export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps
       return sendData(reply, result, 200, ctx.requestId);
     } catch (error) {
       if (error instanceof GatewayError) {
-        return sendError(reply, error.statusCode, "gateway.error", error.message, undefined, ctx.requestId);
+        return sendError(reply, error.statusCode, error.code, error.message, undefined, ctx.requestId);
       }
       return sendError(reply, 502, "gateway.error", error instanceof Error ? error.message : String(error), undefined, ctx.requestId);
     }

@@ -19,11 +19,18 @@ export class DeprecatedPaymentAcquisitionEnvError extends Error {
   }
 }
 
-const DEPRECATED_ACQUISITION_ENV = /^(?:KOKORO_PAYMENT_(?:ENABLED_PROVIDERS|CONFIRM_.+|.*WEBHOOK_SECRET.*|ALIPAY_PUBLIC_KEY|WECHAT_PLATFORM_CERT)|[A-Z][A-Z0-9_]*_WEBHOOK_SECRET)$/u;
+const DEPRECATED_ACQUISITION_ENV = /^KOKORO_PAYMENT_(?:ENABLED_PROVIDERS|CONFIRM_.+|ALIPAY_PUBLIC_KEY|WECHAT_PLATFORM_CERT)$/u;
+
+function isDeprecatedAcquisitionEnv(key: string): boolean {
+  return (
+    DEPRECATED_ACQUISITION_ENV.test(key) ||
+    (key.includes("WEBHOOK") && key.includes("SECRET"))
+  );
+}
 
 export function loadPaymentEnv(env: NodeJS.ProcessEnv = process.env): PaymentEnv {
   const forbidden = Object.entries(env)
-    .filter(([key, value]) => DEPRECATED_ACQUISITION_ENV.test(key) && value?.trim())
+    .filter(([key, value]) => isDeprecatedAcquisitionEnv(key) && value?.trim())
     .map(([key]) => key)
     .sort();
   if (forbidden.length > 0) {

@@ -39,7 +39,9 @@ export function registerSiteAdminRoutes(app: FastifyInstance, repository: SiteRe
   }
 }
 
-const adminListQuerySchema = z.object({ siteId: z.string().trim().min(1).optional() }).strict();
+const adminListQuerySchema = z
+  .object({ siteId: z.string().trim().min(1).refine((siteId) => siteId !== "*").optional() })
+  .strict();
 
 function getRequestId(value: string | string[] | undefined): string {
   const single = Array.isArray(value) ? value[0] : value;
