@@ -16,6 +16,8 @@ async function init(): Promise<void> {
     repository: new MongoSkillRepository(hub.collections),
     mcpRepository: new MongoMcpServerRepository(hub.collections),
     quotaLimits: { maxPackages: 100, maxBytes: 2048 },
+    mcpEnvRefAllowlist: new Set(["GH_MCP_TOKEN"]),
+    mcpUrlResolver: async () => ["93.184.216.34"],
   });
 }
 

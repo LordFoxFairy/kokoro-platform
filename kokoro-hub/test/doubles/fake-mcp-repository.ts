@@ -16,6 +16,7 @@ export class FakeMcpServerRepository implements McpServerRepository {
   failNextWith: Error | null = null;
   readonly enabledCalls: { scope: string; name: string; enabled: boolean }[] = [];
   readonly deletedCalls: { scope: string; name: string }[] = [];
+  readonly upsertCalls: UpsertMcpServerInput[] = [];
 
   private throwIfArmed(): void {
     if (this.failNextWith !== null) {
@@ -51,6 +52,7 @@ export class FakeMcpServerRepository implements McpServerRepository {
 
   async upsertServer(input: UpsertMcpServerInput): Promise<McpServerView> {
     this.throwIfArmed();
+    this.upsertCalls.push(input);
     return {
       scope: input.scope,
       name: input.name,

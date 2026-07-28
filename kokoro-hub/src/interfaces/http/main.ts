@@ -9,6 +9,7 @@ import { MongoMcpServerRepository } from "../../infrastructure/mongo/mongo-mcp-s
 import { MongoSkillRepository } from "../../infrastructure/mongo/mongo-skill-repository.js";
 import { makePackageStore } from "../../infrastructure/packages/package-store.js";
 import { HttpMembershipAuthorizer } from "./membership-authorizer.js";
+import { parseEnvRefAllowlist } from "./mcp-server-ref.js";
 import { createHubServer } from "./server.js";
 
 const env = loadHubEnv();
@@ -67,6 +68,9 @@ await startHttpServer({
       membershipAuthorizer,
       // self 面 MCP mutation 部署门：KOKORO_HUB_MCP_MUTATION=on 才开（HUB-CONSIST 跨仓 E2E 过后）。
       mcpMutationEnabled: env.KOKORO_HUB_MCP_MUTATION === "on",
+      mcpEnvRefAllowlist: parseEnvRefAllowlist(env.KOKORO_HUB_ENV_REF_ALLOWLIST),
+      // 本地显式逃生口；生产即使误配也保持 SSRF 防线关闭逃生口。
+      allowInsecureMcpUrl: !isProductionEnv() && env.KOKORO_HUB_ALLOW_INSECURE_URL === "1",
       onClose: () => client.close(),
     }),
 });

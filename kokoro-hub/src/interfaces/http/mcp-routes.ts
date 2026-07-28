@@ -14,9 +14,21 @@ import type { McpHubService } from "../../application/mcp-hub-service.js";
 import { McpServerNotFoundError } from "../../domain/errors.js";
 import { OFFICIAL_SCOPE } from "../../domain/constants.js";
 import { registerMcpServerBodySchema } from "./mcp-schemas.js";
+import { isEnvRefAllowed, parseSecretRef } from "./mcp-server-ref.js";
+import { validateMcpServerUrl } from "./mcp-url-guard.js";
 import { nameParamsSchema, namespaceQuerySchema, scopeNameParamsSchema } from "./schemas.js";
 
-export function registerMcpRoutes(app: FastifyInstance, service: McpHubService): void {
+export interface AdminMcpAdmissionOptions {
+  envRefAllowlist: ReadonlySet<string>;
+  allowInsecureUrl: boolean;
+  urlResolver?: (hostname: string) => Promise<string[]>;
+}
+
+export function registerMcpRoutes(
+  app: FastifyInstance,
+  service: McpHubService,
+  admission: AdminMcpAdmissionOptions,
+): void {
   app.post(
     "/hub/admin/mcp/servers",
     {
@@ -30,13 +42,41 @@ export function registerMcpRoutes(app: FastifyInstance, service: McpHubService):
       const requestId = readRequestContext(request.headers).requestId;
       try {
         const body = registerMcpServerBodySchema.parse(request.body);
+        const secretRef = body.secret_ref ?? null;
+        if (secretRef !== null) {
+          const parsedRef = parseSecretRef(secretRef);
+          if (parsedRef.kind !== "env" || !isEnvRefAllowed(parsedRef.varName, admission.envRefAllowlist)) {
+            return sendError(
+              reply,
+              400,
+              "hub.mcp_secret_ref_forbidden",
+              "MCP env secret_ref 未在部署白名单内",
+              undefined,
+              requestId,
+            );
+          }
+        }
+        const urlCheck = await validateMcpServerUrl(body.url, {
+          allowInsecure: admission.allowInsecureUrl,
+          ...(admission.urlResolver === undefined ? {} : { resolver: admission.urlResolver }),
+        });
+        if (!urlCheck.ok) {
+          return sendError(
+            reply,
+            400,
+            "hub.mcp_url_forbidden",
+            `MCP url 预校验未通过：${urlCheck.reason}`,
+            undefined,
+            requestId,
+          );
+        }
         const server = await service.register({
           scope: body.scope,
           name: body.name,
           transport: body.transport,
           url: body.url,
           allowedTools: body.allowed_tools,
-          secretRef: body.secret_ref ?? null,
+          secretRef,
         });
         return sendData(reply, { server }, 201, requestId);
       } catch (error) {

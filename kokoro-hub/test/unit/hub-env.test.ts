@@ -26,4 +26,13 @@ describe("hub env", () => {
   it("rejects an out-of-range port", () => {
     expect(() => loadHubEnv({ KOKORO_HUB_PORT: "70000" })).toThrow();
   });
+
+  it("preserves the MCP env-ref allowlist and insecure-url deployment switches", () => {
+    const env = loadHubEnv({
+      KOKORO_HUB_ENV_REF_ALLOWLIST: "GH_MCP_TOKEN,SLACK_MCP_TOKEN",
+      KOKORO_HUB_ALLOW_INSECURE_URL: "1",
+    });
+    expect(env.KOKORO_HUB_ENV_REF_ALLOWLIST).toBe("GH_MCP_TOKEN,SLACK_MCP_TOKEN");
+    expect(env.KOKORO_HUB_ALLOW_INSECURE_URL).toBe("1");
+  });
 });

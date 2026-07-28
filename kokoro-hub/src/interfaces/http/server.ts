@@ -46,6 +46,10 @@ export interface CreateHubServerOptions {
   mcpMutationEnabled?: boolean;
   // self 面 URL 预校验解析器注入（测试用）；缺省用真 DNS。
   mcpUrlResolver?: (hostname: string) => Promise<string[]>;
+  // admin/official MCP 注册 env:VAR 准入白名单；缺省空集，所有 env 引用 fail-closed。
+  mcpEnvRefAllowlist?: ReadonlySet<string>;
+  // 仅本地/test 显式启用；生产装配永不传 true。
+  allowInsecureMcpUrl?: boolean;
 }
 
 // hub 所需 caller 凭据（HUB-AUTHZ 三面）：
@@ -115,7 +119,11 @@ export function createHubServer(options: CreateHubServerOptions) {
     registerHubRoutes(instance, service);
     registerUploadRoutes(instance, uploadService);
     if (mcpService !== null) {
-      registerMcpRoutes(instance, mcpService);
+      registerMcpRoutes(instance, mcpService, {
+        envRefAllowlist: options.mcpEnvRefAllowlist ?? new Set(),
+        allowInsecureUrl: options.allowInsecureMcpUrl ?? false,
+        ...(options.mcpUrlResolver === undefined ? {} : { urlResolver: options.mcpUrlResolver }),
+      });
     }
   });
 

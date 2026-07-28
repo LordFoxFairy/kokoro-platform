@@ -12,6 +12,9 @@ const app: FastifyInstance = createHubServer({
   repository: new FakeSkillRepository(),
   mcpRepository: mcpRepo,
   quotaLimits: { maxPackages: 10, maxBytes: 1024 * 1024 },
+  mcpEnvRefAllowlist: new Set(["GH_MCP_TOKEN"]),
+  mcpUrlResolver: async (hostname) =>
+    hostname === "blocked.example" ? ["169.254.169.254"] : ["93.184.216.34"],
 });
 
 const registerPayload = {
@@ -70,5 +73,53 @@ describe("mcp routes error mapping", () => {
     });
     expect(response.statusCode).toBe(201);
     expect(response.json().data.server).toMatchObject({ name: "github", secret_ref: "env:GH_MCP_TOKEN" });
+  });
+
+  it("rejects an env secret ref outside the deployment allowlist before persistence", async () => {
+    const before = mcpRepo.upsertCalls.length;
+    const response = await app.inject({
+      method: "POST",
+      url: "/hub/admin/mcp/servers",
+      payload: { ...registerPayload, secret_ref: "env:OTHER_MCP_TOKEN" },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe("hub.mcp_secret_ref_forbidden");
+    expect(mcpRepo.upsertCalls).toHaveLength(before);
+  });
+
+  it("rejects non-env secret references before persistence", async () => {
+    const before = mcpRepo.upsertCalls.length;
+    const response = await app.inject({
+      method: "POST",
+      url: "/hub/admin/mcp/servers",
+      payload: { ...registerPayload, secret_ref: "secret:legacy/github" },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe("hub.mcp_secret_ref_forbidden");
+    expect(mcpRepo.upsertCalls).toHaveLength(before);
+  });
+
+  it.each([
+    "http://mcp.example/github",
+    "https://127.0.0.1/github",
+    "https://10.0.0.1/github",
+    "https://169.254.10.1/github",
+    "https://100.64.0.1/github",
+    "https://169.254.169.254/latest",
+    "https://[::ffff:169.254.169.254]/latest",
+    "https://blocked.example/latest",
+  ])("rejects forbidden URL transport target %s before persistence", async (url) => {
+    const before = mcpRepo.upsertCalls.length;
+    const response = await app.inject({
+      method: "POST",
+      url: "/hub/admin/mcp/servers",
+      payload: { ...registerPayload, url },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe("hub.mcp_url_forbidden");
+    expect(mcpRepo.upsertCalls).toHaveLength(before);
   });
 });

@@ -16,6 +16,8 @@ Hub does not execute Agent tools, own GA graph nodes, or sit on every-run capabi
 ## Public boundary
 `src/interfaces/http` and `src/interfaces/admin` expose the module; package/storage contracts live under `src/contract` and application ports.
 
+Admin MCP registration is an admission boundary, not a raw repository proxy: `env:VAR` references are accepted only when `VAR` is in `KOKORO_HUB_ENV_REF_ALLOWLIST`, and URL transports are resolved before persistence. The default policy requires HTTPS and rejects loopback, private, link-local, CGNAT, metadata, multicast/reserved, IPv4-mapped forbidden IPv6, and any DNS answer in those ranges. `KOKORO_HUB_ALLOW_INSECURE_URL=1` is honored only outside production for explicit local/test operation.
+
 ## Callers and dependencies
 Admin and Platform orchestration write through Hub. Agent runtime consumes immutable grants/snapshots through its declared read boundary.
 
@@ -26,6 +28,7 @@ Hub owns capability catalog/revision metadata and package references in Mongo/S3
 
 ## Runtime and security
 Uploads require validation, content addressing, bounded size/path rules, trusted operator context, and secret-free metadata.
+`createHubServer` receives the parsed env-ref allowlist and URL resolver policy explicitly; the real HTTP assembly derives them from validated env. Missing admission configuration fails closed rather than letting fake/test assembly bypass the same contract.
 
 ## Idempotency, failure, and recovery
 Revision/CAS and content hashes handle duplicate publication; package-first metadata-second writes prevent dangling live references.
