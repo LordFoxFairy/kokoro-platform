@@ -44,16 +44,16 @@ export function registerPaymentAdminRoutes(
   app.get("/admin/payments/stats", async (_request, reply) => sendData(reply, await repository.readAdminStats()));
 
   app.post("/admin/payments/grant-plan", async (request, reply) => {
+    const ctx = readRequestContext(request.headers);
     try {
-      const ctx = readRequestContext(request.headers);
       if (ctx.siteId === null) {
         return sendError(reply, 400, "payment.site_required", "缺少站点上下文", undefined, ctx.requestId);
       }
       const { teamId, planId } = grantPlanRequestSchema.parse(request.body);
       const order = await service.grantPlanToTeam(ctx.siteId, teamId, planId, ctx.requestId);
-      return sendData(reply, order);
+      return sendData(reply, order, 200, ctx.requestId);
     } catch (error) {
-      return handlePaymentError(error, reply, "payment.grant_plan_failed");
+      return handlePaymentError(error, reply, "payment.grant_plan_failed", ctx.requestId);
     }
   });
 

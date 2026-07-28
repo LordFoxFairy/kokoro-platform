@@ -228,55 +228,60 @@ export function registerPaymentRoutes(app: FastifyInstance, service: PaymentServ
   });
 }
 
-export function handlePaymentError(error: unknown, reply: FastifyReply, fallbackCode: string) {
+export function handlePaymentError(
+  error: unknown,
+  reply: FastifyReply,
+  fallbackCode: string,
+  requestId?: string,
+) {
   if (error instanceof ZodError) {
-    return sendZodError(reply, error);
+    return sendZodError(reply, error, requestId);
   }
 
   if (error instanceof PaymentIdempotencyConflictError) {
-    return sendError(reply, 409, "payment.idempotency_conflict", "幂等键已被不同请求使用");
+    return sendError(reply, 409, "payment.idempotency_conflict", "幂等键已被不同请求使用", undefined, requestId);
   }
 
   if (isPaymentLifecycleError(error)) {
-    return sendError(reply, error.statusCode, error.code, error.message);
+    return sendError(reply, error.statusCode, error.code, error.message, undefined, requestId);
   }
 
   if (isWebhookError(error)) {
-    return sendError(reply, error.statusCode, error.code, error.message);
+    return sendError(reply, error.statusCode, error.code, error.message, undefined, requestId);
   }
 
   if (error instanceof PaymentProviderNotFoundError) {
-    return sendError(reply, 404, "payment.provider_not_found", "支付 provider 配置不存在");
+    return sendError(reply, 404, "payment.provider_not_found", "支付 provider 配置不存在", undefined, requestId);
   }
 
   if (error instanceof PaymentEventNotFoundError) {
-    return sendError(reply, 404, "payment.event_not_found", "支付事件不存在");
+    return sendError(reply, 404, "payment.event_not_found", "支付事件不存在", undefined, requestId);
   }
 
   if (error instanceof OrderNotFoundError) {
-    return sendError(reply, 404, "payment.order_not_found", "订单不存在");
+    return sendError(reply, 404, "payment.order_not_found", "订单不存在", undefined, requestId);
   }
 
   if (error instanceof PlanNotFoundError) {
-    return sendError(reply, 404, "payment.plan_not_found", "套餐不存在");
+    return sendError(reply, 404, "payment.plan_not_found", "套餐不存在", undefined, requestId);
   }
 
   if (error instanceof OrderNotConfirmableError) {
-    return sendError(reply, 409, "payment.order_not_confirmable", "订单当前状态不可确认");
+    return sendError(reply, 409, "payment.order_not_confirmable", "订单当前状态不可确认", undefined, requestId);
   }
 
   if (error instanceof OrderNotRefundableError) {
-    return sendError(reply, 409, "payment.order_not_refundable", "订单当前状态不可退款");
+    return sendError(reply, 409, "payment.order_not_refundable", "订单当前状态不可退款", undefined, requestId);
   }
 
   if (error instanceof OrderAmountMismatchError) {
-    return sendError(reply, 409, "payment.order_amount_mismatch", "订单金额与套餐定价不匹配");
+    return sendError(reply, 409, "payment.order_amount_mismatch", "订单金额与套餐定价不匹配", undefined, requestId);
   }
 
   if (error instanceof CheckoutUnavailableError) {
     // 501 未实现：本站未接入托管收银台 provider（诚实态，web 据此禁用购买按钮）。
-    return sendError(reply, 501, "payment.checkout_unavailable", "支付渠道未配置");
+    return sendError(reply, 501, "payment.checkout_unavailable", "支付渠道未配置", undefined, requestId);
   }
 
-  return sendError(reply, 500, fallbackCode, "支付操作失败");
+  return sendError(reply, 500, fallbackCode, "支付操作失败", undefined, requestId);
 }

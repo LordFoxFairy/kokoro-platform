@@ -152,7 +152,8 @@ export class PaymentService {
     return recovered;
   }
 
-  // WHY: 管理员不走支付直接发权益：建单后立即确认，复用既有发放路径。
+  // WHY: 管理员不走支付直接发权益：site + request 锁定同一订单目标，重放复用既有 paid 单，
+  // 再走 confirmOrder 的 paid 快返，避免重复发放。
   async grantPlanToTeam(
     siteId: string,
     teamId: string,
@@ -171,7 +172,7 @@ export class PaymentService {
       planId,
       amountMinor: plan.amountMinor,
       currency: plan.currency,
-      idempotencyKey: randomUUID(),
+      idempotencyKey: `admin-grant:${siteId}:${requestId}`,
     });
 
     return this.confirmOrder(order.id, requestId);
