@@ -102,6 +102,39 @@ function assertArtifactGate(workflow) {
   assert.equal(buildCommands[0].step, build);
 }
 
+function assertIntegrationGate(workflow) {
+  const { document, jobs } = parseWorkflow(workflow);
+  const integration = requireJob(jobs, "integration");
+  const artifact = requireJob(jobs, "artifact");
+  assertNoBypass(integration, "integration job");
+  assert.equal(Object.hasOwn(integration, "shell"), false, "integration job must not override shell");
+  assert.equal(Object.hasOwn(integration, "defaults"), false, "integration defaults are forbidden");
+  assert.equal(Object.hasOwn(document, "defaults"), false, "workflow defaults are forbidden");
+  assert.deepEqual(artifact.needs, ["gates", "integration"]);
+
+  const namedSteps = integration.steps.filter(
+    (step) => step !== null && typeof step === "object" && step.name === "integration tests",
+  );
+  assert.equal(namedSteps.length, 1, "integration job must contain exactly one named integration test step");
+  const integrationStep = namedSteps[0];
+  assert.equal(integration.steps.at(-1), integrationStep, "integration tests must be the final integration step");
+  assert.equal(integrationStep.run, "pnpm test:integration");
+  assertNoBypass(integrationStep, "integration test step");
+  assert.equal(Object.hasOwn(integrationStep, "shell"), false, "integration test step must not override shell");
+  assert.equal(Object.hasOwn(integrationStep, "defaults"), false, "integration test step must not declare defaults");
+
+  const commandSteps = allWorkflowSteps(jobs).filter(
+    ({ step }) =>
+      step !== null &&
+      typeof step === "object" &&
+      typeof step.run === "string" &&
+      step.run.includes("pnpm test:integration"),
+  );
+  assert.equal(commandSteps.length, 1, "integration test command must be unique across all jobs");
+  assert.equal(commandSteps[0].jobName, "integration");
+  assert.equal(commandSteps[0].step, integrationStep);
+}
+
 test("platform CI is lock-driven and separates local from integration gates", async () => {
   const workflow = await readFile(resolve(root, ".github/workflows/ci.yml"), "utf8");
   const packageJson = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
@@ -114,8 +147,7 @@ test("platform CI is lock-driven and separates local from integration gates", as
   assert.match(workflow, /pnpm lint/u);
   assert.match(workflow, /pnpm typecheck/u);
   assert.match(workflow, /pnpm test/u);
-  assert.match(workflow, /^\s{2}integration:/mu);
-  assert.match(workflow, /pnpm test:integration/u);
+  assertIntegrationGate(workflow);
   assert.match(workflow, /mysql:/u);
   assert.match(workflow, /mongo:/u);
   assert.match(workflow, /redis:/u);
@@ -193,6 +225,42 @@ test("the artifact contract rejects bypass, defaults, duplicate, comment, and pl
     assert.notEqual(invalid, workflow, "mutation fixture must alter the workflow");
     assert.doesNotThrow(() => parse(invalid), "mutation fixture must remain valid YAML");
     assert.throws(() => assertArtifactGate(invalid));
+  }
+});
+
+test("the integration contract rejects bypass, defaults, duplicate, comment, and placement mutations", async () => {
+  const workflow = await readFile(resolve(root, ".github/workflows/ci.yml"), "utf8");
+  const integrationBlock = "      - name: integration tests\n        run: pnpm test:integration\n";
+  const invalidWorkflows = [
+    workflow.replace("  integration:\n", "  integration:\n    if: always()\n"),
+    workflow.replace("  integration:\n", "  integration:\n    continue-on-error: true\n"),
+    workflow.replace("  integration:\n", "  integration:\n    shell: bash\n"),
+    workflow.replace(integrationBlock, "      - name: integration tests\n        if: always()\n        run: pnpm test:integration\n"),
+    workflow.replace(integrationBlock, "      - name: integration tests\n        continue-on-error: true\n        run: pnpm test:integration\n"),
+    workflow.replace("run: pnpm test:integration", "run: pnpm test:integration || true"),
+    workflow.replace(integrationBlock, "      - name: integration tests\n        shell: bash\n        run: pnpm test:integration\n"),
+    workflow.replace(integrationBlock, "      - name: integration tests\n        defaults: {}\n        run: pnpm test:integration\n"),
+    workflow.replace(
+      "  integration:\n    runs-on: ubuntu-latest\n",
+      "  integration:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        shell: bash\n",
+    ),
+    workflow.replace("jobs:\n", "defaults:\n  run:\n    shell: bash\n\njobs:\n"),
+    workflow.replace(integrationBlock, `${integrationBlock}      - name: duplicate integration\n        run: pnpm test:integration\n`),
+    workflow.replace(integrationBlock, "      # run: pnpm test:integration\n"),
+    workflow.replace(integrationBlock, `${integrationBlock}      - run: echo trailing\n`),
+    workflow
+      .replace(integrationBlock, "      - name: integration tests\n        run: echo misplaced\n")
+      .replace(
+        "  artifact:\n",
+        "  integration-copy:\n    runs-on: ubuntu-latest\n    steps:\n      - run: pnpm test:integration\n\n  artifact:\n",
+      ),
+    workflow.replace("needs: [gates, integration]", "needs: [gates]"),
+  ];
+
+  for (const invalid of invalidWorkflows) {
+    assert.notEqual(invalid, workflow, "mutation fixture must alter the workflow");
+    assert.doesNotThrow(() => parse(invalid), "mutation fixture must remain valid YAML");
+    assert.throws(() => assertIntegrationGate(invalid));
   }
 });
 

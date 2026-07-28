@@ -48,6 +48,16 @@ function assertProductionDockerfile(dockerfile) {
 
   const target = command.at(-1);
   const copies = [...runtime.matchAll(/^COPY(?:\s+--[^\s]+)*\s+([^\s]+)\s+([^\s]+)$/gmu)];
+  const developmentSegment = /(?:^|[-_.])(?:src|test|tests|coverage|dev)(?:$|[-_.])/u;
+  for (const copy of copies) {
+    const [source, destination] = [copy[1], copy[2]].map((value) => value.replace(/^\.\//u, ""));
+    const paths = [source, destination];
+    assert.equal(
+      paths.some((path) => /(?:\.tsx?|\.map)$/u.test(path) || path.split("/").some((segment) => developmentSegment.test(segment))),
+      false,
+      `runtime COPY must not include development source: ${source} -> ${destination}`,
+    );
+  }
   const entrypointCopy = copies.find((match) => match[2].replace(/^\.\//u, "") === target);
   assert.ok(entrypointCopy, `runtime CMD target ${target} must be copied to the same image path`);
   assert.equal(entrypointCopy[1], target, "runtime entrypoint source and destination must stay aligned");
@@ -72,6 +82,20 @@ test("the artifact gate rejects a targeted runtime entrypoint COPY mutation", as
   );
   assert.notEqual(mutated, dockerfile, "mutation fixture must alter the entrypoint COPY");
   assert.throws(() => assertProductionDockerfile(mutated), /must be copied to the same image path/u);
+});
+
+test("the artifact gate rejects source and disguised source-tree COPY mutations", async () => {
+  const dockerfile = await readFile(resolve(root, "deploy/docker/Dockerfile"), "utf8");
+  const marker = "RUN node /opt/kokoro/verify-production-image.mjs /app";
+  const mutations = [
+    "COPY --from=build /app/kokoro-user/src/index.ts ./kokoro-user/dist/leaked-source.ts",
+    "COPY --from=build /app/kokoro-user/src ./kokoro-user/dist/leaked-src",
+  ];
+  for (const copy of mutations) {
+    const mutated = dockerfile.replace(marker, `${copy}\n${marker}`);
+    assert.notEqual(mutated, dockerfile, "mutation fixture must add a runtime COPY");
+    assert.throws(() => assertProductionDockerfile(mutated), /runtime COPY|development source/u);
+  }
 });
 
 test("the runtime entrypoint and image verifier reject dev-tool leakage", async () => {
@@ -169,4 +193,53 @@ test("the image verifier rejects unexpected top-level application files", async 
   }
   await writeFile(resolve(imageRoot, "tsconfig.json"), "{}");
   await assert.rejects(() => verifyProductionImage(imageRoot), /unexpected image path/u);
+});
+
+test("the image verifier recursively rejects source artifacts and disguised dev trees", async (context) => {
+  const imageRoot = await mkdtemp(resolve(tmpdir(), "kokoro-platform-image-recursive-"));
+  context.after(async () => rm(imageRoot, { recursive: true, force: true }));
+  await mkdir(resolve(imageRoot, "node_modules/.pnpm/fastify@5.10.0"), { recursive: true });
+  for (const entry of [
+    "deploy/docker/runtime-entrypoint.mjs",
+    "kokoro-platform-kit/dist/index.js",
+    "kokoro-site/dist/interfaces/http/main.js",
+    "kokoro-user/dist/interfaces/http/main.js",
+    "kokoro-model/dist/interfaces/http/main.js",
+    "kokoro-credit/dist/interfaces/http/main.js",
+    "kokoro-payment/dist/interfaces/http/main.js",
+    "kokoro-hub/dist/interfaces/http/main.js",
+    "kokoro-platform-admin/dist/main.js",
+    "kokoro-platform-admin/public/index.html",
+    "kokoro-user/generated/prisma/index.d.ts",
+    "kokoro-user/generated/prisma/schema.prisma",
+    "kokoro-user/generated/prisma/runtime/library.js",
+  ]) {
+    await mkdir(resolve(imageRoot, entry, ".."), { recursive: true });
+    await writeFile(resolve(imageRoot, entry), "");
+  }
+  await verifyProductionImage(imageRoot);
+
+  for (const workspace of workspaces) {
+    const sourceFile = resolve(imageRoot, workspace, "dist/leaked-source.ts");
+    await writeFile(sourceFile, "");
+    await assert.rejects(() => verifyProductionImage(imageRoot), /source artifact/u);
+    await rm(sourceFile);
+
+    const disguisedTree = resolve(imageRoot, workspace, "dist/leaked-src");
+    await mkdir(disguisedTree, { recursive: true });
+    await writeFile(resolve(disguisedTree, "handler.js"), "");
+    await assert.rejects(() => verifyProductionImage(imageRoot), /development tree/u);
+    await rm(disguisedTree, { recursive: true });
+  }
+
+  for (const publicLeak of ["bundle.tsx", "bundle.js.map"]) {
+    const leaked = resolve(imageRoot, "kokoro-platform-admin/public", publicLeak);
+    await writeFile(leaked, "");
+    await assert.rejects(() => verifyProductionImage(imageRoot), /source artifact/u);
+    await rm(leaked);
+  }
+
+  const generatedLeak = resolve(imageRoot, "kokoro-user/generated/prisma/debug.txt");
+  await writeFile(generatedLeak, "");
+  await assert.rejects(() => verifyProductionImage(imageRoot), /unexpected generated Prisma file/u);
 });

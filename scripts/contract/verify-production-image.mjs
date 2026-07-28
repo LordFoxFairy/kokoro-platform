@@ -23,6 +23,37 @@ const workspaceLayouts = Object.freeze({
   "kokoro-payment": new Set(["dist", "generated", "node_modules", "package.json"]),
 });
 const topLevelLayout = new Set(["deploy", "node_modules", "package.json", ...Object.keys(workspaceLayouts)]);
+const developmentTreePattern = /(?:^|[-_.])(?:src|test|tests|coverage|dev)(?:$|[-_.])/u;
+const prismaRootFiles = new Set([
+  "client.d.ts",
+  "client.js",
+  "default.d.ts",
+  "default.js",
+  "edge.d.ts",
+  "edge.js",
+  "index-browser.js",
+  "index.d.ts",
+  "index.js",
+  "package.json",
+  "query_engine_bg.js",
+  "query_engine_bg.wasm",
+  "schema.prisma",
+  "wasm-edge-light-loader.mjs",
+  "wasm-worker-loader.mjs",
+  "wasm.d.ts",
+  "wasm.js",
+]);
+const prismaRuntimeFiles = new Set([
+  "edge-esm.js",
+  "edge.js",
+  "index-browser.d.ts",
+  "index-browser.js",
+  "library.d.ts",
+  "library.js",
+  "react-native.js",
+  "wasm-compiler-edge.js",
+  "wasm-engine-edge.js",
+]);
 const requiredEntries = Object.freeze([
   "deploy/docker/runtime-entrypoint.mjs",
   "kokoro-platform-kit/dist/index.js",
@@ -51,6 +82,58 @@ async function assertAllowedChildren(directory, allowed, label) {
   }
 }
 
+function isSourceArtifact(filename) {
+  return /(?:\.tsx?|\.map|\.tsbuildinfo)$/u.test(filename);
+}
+
+async function assertRuntimeTree(directory, label) {
+  if (!(await exists(directory))) return;
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const relative = `${label}/${entry.name}`;
+    if (entry.isDirectory()) {
+      if (developmentTreePattern.test(entry.name)) {
+        throw new Error(`Production image contains development tree: ${relative}`);
+      }
+      await assertRuntimeTree(resolve(directory, entry.name), relative);
+    } else if (!entry.isFile() || isSourceArtifact(entry.name)) {
+      throw new Error(`Production image contains source artifact: ${relative}`);
+    }
+  }
+}
+
+async function assertGeneratedPrisma(directory, label) {
+  if (!(await exists(directory))) return;
+  const generatedEntries = await readdir(directory, { withFileTypes: true });
+  if (
+    generatedEntries.length !== 1 ||
+    generatedEntries[0].name !== "prisma" ||
+    !generatedEntries[0].isDirectory()
+  ) {
+    throw new Error(`Production image contains unexpected generated Prisma file: ${label}`);
+  }
+
+  const prismaDirectory = resolve(directory, "prisma");
+  for (const entry of await readdir(prismaDirectory, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      if (entry.name !== "runtime") {
+        throw new Error(`Production image contains unexpected generated Prisma file: ${label}/prisma/${entry.name}`);
+      }
+      for (const runtimeEntry of await readdir(resolve(prismaDirectory, "runtime"), { withFileTypes: true })) {
+        if (!runtimeEntry.isFile() || !prismaRuntimeFiles.has(runtimeEntry.name)) {
+          throw new Error(
+            `Production image contains unexpected generated Prisma file: ${label}/prisma/runtime/${runtimeEntry.name}`,
+          );
+        }
+      }
+      continue;
+    }
+    const isEngine = /^(?:lib)?query_engine.+(?:\.node|\.wasm)$/u.test(entry.name);
+    if (!entry.isFile() || (!prismaRootFiles.has(entry.name) && !isEngine)) {
+      throw new Error(`Production image contains unexpected generated Prisma file: ${label}/prisma/${entry.name}`);
+    }
+  }
+}
+
 export async function verifyProductionImage(root) {
   await assertAllowedChildren(root, topLevelLayout, ".");
   for (const [workspace, allowed] of Object.entries(workspaceLayouts)) {
@@ -62,6 +145,15 @@ export async function verifyProductionImage(root) {
     new Set(["runtime-entrypoint.mjs"]),
     "deploy/docker",
   );
+  for (const [workspace, allowed] of Object.entries(workspaceLayouts)) {
+    await assertRuntimeTree(resolve(root, workspace, "dist"), `${workspace}/dist`);
+    if (allowed.has("public")) {
+      await assertRuntimeTree(resolve(root, workspace, "public"), `${workspace}/public`);
+    }
+    if (allowed.has("generated")) {
+      await assertGeneratedPrisma(resolve(root, workspace, "generated"), `${workspace}/generated`);
+    }
+  }
 
   const installed = await readdir(resolve(root, "node_modules/.pnpm"));
   const leaked = installed.filter((entry) =>
