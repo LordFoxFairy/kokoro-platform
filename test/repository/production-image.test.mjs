@@ -3,6 +3,7 @@ import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
+import { parse } from "yaml";
 import { verifyProductionImage } from "../../scripts/contract/verify-production-image.mjs";
 
 const root = resolve(import.meta.dirname, "../..");
@@ -21,7 +22,22 @@ function assertProductionDockerfile(dockerfile) {
   assert.match(dockerfile, /^FROM .* AS build$/mu);
   assert.match(dockerfile, /^FROM .* AS prod-deps$/mu);
   assert.match(dockerfile, /^FROM .* AS runtime$/mu);
-  assert.match(dockerfile, /RUN pnpm install --prod --frozen-lockfile --ignore-scripts/u);
+  const buildStage = dockerfile.slice(
+    dockerfile.search(/^FROM .* AS build$/mu),
+    dockerfile.search(/^FROM .* AS prod-deps$/mu),
+  );
+  const buildInstallCommands = [...buildStage.matchAll(/^RUN (pnpm install[^\n]+)$/gmu)].map((match) => match[1]);
+  assert.deepEqual(buildInstallCommands, [
+    "pnpm install --config.auto-install-peers=false --frozen-lockfile --ignore-scripts",
+  ]);
+  const prodDeps = dockerfile.slice(
+    dockerfile.search(/^FROM .* AS prod-deps$/mu),
+    dockerfile.search(/^FROM .* AS runtime$/mu),
+  );
+  const prodInstallCommands = [...prodDeps.matchAll(/^RUN (pnpm install[^\n]+)$/gmu)].map((match) => match[1]);
+  assert.deepEqual(prodInstallCommands, [
+    "pnpm install --prod --no-optional --config.auto-install-peers=false --frozen-lockfile --ignore-scripts",
+  ]);
   assert.match(dockerfile, /COPY .*--from=prod-deps .*node_modules/u);
   for (const workspace of workspaces) {
     assert.match(
@@ -34,6 +50,20 @@ function assertProductionDockerfile(dockerfile) {
     );
   }
   assert.match(dockerfile, /COPY .*--from=build .*\/dist/u);
+  assert.match(dockerfile, /pnpm db:generate && pnpm build:runtime/u);
+  for (const workspace of [
+    "kokoro-platform-admin",
+    "kokoro-site",
+    "kokoro-user",
+    "kokoro-model",
+    "kokoro-credit",
+    "kokoro-payment",
+  ]) {
+    assert.match(
+      dockerfile,
+      new RegExp(`COPY .*--from=build /app/${workspace}/generated ./${workspace}/generated`, "u"),
+    );
+  }
   assert.match(dockerfile, /RUN node \/opt\/kokoro\/verify-production-image\.mjs \/app/u);
 
   const runtime = dockerfile.slice(dockerfile.search(/^FROM .* AS runtime$/mu));
@@ -70,6 +100,10 @@ function assertProductionDockerfile(dockerfile) {
 
 test("the final Platform image contains only compiled production dependencies", async () => {
   const dockerfile = await readFile(resolve(root, "deploy/docker/Dockerfile"), "utf8");
+  const legacyPnpmConfig = await readFile(resolve(root, ".npmrc"), "utf8").catch(() => null);
+  const lockfile = parse(await readFile(resolve(root, "pnpm-lock.yaml"), "utf8"));
+  assert.equal(legacyPnpmConfig, null, "pnpm v11 install settings must not be placed in .npmrc");
+  assert.equal(lockfile.settings?.autoInstallPeers, false);
   const target = assertProductionDockerfile(dockerfile);
   await access(resolve(root, target));
 });
@@ -95,6 +129,21 @@ test("the artifact gate rejects source and disguised source-tree COPY mutations"
     const mutated = dockerfile.replace(marker, `${copy}\n${marker}`);
     assert.notEqual(mutated, dockerfile, "mutation fixture must add a runtime COPY");
     assert.throws(() => assertProductionDockerfile(mutated), /runtime COPY|development source/u);
+  }
+});
+
+test("the artifact gate rejects production installs that restore optional peer tooling", async () => {
+  const dockerfile = await readFile(resolve(root, "deploy/docker/Dockerfile"), "utf8");
+  const expected =
+    "pnpm install --prod --no-optional --config.auto-install-peers=false --frozen-lockfile --ignore-scripts";
+  for (const mutation of [
+    expected.replace(" --no-optional", ""),
+    expected.replace(" --config.auto-install-peers=false", ""),
+    expected.replace("auto-install-peers=false", "auto-install-peers=true"),
+  ]) {
+    const mutated = dockerfile.replace(expected, mutation);
+    assert.notEqual(mutated, dockerfile, "mutation fixture must alter the prod-deps install");
+    assert.throws(() => assertProductionDockerfile(mutated));
   }
 });
 
@@ -210,8 +259,11 @@ test("the image verifier recursively rejects source artifacts and disguised dev 
     "kokoro-hub/dist/interfaces/http/main.js",
     "kokoro-platform-admin/dist/main.js",
     "kokoro-platform-admin/public/index.html",
+    "kokoro-user/generated/prisma/index.js",
     "kokoro-user/generated/prisma/index.d.ts",
+    "kokoro-user/generated/prisma/package.json",
     "kokoro-user/generated/prisma/schema.prisma",
+    "kokoro-user/generated/prisma/libquery_engine-test.so.node",
     "kokoro-user/generated/prisma/runtime/library.js",
   ]) {
     await mkdir(resolve(imageRoot, entry, ".."), { recursive: true });
@@ -242,4 +294,14 @@ test("the image verifier recursively rejects source artifacts and disguised dev 
   const generatedLeak = resolve(imageRoot, "kokoro-user/generated/prisma/debug.txt");
   await writeFile(generatedLeak, "");
   await assert.rejects(() => verifyProductionImage(imageRoot), /unexpected generated Prisma file/u);
+  await rm(generatedLeak);
+
+  const generatedClient = resolve(imageRoot, "kokoro-user/generated/prisma/index.js");
+  await rm(generatedClient);
+  await assert.rejects(() => verifyProductionImage(imageRoot), /missing generated Prisma runtime/u);
+  await writeFile(generatedClient, "");
+
+  const generatedEngine = resolve(imageRoot, "kokoro-user/generated/prisma/libquery_engine-test.so.node");
+  await rm(generatedEngine);
+  await assert.rejects(() => verifyProductionImage(imageRoot), /missing generated Prisma engine/u);
 });

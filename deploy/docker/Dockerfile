@@ -19,7 +19,7 @@ COPY kokoro-hub/package.json ./kokoro-hub/package.json
 COPY kokoro-model/package.json ./kokoro-model/package.json
 COPY kokoro-credit/package.json ./kokoro-credit/package.json
 COPY kokoro-payment/package.json ./kokoro-payment/package.json
-RUN pnpm install --frozen-lockfile --ignore-scripts
+RUN pnpm install --config.auto-install-peers=false --frozen-lockfile --ignore-scripts
 
 COPY . .
 RUN DATABASE_URL_SITE=mysql://placeholder:placeholder@mysql:3306/kokoro \
@@ -46,7 +46,7 @@ COPY kokoro-hub/package.json ./kokoro-hub/package.json
 COPY kokoro-model/package.json ./kokoro-model/package.json
 COPY kokoro-credit/package.json ./kokoro-credit/package.json
 COPY kokoro-payment/package.json ./kokoro-payment/package.json
-RUN pnpm install --prod --frozen-lockfile --ignore-scripts
+RUN pnpm install --prod --no-optional --config.auto-install-peers=false --frozen-lockfile --ignore-scripts
 
 FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS runtime
 

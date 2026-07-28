@@ -113,6 +113,9 @@ async function assertGeneratedPrisma(directory, label) {
   }
 
   const prismaDirectory = resolve(directory, "prisma");
+  const rootFiles = new Set();
+  let hasNativeEngine = false;
+  let hasRuntimeLibrary = false;
   for (const entry of await readdir(prismaDirectory, { withFileTypes: true })) {
     if (entry.isDirectory()) {
       if (entry.name !== "runtime") {
@@ -124,6 +127,7 @@ async function assertGeneratedPrisma(directory, label) {
             `Production image contains unexpected generated Prisma file: ${label}/prisma/runtime/${runtimeEntry.name}`,
           );
         }
+        if (runtimeEntry.name === "library.js") hasRuntimeLibrary = true;
       }
       continue;
     }
@@ -131,6 +135,16 @@ async function assertGeneratedPrisma(directory, label) {
     if (!entry.isFile() || (!prismaRootFiles.has(entry.name) && !isEngine)) {
       throw new Error(`Production image contains unexpected generated Prisma file: ${label}/prisma/${entry.name}`);
     }
+    rootFiles.add(entry.name);
+    if (isEngine && entry.name.endsWith(".node")) hasNativeEngine = true;
+  }
+  for (const required of ["index.js", "package.json"]) {
+    if (!rootFiles.has(required) || !hasRuntimeLibrary) {
+      throw new Error(`Production image is missing generated Prisma runtime: ${label}/prisma/${required}`);
+    }
+  }
+  if (!hasNativeEngine) {
+    throw new Error(`Production image is missing generated Prisma engine: ${label}/prisma`);
   }
 }
 
