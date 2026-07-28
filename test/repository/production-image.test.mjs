@@ -1,33 +1,29 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 import { verifyProductionImage } from "../../scripts/contract/verify-production-image.mjs";
 
 const root = resolve(import.meta.dirname, "../..");
+const workspaces = Object.freeze([
+  "kokoro-platform-kit",
+  "kokoro-platform-admin",
+  "kokoro-site",
+  "kokoro-user",
+  "kokoro-hub",
+  "kokoro-model",
+  "kokoro-credit",
+  "kokoro-payment",
+]);
 
-test("the final Platform image contains only compiled production dependencies", async () => {
-  const dockerfile = await readFile(resolve(root, "deploy/docker/Dockerfile"), "utf8");
-
+function assertProductionDockerfile(dockerfile) {
   assert.match(dockerfile, /^FROM .* AS build$/mu);
   assert.match(dockerfile, /^FROM .* AS prod-deps$/mu);
   assert.match(dockerfile, /^FROM .* AS runtime$/mu);
-  assert.match(
-    dockerfile,
-    /RUN pnpm install --prod --frozen-lockfile --ignore-scripts/u,
-  );
+  assert.match(dockerfile, /RUN pnpm install --prod --frozen-lockfile --ignore-scripts/u);
   assert.match(dockerfile, /COPY .*--from=prod-deps .*node_modules/u);
-  for (const workspace of [
-    "kokoro-platform-kit",
-    "kokoro-platform-admin",
-    "kokoro-site",
-    "kokoro-user",
-    "kokoro-hub",
-    "kokoro-model",
-    "kokoro-credit",
-    "kokoro-payment",
-  ]) {
+  for (const workspace of workspaces) {
     assert.match(
       dockerfile,
       new RegExp(
@@ -38,19 +34,44 @@ test("the final Platform image contains only compiled production dependencies", 
     );
   }
   assert.match(dockerfile, /COPY .*--from=build .*\/dist/u);
-  assert.match(
-    dockerfile,
-    /RUN node \/opt\/kokoro\/verify-production-image\.mjs \/app/u,
-  );
-  assert.match(
-    dockerfile,
-    /CMD \["node", "--conditions=kokoro-runtime", "deploy\/runtime-entrypoint\.mjs"\]/u,
-  );
+  assert.match(dockerfile, /RUN node \/opt\/kokoro\/verify-production-image\.mjs \/app/u);
 
   const runtime = dockerfile.slice(dockerfile.search(/^FROM .* AS runtime$/mu));
+  const commandMatches = [...runtime.matchAll(/^CMD\s+(\[[^\n]+\])$/gmu)];
+  assert.equal(commandMatches.length, 1, "runtime stage must contain exactly one JSON-form CMD");
+  const command = JSON.parse(commandMatches[0][1]);
+  assert.deepEqual(command, [
+    "node",
+    "--conditions=kokoro-runtime",
+    "deploy/docker/runtime-entrypoint.mjs",
+  ]);
+
+  const target = command.at(-1);
+  const copies = [...runtime.matchAll(/^COPY(?:\s+--[^\s]+)*\s+([^\s]+)\s+([^\s]+)$/gmu)];
+  const entrypointCopy = copies.find((match) => match[2].replace(/^\.\//u, "") === target);
+  assert.ok(entrypointCopy, `runtime CMD target ${target} must be copied to the same image path`);
+  assert.equal(entrypointCopy[1], target, "runtime entrypoint source and destination must stay aligned");
+
   assert.doesNotMatch(runtime, /pnpm install(?! --prod)/u);
   assert.doesNotMatch(runtime, /\btsx\b/u);
   assert.doesNotMatch(runtime, /^COPY \. \.$/mu);
+  return target;
+}
+
+test("the final Platform image contains only compiled production dependencies", async () => {
+  const dockerfile = await readFile(resolve(root, "deploy/docker/Dockerfile"), "utf8");
+  const target = assertProductionDockerfile(dockerfile);
+  await access(resolve(root, target));
+});
+
+test("the artifact gate rejects a targeted runtime entrypoint COPY mutation", async () => {
+  const dockerfile = await readFile(resolve(root, "deploy/docker/Dockerfile"), "utf8");
+  const mutated = dockerfile.replace(
+    "deploy/docker/runtime-entrypoint.mjs ./deploy/docker/runtime-entrypoint.mjs",
+    "deploy/docker/runtime-entrypoint.mjs ./deploy/runtime-entrypoint.mjs",
+  );
+  assert.notEqual(mutated, dockerfile, "mutation fixture must alter the entrypoint COPY");
+  assert.throws(() => assertProductionDockerfile(mutated), /must be copied to the same image path/u);
 });
 
 test("the runtime entrypoint and image verifier reject dev-tool leakage", async () => {
@@ -91,4 +112,61 @@ test("the image verifier rejects a leaked development executable", async (contex
   }
 
   await assert.rejects(() => verifyProductionImage(imageRoot), /development executable/u);
+});
+
+test("the image verifier rejects development trees in every workspace", async (context) => {
+  const imageRoot = await mkdtemp(resolve(tmpdir(), "kokoro-platform-image-layout-"));
+  context.after(async () => rm(imageRoot, { recursive: true, force: true }));
+  await mkdir(resolve(imageRoot, "node_modules/.pnpm/fastify@5.10.0"), { recursive: true });
+  for (const entry of [
+    "deploy/docker/runtime-entrypoint.mjs",
+    "kokoro-platform-kit/dist/index.js",
+    "kokoro-site/dist/interfaces/http/main.js",
+    "kokoro-user/dist/interfaces/http/main.js",
+    "kokoro-model/dist/interfaces/http/main.js",
+    "kokoro-credit/dist/interfaces/http/main.js",
+    "kokoro-payment/dist/interfaces/http/main.js",
+    "kokoro-hub/dist/interfaces/http/main.js",
+    "kokoro-platform-admin/dist/main.js",
+  ]) {
+    await mkdir(resolve(imageRoot, entry, ".."), { recursive: true });
+    await writeFile(resolve(imageRoot, entry), "");
+  }
+  await verifyProductionImage(imageRoot);
+
+  for (const workspace of workspaces) {
+    for (const developmentTree of ["src", "test", "coverage"]) {
+      const leaked = resolve(imageRoot, workspace, developmentTree);
+      await mkdir(leaked, { recursive: true });
+      await writeFile(resolve(leaked, "leaked.ts"), "");
+      await assert.rejects(
+        () => verifyProductionImage(imageRoot),
+        /development tree|unexpected image path/u,
+        `${workspace}/${developmentTree} must be rejected`,
+      );
+      await rm(leaked, { recursive: true });
+    }
+  }
+});
+
+test("the image verifier rejects unexpected top-level application files", async (context) => {
+  const imageRoot = await mkdtemp(resolve(tmpdir(), "kokoro-platform-image-allowlist-"));
+  context.after(async () => rm(imageRoot, { recursive: true, force: true }));
+  await mkdir(resolve(imageRoot, "node_modules/.pnpm/fastify@5.10.0"), { recursive: true });
+  for (const entry of [
+    "deploy/docker/runtime-entrypoint.mjs",
+    "kokoro-platform-kit/dist/index.js",
+    "kokoro-site/dist/interfaces/http/main.js",
+    "kokoro-user/dist/interfaces/http/main.js",
+    "kokoro-model/dist/interfaces/http/main.js",
+    "kokoro-credit/dist/interfaces/http/main.js",
+    "kokoro-payment/dist/interfaces/http/main.js",
+    "kokoro-hub/dist/interfaces/http/main.js",
+    "kokoro-platform-admin/dist/main.js",
+  ]) {
+    await mkdir(resolve(imageRoot, entry, ".."), { recursive: true });
+    await writeFile(resolve(imageRoot, entry), "");
+  }
+  await writeFile(resolve(imageRoot, "tsconfig.json"), "{}");
+  await assert.rejects(() => verifyProductionImage(imageRoot), /unexpected image path/u);
 });

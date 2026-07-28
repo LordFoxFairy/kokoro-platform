@@ -59,13 +59,28 @@ export async function proxyOpenApiContract(
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
+  let response: Response | undefined;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let completed = false;
+  let timedOut = false;
+  const abortAndCancel = (): void => {
+    controller.abort();
+    const cancellation = reader === undefined ? response?.body?.cancel() : reader.cancel();
+    if (cancellation !== undefined) void cancellation.catch(() => undefined);
+  };
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    abortAndCancel();
+  }, options.timeoutMs);
   try {
-    const response = await fetch(joinUrl(module.baseUrl, "/docs/json"), {
+    response = await fetch(joinUrl(module.baseUrl, "/docs/json"), {
       headers: adminCallerHeaders(internalSecret),
       redirect: "error",
       signal: controller.signal,
     });
+    if (timedOut) {
+      throw new GatewayError("OpenAPI upstream timed out", 504, "gateway.openapi_timeout");
+    }
     if (!response.ok) {
       throw new GatewayError(`OpenAPI upstream returned HTTP ${response.status}`, 502, "gateway.openapi_upstream");
     }
@@ -83,16 +98,17 @@ export async function proxyOpenApiContract(
       throw new GatewayError("OpenAPI upstream returned an empty body", 502, "gateway.openapi_invalid");
     }
 
-    const reader = response.body.getReader();
+    reader = response.body.getReader();
     const chunks: Uint8Array[] = [];
     let total = 0;
     while (true) {
       const result = await reader.read();
+      if (timedOut) {
+        throw new GatewayError("OpenAPI upstream timed out", 504, "gateway.openapi_timeout");
+      }
       if (result.done) break;
       total += result.value.byteLength;
       if (total > options.maxBytes) {
-        controller.abort();
-        await reader.cancel().catch(() => undefined);
         throw new GatewayError("OpenAPI upstream response is too large", 502, "gateway.openapi_too_large");
       }
       chunks.push(result.value);
@@ -118,8 +134,12 @@ export async function proxyOpenApiContract(
     ) {
       throw new GatewayError("OpenAPI upstream returned an invalid contract", 502, "gateway.openapi_invalid");
     }
+    completed = true;
     return { bytes, moduleId: module.id };
   } catch (error) {
+    if (timedOut) {
+      throw new GatewayError("OpenAPI upstream timed out", 504, "gateway.openapi_timeout");
+    }
     if (error instanceof GatewayError) throw error;
     if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) {
       throw new GatewayError("OpenAPI upstream timed out", 504, "gateway.openapi_timeout");
@@ -131,6 +151,7 @@ export async function proxyOpenApiContract(
     );
   } finally {
     clearTimeout(timeout);
+    if (!completed) abortAndCancel();
   }
 }
 

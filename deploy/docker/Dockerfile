@@ -96,4 +96,4 @@ COPY --chown=node:node scripts/contract/verify-production-image.mjs /opt/kokoro/
 
 RUN node /opt/kokoro/verify-production-image.mjs /app
 USER node
-CMD ["node", "--conditions=kokoro-runtime", "deploy/runtime-entrypoint.mjs"]
+CMD ["node", "--conditions=kokoro-runtime", "deploy/docker/runtime-entrypoint.mjs"]

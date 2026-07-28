@@ -20,6 +20,28 @@ const reader: Operator = {
 };
 const fetchMock = vi.fn<typeof fetch>();
 
+function trackedResponse(
+  body: string,
+  init: ResponseInit & { close?: boolean } = {},
+): { cancel: ReturnType<typeof vi.fn>; response: Response } {
+  const cancel = vi.fn();
+  const { close = false, ...responseInit } = init;
+  const bytes = new TextEncoder().encode(body);
+  return {
+    cancel,
+    response: new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(bytes);
+          if (close) controller.close();
+        },
+        cancel,
+      }),
+      responseInit,
+    ),
+  };
+}
+
 function deps(operator: Operator = reader): AdminServerDeps {
   return {
     audit: { record: async () => {} },
@@ -80,34 +102,59 @@ describe("GET /api/openapi/:moduleId", () => {
   });
 
   it.each([
-    ["non-JSON", new Response("<html></html>", { headers: { "content-type": "text/html" } })],
+    ["non-2xx", () => trackedResponse("{}", { status: 503, headers: { "content-type": "application/json" } })],
+    ["non-JSON", () => trackedResponse("<html></html>", { headers: { "content-type": "text/html" } })],
+    [
+      "invalid declared length",
+      () => trackedResponse("{}", { headers: { "content-type": "application/json", "content-length": "invalid" } }),
+    ],
     [
       "declared oversized",
-      new Response("{}", {
-        headers: { "content-type": "application/json", "content-length": "2048" },
-      }),
+      () => trackedResponse("{}", { headers: { "content-type": "application/json", "content-length": "2048" } }),
     ],
     [
       "actual oversized",
-      new Response(JSON.stringify({ value: "x".repeat(2048) }), {
-        headers: { "content-type": "application/json" },
-      }),
+      () => trackedResponse(JSON.stringify({ value: "x".repeat(2048) }), { headers: { "content-type": "application/json" } }),
     ],
-  ])("fails closed for %s upstream contracts", async (_name, upstream) => {
-    fetchMock.mockResolvedValue(upstream);
+  ] as const)("fails closed and cancels the body for %s upstream contracts", async (_name, createUpstream) => {
+    const upstream = createUpstream();
+    let signal: AbortSignal | null | undefined;
+    fetchMock.mockImplementation(async (_input, init) => {
+      signal = init?.signal;
+      return upstream.response;
+    });
     const app = createAdminServer(modules, deps());
     const response = await app.inject({ method: "GET", url: "/api/openapi/site" });
     expect(response.statusCode).toBe(502);
+    expect(signal?.aborted).toBe(true);
+    expect(upstream.cancel).toHaveBeenCalledTimes(1);
   });
 
-  it("aborts a timed-out upstream request", async () => {
-    fetchMock.mockImplementation(async (_input, init) =>
-      new Promise<Response>((_resolve, reject) => {
-        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+  it("aborts and cancels a slow never-ending upstream body", async () => {
+    const cancel = vi.fn();
+    let closeTimer: ReturnType<typeof setTimeout> | undefined;
+    const upstream = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"openapi":"3.0.3"'));
+          closeTimer = setTimeout(() => controller.close(), 100);
+        },
+        cancel() {
+          if (closeTimer !== undefined) clearTimeout(closeTimer);
+          cancel();
+        },
       }),
+      { headers: { "content-type": "application/json" } },
     );
+    let signal: AbortSignal | null | undefined;
+    fetchMock.mockImplementation(async (_input, init) => {
+      signal = init?.signal;
+      return upstream;
+    });
     const app = createAdminServer(modules, deps());
     const response = await app.inject({ method: "GET", url: "/api/openapi/site" });
     expect(response.statusCode).toBe(504);
+    expect(signal?.aborted).toBe(true);
+    expect(cancel).toHaveBeenCalledTimes(1);
   });
 });

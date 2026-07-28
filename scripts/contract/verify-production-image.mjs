@@ -12,7 +12,20 @@ const forbiddenPackages = Object.freeze([
   "@vitest+",
   "@vitejs+",
 ]);
+const workspaceLayouts = Object.freeze({
+  "kokoro-platform-kit": new Set(["dist", "node_modules", "package.json"]),
+  "kokoro-platform-admin": new Set(["dist", "generated", "node_modules", "package.json", "public"]),
+  "kokoro-site": new Set(["dist", "generated", "node_modules", "package.json"]),
+  "kokoro-user": new Set(["dist", "generated", "node_modules", "package.json"]),
+  "kokoro-hub": new Set(["dist", "node_modules", "package.json"]),
+  "kokoro-model": new Set(["dist", "generated", "node_modules", "package.json"]),
+  "kokoro-credit": new Set(["dist", "generated", "node_modules", "package.json"]),
+  "kokoro-payment": new Set(["dist", "generated", "node_modules", "package.json"]),
+});
+const topLevelLayout = new Set(["deploy", "node_modules", "package.json", ...Object.keys(workspaceLayouts)]);
 const requiredEntries = Object.freeze([
+  "deploy/docker/runtime-entrypoint.mjs",
+  "kokoro-platform-kit/dist/index.js",
   "kokoro-site/dist/interfaces/http/main.js",
   "kokoro-user/dist/interfaces/http/main.js",
   "kokoro-model/dist/interfaces/http/main.js",
@@ -29,7 +42,27 @@ async function exists(path) {
   );
 }
 
+async function assertAllowedChildren(directory, allowed, label) {
+  if (!(await exists(directory))) return;
+  for (const entry of await readdir(directory)) {
+    if (!allowed.has(entry)) {
+      throw new Error(`Production image contains unexpected image path: ${label}/${entry}`);
+    }
+  }
+}
+
 export async function verifyProductionImage(root) {
+  await assertAllowedChildren(root, topLevelLayout, ".");
+  for (const [workspace, allowed] of Object.entries(workspaceLayouts)) {
+    await assertAllowedChildren(resolve(root, workspace), allowed, workspace);
+  }
+  await assertAllowedChildren(resolve(root, "deploy"), new Set(["docker"]), "deploy");
+  await assertAllowedChildren(
+    resolve(root, "deploy/docker"),
+    new Set(["runtime-entrypoint.mjs"]),
+    "deploy/docker",
+  );
+
   const installed = await readdir(resolve(root, "node_modules/.pnpm"));
   const leaked = installed.filter((entry) =>
     forbiddenPackages.some((name) => entry === name || entry.startsWith(`${name}@`) || entry.startsWith(name)),
@@ -46,11 +79,6 @@ export async function verifyProductionImage(root) {
     throw new Error(
       `Production image contains development executable: ${leakedExecutables.sort().join(", ")}`,
     );
-  }
-  for (const tree of ["test", ".github", "kokoro-platform-kit/src"]) {
-    if (await exists(resolve(root, tree))) {
-      throw new Error(`Production image contains development tree: ${tree}`);
-    }
   }
   for (const entry of requiredEntries) {
     if (!(await exists(resolve(root, entry)))) {
