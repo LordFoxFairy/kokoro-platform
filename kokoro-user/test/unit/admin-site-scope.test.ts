@@ -97,6 +97,48 @@ describe("PrismaUserRepository admin Site scope", () => {
     expect(await repository.listServiceAccounts("site-b", { includeDeleted: true })).toEqual([]);
   });
 
+  it("filters invalid global service-account owners in SQL before limit without dropping valid ownership shapes", async () => {
+    const now = new Date("2026-07-28T00:00:00.000Z");
+    const deletion = { deletedAt: null, deletedBy: null, deleteReason: null };
+    const rows = [
+      {
+        id: "sa-team", teamId: "team-a", ownerUserId: null, name: "team bot", tokenPrefix: "team",
+        status: "active", lastUsedAt: null, ...deletion, createdAt: now, updatedAt: now, siteId: "site-a",
+      },
+      {
+        id: "sa-user", teamId: null, ownerUserId: "user-b", name: "user bot", tokenPrefix: "user",
+        status: "active", lastUsedAt: null, ...deletion, createdAt: now, updatedAt: now, siteId: "site-b",
+      },
+      {
+        id: "sa-dual", teamId: "team-c", ownerUserId: "user-c", name: "dual bot", tokenPrefix: "dual",
+        status: "active", lastUsedAt: null, ...deletion, createdAt: now, updatedAt: now, siteId: "site-c",
+      },
+    ];
+    const queryRaw = vi.fn().mockResolvedValue(rows);
+    const findMany = vi.fn().mockResolvedValue([]);
+    const repository = new PrismaUserRepository({
+      $queryRaw: queryRaw,
+      serviceAccount: { findMany },
+    } as unknown as PrismaClient);
+
+    expect(await repository.listServiceAccounts(undefined, { includeDeleted: true })).toEqual([
+      expect.objectContaining({ id: "sa-team", siteId: "site-a" }),
+      expect.objectContaining({ id: "sa-user", siteId: "site-b" }),
+      expect.objectContaining({ id: "sa-dual", siteId: "site-c" }),
+    ]);
+    expect(findMany).not.toHaveBeenCalled();
+    expect(queryRaw).toHaveBeenCalledOnce();
+
+    const query = queryRaw.mock.calls[0]?.[0] as { strings: readonly string[]; values: readonly unknown[] };
+    const sql = query.strings.join("?").replace(/\s+/g, " ");
+    expect(sql).toContain("LEFT JOIN teams AS t ON t.id = sa.teamId");
+    expect(sql).toContain("LEFT JOIN users AS u ON u.id = sa.ownerUserId");
+    expect(sql).toContain("(t.id IS NOT NULL OR u.id IS NOT NULL)");
+    expect(sql).toContain("(t.id IS NULL OR u.id IS NULL OR t.siteId = u.siteId)");
+    expect(sql.indexOf("t.siteId = u.siteId")).toBeLessThan(sql.indexOf("LIMIT"));
+    expect(query.values).toContain(100);
+  });
+
   it("does not overwrite a membership's relationship-derived Site with the request Site", async () => {
     const now = new Date("2026-07-28T00:00:00.000Z");
     const membership = {

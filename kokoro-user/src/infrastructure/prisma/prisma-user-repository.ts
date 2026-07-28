@@ -1,4 +1,4 @@
-import type { Prisma, PrismaClient } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 import type { Invite } from "../../domain/invite.js";
 import type { Membership } from "../../domain/membership.js";
 import type { ServiceAccount } from "../../domain/service-account.js";
@@ -41,6 +41,7 @@ import type {
 const ADMIN_LIST_TAKE = 100;
 
 type TransactionClient = Prisma.TransactionClient;
+type AdminServiceAccountRow = Parameters<typeof mapServiceAccount>[0] & { siteId: string };
 
 export class PrismaUserRepository implements UserRepository {
   constructor(private readonly prisma: PrismaClient) {}
@@ -679,18 +680,46 @@ export class PrismaUserRepository implements UserRepository {
   }
 
   async listServiceAccounts(siteId?: string, options?: ListOptions) {
+    if (siteId === undefined) {
+      const accounts = await this.prisma.$queryRaw<AdminServiceAccountRow[]>(Prisma.sql`
+        SELECT
+          sa.id,
+          sa.teamId,
+          sa.ownerUserId,
+          sa.name,
+          sa.tokenPrefix,
+          sa.status,
+          sa.lastUsedAt,
+          sa.deletedAt,
+          sa.deletedBy,
+          sa.deleteReason,
+          sa.createdAt,
+          sa.updatedAt,
+          COALESCE(t.siteId, u.siteId) AS siteId
+        FROM service_accounts AS sa
+        LEFT JOIN teams AS t ON t.id = sa.teamId
+        LEFT JOIN users AS u ON u.id = sa.ownerUserId
+        WHERE
+          (t.id IS NOT NULL OR u.id IS NOT NULL)
+          AND (t.id IS NULL OR u.id IS NULL OR t.siteId = u.siteId)
+          ${options?.includeDeleted === true ? Prisma.empty : Prisma.sql`AND sa.deletedAt IS NULL`}
+        ORDER BY sa.createdAt DESC
+        LIMIT ${ADMIN_LIST_TAKE}
+      `);
+      return accounts.map((account) => ({
+        ...mapServiceAccount(account),
+        siteId: account.siteId,
+      }));
+    }
+
     const accounts = await this.prisma.serviceAccount.findMany({
       where: {
         ...visibleRows(options),
-        ...(siteId === undefined
-          ? { OR: [{ team: { isNot: null } }, { ownerUser: { isNot: null } }] }
-          : {
-              AND: [
-                { OR: [{ team: { siteId } }, { ownerUser: { siteId } }] },
-                { OR: [{ teamId: null }, { team: { siteId } }] },
-                { OR: [{ ownerUserId: null }, { ownerUser: { siteId } }] },
-              ],
-            }),
+        AND: [
+          { OR: [{ team: { siteId } }, { ownerUser: { siteId } }] },
+          { OR: [{ teamId: null }, { team: { siteId } }] },
+          { OR: [{ ownerUserId: null }, { ownerUser: { siteId } }] },
+        ],
       },
       include: {
         team: { select: { siteId: true } },
