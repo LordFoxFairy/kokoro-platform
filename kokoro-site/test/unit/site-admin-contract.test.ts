@@ -48,4 +48,14 @@ describe("siteAdminContract", () => {
       ]),
     );
   });
+
+  it("uses the Site row id for sites and siteId for child resources", () => {
+    expect(Object.fromEntries(siteAdminContract.manifest.resources.map((resource) => [resource.id, resource.siteScopeField]))).toEqual({
+      sites: "id",
+      domains: "siteId",
+      apps: "siteId",
+      policies: "siteId",
+      "feature-flags": "siteId",
+    });
+  });
 });

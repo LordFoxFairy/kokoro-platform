@@ -38,6 +38,7 @@ export const paymentAdminContract: {
         labelKey: "admin.payment.resources.plans",
         route: "/admin/payments/plans",
         requiredPermission: "payment.plan.read",
+        siteScopeField: "siteId",
         actions: [
           {
             id: "upsert",
@@ -78,6 +79,7 @@ export const paymentAdminContract: {
         labelKey: "admin.payment.resources.orders",
         route: "/admin/payments/orders",
         requiredPermission: "payment.order.read",
+        siteScopeField: "siteId",
         actions: [
           {
             id: "refund",
@@ -94,6 +96,7 @@ export const paymentAdminContract: {
         labelKey: "admin.payment.resources.subscriptions",
         route: "/admin/payments/subscriptions",
         requiredPermission: "payment.subscription.read",
+        siteScopeField: "siteId",
         actions: [],
       },
       {
@@ -101,6 +104,7 @@ export const paymentAdminContract: {
         labelKey: "admin.payment.resources.paymentEvents",
         route: "/admin/payments/events",
         requiredPermission: "payment.event.read",
+        siteScopeField: null,
         actions: [
           {
             id: "replay",
@@ -117,6 +121,7 @@ export const paymentAdminContract: {
         labelKey: "admin.payment.resources.refunds",
         route: "/admin/payments/refunds",
         requiredPermission: "payment.refund.read",
+        siteScopeField: "siteId",
         actions: [],
       },
       {
@@ -124,6 +129,7 @@ export const paymentAdminContract: {
         labelKey: "admin.payment.resources.providers",
         route: "/admin/payments/providers",
         requiredPermission: "payment.provider.read",
+        siteScopeField: null,
         actions: [
           {
             id: "upsert",

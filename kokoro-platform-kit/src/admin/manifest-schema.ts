@@ -19,6 +19,7 @@ export const adminResourceManifestSchema = z
     labelKey: z.string().min(1),
     route: z.string().min(1),
     requiredPermission: z.string().min(1),
+    siteScopeField: z.enum(["siteId", "id"]).nullable(),
     actions: z.array(adminActionManifestSchema).default([]),
   })
   .strict();

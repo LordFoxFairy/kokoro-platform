@@ -1,6 +1,6 @@
 import type { JsonObject } from "./json.js";
 import type { ResolvedSiteContext } from "./site-context.js";
-import type { DeleteInput, ListOptions, RestoreInput } from "./site-deletion.js";
+import type { AdminListOptions, DeleteInput, ListOptions, RestoreInput } from "./site-deletion.js";
 import type { Site } from "./site.js";
 import type { SiteApp, SiteSurface } from "./site-app.js";
 import type { SiteDomain } from "./site-domain.js";
@@ -74,9 +74,9 @@ export interface SiteRepository {
   // 下游记账前校验：siteId 对应站点是否 active；不存在/非 active 返回 false。
   resolveSiteActive(siteId: string): Promise<boolean>;
   listSites(options?: ListOptions): Promise<Site[]>;
-  listAdminSites(options?: ListOptions): Promise<Site[]>;
-  listAdminSiteDomains(options?: ListOptions): Promise<SiteDomain[]>;
-  listAdminSiteApps(options?: ListOptions): Promise<SiteApp[]>;
-  listAdminSitePolicies(options?: ListOptions): Promise<SitePolicy[]>;
-  listAdminSiteFeatureFlags(options?: ListOptions): Promise<SiteFeatureFlag[]>;
+  listAdminSites(options?: AdminListOptions): Promise<Site[]>;
+  listAdminSiteDomains(options?: AdminListOptions): Promise<SiteDomain[]>;
+  listAdminSiteApps(options?: AdminListOptions): Promise<SiteApp[]>;
+  listAdminSitePolicies(options?: AdminListOptions): Promise<SitePolicy[]>;
+  listAdminSiteFeatureFlags(options?: AdminListOptions): Promise<SiteFeatureFlag[]>;
 }

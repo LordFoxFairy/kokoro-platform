@@ -35,4 +35,15 @@ describe("payment admin contract", () => {
     expect(planActions).toEqual(["upsert", "delete", "restore", "grant-to-team"]);
     expect(refundActions).toEqual([]);
   });
+
+  it("declares Site projections and platform-global sensitive resources", () => {
+    expect(Object.fromEntries(paymentAdminContract.manifest.resources.map((resource) => [resource.id, resource.siteScopeField]))).toEqual({
+      plans: "siteId",
+      orders: "siteId",
+      subscriptions: "siteId",
+      "payment-events": null,
+      refunds: "siteId",
+      providers: null,
+    });
+  });
 });

@@ -39,6 +39,7 @@ export const modelAdminContract: {
         labelKey: "admin.model.resources.providerAccounts",
         route: "/admin/models/provider-accounts",
         requiredPermission: "model.providerAccount.read",
+        siteScopeField: null,
         actions: [
           {
             id: "create",
@@ -87,6 +88,7 @@ export const modelAdminContract: {
         labelKey: "admin.model.resources.modelBindings",
         route: "/admin/models/bindings",
         requiredPermission: "model.binding.read",
+        siteScopeField: null,
         actions: [
           {
             id: "create",
@@ -135,6 +137,7 @@ export const modelAdminContract: {
         labelKey: "admin.model.resources.modelLabels",
         route: "/admin/models/labels",
         requiredPermission: "model.label.read",
+        siteScopeField: null,
         actions: [
           {
             id: "create",
@@ -151,6 +154,7 @@ export const modelAdminContract: {
         labelKey: "admin.model.resources.sitePolicies",
         route: "/admin/models/site-policies",
         requiredPermission: "model.sitePolicy.read",
+        siteScopeField: "siteId",
         actions: [
           {
             id: "set",

@@ -37,6 +37,7 @@ export const creditAdminContract: {
         labelKey: "admin.credit.resources.accounts",
         route: "/admin/credits/accounts",
         requiredPermission: "credit.account.read",
+        siteScopeField: "siteId",
         actions: [
           {
             id: "grant",
@@ -85,6 +86,7 @@ export const creditAdminContract: {
         labelKey: "admin.credit.resources.ledgerEntries",
         route: "/admin/credits/ledger",
         requiredPermission: "credit.ledger.read",
+        siteScopeField: "siteId",
         actions: [],
       },
       {
@@ -92,6 +94,7 @@ export const creditAdminContract: {
         labelKey: "admin.credit.resources.usageRecords",
         route: "/admin/credits/usage",
         requiredPermission: "credit.usage.read",
+        siteScopeField: "siteId",
         actions: [],
       },
       {
@@ -99,6 +102,7 @@ export const creditAdminContract: {
         labelKey: "admin.credit.resources.pricingRules",
         route: "/admin/credits/pricing",
         requiredPermission: "credit.pricing.read",
+        siteScopeField: null,
         actions: [
           {
             id: "create",

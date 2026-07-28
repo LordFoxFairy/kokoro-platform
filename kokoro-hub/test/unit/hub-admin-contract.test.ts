@@ -52,4 +52,8 @@ describe("hub admin contract", () => {
       path: "/hub/admin/skills/:scope/:name",
     });
   });
+
+  it("marks all official Hub resources as platform-global", () => {
+    expect(hubAdminManifest.resources.every((resource) => resource.siteScopeField === null)).toBe(true);
+  });
 });

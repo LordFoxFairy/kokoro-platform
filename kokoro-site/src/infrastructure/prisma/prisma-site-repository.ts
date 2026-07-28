@@ -12,7 +12,7 @@ import type {
 import { coerceJsonValue, type JsonObject } from "../../domain/json.js";
 import type { ResolvedSiteContext } from "../../domain/site-context.js";
 import { SiteLifecycleError } from "../../domain/site-deletion.js";
-import type { DeleteInput, ListOptions, RestoreInput } from "../../domain/site-deletion.js";
+import type { AdminListOptions, DeleteInput, ListOptions, RestoreInput } from "../../domain/site-deletion.js";
 import type { Site } from "../../domain/site.js";
 import type { SiteApp } from "../../domain/site-app.js";
 import type { SiteDomain } from "../../domain/site-domain.js";
@@ -392,9 +392,9 @@ export class PrismaSiteRepository implements SiteRepository {
     return sites.map(mapSite);
   }
 
-  async listAdminSites(options?: ListOptions): Promise<Site[]> {
+  async listAdminSites(options?: AdminListOptions): Promise<Site[]> {
     const sites = await this.prisma.site.findMany({
-      where: visibleRows(options),
+      where: { ...visibleRows(options), ...(options?.siteId ? { id: options.siteId } : {}) },
       orderBy: { createdAt: "desc" },
       take: ADMIN_LIST_LIMIT,
     });
@@ -402,9 +402,9 @@ export class PrismaSiteRepository implements SiteRepository {
     return sites.map(mapSite);
   }
 
-  async listAdminSiteDomains(options?: ListOptions): Promise<SiteDomain[]> {
+  async listAdminSiteDomains(options?: AdminListOptions): Promise<SiteDomain[]> {
     const domains = await this.prisma.siteDomain.findMany({
-      where: visibleChildRows(options),
+      where: { ...visibleChildRows(options), ...(options?.siteId ? { siteId: options.siteId } : {}) },
       orderBy: { createdAt: "desc" },
       take: ADMIN_LIST_LIMIT,
     });
@@ -412,9 +412,9 @@ export class PrismaSiteRepository implements SiteRepository {
     return domains.map(mapSiteDomain);
   }
 
-  async listAdminSiteApps(options?: ListOptions): Promise<SiteApp[]> {
+  async listAdminSiteApps(options?: AdminListOptions): Promise<SiteApp[]> {
     const apps = await this.prisma.siteApp.findMany({
-      where: visibleChildRows(options),
+      where: { ...visibleChildRows(options), ...(options?.siteId ? { siteId: options.siteId } : {}) },
       orderBy: { createdAt: "desc" },
       take: ADMIN_LIST_LIMIT,
     });
@@ -422,9 +422,9 @@ export class PrismaSiteRepository implements SiteRepository {
     return apps.map(mapSiteApp);
   }
 
-  async listAdminSitePolicies(options?: ListOptions): Promise<SitePolicy[]> {
+  async listAdminSitePolicies(options?: AdminListOptions): Promise<SitePolicy[]> {
     const policies = await this.prisma.sitePolicy.findMany({
-      where: visibleChildRows(options),
+      where: { ...visibleChildRows(options), ...(options?.siteId ? { siteId: options.siteId } : {}) },
       orderBy: { createdAt: "desc" },
       take: ADMIN_LIST_LIMIT,
     });
@@ -432,9 +432,9 @@ export class PrismaSiteRepository implements SiteRepository {
     return policies.map(mapSitePolicy);
   }
 
-  async listAdminSiteFeatureFlags(options?: ListOptions): Promise<SiteFeatureFlag[]> {
+  async listAdminSiteFeatureFlags(options?: AdminListOptions): Promise<SiteFeatureFlag[]> {
     const flags = await this.prisma.siteFeatureFlag.findMany({
-      where: visibleChildRows(options),
+      where: { ...visibleChildRows(options), ...(options?.siteId ? { siteId: options.siteId } : {}) },
       orderBy: { createdAt: "desc" },
       take: ADMIN_LIST_LIMIT,
     });

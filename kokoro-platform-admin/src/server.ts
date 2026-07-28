@@ -65,11 +65,15 @@ const approvalsQuerySchema = z
 const approvalRejectBodySchema = z.object({ note: z.string().min(1).optional() }).strict();
 const approvalParamsSchema = z.object({ id: z.string().min(1) });
 
-const resourceQuerySchema = z.object({
-  moduleId: z.string().min(1),
-  route: z.string().min(1),
-  siteId: z.string().min(1).optional(),
-});
+const resourceQuerySchema = z
+  .object({
+    moduleId: z.string().min(1),
+    route: z.string().min(1),
+    siteId: z.string().min(1).optional(),
+  })
+  .strict();
+
+const billingOverviewQuerySchema = z.object({ siteId: z.string().trim().min(1) }).strict();
 
 const user360QuerySchema = z
   .object({
@@ -250,8 +254,15 @@ export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps
   app.get("/api/billing-overview", async (request, reply) => {
     const operator = await requireOperator(request, reply);
     if (!operator) return reply;
+    const query = billingOverviewQuerySchema.safeParse(request.query);
+    if (!query.success) {
+      return sendError(reply, 400, "request.invalid", "无效的查询参数", { issues: query.error.issues });
+    }
     try {
-      return sendData(reply, await getBillingOverview(modules, deps.internalSecret ?? ""));
+      return sendData(
+        reply,
+        await getBillingOverview(modules, operator, query.data.siteId, deps.internalSecret ?? ""),
+      );
     } catch (error) {
       if (error instanceof GatewayError) {
         return sendError(reply, error.statusCode, "gateway.error", error.message);
@@ -270,7 +281,7 @@ export function createAdminServer(modules: ModuleConfig[], deps: AdminServerDeps
     if (!permitsSite(operator.scopeSites, query.data.siteId)) {
       return sendError(reply, 403, "operator.auth", "租户超出作用域");
     }
-    return sendData(reply, await getUser360(modules, query.data, deps.internalSecret ?? ""));
+    return sendData(reply, await getUser360(modules, query.data, operator, deps.internalSecret ?? ""));
   });
 
   app.get("/api/resource", async (request, reply) => {

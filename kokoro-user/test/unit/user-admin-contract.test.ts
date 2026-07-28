@@ -41,4 +41,13 @@ describe("userAdminContract", () => {
     expect(teams?.actions?.map((action) => action.id)).toEqual(["create", "delete", "restore"]);
     expect(serviceAccounts?.actions?.map((action) => action.id)).toEqual(["delete"]);
   });
+
+  it("declares every identity resource as Site scoped", () => {
+    expect(Object.fromEntries(userAdminContract.manifest.resources.map((resource) => [resource.id, resource.siteScopeField]))).toEqual({
+      users: "siteId",
+      teams: "siteId",
+      memberships: "siteId",
+      "service-accounts": "siteId",
+    });
+  });
 });

@@ -45,6 +45,7 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
       labelKey: "admin.user.resources.users",
       route: "/admin/users",
       requiredPermission: "user.read",
+      siteScopeField: "siteId",
       actions: [
         {
           id: "create",
@@ -89,6 +90,7 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
       labelKey: "admin.user.resources.teams",
       route: "/admin/teams",
       requiredPermission: "team.read",
+      siteScopeField: "siteId",
       actions: [
         {
           id: "create",
@@ -119,6 +121,7 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
       labelKey: "admin.user.resources.memberships",
       route: "/admin/memberships",
       requiredPermission: "membership.read",
+      siteScopeField: "siteId",
       actions: [
         {
           id: "change-role",
@@ -134,6 +137,7 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
       labelKey: "admin.user.resources.serviceAccounts",
       route: "/admin/service-accounts",
       requiredPermission: "serviceAccount.read",
+      siteScopeField: "siteId",
       actions: [
         {
           id: "delete",

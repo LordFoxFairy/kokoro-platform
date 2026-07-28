@@ -18,6 +18,10 @@ export interface ListOptions {
   includeDeleted?: boolean | undefined;
 }
 
+export interface AdminListOptions extends ListOptions {
+  siteId?: string | undefined;
+}
+
 export type SiteLifecycleErrorCode =
   | "site.not_found"
   | "site.deleted"

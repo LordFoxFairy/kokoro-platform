@@ -20,6 +20,7 @@ const SUPER: Operator = { id: "op_super", email: "admin@kokoro.local", roleKey: 
 const FINANCE: Operator = { id: "op_fin", email: "fin@kokoro.local", roleKey: "finance", permissions: ["payment.*", "credit.grant"], scopeSites: ["site_1"] };
 const TENANT: Operator = { id: "op_t", email: "t@kokoro.local", roleKey: "support", permissions: ["user.disable"], scopeSites: ["site_2"] };
 const CREDIT_READER: Operator = { id: "op_credit", email: "credit@kokoro.local", roleKey: "support", permissions: ["credit.account.read"], scopeSites: ["site_1"] };
+const BILLING_READER: Operator = { id: "op_billing", email: "billing@kokoro.local", roleKey: "finance", permissions: ["billing.read"], scopeSites: ["site_1"] };
 
 const modules: ModuleConfig[] = [
   { id: "credit", label: "Credits", baseUrl: "http://127.0.0.1:4231", manifestPath: "/admin/credits/manifest" },
@@ -38,6 +39,7 @@ const creditManifest = {
       labelKey: "admin.credit.resources.accounts",
       route: "/admin/credits/accounts",
       requiredPermission: "credit.account.read",
+      siteScopeField: "siteId",
       actions: [],
     },
   ],
@@ -98,25 +100,25 @@ describe("getManifests", () => {
 
 describe("proxyResource", () => {
   it("proxies a route that the manifest declares and unwraps the {data} array", async () => {
-    const rows = [{ id: "acc_1", balance: 100 }];
+    const rows = [{ id: "acc_1", siteId: "site_1", balance: 100 }];
     fetchMock.mockImplementation(async (input) => {
       const url = String(input);
       if (url.includes("/manifest")) return jsonResponse({ data: creditManifest });
       return jsonResponse({ data: rows });
     });
 
-    const result = await proxyResource(modules, "credit", "/admin/credits/accounts");
+    const result = await proxyResource(modules, "credit", "/admin/credits/accounts", { operator: SUPER });
     expect(result).toEqual(rows);
   });
 
   it("rejects a route absent from the manifest (anti open-proxy/SSRF)", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ data: creditManifest }));
-    await expect(proxyResource(modules, "credit", "/etc/passwd")).rejects.toBeInstanceOf(GatewayError);
-    await expect(proxyResource(modules, "credit", "/etc/passwd")).rejects.toMatchObject({ statusCode: 403 });
+    await expect(proxyResource(modules, "credit", "/etc/passwd", { operator: SUPER })).rejects.toBeInstanceOf(GatewayError);
+    await expect(proxyResource(modules, "credit", "/etc/passwd", { operator: SUPER })).rejects.toMatchObject({ statusCode: 403 });
   });
 
   it("rejects an unknown module id", async () => {
-    await expect(proxyResource(modules, "nope", "/admin/credits/accounts")).rejects.toMatchObject({
+    await expect(proxyResource(modules, "nope", "/admin/credits/accounts", { operator: SUPER })).rejects.toMatchObject({
       statusCode: 400,
     });
     expect(fetchMock).not.toHaveBeenCalled();
@@ -124,7 +126,7 @@ describe("proxyResource", () => {
 
   it("surfaces a 502 when the target module is offline", async () => {
     fetchMock.mockRejectedValue(new Error("ECONNREFUSED"));
-    await expect(proxyResource(modules, "credit", "/admin/credits/accounts")).rejects.toMatchObject({
+    await expect(proxyResource(modules, "credit", "/admin/credits/accounts", { operator: SUPER })).rejects.toMatchObject({
       statusCode: 502,
     });
   });
@@ -133,11 +135,11 @@ describe("proxyResource", () => {
     const manifestThenRows = async (input: string | URL | Request): Promise<Response> =>
       String(input).includes("/manifest")
         ? jsonResponse({ data: creditManifest })
-        : jsonResponse({ data: [{ id: "acc_1" }] });
+        : jsonResponse({ data: [{ id: "acc_1", siteId: "site_1" }] });
 
     fetchMock.mockImplementation(manifestThenRows);
     await expect(proxyResource(modules, "credit", "/admin/credits/accounts", SUPER)).resolves.toEqual([
-      { id: "acc_1" },
+      { id: "acc_1", siteId: "site_1" },
     ]);
 
     fetchMock.mockReset();
@@ -149,7 +151,7 @@ describe("proxyResource", () => {
     expect(fetchMock.mock.calls.every(([url]) => String(url).includes("/manifest"))).toBe(true);
   });
 
-  it("returns every declared row for a super-scoped operator when no siteId is requested", async () => {
+  it("returns every valid scoped row for a super-scoped operator when no siteId is requested", async () => {
     const rows = [
       { id: "acc_1", siteId: "site_1" },
       { id: "acc_2", siteId: "site_2" },
@@ -161,7 +163,7 @@ describe("proxyResource", () => {
 
     await expect(
       proxyResource(modules, "credit", "/admin/credits/accounts", { operator: SUPER }),
-    ).resolves.toEqual(rows);
+    ).resolves.toEqual(rows.slice(0, 2));
   });
 
   it("filters resource rows to the operator tenant scope and drops rows without siteId", async () => {
@@ -211,6 +213,44 @@ describe("proxyResource", () => {
     ).rejects.toMatchObject({ statusCode: 403 });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/manifest");
+  });
+
+  it("fails closed when resource scope omits an operator", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: creditManifest }));
+    await expect(proxyResource(modules, "credit", "/admin/credits/accounts")).rejects.toMatchObject({ statusCode: 403 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("fans a finite multi-Site scope out to provider filters before take", async () => {
+    const multi: Operator = { ...CREDIT_READER, scopeSites: ["site_a", "site_b"] };
+    fetchMock.mockImplementation(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/manifest")) return jsonResponse({ data: creditManifest });
+      const siteId = url.searchParams.get("siteId");
+      return jsonResponse({ data: siteId === null ? Array.from({ length: 100 }, (_, i) => ({ id: `other_${i}`, siteId: "site_other" })) : [{ id: `account_${siteId}`, siteId }] });
+    });
+
+    await expect(proxyResource(modules, "credit", "/admin/credits/accounts", { operator: multi })).resolves.toEqual([
+      { id: "account_site_a", siteId: "site_a" },
+      { id: "account_site_b", siteId: "site_b" },
+    ]);
+    const resourceUrls = fetchMock.mock.calls.slice(1).map(([input]) => String(input));
+    expect(resourceUrls).toHaveLength(2);
+    expect(resourceUrls.some((url) => url.includes("siteId=site_a"))).toBe(true);
+    expect(resourceUrls.some((url) => url.includes("siteId=site_b"))).toBe(true);
+  });
+
+  it("allows platform-global resources only to wildcard-scoped operators", async () => {
+    const globalManifest = {
+      ...creditManifest,
+      resources: [{ ...creditManifest.resources[0], route: "/admin/global", siteScopeField: null }],
+    };
+    fetchMock.mockImplementation(async (input) =>
+      String(input).includes("/manifest") ? jsonResponse({ data: globalManifest }) : jsonResponse({ data: [{ id: "global" }] }),
+    );
+
+    await expect(proxyResource(modules, "credit", "/admin/global", { operator: CREDIT_READER })).rejects.toMatchObject({ statusCode: 403 });
+    await expect(proxyResource(modules, "credit", "/admin/global", { operator: SUPER })).resolves.toEqual([{ id: "global" }]);
   });
 });
 
@@ -278,6 +318,7 @@ const userActionManifest = {
       labelKey: "admin.user.resources.users",
       route: "/admin/users",
       requiredPermission: "user.read",
+      siteScopeField: "siteId",
       actions: [
         {
           id: "disable",
@@ -460,27 +501,35 @@ const fullModules: ModuleConfig[] = [
   { id: "payment", label: "Payments", baseUrl: "http://127.0.0.1:4241", manifestPath: "/admin/payments/manifest" },
 ];
 
-function listManifest(id: string, basePath: string, resourceId: string, route: string): unknown {
+function listManifest(
+  id: string,
+  basePath: string,
+  resourceId: string,
+  route: string,
+  siteScopeField: "siteId" | "id" | null = "siteId",
+  requiredPermission = "x.read",
+): unknown {
   return {
     id,
     labelKey: "x",
     basePath,
     requiredPermission: "x.admin",
     navItems: [],
-    resources: [{ id: resourceId, labelKey: "x", route, requiredPermission: "x.read", actions: [] }],
+    resources: [{ id: resourceId, labelKey: "x", route, requiredPermission, siteScopeField, actions: [] }],
   };
 }
 
 function aggregationFetch(input: string | URL | Request): Promise<Response> {
   const url = String(input);
-  if (url.includes("/admin/sites/manifest")) return Promise.resolve(jsonResponse({ data: listManifest("kokoro-site", "/admin/sites", "sites", "/admin/sites") }));
-  if (url.endsWith("/admin/sites")) return Promise.resolve(jsonResponse({ data: [{ id: "site1", key: "music" }] }));
+  const pathname = new URL(url).pathname;
+  if (url.includes("/admin/sites/manifest")) return Promise.resolve(jsonResponse({ data: listManifest("kokoro-site", "/admin/sites", "sites", "/admin/sites", "id", "site.read") }));
+  if (url.includes("/admin/sites") && !url.includes("/manifest")) return Promise.resolve(jsonResponse({ data: [{ id: new URL(url).searchParams.get("siteId") ?? "site1", key: "music" }] }));
   if (url.includes("/admin/credits/manifest")) return Promise.resolve(jsonResponse({ data: listManifest("kokoro-credit", "/admin/credits", "accounts", "/admin/credits/accounts") }));
-  if (url.endsWith("/admin/credits/accounts")) return Promise.resolve(jsonResponse({ data: [{ id: "acc1", siteId: "s1", ownerKind: "team", ownerId: "t1", balanceMicros: "100" }, { id: "acc2", siteId: "s2", ownerKind: "team", ownerId: "t1" }] }));
+  if (pathname.endsWith("/admin/credits/accounts")) return Promise.resolve(jsonResponse({ data: [{ id: "acc1", siteId: "s1", ownerKind: "team", ownerId: "t1", balanceMicros: "100" }, { id: "acc2", siteId: "s2", ownerKind: "team", ownerId: "t1" }] }));
   if (url.includes("/admin/payments/manifest")) return Promise.resolve(jsonResponse({ data: listManifest("kokoro-payment", "/admin/payments", "orders", "/admin/payments/orders") }));
-  if (url.endsWith("/admin/payments/orders")) return Promise.resolve(jsonResponse({ data: [{ id: "o1", siteId: "s1", teamId: "t1" }, { id: "o2", siteId: "s1", teamId: "t2" }, { id: "o3", siteId: "s2", teamId: "t1" }] }));
+  if (pathname.endsWith("/admin/payments/orders")) return Promise.resolve(jsonResponse({ data: [{ id: "o1", siteId: "s1", teamId: "t1" }, { id: "o2", siteId: "s1", teamId: "t2" }, { id: "o3", siteId: "s2", teamId: "t1" }] }));
   if (url.includes("/admin/users/manifest")) return Promise.resolve(jsonResponse({ data: listManifest("kokoro-user", "/admin/users", "users", "/admin/users") }));
-  if (url.endsWith("/admin/users")) return Promise.resolve(jsonResponse({ data: [{ id: "u1", siteId: "s1", email: "a@b.c" }] }));
+  if (pathname.endsWith("/admin/users")) return Promise.resolve(jsonResponse({ data: [{ id: "u1", siteId: "s1", email: "a@b.c" }] }));
   return Promise.resolve(jsonResponse({}, false, 404));
 }
 
@@ -492,17 +541,24 @@ describe("getSites", () => {
 
   it("filters to the operator's tenant scope", async () => {
     fetchMock.mockImplementation(aggregationFetch);
-    const scoped = { id: "o", email: "e", roleKey: "support", permissions: [], scopeSites: ["site1"] };
-    const other = { id: "o2", email: "e2", roleKey: "support", permissions: [], scopeSites: ["site-x"] };
+    const scoped = { id: "o", email: "e", roleKey: "support", permissions: ["site.read"], scopeSites: ["site1"] };
+    const other = { id: "o2", email: "e2", roleKey: "support", permissions: ["site.read"], scopeSites: ["site-x"] };
     expect(await getSites(fullModules, scoped)).toEqual([{ id: "site1", key: "music" }]);
-    expect(await getSites(fullModules, other)).toEqual([]);
+    expect(await getSites(fullModules, other)).toEqual([{ id: "site-x", key: "music" }]);
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("siteId=site-x"))).toBe(true);
+  });
+
+  it("does not bypass the sites resource permission", async () => {
+    fetchMock.mockImplementation(aggregationFetch);
+    const noSitePermission = { ...CREDIT_READER, scopeSites: ["site1"] };
+    await expect(getSites(fullModules, noSitePermission)).rejects.toMatchObject({ statusCode: 403 });
   });
 });
 
 describe("getUser360", () => {
   it("aggregates the matching account and site-scoped orders for a team owner", async () => {
     fetchMock.mockImplementation(aggregationFetch);
-    const result = await getUser360(fullModules, { siteId: "s1", ownerKind: "team", ownerId: "t1" });
+    const result = await getUser360(fullModules, { siteId: "s1", ownerKind: "team", ownerId: "t1" }, SUPER);
     expect(result.creditAccount?.id).toBe("acc1");
     expect(result.orders.map((order) => order.id)).toEqual(["o1"]);
     expect(result.identity).toBeNull();
@@ -510,7 +566,7 @@ describe("getUser360", () => {
 
   it("resolves identity for a user owner", async () => {
     fetchMock.mockImplementation(aggregationFetch);
-    const result = await getUser360(fullModules, { siteId: "s1", ownerKind: "user", ownerId: "u1" });
+    const result = await getUser360(fullModules, { siteId: "s1", ownerKind: "user", ownerId: "u1" }, SUPER);
     expect(result.identity?.email).toBe("a@b.c");
   });
 
@@ -519,7 +575,7 @@ describe("getUser360", () => {
       if (String(input).includes("/admin/credits/")) return Promise.reject(new Error("ECONNREFUSED"));
       return aggregationFetch(input);
     });
-    const result = await getUser360(fullModules, { siteId: "s1", ownerKind: "team", ownerId: "t1" });
+    const result = await getUser360(fullModules, { siteId: "s1", ownerKind: "team", ownerId: "t1" }, SUPER);
     expect(result.creditAccount).toBeNull();
     expect(result.orders.map((order) => order.id)).toEqual(["o1"]);
   });
@@ -576,27 +632,34 @@ describe("getBillingOverview", () => {
     revenueByCurrency: [{ currency: "CNY", amountMinor: "3450" }],
   };
 
-  it("aggregates credit + payment stats (直取,不经 manifest 资源校验)", async () => {
+  it("aggregates credit + payment stats for an authorized Site", async () => {
     fetchMock.mockImplementation(async (input) => {
       const url = String(input);
-      if (url.endsWith("/admin/credits/stats")) return jsonResponse({ data: creditStats });
-      if (url.endsWith("/admin/payments/stats")) return jsonResponse({ data: paymentStats });
+      if (url.includes("/admin/credits/stats")) return jsonResponse({ data: creditStats });
+      if (url.includes("/admin/payments/stats")) return jsonResponse({ data: paymentStats });
       throw new Error(`unexpected ${url}`);
     });
-    const result = await getBillingOverview(billingModules);
+    const result = await getBillingOverview(billingModules, BILLING_READER, "site_1");
     expect(result.credit).toEqual(creditStats);
     expect(result.payment).toEqual(paymentStats);
+    expect(fetchMock.mock.calls.every(([input]) => String(input).includes("siteId=site_1"))).toBe(true);
   });
 
   it("degrades a segment to null on upstream error (不拖垮整体)", async () => {
     fetchMock.mockImplementation(async (input) => {
       const url = String(input);
-      if (url.endsWith("/admin/credits/stats")) return jsonResponse({ data: creditStats });
-      if (url.endsWith("/admin/payments/stats")) return jsonResponse({}, false, 502);
+      if (url.includes("/admin/credits/stats")) return jsonResponse({ data: creditStats });
+      if (url.includes("/admin/payments/stats")) return jsonResponse({}, false, 502);
       throw new Error(`unexpected ${url}`);
     });
-    const result = await getBillingOverview(billingModules);
+    const result = await getBillingOverview(billingModules, BILLING_READER, "site_1");
     expect(result.credit).toEqual(creditStats);
     expect(result.payment).toBeNull();
+  });
+
+  it("rejects missing billing permission or out-of-scope Site before upstream calls", async () => {
+    await expect(getBillingOverview(billingModules, CREDIT_READER, "site_1")).rejects.toMatchObject({ statusCode: 403 });
+    await expect(getBillingOverview(billingModules, BILLING_READER, "site_2")).rejects.toMatchObject({ statusCode: 403 });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

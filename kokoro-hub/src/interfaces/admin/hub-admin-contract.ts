@@ -34,6 +34,7 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
       labelKey: "admin.hub.resources.skills",
       route: "/hub/admin/official/skills",
       requiredPermission: "hub.skill.read",
+      siteScopeField: null,
       // 运营动作(官方目录治理):official-flags 上架/下架/required + 软删。均单参 :name(scope=official 隐含)。
       // 租户 per-user enable/disable 不属运营面,不在此暴露。
       actions: [
@@ -60,6 +61,7 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
       labelKey: "admin.hub.resources.skillUploads",
       route: "/hub/admin/skills/:scope/:name/revisions",
       requiredPermission: "hub.skill.read",
+      siteScopeField: null,
       actions: [
         {
           id: "upload-preview",
@@ -83,6 +85,7 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
       labelKey: "admin.hub.resources.skillCuration",
       route: "/hub/admin/official/skills",
       requiredPermission: "hub.skill.read",
+      siteScopeField: null,
       actions: [
         {
           id: "curation",
@@ -106,6 +109,7 @@ const manifest: AdminModuleManifest = adminModuleManifestSchema.parse({
       labelKey: "admin.hub.resources.mcpServers",
       route: "/hub/admin/official/mcp/servers",
       requiredPermission: "hub.mcp.read",
+      siteScopeField: null,
       // 运营动作(官方目录治理):注册(namespace-free 写入官方 scope)/启停/软删。
       // 启停/软删均单参 :name(scope=official 隐含);租户合并池不属运营面。
       actions: [

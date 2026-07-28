@@ -43,4 +43,13 @@ describe("model admin contract", () => {
     expect(labelActions).toEqual(["create"]);
     expect(policyActions).toEqual(["set"]);
   });
+
+  it("marks only Site policy rows as Site scoped", () => {
+    expect(Object.fromEntries(modelAdminContract.manifest.resources.map((resource) => [resource.id, resource.siteScopeField]))).toEqual({
+      "provider-accounts": null,
+      "model-bindings": null,
+      "model-labels": null,
+      "site-policies": "siteId",
+    });
+  });
 });

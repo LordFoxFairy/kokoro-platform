@@ -31,6 +31,7 @@ describe("adminModuleManifestSchema", () => {
           labelKey: "admin.user.resources.users",
           route: "/admin/users",
           requiredPermission: "user.read",
+          siteScopeField: "siteId",
         },
       ],
     });
@@ -140,15 +141,27 @@ describe("adminActionManifestSchema", () => {
 });
 
 describe("adminResourceManifestSchema", () => {
-  it("defaults actions to an empty array", () => {
-    expect(
+  it.each(["siteId", "id", null])("accepts explicit site scope field %s", (siteScopeField) => {
+    const parsed = adminResourceManifestSchema.parse({
+        id: "r",
+        labelKey: "k",
+        route: "/r",
+        requiredPermission: "p",
+        siteScopeField,
+      });
+    expect(parsed.siteScopeField).toBe(siteScopeField);
+    expect(parsed.actions).toEqual([]);
+  });
+
+  it("rejects a resource that omits its site scope contract", () => {
+    expect(() =>
       adminResourceManifestSchema.parse({
         id: "r",
         labelKey: "k",
         route: "/r",
         requiredPermission: "p",
-      }).actions,
-    ).toEqual([]);
+      }),
+    ).toThrow();
   });
 });
 

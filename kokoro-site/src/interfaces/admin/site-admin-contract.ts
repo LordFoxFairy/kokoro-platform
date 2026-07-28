@@ -44,6 +44,7 @@ const manifest = adminModuleManifestSchema.parse({
       labelKey: "admin.site.resources.sites",
       route: "/admin/sites",
       requiredPermission: "site.read",
+      siteScopeField: "id",
       actions: [
         {
           id: "upsert",
@@ -74,6 +75,7 @@ const manifest = adminModuleManifestSchema.parse({
       labelKey: "admin.site.resources.domains",
       route: "/admin/site-domains",
       requiredPermission: "siteDomain.read",
+      siteScopeField: "siteId",
       actions: [
         {
           id: "bind",
@@ -104,6 +106,7 @@ const manifest = adminModuleManifestSchema.parse({
       labelKey: "admin.site.resources.apps",
       route: "/admin/site-apps",
       requiredPermission: "siteApp.read",
+      siteScopeField: "siteId",
       actions: [
         {
           id: "configure",
@@ -119,6 +122,7 @@ const manifest = adminModuleManifestSchema.parse({
       labelKey: "admin.site.resources.policies",
       route: "/admin/site-policies",
       requiredPermission: "sitePolicy.read",
+      siteScopeField: "siteId",
       actions: [
         {
           id: "set",
@@ -134,6 +138,7 @@ const manifest = adminModuleManifestSchema.parse({
       labelKey: "admin.site.resources.featureFlags",
       route: "/admin/site-feature-flags",
       requiredPermission: "siteFeatureFlag.read",
+      siteScopeField: "siteId",
       actions: [
         {
           id: "toggle",

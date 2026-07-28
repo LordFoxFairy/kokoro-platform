@@ -35,4 +35,13 @@ describe("credit admin contract", () => {
     expect(accountActions).toEqual(["grant", "reset", "set-quota", "delete", "restore"]);
     expect(pricingActions).toEqual(["create", "update", "delete", "restore"]);
   });
+
+  it("declares the row field used for Site admission on every resource", () => {
+    expect(Object.fromEntries(creditAdminContract.manifest.resources.map((resource) => [resource.id, resource.siteScopeField]))).toEqual({
+      "credit-accounts": "siteId",
+      "ledger-entries": "siteId",
+      "usage-records": "siteId",
+      "pricing-rules": null,
+    });
+  });
 });

@@ -90,17 +90,28 @@ function normalizeResourceScope(scope?: Operator | ResourceScopeOptions): Resour
   return scope;
 }
 
-function filterResourceRows(rows: ResourceRow[], scope: ResourceScopeOptions): ResourceRow[] {
-  if (scope.siteId !== undefined) {
-    return rows.filter((row) => row.siteId === scope.siteId);
+function resourceUrl(baseUrl: string, route: string, siteId?: string): string {
+  const url = new URL(joinUrl(baseUrl, route));
+  if (siteId !== undefined) {
+    url.searchParams.set("siteId", siteId);
   }
+  return url.toString();
+}
 
-  const operator = scope.operator;
-  if (operator === undefined || operator.scopeSites.includes("*")) {
-    return rows;
+async function fetchResourceRows(
+  module: ModuleConfig,
+  route: string,
+  internalSecret: string,
+  siteId?: string,
+): Promise<ResourceRow[]> {
+  const response = await fetch(resourceUrl(module.baseUrl, route, siteId), {
+    headers: adminCallerHeaders(internalSecret),
+  });
+  if (!response.ok) {
+    throw new GatewayError(`upstream returned HTTP ${response.status}`, 502);
   }
-
-  return rows.filter((row) => typeof row.siteId === "string" && permitsSite(operator.scopeSites, row.siteId));
+  const body: unknown = await response.json();
+  return resourceEnvelopeSchema.parse(body).data;
 }
 
 // 校验 moduleId 已知 + route ∈ manifest.resources[].route，防开放代理/SSRF
@@ -133,16 +144,35 @@ export async function proxyResource(
   if (scope.operator && scope.siteId !== undefined && !permitsSite(scope.operator.scopeSites, scope.siteId)) {
     throw new GatewayError(`tenant out of scope: ${scope.siteId}`, 403);
   }
-
-  const response = await fetch(joinUrl(module.baseUrl, route), {
-    headers: adminCallerHeaders(internalSecret),
-  });
-  if (!response.ok) {
-    throw new GatewayError(`upstream returned HTTP ${response.status}`, 502);
+  const operator = scope.operator;
+  if (operator === undefined) {
+    throw new GatewayError("operator required for resource access", 403);
   }
 
-  const body: unknown = await response.json();
-  return filterResourceRows(resourceEnvelopeSchema.parse(body).data, scope);
+  const scopeField = resource.siteScopeField;
+  if (scopeField === null) {
+    if (!operator.scopeSites.includes("*") || scope.siteId !== undefined) {
+      throw new GatewayError("platform-global resource requires wildcard Site scope", 403);
+    }
+    return fetchResourceRows(module, route, internalSecret);
+  }
+
+  const requestedSites =
+    scope.siteId !== undefined
+      ? [scope.siteId]
+      : operator.scopeSites.includes("*")
+        ? [undefined]
+        : [...new Set(operator.scopeSites)];
+  const batches = await Promise.all(
+    requestedSites.map(async (siteId) => {
+      const rows = await fetchResourceRows(module, route, internalSecret, siteId);
+      return rows.filter((row) => {
+        const rowSiteId = row[scopeField];
+        return typeof rowSiteId === "string" && (siteId === undefined || rowSiteId === siteId);
+      });
+    }),
+  );
+  return batches.flat();
 }
 
 export interface ActionRequest {
@@ -356,11 +386,7 @@ export async function getSites(
   operator: Operator,
   internalSecret = "",
 ): Promise<ResourceRow[]> {
-  const sites = await proxyResource(modules, "site", "/admin/sites", undefined, internalSecret);
-  if (operator.scopeSites.includes("*")) {
-    return sites;
-  }
-  return sites.filter((row) => typeof row.id === "string" && permitsSite(operator.scopeSites, row.id));
+  return proxyResource(modules, "site", "/admin/sites", { operator }, internalSecret);
 }
 
 // 功能/页面可见性：只保留 operator 有权读的 resource/nav 及其有权执行的 action。
@@ -394,12 +420,13 @@ export interface User360 {
 export async function getUser360(
   modules: ModuleConfig[],
   query: User360Query,
+  operator: Operator,
   internalSecret = "",
 ): Promise<User360> {
   const [accounts, orders, users] = await Promise.all([
-    proxyResource(modules, "credit", "/admin/credits/accounts", undefined, internalSecret).catch(() => [] as ResourceRow[]),
-    proxyResource(modules, "payment", "/admin/payments/orders", undefined, internalSecret).catch(() => [] as ResourceRow[]),
-    proxyResource(modules, "user", "/admin/users", undefined, internalSecret).catch(() => [] as ResourceRow[]),
+    proxyResource(modules, "credit", "/admin/credits/accounts", { operator, siteId: query.siteId }, internalSecret).catch(() => [] as ResourceRow[]),
+    proxyResource(modules, "payment", "/admin/payments/orders", { operator, siteId: query.siteId }, internalSecret).catch(() => [] as ResourceRow[]),
+    proxyResource(modules, "user", "/admin/users", { operator, siteId: query.siteId }, internalSecret).catch(() => [] as ResourceRow[]),
   ]);
 
   const creditAccount =
@@ -451,13 +478,14 @@ async function fetchStats<T>(
   moduleId: string,
   route: string,
   schema: z.ZodType<T>,
+  siteId: string,
   internalSecret: string,
 ): Promise<T> {
   const module = modules.find((candidate) => candidate.id === moduleId);
   if (!module) {
     throw new GatewayError(`unknown module: ${moduleId}`, 400);
   }
-  const response = await fetch(joinUrl(module.baseUrl, route), { headers: adminCallerHeaders(internalSecret) });
+  const response = await fetch(resourceUrl(module.baseUrl, route, siteId), { headers: adminCallerHeaders(internalSecret) });
   if (!response.ok) {
     throw new GatewayError(`upstream returned HTTP ${response.status}`, 502);
   }
@@ -467,11 +495,19 @@ async function fetchStats<T>(
 
 export async function getBillingOverview(
   modules: ModuleConfig[],
+  operator: Operator,
+  siteId: string,
   internalSecret = "",
 ): Promise<BillingOverview> {
+  if (!permits(operator.permissions, "billing.read")) {
+    throw new GatewayError("permission denied: billing.read", 403);
+  }
+  if (!permitsSite(operator.scopeSites, siteId)) {
+    throw new GatewayError(`tenant out of scope: ${siteId}`, 403);
+  }
   const [credit, payment] = await Promise.all([
-    fetchStats(modules, "credit", "/admin/credits/stats", creditStatsSchema, internalSecret).catch(() => null),
-    fetchStats(modules, "payment", "/admin/payments/stats", paymentStatsSchema, internalSecret).catch(() => null),
+    fetchStats(modules, "credit", "/admin/credits/stats", creditStatsSchema, siteId, internalSecret).catch(() => null),
+    fetchStats(modules, "payment", "/admin/payments/stats", paymentStatsSchema, siteId, internalSecret).catch(() => null),
   ]);
   return { credit, payment };
 }
