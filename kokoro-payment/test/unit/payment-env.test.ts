@@ -30,15 +30,56 @@ describe("paymentEnvSchema", () => {
     expect("PATH" in parsed).toBe(false);
   });
 
-  it("strips every legacy acquisition switch so environment cannot re-enable the channel", () => {
+  it.each([
+    ["KOKORO_PAYMENT_ENABLED_PROVIDERS", "stripe,mock"],
+    ["KOKORO_PAYMENT_CONFIRM_SWEEP_INTERVAL_SECONDS", "1"],
+    ["KOKORO_PAYMENT_CONFIRM_STALE_SECONDS", "1"],
+    ["KOKORO_PAYMENT_WEBHOOK_SECRET_MOCK", "secret"],
+    ["KOKORO_PAYMENT_WEBHOOK_SECRET_STRIPE", "secret"],
+    ["KOKORO_PAYMENT_ALIPAY_PUBLIC_KEY", "public-key"],
+    ["KOKORO_PAYMENT_WECHAT_PLATFORM_CERT", "certificate"],
+    ["STRIPE_WEBHOOK_SECRET", "secret"],
+    ["PAYPAL_WEBHOOK_SECRET", "secret"],
+  ])("fails fast with a stable error when deprecated acquisition variable %s is non-empty", (key, value) => {
+    let thrown: unknown;
+    try {
+      loadPaymentEnv({ ...required, [key]: value });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toMatchObject({
+      code: "payment.acquisition_env_forbidden",
+      variables: [key],
+    });
+  });
+
+  it("allows empty deprecated variables during a rolling configuration cleanup", () => {
     const parsed = loadPaymentEnv({
       ...required,
-      KOKORO_PAYMENT_ENABLED_PROVIDERS: "stripe,mock",
-      KOKORO_PAYMENT_CONFIRM_SWEEP_INTERVAL_SECONDS: "1",
-      KOKORO_PAYMENT_CONFIRM_STALE_SECONDS: "1",
+      KOKORO_PAYMENT_ENABLED_PROVIDERS: "",
+      KOKORO_PAYMENT_CONFIRM_SWEEP_INTERVAL_SECONDS: "  ",
+      STRIPE_WEBHOOK_SECRET: "",
     });
-    expect(parsed).not.toHaveProperty("KOKORO_PAYMENT_ENABLED_PROVIDERS");
-    expect(parsed).not.toHaveProperty("KOKORO_PAYMENT_CONFIRM_SWEEP_INTERVAL_SECONDS");
-    expect(parsed).not.toHaveProperty("KOKORO_PAYMENT_CONFIRM_STALE_SECONDS");
+    expect(parsed).toEqual({ ...required, KOKORO_PAYMENT_PORT: 4241 });
+  });
+
+  it("reports every non-empty deprecated acquisition variable deterministically", () => {
+    let thrown: unknown;
+    try {
+      loadPaymentEnv({
+        ...required,
+        KOKORO_PAYMENT_CONFIRM_STALE_SECONDS: "1",
+        KOKORO_PAYMENT_ENABLED_PROVIDERS: "stripe",
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toMatchObject({
+      code: "payment.acquisition_env_forbidden",
+      variables: [
+        "KOKORO_PAYMENT_CONFIRM_STALE_SECONDS",
+        "KOKORO_PAYMENT_ENABLED_PROVIDERS",
+      ],
+    });
   });
 });

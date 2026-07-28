@@ -59,6 +59,42 @@ describe("payment read-only Admin API (real mysql)", () => {
     expect(response.json().data[0]).toMatchObject({ key: "deleted", deletedBy: "operator-1" });
   });
 
+  it.each(["plans", "orders", "subscriptions", "refunds"])(
+    "rejects missing and blank Site scope before reading %s",
+    async (resource) => {
+      for (const suffix of ["", "?siteId=%20"]) {
+        const response = await app.inject({ method: "GET", url: `/admin/payments/${resource}${suffix}` });
+        expect(response.statusCode).toBe(400);
+        expect(response.json().error.code).toBe("payment.site_required");
+      }
+    },
+  );
+
+  it("isolates every Site-scoped read from another Site's historical rows", async () => {
+    const createHistory = async (siteId: string, suffix: string) => {
+      const plan = await prisma.plan.create({
+        data: { siteId, key: `plan-${suffix}`, name: suffix, currency: "USD", amountMinor: 1n, creditMicros: 0n, billingInterval: "once", status: "active" },
+      });
+      const order = await prisma.order.create({
+        data: { siteId, teamId: `team-${suffix}`, planId: plan.id, amountMinor: 1n, currency: "USD", idempotencyKey: `order-${suffix}`, status: "paid" },
+      });
+      await prisma.subscription.create({ data: { teamId: `team-${suffix}`, planId: plan.id, status: "active" } });
+      await prisma.refund.create({ data: { orderId: order.id, amountMinor: 1n, currency: "USD", status: "succeeded" } });
+    };
+    await createHistory(TEST_SITE_ID, "selected");
+    await createHistory("site-other", "other");
+
+    for (const resource of ["plans", "orders", "subscriptions", "refunds"]) {
+      const response = await app.inject({
+        method: "GET",
+        url: `/admin/payments/${resource}?siteId=${TEST_SITE_ID}`,
+      });
+      expect(response.statusCode, resource).toBe(200);
+      expect(response.json().data, resource).toHaveLength(1);
+      expect(response.json().data[0].siteId, resource).toBe(TEST_SITE_ID);
+    }
+  });
+
   it.each([
     ["POST", "/admin/payments/grant-plan"],
     ["DELETE", "/admin/payments/plans/plan-1"],

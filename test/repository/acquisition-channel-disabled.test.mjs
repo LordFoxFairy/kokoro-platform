@@ -1,79 +1,391 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { readFile, readdir } from "node:fs/promises";
+import { dirname, relative, resolve, sep } from "node:path";
+import { fileURLToPath, URL } from "node:url";
 import test from "node:test";
-import { URL } from "node:url";
+import ts from "typescript";
 
-const layers = [
-  {
-    id: "runtime-router",
-    files: ["kokoro-payment/src/interfaces/http/routes.ts"],
-    forbidden: /service\.(?:startCheckout|createOrder|confirmOrder|refundOrder|recordPaymentEvent|sweepStaleConfirmingOrders)\s*\(/u,
-    fixture: "service.confirmOrder(orderId, requestId);",
-  },
-  {
-    id: "webhook-router",
-    files: ["kokoro-payment/src/interfaces/http/webhook-routes.ts"],
-    forbidden: /(?:PaymentWebhookService|receiveWebhook)\b/u,
-    fixture: "webhookService.receiveWebhook(provider, headers, body, requestId);",
-  },
-  {
-    id: "admin-surface",
-    files: [
-      "kokoro-payment/src/interfaces/admin/payment-admin-contract.ts",
-      "kokoro-payment/src/interfaces/http/admin-routes.ts",
-    ],
-    forbidden: /(?:grantPlanToTeam|refundOrder|upsertProvider|deleteProvider|replayEvent)\s*\(/u,
-    fixture: "await webhookService.upsertProvider(input);",
-  },
-  {
-    id: "server-assembly",
-    files: ["kokoro-payment/src/interfaces/http/server.ts"],
-    forbidden: /(?:PaymentService|PaymentWebhookService|createWebhookProviderRegistry|setInterval|grantPurchaseCredits|reverseCredits|webhookSecretResolver|enabledProviderKinds)\b/u,
-    fixture: "const worker = setInterval(runAcquisition, 1000);",
-  },
-  {
-    id: "process-bootstrap",
-    files: [
-      "kokoro-payment/src/interfaces/http/main.ts",
-      "kokoro-payment/src/index.ts",
-      "kokoro-payment/src/module.ts",
-    ],
-    forbidden: /(?:createCreditGrantClient|createCreditReverseClient|parseEnabledProviders|KOKORO_PAYMENT_ENABLED_PROVIDERS|application\/(?:payment|webhook)-service|POST \/(?:plans\/upsert|orders(?:\/[^"\n]*)?|payment-events\/record|payments\/webhooks)|dependencies:\s*\[[^\]]*"credit")\b/u,
-    fixture: "createCreditGrantClient(env.KOKORO_CREDIT_BASE_URL);",
-  },
-  {
-    id: "environment",
-    files: ["kokoro-payment/src/config/env.ts"],
-    forbidden: /KOKORO_PAYMENT_(?:ENABLED_PROVIDERS|CONFIRM_SWEEP_INTERVAL_SECONDS|CONFIRM_STALE_SECONDS)\b/u,
-    fixture: "KOKORO_PAYMENT_ENABLED_PROVIDERS: z.string().default(''),",
-  },
-  {
-    id: "catalog-seed",
-    files: ["kokoro-payment/src/interfaces/cli/seed-packs.ts"],
-    forbidden: /(?:upsertProvider|KOKORO_PAYMENT_MOCK_WEBHOOK_SECRET|enabled:\s*true)\b/u,
-    fixture: "await repo.upsertProvider({ key: 'mock', enabled: true });",
-  },
+const ROOT = fileURLToPath(new URL("../../", import.meta.url));
+const PAYMENT_SOURCE_ROOT = "kokoro-payment/src";
+
+const HTTP_SOURCE_ALLOWLIST = [
+  "kokoro-payment/src/interfaces/http/admin-routes.ts",
+  "kokoro-payment/src/interfaces/http/main.ts",
+  "kokoro-payment/src/interfaces/http/routes.ts",
+  "kokoro-payment/src/interfaces/http/schemas.ts",
+  "kokoro-payment/src/interfaces/http/server.ts",
+  "kokoro-payment/src/interfaces/http/webhook-routes.ts",
 ];
 
-async function sourceFor(layer) {
-  const sources = await Promise.all(layer.files.map((file) => readFile(new URL(`../../${file}`, import.meta.url), "utf8")));
-  return sources.join("\n");
+const RUNTIME_ROOTS = [
+  "kokoro-payment/src/index.ts",
+  "kokoro-payment/src/interfaces/http/main.ts",
+  "kokoro-payment/src/interfaces/http/server.ts",
+  "kokoro-payment/src/module.ts",
+  "kokoro-payment/src/interfaces/http/routes.ts",
+  "kokoro-payment/src/interfaces/http/admin-routes.ts",
+  "kokoro-payment/src/interfaces/http/webhook-routes.ts",
+];
+
+const RUNTIME_GRAPH_ALLOWLIST = [
+  "kokoro-payment/src/config/env.ts",
+  "kokoro-payment/src/domain/amount.ts",
+  "kokoro-payment/src/domain/errors.ts",
+  "kokoro-payment/src/domain/idempotency.ts",
+  "kokoro-payment/src/domain/payment-lifecycle.ts",
+  "kokoro-payment/src/domain/payment.ts",
+  "kokoro-payment/src/domain/provider.ts",
+  "kokoro-payment/src/domain/repository.ts",
+  "kokoro-payment/src/domain/webhook.ts",
+  "kokoro-payment/src/index.ts",
+  "kokoro-payment/src/infrastructure/prisma/prisma-client.ts",
+  "kokoro-payment/src/infrastructure/prisma/prisma-payment-repository.ts",
+  "kokoro-payment/src/interfaces/admin/manifest.ts",
+  "kokoro-payment/src/interfaces/admin/payment-admin-contract.ts",
+  "kokoro-payment/src/interfaces/admin/schema.ts",
+  "kokoro-payment/src/interfaces/http/admin-routes.ts",
+  "kokoro-payment/src/interfaces/http/main.ts",
+  "kokoro-payment/src/interfaces/http/routes.ts",
+  "kokoro-payment/src/interfaces/http/schemas.ts",
+  "kokoro-payment/src/interfaces/http/server.ts",
+  "kokoro-payment/src/interfaces/http/webhook-routes.ts",
+  "kokoro-payment/src/module.ts",
+];
+
+const EXTERNAL_IMPORT_ALLOWLIST = ["@kokoro/platform-kit", "fastify", "node:http", "zod"];
+const TERMINAL_IMPORT_ALLOWLIST = ["kokoro-payment/generated/prisma/index.js"];
+
+const ACTIVE_POLICY_FILES = [
+  "kokoro-payment/src/index.ts",
+  "kokoro-payment/src/interfaces/admin/payment-admin-contract.ts",
+  "kokoro-payment/src/interfaces/http/admin-routes.ts",
+  "kokoro-payment/src/interfaces/http/main.ts",
+  "kokoro-payment/src/interfaces/http/routes.ts",
+  "kokoro-payment/src/interfaces/http/server.ts",
+  "kokoro-payment/src/interfaces/http/webhook-routes.ts",
+  "kokoro-payment/src/module.ts",
+];
+
+const ACTIVE_IMPORT_ALLOWLIST = new Map([
+  ["kokoro-payment/src/index.ts", ["./config/env.js", "./domain/payment-lifecycle.js", "./domain/payment.js", "./domain/provider.js", "./domain/repository.js", "./domain/webhook.js", "./interfaces/admin/manifest.js", "./interfaces/admin/schema.js", "./interfaces/http/schemas.js", "./interfaces/http/server.js", "./module.js"]],
+  ["kokoro-payment/src/interfaces/admin/payment-admin-contract.ts", ["./schema.js"]],
+  ["kokoro-payment/src/interfaces/http/admin-routes.ts", ["../../domain/repository.js", "../admin/manifest.js", "@kokoro/platform-kit", "fastify", "zod"]],
+  ["kokoro-payment/src/interfaces/http/main.ts", ["../../config/env.js", "./server.js", "@kokoro/platform-kit"]],
+  ["kokoro-payment/src/interfaces/http/routes.ts", ["../../domain/repository.js", "@kokoro/platform-kit", "fastify"]],
+  ["kokoro-payment/src/interfaces/http/server.ts", ["../../../generated/prisma/index.js", "../../infrastructure/prisma/prisma-client.js", "../../infrastructure/prisma/prisma-payment-repository.js", "./admin-routes.js", "./routes.js", "./webhook-routes.js", "@kokoro/platform-kit", "fastify"]],
+  ["kokoro-payment/src/interfaces/http/webhook-routes.ts", ["./routes.js", "@kokoro/platform-kit", "fastify"]],
+  ["kokoro-payment/src/module.ts", []],
+]);
+
+const MUTATING_REPOSITORY_MEMBERS = new Set([
+  "createOrder",
+  "deletePlan",
+  "deleteProvider",
+  "markOrderConfirming",
+  "markOrderPaid",
+  "recordPaymentEvent",
+  "refundOrderAtomically",
+  "restorePlan",
+  "transitionPaymentEventStatus",
+  "upsertPlan",
+  "upsertProvider",
+  "upsertSubscription",
+]);
+
+const FORBIDDEN_RUNTIME_IDENTIFIERS = new Set([
+  "PaymentService",
+  "PaymentWebhookService",
+  "callService",
+  "createCreditGrantClient",
+  "createCreditReverseClient",
+  "createWebhookProviderRegistry",
+  "enabledProviderKinds",
+  "fetch",
+  "grantPurchaseCredits",
+  "providerSdkFactory",
+  "reverseCredits",
+  "setInterval",
+  "webhookSecretResolver",
+]);
+const RUNTIME_ENV_READ_ALLOWLIST = new Set([
+  "kokoro-payment/src/config/env.ts",
+  "kokoro-payment/src/infrastructure/prisma/prisma-client.ts",
+]);
+
+const ALLOWED_LITERAL_ROUTES = new Set([
+  "GET /admin/payments/stats",
+  "GET /plans",
+  "POST /payments/webhooks/:provider",
+]);
+const HTTP_REGISTRATION_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD", "ALL"]);
+const ALLOWED_DYNAMIC_ROUTE_REGISTRATIONS = new Set([
+  "kokoro-payment/src/interfaces/http/admin-routes.ts:GET:resource.route",
+  "kokoro-payment/src/interfaces/http/routes.ts:POST:route",
+]);
+
+const DEPRECATED_ENV_PATTERN = /^(?:KOKORO_(?:USER|MODEL|CREDIT|PAYMENT)_BASE_URL|KOKORO_PAYMENT_(?:ENABLED_PROVIDERS|CONFIRM_.+|.*WEBHOOK_SECRET.*|ALIPAY_PUBLIC_KEY|WECHAT_PLATFORM_CERT)|[A-Z][A-Z0-9_]*_WEBHOOK_SECRET)=/mu;
+const FORBIDDEN_SEED_MEMBER = /\.(?:createOrder|recordPaymentEvent|upsertProvider|upsertSubscription|refundOrderAtomically)\s*\(/u;
+
+function normalized(path) {
+  return path.split(sep).join("/");
 }
 
-function violations(layer, source) {
-  return layer.forbidden.test(source) ? [layer.id] : [];
+async function listTypeScriptFiles(directory) {
+  const files = [];
+  for (const entry of await readdir(resolve(ROOT, directory), { withFileTypes: true })) {
+    const child = `${directory}/${entry.name}`;
+    if (entry.isDirectory()) files.push(...await listTypeScriptFiles(child));
+    else if (entry.isFile() && entry.name.endsWith(".ts")) files.push(child);
+  }
+  return files.sort();
 }
 
-test("all seven acquisition layers are structurally fail-closed", async () => {
-  assert.equal(layers.length, 7);
-  for (const layer of layers) {
-    assert.deepEqual(violations(layer, await sourceFor(layer)), [], layer.id);
+function sourceFile(file, source) {
+  return ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+}
+
+function importsFrom(file, source) {
+  const imports = [];
+  const dynamicImports = [];
+  const ast = sourceFile(file, source);
+  const visit = (node) => {
+    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+      imports.push(node.moduleSpecifier.text);
+    }
+    if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(node.expression) && node.expression.text === "require"))) {
+      dynamicImports.push(node.getText(ast));
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(ast);
+  return { imports, dynamicImports };
+}
+
+function resolveLocalImport(fromFile, specifier) {
+  const raw = normalized(relative(ROOT, resolve(ROOT, dirname(fromFile), specifier)));
+  const sourceCandidate = raw.replace(/\.js$/u, ".ts");
+  if (sourceCandidate.startsWith(`${PAYMENT_SOURCE_ROOT}/`) && existsSync(resolve(ROOT, sourceCandidate))) {
+    return { kind: "source", path: sourceCandidate };
+  }
+  return { kind: "terminal", path: raw };
+}
+
+async function buildRuntimeGraph(overrides = new Map()) {
+  const queue = [...RUNTIME_ROOTS];
+  const files = new Set();
+  const externalImports = new Set();
+  const terminalImports = new Set();
+  const dynamicImports = [];
+  while (queue.length > 0) {
+    const file = queue.shift();
+    if (files.has(file)) continue;
+    files.add(file);
+    const source = overrides.get(file) ?? await readFile(resolve(ROOT, file), "utf8");
+    const parsed = importsFrom(file, source);
+    dynamicImports.push(...parsed.dynamicImports.map((entry) => `${file}: ${entry}`));
+    for (const specifier of parsed.imports) {
+      if (!specifier.startsWith(".")) {
+        externalImports.add(specifier);
+        continue;
+      }
+      const target = resolveLocalImport(file, specifier);
+      if (target.kind === "source") queue.push(target.path);
+      else terminalImports.add(target.path);
+    }
+  }
+  return {
+    files: [...files].sort(),
+    externalImports: [...externalImports].sort(),
+    terminalImports: [...terminalImports].sort(),
+    dynamicImports: dynamicImports.sort(),
+  };
+}
+
+function runtimeContentViolations(file, source) {
+  const violations = [];
+  const ast = sourceFile(file, source);
+  const visit = (node) => {
+    if (ts.isIdentifier(node) && FORBIDDEN_RUNTIME_IDENTIFIERS.has(node.text)) {
+      violations.push(`${file}: forbidden runtime identifier ${node.text}`);
+    }
+    if (
+      !RUNTIME_ENV_READ_ALLOWLIST.has(file) &&
+      ts.isPropertyAccessExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === "process" &&
+      node.expression.name.text === "env"
+    ) {
+      violations.push(`${file}: direct environment read ${node.getText(ast)}`);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(ast);
+  return [...new Set(violations)].sort();
+}
+
+function productionSourceViolations(file, source) {
+  const violations = runtimeContentViolations(file, source);
+  const ast = sourceFile(file, source);
+  const visit = (node) => {
+    if (ts.isPropertyAccessExpression(node) && MUTATING_REPOSITORY_MEMBERS.has(node.name.text)) {
+      violations.push(`${file}: mutating member ${node.name.text}`);
+    }
+    if (ts.isElementAccessExpression(node) && ts.isStringLiteral(node.argumentExpression) && MUTATING_REPOSITORY_MEMBERS.has(node.argumentExpression.text)) {
+      violations.push(`${file}: mutating member ${node.argumentExpression.text}`);
+    }
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const method = node.expression.name.text.toUpperCase();
+      const path = node.arguments[0];
+      if (method === "ROUTE") {
+        violations.push(`${file}: generic route registration is not allowed`);
+      } else if (HTTP_REGISTRATION_METHODS.has(method)) {
+        if (path && ts.isStringLiteral(path)) {
+          const route = `${method} ${path.text}`;
+          if (!ALLOWED_LITERAL_ROUTES.has(route)) violations.push(`${file}: unapproved literal route ${route}`);
+        } else {
+          const registration = `${file}:${method}:${path?.getText(ast) ?? "<missing>"}`;
+          if (!ALLOWED_DYNAMIC_ROUTE_REGISTRATIONS.has(registration)) {
+            violations.push(`${file}: unapproved dynamic route ${registration}`);
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(ast);
+  return [...new Set(violations)].sort();
+}
+
+function deploymentTemplateViolations(source) {
+  return DEPRECATED_ENV_PATTERN.test(source) ? ["deprecated acquisition setting in .env.example"] : [];
+}
+
+function seedViolations(source) {
+  return FORBIDDEN_SEED_MEMBER.test(source) ? ["catalog seed contains acquisition mutation"] : [];
+}
+
+test("production HTTP source inventory is closed", async () => {
+  assert.deepEqual(
+    await listTypeScriptFiles("kokoro-payment/src/interfaces/http"),
+    HTTP_SOURCE_ALLOWLIST,
+  );
+});
+
+test("runtime import graph is closed and has no SDK or dynamic-import escape hatch", async () => {
+  assert.deepEqual(await buildRuntimeGraph(), {
+    files: RUNTIME_GRAPH_ALLOWLIST,
+    externalImports: EXTERNAL_IMPORT_ALLOWLIST,
+    terminalImports: TERMINAL_IMPORT_ALLOWLIST,
+    dynamicImports: [],
+  });
+});
+
+test("production composition sources contain no acquisition mutation or assembly", async () => {
+  const violations = [];
+  for (const file of ACTIVE_POLICY_FILES) {
+    violations.push(...productionSourceViolations(file, await readFile(resolve(ROOT, file), "utf8")));
+  }
+  assert.deepEqual(violations, []);
+});
+
+test("every runtime-reachable source is free of provider egress, SDK assembly, and secret reads", async () => {
+  const violations = [];
+  for (const file of RUNTIME_GRAPH_ALLOWLIST) {
+    violations.push(...runtimeContentViolations(file, await readFile(resolve(ROOT, file), "utf8")));
+  }
+  assert.deepEqual(violations, []);
+});
+
+test("every active composition file has an exact direct-import allowlist", async () => {
+  for (const [file, allowed] of ACTIVE_IMPORT_ALLOWLIST) {
+    const parsed = importsFrom(file, await readFile(resolve(ROOT, file), "utf8"));
+    assert.deepEqual([...new Set(parsed.imports)].sort(), allowed, file);
   }
 });
 
-test("every acquisition detector bears weight against a violating fixture", async () => {
-  for (const layer of layers) {
-    const source = await sourceFor(layer);
-    assert.deepEqual(violations(layer, `${source}\n${layer.fixture}`), [layer.id], layer.id);
+test("deployment template and catalogue seed remain acquisition-free", async () => {
+  assert.deepEqual(
+    deploymentTemplateViolations(await readFile(resolve(ROOT, "kokoro-payment/.env.example"), "utf8")),
+    [],
+  );
+  assert.deepEqual(
+    seedViolations(await readFile(resolve(ROOT, "kokoro-payment/src/interfaces/cli/seed-packs.ts"), "utf8")),
+    [],
+  );
+});
+
+test("HTTP inventory detector bears weight against a new production route file", async () => {
+  assert.notDeepEqual(
+    [...HTTP_SOURCE_ALLOWLIST, "kokoro-payment/src/interfaces/http/acquisition-routes.ts"].sort(),
+    HTTP_SOURCE_ALLOWLIST,
+  );
+});
+
+test("runtime graph detectors bear weight against local service, SDK, and dynamic imports", async () => {
+  const server = await readFile(resolve(ROOT, "kokoro-payment/src/interfaces/http/server.ts"), "utf8");
+  const fixtures = [
+    `${server}\nimport { PaymentService } from "../../application/payment-service.js";`,
+    `${server}\nimport Stripe from "stripe";`,
+    `${server}\nconst moduleName = "../../application/payment-service.js"; void import(moduleName);`,
+  ];
+  for (const fixture of fixtures) {
+    const graph = await buildRuntimeGraph(new Map([["kokoro-payment/src/interfaces/http/server.ts", fixture]]));
+    assert.notDeepEqual(graph, {
+      files: RUNTIME_GRAPH_ALLOWLIST,
+      externalImports: EXTERNAL_IMPORT_ALLOWLIST,
+      terminalImports: TERMINAL_IMPORT_ALLOWLIST,
+      dynamicImports: [],
+    });
+  }
+
+  const existingReachableImport = `${server}\nimport type { PaymentProviderConfig } from "../../domain/provider.js";`;
+  const directImports = importsFrom("kokoro-payment/src/interfaces/http/server.ts", existingReachableImport);
+  assert.notDeepEqual(
+    [...new Set(directImports.imports)].sort(),
+    ACTIVE_IMPORT_ALLOWLIST.get("kokoro-payment/src/interfaces/http/server.ts"),
+  );
+});
+
+test("production policy detector bears weight for every acquisition mutation and assembly class", () => {
+  const fixtures = [
+    ...[...MUTATING_REPOSITORY_MEMBERS].map((member) => `await repository.${member}({});`),
+    ...[...FORBIDDEN_RUNTIME_IDENTIFIERS].map((identifier) => `void ${identifier};`),
+    "void process.env.STRIPE_WEBHOOK_SECRET;",
+    "app.post('/orders/reopen', async () => {});",
+    "app.options('/orders', async () => {});",
+    "app.post(buildRoute(), async () => {});",
+    "app.route({ method: 'POST', url: '/orders/reopen', handler: async () => {} });",
+  ];
+  for (const fixture of fixtures) {
+    assert.ok(productionSourceViolations("fixture.ts", fixture).length > 0, fixture);
+  }
+});
+
+test("runtime content detector bears weight inside an otherwise allowed repository adapter", () => {
+  for (const fixture of ["void fetch;", "void process.env.STRIPE_WEBHOOK_SECRET;", "void createWebhookProviderRegistry;"]) {
+    assert.ok(
+      runtimeContentViolations(
+        "kokoro-payment/src/infrastructure/prisma/prisma-payment-repository.ts",
+        fixture,
+      ).length > 0,
+      fixture,
+    );
+  }
+});
+
+test("template and seed detectors bear weight against provider, worker, secret, and mutation fixtures", () => {
+  for (const fixture of [
+    "KOKORO_PAYMENT_ENABLED_PROVIDERS=stripe",
+    "KOKORO_PAYMENT_CONFIRM_SWEEP_INTERVAL_SECONDS=1",
+    "KOKORO_PAYMENT_WEBHOOK_SECRET_STRIPE=secret",
+    "STRIPE_WEBHOOK_SECRET=secret",
+    "PAYPAL_WEBHOOK_SECRET=secret",
+  ]) {
+    assert.deepEqual(deploymentTemplateViolations(fixture), ["deprecated acquisition setting in .env.example"]);
+  }
+  for (const member of ["createOrder", "recordPaymentEvent", "upsertProvider", "upsertSubscription", "refundOrderAtomically"]) {
+    assert.deepEqual(seedViolations(`await repo.${member}({});`), ["catalog seed contains acquisition mutation"]);
   }
 });

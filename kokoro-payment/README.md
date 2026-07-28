@@ -14,7 +14,9 @@ GET  /admin/payments/stats?siteId=...
 
 已有调用方访问 checkout、order create/confirm/refund/sweep、payment event record 或 provider webhook 时，统一得到 HTTP 503 与 `ACQUISITION_CHANNEL_DISABLED`。Admin manifest 不声明 Payment mutation；旧 mutation URL 不注册。
 
-进程启动图不包含 provider SDK、webhook secret resolver、Credit grant/reverse client 或确认 worker。旧的 provider/worker 环境变量会被 schema 丢弃，不能重新开启购买通道。`seed:packs` 只 upsert Site 套餐目录，不创建或启用 mock provider。
+进程启动图不包含 provider SDK、webhook secret resolver、Credit grant/reverse client 或确认 worker。已知 provider、webhook secret、确认 worker 旧环境变量只要非空就会以 `payment.acquisition_env_forbidden` 拒绝启动；PATH/HOME 等无关系统变量仍正常丢弃。`seed:packs` 只 upsert Site 套餐目录，不创建或启用 mock provider。
+
+Admin 的 plans/orders/subscriptions/refunds 与 stats 必须携带非空 `siteId`；缺失或空白统一在访问仓储前返回 `400 payment.site_required`。providers/events 是平台全局历史视图，只允许从 Admin plane 访问，Admin gateway 继续要求 wildcard Site 权限。
 
 ## 数据与迁移
 
@@ -29,4 +31,4 @@ pnpm --filter @kokoro/payment test
 node --test test/repository/acquisition-channel-disabled.test.mjs
 ```
 
-七层 repository gate 覆盖 runtime router、webhook router、Admin surface、server assembly、process bootstrap、environment 和 catalogue seed；每层都有注入违规源码的承重 fixture。
+Repository gate 固定完整 HTTP 源文件清单、runtime 可达 import graph、每个活跃编排文件的直接 import、生产路由中的写仓储/SDK/Secret/Credit/worker 组装，以及 deployment template 和 catalogue seed。OpenAPI 测试另外固定实际 Fastify method/path 清单；新增、删除或改 method 都会失败。每一类 detector 都有恶意 fixture 承重。

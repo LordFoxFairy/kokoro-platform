@@ -24,6 +24,22 @@ function noDatabasePrisma(calls: string[]): PrismaClient {
   return client as unknown as PrismaClient;
 }
 
+function globalReadPrisma(calls: string[]): PrismaClient {
+  return new Proxy(
+    {},
+    {
+      get(_target, model: string) {
+        return {
+          findMany: vi.fn(async () => {
+            calls.push(`${model}.findMany`);
+            return [];
+          }),
+        };
+      },
+    },
+  ) as unknown as PrismaClient;
+}
+
 type RequestCase = { method: "POST" | "DELETE"; url: string; payload?: Record<string, unknown> };
 
 const disabledRuntimeRequests: readonly RequestCase[] = [
@@ -119,6 +135,37 @@ describe("redeem-only payment acquisition shutdown", () => {
       expect(confirm.json()).toMatchObject({ error: { code: DISABLED_CODE } });
       expect(crossBoundary.statusCode).toBe(403);
       expect(databaseCalls).toEqual([]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("allows a Site-less global history read only through the explicit Admin plane", async () => {
+    const databaseCalls: string[] = [];
+    const app = createPaymentServer({
+      prisma: globalReadPrisma(databaseCalls),
+      routeAccess: {
+        secrets: { admin: "admin-secret", "web-bff": "web-secret" },
+        isProduction: false,
+      },
+    });
+    try {
+      const denied = await app.inject({
+        method: "GET",
+        url: "/admin/payments/providers",
+        headers: { "x-kokoro-service": "web-bff", "x-kokoro-internal-secret": "web-secret" },
+      });
+      expect(denied.statusCode).toBe(403);
+      expect(databaseCalls).toEqual([]);
+
+      const allowed = await app.inject({
+        method: "GET",
+        url: "/admin/payments/providers",
+        headers: { "x-kokoro-service": "admin", "x-kokoro-internal-secret": "admin-secret" },
+      });
+      expect(allowed.statusCode).toBe(200);
+      expect(allowed.json().data).toEqual([]);
+      expect(databaseCalls).toEqual(["paymentProvider.findMany"]);
     } finally {
       await app.close();
     }

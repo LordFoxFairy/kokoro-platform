@@ -77,6 +77,36 @@ describe("PrismaPaymentRepository admin Site scope", () => {
 });
 
 describe("Payment admin Site queries", () => {
+  it.each([
+    ["missing", ""],
+    ["blank", "?siteId=%20"],
+  ])("fails closed with a stable code for %s Site scope and performs no repository read", async (_case, suffix) => {
+    const repository = {
+      listPlans: vi.fn().mockResolvedValue([]),
+      listOrders: vi.fn().mockResolvedValue([]),
+      listSubscriptions: vi.fn().mockResolvedValue([]),
+      listRefunds: vi.fn().mockResolvedValue([]),
+      listPaymentEvents: vi.fn().mockResolvedValue([]),
+      listProviders: vi.fn().mockResolvedValue([]),
+      readAdminStats: vi.fn().mockResolvedValue({}),
+    };
+    const app = Fastify();
+    registerPaymentAdminRoutes(app, repository as unknown as PaymentRepository);
+    try {
+      for (const route of ["plans", "orders", "subscriptions", "refunds"]) {
+        const response = await app.inject({ method: "GET", url: `/admin/payments/${route}${suffix}` });
+        expect(response.statusCode, route).toBe(400);
+        expect(response.json(), route).toMatchObject({ error: { code: "payment.site_required" } });
+      }
+      expect(repository.listPlans).not.toHaveBeenCalled();
+      expect(repository.listOrders).not.toHaveBeenCalled();
+      expect(repository.listSubscriptions).not.toHaveBeenCalled();
+      expect(repository.listRefunds).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
   it("strictly forwards siteId for scoped resources and requires it for stats", async () => {
     const repository = {
       listPlans: vi.fn().mockResolvedValue([]),
@@ -96,7 +126,10 @@ describe("Payment admin Site queries", () => {
     expect(repository.listOrders).toHaveBeenCalledWith("site-b");
     expect(repository.listSubscriptions).toHaveBeenCalledWith("site-b");
     expect(repository.listRefunds).toHaveBeenCalledWith("site-b");
-    expect((await app.inject({ method: "GET", url: "/admin/payments/stats" })).statusCode).toBe(400);
+    const missingStats = await app.inject({ method: "GET", url: "/admin/payments/stats" });
+    expect(missingStats.statusCode).toBe(400);
+    expect(missingStats.json()).toMatchObject({ error: { code: "payment.site_required" } });
+    expect(repository.readAdminStats).not.toHaveBeenCalled();
     expect((await app.inject({ method: "GET", url: "/admin/payments/stats?siteId=site-b" })).statusCode).toBe(200);
     expect(repository.readAdminStats).toHaveBeenCalledWith("site-b");
     await app.close();
@@ -108,5 +141,25 @@ describe("Payment admin Site queries", () => {
     registerPaymentAdminRoutes(app, repository as unknown as PaymentRepository);
     expect((await app.inject({ method: "GET", url: `/admin/payments/${resource}?siteId=site-b` })).statusCode).toBe(400);
     await app.close();
+  });
+
+  it("keeps a scoped runtime read on the requested Site boundary", async () => {
+    const repository = {
+      listPlans: vi.fn(async (siteId: string) => [{ id: `plan-${siteId}`, siteId }]),
+    };
+    const app = Fastify();
+    registerPaymentAdminRoutes(app, repository as unknown as PaymentRepository);
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: "/admin/payments/plans?siteId=site-a",
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().data).toEqual([{ id: "plan-site-a", siteId: "site-a" }]);
+      expect(repository.listPlans).toHaveBeenCalledWith("site-a", { includeDeleted: true });
+      expect(repository.listPlans).not.toHaveBeenCalledWith("site-b", expect.anything());
+    } finally {
+      await app.close();
+    }
   });
 });
