@@ -216,25 +216,73 @@ function functionParameterType(source, functionName, parameterIndex) {
 function prismaReadAdapterViolations(source) {
   const violations = [];
   const ast = sourceFile("prisma-payment-read-repository.ts", source);
+
+  const outerParentheses = (node) => {
+    let current = node;
+    while (ts.isParenthesizedExpression(current.parent) && current.parent.expression === current) {
+      current = current.parent;
+    }
+    return current;
+  };
+
+  const enclosingConstructor = (node) => {
+    let current = node.parent;
+    while (current !== undefined) {
+      if (ts.isConstructorDeclaration(current)) return current;
+      if (ts.isMethodDeclaration(current) || ts.isClassDeclaration(current)) return undefined;
+      current = current.parent;
+    }
+    return undefined;
+  };
+
+  const isConstructorInitialization = (rawClient) => {
+    const clientExpression = outerParentheses(rawClient);
+    const assignment = clientExpression.parent;
+    return (
+      ts.isBinaryExpression(assignment) &&
+      assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      assignment.left === clientExpression &&
+      ts.isIdentifier(assignment.right) &&
+      assignment.right.text === "prisma" &&
+      enclosingConstructor(assignment) !== undefined
+    );
+  };
+
+  const directReadCall = (rawClient) => {
+    const clientExpression = outerParentheses(rawClient);
+    const delegate = clientExpression.parent;
+    if (!ts.isPropertyAccessExpression(delegate) || delegate.expression !== clientExpression) {
+      return undefined;
+    }
+
+    const delegateExpression = outerParentheses(delegate);
+    const operation = delegateExpression.parent;
+    if (!ts.isPropertyAccessExpression(operation) || operation.expression !== delegateExpression) {
+      return undefined;
+    }
+
+    const operationExpression = outerParentheses(operation);
+    const call = operationExpression.parent;
+    if (!ts.isCallExpression(call) || call.expression !== operationExpression) {
+      return undefined;
+    }
+    return `this.#prisma.${delegate.name.text}.${operation.name.text}`;
+  };
+
   const visit = (node) => {
-    if (ts.isVariableDeclaration(node) && node.initializer) {
-      const initializer = node.initializer.getText(ast);
-      if (/^this\.(?:#prisma|prisma)(?:\.|\[|$)/u.test(initializer)) {
-        violations.push(`adapter: raw Prisma alias ${node.name.getText(ast)}`);
-      }
-    }
     if (
-      ts.isElementAccessExpression(node) &&
-      /^this\.(?:#prisma|prisma)(?:\.|\[|$)/u.test(node.expression.getText(ast))
+      ts.isPropertyAccessExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ThisKeyword &&
+      ts.isPrivateIdentifier(node.name) &&
+      node.name.text === "#prisma"
     ) {
-      violations.push(`adapter: computed Prisma access ${node.getText(ast)}`);
-    }
-    if (ts.isCallExpression(node)) {
-      const call = node.expression.getText(ast);
-      if (/^this\.(?:#prisma|prisma)\./u.test(call)) {
-        if (!PAYMENT_PRISMA_READ_CALLS.has(call)) {
-          violations.push(`adapter: forbidden Prisma capability ${call}`);
-        }
+      if (isConstructorInitialization(node)) {
+        ts.forEachChild(node, visit);
+        return;
+      }
+      const call = directReadCall(node);
+      if (call === undefined || !PAYMENT_PRISMA_READ_CALLS.has(call)) {
+        violations.push(`adapter: forbidden raw Prisma use ${outerParentheses(node).getText(ast)}`);
       }
     }
     ts.forEachChild(node, visit);
@@ -555,6 +603,22 @@ test("read-boundary detector bears weight against full-repository and adapter-sh
     ["adapter-extra-method", "adapter", adapter.replace("  async listPlans", "  async createOrder() {}\n\n  async listPlans")],
     ["adapter-direct-write", "adapter", adapter.replace("this.#prisma.plan.findMany", "this.#prisma.plan.create")],
     ["adapter-computed-client", "adapter", adapter.replace("this.#prisma.plan.findMany", "this.#prisma[\"plan\"].findMany")],
+    ["adapter-parenthesized-raw-call", "adapter", adapter.replace(
+      "    const plans = await this.#prisma.plan.findMany(",
+      "    await (this.#prisma).$executeRawUnsafe(\"DELETE FROM Plan\");\n    const plans = await this.#prisma.plan.findMany(",
+    )],
+    ["adapter-parenthesized-client-alias", "adapter", adapter.replace(
+      "const plans = await this.#prisma.plan.findMany(",
+      "const db = (this.#prisma);\n    const plans = await db.plan.create(",
+    )],
+    ["adapter-assignment-client-alias", "adapter", adapter.replace(
+      "const plans = await this.#prisma.plan.findMany(",
+      "let db;\n    db = this.#prisma;\n    const plans = await db.plan.create(",
+    )],
+    ["adapter-parenthesized-computed-client", "adapter", adapter.replace(
+      "this.#prisma.plan.findMany",
+      "(this.#prisma)[\"plan\"].create",
+    )],
     ["port-constant", "port", port.replace('  "readAdminStats",', '  "createOrder",\n  "readAdminStats",')],
     ["server-raw-client", "server", server.replace("readCapabilities: PaymentReadCapabilities", "prisma: PrismaClient")],
     ["route-full-port", "routes", routes.replace("../../domain/read-repository.js", "../../domain/repository.js")],
@@ -586,4 +650,15 @@ test("read-boundary detector bears weight against full-repository and adapter-sh
 
   assert.deepEqual(prismaReadAdapterViolations("const prismaLabel = '#prisma'; void prismaLabel;"), []);
   assert.deepEqual(prismaReadAdapterViolations("const listPlans = repository.listPlans; void listPlans;"), []);
+  assert.deepEqual(
+    paymentReadBoundaryViolations(new Map([
+      ...safe,
+      ["adapter", adapter.replace(
+        "this.#prisma.plan.findMany",
+        "((this.#prisma).plan).findMany",
+      )],
+    ])),
+    [],
+    "parentheses around an exact direct read call remain allowed",
+  );
 });

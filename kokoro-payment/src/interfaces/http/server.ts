@@ -3,6 +3,7 @@ import {
   isProductionEnv,
   registerOpenApi,
   registerRouteAccess,
+  sendError,
   type RouteAccessConfig,
   type ServiceCaller,
 } from "@kokoro/platform-kit";
@@ -19,6 +20,7 @@ export interface CreatePaymentServerOptions {
 }
 
 const PAYMENT_REQUIRED_CALLERS: ServiceCaller[] = ["admin", "web-bff"];
+const PAYMENT_ROUTE_ADMISSION = Symbol("payment.route.admission");
 
 const PAYMENT_RUNTIME_ROUTE_INVENTORY = Object.freeze([
   "GET /admin/payments/events",
@@ -71,9 +73,16 @@ export class PaymentRouteInventoryError extends Error {
   constructor(
     readonly missing: string[],
     readonly unexpected: string[],
+    readonly duplicates: string[] = [],
+    readonly routingMetadata: string[] = [],
   ) {
     super(
-      `payment runtime route inventory mismatch: missing=${missing.join(",")}; unexpected=${unexpected.join(",")}`,
+      [
+        `payment runtime route inventory mismatch: missing=${missing.join(",")}`,
+        `unexpected=${unexpected.join(",")}`,
+        `duplicates=${duplicates.join(",")}`,
+        `routingMetadata=${routingMetadata.join(",")}`,
+      ].join("; "),
     );
     this.name = "PaymentRouteInventoryError";
   }
@@ -81,19 +90,111 @@ export class PaymentRouteInventoryError extends Error {
 
 function registerPaymentRouteInventory(app: FastifyInstance): void {
   const expected = new Set<string>(PAYMENT_RUNTIME_ROUTE_INVENTORY);
-  const observed = new Set<string>();
+  const observed = new Map<string, number>();
+  const routingMetadata = new Set<string>();
+  const admissions = new WeakSet<object>();
+  const finalHandlers = new Map<string, unknown>();
 
   // onRoute observes Fastify's real registration path, including encapsulated plugins,
   // aliases and schema.hide routes. OpenAPI visibility is deliberately irrelevant here.
   app.addHook("onRoute", (route) => {
     const methods = Array.isArray(route.method) ? route.method : [route.method];
-    for (const method of methods) observed.add(`${method.toUpperCase()} ${route.url}`);
+    const routeKeys = methods.map((method) => `${method.toUpperCase()} ${route.url}`);
+    for (const routeKey of routeKeys) {
+      observed.set(routeKey, (observed.get(routeKey) ?? 0) + 1);
+    }
+
+    if (route.constraints !== undefined && Reflect.ownKeys(route.constraints).length > 0) {
+      routingMetadata.add(`${routeKeys.join("|")}:constraints`);
+    }
+    if (route.prefixTrailingSlash !== undefined) {
+      routingMetadata.add(`${routeKeys.join("|")}:prefixTrailingSlash`);
+    }
+    if (Reflect.get(route, "websocket") === true) {
+      routingMetadata.add(`${routeKeys.join("|")}:websocket`);
+    }
+    if (Reflect.get(route, "version") !== undefined) {
+      routingMetadata.add(`${routeKeys.join("|")}:version`);
+    }
+
+    const admission = Object.freeze({ routeKeys: Object.freeze(routeKeys) });
+    admissions.add(admission);
+    const config = { ...(route.config ?? {}) };
+    Object.defineProperty(config, PAYMENT_ROUTE_ADMISSION, {
+      configurable: false,
+      enumerable: true,
+      value: admission,
+      writable: false,
+    });
+    route.config = config;
   });
   app.addHook("onReady", () => {
-    const missing = [...expected].filter((route) => !observed.has(route)).sort();
-    const unexpected = [...observed].filter((route) => !expected.has(route)).sort();
-    if (missing.length > 0 || unexpected.length > 0) {
-      throw new PaymentRouteInventoryError(missing, unexpected);
+    const missing = new Set(
+      [...expected].filter((route) => (observed.get(route) ?? 0) === 0),
+    );
+    const unexpected = [...observed.keys()].filter((route) => !expected.has(route)).sort();
+    const duplicates = [...observed]
+      .filter(([route, count]) => expected.has(route) && count !== 1)
+      .map(([route, count]) => `${route}#${count}`)
+      .sort();
+
+    for (const route of expected) {
+      const separator = route.indexOf(" ");
+      const method = route.slice(0, separator);
+      const url = route.slice(separator + 1);
+      if (!app.hasRoute({ method, url })) {
+        missing.add(route);
+        continue;
+      }
+      const found = app.findRoute({ method, url });
+      if (found === undefined || found === null) {
+        missing.add(route);
+        continue;
+      }
+      finalHandlers.set(route, found.handler);
+    }
+
+    if (
+      missing.size > 0 ||
+      unexpected.length > 0 ||
+      duplicates.length > 0 ||
+      routingMetadata.size > 0
+    ) {
+      throw new PaymentRouteInventoryError(
+        [...missing].sort(),
+        unexpected,
+        duplicates,
+        [...routingMetadata].sort(),
+      );
+    }
+  });
+  app.addHook("onRequest", async (request, reply) => {
+    const routeUrl = request.routeOptions.url;
+    if (request.is404 || routeUrl === undefined) return;
+
+    const routeKey = `${request.method.toUpperCase()} ${routeUrl}`;
+    const admission = Reflect.get(request.routeOptions.config, PAYMENT_ROUTE_ADMISSION);
+    const admitted =
+      typeof admission === "object" &&
+      admission !== null &&
+      admissions.has(admission) &&
+      Array.isArray(Reflect.get(admission, "routeKeys")) &&
+      Reflect.get(admission, "routeKeys").includes(routeKey);
+    const matched = app.findRoute({ method: request.method, url: request.url });
+    if (
+      !admitted ||
+      matched === undefined ||
+      matched === null ||
+      matched.handler !== finalHandlers.get(routeKey)
+    ) {
+      return sendError(
+        reply,
+        503,
+        "payment.route_inventory_mismatch",
+        "Payment route admission failed",
+        undefined,
+        request.id,
+      );
     }
   });
 }
