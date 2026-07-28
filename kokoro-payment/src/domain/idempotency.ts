@@ -1,6 +1,7 @@
 import { PaymentIdempotencyConflictError } from "./errors.js";
 
 export interface OrderIdempotencyTarget {
+  siteId: string;
   teamId: string;
   planId: string;
   amountMinor: string;
@@ -20,6 +21,7 @@ export function assertSameOrderIdempotencyTarget(
   requested: OrderIdempotencyTarget,
 ): void {
   if (
+    existing.siteId !== requested.siteId ||
     existing.teamId !== requested.teamId ||
     existing.planId !== requested.planId ||
     existing.amountMinor !== requested.amountMinor ||

@@ -85,6 +85,11 @@ export class PrismaPaymentRepository implements PaymentRepository {
     return order ? mapOrder(order) : null;
   }
 
+  async findOrderByIdempotencyKey(idempotencyKey: string): Promise<Order | null> {
+    const order = await this.prisma.order.findUnique({ where: { idempotencyKey } });
+    return order ? mapOrder(order) : null;
+  }
+
   async findPlanById(planId: string): Promise<Plan | null> {
     const plan = await this.prisma.plan.findUnique({ where: { id: planId } });
     return plan ? mapPlan(plan) : null;
@@ -361,6 +366,7 @@ export class PrismaPaymentRepository implements PaymentRepository {
     if (existing) {
       assertSameOrderIdempotencyTarget(
         {
+          siteId: existing.siteId,
           teamId: existing.teamId,
           planId: existing.planId,
           amountMinor: existing.amountMinor.toString(),
@@ -433,6 +439,7 @@ export class PrismaPaymentRepository implements PaymentRepository {
 
       assertSameOrderIdempotencyTarget(
         {
+          siteId: existing.siteId,
           teamId: existing.teamId,
           planId: existing.planId,
           amountMinor: existing.amountMinor.toString(),

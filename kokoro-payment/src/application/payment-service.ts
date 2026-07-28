@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { parsePositiveBigIntString } from "@kokoro/platform-kit";
 import { parseNonNegativeBigIntString } from "../domain/amount.js";
 import {
@@ -9,6 +9,7 @@ import {
   OrderNotRefundableError,
   PlanNotFoundError,
 } from "../domain/errors.js";
+import { assertSameOrderIdempotencyTarget } from "../domain/idempotency.js";
 import type { Order, Plan, Refund, Subscription } from "../domain/payment.js";
 import { PaymentLifecycleError, type DeleteInput, type RestoreInput } from "../domain/payment-lifecycle.js";
 import type {
@@ -152,14 +153,28 @@ export class PaymentService {
     return recovered;
   }
 
-  // WHY: 管理员不走支付直接发权益：site + request 锁定同一订单目标，重放复用既有 paid 单，
-  // 再走 confirmOrder 的 paid 快返，避免重复发放。
+  // WHY: 管理员不走支付直接发权益：site + request 的定长哈希锁定同一订单目标；先恢复订单
+  // 快照再看可变 Plan，确保套餐改价/停售/删除不破坏既有 paid 重放。
   async grantPlanToTeam(
     siteId: string,
     teamId: string,
     planId: string,
     requestId: string,
   ): Promise<Order> {
+    const idempotencyKey = adminGrantIdempotencyKey(siteId, requestId);
+    const existing = await this.repository.findOrderByIdempotencyKey(idempotencyKey);
+    if (existing) {
+      assertSameOrderIdempotencyTarget(existing, {
+        siteId,
+        teamId,
+        planId,
+        amountMinor: existing.amountMinor,
+        currency: existing.currency,
+        idempotencyKey,
+      });
+      return this.confirmOrder(existing.id, requestId);
+    }
+
     const plan = await this.repository.findPlanById(planId);
     if (!plan || plan.siteId !== siteId) {
       throw new PlanNotFoundError(planId);
@@ -172,7 +187,7 @@ export class PaymentService {
       planId,
       amountMinor: plan.amountMinor,
       currency: plan.currency,
-      idempotencyKey: `admin-grant:${siteId}:${requestId}`,
+      idempotencyKey,
     });
 
     return this.confirmOrder(order.id, requestId);
@@ -276,6 +291,17 @@ export class PaymentService {
 
     return { order: { ...order, status: "refunded" }, refund: result.refund };
   }
+}
+
+function adminGrantIdempotencyKey(siteId: string, requestId: string): string {
+  const hash = createHash("sha256");
+  for (const value of ["admin-grant", "v1", siteId, requestId]) {
+    const bytes = Buffer.from(value, "utf8");
+    hash.update(String(bytes.byteLength));
+    hash.update(":");
+    hash.update(bytes);
+  }
+  return `admin-grant:v1:${hash.digest("hex")}`;
 }
 
 function assertPlanSellable(

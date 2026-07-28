@@ -113,6 +113,12 @@ function makeFakes(overrides: FakeOverrides = {}): Fakes {
   const createdOrders: Order[] = [];
   const ordersById = new Map<string, Order>();
   const ordersByIdempotencyKey = new Map<string, Order>();
+  const mysqlIdempotencyKey = (key: string) => {
+    if (Buffer.byteLength(key, "utf8") > 191) {
+      throw new Error("payment_orders.idempotencyKey exceeds VARCHAR(191)");
+    }
+    return key.toLowerCase();
+  };
   const grants: GrantPurchaseCreditsInput[] = [];
   const grantPurchaseCredits: GrantPurchaseCredits = async (input) => {
     grants.push(input);
@@ -132,7 +138,8 @@ function makeFakes(overrides: FakeOverrides = {}): Fakes {
     },
     createOrder: async (input: CreateOrderInput) => {
       calls.push("createOrder");
-      const existing = ordersByIdempotencyKey.get(input.idempotencyKey);
+      const storageKey = mysqlIdempotencyKey(input.idempotencyKey);
+      const existing = ordersByIdempotencyKey.get(storageKey);
       if (existing) {
         assertSameOrderIdempotencyTarget(existing, input);
         return existing;
@@ -146,7 +153,7 @@ function makeFakes(overrides: FakeOverrides = {}): Fakes {
       };
       createdOrders.push(created);
       ordersById.set(created.id, created);
-      ordersByIdempotencyKey.set(created.idempotencyKey, created);
+      ordersByIdempotencyKey.set(storageKey, created);
       return created;
     },
     recordPaymentEvent: async (_input: RecordPaymentEventInput) => {
@@ -156,6 +163,10 @@ function makeFakes(overrides: FakeOverrides = {}): Fakes {
     findOrderById: async (orderId: string) => {
       calls.push("findOrderById");
       return overrides.order === undefined ? (ordersById.get(orderId) ?? order) : overrides.order;
+    },
+    findOrderByIdempotencyKey: async (idempotencyKey: string) => {
+      calls.push("findOrderByIdempotencyKey");
+      return ordersByIdempotencyKey.get(mysqlIdempotencyKey(idempotencyKey)) ?? null;
     },
     findPlanById: async (planId: string) => {
       calls.push("findPlanById");
@@ -168,7 +179,7 @@ function makeFakes(overrides: FakeOverrides = {}): Fakes {
       calls.push("markOrderConfirming");
       const confirming = { ...(ordersById.get(orderId) ?? order), id: orderId, status: "confirming" as const };
       ordersById.set(orderId, confirming);
-      ordersByIdempotencyKey.set(confirming.idempotencyKey, confirming);
+      ordersByIdempotencyKey.set(mysqlIdempotencyKey(confirming.idempotencyKey), confirming);
       return confirming;
     },
     listStaleConfirmingOrders: async (_before: Date) => {
@@ -182,7 +193,7 @@ function makeFakes(overrides: FakeOverrides = {}): Fakes {
       }
       const paid = { ...(ordersById.get(orderId) ?? order), id: orderId, status: "paid" as const };
       ordersById.set(orderId, paid);
-      ordersByIdempotencyKey.set(paid.idempotencyKey, paid);
+      ordersByIdempotencyKey.set(mysqlIdempotencyKey(paid.idempotencyKey), paid);
       return paid;
     },
     upsertSubscription: async (input) => {
@@ -530,7 +541,41 @@ describe("PaymentService grantPlanToTeam", () => {
 
     expect(replay.id).toBe(first.id);
     expect(fakes.createdOrders).toHaveLength(1);
-    expect(fakes.createdOrders[0]?.idempotencyKey).toBe("admin-grant:site_1:req_same");
+    expect(fakes.createdOrders[0]?.idempotencyKey).toMatch(/^admin-grant:v1:[0-9a-f]{64}$/);
+    expect(fakes.createdOrders[0]?.idempotencyKey).not.toContain("site_1");
+    expect(fakes.createdOrders[0]?.idempotencyKey).not.toContain("req_same");
+    expect(fakes.grants).toHaveLength(1);
+  });
+
+  it.each([
+    ["repriced", (current: Plan) => Object.assign(current, { amountMinor: "9900" })],
+    ["disabled", (current: Plan) => Object.assign(current, { status: "disabled" as const })],
+    ["deleted", (current: Plan) => Object.assign(current, { deletedAt: new Date(1) })],
+  ])("replays the original paid order after the plan is %s", async (_state, mutatePlan) => {
+    const currentPlan = { ...plan };
+    const fakes = makeFakes({ plan: currentPlan });
+    const payment = service(fakes);
+    const first = await payment.grantPlanToTeam("site_1", "team_1", "plan_1", "req_snapshot");
+    mutatePlan(currentPlan);
+
+    const replay = await payment.grantPlanToTeam("site_1", "team_1", "plan_1", "req_snapshot");
+
+    expect(replay.id).toBe(first.id);
+    expect(replay.amountMinor).toBe("4900");
+    expect(fakes.createdOrders).toHaveLength(1);
+    expect(fakes.grants).toHaveLength(1);
+  });
+
+  it("replays the original paid order after the plan is no longer readable", async () => {
+    const overrides: FakeOverrides = { plan };
+    const fakes = makeFakes(overrides);
+    const payment = service(fakes);
+    const first = await payment.grantPlanToTeam("site_1", "team_1", "plan_1", "req_missing_plan");
+    overrides.plan = null;
+
+    const replay = await payment.grantPlanToTeam("site_1", "team_1", "plan_1", "req_missing_plan");
+
+    expect(replay.id).toBe(first.id);
     expect(fakes.grants).toHaveLength(1);
   });
 
@@ -557,11 +602,39 @@ describe("PaymentService grantPlanToTeam", () => {
     const second = await payment.grantPlanToTeam("site_1", "team_1", "plan_1", "req_2");
 
     expect(second.id).not.toBe(first.id);
-    expect(fakes.createdOrders.map((created) => created.idempotencyKey)).toEqual([
-      "admin-grant:site_1:req_1",
-      "admin-grant:site_1:req_2",
-    ]);
+    const keys = fakes.createdOrders.map((created) => created.idempotencyKey);
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toMatch(/^admin-grant:v1:[0-9a-f]{64}$/);
+    expect(keys[1]).toMatch(/^admin-grant:v1:[0-9a-f]{64}$/);
+    expect(keys[1]).not.toBe(keys[0]);
     expect(fakes.grants).toHaveLength(2);
+  });
+
+  it("preserves case-sensitive opaque request identity on a case-insensitive store", async () => {
+    const fakes = makeFakes();
+    const payment = service(fakes);
+
+    await payment.grantPlanToTeam("site_1", "team_1", "plan_1", "CaseSensitive");
+    await payment.grantPlanToTeam("site_1", "team_1", "plan_1", "casesensitive");
+
+    expect(fakes.createdOrders).toHaveLength(2);
+    expect(fakes.createdOrders[1]?.idempotencyKey).not.toBe(fakes.createdOrders[0]?.idempotencyKey);
+    expect(fakes.grants).toHaveLength(2);
+  });
+
+  it("maps oversized opaque IDs to a fixed ASCII key without leaking raw values", async () => {
+    const longSiteId = `site_${"S".repeat(500)}`;
+    const longRequestId = `request_${"R".repeat(5_000)}`;
+    const longSitePlan = { ...plan, siteId: longSiteId };
+    const fakes = makeFakes({ plan: longSitePlan });
+
+    await service(fakes).grantPlanToTeam(longSiteId, "team_1", "plan_1", longRequestId);
+
+    const key = fakes.createdOrders[0]?.idempotencyKey ?? "";
+    expect(key).toMatch(/^admin-grant:v1:[0-9a-f]{64}$/);
+    expect(Buffer.byteLength(key, "ascii")).toBe(79);
+    expect(key).not.toContain(longSiteId);
+    expect(key).not.toContain(longRequestId);
   });
 
   it("scopes the same request ID to each site", async () => {
@@ -572,10 +645,11 @@ describe("PaymentService grantPlanToTeam", () => {
     await payment.grantPlanToTeam("site_1", "team_1", "plan_1", "req_shared");
     await payment.grantPlanToTeam("site_2", "team_2", "plan_2", "req_shared");
 
-    expect(fakes.createdOrders.map((created) => created.idempotencyKey)).toEqual([
-      "admin-grant:site_1:req_shared",
-      "admin-grant:site_2:req_shared",
-    ]);
+    const keys = fakes.createdOrders.map((created) => created.idempotencyKey);
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toMatch(/^admin-grant:v1:[0-9a-f]{64}$/);
+    expect(keys[1]).toMatch(/^admin-grant:v1:[0-9a-f]{64}$/);
+    expect(keys[1]).not.toBe(keys[0]);
     expect(fakes.grants).toHaveLength(2);
   });
 });
@@ -630,7 +704,8 @@ describe("POST /admin/payments/grant-plan", () => {
 
       const requestId = response.json().requestId as string;
       expect(requestId).toBeTruthy();
-      expect(fakes.createdOrders[0]?.idempotencyKey).toBe(`admin-grant:site_1:${requestId}`);
+      expect(fakes.createdOrders[0]?.idempotencyKey).toMatch(/^admin-grant:v1:[0-9a-f]{64}$/);
+      expect(fakes.createdOrders[0]?.idempotencyKey).not.toContain(requestId);
       expect(fakes.grants[0]?.requestId).toBe(requestId);
     } finally {
       await app.close();

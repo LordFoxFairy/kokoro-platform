@@ -8,6 +8,7 @@ import {
 } from "../../src/domain/idempotency.js";
 
 const order: OrderIdempotencyTarget = {
+  siteId: "site_1",
   teamId: "team_1",
   planId: "plan_1",
   amountMinor: "4900",
@@ -20,7 +21,7 @@ describe("assertSameOrderIdempotencyTarget", () => {
     expect(() => assertSameOrderIdempotencyTarget(order, { ...order })).not.toThrow();
   });
 
-  it.each(["teamId", "planId", "amountMinor", "currency"] as const)(
+  it.each(["siteId", "teamId", "planId", "amountMinor", "currency"] as const)(
     "throws conflict when %s differs",
     (field) => {
       expect(() =>

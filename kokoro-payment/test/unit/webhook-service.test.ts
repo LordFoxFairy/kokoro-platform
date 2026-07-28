@@ -132,6 +132,10 @@ class InMemoryWebhookRepository implements PaymentRepository {
     return this.orders.get(orderId) ?? null;
   }
 
+  async findOrderByIdempotencyKey(idempotencyKey: string): Promise<Order | null> {
+    return [...this.orders.values()].find((order) => order.idempotencyKey === idempotencyKey) ?? null;
+  }
+
   async findPlanById(planId: string): Promise<Plan | null> {
     return planId === plan.id ? plan : null;
   }

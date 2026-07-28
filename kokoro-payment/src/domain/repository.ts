@@ -77,6 +77,8 @@ export interface PaymentRepository {
   createOrder(input: CreateOrderInput): Promise<Order>;
   recordPaymentEvent(input: RecordPaymentEventInput): Promise<PaymentEvent>;
   findOrderById(orderId: string): Promise<Order | null>;
+  // 管理发放在读取可变 Plan 前按最终键恢复既有订单快照。
+  findOrderByIdempotencyKey(idempotencyKey: string): Promise<Order | null>;
   // 确认意图落库(outbox 最小型):pending→confirming 条件转移;confirming/paid 幂等返回,其余拒绝。
   markOrderConfirming(orderId: string): Promise<Order>;
   // confirming 且 updatedAt 早于阈值的悬挂单(确认中途崩溃),交 sweep 收尾。
