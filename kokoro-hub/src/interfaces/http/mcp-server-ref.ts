@@ -2,8 +2,8 @@
 //
 // 门态说明：本模块的收紧逻辑对应 self 面 MCP 注册（现恒 503 fail-closed，见 self-routes.ts）。
 // 逻辑先落 + 单测覆盖；待 HUB-CONSIST 跨仓一致后开门时，self 注册 handler 直接消费本模块——
-// "门后即生效"。故本文件不改动现有 admin 面 registerMcpServerBodySchema / MCP_SECRET_REF_RE
-// （那是活面契约，存量 official env: 引用不受影响）。
+// "门后即生效"。admin schema 只守 string/null 请求形状；具体引用形状与 allowlist 在活跃
+// register handler 的 admission 层校验，以保证非法字符串得到稳定业务错误码而不是 request.invalid。
 //
 // 新模型（D1 不留兼容轴，secret:path 旧留位不再进新面）：
 // - self 面：secret_ref 只接受 `handle:srt_...`，且 handle 须∈本 namespace（归属校验在 handler，走仓储）。

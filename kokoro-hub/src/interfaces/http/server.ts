@@ -48,7 +48,7 @@ export interface CreateHubServerOptions {
   mcpUrlResolver?: (hostname: string) => Promise<string[]>;
   // admin/official MCP 注册 env:VAR 准入白名单；缺省空集，所有 env 引用 fail-closed。
   mcpEnvRefAllowlist?: ReadonlySet<string>;
-  // 仅本地/test 显式启用；生产装配永不传 true。
+  // 仅本地/test 显式启用 HTTP scheme；地址仍必须是公网单播，生产装配永不传 true。
   allowInsecureMcpUrl?: boolean;
 }
 

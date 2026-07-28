@@ -29,7 +29,7 @@ export const hubEnvSchema = z.object({
   KOKORO_HUB_SECRET_MASTER_KEY_PREVIOUS: z.string().min(1).optional(),
   // mcp_servers admin/official 面 env: 引用白名单（逗号分隔 VAR 名）；不在表的 env:VAR 注册 400。
   KOKORO_HUB_ENV_REF_ALLOWLIST: z.string().min(1).optional(),
-  // 放行 http/localhost/私网 url 注册（仅 admin 面 + 本地/test profile）；"1" 开启，缺省关闭。
+  // 仅放行 http scheme（admin 面 + 本地/test profile）；地址公网单播防线始终启用。
   KOKORO_HUB_ALLOW_INSECURE_URL: z.string().optional(),
   // namespace self 面 MCP mutation 部署门（HUB-CONSIST 跨仓 E2E 过后才开）：
   // "on" 开启 self 注册/启停/软删（仍全量强制 secret_ref handle 归属 / URL 预校验防线）；

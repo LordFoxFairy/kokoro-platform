@@ -57,6 +57,11 @@ describe("validateMcpServerUrl — forbidden IPv4 ranges (literal + via DNS)", (
     ["multicast", "224.0.0.1"],
     ["unspecified", "0.0.0.0"],
     ["reserved-240", "240.0.0.1"],
+    ["protocol-assignments", "192.0.0.1"],
+    ["documentation-1", "192.0.2.1"],
+    ["benchmarking", "198.18.0.1"],
+    ["documentation-2", "198.51.100.1"],
+    ["documentation-3", "203.0.113.1"],
   ];
 
   for (const [label, ip] of forbidden) {
@@ -90,12 +95,22 @@ describe("validateMcpServerUrl — forbidden IPv6 ranges", () => {
     ["ula", "fc00::1"],
     ["multicast", "ff02::1"],
     ["ipv4-mapped-metadata", "::ffff:169.254.169.254"],
+    ["discard-only", "100::1"],
+    ["deprecated-site-local", "fec0::1"],
+    ["documentation", "2001:db8::1"],
   ];
 
   for (const [label, ip] of forbidden) {
     it(`rejects ${label} (${ip}) as a bracketed literal`, async () => {
       const result = await validateMcpServerUrl(`https://[${ip}]/x`, SECURE);
       expect(result, `${ip}`).toMatchObject({ ok: false });
+    });
+    it(`rejects ${label} (${ip}) when a hostname resolves to it`, async () => {
+      const result = await validateMcpServerUrl("https://evil-v6.example/x", {
+        ...SECURE,
+        resolver: resolverFor({ "evil-v6.example": [ip] }),
+      });
+      expect(result, `${ip} via dns`).toMatchObject({ ok: false });
     });
   }
 
@@ -106,11 +121,24 @@ describe("validateMcpServerUrl — forbidden IPv6 ranges", () => {
 });
 
 describe("validateMcpServerUrl — admin insecure profile", () => {
-  it("allows http, localhost, and private ranges when allowInsecure is set", async () => {
-    for (const url of ["http://localhost:8080/x", "http://127.0.0.1/x", "https://192.168.1.1/x"]) {
-      const result = await validateMcpServerUrl(url, { allowInsecure: true });
-      expect(result, url).toMatchObject({ ok: true });
-    }
+  it("allows http only when it still resolves exclusively to public unicast", async () => {
+    const result = await validateMcpServerUrl("http://mcp.example/x", {
+      allowInsecure: true,
+      resolver: resolverFor({ "mcp.example": ["93.184.216.34"] }),
+    });
+    expect(result).toMatchObject({ ok: true });
+  });
+
+  it.each([
+    ["private literal", "http://127.0.0.1/x", {}],
+    [
+      "metadata via DNS",
+      "http://metadata.example/x",
+      { resolver: resolverFor({ "metadata.example": ["169.254.169.254"] }) },
+    ],
+  ])("never bypasses the address guard for %s", async (_label, url, options) => {
+    const result = await validateMcpServerUrl(url, { allowInsecure: true, ...options });
+    expect(result).toMatchObject({ ok: false });
   });
 
   it("still rejects a non-http(s) scheme even when insecure is allowed", async () => {

@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  MCP_SECRET_REF_RE,
-  registerMcpServerBodySchema,
-} from "../../src/interfaces/http/mcp-schemas.js";
+import { registerMcpServerBodySchema } from "../../src/interfaces/http/mcp-schemas.js";
 
 const validBody = {
   scope: "ns-a",
@@ -30,27 +27,20 @@ describe("registerMcpServerBodySchema", () => {
     expect(registerMcpServerBodySchema.parse({ ...validBody, allowed_tools: [] }).allowed_tools).toEqual([]);
   });
 
-  it("rejects plaintext credential shapes in secret_ref", () => {
-    for (const plaintext of [
-      "example-token-value",
-      "Bearer example-token",
-      "env GH_MCP_TOKEN",
-      "ENV:GH_MCP_TOKEN",
-      "",
-    ]) {
+  it("leaves string secret-ref legality to the admission layer", () => {
+    for (const value of ["env:GH_MCP_TOKEN", "secret:legacy/path", "plaintext", ""]) {
       expect(
-        registerMcpServerBodySchema.safeParse({ ...validBody, secret_ref: plaintext }).success,
-        `secret_ref '${plaintext}' must be rejected`,
-      ).toBe(false);
+        registerMcpServerBodySchema.safeParse({ ...validBody, secret_ref: value }).success,
+        `secret_ref '${value}' must reach admission`,
+      ).toBe(true);
     }
   });
 
-  it("accepts both env: and secret: reference shapes", () => {
-    expect(MCP_SECRET_REF_RE.test("env:GH_MCP_TOKEN")).toBe(true);
-    expect(MCP_SECRET_REF_RE.test("secret:mcp/github-token")).toBe(true);
+  it("still rejects a non-string secret_ref as an invalid request shape", () => {
+    expect(registerMcpServerBodySchema.safeParse({ ...validBody, secret_ref: 42 }).success).toBe(false);
   });
 
-  it("rejects malformed, non-http, and credential-embedding urls", () => {
+  it("leaves URL string legality to the admission layer", () => {
     for (const url of [
       "not-a-url",
       "ftp://mcp.example/github",
@@ -59,9 +49,15 @@ describe("registerMcpServerBodySchema", () => {
     ]) {
       expect(
         registerMcpServerBodySchema.safeParse({ ...validBody, url }).success,
-        `url '${url}' must be rejected`,
-      ).toBe(false);
+        `url '${url}' must reach admission`,
+      ).toBe(true);
     }
+  });
+
+  it("still rejects a missing or non-string url as an invalid request shape", () => {
+    const { url: _url, ...withoutUrl } = validBody;
+    expect(registerMcpServerBodySchema.safeParse(withoutUrl).success).toBe(false);
+    expect(registerMcpServerBodySchema.safeParse({ ...validBody, url: 42 }).success).toBe(false);
   });
 
   it("rejects an unknown transport", () => {

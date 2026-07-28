@@ -1,5 +1,5 @@
 // MCP server 注册表路由（HUB-3）：注册即 upsert / 池查询（official+namespace 合并）/
-// 文档级启停 / 软删。凭据只收 env/secret 引用（形状在 mcp-schemas 钉死），绝不明文入库。
+// 文档级启停 / 软删。schema 只守请求形状；凭据与 URL 字符串由 admission 层稳定拒绝后才可入库。
 
 import {
   jsonSchema,
@@ -34,7 +34,7 @@ export function registerMcpRoutes(
     {
       schema: {
         tags: ["hub"],
-        summary: "注册/更新 MCP server（凭据只收 env/secret 引用，明文拒收）",
+        summary: "注册/更新 MCP server（凭据只收部署白名单内的 env 引用）",
         body: jsonSchema(registerMcpServerBodySchema),
       },
     },
