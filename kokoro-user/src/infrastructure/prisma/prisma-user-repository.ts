@@ -674,7 +674,7 @@ export class PrismaUserRepository implements UserRepository {
     });
     return memberships.map((membership) => ({
       ...mapMembership(membership),
-      siteId: siteId ?? membership.team.siteId,
+      siteId: membership.team.siteId,
     }));
   }
 
@@ -682,10 +682,15 @@ export class PrismaUserRepository implements UserRepository {
     const accounts = await this.prisma.serviceAccount.findMany({
       where: {
         ...visibleRows(options),
-        OR:
-          siteId === undefined
-            ? [{ team: { isNot: null } }, { ownerUser: { isNot: null } }]
-            : [{ team: { siteId } }, { ownerUser: { siteId } }],
+        ...(siteId === undefined
+          ? { OR: [{ team: { isNot: null } }, { ownerUser: { isNot: null } }] }
+          : {
+              AND: [
+                { OR: [{ team: { siteId } }, { ownerUser: { siteId } }] },
+                { OR: [{ teamId: null }, { team: { siteId } }] },
+                { OR: [{ ownerUserId: null }, { ownerUser: { siteId } }] },
+              ],
+            }),
       },
       include: {
         team: { select: { siteId: true } },
@@ -695,8 +700,15 @@ export class PrismaUserRepository implements UserRepository {
       orderBy: { createdAt: "desc" },
     });
     return accounts.flatMap((account) => {
-      const rowSiteId = siteId ?? account.team?.siteId ?? account.ownerUser?.siteId;
-      return rowSiteId === undefined ? [] : [{ ...mapServiceAccount(account), siteId: rowSiteId }];
+      const teamSiteId = account.team?.siteId;
+      const ownerUserSiteId = account.ownerUser?.siteId;
+      if (teamSiteId !== undefined && ownerUserSiteId !== undefined && teamSiteId !== ownerUserSiteId) {
+        return [];
+      }
+      const rowSiteId = teamSiteId ?? ownerUserSiteId;
+      return rowSiteId === undefined || (siteId !== undefined && rowSiteId !== siteId)
+        ? []
+        : [{ ...mapServiceAccount(account), siteId: rowSiteId }];
     });
   }
 

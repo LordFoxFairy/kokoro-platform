@@ -29,12 +29,18 @@ describe("PrismaUserRepository admin Site scope", () => {
     });
   });
 
-  it("filters service accounts through team or owner user before take", async () => {
+  it("filters service accounts to one consistent owner Site before take", async () => {
     const findMany = vi.fn().mockResolvedValue([]);
     const repository = new PrismaUserRepository({ serviceAccount: { findMany } } as unknown as PrismaClient);
     await repository.listServiceAccounts("site-b", { includeDeleted: true });
     expect(findMany).toHaveBeenCalledWith({
-      where: { OR: [{ team: { siteId: "site-b" } }, { ownerUser: { siteId: "site-b" } }] },
+      where: {
+        AND: [
+          { OR: [{ team: { siteId: "site-b" } }, { ownerUser: { siteId: "site-b" } }] },
+          { OR: [{ teamId: null }, { team: { siteId: "site-b" } }] },
+          { OR: [{ ownerUserId: null }, { ownerUser: { siteId: "site-b" } }] },
+        ],
+      },
       include: {
         team: { select: { siteId: true } },
         ownerUser: { select: { siteId: true } },
@@ -44,28 +50,66 @@ describe("PrismaUserRepository admin Site scope", () => {
     });
   });
 
-  it("returns explicit queried-site projections for memberships and service accounts", async () => {
+  it("derives membership and normal service-account Sites from their relations", async () => {
     const now = new Date("2026-07-28T00:00:00.000Z");
     const deletion = { deletedAt: null, deletedBy: null, deleteReason: null };
     const membership = {
       id: "membership-1", teamId: "team-1", userId: "user-1", role: "member", status: "active",
       ...deletion, createdAt: now, updatedAt: now, team: { siteId: "site-b" },
     };
-    const serviceAccount = {
-      id: "sa-1", teamId: null, ownerUserId: "user-1", name: "bot", tokenPrefix: "tok",
-      status: "active", lastUsedAt: null, ...deletion, createdAt: now, updatedAt: now,
-      team: null, ownerUser: { siteId: "site-b" },
-    };
+    const serviceAccounts = [
+      {
+        id: "sa-team", teamId: "team-1", ownerUserId: null, name: "team bot", tokenPrefix: "team",
+        status: "active", lastUsedAt: null, ...deletion, createdAt: now, updatedAt: now,
+        team: { siteId: "site-b" }, ownerUser: null,
+      },
+      {
+        id: "sa-user", teamId: null, ownerUserId: "user-1", name: "user bot", tokenPrefix: "user",
+        status: "active", lastUsedAt: null, ...deletion, createdAt: now, updatedAt: now,
+        team: null, ownerUser: { siteId: "site-b" },
+      },
+    ];
     const repository = new PrismaUserRepository({
       membership: { findMany: vi.fn().mockResolvedValue([membership]) },
-      serviceAccount: { findMany: vi.fn().mockResolvedValue([serviceAccount]) },
+      serviceAccount: { findMany: vi.fn().mockResolvedValue(serviceAccounts) },
     } as unknown as PrismaClient);
 
     expect(await repository.listMemberships("site-b", { includeDeleted: true })).toEqual([
       expect.objectContaining({ id: "membership-1", siteId: "site-b" }),
     ]);
     expect(await repository.listServiceAccounts("site-b", { includeDeleted: true })).toEqual([
-      expect.objectContaining({ id: "sa-1", siteId: "site-b" }),
+      expect.objectContaining({ id: "sa-team", siteId: "site-b" }),
+      expect.objectContaining({ id: "sa-user", siteId: "site-b" }),
+    ]);
+  });
+
+  it("does not expose a dual-owner service account across either mismatched Site", async () => {
+    const now = new Date("2026-07-28T00:00:00.000Z");
+    const account = {
+      id: "sa-cross-site", teamId: "team-a", ownerUserId: "user-b", name: "bad bot", tokenPrefix: "bad",
+      status: "active", lastUsedAt: null, deletedAt: null, deletedBy: null, deleteReason: null,
+      createdAt: now, updatedAt: now, team: { siteId: "site-a" }, ownerUser: { siteId: "site-b" },
+    };
+    const findMany = vi.fn().mockResolvedValue([account]);
+    const repository = new PrismaUserRepository({ serviceAccount: { findMany } } as unknown as PrismaClient);
+
+    expect(await repository.listServiceAccounts("site-a", { includeDeleted: true })).toEqual([]);
+    expect(await repository.listServiceAccounts("site-b", { includeDeleted: true })).toEqual([]);
+  });
+
+  it("does not overwrite a membership's relationship-derived Site with the request Site", async () => {
+    const now = new Date("2026-07-28T00:00:00.000Z");
+    const membership = {
+      id: "membership-1", teamId: "team-1", userId: "user-1", role: "member", status: "active",
+      deletedAt: null, deletedBy: null, deleteReason: null, createdAt: now, updatedAt: now,
+      team: { siteId: "site-a" },
+    };
+    const repository = new PrismaUserRepository({
+      membership: { findMany: vi.fn().mockResolvedValue([membership]) },
+    } as unknown as PrismaClient);
+
+    expect(await repository.listMemberships("site-b", { includeDeleted: true })).toEqual([
+      expect.objectContaining({ id: "membership-1", siteId: "site-a" }),
     ]);
   });
 });
