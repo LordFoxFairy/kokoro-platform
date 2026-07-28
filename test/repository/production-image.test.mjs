@@ -102,7 +102,9 @@ test("the final Platform image contains only compiled production dependencies", 
   const dockerfile = await readFile(resolve(root, "deploy/docker/Dockerfile"), "utf8");
   const legacyPnpmConfig = await readFile(resolve(root, ".npmrc"), "utf8").catch(() => null);
   const lockfile = parse(await readFile(resolve(root, "pnpm-lock.yaml"), "utf8"));
+  const workspaceConfig = parse(await readFile(resolve(root, "pnpm-workspace.yaml"), "utf8"));
   assert.equal(legacyPnpmConfig, null, "pnpm v11 install settings must not be placed in .npmrc");
+  assert.equal(workspaceConfig.autoInstallPeers, false);
   assert.equal(lockfile.settings?.autoInstallPeers, false);
   const target = assertProductionDockerfile(dockerfile);
   await access(resolve(root, target));
