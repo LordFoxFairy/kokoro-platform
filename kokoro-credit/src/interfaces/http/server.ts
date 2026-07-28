@@ -49,7 +49,7 @@ export function createCreditServer(options: CreateCreditServerOptions = {}) {
   declareRouteAccess(app, { path: "/metrics", exact: true }, "public");
   declareRouteAccess(app, "/admin", "admin");
   declareRouteAccess(app, "/credit", "runtime-internal");
-  declareRouteAccess(app, "/docs", "runtime-internal");
+  declareRouteAccess(app, { path: "/docs/json", exact: true }, "runtime-internal");
 
   const prisma = options.prisma ?? createPrismaClient();
   const repository = new PrismaCreditRepository(prisma);

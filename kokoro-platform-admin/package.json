@@ -23,7 +23,7 @@
     "@connectrpc/validate": "0.2.0",
     "@kokoro/platform-kit": "workspace:*",
     "@prisma/client": "^6.19.3",
-    "fastify": "^5.6.2",
+    "fastify": "^5.10.0",
     "jose": "^5.9.6",
     "zod": "^3.25.76"
   },

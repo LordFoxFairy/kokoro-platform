@@ -42,7 +42,7 @@ export function createSiteServer(options: CreateSiteServerOptions = {}) {
   declareRouteAccess(app, "/site-policies", "runtime-internal");
   declareRouteAccess(app, "/site-feature-flags", "runtime-internal");
   declareRouteAccess(app, "/site-context", "runtime-internal");
-  declareRouteAccess(app, "/docs", "runtime-internal");
+  declareRouteAccess(app, { path: "/docs/json", exact: true }, "runtime-internal");
 
   const prisma = options.prisma ?? createPrismaClient();
   const repository = new PrismaSiteRepository(prisma);

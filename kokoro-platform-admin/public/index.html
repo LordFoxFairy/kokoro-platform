@@ -174,7 +174,7 @@
 </main>
 
 <main id="docs" class="hide">
-  <div class="bar"><span class="muted">各业务模块的 OpenAPI/Swagger 文档（在线模块可点开）。</span></div>
+  <div class="bar"><span class="muted">各业务模块的 OpenAPI JSON 契约（在线模块可点开）。</span></div>
   <div class="tw"><table><thead><tr><th>模块</th><th>状态</th><th>文档</th></tr></thead><tbody id="docsRows"><tr><td colspan="3" class="empty">—</td></tr></tbody></table></div>
 </main>
 
@@ -434,7 +434,7 @@ async function submitNewOperator() {
 async function loadDocs() {
   try {
     const mods = await api("/api/manifests");
-    $("#docsRows").innerHTML = mods.map((m) => `<tr><td>${esc(m.id)}</td><td>${m.online ? '<span class="st ok">online</span>' : '<span class="st error">offline</span>'}</td><td>${m.online ? `<a href="${esc(m.baseUrl)}/docs" target="_blank" rel="noopener">${esc(m.baseUrl)}/docs</a>` : "—"}</td></tr>`).join("") || `<tr><td colspan="3" class="empty">无模块</td></tr>`;
+    $("#docsRows").innerHTML = mods.map((m) => `<tr><td>${esc(m.id)}</td><td>${m.online ? '<span class="st ok">online</span>' : '<span class="st error">offline</span>'}</td><td>${m.online ? `<a href="${esc(m.baseUrl)}/docs/json" target="_blank" rel="noopener">${esc(m.baseUrl)}/docs/json</a>` : "—"}</td></tr>`).join("") || `<tr><td colspan="3" class="empty">无模块</td></tr>`;
   } catch (e) { toast("err", "文档", e.message); }
 }
 

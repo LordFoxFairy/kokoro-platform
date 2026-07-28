@@ -14,7 +14,7 @@
 - **Fastify 5**（HTTP）。
 - **Prisma 6 + MySQL**（ORM/迁移；钱/积分一律 `$transaction` + 幂等 + 原子条件更新）。
 - **Zod**（外部载荷一律 `.strict()` 洗净）。
-- **@fastify/swagger + swagger-ui**（OpenAPI `/docs`；body schema 走 kit `jsonSchema`，已做 AJV 兼容）。
+- **@fastify/swagger**（JSON-only OpenAPI `/docs/json`；body schema 走 kit `jsonSchema`，已做 AJV 兼容；生产不暴露 Swagger UI/static/YAML）。
 - 跨服务：HTTP + `RequestContext` 头（`x-kokoro-site-id/request-id/principal`）；契约 codegen（root `contract/events.yaml`）。
 - 共享底座：`@kokoro/platform-kit`（responses / amount / RequestContext / manifest / openapi）。
 

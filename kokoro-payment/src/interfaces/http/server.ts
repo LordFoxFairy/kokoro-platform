@@ -31,12 +31,7 @@ const PAYMENT_RUNTIME_ROUTE_INVENTORY = Object.freeze([
   "GET /admin/payments/refunds",
   "GET /admin/payments/stats",
   "GET /admin/payments/subscriptions",
-  "GET /docs",
   "GET /docs/json",
-  "GET /docs/static/*",
-  "GET /docs/static/index.html",
-  "GET /docs/static/swagger-initializer.js",
-  "GET /docs/yaml",
   "GET /healthz",
   "GET /metrics",
   "GET /plans",
@@ -48,13 +43,7 @@ const PAYMENT_RUNTIME_ROUTE_INVENTORY = Object.freeze([
   "HEAD /admin/payments/refunds",
   "HEAD /admin/payments/stats",
   "HEAD /admin/payments/subscriptions",
-  "HEAD /docs",
-  "HEAD /docs/",
   "HEAD /docs/json",
-  "HEAD /docs/static/*",
-  "HEAD /docs/static/index.html",
-  "HEAD /docs/static/swagger-initializer.js",
-  "HEAD /docs/yaml",
   "HEAD /healthz",
   "HEAD /metrics",
   "HEAD /plans",
@@ -231,7 +220,7 @@ export function createPaymentServer(options: CreatePaymentServerOptions) {
   // checkout belongs to Web BFF; order lifecycle and payment events belong to services.
   declareRouteAccess(app, "/orders", "runtime-internal");
   declareRouteAccess(app, "/payment-events", "runtime-internal");
-  declareRouteAccess(app, "/docs", "admin");
+  declareRouteAccess(app, { path: "/docs/json", exact: true }, "admin");
 
   void app.register(async (instance) => {
     registerPaymentRoutes(instance, options.readCapabilities.catalog);

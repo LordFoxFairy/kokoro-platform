@@ -75,7 +75,7 @@ export function createHubServer(options: CreateHubServerOptions) {
   declareRouteAccess(app, "/hub/runtime", "runtime-internal");
   declareRouteAccess(app, "/hub/self", "web-bff");
   declareRouteAccess(app, "/hub/admin", "admin");
-  declareRouteAccess(app, "/docs", "runtime-internal");
+  declareRouteAccess(app, { path: "/docs/json", exact: true }, "runtime-internal");
   // multipart 档上传（zip 单文件）；JSON base64 档限制在上传路由 bodyLimit。
   void app.register(multipart, { limits: { files: 1, fileSize: MAX_UPLOAD_ZIP_BYTES } });
 

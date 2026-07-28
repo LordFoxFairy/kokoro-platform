@@ -13,6 +13,7 @@ test("platform CI is lock-driven and separates local from integration gates", as
   assert.match(workflow, /node-version:\s*["']?22["']?/u);
   assert.match(workflow, /corepack enable/u);
   assert.match(workflow, /pnpm install --frozen-lockfile/u);
+  assert.match(workflow, /pnpm audit --prod/u);
   assert.match(workflow, /pnpm lint/u);
   assert.match(workflow, /pnpm typecheck/u);
   assert.match(workflow, /pnpm test/u);

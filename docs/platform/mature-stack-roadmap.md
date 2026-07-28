@@ -4,7 +4,7 @@
 
 ## 已用成熟件（底座）
 
-Prisma(ORM/迁移) · Zod(校验) · Fastify(HTTP) · @fastify/swagger + swagger-ui(OpenAPI) · pnpm。
+Prisma(ORM/迁移) · Zod(校验) · Fastify(HTTP) · @fastify/swagger(JSON-only OpenAPI contract) · pnpm。
 
 ## 该换成熟件的（手搓→成熟）
 

@@ -113,7 +113,7 @@ export function createUserServer(options: CreateUserServerOptions = {}) {
   // 团队自助面：仅 web-bff（携 user principal）。与 runtime-internal 互不越界，user principal 不下传 runtime。
   declareRouteAccess(app, "/bff", "web-bff");
   declareRouteAccess(app, "/admin", "admin");
-  declareRouteAccess(app, "/docs", "runtime-internal");
+  declareRouteAccess(app, { path: "/docs/json", exact: true }, "runtime-internal");
 
   const prisma = options.prisma ?? createPrismaClient();
   const repository = new PrismaUserRepository(prisma);

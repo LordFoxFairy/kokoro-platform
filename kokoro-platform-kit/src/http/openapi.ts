@@ -1,10 +1,9 @@
 import fastifySwagger from "@fastify/swagger";
-import fastifySwaggerUi from "@fastify/swagger-ui";
 import type { FastifyInstance } from "fastify";
 import type { ZodType } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 
-// 注册 OpenAPI + Swagger UI（/docs）。同步排队插件——须在路由注册（建议包进 app.register）之前调用，
+// 注册 OpenAPI JSON 契约（/docs/json）。同步排队插件——须在路由注册（建议包进 app.register）之前调用，
 // @fastify/swagger 以 fastify-plugin 注入根级 onRoute 钩子，捕获其后加载的所有路由 schema。
 export function registerOpenApi(
   app: FastifyInstance,
@@ -19,7 +18,13 @@ export function registerOpenApi(
       },
     },
   });
-  void app.register(fastifySwaggerUi, { routePrefix: "/docs" });
+  void app.register(async (instance) => {
+    instance.get(
+      "/docs/json",
+      { schema: { hide: true } },
+      async () => instance.swagger(),
+    );
+  });
 }
 
 // Fastify 校验用 AJV(draft-07)，与 openApi3 方言有两处冲突，统一在此归一：

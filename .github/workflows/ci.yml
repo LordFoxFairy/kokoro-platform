@@ -15,6 +15,8 @@ jobs:
       - run: corepack enable
       - run: corepack prepare pnpm@11.2.2 --activate
       - run: pnpm install --frozen-lockfile
+      - name: production dependency audit
+        run: pnpm audit --prod
       - name: lint
         run: pnpm lint
       - name: typecheck
