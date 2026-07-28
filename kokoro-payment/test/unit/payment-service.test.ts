@@ -1,7 +1,6 @@
 import Fastify from "fastify";
 import { describe, expect, it } from "vitest";
 import { PaymentService } from "../../src/application/payment-service.js";
-import { PaymentWebhookService } from "../../src/application/webhook-service.js";
 import {
   CheckoutUnavailableError,
   OrderAmountMismatchError,
@@ -25,7 +24,6 @@ import type {
   ReverseCreditsInput,
   UpsertPlanInput,
 } from "../../src/domain/repository.js";
-import { createWebhookProviderRegistry } from "../../src/infrastructure/webhook/webhook-provider-registry.js";
 import { registerPaymentAdminRoutes } from "../../src/interfaces/http/admin-routes.js";
 
 const deletionAudit = {
@@ -657,106 +655,34 @@ describe("PaymentService grantPlanToTeam", () => {
 describe("POST /admin/payments/grant-plan", () => {
   async function createAdminApp(fakes: Fakes) {
     const app = Fastify();
-    const payment = service(fakes);
-    const webhook = new PaymentWebhookService(
-      fakes.repo,
-      payment,
-      createWebhookProviderRegistry(),
-      () => undefined,
-    );
-    registerPaymentAdminRoutes(app, fakes.repo, payment, webhook);
+    registerPaymentAdminRoutes(app, fakes.repo);
     await app.ready();
     return app;
   }
 
-  it("replays a supplied request ID and returns it in the success envelope", async () => {
-    const fakes = makeFakes();
-    const app = await createAdminApp(fakes);
-    try {
-      const request = {
-        method: "POST" as const,
-        url: "/admin/payments/grant-plan",
-        headers: { "x-kokoro-site-id": "site_1", "x-kokoro-request-id": "req_http" },
-        payload: { teamId: "team_1", planId: "plan_1" },
-      };
-      const first = await app.inject(request);
-      const replay = await app.inject(request);
-
-      expect(first.statusCode).toBe(200);
-      expect(first.json().requestId).toBe("req_http");
-      expect(replay.json().data.id).toBe(first.json().data.id);
-      expect(fakes.grants).toHaveLength(1);
-    } finally {
-      await app.close();
-    }
-  });
-
-  it("uses a generated request ID for both idempotency and the response", async () => {
-    const fakes = makeFakes();
-    const app = await createAdminApp(fakes);
-    try {
-      const response = await app.inject({
-        method: "POST",
-        url: "/admin/payments/grant-plan",
-        headers: { "x-kokoro-site-id": "site_1" },
-        payload: { teamId: "team_1", planId: "plan_1" },
-      });
-
-      const requestId = response.json().requestId as string;
-      expect(requestId).toBeTruthy();
-      expect(fakes.createdOrders[0]?.idempotencyKey).toMatch(/^admin-grant:v1:[0-9a-f]{64}$/);
-      expect(fakes.createdOrders[0]?.idempotencyKey).not.toContain(requestId);
-      expect(fakes.grants[0]?.requestId).toBe(requestId);
-    } finally {
-      await app.close();
-    }
-  });
-
-  it("returns a request-scoped 409 without a second grant for conflicting replay", async () => {
-    const fakes = makeFakes();
-    const app = await createAdminApp(fakes);
-    try {
-      const headers = { "x-kokoro-site-id": "site_1", "x-kokoro-request-id": "req_conflict" };
-      await app.inject({
-        method: "POST",
-        url: "/admin/payments/grant-plan",
-        headers,
-        payload: { teamId: "team_1", planId: "plan_1" },
-      });
-      const response = await app.inject({
-        method: "POST",
-        url: "/admin/payments/grant-plan",
-        headers,
-        payload: { teamId: "team_2", planId: "plan_1" },
-      });
-
-      expect(response.statusCode).toBe(409);
-      expect(response.json()).toMatchObject({
-        error: { code: "payment.idempotency_conflict" },
-        requestId: "req_conflict",
-      });
-      expect(fakes.grants).toHaveLength(1);
-    } finally {
-      await app.close();
-    }
-  });
-
   it.each([
-    [{ teamId: "team_1" }, "request.invalid", 400],
-    [{ teamId: "team_1", planId: "missing" }, "payment.plan_not_found", 404],
-  ])("includes the same request ID in validation and domain errors", async (payload, code, statusCode) => {
-    const fakes = makeFakes({ plan: null });
+    [{ teamId: "team_1", planId: "plan_1" }, "req_supplied"],
+    [{ teamId: "team_1", planId: "plan_1" }, undefined],
+    [{ teamId: "team_2", planId: "plan_1" }, "req_conflict"],
+    [{ teamId: "team_1" }, "req_invalid"],
+    [{ teamId: "team_1", planId: "missing" }, "req_missing"],
+  ])("is structurally absent for payload %j without order or credit effects", async (payload, requestId) => {
+    const fakes = makeFakes();
     const app = await createAdminApp(fakes);
     try {
       const response = await app.inject({
         method: "POST",
         url: "/admin/payments/grant-plan",
-        headers: { "x-kokoro-site-id": "site_1", "x-kokoro-request-id": "req_error" },
+        headers: {
+          "x-kokoro-site-id": "site_1",
+          ...(requestId === undefined ? {} : { "x-kokoro-request-id": requestId }),
+        },
         payload,
       });
 
-      expect(response.statusCode).toBe(statusCode);
-      expect(response.json()).toMatchObject({ error: { code }, requestId: "req_error" });
+      expect(response.statusCode).toBe(404);
+      expect(fakes.createdOrders).toEqual([]);
+      expect(fakes.grants).toEqual([]);
     } finally {
       await app.close();
     }

@@ -1,124 +1,32 @@
 # kokoro-payment
 
-套餐、订单、订阅、支付事件、退款和支付 provider 配置模块。
+当前以 redeem-only 模式运行：保存既有 Plan、Order、Subscription、PaymentEvent、Refund、Provider 数据，运行时只开放 Site-scoped 套餐目录和只读管理视图。
 
-## 当前职责
-
-`kokoro-payment` 是购买、订单、支付事件和订阅状态的权威模块。它不自研支付网关，不直接写 credit 账本。支付成功后通过 credit API 发放积分或权益。
-
-## DDD 结构
+## 运行时边界
 
 ```text
-src/domain/                 领域类型、幂等策略、领域错误、repository interface
-src/application/            支付用例
-src/infrastructure/prisma/  Prisma repository 实现
-src/interfaces/http/        HTTP API
-src/interfaces/admin/       admin manifest
-src/config/                 env 解析
-src/module.ts               平台模块元数据
+GET  /healthz
+GET  /metrics
+GET  /plans
+GET  /admin/payments/{plans,orders,subscriptions,events,refunds,providers}
+GET  /admin/payments/stats?siteId=...
 ```
 
-## 当前能力
+已有调用方访问 checkout、order create/confirm/refund/sweep、payment event record 或 provider webhook 时，统一得到 HTTP 503 与 `ACQUISITION_CHANNEL_DISABLED`。Admin manifest 不声明 Payment mutation；旧 mutation URL 不注册。
 
-```text
-Plan
-Order
-Subscription
-PaymentEvent
-Refund
-PaymentProvider config（webhook secret 只存 env 引用，不落明文）
-order idempotency conflict
-payment event idempotency conflict
-webhook 验签（provider 抽象接口；V1 mock=HMAC-SHA256 over rawBody，header x-kokoro-webhook-signature）
-webhook 重放防护（(provider,eventId) 唯一键，重复投递幂等 200 不重处理）
-payment event 状态机 received→processed|failed（payment_succeeded 驱动订单幂等确认链）
-failed 事件手动重放（admin replay 端点）
-```
+进程启动图不包含 provider SDK、webhook secret resolver、Credit grant/reverse client 或确认 worker。旧的 provider/worker 环境变量会被 schema 丢弃，不能重新开启购买通道。`seed:packs` 只 upsert Site 套餐目录，不创建或启用 mock provider。
 
-当前 HTTP 面：
+## 数据与迁移
 
-```text
-GET    /healthz
-POST   /plans/upsert
-DELETE /plans/:planId
-POST   /plans/:planId/restore
-POST   /orders
-POST   /orders/sweep
-POST   /orders/:id/confirm
-POST   /orders/:id/refund
-POST   /payment-events/record
-POST   /payments/webhooks/:provider
-GET    /admin/payments/{plans,orders,subscriptions,events,refunds,providers}
-POST   /admin/payments/grant-plan
-POST   /admin/payments/providers/upsert
-DELETE /admin/payments/providers/:key
-POST   /admin/payments/events/:id/replay
-```
+Prisma schema 和旧 application/provider adapters 暂时保留，作为 Wave 1 / Wave 2A 数据迁移输入；它们不从包入口导出，也不由生产 server 组装。禁止通过直接引用旧 application 文件绕过关闸。
 
-webhook 链路：
-
-```text
-POST /payments/webhooks/:provider
-  → providers 表查配置（未配置/停用=404，kind 未实现验签=501）
-  → secretRef 解析 env 密钥（悬空=500 fail-closed）
-  → provider.verifySignature(headers, rawBody, secret)（坏签/缺头=401）
-  → 事件幂等入库（重复投递 200 不重处理）
-  → received→processed|failed；payment_succeeded → confirmOrder（幂等键 order:<id>）
-  → failed 留 lastError，走 POST /admin/payments/events/:id/replay 手动重放
-```
-
-## 运行与部署
+## 验证
 
 ```bash
-pnpm --filter @kokoro/payment dev
-pnpm --filter @kokoro/payment start
+pnpm --filter @kokoro/payment lint
+pnpm --filter @kokoro/payment typecheck
+pnpm --filter @kokoro/payment test
+node --test test/repository/acquisition-channel-disabled.test.mjs
 ```
 
-关键 env：
-
-```text
-DATABASE_URL_PAYMENT
-KOKORO_PAYMENT_PORT=4241
-KOKORO_PAYMENT_BASE_URL=http://kokoro-payment:4241
-```
-
-容器和 Kubernetes 中通过 `kokoro-payment` 服务名访问，不在服务间调用里写 `localhost`。provider event、order idempotency 和 webhook 重放状态必须落 MySQL，不能依赖单进程状态。
-
-## 下一步补齐
-
-```text
-plan:
-  feature bundle metadata
-  active/disabled
-  price/currency/interval 管理
-
-provider config:
-  stripe/alipay/wechat 真实验签实现（kind 已建模，注册表缺位=501 占位）
-  paddle/lemon_squeezy kind 扩展
-  merchant/app id、certRef
-
-order:
-  create checkout/session
-  providerOrderId
-  canceled 状态流转
-
-subscription:
-  providerSubscriptionId
-  currentPeriodStart/currentPeriodEnd
-  active/canceled/past_due
-
-refund:
-  provider refund id
-  失败重试
-
-admin:
-  订单查询过滤
-  订阅状态
-```
-
-## 边界
-
-- 不直接写 credit ledger。
-- 不保存支付密钥明文。
-- 不自己实现完整支付后台。
-- 不决定用户权限。
+七层 repository gate 覆盖 runtime router、webhook router、Admin surface、server assembly、process bootstrap、environment 和 catalogue seed；每层都有注入违规源码的承重 fixture。

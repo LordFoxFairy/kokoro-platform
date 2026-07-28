@@ -1,8 +1,6 @@
 import type { PrismaClient } from "../../generated/prisma/index.js";
 import Fastify from "fastify";
 import { describe, expect, it, vi } from "vitest";
-import type { PaymentService } from "../../src/application/payment-service.js";
-import type { PaymentWebhookService } from "../../src/application/webhook-service.js";
 import type { PaymentRepository } from "../../src/domain/repository.js";
 import { PrismaPaymentRepository } from "../../src/infrastructure/prisma/prisma-payment-repository.js";
 import { registerPaymentAdminRoutes } from "../../src/interfaces/http/admin-routes.js";
@@ -90,7 +88,7 @@ describe("Payment admin Site queries", () => {
       readAdminStats: vi.fn().mockResolvedValue({}),
     };
     const app = Fastify();
-    registerPaymentAdminRoutes(app, repository as unknown as PaymentRepository, {} as PaymentService, {} as PaymentWebhookService);
+    registerPaymentAdminRoutes(app, repository as unknown as PaymentRepository);
     for (const route of ["plans", "orders", "subscriptions", "refunds"]) {
       expect((await app.inject({ method: "GET", url: `/admin/payments/${route}?siteId=site-b` })).statusCode).toBe(200);
     }
@@ -107,7 +105,7 @@ describe("Payment admin Site queries", () => {
   it.each(["events", "providers"])("rejects Site parameters on global %s", async (resource) => {
     const repository = { listPaymentEvents: vi.fn().mockResolvedValue([]), listProviders: vi.fn().mockResolvedValue([]) };
     const app = Fastify();
-    registerPaymentAdminRoutes(app, repository as unknown as PaymentRepository, {} as PaymentService, {} as PaymentWebhookService);
+    registerPaymentAdminRoutes(app, repository as unknown as PaymentRepository);
     expect((await app.inject({ method: "GET", url: `/admin/payments/${resource}?siteId=site-b` })).statusCode).toBe(400);
     await app.close();
   });

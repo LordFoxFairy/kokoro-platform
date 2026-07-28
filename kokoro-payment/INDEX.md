@@ -8,30 +8,30 @@ owners:
 # Payment module
 
 ## Responsibilities
-Own current payment records, pack configuration, provider/webhook adapters, and payment administration workflows.
+Preserve payment records and expose the Site-scoped read-only pack catalogue during redeem-only launch.
 
 ## Non-responsibilities
 Payment does not directly grant entitlements or credit; provider success must enter the shared Fulfillment boundary in Wave 2B.
 
 ## Public boundary
-`PaymentService` and `PaymentWebhookService` (`src/application/`) are the application services. HTTP serves `/plans` (list, `upsert`, delete/restore by id), `/orders` (`checkout`, create, `sweep`, `:id/confirm`, `:id/refund`), `/payment-events/record`, the provider ingress `POST /payments/webhooks/:provider`, and the `/admin/payments/*` manifest surface; `POST /admin/payments/grant-plan` returns the effective request ID in both success and error envelopes. `src/interfaces/cli/seed-packs.ts` seeds packs. `src/index.ts` re-exports both services, `createPaymentServer`, `paymentAdminManifest`, `paymentPlatformModule`, the HTTP schemas, and the domain/provider/webhook/repository contracts.
+HTTP exposes Site-scoped `GET /plans`, read-only `/admin/payments/*` resources, and stable `ACQUISITION_CHANNEL_DISABLED` denials for existing order/payment-event/webhook callers. Admin mutation actions are absent. `src/interfaces/cli/seed-packs.ts` seeds only plan rows. Legacy payment application/provider code remains private migration input and is not exported or assembled by the runtime.
 
 ## Callers and dependencies
-Platform commerce orchestration calls Payment; provider webhooks enter through infrastructure adapters and private Prisma persistence.
+Web BFF reads the Site catalogue and Admin reads historical records. No provider or commerce orchestrator enters the runtime while acquisition is disabled.
 
 ## Data ownership and events
 This package owns provider/payment/refund/dispute records, webhook inbox state, migrations, and payment-domain events.
 
 ## Runtime and security
-`DATABASE_URL_PAYMENT` is this package's private Prisma datasource; `KOKORO_PAYMENT_PORT` (4241) binds the service and `KOKORO_CREDIT_BASE_URL` is the credit grant/reverse target. `KOKORO_PAYMENT_ENABLED_PROVIDERS` is the real-provider allowlist — unlisted kinds answer 501 instead of faking success — and `KOKORO_PAYMENT_CONFIRM_SWEEP_INTERVAL_SECONDS`/`KOKORO_PAYMENT_CONFIRM_STALE_SECONDS` bound the hanging-confirm sweeper. `KOKORO_SITE_ID` only seeds packs from the CLI. Webhook signatures, secret rotation, replay windows, amount/currency checks, and Site/billing-account context are mandatory trust boundaries.
+`DATABASE_URL_PAYMENT` is this package's private Prisma datasource and `KOKORO_PAYMENT_PORT` (4241) binds the service. Former provider and confirmation-worker environment switches are stripped. The process bootstrap has no provider SDK, webhook secret resolver, Credit client, or acquisition worker. `KOKORO_SITE_ID` only scopes the catalogue seed.
 
 Admin plans/orders/subscriptions/refunds strictly accept an optional `siteId` and filter before `take: 100`; subscriptions and refunds traverse plan/order respectively and return an explicit projected `siteId`. Admin stats require `siteId` for both status and revenue groupings. Provider configuration and raw payment events are platform-global sensitive resources and reject Site query parameters.
 
 ## Idempotency, failure, and recovery
-Provider event IDs and command receipts deduplicate delivery; ambiguous outcomes reconcile with the provider before fulfillment. Admin plan grants derive the fixed 79-byte key `admin-grant:v1:<sha256>` from a domain-separated, length-prefixed `(siteId, requestId)` tuple, so opaque IDs never enter the MySQL unique key in plaintext. The service restores and validates the immutable order snapshot before reading the mutable Plan: an identical target replays the same order even after repricing, disablement, or deletion, while changing site, team, or plan fails with `payment.idempotency_conflict` before another grant.
+Acquisition commands do not reach persistence: existing runtime callers receive one stable 503 code and Admin mutations are structurally unregistered. Seven repository detectors plus runtime no-effect tests keep the shutdown from being widened by wiring or environment changes.
 
 ## Extension rules and forbidden dependencies
-Add providers behind ports. Never duplicate Subscription/Entitlement/Credit issuance inside a provider adapter.
+Do not re-export or assemble legacy acquisition services. Reopening providers requires the Wave 2B fulfillment boundary and removal of the repository shutdown gate in one reviewed change.
 
 ## Current gotchas
 Real checkout/refund/dispute/dunning certification is Wave 2B and does not block redeem-only launch.

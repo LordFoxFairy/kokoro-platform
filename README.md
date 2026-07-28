@@ -48,7 +48,7 @@ kokoro-payment
 ```text
 credit   账户(balance/held)、grant/spend(可用额原子扣减)、quote/hold/capture/release，全幂等并发安全
 model    provider/binding upsert、/model-bindings/resolve（排除 down/disabled，priority 有序候选）
-payment  plan/order/event，confirmOrder 抢占式 pending->paid，并经 HTTP 向 credit grant 套餐积分
+payment  redeem-only：Site 套餐目录与历史只读管理；购买/确认/退款/webhook 统一 fail-closed
 site     site/domain/app/policy upsert、resolveSiteContext（host 规范化、未 active 返回 null）
 user     ensureUserWithPersonalTeam、listTeamsForUser
 ```

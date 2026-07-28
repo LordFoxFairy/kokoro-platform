@@ -1,35 +1,25 @@
-import { jsonSchema, readRequestContext, sendData } from "@kokoro/platform-kit";
+import { readRequestContext, sendError } from "@kokoro/platform-kit";
 import type { FastifyInstance } from "fastify";
-import type { PaymentWebhookService } from "../../application/webhook-service.js";
-import { handlePaymentError } from "./routes.js";
-import { webhookProviderParamsSchema } from "./schemas.js";
+import { ACQUISITION_CHANNEL_DISABLED } from "./routes.js";
 
-// 必须注册在独立 encapsulation context：本域把 body 保留为原始字节（Buffer），
-// 验签要覆盖 provider 发出的原始报文，不允许 JSON 预解析后再序列化验签。
-export function registerPaymentWebhookRoutes(
-  app: FastifyInstance,
-  webhookService: PaymentWebhookService,
-): void {
-  app.removeAllContentTypeParsers();
-  app.addContentTypeParser("*", { parseAs: "buffer" }, (_request, body, done) => {
-    done(null, body);
+// Provider ingress remains a stable fail-closed endpoint so already-configured providers
+// receive an explicit retry-safe denial. No raw-body parser, verifier, SDK or secret resolver
+// is assembled while redeem-only acquisition is in force.
+export function registerPaymentWebhookRoutes(app: FastifyInstance): void {
+  // Accept any provider content type only to reach the denial handler. The bounded Fastify
+  // body reader discards the value; no provider-specific decoder or verifier is initialized.
+  app.addContentTypeParser("*", { parseAs: "string" }, (_request, _body, done) => {
+    done(null, undefined);
   });
-
-  app.post("/payments/webhooks/:provider", {
-    schema: {
-      tags: ["payment"],
-      summary: "接收 provider webhook（验签 + 幂等入库 + 状态机推进）",
-      params: jsonSchema(webhookProviderParamsSchema),
-    },
-  }, async (request, reply) => {
-    try {
-      const ctx = readRequestContext(request.headers);
-      const { provider } = webhookProviderParamsSchema.parse(request.params);
-      const rawBody = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
-      const receipt = await webhookService.receiveWebhook(provider, request.headers, rawBody, ctx.requestId);
-      return sendData(reply, receipt, 200, ctx.requestId);
-    } catch (error) {
-      return handlePaymentError(error, reply, "payment.webhook_failed");
-    }
+  app.post("/payments/webhooks/:provider", async (request, reply) => {
+    const { requestId } = readRequestContext(request.headers);
+    return sendError(
+      reply,
+      503,
+      ACQUISITION_CHANNEL_DISABLED,
+      "支付购买通道未开放，请使用卡密兑换",
+      undefined,
+      requestId,
+    );
   });
 }

@@ -20,16 +20,16 @@ export const paymentPlatformModule = {
     surfaces: ["http", "internal-api", "admin-manifest"],
     routes: [
       "GET /healthz",
-      "POST /plans/upsert",
-      "POST /orders",
-      "POST /orders/:id/confirm",
-      "POST /payment-events/record",
-      "POST /payments/webhooks/:provider",
+      "GET /metrics",
+      "GET /plans",
+      "GET /admin/payments/manifest",
+      "GET /admin/payments/:resource",
+      "GET /admin/payments/stats",
     ],
     notes: [
-      "payment 是购买、订单、订阅和支付事件权威。",
-      "支付成功后只请求 credit 发放权益或积分，不直接写 credit 账本。",
-      "webhook 验签覆盖原始字节；provider 配置只存 webhook secret 的 env 引用，不落明文。",
+      "redeem-only 阶段只提供 Site 套餐目录和历史支付数据只读管理。",
+      "旧 order、payment-event、refund 与 provider webhook 写入口只返回 ACQUISITION_CHANNEL_DISABLED。",
+      "运行图不组装 provider SDK、secret resolver、Credit client 或 acquisition worker。",
     ],
   },
   service: {
@@ -38,9 +38,9 @@ export const paymentPlatformModule = {
     defaultPort: 4241,
     baseUrlEnv: "KOKORO_PAYMENT_BASE_URL",
   },
-  dependencies: ["user", "credit"],
+  dependencies: [],
   boundaries: {
-    owns: ["plans", "orders", "subscriptions", "payment events", "invoices", "refunds"],
-    doesNotOwn: ["credit ledger", "runtime usage metering", "provider routing"],
+    owns: ["Site plan catalogue", "historical orders", "historical subscriptions", "historical payment events", "historical refunds"],
+    doesNotOwn: ["credit ledger", "runtime usage metering", "payment acquisition", "provider routing"],
   },
 } as const;

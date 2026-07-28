@@ -7,24 +7,14 @@ describe("payment admin contract", () => {
     expect(paymentAdminManifest).toEqual(paymentAdminContract.manifest);
   });
 
-  it("declares real method/route entries for every mutation action", () => {
-    const routeKeys = new Set(
-      paymentAdminContract.routes.map((route) => `${route.method} ${route.route}`),
-    );
-
+  it("exposes every payment resource as read-only during redeem-only launch", () => {
     for (const resource of paymentAdminContract.manifest.resources) {
-      for (const action of resource.actions) {
-        if (action.kind === "mutation" || action.kind === "dangerMutation") {
-          expect(action.route, `${resource.id}.${action.id} route`).toBeTypeOf("string");
-          expect(routeKeys.has(`${action.method} ${action.route}`), `${resource.id}.${action.id}`).toBe(
-            true,
-          );
-        }
-      }
+      expect(resource.actions, resource.id).toEqual([]);
     }
+    expect(paymentAdminContract.routes.every((route) => route.method === "GET")).toBe(true);
   });
 
-  it("exposes only real plan and refund actions", () => {
+  it("does not advertise plan, order, refund, subscription, provider, or event mutations", () => {
     const planActions = paymentAdminContract.manifest.resources
       .find((resource) => resource.id === "plans")
       ?.actions.map((action) => action.id);
@@ -32,7 +22,7 @@ describe("payment admin contract", () => {
       .find((resource) => resource.id === "refunds")
       ?.actions.map((action) => action.id);
 
-    expect(planActions).toEqual(["upsert", "delete", "restore", "grant-to-team"]);
+    expect(planActions).toEqual([]);
     expect(refundActions).toEqual([]);
   });
 
