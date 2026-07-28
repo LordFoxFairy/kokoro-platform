@@ -231,7 +231,7 @@ describe("hub MCP server registry API (real mongo)", () => {
       },
     });
     expect(response.statusCode).toBe(400);
-    expect(response.json().error.code).toBe("request.invalid");
+    expect(response.json().error.code).toBe("hub.mcp_secret_ref_forbidden");
     expect(await hub.collections.mcpServers.countDocuments({})).toBe(0);
   });
 
