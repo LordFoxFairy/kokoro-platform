@@ -1,6 +1,6 @@
 import type { Invite, InviteStatus } from "./invite.js";
-import type { Membership, MembershipRole, MembershipStatus } from "./membership.js";
-import type { ServiceAccount } from "./service-account.js";
+import type { AdminMembership, Membership, MembershipRole, MembershipStatus } from "./membership.js";
+import type { AdminServiceAccount, ServiceAccount } from "./service-account.js";
 import type { Team } from "./team.js";
 import type { DeleteInput, ListOptions, RestoreInput } from "./user-deletion.js";
 import type { User, UserStatus } from "./user.js";
@@ -207,6 +207,6 @@ export interface UserRepository {
   // 不传 siteId 保持全量（平台视图）；传则按站过滤（admin 工作台后续按站查）。
   listUsers(siteId?: string, options?: ListOptions): Promise<User[]>;
   listTeams(siteId?: string, options?: ListOptions): Promise<Team[]>;
-  listMemberships(options?: ListOptions): Promise<Membership[]>;
-  listServiceAccounts(options?: ListOptions): Promise<ServiceAccount[]>;
+  listMemberships(siteId?: string, options?: ListOptions): Promise<AdminMembership[]>;
+  listServiceAccounts(siteId?: string, options?: ListOptions): Promise<AdminServiceAccount[]>;
 }

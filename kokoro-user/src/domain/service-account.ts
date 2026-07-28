@@ -13,3 +13,7 @@ export interface ServiceAccount extends DeletionAudit {
   createdAt: Date;
   updatedAt: Date;
 }
+
+export interface AdminServiceAccount extends ServiceAccount {
+  siteId: string;
+}

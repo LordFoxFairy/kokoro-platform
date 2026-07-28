@@ -1,6 +1,6 @@
 import { registerAdminManifestRoute, sendData, sendError, sendZodError } from "@kokoro/platform-kit";
 import type { FastifyInstance, FastifyReply } from "fastify";
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
 import type { ModelBindingStatus, ProviderAccountStatus } from "../../domain/model.js";
 import { isModelLifecycleError } from "../../domain/model-lifecycle.js";
 import type { ModelRepository } from "../../domain/repository.js";
@@ -19,22 +19,31 @@ interface IdParams {
 export function registerModelAdminRoutes(app: FastifyInstance, repository: ModelRepository): void {
   registerAdminManifestRoute(app, modelAdminManifest);
 
-  app.get("/admin/models/provider-accounts", async (_request, reply) =>
-    sendData(reply, await repository.listProviderAccounts({ includeDeleted: true })),
-  );
+  app.get("/admin/models/provider-accounts", async (request, reply) => {
+    const query = globalAdminListQuerySchema.safeParse(request.query);
+    if (!query.success) return sendZodError(reply, query.error);
+    return sendData(reply, await repository.listProviderAccounts({ includeDeleted: true }));
+  });
 
-  app.get("/admin/models/bindings", async (_request, reply) =>
-    sendData(reply, await repository.listAllModelBindings({ includeDeleted: true })),
-  );
+  app.get("/admin/models/bindings", async (request, reply) => {
+    const query = globalAdminListQuerySchema.safeParse(request.query);
+    if (!query.success) return sendZodError(reply, query.error);
+    return sendData(reply, await repository.listAllModelBindings({ includeDeleted: true }));
+  });
 
-  app.get("/admin/models/labels", async (_request, reply) =>
-    sendData(reply, await repository.listModelLabels()),
-  );
+  app.get("/admin/models/labels", async (request, reply) => {
+    const query = globalAdminListQuerySchema.safeParse(request.query);
+    if (!query.success) return sendZodError(reply, query.error);
+    return sendData(reply, await repository.listModelLabels());
+  });
 
   app.get<{ Querystring: { siteId?: string } }>(
     "/admin/models/site-policies",
-    async (request, reply) =>
-      sendData(reply, await repository.listSiteModelPolicies(request.query.siteId)),
+    async (request, reply) => {
+      const query = adminSiteListQuerySchema.safeParse(request.query);
+      if (!query.success) return sendZodError(reply, query.error);
+      return sendData(reply, await repository.listSiteModelPolicies(query.data.siteId));
+    },
   );
 
   app.post("/admin/models/site-policies", async (request, reply) => {
@@ -56,6 +65,9 @@ export function registerModelAdminRoutes(app: FastifyInstance, repository: Model
   registerModelBindingStatusRoute(app, repository, "enable", "active");
   registerModelBindingLifecycleRoutes(app, repository);
 }
+
+const adminSiteListQuerySchema = z.object({ siteId: z.string().trim().min(1).optional() }).strict();
+const globalAdminListQuerySchema = z.object({}).strict();
 
 function registerProviderAccountStatusRoute(
   app: FastifyInstance,

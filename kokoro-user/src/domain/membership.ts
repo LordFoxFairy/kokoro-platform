@@ -12,3 +12,7 @@ export interface Membership extends DeletionAudit {
   createdAt: Date;
   updatedAt: Date;
 }
+
+export interface AdminMembership extends Membership {
+  siteId: string;
+}

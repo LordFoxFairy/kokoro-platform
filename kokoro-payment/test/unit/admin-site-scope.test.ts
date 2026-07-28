@@ -43,6 +43,30 @@ describe("PrismaPaymentRepository admin Site scope", () => {
     });
   });
 
+  it("returns explicit siteId projections for subscription and refund rows", async () => {
+    const now = new Date("2026-07-28T00:00:00.000Z");
+    const subscription = {
+      id: "sub-1", teamId: "team-1", planId: "plan-1", status: "active", provider: null,
+      providerSubscriptionId: null, currentPeriodStart: null, currentPeriodEnd: null, metadata: {},
+      createdAt: now, updatedAt: now, plan: { siteId: "site-b" },
+    };
+    const refund = {
+      id: "refund-1", orderId: "order-1", amountMinor: 10n, currency: "USD", status: "succeeded",
+      reason: null, metadata: {}, createdAt: now, updatedAt: now, order: { siteId: "site-b" },
+    };
+    const repository = new PrismaPaymentRepository({
+      subscription: { findMany: vi.fn().mockResolvedValue([subscription]) },
+      refund: { findMany: vi.fn().mockResolvedValue([refund]) },
+    } as unknown as PrismaClient);
+
+    expect(await repository.listSubscriptions("site-b")).toEqual([
+      expect.objectContaining({ id: "sub-1", siteId: "site-b" }),
+    ]);
+    expect(await repository.listRefunds("site-b")).toEqual([
+      expect.objectContaining({ id: "refund-1", siteId: "site-b" }),
+    ]);
+  });
+
   it("filters both status and revenue groupings by siteId", async () => {
     const groupBy = vi.fn()
       .mockResolvedValueOnce([])

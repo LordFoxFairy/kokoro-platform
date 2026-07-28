@@ -140,7 +140,7 @@ function trackingRepo(
     },
     listUsers: async () => [ensureResult.user],
     listTeams: async () => [ensureResult.personalTeam],
-    listMemberships: async () => [ensureResult.membership],
+    listMemberships: async () => [{ ...ensureResult.membership, siteId: ensureResult.personalTeam.siteId }],
     listServiceAccounts: async () => [],
     createInvite: async () => ({ outcome: "team_not_found" }),
     getTeamDetailForViewer: async () => ({ outcome: "not_member" }),

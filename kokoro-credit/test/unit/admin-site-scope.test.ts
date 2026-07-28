@@ -37,6 +37,31 @@ describe("PrismaCreditRepository admin Site scope", () => {
     });
   });
 
+  it("returns explicit siteId projections for relational ledger and usage rows", async () => {
+    const now = new Date("2026-07-28T00:00:00.000Z");
+    const ledgerRow = {
+      id: "ledger-1", accountId: "account-1", amountMicros: 1n, balanceAfterMicros: 2n,
+      reason: "subscription", idempotencyKey: "idem-1", requestId: null, createdAt: now,
+      account: { siteId: "site-b" },
+    };
+    const usageRow = {
+      id: "usage-1", accountId: "account-1", featureKey: "chat", amountMicros: 1n,
+      modelBindingId: null, requestId: null, idempotencyKey: "idem-2", status: "settled", createdAt: now,
+      account: { siteId: "site-b" },
+    };
+    const repository = new PrismaCreditRepository({
+      creditLedgerEntry: { findMany: vi.fn().mockResolvedValue([ledgerRow]) },
+      usageRecord: { findMany: vi.fn().mockResolvedValue([usageRow]) },
+    } as unknown as PrismaClient);
+
+    expect(await repository.listLedgerEntries("site-b")).toEqual([
+      expect.objectContaining({ id: "ledger-1", siteId: "site-b" }),
+    ]);
+    expect(await repository.listUsageRecords("site-b")).toEqual([
+      expect.objectContaining({ id: "usage-1", siteId: "site-b" }),
+    ]);
+  });
+
   it("applies siteId to every billing aggregate", async () => {
     const count = vi.fn().mockResolvedValue(0);
     const accountAggregate = vi.fn().mockResolvedValue({ _sum: { balanceMicros: null, heldMicros: null } });

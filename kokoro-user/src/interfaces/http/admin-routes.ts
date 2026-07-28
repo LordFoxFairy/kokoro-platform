@@ -1,4 +1,4 @@
-import { registerAdminManifestRoute, sendData, sendError } from "@kokoro/platform-kit";
+import { registerAdminManifestRoute, sendData, sendError, sendZodError } from "@kokoro/platform-kit";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { UserService } from "../../application/user-service.js";
@@ -19,22 +19,15 @@ function resourceLister(
     case "teams":
       return (siteId) => repository.listTeams(siteId, { includeDeleted: true });
     case "memberships":
-      return () => repository.listMemberships({ includeDeleted: true });
+      return (siteId) => repository.listMemberships(siteId, { includeDeleted: true });
     case "service-accounts":
-      return () => repository.listServiceAccounts({ includeDeleted: true });
+      return (siteId) => repository.listServiceAccounts(siteId, { includeDeleted: true });
     default:
       return undefined;
   }
 }
 
-// ?siteId= 是不可信查询串，用 Zod 洗净；缺省/空白/非字符串都降级为未传（全量）。
-const siteIdQuerySchema = z
-  .object({ siteId: z.string().trim().min(1).optional() })
-  .catch({ siteId: undefined });
-
-function siteIdQuery(query: unknown): string | undefined {
-  return siteIdQuerySchema.parse(query).siteId;
-}
+const siteIdQuerySchema = z.object({ siteId: z.string().trim().min(1).optional() }).strict();
 
 export function registerUserAdminRoutes(
   app: FastifyInstance,
@@ -49,9 +42,11 @@ export function registerUserAdminRoutes(
       continue;
     }
 
-    app.get(resource.route, async (request, reply) =>
-      sendData(reply, await lister(siteIdQuery(request.query))),
-    );
+    app.get(resource.route, async (request, reply) => {
+      const query = siteIdQuerySchema.safeParse(request.query);
+      if (!query.success) return sendZodError(reply, query.error);
+      return sendData(reply, await lister(query.data.siteId));
+    });
   }
 
   app.post<UserIdRoute>("/admin/users/:id/disable", async (request, reply) =>

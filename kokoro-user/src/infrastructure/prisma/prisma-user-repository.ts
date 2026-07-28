@@ -662,22 +662,42 @@ export class PrismaUserRepository implements UserRepository {
     return teams.map(mapTeam);
   }
 
-  async listMemberships(options?: ListOptions): Promise<Membership[]> {
+  async listMemberships(siteId?: string, options?: ListOptions) {
     const memberships = await this.prisma.membership.findMany({
-      where: visibleRows(options),
+      where: {
+        ...visibleRows(options),
+        ...(siteId === undefined ? {} : { team: { siteId } }),
+      },
+      include: { team: { select: { siteId: true } } },
       take: ADMIN_LIST_TAKE,
       orderBy: { createdAt: "desc" },
     });
-    return memberships.map(mapMembership);
+    return memberships.map((membership) => ({
+      ...mapMembership(membership),
+      siteId: siteId ?? membership.team.siteId,
+    }));
   }
 
-  async listServiceAccounts(options?: ListOptions): Promise<ServiceAccount[]> {
+  async listServiceAccounts(siteId?: string, options?: ListOptions) {
     const accounts = await this.prisma.serviceAccount.findMany({
-      where: visibleRows(options),
+      where: {
+        ...visibleRows(options),
+        OR:
+          siteId === undefined
+            ? [{ team: { isNot: null } }, { ownerUser: { isNot: null } }]
+            : [{ team: { siteId } }, { ownerUser: { siteId } }],
+      },
+      include: {
+        team: { select: { siteId: true } },
+        ownerUser: { select: { siteId: true } },
+      },
       take: ADMIN_LIST_TAKE,
       orderBy: { createdAt: "desc" },
     });
-    return accounts.map(mapServiceAccount);
+    return accounts.flatMap((account) => {
+      const rowSiteId = siteId ?? account.team?.siteId ?? account.ownerUser?.siteId;
+      return rowSiteId === undefined ? [] : [{ ...mapServiceAccount(account), siteId: rowSiteId }];
+    });
   }
 
   private async upsertUser(tx: TransactionClient, input: EnsureUserInput) {
