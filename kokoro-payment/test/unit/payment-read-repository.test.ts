@@ -58,6 +58,14 @@ describe("PrismaPaymentReadRepository", () => {
     );
     expect("prisma" in capabilities).toBe(false);
     expect("close" in capabilities).toBe(false);
+    for (const capability of [
+      ...Object.values(capabilities.catalog),
+      ...Object.values(capabilities.admin),
+    ]) {
+      expect(Object.isFrozen(capability)).toBe(true);
+      expect(Object.isExtensible(capability)).toBe(false);
+      expect(() => Object.defineProperty(capability, "prisma", { value: {} })).toThrow();
+    }
   });
 
   it("keeps lifecycle control outside the capability object passed to HTTP", async () => {

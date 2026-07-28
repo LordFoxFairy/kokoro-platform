@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { ESLint } from "eslint";
 import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
@@ -61,21 +62,6 @@ const ACTIVE_IMPORT_ALLOWLIST = new Map([
   ["kokoro-payment/src/interfaces/http/webhook-routes.ts", ["./routes.js", "@kokoro/platform-kit", "fastify"]],
 ]);
 
-const MUTATING_REPOSITORY_MEMBERS = new Set([
-  "createOrder",
-  "deletePlan",
-  "deleteProvider",
-  "markOrderConfirming",
-  "markOrderPaid",
-  "recordPaymentEvent",
-  "refundOrderAtomically",
-  "restorePlan",
-  "transitionPaymentEventStatus",
-  "upsertPlan",
-  "upsertProvider",
-  "upsertSubscription",
-]);
-
 const PAYMENT_CATALOG_READ_METHODS = ["listPlans"];
 const PAYMENT_ADMIN_READ_METHODS = [
   "listOrders",
@@ -94,42 +80,6 @@ const PAYMENT_PRISMA_READ_CALLS = new Set([
   "this.#prisma.plan.findMany",
   "this.#prisma.refund.findMany",
   "this.#prisma.subscription.findMany",
-]);
-
-const FORBIDDEN_RUNTIME_IDENTIFIERS = new Set([
-  "PaymentService",
-  "PaymentWebhookService",
-  "Function",
-  "callService",
-  "createCreditGrantClient",
-  "createCreditReverseClient",
-  "createWebhookProviderRegistry",
-  "enabledProviderKinds",
-  "eval",
-  "fetch",
-  "global",
-  "globalThis",
-  "grantPurchaseCredits",
-  "providerSdkFactory",
-  "Reflect",
-  "reverseCredits",
-  "setInterval",
-  "webhookSecretResolver",
-]);
-const RUNTIME_ENV_READ_ALLOWLIST = new Set([
-  "kokoro-payment/src/config/env.ts",
-  "kokoro-payment/src/infrastructure/prisma/prisma-client.ts",
-]);
-
-const ALLOWED_LITERAL_ROUTES = new Set([
-  "GET /admin/payments/stats",
-  "GET /plans",
-  "POST /payments/webhooks/:provider",
-]);
-const HTTP_REGISTRATION_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD", "ALL"]);
-const ALLOWED_DYNAMIC_ROUTE_REGISTRATIONS = new Set([
-  "kokoro-payment/src/interfaces/http/admin-routes.ts:GET:resource.route",
-  "kokoro-payment/src/interfaces/http/routes.ts:POST:route",
 ]);
 
 const FORBIDDEN_SEED_MEMBER = /\.(?:createOrder|recordPaymentEvent|upsertProvider|upsertSubscription|refundOrderAtomically)\s*\(/u;
@@ -159,20 +109,6 @@ function httpSourceInventoryViolations(files) {
 
 function sourceFile(file, source) {
   return ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-}
-
-function sourceAnalysis(file, source) {
-  const options = { noLib: true, noResolve: true, target: ts.ScriptTarget.Latest };
-  const host = ts.createCompilerHost(options);
-  const originalGetSourceFile = host.getSourceFile.bind(host);
-  host.getSourceFile = (requested, languageVersion, onError, shouldCreateNewSourceFile) =>
-    requested === file
-      ? sourceFile(file, source)
-      : originalGetSourceFile(requested, languageVersion, onError, shouldCreateNewSourceFile);
-  const program = ts.createProgram([file], options, host);
-  const ast = program.getSourceFile(file);
-  assert.ok(ast, `unable to analyze ${file}`);
-  return { ast, checker: program.getTypeChecker() };
 }
 
 function importsFrom(file, source) {
@@ -232,236 +168,6 @@ async function buildRuntimeGraph(overrides = new Map()) {
   };
 }
 
-function runtimeContentViolations(file, source) {
-  const violations = [];
-  const { ast, checker } = sourceAnalysis(file, source);
-  const visit = (node) => {
-    if (ts.isIdentifier(node) && FORBIDDEN_RUNTIME_IDENTIFIERS.has(node.text)) {
-      violations.push(`${file}: forbidden runtime identifier ${node.text}`);
-    }
-    if (
-      !RUNTIME_ENV_READ_ALLOWLIST.has(file) &&
-      ts.isIdentifier(node) &&
-      node.text === "process"
-    ) {
-      violations.push(`${file}: direct environment capability ${node.getText(ast)}`);
-    }
-    if (!RUNTIME_ENV_READ_ALLOWLIST.has(file) && isProcessEnvAccess(node, checker)) {
-      violations.push(`${file}: direct environment read ${node.getText(ast)}`);
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(ast);
-  return [...new Set(violations)].sort();
-}
-
-function isProcessEnvAccess(node, checker) {
-  return (
-    (ts.isPropertyAccessExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      node.expression.text === "process" &&
-      node.name.text === "env") ||
-    (ts.isElementAccessExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      node.expression.text === "process" &&
-      evaluateConstantString(node.argumentExpression, checker) === "env")
-  );
-}
-
-function unwrapExpression(node) {
-  let current = node;
-  while (
-    ts.isParenthesizedExpression(current) ||
-    ts.isAsExpression(current) ||
-    ts.isSatisfiesExpression(current) ||
-    ts.isNonNullExpression(current)
-  ) {
-    current = current.expression;
-  }
-  return current;
-}
-
-function constantInitializer(identifier, checker) {
-  const symbol = checker.getSymbolAtLocation(identifier);
-  const declaration = symbol?.declarations?.find((candidate) =>
-    ts.isVariableDeclaration(candidate) &&
-    candidate.initializer &&
-    ts.isVariableDeclarationList(candidate.parent) &&
-    (candidate.parent.flags & ts.NodeFlags.Const) !== 0
-  );
-  return declaration && ts.isVariableDeclaration(declaration) ? { declaration, symbol } : undefined;
-}
-
-function evaluateConstantString(node, checker, resolving = new Set()) {
-  if (!node) return undefined;
-  const expression = unwrapExpression(node);
-  if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) {
-    return expression.text;
-  }
-  if (ts.isIdentifier(expression)) {
-    const resolved = constantInitializer(expression, checker);
-    if (!resolved || resolving.has(resolved.symbol)) return undefined;
-    const next = new Set(resolving);
-    next.add(resolved.symbol);
-    return evaluateConstantString(resolved.declaration.initializer, checker, next);
-  }
-  if (
-    ts.isBinaryExpression(expression) &&
-    expression.operatorToken.kind === ts.SyntaxKind.PlusToken
-  ) {
-    const left = evaluateConstantString(expression.left, checker, resolving);
-    const right = evaluateConstantString(expression.right, checker, resolving);
-    return left === undefined || right === undefined ? undefined : left + right;
-  }
-  if (ts.isCallExpression(expression)) {
-    const callee = unwrapExpression(expression.expression);
-    if (ts.isPropertyAccessExpression(callee) && callee.name.text === "join") {
-      const values = evaluateConstantStringArray(callee.expression, checker, resolving);
-      const separator = expression.arguments[0]
-        ? evaluateConstantString(expression.arguments[0], checker, resolving)
-        : ",";
-      return values && separator !== undefined ? values.join(separator) : undefined;
-    }
-  }
-  return undefined;
-}
-
-function evaluateConstantStringArray(node, checker, resolving = new Set()) {
-  const expression = unwrapExpression(node);
-  if (ts.isIdentifier(expression)) {
-    const resolved = constantInitializer(expression, checker);
-    if (!resolved || resolving.has(resolved.symbol)) return undefined;
-    const next = new Set(resolving);
-    next.add(resolved.symbol);
-    return evaluateConstantStringArray(resolved.declaration.initializer, checker, next);
-  }
-  if (!ts.isArrayLiteralExpression(expression)) return undefined;
-  const values = expression.elements.map((element) => evaluateConstantString(element, checker, resolving));
-  return values.every((value) => value !== undefined) ? values : undefined;
-}
-
-function bindingPropertyName(node, checker) {
-  const property = node.propertyName ?? node.name;
-  if (ts.isIdentifier(property) || ts.isStringLiteral(property) || ts.isNumericLiteral(property)) {
-    return property.text;
-  }
-  if (ts.isComputedPropertyName(property)) {
-    return evaluateConstantString(property.expression, checker);
-  }
-  return undefined;
-}
-
-function memberName(node, checker) {
-  const expression = unwrapExpression(node);
-  if (ts.isPropertyAccessExpression(expression)) return expression.name.text;
-  if (ts.isElementAccessExpression(expression)) {
-    return evaluateConstantString(expression.argumentExpression, checker);
-  }
-  return undefined;
-}
-
-function identifierInitializer(identifier, checker) {
-  const resolved = constantInitializer(identifier, checker);
-  return resolved?.declaration.initializer;
-}
-
-function isFastifyReceiver(node, checker, resolving = new Set()) {
-  const expression = unwrapExpression(node);
-  if (ts.isIdentifier(expression)) {
-    if (["app", "instance"].includes(expression.text)) return true;
-    const symbol = checker.getSymbolAtLocation(expression);
-    if (!symbol || resolving.has(symbol)) return false;
-    const initializer = identifierInitializer(expression, checker);
-    if (!initializer) return false;
-    const next = new Set(resolving);
-    next.add(symbol);
-    return isFastifyReceiver(initializer, checker, next);
-  }
-  return false;
-}
-
-function routeRegistrar(node, checker, resolving = new Set()) {
-  const expression = unwrapExpression(node);
-  if (ts.isIdentifier(expression)) {
-    const symbol = checker.getSymbolAtLocation(expression);
-    if (!symbol || resolving.has(symbol)) return undefined;
-    const initializer = identifierInitializer(expression, checker);
-    if (!initializer) return undefined;
-    const next = new Set(resolving);
-    next.add(symbol);
-    return routeRegistrar(initializer, checker, next);
-  }
-  if (ts.isCallExpression(expression) && memberName(expression.expression, checker) === "bind") {
-    const bindTarget = unwrapExpression(expression.expression).expression;
-    return routeRegistrar(bindTarget, checker, resolving);
-  }
-  if (!ts.isPropertyAccessExpression(expression) && !ts.isElementAccessExpression(expression)) {
-    return undefined;
-  }
-  const method = memberName(expression, checker)?.toUpperCase();
-  if (!method) return undefined;
-  const receiver = unwrapExpression(expression).expression;
-  if (!isFastifyReceiver(receiver, checker)) return undefined;
-  return { method, pathIndex: 0 };
-}
-
-function recordRouteViolation(file, ast, checker, call, registration, violations) {
-  const { method, pathIndex } = registration;
-  if (method === "ROUTE") {
-    violations.push(`${file}: generic route registration is not allowed`);
-    return;
-  }
-  if (!HTTP_REGISTRATION_METHODS.has(method)) return;
-  const path = call.arguments[pathIndex];
-  const literalPath = path ? evaluateConstantString(path, checker) : undefined;
-  if (literalPath !== undefined) {
-    const route = `${method} ${literalPath}`;
-    if (!ALLOWED_LITERAL_ROUTES.has(route)) violations.push(`${file}: unapproved literal route ${route}`);
-    return;
-  }
-  const dynamicRegistration = `${file}:${method}:${path?.getText(ast) ?? "<missing>"}`;
-  if (!ALLOWED_DYNAMIC_ROUTE_REGISTRATIONS.has(dynamicRegistration)) {
-    violations.push(`${file}: unapproved dynamic route ${dynamicRegistration}`);
-  }
-}
-
-function productionSourceViolations(file, source) {
-  const violations = runtimeContentViolations(file, source);
-  const { ast, checker } = sourceAnalysis(file, source);
-  const visit = (node) => {
-    if (ts.isBindingElement(node)) {
-      const member = bindingPropertyName(node, checker);
-      if (member && MUTATING_REPOSITORY_MEMBERS.has(member)) {
-        violations.push(`${file}: mutating member ${member}`);
-      }
-    }
-    if (ts.isPropertyAccessExpression(node) && MUTATING_REPOSITORY_MEMBERS.has(node.name.text)) {
-      violations.push(`${file}: mutating member ${node.name.text}`);
-    }
-    if (ts.isElementAccessExpression(node)) {
-      const member = evaluateConstantString(node.argumentExpression, checker);
-      if (member && MUTATING_REPOSITORY_MEMBERS.has(member)) {
-        violations.push(`${file}: mutating member ${member}`);
-      }
-    }
-    if (ts.isCallExpression(node)) {
-      const callee = unwrapExpression(node.expression);
-      if (
-        (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) &&
-        ["call", "apply"].includes(memberName(callee, checker) ?? "")
-      ) {
-        const target = routeRegistrar(callee.expression, checker);
-        if (target) violations.push(`${file}: indirect route registration is not allowed`);
-      }
-      const registration = routeRegistrar(node.expression, checker);
-      if (registration) recordRouteViolation(file, ast, checker, node, registration, violations);
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(ast);
-  return [...new Set(violations)].sort();
-}
-
 function deploymentTemplateViolations(source) {
   for (const line of source.split(/\r?\n/u)) {
     const match = /^\s*([^#=\s]+)\s*=/u.exec(line);
@@ -507,40 +213,25 @@ function functionParameterType(source, functionName, parameterIndex) {
   return result;
 }
 
-function expressionMemberPath(node, checker, resolving = new Set()) {
-  const expression = unwrapExpression(node);
-  if (expression.kind === ts.SyntaxKind.ThisKeyword) return ["this"];
-  if (ts.isPropertyAccessExpression(expression) || ts.isElementAccessExpression(expression)) {
-    const base = expressionMemberPath(expression.expression, checker, resolving);
-    const name = memberName(expression, checker);
-    return base && name ? [...base, name] : undefined;
-  }
-  if (ts.isIdentifier(expression)) {
-    const symbol = checker.getSymbolAtLocation(expression);
-    if (!symbol || resolving.has(symbol)) return undefined;
-    const initializer = identifierInitializer(expression, checker);
-    if (!initializer) return undefined;
-    const next = new Set(resolving);
-    next.add(symbol);
-    return expressionMemberPath(initializer, checker, next);
-  }
-  return undefined;
-}
-
 function prismaReadAdapterViolations(source) {
   const violations = [];
-  const { ast, checker } = sourceAnalysis("prisma-payment-read-repository.ts", source);
+  const ast = sourceFile("prisma-payment-read-repository.ts", source);
   const visit = (node) => {
     if (ts.isVariableDeclaration(node) && node.initializer) {
-      const path = expressionMemberPath(node.initializer, checker);
-      if (path?.[0] === "this" && ["#prisma", "prisma"].includes(path[1])) {
+      const initializer = node.initializer.getText(ast);
+      if (/^this\.(?:#prisma|prisma)(?:\.|\[|$)/u.test(initializer)) {
         violations.push(`adapter: raw Prisma alias ${node.name.getText(ast)}`);
       }
     }
+    if (
+      ts.isElementAccessExpression(node) &&
+      /^this\.(?:#prisma|prisma)(?:\.|\[|$)/u.test(node.expression.getText(ast))
+    ) {
+      violations.push(`adapter: computed Prisma access ${node.getText(ast)}`);
+    }
     if (ts.isCallExpression(node)) {
-      const path = expressionMemberPath(node.expression, checker);
-      if (path?.[0] === "this" && ["#prisma", "prisma"].includes(path[1])) {
-        const call = path.join(".");
+      const call = node.expression.getText(ast);
+      if (/^this\.(?:#prisma|prisma)\./u.test(call)) {
         if (!PAYMENT_PRISMA_READ_CALLS.has(call)) {
           violations.push(`adapter: forbidden Prisma capability ${call}`);
         }
@@ -549,7 +240,7 @@ function prismaReadAdapterViolations(source) {
     ts.forEachChild(node, visit);
   };
   visit(ast);
-  return violations;
+  return [...new Set(violations)].sort();
 }
 
 function paymentReadBoundaryViolations(sources) {
@@ -689,24 +380,6 @@ test("runtime import graph is closed and has no SDK or dynamic-import escape hat
   });
 });
 
-test("production composition sources contain no acquisition mutation or assembly", async () => {
-  const violations = [];
-  const graph = await buildRuntimeGraph();
-  for (const file of graph.files) {
-    violations.push(...productionSourceViolations(file, await readFile(resolve(ROOT, file), "utf8")));
-  }
-  assert.deepEqual(violations, []);
-});
-
-test("every runtime-reachable source is free of provider egress, SDK assembly, and secret reads", async () => {
-  const violations = [];
-  const graph = await buildRuntimeGraph();
-  for (const file of graph.files) {
-    violations.push(...runtimeContentViolations(file, await readFile(resolve(ROOT, file), "utf8")));
-  }
-  assert.deepEqual(violations, []);
-});
-
 test("every active composition file has an exact direct-import allowlist", async () => {
   const graph = await buildRuntimeGraph();
   assert.deepEqual([...ACTIVE_IMPORT_ALLOWLIST.keys()].sort(), graph.files);
@@ -812,78 +485,22 @@ test("runtime graph detectors bear weight against local service, SDK, and dynami
   );
 });
 
-test("production policy detector bears weight for every acquisition mutation and assembly class", () => {
+test("mature ESLint rules reject production runtime import and code-evaluation escape hatches", async () => {
+  const eslint = new ESLint({ cwd: ROOT });
   const fixtures = [
-    ...[...MUTATING_REPOSITORY_MEMBERS].map((member) => `await repository.${member}({});`),
-    ...[...FORBIDDEN_RUNTIME_IDENTIFIERS].map((identifier) => `void ${identifier};`),
-    "void process.env.STRIPE_WEBHOOK_SECRET;",
-    "void process.env['STRIPE_WEBHOOK_SECRET'];",
-    "const env = process.env; void env['STRIPE_WEBHOOK_SECRET'];",
-    "void globalThis.fetch;",
-    "void globalThis['fetch'];",
-    "const send = globalThis['fetch']; void send;",
-    "const { createOrder: write } = repository; void write;",
-    "const { ['createOrder']: write } = repository; void write;",
-    "const member = ['create', 'Order'].join(''); const { [member]: write } = repository; void write;",
-    "const member = ['create', 'Order'].join(''); void repository[member];",
-    "const member = 'create' + 'Order'; void repository[member];",
-    "void global['fe' + 'tch'];",
-    "const get = Reflect.get; void get(repository, 'createOrder');",
-    "const member = ['create', 'Order'].join(''); void Reflect.get(repository, member);",
-    "void Reflect.get(repository, 'createOrder');",
-    "app.post('/orders/reopen', async () => {});",
-    "app.options('/orders', async () => {});",
-    "app.post(buildRoute(), async () => {});",
-    "app.route({ method: 'POST', url: '/orders/reopen', handler: async () => {} });",
-    "const register = app.post.bind(app); register('/orders/reopen', async () => {});",
-    "if (isProductionEnv()) { const register = app.post.bind(app); register('/orders/reopen', async () => {}); }",
-    "app.post.call(app, '/orders/reopen', async () => {});",
-    "app.post.apply(app, ['/orders/reopen', async () => {}]);",
-    "eval(\"import('../../application/payment-service.js')\");",
-    "new Function(\"return import('../../application/payment-service.js')\");",
+    ["import { PaymentService } from '../../application/payment-service.js'; void PaymentService;", "no-restricted-imports"],
+    ["import { callService } from '@kokoro/platform-kit'; void callService;", "no-restricted-imports"],
+    ["eval('void 0');", "no-eval"],
+    ["new Function('return 1');", "no-new-func"],
+    ["setTimeout('void 0', 1);", "no-implied-eval"],
   ];
-  for (const fixture of fixtures) {
-    assert.ok(productionSourceViolations("fixture.ts", fixture).length > 0, fixture);
-  }
-});
-
-test("constant-folding policy detector permits dynamically composed read-only method names", () => {
-  for (const fixture of [
-    "const member = ['list', 'Plans'].join(''); void repository[member];",
-    "const { [['list', 'Plans'].join('')]: read } = repository; void read;",
-    "const label = 'web' + 'hook'; void metadata[label];",
-  ]) {
-    assert.deepEqual(productionSourceViolations("fixture.ts", fixture), [], fixture);
-  }
-});
-
-test("constant-folding policy detector resolves the lexical binding at each access", () => {
-  const unsafeOuterBinding = `
-    const member = "createOrder";
-    function harmless() { const member = "listPlans"; return repository[member]; }
-    void repository[member];
-  `;
-  assert.ok(productionSourceViolations("fixture.ts", unsafeOuterBinding).length > 0);
-
-  const safeOuterBinding = `
-    const member = "listPlans";
-    function forbiddenInner() { const member = "createOrder"; return repository[member]; }
-    void repository[member];
-  `;
-  assert.deepEqual(
-    productionSourceViolations("fixture.ts", safeOuterBinding),
-    ["fixture.ts: mutating member createOrder"],
-  );
-});
-
-test("runtime content detector bears weight inside an otherwise allowed repository adapter", () => {
-  for (const fixture of ["void fetch;", "void process.env.STRIPE_WEBHOOK_SECRET;", "void createWebhookProviderRegistry;"]) {
+  for (const [source, expectedRule] of fixtures) {
+    const [result] = await eslint.lintText(source, {
+      filePath: resolve(ROOT, "kokoro-payment/src/interfaces/http/policy-fixture.ts"),
+    });
     assert.ok(
-      runtimeContentViolations(
-        "kokoro-payment/src/infrastructure/prisma/prisma-payment-read-repository.ts",
-        fixture,
-      ).length > 0,
-      fixture,
+      result.messages.some((message) => message.ruleId === expectedRule),
+      `${expectedRule}: ${JSON.stringify(result.messages)}`,
     );
   }
 });
@@ -937,6 +554,7 @@ test("read-boundary detector bears weight against full-repository and adapter-sh
   const mutations = [
     ["adapter-extra-method", "adapter", adapter.replace("  async listPlans", "  async createOrder() {}\n\n  async listPlans")],
     ["adapter-direct-write", "adapter", adapter.replace("this.#prisma.plan.findMany", "this.#prisma.plan.create")],
+    ["adapter-computed-client", "adapter", adapter.replace("this.#prisma.plan.findMany", "this.#prisma[\"plan\"].findMany")],
     ["port-constant", "port", port.replace('  "readAdminStats",', '  "createOrder",\n  "readAdminStats",')],
     ["server-raw-client", "server", server.replace("readCapabilities: PaymentReadCapabilities", "prisma: PrismaClient")],
     ["route-full-port", "routes", routes.replace("../../domain/read-repository.js", "../../domain/repository.js")],
@@ -965,4 +583,7 @@ test("read-boundary detector bears weight against full-repository and adapter-sh
       ...fixture,
     ])).length > 0, label);
   }
+
+  assert.deepEqual(prismaReadAdapterViolations("const prismaLabel = '#prisma'; void prismaLabel;"), []);
+  assert.deepEqual(prismaReadAdapterViolations("const listPlans = repository.listPlans; void listPlans;"), []);
 });

@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { FastifyInstance, RouteHandler } from "fastify";
+import { isProductionEnv } from "@kokoro/platform-kit";
 import { createPrismaClient } from "../../src/infrastructure/prisma/prisma-client.js";
 import { createPrismaPaymentReadCapabilities } from "../../src/infrastructure/prisma/prisma-payment-read-repository.js";
 import { createPaymentServer } from "../../src/interfaces/http/server.js";
@@ -28,6 +30,11 @@ const EXPECTED_HTTP_INVENTORY = [
 ] as const;
 
 const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete", "options", "head"]);
+type HiddenRouteRegistrar = (
+  path: string,
+  options: { schema: { hide: true } },
+  handler: RouteHandler,
+) => unknown;
 
 function httpInventory(paths: Record<string, Record<string, unknown>>): string[] {
   return Object.entries(paths)
@@ -48,14 +55,18 @@ function inventoryDiff(paths: Record<string, Record<string, unknown>>) {
 }
 
 describe("payment OpenAPI", () => {
-  it.each([false, true])(
-    "serves the exact /docs/json route inventory when isProduction=%s",
-    async (isProduction) => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it.each(["development", "production"] as const)(
+    "serves the exact /docs/json route inventory with NODE_ENV=%s",
+    async (nodeEnv) => {
+      vi.stubEnv("NODE_ENV", nodeEnv);
+      vi.stubEnv("KOKORO_ENV", "");
       const app = createPaymentServer({
         readCapabilities: createPrismaPaymentReadCapabilities(prisma),
         routeAccess: {
           secrets: { admin: "admin-secret", "web-bff": "web-secret" },
-          isProduction,
+          isProduction: isProductionEnv(),
         },
       });
       try {
@@ -98,5 +109,44 @@ describe("payment OpenAPI", () => {
       missing: expect.arrayContaining(["GET /plans"]),
       unexpected: expect.arrayContaining(["POST /plans"]),
     });
+  });
+
+  it.each([
+    ["direct", (router: FastifyInstance, handler: RouteHandler) =>
+      router.post("/orders/reopen", { schema: { hide: true } }, handler)],
+    ["bind", (router: FastifyInstance, handler: RouteHandler) => {
+      const register = router.post.bind(router);
+      register("/orders/reopen", { schema: { hide: true } }, handler);
+    }],
+    ["call", (router: FastifyInstance, handler: RouteHandler) => {
+      const register = router.post as unknown as HiddenRouteRegistrar;
+      register.call(router, "/orders/reopen", { schema: { hide: true } }, handler);
+    }],
+    ["apply", (router: FastifyInstance, handler: RouteHandler) => {
+      const register = router.post as unknown as HiddenRouteRegistrar;
+      const args: Parameters<HiddenRouteRegistrar> = [
+        "/orders/reopen",
+        { schema: { hide: true } },
+        handler,
+      ];
+      register.apply(router, args);
+    }],
+  ] as const)("rejects an actual hidden route registered through %s", async (_name, register) => {
+    const app = createPaymentServer({
+      readCapabilities: createPrismaPaymentReadCapabilities(prisma),
+    });
+    void app.register(async function hiddenAcquisitionPlugin(arbitraryPluginInstance) {
+      register(arbitraryPluginInstance, async () => ({ ok: true }));
+    });
+
+    let startupError: unknown;
+    try {
+      await app.ready();
+    } catch (error) {
+      startupError = error;
+    } finally {
+      await app.close();
+    }
+    expect(startupError).toMatchObject({ code: "payment.route_inventory_mismatch" });
   });
 });

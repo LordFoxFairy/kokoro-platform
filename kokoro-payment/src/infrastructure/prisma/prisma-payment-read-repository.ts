@@ -114,16 +114,16 @@ export interface PrismaPaymentReadStore {
 
 export function createPrismaPaymentReadCapabilities(prisma: PrismaClient): PaymentReadCapabilities {
   const repository = new PrismaPaymentReadRepository(prisma);
-  const listPlans = repository.listPlans.bind(repository);
+  const listPlans = freezeCapability(repository.listPlans.bind(repository));
   const catalog = Object.freeze({ listPlans });
   const admin = Object.freeze({
-    listOrders: repository.listOrders.bind(repository),
-    listPaymentEvents: repository.listPaymentEvents.bind(repository),
+    listOrders: freezeCapability(repository.listOrders.bind(repository)),
+    listPaymentEvents: freezeCapability(repository.listPaymentEvents.bind(repository)),
     listPlans,
-    listProviders: repository.listProviders.bind(repository),
-    listRefunds: repository.listRefunds.bind(repository),
-    listSubscriptions: repository.listSubscriptions.bind(repository),
-    readAdminStats: repository.readAdminStats.bind(repository),
+    listProviders: freezeCapability(repository.listProviders.bind(repository)),
+    listRefunds: freezeCapability(repository.listRefunds.bind(repository)),
+    listSubscriptions: freezeCapability(repository.listSubscriptions.bind(repository)),
+    readAdminStats: freezeCapability(repository.readAdminStats.bind(repository)),
   });
   return Object.freeze({ catalog, admin });
 }
@@ -133,8 +133,12 @@ export function openPrismaPaymentReadStore(databaseUrl: string): PrismaPaymentRe
   const capabilities = createPrismaPaymentReadCapabilities(prisma);
   return Object.freeze({
     capabilities,
-    close: () => prisma.$disconnect(),
+    close: freezeCapability(() => prisma.$disconnect()),
   });
+}
+
+function freezeCapability<T extends (...args: never[]) => unknown>(capability: T): T {
+  return Object.freeze(capability);
 }
 
 function visibleRows(options: ListOptions | undefined): { deletedAt: null } | Record<string, never> {
