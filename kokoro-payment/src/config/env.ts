@@ -19,12 +19,22 @@ export class DeprecatedPaymentAcquisitionEnvError extends Error {
   }
 }
 
-const DEPRECATED_ACQUISITION_ENV = /^KOKORO_PAYMENT_(?:ENABLED_PROVIDERS|CONFIRM_.+|ALIPAY_PUBLIC_KEY|WECHAT_PLATFORM_CERT)$/u;
+const DEPRECATED_ACQUISITION_ENV = new Set([
+  "KOKOROPAYMENTENABLEDPROVIDERS",
+  "KOKOROPAYMENTALIPAYPUBLICKEY",
+  "KOKOROPAYMENTWECHATPLATFORMCERT",
+]);
+
+function normalizeEnvSemanticKey(key: string): string {
+  return key.normalize("NFKC").toUpperCase().replace(/[^A-Z0-9]/gu, "");
+}
 
 function isDeprecatedAcquisitionEnv(key: string): boolean {
+  const semanticKey = normalizeEnvSemanticKey(key);
   return (
-    DEPRECATED_ACQUISITION_ENV.test(key) ||
-    (key.includes("WEBHOOK") && key.includes("SECRET"))
+    DEPRECATED_ACQUISITION_ENV.has(semanticKey) ||
+    semanticKey.startsWith("KOKOROPAYMENTCONFIRM") ||
+    (semanticKey.includes("WEBHOOK") && semanticKey.includes("SECRET"))
   );
 }
 

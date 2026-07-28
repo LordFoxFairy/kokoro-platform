@@ -6,7 +6,7 @@ import {
   sendError,
 } from "@kokoro/platform-kit";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { PaymentCatalogRepository } from "./read-repository.js";
+import type { PaymentCatalogRepository } from "../../domain/read-repository.js";
 
 export const ACQUISITION_CHANNEL_DISABLED = "ACQUISITION_CHANNEL_DISABLED";
 

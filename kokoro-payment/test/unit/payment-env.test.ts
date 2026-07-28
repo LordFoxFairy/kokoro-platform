@@ -43,6 +43,10 @@ describe("paymentEnvSchema", () => {
     ["WEBHOOK_SECRET", "secret"],
     ["KOKORO_PAYMENT_WEBHOOK_SIGNING_SECRET", "secret"],
     ["STRIPE_WEBHOOK_SIGNING_SECRET", "secret"],
+    ["stripe_web_hook_secret", "secret"],
+    ["STRIPE-WEB-HOOK-SIGNING-SECRET", "secret"],
+    ["secret.web.hook", "secret"],
+    ["SeCrEt__WeB___HoOk", "secret"],
   ])("fails fast with a stable error when deprecated acquisition variable %s is non-empty", (key, value) => {
     let thrown: unknown;
     try {

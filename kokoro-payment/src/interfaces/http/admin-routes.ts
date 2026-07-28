@@ -7,8 +7,8 @@ import {
 } from "@kokoro/platform-kit";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
+import type { PaymentAdminRepository } from "../../domain/read-repository.js";
 import { paymentAdminManifest } from "../admin/manifest.js";
-import type { PaymentAdminRepository } from "./read-repository.js";
 
 const RESOURCE_LISTERS: Record<string, (repository: PaymentAdminRepository, siteId?: string) => Promise<unknown[]>> = {
   plans: (repository, siteId) => repository.listPlans(siteId, { includeDeleted: true }),

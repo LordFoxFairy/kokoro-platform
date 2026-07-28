@@ -12,7 +12,6 @@ const PAYMENT_SOURCE_ROOT = "kokoro-payment/src";
 const HTTP_SOURCE_ALLOWLIST = [
   "kokoro-payment/src/interfaces/http/admin-routes.ts",
   "kokoro-payment/src/interfaces/http/main.ts",
-  "kokoro-payment/src/interfaces/http/read-repository.ts",
   "kokoro-payment/src/interfaces/http/routes.ts",
   "kokoro-payment/src/interfaces/http/schemas.ts",
   "kokoro-payment/src/interfaces/http/server.ts",
@@ -20,67 +19,48 @@ const HTTP_SOURCE_ALLOWLIST = [
 ];
 
 const RUNTIME_ROOTS = [
-  "kokoro-payment/src/index.ts",
   "kokoro-payment/src/interfaces/http/main.ts",
-  "kokoro-payment/src/interfaces/http/read-repository.ts",
-  "kokoro-payment/src/interfaces/http/server.ts",
-  "kokoro-payment/src/module.ts",
-  "kokoro-payment/src/interfaces/http/routes.ts",
-  "kokoro-payment/src/interfaces/http/admin-routes.ts",
-  "kokoro-payment/src/interfaces/http/webhook-routes.ts",
 ];
 
 const RUNTIME_GRAPH_ALLOWLIST = [
   "kokoro-payment/src/config/env.ts",
-  "kokoro-payment/src/domain/amount.ts",
-  "kokoro-payment/src/domain/errors.ts",
-  "kokoro-payment/src/domain/idempotency.ts",
   "kokoro-payment/src/domain/payment-lifecycle.ts",
   "kokoro-payment/src/domain/payment.ts",
   "kokoro-payment/src/domain/provider.ts",
-  "kokoro-payment/src/domain/repository.ts",
-  "kokoro-payment/src/domain/webhook.ts",
-  "kokoro-payment/src/index.ts",
+  "kokoro-payment/src/domain/read-repository.ts",
   "kokoro-payment/src/infrastructure/prisma/prisma-client.ts",
-  "kokoro-payment/src/infrastructure/prisma/prisma-payment-repository.ts",
+  "kokoro-payment/src/infrastructure/prisma/prisma-payment-read-repository.ts",
   "kokoro-payment/src/interfaces/admin/manifest.ts",
   "kokoro-payment/src/interfaces/admin/payment-admin-contract.ts",
   "kokoro-payment/src/interfaces/admin/schema.ts",
   "kokoro-payment/src/interfaces/http/admin-routes.ts",
   "kokoro-payment/src/interfaces/http/main.ts",
-  "kokoro-payment/src/interfaces/http/read-repository.ts",
   "kokoro-payment/src/interfaces/http/routes.ts",
-  "kokoro-payment/src/interfaces/http/schemas.ts",
   "kokoro-payment/src/interfaces/http/server.ts",
   "kokoro-payment/src/interfaces/http/webhook-routes.ts",
-  "kokoro-payment/src/module.ts",
 ];
 
-const EXTERNAL_IMPORT_ALLOWLIST = ["@kokoro/platform-kit", "fastify", "node:http", "zod"];
+const EXTERNAL_IMPORT_ALLOWLIST = ["@kokoro/platform-kit", "fastify", "zod"];
 const TERMINAL_IMPORT_ALLOWLIST = ["kokoro-payment/generated/prisma/index.js"];
 
 const ACTIVE_POLICY_FILES = [
-  "kokoro-payment/src/index.ts",
-  "kokoro-payment/src/interfaces/admin/payment-admin-contract.ts",
+  "kokoro-payment/src/domain/read-repository.ts",
+  "kokoro-payment/src/infrastructure/prisma/prisma-payment-read-repository.ts",
   "kokoro-payment/src/interfaces/http/admin-routes.ts",
   "kokoro-payment/src/interfaces/http/main.ts",
-  "kokoro-payment/src/interfaces/http/read-repository.ts",
   "kokoro-payment/src/interfaces/http/routes.ts",
   "kokoro-payment/src/interfaces/http/server.ts",
   "kokoro-payment/src/interfaces/http/webhook-routes.ts",
-  "kokoro-payment/src/module.ts",
 ];
 
 const ACTIVE_IMPORT_ALLOWLIST = new Map([
-  ["kokoro-payment/src/index.ts", ["./config/env.js", "./domain/payment-lifecycle.js", "./domain/payment.js", "./domain/provider.js", "./domain/repository.js", "./domain/webhook.js", "./interfaces/admin/manifest.js", "./interfaces/admin/schema.js", "./interfaces/http/schemas.js", "./interfaces/http/server.js", "./module.js"]],
-  ["kokoro-payment/src/interfaces/admin/payment-admin-contract.ts", ["./schema.js"]],
-  ["kokoro-payment/src/interfaces/http/admin-routes.ts", ["../admin/manifest.js", "./read-repository.js", "@kokoro/platform-kit", "fastify", "zod"]],
+  ["kokoro-payment/src/domain/read-repository.ts", ["./payment-lifecycle.js", "./payment.js", "./provider.js"]],
+  ["kokoro-payment/src/infrastructure/prisma/prisma-payment-read-repository.ts", ["../../../generated/prisma/index.js", "../../domain/payment-lifecycle.js", "../../domain/payment.js", "../../domain/provider.js", "../../domain/read-repository.js"]],
+  ["kokoro-payment/src/interfaces/http/admin-routes.ts", ["../../domain/read-repository.js", "../admin/manifest.js", "@kokoro/platform-kit", "fastify", "zod"]],
   ["kokoro-payment/src/interfaces/http/main.ts", ["../../config/env.js", "./server.js", "@kokoro/platform-kit"]],
-  ["kokoro-payment/src/interfaces/http/read-repository.ts", ["../../domain/repository.js"]],
-  ["kokoro-payment/src/interfaces/http/routes.ts", ["./read-repository.js", "@kokoro/platform-kit", "fastify"]],
-  ["kokoro-payment/src/interfaces/http/server.ts", ["../../../generated/prisma/index.js", "../../infrastructure/prisma/prisma-client.js", "../../infrastructure/prisma/prisma-payment-repository.js", "./admin-routes.js", "./read-repository.js", "./routes.js", "./webhook-routes.js", "@kokoro/platform-kit", "fastify"]],
+  ["kokoro-payment/src/interfaces/http/routes.ts", ["../../domain/read-repository.js", "@kokoro/platform-kit", "fastify"]],
+  ["kokoro-payment/src/interfaces/http/server.ts", ["../../../generated/prisma/index.js", "../../infrastructure/prisma/prisma-client.js", "../../infrastructure/prisma/prisma-payment-read-repository.js", "./admin-routes.js", "./routes.js", "./webhook-routes.js", "@kokoro/platform-kit", "fastify"]],
   ["kokoro-payment/src/interfaces/http/webhook-routes.ts", ["./routes.js", "@kokoro/platform-kit", "fastify"]],
-  ["kokoro-payment/src/module.ts", []],
 ]);
 
 const MUTATING_REPOSITORY_MEMBERS = new Set([
@@ -107,6 +87,15 @@ const PAYMENT_READ_METHODS = [
   "listSubscriptions",
   "readAdminStats",
 ];
+const PAYMENT_PRISMA_READ_CALLS = new Set([
+  "this.prisma.order.findMany",
+  "this.prisma.order.groupBy",
+  "this.prisma.paymentEvent.findMany",
+  "this.prisma.paymentProvider.findMany",
+  "this.prisma.plan.findMany",
+  "this.prisma.refund.findMany",
+  "this.prisma.subscription.findMany",
+]);
 
 const FORBIDDEN_RUNTIME_IDENTIFIERS = new Set([
   "PaymentService",
@@ -117,6 +106,7 @@ const FORBIDDEN_RUNTIME_IDENTIFIERS = new Set([
   "createWebhookProviderRegistry",
   "enabledProviderKinds",
   "fetch",
+  "global",
   "globalThis",
   "grantPurchaseCredits",
   "providerSdkFactory",
@@ -225,6 +215,13 @@ function runtimeContentViolations(file, source) {
     if (ts.isIdentifier(node) && FORBIDDEN_RUNTIME_IDENTIFIERS.has(node.text)) {
       violations.push(`${file}: forbidden runtime identifier ${node.text}`);
     }
+    if (
+      !RUNTIME_ENV_READ_ALLOWLIST.has(file) &&
+      ts.isIdentifier(node) &&
+      node.text === "process"
+    ) {
+      violations.push(`${file}: direct environment capability ${node.getText(ast)}`);
+    }
     if (!RUNTIME_ENV_READ_ALLOWLIST.has(file) && isProcessEnvAccess(node)) {
       violations.push(`${file}: direct environment read ${node.getText(ast)}`);
     }
@@ -236,20 +233,105 @@ function runtimeContentViolations(file, source) {
 
 function isProcessEnvAccess(node) {
   return (
-    ts.isPropertyAccessExpression(node) &&
-    ts.isIdentifier(node.expression) &&
-    node.expression.text === "process" &&
-    node.name.text === "env"
+    (ts.isPropertyAccessExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "process" &&
+      node.name.text === "env") ||
+    (ts.isElementAccessExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "process" &&
+      evaluateConstantString(node.argumentExpression, new Map()) === "env")
   );
 }
 
-function bindingPropertyName(node) {
+function unwrapExpression(node) {
+  let current = node;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isSatisfiesExpression(current) ||
+    ts.isNonNullExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
+function evaluateConstantString(node, constants, resolving = new Set()) {
+  if (!node) return undefined;
+  const expression = unwrapExpression(node);
+  if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) {
+    return expression.text;
+  }
+  if (ts.isIdentifier(expression)) {
+    if (resolving.has(expression.text)) return undefined;
+    const initializer = constants.get(expression.text);
+    if (!initializer) return undefined;
+    const next = new Set(resolving);
+    next.add(expression.text);
+    return evaluateConstantString(initializer, constants, next);
+  }
+  if (
+    ts.isBinaryExpression(expression) &&
+    expression.operatorToken.kind === ts.SyntaxKind.PlusToken
+  ) {
+    const left = evaluateConstantString(expression.left, constants, resolving);
+    const right = evaluateConstantString(expression.right, constants, resolving);
+    return left === undefined || right === undefined ? undefined : left + right;
+  }
+  if (ts.isCallExpression(expression)) {
+    const callee = unwrapExpression(expression.expression);
+    if (ts.isPropertyAccessExpression(callee) && callee.name.text === "join") {
+      const values = evaluateConstantStringArray(callee.expression, constants, resolving);
+      const separator = expression.arguments[0]
+        ? evaluateConstantString(expression.arguments[0], constants, resolving)
+        : ",";
+      return values && separator !== undefined ? values.join(separator) : undefined;
+    }
+  }
+  return undefined;
+}
+
+function evaluateConstantStringArray(node, constants, resolving = new Set()) {
+  const expression = unwrapExpression(node);
+  if (ts.isIdentifier(expression)) {
+    if (resolving.has(expression.text)) return undefined;
+    const initializer = constants.get(expression.text);
+    if (!initializer) return undefined;
+    const next = new Set(resolving);
+    next.add(expression.text);
+    return evaluateConstantStringArray(initializer, constants, next);
+  }
+  if (!ts.isArrayLiteralExpression(expression)) return undefined;
+  const values = expression.elements.map((element) => evaluateConstantString(element, constants, resolving));
+  return values.every((value) => value !== undefined) ? values : undefined;
+}
+
+function collectConstantInitializers(ast) {
+  const constants = new Map();
+  const visit = (node) => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      ts.isVariableDeclarationList(node.parent) &&
+      (node.parent.flags & ts.NodeFlags.Const) !== 0
+    ) {
+      constants.set(node.name.text, node.initializer);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(ast);
+  return constants;
+}
+
+function bindingPropertyName(node, constants) {
   const property = node.propertyName ?? node.name;
   if (ts.isIdentifier(property) || ts.isStringLiteral(property) || ts.isNumericLiteral(property)) {
     return property.text;
   }
-  if (ts.isComputedPropertyName(property) && ts.isStringLiteral(property.expression)) {
-    return property.expression.text;
+  if (ts.isComputedPropertyName(property)) {
+    return evaluateConstantString(property.expression, constants);
   }
   return undefined;
 }
@@ -257,9 +339,10 @@ function bindingPropertyName(node) {
 function productionSourceViolations(file, source) {
   const violations = runtimeContentViolations(file, source);
   const ast = sourceFile(file, source);
+  const constants = collectConstantInitializers(ast);
   const visit = (node) => {
     if (ts.isBindingElement(node)) {
-      const member = bindingPropertyName(node);
+      const member = bindingPropertyName(node, constants);
       if (member && MUTATING_REPOSITORY_MEMBERS.has(member)) {
         violations.push(`${file}: mutating member ${member}`);
       }
@@ -267,10 +350,18 @@ function productionSourceViolations(file, source) {
     if (ts.isPropertyAccessExpression(node) && MUTATING_REPOSITORY_MEMBERS.has(node.name.text)) {
       violations.push(`${file}: mutating member ${node.name.text}`);
     }
-    if (ts.isElementAccessExpression(node) && ts.isStringLiteral(node.argumentExpression) && MUTATING_REPOSITORY_MEMBERS.has(node.argumentExpression.text)) {
-      violations.push(`${file}: mutating member ${node.argumentExpression.text}`);
+    if (ts.isElementAccessExpression(node)) {
+      const member = evaluateConstantString(node.argumentExpression, constants);
+      if (member && MUTATING_REPOSITORY_MEMBERS.has(member)) {
+        violations.push(`${file}: mutating member ${member}`);
+      }
     }
-    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      ["app", "instance"].includes(node.expression.expression.text)
+    ) {
       const method = node.expression.name.text.toUpperCase();
       const path = node.arguments[0];
       if (method === "ROUTE") {
@@ -295,13 +386,14 @@ function productionSourceViolations(file, source) {
 
 function deploymentTemplateViolations(source) {
   for (const line of source.split(/\r?\n/u)) {
-    const match = /^\s*([A-Z][A-Z0-9_]*)\s*=/u.exec(line);
+    const match = /^\s*([^#=\s]+)\s*=/u.exec(line);
     if (!match) continue;
-    const key = match[1];
+    const key = match[1].normalize("NFKC").toUpperCase().replace(/[^A-Z0-9]/gu, "");
     if (
       (key.includes("WEBHOOK") && key.includes("SECRET")) ||
-      /^KOKORO_(?:USER|MODEL|CREDIT|PAYMENT)_BASE_URL$/u.test(key) ||
-      /^KOKORO_PAYMENT_(?:ENABLED_PROVIDERS|CONFIRM_.+|ALIPAY_PUBLIC_KEY|WECHAT_PLATFORM_CERT)$/u.test(key)
+      ["KOKOROUSERBASEURL", "KOKOROMODELBASEURL", "KOKOROCREDITBASEURL", "KOKOROPAYMENTBASEURL"].includes(key) ||
+      ["KOKOROPAYMENTENABLEDPROVIDERS", "KOKOROPAYMENTALIPAYPUBLICKEY", "KOKOROPAYMENTWECHATPLATFORMCERT"].includes(key) ||
+      key.startsWith("KOKOROPAYMENTCONFIRM")
     ) {
       return ["deprecated acquisition setting in .env.example"];
     }
@@ -330,6 +422,7 @@ function paymentReadBoundaryViolations(sources) {
   const violations = [];
   const routes = sources.get("routes") ?? "";
   const adminRoutes = sources.get("adminRoutes") ?? "";
+  const port = sources.get("port") ?? "";
   const adapter = sources.get("adapter") ?? "";
   const server = sources.get("server") ?? "";
 
@@ -338,10 +431,7 @@ function paymentReadBoundaryViolations(sources) {
     ["admin-routes", adminRoutes, "registerPaymentAdminRoutes", "PaymentAdminRepository"],
   ]) {
     const parsed = importsFrom(`${name}.ts`, source);
-    if (parsed.imports.includes("../../domain/repository.js")) {
-      violations.push(`${name}: full PaymentRepository import is forbidden`);
-    }
-    if (!parsed.imports.includes("./read-repository.js")) {
+    if (!parsed.imports.includes("../../domain/read-repository.js")) {
       violations.push(`${name}: named read repository port import is required`);
     }
     if (functionParameterType(source, functionName, 1) !== expectedType) {
@@ -349,10 +439,10 @@ function paymentReadBoundaryViolations(sources) {
     }
   }
 
-  const adapterAst = sourceFile("read-repository.ts", adapter);
+  const portAst = sourceFile("read-repository.ts", port);
   let declaredMethods = [];
-  let exposedMethods = [];
-  const visitAdapter = (node) => {
+  const interfaceMethods = new Set();
+  const visitPort = (node) => {
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === "PAYMENT_READ_METHODS") {
       let initializer = node.initializer;
       if (initializer && ts.isAsExpression(initializer)) initializer = initializer.expression;
@@ -361,31 +451,61 @@ function paymentReadBoundaryViolations(sources) {
       }
     }
     if (
-      ts.isCallExpression(node) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      ts.isIdentifier(node.expression.expression) &&
-      node.expression.expression.text === "Object" &&
-      node.expression.name.text === "freeze" &&
-      node.arguments[0] &&
-      ts.isObjectLiteralExpression(node.arguments[0])
+      ts.isInterfaceDeclaration(node) &&
+      ["PaymentCatalogRepository", "PaymentAdminRepository"].includes(node.name.text)
     ) {
-      exposedMethods = node.arguments[0].properties
-        .map((property) => property.name)
-        .filter(Boolean)
-        .map((name) => name.text)
+      for (const member of node.members) {
+        if (ts.isMethodSignature(member) && member.name) interfaceMethods.add(member.name.getText(portAst));
+      }
+    }
+    ts.forEachChild(node, visitPort);
+  };
+  visitPort(portAst);
+
+  const adapterAst = sourceFile("prisma-payment-read-repository.ts", adapter);
+  let exposedMethods = [];
+  let adapterImplementsReadPort = false;
+  const prismaCalls = new Set();
+  const visitAdapter = (node) => {
+    if (ts.isClassDeclaration(node) && node.name?.text === "PrismaPaymentReadRepository") {
+      exposedMethods = node.members
+        .filter(ts.isMethodDeclaration)
+        .map((member) => member.name.getText(adapterAst))
         .sort();
+      adapterImplementsReadPort = node.heritageClauses?.some(
+        (clause) => clause.token === ts.SyntaxKind.ImplementsKeyword &&
+          clause.types.some((type) => type.expression.getText(adapterAst) === "PaymentAdminRepository"),
+      ) ?? false;
+    }
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression.getText(adapterAst);
+      if (callee.startsWith("this.prisma.")) prismaCalls.add(callee);
     }
     ts.forEachChild(node, visitAdapter);
   };
   visitAdapter(adapterAst);
   if (JSON.stringify(declaredMethods) !== JSON.stringify(PAYMENT_READ_METHODS)) {
-    violations.push("adapter: PAYMENT_READ_METHODS must be exact");
+    violations.push("port: PAYMENT_READ_METHODS must be exact");
+  }
+  if (JSON.stringify([...interfaceMethods].sort()) !== JSON.stringify(PAYMENT_READ_METHODS)) {
+    violations.push("port: interfaces must expose exactly the read methods");
   }
   if (JSON.stringify(exposedMethods) !== JSON.stringify(PAYMENT_READ_METHODS)) {
-    violations.push("adapter: runtime facade must expose exactly the read methods");
+    violations.push("adapter: class must implement exactly the read methods");
   }
-  if (!server.includes("const repository = createPaymentReadRepository(new PrismaPaymentRepository(prisma));")) {
-    violations.push("server: full repository must be narrowed at construction");
+  if (!adapterImplementsReadPort) {
+    violations.push("adapter: PaymentAdminRepository implementation is required");
+  }
+  for (const call of prismaCalls) {
+    if (!PAYMENT_PRISMA_READ_CALLS.has(call)) violations.push(`adapter: forbidden Prisma capability ${call}`);
+  }
+  for (const [name, source] of [["port", port], ["adapter", adapter], ["routes", routes], ["admin-routes", adminRoutes], ["server", server]]) {
+    for (const forbidden of ["PaymentRepository", "PrismaPaymentRepository"]) {
+      if (source.includes(forbidden)) violations.push(`${name}: forbidden full capability ${forbidden}`);
+    }
+  }
+  if (!server.includes("const repository = new PrismaPaymentReadRepository(prisma);")) {
+    violations.push("server: exact read adapter construction is required");
   }
   return violations.sort();
 }
@@ -438,11 +558,30 @@ test("Payment HTTP composition exposes only exact read repository ports", async 
     paymentReadBoundaryViolations(new Map([
       ["routes", await readFile(resolve(ROOT, "kokoro-payment/src/interfaces/http/routes.ts"), "utf8")],
       ["adminRoutes", await readFile(resolve(ROOT, "kokoro-payment/src/interfaces/http/admin-routes.ts"), "utf8")],
-      ["adapter", await readFile(resolve(ROOT, "kokoro-payment/src/interfaces/http/read-repository.ts"), "utf8")],
+      ["port", await readFile(resolve(ROOT, "kokoro-payment/src/domain/read-repository.ts"), "utf8")],
+      ["adapter", await readFile(resolve(ROOT, "kokoro-payment/src/infrastructure/prisma/prisma-payment-read-repository.ts"), "utf8")],
       ["server", await readFile(resolve(ROOT, "kokoro-payment/src/interfaces/http/server.ts"), "utf8")],
     ])),
     [],
   );
+});
+
+test("production HTTP tree and runtime graph never import full Payment write capabilities", async () => {
+  const violations = [];
+  for (const file of await listTypeScriptFiles("kokoro-payment/src/interfaces/http")) {
+    const source = await readFile(resolve(ROOT, file), "utf8");
+    for (const capability of ["PaymentRepository", "PrismaPaymentRepository"]) {
+      if (source.includes(capability)) violations.push(`${file}: ${capability}`);
+    }
+  }
+  const graph = await buildRuntimeGraph();
+  for (const file of [
+    "kokoro-payment/src/domain/repository.ts",
+    "kokoro-payment/src/infrastructure/prisma/prisma-payment-repository.ts",
+  ]) {
+    if (graph.files.includes(file)) violations.push(`runtime graph: ${file}`);
+  }
+  assert.deepEqual(violations, []);
 });
 
 test("deployment template and catalogue seed remain acquisition-free", async () => {
@@ -500,7 +639,12 @@ test("production policy detector bears weight for every acquisition mutation and
     "const send = globalThis['fetch']; void send;",
     "const { createOrder: write } = repository; void write;",
     "const { ['createOrder']: write } = repository; void write;",
+    "const member = ['create', 'Order'].join(''); const { [member]: write } = repository; void write;",
+    "const member = ['create', 'Order'].join(''); void repository[member];",
+    "const member = 'create' + 'Order'; void repository[member];",
+    "void global['fe' + 'tch'];",
     "const get = Reflect.get; void get(repository, 'createOrder');",
+    "const member = ['create', 'Order'].join(''); void Reflect.get(repository, member);",
     "void Reflect.get(repository, 'createOrder');",
     "app.post('/orders/reopen', async () => {});",
     "app.options('/orders', async () => {});",
@@ -512,11 +656,21 @@ test("production policy detector bears weight for every acquisition mutation and
   }
 });
 
+test("constant-folding policy detector permits dynamically composed read-only method names", () => {
+  for (const fixture of [
+    "const member = ['list', 'Plans'].join(''); void repository[member];",
+    "const { [['list', 'Plans'].join('')]: read } = repository; void read;",
+    "const label = 'web' + 'hook'; void metadata[label];",
+  ]) {
+    assert.deepEqual(productionSourceViolations("fixture.ts", fixture), [], fixture);
+  }
+});
+
 test("runtime content detector bears weight inside an otherwise allowed repository adapter", () => {
   for (const fixture of ["void fetch;", "void process.env.STRIPE_WEBHOOK_SECRET;", "void createWebhookProviderRegistry;"]) {
     assert.ok(
       runtimeContentViolations(
-        "kokoro-payment/src/infrastructure/prisma/prisma-payment-repository.ts",
+        "kokoro-payment/src/infrastructure/prisma/prisma-payment-read-repository.ts",
         fixture,
       ).length > 0,
       fixture,
@@ -534,6 +688,9 @@ test("template and seed detectors bear weight against provider, worker, secret, 
     "WEBHOOK_SECRET=secret",
     "KOKORO_PAYMENT_WEBHOOK_SIGNING_SECRET=secret",
     "STRIPE_WEBHOOK_SIGNING_SECRET=secret",
+    "stripe_web_hook_secret=secret",
+    "STRIPE-WEB-HOOK-SIGNING-SECRET=secret",
+    "secret.web.hook=secret",
   ]) {
     assert.deepEqual(deploymentTemplateViolations(fixture), ["deprecated acquisition setting in .env.example"]);
   }
@@ -548,30 +705,28 @@ test("template and seed detectors bear weight against provider, worker, secret, 
 test("read-boundary detector bears weight against full-repository and adapter-shape regressions", async () => {
   const routes = await readFile(resolve(ROOT, "kokoro-payment/src/interfaces/http/routes.ts"), "utf8");
   const adminRoutes = await readFile(resolve(ROOT, "kokoro-payment/src/interfaces/http/admin-routes.ts"), "utf8");
+  const port = await readFile(resolve(ROOT, "kokoro-payment/src/domain/read-repository.ts"), "utf8");
+  const adapter = await readFile(resolve(ROOT, "kokoro-payment/src/infrastructure/prisma/prisma-payment-read-repository.ts"), "utf8");
   const server = await readFile(resolve(ROOT, "kokoro-payment/src/interfaces/http/server.ts"), "utf8");
-  const safeAdapter = `
-    export const PAYMENT_READ_METHODS = ${JSON.stringify(PAYMENT_READ_METHODS)} as const;
-    export function createPaymentReadRepository(repository) {
-      return Object.freeze({
-        listOrders: repository.listOrders,
-        listPaymentEvents: repository.listPaymentEvents,
-        listPlans: repository.listPlans,
-        listProviders: repository.listProviders,
-        listRefunds: repository.listRefunds,
-        listSubscriptions: repository.listSubscriptions,
-        readAdminStats: repository.readAdminStats,
-      });
-    }
-  `;
-  for (const adapter of [
-    safeAdapter.replace("readAdminStats: repository.readAdminStats,", "createOrder: repository.createOrder,"),
-    safeAdapter.replace('"readAdminStats"]', '"readAdminStats","createOrder"]'),
-  ]) {
+  const safe = new Map([
+    ["routes", routes],
+    ["adminRoutes", adminRoutes],
+    ["port", port],
+    ["adapter", adapter],
+    ["server", server],
+  ]);
+  const mutations = [
+    ["adapter", adapter.replace("  async listPlans", "  async createOrder() {}\n\n  async listPlans")],
+    ["adapter", adapter.replace("this.prisma.plan.findMany", "this.prisma.plan.create")],
+    ["port", port.replace('  "readAdminStats",', '  "createOrder",\n  "readAdminStats",')],
+    ["server", server.replaceAll("PrismaPaymentReadRepository", "PrismaPaymentRepository")],
+    ["routes", routes.replace("../../domain/read-repository.js", "../../domain/repository.js")],
+  ];
+  for (const [key, source] of mutations) {
+    const fixture = new Map(safe);
+    fixture.set(key, source);
     assert.ok(paymentReadBoundaryViolations(new Map([
-      ["routes", routes],
-      ["adminRoutes", adminRoutes],
-      ["adapter", adapter],
-      ["server", server],
-    ])).length > 0);
+      ...fixture,
+    ])).length > 0, key);
   }
 });
