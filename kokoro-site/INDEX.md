@@ -25,6 +25,8 @@ This package owns Site records, host mappings, lifecycle/config revisions, migra
 ## Runtime and security
 `DATABASE_URL_SITE` is this package's private Prisma datasource; `KOKORO_SITE_PORT` (4201) binds the service and `KOKORO_SITE_BASE_URL` is its advertised address. Inbound calls are authenticated by the per-caller registry (`KOKORO_INTERNAL_SECRET_<CALLER>`); the single legacy `KOKORO_INTERNAL_SECRET` is template compatibility only. `KOKORO_SITE_ID`/`KOKORO_SITE_NAME` only steer the seed CLI, which enforces the `site-<key>` id convention. Unknown production hosts fail closed. Site context is server-resolved and cannot be selected by an untrusted browser field.
 
+Every Admin list strictly accepts an optional `siteId` and applies it before `take: 100`. The sites resource uses `id` as its scope field; domains, apps, policies, and feature flags use `siteId`.
+
 ## Idempotency, failure, and recovery
 Site creation/config publication use stable identities and revisions; release activation/rollback require auditable attempts in Wave 1.
 

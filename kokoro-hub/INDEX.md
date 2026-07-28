@@ -30,6 +30,8 @@ Hub owns capability catalog/revision metadata and package references in Mongo/S3
 Uploads require validation, content addressing, bounded size/path rules, trusted operator context, and secret-free metadata.
 `createHubServer` receives the parsed env-ref allowlist and URL resolver policy explicitly; the real HTTP assembly derives them from validated env. Missing admission configuration fails closed rather than letting fake/test assembly bypass the same contract.
 
+All official Hub Admin namespace resources (skill catalog, skill revision uploads, skill curation, and MCP servers) are explicitly platform-global (`siteScopeField: null`). The Admin gateway therefore exposes them only to operators with wildcard Site scope; no finite Site scope is treated as an implicit namespace filter.
+
 ## Idempotency, failure, and recovery
 Revision/CAS and content hashes handle duplicate publication; package-first metadata-second writes prevent dangling live references.
 

@@ -25,6 +25,8 @@ This package owns operator, RBAC, approval, and audit records, plus the Admin Au
 ## Runtime and security
 `DATABASE_URL_ADMIN` is this package's private Prisma datasource; `KOKORO_ADMIN_PORT` (4290) binds the service. Operator authentication is `KOKORO_ADMIN_AUTH_MODE` = `oidc` (default; `KOKORO_ADMIN_OIDC_*`), `proxy` (`KOKORO_ADMIN_PROXY_SECRETS`, comma-separated for rotation), or `dev` (`KOKORO_ADMIN_DEV_OPERATOR`). Outbound module calls carry `KOKORO_INTERNAL_SECRET_ADMIN` — production refuses to boot without it — and `KOKORO_APPROVAL_GRANT_THRESHOLD_MICROS` forces second approval on large grants. Peer addresses come from `KOKORO_{SITE,USER,MODEL,CREDIT,PAYMENT,HUB}_BASE_URL`.
 
+Resource reads are manifest-driven and fail closed: an operator is mandatory, `siteScopeField: null` requires wildcard Site scope, and finite multi-Site scopes fan out one provider query per Site before the provider's limit. Returned rows are checked again against the declared `siteScopeField`. `/api/sites` uses the sites resource permission and its `id` scope field; `/api/billing-overview` additionally requires `billing.read`, a required in-scope `siteId`, and forwards that Site to both stats providers. Seeded ops/finance/readonly roles have `billing.read`; support does not.
+
 ## Idempotency, failure, and recovery
 `/api/action` runs prepare → permission check → approval gate → execute, and `gateway.ts` writes an `AuditLog` row for every denial, transport failure, and completed forward. Admin Auth effect-command idempotency is documented in `src/INDEX.md`.
 

@@ -25,6 +25,8 @@ This package exclusively owns its credit schema, migrations, journal rows, holds
 ## Runtime and security
 `DATABASE_URL_CREDIT` is this package's private Prisma datasource; `KOKORO_CREDIT_PORT` (4231) binds the service. Owner/Site enforcement calls `KOKORO_USER_BASE_URL` and `KOKORO_SITE_BASE_URL`, authenticated by the per-caller registry (`KOKORO_INTERNAL_SECRET_<CALLER>`, legacy `KOKORO_INTERNAL_SECRET` is outbound fallback only). Billing tuning lives in `KOKORO_CREDIT_USAGE_*`, `KOKORO_CREDIT_HOLD_*`, `KOKORO_CREDIT_ACTIVE_CACHE_*`, and `KOKORO_CREDIT_WELCOME_MICROS`. All mutations require trusted Site/billing-account context; amounts use explicit integer units and never client-provided prices.
 
+Admin accounts, ledger, and usage lists accept only a strict optional `siteId` query and apply it before `take: 100`; relational ledger/usage rows project the owning account's `siteId`. Admin stats require `siteId` and apply it to every count/aggregate. Pricing rules are the sole platform-global Admin resource and reject Site query parameters.
+
 ## Idempotency, failure, and recovery
 Journal effects and hold transitions must be idempotent, balanced, transactionally guarded, and reconcilable after timeout.
 

@@ -16,7 +16,7 @@ Kit does not own business entities, orchestration, persistence schemas, provider
 ## Public boundary
 Only `src/index.ts` re-exports are supported. It spans six subtrees:
 
-- `admin/` — Admin module manifest schemas (`adminModuleManifestSchema` and friends) and `registerAdminManifestRoute`.
+- `admin/` — Admin module manifest schemas (`adminModuleManifestSchema` and friends) and `registerAdminManifestRoute`. Every resource must declare `siteScopeField` as `"siteId"`, `"id"`, or `null`; omission is invalid rather than an implicit global scope.
 - `config/` — `defineEnv` and `EnvValidationError`.
 - `contract/` — Platform runtime request/response schemas and their inferred types: usage hold/settle, credit release, model binding and label queries.
 - `domain/` — `AppError`, `appError`, `ERROR_STATUS`, `ErrorCode`, `parsePositiveBigIntString`.
