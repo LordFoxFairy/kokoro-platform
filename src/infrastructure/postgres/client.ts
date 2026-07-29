@@ -116,6 +116,7 @@ export type PlatformInternalOperation =
   | "authorization.snapshot.create"
   | "authorization.retention"
   | "commerce.outbox.reconcile"
+  | "asset.outbox.consume"
   | "site.runtime.consume"
   | "admin.execution.claim"
   | "admin.execution.retry"
@@ -289,6 +290,7 @@ export function createPlatformDatabaseClient(
         : config.role === "worker"
           ? operation === "authorization.retention" ||
             operation === "commerce.outbox.reconcile" ||
+            operation === "asset.outbox.consume" ||
             operation === "site.runtime.consume" ||
             operation === "admin.execution.claim" ||
             operation === "admin.execution.retry" ||

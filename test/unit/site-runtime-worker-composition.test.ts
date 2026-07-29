@@ -13,7 +13,7 @@ describe("Site runtime worker production composition", () => {
     const source = await readFile(new URL("../../src/process/worker.ts", import.meta.url), "utf8");
     expect(source).toContain("createSiteRuntimeWorkerProductionComposition");
     expect(source).toContain("siteRuntime.runOneCycle(context)");
-    expect(source).toContain("stopClaiming: siteRuntime.stopClaiming");
-    expect(source).toContain("returnLease: siteRuntime.returnLease");
+    expect(source).toContain("siteRuntime.stopClaiming()");
+    expect(source).toContain("siteRuntime.returnLease(reason)");
   });
 });

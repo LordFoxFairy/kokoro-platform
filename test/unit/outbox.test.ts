@@ -3,6 +3,34 @@ import { OutboxRepository, type OutboxEvent } from "../../src/shared/outbox-inbo
 import { issuePlatformTransaction, revokePlatformTransaction } from "../../src/shared/unit-of-work/platform-transaction.js";
 
 describe("outbox retry bounds", () => {
+  it("claims only the explicitly allowlisted effect event types", async () => {
+    const queries: Array<{ statement: string; values: readonly unknown[] }> = [];
+    const lease = issuePlatformTransaction({
+      execute: async () => 0,
+      query: async <Row extends Record<string, unknown>>(statement: string, values = []) => {
+        queries.push({ statement, values });
+        return [] as Row[];
+      },
+    });
+    try {
+      await new OutboxRepository().claim(lease.transaction, {
+        workerId: "asset-worker-01",
+        leaseToken: "lease-01",
+        owners: ["asset"],
+        eventTypes: ["asset.scan.requested", "asset.object.cleanup.requested"],
+        limit: 10,
+        leaseSeconds: 30,
+      });
+      expect(queries[0]?.statement).toContain("event_type = ANY($6::text[])");
+      expect(queries[0]?.values).toEqual([
+        10, "asset-worker-01", "lease-01", 30, ["asset"],
+        ["asset.scan.requested", "asset.object.cleanup.requested"],
+      ]);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
   it("rejects invalid retry input before touching persistence", async () => {
     const lease = issuePlatformTransaction({ query: async () => [], execute: async () => { throw new Error("SQL_MUST_NOT_RUN"); } });
     try {

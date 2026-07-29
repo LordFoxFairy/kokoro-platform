@@ -52,7 +52,9 @@ export class OutboxRepository {
 
   async claim(
     transaction: PlatformTransaction,
-    input: { readonly workerId: string; readonly leaseToken: string; readonly owners: readonly string[]; readonly limit: number; readonly leaseSeconds: number },
+    input: { readonly workerId: string; readonly leaseToken: string;
+      readonly owners: readonly string[]; readonly eventTypes?: readonly string[];
+      readonly limit: number; readonly leaseSeconds: number },
   ): Promise<readonly ClaimedOutboxEvent[]> {
     if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 100) throw new Error("OUTBOX_CLAIM_LIMIT_INVALID");
     if (!Number.isInteger(input.leaseSeconds) || input.leaseSeconds < 1 || input.leaseSeconds > 300) throw new Error("OUTBOX_LEASE_SECONDS_INVALID");
@@ -60,11 +62,22 @@ export class OutboxRepository {
     assertBoundedIdentifier(input.leaseToken, "OUTBOX_LEASE_TOKEN_INVALID");
     if (input.owners.length === 0 || input.owners.length > 32) throw new Error("OUTBOX_OWNER_ALLOWLIST_INVALID");
     input.owners.forEach((owner) => assertBoundedIdentifier(owner, "OUTBOX_OWNER_ALLOWLIST_INVALID"));
+    if (input.eventTypes !== undefined) {
+      if (input.eventTypes.length === 0 || input.eventTypes.length > 64 ||
+          new Set(input.eventTypes).size !== input.eventTypes.length) {
+        throw new Error("OUTBOX_EVENT_TYPE_ALLOWLIST_INVALID");
+      }
+      input.eventTypes.forEach((eventType) =>
+        assertBoundedIdentifier(eventType, "OUTBOX_EVENT_TYPE_ALLOWLIST_INVALID"));
+    }
     const sql = resolvePlatformTransaction(transaction);
+    const eventTypeFilter = input.eventTypes === undefined
+      ? ""
+      : " AND event_type = ANY($6::text[])";
     return sql.query<ClaimedOutboxEvent & Record<string, unknown>>(
       `WITH candidates AS (
          SELECT event_id FROM platform.outbox_event
-         WHERE owner = ANY($5::text[]) AND ((state='pending' AND available_at <= now())
+         WHERE owner = ANY($5::text[])${eventTypeFilter} AND ((state='pending' AND available_at <= now())
             OR (state='leased' AND lease_expires_at <= now()))
          ORDER BY available_at, created_at
          FOR UPDATE SKIP LOCKED LIMIT $1
@@ -77,7 +90,8 @@ export class OutboxRepository {
                  event.aggregate_id AS "aggregateId", event.payload, event.payload_digest AS "payloadDigest",
                  event.correlation_id AS "correlationId", event.causation_id AS "causationId",
                  event.lease_token AS "leaseToken", event.attempt`,
-      [input.limit, input.workerId, input.leaseToken, input.leaseSeconds, input.owners],
+      [input.limit, input.workerId, input.leaseToken, input.leaseSeconds, input.owners,
+        ...(input.eventTypes === undefined ? [] : [input.eventTypes])],
     );
   }
 
