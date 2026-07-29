@@ -26,4 +26,6 @@ plaintext or development fallback.
 
 The PostgreSQL lifecycle owner durably freezes the Session binding and execution manifest, mirrors the Credit-owned segment CAS in the same transaction, and never persists trigger-message content or opaque execution-lineage plaintext. Production constructs this adapter itself; deployment cannot replace it.
 
+`src/process/admission.ts` is the dedicated secure-listener lifecycle host: database connect/readiness precedes listen, health is no-store, new requests are rejected during drain, active HTTP/2 sessions receive GOAWAY, and server/database shutdown is deadline bounded. A command entry is intentionally not activated until all formal remote contracts and local owner adapters below exist.
+
 Production activation still requires Root-generated Session owner and GA execution-evidence contracts plus concrete Site runtime-policy, Capability, AssetGrant, and Credit budget-policy adapters. Startup must fail closed until those owner facts exist. There is no placeholder owner implementation, browser-header authentication, default Site/runtime policy, or dual path.
