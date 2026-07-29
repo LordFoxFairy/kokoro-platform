@@ -64,6 +64,8 @@ import { CommerceCommandFence } from "../modules/commerce/application/command-fe
 import { PreviewRedemptionService } from "../modules/commerce/application/services/preview-redemption.js";
 import { authorizeCommerceCommand } from "../workflows/commerce/authorize-command.js";
 import { createCommercePublicOperations, COMMERCE_PUBLIC_OPERATION_IDS } from "../modules/commerce/interfaces/http/commerce-public-operations.js";
+import { ConfirmRedemptionService } from "../modules/commerce/application/services/confirm-redemption.js";
+import { PostgresRedemptionConfirmationRepository } from "../modules/commerce/infrastructure/postgres/redemption-confirmation-repository.js";
 
 export interface PlatformPublicProductionComposition {
   readonly handler: PlatformPublicHttpHandler;
@@ -174,17 +176,26 @@ export async function createPlatformPublicProductionComposition(
   });
   const identityOperations = createIdentityPublicOperations(identity, identitySecurityManagement);
   const redemptionRepository = new PostgresRedemptionRepository();
+  const commerceRepository = new PostgresCommerceRepository();
   const commerceFence = new CommerceCommandFence(
     unitOfWork,
-    new PostgresCommerceRepository(),
+    commerceRepository,
     (transaction, context, operation) => authorizeCommerceCommand(transaction, context, operation, new Date().toISOString()),
   );
-  const commerceOperations = createCommercePublicOperations(new PreviewRedemptionService({
-    unitOfWork,
-    fence: commerceFence,
-    repository: redemptionRepository,
-    secrets: redemptionSecrets,
-  }));
+  const commerceOperations = createCommercePublicOperations({
+    preview: new PreviewRedemptionService({
+      unitOfWork,
+      fence: commerceFence,
+      repository: redemptionRepository,
+      secrets: redemptionSecrets,
+    }),
+    confirm: new ConfirmRedemptionService({
+      unitOfWork,
+      fence: commerceFence,
+      repository: new PostgresRedemptionConfirmationRepository({ commerce: commerceRepository }),
+      secrets: redemptionSecrets,
+    }),
+  });
   const handler = createPlatformPublicHttpHandler({
     workloads,
     sessions: input.database,
