@@ -1,4 +1,5 @@
-import { writeFile } from "node:fs/promises";
+import { createPublicKey } from "node:crypto";
+import { readFile, writeFile } from "node:fs/promises";
 import mysql, { type Connection, type RowDataPacket } from "mysql2/promise";
 import {
   canonicalizeModelInventory,
@@ -11,22 +12,36 @@ import { parseLegacySecretReference } from "../../src/modules/model-control/migr
 import {
   captureFencedLegacySnapshots,
   createLegacySourceWatermark,
+  legacyMysqlDatabaseIdentity,
   legacySnapshotReference,
   sameLegacyDatabaseIdentity,
+  verifyLegacyExportFenceAttestation,
   type CapturedLegacySnapshot,
   type LegacySnapshotParticipant,
+  type VerifiedLegacyExportFence,
 } from "../../src/modules/model-control/migration/legacy-export-snapshot.js";
 
 const outputPath = argument("--output");
 const modelDatabaseUrl = requiredEnv("DATABASE_URL_MODEL");
 const siteDatabaseUrl = requiredEnv("DATABASE_URL_SITE");
-const fence = {
-  token: argument("--fence-token"),
-  fencedAt: argument("--fenced-at"),
-};
 const connections: Connection[] = [];
 try {
   const sameDatabase = sameLegacyDatabaseIdentity(modelDatabaseUrl, siteDatabaseUrl);
+  const expectedSources = sameDatabase
+    ? [{ name: "model+site", databaseIdentity: legacyMysqlDatabaseIdentity(modelDatabaseUrl) }]
+    : [
+        { name: "model", databaseIdentity: legacyMysqlDatabaseIdentity(modelDatabaseUrl) },
+        { name: "site", databaseIdentity: legacyMysqlDatabaseIdentity(siteDatabaseUrl) },
+      ];
+  const fence = verifyLegacyExportFenceAttestation(
+    JSON.parse(await readFile(argument("--fence-attestation"), "utf8")),
+    {
+      publicKey: createPublicKey(await readFile(argument("--fence-public-key"), "utf8")),
+      expectedIssuer: requiredEnv("MODEL_CONTROL_FENCE_ISSUER"),
+      expectedSources,
+      now: new Date().toISOString(),
+    },
+  );
   const captures: readonly CapturedLegacySnapshot<unknown>[] = sameDatabase
     ? await captureSingleDatabase(modelDatabaseUrl, connections, fence)
     : await captureCrossDatabase(modelDatabaseUrl, siteDatabaseUrl, connections, fence);
@@ -132,7 +147,7 @@ type LegacyRow = RowDataPacket & Record<string, unknown>;
 async function captureSingleDatabase(
   databaseUrl: string,
   connections: Connection[],
-  fence: { readonly token: string; readonly fencedAt: string },
+  fence: VerifiedLegacyExportFence,
 ): Promise<readonly CapturedLegacySnapshot<unknown>[]> {
   const snapshot = await openConnection(databaseUrl, connections);
   const verifier = await openConnection(databaseUrl, connections);
@@ -151,7 +166,7 @@ async function captureCrossDatabase(
   modelDatabaseUrl: string,
   siteDatabaseUrl: string,
   connections: Connection[],
-  fence: { readonly token: string; readonly fencedAt: string },
+  fence: VerifiedLegacyExportFence,
 ): Promise<readonly CapturedLegacySnapshot<unknown>[]> {
   const modelSnapshot = await openConnection(modelDatabaseUrl, connections);
   const modelVerifier = await openConnection(modelDatabaseUrl, connections);

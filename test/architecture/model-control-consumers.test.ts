@@ -133,12 +133,16 @@ describe("ModelControl consumer boundary", () => {
       readFile(resolve("scripts/model-control/export-legacy.mts"), "utf8"),
       readFile(resolve("src/modules/model-control/migration/legacy-export-snapshot.ts"), "utf8"),
     ]);
-    expect(exporter).toContain('argument("--fence-token")');
-    expect(exporter).toContain('argument("--fenced-at")');
+    expect(exporter).toContain('argument("--fence-attestation")');
+    expect(exporter).toContain('argument("--fence-public-key")');
+    expect(exporter).toContain('requiredEnv("MODEL_CONTROL_FENCE_ISSUER")');
+    expect(exporter).not.toContain('argument("--fence-token")');
     expect(exporter).toContain("START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY");
     expect(exporter).toContain("captureCrossDatabase");
     expect(exporter).toContain("COMBINED_WATERMARK_SQL");
     expect(snapshot).toContain("assertSameWatermark");
+    expect(snapshot).toContain("verifyLegacyExportFenceAttestation");
+    expect(snapshot).toContain("assertAuthorizedWatermark");
     expect(snapshot).toContain("MODEL_LEGACY_EXPORT_FENCE_VIOLATED");
   });
 

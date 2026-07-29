@@ -53,11 +53,12 @@ per Site. A product whose hidden routes leave no viable main/generation path is 
 policy. Import verifies the whole bundle digest and a signed migration context, then replays fixed import, activation and Site change
 IDs. Re-running the same bundle returns the same receipts and revisions; a changed payload under a reused ID fails closed. Cross-Site
 replay is available only to the admin migration purpose carrying `model:site-policy:migrate`; ordinary commands remain exact-Site.
-Export requires an operator-held write quiesce identified by `--fence-token` and `--fenced-at`. When both sources resolve to one
-database URL, all Model and Site reads share one read-only repeatable-read consistent snapshot. With separate databases, each source
-uses its own consistent snapshot and full-content watermark; pre-snapshot, in-snapshot and post-commit watermarks must match and no
-row may be newer than the fence. The raw fence token is not persisted: a digest of the fence and both source watermarks is embedded
-in the catalog source reference and therefore covered by the bundle digest.
+Export requires a short-lived owner-issued quiesce lease supplied as `--fence-attestation` plus its pinned public key. The signed
+claims bind issuer/key revision, lease lifetime, purpose, exact database identities, fenced timestamp and full-content write
+watermarks; an arbitrary string cannot become a fence. When both sources resolve to one database URL, all Model and Site reads share
+one read-only repeatable-read consistent snapshot. With separate databases, each source uses its own consistent snapshot.
+Pre-snapshot, in-snapshot and post-commit watermarks must all equal the signed owner watermark and no row may be newer than the
+fence. Only a digest of the lease evidence and captured watermarks enters the catalog source reference and bundle digest.
 Legacy provider credentials are accepted only when already encoded as a valid `secret://`, `vault://`, or `env://` reference.
 Plaintext and bare environment-variable names fail with a non-reflective quarantine error; export never manufactures a reference.
 
