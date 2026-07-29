@@ -47,6 +47,10 @@ export async function runPlatformMigrations(
   const environment = options.environment ?? process.env;
   const config = loadPlatformDatabaseConfig("migrator", environment);
   const apiRole = requireRole(environment.PLATFORM_DATABASE_API_ROLE, "PLATFORM_DATABASE_API_ROLE");
+  const admissionRole = requireRole(
+    environment.PLATFORM_DATABASE_ADMISSION_ROLE,
+    "PLATFORM_DATABASE_ADMISSION_ROLE",
+  );
   const workerRole = requireRole(
     environment.PLATFORM_DATABASE_WORKER_ROLE,
     "PLATFORM_DATABASE_WORKER_ROLE",
@@ -62,6 +66,7 @@ export async function runPlatformMigrations(
   assertDistinctRoles(
     config.expectedDatabaseUser,
     apiRole,
+    admissionRole,
     authorizationRole,
     workerRole,
     adminRole,
@@ -79,6 +84,7 @@ export async function runPlatformMigrations(
       migratorRole: config.expectedDatabaseUser,
       expectedDatabase: config.expectedDatabaseName,
       apiRole,
+      admissionRole,
       authorizationRole,
       workerRole,
       adminRole,
@@ -99,11 +105,19 @@ export async function runPlatformMigrations(
     );
     if (exitCode !== 0) throw new Error(`PLATFORM_MIGRATION_FAILED:${exitCode}`);
 
-    await grantFoundationPrivileges(lockClient, apiRole, authorizationRole, workerRole, adminRole);
+    await grantFoundationPrivileges(
+      lockClient,
+      apiRole,
+      admissionRole,
+      authorizationRole,
+      workerRole,
+      adminRole,
+    );
     await assertPostMigrationAuthority(
       lockClient,
       config.expectedDatabaseUser,
       apiRole,
+      admissionRole,
       authorizationRole,
       workerRole,
       adminRole,
@@ -127,6 +141,7 @@ async function assertMigratorPreflight(
     migratorRole: string;
     expectedDatabase: string;
     apiRole: string;
+    admissionRole: string;
     authorizationRole: string;
     workerRole: string;
     adminRole: string;
@@ -134,6 +149,7 @@ async function assertMigratorPreflight(
 ): Promise<void> {
   const result = await client.query(MIGRATOR_PREFLIGHT_SQL, [
     expected.apiRole,
+    expected.admissionRole,
     expected.authorizationRole,
     expected.workerRole,
     expected.adminRole,
@@ -153,6 +169,7 @@ async function assertMigratorPreflight(
     row.inheritsPrivileges !== false ||
     row.hasAnyMembership === true ||
     row.isApiMember === true ||
+    row.isAdmissionMember === true ||
     row.isAuthorizationMember === true ||
     row.isWorkerMember === true ||
     row.isAdminMember === true ||
@@ -167,12 +184,13 @@ async function assertMigratorPreflight(
 
   const roles = await client.query(RUNTIME_ROLE_PREFLIGHT_SQL, [
     expected.apiRole,
+    expected.admissionRole,
     expected.authorizationRole,
     expected.workerRole,
     expected.adminRole,
     expected.migratorRole,
   ]);
-  if (roles.rows?.length !== 4 || roles.rows.some((role) => !safeRuntimeRole(role))) {
+  if (roles.rows?.length !== 5 || roles.rows.some((role) => !safeRuntimeRole(role))) {
     throw new Error("PLATFORM_RUNTIME_ROLE_PREFLIGHT_FAILED");
   }
 }
@@ -191,9 +209,10 @@ const MIGRATOR_PREFLIGHT_SQL = `
          EXISTS (SELECT 1 FROM pg_auth_members membership WHERE membership.member = migrator.oid)
            AS "hasAnyMembership",
          pg_has_role(current_user, $1, 'MEMBER') AS "isApiMember",
-         pg_has_role(current_user, $2, 'MEMBER') AS "isAuthorizationMember",
-         pg_has_role(current_user, $3, 'MEMBER') AS "isWorkerMember",
-         pg_has_role(current_user, $4, 'MEMBER') AS "isAdminMember",
+         pg_has_role(current_user, $2, 'MEMBER') AS "isAdmissionMember",
+         pg_has_role(current_user, $3, 'MEMBER') AS "isAuthorizationMember",
+         pg_has_role(current_user, $4, 'MEMBER') AS "isWorkerMember",
+         pg_has_role(current_user, $5, 'MEMBER') AS "isAdminMember",
          has_database_privilege(current_user, current_database(), 'CREATE') AS "canCreateDatabaseObject",
          platform_schema.oid IS NOT NULL AS "schemaExists",
          schema_owner.rolname AS "schemaOwner",
@@ -225,14 +244,14 @@ const RUNTIME_ROLE_PREFLIGHT_SQL = `
          runtime_role.rolinherit AS "inheritsPrivileges",
          EXISTS (SELECT 1 FROM pg_auth_members membership WHERE membership.member = runtime_role.oid)
            AS "hasAnyMembership",
-         pg_has_role(runtime_role.rolname, $5, 'MEMBER') AS "isMigratorMember",
+         pg_has_role(runtime_role.rolname, $6, 'MEMBER') AS "isMigratorMember",
          EXISTS (
-           SELECT 1 FROM unnest(ARRAY[$1,$2,$3,$4]::text[]) peer(role_name)
+           SELECT 1 FROM unnest(ARRAY[$1,$2,$3,$4,$5]::text[]) peer(role_name)
            WHERE peer.role_name <> runtime_role.rolname
              AND pg_has_role(runtime_role.rolname, peer.role_name, 'MEMBER')
          ) AS "isPeerMember"
   FROM pg_roles runtime_role
-  WHERE runtime_role.rolname = ANY(ARRAY[$1,$2,$3,$4]::text[])
+  WHERE runtime_role.rolname = ANY(ARRAY[$1,$2,$3,$4,$5]::text[])
   ORDER BY runtime_role.rolname
 `;
 
@@ -254,12 +273,13 @@ function safeRuntimeRole(role: Readonly<Record<string, unknown>>): boolean {
 async function grantFoundationPrivileges(
   client: MigrationLockClient,
   apiRole: string,
+  admissionRole: string,
   authorizationRole: string,
   workerRole: string,
   adminRole: string,
 ): Promise<void> {
   await client.query("REVOKE ALL ON SCHEMA platform FROM PUBLIC");
-  for (const role of [apiRole, authorizationRole, workerRole, adminRole]) {
+  for (const role of [apiRole, admissionRole, authorizationRole, workerRole, adminRole]) {
     const identifier = quoteRoleIdentifier(role);
     await client.query(`REVOKE CREATE ON SCHEMA platform FROM ${identifier}`);
     await client.query(`GRANT USAGE ON SCHEMA platform TO ${identifier}`);
@@ -286,7 +306,7 @@ async function grantFoundationPrivileges(
     );
     if (role === apiRole) {
       await client.query(
-        `GRANT SELECT ON TABLE ${KERNEL_TABLES}, ${ADMISSION_TABLES}, ${ADMISSION_RUNTIME_SNAPSHOT_TABLES}, ${AUTHORIZATION_TABLES}, ${IDENTITY_TABLES}, ${COMMERCE_TABLES}, ${ASSET_API_TABLES}, platform.site, platform.site_release TO ${identifier}`,
+        `GRANT SELECT ON TABLE ${KERNEL_TABLES}, ${AUTHORIZATION_TABLES}, ${IDENTITY_TABLES}, ${COMMERCE_TABLES}, ${ASSET_API_TABLES}, platform.site, platform.site_release TO ${identifier}`,
       );
       await client.query(
         `GRANT SELECT(site_ref,subject_ref,subject_generation,project_ref,intent_ref,state,updated_at) ON TABLE platform.asset_blob_candidate TO ${identifier}`,
@@ -312,7 +332,6 @@ async function grantFoundationPrivileges(
       await client.query(
         `GRANT UPDATE ON TABLE platform.command_receipt, platform.inbox_delivery, platform.authorization_product_context, platform.authorization_session_access_grant TO ${identifier}`,
       );
-      await client.query(`GRANT INSERT, UPDATE ON TABLE ${ADMISSION_TABLES} TO ${identifier}`);
       await client.query(
         `GRANT SELECT, UPDATE ON TABLE platform.authorization_stream_state TO ${identifier}`,
       );
@@ -339,7 +358,20 @@ async function grantFoundationPrivileges(
         `GRANT UPDATE ON TABLE platform.asset_upload_intent, platform.asset_upload_session, platform.asset_quota_account, platform.asset_quota_reservation TO ${identifier}`,
       );
       await client.query(
-        `GRANT EXECUTE ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID), platform.resolve_product_model_option_catalog(TEXT, TEXT), platform.resolve_admission_model_owner(TEXT, TEXT, TEXT) TO ${identifier}`,
+        `GRANT EXECUTE ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID), platform.resolve_product_model_option_catalog(TEXT, TEXT) TO ${identifier}`,
+      );
+    } else if (role === admissionRole) {
+      await client.query(
+        `GRANT SELECT ON TABLE ${ADMISSION_TABLES}, ${ADMISSION_RUNTIME_SNAPSHOT_TABLES}, platform.site, platform.site_release, platform.authorization_site, platform.authorization_site_release, platform.authorization_product_binding, platform.authorization_subject, platform.authorization_identity_session, platform.authorization_project, platform.authorization_project_membership, platform.authorization_session_access_grant, platform.identity_personal_bootstrap, platform.identity_execution_space, platform.identity_namespace_allocation_intent, platform.commerce_billing_account, platform.credit_account, platform.credit_grant, platform.credit_hold, platform.credit_hold_allocation, platform.credit_journal_transaction, platform.credit_journal_entry, platform.credit_execution_budget_root, platform.credit_budget_allocation, platform.credit_budget_allocation_revision, platform.credit_authorization_segment, platform.credit_budget_operation_receipt, platform.asset_resource, platform.asset_version, platform.asset_eligibility_projection TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT INSERT ON TABLE platform.admission_command, platform.admission_session_execution_binding, platform.admission_execution_manifest, platform.outbox_event, platform.credit_hold, platform.credit_hold_allocation, platform.credit_journal_transaction, platform.credit_journal_entry, platform.credit_execution_budget_root, platform.credit_budget_allocation, platform.credit_budget_allocation_revision, platform.credit_authorization_segment, platform.credit_budget_operation_receipt TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT UPDATE ON TABLE platform.admission_command, platform.admission_execution_manifest, platform.credit_hold, platform.credit_execution_budget_root, platform.credit_authorization_segment TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT EXECUTE ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.resolve_admission_model_owner(TEXT, TEXT, TEXT) TO ${identifier}`,
       );
     } else if (role === authorizationRole) {
       await client.query(
@@ -586,6 +618,66 @@ const ASSET_WORKER_UPDATE_RELATIONS = [
   "asset_object_cleanup",
   "asset_promotion_intent",
 ] as const;
+const ADMISSION_RELATIONS = [
+  "admission_command",
+  "admission_session_execution_binding",
+  "admission_execution_manifest",
+  "admission_launch_profile_snapshot",
+  "admission_capability_catalog_snapshot",
+] as const;
+const ADMISSION_SELECT_RELATIONS = [
+  ...ADMISSION_RELATIONS,
+  "site",
+  "site_release",
+  "authorization_site",
+  "authorization_site_release",
+  "authorization_product_binding",
+  "authorization_subject",
+  "authorization_identity_session",
+  "authorization_project",
+  "authorization_project_membership",
+  "authorization_session_access_grant",
+  "identity_personal_bootstrap",
+  "identity_execution_space",
+  "identity_namespace_allocation_intent",
+  "commerce_billing_account",
+  "credit_account",
+  "credit_grant",
+  "credit_hold",
+  "credit_hold_allocation",
+  "credit_journal_transaction",
+  "credit_journal_entry",
+  "credit_execution_budget_root",
+  "credit_budget_allocation",
+  "credit_budget_allocation_revision",
+  "credit_authorization_segment",
+  "credit_budget_operation_receipt",
+  "asset_resource",
+  "asset_version",
+  "asset_eligibility_projection",
+] as const;
+const ADMISSION_INSERT_RELATIONS = [
+  "admission_command",
+  "admission_session_execution_binding",
+  "admission_execution_manifest",
+  "outbox_event",
+  "credit_hold",
+  "credit_hold_allocation",
+  "credit_journal_transaction",
+  "credit_journal_entry",
+  "credit_execution_budget_root",
+  "credit_budget_allocation",
+  "credit_budget_allocation_revision",
+  "credit_authorization_segment",
+  "credit_budget_operation_receipt",
+] as const;
+const ADMISSION_UPDATE_RELATIONS = [
+  "admission_command",
+  "admission_execution_manifest",
+  "credit_hold",
+  "credit_execution_budget_root",
+  "credit_authorization_segment",
+] as const;
 const ASSET_TABLES = ASSET_RELATIONS.map((name) => `platform.${name}`).join(", ");
 const ASSET_API_TABLES = ASSET_API_MUTABLE_RELATIONS.map((name) => `platform.${name}`).join(", ");
 const ASSET_RELATIONS_SQL = sqlLiterals(ASSET_RELATIONS);
@@ -615,6 +707,10 @@ const ASSET_API_OWNER_READ_COLUMN_ALLOWLIST_SQL = `
   ]))`;
 const ASSET_WORKER_INSERT_RELATIONS_SQL = sqlLiterals(ASSET_WORKER_INSERT_RELATIONS);
 const ASSET_WORKER_UPDATE_RELATIONS_SQL = sqlLiterals(ASSET_WORKER_UPDATE_RELATIONS);
+const ADMISSION_RELATIONS_SQL = sqlLiterals(ADMISSION_RELATIONS);
+const ADMISSION_SELECT_RELATIONS_SQL = sqlLiterals(ADMISSION_SELECT_RELATIONS);
+const ADMISSION_INSERT_RELATIONS_SQL = sqlLiterals(ADMISSION_INSERT_RELATIONS);
+const ADMISSION_UPDATE_RELATIONS_SQL = sqlLiterals(ADMISSION_UPDATE_RELATIONS);
 
 const SITE_TABLES = [
   "platform.site",
@@ -747,6 +843,7 @@ async function assertPostMigrationAuthority(
   client: MigrationLockClient,
   migratorRole: string,
   apiRole: string,
+  admissionRole: string,
   authorizationRole: string,
   workerRole: string,
   adminRole: string,
@@ -756,9 +853,10 @@ async function assertPostMigrationAuthority(
     authorizationRole,
     workerRole,
     adminRole,
+    admissionRole,
   ]);
   if (
-    result.rows?.length !== 4 ||
+    result.rows?.length !== 5 ||
     result.rows.some(
       (row) =>
         row.schemaOwner !== migratorRole ||
@@ -779,7 +877,7 @@ async function assertPostMigrationAuthority(
         row.canExecuteModelDecisionProjection !== (row.roleName === apiRole) ||
         row.canExecuteModelAvailabilityReport !== (row.roleName === workerRole) ||
         row.canExecuteCreditScopePolicy !==
-          (row.roleName === apiRole || row.roleName === adminRole) ||
+          (row.roleName === apiRole || row.roleName === admissionRole || row.roleName === adminRole) ||
         row.canExecuteAdminAuthorityChange !== (row.roleName === workerRole) ||
         row.hasRequiredModelOptionFunctions !== true ||
         row.canSelectModelCatalogTable !== false ||
@@ -930,6 +1028,41 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            AND has_column_privilege(runtime_role.rolname, 'platform.asset_eligibility_projection', 'purpose', 'SELECT')
            AND has_column_privilege(runtime_role.rolname, 'platform.asset_eligibility_projection', 'eligibility_epoch', 'SELECT')
            AND has_column_privilege(runtime_role.rolname, 'platform.asset_eligibility_projection', 'state', 'SELECT')
+         WHEN runtime_role.rolname = $5 THEN
+           has_table_privilege(runtime_role.rolname, 'platform.admission_command', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.admission_session_execution_binding', 'SELECT,INSERT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.admission_execution_manifest', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.admission_launch_profile_snapshot', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.admission_capability_catalog_snapshot', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.outbox_event', 'INSERT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.site', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.site_release', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.authorization_site', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.authorization_site_release', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.authorization_product_binding', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.authorization_subject', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.authorization_identity_session', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.authorization_project', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.authorization_project_membership', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.authorization_session_access_grant', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.identity_personal_bootstrap', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.identity_execution_space', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.identity_namespace_allocation_intent', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.commerce_billing_account', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.credit_account', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.credit_grant', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.credit_hold', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.credit_hold_allocation', 'SELECT,INSERT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.credit_journal_transaction', 'SELECT,INSERT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.credit_journal_entry', 'SELECT,INSERT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.credit_execution_budget_root', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.credit_budget_allocation', 'SELECT,INSERT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.credit_budget_allocation_revision', 'SELECT,INSERT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.credit_authorization_segment', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.credit_budget_operation_receipt', 'SELECT,INSERT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.asset_resource', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.asset_version', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.asset_eligibility_projection', 'SELECT')
          WHEN runtime_role.rolname = $3 THEN
            has_table_privilege(runtime_role.rolname, 'platform.outbox_event', 'SELECT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.command_receipt', 'UPDATE')
@@ -1046,7 +1179,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            AS "canExecuteAdminAuthorityChange"
          ,CASE WHEN runtime_role.rolname=$1 THEN
             has_function_privilege(runtime_role.rolname,'platform.resolve_product_model_option_catalog(text,text)','EXECUTE')
-            AND has_function_privilege(runtime_role.rolname,'platform.resolve_admission_model_owner(text,text,text)','EXECUTE')
+          WHEN runtime_role.rolname=$5 THEN
+            has_function_privilege(runtime_role.rolname,'platform.resolve_admission_model_owner(text,text,text)','EXECUTE')
           WHEN runtime_role.rolname=$4 THEN
             has_function_privilege(runtime_role.rolname,'platform.load_model_option_inventory(text)','EXECUTE')
             AND has_function_privilege(runtime_role.rolname,'platform.load_model_option_revisions(text[])','EXECUTE')
@@ -1124,6 +1258,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                'site_traffic_stop_observation','site_effect_approval',
                'admin_operator_authority','admin_command_decision','admin_approval','admin_approval_decision',
                'admin_authority_bootstrap','admin_post_effect_review',
+               ${ADMISSION_RELATIONS_SQL},
                ${ASSET_RELATIONS_SQL}
                ]) AND (
                  (candidate.relname LIKE 'model\\_%' ESCAPE '\\' AND (
@@ -1181,6 +1316,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                'site_traffic_stop_observation','site_effect_approval',
                'admin_operator_authority','admin_command_decision','admin_approval','admin_approval_decision',
                'admin_authority_bootstrap','admin_post_effect_review',
+               ${ADMISSION_RELATIONS_SQL},
                ${ASSET_RELATIONS_SQL}
                ]) AND (
                  (runtime_role.rolname = $2 AND (
@@ -1192,6 +1328,11 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                    'authorization_session_access_grant'
                  ]))
                  OR
+                 (runtime_role.rolname=$5 AND (
+                   has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
+                   OR has_any_column_privilege(runtime_role.rolname,candidate.oid,'SELECT')
+                 ) AND candidate.relname <> ALL(ARRAY[${ADMISSION_SELECT_RELATIONS_SQL}]))
+                 OR
                  ((has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
                    OR has_any_column_privilege(runtime_role.rolname,candidate.oid,'SELECT'))
                   AND candidate.relname = ANY(ARRAY[
@@ -1201,6 +1342,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                   ]) AND NOT (
                     (runtime_role.rolname=$3 AND candidate.relname<>'site_effect_approval')
                     OR runtime_role.rolname=$4
+                    OR (runtime_role.rolname=$5 AND
+                      candidate.relname=ANY(ARRAY['site','site_release']))
                  ))
                  OR
                  ((has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
@@ -1209,6 +1352,9 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                     (runtime_role.rolname=$1 AND
                       candidate.relname=ANY(ARRAY[${ASSET_API_RELATIONS_SQL}]))
                     OR (runtime_role.rolname IN ($3,$4))
+                    OR (runtime_role.rolname=$5 AND candidate.relname=ANY(ARRAY[
+                      'asset_resource','asset_version','asset_eligibility_projection'
+                    ]))
                   ))
                  OR
                  (runtime_role.rolname=$1
@@ -1257,6 +1403,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                      'credit_allocation_reservation_receipt','credit_allocation_return_receipt',
                      'credit_authorization_segment','credit_budget_operation_receipt'
                    ]))
+                   OR (runtime_role.rolname = $5 AND
+                     candidate.relname=ANY(ARRAY[${ADMISSION_INSERT_RELATIONS_SQL}]))
                    OR (runtime_role.rolname = $2 AND candidate.relname = ANY(ARRAY['authorization_snapshot','authorization_snapshot_record']))
                    OR (runtime_role.rolname = $1 AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
                    OR (runtime_role.rolname = $3 AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_INSERT_RELATIONS_SQL}]))
@@ -1292,6 +1440,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                      'commerce_redemption_preview','credit_account','credit_hold',
                      'credit_execution_budget_root','credit_authorization_segment','commerce_fulfillment_transaction'
                    ]))
+                   OR (runtime_role.rolname = $5 AND
+                     candidate.relname=ANY(ARRAY[${ADMISSION_UPDATE_RELATIONS_SQL}]))
                    OR (runtime_role.rolname = $1 AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
                    OR (runtime_role.rolname = $3 AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_UPDATE_RELATIONS_SQL}]))
                    OR (runtime_role.rolname = $3 AND candidate.relname = ANY(ARRAY[
@@ -1338,6 +1488,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                      'credit_allocation_reservation_receipt','credit_allocation_return_receipt',
                      'credit_authorization_segment','credit_budget_operation_receipt'
                    ]))
+                   OR (runtime_role.rolname = $5 AND
+                     candidate.relname=ANY(ARRAY[${ADMISSION_INSERT_RELATIONS_SQL}]))
                    OR (runtime_role.rolname = $2 AND candidate.relname = ANY(ARRAY['authorization_snapshot','authorization_snapshot_record']))
                    OR (runtime_role.rolname = $1 AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
                    OR (runtime_role.rolname = $3 AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_INSERT_RELATIONS_SQL}]))
@@ -1373,6 +1525,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                      'commerce_redemption_preview','credit_account','credit_hold',
                      'credit_execution_budget_root','credit_authorization_segment','commerce_fulfillment_transaction'
                    ]))
+                   OR (runtime_role.rolname = $5 AND
+                     candidate.relname=ANY(ARRAY[${ADMISSION_UPDATE_RELATIONS_SQL}]))
                    OR (runtime_role.rolname = $1 AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
                    OR (runtime_role.rolname = $3 AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_UPDATE_RELATIONS_SQL}]))
                    OR (runtime_role.rolname = $3 AND candidate.relname = ANY(ARRAY[
@@ -1419,6 +1573,9 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                  to_regprocedure('platform.resolve_model_candidates(text,text,text)'),
                  to_regprocedure('platform.find_model_selection_decision(uuid)'),
                  to_regprocedure('platform.resolve_product_model_option_catalog(text,text)'),
+                 to_regprocedure('platform.valid_credit_scope_policy(jsonb)')
+               ]))
+               OR (runtime_role.rolname = $5 AND candidate_function.oid = ANY(ARRAY[
                  to_regprocedure('platform.resolve_admission_model_owner(text,text,text)'),
                  to_regprocedure('platform.valid_credit_scope_policy(jsonb)')
                ]))
@@ -1441,18 +1598,28 @@ const POST_MIGRATION_AUTHORITY_SQL = `
   JOIN pg_class foundation ON foundation.relnamespace = platform_schema.oid
                           AND foundation.relname = 'platform_foundation'
   JOIN pg_roles foundation_owner ON foundation_owner.oid = foundation.relowner
-  WHERE runtime_role.rolname = ANY(ARRAY[$1,$2,$3,$4]::text[])
+  WHERE runtime_role.rolname = ANY(ARRAY[$1,$2,$3,$4,$5]::text[])
   ORDER BY runtime_role.rolname
 `;
 
 function assertDistinctRoles(
   migratorRole: string,
   apiRole: string,
+  admissionRole: string,
   authorizationRole: string,
   workerRole: string,
   adminRole: string,
 ): void {
-  if (new Set([migratorRole, apiRole, authorizationRole, workerRole, adminRole]).size !== 5) {
+  if (
+    new Set([
+      migratorRole,
+      apiRole,
+      admissionRole,
+      authorizationRole,
+      workerRole,
+      adminRole,
+    ]).size !== 6
+  ) {
     throw new Error("PLATFORM_DATABASE_ROLES_MUST_BE_DISTINCT");
   }
 }

@@ -26,6 +26,7 @@
     "model-option:publish-site-release": "tsx scripts/model-control/publish-site-release-catalog.mts",
     "admin:bootstrap-authority": "tsx scripts/admin-control/bootstrap-authority.mts",
     "start:api": "node dist/src/process/api.js",
+    "start:admission": "node dist/src/process/admission.js",
     "start:admin": "node dist/src/process/admin.js",
     "start:authorization": "node dist/src/process/authorization.js",
     "start:worker": "node dist/src/process/worker.js",

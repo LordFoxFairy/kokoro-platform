@@ -19,13 +19,50 @@ deployables:
     activationAuthorized: false
     runtimeTraffic: false
     inboundContracts: []
-    declaredInboundContracts: [platform-public-http, platform-admission-connect]
+    declaredInboundContracts: [platform-public-http]
     outboundContracts: []
     secretClasses: [platform-api-database, workload-verification, identity-totp-encryption-keyring, identity-reauthentication-digest-key]
     audience: platform-api
     scalingKey: http-concurrency
     readiness: /health/ready
     drain: http-graceful
+    sloOwner: platform
+    runbookOwner: platform
+    releaseOwner: platform
+
+  - id: platform-admission
+    command: node --conditions=kokoro-runtime deploy/docker/runtime-entrypoint.mjs
+    selectorEnvironment: KOKORO_SERVICE_PACKAGE=platform-admission
+    processRole: admission
+    database:
+      environmentVariable: DATABASE_URL_PLATFORM
+      authorityMode: transition-candidate
+      expectedUserEnvironmentVariable: PLATFORM_DATABASE_ADMISSION_ROLE
+      migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
+      expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
+      credentialClass: platform-admission
+      permissions: admission-owner-transaction-only
+      ddl: forbidden
+    activationAuthorized: false
+    runtimeTraffic: false
+    inboundContracts: []
+    declaredInboundContracts: [platform-admission-connect]
+    outboundContracts:
+      [session-admission-owner-connect, session-dispatch-owner-evidence-connect, agent-execution-evidence-connect]
+    secretClasses:
+      [
+        platform-admission-database,
+        mtls-server,
+        mtls-peer-registry,
+        mtls-client,
+        session-peer-ca,
+        agent-peer-ca,
+        admission-hpke-public-key-ring,
+      ]
+    audience: platform-admission
+    scalingKey: connect-request-concurrency
+    readiness: /health/ready
+    drain: http2-graceful
     sloOwner: platform
     runbookOwner: platform
     releaseOwner: platform
@@ -125,6 +162,7 @@ deployables:
       authorityMode: transition-candidate
       expectedUserEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
       apiRoleEnvironmentVariable: PLATFORM_DATABASE_API_ROLE
+      admissionRoleEnvironmentVariable: PLATFORM_DATABASE_ADMISSION_ROLE
       workerRoleEnvironmentVariable: PLATFORM_DATABASE_WORKER_ROLE
       authorizationRoleEnvironmentVariable: PLATFORM_DATABASE_AUTHORIZATION_ROLE
       adminRoleEnvironmentVariable: PLATFORM_DATABASE_ADMIN_ROLE

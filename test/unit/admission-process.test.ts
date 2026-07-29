@@ -67,4 +67,26 @@ describe("Platform Admission process", () => {
     expect(events).toEqual(["db.connect", "db.disconnect"]);
     expect(process.status().state).toBe("stopped");
   });
+
+  it("fails closed and drains when the bound HTTP/2 server terminates", async () => {
+    const events: string[] = [];
+    const db = database(events);
+    const server = new FakeSecureServer();
+    const onFatalError = vi.fn();
+    const composition: AdmissionProductionComposition = {
+      handler: vi.fn(),
+      createServer: vi.fn(() => server as never),
+    };
+    const process = createPlatformAdmissionProcess({ database: db, composition, onFatalError });
+    await process.start({ host: "127.0.0.1", port: 4244 });
+
+    const failure = new Error("listener terminated");
+    server.emit("error", failure);
+
+    expect(onFatalError).toHaveBeenCalledWith(failure);
+    expect(process.status().ready).toBe(false);
+    await vi.waitFor(() => expect(process.status().state).toBe("stopped"));
+    expect(server.close).toHaveBeenCalledOnce();
+    expect(events.at(-1)).toBe("db.disconnect");
+  });
 });

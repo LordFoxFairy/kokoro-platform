@@ -2,11 +2,19 @@ import type {
   Http2SecureServer,
   ServerHttp2Session,
 } from "node:http2";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import type { PlatformDatabaseClient } from "../infrastructure/postgres/client.js";
+import {
+  createPlatformDatabaseClient,
+  loadPlatformDatabaseConfig,
+} from "../infrastructure/postgres/client.js";
 import type {
   AdmissionProductionComposition,
   AdmissionRequestListener,
 } from "./admission-composition.js";
+import { createAdmissionProductionComposition } from "./admission-composition.js";
+import { createAdmissionProductionOwnerPorts } from "./admission-owner-composition.js";
 
 export type PlatformAdmissionProcessState =
   | "stopped"
@@ -36,6 +44,7 @@ export interface PlatformAdmissionProcess {
 export function createPlatformAdmissionProcess(options: Readonly<{
   database: PlatformDatabaseClient;
   composition: AdmissionProductionComposition;
+  onFatalError?: (error: Error) => void;
 }>): PlatformAdmissionProcess {
   let state: PlatformAdmissionProcessState = "stopped";
   let ready = false;
@@ -111,6 +120,13 @@ export function createPlatformAdmissionProcess(options: Readonly<{
       server.on("session", (session) => {
         sessions.add(session);
         session.once("close", () => sessions.delete(session));
+      });
+      server.on("error", (error) => {
+        if (state !== "running") return;
+        ready = false;
+        state = "failed";
+        options.onFatalError?.(error);
+        void process.shutdown().catch(() => undefined);
       });
       await listen(server, address);
       if (state !== "starting") throw new Error("PLATFORM_ADMISSION_START_ABORTED");
@@ -244,4 +260,70 @@ function validateAddress(address: Readonly<{ host: string; port: number }>): voi
     address.host.length < 1 || address.host.length > 253 || address.host.trim() !== address.host ||
     !Number.isInteger(address.port) || address.port < 1 || address.port > 65_535
   ) throw new Error("PLATFORM_ADMISSION_ADDRESS_INVALID");
+}
+
+export async function runPlatformAdmissionMain(
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): Promise<void> {
+  const database = createPlatformDatabaseClient(loadPlatformDatabaseConfig("admission", environment));
+  const ownerPorts = await createAdmissionProductionOwnerPorts({ environment });
+  const composition = await createAdmissionProductionComposition({
+    database,
+    ownerPorts,
+    gaDispatchAudience: required(environment, "PLATFORM_ADMISSION_GA_DISPATCH_AUDIENCE"),
+    environment,
+  });
+  const fatal = (error: Error) => {
+    process.exitCode = 1;
+    console.error("Platform Admission runtime failed", error);
+  };
+  const runtime = createPlatformAdmissionProcess({ database, composition, onFatalError: fatal });
+  const shutdown = () => {
+    void runtime.shutdown().catch((error: unknown) => {
+      process.exitCode = 1;
+      console.error("Platform Admission failed to drain", error);
+    });
+  };
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
+  try {
+    const address = await runtime.start({
+      host: "0.0.0.0",
+      port: boundedPort(environment.PLATFORM_ADMISSION_PORT ?? "4244"),
+    });
+    console.log(`Platform Admission listening at ${address}`);
+  } catch (error) {
+    process.off("SIGINT", shutdown);
+    process.off("SIGTERM", shutdown);
+    await runtime.shutdown().catch(() => undefined);
+    throw error;
+  }
+}
+
+function boundedPort(value: string): number {
+  if (!/^[1-9][0-9]{0,4}$/u.test(value)) throw new Error("PLATFORM_ADMISSION_PORT_INVALID");
+  const port = Number(value);
+  if (!Number.isInteger(port) || port > 65_535) throw new Error("PLATFORM_ADMISSION_PORT_INVALID");
+  return port;
+}
+
+function required(
+  environment: Readonly<Record<string, string | undefined>>,
+  name: string,
+): string {
+  const value = environment[name]?.trim();
+  if (!value) throw new Error(`${name}_REQUIRED`);
+  return value;
+}
+
+function isMainModule(): boolean {
+  const entry = process.argv[1];
+  return entry !== undefined && pathToFileURL(resolve(entry)).href === import.meta.url;
+}
+
+if (isMainModule()) {
+  await runPlatformAdmissionMain().catch((error: unknown) => {
+    process.exitCode = 1;
+    console.error("Platform Admission failed to start", error);
+  });
 }

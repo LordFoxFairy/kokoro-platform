@@ -23,7 +23,7 @@ DECLARE
   resolved_inventory_digest TEXT;
 BEGIN
   IF current_setting('app.operation',true) IS DISTINCT FROM 'admission.command'
-     OR current_setting('app.workload_kind',true) IS DISTINCT FROM 'platform_api'
+     OR current_setting('app.workload_kind',true) IS DISTINCT FROM 'platform_admission'
      OR current_setting('app.site_id',true) IS DISTINCT FROM p_site_id THEN
     RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='ADMISSION_MODEL_OWNER_CONTEXT_REQUIRED';
   END IF;

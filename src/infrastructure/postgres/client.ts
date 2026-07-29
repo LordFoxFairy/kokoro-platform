@@ -11,11 +11,18 @@ import { assertVerifiedRequestSecurityContext } from "../../shared/security-cont
 import type { SessionAuthenticationPort } from "../../modules/authorization/application/contracts/session-authorization-ports.js";
 import type { AuthenticatedUserSession } from "../../modules/authorization/domain/session-access-grant.js";
 
-export type PlatformProcessRole = "api" | "authorization" | "worker" | "admin" | "migrator";
-export type PlatformCredentialClass = "api" | "authorization" | "worker" | "admin" | "migrator";
+export type PlatformProcessRole =
+  | "api" | "admission" | "authorization" | "worker" | "admin" | "migrator";
+export type PlatformCredentialClass =
+  | "api" | "admission" | "authorization" | "worker" | "admin" | "migrator";
 
 const ROLE_DEFAULTS = {
   api: { poolMax: 20, credentialClass: "api", identityEnv: "PLATFORM_DATABASE_API_ROLE" },
+  admission: {
+    poolMax: 12,
+    credentialClass: "admission",
+    identityEnv: "PLATFORM_DATABASE_ADMISSION_ROLE",
+  },
   authorization: {
     poolMax: 8,
     credentialClass: "authorization",
@@ -285,7 +292,7 @@ export function createPlatformDatabaseClient(
       operation: PlatformInternalOperation,
       work: (transaction: PlatformTransaction) => Promise<Result>,
     ) => {
-      const allowed = config.role === "api"
+      const allowed = config.role === "admission"
         ? operation === "admission.command"
         : config.role === "worker"
           ? operation === "authorization.retention" ||
@@ -307,8 +314,8 @@ export function createPlatformDatabaseClient(
             operation,
             config.role === "worker"
               ? "platform_worker"
-              : config.role === "api"
-                ? "platform_api"
+              : config.role === "admission"
+                ? "platform_admission"
                 : "platform_authorization",
           );
           const lease = issuePlatformTransaction({
@@ -572,11 +579,75 @@ const ASSET_WORKER_UPDATE_RELATIONS = [
   ...ASSET_API_MUTABLE_RELATIONS, "asset_blob_candidate", "asset_cleanup_group",
   "asset_object_cleanup", "asset_promotion_intent",
 ] as const;
+const ADMISSION_RELATIONS = [
+  "admission_command",
+  "admission_session_execution_binding",
+  "admission_execution_manifest",
+  "admission_launch_profile_snapshot",
+  "admission_capability_catalog_snapshot",
+] as const;
+const ADMISSION_SELECT_RELATIONS = [
+  ...ADMISSION_RELATIONS,
+  "site",
+  "site_release",
+  "authorization_site",
+  "authorization_site_release",
+  "authorization_product_binding",
+  "authorization_subject",
+  "authorization_identity_session",
+  "authorization_project",
+  "authorization_project_membership",
+  "authorization_session_access_grant",
+  "identity_personal_bootstrap",
+  "identity_execution_space",
+  "identity_namespace_allocation_intent",
+  "commerce_billing_account",
+  "credit_account",
+  "credit_grant",
+  "credit_hold",
+  "credit_hold_allocation",
+  "credit_journal_transaction",
+  "credit_journal_entry",
+  "credit_execution_budget_root",
+  "credit_budget_allocation",
+  "credit_budget_allocation_revision",
+  "credit_authorization_segment",
+  "credit_budget_operation_receipt",
+  "asset_resource",
+  "asset_version",
+  "asset_eligibility_projection",
+] as const;
+const ADMISSION_INSERT_RELATIONS = [
+  "admission_command",
+  "admission_session_execution_binding",
+  "admission_execution_manifest",
+  "outbox_event",
+  "credit_hold",
+  "credit_hold_allocation",
+  "credit_journal_transaction",
+  "credit_journal_entry",
+  "credit_execution_budget_root",
+  "credit_budget_allocation",
+  "credit_budget_allocation_revision",
+  "credit_authorization_segment",
+  "credit_budget_operation_receipt",
+] as const;
+const ADMISSION_UPDATE_RELATIONS = [
+  "admission_command",
+  "admission_execution_manifest",
+  "credit_hold",
+  "credit_execution_budget_root",
+  "credit_authorization_segment",
+] as const;
 const ASSET_RELATIONS_SQL = sqlLiterals(ASSET_RELATIONS);
 const ASSET_API_RELATIONS_SQL = sqlLiterals(ASSET_API_RELATIONS);
 const ASSET_API_MUTABLE_RELATIONS_SQL = sqlLiterals(ASSET_API_MUTABLE_RELATIONS);
 const ASSET_WORKER_INSERT_RELATIONS_SQL = sqlLiterals(ASSET_WORKER_INSERT_RELATIONS);
 const ASSET_WORKER_UPDATE_RELATIONS_SQL = sqlLiterals(ASSET_WORKER_UPDATE_RELATIONS);
+const ADMISSION_RELATIONS_SQL = sqlLiterals(ADMISSION_RELATIONS);
+const ADMISSION_SELECT_RELATIONS_SQL = sqlLiterals(ADMISSION_SELECT_RELATIONS);
+const ADMISSION_INSERT_RELATIONS_SQL = sqlLiterals(ADMISSION_INSERT_RELATIONS);
+const ADMISSION_UPDATE_RELATIONS_SQL = sqlLiterals(ADMISSION_UPDATE_RELATIONS);
 
 const RUNTIME_IDENTITY_SQL = `
   SELECT current_user AS "currentUser",
@@ -671,6 +742,41 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_table_privilege(current_user, 'platform.asset_resource', 'SELECT')
            AND has_table_privilege(current_user, 'platform.asset_version', 'SELECT')
            AND has_table_privilege(current_user, 'platform.asset_reference', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.asset_eligibility_projection', 'SELECT')
+         WHEN $2 = 'admission' THEN
+           has_table_privilege(current_user, 'platform.admission_command', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.admission_session_execution_binding', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.admission_execution_manifest', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.admission_launch_profile_snapshot', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.admission_capability_catalog_snapshot', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.outbox_event', 'INSERT')
+           AND has_table_privilege(current_user, 'platform.site', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.site_release', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.authorization_site', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.authorization_site_release', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.authorization_product_binding', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.authorization_subject', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.authorization_identity_session', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.authorization_project', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.authorization_project_membership', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.authorization_session_access_grant', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.identity_personal_bootstrap', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.identity_execution_space', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.identity_namespace_allocation_intent', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.commerce_billing_account', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.credit_account', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.credit_grant', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.credit_hold', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.credit_hold_allocation', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.credit_journal_transaction', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.credit_journal_entry', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.credit_execution_budget_root', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.credit_budget_allocation', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.credit_budget_allocation_revision', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.credit_authorization_segment', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.credit_budget_operation_receipt', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.asset_resource', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.asset_version', 'SELECT')
            AND has_table_privilege(current_user, 'platform.asset_eligibility_projection', 'SELECT')
          WHEN $2 = 'worker' THEN
            has_table_privilege(current_user, 'platform.outbox_event', 'SELECT,UPDATE')
@@ -784,7 +890,8 @@ const RUNTIME_IDENTITY_SQL = `
            AS "canExecuteAdminAuthorityChange",
          CASE WHEN $2='api' THEN
            has_function_privilege(current_user,'platform.resolve_product_model_option_catalog(text,text)','EXECUTE')
-           AND has_function_privilege(current_user,'platform.resolve_admission_model_owner(text,text,text)','EXECUTE')
+         WHEN $2='admission' THEN
+           has_function_privilege(current_user,'platform.resolve_admission_model_owner(text,text,text)','EXECUTE')
          WHEN $2='admin' THEN
            has_function_privilege(current_user,'platform.load_model_option_inventory(text)','EXECUTE')
            AND has_function_privilege(current_user,'platform.load_model_option_revisions(text[])','EXECUTE')
@@ -861,6 +968,7 @@ const RUNTIME_IDENTITY_SQL = `
                'site_traffic_stop_observation','site_effect_approval',
                'admin_operator_authority','admin_command_decision','admin_approval','admin_approval_decision',
                'admin_authority_bootstrap','admin_post_effect_review',
+               ${ADMISSION_RELATIONS_SQL},
                ${ASSET_RELATIONS_SQL}
                ]) AND (
                  has_table_privilege(runtime_role.rolname, candidate.oid,
@@ -913,6 +1021,7 @@ const RUNTIME_IDENTITY_SQL = `
                'site_traffic_stop_observation','site_effect_approval',
                'admin_operator_authority','admin_command_decision','admin_approval','admin_approval_decision',
                'admin_authority_bootstrap','admin_post_effect_review',
+               ${ADMISSION_RELATIONS_SQL},
                ${ASSET_RELATIONS_SQL}
                ]) AND (
                  (candidate.relname LIKE 'model\\_%' ESCAPE '\\' AND (
@@ -929,6 +1038,11 @@ const RUNTIME_IDENTITY_SQL = `
                    'authorization_session_access_grant'
                  ]))
                  OR
+                 ($2='admission' AND (
+                   has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
+                   OR has_any_column_privilege(runtime_role.rolname,candidate.oid,'SELECT')
+                 ) AND candidate.relname <> ALL(ARRAY[${ADMISSION_SELECT_RELATIONS_SQL}]))
+                 OR
                  ((has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
                    OR has_any_column_privilege(runtime_role.rolname,candidate.oid,'SELECT'))
                   AND candidate.relname = ANY(ARRAY[
@@ -937,14 +1051,18 @@ const RUNTIME_IDENTITY_SQL = `
                     'site_traffic_stop_observation','site_effect_approval'
                   ]) AND NOT (
                     ($2='worker' AND candidate.relname<>'site_effect_approval') OR $2='admin'
+                    OR ($2='admission' AND candidate.relname=ANY(ARRAY['site','site_release']))
                   ))
                  OR
                  ((has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
-                   OR has_any_column_privilege(runtime_role.rolname,candidate.oid,'SELECT')) AND (
-                   ($2='api' AND candidate.relname=ANY(ARRAY[${ASSET_API_RELATIONS_SQL}]))
-                   OR ($2 IN ('worker','admin') AND
-                     candidate.relname=ANY(ARRAY[${ASSET_RELATIONS_SQL}]))
-                 ))
+                  OR has_any_column_privilege(runtime_role.rolname,candidate.oid,'SELECT')) AND NOT (
+                    ($2='api' AND candidate.relname=ANY(ARRAY[${ASSET_API_RELATIONS_SQL}]))
+                    OR ($2 IN ('worker','admin') AND
+                      candidate.relname=ANY(ARRAY[${ASSET_RELATIONS_SQL}]))
+                    OR ($2='admission' AND candidate.relname=ANY(ARRAY[
+                      'asset_resource','asset_version','asset_eligibility_projection'
+                    ]))
+                  ))
                  OR
                  (has_table_privilege(runtime_role.rolname, candidate.oid,
                    'DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN') AND NOT (
@@ -980,6 +1098,8 @@ const RUNTIME_IDENTITY_SQL = `
                      'credit_allocation_reservation_receipt','credit_allocation_return_receipt',
                      'credit_authorization_segment','credit_budget_operation_receipt'
                    ]))
+                   OR ($2 = 'admission' AND
+                     candidate.relname=ANY(ARRAY[${ADMISSION_INSERT_RELATIONS_SQL}]))
                    OR ($2 = 'authorization' AND candidate.relname = ANY(ARRAY['authorization_snapshot','authorization_snapshot_record']))
                    OR ($2 = 'api' AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
                    OR ($2 = 'worker' AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_INSERT_RELATIONS_SQL}]))
@@ -1013,6 +1133,8 @@ const RUNTIME_IDENTITY_SQL = `
                      'commerce_redemption_preview','credit_account','credit_hold',
                      'credit_execution_budget_root','credit_authorization_segment','commerce_fulfillment_transaction'
                    ]))
+                   OR ($2 = 'admission' AND
+                     candidate.relname=ANY(ARRAY[${ADMISSION_UPDATE_RELATIONS_SQL}]))
                    OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
                      'outbox_event','site','site_release','site_deployment_binding',
                      'site_activation_attempt','site_traffic_stop_attempt','authorization_site',
@@ -1059,6 +1181,8 @@ const RUNTIME_IDENTITY_SQL = `
                      'credit_allocation_reservation_receipt','credit_allocation_return_receipt',
                      'credit_authorization_segment','credit_budget_operation_receipt'
                    ]))
+                   OR ($2 = 'admission' AND
+                     candidate.relname=ANY(ARRAY[${ADMISSION_INSERT_RELATIONS_SQL}]))
                    OR ($2 = 'authorization' AND candidate.relname = ANY(ARRAY['authorization_snapshot','authorization_snapshot_record']))
                    OR ($2 = 'api' AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
                    OR ($2 = 'worker' AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_INSERT_RELATIONS_SQL}]))
@@ -1092,6 +1216,8 @@ const RUNTIME_IDENTITY_SQL = `
                      'commerce_redemption_preview','credit_account','credit_hold',
                      'credit_execution_budget_root','credit_authorization_segment','commerce_fulfillment_transaction'
                    ]))
+                   OR ($2 = 'admission' AND
+                     candidate.relname=ANY(ARRAY[${ADMISSION_UPDATE_RELATIONS_SQL}]))
                    OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
                      'outbox_event','site','site_release','site_deployment_binding',
                      'site_activation_attempt','site_traffic_stop_attempt','authorization_site',
@@ -1138,6 +1264,9 @@ const RUNTIME_IDENTITY_SQL = `
                  to_regprocedure('platform.resolve_model_candidates(text,text,text)'),
                  to_regprocedure('platform.find_model_selection_decision(uuid)'),
                  to_regprocedure('platform.resolve_product_model_option_catalog(text,text)'),
+                 to_regprocedure('platform.valid_credit_scope_policy(jsonb)')
+               ]))
+               OR ($2 = 'admission' AND candidate_function.oid = ANY(ARRAY[
                  to_regprocedure('platform.resolve_admission_model_owner(text,text,text)'),
                  to_regprocedure('platform.valid_credit_scope_policy(jsonb)')
                ]))
@@ -1199,7 +1328,8 @@ function validRuntimeIdentity(
     identity.canExecuteModelCandidatesProjection === (config.role === "api") &&
     identity.canExecuteModelDecisionProjection === (config.role === "api") &&
     identity.canExecuteModelAvailabilityReport === (config.role === "worker") &&
-    identity.canExecuteCreditScopePolicy === (config.role === "api" || config.role === "admin") &&
+    identity.canExecuteCreditScopePolicy ===
+      (config.role === "api" || config.role === "admission" || config.role === "admin") &&
     identity.canExecuteAdminAuthorityChange === (config.role === "worker") &&
     identity.hasRequiredModelOptionFunctions &&
     !identity.canSelectModelCatalogTable &&

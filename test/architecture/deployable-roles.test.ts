@@ -14,6 +14,7 @@ import { createPlatformApiProcess } from "../../src/process/api.js";
 import { createPlatformWorkerProcess } from "../../src/process/worker.js";
 
 const apiUrl = "postgresql://platform_api:secret@localhost:5432/kokoro_platform";
+const admissionUrl = "postgresql://platform_admission:secret@localhost:5432/kokoro_platform";
 const workerUrl = "postgresql://platform_worker:secret@localhost:5432/kokoro_platform";
 const authorizationUrl = "postgresql://platform_authorization:secret@localhost:5432/kokoro_platform";
 const adminUrl = "postgresql://platform_admin:secret@localhost:5432/kokoro_platform";
@@ -22,6 +23,7 @@ const commonEnvironment = {
   PLATFORM_DATABASE_AUTHORITY_MODE: "transition-candidate",
   PLATFORM_DATABASE_EXPECTED_DATABASE: "kokoro_platform",
   PLATFORM_DATABASE_MIGRATOR_ROLE: "platform_migrator",
+  PLATFORM_DATABASE_ADMISSION_ROLE: "platform_admission",
   PLATFORM_DATABASE_ADMIN_ROLE: "platform_admin",
   PLATFORM_DATABASE_AUTHORIZATION_ROLE: "platform_authorization",
 } as const;
@@ -67,7 +69,7 @@ describe("Platform PostgreSQL authority", () => {
     ).toThrowError("PLATFORM_DATABASE_URL_USER_MISMATCH");
   });
 
-  it("keeps API, Authorization, Worker, Admin, and migrator credential classes independent", () => {
+  it("keeps every runtime and migrator credential class independent", () => {
     const api = loadPlatformDatabaseConfig("api", {
       ...commonEnvironment,
       DATABASE_URL_PLATFORM: apiUrl,
@@ -79,6 +81,11 @@ describe("Platform PostgreSQL authority", () => {
       DATABASE_URL_PLATFORM: workerUrl,
       PLATFORM_DATABASE_CREDENTIAL_CLASS: "worker",
       PLATFORM_DATABASE_WORKER_ROLE: "platform_worker",
+    });
+    const admission = loadPlatformDatabaseConfig("admission", {
+      ...commonEnvironment,
+      DATABASE_URL_PLATFORM: admissionUrl,
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: "admission",
     });
     const authorization = loadPlatformDatabaseConfig("authorization", {
       ...commonEnvironment,
@@ -93,18 +100,28 @@ describe("Platform PostgreSQL authority", () => {
     expect(
       new Set([
         api.expectedDatabaseUser,
+        admission.expectedDatabaseUser,
         worker.expectedDatabaseUser,
         authorization.expectedDatabaseUser,
         admin.expectedDatabaseUser,
         api.migratorDatabaseUser,
       ]).size,
-    ).toBe(5);
+    ).toBe(6);
+    expect(admission).toMatchObject({
+      role: "admission",
+      credentialClass: "admission",
+      expectedDatabaseUser: "platform_admission",
+      applicationName: "kokoro-platform-admission",
+      pool: { max: 12, connectionTimeoutMs: 5_000 },
+    });
   });
 });
 
 describe("Platform migrator", () => {
   it("preflights PG18/roles, locks migration, grants role-scoped access, and sanitizes env", async () => {
     const events: string[] = [];
+    const grants: string[] = [];
+    let authoritySql = "";
     const lockClient: MigrationLockClient = {
       async connect() {
         events.push("connect");
@@ -127,6 +144,7 @@ describe("Platform migrator", () => {
                 inheritsPrivileges: false,
                 hasAnyMembership: false,
                 isApiMember: false,
+                isAdmissionMember: false,
                 isAuthorizationMember: false,
                 isWorkerMember: false,
                 isAdminMember: false,
@@ -144,6 +162,7 @@ describe("Platform migrator", () => {
           return {
             rows: [
               safeRole("platform_api"),
+              safeRole("platform_admission"),
               safeRole("platform_authorization"),
               safeRole("platform_worker"),
               safeRole("platform_admin"),
@@ -152,9 +171,11 @@ describe("Platform migrator", () => {
         }
         if (sql.includes("canReadFoundation")) {
           events.push("verify-authority");
+          authoritySql = sql;
           return {
             rows: [
               authority("platform_api"),
+              authority("platform_admission"),
               authority("platform_authorization"),
               authority("platform_worker"),
               authority("platform_admin"),
@@ -163,6 +184,7 @@ describe("Platform migrator", () => {
         }
         if (/^(?:REVOKE|GRANT|ALTER DEFAULT PRIVILEGES)/u.test(sql)) {
           events.push("grant");
+          grants.push(sql);
           return {};
         }
         events.push(`${sql}:${values?.join(",") ?? ""}`);
@@ -204,7 +226,36 @@ describe("Platform migrator", () => {
       `SELECT pg_advisory_lock(hashtext($1)):${MIGRATION_ADVISORY_LOCK}`,
       "execute",
     ]);
-    expect(events.filter((event) => event === "grant")).toHaveLength(103);
+    expect(grants).toContain(
+      "GRANT EXECUTE ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.resolve_admission_model_owner(TEXT, TEXT, TEXT) TO \"platform_admission\"",
+    );
+    expect(grants).toContain(
+      "REVOKE ALL ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT), platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID), platform.report_model_provider_availability(UUID, TEXT, TEXT, TEXT, BIGINT, TEXT, TIMESTAMPTZ, TEXT), platform.load_model_option_inventory(TEXT), platform.load_model_option_revisions(TEXT[]), platform.materialize_legacy_model_options(UUID, TEXT, TEXT, TEXT, TEXT, JSONB, JSONB, TEXT), platform.publish_site_release_model_catalog(UUID, JSONB, TEXT), platform.resolve_product_model_option_catalog(TEXT, TEXT), platform.resolve_admission_model_owner(TEXT, TEXT, TEXT) FROM \"platform_api\"",
+    );
+    expect(grants.some((sql) =>
+      sql.startsWith("GRANT INSERT ON TABLE platform.admission_command") &&
+      sql.endsWith('TO "platform_admission"'),
+    )).toBe(true);
+    expect(grants.some((sql) =>
+      sql.includes("platform.admission_command") &&
+      sql.startsWith("GRANT INSERT") &&
+      sql.endsWith('TO "platform_api"'),
+    )).toBe(false);
+    const columnInsertAuthority = authoritySql.match(
+      /has_any_column_privilege\(runtime_role\.rolname, candidate\.oid, 'INSERT'\)[\s\S]*?(?=OR \(has_any_column_privilege\(runtime_role\.rolname, candidate\.oid, 'UPDATE'\))/u,
+    )?.[0];
+    const columnUpdateAuthority = authoritySql.match(
+      /has_any_column_privilege\(runtime_role\.rolname, candidate\.oid, 'UPDATE'\)[\s\S]*?(?=OR \(candidate\.relname = 'platform_foundation')/u,
+    )?.[0];
+    expect(columnInsertAuthority).toContain("runtime_role.rolname = $5");
+    expect(columnInsertAuthority).toContain("'admission_command'");
+    expect(columnUpdateAuthority).toContain("runtime_role.rolname = $5");
+    expect(columnUpdateAuthority).toContain("'admission_execution_manifest'");
+    const admissionSelectFence = authoritySql.match(
+      /runtime_role\.rolname=\$5 AND \([\s\S]*?'SELECT'[\s\S]*?candidate\.relname <> ALL\(ARRAY\[[\s\S]*?'credit_authorization_segment'[\s\S]*?\]\)\)/u,
+    )?.[0];
+    expect(admissionSelectFence).toContain("'authorization_session_access_grant'");
+    expect(admissionSelectFence).toContain("'asset_eligibility_projection'");
     expect(events.slice(-3)).toEqual([
       "verify-authority",
       `SELECT pg_advisory_unlock(hashtext($1)):${MIGRATION_ADVISORY_LOCK}`,
@@ -223,6 +274,7 @@ describe("Platform migrator", () => {
           return {
             rows: [
               safeRole("platform_api"),
+              safeRole("platform_admission"),
               safeRole("platform_authorization"),
               { ...safeRole("platform_worker"), hasAnyMembership: true },
               safeRole("platform_admin"),
@@ -252,6 +304,7 @@ describe("Platform migrator", () => {
           return {
             rows: [
               safeRole("platform_api"),
+              safeRole("platform_admission"),
               safeRole("platform_authorization"),
               safeRole("platform_worker"),
               safeRole("platform_admin"),
@@ -262,6 +315,7 @@ describe("Platform migrator", () => {
           return {
             rows: [
               authority("platform_api"),
+              authority("platform_admission"),
               authority("platform_authorization"),
               { ...authority("platform_worker"), hasUnexpectedPlatformPrivilege: true },
               authority("platform_admin"),
@@ -403,11 +457,14 @@ describe("independent deployable roles", () => {
   it("publishes executable image selectors and distinct database roles", async () => {
     const manifest = await readFile(resolve("deployables.yaml"), "utf8");
     const entrypoint = await readFile(resolve("deploy/docker/runtime-entrypoint.mjs"), "utf8");
-    for (const role of ["platform-api", "platform-authorization", "platform-worker", "platform-admin", "platform-migrator"]) {
+    for (const role of ["platform-api", "platform-admission", "platform-authorization", "platform-worker", "platform-admin", "platform-migrator"]) {
       expect(manifest).toContain(`KOKORO_SERVICE_PACKAGE=${role}`);
       expect(entrypoint).toContain(`"${role}"`);
     }
     expect(manifest).toContain("credentialClass: platform-api");
+    expect(manifest).toContain("credentialClass: platform-admission");
+    expect(manifest).toContain("expectedUserEnvironmentVariable: PLATFORM_DATABASE_ADMISSION_ROLE");
+    expect(manifest).toContain("declaredInboundContracts: [platform-admission-connect]");
     expect(manifest).toContain("credentialClass: platform-worker");
     expect(manifest).toContain("credentialClass: platform-authorization");
     expect(manifest).toContain("expectedUserEnvironmentVariable: PLATFORM_DATABASE_AUTHORIZATION_ROLE");
@@ -451,7 +508,10 @@ function authority(roleName: string): Record<string, unknown> {
     canExecuteModelCandidatesProjection: roleName === "platform_api",
     canExecuteModelDecisionProjection: roleName === "platform_api",
     canExecuteModelAvailabilityReport: roleName === "platform_worker",
-    canExecuteCreditScopePolicy: roleName === "platform_api" || roleName === "platform_admin",
+    canExecuteCreditScopePolicy:
+      roleName === "platform_api" ||
+      roleName === "platform_admission" ||
+      roleName === "platform_admin",
     canExecuteAdminAuthorityChange: roleName === "platform_worker",
     hasRequiredModelOptionFunctions: true,
     canSelectModelCatalogTable: false,
@@ -474,6 +534,7 @@ function safeMigratorAuthority(): Record<string, unknown> {
     inheritsPrivileges: false,
     hasAnyMembership: false,
     isApiMember: false,
+    isAdmissionMember: false,
     isAuthorizationMember: false,
     isWorkerMember: false,
     isAdminMember: false,

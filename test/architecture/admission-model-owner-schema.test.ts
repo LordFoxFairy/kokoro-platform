@@ -13,7 +13,12 @@ describe("Admission Model owner database boundary", () => {
 
     expect(migration).toContain("CREATE FUNCTION platform.resolve_admission_model_owner");
     expect(migration).toContain("current_setting('app.operation',true) IS DISTINCT FROM 'admission.command'");
-    expect(migration).toContain("current_setting('app.workload_kind',true) IS DISTINCT FROM 'platform_api'");
+    expect(migration).toContain(
+      "current_setting('app.workload_kind',true) IS DISTINCT FROM 'platform_admission'",
+    );
+    expect(migration).not.toContain(
+      "current_setting('app.workload_kind',true) IS DISTINCT FROM 'platform_api'",
+    );
     expect(migration).toContain("current_setting('app.site_id',true) IS DISTINCT FROM p_site_id");
     expect(migration).toContain("composition_slot='orchestration'");
     expect(migration).toContain("model_availability.status='active'");
