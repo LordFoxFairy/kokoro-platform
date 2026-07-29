@@ -205,6 +205,7 @@ export interface IdentitySecurityManagementRepository {
   ): Promise<Readonly<{
     target: IdentityReauthenticationTarget;
     authStrengthPolicyRevision: string;
+    expiresAt: string;
   }> | null>;
   consumeReauthenticationProof(
     transaction: PlatformTransaction,

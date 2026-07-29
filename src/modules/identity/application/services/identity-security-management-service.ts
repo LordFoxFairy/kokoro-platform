@@ -129,6 +129,7 @@ export class IdentitySecurityManagementService {
     const challengeProof = await this.verifyReauthenticationChallenge(input, challenge, proofCode, now);
     const issued = this.dependencies.reauthenticationCredentials.issue();
     const expiresAt = plus(now, 5 * 60_000);
+    let resolvedExpiresAt = expiresAt;
     const challengeRef = passwordStage ? this.reference() : null;
     let resolvedTarget = target;
     let policyRevision = material?.authStrengthPolicyRevision ?? challenge?.authStrengthPolicyRevision ?? "unknown";
@@ -173,6 +174,7 @@ export class IdentitySecurityManagementService {
           if (recovered !== null) {
             resolvedTarget = recovered.target;
             policyRevision = recovered.authStrengthPolicyRevision;
+            resolvedExpiresAt = recovered.expiresAt;
             completed = Object.freeze({ accountRef: material.accountRef,
               accountSecurityEpoch: material.accountSecurityEpoch,
               target: recovered.target, authStrengthPolicyRevision: recovered.authStrengthPolicyRevision });
@@ -253,7 +255,7 @@ export class IdentitySecurityManagementService {
           operationId: resolvedTarget.operationId, resourceKind: resolvedTarget.resourceKind,
           accountRef: completed.accountRef, accountSecurityEpoch: completed.accountSecurityEpoch,
           sessionEpoch: binding.sessionEpoch, authStrengthPolicyRevision: policyRevision,
-          issuedAt: now, expiresAt, committedAt: now,
+          issuedAt: now, expiresAt: resolvedExpiresAt, committedAt: now,
         });
         return Object.freeze({ kind: "fresh" as const });
         },
@@ -274,7 +276,7 @@ export class IdentitySecurityManagementService {
       proof: Object.freeze({
         audience: resolvedTarget.audience, operationId: resolvedTarget.operationId,
         resourceKind: resolvedTarget.resourceKind, reauthenticationProof: issued.credential,
-        authStrengthPolicyRevision: policyRevision, issuedAt: now, expiresAt,
+        authStrengthPolicyRevision: policyRevision, issuedAt: now, expiresAt: resolvedExpiresAt,
         sessionRef: binding.sessionRef, sessionEpoch: binding.sessionEpoch,
         userSecurityEpoch: accountSecurityEpoch,
       }),
@@ -517,13 +519,6 @@ export class IdentitySecurityManagementService {
         assertSameCommand(existing, input.commandId);
         if (existing.state === "succeeded") return Object.freeze({ kind: "retry" as const });
         if (existing.state === "failed") return Object.freeze({ kind: "rejected" as const });
-        await this.bindRecovery(
-          transaction,
-          input,
-          "confirmTotpEnrollment",
-          input.transactionRef,
-          now,
-        );
         const confirmed = await this.dependencies.repository.confirmTotpEnrollment(transaction, {
           binding,
           transactionRef: input.transactionRef,
@@ -538,6 +533,13 @@ export class IdentitySecurityManagementService {
           await this.failure(transaction, identity, "AUTH_TRANSACTION_INVALID");
           return Object.freeze({ kind: "rejected" as const });
         }
+        await this.bindRecovery(
+          transaction,
+          input,
+          "confirmTotpEnrollment",
+          input.transactionRef,
+          now,
+        );
         await this.securityEvent(transaction, input, {
           eventType: "identity.totp.enrollment_confirmed",
           accountRef: confirmed.accountRef,
