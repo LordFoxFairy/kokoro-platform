@@ -44,7 +44,6 @@ CREATE TABLE platform.identity_verification_transaction (
   secret_digest CHAR(64) NOT NULL CHECK (secret_digest ~ '^[0-9a-f]{64}$'),
   request_digest CHAR(64) NOT NULL CHECK (request_digest ~ '^[0-9a-f]{64}$'),
   state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','consumed','expired','locked','superseded')),
-  delivery_state TEXT NOT NULL DEFAULT 'queued' CHECK (delivery_state IN ('queued','delivered','failed')),
   attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
   max_attempts INTEGER NOT NULL CHECK (max_attempts BETWEEN 1 AND 20),
   resend_count INTEGER NOT NULL DEFAULT 0 CHECK (resend_count BETWEEN 0 AND 20),
@@ -72,7 +71,7 @@ ALTER TABLE platform.authorization_product_binding
 CREATE TABLE platform.identity_verification_legal_acceptance (
   site_ref TEXT NOT NULL,
   transaction_ref TEXT NOT NULL,
-  term_ref TEXT NOT NULL CHECK (length(term_ref) BETWEEN 1 AND 256),
+  term_ref TEXT NOT NULL CHECK (length(term_ref) BETWEEN 1 AND 128),
   accepted_at TIMESTAMPTZ NOT NULL,
   evidence_digest CHAR(64) NOT NULL CHECK (evidence_digest ~ '^[0-9a-f]{64}$'),
   workload_identity_id TEXT NOT NULL,

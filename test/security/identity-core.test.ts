@@ -44,9 +44,11 @@ describe("Platform Identity core security", () => {
     expect(migration).toContain("attempt_count");
     expect(migration).toContain("max_attempts");
     expect(migration).toContain("identity_verification_legal_acceptance");
+    expect(migration).toContain("length(term_ref) BETWEEN 1 AND 128");
     expect(migration).toContain("identity_verification_delivery");
     expect(migration).toContain("verification_legal_acceptance_immutable");
     expect(migration).toContain("outbox_event(event_id)");
+    expect(migration).not.toContain("delivery_state TEXT");
     expect(migration).toContain("identity_refresh_credential");
     expect(migration).toContain("UNIQUE(site_ref,family_ref,generation)");
     expect(migration).toContain("REVOKE ALL ON");

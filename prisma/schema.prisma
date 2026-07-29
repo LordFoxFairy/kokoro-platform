@@ -617,7 +617,6 @@ model IdentityVerificationTransaction {
   secretDigest         String    @map("secret_digest") @db.Char(64)
   requestDigest        String    @map("request_digest") @db.Char(64)
   state                String    @default("pending")
-  deliveryState        String    @default("queued") @map("delivery_state")
   attemptCount         Int       @default(0) @map("attempt_count")
   maxAttempts          Int       @map("max_attempts")
   resendCount          Int       @default(0) @map("resend_count")
