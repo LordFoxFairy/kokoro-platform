@@ -388,15 +388,29 @@ export class AssetMultipartService {
     uploadReference(uploadRef);
     const snapshot = await this.read(claims, uploadRef, "asset.multipart.status");
     const upload = requiredUpload(snapshot);
-    if (upload.state !== "outcome_unknown") return snapshot;
-    if (upload.outcomeOperation === "initiate") return this.initiate({
-      claims,
-      clientUploadId: upload.clientUploadId,
-      idempotencyKey: upload.initiationIdempotencyKey,
-    });
-    return upload.outcomeOperation === "abort"
-      ? this.retryAbort(claims, upload, snapshot)
-      : this.retryCompletion(claims, upload, snapshot);
+    if (
+      upload.state === "initiating" ||
+      (upload.state === "outcome_unknown" && upload.outcomeOperation === "initiate")
+    ) {
+      return this.initiate({
+        claims,
+        clientUploadId: upload.clientUploadId,
+        idempotencyKey: upload.initiationIdempotencyKey,
+      });
+    }
+    if (
+      upload.state === "completing" ||
+      (upload.state === "outcome_unknown" && upload.outcomeOperation === "complete")
+    ) {
+      return this.retryCompletion(claims, upload, snapshot);
+    }
+    if (
+      upload.state === "aborting" ||
+      (upload.state === "outcome_unknown" && upload.outcomeOperation === "abort")
+    ) {
+      return this.retryAbort(claims, upload, snapshot);
+    }
+    return snapshot;
   }
 
   private read(

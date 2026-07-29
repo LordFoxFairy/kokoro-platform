@@ -630,6 +630,79 @@ describe("AssetMultipartService", () => {
     expect(repository.finishAbort).toHaveBeenCalledWith(expect.anything(),
       expect.objectContaining({ effectToken: "abort_effect_token_01", state: "aborted" }));
   });
+
+  it("lets status recover a completion owner that crashed after its durable claim", async () => {
+    const crashed = uploadSnapshot(snapshot("completing", 2n), {
+      completionEffectToken: "expired_completion_effect_01",
+      completionEffectLeaseExpiresAt: "2026-07-29T12:00:30.000Z",
+    });
+    const claimed = uploadSnapshot(crashed, {
+      expectedVersion: 3n,
+      completionEffectToken: "recovered_completion_effect_01",
+      completionEffectLeaseExpiresAt: "2026-07-29T12:03:00.000Z",
+    });
+    const uploaded = uploadSnapshot(snapshot("uploaded", 4n), {
+      completionEffectToken: null,
+      completionEffectLeaseExpiresAt: null,
+    });
+    const repository = {
+      readAuthorized: vi.fn().mockResolvedValue(crashed),
+      claimCompletionEffect: vi.fn().mockResolvedValue(claimed),
+      finishCompletion: vi.fn().mockResolvedValue(uploaded),
+    } as unknown as AssetMultipartRepositoryPort;
+    const store = {
+      observeCompleted: vi.fn().mockResolvedValue("exact"),
+      complete: vi.fn(),
+    } as unknown as AssetMultipartStorePort;
+    const service = new AssetMultipartService({
+      unitOfWork: unitOfWork(), repository, store,
+      reference: references(["recovered_completion_effect_01"]),
+      clock: () => new Date("2026-07-29T12:01:00.000Z"),
+    });
+
+    await expect(service.status(claims, "multipart_upload_01")).resolves.toMatchObject({
+      upload: { state: "uploaded" },
+    });
+    expect(repository.claimCompletionEffect).toHaveBeenCalledOnce();
+    expect(store.complete).not.toHaveBeenCalled();
+  });
+
+  it("lets status recover an abort owner that crashed after its durable claim", async () => {
+    const crashed = uploadSnapshot(snapshot("aborting", 2n), {
+      abortEffectToken: "expired_abort_effect_01",
+      abortEffectLeaseExpiresAt: "2026-07-29T12:00:30.000Z",
+    });
+    const claimed = uploadSnapshot(crashed, {
+      expectedVersion: 3n,
+      abortEffectToken: "recovered_abort_effect_01",
+      abortEffectLeaseExpiresAt: "2026-07-29T12:03:00.000Z",
+    });
+    const aborted = uploadSnapshot(snapshot("aborting", 4n), {
+      state: "aborted",
+      abortEffectToken: null,
+      abortEffectLeaseExpiresAt: null,
+    });
+    const repository = {
+      readAuthorized: vi.fn().mockResolvedValue(crashed),
+      claimAbortEffect: vi.fn().mockResolvedValue(claimed),
+      finishAbort: vi.fn().mockResolvedValue(aborted),
+    } as unknown as AssetMultipartRepositoryPort;
+    const store = {
+      observeCompleted: vi.fn().mockResolvedValue("absent"),
+      abort: vi.fn().mockResolvedValue("aborted"),
+    } as unknown as AssetMultipartStorePort;
+    const service = new AssetMultipartService({
+      unitOfWork: unitOfWork(), repository, store,
+      reference: references(["recovered_abort_effect_01"]),
+      clock: () => new Date("2026-07-29T12:01:00.000Z"),
+    });
+
+    await expect(service.status(claims, "multipart_upload_01")).resolves.toMatchObject({
+      upload: { state: "aborted" },
+    });
+    expect(repository.claimAbortEffect).toHaveBeenCalledOnce();
+    expect(store.abort).toHaveBeenCalledOnce();
+  });
 });
 
 function snapshot(
