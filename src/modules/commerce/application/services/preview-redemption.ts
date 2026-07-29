@@ -14,6 +14,7 @@ import type { RedemptionSecretPort } from "../contracts/redemption-secret-port.j
 import type { CommerceCommandFence } from "../command-fence.js";
 import { commerceCanonicalJson } from "../../domain/canonical-json.js";
 import { CommerceApplicationError } from "../commerce-application-error.js";
+import { RedemptionInputError } from "../../domain/redemption-input-error.js";
 
 export type RedemptionPreviewView = Readonly<{
   receipt: Readonly<{
@@ -81,7 +82,7 @@ export class PreviewRedemptionService {
         code: input.code,
       });
     } catch (error) {
-      if (error instanceof Error && error.message === "REDEEM_NOT_ACCEPTED") {
+      if (error instanceof RedemptionInputError) {
         throw new CommerceApplicationError("REDEEM_NOT_ACCEPTED");
       }
       throw error;

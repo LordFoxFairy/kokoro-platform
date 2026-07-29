@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createRedemptionSecretCodec } from "../../src/modules/commerce/infrastructure/crypto/redemption-secret-codec.js";
+import { RedemptionInputError } from "../../src/modules/commerce/domain/redemption-input-error.js";
 
 describe("Commerce redemption secret codec", () => {
   const codec = createRedemptionSecretCodec({
@@ -64,5 +65,11 @@ describe("Commerce redemption secret codec", () => {
     });
     expect(audit).toMatch(/^[a-f0-9]{64}$/u);
     expect(audit).not.toBe(lookup.lookupDigest);
+  });
+
+  it("uses a typed boundary error for malformed Code input", () => {
+    expect(() => codec.previewRequestDigest({
+      siteId: "site-1", subjectId: "subject-1", subjectGeneration: "2", code: "----------------",
+    })).toThrow(RedemptionInputError);
   });
 });

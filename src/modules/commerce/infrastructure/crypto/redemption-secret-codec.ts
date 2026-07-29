@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { RedemptionSecretPort } from "../../application/contracts/redemption-secret-port.js";
+import { RedemptionInputError } from "../../domain/redemption-input-error.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const KEY_REVISION = /^[A-Za-z0-9_-]{1,64}$/u;
@@ -98,7 +99,7 @@ function ownedKey(key: Uint8Array): Uint8Array {
 
 function normalizeCode(value: string): string {
   const normalized = value.normalize("NFKC").toUpperCase().replaceAll("-", "");
-  if (!CODE.test(normalized)) throw new Error("REDEEM_NOT_ACCEPTED");
+  if (!CODE.test(normalized)) throw new RedemptionInputError();
   return normalized;
 }
 
