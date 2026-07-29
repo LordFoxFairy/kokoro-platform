@@ -26,6 +26,7 @@ export type PlatformPublicOperationExecution<Id extends PlatformPublicOperationI
 
 export interface PlatformPublicOperationDescriptor<Id extends PlatformPublicOperationId = PlatformPublicOperationId> {
   readonly operationId: Id;
+  readonly successStatus?: (result: unknown) => number;
   readonly targetProjectRef?: (
     input: Readonly<{
       body: RuntimeSchemaOutput<OperationDefinition<Id>["requestSchemas"]["body"]>;

@@ -26,4 +26,10 @@ describe("Commerce public problem mapping", () => {
       new Error("REDEEM_NOT_ACCEPTED"), "request-1", "correlation-1",
     )).toMatchObject({ status: 503, body: { code: "INTERNAL_UNAVAILABLE" } });
   });
+
+  it("maps the repository's canonical idempotency conflict to HTTP 409", () => {
+    expect(platformPublicSafeProblem(
+      new Error("IDEMPOTENCY_CONFLICT"), "request-1", "correlation-1",
+    )).toMatchObject({ status: 409, body: { code: "IDEMPOTENCY_CONFLICT", retryClass: "never" } });
+  });
 });

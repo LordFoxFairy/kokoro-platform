@@ -29,6 +29,11 @@ export function createCommercePublicOperations(dependencies: Readonly<{
     }),
     definePlatformPublicOperation({
       operationId: "confirmRedemption",
+      successStatus(result) {
+        if (typeof result !== "object" || result === null || !("kind" in result)) return 200;
+        return result.kind === "accepted" || result.kind === "executing" || result.kind === "outcome_unknown"
+          ? 202 : 200;
+      },
       async execute(input): Promise<ConfirmRedemptionResponse> {
         const result = await dependencies.confirm.execute({
           context: input.context,

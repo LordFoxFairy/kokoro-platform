@@ -14,6 +14,10 @@ describe("Commerce public operations", () => {
     expect(COMMERCE_PUBLIC_OPERATION_IDS).toEqual(["previewRedemption", "confirmRedemption"]);
     expect(operations.map((operation) => operation.operationId)).toEqual(COMMERCE_PUBLIC_OPERATION_IDS);
     const confirm = operations.find((operation) => operation.operationId === "confirmRedemption")!;
+    expect(confirm.successStatus?.({ kind: "accepted" })).toBe(202);
+    expect(confirm.successStatus?.({ kind: "executing" })).toBe(202);
+    expect(confirm.successStatus?.({ kind: "outcome_unknown" })).toBe(202);
+    expect(confirm.successStatus?.({ kind: "succeeded" })).toBe(200);
     await confirm.execute({
       context: { context: true },
       headers: {

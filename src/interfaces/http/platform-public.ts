@@ -111,8 +111,10 @@ export function createPlatformPublicHttpHandler(input: Readonly<{
         } as PlatformPublicOperationExecution<PlatformPublicOperationId>;
         const result = await matched.descriptor.execute(execution);
         const responseBody = requestValue(matched.definition.responseSchema as RuntimeSchema, result);
-        const successStatus = matched.definition.successStatuses[0];
-        if (successStatus === undefined) throw new Error("PLATFORM_PUBLIC_SUCCESS_STATUS_MISSING");
+        const successStatus = matched.descriptor.successStatus?.(responseBody) ?? matched.definition.successStatuses[0];
+        if (successStatus === undefined || !matched.definition.successStatuses.includes(successStatus)) {
+          throw new Error("PLATFORM_PUBLIC_SUCCESS_STATUS_INVALID");
+        }
         sendJson(response, successStatus, responseBody);
         return true;
       } catch (error) {
@@ -382,7 +384,8 @@ export function platformPublicSafeProblem(error: unknown, requestId: string, cor
     status = 503; code = "SITE_UNAVAILABLE"; retryClass = "after_delay"; safeMessage = "The site is temporarily unavailable.";
   } else if (
     error instanceof Error &&
-    (error.message.includes("COMMAND_DIGEST_CONFLICT") || error.message.includes("COMMAND_IDENTITY_CONFLICT"))
+    (error.message === "IDEMPOTENCY_CONFLICT" || error.message.includes("COMMAND_DIGEST_CONFLICT") ||
+      error.message.includes("COMMAND_IDENTITY_CONFLICT"))
   ) {
     status = 409; code = "IDEMPOTENCY_CONFLICT"; retryClass = "never"; safeMessage = "The command identity conflicts with an earlier request.";
   }
