@@ -450,11 +450,9 @@ function authenticatedEnvelope(
 }
 
 import {
-  DecidePostEffectReviewEffectSchema,
   DecideApprovalEffectSchema,
   ChangeOperatorAuthoritySchema,
   SubmitCommandEffectSchema,
-  type DecidePostEffectReviewEffect,
   type DecideApprovalEffect,
   type SubmitCommandEffect,
 } from "./kokoro/platform/admin/v2/admin_command_pb.js";
@@ -505,21 +503,6 @@ export function decideApprovalRequestDigest(
     context,
     { typeName: DecideApprovalEffectSchema.typeName, bytes: toBinary(DecideApprovalEffectSchema, effect, { writeUnknownFields: false }) },
     [effect.approvalRef],
-    verified,
-  );
-}
-
-export function decidePostEffectReviewRequestDigest(
-  context: AuthenticatedOperatorCommandContext,
-  effect: DecidePostEffectReviewEffect,
-  verified: VerifiedAuthenticatedAdminAxes,
-): string {
-  return authenticatedEnvelope(
-    "platform-admin-command@v2",
-    "kokoro.platform.admin.v2.AdminCommandService/DecidePostEffectReview",
-    context,
-    { typeName: DecidePostEffectReviewEffectSchema.typeName, bytes: toBinary(DecidePostEffectReviewEffectSchema, effect, { writeUnknownFields: false }) },
-    [effect.reviewRef],
     verified,
   );
 }

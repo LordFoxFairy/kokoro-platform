@@ -17,7 +17,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file kokoro/platform/admin/v2/admin_command.proto.
  */
 export const file_kokoro_platform_admin_v2_admin_command: GenFile = /*@__PURE__*/
-  fileDesc("Cixrb2tvcm8vcGxhdGZvcm0vYWRtaW4vdjIvYWRtaW5fY29tbWFuZC5wcm90bxIYa29rb3JvLnBsYXRmb3JtLmFkbWluLnYyIpgEChdDaGFuZ2VPcGVyYXRvckF1dGhvcml0eRJTCgZhY3Rpb24YASABKA4yNy5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuT3BlcmF0b3JBdXRob3JpdHlDaGFuZ2VBY3Rpb25CCrpIB4IBBBABIAASIAoMb3BlcmF0b3JfcmVmGAIgASgJQgq6SAdyBRABGIABEiQKE29wZXJhdG9yX2dlbmVyYXRpb24YAyABKARCB7pIBDICIAASMgocZXhwZWN0ZWRfYXV0aG9yaXphdGlvbl9lcG9jaBgEIAEoBEIHukgEMgIgAEgAiAEBEikKC3Blcm1pc3Npb25zGAUgAygJQhS6SBGSAQ4QgAIYASIHcgUQARiAARIlCghzaXRlX2lkcxgGIAMoCUITukgQkgENEGQYASIHcgUQARiAARIoCgxlbnZpcm9ubWVudHMYByADKAlCErpID5IBDBAgGAEiBnIEEAEYQBIjCgdyZWdpb25zGAggAygJQhK6SA+SAQwQQBgBIgZyBBABGEASLgoKZXhwaXJlc19hdBgJIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASOgoWYnJlYWtfZ2xhc3NfZXhwaXJlc19hdBgKIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBCHwodX2V4cGVjdGVkX2F1dGhvcml6YXRpb25fZXBvY2gifAoTU3VibWl0Q29tbWFuZEVmZmVjdBJJCgZjaGFuZ2UYASABKAsyMS5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuQ2hhbmdlT3BlcmF0b3JBdXRob3JpdHlCBrpIA8gBARIaCgZyZWFzb24YAiABKAlCCrpIB3IFEAEYgAQitQEKFFN1Ym1pdENvbW1hbmRSZXF1ZXN0ElYKB2NvbnRleHQYASABKAsyPS5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuQXV0aGVudGljYXRlZE9wZXJhdG9yQ29tbWFuZENvbnRleHRCBrpIA8gBARJFCgZlZmZlY3QYAiABKAsyLS5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuU3VibWl0Q29tbWFuZEVmZmVjdEIGukgDyAEBIqECChVTdWJtaXRDb21tYW5kUmVzcG9uc2USRwoFc3RhdGUYASABKA4yLC5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuU3VibWl0Q29tbWFuZFN0YXRlQgq6SAeCAQQQASAAEiUKDGFwcHJvdmFsX3JlZhgCIAEoCUIKukgHcgUQARiAAUgAiAEBEi8KFnBvc3RfZWZmZWN0X3Jldmlld19yZWYYAyABKAlCCrpIB3IFEAEYgAFIAYgBARI7CgdyZWNlaXB0GAQgASgLMiIua29rb3JvLmNvbW1vbi52Mi5Db21tYW5kUmVjZWlwdFYyQga6SAPIAQFCDwoNX2FwcHJvdmFsX3JlZkIZChdfcG9zdF9lZmZlY3RfcmV2aWV3X3JlZiKeAQoURGVjaWRlQXBwcm92YWxFZmZlY3QSIAoMYXBwcm92YWxfcmVmGAEgASgJQgq6SAdyBRABGIABEkgKCGRlY2lzaW9uGAIgASgOMioua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkFwcHJvdmFsRGVjaXNpb25CCrpIB4IBBBABIAASGgoGcmVhc29uGAMgASgJQgq6SAdyBRABGIAEIrcBChVEZWNpZGVBcHByb3ZhbFJlcXVlc3QSVgoHY29udGV4dBgBIAEoCzI9Lmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5BdXRoZW50aWNhdGVkT3BlcmF0b3JDb21tYW5kQ29udGV4dEIGukgDyAEBEkYKBmVmZmVjdBgCIAEoCzIuLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5EZWNpZGVBcHByb3ZhbEVmZmVjdEIGukgDyAEBIqEBChZEZWNpZGVBcHByb3ZhbFJlc3BvbnNlEkoKBXN0YXRlGAEgASgOMi8ua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkFwcHJvdmFsRGVjaXNpb25TdGF0ZUIKukgHggEEEAEgABI7CgdyZWNlaXB0GAIgASgLMiIua29rb3JvLmNvbW1vbi52Mi5Db21tYW5kUmVjZWlwdFYyQga6SAPIAQEirAEKHERlY2lkZVBvc3RFZmZlY3RSZXZpZXdFZmZlY3QSHgoKcmV2aWV3X3JlZhgBIAEoCUIKukgHcgUQARiAARJQCghkZWNpc2lvbhgCIAEoDjIyLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5Qb3N0RWZmZWN0UmV2aWV3RGVjaXNpb25CCrpIB4IBBBABIAASGgoGcmVhc29uGAMgASgJQgq6SAdyBRABGIAEIscBCh1EZWNpZGVQb3N0RWZmZWN0UmV2aWV3UmVxdWVzdBJWCgdjb250ZXh0GAEgASgLMj0ua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkF1dGhlbnRpY2F0ZWRPcGVyYXRvckNvbW1hbmRDb250ZXh0Qga6SAPIAQESTgoGZWZmZWN0GAIgASgLMjYua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkRlY2lkZVBvc3RFZmZlY3RSZXZpZXdFZmZlY3RCBrpIA8gBASKpAQoeRGVjaWRlUG9zdEVmZmVjdFJldmlld1Jlc3BvbnNlEkoKBXN0YXRlGAEgASgOMi8ua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLlBvc3RFZmZlY3RSZXZpZXdTdGF0ZUIKukgHggEEEAEgABI7CgdyZWNlaXB0GAIgASgLMiIua29rb3JvLmNvbW1vbi52Mi5Db21tYW5kUmVjZWlwdFYyQga6SAPIAQEijQIKEUdldFJlY2VpcHRSZXF1ZXN0ElQKB2NvbnRleHQYASABKAsyOy5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuQXV0aGVudGljYXRlZE9wZXJhdG9yUXVlcnlDb250ZXh0Qga6SAPIAQESHgoKY29tbWFuZF9pZBgCIAEoCUIKukgHcgUQARiAARJQChBkaWdlc3RfYWxnb3JpdGhtGAMgASgOMioua29rb3JvLmNvbW1vbi52Mi5Db21tYW5kRGlnZXN0QWxnb3JpdGhtVjJCCrpIB4IBBBABIAASMAoOcmVxdWVzdF9kaWdlc3QYBCABKAlCGLpIFXITMg5eWzAtOWEtZl17NjR9JJgBQCJRChJHZXRSZWNlaXB0UmVzcG9uc2USOwoHcmVjZWlwdBgBIAEoCzIiLmtva29yby5jb21tb24udjIuQ29tbWFuZFJlY2VpcHRWMkIGukgDyAEBKooCCh1PcGVyYXRvckF1dGhvcml0eUNoYW5nZUFjdGlvbhIwCixPUEVSQVRPUl9BVVRIT1JJVFlfQ0hBTkdFX0FDVElPTl9VTlNQRUNJRklFRBAAEi4KKk9QRVJBVE9SX0FVVEhPUklUWV9DSEFOR0VfQUNUSU9OX1BST1ZJU0lPThABEiwKKE9QRVJBVE9SX0FVVEhPUklUWV9DSEFOR0VfQUNUSU9OX1JFUExBQ0UQAhIsCihPUEVSQVRPUl9BVVRIT1JJVFlfQ0hBTkdFX0FDVElPTl9TVVNQRU5EEAMSKwonT1BFUkFUT1JfQVVUSE9SSVRZX0NIQU5HRV9BQ1RJT05fUkVWT0tFEAQqiQEKElN1Ym1pdENvbW1hbmRTdGF0ZRIkCiBTVUJNSVRfQ09NTUFORF9TVEFURV9VTlNQRUNJRklFRBAAEikKJVNVQk1JVF9DT01NQU5EX1NUQVRFX1BFTkRJTkdfQVBQUk9WQUwQARIiCh5TVUJNSVRfQ09NTUFORF9TVEFURV9DT01NSVRURUQQAipyChBBcHByb3ZhbERlY2lzaW9uEiEKHUFQUFJPVkFMX0RFQ0lTSU9OX1VOU1BFQ0lGSUVEEAASHQoZQVBQUk9WQUxfREVDSVNJT05fQVBQUk9WRRABEhwKGEFQUFJPVkFMX0RFQ0lTSU9OX1JFSkVDVBACKrgBChVBcHByb3ZhbERlY2lzaW9uU3RhdGUSJwojQVBQUk9WQUxfREVDSVNJT05fU1RBVEVfVU5TUEVDSUZJRUQQABIsCihBUFBST1ZBTF9ERUNJU0lPTl9TVEFURV9FWEVDVVRJT05fUVVFVUVEEAESJAogQVBQUk9WQUxfREVDSVNJT05fU1RBVEVfUkVKRUNURUQQAhIiCh5BUFBST1ZBTF9ERUNJU0lPTl9TVEFURV9ERU5JRUQQAyqeAQoYUG9zdEVmZmVjdFJldmlld0RlY2lzaW9uEisKJ1BPU1RfRUZGRUNUX1JFVklFV19ERUNJU0lPTl9VTlNQRUNJRklFRBAAEisKJ1BPU1RfRUZGRUNUX1JFVklFV19ERUNJU0lPTl9BQ0tOT1dMRURHRRABEigKJFBPU1RfRUZGRUNUX1JFVklFV19ERUNJU0lPTl9FU0NBTEFURRACKrkBChVQb3N0RWZmZWN0UmV2aWV3U3RhdGUSKAokUE9TVF9FRkZFQ1RfUkVWSUVXX1NUQVRFX1VOU1BFQ0lGSUVEEAASKQolUE9TVF9FRkZFQ1RfUkVWSUVXX1NUQVRFX0FDS05PV0xFREdFRBABEiYKIlBPU1RfRUZGRUNUX1JFVklFV19TVEFURV9FU0NBTEFURUQQAhIjCh9QT1NUX0VGRkVDVF9SRVZJRVdfU1RBVEVfREVOSUVEEAMy+wMKE0FkbWluQ29tbWFuZFNlcnZpY2UScgoNU3VibWl0Q29tbWFuZBIuLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5TdWJtaXRDb21tYW5kUmVxdWVzdBovLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5TdWJtaXRDb21tYW5kUmVzcG9uc2UiABJ1Cg5EZWNpZGVBcHByb3ZhbBIvLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5EZWNpZGVBcHByb3ZhbFJlcXVlc3QaMC5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuRGVjaWRlQXBwcm92YWxSZXNwb25zZSIAEo0BChZEZWNpZGVQb3N0RWZmZWN0UmV2aWV3Ejcua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkRlY2lkZVBvc3RFZmZlY3RSZXZpZXdSZXF1ZXN0Gjgua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkRlY2lkZVBvc3RFZmZlY3RSZXZpZXdSZXNwb25zZSIAEmkKCkdldFJlY2VpcHQSKy5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuR2V0UmVjZWlwdFJlcXVlc3QaLC5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuR2V0UmVjZWlwdFJlc3BvbnNlIgBiBnByb3RvMw", [file_buf_validate_validate, file_google_protobuf_timestamp, file_kokoro_common_v2_command_envelope, file_kokoro_platform_admin_v2_admin_shared]);
+  fileDesc("Cixrb2tvcm8vcGxhdGZvcm0vYWRtaW4vdjIvYWRtaW5fY29tbWFuZC5wcm90bxIYa29rb3JvLnBsYXRmb3JtLmFkbWluLnYyIpgEChdDaGFuZ2VPcGVyYXRvckF1dGhvcml0eRJTCgZhY3Rpb24YASABKA4yNy5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuT3BlcmF0b3JBdXRob3JpdHlDaGFuZ2VBY3Rpb25CCrpIB4IBBBABIAASIAoMb3BlcmF0b3JfcmVmGAIgASgJQgq6SAdyBRABGIABEiQKE29wZXJhdG9yX2dlbmVyYXRpb24YAyABKARCB7pIBDICIAASMgocZXhwZWN0ZWRfYXV0aG9yaXphdGlvbl9lcG9jaBgEIAEoBEIHukgEMgIgAEgAiAEBEikKC3Blcm1pc3Npb25zGAUgAygJQhS6SBGSAQ4QgAIYASIHcgUQARiAARIlCghzaXRlX2lkcxgGIAMoCUITukgQkgENEGQYASIHcgUQARiAARIoCgxlbnZpcm9ubWVudHMYByADKAlCErpID5IBDBAgGAEiBnIEEAEYQBIjCgdyZWdpb25zGAggAygJQhK6SA+SAQwQQBgBIgZyBBABGEASLgoKZXhwaXJlc19hdBgJIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASOgoWYnJlYWtfZ2xhc3NfZXhwaXJlc19hdBgKIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBCHwodX2V4cGVjdGVkX2F1dGhvcml6YXRpb25fZXBvY2gifAoTU3VibWl0Q29tbWFuZEVmZmVjdBJJCgZjaGFuZ2UYASABKAsyMS5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuQ2hhbmdlT3BlcmF0b3JBdXRob3JpdHlCBrpIA8gBARIaCgZyZWFzb24YAiABKAlCCrpIB3IFEAEYgAQitQEKFFN1Ym1pdENvbW1hbmRSZXF1ZXN0ElYKB2NvbnRleHQYASABKAsyPS5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuQXV0aGVudGljYXRlZE9wZXJhdG9yQ29tbWFuZENvbnRleHRCBrpIA8gBARJFCgZlZmZlY3QYAiABKAsyLS5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuU3VibWl0Q29tbWFuZEVmZmVjdEIGukgDyAEBItUBChVTdWJtaXRDb21tYW5kUmVzcG9uc2USRwoFc3RhdGUYASABKA4yLC5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuU3VibWl0Q29tbWFuZFN0YXRlQgq6SAeCAQQQASAAEiUKDGFwcHJvdmFsX3JlZhgCIAEoCUIKukgHcgUQARiAAUgAiAEBEjsKB3JlY2VpcHQYAyABKAsyIi5rb2tvcm8uY29tbW9uLnYyLkNvbW1hbmRSZWNlaXB0VjJCBrpIA8gBAUIPCg1fYXBwcm92YWxfcmVmIp4BChREZWNpZGVBcHByb3ZhbEVmZmVjdBIgCgxhcHByb3ZhbF9yZWYYASABKAlCCrpIB3IFEAEYgAESSAoIZGVjaXNpb24YAiABKA4yKi5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuQXBwcm92YWxEZWNpc2lvbkIKukgHggEEEAEgABIaCgZyZWFzb24YAyABKAlCCrpIB3IFEAEYgAQitwEKFURlY2lkZUFwcHJvdmFsUmVxdWVzdBJWCgdjb250ZXh0GAEgASgLMj0ua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkF1dGhlbnRpY2F0ZWRPcGVyYXRvckNvbW1hbmRDb250ZXh0Qga6SAPIAQESRgoGZWZmZWN0GAIgASgLMi4ua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkRlY2lkZUFwcHJvdmFsRWZmZWN0Qga6SAPIAQEioQEKFkRlY2lkZUFwcHJvdmFsUmVzcG9uc2USSgoFc3RhdGUYASABKA4yLy5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuQXBwcm92YWxEZWNpc2lvblN0YXRlQgq6SAeCAQQQASAAEjsKB3JlY2VpcHQYAiABKAsyIi5rb2tvcm8uY29tbW9uLnYyLkNvbW1hbmRSZWNlaXB0VjJCBrpIA8gBASKNAgoRR2V0UmVjZWlwdFJlcXVlc3QSVAoHY29udGV4dBgBIAEoCzI7Lmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5BdXRoZW50aWNhdGVkT3BlcmF0b3JRdWVyeUNvbnRleHRCBrpIA8gBARIeCgpjb21tYW5kX2lkGAIgASgJQgq6SAdyBRABGIABElAKEGRpZ2VzdF9hbGdvcml0aG0YAyABKA4yKi5rb2tvcm8uY29tbW9uLnYyLkNvbW1hbmREaWdlc3RBbGdvcml0aG1WMkIKukgHggEEEAEgABIwCg5yZXF1ZXN0X2RpZ2VzdBgEIAEoCUIYukgVchMyDl5bMC05YS1mXXs2NH0kmAFAIlEKEkdldFJlY2VpcHRSZXNwb25zZRI7CgdyZWNlaXB0GAEgASgLMiIua29rb3JvLmNvbW1vbi52Mi5Db21tYW5kUmVjZWlwdFYyQga6SAPIAQEqigIKHU9wZXJhdG9yQXV0aG9yaXR5Q2hhbmdlQWN0aW9uEjAKLE9QRVJBVE9SX0FVVEhPUklUWV9DSEFOR0VfQUNUSU9OX1VOU1BFQ0lGSUVEEAASLgoqT1BFUkFUT1JfQVVUSE9SSVRZX0NIQU5HRV9BQ1RJT05fUFJPVklTSU9OEAESLAooT1BFUkFUT1JfQVVUSE9SSVRZX0NIQU5HRV9BQ1RJT05fUkVQTEFDRRACEiwKKE9QRVJBVE9SX0FVVEhPUklUWV9DSEFOR0VfQUNUSU9OX1NVU1BFTkQQAxIrCidPUEVSQVRPUl9BVVRIT1JJVFlfQ0hBTkdFX0FDVElPTl9SRVZPS0UQBCplChJTdWJtaXRDb21tYW5kU3RhdGUSJAogU1VCTUlUX0NPTU1BTkRfU1RBVEVfVU5TUEVDSUZJRUQQABIpCiVTVUJNSVRfQ09NTUFORF9TVEFURV9QRU5ESU5HX0FQUFJPVkFMEAEqcgoQQXBwcm92YWxEZWNpc2lvbhIhCh1BUFBST1ZBTF9ERUNJU0lPTl9VTlNQRUNJRklFRBAAEh0KGUFQUFJPVkFMX0RFQ0lTSU9OX0FQUFJPVkUQARIcChhBUFBST1ZBTF9ERUNJU0lPTl9SRUpFQ1QQAiq4AQoVQXBwcm92YWxEZWNpc2lvblN0YXRlEicKI0FQUFJPVkFMX0RFQ0lTSU9OX1NUQVRFX1VOU1BFQ0lGSUVEEAASLAooQVBQUk9WQUxfREVDSVNJT05fU1RBVEVfRVhFQ1VUSU9OX1FVRVVFRBABEiQKIEFQUFJPVkFMX0RFQ0lTSU9OX1NUQVRFX1JFSkVDVEVEEAISIgoeQVBQUk9WQUxfREVDSVNJT05fU1RBVEVfREVOSUVEEAMy6wIKE0FkbWluQ29tbWFuZFNlcnZpY2UScgoNU3VibWl0Q29tbWFuZBIuLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5TdWJtaXRDb21tYW5kUmVxdWVzdBovLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5TdWJtaXRDb21tYW5kUmVzcG9uc2UiABJ1Cg5EZWNpZGVBcHByb3ZhbBIvLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5EZWNpZGVBcHByb3ZhbFJlcXVlc3QaMC5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuRGVjaWRlQXBwcm92YWxSZXNwb25zZSIAEmkKCkdldFJlY2VpcHQSKy5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuR2V0UmVjZWlwdFJlcXVlc3QaLC5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuR2V0UmVjZWlwdFJlc3BvbnNlIgBiBnByb3RvMw", [file_buf_validate_validate, file_google_protobuf_timestamp, file_kokoro_common_v2_command_envelope, file_kokoro_platform_admin_v2_admin_shared]);
 
 /**
  * This is the exact worker-owned authority aggregate accepted by
@@ -146,14 +146,7 @@ export type SubmitCommandResponse = Message<"kokoro.platform.admin.v2.SubmitComm
   approvalRef?: string | undefined;
 
   /**
-   * Present only for a committed break-glass effect that requires independent post-effect review.
-   *
-   * @generated from field: optional string post_effect_review_ref = 3;
-   */
-  postEffectReviewRef?: string | undefined;
-
-  /**
-   * @generated from field: kokoro.common.v2.CommandReceiptV2 receipt = 4;
+   * @generated from field: kokoro.common.v2.CommandReceiptV2 receipt = 3;
    */
   receipt?: CommandReceiptV2 | undefined;
 };
@@ -237,77 +230,6 @@ export const DecideApprovalResponseSchema: GenMessage<DecideApprovalResponse> = 
   messageDesc(file_kokoro_platform_admin_v2_admin_command, 6);
 
 /**
- * @generated from message kokoro.platform.admin.v2.DecidePostEffectReviewEffect
- */
-export type DecidePostEffectReviewEffect = Message<"kokoro.platform.admin.v2.DecidePostEffectReviewEffect"> & {
-  /**
-   * @generated from field: string review_ref = 1;
-   */
-  reviewRef: string;
-
-  /**
-   * @generated from field: kokoro.platform.admin.v2.PostEffectReviewDecision decision = 2;
-   */
-  decision: PostEffectReviewDecision;
-
-  /**
-   * @generated from field: string reason = 3;
-   */
-  reason: string;
-};
-
-/**
- * Describes the message kokoro.platform.admin.v2.DecidePostEffectReviewEffect.
- * Use `create(DecidePostEffectReviewEffectSchema)` to create a new message.
- */
-export const DecidePostEffectReviewEffectSchema: GenMessage<DecidePostEffectReviewEffect> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v2_admin_command, 7);
-
-/**
- * @generated from message kokoro.platform.admin.v2.DecidePostEffectReviewRequest
- */
-export type DecidePostEffectReviewRequest = Message<"kokoro.platform.admin.v2.DecidePostEffectReviewRequest"> & {
-  /**
-   * @generated from field: kokoro.platform.admin.v2.AuthenticatedOperatorCommandContext context = 1;
-   */
-  context?: AuthenticatedOperatorCommandContext | undefined;
-
-  /**
-   * @generated from field: kokoro.platform.admin.v2.DecidePostEffectReviewEffect effect = 2;
-   */
-  effect?: DecidePostEffectReviewEffect | undefined;
-};
-
-/**
- * Describes the message kokoro.platform.admin.v2.DecidePostEffectReviewRequest.
- * Use `create(DecidePostEffectReviewRequestSchema)` to create a new message.
- */
-export const DecidePostEffectReviewRequestSchema: GenMessage<DecidePostEffectReviewRequest> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v2_admin_command, 8);
-
-/**
- * @generated from message kokoro.platform.admin.v2.DecidePostEffectReviewResponse
- */
-export type DecidePostEffectReviewResponse = Message<"kokoro.platform.admin.v2.DecidePostEffectReviewResponse"> & {
-  /**
-   * @generated from field: kokoro.platform.admin.v2.PostEffectReviewState state = 1;
-   */
-  state: PostEffectReviewState;
-
-  /**
-   * @generated from field: kokoro.common.v2.CommandReceiptV2 receipt = 2;
-   */
-  receipt?: CommandReceiptV2 | undefined;
-};
-
-/**
- * Describes the message kokoro.platform.admin.v2.DecidePostEffectReviewResponse.
- * Use `create(DecidePostEffectReviewResponseSchema)` to create a new message.
- */
-export const DecidePostEffectReviewResponseSchema: GenMessage<DecidePostEffectReviewResponse> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v2_admin_command, 9);
-
-/**
  * @generated from message kokoro.platform.admin.v2.GetReceiptRequest
  */
 export type GetReceiptRequest = Message<"kokoro.platform.admin.v2.GetReceiptRequest"> & {
@@ -337,7 +259,7 @@ export type GetReceiptRequest = Message<"kokoro.platform.admin.v2.GetReceiptRequ
  * Use `create(GetReceiptRequestSchema)` to create a new message.
  */
 export const GetReceiptRequestSchema: GenMessage<GetReceiptRequest> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v2_admin_command, 10);
+  messageDesc(file_kokoro_platform_admin_v2_admin_command, 7);
 
 /**
  * @generated from message kokoro.platform.admin.v2.GetReceiptResponse
@@ -354,7 +276,7 @@ export type GetReceiptResponse = Message<"kokoro.platform.admin.v2.GetReceiptRes
  * Use `create(GetReceiptResponseSchema)` to create a new message.
  */
 export const GetReceiptResponseSchema: GenMessage<GetReceiptResponse> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v2_admin_command, 11);
+  messageDesc(file_kokoro_platform_admin_v2_admin_command, 8);
 
 /**
  * @generated from enum kokoro.platform.admin.v2.OperatorAuthorityChangeAction
@@ -405,11 +327,6 @@ export enum SubmitCommandState {
    * @generated from enum value: SUBMIT_COMMAND_STATE_PENDING_APPROVAL = 1;
    */
   PENDING_APPROVAL = 1,
-
-  /**
-   * @generated from enum value: SUBMIT_COMMAND_STATE_COMMITTED = 2;
-   */
-  COMMITTED = 2,
 }
 
 /**
@@ -482,63 +399,6 @@ export const ApprovalDecisionStateSchema: GenEnum<ApprovalDecisionState> = /*@__
   enumDesc(file_kokoro_platform_admin_v2_admin_command, 3);
 
 /**
- * @generated from enum kokoro.platform.admin.v2.PostEffectReviewDecision
- */
-export enum PostEffectReviewDecision {
-  /**
-   * @generated from enum value: POST_EFFECT_REVIEW_DECISION_UNSPECIFIED = 0;
-   */
-  UNSPECIFIED = 0,
-
-  /**
-   * @generated from enum value: POST_EFFECT_REVIEW_DECISION_ACKNOWLEDGE = 1;
-   */
-  ACKNOWLEDGE = 1,
-
-  /**
-   * @generated from enum value: POST_EFFECT_REVIEW_DECISION_ESCALATE = 2;
-   */
-  ESCALATE = 2,
-}
-
-/**
- * Describes the enum kokoro.platform.admin.v2.PostEffectReviewDecision.
- */
-export const PostEffectReviewDecisionSchema: GenEnum<PostEffectReviewDecision> = /*@__PURE__*/
-  enumDesc(file_kokoro_platform_admin_v2_admin_command, 4);
-
-/**
- * @generated from enum kokoro.platform.admin.v2.PostEffectReviewState
- */
-export enum PostEffectReviewState {
-  /**
-   * @generated from enum value: POST_EFFECT_REVIEW_STATE_UNSPECIFIED = 0;
-   */
-  UNSPECIFIED = 0,
-
-  /**
-   * @generated from enum value: POST_EFFECT_REVIEW_STATE_ACKNOWLEDGED = 1;
-   */
-  ACKNOWLEDGED = 1,
-
-  /**
-   * @generated from enum value: POST_EFFECT_REVIEW_STATE_ESCALATED = 2;
-   */
-  ESCALATED = 2,
-
-  /**
-   * @generated from enum value: POST_EFFECT_REVIEW_STATE_DENIED = 3;
-   */
-  DENIED = 3,
-}
-
-/**
- * Describes the enum kokoro.platform.admin.v2.PostEffectReviewState.
- */
-export const PostEffectReviewStateSchema: GenEnum<PostEffectReviewState> = /*@__PURE__*/
-  enumDesc(file_kokoro_platform_admin_v2_admin_command, 5);
-
-/**
  * AdminCommandService coordinates approval for non-lifecycle administrative effects.
  * Site lifecycle effects have their own typed service and are deliberately absent here.
  * A client can submit and govern a command, but can never execute an approved effect. Approval
@@ -564,14 +424,6 @@ export const AdminCommandService: GenService<{
     methodKind: "unary";
     input: typeof DecideApprovalRequestSchema;
     output: typeof DecideApprovalResponseSchema;
-  },
-  /**
-   * @generated from rpc kokoro.platform.admin.v2.AdminCommandService.DecidePostEffectReview
-   */
-  decidePostEffectReview: {
-    methodKind: "unary";
-    input: typeof DecidePostEffectReviewRequestSchema;
-    output: typeof DecidePostEffectReviewResponseSchema;
   },
   /**
    * @generated from rpc kokoro.platform.admin.v2.AdminCommandService.GetReceipt
