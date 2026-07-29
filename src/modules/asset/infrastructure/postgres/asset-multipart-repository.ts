@@ -93,6 +93,7 @@ export class PostgresAssetMultipartRepository implements AssetMultipartRepositor
     input: Parameters<AssetMultipartRepositoryPort["claimInitiation"]>[1],
   ): Promise<AuthorizedAssetMultipartSnapshot> {
     const before = await this.required(transaction, input.claims);
+    const sql = resolvePlatformTransaction(transaction);
     if (before.upload !== null) {
       if (before.upload.clientUploadId !== input.clientUploadId ||
           before.upload.initiationIdempotencyKey !== input.idempotencyKey ||
@@ -100,19 +101,36 @@ export class PostgresAssetMultipartRepository implements AssetMultipartRepositor
           before.upload.capabilityEpoch !== BigInt(input.claims.capabilityEpoch)) {
         throw new Error("UPLOAD_STATE_CONFLICT");
       }
-      return before;
+      if (before.upload.providerUploadId !== null ||
+          !["initiating", "outcome_unknown"].includes(before.upload.state)) return before;
+      const changed = await sql.execute(
+        `UPDATE platform.asset_multipart_upload
+         SET initiation_effect_token=$5,initiation_effect_lease_expires_at=$6::timestamptz,
+             expected_version=expected_version+1,updated_at=$7::timestamptz
+         WHERE site_ref=$1 AND upload_ref=$2 AND expected_version=$3::bigint
+           AND capability_epoch=$4::bigint AND state IN ('initiating','outcome_unknown')
+           AND (initiation_effect_token IS NULL OR
+                initiation_effect_lease_expires_at<=$7::timestamptz)`,
+        [input.claims.siteRef, before.upload.uploadRef, before.upload.expectedVersion,
+          input.claims.capabilityEpoch, input.effectToken, input.effectLeaseExpiresAt, input.now],
+      );
+      return changed === 1
+        ? this.required(transaction, input.claims, before.upload.uploadRef)
+        : before;
     }
-    const sql = resolvePlatformTransaction(transaction);
     const changed = await sql.execute(
       `INSERT INTO platform.asset_multipart_upload
        (upload_ref,site_ref,intent_ref,session_ref,client_upload_id,capability_epoch,state,
         expected_version,initiation_idempotency_key,initiation_request_digest,
-        initiation_receipt_ref,created_at,updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6::bigint,'initiating',1,$7,$8,$9,$10::timestamptz,$10::timestamptz)
+        initiation_receipt_ref,initiation_effect_token,initiation_effect_lease_expires_at,
+        created_at,updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6::bigint,'initiating',1,$7,$8,$9,$10,$11::timestamptz,
+              $12::timestamptz,$12::timestamptz)
        ON CONFLICT (site_ref,session_ref) DO NOTHING`,
       [input.uploadRef, input.claims.siteRef, input.claims.intentRef, input.claims.sessionRef,
         input.clientUploadId, input.claims.capabilityEpoch, input.idempotencyKey,
-        input.requestDigest, input.receiptRef, input.now],
+        input.requestDigest, input.receiptRef, input.effectToken, input.effectLeaseExpiresAt,
+        input.now],
     );
     const snapshot = await this.required(transaction, input.claims);
     if (changed !== 1 && (snapshot.upload?.initiationRequestDigest !== input.requestDigest ||
@@ -126,9 +144,19 @@ export class PostgresAssetMultipartRepository implements AssetMultipartRepositor
     transaction: Parameters<AssetMultipartRepositoryPort["recordInitiated"]>[0],
     input: Parameters<AssetMultipartRepositoryPort["recordInitiated"]>[1],
   ): Promise<AuthorizedAssetMultipartSnapshot> {
-    await this.updateUpload(transaction, input.claims, input.uploadRef, input.expectedVersion,
-      `provider_upload_id=$5,state='uploading',outcome_operation=NULL`,
-      [input.providerUploadId], input.now, ["initiating", "outcome_unknown"]);
+    await this.required(transaction, input.claims, input.uploadRef);
+    const changed = await resolvePlatformTransaction(transaction).execute(
+      `UPDATE platform.asset_multipart_upload
+       SET provider_upload_id=$6,state='uploading',outcome_operation=NULL,
+           initiation_effect_token=NULL,initiation_effect_lease_expires_at=NULL,
+           expected_version=expected_version+1,updated_at=$7::timestamptz
+       WHERE site_ref=$1 AND upload_ref=$2 AND expected_version=$3::bigint
+         AND capability_epoch=$4::bigint AND initiation_effect_token=$5
+         AND state IN ('initiating','outcome_unknown')`,
+      [input.claims.siteRef, input.uploadRef, input.expectedVersion,
+        input.claims.capabilityEpoch, input.effectToken, input.providerUploadId, input.now],
+    );
+    if (changed !== 1) throw new Error("UPLOAD_STATE_CONFLICT");
     return this.required(transaction, input.claims, input.uploadRef);
   }
 
@@ -136,12 +164,38 @@ export class PostgresAssetMultipartRepository implements AssetMultipartRepositor
     transaction: Parameters<AssetMultipartRepositoryPort["recordInitiationUnknown"]>[0],
     input: Parameters<AssetMultipartRepositoryPort["recordInitiationUnknown"]>[1],
   ): Promise<AuthorizedAssetMultipartSnapshot> {
-    const before = await this.required(transaction, input.claims, input.uploadRef);
-    if (before.upload?.state === "outcome_unknown" &&
-        before.upload.outcomeOperation === "initiate") return before;
-    await this.updateUpload(transaction, input.claims, input.uploadRef, input.expectedVersion,
-      `state='outcome_unknown',outcome_operation='initiate'`, [], input.now,
-      ["initiating", "outcome_unknown"]);
+    await this.required(transaction, input.claims, input.uploadRef);
+    const changed = await resolvePlatformTransaction(transaction).execute(
+      `UPDATE platform.asset_multipart_upload
+       SET state='outcome_unknown',outcome_operation='initiate',
+           initiation_effect_token=NULL,initiation_effect_lease_expires_at=NULL,
+           expected_version=expected_version+1,updated_at=$6::timestamptz
+       WHERE site_ref=$1 AND upload_ref=$2 AND expected_version=$3::bigint
+         AND capability_epoch=$4::bigint AND initiation_effect_token=$5
+         AND state IN ('initiating','outcome_unknown')`,
+      [input.claims.siteRef, input.uploadRef, input.expectedVersion,
+        input.claims.capabilityEpoch, input.effectToken, input.now],
+    );
+    if (changed !== 1) throw new Error("UPLOAD_STATE_CONFLICT");
+    return this.required(transaction, input.claims, input.uploadRef);
+  }
+
+  async releaseInitiation(
+    transaction: Parameters<AssetMultipartRepositoryPort["releaseInitiation"]>[0],
+    input: Parameters<AssetMultipartRepositoryPort["releaseInitiation"]>[1],
+  ): Promise<AuthorizedAssetMultipartSnapshot> {
+    await this.required(transaction, input.claims, input.uploadRef);
+    const changed = await resolvePlatformTransaction(transaction).execute(
+      `UPDATE platform.asset_multipart_upload
+       SET initiation_effect_token=NULL,initiation_effect_lease_expires_at=NULL,
+           expected_version=expected_version+1,updated_at=$6::timestamptz
+       WHERE site_ref=$1 AND upload_ref=$2 AND expected_version=$3::bigint
+         AND capability_epoch=$4::bigint AND initiation_effect_token=$5
+         AND state IN ('initiating','outcome_unknown')`,
+      [input.claims.siteRef, input.uploadRef, input.expectedVersion,
+        input.claims.capabilityEpoch, input.effectToken, input.now],
+    );
+    if (changed !== 1) throw new Error("UPLOAD_STATE_CONFLICT");
     return this.required(transaction, input.claims, input.uploadRef);
   }
 
@@ -162,7 +216,7 @@ export class PostgresAssetMultipartRepository implements AssetMultipartRepositor
          SET effect_token=$5,effect_lease_expires_at=$6::timestamptz,
              state='pending',expected_version=expected_version+1,updated_at=$7::timestamptz
          WHERE site_ref=$1 AND upload_ref=$2 AND part_number=$3
-           AND expected_version=$4::bigint AND state IN ('pending','outcome_unknown')
+           AND expected_version=$4::bigint AND state IN ('pending','retryable','outcome_unknown')
            AND (effect_token IS NULL OR effect_lease_expires_at<=$7::timestamptz)`,
         [input.claims.siteRef, input.uploadRef, input.partNumber, existing.expectedVersion,
           input.effectToken, input.effectLeaseExpiresAt, input.now],
@@ -213,6 +267,30 @@ export class PostgresAssetMultipartRepository implements AssetMultipartRepositor
          AND state IN ('pending','outcome_unknown')`,
       [input.claims.siteRef, input.uploadRef, input.partNumber, input.expectedPartVersion,
         input.effectToken, input.state, input.providerEtag, input.now],
+    );
+    if (changed !== 1) throw new Error("UPLOAD_PART_CONFLICT");
+    return this.required(transaction, input.claims, input.uploadRef);
+  }
+
+  async releasePart(
+    transaction: Parameters<AssetMultipartRepositoryPort["releasePart"]>[0],
+    input: Parameters<AssetMultipartRepositoryPort["releasePart"]>[1],
+  ): Promise<AuthorizedAssetMultipartSnapshot> {
+    const before = await this.required(transaction, input.claims, input.uploadRef);
+    const part = before.parts.find((candidate) => candidate.partNumber === input.partNumber);
+    if (part === undefined || part.expectedVersion !== input.expectedPartVersion ||
+        part.effectToken !== input.effectToken || part.state !== "pending") {
+      throw new Error("UPLOAD_PART_CONFLICT");
+    }
+    const changed = await resolvePlatformTransaction(transaction).execute(
+      `UPDATE platform.asset_multipart_part
+       SET provider_etag=NULL,state='retryable',effect_token=NULL,effect_lease_expires_at=NULL,
+           expected_version=expected_version+1,updated_at=$6::timestamptz
+       WHERE site_ref=$1 AND upload_ref=$2 AND part_number=$3
+         AND expected_version=$4::bigint AND effect_token=$5
+         AND state='pending'`,
+      [input.claims.siteRef, input.uploadRef, input.partNumber, input.expectedPartVersion,
+        input.effectToken, input.now],
     );
     if (changed !== 1) throw new Error("UPLOAD_PART_CONFLICT");
     return this.required(transaction, input.claims, input.uploadRef);
@@ -418,6 +496,8 @@ type UploadRow = Readonly<{
   initiationIdempotencyKey: string | null;
   initiationRequestDigest: string | null;
   initiationReceiptRef: string | null;
+  initiationEffectToken: string | null;
+  initiationEffectLeaseExpiresAt: Date | string | null;
   completionIdempotencyKey: string | null;
   completionRequestDigest: string | null;
   completionReceiptRef: string | null;
@@ -465,6 +545,10 @@ function hydrateUpload(row: UploadRow): StoredAssetMultipartUpload {
     initiationIdempotencyKey: row.initiationIdempotencyKey,
     initiationRequestDigest: row.initiationRequestDigest,
     initiationReceiptRef: row.initiationReceiptRef,
+    initiationEffectToken: row.initiationEffectToken,
+    initiationEffectLeaseExpiresAt: row.initiationEffectLeaseExpiresAt === null
+      ? null
+      : instant(row.initiationEffectLeaseExpiresAt),
     completionIdempotencyKey: row.completionIdempotencyKey,
     completionRequestDigest: row.completionRequestDigest,
     completionReceiptRef: row.completionReceiptRef,
@@ -511,6 +595,8 @@ const UPLOAD_COLUMNS = `
   upload.initiation_idempotency_key AS "initiationIdempotencyKey",
   upload.initiation_request_digest AS "initiationRequestDigest",
   upload.initiation_receipt_ref AS "initiationReceiptRef",
+  upload.initiation_effect_token AS "initiationEffectToken",
+  upload.initiation_effect_lease_expires_at AS "initiationEffectLeaseExpiresAt",
   upload.completion_idempotency_key AS "completionIdempotencyKey",
   upload.completion_request_digest AS "completionRequestDigest",
   upload.completion_receipt_ref AS "completionReceiptRef",

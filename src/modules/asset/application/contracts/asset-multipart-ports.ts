@@ -28,6 +28,8 @@ export interface StoredAssetMultipartUpload {
   readonly initiationIdempotencyKey: string;
   readonly initiationRequestDigest: string;
   readonly initiationReceiptRef: string;
+  readonly initiationEffectToken: string | null;
+  readonly initiationEffectLeaseExpiresAt: string | null;
   readonly completionIdempotencyKey: string | null;
   readonly completionRequestDigest: string | null;
   readonly completionReceiptRef: string | null;
@@ -46,7 +48,7 @@ export interface StoredAssetMultipartPart {
   readonly checksumSha256: string;
   readonly idempotencyKey: string;
   readonly requestDigest: string;
-  readonly state: "pending" | "committed" | "outcome_unknown";
+  readonly state: "pending" | "retryable" | "committed" | "outcome_unknown";
   readonly expectedVersion: bigint;
   readonly effectToken: string | null;
   readonly effectLeaseExpiresAt: string | null;
@@ -81,6 +83,8 @@ export interface AssetMultipartRepositoryPort {
       idempotencyKey: string;
       requestDigest: string;
       receiptRef: string;
+      effectToken: string;
+      effectLeaseExpiresAt: string;
       now: string;
     }>,
   ): Promise<AuthorizedAssetMultipartSnapshot>;
@@ -91,6 +95,7 @@ export interface AssetMultipartRepositoryPort {
       uploadRef: string;
       expectedVersion: bigint;
       providerUploadId: string;
+      effectToken: string;
       now: string;
     }>,
   ): Promise<AuthorizedAssetMultipartSnapshot>;
@@ -100,6 +105,17 @@ export interface AssetMultipartRepositoryPort {
       claims: AssetUploadCapabilityClaims;
       uploadRef: string;
       expectedVersion: bigint;
+      effectToken: string;
+      now: string;
+    }>,
+  ): Promise<AuthorizedAssetMultipartSnapshot>;
+  releaseInitiation(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      claims: AssetUploadCapabilityClaims;
+      uploadRef: string;
+      expectedVersion: bigint;
+      effectToken: string;
       now: string;
     }>,
   ): Promise<AuthorizedAssetMultipartSnapshot>;
@@ -129,6 +145,17 @@ export interface AssetMultipartRepositoryPort {
       effectToken: string;
       providerEtag: string | null;
       state: "committed" | "outcome_unknown";
+      now: string;
+    }>,
+  ): Promise<AuthorizedAssetMultipartSnapshot>;
+  releasePart(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      claims: AssetUploadCapabilityClaims;
+      uploadRef: string;
+      partNumber: number;
+      expectedPartVersion: bigint;
+      effectToken: string;
       now: string;
     }>,
   ): Promise<AuthorizedAssetMultipartSnapshot>;
@@ -196,11 +223,13 @@ export interface AssetMultipartStorePort {
     storageRegion: string;
     objectRef: string;
     uploadRef: string;
+    signal: AbortSignal;
   }>): Promise<string>;
   recoverInitiation(input: Readonly<{
     storageTenantRef: string;
     storageRegion: string;
     objectRef: string;
+    signal: AbortSignal;
   }>): Promise<string | null>;
   putPart(input: Readonly<{
     storageTenantRef: string;
@@ -211,6 +240,7 @@ export interface AssetMultipartStorePort {
     declaredSize: bigint;
     checksumSha256: string;
     body: Readable;
+    signal: AbortSignal;
   }>): Promise<string>;
   complete(input: Readonly<{
     storageTenantRef: string;
@@ -236,4 +266,14 @@ export interface AssetMultipartStorePort {
     expectedSize: bigint;
     expectedChecksumSha256: string;
   }>): Promise<"absent" | "exact">;
+}
+
+/** The provider effect may have committed although its transport result was not observed. */
+export class AssetMultipartProviderOutcomeUnknownError extends Error {
+  override readonly name = "AssetMultipartProviderOutcomeUnknownError";
+}
+
+/** The provider or request rejected deterministically; repeating the same bytes is safe. */
+export class AssetMultipartProviderRejectedError extends Error {
+  override readonly name = "AssetMultipartProviderRejectedError";
 }

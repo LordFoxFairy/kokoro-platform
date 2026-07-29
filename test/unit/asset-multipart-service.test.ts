@@ -2,11 +2,17 @@ import { Readable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import { AssetMultipartService } from
   "../../src/modules/asset/application/services/asset-multipart-service.js";
+import { digestAssetCommand } from
+  "../../src/modules/asset/application/asset-digest.js";
 import type {
   AssetMultipartRepositoryPort,
   AssetMultipartStorePort,
   AssetMultipartUnitOfWorkPort,
   AuthorizedAssetMultipartSnapshot,
+} from "../../src/modules/asset/application/contracts/asset-multipart-ports.js";
+import {
+  AssetMultipartProviderOutcomeUnknownError,
+  AssetMultipartProviderRejectedError,
 } from "../../src/modules/asset/application/contracts/asset-multipart-ports.js";
 import type { AssetUploadCapabilityClaims } from
   "../../src/modules/asset/application/contracts/asset-upload-ports.js";
@@ -32,13 +38,101 @@ const claims: AssetUploadCapabilityClaims = Object.freeze({
   expectedSize: "1234",
   expectedChecksumSha256: "a".repeat(64),
   capabilityEpoch: "1",
-  expiresAt: "2026-07-29T12:05:00.000Z",
+  expiresAt: "2099-07-29T12:05:00.000Z",
   minimumPartBytes: "100",
   maximumPartBytes: "10000",
   allowedOrigins: ["https://chat.example.test"],
 });
 
 describe("AssetMultipartService", () => {
+  it("allows only the durable initiation effect owner to invoke the provider", async () => {
+    const ownedByAnotherCall = initiationSnapshot("winning_effect_token_01");
+    const repository = {
+      claimInitiation: vi.fn().mockResolvedValue(ownedByAnotherCall),
+    } as unknown as AssetMultipartRepositoryPort;
+    const store = {
+      recoverInitiation: vi.fn(),
+      initiate: vi.fn(),
+    } as unknown as AssetMultipartStorePort;
+    const service = new AssetMultipartService({
+      unitOfWork: unitOfWork(), repository, store,
+      reference: references([
+        "losing_effect_token_01", "losing_upload_ref_01", "losing_receipt_ref_01",
+      ]),
+      clock: () => new Date("2026-07-29T12:01:00.000Z"),
+    });
+
+    await expect(service.initiate({
+      claims,
+      clientUploadId: "client_upload_0001",
+      idempotencyKey: "initiation-key-0001",
+    })).resolves.toBe(ownedByAnotherCall);
+    expect(store.recoverInitiation).not.toHaveBeenCalled();
+    expect(store.initiate).not.toHaveBeenCalled();
+  });
+
+  it("releases deterministic initiation failures instead of recording an unknown outcome", async () => {
+    const pending = initiationSnapshot("owned_effect_token_01");
+    const released = initiationSnapshot(null);
+    const repository = {
+      claimInitiation: vi.fn().mockResolvedValue(pending),
+      releaseInitiation: vi.fn().mockResolvedValue(released),
+      recordInitiationUnknown: vi.fn(),
+    } as unknown as AssetMultipartRepositoryPort;
+    const store = {
+      recoverInitiation: vi.fn().mockRejectedValue(
+        new AssetMultipartProviderRejectedError("ASSET_STORAGE_ROUTE_NOT_FOUND"),
+      ),
+      initiate: vi.fn(),
+    } as unknown as AssetMultipartStorePort;
+    const service = new AssetMultipartService({
+      unitOfWork: unitOfWork(), repository, store,
+      reference: references([
+        "owned_effect_token_01", "multipart_upload_01", "initiation_receipt_01",
+      ]),
+      clock: () => new Date("2026-07-29T12:01:00.000Z"),
+    });
+
+    await expect(service.initiate({
+      claims,
+      clientUploadId: "client_upload_0001",
+      idempotencyKey: "initiation-key-0001",
+    })).rejects.toThrow("ASSET_STORAGE_ROUTE_NOT_FOUND");
+    expect(repository.releaseInitiation).toHaveBeenCalledOnce();
+    expect(repository.recordInitiationUnknown).not.toHaveBeenCalled();
+  });
+
+  it("records only an explicitly ambiguous provider initiation effect as outcome unknown", async () => {
+    const pending = initiationSnapshot("owned_effect_token_01");
+    const unknown = initiationSnapshot(null, "outcome_unknown");
+    const repository = {
+      claimInitiation: vi.fn().mockResolvedValue(pending),
+      recordInitiationUnknown: vi.fn().mockResolvedValue(unknown),
+      releaseInitiation: vi.fn(),
+    } as unknown as AssetMultipartRepositoryPort;
+    const store = {
+      recoverInitiation: vi.fn().mockResolvedValue(null),
+      initiate: vi.fn().mockRejectedValue(
+        new AssetMultipartProviderOutcomeUnknownError("provider_timeout"),
+      ),
+    } as unknown as AssetMultipartStorePort;
+    const service = new AssetMultipartService({
+      unitOfWork: unitOfWork(), repository, store,
+      reference: references([
+        "owned_effect_token_01", "multipart_upload_01", "initiation_receipt_01",
+      ]),
+      clock: () => new Date("2026-07-29T12:01:00.000Z"),
+    });
+
+    await expect(service.initiate({
+      claims,
+      clientUploadId: "client_upload_0001",
+      idempotencyKey: "initiation-key-0001",
+    })).resolves.toMatchObject({ upload: { state: "outcome_unknown" } });
+    expect(repository.recordInitiationUnknown).toHaveBeenCalledOnce();
+    expect(repository.releaseInitiation).not.toHaveBeenCalled();
+  });
+
   it("durably rejects a completed object with deterministic integrity mismatch", async () => {
     const uploading = snapshot("uploading", 1n);
     const completing = snapshot("completing", 2n);
@@ -217,13 +311,85 @@ describe("AssetMultipartService", () => {
     })).resolves.toMatchObject({ parts: [{ state: "pending" }] });
     expect(store.putPart).not.toHaveBeenCalled();
   });
+
+  it("releases deterministic part rejection without misclassifying it as outcome unknown", async () => {
+    const pending = snapshot("uploading", 1n, "pending");
+    const retryable = snapshot("uploading", 1n, "retryable");
+    const repository = {
+      claimPart: vi.fn().mockResolvedValue(pending),
+      releasePart: vi.fn().mockResolvedValue(retryable),
+      finishPart: vi.fn(),
+    } as unknown as AssetMultipartRepositoryPort;
+    const store = {
+      putPart: vi.fn().mockRejectedValue(
+        new AssetMultipartProviderRejectedError("ASSET_MULTIPART_PART_CHECKSUM_MISMATCH"),
+      ),
+    } as unknown as AssetMultipartStorePort;
+    const service = new AssetMultipartService({
+      unitOfWork: unitOfWork(), repository, store,
+      reference: references(["multipart_part_receipt_01"]),
+    });
+
+    await expect(service.putPart({
+      claims,
+      uploadRef: "multipart_upload_01",
+      partNumber: 1,
+      declaredSize: 1234n,
+      checksumSha256: "d".repeat(64),
+      idempotencyKey: "part-idempotency-01",
+      body: Readable.from(Buffer.alloc(1234)),
+    })).rejects.toThrow("ASSET_MULTIPART_PART_CHECKSUM_MISMATCH");
+    expect(repository.releasePart).toHaveBeenCalledOnce();
+    expect(repository.finishPart).not.toHaveBeenCalled();
+  });
+
+  it("aborts a provider part effect before its durable lease can be reclaimed", async () => {
+    const pending = snapshot("uploading", 1n, "pending");
+    const unknown = snapshot("uploading", 1n, "outcome_unknown");
+    const repository = {
+      claimPart: vi.fn().mockResolvedValue(pending),
+      finishPart: vi.fn().mockResolvedValue(unknown),
+    } as unknown as AssetMultipartRepositoryPort;
+    const observedSignals: AbortSignal[] = [];
+    const store = {
+      putPart: vi.fn(async (input) => {
+        observedSignals.push(input.signal);
+        await new Promise<void>((_resolve, reject) => input.signal.addEventListener(
+          "abort", () => reject(new AssetMultipartProviderOutcomeUnknownError("provider_deadline")),
+          { once: true },
+        ));
+        return "unreachable";
+      }),
+    } as unknown as AssetMultipartStorePort;
+    const body = Readable.from(Buffer.alloc(1234));
+    const service = new AssetMultipartService({
+      unitOfWork: unitOfWork(), repository, store,
+      reference: references(["multipart_part_receipt_01"]),
+      providerEffectTimeoutMs: 5,
+    });
+
+    await expect(service.putPart({
+      claims,
+      uploadRef: "multipart_upload_01",
+      partNumber: 1,
+      declaredSize: 1234n,
+      checksumSha256: "d".repeat(64),
+      idempotencyKey: "part-idempotency-01",
+      body,
+    })).rejects.toThrow("provider_deadline");
+    expect(observedSignals).toHaveLength(1);
+    expect(observedSignals[0]?.aborted).toBe(true);
+    expect(repository.finishPart).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      state: "outcome_unknown",
+    }));
+  });
 });
 
 function snapshot(
-  state: "uploading" | "completing" | "aborting" | "uploaded" | "integrity_rejected" |
-    "outcome_unknown",
+  state: "initiating" | "uploading" | "completing" | "aborting" | "uploaded" |
+    "integrity_rejected" | "outcome_unknown",
   expectedVersion: bigint,
-  partState: "pending" | "committed" | "outcome_unknown" = "committed",
+  partState: "pending" | "retryable" | "committed" | "outcome_unknown" = "committed",
 ): AuthorizedAssetMultipartSnapshot {
   return Object.freeze({
     claims,
@@ -241,6 +407,8 @@ function snapshot(
       initiationIdempotencyKey: "initiation-key-0001",
       initiationRequestDigest: "b".repeat(64),
       initiationReceiptRef: "initiation_receipt_01",
+      initiationEffectToken: null,
+      initiationEffectLeaseExpiresAt: null,
       completionIdempotencyKey: state === "uploading" ? null : "completion-key-0001",
       completionRequestDigest: state === "uploading" ? null : "c".repeat(64),
       completionReceiptRef: state === "uploading" ? null : "completion_receipt_01",
@@ -263,6 +431,33 @@ function snapshot(
       effectToken: partState === "pending" ? "multipart_part_receipt_01" : null,
       effectLeaseExpiresAt: partState === "pending" ? "2026-07-29T12:01:30.000Z" : null,
     })]),
+  });
+}
+
+function initiationSnapshot(
+  effectToken: string | null,
+  state: "initiating" | "outcome_unknown" = "initiating",
+): AuthorizedAssetMultipartSnapshot {
+  const value = snapshot(state, 1n);
+  return Object.freeze({
+    ...value,
+    upload: Object.freeze({
+      ...value.upload!,
+      providerUploadId: null,
+      initiationRequestDigest: digestAssetCommand({
+        operation: "initiateAssetMultipartUpload",
+        sessionRef: claims.sessionRef,
+        capabilityEpoch: claims.capabilityEpoch,
+        clientUploadId: "client_upload_0001",
+        protocolRevision: "s3-multipart-v1",
+      }),
+      outcomeOperation: state === "outcome_unknown" ? "initiate" as const : null,
+      initiationEffectToken: effectToken,
+      initiationEffectLeaseExpiresAt: effectToken === null
+        ? null
+        : "2026-07-29T12:01:30.000Z",
+    }),
+    parts: Object.freeze([]),
   });
 }
 

@@ -7,6 +7,8 @@ import type {
   AuthorizedAssetMultipartSnapshot,
   StoredAssetMultipartPart,
 } from "../contracts/asset-multipart-ports.js";
+import { AssetMultipartProviderOutcomeUnknownError } from
+  "../contracts/asset-multipart-ports.js";
 import type { AssetUploadCapabilityClaims } from "../contracts/asset-upload-ports.js";
 
 export class AssetMultipartService {
@@ -16,6 +18,8 @@ export class AssetMultipartService {
     store: AssetMultipartStorePort;
     clock?: () => Date;
     reference?: () => string;
+    providerEffectTimeoutMs?: number;
+    monotonicClock?: () => number;
   }>) {}
 
   async initiate(input: Readonly<{
@@ -33,6 +37,8 @@ export class AssetMultipartService {
       protocolRevision: "s3-multipart-v1",
     });
     const now = this.now();
+    const claimedMonotonic = this.monotonicNow();
+    const effectToken = this.reference();
     let snapshot = await this.dependencies.unitOfWork.execute(
       input.claims,
       "asset.multipart.initiate",
@@ -43,6 +49,8 @@ export class AssetMultipartService {
         idempotencyKey: input.idempotencyKey,
         requestDigest,
         receiptRef: this.reference(),
+        effectToken,
+        effectLeaseExpiresAt: leaseExpiry(now, input.claims.expiresAt),
         now,
       }),
     );
@@ -55,11 +63,16 @@ export class AssetMultipartService {
         !(upload.state === "outcome_unknown" && upload.outcomeOperation === "initiate")) {
       return snapshot;
     }
+    if (upload.initiationEffectToken !== effectToken) return snapshot;
     try {
-      const recovered = await this.dependencies.store.recoverInitiation(route(input.claims));
+      const signal = this.effectSignal(claimedMonotonic, input.claims.expiresAt);
+      const recovered = await this.dependencies.store.recoverInitiation({
+        ...route(input.claims), signal,
+      });
       const providerUploadId = recovered ?? await this.dependencies.store.initiate({
         ...route(input.claims),
         uploadRef: upload.uploadRef,
+        signal,
       });
       snapshot = await this.dependencies.unitOfWork.execute(
         input.claims,
@@ -69,20 +82,37 @@ export class AssetMultipartService {
           uploadRef: upload.uploadRef,
           expectedVersion: upload.expectedVersion,
           providerUploadId,
+          effectToken,
           now: this.now(),
         }),
       );
-    } catch {
-      snapshot = await this.dependencies.unitOfWork.execute(
-        input.claims,
-        "asset.multipart.initiate",
-        (transaction) => this.dependencies.repository.recordInitiationUnknown(transaction, {
-          claims: input.claims,
-          uploadRef: upload.uploadRef,
-          expectedVersion: upload.expectedVersion,
-          now: this.now(),
-        }),
-      );
+    } catch (error) {
+      if (error instanceof AssetMultipartProviderOutcomeUnknownError) {
+        snapshot = await this.dependencies.unitOfWork.execute(
+          input.claims,
+          "asset.multipart.initiate",
+          (transaction) => this.dependencies.repository.recordInitiationUnknown(transaction, {
+            claims: input.claims,
+            uploadRef: upload.uploadRef,
+            expectedVersion: upload.expectedVersion,
+            effectToken,
+            now: this.now(),
+          }),
+        );
+      } else {
+        await this.dependencies.unitOfWork.execute(
+          input.claims,
+          "asset.multipart.initiate",
+          (transaction) => this.dependencies.repository.releaseInitiation(transaction, {
+            claims: input.claims,
+            uploadRef: upload.uploadRef,
+            expectedVersion: upload.expectedVersion,
+            effectToken,
+            now: this.now(),
+          }),
+        );
+        throw error;
+      }
     }
     return snapshot;
   }
@@ -114,6 +144,7 @@ export class AssetMultipartService {
     });
     const effectToken = this.reference();
     const claimedAt = this.now();
+    const claimedMonotonic = this.monotonicNow();
     let snapshot = await this.dependencies.unitOfWork.execute(
       input.claims,
       "asset.multipart.put-part",
@@ -127,7 +158,7 @@ export class AssetMultipartService {
         idempotencyKey: input.idempotencyKey,
         requestDigest,
         effectToken,
-        effectLeaseExpiresAt: leaseExpiry(claimedAt),
+        effectLeaseExpiresAt: leaseExpiry(claimedAt, input.claims.expiresAt),
         now: claimedAt,
       }),
     );
@@ -153,14 +184,19 @@ export class AssetMultipartService {
         declaredSize: input.declaredSize,
         checksumSha256: input.checksumSha256,
         body: input.body,
+        signal: this.effectSignal(claimedMonotonic, input.claims.expiresAt),
       });
       snapshot = await this.finishPart(input.claims, input.uploadRef, part, effectToken,
         "committed", providerEtag);
       return snapshot;
     } catch (error) {
-      await this.finishPart(input.claims, input.uploadRef, part, effectToken,
-        "outcome_unknown", null)
-        .catch(() => undefined);
+      if (error instanceof AssetMultipartProviderOutcomeUnknownError) {
+        await this.finishPart(input.claims, input.uploadRef, part, effectToken,
+          "outcome_unknown", null)
+          .catch(() => undefined);
+      } else {
+        await this.releasePart(input.claims, input.uploadRef, part, effectToken);
+      }
       throw error;
     }
   }
@@ -343,6 +379,26 @@ export class AssetMultipartService {
     );
   }
 
+  private releasePart(
+    claims: AssetUploadCapabilityClaims,
+    uploadRef: string,
+    part: StoredAssetMultipartPart,
+    effectToken: string,
+  ) {
+    return this.dependencies.unitOfWork.execute(
+      claims,
+      "asset.multipart.put-part",
+      (transaction) => this.dependencies.repository.releasePart(transaction, {
+        claims,
+        uploadRef,
+        partNumber: part.partNumber,
+        expectedPartVersion: part.expectedVersion,
+        effectToken,
+        now: this.now(),
+      }),
+    );
+  }
+
   private async reconcileCompletion(
     claims: AssetUploadCapabilityClaims,
     upload: NonNullable<AuthorizedAssetMultipartSnapshot["upload"]>,
@@ -472,6 +528,26 @@ export class AssetMultipartService {
   private reference(): string {
     return (this.dependencies.reference ?? (() => crypto.randomUUID()))();
   }
+
+  private monotonicNow(): number {
+    return (this.dependencies.monotonicClock ?? (() => performance.now()))();
+  }
+
+  private effectSignal(claimedAt: number, capabilityExpiresAt: string): AbortSignal {
+    const requested = this.dependencies.providerEffectTimeoutMs ?? PROVIDER_EFFECT_TIMEOUT_MS;
+    if (!Number.isSafeInteger(requested) || requested < 1 || requested > PROVIDER_EFFECT_TIMEOUT_MS) {
+      throw new Error("ASSET_MULTIPART_PROVIDER_TIMEOUT_INVALID");
+    }
+    const elapsed = Math.max(0, this.monotonicNow() - claimedAt);
+    const capabilityRemaining = Date.parse(capabilityExpiresAt) - Date.parse(this.now()) -
+      EFFECT_LEASE_SAFETY_MS;
+    const remaining = Math.floor(Math.min(
+      EFFECT_LEASE_MS - EFFECT_LEASE_SAFETY_MS - elapsed,
+      capabilityRemaining,
+    ));
+    if (remaining < 1) throw new Error("UPLOAD_CAPABILITY_REJECTED");
+    return AbortSignal.timeout(Math.min(requested, remaining));
+  }
 }
 
 function requiredUpload(snapshot: AuthorizedAssetMultipartSnapshot) {
@@ -560,6 +636,17 @@ function requiredProviderEtag(part: StoredAssetMultipartPart): string {
   return part.providerEtag;
 }
 
+const EFFECT_LEASE_MS = 30_000;
+const EFFECT_LEASE_SAFETY_MS = 5_000;
+const PROVIDER_EFFECT_TIMEOUT_MS = 20_000;
+
+function leaseExpiry(value: string, capabilityExpiresAt: string): string {
+  return new Date(Math.min(
+    Date.parse(value) + EFFECT_LEASE_MS,
+    Date.parse(capabilityExpiresAt),
+  )).toISOString();
+}
+
 function committedParts(parts: readonly StoredAssetMultipartPart[]): readonly StoredAssetMultipartPart[] {
   const committed = parts
     .filter((part) => part.state === "committed")
@@ -570,8 +657,4 @@ function committedParts(parts: readonly StoredAssetMultipartPart[]): readonly St
 
 function isIntegrityMismatch(error: unknown): boolean {
   return error instanceof Error && error.message === "ASSET_MULTIPART_OBJECT_MISMATCH";
-}
-
-function leaseExpiry(now: string): string {
-  return new Date(Date.parse(now) + 30_000).toISOString();
 }

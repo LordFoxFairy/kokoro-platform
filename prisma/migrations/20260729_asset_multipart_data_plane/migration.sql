@@ -19,6 +19,8 @@ CREATE TABLE platform.asset_multipart_upload (
   initiation_idempotency_key TEXT NOT NULL CHECK (length(initiation_idempotency_key) BETWEEN 16 AND 191),
   initiation_request_digest CHAR(64) NOT NULL CHECK (initiation_request_digest ~ '^[a-f0-9]{64}$'),
   initiation_receipt_ref TEXT NOT NULL UNIQUE,
+  initiation_effect_token TEXT,
+  initiation_effect_lease_expires_at TIMESTAMPTZ,
   completion_idempotency_key TEXT CHECK (length(completion_idempotency_key) BETWEEN 16 AND 191),
   completion_request_digest CHAR(64) CHECK (completion_request_digest ~ '^[a-f0-9]{64}$'),
   completion_receipt_ref TEXT UNIQUE,
@@ -39,6 +41,8 @@ CREATE TABLE platform.asset_multipart_upload (
   CHECK ((completion_idempotency_key IS NULL) = (completion_receipt_ref IS NULL)),
   CHECK ((abort_idempotency_key IS NULL) = (abort_request_digest IS NULL)),
   CHECK ((abort_idempotency_key IS NULL) = (abort_receipt_ref IS NULL)),
+  CHECK ((initiation_effect_token IS NULL) = (initiation_effect_lease_expires_at IS NULL)),
+  CHECK (initiation_effect_token IS NULL OR state IN ('initiating','outcome_unknown')),
   CHECK (provider_upload_id IS NOT NULL OR state IN ('initiating','outcome_unknown'))
 );
 CREATE INDEX asset_multipart_upload_reconcile_idx
@@ -54,7 +58,7 @@ CREATE TABLE platform.asset_multipart_part (
   checksum_sha256 CHAR(64) NOT NULL CHECK (checksum_sha256 ~ '^[a-f0-9]{64}$'),
   idempotency_key TEXT NOT NULL CHECK (length(idempotency_key) BETWEEN 16 AND 191),
   request_digest CHAR(64) NOT NULL CHECK (request_digest ~ '^[a-f0-9]{64}$'),
-  state TEXT NOT NULL CHECK (state IN ('pending','committed','outcome_unknown')),
+  state TEXT NOT NULL CHECK (state IN ('pending','retryable','committed','outcome_unknown')),
   expected_version BIGINT NOT NULL CHECK (expected_version > 0),
   effect_token TEXT,
   effect_lease_expires_at TIMESTAMPTZ,
@@ -87,7 +91,7 @@ BEGIN
       NEW.abort_request_digest,NEW.abort_receipt_ref) IS DISTINCT FROM
       ROW(OLD.abort_idempotency_key,OLD.abort_request_digest,OLD.abort_receipt_ref))
     OR NOT CASE OLD.state
-      WHEN 'initiating' THEN NEW.state IN ('uploading','outcome_unknown')
+      WHEN 'initiating' THEN NEW.state IN ('initiating','uploading','outcome_unknown')
       WHEN 'uploading' THEN NEW.state IN ('completing','aborting')
       WHEN 'completing' THEN NEW.state IN ('uploaded','integrity_rejected','outcome_unknown')
       WHEN 'aborting' THEN NEW.state IN ('aborted','uploaded','integrity_rejected','outcome_unknown')
@@ -114,8 +118,9 @@ BEGIN
     NEW.checksum_sha256,NEW.idempotency_key,NEW.request_digest,NEW.created_at)
     OR NEW.expected_version<>OLD.expected_version+1
     OR NOT CASE OLD.state
-      WHEN 'pending' THEN NEW.state IN ('pending','committed','outcome_unknown')
-      WHEN 'outcome_unknown' THEN NEW.state IN ('pending','committed','outcome_unknown')
+      WHEN 'pending' THEN NEW.state IN ('pending','retryable','committed','outcome_unknown')
+      WHEN 'retryable' THEN NEW.state IN ('pending')
+      WHEN 'outcome_unknown' THEN NEW.state IN ('pending','retryable','committed','outcome_unknown')
       ELSE FALSE
     END THEN
     RAISE EXCEPTION 'ASSET_MULTIPART_PART_TRANSITION_INVALID' USING ERRCODE='23514';

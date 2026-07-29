@@ -6,6 +6,10 @@ import {
   HeadObjectCommand,
   UploadPartCommand,
 } from "@aws-sdk/client-s3";
+import {
+  AssetMultipartProviderOutcomeUnknownError,
+  AssetMultipartProviderRejectedError,
+} from "../../src/modules/asset/application/contracts/asset-multipart-ports.js";
 import { S3AssetObjectStore } from
   "../../src/modules/asset/infrastructure/s3/asset-object-store.js";
 
@@ -89,6 +93,77 @@ describe("S3AssetObjectStore exact cleanup", () => {
 });
 
 describe("S3AssetObjectStore multipart data plane", () => {
+  it("classifies an ambiguous create transport result separately from deterministic provider rejection", async () => {
+    const ambiguous = new S3AssetObjectStore([route], () => ({
+      send: vi.fn().mockRejectedValue(new Error("socket_timeout")),
+    } as never));
+    await expect(ambiguous.initiate({
+      storageTenantRef: route.storageTenantRef,
+      storageRegion: route.storageRegion,
+      objectRef: "quarantine/opaque_0123456789",
+      uploadRef: "multipart_upload_01",
+      signal: new AbortController().signal,
+    })).rejects.toBeInstanceOf(AssetMultipartProviderOutcomeUnknownError);
+
+    const rejected = new S3AssetObjectStore([route], () => ({
+      send: vi.fn().mockResolvedValue({ UploadId: "" }),
+    } as never));
+    await expect(rejected.initiate({
+      storageTenantRef: route.storageTenantRef,
+      storageRegion: route.storageRegion,
+      objectRef: "quarantine/opaque_0123456789",
+      uploadRef: "multipart_upload_01",
+      signal: new AbortController().signal,
+    })).rejects.toBeInstanceOf(AssetMultipartProviderRejectedError);
+  });
+
+  it("passes the effect deadline to S3 and tears down the body when it expires", async () => {
+    const controller = new AbortController();
+    const send = vi.fn((_command: UploadPartCommand, options?: { abortSignal?: AbortSignal }) =>
+      new Promise((_resolve, reject) => options?.abortSignal?.addEventListener(
+        "abort", () => reject(new Error("sdk_aborted")), { once: true },
+      )));
+    const store = new S3AssetObjectStore([route], () => ({ send } as never));
+    const body = Readable.from(Buffer.alloc(1234));
+    const effect = store.putPart({
+      storageTenantRef: route.storageTenantRef,
+      storageRegion: route.storageRegion,
+      objectRef: "quarantine/opaque_0123456789",
+      providerUploadId: "provider_upload_01",
+      partNumber: 1,
+      declaredSize: 1234n,
+      checksumSha256: "d".repeat(64),
+      body,
+      signal: controller.signal,
+    });
+
+    controller.abort();
+    await expect(effect).rejects.toBeInstanceOf(AssetMultipartProviderOutcomeUnknownError);
+    expect(send.mock.calls[0]?.[1]?.abortSignal).toBe(controller.signal);
+    expect(body.destroyed).toBe(true);
+  });
+
+  it("classifies an invalid successful part response as deterministic and safely retryable", async () => {
+    const send = vi.fn(async (command: UploadPartCommand) => {
+      for await (const _chunk of command.input.Body as unknown as AsyncIterable<Uint8Array>) {
+        // consume the exact admitted stream
+      }
+      return { ETag: "" };
+    });
+    const store = new S3AssetObjectStore([route], () => ({ send } as never));
+    await expect(store.putPart({
+      storageTenantRef: route.storageTenantRef,
+      storageRegion: route.storageRegion,
+      objectRef: "quarantine/opaque_0123456789",
+      providerUploadId: "provider_upload_01",
+      partNumber: 1,
+      declaredSize: 5n,
+      checksumSha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+      body: Readable.from(Buffer.from("hello")),
+      signal: new AbortController().signal,
+    })).rejects.toBeInstanceOf(AssetMultipartProviderRejectedError);
+  });
+
   it("completes with the exact provider etag and per-part SHA-256", async () => {
     const send = vi.fn().mockResolvedValue({});
     const store = new S3AssetObjectStore([route], () => ({ send } as never));
@@ -140,6 +215,7 @@ describe("S3AssetObjectStore multipart data plane", () => {
         declaredSize: 5n,
         checksumSha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
         body,
+        signal: new AbortController().signal,
       }),
       rejectAfter(100, "source_failure_not_propagated"),
     ])).rejects.toThrow("source_failed");

@@ -18,7 +18,11 @@ import type { AssetQuarantineObjectStorePort } from "../../application/contracts
 import type { AssetTrustedObjectStorePort } from "../../application/contracts/asset-promotion-worker-ports.js";
 import type { AssetObjectCleanupStorePort } from
   "../../application/contracts/asset-cleanup-worker-ports.js";
-import type { AssetMultipartStorePort } from
+import {
+  AssetMultipartProviderOutcomeUnknownError,
+  AssetMultipartProviderRejectedError,
+  type AssetMultipartStorePort,
+} from
   "../../application/contracts/asset-multipart-ports.js";
 
 export interface AssetS3StorageRoute {
@@ -79,14 +83,21 @@ export class S3AssetObjectStore implements
   async initiate(input: Parameters<AssetMultipartStorePort["initiate"]>[0]): Promise<string> {
     const route = this.resolve(input.storageTenantRef, input.storageRegion);
     validateObjectRef(input.objectRef);
-    const output = await route.client.send(new CreateMultipartUploadCommand({
-      Bucket: route.configuration.bucket,
-      Key: input.objectRef,
-      ChecksumAlgorithm: "SHA256",
-      Metadata: { "kokoro-upload-ref": input.uploadRef },
-    }));
+    let output;
+    try {
+      output = await route.client.send(new CreateMultipartUploadCommand({
+        Bucket: route.configuration.bucket,
+        Key: input.objectRef,
+        ChecksumAlgorithm: "SHA256",
+        Metadata: { "kokoro-upload-ref": input.uploadRef },
+      }), { abortSignal: input.signal });
+    } catch (error) {
+      throw new AssetMultipartProviderOutcomeUnknownError("ASSET_MULTIPART_INITIATION_OUTCOME_UNKNOWN", {
+        cause: error,
+      });
+    }
     if (output.UploadId === undefined || output.UploadId.length < 1 || output.UploadId.length > 2_048) {
-      throw new Error("ASSET_MULTIPART_PROVIDER_ID_INVALID");
+      throw new AssetMultipartProviderRejectedError("ASSET_MULTIPART_PROVIDER_ID_INVALID");
     }
     return output.UploadId;
   }
@@ -96,15 +107,22 @@ export class S3AssetObjectStore implements
   ): Promise<string | null> {
     const route = this.resolve(input.storageTenantRef, input.storageRegion);
     validateObjectRef(input.objectRef);
-    const output = await route.client.send(new ListMultipartUploadsCommand({
-      Bucket: route.configuration.bucket,
-      Prefix: input.objectRef,
-      MaxUploads: 2,
-    }));
+    let output;
+    try {
+      output = await route.client.send(new ListMultipartUploadsCommand({
+        Bucket: route.configuration.bucket,
+        Prefix: input.objectRef,
+        MaxUploads: 2,
+      }), { abortSignal: input.signal });
+    } catch (error) {
+      throw new AssetMultipartProviderRejectedError("ASSET_MULTIPART_RECOVERY_UNAVAILABLE", {
+        cause: error,
+      });
+    }
     const matches = (output.Uploads ?? []).filter((upload) =>
       upload.Key === input.objectRef && upload.UploadId !== undefined && upload.UploadId.length > 0);
     if (matches.length > 1 || output.IsTruncated === true) {
-      throw new Error("ASSET_MULTIPART_INITIATION_AMBIGUOUS");
+      throw new AssetMultipartProviderRejectedError("ASSET_MULTIPART_INITIATION_AMBIGUOUS");
     }
     return matches[0]?.UploadId ?? null;
   }
@@ -124,19 +142,28 @@ export class S3AssetObjectStore implements
         const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
         observedBytes += BigInt(bytes.byteLength);
         if (observedBytes > input.declaredSize) {
-          callback(new Error("ASSET_MULTIPART_PART_LENGTH_MISMATCH"));
+          callback(new AssetMultipartProviderRejectedError(
+            "ASSET_MULTIPART_PART_LENGTH_MISMATCH",
+          ));
           return;
         }
         hash.update(bytes);
         callback(null, bytes);
       },
     });
-    let sourceFailure: Error | null = null;
+    let sourceFailure: unknown = null;
     const forwardSourceFailure = (error: Error) => {
       sourceFailure = error;
       meter.destroy(error);
     };
     input.body.once("error", forwardSourceFailure);
+    const abortEffect = () => {
+      // The SDK receives the abort reason through its signal. Destroy streams without emitting a
+      // second asynchronous error after the provider promise has already settled.
+      input.body.destroy();
+      meter.destroy();
+    };
+    input.signal.addEventListener("abort", abortEffect, { once: true });
     input.body.pipe(meter);
     try {
       const output = await route.client.send(new UploadPartCommand({
@@ -147,20 +174,47 @@ export class S3AssetObjectStore implements
         Body: meter,
         ContentLength: Number(input.declaredSize),
         ChecksumSHA256: Buffer.from(input.checksumSha256, "hex").toString("base64"),
-      }));
-      if (sourceFailure !== null) throw sourceFailure;
+      }), { abortSignal: input.signal });
+      if (sourceFailure !== null) {
+        if (input.signal.aborted) throw new AssetMultipartProviderOutcomeUnknownError(
+          "ASSET_MULTIPART_PART_OUTCOME_UNKNOWN", { cause: sourceFailure },
+        );
+        throw new AssetMultipartProviderRejectedError(
+          sourceFailure instanceof Error ? sourceFailure.message : "ASSET_MULTIPART_SOURCE_REJECTED", {
+          cause: sourceFailure,
+          },
+        );
+      }
       if (observedBytes !== input.declaredSize || hash.digest("hex") !== input.checksumSha256) {
-        throw new Error("ASSET_MULTIPART_PART_CHECKSUM_MISMATCH");
+        throw new AssetMultipartProviderRejectedError(
+          "ASSET_MULTIPART_PART_CHECKSUM_MISMATCH",
+        );
       }
       if (output.ETag === undefined || output.ETag.length < 1 || output.ETag.length > 512) {
-        throw new Error("ASSET_MULTIPART_PROVIDER_ETAG_INVALID");
+        throw new AssetMultipartProviderRejectedError("ASSET_MULTIPART_PROVIDER_ETAG_INVALID");
       }
       return output.ETag;
     } catch (error) {
       input.body.destroy();
       meter.destroy();
-      throw error;
+      if (error instanceof AssetMultipartProviderRejectedError ||
+          error instanceof AssetMultipartProviderOutcomeUnknownError) throw error;
+      if (input.signal.aborted) {
+        throw new AssetMultipartProviderOutcomeUnknownError(
+          "ASSET_MULTIPART_PART_OUTCOME_UNKNOWN", { cause: error },
+        );
+      }
+      if (sourceFailure !== null || isDeterministicPartFailure(error)) {
+        throw new AssetMultipartProviderRejectedError(
+          error instanceof Error ? error.message : "ASSET_MULTIPART_PART_REJECTED",
+          { cause: error },
+        );
+      }
+      throw new AssetMultipartProviderOutcomeUnknownError(
+        "ASSET_MULTIPART_PART_OUTCOME_UNKNOWN", { cause: error },
+      );
     } finally {
+      input.signal.removeEventListener("abort", abortEffect);
       input.body.off("error", forwardSourceFailure);
       input.body.unpipe(meter);
       if (!input.body.readableEnded) input.body.destroy();
@@ -537,5 +591,13 @@ function isDeterministicSizeFailure(error: unknown): boolean {
   return error instanceof Error && [
     "ASSET_OBJECT_SIZE_INVALID",
     "ASSET_OBJECT_READ_LIMIT_EXCEEDED",
+  ].includes(error.message);
+}
+
+function isDeterministicPartFailure(error: unknown): boolean {
+  return error instanceof Error && [
+    "ASSET_MULTIPART_PART_LENGTH_MISMATCH",
+    "ASSET_MULTIPART_PART_CHECKSUM_MISMATCH",
+    "ASSET_MULTIPART_PROVIDER_ETAG_INVALID",
   ].includes(error.message);
 }

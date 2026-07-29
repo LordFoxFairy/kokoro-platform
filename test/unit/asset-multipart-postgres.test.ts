@@ -35,6 +35,99 @@ const claims: AssetUploadCapabilityClaims = Object.freeze({
 });
 
 describe("PostgresAssetMultipartRepository", () => {
+  it("does not transfer an active initiation effect lease to an exact concurrent retry", async () => {
+    const statements: string[] = [];
+    const active = uploadRow({
+      providerUploadId: null,
+      uploadState: "initiating",
+      initiationEffectToken: "active_effect_token_01",
+      initiationEffectLeaseExpiresAt: "2026-07-29T12:01:30.000Z",
+    });
+    const sql: PlatformSqlTransaction = {
+      query: async <Row extends Record<string, unknown>>(statement: string): Promise<readonly Row[]> => {
+        if (statement.includes("FROM platform.asset_upload_intent intent")) {
+          return rows<Row>({ authoritySiteRef: claims.siteRef,
+            authorityIntentRef: claims.intentRef, authoritySessionRef: claims.sessionRef });
+        }
+        if (statement.includes("FROM platform.asset_multipart_upload upload")) return rows<Row>(active);
+        if (statement.includes("FROM platform.asset_multipart_part")) return [];
+        throw new Error(`unexpected query: ${statement}`);
+      },
+      execute: async (statement) => { statements.push(statement); return 0; },
+    };
+    const lease = issuePlatformTransaction(sql);
+    try {
+      await expect(new PostgresAssetMultipartRepository().claimInitiation(lease.transaction, {
+        claims,
+        uploadRef: "losing_upload_ref_01",
+        clientUploadId: "client_upload_0001",
+        idempotencyKey: "initiation-key-0001",
+        requestDigest: "b".repeat(64),
+        receiptRef: "losing_receipt_ref_01",
+        effectToken: "losing_effect_token_01",
+        effectLeaseExpiresAt: "2026-07-29T12:01:40.000Z",
+        now: "2026-07-29T12:01:00.000Z",
+      })).resolves.toMatchObject({
+        upload: { initiationEffectToken: "active_effect_token_01" },
+      });
+      expect(statements).toHaveLength(1);
+      expect(statements[0]).toContain("initiation_effect_lease_expires_at<=$7::timestamptz");
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("reclaims an expired initiation lease with an expected-version fenced owner token", async () => {
+    let uploadReads = 0;
+    const sql: PlatformSqlTransaction = {
+      query: async <Row extends Record<string, unknown>>(statement: string): Promise<readonly Row[]> => {
+        if (statement.includes("FROM platform.asset_upload_intent intent")) {
+          return rows<Row>({ authoritySiteRef: claims.siteRef,
+            authorityIntentRef: claims.intentRef, authoritySessionRef: claims.sessionRef });
+        }
+        if (statement.includes("FROM platform.asset_multipart_upload upload")) {
+          uploadReads += 1;
+          return rows<Row>(uploadRow({
+            providerUploadId: null,
+            uploadState: "initiating",
+            uploadExpectedVersion: uploadReads === 1 ? 1n : 2n,
+            initiationEffectToken: uploadReads === 1
+              ? "expired_effect_token_01"
+              : "new_effect_token_01",
+            initiationEffectLeaseExpiresAt: uploadReads === 1
+              ? "2026-07-29T12:00:30.000Z"
+              : "2026-07-29T12:01:30.000Z",
+          }));
+        }
+        if (statement.includes("FROM platform.asset_multipart_part")) return [];
+        throw new Error(`unexpected query: ${statement}`);
+      },
+      execute: async (statement, parameters) => {
+        expect(statement).toContain("expected_version=$3::bigint");
+        expect(parameters?.[4]).toBe("new_effect_token_01");
+        return 1;
+      },
+    };
+    const lease = issuePlatformTransaction(sql);
+    try {
+      await expect(new PostgresAssetMultipartRepository().claimInitiation(lease.transaction, {
+        claims,
+        uploadRef: "multipart_upload_01",
+        clientUploadId: "client_upload_0001",
+        idempotencyKey: "initiation-key-0001",
+        requestDigest: "b".repeat(64),
+        receiptRef: "initiation_receipt_01",
+        effectToken: "new_effect_token_01",
+        effectLeaseExpiresAt: "2026-07-29T12:01:30.000Z",
+        now: "2026-07-29T12:01:00.000Z",
+      })).resolves.toMatchObject({
+        upload: { expectedVersion: 2n, initiationEffectToken: "new_effect_token_01" },
+      });
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
   it("locks owner authority before locking the non-null multipart row separately", async () => {
     const statements: string[] = [];
     const sql: PlatformSqlTransaction = {
@@ -97,6 +190,8 @@ describe("PostgresAssetMultipartRepository", () => {
         idempotencyKey: "initiation-key-0001",
         requestDigest: "b".repeat(64),
         receiptRef: "losing_receipt_ref_01",
+        effectToken: "losing_effect_token_01",
+        effectLeaseExpiresAt: "2026-07-29T12:00:30.000Z",
         now: "2026-07-29T12:00:00.000Z",
       })).resolves.toMatchObject({ upload: { uploadRef: "multipart_upload_01" } });
     } finally {
@@ -176,6 +271,8 @@ function uploadRow(overrides: Readonly<Record<string, unknown>> = {}) {
     initiationIdempotencyKey: "initiation-key-0001",
     initiationRequestDigest: "b".repeat(64),
     initiationReceiptRef: "initiation_receipt_01",
+    initiationEffectToken: null,
+    initiationEffectLeaseExpiresAt: null,
     completionIdempotencyKey: null,
     completionRequestDigest: null,
     completionReceiptRef: null,
