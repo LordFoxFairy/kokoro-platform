@@ -8,6 +8,10 @@ export interface RedemptionCodeLookupCandidate {
 
 export type SaveRedemptionPreviewInput = StoredRedemptionPreview;
 
+export interface ResolvedRedemptionPreviewCandidate extends RedemptionPreviewCandidate {
+  readonly observedAt: string;
+}
+
 export interface RedemptionRepository {
   resolvePreviewCandidate(
     transaction: PlatformTransaction,
@@ -15,9 +19,8 @@ export interface RedemptionRepository {
       siteId: string;
       billingAccountId: string;
       lookupCandidates: readonly RedemptionCodeLookupCandidate[];
-      now: string;
     }>,
-  ): Promise<RedemptionPreviewCandidate | null>;
+  ): Promise<ResolvedRedemptionPreviewCandidate | null>;
   resolvePreviewBillingAccount(
     transaction: PlatformTransaction,
     input: Readonly<{ siteId: string; subjectId: string; subjectGeneration: string }>,

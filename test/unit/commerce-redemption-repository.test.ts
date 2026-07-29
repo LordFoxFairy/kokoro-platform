@@ -42,6 +42,7 @@ describe("PostgresRedemptionRepository preview", () => {
           termAction: "extend_from_max",
           termSeconds: 3600n,
           activeTermEndsAt: new Date("2026-07-29T02:00:00.000Z"),
+          observedAt: new Date("2026-07-29T01:00:30.000Z"),
           legalTermRefs: ["terms-v1"],
         }] as never;
         return outputRows as never;
@@ -53,13 +54,15 @@ describe("PostgresRedemptionRepository preview", () => {
         siteId: "site-1",
         billingAccountId: "billing-1",
         lookupCandidates: [{ keyRevision: "code-1", lookupDigest: "d".repeat(64) }],
-        now: "2026-07-29T01:00:00.000Z",
       });
       expect(JSON.parse(calls[0]!.values[1] as string)).toEqual([
         { key_revision: "code-1", lookup_digest: "d".repeat(64) },
       ]);
       expect(calls[0]!.statement).toContain("commerce_redemption_program_availability");
-      expect(calls[0]!.statement).toContain("subscription.billing_account_ref=$4");
+      expect(calls[0]!.statement).toContain("clock_timestamp()");
+      expect(calls[0]!.statement).toContain("subscription.billing_account_ref=$3");
+      expect(calls[0]!.statement).toContain("plan.plan_ref IS NOT NULL");
+      expect(result?.observedAt).toBe("2026-07-29T01:00:30.000Z");
       expect(result?.safeTerms.term).toEqual({
         action: "extend_from_max",
         automaticRenewal: false,

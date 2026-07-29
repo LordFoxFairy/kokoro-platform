@@ -44,20 +44,17 @@ export type RedemptionPreviewView = Readonly<{
 }>;
 
 export class PreviewRedemptionService {
-  readonly #clock: () => Date;
   readonly #reference: (now: number) => string;
   readonly #ttlSeconds: number;
 
   constructor(private readonly dependencies: Readonly<{
-    unitOfWork: PlatformUnitOfWork;
-    fence: CommerceCommandFence;
+    unitOfWork: Pick<PlatformUnitOfWork, "execute">;
+    fence: Pick<CommerceCommandFence, "execute">;
     repository: RedemptionRepository;
     secrets: RedemptionSecretPort;
-    clock?: () => Date;
     reference?: (now: number) => string;
     previewTtlSeconds?: number;
   }>) {
-    this.#clock = dependencies.clock ?? (() => new Date());
     this.#reference = dependencies.reference ?? ((now) => uuidV7(now));
     this.#ttlSeconds = dependencies.previewTtlSeconds ?? 300;
     if (!Number.isInteger(this.#ttlSeconds) || this.#ttlSeconds < 60 || this.#ttlSeconds > 900) {
@@ -104,9 +101,6 @@ export class PreviewRedemptionService {
     let execution: Awaited<ReturnType<CommerceCommandFence["execute"]>>;
     try {
       execution = await this.dependencies.fence.execute({ context: input.context, identity }, async ({ transaction }) => {
-      const now = this.#clock();
-      const issuedAt = now.toISOString();
-      const expiresAt = new Date(now.getTime() + this.#ttlSeconds * 1000).toISOString();
       const billing = await this.dependencies.repository.resolvePreviewBillingAccount(transaction, {
         siteId: identity.siteId,
         subjectId: identity.actorSubject,
@@ -117,10 +111,13 @@ export class PreviewRedemptionService {
         siteId: identity.siteId,
         billingAccountId: billing.billingAccountId,
         lookupCandidates: this.dependencies.secrets.codeLookupCandidates(input.code, identity.siteId),
-        now: issuedAt,
       });
       if (candidate === null) throw new CommerceApplicationError("REDEEM_NOT_ACCEPTED");
-      const previewRef = this.#reference(now.getTime());
+      const { observedAt: issuedAt, ...previewCandidate } = candidate;
+      const effectTime = Date.parse(issuedAt);
+      if (!Number.isFinite(effectTime)) throw new Error("REDEMPTION_TIMESTAMP_INVALID");
+      const expiresAt = new Date(effectTime + this.#ttlSeconds * 1000).toISOString();
+      const previewRef = this.#reference(effectTime);
       const previewCredential = this.dependencies.secrets.previewCredential(previewRef);
       const verifiedCredential = this.dependencies.secrets.verifyPreviewCredential(previewCredential);
       if (verifiedCredential === null) throw new Error("REDEMPTION_PREVIEW_CREDENTIAL_ISSUE_FAILED");
@@ -129,11 +126,11 @@ export class PreviewRedemptionService {
         subjectId: identity.actorSubject,
         subjectGeneration: identity.actorGeneration,
         billingAccountId: billing.billingAccountId,
-        candidate,
+        candidate: previewCandidate,
         expiresAt,
       });
       created = Object.freeze({
-        ...candidate,
+        ...previewCandidate,
         previewRef,
         commandId: identity.commandId,
         siteId: identity.siteId,
@@ -173,7 +170,6 @@ export class PreviewRedemptionService {
       }),
     );
     if (stored === null) throw new CommerceApplicationError("REDEEM_TEMPORARILY_UNAVAILABLE");
-    if (Date.parse(stored.expiresAt) <= this.#clock().getTime()) throw new CommerceApplicationError("REDEEM_NOT_ACCEPTED");
     let previewCredential: string;
     try {
       previewCredential = this.dependencies.secrets.previewCredential(stored.previewRef, stored.credentialKeyRevision);

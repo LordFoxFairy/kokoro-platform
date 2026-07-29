@@ -27,6 +27,7 @@ type CandidateRow = Record<string, unknown> & {
   termAction: RedemptionSafeTerms["term"]["action"] | null;
   termSeconds: bigint | null;
   activeTermEndsAt: Date | string | null;
+  observedAt: Date | string;
   legalTermRefs: string[];
 };
 
@@ -86,7 +87,6 @@ export class PostgresRedemptionRepository implements RedemptionRepository {
         key_revision: item.keyRevision,
         lookup_digest: item.lookupDigest,
       }))),
-      input.now,
       input.billingAccountId,
     ]);
     const row = rows[0];
@@ -99,7 +99,8 @@ export class PostgresRedemptionRepository implements RedemptionRepository {
       lines: outputRows,
     });
     if (computedOutputPlanDigest !== row.outputPlanDigest) throw new Error("REDEMPTION_OUTPUT_PLAN_DIGEST_MISMATCH");
-    const safeTerms = terms(row, outputRows, input.now);
+    const observedAt = instant(row.observedAt);
+    const safeTerms = terms(row, outputRows, observedAt);
     return Object.freeze({
       codeRef: row.codeRef,
       batchRef: row.batchRef,
@@ -110,6 +111,7 @@ export class PostgresRedemptionRepository implements RedemptionRepository {
       outputPlanDigest: row.outputPlanDigest,
       safeCodeFingerprint: row.safeCodeFingerprint,
       safeTerms,
+      observedAt,
     });
   }
 
@@ -178,7 +180,8 @@ export class PostgresRedemptionRepository implements RedemptionRepository {
               preview.safe_terms AS "safeTerms",preview.state,preview.expires_at AS "expiresAt",preview.created_at AS "createdAt"
        FROM platform.commerce_redemption_preview preview
        JOIN platform.commerce_redeem_code code ON code.code_ref=preview.code_ref AND code.site_ref=preview.site_ref
-       WHERE preview.command_id=$1 AND preview.site_ref=$2 AND preview.subject_ref=$3 AND preview.subject_generation=$4::bigint`,
+       WHERE preview.command_id=$1 AND preview.site_ref=$2 AND preview.subject_ref=$3
+         AND preview.subject_generation=$4::bigint AND preview.expires_at>clock_timestamp()`,
       [input.commandId, input.siteId, input.subjectId, input.subjectGeneration],
     );
     const row = rows[0];
@@ -275,6 +278,7 @@ function instant(value: string | Date): string {
 }
 
 const CANDIDATE_SQL = `
+  WITH effect AS MATERIALIZED (SELECT clock_timestamp() AS observed_at)
   SELECT code.code_ref AS "codeRef",code.batch_ref AS "batchRef",
          program.redemption_program_revision_ref AS "redemptionProgramRevisionRef",
          program.fulfillment_program_revision_ref AS "fulfillmentProgramRevisionRef",
@@ -285,23 +289,25 @@ const CANDIDATE_SQL = `
          plan.plan_ref AS "planRef",plan_version.plan_version_ref AS "planVersionRef",
          plan_version.safe_label AS "safePlanLabel",plan_version.term_action AS "termAction",
          plan_version.term_seconds AS "termSeconds",active_term.ends_at AS "activeTermEndsAt",
+         effect.observed_at AS "observedAt",
          product_version.legal_term_refs AS "legalTermRefs"
-  FROM jsonb_to_recordset($2::jsonb) AS lookup(key_revision TEXT,lookup_digest TEXT)
+  FROM effect
+  CROSS JOIN jsonb_to_recordset($2::jsonb) AS lookup(key_revision TEXT,lookup_digest TEXT)
   JOIN platform.commerce_redeem_code code
     ON code.site_ref=$1 AND code.code_lookup_key_revision=lookup.key_revision
       AND code.lookup_digest=lookup.lookup_digest AND code.state='available'
   JOIN platform.commerce_code_batch batch
     ON batch.batch_ref=code.batch_ref AND batch.site_ref=code.site_ref AND batch.state='active'
-      AND (batch.starts_at IS NULL OR batch.starts_at <= $3::timestamptz)
-      AND (batch.ends_at IS NULL OR batch.ends_at > $3::timestamptz)
+      AND (batch.starts_at IS NULL OR batch.starts_at <= effect.observed_at)
+      AND (batch.ends_at IS NULL OR batch.ends_at > effect.observed_at)
   JOIN platform.commerce_redemption_program_revision program
     ON program.redemption_program_revision_ref=batch.redemption_program_revision_ref
       AND program.site_ref=batch.site_ref
   JOIN platform.commerce_redemption_program_availability availability
     ON availability.redemption_program_revision_ref=program.redemption_program_revision_ref
       AND availability.site_ref=program.site_ref AND availability.state='active'
-      AND (availability.starts_at IS NULL OR availability.starts_at <= $3::timestamptz)
-      AND (availability.ends_at IS NULL OR availability.ends_at > $3::timestamptz)
+      AND (availability.starts_at IS NULL OR availability.starts_at <= effect.observed_at)
+      AND (availability.ends_at IS NULL OR availability.ends_at > effect.observed_at)
   JOIN platform.commerce_catalog_product_version product_version
     ON product_version.product_version_ref=program.product_version_ref
       AND product_version.site_ref=program.site_ref
@@ -318,7 +324,7 @@ const CANDIDATE_SQL = `
   LEFT JOIN platform.commerce_catalog_plan plan
     ON plan.site_ref=plan_version.site_ref AND plan.plan_ref=plan_version.plan_ref AND plan.state='active'
   LEFT JOIN platform.commerce_subscription subscription
-    ON subscription.site_ref=program.site_ref AND subscription.billing_account_ref=$4
+    ON subscription.site_ref=program.site_ref AND subscription.billing_account_ref=$3
       AND subscription.stacking_scope=plan_version.stacking_scope AND subscription.state='active'
   LEFT JOIN LATERAL (
     SELECT max(term.ends_at) AS ends_at
@@ -328,17 +334,19 @@ const CANDIDATE_SQL = `
         SELECT 1 FROM platform.commerce_subscription_term_revocation revocation
         WHERE revocation.site_ref=term.site_ref
           AND revocation.subscription_term_ref=term.subscription_term_ref
-          AND revocation.effective_at<=$3::timestamptz
+          AND revocation.effective_at<=effect.observed_at
       )
   ) active_term ON TRUE
   LEFT JOIN LATERAL (
     SELECT count(*)::INTEGER AS redemption_count
     FROM platform.commerce_redemption redemption
-    WHERE redemption.site_ref=program.site_ref AND redemption.billing_account_ref=$4
+    WHERE redemption.site_ref=program.site_ref AND redemption.billing_account_ref=$3
       AND redemption.redemption_program_revision_ref=program.redemption_program_revision_ref
       AND redemption.state IN ('fulfilled','reversed','reconciliation_required')
   ) account_redemptions ON TRUE
-  WHERE (product_version.plan_version_ref IS NULL OR plan_version.plan_version_ref IS NOT NULL)
+  WHERE (product_version.plan_version_ref IS NULL OR
+         (plan_version.plan_version_ref IS NOT NULL AND plan.plan_ref IS NOT NULL))
+    AND (subscription.subscription_ref IS NULL OR subscription.plan_ref=plan.plan_ref)
     AND account_redemptions.redemption_count < program.max_redemptions_per_account`;
 
 const OUTPUT_SQL = `
