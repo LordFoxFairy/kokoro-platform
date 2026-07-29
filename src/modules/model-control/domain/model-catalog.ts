@@ -340,9 +340,15 @@ function identifier(value: string): string {
   return value;
 }
 function text(value: string): string {
-  if (value.length < 1 || value.length > 512 || /[\u0000-\u001f\u007f]/u.test(value))
+  if (value.length < 1 || value.length > 512 || containsControl(value))
     throw new Error("MODEL_TEXT_INVALID");
   return value;
+}
+function containsControl(value: string): boolean {
+  return [...value].some((character) => {
+    const codePoint = character.codePointAt(0)!;
+    return codePoint < 32 || codePoint === 127;
+  });
 }
 function secretReference(value: string): string {
   if (!/^(?:secret|vault|env):\/\/[A-Za-z0-9._:/-]+$/u.test(value))

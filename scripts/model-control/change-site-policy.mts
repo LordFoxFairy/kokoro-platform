@@ -6,6 +6,7 @@ import {
 } from "../../src/infrastructure/postgres/client.js";
 import { ChangeSiteModelPolicyService } from "../../src/modules/model-control/application/services/change-site-model-policy.js";
 import { PostgresModelControlRepository } from "../../src/modules/model-control/infrastructure/postgres/model-control-repository.js";
+import { PostgresModelControlCommandJournal } from "../../src/modules/model-control/infrastructure/postgres/model-control-command-journal.js";
 import type { SiteModelPolicy } from "../../src/modules/model-control/domain/site-model-policy.js";
 import {
   verifyRequestSecurityContext,
@@ -54,6 +55,7 @@ try {
   const receipt = await new ChangeSiteModelPolicyService(
     new PlatformUnitOfWork(database),
     new PostgresModelControlRepository(),
+    new PostgresModelControlCommandJournal(),
   ).change(
     {
       changeId: argument("--change-id"),

@@ -285,6 +285,15 @@ async function grantFoundationPrivileges(
       );
     } else {
       await client.query(
+        `GRANT SELECT ON TABLE platform.command_receipt, platform.outbox_event TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT INSERT ON TABLE platform.command_receipt, platform.outbox_event TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT UPDATE ON TABLE platform.command_receipt TO ${identifier}`,
+      );
+      await client.query(
         `GRANT EXECUTE ON FUNCTION platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT) TO ${identifier}`,
       );
     }
@@ -397,7 +406,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            has_table_privilege(runtime_role.rolname, 'platform.command_receipt', 'UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.outbox_event', 'UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.inbox_delivery', 'INSERT,UPDATE')
-         ELSE TRUE
+         ELSE has_table_privilege(runtime_role.rolname, 'platform.command_receipt', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.outbox_event', 'SELECT,INSERT')
          END AS "hasRequiredPlatformWrites"
          ,has_function_privilege(runtime_role.rolname, 'platform.import_model_inventory(uuid,text,text,jsonb,jsonb,text)', 'EXECUTE')
            AS "canExecuteModelInventoryImport"
@@ -463,18 +473,22 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'INSERT') AND NOT (
                    (runtime_role.rolname = $1 AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_selection_decision']))
                    OR (runtime_role.rolname = $2 AND candidate.relname = 'inbox_delivery')
+                   OR (runtime_role.rolname = $3 AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event']))
                  ))
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
                    (runtime_role.rolname = $1 AND candidate.relname = ANY(ARRAY['command_receipt','inbox_delivery']))
                    OR (runtime_role.rolname = $2 AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery']))
+                   OR (runtime_role.rolname = $3 AND candidate.relname = 'command_receipt')
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'INSERT') AND NOT (
                    (runtime_role.rolname = $1 AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_selection_decision']))
                    OR (runtime_role.rolname = $2 AND candidate.relname = 'inbox_delivery')
+                   OR (runtime_role.rolname = $3 AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event']))
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
                    (runtime_role.rolname = $1 AND candidate.relname = ANY(ARRAY['command_receipt','inbox_delivery']))
                    OR (runtime_role.rolname = $2 AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery']))
+                   OR (runtime_role.rolname = $3 AND candidate.relname = 'command_receipt')
                  ))
                ))
                OR (candidate.relname = 'platform_foundation' AND (

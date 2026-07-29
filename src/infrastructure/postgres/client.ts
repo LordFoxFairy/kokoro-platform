@@ -321,7 +321,8 @@ const RUNTIME_IDENTITY_SQL = `
            has_table_privilege(current_user, 'platform.command_receipt', 'UPDATE')
            AND has_table_privilege(current_user, 'platform.outbox_event', 'UPDATE')
            AND has_table_privilege(current_user, 'platform.inbox_delivery', 'INSERT,UPDATE')
-         ELSE TRUE
+         ELSE has_table_privilege(current_user, 'platform.command_receipt', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.outbox_event', 'SELECT,INSERT')
          END AS "hasRequiredPlatformWrites",
          has_function_privilege(current_user, 'platform.import_model_inventory(uuid,text,text,jsonb,jsonb,text)', 'EXECUTE')
            AS "canExecuteModelInventoryImport",
@@ -386,18 +387,22 @@ const RUNTIME_IDENTITY_SQL = `
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'INSERT') AND NOT (
                    ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_selection_decision']))
                    OR ($2 = 'worker' AND candidate.relname = 'inbox_delivery')
+                   OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event']))
                  ))
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
                    ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','inbox_delivery']))
                    OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery']))
+                   OR ($2 = 'admin' AND candidate.relname = 'command_receipt')
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'INSERT') AND NOT (
                    ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_selection_decision']))
                    OR ($2 = 'worker' AND candidate.relname = 'inbox_delivery')
+                   OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event']))
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
                    ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','inbox_delivery']))
                    OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery']))
+                   OR ($2 = 'admin' AND candidate.relname = 'command_receipt')
                  ))
                ))
                OR (candidate.relname = 'platform_foundation' AND (

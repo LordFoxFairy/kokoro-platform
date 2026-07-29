@@ -8,6 +8,7 @@ import { ActivateModelInventoryService } from "../../src/modules/model-control/a
 import { ChangeSiteModelPolicyService } from "../../src/modules/model-control/application/services/change-site-model-policy.js";
 import { ImportModelControlService } from "../../src/modules/model-control/application/services/import-model-control.js";
 import { PostgresModelControlRepository } from "../../src/modules/model-control/infrastructure/postgres/model-control-repository.js";
+import { PostgresModelControlCommandJournal } from "../../src/modules/model-control/infrastructure/postgres/model-control-command-journal.js";
 import { verifyModelControlMigrationBundle } from "../../src/modules/model-control/migration/model-control-migration-bundle.js";
 import {
   verifyRequestSecurityContext,
@@ -74,7 +75,8 @@ await database.connect();
 try {
   const unitOfWork = new PlatformUnitOfWork(database);
   const repository = new PostgresModelControlRepository();
-  const imported = await new ImportModelControlService(unitOfWork, repository).import(
+  const journal = new PostgresModelControlCommandJournal();
+  const imported = await new ImportModelControlService(unitOfWork, repository, journal).import(
     {
       importId: bundle.importId,
       inventory: bundle.catalog,
@@ -82,7 +84,7 @@ try {
     },
     context,
   );
-  const activated = await new ActivateModelInventoryService(unitOfWork, repository).activate(
+  const activated = await new ActivateModelInventoryService(unitOfWork, repository, journal).activate(
     {
       activationId: bundle.activationId,
       targetDigest: bundle.catalogDigest,
@@ -90,7 +92,7 @@ try {
     },
     context,
   );
-  const policyService = new ChangeSiteModelPolicyService(unitOfWork, repository);
+  const policyService = new ChangeSiteModelPolicyService(unitOfWork, repository, journal);
   const sitePolicies = [];
   for (const command of bundle.sitePolicyCommands)
     sitePolicies.push(

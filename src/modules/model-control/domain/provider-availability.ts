@@ -76,9 +76,16 @@ function identifier(value: string): string {
 }
 
 function boundedText(value: string, maximum: number): string {
-  if (value.length < 1 || value.length > maximum || /[\u0000-\u001f\u007f]/u.test(value))
+  if (value.length < 1 || value.length > maximum || containsControl(value))
     throw new Error("MODEL_TEXT_INVALID");
   return value;
+}
+
+function containsControl(value: string): boolean {
+  return [...value].some((character) => {
+    const codePoint = character.codePointAt(0)!;
+    return codePoint < 32 || codePoint === 127;
+  });
 }
 
 function canonicalCompare(left: string, right: string): number {

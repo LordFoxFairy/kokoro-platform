@@ -6,6 +6,7 @@ import {
 } from "../../src/infrastructure/postgres/client.js";
 import { ActivateModelInventoryService } from "../../src/modules/model-control/application/services/activate-model-inventory.js";
 import { PostgresModelControlRepository } from "../../src/modules/model-control/infrastructure/postgres/model-control-repository.js";
+import { PostgresModelControlCommandJournal } from "../../src/modules/model-control/infrastructure/postgres/model-control-command-journal.js";
 import {
   verifyRequestSecurityContext,
   type RequestSecurityContext,
@@ -52,6 +53,7 @@ try {
   const receipt = await new ActivateModelInventoryService(
     new PlatformUnitOfWork(database),
     new PostgresModelControlRepository(),
+    new PostgresModelControlCommandJournal(),
   ).activate(
     {
       activationId: argument("--activation-id"),

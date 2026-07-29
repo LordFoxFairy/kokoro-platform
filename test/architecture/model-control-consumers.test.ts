@@ -93,6 +93,27 @@ describe("ModelControl consumer boundary", () => {
     expect(adminGrant).toContain("platform.put_model_site_policy");
   });
 
+  it("journals every ModelControl command and exposes activation through a durable owner outbox", async () => {
+    const [importService, activationService, policyService, journal, migrator] = await Promise.all([
+      readFile(resolve("src/modules/model-control/application/services/import-model-control.ts"), "utf8"),
+      readFile(resolve("src/modules/model-control/application/services/activate-model-inventory.ts"), "utf8"),
+      readFile(resolve("src/modules/model-control/application/services/change-site-model-policy.ts"), "utf8"),
+      readFile(resolve("src/modules/model-control/infrastructure/postgres/model-control-command-journal.ts"), "utf8"),
+      readFile(resolve("src/infrastructure/postgres/migrator.ts"), "utf8"),
+    ]);
+    for (const service of [importService, activationService, policyService]) {
+      expect(service).toContain("this.journal.begin(transaction, command)");
+      expect(service).toContain("this.journal.succeed(transaction, command, receipt, context)");
+    }
+    expect(journal).toContain('owner: event.owner');
+    expect(journal).toContain('eventType: event.eventType');
+    expect(journal).toContain('state: "succeeded"');
+    expect(migrator).toContain(
+      "GRANT INSERT ON TABLE platform.command_receipt, platform.outbox_event",
+    );
+    expect(migrator).toContain("GRANT UPDATE ON TABLE platform.command_receipt");
+  });
+
   it("bootstraps operational provider availability without rewriting it as catalog state", async () => {
     const [migration, exporter, repository] = await Promise.all([
       readFile(resolve("prisma/migrations/0003_model_control/migration.sql"), "utf8"),

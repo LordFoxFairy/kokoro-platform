@@ -5,6 +5,7 @@ import {
   loadPlatformDatabaseConfig,
 } from "../../src/infrastructure/postgres/client.js";
 import { PostgresModelControlRepository } from "../../src/modules/model-control/infrastructure/postgres/model-control-repository.js";
+import { PostgresModelControlCommandJournal } from "../../src/modules/model-control/infrastructure/postgres/model-control-command-journal.js";
 import { ImportModelControlService } from "../../src/modules/model-control/application/services/import-model-control.js";
 import type { CanonicalModelInventory } from "../../src/modules/model-control/domain/model-catalog.js";
 import {
@@ -56,6 +57,7 @@ try {
   const receipt = await new ImportModelControlService(
     new PlatformUnitOfWork(database),
     new PostgresModelControlRepository(),
+    new PostgresModelControlCommandJournal(),
   ).import(
     {
       importId: argument("--import-id"),

@@ -7,11 +7,17 @@ import type {
   ModelInventoryImportAdministration,
   ModelInventoryImportReceipt,
 } from "../contracts/model-control-ports.js";
+import type { ModelControlCommandJournal } from "../contracts/model-control-command-journal.js";
+import {
+  createModelControlCommand,
+  modelControlSecurityFacts,
+} from "../model-control-command.js";
 
 export class ImportModelControlService implements ModelInventoryImportAdministration {
   constructor(
     private readonly unitOfWork: PlatformUnitOfWork,
     private readonly repository: ModelControlRepository,
+    private readonly journal: ModelControlCommandJournal,
   ) {}
   import(
     input: Parameters<ModelInventoryImportAdministration["import"]>[0],
@@ -40,15 +46,29 @@ export class ImportModelControlService implements ModelInventoryImportAdministra
       throw new Error("MODEL_INVENTORY_IMPORT_ADMIN_WORKLOAD_REQUIRED");
     if (context.actor.kind !== "operator" && context.actor.kind !== "workload")
       throw new Error("MODEL_INVENTORY_IMPORT_MANAGEMENT_PRINCIPAL_REQUIRED");
+    const command = createModelControlCommand({
+      commandId: input.importId,
+      operation: "model.inventory.import",
+      security: modelControlSecurityFacts(context),
+      effect: {
+        inventoryDigest: inventory.digest,
+        source: inventory.document.source,
+        providerAvailability,
+      },
+    });
     return this.unitOfWork.execute(
       { context, operation: "model.inventory.import" },
-      (transaction) =>
-        this.repository.importInventory(transaction, {
+      async (transaction) => {
+        await this.journal.begin(transaction, command);
+        const receipt = await this.repository.importInventory(transaction, {
           importId: input.importId,
           importedBy: context.actor.subjectId,
           inventory,
           providerAvailability,
-        }),
+        });
+        await this.journal.succeed(transaction, command, receipt, context);
+        return receipt;
+      },
     );
   }
 }

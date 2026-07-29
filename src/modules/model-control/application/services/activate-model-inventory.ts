@@ -5,11 +5,17 @@ import type {
   ModelInventoryActivationAdministration,
   ModelInventoryActivationReceipt,
 } from "../contracts/model-control-ports.js";
+import type { ModelControlCommandJournal } from "../contracts/model-control-command-journal.js";
+import {
+  createModelControlCommand,
+  modelControlSecurityFacts,
+} from "../model-control-command.js";
 
 export class ActivateModelInventoryService implements ModelInventoryActivationAdministration {
   constructor(
     private readonly unitOfWork: PlatformUnitOfWork,
     private readonly repository: ModelControlRepository,
+    private readonly journal: ModelControlCommandJournal,
   ) {}
 
   activate(
@@ -25,15 +31,28 @@ export class ActivateModelInventoryService implements ModelInventoryActivationAd
       throw new Error("MODEL_INVENTORY_ACTIVATION_ADMIN_WORKLOAD_REQUIRED");
     if (context.actor.kind !== "operator" && context.actor.kind !== "workload")
       throw new Error("MODEL_INVENTORY_ACTIVATION_MANAGEMENT_PRINCIPAL_REQUIRED");
+    const command = createModelControlCommand({
+      commandId: input.activationId,
+      operation: "model.inventory.activate",
+      security: modelControlSecurityFacts(context),
+      effect: {
+        targetDigest: input.targetDigest,
+        expectedPointerRevision: input.expectedPointerRevision,
+      },
+    });
     return this.unitOfWork.execute(
       { context, operation: "model.inventory.activate" },
-      (transaction) =>
-        this.repository.activateInventory(transaction, {
+      async (transaction) => {
+        await this.journal.begin(transaction, command);
+        const receipt = await this.repository.activateInventory(transaction, {
           activationId: input.activationId,
           activatedBy: context.actor.subjectId,
           targetDigest: input.targetDigest,
           expectedPointerRevision: input.expectedPointerRevision,
-        }),
+        });
+        await this.journal.succeed(transaction, command, receipt, context);
+        return receipt;
+      },
     );
   }
 }

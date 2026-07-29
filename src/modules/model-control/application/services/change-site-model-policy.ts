@@ -6,11 +6,17 @@ import type {
   SiteModelPolicyAdministration,
   SiteModelPolicyChangeReceipt,
 } from "../contracts/model-control-ports.js";
+import type { ModelControlCommandJournal } from "../contracts/model-control-command-journal.js";
+import {
+  createModelControlCommand,
+  modelControlSecurityFacts,
+} from "../model-control-command.js";
 
 export class ChangeSiteModelPolicyService implements SiteModelPolicyAdministration {
   constructor(
     private readonly unitOfWork: PlatformUnitOfWork,
     private readonly repository: ModelControlRepository,
+    private readonly journal: ModelControlCommandJournal,
   ) {}
 
   change(
@@ -31,15 +37,30 @@ export class ChangeSiteModelPolicyService implements SiteModelPolicyAdministrati
       context.target.scopes.includes("model:site-policy:migrate");
     if (context.target.siteId !== policy.document.siteId && !crossSiteMigration)
       throw new Error("MODEL_SITE_SCOPE_MISMATCH");
+    const command = createModelControlCommand({
+      commandId: input.changeId,
+      operation: "model.site-policy.change",
+      security: modelControlSecurityFacts(context),
+      effect: {
+        siteId: policy.document.siteId,
+        product: policy.document.product,
+        policyDigest: policy.digest,
+        expectedRevision: input.expectedRevision,
+      },
+    });
     return this.unitOfWork.execute(
       { context, operation: "model.site-policy.change" },
-      (transaction) =>
-        this.repository.putSitePolicy(transaction, {
+      async (transaction) => {
+        await this.journal.begin(transaction, command);
+        const receipt = await this.repository.putSitePolicy(transaction, {
           changeId: input.changeId,
           changedBy: context.actor.subjectId,
           expectedRevision: input.expectedRevision,
           policy,
-        }),
+        });
+        await this.journal.succeed(transaction, command, receipt, context);
+        return receipt;
+      },
     );
   }
 }

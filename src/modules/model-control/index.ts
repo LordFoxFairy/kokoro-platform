@@ -15,6 +15,12 @@ export type {
   ResolveModelPolicyInput,
   ResolveModelPolicyResult,
 } from "./application/contracts/model-control-ports.js";
+export type { ModelControlCommandJournal } from "./application/contracts/model-control-command-journal.js";
+export type {
+  ModelControlCommand,
+  ModelControlCommandInput,
+  ModelControlCommittedEvent,
+} from "./application/model-control-command.js";
 export type {
   CanonicalModelInventory,
   ModelProduct,
