@@ -304,6 +304,133 @@ model ModelSelectionDecision {
   @@schema("platform")
 }
 
+model ModelOptionMaterialization {
+  materializationId  String   @id @map("materialization_id") @db.Uuid
+  artifactDigest     String   @map("artifact_digest") @db.Char(64)
+  inventoryImportId  String   @map("inventory_import_id") @db.Uuid
+  inventoryDigest    String   @map("inventory_digest") @db.Char(64)
+  materializationDigest String @unique @map("materialization_digest") @db.Char(64)
+  compilerVersion    String   @map("compiler_version")
+  optionRevisionCount Int     @map("option_revision_count")
+  quarantineCount    Int      @map("quarantine_count")
+  materializedBy     String   @map("materialized_by")
+  materializedAt     DateTime @default(now()) @map("materialized_at") @db.Timestamptz(6)
+
+  @@unique([materializationId, artifactDigest, inventoryDigest, materializationDigest])
+  @@map("model_option_materialization")
+  @@schema("platform")
+}
+
+model ModelOptionRevision {
+  revisionRef       String   @id @map("revision_ref")
+  revisionDigest    String   @unique @map("revision_digest") @db.Char(64)
+  inventoryImportId String  @map("inventory_import_id") @db.Uuid
+  inventoryDigest  String   @map("inventory_digest") @db.Char(64)
+  schemaVersion    Int      @map("schema_version")
+  optionKey        String   @map("option_key")
+  surface          String
+  label            String
+  description      String?
+  tier             String?
+  lifecycle        String
+  inputModalities  String[] @map("input_modalities")
+  outputModalities String[] @map("output_modalities")
+  supportedEfforts String[] @map("supported_efforts")
+  badges           String[]
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([inventoryDigest, surface, optionKey])
+  @@map("model_option_revision")
+  @@schema("platform")
+}
+
+model ModelOptionMaterializedRevision {
+  materializationId String @map("materialization_id") @db.Uuid
+  position          Int
+  revisionRef       String @map("revision_ref")
+
+  @@id([materializationId, position])
+  @@unique([materializationId, revisionRef])
+  @@map("model_option_materialized_revision")
+  @@schema("platform")
+}
+
+model ModelOptionRoleBinding {
+  revisionRef         String   @map("revision_ref")
+  compositionSlot     String   @map("composition_slot")
+  roleKey             String   @map("role_key")
+  position            Int
+  bindingKind         String   @map("binding_kind")
+  inventoryImportId   String   @map("inventory_import_id") @db.Uuid
+  modelKey            String   @map("model_key")
+  requiredCapabilities String[] @map("required_capabilities")
+  fallbackPolicy      String   @map("fallback_policy")
+
+  @@id([revisionRef, compositionSlot, position])
+  @@unique([revisionRef, compositionSlot, modelKey])
+  @@map("model_option_role_binding")
+  @@schema("platform")
+}
+
+model ModelOptionMaterializationQuarantine {
+  materializationId   String @map("materialization_id") @db.Uuid
+  position            Int
+  safeSourceRef       String @map("safe_source_ref")
+  sourceArtifactDigest String @map("source_artifact_digest") @db.Char(64)
+  optionKeyDigest     String @map("option_key_digest") @db.Char(64)
+  reasonCode          String @map("reason_code")
+
+  @@id([materializationId, position])
+  @@map("model_option_materialization_quarantine")
+  @@schema("platform")
+}
+
+model SiteReleaseModelCatalogPublication {
+  publicationId       String   @id @map("publication_id") @db.Uuid
+  modelOptionCatalogRef String @unique @map("model_option_catalog_ref")
+  catalogDigest       String   @unique @map("catalog_digest") @db.Char(64)
+  siteId              String   @map("site_id")
+  siteReleaseRef      String   @map("site_release_ref")
+  inventoryImportId  String   @map("inventory_import_id") @db.Uuid
+  inventoryDigest    String   @map("inventory_digest") @db.Char(64)
+  schemaVersion       Int      @map("schema_version")
+  publishedBy         String   @map("published_by")
+  publishedAt         DateTime @map("published_at") @db.Timestamptz(6)
+
+  @@unique([siteId, siteReleaseRef])
+  @@unique([siteReleaseRef, siteId, modelOptionCatalogRef])
+  @@map("site_release_model_catalog_publication")
+  @@schema("platform")
+}
+
+model SiteReleaseModelCatalogSurface {
+  publicationId                String @map("publication_id") @db.Uuid
+  surfaceId                    String @map("surface_id")
+  position                     Int
+  catalogRevisionRef           String @map("catalog_revision_ref")
+  catalogDigest                String @map("catalog_digest") @db.Char(64)
+  defaultModelOptionRevisionRef String @map("default_model_option_revision_ref")
+
+  @@id([publicationId, surfaceId])
+  @@unique([publicationId, position])
+  @@unique([publicationId, catalogRevisionRef])
+  @@map("site_release_model_catalog_surface")
+  @@schema("platform")
+}
+
+model SiteReleaseModelCatalogOption {
+  publicationId String @map("publication_id") @db.Uuid
+  surfaceId     String @map("surface_id")
+  position      Int
+  revisionRef   String @map("revision_ref")
+  isDefault     Boolean @map("is_default")
+
+  @@id([publicationId, surfaceId, position])
+  @@unique([publicationId, surfaceId, revisionRef])
+  @@map("site_release_model_catalog_option")
+  @@schema("platform")
+}
+
 model AuthorizationSite {
   siteRef         String   @id @map("site_ref")
   state           String
@@ -331,6 +458,7 @@ model AuthorizationSiteRelease {
   updatedAt             DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@unique([releaseRef, siteRef])
+  @@unique([releaseRef, siteRef, modelOptionCatalogRef])
   @@index([siteRef, state])
   @@map("authorization_site_release")
   @@schema("platform")

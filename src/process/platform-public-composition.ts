@@ -13,6 +13,7 @@ import {
   type SessionAccessSigningKeyConfig,
 } from "../modules/authorization/infrastructure/jose/session-access-grant-signer.js";
 import { PostgresSessionAuthorizationRepository } from "../modules/authorization/infrastructure/postgres/session-authorization-repository.js";
+import { PostgresProductModelOptionCatalogReader } from "../modules/model-control/infrastructure/postgres/product-model-option-repository.js";
 import { loadProductWorkloadRegistry } from "../modules/authorization/infrastructure/transport/product-workload-registry.js";
 import { PlatformUnitOfWork } from "../shared/unit-of-work/unit-of-work.js";
 import { createPlatformPublicHttpHandler, type PlatformPublicHttpHandler } from "../interfaces/http/platform-public.js";
@@ -25,7 +26,7 @@ export interface PlatformPublicProductionComposition {
 
 export async function createPlatformPublicProductionComposition(input: Readonly<{
   database: PlatformTransactionalDatabaseClient;
-  modelOptions: ModelOptionCatalogReadPort;
+  modelOptions?: ModelOptionCatalogReadPort;
   environment?: Readonly<Record<string, string | undefined>>;
 }>): Promise<PlatformPublicProductionComposition> {
   const environment = input.environment ?? process.env;
@@ -37,6 +38,7 @@ export async function createPlatformPublicProductionComposition(input: Readonly<
   const signer = await createSessionAccessGrantSigner(keyRing);
   const unitOfWork = new PlatformUnitOfWork(input.database);
   const repository = new PostgresSessionAuthorizationRepository();
+  const modelOptions = input.modelOptions ?? new PostgresProductModelOptionCatalogReader();
   const publisher = new DurableSessionAuthorizationPublisher();
   const handler = createPlatformPublicHttpHandler({
     workloads,
@@ -44,7 +46,7 @@ export async function createPlatformPublicProductionComposition(input: Readonly<
     exchangeProductContext: new ExchangeProductContextService(
       unitOfWork,
       repository,
-      input.modelOptions,
+      modelOptions,
     ),
     getPersonalContext: new GetPersonalContextService(unitOfWork, repository),
     issueSessionAccessGrant: new IssueSessionAccessGrantService(

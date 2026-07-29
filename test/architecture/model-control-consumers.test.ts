@@ -80,17 +80,65 @@ describe("ModelControl consumer boundary", () => {
     expect(migrator).not.toContain("GRANT SELECT ON TABLE platform.model_provider_snapshot");
   });
 
-  it("keeps Admin on exactly three management functions", async () => {
+  it("keeps Admin on the explicit inventory, policy, and ModelOption management functions", async () => {
     const migrator = await readFile(resolve("src/infrastructure/postgres/migrator.ts"), "utf8");
     const adminGrant = between(
       migrator,
       "GRANT EXECUTE ON FUNCTION platform.import_model_inventory",
       "TO ${identifier}`",
     );
-    expect(adminGrant.match(/platform\.[a-z_]+\(/gu)).toHaveLength(3);
+    expect(adminGrant.match(/platform\.[a-z_]+\(/gu)).toHaveLength(7);
     expect(adminGrant).toContain("platform.import_model_inventory");
     expect(adminGrant).toContain("platform.activate_model_inventory");
     expect(adminGrant).toContain("platform.put_model_site_policy");
+    expect(adminGrant).toContain("platform.load_model_option_inventory");
+    expect(adminGrant).toContain("platform.load_model_option_revisions");
+    expect(adminGrant).toContain("platform.materialize_legacy_model_options");
+    expect(adminGrant).toContain("platform.publish_site_release_model_catalog");
+  });
+
+  it("owns ModelOption facts relationally and exposes only exact-Site safe projections", async () => {
+    const migration = await readFile(
+      resolve("prisma/migrations/20260729_product_model_options/migration.sql"),
+      "utf8",
+    );
+    for (const relation of [
+      "model_option_materialization",
+      "model_option_revision",
+      "model_option_role_binding",
+      "model_option_materialization_quarantine",
+      "site_release_model_catalog_publication",
+      "site_release_model_catalog_surface",
+      "site_release_model_catalog_option",
+    ]) {
+      expect(migration).toContain(`platform.${relation}`);
+    }
+    expect(migration).toContain("FOREIGN KEY(site_release_ref,site_id,model_option_catalog_ref)");
+    expect(migration).toContain("REFERENCES platform.authorization_site_release");
+    expect(migration).toContain("MODEL_OPTION_PUBLICATION_ID_CONFLICT");
+    expect(migration).toContain("MODEL_OPTION_MATERIALIZATION_ID_CONFLICT");
+    expect(migration).toContain("platform.resolve_product_model_option_catalog");
+    expect(migration).toContain("model_availability.status='active'");
+    expect(migration).toContain("provider_availability.health IN ('healthy','degraded')");
+    expect(migration).not.toContain("default 'available'");
+  });
+
+  it("wires the public binary and executable admin commands to the PostgreSQL owner", async () => {
+    const [api, publicComposition, adminComposition, manifest] = await Promise.all([
+      readFile(resolve("src/process/api.ts"), "utf8"),
+      readFile(resolve("src/process/platform-public-composition.ts"), "utf8"),
+      readFile(resolve("src/process/model-option-admin-composition.ts"), "utf8"),
+      readFile(resolve("package.json"), "utf8"),
+    ]);
+    expect(api).toContain("runPlatformApiMain(): Promise<void>");
+    expect(api).toContain("await runPlatformApiMain()");
+    expect(api).not.toContain("failStandaloneWithoutModelOptionOwner");
+    expect(publicComposition).toContain("new PostgresProductModelOptionCatalogReader()");
+    expect(adminComposition).toContain("new MaterializeLegacyModelOptionsService");
+    expect(adminComposition).toContain("new PublishSiteReleaseModelCatalogService");
+    expect(adminComposition).toContain("new PostgresModelControlCommandJournal()");
+    expect(manifest).toContain("model-option:materialize-legacy");
+    expect(manifest).toContain("model-option:publish-site-release");
   });
 
   it("journals every ModelControl command and exposes activation through a durable owner outbox", async () => {

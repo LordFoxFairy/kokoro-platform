@@ -22,6 +22,8 @@
     "model-control:import-canonical": "tsx scripts/model-control/import-canonical.mts",
     "model-control:activate-catalog": "tsx scripts/model-control/activate-catalog.mts",
     "model-control:change-site-policy": "tsx scripts/model-control/change-site-policy.mts",
+    "model-option:materialize-legacy": "tsx scripts/model-control/materialize-legacy-options.mts",
+    "model-option:publish-site-release": "tsx scripts/model-control/publish-site-release-catalog.mts",
     "start:api": "node dist/src/process/api.js",
     "start:admin": "node dist/src/process/admin.js",
     "start:worker": "node dist/src/process/worker.js",

@@ -309,6 +309,7 @@ interface RuntimeIdentity {
   canExecuteModelCandidatesProjection: boolean;
   canExecuteModelDecisionProjection: boolean;
   canExecuteModelAvailabilityReport: boolean;
+  hasRequiredModelOptionFunctions: boolean;
   canSelectModelCatalogTable: boolean;
   canReadModelSensitiveColumn: boolean;
   hasUnexpectedPlatformPrivilege: boolean;
@@ -381,6 +382,14 @@ const RUNTIME_IDENTITY_SQL = `
            AS "canExecuteModelDecisionProjection",
          has_function_privilege(current_user, 'platform.report_model_provider_availability(uuid,text,text,text,bigint,text,timestamptz,text)', 'EXECUTE')
            AS "canExecuteModelAvailabilityReport",
+         CASE WHEN $2='api' THEN
+           has_function_privilege(current_user,'platform.resolve_product_model_option_catalog(text,text)','EXECUTE')
+         WHEN $2='admin' THEN
+           has_function_privilege(current_user,'platform.load_model_option_inventory(text)','EXECUTE')
+           AND has_function_privilege(current_user,'platform.load_model_option_revisions(text[])','EXECUTE')
+           AND has_function_privilege(current_user,'platform.materialize_legacy_model_options(uuid,text,text,text,text,jsonb,jsonb,text)','EXECUTE')
+           AND has_function_privilege(current_user,'platform.publish_site_release_model_catalog(uuid,jsonb,text)','EXECUTE')
+         ELSE TRUE END AS "hasRequiredModelOptionFunctions",
          EXISTS (
            SELECT 1 FROM pg_class model_relation
            WHERE model_relation.relnamespace=platform_schema.oid
@@ -388,7 +397,11 @@ const RUNTIME_IDENTITY_SQL = `
                'model_inventory_import','model_inventory_activation','model_inventory_pointer','model_provider_snapshot',
                'model_definition_snapshot','model_provider_binding_snapshot','model_product_route_snapshot',
                'model_provider_availability','model_definition_availability','model_provider_availability_report','model_site_policy_revision',
-               'model_site_assignment_revision','model_site_policy_pointer','model_selection_decision'
+               'model_site_assignment_revision','model_site_policy_pointer','model_selection_decision',
+               'model_option_materialization','model_option_revision','model_option_materialized_revision',
+               'model_option_role_binding','model_option_materialization_quarantine',
+               'site_release_model_catalog_publication','site_release_model_catalog_surface',
+               'site_release_model_catalog_option'
              ])
              AND has_table_privilege(current_user,model_relation.oid,'SELECT')
          ) AS "canSelectModelCatalogTable",
@@ -411,7 +424,10 @@ const RUNTIME_IDENTITY_SQL = `
                  'authorization_site','authorization_site_release','authorization_product_binding',
                  'authorization_subject','authorization_identity_session','authorization_project',
                  'authorization_project_membership','authorization_product_context',
-                 'authorization_session_access_grant'
+                 'authorization_session_access_grant','model_option_materialization','model_option_revision',
+                 'model_option_materialized_revision','model_option_role_binding',
+                 'model_option_materialization_quarantine','site_release_model_catalog_publication',
+                 'site_release_model_catalog_surface','site_release_model_catalog_option'
                ]) AND (
                  has_table_privilege(runtime_role.rolname, candidate.oid,
                    'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
@@ -427,7 +443,10 @@ const RUNTIME_IDENTITY_SQL = `
                  'authorization_site','authorization_site_release','authorization_product_binding',
                  'authorization_subject','authorization_identity_session','authorization_project',
                  'authorization_project_membership','authorization_product_context',
-                 'authorization_session_access_grant'
+                 'authorization_session_access_grant','model_option_materialization','model_option_revision',
+                 'model_option_materialized_revision','model_option_role_binding',
+                 'model_option_materialization_quarantine','site_release_model_catalog_publication',
+                 'site_release_model_catalog_surface','site_release_model_catalog_option'
                ]) AND (
                  (candidate.relname LIKE 'model\\_%' ESCAPE '\\' AND (
                    has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
@@ -473,11 +492,16 @@ const RUNTIME_IDENTITY_SQL = `
                ($2 = 'admin' AND candidate_function.oid = ANY(ARRAY[
                  to_regprocedure('platform.import_model_inventory(uuid,text,text,jsonb,jsonb,text)'),
                  to_regprocedure('platform.activate_model_inventory(uuid,text,bigint,text)'),
-                 to_regprocedure('platform.put_model_site_policy(uuid,text,text,text,bigint)')
+                 to_regprocedure('platform.put_model_site_policy(uuid,text,text,text,bigint)'),
+                 to_regprocedure('platform.load_model_option_inventory(text)'),
+                 to_regprocedure('platform.load_model_option_revisions(text[])'),
+                 to_regprocedure('platform.materialize_legacy_model_options(uuid,text,text,text,text,jsonb,jsonb,text)'),
+                 to_regprocedure('platform.publish_site_release_model_catalog(uuid,jsonb,text)')
                ]))
                OR ($2 = 'api' AND candidate_function.oid = ANY(ARRAY[
                  to_regprocedure('platform.resolve_model_candidates(text,text,text)'),
-                 to_regprocedure('platform.find_model_selection_decision(uuid)')
+                 to_regprocedure('platform.find_model_selection_decision(uuid)'),
+                 to_regprocedure('platform.resolve_product_model_option_catalog(text,text)')
                ]))
                OR ($2 = 'worker' AND candidate_function.oid =
                  to_regprocedure('platform.report_model_provider_availability(uuid,text,text,text,bigint,text,timestamptz,text)'))
@@ -528,6 +552,7 @@ function validRuntimeIdentity(
     identity.canExecuteModelCandidatesProjection === (config.role === "api") &&
     identity.canExecuteModelDecisionProjection === (config.role === "api") &&
     identity.canExecuteModelAvailabilityReport === (config.role === "worker") &&
+    identity.hasRequiredModelOptionFunctions &&
     !identity.canSelectModelCatalogTable &&
     !identity.canReadModelSensitiveColumn &&
     !identity.hasUnexpectedPlatformPrivilege,

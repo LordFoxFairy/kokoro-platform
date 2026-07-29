@@ -7,7 +7,6 @@ import {
   type PlatformDatabaseClient,
 } from "../infrastructure/postgres/client.js";
 import type { PlatformPublicHttpHandler } from "../interfaces/http/platform-public.js";
-import type { ModelOptionCatalogReadPort } from "../modules/authorization/application/contracts/session-authorization-ports.js";
 import { createPlatformPublicProductionComposition } from "./platform-public-composition.js";
 
 export type PlatformProcessState = "stopped" | "starting" | "running" | "draining" | "failed";
@@ -241,13 +240,10 @@ function isMainModule(): boolean {
   return entry !== undefined && pathToFileURL(resolve(entry)).href === import.meta.url;
 }
 
-export async function runPlatformApiMain(input: Readonly<{
-  modelOptions: ModelOptionCatalogReadPort;
-}>): Promise<void> {
+export async function runPlatformApiMain(): Promise<void> {
   const database = createPlatformDatabaseClient(loadPlatformDatabaseConfig("api"));
   const publicComposition = await createPlatformPublicProductionComposition({
     database,
-    modelOptions: input.modelOptions,
   });
   const api = createPlatformApiProcess({
     database,
@@ -269,12 +265,8 @@ export async function runPlatformApiMain(input: Readonly<{
 }
 
 if (isMainModule()) {
-  failStandaloneWithoutModelOptionOwner().catch((error: unknown) => {
+  await runPlatformApiMain().catch((error: unknown) => {
     process.exitCode = 1;
     console.error("Platform API failed to start", error);
   });
-}
-
-async function failStandaloneWithoutModelOptionOwner(): Promise<never> {
-  throw new Error("PLATFORM_MODEL_OPTION_CATALOG_PROVIDER_REQUIRED");
 }

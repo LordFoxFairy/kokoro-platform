@@ -435,6 +435,7 @@ function authority(roleName: string): Record<string, unknown> {
     canExecuteModelCandidatesProjection: roleName === "platform_api",
     canExecuteModelDecisionProjection: roleName === "platform_api",
     canExecuteModelAvailabilityReport: roleName === "platform_worker",
+    hasRequiredModelOptionFunctions: true,
     canSelectModelCatalogTable: false,
     canReadModelSensitiveColumn: false,
     hasUnexpectedPlatformPrivilege: false,

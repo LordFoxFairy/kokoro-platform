@@ -44,10 +44,11 @@ Signed context still requires an admin workload acting as an operator or managem
 different digest fails closed.
 
 The migrator is the only identity allowed to read raw catalog, policy, receipt, provider account, `secret_ref`, or canonical-payload
-tables. API resolves candidates and decision replays through Site-scoped, safe-projection functions only. Admin has exactly the three
-catalog/Site management commands. Worker has one separate provider-availability report command: it atomically compare-and-swaps the
-provider epoch and writes an immutable idempotency receipt. Provider status/health is therefore a mutable operational fact, never a
-catalog-release mutation.
+tables. API resolves candidates, decision replays, and exact SiteRelease ModelOption projections through scoped owner functions
+only. Admin can execute the three inventory/Site-policy commands plus the four narrow ModelOption inventory-read, revision-read,
+materialization, and publication functions; it still has no raw ModelOption table access. Worker has one separate
+provider-availability report command: it atomically compare-and-swaps the provider epoch and writes an immutable idempotency receipt.
+Provider status/health is therefore a mutable operational fact, never a catalog-release mutation.
 
 Runtime selection requires an explicit Site policy. `down` providers and disabled providers/models/bindings are rejected;
 `unknown` and `degraded` remain eligible cold-start/degraded candidates. Resolution orders product/Site position first, then health,
@@ -77,10 +78,13 @@ keys and the default selected through `defaultBindingId -> ModelBinding.id -> mo
 facts become non-reflective hashed quarantine entries. The artifact and its quarantine counts are covered by the bundle digest, and
 its digest is also bound into the import command identity. Bundle import reports it explicitly as
 `pending_site_release_materialization`: the source bundle remains the artifact of record and its digest is conflict-bound to the
-import receipt, but the artifact has not been persisted as product configuration or published.
-Task 7 owns the immutable `ModelOptionRevision`/`SiteRelease` aggregate, selector defaults and the consumer that materializes this
-artifact. Cutover is not complete until that owner consumes or explicitly resolves every option/quarantine fact.
+import receipt. Operators then run the signed `model-option:materialize-legacy` command, which persists immutable revisions and every
+quarantine fact, followed by `model-option:publish-site-release` for an already-authorized exact SiteRelease catalog reference.
+Publication is relational (`publication -> surface -> allowed/default revision`) and cannot cross Site, release, catalog, or inventory
+boundaries. ProductContext reads that same publication inside the authorization transaction; missing operational model/provider/
+binding facts make the default unavailable and fail the request closed.
 
-Task 7 adds the authoritative Site foreign key. Task 15 supplies Admin UI/command adapters. The legacy package remains only as a
-read-only migration source and rollback artifact until cross-repository consumers complete cutover; no new Platform consumer may
-import it or use `KOKORO_MODEL_BASE_URL`.
+The legacy package remains only as a read-only migration source and rollback artifact until operational cutover consumes or resolves
+every option/quarantine fact; no new Platform consumer may import it or use `KOKORO_MODEL_BASE_URL`. Upstream SiteRelease authority
+provisioning remains a separate owner: ModelControl may publish only when its requested catalog reference already matches the locked
+`authorization_site_release` row.

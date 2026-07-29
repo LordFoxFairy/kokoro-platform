@@ -261,7 +261,7 @@ async function grantFoundationPrivileges(
     );
     await client.query(`REVOKE ALL ON TABLE ${PLATFORM_RUNTIME_TABLES} FROM ${identifier}`);
     await client.query(
-      `REVOKE ALL ON FUNCTION platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT), platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID), platform.report_model_provider_availability(UUID, TEXT, TEXT, TEXT, BIGINT, TEXT, TIMESTAMPTZ, TEXT) FROM ${identifier}`,
+      `REVOKE ALL ON FUNCTION platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT), platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID), platform.report_model_provider_availability(UUID, TEXT, TEXT, TEXT, BIGINT, TEXT, TIMESTAMPTZ, TEXT), platform.load_model_option_inventory(TEXT), platform.load_model_option_revisions(TEXT[]), platform.materialize_legacy_model_options(UUID, TEXT, TEXT, TEXT, TEXT, JSONB, JSONB, TEXT), platform.publish_site_release_model_catalog(UUID, JSONB, TEXT), platform.resolve_product_model_option_catalog(TEXT, TEXT) FROM ${identifier}`,
     );
     if (role === apiRole) {
       await client.query(`GRANT SELECT ON TABLE ${KERNEL_TABLES}, ${AUTHORIZATION_TABLES} TO ${identifier}`);
@@ -272,7 +272,7 @@ async function grantFoundationPrivileges(
         `GRANT UPDATE ON TABLE platform.command_receipt, platform.inbox_delivery, platform.authorization_product_context, platform.authorization_session_access_grant TO ${identifier}`,
       );
       await client.query(
-        `GRANT EXECUTE ON FUNCTION platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID) TO ${identifier}`,
+        `GRANT EXECUTE ON FUNCTION platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID), platform.resolve_product_model_option_catalog(TEXT, TEXT) TO ${identifier}`,
       );
     } else if (role === workerRole) {
       await client.query(`GRANT SELECT ON TABLE ${KERNEL_TABLES}, platform.authorization_site, platform.authorization_product_context, platform.authorization_session_access_grant TO ${identifier}`);
@@ -294,7 +294,7 @@ async function grantFoundationPrivileges(
         `GRANT UPDATE ON TABLE platform.command_receipt TO ${identifier}`,
       );
       await client.query(
-        `GRANT EXECUTE ON FUNCTION platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT) TO ${identifier}`,
+        `GRANT EXECUTE ON FUNCTION platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT), platform.load_model_option_inventory(TEXT), platform.load_model_option_revisions(TEXT[]), platform.materialize_legacy_model_options(UUID, TEXT, TEXT, TEXT, TEXT, JSONB, JSONB, TEXT), platform.publish_site_release_model_catalog(UUID, JSONB, TEXT) TO ${identifier}`,
       );
     }
   }
@@ -336,6 +336,14 @@ const PLATFORM_RUNTIME_TABLES = [
   "platform.model_site_assignment_revision",
   "platform.model_site_policy_pointer",
   "platform.model_selection_decision",
+  "platform.model_option_materialization",
+  "platform.model_option_revision",
+  "platform.model_option_materialized_revision",
+  "platform.model_option_role_binding",
+  "platform.model_option_materialization_quarantine",
+  "platform.site_release_model_catalog_publication",
+  "platform.site_release_model_catalog_surface",
+  "platform.site_release_model_catalog_option",
   AUTHORIZATION_TABLES,
 ].join(", ");
 
@@ -368,6 +376,7 @@ async function assertPostMigrationAuthority(
         row.canExecuteModelCandidatesProjection !== (row.roleName === apiRole) ||
         row.canExecuteModelDecisionProjection !== (row.roleName === apiRole) ||
         row.canExecuteModelAvailabilityReport !== (row.roleName === workerRole) ||
+        row.hasRequiredModelOptionFunctions !== true ||
         row.canSelectModelCatalogTable !== false ||
         row.canReadModelSensitiveColumn !== false ||
         row.hasUnexpectedPlatformPrivilege !== false,
@@ -440,6 +449,14 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            AS "canExecuteModelDecisionProjection"
          ,has_function_privilege(runtime_role.rolname, 'platform.report_model_provider_availability(uuid,text,text,text,bigint,text,timestamptz,text)', 'EXECUTE')
            AS "canExecuteModelAvailabilityReport"
+         ,CASE WHEN runtime_role.rolname=$1 THEN
+            has_function_privilege(runtime_role.rolname,'platform.resolve_product_model_option_catalog(text,text)','EXECUTE')
+          WHEN runtime_role.rolname=$3 THEN
+            has_function_privilege(runtime_role.rolname,'platform.load_model_option_inventory(text)','EXECUTE')
+            AND has_function_privilege(runtime_role.rolname,'platform.load_model_option_revisions(text[])','EXECUTE')
+            AND has_function_privilege(runtime_role.rolname,'platform.materialize_legacy_model_options(uuid,text,text,text,text,jsonb,jsonb,text)','EXECUTE')
+            AND has_function_privilege(runtime_role.rolname,'platform.publish_site_release_model_catalog(uuid,jsonb,text)','EXECUTE')
+          ELSE TRUE END AS "hasRequiredModelOptionFunctions"
          ,EXISTS (
            SELECT 1 FROM pg_class model_relation
            WHERE model_relation.relnamespace=platform_schema.oid
@@ -447,7 +464,11 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                'model_inventory_import','model_inventory_activation','model_inventory_pointer','model_provider_snapshot',
                'model_definition_snapshot','model_provider_binding_snapshot','model_product_route_snapshot',
                'model_provider_availability','model_definition_availability','model_provider_availability_report','model_site_policy_revision',
-               'model_site_assignment_revision','model_site_policy_pointer','model_selection_decision'
+               'model_site_assignment_revision','model_site_policy_pointer','model_selection_decision',
+               'model_option_materialization','model_option_revision','model_option_materialized_revision',
+               'model_option_role_binding','model_option_materialization_quarantine',
+               'site_release_model_catalog_publication','site_release_model_catalog_surface',
+               'site_release_model_catalog_option'
              ])
              AND has_table_privilege(runtime_role.rolname,model_relation.oid,'SELECT')
          ) AS "canSelectModelCatalogTable"
@@ -471,7 +492,10 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                  'authorization_site','authorization_site_release','authorization_product_binding',
                  'authorization_subject','authorization_identity_session','authorization_project',
                  'authorization_project_membership','authorization_product_context',
-                 'authorization_session_access_grant'
+               'authorization_session_access_grant','model_option_materialization','model_option_revision',
+               'model_option_materialized_revision','model_option_role_binding',
+               'model_option_materialization_quarantine','site_release_model_catalog_publication',
+               'site_release_model_catalog_surface','site_release_model_catalog_option'
                ]) AND (
                  (candidate.relname LIKE 'model\\_%' ESCAPE '\\' AND (
                    has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
@@ -492,7 +516,10 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                  'authorization_site','authorization_site_release','authorization_product_binding',
                  'authorization_subject','authorization_identity_session','authorization_project',
                  'authorization_project_membership','authorization_product_context',
-                 'authorization_session_access_grant'
+                 'authorization_session_access_grant','model_option_materialization','model_option_revision',
+                 'model_option_materialized_revision','model_option_role_binding',
+                 'model_option_materialization_quarantine','site_release_model_catalog_publication',
+                 'site_release_model_catalog_surface','site_release_model_catalog_option'
                ]) AND (
                  has_table_privilege(runtime_role.rolname, candidate.oid,
                    'DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
@@ -533,11 +560,16 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                (runtime_role.rolname = $3 AND candidate_function.oid = ANY(ARRAY[
                  to_regprocedure('platform.import_model_inventory(uuid,text,text,jsonb,jsonb,text)'),
                  to_regprocedure('platform.activate_model_inventory(uuid,text,bigint,text)'),
-                 to_regprocedure('platform.put_model_site_policy(uuid,text,text,text,bigint)')
+                 to_regprocedure('platform.put_model_site_policy(uuid,text,text,text,bigint)'),
+                 to_regprocedure('platform.load_model_option_inventory(text)'),
+                 to_regprocedure('platform.load_model_option_revisions(text[])'),
+                 to_regprocedure('platform.materialize_legacy_model_options(uuid,text,text,text,text,jsonb,jsonb,text)'),
+                 to_regprocedure('platform.publish_site_release_model_catalog(uuid,jsonb,text)')
                ]))
                OR (runtime_role.rolname = $1 AND candidate_function.oid = ANY(ARRAY[
                  to_regprocedure('platform.resolve_model_candidates(text,text,text)'),
-                 to_regprocedure('platform.find_model_selection_decision(uuid)')
+                 to_regprocedure('platform.find_model_selection_decision(uuid)'),
+                 to_regprocedure('platform.resolve_product_model_option_catalog(text,text)')
                ]))
                OR (runtime_role.rolname = $2 AND candidate_function.oid =
                  to_regprocedure('platform.report_model_provider_availability(uuid,text,text,text,bigint,text,timestamptz,text)'))
