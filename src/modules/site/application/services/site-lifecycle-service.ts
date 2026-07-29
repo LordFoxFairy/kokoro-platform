@@ -1,7 +1,5 @@
-import { createHash } from "node:crypto";
 import type { VerifiedRequestSecurityContext } from "../../../../shared/security-context/index.js";
 import type { PlatformUnitOfWork } from "../../../../shared/unit-of-work/index.js";
-import { canonicalCommandId } from "../../../../shared/outbox-inbox/receipt.js";
 import {
   activateObservedRelease,
   beginActivation,
@@ -17,6 +15,7 @@ import type {
   SiteAuthorityReceipt,
   SiteAuthorityRepository,
 } from "../contracts/site-authority-ports.js";
+import { createSiteAuthorityCommand } from "../site-command.js";
 
 interface CommandInput {
   readonly commandId: string;
@@ -45,7 +44,7 @@ export class SiteLifecycleService {
     context: VerifiedRequestSecurityContext,
   ): Promise<SiteAuthorityReceipt> {
     admin(context, input.siteRef);
-    const command = siteCommand("site.activation.begin", input.siteRef, input, context, {
+    const command = createSiteAuthorityCommand("site.activation.begin", input.siteRef, input, context, {
       attemptRef: input.attemptRef,
       candidateReleaseRef: input.candidateReleaseRef,
       expectedActiveReleaseRef: input.expectedActiveReleaseRef,
@@ -92,7 +91,7 @@ export class SiteLifecycleService {
     context: VerifiedRequestSecurityContext,
   ): Promise<SiteAuthorityReceipt> {
     worker(context, input.siteRef);
-    const command = siteCommand("site.activation.request-promotion", input.siteRef, input, context, {
+    const command = createSiteAuthorityCommand("site.activation.request-promotion", input.siteRef, input, context, {
       attemptRef: input.attemptRef,
       providerOperationKey: input.providerOperationKey,
     });
@@ -114,7 +113,7 @@ export class SiteLifecycleService {
   ): Promise<SiteAuthorityReceipt> {
     const siteRef = targetSite(context);
     worker(context, siteRef);
-    const command = siteCommand("site.activation.observe", siteRef, input, context, {
+    const command = createSiteAuthorityCommand("site.activation.observe", siteRef, input, context, {
       attemptRef: input.attemptRef,
       providerOperationKey: input.providerOperationKey,
       deploymentRef: input.deploymentRef,
@@ -132,7 +131,7 @@ export class SiteLifecycleService {
     context: VerifiedRequestSecurityContext,
   ): Promise<SiteAuthorityReceipt> {
     worker(context, input.siteRef);
-    const command = siteCommand("site.activation.commit", input.siteRef, input, context, {
+    const command = createSiteAuthorityCommand("site.activation.commit", input.siteRef, input, context, {
       attemptRef: input.attemptRef,
     });
     return this.unitOfWork.execute({ context, operation: command.operation }, async (transaction) => {
@@ -173,7 +172,7 @@ export class SiteLifecycleService {
   ): Promise<SiteAuthorityReceipt> {
     admin(context, input.siteRef);
     const operation = `site.${input.action}`;
-    const command = siteCommand(operation, input.siteRef, input, context, { action: input.action });
+    const command = createSiteAuthorityCommand(operation, input.siteRef, input, context, { action: input.action });
     return this.unitOfWork.execute({ context, operation }, async (transaction) => {
       const disposition = await this.journal.begin(transaction, command);
       const current = await this.repository.loadSiteForUpdate(transaction, input.siteRef);
@@ -230,37 +229,4 @@ function targetSite(context: VerifiedRequestSecurityContext): string {
   const siteRef = context.target.siteId;
   if (siteRef === null) throw new Error("SITE_SCOPE_REQUIRED");
   return siteRef;
-}
-
-function siteCommand(
-  operation: string,
-  siteRef: string,
-  input: CommandInput,
-  context: VerifiedRequestSecurityContext,
-  effect: Readonly<Record<string, unknown>>,
-): SiteAuthorityCommand {
-  const commandId = canonicalCommandId(input.commandId);
-  if (input.idempotencyKey.length < 16 || input.idempotencyKey.length > 256) {
-    throw new Error("SITE_IDEMPOTENCY_KEY_INVALID");
-  }
-  return Object.freeze({
-    commandId,
-    idempotencyKey: input.idempotencyKey,
-    operation,
-    siteRef,
-    callerIdentity: context.trustedCaller.workloadIdentityId,
-    environment: context.environment,
-    region: context.region,
-    requestDigest: createHash("sha256").update(stableJson({ operation, siteRef, effect })).digest("hex"),
-  });
-}
-
-function stableJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  return `{${Object.entries(value as Record<string, unknown>)
-    .filter(([, child]) => child !== undefined)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, child]) => `${JSON.stringify(key)}:${stableJson(child)}`)
-    .join(",")}}`;
 }

@@ -1,4 +1,10 @@
 import type { SiteAuthorityRepository } from "../../application/contracts/site-authority-ports.js";
+import type { SitePublicationRepository } from "../../application/contracts/site-publication-ports.js";
+import type {
+  PublishedSiteRelease,
+  SiteAuthorityDefinition,
+  SiteProjectBinding,
+} from "../../domain/site-publication.js";
 import {
   verifyActivationAttempt,
   verifySiteAggregate,
@@ -10,7 +16,53 @@ import {
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
 import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
 
-export class PostgresSiteAuthorityRepository implements SiteAuthorityRepository {
+export class PostgresSiteAuthorityRepository implements SiteAuthorityRepository, SitePublicationRepository {
+  async insertSiteWithProjectBinding(
+    transaction: PlatformTransaction,
+    site: SiteAuthorityDefinition,
+    binding: SiteProjectBinding,
+  ): Promise<void> {
+    const sql = resolvePlatformTransaction(transaction);
+    const insertedSite = await sql.execute(
+      `INSERT INTO platform.site
+       (site_ref,site_key,state,active_release_ref,security_epoch,policy_epoch,revocation_epoch)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [site.siteRef, site.siteKey, site.state, site.activeReleaseRef, site.securityEpoch,
+        site.policyEpoch, site.revocationEpoch],
+    );
+    if (insertedSite !== 1) throw new Error("SITE_INSERT_FAILED");
+    const insertedBinding = await sql.execute(
+      `INSERT INTO platform.site_project_binding
+       (binding_ref,site_ref,repository_ref,provider_project_ref,environment,
+        workload_identity_id,binding_epoch,state)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [binding.bindingRef, binding.siteRef, binding.repositoryRef, binding.providerProjectRef,
+        binding.environment, binding.workloadIdentityId, binding.bindingEpoch, binding.state],
+    );
+    if (insertedBinding !== 1) throw new Error("SITE_PROJECT_BINDING_INSERT_FAILED");
+  }
+
+  async insertRelease(
+    transaction: PlatformTransaction,
+    release: PublishedSiteRelease,
+  ): Promise<void> {
+    const changed = await resolvePlatformTransaction(transaction).execute(
+      `INSERT INTO platform.site_release
+       (release_ref,site_ref,state,web_artifact_digest,release_manifest_digest,
+        certification_digest,launch_profile_ref,site_config_revision_ref,legal_revision_ref,
+        feature_policy_revision,model_option_catalog_ref,agent_catalog_ref,identity_issuer_label,
+        identity_auth_strength_policy_revision,enabled_surface_ids,locale_policy)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16::jsonb)`,
+      [release.releaseRef, release.siteRef, release.state, release.webArtifactDigest,
+        release.releaseManifestDigest, release.certificationDigest, release.launchProfileRef,
+        release.siteConfigRevisionRef, release.legalRevisionRef, release.featurePolicyRevision,
+        release.modelOptionCatalogRef, release.agentCatalogRef, release.identityIssuerLabel,
+        release.identityAuthStrengthPolicyRevision, JSON.stringify(release.enabledSurfaceIds),
+        JSON.stringify(release.localePolicy)],
+    );
+    if (changed !== 1) throw new Error("SITE_RELEASE_INSERT_FAILED");
+  }
+
   async loadSiteForUpdate(
     transaction: PlatformTransaction,
     siteRef: string,

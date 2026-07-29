@@ -23,6 +23,44 @@ const attempt: ActivationAttempt = Object.freeze({
 });
 
 describe("Postgres Site authority", () => {
+  it("creates the Site and independent project binding atomically through the caller transaction", async () => {
+    const calls: { statement: string; values: readonly unknown[] }[] = [];
+    const lease = issuePlatformTransaction({ query: async () => [], execute: async (statement, values = []) => {
+      calls.push({ statement, values }); return 1;
+    } });
+    try {
+      await new PostgresSiteAuthorityRepository().insertSiteWithProjectBinding(lease.transaction,
+        { ...site, siteKey: "image-studio", state: "preview_ready", activeReleaseRef: null },
+        { bindingRef: "binding_01", siteRef: "site_01", repositoryRef: "github:org/image-studio",
+          providerProjectRef: "vercel:image-studio", environment: "production",
+          workloadIdentityId: "spiffe://kokoro/site/image-studio", bindingEpoch: 1n, state: "active" });
+      expect(calls).toHaveLength(2);
+      expect(calls[0]?.statement).toContain("INSERT INTO platform.site");
+      expect(calls[1]?.statement).toContain("INSERT INTO platform.site_project_binding");
+    } finally { revokePlatformTransaction(lease); }
+  });
+
+  it("persists the complete immutable release snapshot", async () => {
+    const calls: { statement: string; values: readonly unknown[] }[] = [];
+    const lease = issuePlatformTransaction({ query: async () => [], execute: async (statement, values = []) => {
+      calls.push({ statement, values }); return 1;
+    } });
+    try {
+      await new PostgresSiteAuthorityRepository().insertRelease(lease.transaction, {
+        ...release, state: "ready", launchProfileRef: "core-redeem-chat@1",
+        siteConfigRevisionRef: "config_01", legalRevisionRef: "legal_01",
+        featurePolicyRevision: "policy_01", modelOptionCatalogRef: "models_01",
+        agentCatalogRef: "agents_01", identityIssuerLabel: "Image Studio",
+        identityAuthStrengthPolicyRevision: "auth_policy_01", enabledSurfaceIds: ["account", "chat"],
+        localePolicy: { defaultLocale: "en-US", allowedLocales: ["en-US"] },
+      });
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.statement).toContain("certification_digest");
+      expect(calls[0]?.statement).toContain("identity_auth_strength_policy_revision");
+      expect(calls[0]?.values).toContain(JSON.stringify(["account", "chat"]));
+    } finally { revokePlatformTransaction(lease); }
+  });
+
   it("loads owner rows under lock and rejects malformed persisted state", async () => {
     const calls: string[] = [];
     const lease = issuePlatformTransaction({
