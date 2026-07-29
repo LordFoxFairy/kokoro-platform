@@ -45,9 +45,10 @@ export function createRedemptionSecretCodec(config: RedemptionSecretCodecConfig)
         lookupDigest: hmac(key, "kokoro.commerce.code-lookup.v1", `${siteId}\0${normalized}`),
       })));
     },
-    safeCodeFingerprint(code: string) {
+    safeCodeFingerprint(code: string, siteId: string) {
       const normalized = normalizeCode(code);
-      return `CODE-${hmac(auditKey, "kokoro.commerce.safe-code-fingerprint.v1", normalized).slice(0, 16).toUpperCase()}`;
+      bounded(siteId, 256, "REDEMPTION_SITE_INVALID");
+      return `CODE-${hmac(auditKey, "kokoro.commerce.safe-code-fingerprint.v1", `${siteId}\0${normalized}`).slice(0, 16).toUpperCase()}`;
     },
     previewCredential,
     verifyPreviewCredential(credential: string) {

@@ -5,6 +5,7 @@ import type { JsonValue } from "../../../../shared/outbox-inbox/receipt.js";
 import { createCommerceCommandIdentity } from "../../domain/command-identity.js";
 import {
   redemptionPreviewDigest,
+  RedemptionPolicyError,
   uuidV7,
   type StoredRedemptionPreview,
 } from "../../domain/redemption-preview.js";
@@ -12,6 +13,7 @@ import type { RedemptionRepository } from "../contracts/redemption-repository.js
 import type { RedemptionSecretPort } from "../contracts/redemption-secret-port.js";
 import type { CommerceCommandFence } from "../command-fence.js";
 import { commerceCanonicalJson } from "../../domain/canonical-json.js";
+import { CommerceApplicationError } from "../commerce-application-error.js";
 
 export type RedemptionPreviewView = Readonly<{
   receipt: Readonly<{
@@ -70,12 +72,20 @@ export class PreviewRedemptionService {
   }>): Promise<RedemptionPreviewView> {
     const siteId = input.context.target.siteId;
     if (input.context.actor.kind !== "user" || siteId === null) throw new Error("COMMERCE_EFFECT_NOT_AUTHORIZED");
-    const requestDigest = this.dependencies.secrets.previewRequestDigest({
-      siteId,
-      subjectId: input.context.actor.subjectId,
-      subjectGeneration: input.context.actor.subjectGeneration,
-      code: input.code,
-    });
+    let requestDigest: string;
+    try {
+      requestDigest = this.dependencies.secrets.previewRequestDigest({
+        siteId,
+        subjectId: input.context.actor.subjectId,
+        subjectGeneration: input.context.actor.subjectGeneration,
+        code: input.code,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === "REDEEM_NOT_ACCEPTED") {
+        throw new CommerceApplicationError("REDEEM_NOT_ACCEPTED");
+      }
+      throw error;
+    }
     const identity = createCommerceCommandIdentity({
       commandId: input.commandId,
       environment: input.context.environment,
@@ -90,7 +100,9 @@ export class PreviewRedemptionService {
       requestDigest,
     });
     let created: StoredRedemptionPreview | null = null;
-    const execution = await this.dependencies.fence.execute({ context: input.context, identity }, async ({ transaction }) => {
+    let execution: Awaited<ReturnType<CommerceCommandFence["execute"]>>;
+    try {
+      execution = await this.dependencies.fence.execute({ context: input.context, identity }, async ({ transaction }) => {
       const now = this.#clock();
       const issuedAt = now.toISOString();
       const expiresAt = new Date(now.getTime() + this.#ttlSeconds * 1000).toISOString();
@@ -99,14 +111,14 @@ export class PreviewRedemptionService {
         subjectId: identity.actorSubject,
         subjectGeneration: identity.actorGeneration,
       });
-      if (billing === null) throw new Error("REDEEM_NOT_ACCEPTED");
+      if (billing === null) throw new CommerceApplicationError("REDEEM_NOT_ACCEPTED");
       const candidate = await this.dependencies.repository.resolvePreviewCandidate(transaction, {
         siteId: identity.siteId,
         billingAccountId: billing.billingAccountId,
         lookupCandidates: this.dependencies.secrets.codeLookupCandidates(input.code, identity.siteId),
         now: issuedAt,
       });
-      if (candidate === null) throw new Error("REDEEM_NOT_ACCEPTED");
+      if (candidate === null) throw new CommerceApplicationError("REDEEM_NOT_ACCEPTED");
       const previewRef = this.#reference(now.getTime());
       const previewCredential = this.dependencies.secrets.previewCredential(previewRef);
       const verifiedCredential = this.dependencies.secrets.verifyPreviewCredential(previewCredential);
@@ -141,10 +153,14 @@ export class PreviewRedemptionService {
         committedAt: issuedAt,
       });
       return Object.freeze({ state: "succeeded" as const, result, resultDigest: digest(result) });
-    });
+      });
+    } catch (error) {
+      if (error instanceof RedemptionPolicyError) throw new CommerceApplicationError("REDEEM_NOT_ACCEPTED");
+      throw error;
+    }
     if (execution.disposition === "in_progress" ||
       (execution.disposition === "replay" && execution.receipt.state !== "succeeded")) {
-      throw new Error("REDEEM_TEMPORARILY_UNAVAILABLE");
+      throw new CommerceApplicationError("REDEEM_TEMPORARILY_UNAVAILABLE");
     }
     const stored = created ?? await this.dependencies.unitOfWork.execute(
       { context: input.context, operation: "previewRedemption" },
@@ -155,20 +171,20 @@ export class PreviewRedemptionService {
         commandId: identity.commandId,
       }),
     );
-    if (stored === null) throw new Error("REDEEM_TEMPORARILY_UNAVAILABLE");
-    if (Date.parse(stored.expiresAt) <= this.#clock().getTime()) throw new Error("REDEEM_NOT_ACCEPTED");
+    if (stored === null) throw new CommerceApplicationError("REDEEM_TEMPORARILY_UNAVAILABLE");
+    if (Date.parse(stored.expiresAt) <= this.#clock().getTime()) throw new CommerceApplicationError("REDEEM_NOT_ACCEPTED");
     let previewCredential: string;
     try {
       previewCredential = this.dependencies.secrets.previewCredential(stored.previewRef, stored.credentialKeyRevision);
     } catch (error) {
       if (error instanceof Error && error.message === "REDEMPTION_PREVIEW_KEY_RETIRED") {
-        throw new Error("REDEEM_NOT_ACCEPTED");
+        throw new CommerceApplicationError("REDEEM_NOT_ACCEPTED");
       }
       throw error;
     }
     const verified = this.dependencies.secrets.verifyPreviewCredential(previewCredential);
     if (verified === null || verified.credentialDigest !== stored.credentialDigest) {
-      throw new Error("REDEEM_TEMPORARILY_UNAVAILABLE");
+      throw new CommerceApplicationError("REDEEM_TEMPORARILY_UNAVAILABLE");
     }
     return view(stored, requestDigest, previewCredential);
   }

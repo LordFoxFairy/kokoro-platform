@@ -10,6 +10,7 @@ import {
 import { ProductWorkloadRegistry } from "../../modules/authorization/infrastructure/transport/product-workload-registry.js";
 import type { VerifiedCsrfEvidence } from "../../modules/authorization/infrastructure/transport/product-workload-registry.js";
 import { IdentityApplicationError } from "../../modules/identity/application/services/identity-application-service.js";
+import { CommerceApplicationError } from "../../modules/commerce/application/commerce-application-error.js";
 import { verifyRequestSecurityContext, type VerifiedRequestSecurityContext } from "../../shared/security-context/request-security-context.js";
 import {
   createPlatformPublicOperationRegistry,
@@ -46,7 +47,7 @@ export function createPlatformPublicHttpHandler(input: Readonly<{
         response.setHeader("x-request-id", requestId);
         response.setHeader("cache-control", "no-store");
         response.setHeader("x-content-type-options", "nosniff");
-        const problem = safeProblem(error, requestId, correlationId);
+        const problem = platformPublicSafeProblem(error, requestId, correlationId);
         response.statusCode = problem.status;
         response.setHeader("content-type", "application/problem+json; charset=utf-8");
         response.end(JSON.stringify(problem.body));
@@ -57,7 +58,7 @@ export function createPlatformPublicHttpHandler(input: Readonly<{
         response.setHeader("cache-control", "no-store");
         response.setHeader("x-content-type-options", "nosniff");
         if (Object.keys(target.query).length !== 0) {
-          const problem = safeProblem(new SessionAuthorizationError("AUTHORIZATION_INPUT_INVALID"), requestId, correlationId);
+          const problem = platformPublicSafeProblem(new SessionAuthorizationError("AUTHORIZATION_INPUT_INVALID"), requestId, correlationId);
           sendProblem(response, problem);
           return true;
         }
@@ -115,7 +116,7 @@ export function createPlatformPublicHttpHandler(input: Readonly<{
         sendJson(response, successStatus, responseBody);
         return true;
       } catch (error) {
-        sendProblem(response, safeProblem(error, requestId, correlationId));
+        sendProblem(response, platformPublicSafeProblem(error, requestId, correlationId));
         return true;
       }
     },
@@ -351,13 +352,21 @@ function sendProblem(
   response.end(JSON.stringify(problem.body));
 }
 
-function safeProblem(error: unknown, requestId: string, correlationId: string): { status: number; body: ErrorResponse } {
+export function platformPublicSafeProblem(error: unknown, requestId: string, correlationId: string): { status: number; body: ErrorResponse } {
   let status = 503;
   let code: ErrorCode = "INTERNAL_UNAVAILABLE";
   let retryClass: ErrorResponse["retryClass"] = "after_delay";
   let safeMessage = "The service is temporarily unavailable.";
   const authorizationCode = error instanceof SessionAuthorizationError ? error.code : undefined;
-  if (authorizationCode === "USER_SESSION_REQUIRED" || (error instanceof IdentityApplicationError && error.code === "AUTHENTICATION_FAILED")) {
+  if (error instanceof CommerceApplicationError) {
+    if (error.code === "REDEEM_NOT_ACCEPTED") {
+      status = 422; code = "REDEEM_NOT_ACCEPTED"; retryClass = "never";
+      safeMessage = "The redemption was not accepted.";
+    } else {
+      status = 503; code = "REDEEM_TEMPORARILY_UNAVAILABLE"; retryClass = "after_delay";
+      safeMessage = "Redemption is temporarily unavailable.";
+    }
+  } else if (authorizationCode === "USER_SESSION_REQUIRED" || (error instanceof IdentityApplicationError && error.code === "AUTHENTICATION_FAILED")) {
     status = 401; code = authorizationCode === "USER_SESSION_REQUIRED" ? "AUTHENTICATION_REQUIRED" : "AUTHENTICATION_FAILED";
     retryClass = "after_user_action"; safeMessage = "Authentication failed.";
   } else if (authorizationCode === "WORKLOAD_NOT_AUTHORIZED" || authorizationCode === "PROJECT_NOT_AUTHORIZED") {

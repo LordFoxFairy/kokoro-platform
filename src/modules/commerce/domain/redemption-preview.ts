@@ -34,6 +34,13 @@ export const redemptionSafeTermsSchema = z.strictObject({
 
 export type RedemptionSafeTerms = z.infer<typeof redemptionSafeTermsSchema>;
 
+export class RedemptionPolicyError extends Error {
+  constructor() {
+    super("REDEMPTION_POLICY_REJECTED");
+    this.name = "RedemptionPolicyError";
+  }
+}
+
 export interface RedemptionPreviewCandidate {
   readonly codeRef: string;
   readonly batchRef: string;
@@ -44,6 +51,37 @@ export interface RedemptionPreviewCandidate {
   readonly outputPlanDigest: string;
   readonly safeCodeFingerprint: string;
   readonly safeTerms: RedemptionSafeTerms;
+}
+
+export interface PublishedFulfillmentOutputLine {
+  readonly outputLineId: string;
+  readonly ordinal: number;
+  readonly cardinality: number;
+  readonly outputKind: "subscription_term" | "entitlement_grant" | "credit_grant";
+  readonly planVersionRef: string | null;
+  readonly entitlementTemplateRevisionRef: string | null;
+  readonly creditProgramRevisionRef: string | null;
+}
+
+export function publishedFulfillmentOutputPlanDigest(input: Readonly<{
+  siteId: string;
+  fulfillmentProgramRevisionRef: string;
+  lines: readonly PublishedFulfillmentOutputLine[];
+}>): string {
+  return createHash("sha256").update(commerceCanonicalJson({
+    version: 1,
+    siteId: input.siteId,
+    fulfillmentProgramRevisionRef: input.fulfillmentProgramRevisionRef,
+    lines: input.lines.map((line) => ({
+      outputLineId: line.outputLineId,
+      ordinal: line.ordinal,
+      cardinality: line.cardinality,
+      outputKind: line.outputKind,
+      planVersionRef: line.planVersionRef,
+      entitlementTemplateRevisionRef: line.entitlementTemplateRevisionRef,
+      creditProgramRevisionRef: line.creditProgramRevisionRef,
+    })),
+  }), "utf8").digest("hex");
 }
 
 export interface StoredRedemptionPreview extends RedemptionPreviewCandidate {

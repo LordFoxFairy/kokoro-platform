@@ -4,7 +4,7 @@ export interface RedemptionSecretPort {
     keyRevision: string;
     lookupDigest: string;
   }>[];
-  safeCodeFingerprint(code: string): string;
+  safeCodeFingerprint(code: string, siteId: string): string;
   previewCredential(previewRef: string, keyRevision?: string): string;
   verifyPreviewCredential(credential: string): Readonly<{
     keyRevision: string;

@@ -2,6 +2,8 @@ import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/plat
 import type { RedemptionRepository } from "../../application/contracts/redemption-repository.js";
 import {
   redemptionSafeTermsSchema,
+  RedemptionPolicyError,
+  publishedFulfillmentOutputPlanDigest,
   type RedemptionSafeTerms,
   type StoredRedemptionPreview,
 } from "../../domain/redemption-preview.js";
@@ -29,9 +31,11 @@ type CandidateRow = Record<string, unknown> & {
 };
 
 type OutputRow = Record<string, unknown> & {
+  outputLineId: string;
   outputKind: "subscription_term" | "entitlement_grant" | "credit_grant";
   ordinal: number;
   cardinality: number;
+  planVersionRef: string | null;
   creditProgramRevisionRef: string | null;
   bucketClass: "daily" | "period" | "permanent" | null;
   unit: string | null;
@@ -89,6 +93,12 @@ export class PostgresRedemptionRepository implements RedemptionRepository {
     if (row === undefined) return null;
     if (rows.length !== 1) throw new Error("REDEMPTION_CODE_LOOKUP_AMBIGUOUS");
     const outputRows = await sql.query<OutputRow>(OUTPUT_SQL, [row.fulfillmentProgramRevisionRef, input.siteId]);
+    const computedOutputPlanDigest = publishedFulfillmentOutputPlanDigest({
+      siteId: input.siteId,
+      fulfillmentProgramRevisionRef: row.fulfillmentProgramRevisionRef,
+      lines: outputRows,
+    });
+    if (computedOutputPlanDigest !== row.outputPlanDigest) throw new Error("REDEMPTION_OUTPUT_PLAN_DIGEST_MISMATCH");
     const safeTerms = terms(row, outputRows, input.now);
     return Object.freeze({
       codeRef: row.codeRef,
@@ -218,14 +228,16 @@ function terms(row: CandidateRow, outputs: readonly OutputRow[], now: string): R
         }));
       }
     } else {
-      if (output.cardinality !== 1) throw new Error("REDEMPTION_PROGRAM_OUTPUT_INVALID");
+      if (output.cardinality !== 1 || row.planVersionRef === null || output.planVersionRef !== row.planVersionRef) {
+        throw new Error("REDEMPTION_PROGRAM_OUTPUT_INVALID");
+      }
       subscriptionTermCount += 1;
     }
   });
   const activeTermEndsAt = row.activeTermEndsAt === null ? null : instant(row.activeTermEndsAt);
   const hasActiveTerm = activeTermEndsAt !== null && Date.parse(activeTermEndsAt) > Date.parse(now);
   if ((row.termAction === "new_subscription" || row.termAction === "reject_if_active") && hasActiveTerm) {
-    throw new Error("REDEEM_NOT_ACCEPTED");
+    throw new RedemptionPolicyError();
   }
   if ((row.termAction === null || row.termAction === "none") !== (subscriptionTermCount === 0)) {
     throw new Error("REDEMPTION_PROGRAM_OUTPUT_INVALID");
@@ -325,7 +337,8 @@ const CANDIDATE_SQL = `
     AND account_redemptions.redemption_count < program.max_redemptions_per_account`;
 
 const OUTPUT_SQL = `
-  SELECT output.output_kind AS "outputKind",output.ordinal,output.cardinality,
+  SELECT output.output_line_id AS "outputLineId",output.output_kind AS "outputKind",
+         output.ordinal,output.cardinality,output.plan_version_ref AS "planVersionRef",
          output.credit_program_revision_ref AS "creditProgramRevisionRef",
          credit.bucket_class AS "bucketClass",credit.unit,credit.amount::text AS amount,
          credit.expires_after_seconds AS "creditExpiresAfterSeconds",

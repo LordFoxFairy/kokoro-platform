@@ -5,10 +5,20 @@ import {
   revokePlatformTransaction,
   type PlatformSqlTransaction,
 } from "../../src/shared/unit-of-work/platform-transaction.js";
+import { publishedFulfillmentOutputPlanDigest } from "../../src/modules/commerce/domain/redemption-preview.js";
 
 describe("PostgresRedemptionRepository preview", () => {
   it("uses snake-case HMAC lookup DTOs and expands frozen output cardinality", async () => {
     const calls: { statement: string; values: readonly unknown[] }[] = [];
+    const outputRows = [
+      { outputLineId: "term", outputKind: "subscription_term" as const, ordinal: 0, cardinality: 1, planVersionRef: "plan-v1", creditProgramRevisionRef: null, bucketClass: null, unit: null, amount: null, creditExpiresAfterSeconds: null, entitlementTemplateRevisionRef: null, capabilityKey: null, safeLabel: null, entitlementExpiresAfterSeconds: null },
+      { outputLineId: "credits", outputKind: "credit_grant" as const, ordinal: 1, cardinality: 2, planVersionRef: null, creditProgramRevisionRef: "credit-v1", bucketClass: "period" as const, unit: "credit", amount: "100", creditExpiresAfterSeconds: 86400n, entitlementTemplateRevisionRef: null, capabilityKey: null, safeLabel: null, entitlementExpiresAfterSeconds: null },
+    ];
+    const outputPlanDigest = publishedFulfillmentOutputPlanDigest({
+      siteId: "site-1",
+      fulfillmentProgramRevisionRef: "fulfillment-v1",
+      lines: outputRows,
+    });
     const sql: PlatformSqlTransaction = {
       execute: async () => 0,
       query: async (statement, values = []) => {
@@ -20,7 +30,7 @@ describe("PostgresRedemptionRepository preview", () => {
           fulfillmentProgramRevisionRef: "fulfillment-v1",
           productRevisionDigest: "a".repeat(64),
           programDigest: "b".repeat(64),
-          outputPlanDigest: "c".repeat(64),
+          outputPlanDigest,
           safeCodeFingerprint: "CODE-0123456789ABCDEF",
           productRef: "product-1",
           productVersionRef: "product-v1",
@@ -34,10 +44,7 @@ describe("PostgresRedemptionRepository preview", () => {
           activeTermEndsAt: new Date("2026-07-29T02:00:00.000Z"),
           legalTermRefs: ["terms-v1"],
         }] as never;
-        return [
-          { outputKind: "subscription_term", ordinal: 0, cardinality: 1, creditProgramRevisionRef: null, bucketClass: null, unit: null, amount: null, creditExpiresAfterSeconds: null, entitlementTemplateRevisionRef: null, capabilityKey: null, safeLabel: null, entitlementExpiresAfterSeconds: null },
-          { outputKind: "credit_grant", ordinal: 1, cardinality: 2, creditProgramRevisionRef: "credit-v1", bucketClass: "period", unit: "credit", amount: "100", creditExpiresAfterSeconds: 86400n, entitlementTemplateRevisionRef: null, capabilityKey: null, safeLabel: null, entitlementExpiresAfterSeconds: null },
-        ] as never;
+        return outputRows as never;
       },
     };
     const lease = issuePlatformTransaction(sql);

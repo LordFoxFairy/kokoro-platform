@@ -25,9 +25,11 @@ describe("Commerce redemption secret codec", () => {
     );
     expect(codec.codeLookupCandidates("ABCDEFGHIJKLMNOP", "site-1").map((item) => item.keyRevision))
       .toEqual(["code-2026-07", "code-2026-06"]);
-    expect(codec.safeCodeFingerprint("abcd-efgh-ijkl-mnop")).toMatch(/^CODE-[A-F0-9]{16}$/u);
-    expect(codec.safeCodeFingerprint("abcd-efgh-ijkl-mnop")).not.toContain("ABCD");
-    expect(codec.safeCodeFingerprint("abcd-efgh-ijkl-mnop")).not.toContain("MNOP");
+    expect(codec.safeCodeFingerprint("abcd-efgh-ijkl-mnop", "site-1")).toMatch(/^CODE-[A-F0-9]{16}$/u);
+    expect(codec.safeCodeFingerprint("abcd-efgh-ijkl-mnop", "site-1")).not.toContain("ABCD");
+    expect(codec.safeCodeFingerprint("abcd-efgh-ijkl-mnop", "site-1")).not.toContain("MNOP");
+    expect(codec.safeCodeFingerprint("abcd-efgh-ijkl-mnop", "site-1"))
+      .not.toBe(codec.safeCodeFingerprint("abcd-efgh-ijkl-mnop", "site-2"));
   });
 
   it("issues a deterministic opaque preview capability and verifies key rotation", () => {
