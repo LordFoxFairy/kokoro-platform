@@ -31,6 +31,7 @@ describe("RedemptionQueryService", () => {
       expect(repository.recoveryInput).toEqual({
         siteId: "site-1", subjectId: "subject-1", subjectGeneration: "2", idempotencyKey: "confirm-1",
       });
+      expect(harness.authorized).toEqual(["recoverRedemptionCommand"]);
     } finally {
       harness.close();
     }
@@ -47,6 +48,7 @@ describe("RedemptionQueryService", () => {
       expect(repository.receiptInput).toMatchObject({
         siteId: "site-1", subjectId: "subject-1", subjectGeneration: "2",
       });
+      expect(harness.authorized).toEqual(["getRedemptionReceipt"]);
     } finally {
       harness.close();
     }
@@ -95,11 +97,17 @@ class QueryRepository implements RedemptionConfirmationRepository {
 
 function queryHarness(repository: RedemptionConfirmationRepository) {
   const lease = issuePlatformTransaction({ query: async () => [], execute: async () => 0 });
+  const authorized: string[] = [];
   return {
     service: new RedemptionQueryService({
       repository,
       unitOfWork: { execute: async (_fence, work) => work(lease.transaction) },
+      authorizeRead: async (_transaction, _context, operation) => {
+        authorized.push(operation);
+        return { siteId: "site-1", releaseRef: "release-1", subjectId: "subject-1" };
+      },
     }),
+    authorized,
     close: () => revokePlatformTransaction(lease),
   };
 }

@@ -322,7 +322,7 @@ async function grantFoundationPrivileges(
       );
     } else if (role === workerRole) {
       await client.query(
-        `GRANT SELECT ON TABLE ${KERNEL_TABLES}, platform.authorization_site, platform.authorization_product_context, platform.authorization_session_access_grant, platform.commerce_redemption, platform.commerce_fulfillment_transaction TO ${identifier}`,
+        `GRANT SELECT ON TABLE ${KERNEL_TABLES}, platform.authorization_site, platform.authorization_product_context, platform.authorization_session_access_grant, platform.commerce_redemption, platform.commerce_fulfillment_transaction, platform.credit_budget_operation_receipt, platform.credit_authorization_segment TO ${identifier}`,
       );
       await client.query(`GRANT INSERT ON TABLE platform.inbox_delivery TO ${identifier}`);
       await client.query(

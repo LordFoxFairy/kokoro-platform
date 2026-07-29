@@ -45,13 +45,41 @@ export async function authorizeCommerceCommand(
     !hasBoundaryCsrfEvidence(context)
   ) deny();
 
-  const rows = await resolvePlatformTransaction(transaction).query<AuthorityRow>(AUTHORITY_SQL, [
+  const rows = await resolvePlatformTransaction(transaction).query<AuthorityRow>(`${AUTHORITY_SQL}\n  FOR UPDATE OF binding,site,release,subject,identity_session`, [
     context.trustedCaller.workloadIdentityId,
     callerSite,
     context.actor.subjectId,
     sessionId,
   ]);
-  const row = rows[0];
+  return validateAuthority(rows[0], context, callerSite, now);
+}
+
+export async function authorizeCommerceRead(
+  transaction: PlatformTransaction,
+  context: VerifiedRequestSecurityContext,
+  operation: string,
+  now: string,
+): Promise<CommerceEffectAuthority> {
+  const callerSite = context.trustedCaller.siteId;
+  const sessionId = context.actor.sessionId;
+  if (
+    !["recoverRedemptionCommand", "getRedemptionReceipt", "getCreditGrant", "getCreditSummary", "getUsageDetail", "listAccountProducts"].includes(operation) ||
+    context.trustedCaller.kind !== "site_product" || callerSite === undefined || context.actor.kind !== "user" ||
+    sessionId === undefined || context.target.siteId !== callerSite || context.actor.sessionEpoch === undefined ||
+    context.actor.restrictionEpoch === undefined || context.target.purpose !== operation
+  ) deny();
+  const rows = await resolvePlatformTransaction(transaction).query<AuthorityRow>(AUTHORITY_SQL, [
+    context.trustedCaller.workloadIdentityId, callerSite, context.actor.subjectId, sessionId,
+  ]);
+  return validateAuthority(rows[0], context, callerSite, now);
+}
+
+function validateAuthority(
+  row: AuthorityRow | undefined,
+  context: VerifiedRequestSecurityContext,
+  callerSite: string,
+  now: string,
+): CommerceEffectAuthority {
   if (
     row === undefined || row.siteId !== callerSite || row.releaseRef !== context.trustedCaller.siteReleaseRef || row.subjectId !== context.actor.subjectId ||
     row.bindingState !== "active" || row.siteState !== "active" || row.releaseState !== "active" ||
@@ -97,5 +125,4 @@ const AUTHORITY_SQL = `
   JOIN platform.authorization_identity_session identity_session
     ON identity_session.session_ref=$4 AND identity_session.subject_ref=subject.subject_ref
       AND identity_session.site_ref=binding.site_ref
-  WHERE binding.workload_identity_id=$1 AND binding.site_ref=$2
-  FOR UPDATE OF binding,site,release,subject,identity_session`;
+  WHERE binding.workload_identity_id=$1 AND binding.site_ref=$2`;

@@ -8,18 +8,24 @@ import { definePlatformPublicOperation } from "../../../../interfaces/http/platf
 import type { PreviewRedemptionService } from "../../application/services/preview-redemption.js";
 import type { ConfirmRedemptionService } from "../../application/services/confirm-redemption.js";
 import type { RedemptionQueryService } from "../../application/services/redemption-query.js";
+import type { AccountReadService } from "../../application/services/account-read.js";
 
 export const COMMERCE_PUBLIC_OPERATION_IDS = Object.freeze([
   "previewRedemption",
   "confirmRedemption",
   "recoverRedemptionCommand",
   "getRedemptionReceipt",
+  "getCreditGrant",
+  "getCreditSummary",
+  "getUsageDetail",
+  "listAccountProducts",
 ] as const);
 
 export function createCommercePublicOperations(dependencies: Readonly<{
   preview: Pick<PreviewRedemptionService, "execute">;
   confirm: Pick<ConfirmRedemptionService, "execute">;
   queries: Pick<RedemptionQueryService, "recoverCommand" | "getReceipt">;
+  accountQueries: Pick<AccountReadService, "getCreditGrant" | "getCreditSummary" | "getUsageDetail" | "listAccountProducts">;
 }>) {
   return Object.freeze([
     definePlatformPublicOperation({
@@ -85,6 +91,22 @@ export function createCommercePublicOperations(dependencies: Readonly<{
           redemptionId: input.path.id,
         });
       },
+    }),
+    definePlatformPublicOperation({
+      operationId: "getCreditGrant",
+      execute: (input) => dependencies.accountQueries.getCreditGrant({ context: input.context, grantId: input.path.id }),
+    }),
+    definePlatformPublicOperation({
+      operationId: "getCreditSummary",
+      execute: (input) => dependencies.accountQueries.getCreditSummary({ context: input.context }),
+    }),
+    definePlatformPublicOperation({
+      operationId: "getUsageDetail",
+      execute: (input) => dependencies.accountQueries.getUsageDetail({ context: input.context, usageId: input.path.id }),
+    }),
+    definePlatformPublicOperation({
+      operationId: "listAccountProducts",
+      execute: (input) => dependencies.accountQueries.listAccountProducts({ context: input.context }),
     }),
   ]);
 }

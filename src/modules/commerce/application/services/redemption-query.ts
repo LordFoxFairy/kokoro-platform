@@ -5,11 +5,14 @@ import type { RedemptionReceiptResponse } from
 import type { RedemptionConfirmationRepository } from "../contracts/redemption-confirmation-repository.js";
 import { CommerceApplicationError } from "../commerce-application-error.js";
 import { redemptionCommandView, type ConfirmRedemptionView } from "./confirm-redemption.js";
+import { authorizeCommerceRead } from "../../../../workflows/commerce/authorize-command.js";
 
 export class RedemptionQueryService {
   constructor(private readonly dependencies: Readonly<{
     unitOfWork: Pick<PlatformUnitOfWork, "execute">;
     repository: RedemptionConfirmationRepository;
+    authorizeRead?: typeof authorizeCommerceRead;
+    clock?: () => string;
   }>) {}
 
   async recoverCommand(input: Readonly<{
@@ -19,10 +22,14 @@ export class RedemptionQueryService {
     const identity = userIdentity(input.context);
     const recovered = await this.dependencies.unitOfWork.execute(
       { context: input.context, operation: "recoverRedemptionCommand" },
-      (transaction) => this.dependencies.repository.findConfirmationByIdempotencyKey(transaction, {
-        ...identity,
-        idempotencyKey: input.idempotencyKey,
-      }),
+      async (transaction) => {
+        await (this.dependencies.authorizeRead ?? authorizeCommerceRead)(
+          transaction, input.context, "recoverRedemptionCommand", (this.dependencies.clock ?? (() => new Date().toISOString()))(),
+        );
+        return this.dependencies.repository.findConfirmationByIdempotencyKey(transaction, {
+          ...identity, idempotencyKey: input.idempotencyKey,
+        });
+      },
     );
     if (recovered === null) throw new CommerceApplicationError("REDEMPTION_NOT_FOUND");
     return redemptionCommandView(recovered.confirmation, recovered.requestDigest, recovered.commandId);
@@ -35,10 +42,14 @@ export class RedemptionQueryService {
     const identity = userIdentity(input.context);
     const receipt = await this.dependencies.unitOfWork.execute(
       { context: input.context, operation: "getRedemptionReceipt" },
-      (transaction) => this.dependencies.repository.findRedemptionReceipt(transaction, {
-        ...identity,
-        redemptionId: input.redemptionId,
-      }),
+      async (transaction) => {
+        await (this.dependencies.authorizeRead ?? authorizeCommerceRead)(
+          transaction, input.context, "getRedemptionReceipt", (this.dependencies.clock ?? (() => new Date().toISOString()))(),
+        );
+        return this.dependencies.repository.findRedemptionReceipt(transaction, {
+          ...identity, redemptionId: input.redemptionId,
+        });
+      },
     );
     if (receipt === null) throw new CommerceApplicationError("REDEMPTION_NOT_FOUND");
     return Object.freeze({

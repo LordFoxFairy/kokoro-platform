@@ -364,7 +364,7 @@ export function platformPublicSafeProblem(error: unknown, requestId: string, cor
     if (error.code === "REDEEM_NOT_ACCEPTED") {
       status = 422; code = "REDEEM_NOT_ACCEPTED"; retryClass = "never";
       safeMessage = "The redemption was not accepted.";
-    } else if (error.code === "REDEMPTION_NOT_FOUND") {
+    } else if (error.code === "REDEMPTION_NOT_FOUND" || error.code === "ACCOUNT_RESOURCE_NOT_FOUND") {
       status = 404; code = "NOT_FOUND"; retryClass = "never";
       safeMessage = "The requested resource was not found.";
     } else {

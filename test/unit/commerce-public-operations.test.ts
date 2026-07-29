@@ -14,9 +14,16 @@ describe("Commerce public operations", () => {
         recoverCommand: async (input) => { calls.push({ recover: input }); return { kind: "executing" } as never; },
         getReceipt: async (input) => { calls.push({ receipt: input }); return { redemption: true } as never; },
       },
+      accountQueries: {
+        getCreditGrant: async (input) => { calls.push({ creditGrant: input }); return { grant: true } as never; },
+        getCreditSummary: async (input) => { calls.push({ creditSummary: input }); return { units: [] } as never; },
+        getUsageDetail: async (input) => { calls.push({ usage: input }); return { usage: true } as never; },
+        listAccountProducts: async (input) => { calls.push({ products: input }); return { products: [] } as never; },
+      },
     });
     expect(COMMERCE_PUBLIC_OPERATION_IDS).toEqual([
       "previewRedemption", "confirmRedemption", "recoverRedemptionCommand", "getRedemptionReceipt",
+      "getCreditGrant", "getCreditSummary", "getUsageDetail", "listAccountProducts",
     ]);
     expect(operations.map((operation) => operation.operationId)).toEqual(COMMERCE_PUBLIC_OPERATION_IDS);
     const confirm = operations.find((operation) => operation.operationId === "confirmRedemption")!;

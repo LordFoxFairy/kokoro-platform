@@ -67,6 +67,8 @@ import { createCommercePublicOperations, COMMERCE_PUBLIC_OPERATION_IDS } from ".
 import { RedemptionQueryService } from "../modules/commerce/application/services/redemption-query.js";
 import { ConfirmRedemptionService } from "../modules/commerce/application/services/confirm-redemption.js";
 import { PostgresRedemptionConfirmationRepository } from "../modules/commerce/infrastructure/postgres/redemption-confirmation-repository.js";
+import { AccountReadService } from "../modules/commerce/application/services/account-read.js";
+import { PostgresAccountReadRepository } from "../modules/commerce/infrastructure/postgres/account-read-repository.js";
 
 export interface PlatformPublicProductionComposition {
   readonly handler: PlatformPublicHttpHandler;
@@ -198,6 +200,7 @@ export async function createPlatformPublicProductionComposition(
       secrets: redemptionSecrets,
     }),
     queries: new RedemptionQueryService({ unitOfWork, repository: redemptionConfirmationRepository }),
+    accountQueries: new AccountReadService({ unitOfWork, repository: new PostgresAccountReadRepository() }),
   });
   const handler = createPlatformPublicHttpHandler({
     workloads,
