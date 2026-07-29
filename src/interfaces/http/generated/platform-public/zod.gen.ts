@@ -515,9 +515,9 @@ export const zReauthenticationProof = z.strictObject({
     ]),
     reauthenticationProof: z.string().min(32).max(2048),
     resourceKind: z.literal('identity_account'),
-    sessionEpoch: z.coerce.bigint().gte(BigInt(0)).max(BigInt('9223372036854775807'), { error: 'Invalid value: Expected int64 to be <= 9223372036854775807' }),
+    sessionEpoch: zPositiveUint64String,
     sessionRef: z.string().min(16).max(128),
-    userSecurityEpoch: z.coerce.bigint().gte(BigInt(0)).max(BigInt('9223372036854775807'), { error: 'Invalid value: Expected int64 to be <= 9223372036854775807' })
+    userSecurityEpoch: zPositiveUint64String
 });
 
 /**

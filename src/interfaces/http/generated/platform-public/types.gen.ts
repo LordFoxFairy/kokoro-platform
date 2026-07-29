@@ -554,9 +554,9 @@ export type ReauthenticationProof = {
     operationId: 'beginTotpEnrollment' | 'disableTotp' | 'regenerateRecoveryCodes';
     reauthenticationProof: string;
     resourceKind: 'identity_account';
-    sessionEpoch: number;
+    sessionEpoch: PositiveUint64String;
     sessionRef: string;
-    userSecurityEpoch: number;
+    userSecurityEpoch: PositiveUint64String;
 };
 
 export type ReauthenticationResponse = ReauthenticationPendingResponse | OneTimeReauthenticationProofDelivery | OneTimeDeliveryUnavailable;
