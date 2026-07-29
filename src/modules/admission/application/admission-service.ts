@@ -318,6 +318,7 @@ export class AdmissionApplicationService {
     if (
       decision.ownerFacts.run_id !== command.effect.proposedRunId ||
       decision.ownerFacts.input.message_id !== command.effect.triggerMessageId ||
+      decision.ownerFacts.input.content !== command.effect.triggerMessageContent ||
       decision.ownerFacts.context.session_id !== command.effect.sessionId
     ) throw new Error("ADMISSION_OWNER_FACTS_INTENT_MISMATCH");
     const executionContext = mapOpaqueExecutionContextIntent(command.effect.executionContext!);

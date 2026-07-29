@@ -112,6 +112,7 @@ function prepareRequest(commandId = "0198f279-7420-7a32-995f-7f4421eb6c42") {
     launchId: "launch-1",
     proposedRunId: "run-1",
     triggerMessageId: "message-1",
+    triggerMessageContent: "hello",
     modelOptionRevisionRef: "model-option-revision-1",
     clientIntent: { locale: "en-US" },
     executionContext: create(OpaqueExecutionContextIntentSchema, {
@@ -258,6 +259,37 @@ describe("Admission application provider", () => {
 
     expect(response.result.case).toBe("outcomeUnknown");
     expect(response.receipt?.state).toBe(4);
+  });
+
+  it("never seals owner facts whose content differs from the authenticated Session effect", async () => {
+    const owner = authority();
+    owner.prepareRun = vi.fn(async () => ({
+      kind: "accepted" as const,
+      ownerFacts: { ...ownerFacts, input: { message_id: "message-1", content: "different" } },
+      prerequisiteRefs: [],
+      prepared: {
+        manifestRef: "manifest-1",
+        manifestDigest: "b".repeat(64),
+        sessionExecutionBindingRef: "binding-1",
+        capabilitySnapshotRef: "capability-snapshot-1",
+        configurationRevisionId: "configuration-1",
+        executionBudgetRootRef: "budget-1",
+        rootHoldRef: "hold-1",
+        authorizationSegmentRef: "segment-1",
+        segmentVersion: 1n,
+        expiresAt: timestampFromDate(new Date("2026-07-29T12:02:00.000Z")),
+        safeAdmissionSnapshot: create(SafeAdmissionSnapshotSchema, {
+          modelLabel: "Claude Sonnet",
+          policyDecisionRef: "policy-1",
+          capabilities: [],
+        }),
+      },
+    }));
+    const fixture = service(owner);
+
+    const response = await fixture.service.prepareRun(prepareRequest(), caller);
+
+    expect(response.result.case).toBe("outcomeUnknown");
   });
 
   it("enforces versioned commit, release and reconciliation outcomes on all effect handlers", async () => {
