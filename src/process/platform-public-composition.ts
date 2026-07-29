@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { open, readFile } from "node:fs/promises";
+import { constants as fileSystemConstants } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { generateSecret } from "otplib";
 import { createServer as createHttpsServer, type ServerOptions } from "node:https";
@@ -17,13 +18,25 @@ import { PostgresSessionAuthorizationRepository } from "../modules/authorization
 import { PostgresAuthorizationFeedRepository } from "../modules/authorization/infrastructure/postgres/authorization-feed-repository.js";
 import { SignedSessionAuthorizationPublisher } from "../modules/authorization/infrastructure/postgres/signed-session-authorization-publisher.js";
 import { createSessionAuthorizationEventSigner } from "../modules/authorization/infrastructure/jose/session-authorization-event-signer.js";
-import type { AuthorizationEventKeyRingConfig, AuthorizationEventSigningKeyConfig } from "../modules/authorization/infrastructure/jose/session-authorization-event-signer.js";
+import type {
+  AuthorizationEventKeyRingConfig,
+  AuthorizationEventSigningKeyConfig,
+} from "../modules/authorization/infrastructure/jose/session-authorization-event-signer.js";
 import { PostgresProductModelOptionCatalogReader } from "../modules/model-control/infrastructure/postgres/product-model-option-repository.js";
 import { loadProductWorkloadRegistry } from "../modules/authorization/infrastructure/transport/product-workload-registry.js";
 import { PlatformUnitOfWork } from "../shared/unit-of-work/unit-of-work.js";
-import { createPlatformPublicHttpHandler, type PlatformPublicHttpHandler } from "../interfaces/http/platform-public.js";
-import { createAuthorizationPublicOperations, AUTHORIZATION_PUBLIC_OPERATION_IDS } from "../modules/authorization/interfaces/http/authorization-public-operations.js";
-import { createIdentityPublicOperations, IDENTITY_LAUNCH_OPERATION_IDS } from "../modules/identity/interfaces/http/identity-public-operations.js";
+import {
+  createPlatformPublicHttpHandler,
+  type PlatformPublicHttpHandler,
+} from "../interfaces/http/platform-public.js";
+import {
+  createAuthorizationPublicOperations,
+  AUTHORIZATION_PUBLIC_OPERATION_IDS,
+} from "../modules/authorization/interfaces/http/authorization-public-operations.js";
+import {
+  createIdentityPublicOperations,
+  IDENTITY_LAUNCH_OPERATION_IDS,
+} from "../modules/identity/interfaces/http/identity-public-operations.js";
 import { IdentityApplicationService } from "../modules/identity/application/services/identity-application-service.js";
 import { IdentitySessionAuthorizationMutation } from "../modules/identity/application/services/identity-session-authorization-mutation.js";
 import { SubjectAuthorizationMutation } from "../modules/identity/application/services/subject-authorization-mutation.js";
@@ -34,6 +47,12 @@ import { createIdentityAuditDigester } from "../modules/identity/infrastructure/
 import { createVerificationEnvelopeSealer } from "../modules/identity/infrastructure/crypto/verification-envelope-sealer.js";
 import { createIdentityTotpVerifier } from "../modules/identity/infrastructure/crypto/identity-totp-verifier.js";
 import { createIdentityTotpSecretProtector } from "../modules/identity/infrastructure/crypto/identity-totp-secret-protector.js";
+import { IdentitySecurityManagementService } from "../modules/identity/application/services/identity-security-management-service.js";
+import { PostgresIdentitySecurityManagementRepository } from "../modules/identity/infrastructure/postgres/identity-security-management-repository.js";
+import {
+  createIdentityRecoveryCodeIssuer,
+  createIdentityTotpEnrollmentIssuer,
+} from "../modules/identity/infrastructure/crypto/identity-security-credential-issuer.js";
 import { PostgresScopedAuthorizationFeedRepository } from "../modules/authorization/infrastructure/postgres/scoped-authorization-feed-repository.js";
 import { SignedScopedSessionAuthorizationPublisher } from "../modules/authorization/infrastructure/postgres/signed-scoped-session-authorization-publisher.js";
 import { CommandReceiptRepository } from "../shared/outbox-inbox/receipt.js";
@@ -45,16 +64,20 @@ export interface PlatformPublicProductionComposition {
   createServer(listener: RequestListener): Server;
 }
 
-export async function createPlatformPublicProductionComposition(input: Readonly<{
-  database: PlatformTransactionalDatabaseClient;
-  modelOptions?: ModelOptionCatalogReadPort;
-  environment?: Readonly<Record<string, string | undefined>>;
-}>): Promise<PlatformPublicProductionComposition> {
+export async function createPlatformPublicProductionComposition(
+  input: Readonly<{
+    database: PlatformTransactionalDatabaseClient;
+    modelOptions?: ModelOptionCatalogReadPort;
+    environment?: Readonly<Record<string, string | undefined>>;
+  }>,
+): Promise<PlatformPublicProductionComposition> {
   const environment = input.environment ?? process.env;
   const [workloads, keyRing, eventKeyRing, tls] = await Promise.all([
     loadProductWorkloadRegistry(required(environment, "PLATFORM_PRODUCT_WORKLOAD_REGISTRY_FILE")),
     loadSessionAccessKeyRing(required(environment, "PLATFORM_SESSION_ACCESS_KEY_RING_FILE")),
-    loadAuthorizationEventKeyRing(required(environment, "PLATFORM_AUTHORIZATION_EVENT_KEY_RING_FILE")),
+    loadAuthorizationEventKeyRing(
+      required(environment, "PLATFORM_AUTHORIZATION_EVENT_KEY_RING_FILE"),
+    ),
     loadTls(environment),
   ]);
   const signer = await createSessionAccessGrantSigner(keyRing);
@@ -66,23 +89,35 @@ export async function createPlatformPublicProductionComposition(input: Readonly<
     new PostgresAuthorizationFeedRepository(),
     eventSigner,
   );
-  const [passwordHasher, verificationCredentials, sessionCredentials, refreshCredentials, auditDigest, deliverySealer,
-    totpSecretProtector] =
-    await Promise.all([
-      loadIdentityPasswordHasher(required(environment, "PLATFORM_IDENTITY_PASSWORD_PEPPER_RING_FILE")),
-      loadOpaqueCredentialCodec(required(environment, "PLATFORM_IDENTITY_VERIFICATION_DIGEST_KEY_FILE")),
-      loadOpaqueCredentialCodec(required(environment, "PLATFORM_IDENTITY_SESSION_DIGEST_KEY_FILE")),
-      loadOpaqueCredentialCodec(required(environment, "PLATFORM_IDENTITY_REFRESH_DIGEST_KEY_FILE")),
-      loadIdentityAuditDigester(required(environment, "PLATFORM_IDENTITY_AUDIT_DIGEST_KEY_FILE")),
-      loadVerificationDeliverySealer(required(environment, "PLATFORM_IDENTITY_DELIVERY_KEY_FILE")),
-      loadIdentityTotpSecretProtector(required(environment, "PLATFORM_IDENTITY_TOTP_KEY_RING_FILE")),
-    ]);
+  const [
+    passwordHasher,
+    verificationCredentials,
+    sessionCredentials,
+    refreshCredentials,
+    auditDigest,
+    deliverySealer,
+    totpSecretProtector,
+  ] = await Promise.all([
+    loadIdentityPasswordHasher(
+      required(environment, "PLATFORM_IDENTITY_PASSWORD_PEPPER_RING_FILE"),
+    ),
+    loadOpaqueCredentialCodec(
+      required(environment, "PLATFORM_IDENTITY_VERIFICATION_DIGEST_KEY_FILE"),
+    ),
+    loadOpaqueCredentialCodec(required(environment, "PLATFORM_IDENTITY_SESSION_DIGEST_KEY_FILE")),
+    loadOpaqueCredentialCodec(required(environment, "PLATFORM_IDENTITY_REFRESH_DIGEST_KEY_FILE")),
+    loadIdentityAuditDigester(required(environment, "PLATFORM_IDENTITY_AUDIT_DIGEST_KEY_FILE")),
+    loadVerificationDeliverySealer(required(environment, "PLATFORM_IDENTITY_DELIVERY_KEY_FILE")),
+    loadIdentityTotpSecretProtector(required(environment, "PLATFORM_IDENTITY_TOTP_KEY_RING_FILE")),
+  ]);
   const scopedPublisher = new SignedScopedSessionAuthorizationPublisher(
-    new PostgresScopedAuthorizationFeedRepository(), eventSigner,
+    new PostgresScopedAuthorizationFeedRepository(),
+    eventSigner,
   );
+  const identityRepository = new PostgresIdentityRepository();
   const identity = new IdentityApplicationService({
     unitOfWork,
-    repository: new PostgresIdentityRepository(),
+    repository: identityRepository,
     receipts: new CommandReceiptRepository(),
     outbox: new OutboxRepository(),
     passwordHasher,
@@ -99,12 +134,31 @@ export async function createPlatformPublicProductionComposition(input: Readonly<
     sessionAuthorization: new IdentitySessionAuthorizationMutation(scopedPublisher),
     reference: randomUUID,
   });
+  const identitySecurityManagement = new IdentitySecurityManagementService({
+    unitOfWork,
+    repository: new PostgresIdentitySecurityManagementRepository(),
+    receiptRecovery: identityRepository,
+    receipts: new CommandReceiptRepository(),
+    outbox: new OutboxRepository(),
+    totpEnrollmentIssuer: createIdentityTotpEnrollmentIssuer(),
+    recoveryCodeIssuer: createIdentityRecoveryCodeIssuer(),
+    totpSecretProtector,
+    totpVerifier: createIdentityTotpVerifier(),
+    dummyTotpSecret: generateSecret(),
+    auditDigest,
+    reference: randomUUID,
+  });
   const authorizationOperations = createAuthorizationPublicOperations({
     exchangeProductContext: new ExchangeProductContextService(unitOfWork, repository, modelOptions),
     getPersonalContext: new GetPersonalContextService(unitOfWork, repository),
-    issueSessionAccessGrant: new IssueSessionAccessGrantService(unitOfWork, repository, signer, publisher),
+    issueSessionAccessGrant: new IssueSessionAccessGrantService(
+      unitOfWork,
+      repository,
+      signer,
+      publisher,
+    ),
   });
-  const identityOperations = createIdentityPublicOperations(identity);
+  const identityOperations = createIdentityPublicOperations(identity, identitySecurityManagement);
   const handler = createPlatformPublicHttpHandler({
     workloads,
     sessions: input.database,
@@ -121,20 +175,37 @@ export async function createPlatformPublicProductionComposition(input: Readonly<
 }
 
 async function loadIdentityPasswordHasher(path: string) {
-  const root = record(JSON.parse(await readBoundedSecret(path, 64 * 1024)) as unknown, "IDENTITY_PASSWORD_PEPPER_RING_INVALID");
-  exactIdentity(root, ["version", "currentPepperVersion", "peppers", "memoryCostKiB", "timeCost", "parallelism"]);
+  const root = record(
+    JSON.parse(await readBoundedSecret(path, 64 * 1024)) as unknown,
+    "IDENTITY_PASSWORD_PEPPER_RING_INVALID",
+  );
+  exactIdentity(root, [
+    "version",
+    "currentPepperVersion",
+    "peppers",
+    "memoryCostKiB",
+    "timeCost",
+    "parallelism",
+  ]);
   if (
-    root.version !== 1 || typeof root.currentPepperVersion !== "number" ||
-    typeof root.memoryCostKiB !== "number" || typeof root.timeCost !== "number" ||
-    typeof root.parallelism !== "number" || !Array.isArray(root.peppers)
-  ) throw new Error("IDENTITY_PASSWORD_PEPPER_RING_INVALID");
+    root.version !== 1 ||
+    typeof root.currentPepperVersion !== "number" ||
+    typeof root.memoryCostKiB !== "number" ||
+    typeof root.timeCost !== "number" ||
+    typeof root.parallelism !== "number" ||
+    !Array.isArray(root.peppers)
+  )
+    throw new Error("IDENTITY_PASSWORD_PEPPER_RING_INVALID");
   const peppers = root.peppers.map((value) => {
     const pepper = record(value, "IDENTITY_PASSWORD_PEPPER_RING_INVALID");
     exactIdentity(pepper, ["version", "secretBase64url"]);
     if (typeof pepper.version !== "number" || typeof pepper.secretBase64url !== "string") {
       throw new Error("IDENTITY_PASSWORD_PEPPER_RING_INVALID");
     }
-    return Object.freeze({ version: pepper.version, secret: secretBytes(pepper.secretBase64url, 32) });
+    return Object.freeze({
+      version: pepper.version,
+      secret: secretBytes(pepper.secretBase64url, 32),
+    });
   });
   return createIdentityPasswordHasher({
     currentPepperVersion: root.currentPepperVersion,
@@ -154,9 +225,16 @@ async function loadIdentityAuditDigester(path: string) {
 }
 
 async function loadVerificationDeliverySealer(path: string) {
-  const root = record(JSON.parse(await readBoundedSecret(path, 4096)) as unknown, "IDENTITY_DELIVERY_KEY_INVALID");
+  const root = record(
+    JSON.parse(await readBoundedSecret(path, 4096)) as unknown,
+    "IDENTITY_DELIVERY_KEY_INVALID",
+  );
   exactIdentity(root, ["version", "keyRevision", "keyBase64url"]);
-  if (root.version !== 1 || typeof root.keyRevision !== "string" || typeof root.keyBase64url !== "string") {
+  if (
+    root.version !== 1 ||
+    typeof root.keyRevision !== "string" ||
+    typeof root.keyBase64url !== "string"
+  ) {
     throw new Error("IDENTITY_DELIVERY_KEY_INVALID");
   }
   return createVerificationEnvelopeSealer({
@@ -165,10 +243,19 @@ async function loadVerificationDeliverySealer(path: string) {
   });
 }
 
-async function loadIdentityTotpSecretProtector(path: string) {
-  const root = record(JSON.parse(await readBoundedSecret(path, 64 * 1024)) as unknown, "IDENTITY_TOTP_KEY_RING_INVALID");
+export async function loadIdentityTotpSecretProtector(path: string) {
+  const root = record(
+    JSON.parse(await readBoundedPrivateSecret(path, 64 * 1024)) as unknown,
+    "IDENTITY_TOTP_KEY_RING_INVALID",
+  );
   exactIdentity(root, ["version", "currentKeyRevision", "keys"]);
-  if (root.version !== 1 || typeof root.currentKeyRevision !== "string" || !Array.isArray(root.keys)) {
+  if (
+    root.version !== 1 ||
+    typeof root.currentKeyRevision !== "string" ||
+    !Array.isArray(root.keys) ||
+    root.keys.length < 1 ||
+    root.keys.length > 32
+  ) {
     throw new Error("IDENTITY_TOTP_KEY_RING_INVALID");
   }
   const keys = root.keys.map((value) => {
@@ -188,6 +275,35 @@ async function loadIdentityTotpSecretProtector(path: string) {
   });
 }
 
+async function readBoundedPrivateSecret(path: string, maximumBytes: number): Promise<string> {
+  if (!path.startsWith("/")) throw new Error("PLATFORM_SECRET_FILE_MUST_BE_ABSOLUTE");
+  let handle;
+  try {
+    handle = await open(path, fileSystemConstants.O_RDONLY | fileSystemConstants.O_NOFOLLOW);
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || (metadata.mode & 0o077) !== 0) {
+      throw new Error("IDENTITY_TOTP_KEY_RING_PERMISSIONS_INVALID");
+    }
+    if (metadata.size < 1 || metadata.size > maximumBytes)
+      throw new Error("PLATFORM_SECRET_FILE_INVALID");
+    const value = await handle.readFile("utf8");
+    if (Buffer.byteLength(value, "utf8") > maximumBytes)
+      throw new Error("PLATFORM_SECRET_FILE_INVALID");
+    return value;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message === "IDENTITY_TOTP_KEY_RING_PERMISSIONS_INVALID" ||
+        error.message === "PLATFORM_SECRET_FILE_INVALID" ||
+        error.message === "PLATFORM_SECRET_FILE_MUST_BE_ABSOLUTE")
+    )
+      throw error;
+    throw new Error("IDENTITY_TOTP_KEY_RING_PERMISSIONS_INVALID", { cause: error });
+  } finally {
+    await handle?.close();
+  }
+}
+
 function secretBytes(value: string, length: number): Uint8Array {
   if (!/^[A-Za-z0-9_-]+$/u.test(value)) throw new Error("IDENTITY_SECRET_ENCODING_INVALID");
   const bytes = Buffer.from(value, "base64url");
@@ -203,13 +319,19 @@ function exactIdentity(value: Record<string, unknown>, names: readonly string[])
   }
 }
 
-async function loadTls(environment: Readonly<Record<string, string | undefined>>): Promise<ServerOptions> {
+async function loadTls(
+  environment: Readonly<Record<string, string | undefined>>,
+): Promise<ServerOptions> {
   const [key, cert, ca] = await Promise.all([
     readBoundedSecret(required(environment, "PLATFORM_PUBLIC_TLS_KEY_FILE"), 64 * 1024),
     readBoundedSecret(required(environment, "PLATFORM_PUBLIC_TLS_CERT_FILE"), 64 * 1024),
     readBoundedSecret(required(environment, "PLATFORM_PUBLIC_TLS_CLIENT_CA_FILE"), 256 * 1024),
   ]);
-  if (!key.includes("BEGIN PRIVATE KEY") || !cert.includes("BEGIN CERTIFICATE") || !ca.includes("BEGIN CERTIFICATE")) {
+  if (
+    !key.includes("BEGIN PRIVATE KEY") ||
+    !cert.includes("BEGIN CERTIFICATE") ||
+    !ca.includes("BEGIN CERTIFICATE")
+  ) {
     throw new Error("PLATFORM_PUBLIC_TLS_MATERIAL_INVALID");
   }
   return Object.freeze({
@@ -227,16 +349,27 @@ export async function loadSessionAccessKeyRing(path: string): Promise<SessionAcc
   const parsed = JSON.parse(await readBoundedSecret(path, 512 * 1024)) as unknown;
   const root = record(parsed, "SESSION_ACCESS_KEY_RING_INVALID");
   exact(root, ["version", "issuer", "maximumTtlSeconds", "keys"]);
-  if (root.version !== 2 || !Array.isArray(root.keys)) throw new Error("SESSION_ACCESS_KEY_RING_INVALID");
+  if (root.version !== 2 || !Array.isArray(root.keys))
+    throw new Error("SESSION_ACCESS_KEY_RING_INVALID");
   const keys = root.keys.map((raw): SessionAccessSigningKeyConfig => {
     const key = record(raw, "SESSION_ACCESS_KEY_RING_INVALID");
-    exact(key, ["keyRevision", "publicKeyPem", "privateKeyPem", "current", "notBefore", "notAfter"]);
+    exact(key, [
+      "keyRevision",
+      "publicKeyPem",
+      "privateKeyPem",
+      "current",
+      "notBefore",
+      "notAfter",
+    ]);
     if (
-      typeof key.keyRevision !== "string" || typeof key.publicKeyPem !== "string" ||
-      typeof key.current !== "boolean" || typeof key.notBefore !== "string" ||
+      typeof key.keyRevision !== "string" ||
+      typeof key.publicKeyPem !== "string" ||
+      typeof key.current !== "boolean" ||
+      typeof key.notBefore !== "string" ||
       typeof key.notAfter !== "string" ||
       (key.privateKeyPem !== undefined && typeof key.privateKeyPem !== "string")
-    ) throw new Error("SESSION_ACCESS_KEY_RING_INVALID");
+    )
+      throw new Error("SESSION_ACCESS_KEY_RING_INVALID");
     return Object.freeze({
       keyRevision: key.keyRevision,
       publicKeyPem: key.publicKeyPem,
@@ -256,20 +389,33 @@ export async function loadSessionAccessKeyRing(path: string): Promise<SessionAcc
   });
 }
 
-export async function loadAuthorizationEventKeyRing(path: string): Promise<AuthorizationEventKeyRingConfig> {
+export async function loadAuthorizationEventKeyRing(
+  path: string,
+): Promise<AuthorizationEventKeyRingConfig> {
   const parsed = JSON.parse(await readBoundedSecret(path, 512 * 1024)) as unknown;
   const root = record(parsed, "AUTHORIZATION_EVENT_KEY_RING_INVALID");
   exactAuthorization(root, ["version", "keys"]);
-  if (root.version !== 1 || !Array.isArray(root.keys)) throw new Error("AUTHORIZATION_EVENT_KEY_RING_INVALID");
+  if (root.version !== 1 || !Array.isArray(root.keys))
+    throw new Error("AUTHORIZATION_EVENT_KEY_RING_INVALID");
   const keys = root.keys.map((raw): AuthorizationEventSigningKeyConfig => {
     const key = record(raw, "AUTHORIZATION_EVENT_KEY_RING_INVALID");
-    exactAuthorization(key, ["keyRevision", "publicKeyPem", "privateKeyPem", "current", "notBefore", "notAfter"]);
+    exactAuthorization(key, [
+      "keyRevision",
+      "publicKeyPem",
+      "privateKeyPem",
+      "current",
+      "notBefore",
+      "notAfter",
+    ]);
     if (
-      typeof key.keyRevision !== "string" || typeof key.publicKeyPem !== "string" ||
-      typeof key.current !== "boolean" || typeof key.notBefore !== "string" ||
+      typeof key.keyRevision !== "string" ||
+      typeof key.publicKeyPem !== "string" ||
+      typeof key.current !== "boolean" ||
+      typeof key.notBefore !== "string" ||
       typeof key.notAfter !== "string" ||
       (key.privateKeyPem !== undefined && typeof key.privateKeyPem !== "string")
-    ) throw new Error("AUTHORIZATION_EVENT_KEY_RING_INVALID");
+    )
+      throw new Error("AUTHORIZATION_EVENT_KEY_RING_INVALID");
     return Object.freeze({
       keyRevision: key.keyRevision,
       publicKeyPem: key.publicKeyPem,

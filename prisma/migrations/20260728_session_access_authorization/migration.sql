@@ -21,6 +21,11 @@ CREATE TABLE platform.authorization_site_release (
   feature_policy_revision TEXT NOT NULL,
   model_option_catalog_ref TEXT NOT NULL,
   agent_catalog_ref TEXT NOT NULL,
+  identity_issuer_label TEXT NOT NULL CHECK (
+    identity_issuer_label=btrim(identity_issuer_label)
+    AND length(identity_issuer_label) BETWEEN 1 AND 64
+    AND identity_issuer_label !~ '[[:cntrl:]]'
+  ),
   locale_policy JSONB NOT NULL CHECK (jsonb_typeof(locale_policy)='object'),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -28,6 +33,19 @@ CREATE TABLE platform.authorization_site_release (
 );
 CREATE INDEX authorization_site_release_active_idx
   ON platform.authorization_site_release(site_ref,state);
+
+CREATE FUNCTION platform.reject_authorization_site_release_identity_brand_mutation() RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
+BEGIN
+  IF NEW.identity_issuer_label IS DISTINCT FROM OLD.identity_issuer_label THEN
+    RAISE EXCEPTION 'AUTHORIZATION_SITE_RELEASE_IDENTITY_BRAND_IMMUTABLE' USING ERRCODE='23000';
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION platform.reject_authorization_site_release_identity_brand_mutation() FROM PUBLIC;
+CREATE TRIGGER authorization_site_release_identity_brand_immutable
+BEFORE UPDATE OF identity_issuer_label ON platform.authorization_site_release
+FOR EACH ROW EXECUTE FUNCTION platform.reject_authorization_site_release_identity_brand_mutation();
 
 CREATE TABLE platform.authorization_product_binding (
   binding_ref TEXT PRIMARY KEY,

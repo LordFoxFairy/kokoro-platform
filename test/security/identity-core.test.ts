@@ -36,9 +36,17 @@ describe("Platform Identity core security", () => {
   });
 
   it("declares composite Site ownership and bounded verification/session state", async () => {
-    const migration = await readFile("prisma/migrations/20260729_identity_core/migration.sql", "utf8");
+    const migration = await readFile(
+      "prisma/migrations/20260729_identity_core/migration.sql",
+      "utf8",
+    );
+    const authorization = await readFile(
+      "prisma/migrations/20260728_session_access_authorization/migration.sql",
+      "utf8",
+    );
     expect(migration).toContain("PRIMARY KEY(site_ref,account_ref)");
     expect(migration).toContain("identity_login_identifier_current_value_idx");
+    expect(migration).toContain("identity_login_identifier_one_active_per_account_idx");
     expect(migration).not.toContain("UNIQUE(site_ref,email_normalized)");
     expect(migration).toContain("UNIQUE(site_ref,account_ref,subject_ref)");
     expect(migration).toContain("FOREIGN KEY(site_ref,account_ref,subject_ref)");
@@ -59,6 +67,22 @@ describe("Platform Identity core security", () => {
     expect(migration).not.toContain("delivery_state TEXT");
     expect(migration).toContain("identity_refresh_credential");
     expect(migration).toContain("identity_session_delivery_claim");
+    expect(migration).toContain("security_epoch BIGINT NOT NULL DEFAULT 1");
+    expect(migration).toContain("identity_totp_enrollment_transaction");
+    expect(migration).toContain("identity_one_pending_totp_enrollment_idx");
+    expect(migration).toContain("account_security_epoch");
+    expect(migration).toContain("subject_generation");
+    expect(migration).toContain("session_epoch");
+    expect(migration).toContain("credential_epoch");
+    expect(migration).toContain("identity_totp_enrollment_delivery_claim");
+    expect(migration).toContain("identity_recovery_code_delivery_claim");
+    expect(migration).toContain("identity_security_event");
+    expect(migration).toContain("identity_security_event_immutable");
+    expect(migration).not.toMatch(/manual_entry_secret|recovery_code_plaintext|otpauth_uri/iu);
+    expect(authorization).toContain("identity_issuer_label TEXT NOT NULL");
+    expect(authorization).toContain("identity_issuer_label=btrim(identity_issuer_label)");
+    expect(authorization).toContain("length(identity_issuer_label) BETWEEN 1 AND 64");
+    expect(authorization).toContain("authorization_site_release_identity_brand_immutable");
     expect(migration).toContain("device_label");
     expect(migration).toContain("last_seen_at");
     expect(migration).toContain("UNIQUE(site_ref,family_ref,generation)");

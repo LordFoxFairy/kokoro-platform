@@ -305,16 +305,16 @@ model ModelSelectionDecision {
 }
 
 model ModelOptionMaterialization {
-  materializationId  String   @id @map("materialization_id") @db.Uuid
-  artifactDigest     String   @map("artifact_digest") @db.Char(64)
-  inventoryImportId  String   @map("inventory_import_id") @db.Uuid
-  inventoryDigest    String   @map("inventory_digest") @db.Char(64)
-  materializationDigest String @unique @map("materialization_digest") @db.Char(64)
-  compilerVersion    String   @map("compiler_version")
-  optionRevisionCount Int     @map("option_revision_count")
-  quarantineCount    Int      @map("quarantine_count")
-  materializedBy     String   @map("materialized_by")
-  materializedAt     DateTime @default(now()) @map("materialized_at") @db.Timestamptz(6)
+  materializationId     String   @id @map("materialization_id") @db.Uuid
+  artifactDigest        String   @map("artifact_digest") @db.Char(64)
+  inventoryImportId     String   @map("inventory_import_id") @db.Uuid
+  inventoryDigest       String   @map("inventory_digest") @db.Char(64)
+  materializationDigest String   @unique @map("materialization_digest") @db.Char(64)
+  compilerVersion       String   @map("compiler_version")
+  optionRevisionCount   Int      @map("option_revision_count")
+  quarantineCount       Int      @map("quarantine_count")
+  materializedBy        String   @map("materialized_by")
+  materializedAt        DateTime @default(now()) @map("materialized_at") @db.Timestamptz(6)
 
   @@unique([materializationId, artifactDigest, inventoryDigest, materializationDigest])
   @@map("model_option_materialization")
@@ -324,20 +324,20 @@ model ModelOptionMaterialization {
 model ModelOptionRevision {
   revisionRef       String   @id @map("revision_ref")
   revisionDigest    String   @unique @map("revision_digest") @db.Char(64)
-  inventoryImportId String  @map("inventory_import_id") @db.Uuid
-  inventoryDigest  String   @map("inventory_digest") @db.Char(64)
-  schemaVersion    Int      @map("schema_version")
-  optionKey        String   @map("option_key")
-  surface          String
-  label            String
-  description      String?
-  tier             String?
-  lifecycle        String
-  inputModalities  String[] @map("input_modalities")
-  outputModalities String[] @map("output_modalities")
-  supportedEfforts String[] @map("supported_efforts")
-  badges           String[]
-  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  inventoryImportId String   @map("inventory_import_id") @db.Uuid
+  inventoryDigest   String   @map("inventory_digest") @db.Char(64)
+  schemaVersion     Int      @map("schema_version")
+  optionKey         String   @map("option_key")
+  surface           String
+  label             String
+  description       String?
+  tier              String?
+  lifecycle         String
+  inputModalities   String[] @map("input_modalities")
+  outputModalities  String[] @map("output_modalities")
+  supportedEfforts  String[] @map("supported_efforts")
+  badges            String[]
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([inventoryDigest, surface, optionKey])
   @@map("model_option_revision")
@@ -356,15 +356,15 @@ model ModelOptionMaterializedRevision {
 }
 
 model ModelOptionRoleBinding {
-  revisionRef         String   @map("revision_ref")
-  compositionSlot     String   @map("composition_slot")
-  roleKey             String   @map("role_key")
-  position            Int
-  bindingKind         String   @map("binding_kind")
-  inventoryImportId   String   @map("inventory_import_id") @db.Uuid
-  modelKey            String   @map("model_key")
+  revisionRef          String   @map("revision_ref")
+  compositionSlot      String   @map("composition_slot")
+  roleKey              String   @map("role_key")
+  position             Int
+  bindingKind          String   @map("binding_kind")
+  inventoryImportId    String   @map("inventory_import_id") @db.Uuid
+  modelKey             String   @map("model_key")
   requiredCapabilities String[] @map("required_capabilities")
-  fallbackPolicy      String   @map("fallback_policy")
+  fallbackPolicy       String   @map("fallback_policy")
 
   @@id([revisionRef, compositionSlot, position])
   @@unique([revisionRef, compositionSlot, modelKey])
@@ -373,12 +373,12 @@ model ModelOptionRoleBinding {
 }
 
 model ModelOptionMaterializationQuarantine {
-  materializationId   String @map("materialization_id") @db.Uuid
-  position            Int
-  safeSourceRef       String @map("safe_source_ref")
+  materializationId    String @map("materialization_id") @db.Uuid
+  position             Int
+  safeSourceRef        String @map("safe_source_ref")
   sourceArtifactDigest String @map("source_artifact_digest") @db.Char(64)
-  optionKeyDigest     String @map("option_key_digest") @db.Char(64)
-  reasonCode          String @map("reason_code")
+  optionKeyDigest      String @map("option_key_digest") @db.Char(64)
+  reasonCode           String @map("reason_code")
 
   @@id([materializationId, position])
   @@map("model_option_materialization_quarantine")
@@ -386,16 +386,16 @@ model ModelOptionMaterializationQuarantine {
 }
 
 model SiteReleaseModelCatalogPublication {
-  publicationId       String   @id @map("publication_id") @db.Uuid
-  modelOptionCatalogRef String @unique @map("model_option_catalog_ref")
-  catalogDigest       String   @unique @map("catalog_digest") @db.Char(64)
-  siteId              String   @map("site_id")
-  siteReleaseRef      String   @map("site_release_ref")
-  inventoryImportId  String   @map("inventory_import_id") @db.Uuid
-  inventoryDigest    String   @map("inventory_digest") @db.Char(64)
-  schemaVersion       Int      @map("schema_version")
-  publishedBy         String   @map("published_by")
-  publishedAt         DateTime @map("published_at") @db.Timestamptz(6)
+  publicationId         String   @id @map("publication_id") @db.Uuid
+  modelOptionCatalogRef String   @unique @map("model_option_catalog_ref")
+  catalogDigest         String   @unique @map("catalog_digest") @db.Char(64)
+  siteId                String   @map("site_id")
+  siteReleaseRef        String   @map("site_release_ref")
+  inventoryImportId     String   @map("inventory_import_id") @db.Uuid
+  inventoryDigest       String   @map("inventory_digest") @db.Char(64)
+  schemaVersion         Int      @map("schema_version")
+  publishedBy           String   @map("published_by")
+  publishedAt           DateTime @map("published_at") @db.Timestamptz(6)
 
   @@unique([siteId, siteReleaseRef])
   @@unique([siteReleaseRef, siteId, modelOptionCatalogRef])
@@ -404,11 +404,11 @@ model SiteReleaseModelCatalogPublication {
 }
 
 model SiteReleaseModelCatalogSurface {
-  publicationId                String @map("publication_id") @db.Uuid
-  surfaceId                    String @map("surface_id")
-  position                     Int
-  catalogRevisionRef           String @map("catalog_revision_ref")
-  catalogDigest                String @map("catalog_digest") @db.Char(64)
+  publicationId                 String @map("publication_id") @db.Uuid
+  surfaceId                     String @map("surface_id")
+  position                      Int
+  catalogRevisionRef            String @map("catalog_revision_ref")
+  catalogDigest                 String @map("catalog_digest") @db.Char(64)
   defaultModelOptionRevisionRef String @map("default_model_option_revision_ref")
 
   @@id([publicationId, surfaceId])
@@ -419,10 +419,10 @@ model SiteReleaseModelCatalogSurface {
 }
 
 model SiteReleaseModelCatalogOption {
-  publicationId String @map("publication_id") @db.Uuid
-  surfaceId     String @map("surface_id")
+  publicationId String  @map("publication_id") @db.Uuid
+  surfaceId     String  @map("surface_id")
   position      Int
-  revisionRef   String @map("revision_ref")
+  revisionRef   String  @map("revision_ref")
   isDefault     Boolean @map("is_default")
 
   @@id([publicationId, surfaceId, position])
@@ -446,18 +446,18 @@ model AuthorizationSite {
 }
 
 model AuthorizationStreamState {
-  singleton    Boolean  @id @default(true)
-  highWatermark BigInt  @default(0) @map("high_watermark")
-  updatedAt    DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  singleton     Boolean  @id @default(true)
+  highWatermark BigInt   @default(0) @map("high_watermark")
+  updatedAt     DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@map("authorization_stream_state")
   @@schema("platform")
 }
 
 model AuthorizationScopedStreamState {
-  singleton    Boolean  @id @default(true)
-  highWatermark BigInt  @default(0) @map("high_watermark")
-  updatedAt    DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  singleton     Boolean  @id @default(true)
+  highWatermark BigInt   @default(0) @map("high_watermark")
+  updatedAt     DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@map("authorization_scoped_stream_state")
   @@schema("platform")
@@ -528,9 +528,9 @@ model AuthorizationSnapshot {
 }
 
 model AuthorizationSnapshotRecord {
-  snapshotRef  String @map("snapshot_ref") @db.Uuid
-  ordinal      BigInt
-  recordPayload Bytes @map("record_payload")
+  snapshotRef   String @map("snapshot_ref") @db.Uuid
+  ordinal       BigInt
+  recordPayload Bytes  @map("record_payload")
 
   @@id([snapshotRef, ordinal])
   @@map("authorization_snapshot_record")
@@ -546,6 +546,7 @@ model AuthorizationSiteRelease {
   featurePolicyRevision String   @map("feature_policy_revision")
   modelOptionCatalogRef String   @map("model_option_catalog_ref")
   agentCatalogRef       String   @map("agent_catalog_ref")
+  identityIssuerLabel   String   @map("identity_issuer_label")
   localePolicy          Json     @map("locale_policy")
   createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
@@ -588,8 +589,8 @@ model AuthorizationSubject {
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
-  @@index([siteRef, state])
   @@unique([subjectRef, siteRef])
+  @@index([siteRef, state])
   @@map("authorization_subject")
   @@schema("platform")
 }
@@ -610,9 +611,9 @@ model AuthorizationIdentitySession {
   createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
+  @@unique([sessionRef, subjectRef, siteRef])
   @@index([subjectRef, state])
   @@index([siteRef, state, expiresAt])
-  @@unique([sessionRef, subjectRef, siteRef])
   @@map("authorization_identity_session")
   @@schema("platform")
 }
@@ -623,6 +624,7 @@ model IdentityAccount {
   subjectRef        String   @map("subject_ref")
   state             String
   accountGeneration BigInt   @default(1) @map("account_generation")
+  securityEpoch     BigInt   @default(1) @map("security_epoch")
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
@@ -634,12 +636,12 @@ model IdentityAccount {
 }
 
 model IdentityPasswordCredential {
-  siteRef          String   @map("site_ref")
-  accountRef       String   @map("account_ref")
-  passwordHash     String   @map("password_hash")
-  pepperVersion    Int      @map("pepper_version")
+  siteRef         String   @map("site_ref")
+  accountRef      String   @map("account_ref")
+  passwordHash    String   @map("password_hash")
+  pepperVersion   Int      @map("pepper_version")
   credentialEpoch BigInt   @default(1) @map("credential_epoch")
-  changedAt        DateTime @default(now()) @map("changed_at") @db.Timestamptz(6)
+  changedAt       DateTime @default(now()) @map("changed_at") @db.Timestamptz(6)
 
   @@id([siteRef, accountRef])
   @@map("identity_password_credential")
@@ -665,22 +667,22 @@ model IdentityLoginIdentifier {
 }
 
 model IdentityVerificationTransaction {
-  siteRef              String    @map("site_ref")
-  transactionRef       String    @map("transaction_ref")
-  accountRef           String    @map("account_ref")
-  subjectRef           String    @map("subject_ref")
-  purpose              String
-  emailNormalized      String    @map("email_normalized")
-  secretDigest         String    @map("secret_digest") @db.Char(64)
-  requestDigest        String    @map("request_digest") @db.Char(64)
-  state                String    @default("pending")
-  attemptCount         Int       @default(0) @map("attempt_count")
-  maxAttempts          Int       @map("max_attempts")
-  resendCount          Int       @default(0) @map("resend_count")
-  expiresAt            DateTime  @map("expires_at") @db.Timestamptz(6)
-  consumedAt           DateTime? @map("consumed_at") @db.Timestamptz(6)
-  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt            DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  siteRef         String    @map("site_ref")
+  transactionRef  String    @map("transaction_ref")
+  accountRef      String    @map("account_ref")
+  subjectRef      String    @map("subject_ref")
+  purpose         String
+  emailNormalized String    @map("email_normalized")
+  secretDigest    String    @map("secret_digest") @db.Char(64)
+  requestDigest   String    @map("request_digest") @db.Char(64)
+  state           String    @default("pending")
+  attemptCount    Int       @default(0) @map("attempt_count")
+  maxAttempts     Int       @map("max_attempts")
+  resendCount     Int       @default(0) @map("resend_count")
+  expiresAt       DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt      DateTime? @map("consumed_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@id([siteRef, transactionRef])
   @@index([siteRef, emailNormalized, createdAt])
@@ -721,6 +723,182 @@ model IdentityVerificationDelivery {
   @@schema("platform")
 }
 
+model IdentityTotpAuthenticator {
+  siteRef                 String    @map("site_ref")
+  authenticatorRef        String    @map("authenticator_ref")
+  accountRef              String    @map("account_ref")
+  subjectRef              String    @map("subject_ref")
+  state                   String
+  secretAlgorithm         String    @map("secret_algorithm")
+  secretKeyRevision       String    @map("secret_key_revision")
+  secretNonce             String    @map("secret_nonce")
+  secretCiphertext        String    @map("secret_ciphertext")
+  secretAuthenticationTag String    @map("secret_authentication_tag")
+  lastAcceptedTimestep    BigInt?   @map("last_accepted_timestep")
+  confirmedAt             DateTime? @map("confirmed_at") @db.Timestamptz(6)
+  revokedAt               DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@id([siteRef, authenticatorRef])
+  @@unique([siteRef, authenticatorRef, accountRef, subjectRef])
+  @@map("identity_totp_authenticator")
+  @@schema("platform")
+}
+
+model IdentityRecoveryCodeSet {
+  siteRef    String    @map("site_ref")
+  setRef     String    @map("set_ref")
+  accountRef String    @map("account_ref")
+  subjectRef String    @map("subject_ref")
+  generation BigInt
+  state      String
+  replacedAt DateTime? @map("replaced_at") @db.Timestamptz(6)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@id([siteRef, setRef])
+  @@unique([siteRef, setRef, accountRef, subjectRef])
+  @@unique([siteRef, accountRef, generation])
+  @@map("identity_recovery_code_set")
+  @@schema("platform")
+}
+
+model IdentityRecoveryCode {
+  siteRef    String    @map("site_ref")
+  setRef     String    @map("set_ref")
+  codeDigest String    @map("code_digest") @db.Char(64)
+  state      String
+  usedAt     DateTime? @map("used_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@id([siteRef, codeDigest])
+  @@index([siteRef, setRef, state])
+  @@map("identity_recovery_code")
+  @@schema("platform")
+}
+
+model IdentityAuthRateLimit {
+  siteRef            String    @map("site_ref")
+  accountRef         String    @map("account_ref")
+  purpose            String
+  windowStartedAt    DateTime  @map("window_started_at") @db.Timestamptz(6)
+  failedAttemptCount Int       @map("failed_attempt_count")
+  lockedUntil        DateTime? @map("locked_until") @db.Timestamptz(6)
+  updatedAt          DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@id([siteRef, accountRef, purpose])
+  @@map("identity_auth_rate_limit")
+  @@schema("platform")
+}
+
+model IdentityAuthTransaction {
+  siteRef                 String    @map("site_ref")
+  transactionRef          String    @map("transaction_ref")
+  initiatingCommandId     String    @unique @map("initiating_command_id")
+  accountRef              String    @map("account_ref")
+  subjectRef              String    @map("subject_ref")
+  purpose                 String
+  challengeKind           String    @map("challenge_kind")
+  authenticatorRef        String?   @map("authenticator_ref")
+  recoverySetRef          String?   @map("recovery_set_ref")
+  passwordCredentialEpoch BigInt    @map("password_credential_epoch")
+  requestDigest           String    @map("request_digest") @db.Char(64)
+  state                   String    @default("pending")
+  attemptCount            Int       @default(0) @map("attempt_count")
+  maxAttempts             Int       @default(5) @map("max_attempts")
+  expiresAt               DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt              DateTime? @map("consumed_at") @db.Timestamptz(6)
+  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@id([siteRef, transactionRef])
+  @@index([expiresAt])
+  @@map("identity_auth_transaction")
+  @@schema("platform")
+}
+
+model IdentityTotpEnrollmentTransaction {
+  siteRef              String    @map("site_ref")
+  transactionRef       String    @map("transaction_ref")
+  accountRef           String    @map("account_ref")
+  subjectRef           String    @map("subject_ref")
+  sessionRef           String    @map("session_ref")
+  authenticatorRef     String    @map("authenticator_ref")
+  accountSecurityEpoch BigInt    @map("account_security_epoch")
+  subjectGeneration    BigInt    @map("subject_generation")
+  sessionEpoch         BigInt    @map("session_epoch")
+  credentialEpoch      BigInt    @map("credential_epoch")
+  initiatingCommandId  String    @unique @map("initiating_command_id")
+  requestDigest        String    @map("request_digest") @db.Char(64)
+  state                String    @default("pending")
+  attemptCount         Int       @default(0) @map("attempt_count")
+  maxAttempts          Int       @default(5) @map("max_attempts")
+  expiresAt            DateTime  @map("expires_at") @db.Timestamptz(6)
+  confirmedAt          DateTime? @map("confirmed_at") @db.Timestamptz(6)
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@id([siteRef, transactionRef])
+  @@index([expiresAt])
+  @@map("identity_totp_enrollment_transaction")
+  @@schema("platform")
+}
+
+model IdentityTotpEnrollmentDeliveryClaim {
+  commandId      String    @id @map("command_id")
+  siteRef        String    @map("site_ref")
+  accountRef     String    @map("account_ref")
+  subjectRef     String    @map("subject_ref")
+  sessionRef     String    @map("session_ref")
+  transactionRef String    @map("transaction_ref")
+  requestDigest  String    @map("request_digest") @db.Char(64)
+  state          String
+  claimedAt      DateTime  @map("claimed_at") @db.Timestamptz(6)
+  supersededAt   DateTime? @map("superseded_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("identity_totp_enrollment_delivery_claim")
+  @@schema("platform")
+}
+
+model IdentityRecoveryCodeDeliveryClaim {
+  commandId     String    @id @map("command_id")
+  siteRef       String    @map("site_ref")
+  accountRef    String    @map("account_ref")
+  subjectRef    String    @map("subject_ref")
+  sessionRef    String    @map("session_ref")
+  setRef        String    @map("set_ref")
+  purpose       String
+  requestDigest String    @map("request_digest") @db.Char(64)
+  state         String
+  claimedAt     DateTime  @map("claimed_at") @db.Timestamptz(6)
+  supersededAt  DateTime? @map("superseded_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("identity_recovery_code_delivery_claim")
+  @@schema("platform")
+}
+
+model IdentitySecurityEvent {
+  eventId              String   @id @map("event_id") @db.Uuid
+  siteRef              String   @map("site_ref")
+  accountRef           String   @map("account_ref")
+  subjectRef           String   @map("subject_ref")
+  sessionRef           String?  @map("session_ref")
+  eventType            String   @map("event_type")
+  accountSecurityEpoch BigInt   @map("account_security_epoch")
+  payloadDigest        String   @map("payload_digest") @db.Char(64)
+  correlationId        String   @map("correlation_id")
+  causationId          String   @map("causation_id")
+  occurredAt           DateTime @map("occurred_at") @db.Timestamptz(6)
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("identity_security_event")
+  @@schema("platform")
+}
+
 model IdentityRefreshFamily {
   siteRef           String    @map("site_ref")
   familyRef         String    @map("family_ref")
@@ -745,7 +923,7 @@ model IdentityRefreshCredential {
   siteRef          String    @map("site_ref")
   familyRef        String    @map("family_ref")
   generation       BigInt
-  credentialDigest String   @map("credential_digest") @db.Char(64)
+  credentialDigest String    @map("credential_digest") @db.Char(64)
   state            String    @default("active")
   expiresAt        DateTime  @map("expires_at") @db.Timestamptz(6)
   consumedAt       DateTime? @map("consumed_at") @db.Timestamptz(6)
@@ -759,15 +937,15 @@ model IdentityRefreshCredential {
 }
 
 model IdentitySessionDeliveryClaim {
-  commandId      String    @id @map("command_id")
-  siteRef        String    @map("site_ref")
-  subjectRef     String    @map("subject_ref")
-  sessionRef     String    @map("session_ref")
-  requestDigest  String    @map("request_digest") @db.Char(64)
-  state          String
-  claimedAt      DateTime  @map("claimed_at") @db.Timestamptz(6)
-  supersededAt   DateTime? @map("superseded_at") @db.Timestamptz(6)
-  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  commandId     String    @id @map("command_id")
+  siteRef       String    @map("site_ref")
+  subjectRef    String    @map("subject_ref")
+  sessionRef    String    @map("session_ref")
+  requestDigest String    @map("request_digest") @db.Char(64)
+  state         String
+  claimedAt     DateTime  @map("claimed_at") @db.Timestamptz(6)
+  supersededAt  DateTime? @map("superseded_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([siteRef, subjectRef, sessionRef])
   @@map("identity_session_delivery_claim")
@@ -839,17 +1017,17 @@ model IdentityNamespaceAllocationIntent {
 }
 
 model IdentityPersonalBootstrap {
-  siteRef              String   @map("site_ref")
-  subjectRef           String   @map("subject_ref")
-  subjectGeneration    BigInt   @map("subject_generation")
-  bootstrapKind        String   @map("bootstrap_kind")
-  workspaceRef         String   @map("workspace_ref")
-  billingAccountRef    String   @map("billing_account_ref")
-  projectRef           String   @map("project_ref")
-  executionSpaceRef    String   @map("execution_space_ref")
-  executionNamespace  String   @map("execution_namespace")
-  namespaceIntentRef  String   @unique @map("namespace_intent_ref") @db.Uuid
-  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  siteRef            String   @map("site_ref")
+  subjectRef         String   @map("subject_ref")
+  subjectGeneration  BigInt   @map("subject_generation")
+  bootstrapKind      String   @map("bootstrap_kind")
+  workspaceRef       String   @map("workspace_ref")
+  billingAccountRef  String   @map("billing_account_ref")
+  projectRef         String   @map("project_ref")
+  executionSpaceRef  String   @map("execution_space_ref")
+  executionNamespace String   @map("execution_namespace")
+  namespaceIntentRef String   @unique @map("namespace_intent_ref") @db.Uuid
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@id([siteRef, subjectRef, subjectGeneration, bootstrapKind])
   @@unique([siteRef, workspaceRef, billingAccountRef, projectRef, executionSpaceRef])
@@ -875,18 +1053,18 @@ model IdentityReceiptRecoveryCapability {
 }
 
 model CommerceCommand {
-  commandId       String    @id @map("command_id")
-  siteRef         String    @map("site_ref")
-  actorKind       String    @map("actor_kind")
-  actorSubject    String    @map("actor_subject")
-  authorizationSubjectRef String? @map("authorization_subject_ref")
-  actorGeneration BigInt    @map("actor_generation")
-  commandVersion  String    @map("command_version")
-  completedAt     DateTime? @map("completed_at") @db.Timestamptz(6)
-  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  commandId               String    @id @map("command_id")
+  siteRef                 String    @map("site_ref")
+  actorKind               String    @map("actor_kind")
+  actorSubject            String    @map("actor_subject")
+  authorizationSubjectRef String?   @map("authorization_subject_ref")
+  actorGeneration         BigInt    @map("actor_generation")
+  commandVersion          String    @map("command_version")
+  completedAt             DateTime? @map("completed_at") @db.Timestamptz(6)
+  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  @@index([siteRef, actorSubject])
   @@unique([commandId, siteRef])
+  @@index([siteRef, actorSubject])
   @@map("commerce_command")
   @@schema("platform")
 }
@@ -923,24 +1101,24 @@ model CommerceBillingAccountMembership {
 }
 
 model CommerceFulfillmentTransaction {
-  fulfillmentId               String    @id @map("fulfillment_id") @db.Uuid
-  commandId                   String?   @map("command_id")
-  siteRef                     String    @map("site_ref")
-  billingAccountRef           String    @map("billing_account_ref")
-  sourceType                  String    @map("source_type")
-  sourceId                    String    @map("source_id")
-  purpose                     String
-  cycleKey                    String    @map("cycle_key")
-  productVersionRef           String    @map("product_version_ref")
-  planVersionRef              String?   @map("plan_version_ref")
-  offeringVersionRef          String    @map("offering_version_ref")
-  fulfillmentProgramVersionRef String   @map("fulfillment_program_version_ref")
-  outputPlanDigest            String    @map("output_plan_digest") @db.Char(64)
-  outputSetDigest             String?   @map("output_set_digest") @db.Char(64)
-  resultDigest                String?   @map("result_digest") @db.Char(64)
-  status                      String
-  completedAt                 DateTime? @map("completed_at") @db.Timestamptz(6)
-  createdAt                   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  fulfillmentId                String    @id @map("fulfillment_id") @db.Uuid
+  commandId                    String?   @map("command_id")
+  siteRef                      String    @map("site_ref")
+  billingAccountRef            String    @map("billing_account_ref")
+  sourceType                   String    @map("source_type")
+  sourceId                     String    @map("source_id")
+  purpose                      String
+  cycleKey                     String    @map("cycle_key")
+  productVersionRef            String    @map("product_version_ref")
+  planVersionRef               String?   @map("plan_version_ref")
+  offeringVersionRef           String    @map("offering_version_ref")
+  fulfillmentProgramVersionRef String    @map("fulfillment_program_version_ref")
+  outputPlanDigest             String    @map("output_plan_digest") @db.Char(64)
+  outputSetDigest              String?   @map("output_set_digest") @db.Char(64)
+  resultDigest                 String?   @map("result_digest") @db.Char(64)
+  status                       String
+  completedAt                  DateTime? @map("completed_at") @db.Timestamptz(6)
+  createdAt                    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@unique([sourceType, sourceId, purpose, cycleKey])
   @@index([siteRef, billingAccountRef])
@@ -949,13 +1127,13 @@ model CommerceFulfillmentTransaction {
 }
 
 model CommerceFulfillmentOutputPlan {
-  fulfillmentId   String @map("fulfillment_id") @db.Uuid
-  outputLineId    String @map("output_line_id")
-  ordinal         Int
-  cardinality     Int
+  fulfillmentId    String @map("fulfillment_id") @db.Uuid
+  outputLineId     String @map("output_line_id")
+  ordinal          Int
+  cardinality      Int
   templateRevision String @map("template_revision")
-  outputKind      String @map("output_kind")
-  disposition     String
+  outputKind       String @map("output_kind")
+  disposition      String
 
   @@id([fulfillmentId, outputLineId])
   @@unique([fulfillmentId, ordinal])
@@ -965,14 +1143,14 @@ model CommerceFulfillmentOutputPlan {
 }
 
 model CommerceFulfillmentActualOutput {
-  fulfillmentId   String   @map("fulfillment_id") @db.Uuid
-  outputLineId    String   @map("output_line_id")
-  occurrence      Int
-  cardinality     Int
-  templateRevision String  @map("template_revision")
-  outputKind      String   @map("output_kind")
-  outputRef       String   @map("output_ref")
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  fulfillmentId    String   @map("fulfillment_id") @db.Uuid
+  outputLineId     String   @map("output_line_id")
+  occurrence       Int
+  cardinality      Int
+  templateRevision String   @map("template_revision")
+  outputKind       String   @map("output_kind")
+  outputRef        String   @map("output_ref")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@id([fulfillmentId, outputLineId, occurrence])
   @@unique([fulfillmentId, outputKind, outputRef])
@@ -1013,21 +1191,21 @@ model AuthorizationProject {
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
-  @@index([siteRef, state])
   @@unique([projectRef, siteRef])
+  @@index([siteRef, state])
   @@map("authorization_project")
   @@schema("platform")
 }
 
 model AuthorizationProjectMembership {
-  projectRef        String   @map("project_ref")
-  subjectRef        String   @map("subject_ref")
-  state             String
-  membershipEpoch   BigInt   @map("membership_epoch")
-  authorizationEpoch BigInt  @map("authorization_epoch")
-  isDefault         Boolean  @default(false) @map("is_default")
-  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt         DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  projectRef         String   @map("project_ref")
+  subjectRef         String   @map("subject_ref")
+  state              String
+  membershipEpoch    BigInt   @map("membership_epoch")
+  authorizationEpoch BigInt   @map("authorization_epoch")
+  isDefault          Boolean  @default(false) @map("is_default")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@id([projectRef, subjectRef])
   @@index([subjectRef, state])
@@ -1052,34 +1230,34 @@ model AuthorizationProductContext {
 }
 
 model AuthorizationSessionAccessGrant {
-  grantRef          String    @id @map("grant_ref") @db.Uuid
-  bindingRef        String    @map("binding_ref")
-  siteRef           String    @map("site_ref")
-  subjectRef        String    @map("subject_ref")
-  identitySessionRef String   @map("identity_session_ref")
-  projectRef        String    @map("project_ref")
-  purpose           String
-  audience          String
-  resource          Json
-  claimsDigest      String    @map("claims_digest") @db.Char(64)
-  credentialDigest  String?   @map("credential_digest") @db.Char(64)
-  keyRevision       String    @map("key_revision")
-  policyEpoch       BigInt    @map("policy_epoch")
-  revocationEpoch   BigInt    @map("revocation_epoch")
-  siteSecurityEpoch BigInt?   @map("site_security_epoch")
-  subjectGeneration BigInt?   @map("subject_generation")
-  identitySessionEpoch BigInt? @map("identity_session_epoch")
-  membershipEpoch   BigInt?   @map("membership_epoch")
-  authorizationEpoch BigInt?  @map("authorization_epoch")
-  restrictionEpoch  BigInt?   @map("restriction_epoch")
-  credentialEpoch   BigInt?   @map("credential_epoch")
-  deliveryState     String    @map("delivery_state")
-  deliveryErrorCode String?   @map("delivery_error_code")
-  issuedAt          DateTime  @map("issued_at") @db.Timestamptz(6)
-  notBefore         DateTime  @map("not_before") @db.Timestamptz(6)
-  expiresAt         DateTime  @map("expires_at") @db.Timestamptz(6)
-  deliveredAt       DateTime? @map("delivered_at") @db.Timestamptz(6)
-  failedAt          DateTime? @map("failed_at") @db.Timestamptz(6)
+  grantRef             String    @id @map("grant_ref") @db.Uuid
+  bindingRef           String    @map("binding_ref")
+  siteRef              String    @map("site_ref")
+  subjectRef           String    @map("subject_ref")
+  identitySessionRef   String    @map("identity_session_ref")
+  projectRef           String    @map("project_ref")
+  purpose              String
+  audience             String
+  resource             Json
+  claimsDigest         String    @map("claims_digest") @db.Char(64)
+  credentialDigest     String?   @map("credential_digest") @db.Char(64)
+  keyRevision          String    @map("key_revision")
+  policyEpoch          BigInt    @map("policy_epoch")
+  revocationEpoch      BigInt    @map("revocation_epoch")
+  siteSecurityEpoch    BigInt?   @map("site_security_epoch")
+  subjectGeneration    BigInt?   @map("subject_generation")
+  identitySessionEpoch BigInt?   @map("identity_session_epoch")
+  membershipEpoch      BigInt?   @map("membership_epoch")
+  authorizationEpoch   BigInt?   @map("authorization_epoch")
+  restrictionEpoch     BigInt?   @map("restriction_epoch")
+  credentialEpoch      BigInt?   @map("credential_epoch")
+  deliveryState        String    @map("delivery_state")
+  deliveryErrorCode    String?   @map("delivery_error_code")
+  issuedAt             DateTime  @map("issued_at") @db.Timestamptz(6)
+  notBefore            DateTime  @map("not_before") @db.Timestamptz(6)
+  expiresAt            DateTime  @map("expires_at") @db.Timestamptz(6)
+  deliveredAt          DateTime? @map("delivered_at") @db.Timestamptz(6)
+  failedAt             DateTime? @map("failed_at") @db.Timestamptz(6)
 
   @@index([siteRef, revocationEpoch, expiresAt])
   @@index([subjectRef, expiresAt])

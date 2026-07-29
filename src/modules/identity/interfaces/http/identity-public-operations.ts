@@ -2,6 +2,7 @@ import type { RegisteredPlatformPublicOperation } from "../../../../interfaces/h
 import { definePlatformPublicOperation } from "../../../../interfaces/http/platform-public-operation-registry.js";
 import type { IdentityApplicationService } from "../../application/services/identity-application-service.js";
 import { IdentityApplicationError } from "../../application/services/identity-application-service.js";
+import type { IdentitySecurityManagementService } from "../../application/services/identity-security-management-service.js";
 
 export const IDENTITY_LAUNCH_OPERATION_IDS = Object.freeze([
   "beginRegistration",
@@ -9,6 +10,8 @@ export const IDENTITY_LAUNCH_OPERATION_IDS = Object.freeze([
   "completeEmailVerification",
   "createIdentitySession",
   "completeSessionMfa",
+  "beginTotpEnrollment",
+  "confirmTotpEnrollment",
   "refreshIdentitySession",
   "listIdentitySessions",
   "revokeIdentitySessions",
@@ -16,16 +19,19 @@ export const IDENTITY_LAUNCH_OPERATION_IDS = Object.freeze([
 
 export function createIdentityPublicOperations(
   service: IdentityApplicationService,
+  securityManagement: IdentitySecurityManagementService,
 ): readonly RegisteredPlatformPublicOperation[] {
   return Object.freeze([
     definePlatformPublicOperation({
       operationId: "beginRegistration",
       async execute(input) {
         return service.beginRegistration({
-          workload: input.workload, context: input.context,
+          workload: input.workload,
+          context: input.context,
           commandId: input.headers["X-Kokoro-Command-Id"],
           idempotencyKey: input.headers["Idempotency-Key"],
-          email: input.body.email, password: input.body.password,
+          email: input.body.email,
+          password: input.body.password,
           legalAcceptanceRefs: input.body.legalAcceptanceRefs,
         });
       },
@@ -34,9 +40,11 @@ export function createIdentityPublicOperations(
       operationId: "resendEmailVerification",
       async execute(input) {
         return service.resendEmailVerification({
-          workload: input.workload, context: input.context,
+          workload: input.workload,
+          context: input.context,
           commandId: input.headers["X-Kokoro-Command-Id"],
-          idempotencyKey: input.headers["Idempotency-Key"], email: input.body.email,
+          idempotencyKey: input.headers["Idempotency-Key"],
+          email: input.body.email,
         });
       },
     }),
@@ -44,10 +52,12 @@ export function createIdentityPublicOperations(
       operationId: "completeEmailVerification",
       async execute(input) {
         return service.completeEmailVerification({
-          workload: input.workload, context: input.context,
+          workload: input.workload,
+          context: input.context,
           commandId: input.headers["X-Kokoro-Command-Id"],
           idempotencyKey: input.headers["Idempotency-Key"],
-          transactionRef: input.path.id, transactionSecret: input.body.transactionSecret,
+          transactionRef: input.path.id,
+          transactionSecret: input.body.transactionSecret,
           receiptRecoveryCapability: recovery(input.receiptRecoveryCapability),
         });
       },
@@ -56,19 +66,26 @@ export function createIdentityPublicOperations(
       operationId: "createIdentitySession",
       async execute(input) {
         const common = {
-          workload: input.workload, context: input.context,
+          workload: input.workload,
+          context: input.context,
           commandId: input.headers["X-Kokoro-Command-Id"],
           idempotencyKey: input.headers["Idempotency-Key"],
           receiptRecoveryCapability: recovery(input.receiptRecoveryCapability),
         };
         if ("recoveryAction" in input.body) {
           return service.createIdentitySession({
-            ...common, recoveryAction: input.body.recoveryAction, priorCommandId: input.body.priorCommandId,
+            ...common,
+            recoveryAction: input.body.recoveryAction,
+            priorCommandId: input.body.priorCommandId,
           });
         }
         return service.createIdentitySession({
-          ...common, email: input.body.email, password: input.body.password,
-          ...(input.body.returnIntentRef === undefined ? {} : { returnIntentRef: input.body.returnIntentRef }),
+          ...common,
+          email: input.body.email,
+          password: input.body.password,
+          ...(input.body.returnIntentRef === undefined
+            ? {}
+            : { returnIntentRef: input.body.returnIntentRef }),
         });
       },
     }),
@@ -76,7 +93,8 @@ export function createIdentityPublicOperations(
       operationId: "completeSessionMfa",
       async execute(input) {
         const common = {
-          workload: input.workload, context: input.context,
+          workload: input.workload,
+          context: input.context,
           commandId: input.headers["X-Kokoro-Command-Id"],
           idempotencyKey: input.headers["Idempotency-Key"],
           receiptRecoveryCapability: recovery(input.receiptRecoveryCapability),
@@ -84,27 +102,77 @@ export function createIdentityPublicOperations(
         };
         if ("recoveryAction" in input.body) {
           return service.completeSessionMfa({
-            ...common, recoveryAction: input.body.recoveryAction, priorCommandId: input.body.priorCommandId,
+            ...common,
+            recoveryAction: input.body.recoveryAction,
+            priorCommandId: input.body.priorCommandId,
           });
         }
         return service.completeSessionMfa({ ...common, code: input.body.code });
       },
     }),
     definePlatformPublicOperation({
+      operationId: "beginTotpEnrollment",
+      async execute(input) {
+        if (input.session === null) throw new IdentityApplicationError("AUTHENTICATION_FAILED");
+        const common = {
+          workload: input.workload,
+          context: input.context,
+          session: input.session,
+          commandId: input.headers["X-Kokoro-Command-Id"],
+          idempotencyKey: input.headers["Idempotency-Key"],
+          receiptRecoveryCapability: recovery(input.receiptRecoveryCapability),
+        };
+        if (input.body.ceremonyAction === "supersede") {
+          return securityManagement.beginTotpEnrollment({
+            ...common,
+            ceremonyAction: input.body.ceremonyAction,
+            priorCommandId: input.body.priorCommandId,
+            priorTransactionRef: input.body.priorTransactionRef,
+          });
+        }
+        return securityManagement.beginTotpEnrollment({
+          ...common,
+          ceremonyAction: input.body.ceremonyAction,
+        });
+      },
+    }),
+    definePlatformPublicOperation({
+      operationId: "confirmTotpEnrollment",
+      async execute(input) {
+        if (input.session === null) throw new IdentityApplicationError("AUTHENTICATION_FAILED");
+        return securityManagement.confirmTotpEnrollment({
+          workload: input.workload,
+          context: input.context,
+          session: input.session,
+          commandId: input.headers["X-Kokoro-Command-Id"],
+          idempotencyKey: input.headers["Idempotency-Key"],
+          receiptRecoveryCapability: recovery(input.receiptRecoveryCapability),
+          transactionRef: input.body.transactionRef,
+          code: input.body.code,
+        });
+      },
+    }),
+    definePlatformPublicOperation({
       operationId: "refreshIdentitySession",
       async execute(input) {
         const common = {
-          workload: input.workload, context: input.context,
+          workload: input.workload,
+          context: input.context,
           commandId: input.headers["X-Kokoro-Command-Id"],
           idempotencyKey: input.headers["Idempotency-Key"],
           receiptRecoveryCapability: recovery(input.receiptRecoveryCapability),
         };
         if ("recoveryAction" in input.body) {
           return service.refreshIdentitySession({
-            ...common, recoveryAction: input.body.recoveryAction, priorCommandId: input.body.priorCommandId,
+            ...common,
+            recoveryAction: input.body.recoveryAction,
+            priorCommandId: input.body.priorCommandId,
           });
         }
-        return service.refreshIdentitySession({ ...common, opaqueCredential: input.body.opaqueCredential });
+        return service.refreshIdentitySession({
+          ...common,
+          opaqueCredential: input.body.opaqueCredential,
+        });
       },
     }),
     definePlatformPublicOperation({
@@ -112,7 +180,9 @@ export function createIdentityPublicOperations(
       async execute(input) {
         if (input.session === null) throw new IdentityApplicationError("AUTHENTICATION_FAILED");
         return service.listIdentitySessions({
-          workload: input.workload, context: input.context, session: input.session,
+          workload: input.workload,
+          context: input.context,
+          session: input.session,
         });
       },
     }),
@@ -121,7 +191,9 @@ export function createIdentityPublicOperations(
       async execute(input) {
         if (input.session === null) throw new IdentityApplicationError("AUTHENTICATION_FAILED");
         return service.revokeIdentitySessions({
-          workload: input.workload, context: input.context, session: input.session,
+          workload: input.workload,
+          context: input.context,
+          session: input.session,
           commandId: input.headers["X-Kokoro-Command-Id"],
           idempotencyKey: input.headers["Idempotency-Key"],
           target: input.body.target,

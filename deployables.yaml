@@ -21,7 +21,7 @@ deployables:
     inboundContracts: []
     declaredInboundContracts: [platform-public-http, platform-admission-connect]
     outboundContracts: []
-    secretClasses: [platform-api-database, workload-verification]
+    secretClasses: [platform-api-database, workload-verification, identity-totp-encryption-keyring]
     audience: platform-api
     scalingKey: http-concurrency
     readiness: /health/ready
@@ -74,7 +74,13 @@ deployables:
     inboundContracts: []
     declaredInboundContracts: [platform-session-authorization-connect]
     outboundContracts: []
-    secretClasses: [platform-authorization-database, authorization-verification-keys, mtls-server, mtls-peer-registry]
+    secretClasses:
+      [
+        platform-authorization-database,
+        authorization-verification-keys,
+        mtls-server,
+        mtls-peer-registry,
+      ]
     audience: platform-session-authorization
     scalingKey: connect-long-poll-concurrency
     readiness: /health/ready

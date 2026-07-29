@@ -59,7 +59,13 @@ export async function runPlatformMigrations(
     environment.PLATFORM_DATABASE_ADMIN_ROLE,
     "PLATFORM_DATABASE_ADMIN_ROLE",
   );
-  assertDistinctRoles(config.expectedDatabaseUser, apiRole, authorizationRole, workerRole, adminRole);
+  assertDistinctRoles(
+    config.expectedDatabaseUser,
+    apiRole,
+    authorizationRole,
+    workerRole,
+    adminRole,
+  );
 
   const lockClient = (options.createLockClient ?? defaultLockClient)(config.url);
   const execute = options.execute ?? executeMigrationCommand;
@@ -276,16 +282,22 @@ async function grantFoundationPrivileges(
       `REVOKE ALL ON FUNCTION platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT), platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID), platform.report_model_provider_availability(UUID, TEXT, TEXT, TEXT, BIGINT, TEXT, TIMESTAMPTZ, TEXT), platform.load_model_option_inventory(TEXT), platform.load_model_option_revisions(TEXT[]), platform.materialize_legacy_model_options(UUID, TEXT, TEXT, TEXT, TEXT, JSONB, JSONB, TEXT), platform.publish_site_release_model_catalog(UUID, JSONB, TEXT), platform.resolve_product_model_option_catalog(TEXT, TEXT) FROM ${identifier}`,
     );
     if (role === apiRole) {
-      await client.query(`GRANT SELECT ON TABLE ${KERNEL_TABLES}, ${AUTHORIZATION_TABLES}, ${IDENTITY_TABLES}, ${COMMERCE_TABLES} TO ${identifier}`);
+      await client.query(
+        `GRANT SELECT ON TABLE ${KERNEL_TABLES}, ${AUTHORIZATION_TABLES}, ${IDENTITY_TABLES}, ${COMMERCE_TABLES} TO ${identifier}`,
+      );
       await client.query(
         `GRANT INSERT ON TABLE platform.command_receipt, platform.outbox_event, platform.inbox_delivery, platform.model_selection_decision, platform.authorization_product_context, platform.authorization_session_access_grant TO ${identifier}`,
       );
       await client.query(
         `GRANT UPDATE ON TABLE platform.command_receipt, platform.inbox_delivery, platform.authorization_product_context, platform.authorization_session_access_grant TO ${identifier}`,
       );
-      await client.query(`GRANT SELECT, UPDATE ON TABLE platform.authorization_stream_state TO ${identifier}`);
+      await client.query(
+        `GRANT SELECT, UPDATE ON TABLE platform.authorization_stream_state TO ${identifier}`,
+      );
       await client.query(`GRANT INSERT ON TABLE platform.authorization_event_log TO ${identifier}`);
-      await client.query(`GRANT UPDATE(event_sequence) ON TABLE platform.authorization_site TO ${identifier}`);
+      await client.query(
+        `GRANT UPDATE(event_sequence) ON TABLE platform.authorization_site TO ${identifier}`,
+      );
       await client.query(
         `GRANT INSERT ON TABLE platform.authorization_subject, platform.authorization_identity_session, platform.authorization_project, platform.authorization_project_membership, ${IDENTITY_TABLES}, platform.commerce_billing_account, platform.commerce_billing_account_membership TO ${identifier}`,
       );
@@ -309,7 +321,9 @@ async function grantFoundationPrivileges(
         `GRANT INSERT ON TABLE platform.authorization_snapshot, platform.authorization_snapshot_record TO ${identifier}`,
       );
     } else if (role === workerRole) {
-      await client.query(`GRANT SELECT ON TABLE ${KERNEL_TABLES}, platform.authorization_site, platform.authorization_product_context, platform.authorization_session_access_grant TO ${identifier}`);
+      await client.query(
+        `GRANT SELECT ON TABLE ${KERNEL_TABLES}, platform.authorization_site, platform.authorization_product_context, platform.authorization_session_access_grant TO ${identifier}`,
+      );
       await client.query(`GRANT INSERT ON TABLE platform.inbox_delivery TO ${identifier}`);
       await client.query(
         `GRANT UPDATE ON TABLE platform.command_receipt, platform.outbox_event, platform.inbox_delivery TO ${identifier}`,
@@ -327,9 +341,7 @@ async function grantFoundationPrivileges(
       await client.query(
         `GRANT INSERT ON TABLE platform.command_receipt, platform.outbox_event TO ${identifier}`,
       );
-      await client.query(
-        `GRANT UPDATE ON TABLE platform.command_receipt TO ${identifier}`,
-      );
+      await client.query(`GRANT UPDATE ON TABLE platform.command_receipt TO ${identifier}`);
       await client.query(`GRANT SELECT ON TABLE ${COMMERCE_TABLES} TO ${identifier}`);
       await client.query(
         `GRANT INSERT, UPDATE ON TABLE platform.commerce_billing_account, platform.commerce_billing_account_membership TO ${identifier}`,
@@ -382,6 +394,10 @@ const IDENTITY_TABLES = [
   "platform.identity_recovery_code",
   "platform.identity_auth_rate_limit",
   "platform.identity_auth_transaction",
+  "platform.identity_totp_enrollment_transaction",
+  "platform.identity_totp_enrollment_delivery_claim",
+  "platform.identity_recovery_code_delivery_claim",
+  "platform.identity_security_event",
   "platform.identity_refresh_family",
   "platform.identity_refresh_credential",
   "platform.identity_session_delivery_claim",
@@ -404,6 +420,9 @@ const IDENTITY_MUTABLE_TABLES = [
   "platform.identity_recovery_code",
   "platform.identity_auth_rate_limit",
   "platform.identity_auth_transaction",
+  "platform.identity_totp_enrollment_transaction",
+  "platform.identity_totp_enrollment_delivery_claim",
+  "platform.identity_recovery_code_delivery_claim",
   "platform.identity_refresh_family",
   "platform.identity_refresh_credential",
   "platform.identity_session_delivery_claim",
@@ -545,6 +564,10 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            AND has_table_privilege(runtime_role.rolname, 'platform.identity_recovery_code_set', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.identity_recovery_code', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.identity_auth_rate_limit', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.identity_totp_enrollment_transaction', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.identity_totp_enrollment_delivery_claim', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.identity_recovery_code_delivery_claim', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.identity_security_event', 'SELECT,INSERT')
            AND has_table_privilege(runtime_role.rolname, 'platform.identity_refresh_family', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.identity_session_delivery_claim', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.identity_personal_bootstrap', 'SELECT,INSERT')
@@ -638,6 +661,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
                'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
                'identity_auth_rate_limit','identity_auth_transaction',
+               'identity_totp_enrollment_transaction','identity_totp_enrollment_delivery_claim',
+               'identity_recovery_code_delivery_claim','identity_security_event',
                'identity_refresh_family','identity_refresh_credential','identity_session_delivery_claim',
                'identity_receipt_recovery_capability','identity_personal_workspace','identity_workspace_membership',
                'identity_execution_space','identity_namespace_allocation_intent','identity_personal_bootstrap'
@@ -673,6 +698,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
                'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
                'identity_auth_rate_limit','identity_auth_transaction',
+               'identity_totp_enrollment_transaction','identity_totp_enrollment_delivery_claim',
+               'identity_recovery_code_delivery_claim','identity_security_event',
                'identity_refresh_family','identity_refresh_credential','identity_session_delivery_claim',
                'identity_receipt_recovery_capability','identity_personal_workspace','identity_workspace_membership',
                'identity_execution_space','identity_namespace_allocation_intent','identity_personal_bootstrap'
@@ -705,6 +732,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                      'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
                      'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
                      'identity_auth_rate_limit','identity_auth_transaction',
+               'identity_totp_enrollment_transaction','identity_totp_enrollment_delivery_claim',
+               'identity_recovery_code_delivery_claim','identity_security_event',
                      'identity_refresh_family','identity_refresh_credential','identity_session_delivery_claim',
                      'identity_receipt_recovery_capability','identity_personal_workspace','identity_workspace_membership',
                      'identity_execution_space','identity_namespace_allocation_intent','identity_personal_bootstrap',
@@ -723,7 +752,9 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                      'identity_account','identity_password_credential','identity_login_identifier',
                      'identity_verification_transaction','identity_verification_delivery',
                      'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
-                     'identity_auth_rate_limit','identity_auth_transaction','identity_refresh_family',
+                     'identity_auth_rate_limit','identity_auth_transaction',
+               'identity_totp_enrollment_transaction','identity_totp_enrollment_delivery_claim',
+               'identity_recovery_code_delivery_claim','identity_refresh_family',
                      'identity_refresh_credential','identity_session_delivery_claim','identity_receipt_recovery_capability',
                      'identity_execution_space','identity_namespace_allocation_intent',
                      'commerce_command','commerce_fulfillment_transaction'
@@ -740,6 +771,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                      'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
                      'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
                      'identity_auth_rate_limit','identity_auth_transaction',
+               'identity_totp_enrollment_transaction','identity_totp_enrollment_delivery_claim',
+               'identity_recovery_code_delivery_claim','identity_security_event',
                      'identity_refresh_family','identity_refresh_credential','identity_session_delivery_claim',
                      'identity_receipt_recovery_capability','identity_personal_workspace','identity_workspace_membership',
                      'identity_execution_space','identity_namespace_allocation_intent','identity_personal_bootstrap',
@@ -758,7 +791,9 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                      'identity_account','identity_password_credential','identity_login_identifier',
                      'identity_verification_transaction','identity_verification_delivery',
                      'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
-                     'identity_auth_rate_limit','identity_auth_transaction','identity_refresh_family',
+                     'identity_auth_rate_limit','identity_auth_transaction',
+               'identity_totp_enrollment_transaction','identity_totp_enrollment_delivery_claim',
+               'identity_recovery_code_delivery_claim','identity_refresh_family',
                      'identity_refresh_credential','identity_session_delivery_claim','identity_receipt_recovery_capability',
                      'identity_execution_space','identity_namespace_allocation_intent',
                      'commerce_command','commerce_fulfillment_transaction'

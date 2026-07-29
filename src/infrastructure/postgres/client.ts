@@ -202,7 +202,9 @@ export function createPlatformDatabaseClient(
       await prisma.$queryRaw`SELECT "schemaVersion" FROM platform.platform_foundation WHERE singleton = TRUE`;
     },
     authenticateUserSession: async (input) => {
-      const rows = await prisma.$queryRawUnsafe<Array<AuthenticatedUserSession & Record<string, unknown>>>(
+      const rows = await prisma.$queryRawUnsafe<
+        Array<AuthenticatedUserSession & Record<string, unknown>>
+      >(
         `SELECT identity_session.session_ref AS "identitySessionRef",
                 identity_session.subject_ref AS "subjectRef", identity_session.site_ref AS "siteRef",
                 subject.subject_generation::text AS "subjectGeneration",
@@ -228,9 +230,11 @@ export function createPlatformDatabaseClient(
       if (row === undefined) return null;
       const methods = row.authenticationMethods;
       if (
-        !Array.isArray(methods) || methods.length < 1 ||
+        !Array.isArray(methods) ||
+        methods.length < 1 ||
         methods.some((method) => !["password", "totp", "recovery_code"].includes(method))
-      ) return null;
+      )
+        return null;
       return Object.freeze({
         ...row,
         authenticationMethods: Object.freeze([...methods]),
@@ -238,33 +242,43 @@ export function createPlatformDatabaseClient(
         expiresAt: new Date(row.expiresAt).toISOString(),
       });
     },
-    internalTransaction: async <Result>(operation: PlatformInternalOperation, work: (transaction: PlatformTransaction) => Promise<Result>) => {
-      const allowed = config.role === "worker"
-        ? operation === "authorization.retention"
-        : config.role === "authorization" &&
-          (operation === "authorization.feed.read" || operation === "authorization.snapshot.create");
+    internalTransaction: async <Result>(
+      operation: PlatformInternalOperation,
+      work: (transaction: PlatformTransaction) => Promise<Result>,
+    ) => {
+      const allowed =
+        config.role === "worker"
+          ? operation === "authorization.retention"
+          : config.role === "authorization" &&
+            (operation === "authorization.feed.read" ||
+              operation === "authorization.snapshot.create");
       if (!allowed) throw new Error("PLATFORM_INTERNAL_OPERATION_ROLE_FORBIDDEN");
-      return prisma.$transaction(async (databaseTransaction) => {
-        await databaseTransaction.$queryRawUnsafe(
-          `SELECT set_config('app.operation',$1,true),
+      return prisma.$transaction(
+        async (databaseTransaction) => {
+          await databaseTransaction.$queryRawUnsafe(
+            `SELECT set_config('app.operation',$1,true),
                   set_config('app.workload_kind',$2,true)`,
-          operation,
-          config.role === "worker" ? "platform_worker" : "platform_authorization",
-        );
-        const lease = issuePlatformTransaction({
-          query: (statement, values = []) => databaseTransaction.$queryRawUnsafe(statement, ...values),
-          execute: (statement, values = []) => databaseTransaction.$executeRawUnsafe(statement, ...values),
-        });
-        try {
-          return await work(lease.transaction);
-        } finally {
-          revokePlatformTransaction(lease);
-        }
-      }, {
-        isolationLevel: config.transaction.isolationLevel,
-        maxWait: config.transaction.maxWaitMs,
-        timeout: config.transaction.timeoutMs,
-      });
+            operation,
+            config.role === "worker" ? "platform_worker" : "platform_authorization",
+          );
+          const lease = issuePlatformTransaction({
+            query: (statement, values = []) =>
+              databaseTransaction.$queryRawUnsafe(statement, ...values),
+            execute: (statement, values = []) =>
+              databaseTransaction.$executeRawUnsafe(statement, ...values),
+          });
+          try {
+            return await work(lease.transaction);
+          } finally {
+            revokePlatformTransaction(lease);
+          }
+        },
+        {
+          isolationLevel: config.transaction.isolationLevel,
+          maxWait: config.transaction.maxWaitMs,
+          timeout: config.transaction.timeoutMs,
+        },
+      );
     },
     transaction: async <Result>(
       fence: Parameters<PlatformTransactionHost["transaction"]>[0],
@@ -416,6 +430,10 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_table_privilege(current_user, 'platform.identity_recovery_code_set', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.identity_recovery_code', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.identity_auth_rate_limit', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.identity_totp_enrollment_transaction', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.identity_totp_enrollment_delivery_claim', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.identity_recovery_code_delivery_claim', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.identity_security_event', 'SELECT,INSERT')
            AND has_table_privilege(current_user, 'platform.identity_refresh_family', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.identity_session_delivery_claim', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.identity_personal_bootstrap', 'SELECT,INSERT')
@@ -508,6 +526,8 @@ const RUNTIME_IDENTITY_SQL = `
                'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
                'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
                'identity_auth_rate_limit','identity_auth_transaction',
+               'identity_totp_enrollment_transaction','identity_totp_enrollment_delivery_claim',
+               'identity_recovery_code_delivery_claim','identity_security_event',
                'identity_refresh_family','identity_refresh_credential','identity_session_delivery_claim',
                'identity_receipt_recovery_capability','identity_personal_workspace','identity_workspace_membership',
                'identity_execution_space','identity_namespace_allocation_intent','identity_personal_bootstrap'
@@ -538,6 +558,8 @@ const RUNTIME_IDENTITY_SQL = `
                'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
                'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
                'identity_auth_rate_limit','identity_auth_transaction',
+               'identity_totp_enrollment_transaction','identity_totp_enrollment_delivery_claim',
+               'identity_recovery_code_delivery_claim','identity_security_event',
                'identity_refresh_family','identity_refresh_credential','identity_session_delivery_claim',
                'identity_receipt_recovery_capability','identity_personal_workspace','identity_workspace_membership',
                'identity_execution_space','identity_namespace_allocation_intent','identity_personal_bootstrap'
@@ -575,6 +597,8 @@ const RUNTIME_IDENTITY_SQL = `
                      'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
                      'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
                      'identity_auth_rate_limit','identity_auth_transaction',
+               'identity_totp_enrollment_transaction','identity_totp_enrollment_delivery_claim',
+               'identity_recovery_code_delivery_claim','identity_security_event',
                      'identity_refresh_family','identity_refresh_credential','identity_session_delivery_claim',
                      'identity_receipt_recovery_capability','identity_personal_workspace','identity_workspace_membership',
                      'identity_execution_space','identity_namespace_allocation_intent','identity_personal_bootstrap',
@@ -593,7 +617,9 @@ const RUNTIME_IDENTITY_SQL = `
                      'identity_account','identity_password_credential','identity_login_identifier',
                      'identity_verification_transaction','identity_verification_delivery',
                      'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
-                     'identity_auth_rate_limit','identity_auth_transaction','identity_refresh_family',
+                     'identity_auth_rate_limit','identity_auth_transaction',
+               'identity_totp_enrollment_transaction','identity_totp_enrollment_delivery_claim',
+               'identity_recovery_code_delivery_claim','identity_refresh_family',
                      'identity_refresh_credential','identity_session_delivery_claim','identity_receipt_recovery_capability',
                      'identity_execution_space','identity_namespace_allocation_intent',
                      'commerce_command','commerce_fulfillment_transaction'
@@ -610,6 +636,8 @@ const RUNTIME_IDENTITY_SQL = `
                      'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
                      'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
                      'identity_auth_rate_limit','identity_auth_transaction',
+               'identity_totp_enrollment_transaction','identity_totp_enrollment_delivery_claim',
+               'identity_recovery_code_delivery_claim','identity_security_event',
                      'identity_refresh_family','identity_refresh_credential','identity_session_delivery_claim',
                      'identity_receipt_recovery_capability','identity_personal_workspace','identity_workspace_membership',
                      'identity_execution_space','identity_namespace_allocation_intent','identity_personal_bootstrap',
@@ -628,7 +656,9 @@ const RUNTIME_IDENTITY_SQL = `
                      'identity_account','identity_password_credential','identity_login_identifier',
                      'identity_verification_transaction','identity_verification_delivery',
                      'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
-                     'identity_auth_rate_limit','identity_auth_transaction','identity_refresh_family',
+                     'identity_auth_rate_limit','identity_auth_transaction',
+               'identity_totp_enrollment_transaction','identity_totp_enrollment_delivery_claim',
+               'identity_recovery_code_delivery_claim','identity_refresh_family',
                      'identity_refresh_credential','identity_session_delivery_claim','identity_receipt_recovery_capability',
                      'identity_execution_space','identity_namespace_allocation_intent',
                      'commerce_command','commerce_fulfillment_transaction'

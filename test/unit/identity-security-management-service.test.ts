@@ -1,0 +1,447 @@
+import { describe, expect, it } from "vitest";
+import { issuePlatformTransaction } from "../../src/shared/unit-of-work/platform-transaction.js";
+import type { CommandReceipt, JsonValue } from "../../src/shared/outbox-inbox/receipt.js";
+import type { IdentitySecurityManagementRepository } from "../../src/modules/identity/application/contracts/identity-security-management-repository.js";
+import type { IdentityRepository } from "../../src/modules/identity/application/contracts/identity-repository.js";
+import { IdentitySecurityManagementService } from "../../src/modules/identity/application/services/identity-security-management-service.js";
+import { createIdentityAuditDigester } from "../../src/modules/identity/infrastructure/crypto/identity-audit-digester.js";
+import type { ProductWorkloadIdentity } from "../../src/modules/authorization/domain/session-access-grant.js";
+
+const transaction = issuePlatformTransaction({
+  async query() {
+    return [];
+  },
+  async execute() {
+    return 0;
+  },
+}).transaction;
+const workload = {
+  siteRef: "site-1",
+  siteReleaseRef: "release-1",
+  workloadIdentityId: "workload-1",
+  environment: "production",
+  region: "us-east-1",
+  certificateSha256: "c".repeat(64),
+  siteProjectBindingRef: "binding-1",
+  deploymentRef: "deployment-1",
+  webArtifactDigest: "a".repeat(64),
+  sessionContractRevision: "v1",
+  audience: "platform-public",
+  allowedOperations: ["beginTotpEnrollment", "confirmTotpEnrollment"],
+  bindingEpoch: "1",
+  siteSecurityEpoch: "1",
+  policyEpoch: "1",
+  csrfSha256: "d".repeat(64),
+} as const satisfies ProductWorkloadIdentity;
+const session = {
+  identitySessionRef: "session-1",
+  subjectRef: "subject-1",
+  siteRef: "site-1",
+  subjectGeneration: "3",
+  identitySessionEpoch: "4",
+  restrictionEpoch: "2",
+  credentialEpoch: "5",
+  authenticationMethods: ["password"],
+  authenticatedAt: "2026-07-29T00:00:00.000Z",
+  expiresAt: "2026-07-29T12:00:00.000Z",
+} as const;
+const context = { correlationId: "correlation-1" } as never;
+const commandId = "1".repeat(32);
+const auditDigest = createIdentityAuditDigester(new Uint8Array(32).fill(7));
+
+describe("Identity security management application service", () => {
+  it("delivers a TOTP seed once while retaining only its bound envelope and safe receipt state", async () => {
+    let enrollment:
+      | Parameters<IdentitySecurityManagementRepository["beginTotpEnrollment"]>[1]
+      | undefined;
+    let receiptResult: JsonValue | null = null;
+    let eventPayload: JsonValue | undefined;
+    const receipts = pendingReceipts((result) => {
+      receiptResult = result;
+    });
+    const repository = {
+      async loadSecurityOwnerMaterial() {
+        return ownerMaterial();
+      },
+      async beginTotpEnrollment(_transaction: unknown, input: NonNullable<typeof enrollment>) {
+        enrollment = input;
+        return true;
+      },
+      async appendSecurityEvent() {},
+    } as unknown as IdentitySecurityManagementRepository;
+    const service = createService({
+      repository,
+      receipts,
+      references: [
+        "enrollment-transaction-1",
+        "authenticator-1",
+        "018f1111-1111-7111-8111-111111111111",
+        "discarded-retry-transaction",
+        "discarded-retry-authenticator",
+      ],
+      outbox: {
+        async enqueue(_transaction, event) {
+          eventPayload = event.payload;
+        },
+      },
+    });
+
+    const first = await service.beginTotpEnrollment({
+      workload,
+      context,
+      session: session as never,
+      commandId,
+      idempotencyKey: "enroll-1",
+      receiptRecoveryCapability: "r".repeat(43),
+      ceremonyAction: "begin",
+    });
+    const retry = await service.beginTotpEnrollment({
+      workload,
+      context,
+      session: session as never,
+      commandId,
+      idempotencyKey: "enroll-1",
+      receiptRecoveryCapability: "r".repeat(43),
+      ceremonyAction: "begin",
+    });
+
+    expect(first).toMatchObject({
+      commandId,
+      transaction: {
+        transactionRef: "enrollment-transaction-1",
+        manualEntrySecret: "JBSWY3DPEHPK3PXP",
+        otpauthUri: "otpauth://totp/Acme%20AI:test",
+      },
+    });
+    expect(retry).toMatchObject({ kind: "delivery_unavailable", commandId });
+    expect(enrollment).toMatchObject({
+      accountRef: "account-1",
+      expectedAccountSecurityEpoch: "7",
+      transactionRef: "enrollment-transaction-1",
+      authenticatorRef: "authenticator-1",
+      envelope: { algorithm: "A256GCM", keyRevision: "key-1", ciphertext: "sealed" },
+    });
+    expect(JSON.stringify(receiptResult)).not.toContain("JBSWY3DPEHPK3PXP");
+    expect(JSON.stringify(receiptResult)).not.toContain("otpauth://");
+    expect(JSON.stringify(eventPayload)).not.toContain("JBSWY3DPEHPK3PXP");
+  });
+
+  it("takes the TOTP issuer only from the exact active SiteRelease and isolates two Site brands", async () => {
+    const issuedLabels: string[] = [];
+    const siteA = createService({
+      repository: beginRepository(ownerMaterial("Acme AI")),
+      receipts: pendingReceipts(),
+      references: ["enrollment-a", "authenticator-a", "018faaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa"],
+      issuedLabels,
+    });
+    const siteB = createService({
+      repository: beginRepository(ownerMaterial("Lumen Studio")),
+      receipts: pendingReceipts(),
+      references: ["enrollment-b", "authenticator-b", "018fbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb"],
+      issuedLabels,
+    });
+
+    await siteA.beginTotpEnrollment({
+      workload,
+      context,
+      session: session as never,
+      commandId,
+      idempotencyKey: "site-a",
+      receiptRecoveryCapability: "r".repeat(43),
+      ceremonyAction: "begin",
+    });
+    await siteB.beginTotpEnrollment({
+      workload: { ...workload, siteRef: "site-2", siteReleaseRef: "release-2" } as never,
+      context,
+      session: { ...session, siteRef: "site-2" } as never,
+      commandId: "2".repeat(32),
+      idempotencyKey: "site-b",
+      receiptRecoveryCapability: "s".repeat(43),
+      ceremonyAction: "begin",
+    });
+
+    expect(issuedLabels).toEqual(["Acme AI", "Lumen Studio"]);
+  });
+
+  it("fails closed when the release is unknown or its identity issuer label is empty", async () => {
+    const missingRelease = createService({
+      repository: {
+        async loadSecurityOwnerMaterial() {
+          return null;
+        },
+      } as never,
+      receipts: pendingReceipts(),
+      references: [],
+    });
+    const emptyLabel = createService({
+      repository: beginRepository(ownerMaterial("")),
+      receipts: pendingReceipts(),
+      references: ["unused-enrollment", "unused-authenticator"],
+    });
+    const input = {
+      workload,
+      context,
+      session: session as never,
+      commandId,
+      idempotencyKey: "unknown-release",
+      receiptRecoveryCapability: "r".repeat(43),
+      ceremonyAction: "begin" as const,
+    };
+
+    await expect(missingRelease.beginTotpEnrollment(input)).rejects.toMatchObject({
+      code: "AUTHENTICATION_FAILED",
+    });
+    await expect(emptyLabel.beginTotpEnrollment(input)).rejects.toMatchObject({
+      code: "AUTHENTICATION_FAILED",
+    });
+  });
+
+  it("atomically confirms one TOTP timestep and returns ten recovery codes only on the fresh claim", async () => {
+    let confirmation:
+      | Parameters<IdentitySecurityManagementRepository["confirmTotpEnrollment"]>[1]
+      | undefined;
+    let receiptResult: JsonValue | null = null;
+    const codes = Array.from({ length: 10 }, (_, index) => `recovery-code-${index}`);
+    const repository = {
+      async loadTotpEnrollmentMaterial() {
+        return {
+          accountRef: "account-1",
+          subjectRef: "subject-1",
+          sessionRef: "session-1",
+          transactionRef: "enrollment-transaction-1",
+          expiresAt: "2026-07-29T00:10:00.000Z",
+          authenticatorRef: "authenticator-1",
+          accountSecurityEpoch: "7",
+          envelope: {
+            algorithm: "A256GCM" as const,
+            keyRevision: "key-1",
+            nonce: "nonce",
+            ciphertext: "sealed",
+            authenticationTag: "tag",
+          },
+          lastAcceptedTimeStep: null,
+        };
+      },
+      async confirmTotpEnrollment(_transaction: unknown, input: NonNullable<typeof confirmation>) {
+        confirmation = input;
+        return { accountRef: "account-1", accountSecurityEpoch: "8" };
+      },
+      async appendSecurityEvent() {},
+    } as unknown as IdentitySecurityManagementRepository;
+    const receipts = pendingReceipts((result) => {
+      receiptResult = result;
+    });
+    const service = createService({
+      repository,
+      receipts,
+      references: ["recovery-set-1", "018f2222-2222-7222-8222-222222222222"],
+      recoveryCodes: codes,
+      totpVerifier: {
+        async verify() {
+          return { valid: true as const, timeStep: 123 };
+        },
+      },
+    });
+
+    const result = await service.confirmTotpEnrollment({
+      workload,
+      context,
+      session: session as never,
+      commandId,
+      idempotencyKey: "confirm-1",
+      receiptRecoveryCapability: "r".repeat(43),
+      transactionRef: "enrollment-transaction-1",
+      code: "123456",
+    });
+
+    expect(result).toEqual({
+      commandId,
+      requestDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      recoveryCodes: codes,
+      generatedAt: "2026-07-29T00:00:00.000Z",
+    });
+    expect(confirmation?.timeStep).toBe(123);
+    expect(confirmation?.recoveryCodeDigests).toHaveLength(10);
+    expect(new Set(confirmation?.recoveryCodeDigests.map((item) => item.codeDigest)).size).toBe(10);
+    expect(JSON.stringify(receiptResult)).not.toContain("recovery-code-");
+    expect(receiptResult).toMatchObject({ kind: "recovery_code_set", setRef: "recovery-set-1" });
+  });
+
+  it("passes an invalid confirmation as a failed ceremony without activating the factor", async () => {
+    let timeStep: number | null | undefined;
+    const repository = {
+      async loadTotpEnrollmentMaterial() {
+        return null;
+      },
+      async confirmTotpEnrollment(
+        _transaction: unknown,
+        input: Parameters<IdentitySecurityManagementRepository["confirmTotpEnrollment"]>[1],
+      ) {
+        timeStep = input.timeStep;
+        return null;
+      },
+    } as unknown as IdentitySecurityManagementRepository;
+    const service = createService({
+      repository,
+      receipts: pendingReceipts(),
+      references: ["unused-set"],
+      recoveryCodes: Array.from({ length: 10 }, (_, index) => `unused-${index}`),
+    });
+
+    await expect(
+      service.confirmTotpEnrollment({
+        workload,
+        context,
+        session: session as never,
+        commandId,
+        idempotencyKey: "confirm-invalid",
+        receiptRecoveryCapability: "r".repeat(43),
+        transactionRef: "missing-transaction",
+        code: "000000",
+      }),
+    ).rejects.toMatchObject({ code: "AUTH_TRANSACTION_INVALID" });
+    expect(timeStep).toBeNull();
+  });
+});
+
+function createService(
+  input: Readonly<{
+    repository: IdentitySecurityManagementRepository;
+    receipts: ReturnType<typeof pendingReceipts>;
+    references: string[];
+    recoveryCodes?: readonly string[];
+    totpVerifier?: Readonly<{
+      verify(): Promise<Readonly<{ valid: false } | { valid: true; timeStep: number }>>;
+    }>;
+    outbox?: Readonly<{
+      enqueue(transaction: unknown, event: { payload: JsonValue }): Promise<void>;
+    }>;
+    issuedLabels?: string[];
+  }>,
+) {
+  return new IdentitySecurityManagementService({
+    unitOfWork: {
+      async execute(_fence, work) {
+        return work(transaction);
+      },
+    },
+    repository: input.repository,
+    receiptRecovery: { async bindReceiptRecoveryCapability() {} } as unknown as Pick<
+      IdentityRepository,
+      "bindReceiptRecoveryCapability"
+    >,
+    receipts: input.receipts,
+    outbox: (input.outbox ?? { async enqueue() {} }) as never,
+    totpEnrollmentIssuer: {
+      async issue(issueInput) {
+        input.issuedLabels?.push(issueInput.issuer);
+        return {
+          secret: "JBSWY3DPEHPK3PXP",
+          otpauthUri: `otpauth://totp/${encodeURIComponent(issueInput.issuer)}:test`,
+        };
+      },
+    },
+    recoveryCodeIssuer: {
+      issue() {
+        return input.recoveryCodes ?? [];
+      },
+    },
+    totpSecretProtector: {
+      seal() {
+        return {
+          algorithm: "A256GCM",
+          keyRevision: "key-1",
+          nonce: "nonce",
+          ciphertext: "sealed",
+          authenticationTag: "tag",
+        };
+      },
+      unseal() {
+        return "JBSWY3DPEHPK3PXP";
+      },
+    },
+    totpVerifier: (input.totpVerifier as never) ?? {
+      async verify() {
+        return { valid: false as const };
+      },
+    },
+    dummyTotpSecret: "JBSWY3DPEHPK3PXP",
+    auditDigest,
+    clock: () => new Date("2026-07-29T00:00:00.000Z"),
+    reference: () => {
+      const value = input.references.shift();
+      if (value === undefined) throw new Error("reference exhausted");
+      return value;
+    },
+  });
+}
+
+function ownerMaterial(identityIssuerLabel = "Acme AI") {
+  return {
+    accountRef: "account-1",
+    subjectRef: "subject-1",
+    sessionRef: "session-1",
+    emailNormalized: "person@example.com",
+    identityIssuerLabel,
+    accountSecurityEpoch: "7",
+    subjectGeneration: "3",
+    sessionEpoch: "4",
+    credentialEpoch: "5",
+    authenticatedAt: "2026-07-29T00:00:00.000Z",
+    authenticationMethods: ["password"] as const,
+    passwordHash: "$argon2id$stored",
+    pepperVersion: 1,
+    passwordCredentialEpoch: "2",
+    authenticator: null,
+    recoverySetRef: null,
+    recoveryCodeDigests: [],
+  };
+}
+
+function beginRepository(
+  material: ReturnType<typeof ownerMaterial>,
+): IdentitySecurityManagementRepository {
+  return {
+    async loadSecurityOwnerMaterial() {
+      return material;
+    },
+    async beginTotpEnrollment() {
+      return true;
+    },
+    async appendSecurityEvent() {},
+  } as unknown as IdentitySecurityManagementRepository;
+}
+
+function pendingReceipts(onResult?: (value: JsonValue | null) => void) {
+  let receipt: CommandReceipt = {
+    commandId,
+    environment: "production",
+    region: "us-east-1",
+    callerIdentity: "workload-1",
+    operation: "",
+    idempotencyKey: "",
+    requestDigest: auditDigest({}),
+    state: "pending",
+    result: null,
+    resultDigest: null,
+  };
+  return {
+    async begin(_transaction: unknown, identity: CommandReceipt) {
+      if (receipt.operation === "") receipt = { ...receipt, ...identity };
+      return receipt;
+    },
+    async recordOutcome(
+      _transaction: unknown,
+      _identity: unknown,
+      outcome: Readonly<{
+        state: "succeeded" | "failed" | "outcome_unknown";
+        result: JsonValue | null;
+        resultDigest: string;
+      }>,
+    ) {
+      receipt = { ...receipt, ...outcome };
+      onResult?.(outcome.result);
+      return receipt;
+    },
+  };
+}

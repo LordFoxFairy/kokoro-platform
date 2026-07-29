@@ -15,12 +15,18 @@ export interface OpaqueCredentialPort {
 export type IdentityAuditDigesterPort = (value: JsonValue) => string;
 
 export type VerificationDeliveryContent = Readonly<{
-  siteRef: string; transactionRef: string; email: string;
-  verificationSecret: string; expiresAt: string;
+  siteRef: string;
+  transactionRef: string;
+  email: string;
+  verificationSecret: string;
+  expiresAt: string;
 }>;
 export type SealedVerificationEnvelope = Readonly<{
-  algorithm: "A256GCM"; keyRevision: string; nonce: string;
-  ciphertext: string; authenticationTag: string;
+  algorithm: "A256GCM";
+  keyRevision: string;
+  nonce: string;
+  ciphertext: string;
+  authenticationTag: string;
 }>;
 export interface VerificationEnvelopeSealerPort {
   seal(content: VerificationDeliveryContent): SealedVerificationEnvelope;
@@ -47,10 +53,25 @@ export interface IdentityTotpSecretProtectorPort {
 }
 
 export interface IdentityTotpVerifierPort {
-  verify(input: Readonly<{
-    secret: string;
-    code: string;
-    epochSeconds: number;
-    afterTimeStep: number | null;
-  }>): Promise<Readonly<{ valid: false } | { valid: true; timeStep: number }>>;
+  verify(
+    input: Readonly<{
+      secret: string;
+      code: string;
+      epochSeconds: number;
+      afterTimeStep: number | null;
+    }>,
+  ): Promise<Readonly<{ valid: false } | { valid: true; timeStep: number }>>;
+}
+
+export interface IdentityTotpEnrollmentIssuerPort {
+  issue(input: Readonly<{ issuer: string; accountLabel: string }>): Promise<
+    Readonly<{
+      secret: string;
+      otpauthUri: string;
+    }>
+  >;
+}
+
+export interface IdentityRecoveryCodeIssuerPort {
+  issue(): readonly string[];
 }

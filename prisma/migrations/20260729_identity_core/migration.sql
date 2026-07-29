@@ -26,6 +26,7 @@ CREATE TABLE platform.identity_account (
   subject_ref TEXT NOT NULL,
   state TEXT NOT NULL CHECK (state IN ('verification_pending','active','disabled','removed')),
   account_generation BIGINT NOT NULL DEFAULT 1 CHECK (account_generation > 0),
+  security_epoch BIGINT NOT NULL DEFAULT 1 CHECK (security_epoch > 0),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY(site_ref,account_ref),
@@ -67,6 +68,9 @@ CREATE TABLE platform.identity_login_identifier (
 CREATE UNIQUE INDEX identity_login_identifier_current_value_idx
   ON platform.identity_login_identifier(site_ref,kind,normalized_value)
   WHERE status IN ('pending_verification','active');
+CREATE UNIQUE INDEX identity_login_identifier_one_active_per_account_idx
+  ON platform.identity_login_identifier(site_ref,account_ref,kind)
+  WHERE status='active';
 
 CREATE TABLE platform.identity_verification_transaction (
   site_ref TEXT NOT NULL REFERENCES platform.authorization_site(site_ref),
@@ -281,6 +285,117 @@ CREATE INDEX identity_auth_transaction_expiry_idx
   ON platform.identity_auth_transaction(expires_at)
   WHERE state='pending';
 
+CREATE TABLE platform.identity_totp_enrollment_transaction (
+  site_ref TEXT NOT NULL,
+  transaction_ref TEXT NOT NULL,
+  account_ref TEXT NOT NULL,
+  subject_ref TEXT NOT NULL,
+  session_ref TEXT NOT NULL,
+  authenticator_ref TEXT NOT NULL,
+  account_security_epoch BIGINT NOT NULL CHECK(account_security_epoch > 0),
+  subject_generation BIGINT NOT NULL CHECK(subject_generation > 0),
+  session_epoch BIGINT NOT NULL CHECK(session_epoch > 0),
+  credential_epoch BIGINT NOT NULL CHECK(credential_epoch > 0),
+  initiating_command_id TEXT NOT NULL UNIQUE REFERENCES platform.command_receipt(command_id),
+  request_digest CHAR(64) NOT NULL CHECK(request_digest ~ '^[0-9a-f]{64}$'),
+  state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','confirmed','expired','locked','superseded')),
+  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count BETWEEN 0 AND 5),
+  max_attempts INTEGER NOT NULL DEFAULT 5 CHECK(max_attempts=5),
+  expires_at TIMESTAMPTZ NOT NULL,
+  confirmed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY(site_ref,transaction_ref),
+  FOREIGN KEY(site_ref,account_ref,subject_ref)
+    REFERENCES platform.identity_account(site_ref,account_ref,subject_ref),
+  FOREIGN KEY(session_ref,subject_ref,site_ref)
+    REFERENCES platform.authorization_identity_session(session_ref,subject_ref,site_ref),
+  FOREIGN KEY(site_ref,authenticator_ref,account_ref,subject_ref)
+    REFERENCES platform.identity_totp_authenticator(site_ref,authenticator_ref,account_ref,subject_ref),
+  CHECK(expires_at > created_at),
+  CHECK((state='confirmed') = (confirmed_at IS NOT NULL))
+);
+CREATE UNIQUE INDEX identity_one_pending_totp_enrollment_idx
+  ON platform.identity_totp_enrollment_transaction(site_ref,account_ref)
+  WHERE state='pending';
+CREATE INDEX identity_totp_enrollment_expiry_idx
+  ON platform.identity_totp_enrollment_transaction(expires_at)
+  WHERE state='pending';
+
+CREATE TABLE platform.identity_totp_enrollment_delivery_claim (
+  command_id TEXT PRIMARY KEY REFERENCES platform.command_receipt(command_id),
+  site_ref TEXT NOT NULL,
+  account_ref TEXT NOT NULL,
+  subject_ref TEXT NOT NULL,
+  session_ref TEXT NOT NULL,
+  transaction_ref TEXT NOT NULL,
+  request_digest CHAR(64) NOT NULL CHECK(request_digest ~ '^[0-9a-f]{64}$'),
+  state TEXT NOT NULL CHECK(state IN ('first_claim_consumed','superseded')),
+  claimed_at TIMESTAMPTZ NOT NULL,
+  superseded_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  FOREIGN KEY(site_ref,transaction_ref)
+    REFERENCES platform.identity_totp_enrollment_transaction(site_ref,transaction_ref),
+  FOREIGN KEY(session_ref,subject_ref,site_ref)
+    REFERENCES platform.authorization_identity_session(session_ref,subject_ref,site_ref),
+  CHECK(
+    (state='first_claim_consumed' AND superseded_at IS NULL)
+    OR (state='superseded' AND superseded_at IS NOT NULL)
+  )
+);
+
+CREATE TABLE platform.identity_recovery_code_delivery_claim (
+  command_id TEXT PRIMARY KEY REFERENCES platform.command_receipt(command_id),
+  site_ref TEXT NOT NULL,
+  account_ref TEXT NOT NULL,
+  subject_ref TEXT NOT NULL,
+  session_ref TEXT NOT NULL,
+  set_ref TEXT NOT NULL,
+  purpose TEXT NOT NULL CHECK(purpose='confirmTotpEnrollment'),
+  request_digest CHAR(64) NOT NULL CHECK(request_digest ~ '^[0-9a-f]{64}$'),
+  state TEXT NOT NULL CHECK(state IN ('first_claim_consumed','superseded')),
+  claimed_at TIMESTAMPTZ NOT NULL,
+  superseded_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  FOREIGN KEY(site_ref,set_ref,account_ref,subject_ref)
+    REFERENCES platform.identity_recovery_code_set(site_ref,set_ref,account_ref,subject_ref),
+  FOREIGN KEY(session_ref,subject_ref,site_ref)
+    REFERENCES platform.authorization_identity_session(session_ref,subject_ref,site_ref),
+  CHECK(
+    (state='first_claim_consumed' AND superseded_at IS NULL)
+    OR (state='superseded' AND superseded_at IS NOT NULL)
+  )
+);
+
+CREATE TABLE platform.identity_security_event (
+  event_id UUID PRIMARY KEY REFERENCES platform.outbox_event(event_id),
+  site_ref TEXT NOT NULL,
+  account_ref TEXT NOT NULL,
+  subject_ref TEXT NOT NULL,
+  session_ref TEXT,
+  event_type TEXT NOT NULL CHECK(length(event_type) BETWEEN 1 AND 128),
+  account_security_epoch BIGINT NOT NULL CHECK(account_security_epoch > 0),
+  payload_digest CHAR(64) NOT NULL CHECK(payload_digest ~ '^[0-9a-f]{64}$'),
+  correlation_id TEXT NOT NULL CHECK(length(correlation_id) BETWEEN 1 AND 128),
+  causation_id TEXT NOT NULL REFERENCES platform.command_receipt(command_id),
+  occurred_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  FOREIGN KEY(site_ref,account_ref,subject_ref)
+    REFERENCES platform.identity_account(site_ref,account_ref,subject_ref),
+  FOREIGN KEY(session_ref,subject_ref,site_ref)
+    REFERENCES platform.authorization_identity_session(session_ref,subject_ref,site_ref)
+);
+
+CREATE FUNCTION platform.reject_identity_security_event_mutation() RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
+BEGIN
+  RAISE EXCEPTION 'IDENTITY_SECURITY_EVENT_IMMUTABLE' USING ERRCODE='23000';
+END $$;
+REVOKE ALL ON FUNCTION platform.reject_identity_security_event_mutation() FROM PUBLIC;
+CREATE TRIGGER identity_security_event_immutable
+BEFORE UPDATE OR DELETE ON platform.identity_security_event
+FOR EACH ROW EXECUTE FUNCTION platform.reject_identity_security_event_mutation();
+
 CREATE TABLE platform.identity_refresh_family (
   site_ref TEXT NOT NULL REFERENCES platform.authorization_site(site_ref),
   family_ref TEXT NOT NULL,
@@ -468,6 +583,10 @@ REVOKE ALL ON
   platform.identity_recovery_code,
   platform.identity_auth_rate_limit,
   platform.identity_auth_transaction,
+  platform.identity_totp_enrollment_transaction,
+  platform.identity_totp_enrollment_delivery_claim,
+  platform.identity_recovery_code_delivery_claim,
+  platform.identity_security_event,
   platform.identity_refresh_family,
   platform.identity_refresh_credential,
   platform.identity_session_delivery_claim,
