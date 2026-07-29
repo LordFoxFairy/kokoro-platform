@@ -79,7 +79,8 @@ export const zAuthPending = z.strictObject({
 });
 
 export const zBeginTotpEnrollmentInput = z.strictObject({
-    ceremonyAction: z.literal('begin')
+    ceremonyAction: z.literal('begin'),
+    reauthenticationProof: z.string().min(32).max(2048)
 });
 
 export const zBeginTotpRecoveryReplacementInput = z.strictObject({
@@ -300,6 +301,13 @@ export const zIdentifierInput = z.strictObject({
     email: z.email().max(191)
 });
 
+/**
+ * The current authenticated session's identity account. The server resolves the account reference; callers cannot select another account.
+ */
+export const zIdentityAccountReauthenticationResource = z.strictObject({
+    kind: z.literal('identity_account')
+});
+
 export const zIdentitySession = z.strictObject({
     createdAt: z.iso.datetime(),
     current: z.boolean(),
@@ -324,13 +332,6 @@ export const zLocalePolicy = z.strictObject({
     defaultLocale: z.string().min(2).max(35)
 });
 
-export const zMfaReauthenticationInput = z.strictObject({
-    challengeKind: z.enum(['totp', 'recovery']),
-    proofCode: z.string().min(6).max(64),
-    stage: z.literal('mfa'),
-    transactionRef: z.string().min(16).max(128)
-});
-
 /**
  * Returned by an exact idempotent retry after the first one-time delivery was claimed. The previous payload is never replayed; the caller must read the durable receipt and, when offered, start the permitted replacement command with the caller-held receipt recovery capability.
  */
@@ -352,7 +353,8 @@ export const zOneTimeRecoveryCodeSetDelivery = z.strictObject({
 });
 
 export const zOtpInput = z.strictObject({
-    code: z.string().min(6).max(32)
+    code: z.string().min(6).max(32),
+    reauthenticationProof: z.string().min(32).max(2048)
 });
 
 export const zOutcomeUnknownPublicCommandReceipt = z.strictObject({
@@ -377,11 +379,6 @@ export const zPasswordLoginInput = z.strictObject({
     email: z.email().max(191),
     password: z.string().max(1024),
     returnIntentRef: z.string().min(1).max(128).regex(/^[a-z][a-z0-9_.-]{0,127}$/).optional()
-});
-
-export const zPasswordReauthenticationInput = z.strictObject({
-    password: z.string().max(1024),
-    stage: z.literal('password')
 });
 
 export const zPasswordRecoveryCompletionInput = z.strictObject({
@@ -507,10 +504,17 @@ export const zReauthenticationPendingResponse = z.strictObject({
 });
 
 export const zReauthenticationProof = z.strictObject({
+    audience: z.literal('platform-public'),
     authStrengthPolicyRevision: z.string().min(1).max(128),
     expiresAt: z.iso.datetime(),
     issuedAt: z.iso.datetime(),
+    operationId: z.enum([
+        'beginTotpEnrollment',
+        'disableTotp',
+        'regenerateRecoveryCodes'
+    ]),
     reauthenticationProof: z.string().min(32).max(2048),
+    resourceKind: z.literal('identity_account'),
     sessionEpoch: z.coerce.bigint().gte(BigInt(0)).max(BigInt('9223372036854775807'), { error: 'Invalid value: Expected int64 to be <= 9223372036854775807' }),
     sessionRef: z.string().min(16).max(128),
     userSecurityEpoch: z.coerce.bigint().gte(BigInt(0)).max(BigInt('9223372036854775807'), { error: 'Invalid value: Expected int64 to be <= 9223372036854775807' })
@@ -530,6 +534,33 @@ export const zReauthenticationResponse = z.union([
     zOneTimeReauthenticationProofDelivery,
     zOneTimeDeliveryUnavailable
 ]);
+
+/**
+ * Exact one-time proof audience and sensitive mutation. A proof issued for one operation cannot authorize another operation or another account.
+ */
+export const zReauthenticationTarget = z.strictObject({
+    audience: z.literal('platform-public'),
+    operationId: z.enum([
+        'beginTotpEnrollment',
+        'disableTotp',
+        'regenerateRecoveryCodes'
+    ]),
+    resource: zIdentityAccountReauthenticationResource
+});
+
+export const zMfaReauthenticationInput = z.strictObject({
+    challengeKind: z.enum(['totp', 'recovery']),
+    proofCode: z.string().min(6).max(64),
+    stage: z.literal('mfa'),
+    target: zReauthenticationTarget,
+    transactionRef: z.string().min(16).max(128)
+});
+
+export const zPasswordReauthenticationInput = z.strictObject({
+    password: z.string().max(1024),
+    stage: z.literal('password'),
+    target: zReauthenticationTarget
+});
 
 export const zRecoveryCodeSetResponse = z.union([
     zOneTimeRecoveryCodeSetDelivery,
@@ -703,6 +734,7 @@ export const zRefreshCredentialInput = z.strictObject({
 });
 
 export const zRegenerateRecoveryCodesInput = z.strictObject({
+    reauthenticationProof: z.string().min(32).max(2048),
     recoveryAction: z.literal('regenerate')
 });
 
@@ -886,6 +918,7 @@ export const zReauthenticationInput = z.union([
 
 export const zSupersedeRecoveryCodeSetInput = z.strictObject({
     priorCommandId: z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
+    reauthenticationProof: z.string().min(32).max(2048),
     recoveryAction: z.literal('supersede')
 });
 
@@ -922,7 +955,8 @@ export const zSessionMfaCompletionInput = z.union([
 export const zSupersedeTotpEnrollmentInput = z.strictObject({
     ceremonyAction: z.literal('supersede'),
     priorCommandId: z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
-    priorTransactionRef: z.string().min(16).max(128)
+    priorTransactionRef: z.string().min(16).max(128),
+    reauthenticationProof: z.string().min(32).max(2048)
 });
 
 export const zSupersedeTotpRecoveryReplacementInput = z.strictObject({

@@ -82,6 +82,7 @@ export type AuthPendingResponse = {
 
 export type BeginTotpEnrollmentInput = {
     ceremonyAction: 'begin';
+    reauthenticationProof: string;
 };
 
 export type BeginTotpRecoveryReplacementInput = {
@@ -279,6 +280,13 @@ export type IdentifierInput = {
     email: string;
 };
 
+/**
+ * The current authenticated session's identity account. The server resolves the account reference; callers cannot select another account.
+ */
+export type IdentityAccountReauthenticationResource = {
+    kind: 'identity_account';
+};
+
 export type IdentitySession = {
     createdAt: string;
     current: boolean;
@@ -303,6 +311,7 @@ export type MfaReauthenticationInput = {
     challengeKind: 'totp' | 'recovery';
     proofCode: string;
     stage: 'mfa';
+    target: ReauthenticationTarget;
     transactionRef: string;
 };
 
@@ -365,6 +374,7 @@ export type OneTimeTotpRecoveryEnrollmentDelivery = {
 
 export type OtpInput = {
     code: string;
+    reauthenticationProof: string;
 };
 
 export type OutcomeUnknownPublicCommandReceipt = {
@@ -405,6 +415,7 @@ export type PasswordLoginInput = {
 export type PasswordReauthenticationInput = {
     password: string;
     stage: 'password';
+    target: ReauthenticationTarget;
 };
 
 export type PasswordRecoveryCompletionInput = {
@@ -536,16 +547,28 @@ export type ReauthenticationPendingResponse = {
 };
 
 export type ReauthenticationProof = {
+    audience: 'platform-public';
     authStrengthPolicyRevision: string;
     expiresAt: string;
     issuedAt: string;
+    operationId: 'beginTotpEnrollment' | 'disableTotp' | 'regenerateRecoveryCodes';
     reauthenticationProof: string;
+    resourceKind: 'identity_account';
     sessionEpoch: number;
     sessionRef: string;
     userSecurityEpoch: number;
 };
 
 export type ReauthenticationResponse = ReauthenticationPendingResponse | OneTimeReauthenticationProofDelivery | OneTimeDeliveryUnavailable;
+
+/**
+ * Exact one-time proof audience and sensitive mutation. A proof issued for one operation cannot authorize another operation or another account.
+ */
+export type ReauthenticationTarget = {
+    audience: 'platform-public';
+    operationId: 'beginTotpEnrollment' | 'disableTotp' | 'regenerateRecoveryCodes';
+    resource: IdentityAccountReauthenticationResource;
+};
 
 export type RecoveryCodeRegenerationInput = RegenerateRecoveryCodesInput | SupersedeRecoveryCodeSetInput;
 
@@ -687,6 +710,7 @@ export type RefreshCredentialInput = {
 export type RefreshSessionInput = RefreshCredentialInput | SupersedeRefreshCredentialDeliveryInput;
 
 export type RegenerateRecoveryCodesInput = {
+    reauthenticationProof: string;
     recoveryAction: 'regenerate';
 };
 
@@ -828,6 +852,7 @@ export type SupersedeReauthenticationProofInput = {
 
 export type SupersedeRecoveryCodeSetInput = {
     priorCommandId: string;
+    reauthenticationProof: string;
     recoveryAction: 'supersede';
 };
 
@@ -845,6 +870,7 @@ export type SupersedeTotpEnrollmentInput = {
     ceremonyAction: 'supersede';
     priorCommandId: string;
     priorTransactionRef: string;
+    reauthenticationProof: string;
 };
 
 export type SupersedeTotpRecoveryReplacementInput = {
