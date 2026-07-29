@@ -203,7 +203,8 @@ export function createPlatformDatabaseClient(
                   set_config('app.environment', $9, true),
                   set_config('app.region', $10, true),
                   set_config('app.workload_kind', $11, true),
-                  set_config('app.actor_kind', $12, true)`,
+                  set_config('app.actor_kind', $12, true),
+                  set_config('app.scopes', $13, true)`,
             fence.operation,
             context.target.siteId ?? "",
             context.target.workspaceId ?? "",
@@ -216,6 +217,7 @@ export function createPlatformDatabaseClient(
             context.region,
             context.trustedCaller.kind,
             context.actor.kind,
+            JSON.stringify(context.target.scopes),
           );
           const sql: PlatformSqlTransaction = {
             query: (statement, values = []) =>
@@ -265,6 +267,11 @@ interface RuntimeIdentity {
   canExecuteModelInventoryImport: boolean;
   canExecuteModelInventoryActivate: boolean;
   canExecuteModelSitePolicyChange: boolean;
+  canExecuteModelCandidatesProjection: boolean;
+  canExecuteModelDecisionProjection: boolean;
+  canExecuteModelAvailabilityReport: boolean;
+  canSelectModelCatalogTable: boolean;
+  canReadModelSensitiveColumn: boolean;
   hasUnexpectedPlatformPrivilege: boolean;
 }
 
@@ -314,17 +321,34 @@ const RUNTIME_IDENTITY_SQL = `
            has_table_privilege(current_user, 'platform.command_receipt', 'UPDATE')
            AND has_table_privilege(current_user, 'platform.outbox_event', 'UPDATE')
            AND has_table_privilege(current_user, 'platform.inbox_delivery', 'INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.model_provider_availability', 'UPDATE')
-           AND has_table_privilege(current_user, 'platform.model_definition_availability', 'UPDATE')
-           AND has_table_privilege(current_user, 'platform.model_selection_decision', 'INSERT')
          ELSE TRUE
          END AS "hasRequiredPlatformWrites",
-         has_function_privilege(current_user, 'platform.import_model_inventory(uuid,text,text,jsonb,text)', 'EXECUTE')
+         has_function_privilege(current_user, 'platform.import_model_inventory(uuid,text,text,jsonb,jsonb,text)', 'EXECUTE')
            AS "canExecuteModelInventoryImport",
          has_function_privilege(current_user, 'platform.activate_model_inventory(uuid,text,bigint,text)', 'EXECUTE')
            AS "canExecuteModelInventoryActivate",
          has_function_privilege(current_user, 'platform.put_model_site_policy(uuid,text,text,text,bigint)', 'EXECUTE')
            AS "canExecuteModelSitePolicyChange",
+         has_function_privilege(current_user, 'platform.resolve_model_candidates(text,text,text)', 'EXECUTE')
+           AS "canExecuteModelCandidatesProjection",
+         has_function_privilege(current_user, 'platform.find_model_selection_decision(uuid)', 'EXECUTE')
+           AS "canExecuteModelDecisionProjection",
+         has_function_privilege(current_user, 'platform.report_model_provider_availability(uuid,text,text,text,bigint,text,timestamptz,text)', 'EXECUTE')
+           AS "canExecuteModelAvailabilityReport",
+         EXISTS (
+           SELECT 1 FROM pg_class model_relation
+           WHERE model_relation.relnamespace=platform_schema.oid
+             AND model_relation.relname=ANY(ARRAY[
+               'model_inventory_import','model_inventory_activation','model_inventory_pointer','model_provider_snapshot',
+               'model_definition_snapshot','model_provider_binding_snapshot','model_product_route_snapshot',
+               'model_provider_availability','model_definition_availability','model_provider_availability_report','model_site_policy_revision',
+               'model_site_assignment_revision','model_site_policy_pointer','model_selection_decision'
+             ])
+             AND has_table_privilege(current_user,model_relation.oid,'SELECT')
+         ) AS "canSelectModelCatalogTable",
+         (has_any_column_privilege(current_user,'platform.model_inventory_import','SELECT')
+           OR has_any_column_privilege(current_user,'platform.model_provider_snapshot','SELECT'))
+           AS "canReadModelSensitiveColumn",
          EXISTS (
            SELECT 1 FROM pg_class candidate
            WHERE candidate.relnamespace = platform_schema.oid
@@ -336,7 +360,7 @@ const RUNTIME_IDENTITY_SQL = `
                  'platform_foundation','command_receipt','outbox_event','inbox_delivery',
                  'model_inventory_import','model_inventory_activation','model_inventory_pointer','model_provider_snapshot',
                  'model_definition_snapshot','model_provider_binding_snapshot','model_product_route_snapshot','model_provider_availability',
-                 'model_definition_availability','model_site_policy_revision',
+                 'model_definition_availability','model_provider_availability_report','model_site_policy_revision',
                  'model_site_assignment_revision','model_site_policy_pointer','model_selection_decision'
                ]) AND (
                  has_table_privilege(runtime_role.rolname, candidate.oid,
@@ -348,27 +372,32 @@ const RUNTIME_IDENTITY_SQL = `
                  'command_receipt','outbox_event','inbox_delivery','model_inventory_import','model_inventory_activation',
                  'model_inventory_pointer','model_provider_snapshot','model_definition_snapshot','model_provider_binding_snapshot',
                  'model_product_route_snapshot','model_provider_availability',
-                 'model_definition_availability','model_site_policy_revision',
+                 'model_definition_availability','model_provider_availability_report','model_site_policy_revision',
                  'model_site_assignment_revision','model_site_policy_pointer','model_selection_decision'
                ]) AND (
+                 (candidate.relname LIKE 'model\\_%' ESCAPE '\\' AND (
+                   has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
+                   OR has_any_column_privilege(runtime_role.rolname,candidate.oid,'SELECT')
+                 ))
+                 OR
                  has_table_privilege(runtime_role.rolname, candidate.oid,
                    'DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
                  OR has_any_column_privilege(runtime_role.rolname, candidate.oid, 'REFERENCES')
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'INSERT') AND NOT (
                    ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_selection_decision']))
-                   OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY['inbox_delivery','model_selection_decision']))
+                   OR ($2 = 'worker' AND candidate.relname = 'inbox_delivery')
                  ))
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
                    ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','inbox_delivery']))
-                   OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_provider_availability','model_definition_availability']))
+                   OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery']))
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'INSERT') AND NOT (
                    ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_selection_decision']))
-                   OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY['inbox_delivery','model_selection_decision']))
+                   OR ($2 = 'worker' AND candidate.relname = 'inbox_delivery')
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
                    ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','inbox_delivery']))
-                   OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_provider_availability','model_definition_availability']))
+                   OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery']))
                  ))
                ))
                OR (candidate.relname = 'platform_foundation' AND (
@@ -382,11 +411,19 @@ const RUNTIME_IDENTITY_SQL = `
            SELECT 1 FROM pg_proc candidate_function
            WHERE candidate_function.pronamespace = platform_schema.oid
              AND has_function_privilege(runtime_role.rolname, candidate_function.oid, 'EXECUTE')
-             AND NOT ($2 = 'admin' AND candidate_function.oid = ANY(ARRAY[
-               to_regprocedure('platform.import_model_inventory(uuid,text,text,jsonb,text)'),
-               to_regprocedure('platform.activate_model_inventory(uuid,text,bigint,text)'),
-               to_regprocedure('platform.put_model_site_policy(uuid,text,text,text,bigint)')
-             ]))
+             AND NOT (
+               ($2 = 'admin' AND candidate_function.oid = ANY(ARRAY[
+                 to_regprocedure('platform.import_model_inventory(uuid,text,text,jsonb,jsonb,text)'),
+                 to_regprocedure('platform.activate_model_inventory(uuid,text,bigint,text)'),
+                 to_regprocedure('platform.put_model_site_policy(uuid,text,text,text,bigint)')
+               ]))
+               OR ($2 = 'api' AND candidate_function.oid = ANY(ARRAY[
+                 to_regprocedure('platform.resolve_model_candidates(text,text,text)'),
+                 to_regprocedure('platform.find_model_selection_decision(uuid)')
+               ]))
+               OR ($2 = 'worker' AND candidate_function.oid =
+                 to_regprocedure('platform.report_model_provider_availability(uuid,text,text,text,bigint,text,timestamptz,text)'))
+             )
          ) AS "hasUnexpectedPlatformPrivilege"
   FROM pg_database database_row
   JOIN pg_roles db_owner ON db_owner.oid = database_row.datdba
@@ -430,6 +467,11 @@ function validRuntimeIdentity(
     identity.canExecuteModelInventoryImport === (config.role === "admin") &&
     identity.canExecuteModelInventoryActivate === (config.role === "admin") &&
     identity.canExecuteModelSitePolicyChange === (config.role === "admin") &&
+    identity.canExecuteModelCandidatesProjection === (config.role === "api") &&
+    identity.canExecuteModelDecisionProjection === (config.role === "api") &&
+    identity.canExecuteModelAvailabilityReport === (config.role === "worker") &&
+    !identity.canSelectModelCatalogTable &&
+    !identity.canReadModelSensitiveColumn &&
     !identity.hasUnexpectedPlatformPrivilege,
   );
 }

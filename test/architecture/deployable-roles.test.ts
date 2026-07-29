@@ -193,7 +193,7 @@ describe("Platform migrator", () => {
       `SELECT pg_advisory_lock(hashtext($1)):${MIGRATION_ADVISORY_LOCK}`,
       "execute",
     ]);
-    expect(events.filter((event) => event === "grant")).toHaveLength(42);
+    expect(events.filter((event) => event === "grant")).toHaveLength(37);
     expect(events.slice(-3)).toEqual([
       "verify-authority",
       `SELECT pg_advisory_unlock(hashtext($1)):${MIGRATION_ADVISORY_LOCK}`,
@@ -432,6 +432,11 @@ function authority(roleName: string): Record<string, unknown> {
     canExecuteModelInventoryImport: roleName === "platform_admin",
     canExecuteModelInventoryActivate: roleName === "platform_admin",
     canExecuteModelSitePolicyChange: roleName === "platform_admin",
+    canExecuteModelCandidatesProjection: roleName === "platform_api",
+    canExecuteModelDecisionProjection: roleName === "platform_api",
+    canExecuteModelAvailabilityReport: roleName === "platform_worker",
+    canSelectModelCatalogTable: false,
+    canReadModelSensitiveColumn: false,
     hasUnexpectedPlatformPrivilege: false,
   };
 }

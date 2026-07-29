@@ -205,6 +205,23 @@ model ModelProviderAvailability {
   @@schema("platform")
 }
 
+model ModelProviderAvailabilityReport {
+  reportId        String    @id @map("report_id") @db.Uuid
+  providerKey     String    @map("provider_key")
+  requestedStatus String    @map("requested_status")
+  requestedHealth String    @map("requested_health")
+  expectedEpoch   BigInt    @map("expected_epoch")
+  appliedEpoch    BigInt    @map("applied_epoch")
+  observationRef  String?   @map("observation_ref")
+  observedAt      DateTime? @map("observed_at") @db.Timestamptz(6)
+  reportedBy      String    @map("reported_by")
+  reportedAt      DateTime  @default(now()) @map("reported_at") @db.Timestamptz(6)
+
+  @@unique([providerKey, appliedEpoch])
+  @@map("model_provider_availability_report")
+  @@schema("platform")
+}
+
 model ModelDefinitionAvailability {
   modelKey  String   @id @map("model_key")
   status    String

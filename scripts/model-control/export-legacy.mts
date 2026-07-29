@@ -6,22 +6,25 @@ import {
   type CanonicalProductRoute,
   type ModelProduct,
 } from "../../src/modules/model-control/domain/model-catalog.js";
-import { canonicalizeSiteModelPolicy } from "../../src/modules/model-control/domain/site-model-policy.js";
+import { createModelControlMigrationBundle } from "../../src/modules/model-control/migration/model-control-migration-bundle.js";
 
 const outputPath = argument("--output");
-const sitePoliciesOutputPath = argument("--site-policies-output");
-const databaseUrl = process.env.DATABASE_URL_MODEL;
-if (!databaseUrl) throw new Error("DATABASE_URL_MODEL_REQUIRED");
-const connection = await mysql.createConnection({ uri: databaseUrl, rowsAsArray: false });
+const modelDatabaseUrl = requiredEnv("DATABASE_URL_MODEL");
+const siteDatabaseUrl = requiredEnv("DATABASE_URL_SITE");
+const connection = await mysql.createConnection({ uri: modelDatabaseUrl, rowsAsArray: false });
+const siteConnection = await mysql.createConnection({ uri: siteDatabaseUrl, rowsAsArray: false });
 try {
   const [providerRows] = await connection.query<Record<string, unknown>[]>(
-    `SELECT id, provider, \`key\`, secretRef, priority, transportKind, status FROM model_provider_accounts WHERE deletedAt IS NULL ORDER BY provider, \`key\``,
+    `SELECT id, provider, \`key\`, secretRef, priority, transportKind, status, healthStatus, updatedAt FROM model_provider_accounts WHERE deletedAt IS NULL ORDER BY provider, \`key\``,
   );
   const [modelRows] = await connection.query<Record<string, unknown>[]>(
     `SELECT id, providerAccountId, provider, modelName, displayName, featureKey, labelKeys, inputModalities, outputModalities, transportKind, gatewayModelName, contextWindow, priority, status FROM model_bindings WHERE deletedAt IS NULL ORDER BY featureKey, priority, id`,
   );
   const [policyRows] = await connection.query<Record<string, unknown>[]>(
     `SELECT siteId, labelKey, status FROM model_site_policies ORDER BY siteId, labelKey`,
+  );
+  const [siteRows] = await siteConnection.query<Record<string, unknown>[]>(
+    `SELECT id FROM site_sites WHERE deletedAt IS NULL ORDER BY id`,
   );
   const providers = providerRows.map((row) => ({
     key: string(row.id),
@@ -31,9 +34,6 @@ try {
     adapterKind: row.transportKind === "litellm" ? ("litellm" as const) : ("direct" as const),
     priority: number(row.priority),
   }));
-  const providerIsActive = new Map(
-    providerRows.map((row) => [string(row.id), row.status === "active"]),
-  );
   const models = modelRows.map((row) => ({
     key: string(row.id),
     displayName: string(row.displayName),
@@ -41,8 +41,7 @@ try {
     outputModalities: jsonStrings(row.outputModalities),
     capabilities: capabilities(row),
     contextWindow: nullableNumber(row.contextWindow),
-    enabled:
-      row.status === "active" && providerIsActive.get(string(row.providerAccountId)) === true,
+    enabled: row.status === "active",
   }));
   const bindings = modelRows.map((row) => ({
     key: `binding:${string(row.id)}`,
@@ -52,21 +51,13 @@ try {
     gatewayModelName:
       nullableString(row.gatewayModelName) ?? `${string(row.provider)}:${string(row.modelName)}`,
     priority: number(row.priority),
-    enabled:
-      row.status === "active" && providerIsActive.get(string(row.providerAccountId)) === true,
+    enabled: row.status === "active",
   }));
   const productRoutes = routes(modelRows);
-  const sites = [...new Set(policyRows.map((row) => string(row.siteId)))].sort();
-  const hiddenBySite = new Map(
-    sites.map((site) => [
-      site,
-      new Set(
-        policyRows
-          .filter((row) => row.siteId === site && row.status === "hidden")
-          .map((row) => string(row.labelKey)),
-      ),
-    ]),
-  );
+  const siteIds = siteRows.map((row) => string(row.id));
+  const siteIdSet = new Set(siteIds);
+  if (policyRows.some((row) => !siteIdSet.has(string(row.siteId))))
+    throw new Error("LEGACY_MODEL_POLICY_SITE_UNKNOWN");
   const inventory: CanonicalModelInventory = {
     schemaVersion: 1,
     source: { kind: "legacy-kokoro-model", reference: argument("--source-ref") },
@@ -76,30 +67,37 @@ try {
     productRoutes,
   };
   const canonical = canonicalizeModelInventory(inventory);
-  const sitePolicies = sites.flatMap((siteId) =>
-    (["chat", "music", "image", "video"] as const).map((product) =>
-      canonicalizeSiteModelPolicy({
-        schemaVersion: 1,
+  const providerAvailability = providerRows.map((row) => ({
+    providerKey: string(row.id),
+    status: enumValue(row.status, ["active", "disabled"] as const),
+    health: enumValue(row.healthStatus, ["unknown", "healthy", "degraded", "down"] as const),
+    epoch: "0",
+    observationRef: `legacy:model_provider_accounts:${string(row.id)}`,
+    observedAt: instant(row.updatedAt),
+  }));
+  const bundle = createModelControlMigrationBundle({
+    catalog: canonical,
+    providerAvailability,
+    sites: siteIds.map((siteId) => {
+      const hiddenLabels = new Set(
+        policyRows
+          .filter((row) => string(row.siteId) === siteId && row.status === "hidden")
+          .map((row) => string(row.labelKey)),
+      );
+      return {
         siteId,
-        product,
-        enabled: true,
-        catalog: { mode: "pinned", digest: canonical.digest },
-        assignmentMode: "replace",
-        assignments: siteAssignments(productRoutes, modelRows, hiddenBySite.get(siteId)!, product),
-      }),
-    ),
-  );
-  await writeFile(outputPath, `${canonical.canonicalJson}\n`, { encoding: "utf8", flag: "wx" });
-  await writeFile(
-    sitePoliciesOutputPath,
-    `${JSON.stringify({ schemaVersion: 1, catalogDigest: canonical.digest, policies: sitePolicies.map((policy) => ({ digest: policy.digest, document: policy.document })) })}\n`,
-    { encoding: "utf8", flag: "wx" },
-  );
+        hiddenModelKeys: modelRows
+          .filter((row) => jsonStrings(row.labelKeys).some((label) => hiddenLabels.has(label)))
+          .map((row) => string(row.id)),
+      };
+    }),
+  });
+  await writeFile(outputPath, `${JSON.stringify(bundle)}\n`, { encoding: "utf8", flag: "wx" });
   process.stdout.write(
-    `${JSON.stringify({ outputPath, sitePoliciesOutputPath, digest: canonical.digest, counts: canonical.counts, sitePolicies: sitePolicies.length })}\n`,
+    `${JSON.stringify({ outputPath, bundleDigest: bundle.bundleDigest, catalogDigest: canonical.digest, counts: canonical.counts, sitePolicies: bundle.sitePolicyCommands.length })}\n`,
   );
 } finally {
-  await connection.end();
+  await Promise.all([connection.end(), siteConnection.end()]);
 }
 
 function routes(rows: Record<string, unknown>[]): CanonicalProductRoute[] {
@@ -132,30 +130,6 @@ function routes(rows: Record<string, unknown>[]): CanonicalProductRoute[] {
   return result;
 }
 
-function siteAssignments(
-  productRoutes: readonly CanonicalProductRoute[],
-  modelRows: readonly Record<string, unknown>[],
-  hiddenLabels: ReadonlySet<string>,
-  product: ModelProduct,
-) {
-  const visible = productRoutes.filter((route) => {
-    if (route.product !== product) return false;
-    const model = modelRows.find((row) => string(row.id) === route.modelKey);
-    if (!model) throw new Error("LEGACY_ROUTE_MODEL_MISSING");
-    return !jsonStrings(model.labelKeys).some((label) => hiddenLabels.has(label));
-  });
-  return (["main", "generation"] as const).flatMap((role) =>
-    visible
-      .filter((route) => route.role === role)
-      .map((route, position) => ({
-        role,
-        modelKey: route.modelKey,
-        position,
-        requiredCapabilities: route.requiredCapabilities,
-        enabled: true,
-      })),
-  );
-}
 function capabilities(row: Record<string, unknown>): string[] {
   const feature = string(row.featureKey) as ModelProduct;
   return [
@@ -197,4 +171,21 @@ function jsonStrings(value: unknown): string[] {
 }
 function normalizeSecretRef(value: string): string {
   return /^(?:secret|vault|env):\/\//u.test(value) ? value : `env://${value}`;
+}
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name}_REQUIRED`);
+  return value;
+}
+function enumValue<const Values extends readonly string[]>(
+  value: unknown,
+  allowed: Values,
+): Values[number] {
+  if (typeof value !== "string" || !allowed.includes(value)) throw new Error("LEGACY_ENUM_INVALID");
+  return value;
+}
+function instant(value: unknown): string {
+  const parsed = value instanceof Date ? value : new Date(string(value));
+  if (!Number.isFinite(parsed.getTime())) throw new Error("LEGACY_INSTANT_INVALID");
+  return parsed.toISOString();
 }

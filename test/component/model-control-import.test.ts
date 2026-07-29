@@ -246,6 +246,9 @@ describe("canonical ModelControl", () => {
       putSitePolicy: async () => {
         throw new Error("unused");
       },
+      reportProviderAvailability: async () => {
+        throw new Error("unused");
+      },
       findSelectionDecision: async () => null,
       loadCandidates: async () => ({
         inventoryDigest: "a".repeat(64),
@@ -293,6 +296,9 @@ describe("canonical ModelControl", () => {
       putSitePolicy: async () => {
         throw new Error("unused");
       },
+      reportProviderAvailability: async () => {
+        throw new Error("unused");
+      },
       findSelectionDecision: async () => recorded,
       loadCandidates: async () => ({
         inventoryDigest: "a".repeat(64),
@@ -333,6 +339,9 @@ describe("canonical ModelControl", () => {
       putSitePolicy: async () => {
         throw new Error("unused");
       },
+      reportProviderAvailability: async () => {
+        throw new Error("unused");
+      },
       findSelectionDecision: async () => null,
       loadCandidates: async () => ({
         inventoryDigest: "a".repeat(64),
@@ -361,9 +370,53 @@ describe("canonical ModelControl", () => {
     );
     expect(result.reason).toBe("persisted_concurrent_winner");
   });
+
+  it("rejects down providers while keeping an explicit unknown cold-start policy", async () => {
+    const repository: ModelControlRepository = {
+      importInventory: async () => {
+        throw new Error("unused");
+      },
+      activateInventory: async () => {
+        throw new Error("unused");
+      },
+      putSitePolicy: async () => {
+        throw new Error("unused");
+      },
+      reportProviderAvailability: async () => {
+        throw new Error("unused");
+      },
+      findSelectionDecision: async () => null,
+      loadCandidates: async () => ({
+        inventoryDigest: "a".repeat(64),
+        policyStatus: "enabled",
+        policyRevision: "1",
+        candidates: [candidate("chat-down", "down", 0), candidate("chat-unknown", "unknown", 1)],
+      }),
+      recordSelectionDecision: async (_transaction, decision) => decision,
+    };
+    const result = await new ResolveModelPolicyService(
+      unitOfWork(),
+      repository,
+      () => "2026-07-28T12:01:00.000Z",
+    ).resolve(
+      {
+        siteId: "site-a",
+        product: "chat",
+        role: "main",
+        requiredCapabilities: ["chat"],
+        decisionId: "00000000-0000-4000-8000-000000000004",
+      },
+      context,
+    );
+    expect(result).toMatchObject({
+      kind: "selected",
+      selected: { modelKey: "chat-unknown" },
+      reason: "fallback_after_provider_down",
+    });
+  });
 });
 
-function candidate(modelKey: string, health: "healthy" | "down", position: number) {
+function candidate(modelKey: string, health: "healthy" | "unknown" | "down", position: number) {
   return {
     modelKey,
     bindingKey: `binding-${modelKey}`,

@@ -27,11 +27,24 @@ Catalog materialization, activation and Site policy changes are narrow `SECURITY
 Signed context still requires an admin workload acting as an operator or management workload. Reusing an import/change ID with a
 different digest fails closed.
 
+The migrator is the only identity allowed to read raw catalog, policy, receipt, provider account, `secret_ref`, or canonical-payload
+tables. API resolves candidates and decision replays through Site-scoped, safe-projection functions only. Admin has exactly the three
+catalog/Site management commands. Worker has one separate provider-availability report command: it atomically compare-and-swaps the
+provider epoch and writes an immutable idempotency receipt. Provider status/health is therefore a mutable operational fact, never a
+catalog-release mutation.
+
 Runtime selection requires an explicit Site policy. `down` providers and disabled providers/models/bindings are rejected;
 `unknown` and `degraded` remain eligible cold-start/degraded candidates. Resolution orders product/Site position first, then health,
 binding priority, provider priority and binding key. It records the full candidate/rejection effect and selected fallback under a
 decision digest. The policy-input digest is recomputed locally from Site/product/role/capabilities, never trusted from a caller, and
 no resolution performs remote I/O in the UoW.
+
+Legacy cutover is one deterministic, content-addressed bundle. Export includes the canonical catalog, provider operational
+status/health and all non-deleted Sites—including Sites with no legacy model-policy row—and emits four deterministic Site commands
+per Site. A product whose hidden routes leave no viable main/generation path is restored disabled instead of producing an invalid
+policy. Import verifies the whole bundle digest and a signed migration context, then replays fixed import, activation and Site change
+IDs. Re-running the same bundle returns the same receipts and revisions; a changed payload under a reused ID fails closed. Cross-Site
+replay is available only to the admin migration purpose carrying `model:site-policy:migrate`; ordinary commands remain exact-Site.
 
 Task 7 adds the authoritative Site foreign key. Task 15 supplies Admin UI/command adapters. The legacy package remains only as a
 read-only migration source and rollback artifact until cross-repository consumers complete cutover; no new Platform consumer may

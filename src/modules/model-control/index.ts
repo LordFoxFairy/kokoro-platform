@@ -1,6 +1,7 @@
 import type { PlatformModuleDescriptor } from "../../platform-module.js";
 
 export { ImportModelControlService } from "./application/services/import-model-control.js";
+export { ReportModelProviderAvailabilityService } from "./application/services/report-model-provider-availability.js";
 export { ActivateModelInventoryService } from "./application/services/activate-model-inventory.js";
 export { ChangeSiteModelPolicyService } from "./application/services/change-site-model-policy.js";
 export { ResolveModelPolicyService } from "./application/services/resolve-model-policy.js";
@@ -8,6 +9,8 @@ export type {
   ModelControlApplication,
   ModelInventoryActivationAdministration,
   ModelInventoryImportAdministration,
+  ModelProviderAvailabilityReporting,
+  ModelProviderAvailabilityReportReceipt,
   SiteModelPolicyAdministration,
   ResolveModelPolicyInput,
   ResolveModelPolicyResult,
@@ -18,6 +21,7 @@ export type {
   ModelRouteRole,
 } from "./domain/model-catalog.js";
 export type { SiteModelPolicy } from "./domain/site-model-policy.js";
+export type { ProviderOperationalAvailability } from "./domain/provider-availability.js";
 
 export const modelControlPlatformModule = {
   id: "model",

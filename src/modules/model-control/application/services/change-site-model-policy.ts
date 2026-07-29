@@ -25,7 +25,11 @@ export class ChangeSiteModelPolicyService implements SiteModelPolicyAdministrati
     if (context.actor.kind !== "operator" && context.actor.kind !== "workload")
       throw new Error("MODEL_SITE_POLICY_MANAGEMENT_PRINCIPAL_REQUIRED");
     const policy = canonicalizeSiteModelPolicy(input.policy);
-    if (context.target.siteId !== policy.document.siteId)
+    const crossSiteMigration =
+      context.target.siteId === null &&
+      context.target.purpose === "model_control_migration" &&
+      context.target.scopes.includes("model:site-policy:migrate");
+    if (context.target.siteId !== policy.document.siteId && !crossSiteMigration)
       throw new Error("MODEL_SITE_SCOPE_MISMATCH");
     return this.unitOfWork.execute(
       { context, operation: "model.site-policy.change" },

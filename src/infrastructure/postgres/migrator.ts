@@ -261,36 +261,41 @@ async function grantFoundationPrivileges(
     );
     await client.query(`REVOKE ALL ON TABLE ${KERNEL_AND_MODEL_TABLES} FROM ${identifier}`);
     await client.query(
-      `REVOKE ALL ON FUNCTION platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, TEXT) FROM ${identifier}`,
+      `REVOKE ALL ON FUNCTION platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT), platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID), platform.report_model_provider_availability(UUID, TEXT, TEXT, TEXT, BIGINT, TEXT, TIMESTAMPTZ, TEXT) FROM ${identifier}`,
     );
-    await client.query(
-      `REVOKE ALL ON FUNCTION platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT) FROM ${identifier}`,
-    );
-    await client.query(
-      `REVOKE ALL ON FUNCTION platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT) FROM ${identifier}`,
-    );
-    await client.query(`GRANT SELECT ON TABLE ${KERNEL_AND_MODEL_TABLES} TO ${identifier}`);
     if (role === apiRole) {
+      await client.query(`GRANT SELECT ON TABLE ${KERNEL_TABLES} TO ${identifier}`);
       await client.query(
         `GRANT INSERT ON TABLE platform.command_receipt, platform.outbox_event, platform.inbox_delivery, platform.model_selection_decision TO ${identifier}`,
       );
       await client.query(
         `GRANT UPDATE ON TABLE platform.command_receipt, platform.inbox_delivery TO ${identifier}`,
       );
-    } else if (role === workerRole) {
       await client.query(
-        `GRANT INSERT ON TABLE platform.inbox_delivery, platform.model_selection_decision TO ${identifier}`,
+        `GRANT EXECUTE ON FUNCTION platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID) TO ${identifier}`,
+      );
+    } else if (role === workerRole) {
+      await client.query(`GRANT SELECT ON TABLE ${KERNEL_TABLES} TO ${identifier}`);
+      await client.query(`GRANT INSERT ON TABLE platform.inbox_delivery TO ${identifier}`);
+      await client.query(
+        `GRANT UPDATE ON TABLE platform.command_receipt, platform.outbox_event, platform.inbox_delivery TO ${identifier}`,
       );
       await client.query(
-        `GRANT UPDATE ON TABLE platform.command_receipt, platform.outbox_event, platform.inbox_delivery, platform.model_provider_availability, platform.model_definition_availability TO ${identifier}`,
+        `GRANT EXECUTE ON FUNCTION platform.report_model_provider_availability(UUID, TEXT, TEXT, TEXT, BIGINT, TEXT, TIMESTAMPTZ, TEXT) TO ${identifier}`,
       );
     } else {
       await client.query(
-        `GRANT EXECUTE ON FUNCTION platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT) TO ${identifier}`,
+        `GRANT EXECUTE ON FUNCTION platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT) TO ${identifier}`,
       );
     }
   }
 }
+
+const KERNEL_TABLES = [
+  "platform.command_receipt",
+  "platform.outbox_event",
+  "platform.inbox_delivery",
+].join(", ");
 
 const KERNEL_AND_MODEL_TABLES = [
   "platform.command_receipt",
@@ -305,6 +310,7 @@ const KERNEL_AND_MODEL_TABLES = [
   "platform.model_product_route_snapshot",
   "platform.model_provider_availability",
   "platform.model_definition_availability",
+  "platform.model_provider_availability_report",
   "platform.model_site_policy_revision",
   "platform.model_site_assignment_revision",
   "platform.model_site_policy_pointer",
@@ -337,6 +343,11 @@ async function assertPostMigrationAuthority(
         row.canExecuteModelInventoryImport !== (row.roleName === adminRole) ||
         row.canExecuteModelInventoryActivate !== (row.roleName === adminRole) ||
         row.canExecuteModelSitePolicyChange !== (row.roleName === adminRole) ||
+        row.canExecuteModelCandidatesProjection !== (row.roleName === apiRole) ||
+        row.canExecuteModelDecisionProjection !== (row.roleName === apiRole) ||
+        row.canExecuteModelAvailabilityReport !== (row.roleName === workerRole) ||
+        row.canSelectModelCatalogTable !== false ||
+        row.canReadModelSensitiveColumn !== false ||
         row.hasUnexpectedPlatformPrivilege !== false,
     )
   ) {
@@ -386,17 +397,34 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            has_table_privilege(runtime_role.rolname, 'platform.command_receipt', 'UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.outbox_event', 'UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.inbox_delivery', 'INSERT,UPDATE')
-           AND has_table_privilege(runtime_role.rolname, 'platform.model_provider_availability', 'UPDATE')
-           AND has_table_privilege(runtime_role.rolname, 'platform.model_definition_availability', 'UPDATE')
-           AND has_table_privilege(runtime_role.rolname, 'platform.model_selection_decision', 'INSERT')
          ELSE TRUE
          END AS "hasRequiredPlatformWrites"
-         ,has_function_privilege(runtime_role.rolname, 'platform.import_model_inventory(uuid,text,text,jsonb,text)', 'EXECUTE')
+         ,has_function_privilege(runtime_role.rolname, 'platform.import_model_inventory(uuid,text,text,jsonb,jsonb,text)', 'EXECUTE')
            AS "canExecuteModelInventoryImport"
          ,has_function_privilege(runtime_role.rolname, 'platform.activate_model_inventory(uuid,text,bigint,text)', 'EXECUTE')
            AS "canExecuteModelInventoryActivate"
          ,has_function_privilege(runtime_role.rolname, 'platform.put_model_site_policy(uuid,text,text,text,bigint)', 'EXECUTE')
            AS "canExecuteModelSitePolicyChange"
+         ,has_function_privilege(runtime_role.rolname, 'platform.resolve_model_candidates(text,text,text)', 'EXECUTE')
+           AS "canExecuteModelCandidatesProjection"
+         ,has_function_privilege(runtime_role.rolname, 'platform.find_model_selection_decision(uuid)', 'EXECUTE')
+           AS "canExecuteModelDecisionProjection"
+         ,has_function_privilege(runtime_role.rolname, 'platform.report_model_provider_availability(uuid,text,text,text,bigint,text,timestamptz,text)', 'EXECUTE')
+           AS "canExecuteModelAvailabilityReport"
+         ,EXISTS (
+           SELECT 1 FROM pg_class model_relation
+           WHERE model_relation.relnamespace=platform_schema.oid
+             AND model_relation.relname=ANY(ARRAY[
+               'model_inventory_import','model_inventory_activation','model_inventory_pointer','model_provider_snapshot',
+               'model_definition_snapshot','model_provider_binding_snapshot','model_product_route_snapshot',
+               'model_provider_availability','model_definition_availability','model_provider_availability_report','model_site_policy_revision',
+               'model_site_assignment_revision','model_site_policy_pointer','model_selection_decision'
+             ])
+             AND has_table_privilege(runtime_role.rolname,model_relation.oid,'SELECT')
+         ) AS "canSelectModelCatalogTable"
+         ,(has_any_column_privilege(runtime_role.rolname,'platform.model_inventory_import','SELECT')
+           OR has_any_column_privilege(runtime_role.rolname,'platform.model_provider_snapshot','SELECT'))
+           AS "canReadModelSensitiveColumn"
          ,EXISTS (
            SELECT 1
            FROM pg_class candidate
@@ -409,9 +437,14 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                  'platform_foundation','command_receipt','outbox_event','inbox_delivery',
                  'model_inventory_import','model_inventory_activation','model_inventory_pointer','model_provider_snapshot',
                  'model_definition_snapshot','model_provider_binding_snapshot','model_product_route_snapshot','model_provider_availability',
-                 'model_definition_availability','model_site_policy_revision',
+                 'model_definition_availability','model_provider_availability_report','model_site_policy_revision',
                  'model_site_assignment_revision','model_site_policy_pointer','model_selection_decision'
                ]) AND (
+                 (candidate.relname LIKE 'model\\_%' ESCAPE '\\' AND (
+                   has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
+                   OR has_any_column_privilege(runtime_role.rolname,candidate.oid,'SELECT')
+                 ))
+                 OR
                  has_table_privilege(runtime_role.rolname, candidate.oid,
                    'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
                  OR has_any_column_privilege(runtime_role.rolname, candidate.oid,
@@ -421,7 +454,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                  'command_receipt','outbox_event','inbox_delivery','model_inventory_import','model_inventory_activation',
                  'model_inventory_pointer','model_provider_snapshot','model_definition_snapshot','model_provider_binding_snapshot',
                  'model_product_route_snapshot','model_provider_availability',
-                 'model_definition_availability','model_site_policy_revision',
+                 'model_definition_availability','model_provider_availability_report','model_site_policy_revision',
                  'model_site_assignment_revision','model_site_policy_pointer','model_selection_decision'
                ]) AND (
                  has_table_privilege(runtime_role.rolname, candidate.oid,
@@ -429,19 +462,19 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                  OR has_any_column_privilege(runtime_role.rolname, candidate.oid, 'REFERENCES')
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'INSERT') AND NOT (
                    (runtime_role.rolname = $1 AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_selection_decision']))
-                   OR (runtime_role.rolname = $2 AND candidate.relname = ANY(ARRAY['inbox_delivery','model_selection_decision']))
+                   OR (runtime_role.rolname = $2 AND candidate.relname = 'inbox_delivery')
                  ))
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
                    (runtime_role.rolname = $1 AND candidate.relname = ANY(ARRAY['command_receipt','inbox_delivery']))
-                   OR (runtime_role.rolname = $2 AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_provider_availability','model_definition_availability']))
+                   OR (runtime_role.rolname = $2 AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery']))
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'INSERT') AND NOT (
                    (runtime_role.rolname = $1 AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_selection_decision']))
-                   OR (runtime_role.rolname = $2 AND candidate.relname = ANY(ARRAY['inbox_delivery','model_selection_decision']))
+                   OR (runtime_role.rolname = $2 AND candidate.relname = 'inbox_delivery')
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
                    (runtime_role.rolname = $1 AND candidate.relname = ANY(ARRAY['command_receipt','inbox_delivery']))
-                   OR (runtime_role.rolname = $2 AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_provider_availability','model_definition_availability']))
+                   OR (runtime_role.rolname = $2 AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery']))
                  ))
                ))
                OR (candidate.relname = 'platform_foundation' AND (
@@ -455,11 +488,19 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            SELECT 1 FROM pg_proc candidate_function
            WHERE candidate_function.pronamespace = platform_schema.oid
              AND has_function_privilege(runtime_role.rolname, candidate_function.oid, 'EXECUTE')
-             AND NOT (runtime_role.rolname = $3 AND candidate_function.oid = ANY(ARRAY[
-               to_regprocedure('platform.import_model_inventory(uuid,text,text,jsonb,text)'),
-               to_regprocedure('platform.activate_model_inventory(uuid,text,bigint,text)'),
-               to_regprocedure('platform.put_model_site_policy(uuid,text,text,text,bigint)')
-             ]))
+             AND NOT (
+               (runtime_role.rolname = $3 AND candidate_function.oid = ANY(ARRAY[
+                 to_regprocedure('platform.import_model_inventory(uuid,text,text,jsonb,jsonb,text)'),
+                 to_regprocedure('platform.activate_model_inventory(uuid,text,bigint,text)'),
+                 to_regprocedure('platform.put_model_site_policy(uuid,text,text,text,bigint)')
+               ]))
+               OR (runtime_role.rolname = $1 AND candidate_function.oid = ANY(ARRAY[
+                 to_regprocedure('platform.resolve_model_candidates(text,text,text)'),
+                 to_regprocedure('platform.find_model_selection_decision(uuid)')
+               ]))
+               OR (runtime_role.rolname = $2 AND candidate_function.oid =
+                 to_regprocedure('platform.report_model_provider_availability(uuid,text,text,text,bigint,text,timestamptz,text)'))
+             )
          ) AS "hasUnexpectedPlatformPrivilege"
   FROM pg_roles runtime_role
   JOIN pg_namespace platform_schema ON platform_schema.nspname = 'platform'

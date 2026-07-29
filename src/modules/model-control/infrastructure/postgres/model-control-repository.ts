@@ -10,6 +10,7 @@ import type {
   ResolveModelPolicyInput,
   ModelCandidate,
   SelectedModelRoute,
+  ModelProviderAvailabilityReportReceipt,
 } from "../../application/contracts/model-control-ports.js";
 
 export class PostgresModelControlRepository implements ModelControlRepository {
@@ -19,12 +20,13 @@ export class PostgresModelControlRepository implements ModelControlRepository {
   ): Promise<ModelInventoryImportReceipt> {
     const sql = resolvePlatformTransaction(transaction);
     const rows = await sql.query<ImportFunctionRow>(
-      `SELECT result_import_id AS "importId", result_source_digest AS digest, result_counts AS counts, replayed FROM platform.import_model_inventory($1::uuid,$2::text,$3::text,$4::jsonb,$5::text)`,
+      `SELECT result_import_id AS "importId", result_source_digest AS digest, result_counts AS counts, replayed FROM platform.import_model_inventory($1::uuid,$2::text,$3::text,$4::jsonb,$5::jsonb,$6::text)`,
       [
         input.importId,
         input.inventory.digest,
         input.inventory.canonicalJson,
         JSON.stringify(input.inventory.counts),
+        JSON.stringify(input.providerAvailability),
         input.importedBy,
       ],
     );
@@ -85,6 +87,34 @@ export class PostgresModelControlRepository implements ModelControlRepository {
     return receipt;
   }
 
+  async reportProviderAvailability(
+    transaction: Parameters<ModelControlRepository["reportProviderAvailability"]>[0],
+    input: Parameters<ModelControlRepository["reportProviderAvailability"]>[1],
+  ): Promise<ModelProviderAvailabilityReportReceipt> {
+    const rows = await resolvePlatformTransaction(transaction).query<AvailabilityReportRow>(
+      `SELECT result_report_id AS "reportId", result_provider_key AS "providerKey", result_applied_epoch::text AS "appliedEpoch", replayed FROM platform.report_model_provider_availability($1::uuid,$2::text,$3::text,$4::text,$5::bigint,$6::text,$7::timestamptz,$8::text)`,
+      [
+        input.reportId,
+        input.providerKey,
+        input.status,
+        input.health,
+        input.expectedEpoch,
+        input.observationRef,
+        input.observedAt,
+        input.reportedBy,
+      ],
+    );
+    const receipt = rows[0];
+    if (
+      !receipt ||
+      receipt.reportId !== input.reportId ||
+      receipt.providerKey !== input.providerKey ||
+      !/^[1-9][0-9]*$/u.test(receipt.appliedEpoch)
+    )
+      throw new Error("MODEL_AVAILABILITY_REPORT_RECEIPT_INVALID");
+    return receipt;
+  }
+
   async loadCandidates(
     transaction: Parameters<ModelControlRepository["loadCandidates"]>[0],
     input: ResolveModelPolicyInput,
@@ -140,63 +170,24 @@ export class PostgresModelControlRepository implements ModelControlRepository {
     decisionId: string,
   ): Promise<ModelSelectionDecisionRecord | null> {
     const rows = await resolvePlatformTransaction(transaction).query<DecisionRow>(
-      `SELECT decision_id AS "decisionId", decision_digest AS "decisionDigest", site_id AS "siteId", product, route_role AS role, request_digest AS "requestDigest", required_capabilities AS "requiredCapabilities", inventory_digest AS "inventoryDigest", policy_revision::text AS "policyRevision", selected_model_key AS "selectedModelKey", selected_binding_key AS "selectedBindingKey", selected_route AS "selectedRoute", candidate_binding_keys AS "candidateBindingKeys", rejections, reason, to_char(decided_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "decidedAt" FROM platform.model_selection_decision WHERE decision_id=$1`,
+      `SELECT decision_id AS "decisionId", decision_digest AS "decisionDigest", site_id AS "siteId", product, route_role AS role, request_digest AS "requestDigest", required_capabilities AS "requiredCapabilities", inventory_digest AS "inventoryDigest", policy_revision::text AS "policyRevision", selected_model_key AS "selectedModelKey", selected_binding_key AS "selectedBindingKey", selected_route AS "selectedRoute", candidate_binding_keys AS "candidateBindingKeys", rejections, reason, to_char(decided_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "decidedAt" FROM platform.find_model_selection_decision($1::uuid)`,
       [decisionId],
     );
     return rows[0] ? mapDecision(rows[0]) : null;
   }
 }
 
-const CANDIDATE_SQL = `WITH seed AS (
-  SELECT TRUE AS singleton
-), active AS (
-  SELECT pointer.import_id, imported.source_digest
-  FROM platform.model_inventory_pointer pointer
-  JOIN platform.model_inventory_import imported ON imported.import_id=pointer.import_id
-  WHERE pointer.singleton=TRUE
-), policy AS (
-  SELECT revision.*
-  FROM platform.model_site_policy_pointer pointer
-  JOIN platform.model_site_policy_revision revision
-    ON revision.site_id=pointer.site_id AND revision.product=pointer.product AND revision.revision=pointer.revision
-  WHERE pointer.site_id=$1 AND pointer.product=$2
-), catalog AS (
-  SELECT CASE WHEN policy.catalog_mode='pinned' THEN pinned.import_id ELSE active.import_id END AS import_id,
-         CASE WHEN policy.catalog_mode='pinned' THEN pinned.source_digest ELSE active.source_digest END AS source_digest
-  FROM seed LEFT JOIN active ON TRUE LEFT JOIN policy ON TRUE
-  LEFT JOIN platform.model_inventory_import pinned ON policy.catalog_mode='pinned' AND pinned.source_digest=policy.catalog_digest
-), routes AS (
-  SELECT route.model_key, route.position, route.required_capabilities
-  FROM platform.model_product_route_snapshot route JOIN catalog ON catalog.import_id=route.import_id
-  JOIN policy ON policy.assignment_mode='inherit' AND policy.enabled=TRUE
-  WHERE route.product=$2 AND route.route_role=$3
-  UNION ALL
-  SELECT assignment.model_key, assignment.position, assignment.required_capabilities
-  FROM platform.model_site_assignment_revision assignment
-  JOIN policy ON policy.site_id=assignment.site_id AND policy.product=assignment.product AND policy.revision=assignment.policy_revision
-    AND policy.assignment_mode='replace' AND policy.enabled=TRUE
-  WHERE assignment.route_role=$3 AND assignment.enabled=TRUE
-)
-SELECT catalog.source_digest AS "inventoryDigest",
-  CASE WHEN policy.site_id IS NULL THEN 'missing' WHEN policy.enabled THEN 'enabled' ELSE 'disabled' END AS "policyStatus",
-  COALESCE(policy.revision,0)::text AS "policyRevision",
-  route.model_key AS "modelKey", binding.binding_key AS "bindingKey", provider.provider_key AS "providerKey",
-  binding.gateway_model_name AS "gatewayModelName", 'model_gateway' AS "executionBoundary", route.position,
-  binding.priority AS "bindingPriority", provider.priority AS "providerPriority", model.input_modalities AS "inputModalities",
-  model.output_modalities AS "outputModalities", model.capabilities, model.context_window AS "contextWindow",
-  COALESCE(provider_availability.status,'disabled') AS "providerStatus",
-  COALESCE(provider_availability.health,'unknown') AS "providerHealth",
-  CASE WHEN model.enabled IS NOT TRUE THEN 'disabled' ELSE COALESCE(model_availability.status,'disabled') END AS "modelStatus",
-  CASE WHEN binding.enabled THEN 'active' ELSE 'disabled' END AS "bindingStatus",
-  route.required_capabilities AS "routeRequiredCapabilities"
-FROM catalog LEFT JOIN policy ON TRUE LEFT JOIN routes ON TRUE
-LEFT JOIN platform.model_definition_snapshot model ON model.import_id=catalog.import_id AND model.model_key=route.model_key
-LEFT JOIN platform.model_provider_binding_snapshot binding ON binding.import_id=catalog.import_id AND binding.model_key=model.model_key
-LEFT JOIN platform.model_provider_snapshot provider ON provider.import_id=catalog.import_id AND provider.provider_key=binding.provider_key
-LEFT JOIN platform.model_provider_availability provider_availability ON provider_availability.provider_key=provider.provider_key
-LEFT JOIN platform.model_definition_availability model_availability ON model_availability.model_key=model.model_key
-WHERE catalog.import_id IS NOT NULL
-ORDER BY route.position,binding.priority,provider.priority,binding.binding_key`;
+const CANDIDATE_SQL = `SELECT result_inventory_digest AS "inventoryDigest",
+  result_policy_status AS "policyStatus",result_policy_revision::text AS "policyRevision",
+  result_model_key AS "modelKey",result_binding_key AS "bindingKey",result_provider_key AS "providerKey",
+  result_gateway_model_name AS "gatewayModelName",result_execution_boundary AS "executionBoundary",
+  result_position AS position,result_binding_priority AS "bindingPriority",result_provider_priority AS "providerPriority",
+  result_input_modalities AS "inputModalities",result_output_modalities AS "outputModalities",
+  result_capabilities AS capabilities,result_context_window AS "contextWindow",
+  result_provider_status AS "providerStatus",result_provider_health AS "providerHealth",
+  result_model_status AS "modelStatus",result_binding_status AS "bindingStatus",
+  result_route_required_capabilities AS "routeRequiredCapabilities"
+FROM platform.resolve_model_candidates($1::text,$2::text,$3::text)`;
 interface ImportFunctionRow extends Record<string, unknown> {
   importId: string;
   digest: string;
@@ -205,6 +196,8 @@ interface ImportFunctionRow extends Record<string, unknown> {
 }
 interface ActivationFunctionRow extends Record<string, unknown>, ModelInventoryActivationReceipt {}
 interface SitePolicyFunctionRow extends Record<string, unknown>, SiteModelPolicyChangeReceipt {}
+interface AvailabilityReportRow
+  extends Record<string, unknown>, ModelProviderAvailabilityReportReceipt {}
 interface CandidateRow extends Record<string, unknown> {
   inventoryDigest: string;
   policyStatus: CandidateProjection["policyStatus"];

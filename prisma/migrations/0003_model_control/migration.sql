@@ -96,6 +96,19 @@ CREATE TABLE platform.model_definition_availability (
   epoch BIGINT NOT NULL CHECK (epoch >= 0),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE platform.model_provider_availability_report (
+  report_id UUID PRIMARY KEY,
+  provider_key TEXT NOT NULL REFERENCES platform.model_provider_availability(provider_key),
+  requested_status TEXT NOT NULL CHECK (requested_status IN ('active','disabled')),
+  requested_health TEXT NOT NULL CHECK (requested_health IN ('unknown','healthy','degraded','down')),
+  expected_epoch BIGINT NOT NULL CHECK (expected_epoch >= 0),
+  applied_epoch BIGINT NOT NULL CHECK (applied_epoch = expected_epoch + 1),
+  observation_ref TEXT,
+  observed_at TIMESTAMPTZ,
+  reported_by TEXT NOT NULL,
+  reported_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (provider_key, applied_epoch)
+);
 
 CREATE TABLE platform.model_site_policy_revision (
   site_id TEXT NOT NULL,
@@ -184,7 +197,7 @@ CREATE TRIGGER model_product_route_capabilities BEFORE INSERT ON platform.model_
 
 CREATE FUNCTION platform.import_model_inventory(
   p_import_id UUID, p_source_digest TEXT, p_canonical_json TEXT, p_counts JSONB,
-  p_imported_by TEXT
+  p_provider_availability JSONB, p_imported_by TEXT
 ) RETURNS TABLE (result_import_id UUID, result_source_digest TEXT, result_counts JSONB, replayed BOOLEAN)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, platform AS $$
 DECLARE
@@ -221,6 +234,28 @@ BEGIN
     'bindings',jsonb_array_length(canonical_payload->'bindings'),
     'productRoutes',jsonb_array_length(canonical_payload->'productRoutes')
   ) THEN RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='MODEL_INVENTORY_COUNTS_MISMATCH'; END IF;
+  IF jsonb_typeof(p_provider_availability) IS DISTINCT FROM 'array'
+     OR jsonb_array_length(p_provider_availability)<>jsonb_array_length(canonical_payload->'providers')
+     OR EXISTS(
+       SELECT 1 FROM jsonb_array_elements(p_provider_availability) availability(item)
+       WHERE jsonb_typeof(item) IS DISTINCT FROM 'object'
+          OR NOT (item ?& ARRAY['providerKey','status','health','epoch','observationRef','observedAt'])
+          OR item - ARRAY['providerKey','status','health','epoch','observationRef','observedAt']::TEXT[] <> '{}'::JSONB
+          OR NULLIF(item->>'providerKey','') IS NULL
+          OR item->>'status' IS NULL OR item->>'status' NOT IN ('active','disabled')
+          OR item->>'health' IS NULL OR item->>'health' NOT IN ('unknown','healthy','degraded','down')
+          OR item->>'epoch' IS NULL OR item->>'epoch' !~ '^(0|[1-9][0-9]*)$'
+          OR (item->'observationRef' <> 'null'::JSONB AND NULLIF(item->>'observationRef','') IS NULL)
+          OR (item->'observedAt' <> 'null'::JSONB AND NULLIF(item->>'observedAt','') IS NULL)
+          OR NOT EXISTS(
+            SELECT 1 FROM jsonb_array_elements(canonical_payload->'providers') provider(provider_item)
+            WHERE provider_item->>'key'=item->>'providerKey'
+          )
+     )
+     OR (SELECT count(DISTINCT item->>'providerKey') FROM jsonb_array_elements(p_provider_availability) availability(item))
+        <>jsonb_array_length(canonical_payload->'providers') THEN
+    RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='MODEL_PROVIDER_AVAILABILITY_INVALID';
+  END IF;
   FOREACH product_name IN ARRAY ARRAY['chat','music','image','video'] LOOP
     IF NOT EXISTS (SELECT 1 FROM jsonb_array_elements(canonical_payload->'productRoutes') route(item)
       WHERE item->>'product'=product_name AND item->>'role'='main' AND item->>'position'='0'
@@ -273,8 +308,10 @@ BEGIN
   INSERT INTO platform.model_product_route_snapshot(import_id,product,route_role,model_key,position,required_capabilities)
     SELECT p_import_id,item->>'product',item->>'role',item->>'modelKey',(item->>'position')::INTEGER,ARRAY(SELECT jsonb_array_elements_text(item->'requiredCapabilities'))
     FROM jsonb_array_elements(canonical_payload->'productRoutes') route(item);
-  INSERT INTO platform.model_provider_availability(provider_key,status,health,epoch)
-    SELECT item->>'key','active','unknown',0 FROM jsonb_array_elements(canonical_payload->'providers') provider(item) ON CONFLICT(provider_key) DO NOTHING;
+  INSERT INTO platform.model_provider_availability(provider_key,status,health,epoch,observation_ref,observed_at)
+    SELECT item->>'providerKey',item->>'status',item->>'health',(item->>'epoch')::BIGINT,
+      item->>'observationRef',CASE WHEN item->>'observedAt' IS NULL THEN NULL ELSE (item->>'observedAt')::TIMESTAMPTZ END
+    FROM jsonb_array_elements(p_provider_availability) availability(item) ON CONFLICT(provider_key) DO NOTHING;
   INSERT INTO platform.model_definition_availability(model_key,status,epoch)
     SELECT item->>'key','active',0 FROM jsonb_array_elements(canonical_payload->'models') model(item) ON CONFLICT(model_key) DO NOTHING;
   RETURN QUERY SELECT p_import_id,p_source_digest,p_counts,FALSE;
@@ -357,6 +394,7 @@ DECLARE
   current_revision BIGINT;
   next_revision BIGINT;
   catalog_import_id UUID;
+  cross_site_migration BOOLEAN;
 BEGIN
   IF current_setting('app.operation',true) IS DISTINCT FROM 'model.site-policy.change'
      OR current_setting('app.workload_kind',true) IS DISTINCT FROM 'admin_workload'
@@ -374,15 +412,19 @@ BEGIN
   policy:=p_policy_json::JSONB;
   site_key:=policy->>'siteId'; product_key:=policy->>'product'; catalog_mode_value:=policy#>>'{catalog,mode}';
   catalog_digest_value:=policy#>>'{catalog,digest}'; assignment_mode_value:=policy->>'assignmentMode';
+  cross_site_migration:=NULLIF(current_setting('app.site_id',true),'') IS NULL
+    AND current_setting('app.purpose',true)='model_control_migration'
+    AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'model:site-policy:migrate';
   IF policy->>'schemaVersion' IS DISTINCT FROM '1' OR NULLIF(site_key,'') IS NULL
      OR product_key IS NULL OR product_key NOT IN ('chat','music','image','video')
      OR policy->>'enabled' IS NULL OR policy->>'enabled' NOT IN ('true','false')
      OR catalog_mode_value IS NULL OR catalog_mode_value NOT IN ('follow_active','pinned')
      OR assignment_mode_value IS NULL OR assignment_mode_value NOT IN ('inherit','replace')
      OR jsonb_typeof(policy->'assignments') IS DISTINCT FROM 'array'
-     OR current_setting('app.site_id',true) IS DISTINCT FROM site_key THEN
+     OR (current_setting('app.site_id',true) IS DISTINCT FROM site_key AND NOT cross_site_migration) THEN
     RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='MODEL_SITE_POLICY_PAYLOAD_INVALID';
   END IF;
+  IF cross_site_migration THEN PERFORM set_config('app.site_id',site_key,true); END IF;
   IF catalog_mode_value='follow_active' AND (catalog_digest_value IS NOT NULL OR assignment_mode_value<>'inherit') THEN
     RAISE EXCEPTION USING ERRCODE='23514', MESSAGE='MODEL_SITE_ACTIVE_POLICY_INVALID';
   END IF;
@@ -453,10 +495,149 @@ BEGIN
   RETURN QUERY SELECT p_change_id,p_policy_digest,next_revision,FALSE;
 END $$;
 
+CREATE FUNCTION platform.resolve_model_candidates(
+  p_site_id TEXT, p_product TEXT, p_route_role TEXT
+) RETURNS TABLE(
+  result_inventory_digest TEXT,result_policy_status TEXT,result_policy_revision BIGINT,
+  result_model_key TEXT,result_binding_key TEXT,result_provider_key TEXT,result_gateway_model_name TEXT,
+  result_execution_boundary TEXT,result_position INTEGER,result_binding_priority INTEGER,result_provider_priority INTEGER,
+  result_input_modalities TEXT[],result_output_modalities TEXT[],result_capabilities TEXT[],result_context_window INTEGER,
+  result_provider_status TEXT,result_provider_health TEXT,result_model_status TEXT,result_binding_status TEXT,
+  result_route_required_capabilities TEXT[]
+)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, platform AS $$
+BEGIN
+  IF current_setting('app.operation',true) IS DISTINCT FROM 'model.policy.resolve'
+     OR current_setting('app.site_id',true) IS DISTINCT FROM p_site_id
+     OR current_setting('app.workload_kind',true) IS NULL
+     OR p_product NOT IN ('chat','music','image','video')
+     OR p_route_role NOT IN ('main','generation') THEN
+    RAISE EXCEPTION USING ERRCODE='42501', MESSAGE='MODEL_CANDIDATE_PROJECTION_CONTEXT_REQUIRED';
+  END IF;
+  RETURN QUERY WITH seed AS (
+    SELECT TRUE AS singleton
+  ), active AS (
+    SELECT pointer.import_id,imported.source_digest
+    FROM platform.model_inventory_pointer pointer
+    JOIN platform.model_inventory_import imported ON imported.import_id=pointer.import_id
+    WHERE pointer.singleton IS TRUE
+  ), policy AS (
+    SELECT revision_row.*
+    FROM platform.model_site_policy_pointer pointer
+    JOIN platform.model_site_policy_revision revision_row
+      ON revision_row.site_id=pointer.site_id AND revision_row.product=pointer.product AND revision_row.revision=pointer.revision
+    WHERE pointer.site_id=p_site_id AND pointer.product=p_product
+  ), catalog AS (
+    SELECT CASE WHEN policy.catalog_mode='pinned' THEN pinned.import_id ELSE active.import_id END AS import_id,
+           CASE WHEN policy.catalog_mode='pinned' THEN pinned.source_digest ELSE active.source_digest END AS source_digest
+    FROM seed LEFT JOIN active ON TRUE LEFT JOIN policy ON TRUE
+    LEFT JOIN platform.model_inventory_import pinned ON policy.catalog_mode='pinned' AND pinned.source_digest=policy.catalog_digest
+  ), routes AS (
+    SELECT route.model_key,route.position,route.required_capabilities
+    FROM platform.model_product_route_snapshot route JOIN catalog ON catalog.import_id=route.import_id
+    JOIN policy ON policy.assignment_mode='inherit' AND policy.enabled=TRUE
+    WHERE route.product=p_product AND route.route_role=p_route_role
+    UNION ALL
+    SELECT assignment.model_key,assignment.position,assignment.required_capabilities
+    FROM platform.model_site_assignment_revision assignment
+    JOIN policy ON policy.site_id=assignment.site_id AND policy.product=assignment.product AND policy.revision=assignment.policy_revision
+      AND policy.assignment_mode='replace' AND policy.enabled=TRUE
+    WHERE assignment.route_role=p_route_role AND assignment.enabled=TRUE
+  )
+  SELECT catalog.source_digest::TEXT,
+    CASE WHEN policy.site_id IS NULL THEN 'missing' WHEN policy.enabled THEN 'enabled' ELSE 'disabled' END,
+    COALESCE(policy.revision,0),route.model_key,binding.binding_key,provider.provider_key,
+    binding.gateway_model_name,'model_gateway',route.position,binding.priority,provider.priority,
+    model.input_modalities,model.output_modalities,model.capabilities,model.context_window,
+    COALESCE(provider_availability.status,'disabled'),COALESCE(provider_availability.health,'unknown'),
+    CASE WHEN model.enabled IS NOT TRUE THEN 'disabled' ELSE COALESCE(model_availability.status,'disabled') END,
+    CASE WHEN binding.enabled THEN 'active' ELSE 'disabled' END,route.required_capabilities
+  FROM catalog LEFT JOIN policy ON TRUE LEFT JOIN routes ON TRUE
+  LEFT JOIN platform.model_definition_snapshot model ON model.import_id=catalog.import_id AND model.model_key=route.model_key
+  LEFT JOIN platform.model_provider_binding_snapshot binding ON binding.import_id=catalog.import_id AND binding.model_key=model.model_key
+  LEFT JOIN platform.model_provider_snapshot provider ON provider.import_id=catalog.import_id AND provider.provider_key=binding.provider_key
+  LEFT JOIN platform.model_provider_availability provider_availability ON provider_availability.provider_key=provider.provider_key
+  LEFT JOIN platform.model_definition_availability model_availability ON model_availability.model_key=model.model_key
+  WHERE catalog.import_id IS NOT NULL
+  ORDER BY route.position,binding.priority,provider.priority,binding.binding_key;
+END $$;
+
+CREATE FUNCTION platform.find_model_selection_decision(
+  p_decision_id UUID
+) RETURNS SETOF platform.model_selection_decision
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, platform AS $$
+BEGIN
+  IF current_setting('app.operation',true) IS DISTINCT FROM 'model.policy.resolve'
+     OR NULLIF(current_setting('app.site_id',true),'') IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE='42501', MESSAGE='MODEL_DECISION_PROJECTION_CONTEXT_REQUIRED';
+  END IF;
+  RETURN QUERY SELECT decision.* FROM platform.model_selection_decision decision
+    WHERE decision.decision_id=p_decision_id
+      AND decision.site_id=current_setting('app.site_id',true);
+END $$;
+
+CREATE FUNCTION platform.report_model_provider_availability(
+  p_report_id UUID,p_provider_key TEXT,p_status TEXT,p_health TEXT,p_expected_epoch BIGINT,
+  p_observation_ref TEXT,p_observed_at TIMESTAMPTZ,p_reported_by TEXT
+) RETURNS TABLE(result_report_id UUID,result_provider_key TEXT,result_applied_epoch BIGINT,replayed BOOLEAN)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, platform AS $$
+DECLARE
+  existing_report platform.model_provider_availability_report%ROWTYPE;
+  applied_epoch BIGINT;
+BEGIN
+  IF current_setting('app.operation',true) IS DISTINCT FROM 'model.availability.report'
+     OR current_setting('app.workload_kind',true) IS DISTINCT FROM 'platform_worker'
+     OR current_setting('app.actor_kind',true) IS DISTINCT FROM 'workload'
+     OR NULLIF(current_setting('app.site_id',true),'') IS NOT NULL
+     OR NULLIF(current_setting('app.workspace_id',true),'') IS NOT NULL
+     OR NULLIF(current_setting('app.project_id',true),'') IS NOT NULL
+     OR current_setting('app.purpose',true) IS DISTINCT FROM 'model_health_observation'
+     OR NOT (COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'model:availability:write')
+     OR p_reported_by IS DISTINCT FROM current_setting('app.subject_id',true) THEN
+    RAISE EXCEPTION USING ERRCODE='42501', MESSAGE='MODEL_AVAILABILITY_REPORT_CONTEXT_REQUIRED';
+  END IF;
+  IF p_report_id IS NULL OR p_status IS NULL OR p_status NOT IN ('active','disabled')
+     OR p_health IS NULL OR p_health NOT IN ('unknown','healthy','degraded','down')
+     OR p_expected_epoch IS NULL OR p_expected_epoch<0
+     OR p_provider_key IS NULL OR p_provider_key !~ '^[a-z0-9][a-z0-9._:-]{0,127}$'
+     OR NULLIF(p_reported_by,'') IS NULL
+     OR (p_observation_ref IS NOT NULL AND (length(p_observation_ref)<1 OR length(p_observation_ref)>512)) THEN
+    RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='MODEL_AVAILABILITY_REPORT_INVALID';
+  END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended('kokoro-platform:model-provider-availability:'||p_provider_key,0));
+  SELECT report.* INTO existing_report FROM platform.model_provider_availability_report report
+    WHERE report.report_id=p_report_id;
+  IF FOUND THEN
+    IF existing_report.provider_key<>p_provider_key
+       OR existing_report.requested_status<>p_status OR existing_report.requested_health<>p_health
+       OR existing_report.expected_epoch<>p_expected_epoch
+       OR existing_report.observation_ref IS DISTINCT FROM p_observation_ref
+       OR existing_report.observed_at IS DISTINCT FROM p_observed_at
+       OR existing_report.reported_by IS DISTINCT FROM p_reported_by THEN
+      RAISE EXCEPTION USING ERRCODE='23505', MESSAGE='MODEL_AVAILABILITY_REPORT_ID_CONFLICT';
+    END IF;
+    RETURN QUERY SELECT existing_report.report_id,existing_report.provider_key,
+      existing_report.applied_epoch,TRUE;
+    RETURN;
+  END IF;
+  UPDATE platform.model_provider_availability
+    SET status=p_status,health=p_health,epoch=p_expected_epoch+1,observation_ref=p_observation_ref,
+        observed_at=p_observed_at,updated_at=now()
+    WHERE provider_key=p_provider_key AND epoch=p_expected_epoch
+    RETURNING epoch INTO applied_epoch;
+  IF NOT FOUND THEN RAISE EXCEPTION USING ERRCODE='40001', MESSAGE='MODEL_AVAILABILITY_EPOCH_CONFLICT'; END IF;
+  INSERT INTO platform.model_provider_availability_report(
+    report_id,provider_key,requested_status,requested_health,expected_epoch,applied_epoch,
+    observation_ref,observed_at,reported_by
+  ) VALUES(p_report_id,p_provider_key,p_status,p_health,p_expected_epoch,applied_epoch,
+    p_observation_ref,p_observed_at,p_reported_by);
+  RETURN QUERY SELECT p_report_id,p_provider_key,applied_epoch,FALSE;
+END $$;
+
 CREATE FUNCTION platform.reject_immutable_model_control_update() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN RAISE EXCEPTION 'immutable model-control fact'; END $$;
 DO $$ DECLARE table_name TEXT; BEGIN
-  FOREACH table_name IN ARRAY ARRAY['model_inventory_import','model_inventory_activation','model_provider_snapshot','model_definition_snapshot','model_provider_binding_snapshot','model_product_route_snapshot','model_site_policy_revision','model_site_assignment_revision','model_selection_decision']
+  FOREACH table_name IN ARRAY ARRAY['model_inventory_import','model_inventory_activation','model_provider_snapshot','model_definition_snapshot','model_provider_binding_snapshot','model_product_route_snapshot','model_provider_availability_report','model_site_policy_revision','model_site_assignment_revision','model_selection_decision']
   LOOP EXECUTE format('CREATE TRIGGER %I_immutable BEFORE UPDATE OR DELETE ON platform.%I FOR EACH ROW EXECUTE FUNCTION platform.reject_immutable_model_control_update()',table_name,table_name); END LOOP;
 END $$;
 
@@ -473,9 +654,12 @@ CREATE POLICY model_site_assignment_revision_scope ON platform.model_site_assign
 CREATE POLICY model_site_policy_pointer_scope ON platform.model_site_policy_pointer USING(site_id=NULLIF(current_setting('app.site_id',true),'')) WITH CHECK(site_id=NULLIF(current_setting('app.site_id',true),''));
 CREATE POLICY model_selection_scope ON platform.model_selection_decision USING(site_id=NULLIF(current_setting('app.site_id',true),'')) WITH CHECK(site_id=NULLIF(current_setting('app.site_id',true),''));
 
-REVOKE ALL ON platform.model_inventory_import,platform.model_inventory_activation,platform.model_inventory_pointer,platform.model_provider_snapshot,platform.model_definition_snapshot,platform.model_provider_binding_snapshot,platform.model_product_route_snapshot,platform.model_provider_availability,platform.model_definition_availability,platform.model_site_policy_revision,platform.model_site_assignment_revision,platform.model_site_policy_pointer,platform.model_selection_decision FROM PUBLIC;
+REVOKE ALL ON platform.model_inventory_import,platform.model_inventory_activation,platform.model_inventory_pointer,platform.model_provider_snapshot,platform.model_definition_snapshot,platform.model_provider_binding_snapshot,platform.model_product_route_snapshot,platform.model_provider_availability,platform.model_definition_availability,platform.model_provider_availability_report,platform.model_site_policy_revision,platform.model_site_assignment_revision,platform.model_site_policy_pointer,platform.model_selection_decision FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.reject_immutable_model_control_update() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.validate_model_route_capabilities() FROM PUBLIC;
-REVOKE ALL ON FUNCTION platform.import_model_inventory(UUID,TEXT,TEXT,JSONB,TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.import_model_inventory(UUID,TEXT,TEXT,JSONB,JSONB,TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.activate_model_inventory(UUID,TEXT,BIGINT,TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.put_model_site_policy(UUID,TEXT,TEXT,TEXT,BIGINT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.resolve_model_candidates(TEXT,TEXT,TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.find_model_selection_decision(UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.report_model_provider_availability(UUID,TEXT,TEXT,TEXT,BIGINT,TEXT,TIMESTAMPTZ,TEXT) FROM PUBLIC;

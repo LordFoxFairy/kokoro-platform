@@ -18,6 +18,7 @@
     "db:migrate:platform": "node dist/src/infrastructure/postgres/migrator.js",
     "db:reset": "pnpm -r db:reset",
     "model-control:export-legacy": "tsx scripts/model-control/export-legacy.mts",
+    "model-control:import-bundle": "tsx scripts/model-control/import-bundle.mts",
     "model-control:import-canonical": "tsx scripts/model-control/import-canonical.mts",
     "model-control:activate-catalog": "tsx scripts/model-control/activate-catalog.mts",
     "model-control:change-site-policy": "tsx scripts/model-control/change-site-policy.mts",

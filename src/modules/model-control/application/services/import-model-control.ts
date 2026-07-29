@@ -1,6 +1,7 @@
 import type { VerifiedRequestSecurityContext } from "../../../../shared/security-context/index.js";
 import type { PlatformUnitOfWork } from "../../../../shared/unit-of-work/index.js";
 import { canonicalizeModelInventory } from "../../domain/model-catalog.js";
+import { canonicalizeProviderOperationalAvailability } from "../../domain/provider-availability.js";
 import type {
   ModelControlRepository,
   ModelInventoryImportAdministration,
@@ -23,6 +24,18 @@ export class ImportModelControlService implements ModelInventoryImportAdministra
     )
       throw new Error("MODEL_IMPORT_ID_INVALID");
     const inventory = canonicalizeModelInventory(input.inventory);
+    const providerAvailability = canonicalizeProviderOperationalAvailability(
+      input.providerAvailability ??
+        inventory.document.providers.map((provider) => ({
+          providerKey: provider.key,
+          status: "active",
+          health: "unknown",
+          epoch: "0",
+          observationRef: null,
+          observedAt: null,
+        })),
+      new Set(inventory.document.providers.map((provider) => provider.key)),
+    );
     if (context.trustedCaller.kind !== "admin_workload")
       throw new Error("MODEL_INVENTORY_IMPORT_ADMIN_WORKLOAD_REQUIRED");
     if (context.actor.kind !== "operator" && context.actor.kind !== "workload")
@@ -34,6 +47,7 @@ export class ImportModelControlService implements ModelInventoryImportAdministra
           importId: input.importId,
           importedBy: context.actor.subjectId,
           inventory,
+          providerAvailability,
         }),
     );
   }

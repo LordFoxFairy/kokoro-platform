@@ -10,6 +10,7 @@ import type {
   CanonicalizedSiteModelPolicy,
   SiteModelPolicy,
 } from "../../domain/site-model-policy.js";
+import type { ProviderOperationalAvailability } from "../../domain/provider-availability.js";
 
 export interface ModelInventoryImportReceipt {
   readonly importId: string;
@@ -29,6 +30,12 @@ export interface SiteModelPolicyChangeReceipt {
   readonly changeId: string;
   readonly policyDigest: string;
   readonly revision: string;
+  readonly replayed: boolean;
+}
+export interface ModelProviderAvailabilityReportReceipt {
+  readonly reportId: string;
+  readonly providerKey: string;
+  readonly appliedEpoch: string;
   readonly replayed: boolean;
 }
 export interface ModelCandidate {
@@ -111,6 +118,7 @@ export interface ModelControlRepository {
       readonly importId: string;
       readonly importedBy: string;
       readonly inventory: CanonicalizedModelInventory;
+      readonly providerAvailability: readonly ProviderOperationalAvailability[];
     },
   ): Promise<ModelInventoryImportReceipt>;
   activateInventory(
@@ -131,6 +139,19 @@ export interface ModelControlRepository {
       readonly policy: CanonicalizedSiteModelPolicy;
     },
   ): Promise<SiteModelPolicyChangeReceipt>;
+  reportProviderAvailability(
+    transaction: PlatformTransaction,
+    input: {
+      readonly reportId: string;
+      readonly providerKey: string;
+      readonly status: ProviderOperationalAvailability["status"];
+      readonly health: ProviderOperationalAvailability["health"];
+      readonly expectedEpoch: string;
+      readonly observationRef: string | null;
+      readonly observedAt: string | null;
+      readonly reportedBy: string;
+    },
+  ): Promise<ModelProviderAvailabilityReportReceipt>;
   loadCandidates(
     transaction: PlatformTransaction,
     input: ResolveModelPolicyInput,
@@ -155,6 +176,7 @@ export interface ModelInventoryImportAdministration {
     input: {
       readonly importId: string;
       readonly inventory: CanonicalModelInventory;
+      readonly providerAvailability?: readonly ProviderOperationalAvailability[];
     },
     context: VerifiedRequestSecurityContext,
   ): Promise<ModelInventoryImportReceipt>;
@@ -178,4 +200,18 @@ export interface ModelInventoryActivationAdministration {
     },
     context: VerifiedRequestSecurityContext,
   ): Promise<ModelInventoryActivationReceipt>;
+}
+export interface ModelProviderAvailabilityReporting {
+  report(
+    input: {
+      readonly reportId: string;
+      readonly providerKey: string;
+      readonly status: ProviderOperationalAvailability["status"];
+      readonly health: ProviderOperationalAvailability["health"];
+      readonly expectedEpoch: string;
+      readonly observationRef: string | null;
+      readonly observedAt: string | null;
+    },
+    context: VerifiedRequestSecurityContext,
+  ): Promise<ModelProviderAvailabilityReportReceipt>;
 }
