@@ -8,12 +8,19 @@ import { AdminLocalCommandRegistry } from "../../application/admin-command-servi
 import { PostgresAdminAuthorityRepository } from "./admin-authority-repository.js";
 import { createAdminAuthorityCommandHandler } from "./admin-authority-command-handler.js";
 
-export function createAdminWorkerExecutionCycle(input: Readonly<{
+export interface AdminWorkerExecutionRuntime {
+  runOneCycle(context: Readonly<{ signal: AbortSignal }>): Promise<void>;
+  stopClaiming(): Promise<void>;
+  returnLeases(reason: "shutdown" | "shutdown-deadline" | "stop-claim-failed"): Promise<void>;
+}
+
+export function createAdminWorkerExecutionRuntime(input: Readonly<{
   database: Pick<PlatformTransactionalDatabaseClient,
     "internalTransaction" | "adminExecutionTransaction">;
   workerId: string;
-}>): (context: Readonly<{ signal: AbortSignal }>) => Promise<void> {
+}>): AdminWorkerExecutionRuntime {
   const outbox = new OutboxRepository();
+  let acceptingClaims = true;
   const registry = new AdminLocalCommandRegistry([
     createAdminAuthorityCommandHandler(),
   ]);
@@ -29,11 +36,25 @@ export function createAdminWorkerExecutionCycle(input: Readonly<{
       }),
     },
   });
-  return createAdminExecutionCycle({
+  const runOneCycle = createAdminExecutionCycle({
     database: input.database,
     executor,
     outbox,
     workerId: input.workerId,
     reference: randomUUID,
+    canClaim: () => acceptingClaims,
+  });
+  return Object.freeze({
+    runOneCycle,
+    stopClaiming: async () => {
+      acceptingClaims = false;
+    },
+    returnLeases: async () => {
+      await input.database.internalTransaction("admin.execution.retry", (transaction) =>
+        outbox.releaseOwnedLeases(transaction, {
+          workerId: input.workerId,
+          owners: ["admin-execution"],
+        }));
+    },
   });
 }

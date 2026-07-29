@@ -7,12 +7,19 @@ import type { AdminLocalCommandHandler } from "../../application/admin-command-s
 export function createAdminAuthorityCommandHandler(): AdminLocalCommandHandler {
   const execute: AdminLocalCommandHandler["execute"] = async (transaction, input) => {
     if (input.approval === undefined) throw new Error("ADMIN_AUTHORITY_APPROVAL_REQUIRED");
-    const rows = await resolvePlatformTransaction(transaction).query<{
-      result: JsonValue;
-    }>(
-      `SELECT platform.apply_admin_authority_change($1::uuid,$2::jsonb) AS result`,
-      [input.approval.approvalRef, JSON.stringify(input.payload)],
-    );
+    let rows: readonly { result: JsonValue }[];
+    try {
+      rows = await resolvePlatformTransaction(transaction).query<{ result: JsonValue }>(
+        `SELECT platform.apply_admin_authority_change($1::uuid,$2::jsonb) AS result`,
+        [input.approval.approvalRef, JSON.stringify(input.payload)],
+      );
+    } catch (error) {
+      const code = permanentAuthorityRejection(error);
+      if (code !== null) {
+        return Object.freeze({ disposition: "rejected" as const, code, result: { code } });
+      }
+      throw error;
+    }
     if (rows.length !== 1 || rows[0] === undefined) {
       throw new Error("ADMIN_AUTHORITY_CHANGE_FAILED");
     }
@@ -29,4 +36,13 @@ export function createAdminAuthorityCommandHandler(): AdminLocalCommandHandler {
     }),
     execute,
   });
+}
+
+function permanentAuthorityRejection(error: unknown): string | null {
+  const code = error instanceof Error ? error.message : "";
+  return [
+    "ADMIN_AUTHORITY_CHANGE_INVALID",
+    "ADMIN_AUTHORITY_EPOCH_CONFLICT",
+    "ADMIN_AUTHORITY_QUORUM_REQUIRED",
+  ].includes(code) ? code : null;
 }

@@ -129,6 +129,24 @@ export class OutboxRepository {
     if (changed !== 1) throw new Error("OUTBOX_LEASE_LOST");
   }
 
+  async releaseOwnedLeases(
+    transaction: PlatformTransaction,
+    input: Readonly<{ workerId: string; owners: readonly string[] }>,
+  ): Promise<number> {
+    assertBoundedIdentifier(input.workerId, "OUTBOX_WORKER_ID_INVALID");
+    if (input.owners.length < 1 || input.owners.length > 32) {
+      throw new Error("OUTBOX_OWNER_ALLOWLIST_INVALID");
+    }
+    input.owners.forEach((owner) =>
+      assertBoundedIdentifier(owner, "OUTBOX_OWNER_ALLOWLIST_INVALID"));
+    return resolvePlatformTransaction(transaction).execute(
+      `UPDATE platform.outbox_event
+       SET state='pending',available_at=now(),lease_owner=NULL,lease_token=NULL,
+           lease_expires_at=NULL,updated_at=now(),last_error_code='WORKER_SHUTDOWN'
+       WHERE state='leased' AND lease_owner=$1 AND owner=ANY($2::text[])`,
+      [input.workerId, input.owners],
+    );
+  }
 }
 
 function sameEnvelope(stored: OutboxEvent, candidate: OutboxEvent): boolean {

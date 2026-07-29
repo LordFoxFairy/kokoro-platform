@@ -68,6 +68,29 @@ describe("outbox retry bounds", () => {
       expect(statement).toContain("lease_token=NULL");
     } finally { revokePlatformTransaction(lease); }
   });
+
+  it("returns every owned lease for a bounded owner set during worker shutdown", async () => {
+    const statements: unknown[] = [];
+    const lease = issuePlatformTransaction({
+      query: async () => [],
+      execute: async (statement, values) => {
+        statements.push({ statement, values });
+        return 2;
+      },
+    });
+    try {
+      await expect(new OutboxRepository().releaseOwnedLeases(lease.transaction, {
+        workerId: "admin-worker-01",
+        owners: ["admin-execution"],
+      })).resolves.toBe(2);
+      expect(statements[0]).toMatchObject({
+        statement: expect.stringContaining("lease_owner=$1"),
+        values: ["admin-worker-01", ["admin-execution"]],
+      });
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
 });
 
 function event(): OutboxEvent {

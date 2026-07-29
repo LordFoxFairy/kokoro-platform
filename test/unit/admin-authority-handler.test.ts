@@ -50,4 +50,23 @@ describe("Admin authority command handler", () => {
       revokePlatformTransaction(lease);
     }
   });
+
+  it("returns a terminal business rejection instead of retrying a permanent authority conflict", async () => {
+    const handler = createAdminAuthorityCommandHandler();
+    const lease = issuePlatformTransaction({
+      async query() { throw new Error("ADMIN_AUTHORITY_QUORUM_REQUIRED"); },
+      async execute() { return 0; },
+    });
+    try {
+      await expect(handler.execute(lease.transaction, {
+        admission: {} as never,
+        approval: { approvalRef: "018f1414-1414-7414-8414-141414141414" } as never,
+        payload: { action: "revoke" }, requestDigest: "a".repeat(64),
+      })).resolves.toEqual({ disposition: "rejected",
+        code: "ADMIN_AUTHORITY_QUORUM_REQUIRED",
+        result: { code: "ADMIN_AUTHORITY_QUORUM_REQUIRED" } });
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
 });

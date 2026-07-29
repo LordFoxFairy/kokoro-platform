@@ -12,7 +12,7 @@ import { createCommerceOutboxReconciliationCycle, HmacHttpOutboxDeliveryTranspor
 import { createSiteRuntimeWorkerProductionComposition } from "./site-runtime-worker-composition.js";
 import { createAdminTerminalizerCycle } from
   "../modules/admin-control/application/admin-terminalizer.js";
-import { createAdminWorkerExecutionCycle } from
+import { createAdminWorkerExecutionRuntime } from
   "../modules/admin-control/infrastructure/postgres/admin-worker-composition.js";
 import { PostgresAdminAuthorityRepository } from
   "../modules/admin-control/infrastructure/postgres/admin-authority-repository.js";
@@ -32,6 +32,22 @@ export interface PlatformWorkerProcess {
 
 export interface PlatformWorkerCycleContext {
   readonly signal: AbortSignal;
+}
+
+export async function runPlatformWorkerActivities(
+  context: PlatformWorkerCycleContext,
+  activities: readonly ((context: PlatformWorkerCycleContext) => Promise<void>)[],
+): Promise<void> {
+  const errors: unknown[] = [];
+  for (const activity of activities) {
+    try {
+      await activity(context);
+    } catch (error) {
+      if (context.signal.aborted) throw error;
+      errors.push(error);
+    }
+  }
+  if (errors.length > 0) throw new AggregateError(errors, "PLATFORM_WORKER_CYCLE_FAILED");
 }
 
 export function createPlatformWorkerProcess(options: {
@@ -242,25 +258,20 @@ export async function runPlatformWorkerMain(): Promise<void> {
     database,
     repository: new PostgresAdminAuthorityRepository(),
   });
-  const executeAdmin = createAdminWorkerExecutionCycle({
+  const adminExecution = createAdminWorkerExecutionRuntime({
     database,
     workerId: process.env.PLATFORM_WORKER_ID ?? `platform-worker-${process.pid}`,
   });
   const worker = createPlatformWorkerProcess({
     database,
-    runOneCycle: async (context) => {
-      await Promise.all([
-        authorizationRetention(context),
-        commerceOutbox(context),
-        siteRuntime.runOneCycle(context),
-        (async () => {
-          await terminalizeAdmin(context);
-          await executeAdmin(context);
-        })(),
-      ]);
+    runOneCycle: (context) => runPlatformWorkerActivities(context,
+      [authorizationRetention, commerceOutbox, siteRuntime.runOneCycle, terminalizeAdmin, adminExecution.runOneCycle]),
+    stopClaiming: async () => {
+      await Promise.all([siteRuntime.stopClaiming(), adminExecution.stopClaiming()]);
     },
-    stopClaiming: siteRuntime.stopClaiming,
-    returnLease: siteRuntime.returnLease,
+    returnLease: async (reason) => {
+      await Promise.all([siteRuntime.returnLease(reason), adminExecution.returnLeases(reason)]);
+    },
     onCycleError: (error) => console.error("Platform Worker cycle failed", error),
   });
   const shutdown = () => {

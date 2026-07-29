@@ -53,6 +53,7 @@ export function createAdminExecutionCycle(input: Readonly<{
   limit?: number;
   leaseSeconds?: number;
   maxAttempts?: number;
+  canClaim?: () => boolean;
 }>): (context: Readonly<{ signal: AbortSignal }>) => Promise<void> {
   bounded(input.workerId);
   const outbox = input.outbox ?? new OutboxRepository();
@@ -62,6 +63,7 @@ export function createAdminExecutionCycle(input: Readonly<{
   const maxAttempts = input.maxAttempts ?? 8;
   return async ({ signal }) => {
     signal.throwIfAborted();
+    if (input.canClaim?.() === false) return;
     const leaseToken = input.reference();
     bounded(leaseToken);
     const events = await input.database.internalTransaction("admin.execution.claim", (transaction) =>

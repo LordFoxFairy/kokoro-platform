@@ -86,6 +86,12 @@ export class AdminPostEffectReviewService {
         if (context.actor.subjectId === review.makerRef) {
           throw new Error("ADMIN_POST_EFFECT_REVIEW_INDEPENDENCE_REQUIRED");
         }
+        if (context.actor.assuranceLevel !== "phishing_resistant" ||
+          context.actor.stepUpAt === undefined || context.actor.stepUpAt === null ||
+          Date.parse(context.actor.stepUpAt) > Date.parse(now) ||
+          Date.parse(now) - Date.parse(context.actor.stepUpAt) > 5 * 60_000) {
+          throw new Error("ADMIN_POST_EFFECT_REVIEW_STEP_UP_REQUIRED");
+        }
         const generation = epoch(context.actor.subjectGeneration);
         const authority = await this.dependencies.repository.lockOperatorAuthority(transaction, {
           operatorRef: context.actor.subjectId,
