@@ -576,6 +576,97 @@ model AuthorizationIdentitySession {
   @@schema("platform")
 }
 
+model IdentityAccount {
+  siteRef           String   @map("site_ref")
+  accountRef        String   @map("account_ref")
+  subjectRef        String   @map("subject_ref")
+  emailNormalized   String   @map("email_normalized")
+  state             String
+  accountGeneration BigInt   @default(1) @map("account_generation")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@id([siteRef, accountRef])
+  @@unique([siteRef, emailNormalized])
+  @@unique([siteRef, subjectRef])
+  @@map("identity_account")
+  @@schema("platform")
+}
+
+model IdentityPasswordCredential {
+  siteRef          String   @map("site_ref")
+  accountRef       String   @map("account_ref")
+  passwordHash     String   @map("password_hash")
+  pepperVersion    Int      @map("pepper_version")
+  credentialEpoch BigInt   @default(1) @map("credential_epoch")
+  changedAt        DateTime @default(now()) @map("changed_at") @db.Timestamptz(6)
+
+  @@id([siteRef, accountRef])
+  @@map("identity_password_credential")
+  @@schema("platform")
+}
+
+model IdentityVerificationTransaction {
+  siteRef              String    @map("site_ref")
+  transactionRef       String    @map("transaction_ref")
+  purpose              String
+  emailNormalized      String    @map("email_normalized")
+  pendingPasswordHash  String?   @map("pending_password_hash")
+  pendingPepperVersion Int?      @map("pending_pepper_version")
+  secretDigest         String    @map("secret_digest") @db.Char(64)
+  requestDigest        String    @map("request_digest") @db.Char(64)
+  state                String    @default("pending")
+  attemptCount         Int       @default(0) @map("attempt_count")
+  maxAttempts          Int       @map("max_attempts")
+  resendCount          Int       @default(0) @map("resend_count")
+  expiresAt            DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt           DateTime? @map("consumed_at") @db.Timestamptz(6)
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@id([siteRef, transactionRef])
+  @@index([siteRef, emailNormalized, createdAt])
+  @@map("identity_verification_transaction")
+  @@schema("platform")
+}
+
+model IdentityRefreshFamily {
+  siteRef           String    @map("site_ref")
+  familyRef         String    @map("family_ref")
+  accountRef        String    @map("account_ref")
+  subjectRef        String    @map("subject_ref")
+  sessionRef        String    @map("session_ref")
+  state             String    @default("active")
+  currentGeneration BigInt    @default(1) @map("current_generation")
+  absoluteExpiresAt DateTime  @map("absolute_expires_at") @db.Timestamptz(6)
+  revokedAt         DateTime? @map("revoked_at") @db.Timestamptz(6)
+  revokeReason      String?   @map("revoke_reason")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@id([siteRef, familyRef])
+  @@index([siteRef, sessionRef])
+  @@map("identity_refresh_family")
+  @@schema("platform")
+}
+
+model IdentityRefreshCredential {
+  siteRef          String    @map("site_ref")
+  familyRef        String    @map("family_ref")
+  generation       BigInt
+  credentialDigest String   @map("credential_digest") @db.Char(64)
+  state            String    @default("active")
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt       DateTime? @map("consumed_at") @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@id([siteRef, credentialDigest])
+  @@unique([siteRef, familyRef, generation])
+  @@index([siteRef, familyRef, generation])
+  @@map("identity_refresh_credential")
+  @@schema("platform")
+}
+
 model CommerceCommand {
   commandId       String    @id @map("command_id")
   siteRef         String    @map("site_ref")
