@@ -46,6 +46,7 @@ export interface AssetUploadRepositoryPort {
       session: AssetUploadSession;
       idempotencyKey: string;
       requestDigest: string;
+      maximumInflightBytes: bigint;
     }>,
   ): Promise<ClaimUploadIntentResult>;
 
@@ -72,6 +73,11 @@ export interface AssetUploadCapability {
 }
 
 export interface AssetUploadCapabilityIssuerPort {
+  /**
+   * Issues an opaque, initially inactive credential. The upload data plane MUST
+   * authorize every use against the owner's current (sessionRef, capabilityEpoch)
+   * projection; it must never return a standalone object-store credential.
+   */
   issue(input: Readonly<{
     audience: string;
     storageTenantRef: string;

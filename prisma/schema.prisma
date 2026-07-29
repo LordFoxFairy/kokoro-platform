@@ -1746,3 +1746,100 @@ model AuthorizationSessionAccessGrant {
   @@map("authorization_session_access_grant")
   @@schema("platform")
 }
+
+model AssetUploadIntent {
+  intentRef              String   @id @map("intent_ref")
+  siteRef                String   @map("site_ref")
+  workloadIdentityId     String   @map("workload_identity_id")
+  siteReleaseRef         String   @map("site_release_ref")
+  bindingEpoch           BigInt   @map("binding_epoch")
+  subjectRef             String   @map("subject_ref")
+  subjectGeneration      BigInt   @map("subject_generation")
+  projectRef             String   @map("project_ref")
+  purpose                String
+  safeDisplayName        String   @map("safe_display_name")
+  clientMediaType        String   @map("client_media_type")
+  expectedSize           BigInt   @map("expected_size")
+  expectedChecksumSha256 String   @map("expected_checksum_sha256") @db.Char(64)
+  policyRevisionRef      String   @map("policy_revision_ref")
+  idempotencyKey         String   @map("idempotency_key")
+  requestDigest          String   @map("request_digest") @db.Char(64)
+  state                  String
+  expectedVersion        BigInt   @map("expected_version")
+  expiresAt              DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([siteRef, subjectRef, subjectGeneration, idempotencyKey])
+  @@unique([siteRef, intentRef])
+  @@index([siteRef, subjectRef, state, expiresAt])
+  @@map("asset_upload_intent")
+  @@schema("platform")
+}
+
+model AssetUploadSession {
+  sessionRef                String    @id @map("session_ref")
+  intentRef                 String    @unique @map("intent_ref")
+  siteRef                   String    @map("site_ref")
+  subjectRef                String    @map("subject_ref")
+  subjectGeneration         BigInt    @map("subject_generation")
+  projectRef                String    @map("project_ref")
+  purpose                   String
+  quotaRevisionRef          String    @map("quota_revision_ref")
+  storageTenantRef          String    @map("storage_tenant_ref")
+  storageRegion             String    @map("storage_region")
+  quarantineObjectRef       String    @map("quarantine_object_ref")
+  protocolRevision          String    @map("protocol_revision")
+  capabilityAudience        String    @map("capability_audience")
+  minimumPartBytes          BigInt    @map("minimum_part_bytes")
+  maximumPartBytes          BigInt    @map("maximum_part_bytes")
+  capabilityLifetimeSeconds Int       @map("capability_lifetime_seconds")
+  capabilityEpoch           BigInt    @default(0) @map("capability_epoch")
+  capabilityExpiresAt       DateTime? @map("capability_expires_at") @db.Timestamptz(6)
+  state                     String
+  expectedVersion           BigInt    @map("expected_version")
+  expiresAt                 DateTime  @map("expires_at") @db.Timestamptz(6)
+  createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([siteRef, sessionRef])
+  @@unique([storageTenantRef, storageRegion, quarantineObjectRef])
+  @@index([siteRef, subjectRef, state, expiresAt])
+  @@map("asset_upload_session")
+  @@schema("platform")
+}
+
+model AssetQuotaAccount {
+  siteRef               String   @map("site_ref")
+  subjectRef            String   @map("subject_ref")
+  purpose               String
+  quotaRevisionRef      String   @map("quota_revision_ref")
+  maximumInflightBytes  BigInt   @map("maximum_inflight_bytes")
+  reservedInflightBytes BigInt   @default(0) @map("reserved_inflight_bytes")
+  expectedVersion       BigInt   @default(1) @map("expected_version")
+  updatedAt             DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@id([siteRef, subjectRef, purpose])
+  @@map("asset_quota_account")
+  @@schema("platform")
+}
+
+model AssetQuotaReservation {
+  reservationRef     String   @id @map("reservation_ref")
+  siteRef            String   @map("site_ref")
+  subjectRef         String   @map("subject_ref")
+  purpose            String
+  intentRef          String   @unique @map("intent_ref")
+  sessionRef         String   @unique @map("session_ref")
+  quotaRevisionRef   String   @map("quota_revision_ref")
+  reservedBytes      BigInt   @map("reserved_bytes")
+  state              String
+  releaseEvidenceRef String?  @map("release_evidence_ref")
+  expiresAt          DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([siteRef, subjectRef, purpose, state, expiresAt])
+  @@map("asset_quota_reservation")
+  @@schema("platform")
+}

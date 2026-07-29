@@ -4,6 +4,7 @@ export type UploadSessionState =
   | "completing"
   | "reconciling_upload"
   | "validating"
+  | "completed"
   | "aborting"
   | "aborted"
   | "rejected";
@@ -253,7 +254,7 @@ export function verifyUploadSession(value: AssetUploadSession): AssetUploadSessi
   instant(value.expiresAt, "ASSET_UPLOAD_EXPIRY_INVALID");
   if (value.capabilityExpiresAt !== null) instant(value.capabilityExpiresAt, "ASSET_UPLOAD_CAPABILITY_EXPIRY_INVALID");
   if (!new Set<UploadSessionState>(["awaiting_capability", "uploading", "completing",
-    "reconciling_upload", "validating", "aborting", "aborted", "rejected"]).has(value.state)) {
+    "reconciling_upload", "validating", "completed", "aborting", "aborted", "rejected"]).has(value.state)) {
     throw new Error("ASSET_UPLOAD_SESSION_STATE_INVALID");
   }
   return Object.freeze({ ...value });
