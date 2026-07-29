@@ -22,7 +22,8 @@ export interface BlobCandidate {
   readonly observedSize: bigint;
   readonly checksumSha256: string;
   readonly clientMediaType: string;
-  readonly state: "checksum_verified" | "scanning" | "clean" | "rejected";
+  readonly policyRevisionRef: string;
+  readonly state: "checksum_verified" | "scanning" | "scan_unavailable" | "promotion_ready" | "rejected";
   readonly expectedVersion: bigint;
   readonly completionRequestedAt: string;
   readonly observedAt: string;
@@ -106,12 +107,36 @@ export function evaluateQuarantineObservation(input: Readonly<{
       observedSize: input.observation.size,
       checksumSha256: input.observation.checksumSha256,
       clientMediaType: intent.clientMediaType,
+      policyRevisionRef: intent.policyRevisionRef,
       state: "checksum_verified",
       expectedVersion: 1n,
       completionRequestedAt: session.completionRequestedAt,
       observedAt: input.observation.observedAt,
     }),
   });
+}
+
+export function verifyBlobCandidate(value: BlobCandidate): BlobCandidate {
+  identifier(value.candidateRef, "ASSET_BLOB_CANDIDATE_REF_INVALID");
+  identifier(value.siteRef, "ASSET_SITE_REF_INVALID");
+  identifier(value.subjectRef, "ASSET_SUBJECT_REF_INVALID");
+  identifier(value.projectRef, "ASSET_PROJECT_REF_INVALID");
+  identifier(value.intentRef, "ASSET_UPLOAD_INTENT_REF_INVALID");
+  identifier(value.sessionRef, "ASSET_UPLOAD_SESSION_REF_INVALID");
+  identifier(value.storageTenantRef, "ASSET_STORAGE_TENANT_INVALID");
+  identifier(value.providerVersionRef, "ASSET_PROVIDER_VERSION_INVALID");
+  identifier(value.policyRevisionRef, "ASSET_POLICY_REVISION_INVALID");
+  digest(value.providerEtagDigest, "ASSET_PROVIDER_ETAG_DIGEST_INVALID");
+  digest(value.checksumSha256, "ASSET_OBJECT_CHECKSUM_INVALID");
+  instant(value.completionRequestedAt, "ASSET_UPLOAD_COMPLETION_TIME_INVALID");
+  instant(value.observedAt, "ASSET_OBJECT_OBSERVATION_TIME_INVALID");
+  if (
+    value.subjectGeneration < 1n || value.observedSize < 1n || value.expectedVersion < 1n ||
+    Date.parse(value.observedAt) < Date.parse(value.completionRequestedAt) ||
+    !new Set<BlobCandidate["state"]>(["checksum_verified", "scanning", "scan_unavailable",
+      "promotion_ready", "rejected"]).has(value.state)
+  ) throw new Error("ASSET_BLOB_CANDIDATE_VALUE_INVALID");
+  return Object.freeze({ ...value });
 }
 
 function identifier(value: string, code: string): void {

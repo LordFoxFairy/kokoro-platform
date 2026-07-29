@@ -36,7 +36,7 @@ export class ProcessUploadCompletionService {
     bounded(input.sessionRef, "ASSET_UPLOAD_SESSION_REF_INVALID");
     if (input.expectedVersion < 1n) throw new Error("ASSET_UPLOAD_VERSION_INVALID");
     const work = await this.dependencies.unitOfWork.execute(
-      "asset.upload-completion.observe",
+      { operation: "asset.upload-completion.observe", siteRef: input.siteRef },
       (transaction) => this.dependencies.repository.loadCompletionWork(transaction, input),
     );
     if (work.disposition !== "work") return Object.freeze({ disposition: "superseded" });
@@ -73,7 +73,7 @@ export class ProcessUploadCompletionService {
         intentRef: input.intentRef, sessionRef: input.sessionRef, reasonCode: decision.code,
       }), this.reference(), input.sessionRef);
       const result = await this.dependencies.unitOfWork.execute(
-        "asset.upload-completion.observe",
+        { operation: "asset.upload-completion.observe", siteRef: input.siteRef },
         (transaction) => this.dependencies.repository.rejectCompletion(transaction, {
           siteRef: input.siteRef, intentRef: input.intentRef, sessionRef: input.sessionRef,
           expectedSessionVersion: work.session.expectedVersion, reasonCode: decision.code,
@@ -90,7 +90,7 @@ export class ProcessUploadCompletionService {
       expectedVersion: decision.candidate.expectedVersion.toString(),
     }), this.reference(), decision.candidate.candidateRef);
     const result = await this.dependencies.unitOfWork.execute(
-      "asset.upload-completion.observe",
+      { operation: "asset.upload-completion.observe", siteRef: input.siteRef },
       (transaction) => this.dependencies.repository.commitCandidate(transaction, {
         candidate: decision.candidate,
         expectedSessionVersion: work.session.expectedVersion,

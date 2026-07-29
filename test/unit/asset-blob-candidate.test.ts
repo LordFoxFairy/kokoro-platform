@@ -48,6 +48,7 @@ describe("Blob candidate admission", () => {
         quarantineObjectRef: "quarantine/opaque_0123456789",
         providerVersionRef: "provider_version_01", providerEtagDigest: "b".repeat(64),
         observedSize: 1234n, checksumSha256: "a".repeat(64), clientMediaType: "image/png",
+        policyRevisionRef: "asset_policy_01",
         state: "checksum_verified", expectedVersion: 1n,
         completionRequestedAt: "2026-07-28T12:01:00.000Z",
         observedAt: "2026-07-28T12:01:05.000Z",

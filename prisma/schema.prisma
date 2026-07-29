@@ -1862,6 +1862,7 @@ model AssetBlobCandidate {
   observedSize          BigInt   @map("observed_size")
   checksumSha256        String   @map("checksum_sha256") @db.Char(64)
   clientMediaType       String   @map("client_media_type")
+  policyRevisionRef     String   @map("policy_revision_ref")
   state                 String
   expectedVersion       BigInt   @map("expected_version")
   completionRequestedAt DateTime @map("completion_requested_at") @db.Timestamptz(6)
@@ -1871,6 +1872,7 @@ model AssetBlobCandidate {
   updatedAt             DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@unique([storageTenantRef, storageRegion, quarantineObjectRef, providerVersionRef])
+  @@unique([siteRef, candidateRef])
   @@index([siteRef, state, observedAt])
   @@map("asset_blob_candidate")
   @@schema("platform")
@@ -1886,5 +1888,71 @@ model AssetUploadRejection {
   rejectedAt     DateTime @default(now()) @map("rejected_at") @db.Timestamptz(6)
 
   @@map("asset_upload_rejection")
+  @@schema("platform")
+}
+
+model AssetScanEvaluation {
+  evaluationRef            String   @id @map("evaluation_ref")
+  siteRef                  String   @map("site_ref")
+  candidateRef             String   @map("candidate_ref")
+  candidateVersion         BigInt   @map("candidate_version")
+  policyRevisionRef        String   @map("policy_revision_ref")
+  scannerDefinitionRef     String   @map("scanner_definition_ref")
+  scannerRevisionRef       String   @map("scanner_revision_ref")
+  signatureRevisionRef     String   @map("signature_revision_ref")
+  detectedMediaType        String   @map("detected_media_type")
+  magicSignatureRef        String   @map("magic_signature_ref")
+  containerSummaryDigest   String   @map("container_summary_digest") @db.Char(64)
+  malwareDisposition       String   @map("malware_disposition")
+  contentSafetyDisposition String   @map("content_safety_disposition")
+  evidenceRef              String   @map("evidence_ref")
+  evidenceDigest           String   @map("evidence_digest") @db.Char(64)
+  outcome                  String
+  reasonCode               String   @map("reason_code")
+  occurredAt               DateTime @map("occurred_at") @db.Timestamptz(6)
+  createdAt                DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([siteRef, candidateRef, evidenceRef, evidenceDigest])
+  @@index([siteRef, candidateRef, occurredAt])
+  @@map("asset_scan_evaluation")
+  @@schema("platform")
+}
+
+model AssetPromotionIntent {
+  promotionRef                 String    @id @map("promotion_ref")
+  siteRef                      String    @map("site_ref")
+  subjectRef                   String    @map("subject_ref")
+  subjectGeneration            BigInt    @map("subject_generation")
+  projectRef                   String    @map("project_ref")
+  purpose                      String
+  intentRef                    String    @map("intent_ref")
+  sessionRef                   String    @map("session_ref")
+  candidateRef                 String    @unique @map("candidate_ref")
+  evaluationRef                String    @unique @map("evaluation_ref")
+  policyRevisionRef            String    @map("policy_revision_ref")
+  assetRef                     String    @unique @map("asset_ref")
+  assetVersionRef              String    @unique @map("asset_version_ref")
+  blobRef                      String    @unique @map("blob_ref")
+  storageTenantRef             String    @map("storage_tenant_ref")
+  storageRegion                String    @map("storage_region")
+  quarantineObjectRef          String    @map("quarantine_object_ref")
+  quarantineProviderVersionRef String    @map("quarantine_provider_version_ref")
+  trustedObjectRef             String    @map("trusted_object_ref")
+  checksumSha256               String    @map("checksum_sha256") @db.Char(64)
+  size                         BigInt
+  detectedMediaType            String    @map("detected_media_type")
+  state                        String
+  expectedVersion              BigInt    @map("expected_version")
+  promotionEventId             String    @unique @map("promotion_event_id") @db.Uuid
+  copiedProviderVersionRef     String?   @map("copied_provider_version_ref")
+  copiedProviderEtagDigest     String?   @map("copied_provider_etag_digest") @db.Char(64)
+  copiedAt                     DateTime? @map("copied_at") @db.Timestamptz(6)
+  createdAt                    DateTime  @map("created_at") @db.Timestamptz(6)
+  updatedAt                    DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([siteRef, intentRef, purpose])
+  @@unique([storageTenantRef, storageRegion, trustedObjectRef])
+  @@index([siteRef, state, updatedAt])
+  @@map("asset_promotion_intent")
   @@schema("platform")
 }

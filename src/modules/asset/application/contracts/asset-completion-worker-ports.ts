@@ -5,7 +5,10 @@ import type { AssetUploadIntent, AssetUploadSession } from "../../domain/upload-
 
 export interface AssetWorkerUnitOfWorkPort {
   execute<Result>(
-    operation: "asset.upload-completion.observe",
+    scope: Readonly<{
+      operation: "asset.upload-completion.observe" | "asset.scan.evaluate";
+      siteRef: string;
+    }>,
     work: (transaction: PlatformTransaction) => Promise<Result>,
   ): Promise<Result>;
 }

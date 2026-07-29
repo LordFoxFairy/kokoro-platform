@@ -190,16 +190,17 @@ export class PostgresAssetUploadRepository implements AssetUploadRepositoryPort,
        (candidate_ref,site_ref,subject_ref,subject_generation,project_ref,purpose,intent_ref,
         session_ref,storage_tenant_ref,storage_region,quarantine_object_ref,provider_version_ref,
         provider_etag_digest,observed_size,checksum_sha256,client_media_type,state,
-        expected_version,completion_requested_at,observed_at,scan_event_id)
+        policy_revision_ref,expected_version,completion_requested_at,observed_at,scan_event_id)
        VALUES ($1,$2,$3,$4::bigint,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::bigint,$15,$16,
-         $17,$18::bigint,$19::timestamptz,$20::timestamptz,$21::uuid)`,
+         $17,$18,$19::bigint,$20::timestamptz,$21::timestamptz,$22::uuid)`,
       [input.candidate.candidateRef, input.candidate.siteRef, input.candidate.subjectRef,
         input.candidate.subjectGeneration, input.candidate.projectRef, input.candidate.purpose,
         input.candidate.intentRef, input.candidate.sessionRef, input.candidate.storageTenantRef,
         input.candidate.storageRegion, input.candidate.quarantineObjectRef,
         input.candidate.providerVersionRef, input.candidate.providerEtagDigest,
         input.candidate.observedSize, input.candidate.checksumSha256,
-        input.candidate.clientMediaType, input.candidate.state, input.candidate.expectedVersion,
+        input.candidate.clientMediaType, input.candidate.state, input.candidate.policyRevisionRef,
+        input.candidate.expectedVersion,
         input.candidate.completionRequestedAt, input.candidate.observedAt, input.scanEvent.eventId],
     );
     if (inserted !== 1) throw new Error("ASSET_BLOB_CANDIDATE_NOT_PERSISTED");

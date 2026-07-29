@@ -229,6 +229,7 @@ const candidate: BlobCandidate = Object.freeze({
   observedSize: intent.expectedSize,
   checksumSha256: intent.expectedChecksumSha256,
   clientMediaType: intent.clientMediaType,
+  policyRevisionRef: intent.policyRevisionRef,
   state: "checksum_verified",
   expectedVersion: 1n,
   completionRequestedAt: "2026-07-28T12:01:00.000Z",

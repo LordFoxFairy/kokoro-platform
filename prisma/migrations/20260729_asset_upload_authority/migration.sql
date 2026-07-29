@@ -139,7 +139,10 @@ CREATE TABLE platform.asset_blob_candidate (
   observed_size BIGINT NOT NULL CHECK (observed_size > 0),
   checksum_sha256 CHAR(64) NOT NULL CHECK (checksum_sha256 ~ '^[a-f0-9]{64}$'),
   client_media_type TEXT NOT NULL,
-  state TEXT NOT NULL CHECK (state IN ('checksum_verified','scanning','clean','rejected')),
+  policy_revision_ref TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN (
+    'checksum_verified','scanning','scan_unavailable','promotion_ready','rejected'
+  )),
   expected_version BIGINT NOT NULL CHECK (expected_version > 0),
   completion_requested_at TIMESTAMPTZ NOT NULL,
   observed_at TIMESTAMPTZ NOT NULL,
@@ -154,6 +157,7 @@ CREATE TABLE platform.asset_blob_candidate (
     REFERENCES platform.authorization_subject(subject_ref,site_ref),
   FOREIGN KEY(project_ref,site_ref)
     REFERENCES platform.authorization_project(project_ref,site_ref),
+  UNIQUE(site_ref,candidate_ref),
   UNIQUE(storage_tenant_ref,storage_region,quarantine_object_ref,provider_version_ref),
   CHECK (observed_at >= completion_requested_at)
 );
@@ -173,6 +177,86 @@ CREATE TABLE platform.asset_upload_rejection (
   FOREIGN KEY(site_ref,session_ref)
     REFERENCES platform.asset_upload_session(site_ref,session_ref)
 );
+
+CREATE TABLE platform.asset_scan_evaluation (
+  evaluation_ref TEXT PRIMARY KEY,
+  site_ref TEXT NOT NULL,
+  candidate_ref TEXT NOT NULL,
+  candidate_version BIGINT NOT NULL CHECK (candidate_version > 0),
+  policy_revision_ref TEXT NOT NULL,
+  scanner_definition_ref TEXT NOT NULL,
+  scanner_revision_ref TEXT NOT NULL,
+  signature_revision_ref TEXT NOT NULL,
+  detected_media_type TEXT NOT NULL,
+  magic_signature_ref TEXT NOT NULL,
+  container_summary_digest CHAR(64) NOT NULL CHECK (container_summary_digest ~ '^[a-f0-9]{64}$'),
+  malware_disposition TEXT NOT NULL CHECK (malware_disposition IN ('clean','detected','unavailable')),
+  content_safety_disposition TEXT NOT NULL CHECK (
+    content_safety_disposition IN ('allow','deny','not_required','unavailable')
+  ),
+  evidence_ref TEXT NOT NULL,
+  evidence_digest CHAR(64) NOT NULL CHECK (evidence_digest ~ '^[a-f0-9]{64}$'),
+  outcome TEXT NOT NULL CHECK (outcome IN ('clean','rejected','unavailable')),
+  reason_code TEXT NOT NULL,
+  occurred_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  FOREIGN KEY(site_ref,candidate_ref)
+    REFERENCES platform.asset_blob_candidate(site_ref,candidate_ref),
+  UNIQUE(site_ref,candidate_ref,evidence_ref,evidence_digest)
+);
+CREATE INDEX asset_scan_evaluation_candidate_idx
+  ON platform.asset_scan_evaluation(site_ref,candidate_ref,occurred_at);
+
+CREATE TABLE platform.asset_promotion_intent (
+  promotion_ref TEXT PRIMARY KEY,
+  site_ref TEXT NOT NULL,
+  subject_ref TEXT NOT NULL,
+  subject_generation BIGINT NOT NULL CHECK (subject_generation > 0),
+  project_ref TEXT NOT NULL,
+  purpose TEXT NOT NULL,
+  intent_ref TEXT NOT NULL,
+  session_ref TEXT NOT NULL,
+  candidate_ref TEXT NOT NULL UNIQUE,
+  evaluation_ref TEXT NOT NULL UNIQUE REFERENCES platform.asset_scan_evaluation(evaluation_ref),
+  policy_revision_ref TEXT NOT NULL,
+  asset_ref TEXT NOT NULL UNIQUE,
+  asset_version_ref TEXT NOT NULL UNIQUE,
+  blob_ref TEXT NOT NULL UNIQUE,
+  storage_tenant_ref TEXT NOT NULL,
+  storage_region TEXT NOT NULL,
+  quarantine_object_ref TEXT NOT NULL,
+  quarantine_provider_version_ref TEXT NOT NULL,
+  trusted_object_ref TEXT NOT NULL,
+  checksum_sha256 CHAR(64) NOT NULL CHECK (checksum_sha256 ~ '^[a-f0-9]{64}$'),
+  size BIGINT NOT NULL CHECK (size > 0),
+  detected_media_type TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN (
+    'pending_copy','observing_copy','ready_to_finalize','completed','rejected'
+  )),
+  expected_version BIGINT NOT NULL CHECK (expected_version > 0),
+  promotion_event_id UUID NOT NULL UNIQUE REFERENCES platform.outbox_event(event_id),
+  copied_provider_version_ref TEXT,
+  copied_provider_etag_digest CHAR(64),
+  copied_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  FOREIGN KEY(site_ref,candidate_ref)
+    REFERENCES platform.asset_blob_candidate(site_ref,candidate_ref),
+  FOREIGN KEY(site_ref,intent_ref)
+    REFERENCES platform.asset_upload_intent(site_ref,intent_ref),
+  FOREIGN KEY(site_ref,session_ref)
+    REFERENCES platform.asset_upload_session(site_ref,session_ref),
+  FOREIGN KEY(subject_ref,site_ref)
+    REFERENCES platform.authorization_subject(subject_ref,site_ref),
+  FOREIGN KEY(project_ref,site_ref)
+    REFERENCES platform.authorization_project(project_ref,site_ref),
+  UNIQUE(site_ref,intent_ref,purpose),
+  UNIQUE(storage_tenant_ref,storage_region,trusted_object_ref),
+  CHECK ((copied_provider_version_ref IS NULL) = (copied_at IS NULL)),
+  CHECK (copied_provider_etag_digest IS NULL OR copied_provider_etag_digest ~ '^[a-f0-9]{64}$')
+);
+CREATE INDEX asset_promotion_intent_state_idx
+  ON platform.asset_promotion_intent(site_ref,state,updated_at);
 
 CREATE FUNCTION platform.guard_asset_upload_intent_update() RETURNS TRIGGER
 LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
@@ -200,6 +284,60 @@ CREATE FUNCTION platform.reject_asset_immutable_mutation() RETURNS TRIGGER
 LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
 BEGIN
   RAISE EXCEPTION 'ASSET_IMMUTABLE_FACT' USING ERRCODE='23000';
+END $$;
+
+CREATE FUNCTION platform.guard_asset_blob_candidate_update() RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
+BEGIN
+  IF ROW(OLD.candidate_ref,OLD.site_ref,OLD.subject_ref,OLD.subject_generation,OLD.project_ref,
+    OLD.purpose,OLD.intent_ref,OLD.session_ref,OLD.storage_tenant_ref,OLD.storage_region,
+    OLD.quarantine_object_ref,OLD.provider_version_ref,OLD.provider_etag_digest,OLD.observed_size,
+    OLD.checksum_sha256,OLD.client_media_type,OLD.policy_revision_ref,OLD.completion_requested_at,
+    OLD.observed_at,OLD.scan_event_id,OLD.created_at)
+    IS DISTINCT FROM
+    ROW(NEW.candidate_ref,NEW.site_ref,NEW.subject_ref,NEW.subject_generation,NEW.project_ref,
+    NEW.purpose,NEW.intent_ref,NEW.session_ref,NEW.storage_tenant_ref,NEW.storage_region,
+    NEW.quarantine_object_ref,NEW.provider_version_ref,NEW.provider_etag_digest,NEW.observed_size,
+    NEW.checksum_sha256,NEW.client_media_type,NEW.policy_revision_ref,NEW.completion_requested_at,
+    NEW.observed_at,NEW.scan_event_id,NEW.created_at) THEN
+    RAISE EXCEPTION 'ASSET_BLOB_CANDIDATE_IDENTITY_IMMUTABLE' USING ERRCODE='23000';
+  END IF;
+  IF NEW.expected_version<>OLD.expected_version+1 OR NOT (
+    (OLD.state='checksum_verified' AND NEW.state='scanning')
+    OR (OLD.state='scan_unavailable' AND NEW.state='scanning')
+    OR (OLD.state='scanning' AND NEW.state IN ('scan_unavailable','promotion_ready','rejected'))
+  ) THEN
+    RAISE EXCEPTION 'ASSET_BLOB_CANDIDATE_TRANSITION_INVALID' USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE FUNCTION platform.guard_asset_promotion_intent_update() RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
+BEGIN
+  IF ROW(OLD.promotion_ref,OLD.site_ref,OLD.subject_ref,OLD.subject_generation,OLD.project_ref,
+    OLD.purpose,OLD.intent_ref,OLD.session_ref,OLD.candidate_ref,OLD.evaluation_ref,
+    OLD.policy_revision_ref,OLD.asset_ref,OLD.asset_version_ref,OLD.blob_ref,
+    OLD.storage_tenant_ref,OLD.storage_region,OLD.quarantine_object_ref,
+    OLD.quarantine_provider_version_ref,OLD.trusted_object_ref,OLD.checksum_sha256,OLD.size,
+    OLD.detected_media_type,OLD.promotion_event_id,OLD.created_at)
+    IS DISTINCT FROM
+    ROW(NEW.promotion_ref,NEW.site_ref,NEW.subject_ref,NEW.subject_generation,NEW.project_ref,
+    NEW.purpose,NEW.intent_ref,NEW.session_ref,NEW.candidate_ref,NEW.evaluation_ref,
+    NEW.policy_revision_ref,NEW.asset_ref,NEW.asset_version_ref,NEW.blob_ref,
+    NEW.storage_tenant_ref,NEW.storage_region,NEW.quarantine_object_ref,
+    NEW.quarantine_provider_version_ref,NEW.trusted_object_ref,NEW.checksum_sha256,NEW.size,
+    NEW.detected_media_type,NEW.promotion_event_id,NEW.created_at) THEN
+    RAISE EXCEPTION 'ASSET_PROMOTION_IDENTITY_IMMUTABLE' USING ERRCODE='23000';
+  END IF;
+  IF NEW.expected_version<>OLD.expected_version+1 OR NOT (
+    (OLD.state='pending_copy' AND NEW.state IN ('observing_copy','rejected'))
+    OR (OLD.state='observing_copy' AND NEW.state IN ('ready_to_finalize','rejected'))
+    OR (OLD.state='ready_to_finalize' AND NEW.state IN ('completed','rejected'))
+  ) THEN
+    RAISE EXCEPTION 'ASSET_PROMOTION_TRANSITION_INVALID' USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
 END $$;
 
 CREATE FUNCTION platform.guard_asset_upload_session_update() RETURNS TRIGGER
@@ -261,6 +399,10 @@ ALTER TABLE platform.asset_blob_candidate ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform.asset_blob_candidate FORCE ROW LEVEL SECURITY;
 ALTER TABLE platform.asset_upload_rejection ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform.asset_upload_rejection FORCE ROW LEVEL SECURITY;
+ALTER TABLE platform.asset_scan_evaluation ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.asset_scan_evaluation FORCE ROW LEVEL SECURITY;
+ALTER TABLE platform.asset_promotion_intent ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.asset_promotion_intent FORCE ROW LEVEL SECURITY;
 CREATE POLICY asset_upload_intent_site_scope ON platform.asset_upload_intent
   USING(site_ref=NULLIF(current_setting('app.site_id',true),'')
     AND (subject_ref=NULLIF(current_setting('app.subject_id',true),'')
@@ -335,6 +477,28 @@ CREATE POLICY asset_upload_rejection_worker_scope ON platform.asset_upload_rejec
       AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker')
     OR (current_setting('app.workload_kind',true)='admin_workload'
       AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:admin')));
+CREATE POLICY asset_scan_evaluation_worker_scope ON platform.asset_scan_evaluation
+  USING(site_ref=NULLIF(current_setting('app.site_id',true),'')
+    AND ((current_setting('app.workload_kind',true)='platform_worker'
+      AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker')
+    OR (current_setting('app.workload_kind',true)='admin_workload'
+      AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:admin')))
+  WITH CHECK(site_ref=NULLIF(current_setting('app.site_id',true),'')
+    AND ((current_setting('app.workload_kind',true)='platform_worker'
+      AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker')
+    OR (current_setting('app.workload_kind',true)='admin_workload'
+      AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:admin')));
+CREATE POLICY asset_promotion_intent_worker_scope ON platform.asset_promotion_intent
+  USING(site_ref=NULLIF(current_setting('app.site_id',true),'')
+    AND ((current_setting('app.workload_kind',true)='platform_worker'
+      AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker')
+    OR (current_setting('app.workload_kind',true)='admin_workload'
+      AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:admin')))
+  WITH CHECK(site_ref=NULLIF(current_setting('app.site_id',true),'')
+    AND ((current_setting('app.workload_kind',true)='platform_worker'
+      AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker')
+    OR (current_setting('app.workload_kind',true)='admin_workload'
+      AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:admin')));
 
 CREATE TRIGGER asset_upload_intent_update_guard
   BEFORE UPDATE ON platform.asset_upload_intent
@@ -345,6 +509,15 @@ CREATE TRIGGER asset_upload_session_update_guard
 CREATE TRIGGER asset_upload_rejection_immutable
   BEFORE UPDATE OR DELETE ON platform.asset_upload_rejection
   FOR EACH ROW EXECUTE FUNCTION platform.reject_asset_immutable_mutation();
+CREATE TRIGGER asset_scan_evaluation_immutable
+  BEFORE UPDATE OR DELETE ON platform.asset_scan_evaluation
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_asset_immutable_mutation();
+CREATE TRIGGER asset_blob_candidate_update_guard
+  BEFORE UPDATE ON platform.asset_blob_candidate
+  FOR EACH ROW EXECUTE FUNCTION platform.guard_asset_blob_candidate_update();
+CREATE TRIGGER asset_promotion_intent_update_guard
+  BEFORE UPDATE ON platform.asset_promotion_intent
+  FOR EACH ROW EXECUTE FUNCTION platform.guard_asset_promotion_intent_update();
 
 REVOKE ALL ON
   platform.asset_upload_intent,
@@ -352,8 +525,12 @@ REVOKE ALL ON
   platform.asset_quota_account,
   platform.asset_quota_reservation,
   platform.asset_blob_candidate,
-  platform.asset_upload_rejection
+  platform.asset_upload_rejection,
+  platform.asset_scan_evaluation,
+  platform.asset_promotion_intent
 FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.guard_asset_upload_intent_update() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.guard_asset_upload_session_update() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.reject_asset_immutable_mutation() FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.guard_asset_blob_candidate_update() FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.guard_asset_promotion_intent_update() FROM PUBLIC;

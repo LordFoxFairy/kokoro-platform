@@ -38,7 +38,7 @@ describe("ProcessUploadCompletionService", () => {
     expect(harness.computeSha256).not.toHaveBeenCalled();
     expect(harness.commitCandidate).toHaveBeenCalledWith(transaction, expect.objectContaining({
       candidate: expect.objectContaining({ providerVersionRef: "provider_version_01",
-        state: "checksum_verified" }),
+        policyRevisionRef: "asset_policy_01", state: "checksum_verified" }),
       expectedSessionVersion: 3n,
       scanEvent: expect.objectContaining({ eventType: "asset.scan.requested",
         causationId: "event_completion_01" }),
