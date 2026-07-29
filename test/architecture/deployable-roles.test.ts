@@ -15,6 +15,7 @@ import { createPlatformWorkerProcess } from "../../src/process/worker.js";
 
 const apiUrl = "postgresql://platform_api:secret@localhost:5432/kokoro_platform";
 const workerUrl = "postgresql://platform_worker:secret@localhost:5432/kokoro_platform";
+const authorizationUrl = "postgresql://platform_authorization:secret@localhost:5432/kokoro_platform";
 const adminUrl = "postgresql://platform_admin:secret@localhost:5432/kokoro_platform";
 const migratorUrl = "postgresql://platform_migrator:secret@localhost:5432/kokoro_platform";
 const commonEnvironment = {
@@ -22,6 +23,7 @@ const commonEnvironment = {
   PLATFORM_DATABASE_EXPECTED_DATABASE: "kokoro_platform",
   PLATFORM_DATABASE_MIGRATOR_ROLE: "platform_migrator",
   PLATFORM_DATABASE_ADMIN_ROLE: "platform_admin",
+  PLATFORM_DATABASE_AUTHORIZATION_ROLE: "platform_authorization",
 } as const;
 
 describe("Platform PostgreSQL authority", () => {
@@ -65,7 +67,7 @@ describe("Platform PostgreSQL authority", () => {
     ).toThrowError("PLATFORM_DATABASE_URL_USER_MISMATCH");
   });
 
-  it("keeps API, Worker, Admin, and migrator credential classes independent", () => {
+  it("keeps API, Authorization, Worker, Admin, and migrator credential classes independent", () => {
     const api = loadPlatformDatabaseConfig("api", {
       ...commonEnvironment,
       DATABASE_URL_PLATFORM: apiUrl,
@@ -78,6 +80,11 @@ describe("Platform PostgreSQL authority", () => {
       PLATFORM_DATABASE_CREDENTIAL_CLASS: "worker",
       PLATFORM_DATABASE_WORKER_ROLE: "platform_worker",
     });
+    const authorization = loadPlatformDatabaseConfig("authorization", {
+      ...commonEnvironment,
+      DATABASE_URL_PLATFORM: authorizationUrl,
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: "authorization",
+    });
     const admin = loadPlatformDatabaseConfig("admin", {
       ...commonEnvironment,
       DATABASE_URL_PLATFORM: adminUrl,
@@ -87,10 +94,11 @@ describe("Platform PostgreSQL authority", () => {
       new Set([
         api.expectedDatabaseUser,
         worker.expectedDatabaseUser,
+        authorization.expectedDatabaseUser,
         admin.expectedDatabaseUser,
         api.migratorDatabaseUser,
       ]).size,
-    ).toBe(4);
+    ).toBe(5);
   });
 });
 
@@ -119,6 +127,7 @@ describe("Platform migrator", () => {
                 inheritsPrivileges: false,
                 hasAnyMembership: false,
                 isApiMember: false,
+                isAuthorizationMember: false,
                 isWorkerMember: false,
                 isAdminMember: false,
                 canCreateDatabaseObject: true,
@@ -135,6 +144,7 @@ describe("Platform migrator", () => {
           return {
             rows: [
               safeRole("platform_api"),
+              safeRole("platform_authorization"),
               safeRole("platform_worker"),
               safeRole("platform_admin"),
             ],
@@ -145,6 +155,7 @@ describe("Platform migrator", () => {
           return {
             rows: [
               authority("platform_api"),
+              authority("platform_authorization"),
               authority("platform_worker"),
               authority("platform_admin"),
             ],
@@ -193,7 +204,7 @@ describe("Platform migrator", () => {
       `SELECT pg_advisory_lock(hashtext($1)):${MIGRATION_ADVISORY_LOCK}`,
       "execute",
     ]);
-    expect(events.filter((event) => event === "grant")).toHaveLength(44);
+    expect(events.filter((event) => event === "grant")).toHaveLength(59);
     expect(events.slice(-3)).toEqual([
       "verify-authority",
       `SELECT pg_advisory_unlock(hashtext($1)):${MIGRATION_ADVISORY_LOCK}`,
@@ -212,6 +223,7 @@ describe("Platform migrator", () => {
           return {
             rows: [
               safeRole("platform_api"),
+              safeRole("platform_authorization"),
               { ...safeRole("platform_worker"), hasAnyMembership: true },
               safeRole("platform_admin"),
             ],
@@ -240,6 +252,7 @@ describe("Platform migrator", () => {
           return {
             rows: [
               safeRole("platform_api"),
+              safeRole("platform_authorization"),
               safeRole("platform_worker"),
               safeRole("platform_admin"),
             ],
@@ -249,6 +262,7 @@ describe("Platform migrator", () => {
           return {
             rows: [
               authority("platform_api"),
+              authority("platform_authorization"),
               { ...authority("platform_worker"), hasUnexpectedPlatformPrivilege: true },
               authority("platform_admin"),
             ],
@@ -389,12 +403,14 @@ describe("independent deployable roles", () => {
   it("publishes executable image selectors and distinct database roles", async () => {
     const manifest = await readFile(resolve("deployables.yaml"), "utf8");
     const entrypoint = await readFile(resolve("deploy/docker/runtime-entrypoint.mjs"), "utf8");
-    for (const role of ["platform-api", "platform-worker", "platform-admin", "platform-migrator"]) {
+    for (const role of ["platform-api", "platform-authorization", "platform-worker", "platform-admin", "platform-migrator"]) {
       expect(manifest).toContain(`KOKORO_SERVICE_PACKAGE=${role}`);
       expect(entrypoint).toContain(`"${role}"`);
     }
     expect(manifest).toContain("credentialClass: platform-api");
     expect(manifest).toContain("credentialClass: platform-worker");
+    expect(manifest).toContain("credentialClass: platform-authorization");
+    expect(manifest).toContain("expectedUserEnvironmentVariable: PLATFORM_DATABASE_AUTHORIZATION_ROLE");
     expect(manifest).toContain("credentialClass: platform-admin");
     expect(manifest).toContain("credentialClass: platform-migrator");
   });
@@ -456,6 +472,7 @@ function safeMigratorAuthority(): Record<string, unknown> {
     inheritsPrivileges: false,
     hasAnyMembership: false,
     isApiMember: false,
+    isAuthorizationMember: false,
     isWorkerMember: false,
     isAdminMember: false,
     canCreateDatabaseObject: true,

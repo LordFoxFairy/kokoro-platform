@@ -8,6 +8,8 @@ export interface SessionAccessSigningKeyConfig {
   readonly publicKeyPem: string;
   readonly privateKeyPem?: string;
   readonly current: boolean;
+  readonly notBefore: string;
+  readonly notAfter: string;
 }
 
 export interface SessionAccessKeyRingConfig {
@@ -19,6 +21,8 @@ export interface SessionAccessKeyRingConfig {
 type ImportedKey = Readonly<{
   keyRevision: string;
   current: boolean;
+  notBeforeSeconds: number;
+  notAfterSeconds: number;
   publicKey: CryptoKey;
   privateKey?: CryptoKey;
   jwk: Readonly<Record<string, unknown>>;
@@ -37,11 +41,18 @@ export async function createSessionAccessGrantSigner(
     throw new Error("SESSION_ACCESS_KEY_RING_INVALID");
   }
   const revisions = new Set<string>();
+  const nowSeconds = Math.floor(Date.now() / 1_000);
   const imported = await Promise.all(config.keys.map(async (item): Promise<ImportedKey> => {
     if (!/^[A-Za-z0-9_-]{1,128}$/u.test(item.keyRevision) || revisions.has(item.keyRevision)) {
       throw new Error("SESSION_ACCESS_KEY_REVISION_INVALID");
     }
     revisions.add(item.keyRevision);
+    const notBeforeSeconds = keyWindowSeconds(item.notBefore);
+    const notAfterSeconds = keyWindowSeconds(item.notAfter);
+    if (
+      notBeforeSeconds >= notAfterSeconds || notBeforeSeconds > nowSeconds ||
+      notAfterSeconds <= nowSeconds
+    ) throw new Error("SESSION_ACCESS_KEY_WINDOW_INVALID");
     if (!item.publicKeyPem.includes("BEGIN PUBLIC KEY")) {
       throw new Error("SESSION_ACCESS_PUBLIC_KEY_INVALID");
     }
@@ -65,6 +76,8 @@ export async function createSessionAccessGrantSigner(
     return Object.freeze({
       keyRevision: item.keyRevision,
       current: item.current,
+      notBeforeSeconds,
+      notAfterSeconds,
       publicKey,
       ...(privateKey === undefined ? {} : { privateKey }),
       jwk: Object.freeze(jwk as Record<string, unknown>),
@@ -106,7 +119,9 @@ export async function createSessionAccessGrantSigner(
       if (
         expiresAt <= issuedAt ||
         expiresAt <= notBefore ||
-        expiresAt - issuedAt > config.maximumTtlSeconds
+        expiresAt - issuedAt > config.maximumTtlSeconds ||
+        notBefore < current[0]!.notBeforeSeconds ||
+        expiresAt > current[0]!.notAfterSeconds
       ) throw new SessionAuthorizationError("AUTHORIZATION_INPUT_INVALID");
       return new SignJWT({
         grantRef: claims.grantRef,
@@ -148,6 +163,14 @@ function seconds(value: string): number {
   const milliseconds = Date.parse(value);
   if (!Number.isFinite(milliseconds) || milliseconds % 1_000 !== 0) {
     throw new SessionAuthorizationError("AUTHORIZATION_INPUT_INVALID");
+  }
+  return milliseconds / 1_000;
+}
+
+function keyWindowSeconds(value: string): number {
+  const milliseconds = Date.parse(value);
+  if (!Number.isFinite(milliseconds) || milliseconds % 1_000 !== 0) {
+    throw new Error("SESSION_ACCESS_KEY_WINDOW_INVALID");
   }
   return milliseconds / 1_000;
 }

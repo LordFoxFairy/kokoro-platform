@@ -437,10 +437,64 @@ model AuthorizationSite {
   securityEpoch   BigInt   @map("security_epoch")
   policyEpoch     BigInt   @map("policy_epoch")
   revocationEpoch BigInt   @map("revocation_epoch")
+  eventSequence   BigInt   @default(0) @map("event_sequence")
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@map("authorization_site")
+  @@schema("platform")
+}
+
+model AuthorizationStreamState {
+  singleton    Boolean  @id @default(true)
+  highWatermark BigInt  @default(0) @map("high_watermark")
+  updatedAt    DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("authorization_stream_state")
+  @@schema("platform")
+}
+
+model AuthorizationEventLog {
+  streamSequence     BigInt   @id @map("stream_sequence")
+  eventId            String   @unique @map("event_id") @db.Uuid
+  siteRef            String   @map("site_ref")
+  aggregateSequence  BigInt   @map("aggregate_sequence")
+  eventType          String   @map("event_type")
+  occurredAt         DateTime @map("occurred_at") @db.Timestamptz(6)
+  signingPayload     Bytes    @map("signing_payload")
+  payloadDigest      String   @map("payload_digest") @db.Char(64)
+  signingKeyRevision String   @map("signing_key_revision")
+  signatureAlgorithm String   @map("signature_algorithm")
+  signature          Bytes
+  correlationId      String   @map("correlation_id")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([siteRef, aggregateSequence])
+  @@index([occurredAt, streamSequence])
+  @@map("authorization_event_log")
+  @@schema("platform")
+}
+
+model AuthorizationSnapshot {
+  snapshotRef    String   @id @map("snapshot_ref") @db.Uuid
+  highWatermark  BigInt   @map("high_watermark")
+  keySetRevision String   @map("key_set_revision") @db.Char(64)
+  frozenAt       DateTime @map("frozen_at") @db.Timestamptz(6)
+  expiresAt      DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([expiresAt])
+  @@map("authorization_snapshot")
+  @@schema("platform")
+}
+
+model AuthorizationSnapshotRecord {
+  snapshotRef  String @map("snapshot_ref") @db.Uuid
+  ordinal      BigInt
+  recordPayload Bytes @map("record_payload")
+
+  @@id([snapshotRef, ordinal])
+  @@map("authorization_snapshot_record")
   @@schema("platform")
 }
 
@@ -713,6 +767,13 @@ model AuthorizationSessionAccessGrant {
   keyRevision       String    @map("key_revision")
   policyEpoch       BigInt    @map("policy_epoch")
   revocationEpoch   BigInt    @map("revocation_epoch")
+  siteSecurityEpoch BigInt?   @map("site_security_epoch")
+  subjectGeneration BigInt?   @map("subject_generation")
+  identitySessionEpoch BigInt? @map("identity_session_epoch")
+  membershipEpoch   BigInt?   @map("membership_epoch")
+  authorizationEpoch BigInt?  @map("authorization_epoch")
+  restrictionEpoch  BigInt?   @map("restriction_epoch")
+  credentialEpoch   BigInt?   @map("credential_epoch")
   deliveryState     String    @map("delivery_state")
   deliveryErrorCode String?   @map("delivery_error_code")
   issuedAt          DateTime  @map("issued_at") @db.Timestamptz(6)

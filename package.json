@@ -26,6 +26,7 @@
     "model-option:publish-site-release": "tsx scripts/model-control/publish-site-release-catalog.mts",
     "start:api": "node dist/src/process/api.js",
     "start:admin": "node dist/src/process/admin.js",
+    "start:authorization": "node dist/src/process/authorization.js",
     "start:worker": "node dist/src/process/worker.js",
     "test:repository": "node --test test/repository/*.test.mjs",
     "test:platform": "vitest run test/*.test.ts test/architecture/*.test.ts",
@@ -40,6 +41,8 @@
   },
   "dependencies": {
     "@bufbuild/protobuf": "2.13.0",
+    "@connectrpc/connect": "2.1.2",
+    "@connectrpc/connect-node": "2.1.2",
     "@kokoro/credit": "workspace:*",
     "@kokoro/hub": "workspace:*",
     "@kokoro/payment": "workspace:*",

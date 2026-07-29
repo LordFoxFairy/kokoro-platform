@@ -90,14 +90,6 @@ export interface SessionAuthorizationRepository {
     input: Readonly<{ grantRef: string; claimsDigest: string; errorCode: string }>,
   ): Promise<void>;
 
-  bumpRevocationEpoch(
-    transaction: PlatformTransaction,
-    input: Readonly<{
-      siteRef: string;
-      expectedRevocationEpoch: string;
-      changedAt: string;
-    }>,
-  ): Promise<string>;
 }
 
 export interface SessionAccessGrantSigner {
@@ -109,24 +101,42 @@ export interface SessionAccessGrantSigner {
 }
 
 export interface SessionAuthorizationPublisher {
-  publishGrantPrepared(
+  publishGrantDelivered(
     transaction: PlatformTransaction,
     input: Readonly<{
       claims: SessionAccessGrantClaims;
       claimsDigest: string;
-      correlationId: string;
-    }>,
-  ): Promise<void>;
-  publishRevocationEpochChanged(
-    transaction: PlatformTransaction,
-    input: Readonly<{
-      siteRef: string;
-      revocationEpoch: string;
-      reason: string;
       changedAt: string;
       correlationId: string;
     }>,
   ): Promise<void>;
+  bumpAndPublishRevocationEpochChanged(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      siteRef: string;
+      expectedRevocationEpoch: string;
+      reason: string;
+      changedAt: string;
+      correlationId: string;
+    }>,
+  ): Promise<string>;
+}
+
+export interface SessionAuthorizationEventSigner {
+  readonly keyRevision: string;
+  sign(payload: Uint8Array): Promise<Uint8Array>;
+}
+
+export interface SessionAuthorizationVerificationKeySet {
+  readonly keySetRevision: string;
+  verificationKeys(): readonly Readonly<{
+    purpose: "event_signing" | "session_access_grant";
+    keyRevision: string;
+    current: boolean;
+    canonicalPublicJwkJson: string;
+    notBefore: string;
+    notAfter: string;
+  }>[];
 }
 
 export type SignedSessionAccessGrant = IssuedSessionAccessGrant;

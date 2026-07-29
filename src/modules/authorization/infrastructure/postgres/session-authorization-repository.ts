@@ -276,12 +276,17 @@ export class PostgresSessionAuthorizationRepository implements SessionAuthorizat
       `INSERT INTO platform.authorization_session_access_grant
        (grant_ref, binding_ref, site_ref, subject_ref, identity_session_ref, project_ref,
         purpose, audience, resource, claims_digest, key_revision, policy_epoch, revocation_epoch,
+        site_security_epoch,subject_generation,identity_session_epoch,membership_epoch,
+        authorization_epoch,restriction_epoch,credential_epoch,
         delivery_state, issued_at, not_before, expires_at)
-       VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,'pending',$14::timestamptz,$15::timestamptz,$16::timestamptz)`,
+       VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,
+               $14,$15,$16,$17,$18,$19,$20,'pending',$21::timestamptz,$22::timestamptz,$23::timestamptz)`,
       [claims.grantRef, row.bindingRef, row.siteRef, row.subjectRef, row.identitySessionRef,
         row.projectRef, input.purpose, claims.authorization.audience, JSON.stringify(input.resource),
-        claimsDigest, input.keyRevision, row.policyEpoch, row.revocationEpoch, input.issuedAt,
-        input.notBefore, input.expiresAt],
+        claimsDigest, input.keyRevision, row.policyEpoch, row.revocationEpoch,
+        row.siteSecurityEpoch,row.subjectGeneration,row.identitySessionEpoch,row.membershipEpoch,
+        row.authorizationEpoch,row.restrictionEpoch,row.credentialEpoch,
+        input.issuedAt,input.notBefore,input.expiresAt],
     );
     return Object.freeze({ claims, claimsDigest });
   }
@@ -305,18 +310,6 @@ export class PostgresSessionAuthorizationRepository implements SessionAuthorizat
     );
   }
 
-  async bumpRevocationEpoch(transaction: Parameters<SessionAuthorizationRepository["bumpRevocationEpoch"]>[0], input: Parameters<SessionAuthorizationRepository["bumpRevocationEpoch"]>[1]): Promise<string> {
-    const rows = await resolvePlatformTransaction(transaction).query<{ revocationEpoch: bigint }>(
-      `UPDATE platform.authorization_site
-       SET revocation_epoch=revocation_epoch+1, updated_at=$3::timestamptz
-       WHERE site_ref=$1 AND revocation_epoch=$2::bigint AND state='active'
-       RETURNING revocation_epoch AS "revocationEpoch"`,
-      [input.siteRef, BigInt(input.expectedRevocationEpoch), input.changedAt],
-    );
-    const row = rows[0];
-    if (row === undefined) throw new SessionAuthorizationError("AUTHORIZATION_STALE");
-    return positive(row.revocationEpoch);
-  }
 }
 
 const PRODUCT_AUTHORITY_SQL = `

@@ -3,6 +3,7 @@ import { PrismaClient } from "../../generated/platform-prisma/client.js";
 import {
   issuePlatformTransaction,
   revokePlatformTransaction,
+  type PlatformTransaction,
   type PlatformSqlTransaction,
 } from "../../shared/unit-of-work/platform-transaction.js";
 import type { PlatformTransactionHost } from "../../shared/unit-of-work/unit-of-work.js";
@@ -10,11 +11,16 @@ import { assertVerifiedRequestSecurityContext } from "../../shared/security-cont
 import type { SessionAuthenticationPort } from "../../modules/authorization/application/contracts/session-authorization-ports.js";
 import type { AuthenticatedUserSession } from "../../modules/authorization/domain/session-access-grant.js";
 
-export type PlatformProcessRole = "api" | "worker" | "admin" | "migrator";
-export type PlatformCredentialClass = "api" | "worker" | "admin" | "migrator";
+export type PlatformProcessRole = "api" | "authorization" | "worker" | "admin" | "migrator";
+export type PlatformCredentialClass = "api" | "authorization" | "worker" | "admin" | "migrator";
 
 const ROLE_DEFAULTS = {
   api: { poolMax: 20, credentialClass: "api", identityEnv: "PLATFORM_DATABASE_API_ROLE" },
+  authorization: {
+    poolMax: 8,
+    credentialClass: "authorization",
+    identityEnv: "PLATFORM_DATABASE_AUTHORIZATION_ROLE",
+  },
   worker: {
     poolMax: 8,
     credentialClass: "worker",
@@ -70,7 +76,17 @@ export interface PlatformDatabaseClient {
 }
 
 export interface PlatformTransactionalDatabaseClient
-  extends PlatformDatabaseClient, PlatformTransactionHost, SessionAuthenticationPort {}
+  extends PlatformDatabaseClient, PlatformTransactionHost, SessionAuthenticationPort {
+  internalTransaction<Result>(
+    operation: PlatformInternalOperation,
+    work: (transaction: PlatformTransaction) => Promise<Result>,
+  ): Promise<Result>;
+}
+
+export type PlatformInternalOperation =
+  | "authorization.feed.read"
+  | "authorization.snapshot.create"
+  | "authorization.retention";
 
 export function loadPlatformDatabaseConfig(
   role: PlatformProcessRole,
@@ -222,6 +238,34 @@ export function createPlatformDatabaseClient(
         expiresAt: new Date(row.expiresAt).toISOString(),
       });
     },
+    internalTransaction: async <Result>(operation: PlatformInternalOperation, work: (transaction: PlatformTransaction) => Promise<Result>) => {
+      const allowed = config.role === "worker"
+        ? operation === "authorization.retention"
+        : config.role === "authorization" &&
+          (operation === "authorization.feed.read" || operation === "authorization.snapshot.create");
+      if (!allowed) throw new Error("PLATFORM_INTERNAL_OPERATION_ROLE_FORBIDDEN");
+      return prisma.$transaction(async (databaseTransaction) => {
+        await databaseTransaction.$queryRawUnsafe(
+          `SELECT set_config('app.operation',$1,true),
+                  set_config('app.workload_kind',$2,true)`,
+          operation,
+          config.role === "worker" ? "platform_worker" : "platform_authorization",
+        );
+        const lease = issuePlatformTransaction({
+          query: (statement, values = []) => databaseTransaction.$queryRawUnsafe(statement, ...values),
+          execute: (statement, values = []) => databaseTransaction.$executeRawUnsafe(statement, ...values),
+        });
+        try {
+          return await work(lease.transaction);
+        } finally {
+          revokePlatformTransaction(lease);
+        }
+      }, {
+        isolationLevel: config.transaction.isolationLevel,
+        maxWait: config.transaction.maxWaitMs,
+        timeout: config.transaction.timeoutMs,
+      });
+    },
     transaction: async <Result>(
       fence: Parameters<PlatformTransactionHost["transaction"]>[0],
       work: Parameters<PlatformTransactionHost["transaction"]>[1],
@@ -361,6 +405,8 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_table_privilege(current_user, 'platform.authorization_project_membership', 'SELECT')
            AND has_table_privilege(current_user, 'platform.authorization_product_context', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.authorization_session_access_grant', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.authorization_stream_state', 'SELECT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.authorization_event_log', 'INSERT')
            AND has_table_privilege(current_user, 'platform.commerce_command', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.commerce_fulfillment_transaction', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.commerce_fulfillment_output_plan', 'SELECT,INSERT')
@@ -371,6 +417,13 @@ const RUNTIME_IDENTITY_SQL = `
            has_table_privilege(current_user, 'platform.command_receipt', 'UPDATE')
            AND has_table_privilege(current_user, 'platform.outbox_event', 'UPDATE')
            AND has_table_privilege(current_user, 'platform.inbox_delivery', 'INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.authorization_session_access_grant', 'SELECT')
+         WHEN $2 = 'authorization' THEN
+           has_table_privilege(current_user, 'platform.authorization_stream_state', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.authorization_event_log', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.authorization_snapshot', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.authorization_snapshot_record', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.authorization_site', 'SELECT')
            AND has_table_privilege(current_user, 'platform.authorization_session_access_grant', 'SELECT')
          ELSE has_table_privilege(current_user, 'platform.command_receipt', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.outbox_event', 'SELECT,INSERT')
@@ -432,7 +485,8 @@ const RUNTIME_IDENTITY_SQL = `
                  'authorization_site','authorization_site_release','authorization_product_binding',
                  'authorization_subject','authorization_identity_session','authorization_project',
                  'authorization_project_membership','authorization_product_context',
-                 'authorization_session_access_grant','model_option_materialization','model_option_revision',
+                 'authorization_session_access_grant','authorization_stream_state','authorization_event_log',
+                 'authorization_snapshot','authorization_snapshot_record','model_option_materialization','model_option_revision',
                  'model_option_materialized_revision','model_option_role_binding',
                'model_option_materialization_quarantine','site_release_model_catalog_publication',
                'site_release_model_catalog_surface','site_release_model_catalog_option'
@@ -454,7 +508,8 @@ const RUNTIME_IDENTITY_SQL = `
                  'authorization_site','authorization_site_release','authorization_product_binding',
                  'authorization_subject','authorization_identity_session','authorization_project',
                  'authorization_project_membership','authorization_product_context',
-                 'authorization_session_access_grant','model_option_materialization','model_option_revision',
+                 'authorization_session_access_grant','authorization_stream_state','authorization_event_log',
+                 'authorization_snapshot','authorization_snapshot_record','model_option_materialization','model_option_revision',
                  'model_option_materialized_revision','model_option_role_binding',
                'model_option_materialization_quarantine','site_release_model_catalog_publication',
                'site_release_model_catalog_surface','site_release_model_catalog_option'
@@ -467,26 +522,41 @@ const RUNTIME_IDENTITY_SQL = `
                    OR has_any_column_privilege(runtime_role.rolname,candidate.oid,'SELECT')
                  ))
                  OR
-                 has_table_privilege(runtime_role.rolname, candidate.oid,
-                   'DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+                 ($2 = 'authorization' AND (
+                   has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
+                   OR has_any_column_privilege(runtime_role.rolname,candidate.oid,'SELECT')
+                 ) AND candidate.relname <> ALL(ARRAY[
+                   'platform_foundation','authorization_stream_state','authorization_event_log',
+                   'authorization_snapshot','authorization_snapshot_record','authorization_site',
+                   'authorization_session_access_grant'
+                 ]))
+                 OR
+                 (has_table_privilege(runtime_role.rolname, candidate.oid,
+                   'DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN') AND NOT (
+                   $2 = 'worker' AND candidate.relname = ANY(ARRAY[
+                     'authorization_event_log','authorization_snapshot'
+                   ])
+                 ))
                  OR has_any_column_privilege(runtime_role.rolname, candidate.oid, 'REFERENCES')
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'INSERT') AND NOT (
-                   ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_selection_decision','authorization_product_context','authorization_session_access_grant','commerce_command','commerce_fulfillment_transaction','commerce_fulfillment_output_plan','commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry']))
+                   ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_selection_decision','authorization_product_context','authorization_session_access_grant','authorization_event_log','commerce_command','commerce_fulfillment_transaction','commerce_fulfillment_output_plan','commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry']))
+                   OR ($2 = 'authorization' AND candidate.relname = ANY(ARRAY['authorization_snapshot','authorization_snapshot_record']))
                    OR ($2 = 'worker' AND candidate.relname = 'inbox_delivery')
                    OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership']))
                  ))
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
-                   ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','inbox_delivery','authorization_product_context','authorization_session_access_grant','commerce_command','commerce_fulfillment_transaction']))
+                   ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','inbox_delivery','authorization_product_context','authorization_session_access_grant','authorization_stream_state','authorization_site','commerce_command','commerce_fulfillment_transaction']))
                    OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery']))
                    OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY['command_receipt','commerce_billing_account','commerce_billing_account_membership']))
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'INSERT') AND NOT (
-                   ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_selection_decision','authorization_product_context','authorization_session_access_grant','commerce_command','commerce_fulfillment_transaction','commerce_fulfillment_output_plan','commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry']))
+                   ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_selection_decision','authorization_product_context','authorization_session_access_grant','authorization_event_log','commerce_command','commerce_fulfillment_transaction','commerce_fulfillment_output_plan','commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry']))
+                   OR ($2 = 'authorization' AND candidate.relname = ANY(ARRAY['authorization_snapshot','authorization_snapshot_record']))
                    OR ($2 = 'worker' AND candidate.relname = 'inbox_delivery')
                    OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership']))
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
-                   ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','inbox_delivery','authorization_product_context','authorization_session_access_grant','commerce_command','commerce_fulfillment_transaction']))
+                   ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','inbox_delivery','authorization_product_context','authorization_session_access_grant','authorization_stream_state','authorization_site','commerce_command','commerce_fulfillment_transaction']))
                    OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery']))
                    OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY['command_receipt','commerce_billing_account','commerce_billing_account_membership']))
                  ))

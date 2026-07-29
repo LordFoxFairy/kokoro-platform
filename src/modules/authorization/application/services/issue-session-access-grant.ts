@@ -63,11 +63,6 @@ export class IssueSessionAccessGrantService {
           issuedAt,
           expiresAt,
         });
-        await this.publisher.publishGrantPrepared(transaction, {
-          claims: result.claims,
-          claimsDigest: result.claimsDigest,
-          correlationId: input.context.correlationId,
-        });
         return result;
       },
     );
@@ -82,11 +77,19 @@ export class IssueSessionAccessGrantService {
     try {
       await this.unitOfWork.execute(
         { context: input.context, operation: "issueSessionAccessGrant" },
-        (transaction) => this.repository.markGrantDelivered(transaction, {
-          grantRef,
-          claimsDigest: prepared.claimsDigest,
-          credentialDigest: signedCredentialDigest(credential),
-        }),
+        async (transaction) => {
+          await this.repository.markGrantDelivered(transaction, {
+            grantRef,
+            claimsDigest: prepared.claimsDigest,
+            credentialDigest: signedCredentialDigest(credential),
+          });
+          await this.publisher.publishGrantDelivered(transaction, {
+            claims: prepared.claims,
+            claimsDigest: prepared.claimsDigest,
+            changedAt: instant(this.clock()),
+            correlationId: input.context.correlationId,
+          });
+        },
       );
     } catch {
       await this.recordFailure(input.context, grantRef, prepared.claimsDigest, "DELIVERY_COMMIT_FAILED");

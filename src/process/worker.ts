@@ -6,6 +6,7 @@ import {
   type PlatformDatabaseClient,
 } from "../infrastructure/postgres/client.js";
 import type { PlatformProcessState } from "./api.js";
+import { createAuthorizationRetentionCycle } from "../modules/authorization/infrastructure/postgres/authorization-retention.js";
 
 export interface PlatformWorkerProcessStatus {
   readonly state: PlatformProcessState;
@@ -212,8 +213,13 @@ function isMainModule(): boolean {
 
 export async function runPlatformWorkerMain(): Promise<void> {
   const database = createPlatformDatabaseClient(loadPlatformDatabaseConfig("worker"));
+  const retentionDays = Number.parseInt(process.env.PLATFORM_AUTHORIZATION_EVENT_RETENTION_DAYS ?? "7", 10);
   const worker = createPlatformWorkerProcess({
     database,
+    runOneCycle: createAuthorizationRetentionCycle({
+      database,
+      retentionMs: retentionDays * 24 * 60 * 60_000,
+    }),
     onCycleError: (error) => console.error("Platform Worker cycle failed", error),
   });
   const shutdown = () => {
