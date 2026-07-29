@@ -69,6 +69,22 @@ import { ConfirmRedemptionService } from "../modules/commerce/application/servic
 import { PostgresRedemptionConfirmationRepository } from "../modules/commerce/infrastructure/postgres/redemption-confirmation-repository.js";
 import { AccountReadService } from "../modules/commerce/application/services/account-read.js";
 import { PostgresAccountReadRepository } from "../modules/commerce/infrastructure/postgres/account-read-repository.js";
+import { PostgresAssetUploadRepository } from "../modules/asset/infrastructure/postgres/asset-upload-repository.js";
+import { PostgresAssetOwnerQueryRepository } from "../modules/asset/infrastructure/postgres/asset-owner-query-repository.js";
+import { CreateUploadIntentService } from "../modules/asset/application/services/create-upload-intent.js";
+import { CompleteUploadService } from "../modules/asset/application/services/complete-upload.js";
+import { AssetOwnerQueryService } from "../modules/asset/application/services/asset-owner-query.js";
+import {
+  parseAssetUploadPolicyRegistry,
+} from "../modules/asset/infrastructure/config/asset-upload-policy-registry.js";
+import {
+  parseAssetUploadCapabilityKeyRing,
+  SealedAssetUploadCapabilityIssuer,
+} from "../modules/asset/infrastructure/crypto/asset-upload-capability.js";
+import {
+  ASSET_PUBLIC_OPERATION_IDS,
+  createAssetPublicOperations,
+} from "../modules/asset/interfaces/http/asset-public-operations.js";
 
 export interface PlatformPublicProductionComposition {
   readonly handler: PlatformPublicHttpHandler;
@@ -84,7 +100,7 @@ export async function createPlatformPublicProductionComposition(
   }>,
 ): Promise<PlatformPublicProductionComposition> {
   const environment = input.environment ?? process.env;
-  const [workloads, keyRing, eventKeyRing, tls, redemptionSecrets] = await Promise.all([
+  const [workloads, keyRing, eventKeyRing, tls, redemptionSecrets, assetPolicies, assetCapabilityKeys] = await Promise.all([
     loadProductWorkloadRegistry(required(environment, "PLATFORM_PRODUCT_WORKLOAD_REGISTRY_FILE")),
     loadSessionAccessKeyRing(required(environment, "PLATFORM_SESSION_ACCESS_KEY_RING_FILE")),
     loadAuthorizationEventKeyRing(
@@ -92,6 +108,8 @@ export async function createPlatformPublicProductionComposition(
     ),
     loadTls(environment),
     loadRedemptionSecretCodec(required(environment, "PLATFORM_COMMERCE_REDEMPTION_KEY_RING_FILE")),
+    loadAssetUploadPolicies(required(environment, "PLATFORM_ASSET_UPLOAD_POLICY_REGISTRY_FILE")),
+    loadAssetUploadCapabilityKeys(required(environment, "PLATFORM_ASSET_UPLOAD_CAPABILITY_KEY_RING_FILE")),
   ]);
   const signer = await createSessionAccessGrantSigner(keyRing);
   const eventSigner = await createSessionAuthorizationEventSigner(eventKeyRing);
@@ -202,11 +220,35 @@ export async function createPlatformPublicProductionComposition(
     queries: new RedemptionQueryService({ unitOfWork, repository: redemptionConfirmationRepository }),
     accountQueries: new AccountReadService({ unitOfWork, repository: new PostgresAccountReadRepository() }),
   });
+  const assetUploadRepository = new PostgresAssetUploadRepository();
+  const assetQueries = new AssetOwnerQueryService({
+    unitOfWork,
+    repository: new PostgresAssetOwnerQueryRepository(),
+  });
+  const assetOperations = createAssetPublicOperations({
+    create: new CreateUploadIntentService({
+      unitOfWork,
+      repository: assetUploadRepository,
+      policyResolver: assetPolicies,
+      capabilityIssuer: new SealedAssetUploadCapabilityIssuer(assetCapabilityKeys, assetPolicies),
+      receipts: new CommandReceiptRepository(),
+      reference: randomUUID,
+    }),
+    complete: new CompleteUploadService({
+      unitOfWork,
+      repository: assetUploadRepository,
+      receipts: new CommandReceiptRepository(),
+      outbox: new OutboxRepository(),
+      eventId: randomUUID,
+    }),
+    queries: assetQueries,
+  });
   const handler = createPlatformPublicHttpHandler({
     workloads,
     sessions: input.database,
-    operations: [...authorizationOperations, ...identityOperations, ...commerceOperations],
-    requiredOperationIds: [...AUTHORIZATION_PUBLIC_OPERATION_IDS, ...IDENTITY_LAUNCH_OPERATION_IDS, ...COMMERCE_PUBLIC_OPERATION_IDS],
+    operations: [...authorizationOperations, ...identityOperations, ...commerceOperations, ...assetOperations],
+    requiredOperationIds: [...AUTHORIZATION_PUBLIC_OPERATION_IDS, ...IDENTITY_LAUNCH_OPERATION_IDS,
+      ...COMMERCE_PUBLIC_OPERATION_IDS, ...ASSET_PUBLIC_OPERATION_IDS],
     grantSigner: signer,
     sessionCredentialDigest: sessionCredentials.digest,
   });
@@ -215,6 +257,18 @@ export async function createPlatformPublicProductionComposition(
     secure: true as const,
     createServer: (listener: RequestListener) => createHttpsServer(tls, listener),
   });
+}
+
+async function loadAssetUploadPolicies(path: string) {
+  return parseAssetUploadPolicyRegistry(
+    JSON.parse(await readBoundedSecret(path, 2 * 1024 * 1024)) as unknown,
+  );
+}
+
+async function loadAssetUploadCapabilityKeys(path: string) {
+  return parseAssetUploadCapabilityKeyRing(
+    JSON.parse(await readBoundedPrivateFile(path, 64 * 1024, "ASSET_CAPABILITY_KEY_RING_PERMISSIONS_INVALID")) as unknown,
+  );
 }
 
 export async function loadRedemptionSecretCodec(path: string) {
@@ -352,13 +406,21 @@ export async function loadIdentityTotpSecretProtector(path: string) {
 }
 
 async function readBoundedPrivateSecret(path: string, maximumBytes: number): Promise<string> {
+  return readBoundedPrivateFile(path, maximumBytes, "IDENTITY_TOTP_KEY_RING_PERMISSIONS_INVALID");
+}
+
+async function readBoundedPrivateFile(
+  path: string,
+  maximumBytes: number,
+  permissionsCode: string,
+): Promise<string> {
   if (!path.startsWith("/")) throw new Error("PLATFORM_SECRET_FILE_MUST_BE_ABSOLUTE");
   let handle;
   try {
     handle = await open(path, fileSystemConstants.O_RDONLY | fileSystemConstants.O_NOFOLLOW);
     const metadata = await handle.stat();
     if (!metadata.isFile() || (metadata.mode & 0o077) !== 0) {
-      throw new Error("IDENTITY_TOTP_KEY_RING_PERMISSIONS_INVALID");
+      throw new Error(permissionsCode);
     }
     if (metadata.size < 1 || metadata.size > maximumBytes)
       throw new Error("PLATFORM_SECRET_FILE_INVALID");
@@ -369,12 +431,12 @@ async function readBoundedPrivateSecret(path: string, maximumBytes: number): Pro
   } catch (error) {
     if (
       error instanceof Error &&
-      (error.message === "IDENTITY_TOTP_KEY_RING_PERMISSIONS_INVALID" ||
+      (error.message === permissionsCode ||
         error.message === "PLATFORM_SECRET_FILE_INVALID" ||
         error.message === "PLATFORM_SECRET_FILE_MUST_BE_ABSOLUTE")
     )
       throw error;
-    throw new Error("IDENTITY_TOTP_KEY_RING_PERMISSIONS_INVALID", { cause: error });
+    throw new Error(permissionsCode, { cause: error });
   } finally {
     await handle?.close();
   }

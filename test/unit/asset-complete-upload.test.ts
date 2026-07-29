@@ -9,9 +9,9 @@ const transaction = Object.freeze({}) as PlatformTransaction;
 const context = Object.freeze({
   environment: "production", region: "us-east-1", correlationId: "correlation_01",
   trustedCaller: { kind: "site_product", workloadIdentityId: "workload_01", siteId: "site_01",
-    siteReleaseRef: "release_01", bindingEpoch: "7", allowedOperations: ["asset.complete-upload"] },
+    siteReleaseRef: "release_01", bindingEpoch: "7", allowedOperations: ["completeAssetUpload"] },
   actor: { kind: "user", subjectId: "subject_01", subjectGeneration: "4" },
-  target: { siteId: "site_01", projectId: "project_01", purpose: "asset.complete-upload" },
+  target: { siteId: "site_01", projectId: "project_01", purpose: "completeAssetUpload" },
 }) as unknown as VerifiedRequestSecurityContext;
 const intent = createUploadIntent({
   intentRef: "upload_intent_01", siteRef: "site_01", workloadIdentityId: "workload_01",

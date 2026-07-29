@@ -35,7 +35,7 @@ export interface AssetUploadIntent {
   readonly expectedSize: bigint;
   readonly expectedChecksumSha256: string;
   readonly policyRevisionRef: string;
-  readonly state: "admitted" | "aborted" | "rejected";
+  readonly state: "admitted" | "completed" | "aborted" | "rejected";
   readonly expectedVersion: bigint;
   readonly expiresAt: string;
 }
@@ -241,7 +241,7 @@ export function verifyUploadIntent(value: AssetUploadIntent): AssetUploadIntent 
   if (!/^[0-9a-f]{64}$/u.test(value.expectedChecksumSha256)) throw new Error("ASSET_CHECKSUM_INVALID");
   identifier(value.policyRevisionRef, "ASSET_POLICY_REVISION_INVALID");
   instant(value.expiresAt, "ASSET_UPLOAD_EXPIRY_INVALID");
-  if (!["admitted", "aborted", "rejected"].includes(value.state)) throw new Error("ASSET_UPLOAD_INTENT_STATE_INVALID");
+  if (!["admitted", "completed", "aborted", "rejected"].includes(value.state)) throw new Error("ASSET_UPLOAD_INTENT_STATE_INVALID");
   return Object.freeze({ ...value });
 }
 

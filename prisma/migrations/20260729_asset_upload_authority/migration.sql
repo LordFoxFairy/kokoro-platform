@@ -795,26 +795,34 @@ ALTER TABLE platform.asset_promotion_receipt ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform.asset_promotion_receipt FORCE ROW LEVEL SECURITY;
 CREATE POLICY asset_upload_intent_site_scope ON platform.asset_upload_intent
   USING(site_ref=NULLIF(current_setting('app.site_id',true),'')
-    AND (subject_ref=NULLIF(current_setting('app.subject_id',true),'')
+    AND ((subject_ref=NULLIF(current_setting('app.subject_id',true),'')
+      AND subject_generation::TEXT=NULLIF(current_setting('app.subject_generation',true),'')
+      AND project_ref=NULLIF(current_setting('app.project_id',true),''))
       OR (current_setting('app.workload_kind',true)='platform_worker'
         AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker')
       OR (current_setting('app.workload_kind',true)='admin_workload'
         AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:admin')))
   WITH CHECK(site_ref=NULLIF(current_setting('app.site_id',true),'')
-    AND (subject_ref=NULLIF(current_setting('app.subject_id',true),'')
+    AND ((subject_ref=NULLIF(current_setting('app.subject_id',true),'')
+      AND subject_generation::TEXT=NULLIF(current_setting('app.subject_generation',true),'')
+      AND project_ref=NULLIF(current_setting('app.project_id',true),''))
       OR (current_setting('app.workload_kind',true)='platform_worker'
         AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker')
       OR (current_setting('app.workload_kind',true)='admin_workload'
         AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:admin')));
 CREATE POLICY asset_upload_session_site_scope ON platform.asset_upload_session
   USING(site_ref=NULLIF(current_setting('app.site_id',true),'')
-    AND (subject_ref=NULLIF(current_setting('app.subject_id',true),'')
+    AND ((subject_ref=NULLIF(current_setting('app.subject_id',true),'')
+      AND subject_generation::TEXT=NULLIF(current_setting('app.subject_generation',true),'')
+      AND project_ref=NULLIF(current_setting('app.project_id',true),''))
       OR (current_setting('app.workload_kind',true)='platform_worker'
         AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker')
       OR (current_setting('app.workload_kind',true)='admin_workload'
         AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:admin')))
   WITH CHECK(site_ref=NULLIF(current_setting('app.site_id',true),'')
-    AND (subject_ref=NULLIF(current_setting('app.subject_id',true),'')
+    AND ((subject_ref=NULLIF(current_setting('app.subject_id',true),'')
+      AND subject_generation::TEXT=NULLIF(current_setting('app.subject_generation',true),'')
+      AND project_ref=NULLIF(current_setting('app.project_id',true),''))
       OR (current_setting('app.workload_kind',true)='platform_worker'
         AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker')
       OR (current_setting('app.workload_kind',true)='admin_workload'
@@ -847,7 +855,11 @@ CREATE POLICY asset_quota_reservation_site_scope ON platform.asset_quota_reserva
         AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:admin')));
 CREATE POLICY asset_blob_candidate_worker_scope ON platform.asset_blob_candidate
   USING(site_ref=NULLIF(current_setting('app.site_id',true),'')
-    AND ((current_setting('app.workload_kind',true)='platform_worker'
+    AND ((current_setting('app.actor_kind',true)='user'
+      AND subject_ref=NULLIF(current_setting('app.subject_id',true),'')
+      AND subject_generation::TEXT=NULLIF(current_setting('app.subject_generation',true),'')
+      AND project_ref=NULLIF(current_setting('app.project_id',true),''))
+    OR (current_setting('app.workload_kind',true)='platform_worker'
       AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker')
     OR (current_setting('app.workload_kind',true)='admin_workload'
       AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:admin')))
@@ -885,7 +897,14 @@ CREATE POLICY asset_object_cleanup_receipt_worker_scope ON platform.asset_object
     AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker');
 CREATE POLICY asset_upload_rejection_worker_scope ON platform.asset_upload_rejection
   USING(site_ref=NULLIF(current_setting('app.site_id',true),'')
-    AND ((current_setting('app.workload_kind',true)='platform_worker'
+    AND ((current_setting('app.actor_kind',true)='user' AND EXISTS (
+      SELECT 1 FROM platform.asset_upload_intent intent
+      WHERE intent.site_ref=asset_upload_rejection.site_ref
+        AND intent.intent_ref=asset_upload_rejection.intent_ref
+        AND intent.subject_ref=NULLIF(current_setting('app.subject_id',true),'')
+        AND intent.subject_generation::TEXT=NULLIF(current_setting('app.subject_generation',true),'')
+        AND intent.project_ref=NULLIF(current_setting('app.project_id',true),'')))
+    OR (current_setting('app.workload_kind',true)='platform_worker'
       AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker')
     OR (current_setting('app.workload_kind',true)='admin_workload'
       AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:admin')))
@@ -896,7 +915,14 @@ CREATE POLICY asset_upload_rejection_worker_scope ON platform.asset_upload_rejec
       AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:admin')));
 CREATE POLICY asset_scan_evaluation_worker_scope ON platform.asset_scan_evaluation
   USING(site_ref=NULLIF(current_setting('app.site_id',true),'')
-    AND ((current_setting('app.workload_kind',true)='platform_worker'
+    AND ((current_setting('app.actor_kind',true)='user' AND EXISTS (
+      SELECT 1 FROM platform.asset_blob_candidate candidate
+      WHERE candidate.site_ref=asset_scan_evaluation.site_ref
+        AND candidate.candidate_ref=asset_scan_evaluation.candidate_ref
+        AND candidate.subject_ref=NULLIF(current_setting('app.subject_id',true),'')
+        AND candidate.subject_generation::TEXT=NULLIF(current_setting('app.subject_generation',true),'')
+        AND candidate.project_ref=NULLIF(current_setting('app.project_id',true),'')))
+    OR (current_setting('app.workload_kind',true)='platform_worker'
       AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker')
     OR (current_setting('app.workload_kind',true)='admin_workload'
       AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:admin')))
@@ -907,7 +933,11 @@ CREATE POLICY asset_scan_evaluation_worker_scope ON platform.asset_scan_evaluati
       AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:admin')));
 CREATE POLICY asset_promotion_intent_worker_scope ON platform.asset_promotion_intent
   USING(site_ref=NULLIF(current_setting('app.site_id',true),'')
-    AND ((current_setting('app.workload_kind',true)='platform_worker'
+    AND ((current_setting('app.actor_kind',true)='user'
+      AND subject_ref=NULLIF(current_setting('app.subject_id',true),'')
+      AND subject_generation::TEXT=NULLIF(current_setting('app.subject_generation',true),'')
+      AND project_ref=NULLIF(current_setting('app.project_id',true),''))
+    OR (current_setting('app.workload_kind',true)='platform_worker'
       AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker')
     OR (current_setting('app.workload_kind',true)='admin_workload'
       AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:admin')))
@@ -928,7 +958,9 @@ CREATE POLICY asset_blob_worker_scope ON platform.asset_blob
     AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker');
 CREATE POLICY asset_resource_owner_scope ON platform.asset_resource
   USING(site_ref=NULLIF(current_setting('app.site_id',true),'')
-    AND (subject_ref=NULLIF(current_setting('app.subject_id',true),'')
+    AND ((subject_ref=NULLIF(current_setting('app.subject_id',true),'')
+      AND subject_generation::TEXT=NULLIF(current_setting('app.subject_generation',true),'')
+      AND project_ref=NULLIF(current_setting('app.project_id',true),''))
       OR (current_setting('app.workload_kind',true)='platform_worker'
         AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker')
       OR (current_setting('app.workload_kind',true)='admin_workload'
@@ -969,7 +1001,9 @@ CREATE POLICY asset_reference_owner_scope ON platform.asset_reference
     AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker');
 CREATE POLICY asset_eligibility_owner_scope ON platform.asset_eligibility_projection
   USING(site_ref=NULLIF(current_setting('app.site_id',true),'')
-    AND (subject_ref=NULLIF(current_setting('app.subject_id',true),'')
+    AND ((subject_ref=NULLIF(current_setting('app.subject_id',true),'')
+      AND subject_generation::TEXT=NULLIF(current_setting('app.subject_generation',true),'')
+      AND project_ref=NULLIF(current_setting('app.project_id',true),''))
       OR (current_setting('app.workload_kind',true)='platform_worker'
         AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker')
       OR (current_setting('app.workload_kind',true)='admin_workload'

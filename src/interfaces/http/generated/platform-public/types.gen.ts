@@ -69,6 +69,76 @@ export type AcquisitionSourceSummary = {
     sourceRef: string;
 };
 
+/**
+ * Short-lived credential for one registered upload data plane. The endpoint is a shared service endpoint, never a provider object URL or presigned request.
+ */
+export type AssetUploadCapability = {
+    capabilityEpoch: PositiveUint64String;
+    credential: string;
+    expiresAt: string;
+    maximumPartBytes: PositiveUint64String;
+    minimumPartBytes: PositiveUint64String;
+    protocolRevision: 's3-multipart-v1';
+    uploadEndpoint: string;
+};
+
+export type AssetUploadCommandResponse = {
+    receipt: AssetUploadOwnerReceipt;
+    upload: AssetUploadStatus | null;
+};
+
+export type AssetUploadCompleteInput = {
+    expectedVersion: PositiveUint64String;
+    sessionRef: string;
+};
+
+export type AssetUploadIntentInput = {
+    clientMediaType: string;
+    expectedChecksumSha256: string;
+    expectedSize: PositiveUint64String;
+    filename: string;
+    purpose: string;
+};
+
+export type AssetUploadIntentResponse = {
+    capability: AssetUploadCapability;
+    receipt: AssetUploadOwnerReceipt;
+    upload: AssetUploadStatus;
+};
+
+/**
+ * Durable owner command cursor. It deliberately excludes the upload capability and all object-storage facts, so command recovery cannot replay a credential.
+ */
+export type AssetUploadOwnerReceipt = {
+    commandId: string;
+    operation: 'create_asset_upload_intent' | 'complete_asset_upload';
+    receiptRef: string;
+    receivedAt: string;
+    state: 'pending' | 'succeeded' | 'failed' | 'outcome_unknown';
+    updatedAt: string;
+};
+
+export type AssetUploadStatus = {
+    clientMediaType: string;
+    expectedSize: PositiveUint64String;
+    expectedVersion: PositiveUint64String;
+    intentRef: string;
+    projectRef: string;
+    purpose: string;
+    retryAfter: string | null;
+    retryClass: 'never' | 'immediate' | 'after_delay' | 'after_user_action';
+    safeDisplayName: string;
+    safeReasonCode: string | null;
+    sessionRef: string;
+    stage: 'upload_interrupted' | 'uploading' | 'upload_verification' | 'scan_waiting' | 'scanning' | 'promotion_recovering' | 'ready' | 'rejected' | 'aborted';
+    terminal: boolean;
+    trustedGrant: TrustedAssetGrant | null;
+};
+
+export type AssetUploadStatusResponse = {
+    upload: AssetUploadStatus;
+};
+
 export type AuthPending = {
     challengeKind: 'totp' | 'recovery';
     expiresAt: string;
@@ -265,7 +335,7 @@ export type EmailVerificationTransactionResponse = {
     transaction: EmailVerificationTransaction;
 };
 
-export type ErrorCode = 'INVALID_REQUEST' | 'CONTRACT_VERSION_UNSUPPORTED' | 'AUTHENTICATION_REQUIRED' | 'AUTHENTICATION_FAILED' | 'AUTH_TRANSACTION_EXPIRED' | 'MFA_REQUIRED' | 'FORBIDDEN' | 'NOT_FOUND' | 'CONFLICT' | 'RATE_LIMITED' | 'RISK_UNAVAILABLE' | 'SITE_UNAVAILABLE' | 'OUTCOME_UNKNOWN' | 'INTERNAL_UNAVAILABLE' | 'REDEEM_NOT_ACCEPTED' | 'REDEEM_TEMPORARILY_UNAVAILABLE' | 'IDEMPOTENCY_CONFLICT' | 'ACQUISITION_CHANNEL_DISABLED';
+export type ErrorCode = 'INVALID_REQUEST' | 'CONTRACT_VERSION_UNSUPPORTED' | 'AUTHENTICATION_REQUIRED' | 'AUTHENTICATION_FAILED' | 'AUTH_TRANSACTION_EXPIRED' | 'MFA_REQUIRED' | 'FORBIDDEN' | 'NOT_FOUND' | 'CONFLICT' | 'RATE_LIMITED' | 'RISK_UNAVAILABLE' | 'SITE_UNAVAILABLE' | 'OUTCOME_UNKNOWN' | 'INTERNAL_UNAVAILABLE' | 'REDEEM_NOT_ACCEPTED' | 'REDEEM_TEMPORARILY_UNAVAILABLE' | 'IDEMPOTENCY_CONFLICT' | 'ACQUISITION_CHANNEL_DISABLED' | 'ASSET_NOT_ACCEPTED' | 'ASSET_UPLOAD_CONFLICT' | 'ASSET_QUOTA_EXCEEDED' | 'ASSET_TEMPORARILY_UNAVAILABLE';
 
 export type ErrorResponse = {
     code: ErrorCode;
@@ -852,7 +922,6 @@ export type SupersedeReauthenticationProofInput = {
 
 export type SupersedeRecoveryCodeSetInput = {
     priorCommandId: string;
-    reauthenticationProof: string;
     recoveryAction: 'supersede';
 };
 
@@ -870,7 +939,6 @@ export type SupersedeTotpEnrollmentInput = {
     ceremonyAction: 'supersede';
     priorCommandId: string;
     priorTransactionRef: string;
-    reauthenticationProof: string;
 };
 
 export type SupersedeTotpRecoveryReplacementInput = {
@@ -927,6 +995,26 @@ export type TransactionSecretInput = {
     transactionSecret: string;
 };
 
+/**
+ * Current owner eligibility projection. The opaque assetGrantRef is consumed by Platform Admission; it does not directly authorize storage access.
+ */
+export type TrustedAssetGrant = {
+    assetGrantRef: string;
+    assetRef: string;
+    assetVersionRef: string;
+    detectedMediaType: string;
+    eligibilityEpoch: PositiveUint64String;
+    projectRef: string;
+    purpose: string;
+    size: PositiveUint64String;
+    state: 'ready';
+    subjectGeneration: PositiveUint64String;
+};
+
+export type TrustedAssetGrantResponse = {
+    grant: TrustedAssetGrant;
+};
+
 export type UsageCreditAllocation = {
     amount: CreditAmount;
     creditGrantId: string;
@@ -959,6 +1047,20 @@ export type VerificationActivationResponse = {
     receipt: CommandReceipt;
 };
 
+export type AssetCommandId = string;
+
+export type AssetEligibilityEpoch = PositiveUint64String;
+
+export type AssetGrantRef = string;
+
+export type AssetPurpose = string;
+
+export type AssetRef = string;
+
+export type AssetUploadIntentRef = string;
+
+export type AssetVersionRef = string;
+
 export type CommandId = string;
 
 /**
@@ -974,11 +1076,17 @@ export type CsrfToken = string;
 
 export type IdempotencyKey = string;
 
+export type ProjectRef = string;
+
 export type RedemptionId = string;
 
 export type TransactionRef = string;
 
 export type UsageId = string;
+
+export type AssetUploadCompleteRequest = AssetUploadCompleteInput;
+
+export type AssetUploadIntentRequest = AssetUploadIntentInput;
 
 export type CommandRequest = CommandInput;
 
@@ -1913,6 +2021,177 @@ export type ExchangeProductContextResponses = {
 };
 
 export type ExchangeProductContextResponse = ExchangeProductContextResponses[keyof ExchangeProductContextResponses];
+
+export type RecoverAssetUploadCommandData = {
+    body?: never;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+    };
+    path: {
+        projectRef: string;
+        commandId: string;
+    };
+    query?: never;
+    url: '/v1/projects/{projectRef}/asset-upload-commands/{commandId}';
+};
+
+export type RecoverAssetUploadCommandErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type RecoverAssetUploadCommandError = RecoverAssetUploadCommandErrors[keyof RecoverAssetUploadCommandErrors];
+
+export type RecoverAssetUploadCommandResponses = {
+    /**
+     * A durable owner command state without any upload credential or storage locator.
+     */
+    200: AssetUploadCommandResponse;
+};
+
+export type RecoverAssetUploadCommandResponse = RecoverAssetUploadCommandResponses[keyof RecoverAssetUploadCommandResponses];
+
+export type CreateAssetUploadIntentData = {
+    body: AssetUploadIntentRequest;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+        /**
+         * Stable caller-generated 128-bit command identity, encoded as lowercase 32-hex or UUIDv7. It must not be derived from Idempotency-Key, password, OTP, or request content. Platform owns a unique workload/Site/caller/command row and rejects the same command id with a different payload using an internal keyed digest; all responses and receipts echo this exact id.
+         */
+        'X-Kokoro-Command-Id': string;
+        'Idempotency-Key': string;
+        'X-CSRF-Token': string;
+    };
+    path: {
+        projectRef: string;
+    };
+    query?: never;
+    url: '/v1/projects/{projectRef}/asset-upload-intents';
+};
+
+export type CreateAssetUploadIntentErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type CreateAssetUploadIntentError = CreateAssetUploadIntentErrors[keyof CreateAssetUploadIntentErrors];
+
+export type CreateAssetUploadIntentResponses = {
+    /**
+     * A durable upload owner receipt plus a one-time short-lived upload capability.
+     */
+    201: AssetUploadIntentResponse;
+};
+
+export type CreateAssetUploadIntentResponse = CreateAssetUploadIntentResponses[keyof CreateAssetUploadIntentResponses];
+
+export type GetAssetUploadStatusData = {
+    body?: never;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+    };
+    path: {
+        projectRef: string;
+        intentRef: string;
+    };
+    query?: never;
+    url: '/v1/projects/{projectRef}/asset-upload-intents/{intentRef}';
+};
+
+export type GetAssetUploadStatusErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type GetAssetUploadStatusError = GetAssetUploadStatusErrors[keyof GetAssetUploadStatusErrors];
+
+export type GetAssetUploadStatusResponses = {
+    /**
+     * The current owner-visible upload, validation, scan, and promotion state.
+     */
+    200: AssetUploadStatusResponse;
+};
+
+export type GetAssetUploadStatusResponse = GetAssetUploadStatusResponses[keyof GetAssetUploadStatusResponses];
+
+export type CompleteAssetUploadData = {
+    body: AssetUploadCompleteRequest;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+        /**
+         * Stable caller-generated 128-bit command identity, encoded as lowercase 32-hex or UUIDv7. It must not be derived from Idempotency-Key, password, OTP, or request content. Platform owns a unique workload/Site/caller/command row and rejects the same command id with a different payload using an internal keyed digest; all responses and receipts echo this exact id.
+         */
+        'X-Kokoro-Command-Id': string;
+        'Idempotency-Key': string;
+        'X-CSRF-Token': string;
+    };
+    path: {
+        projectRef: string;
+        intentRef: string;
+    };
+    query?: never;
+    url: '/v1/projects/{projectRef}/asset-upload-intents/{intentRef}:complete';
+};
+
+export type CompleteAssetUploadErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type CompleteAssetUploadError = CompleteAssetUploadErrors[keyof CompleteAssetUploadErrors];
+
+export type CompleteAssetUploadResponses = {
+    /**
+     * A durable owner command state without any upload credential or storage locator.
+     */
+    202: AssetUploadCommandResponse;
+};
+
+export type CompleteAssetUploadResponse = CompleteAssetUploadResponses[keyof CompleteAssetUploadResponses];
+
+export type GetTrustedAssetGrantData = {
+    body?: never;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+    };
+    path: {
+        projectRef: string;
+        assetRef: string;
+        assetVersionRef: string;
+        assetGrantRef: string;
+    };
+    query: {
+        purpose: string;
+        eligibilityEpoch: PositiveUint64String;
+    };
+    url: '/v1/projects/{projectRef}/assets/{assetRef}/versions/{assetVersionRef}/grants/{assetGrantRef}';
+};
+
+export type GetTrustedAssetGrantErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type GetTrustedAssetGrantError = GetTrustedAssetGrantErrors[keyof GetTrustedAssetGrantErrors];
+
+export type GetTrustedAssetGrantResponses = {
+    /**
+     * A current ready owner projection with no byte or storage authority.
+     */
+    200: TrustedAssetGrantResponse;
+};
+
+export type GetTrustedAssetGrantResponse = GetTrustedAssetGrantResponses[keyof GetTrustedAssetGrantResponses];
 
 export type RecoverRedemptionCommandData = {
     body?: never;

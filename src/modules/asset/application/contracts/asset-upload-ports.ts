@@ -1,5 +1,6 @@
 import type { VerifiedRequestSecurityContext } from "../../../../shared/security-context/index.js";
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
+import type { CommandIdentity, CommandReceipt, JsonValue } from "../../../../shared/outbox-inbox/receipt.js";
 import type { AssetPolicySnapshot, AssetUploadIntent, AssetUploadSession } from "../../domain/upload-intent.js";
 
 export interface AssetUnitOfWorkPort {
@@ -61,6 +62,19 @@ export interface AssetUploadRepositoryPort {
       expiresAt: string;
     }>,
   ): Promise<AssetUploadSession>;
+}
+
+export interface AssetUploadCommandReceiptPort {
+  begin(transaction: PlatformTransaction, identity: CommandIdentity): Promise<CommandReceipt>;
+  recordOutcome(
+    transaction: PlatformTransaction,
+    identity: CommandIdentity,
+    outcome: Readonly<{
+      state: "succeeded" | "failed" | "outcome_unknown";
+      result: JsonValue | null;
+      resultDigest: string;
+    }>,
+  ): Promise<CommandReceipt>;
 }
 
 export interface AssetUploadCapability {

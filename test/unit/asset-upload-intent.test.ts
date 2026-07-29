@@ -4,6 +4,7 @@ import {
   createUploadIntent,
   createUploadSession,
   markUploadCapabilityIssued,
+  verifyUploadIntent,
 } from "../../src/modules/asset/domain/upload-intent.js";
 
 const policy = Object.freeze({
@@ -71,5 +72,17 @@ describe("Asset upload intent", () => {
     });
     expect(value.safeDisplayName).toBe("invoicegnp.exe");
     expect(value.safeDisplayName.length).toBeLessThanOrEqual(255);
+  });
+
+  it("hydrates the worker's terminal completed intent without rejecting canonical state", () => {
+    const completed = createUploadIntent({
+      intentRef: "upload_intent_03", siteRef: "site_01", workloadIdentityId: "workload_01",
+      siteReleaseRef: "release_01", bindingEpoch: 7n, subjectRef: "subject_01",
+      subjectGeneration: 4n, projectRef: "project_01", purpose: "chat.attachment",
+      filename: "photo.png", clientMediaType: "image/png", expectedSize: 1234n,
+      expectedChecksumSha256: "c".repeat(64), policy, now: "2026-07-28T12:00:00.000Z",
+    });
+    expect(verifyUploadIntent({ ...completed, state: "completed", expectedVersion: 2n }))
+      .toMatchObject({ state: "completed", expectedVersion: 2n });
   });
 });

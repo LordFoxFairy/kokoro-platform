@@ -11,6 +11,7 @@ import { ProductWorkloadRegistry } from "../../modules/authorization/infrastruct
 import type { VerifiedCsrfEvidence } from "../../modules/authorization/infrastructure/transport/product-workload-registry.js";
 import { IdentityApplicationError } from "../../modules/identity/application/services/identity-application-service.js";
 import { CommerceApplicationError } from "../../modules/commerce/application/commerce-application-error.js";
+import { AssetApplicationError } from "../../modules/asset/application/asset-application-error.js";
 import { verifyRequestSecurityContext, type VerifiedRequestSecurityContext } from "../../shared/security-context/request-security-context.js";
 import {
   createPlatformPublicOperationRegistry,
@@ -370,6 +371,20 @@ export function platformPublicSafeProblem(error: unknown, requestId: string, cor
     } else {
       status = 503; code = "REDEEM_TEMPORARILY_UNAVAILABLE"; retryClass = "after_delay";
       safeMessage = "Redemption is temporarily unavailable.";
+    }
+  } else if (error instanceof AssetApplicationError) {
+    if (error.code === "ASSET_NOT_ACCEPTED") {
+      status = 404; code = error.code; retryClass = "never";
+      safeMessage = "The requested asset resource was not accepted.";
+    } else if (error.code === "ASSET_QUOTA_EXCEEDED") {
+      status = 422; code = error.code; retryClass = "after_user_action";
+      safeMessage = "The upload exceeds the available asset quota.";
+    } else if (error.code === "ASSET_UPLOAD_CONFLICT") {
+      status = 409; code = error.code; retryClass = "never";
+      safeMessage = "The upload state conflicts with this request.";
+    } else {
+      status = 503; code = error.code; retryClass = "after_delay";
+      safeMessage = "Asset processing is temporarily unavailable.";
     }
   } else if (authorizationCode === "USER_SESSION_REQUIRED" || (error instanceof IdentityApplicationError && error.code === "AUTHENTICATION_FAILED")) {
     status = 401; code = authorizationCode === "USER_SESSION_REQUIRED" ? "AUTHENTICATION_REQUIRED" : "AUTHENTICATION_FAILED";

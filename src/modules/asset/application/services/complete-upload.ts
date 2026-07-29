@@ -10,7 +10,7 @@ import type {
 import { digestAssetCommand } from "../asset-digest.js";
 import { resolveAssetUserAuthority } from "../asset-user-authority.js";
 
-const OPERATION = "asset.complete-upload";
+const OPERATION = "completeAssetUpload";
 
 export interface CompleteUploadResult {
   readonly intentRef: string;

@@ -21,6 +21,9 @@ import type {
   CompleteAccountRecoveryData,
   CompleteAccountRecoveryError,
   CompleteAccountRecoveryResponse,
+  CompleteAssetUploadData,
+  CompleteAssetUploadError,
+  CompleteAssetUploadResponse,
   CompleteEmailChangeData,
   CompleteEmailChangeError,
   CompleteEmailChangeResponse,
@@ -39,6 +42,9 @@ import type {
   ConfirmTotpEnrollmentData,
   ConfirmTotpEnrollmentError,
   ConfirmTotpEnrollmentResponse,
+  CreateAssetUploadIntentData,
+  CreateAssetUploadIntentError,
+  CreateAssetUploadIntentResponse,
   CreateIdentitySessionData,
   CreateIdentitySessionError,
   CreateIdentitySessionResponse,
@@ -48,6 +54,9 @@ import type {
   ExchangeProductContextData,
   ExchangeProductContextError,
   ExchangeProductContextResponse,
+  GetAssetUploadStatusData,
+  GetAssetUploadStatusError,
+  GetAssetUploadStatusResponse,
   GetCreditGrantData,
   GetCreditGrantError,
   GetCreditGrantResponse,
@@ -63,6 +72,9 @@ import type {
   GetRedemptionReceiptData,
   GetRedemptionReceiptError,
   GetRedemptionReceiptResponse,
+  GetTrustedAssetGrantData,
+  GetTrustedAssetGrantError,
+  GetTrustedAssetGrantResponse,
   GetUsageDetailData,
   GetUsageDetailError,
   GetUsageDetailResponse,
@@ -81,6 +93,9 @@ import type {
   ReauthenticateIdentitySessionData,
   ReauthenticateIdentitySessionError,
   ReauthenticateIdentitySessionResponse,
+  RecoverAssetUploadCommandData,
+  RecoverAssetUploadCommandError,
+  RecoverAssetUploadCommandResponse,
   RecoverRedemptionCommandData,
   RecoverRedemptionCommandError,
   RecoverRedemptionCommandResponse,
@@ -121,6 +136,10 @@ import {
   zCompleteAccountRecoveryHeaders,
   zCompleteAccountRecoveryPath,
   zCompleteAccountRecoveryResponse,
+  zCompleteAssetUploadBody,
+  zCompleteAssetUploadHeaders,
+  zCompleteAssetUploadPath,
+  zCompleteAssetUploadResponse,
   zCompleteEmailChangeBody,
   zCompleteEmailChangeHeaders,
   zCompleteEmailChangePath,
@@ -143,6 +162,10 @@ import {
   zConfirmTotpEnrollmentBody,
   zConfirmTotpEnrollmentHeaders,
   zConfirmTotpEnrollmentResponse,
+  zCreateAssetUploadIntentBody,
+  zCreateAssetUploadIntentHeaders,
+  zCreateAssetUploadIntentPath,
+  zCreateAssetUploadIntentResponse,
   zCreateIdentitySessionBody,
   zCreateIdentitySessionHeaders,
   zCreateIdentitySessionResponse,
@@ -152,6 +175,9 @@ import {
   zExchangeProductContextBody,
   zExchangeProductContextHeaders,
   zExchangeProductContextResponse,
+  zGetAssetUploadStatusHeaders,
+  zGetAssetUploadStatusPath,
+  zGetAssetUploadStatusResponse,
   zGetCreditGrantHeaders,
   zGetCreditGrantPath,
   zGetCreditGrantResponse,
@@ -165,6 +191,10 @@ import {
   zGetRedemptionReceiptHeaders,
   zGetRedemptionReceiptPath,
   zGetRedemptionReceiptResponse,
+  zGetTrustedAssetGrantHeaders,
+  zGetTrustedAssetGrantPath,
+  zGetTrustedAssetGrantQuery,
+  zGetTrustedAssetGrantResponse,
   zGetUsageDetailHeaders,
   zGetUsageDetailPath,
   zGetUsageDetailResponse,
@@ -181,6 +211,9 @@ import {
   zReauthenticateIdentitySessionBody,
   zReauthenticateIdentitySessionHeaders,
   zReauthenticateIdentitySessionResponse,
+  zRecoverAssetUploadCommandHeaders,
+  zRecoverAssetUploadCommandPath,
+  zRecoverAssetUploadCommandResponse,
   zRecoverRedemptionCommandHeaders,
   zRecoverRedemptionCommandResponse,
   zRefreshIdentitySessionBody,
@@ -205,26 +238,31 @@ export interface PlatformPublicOperationDataMap {
   readonly "beginTotpEnrollment": BeginTotpEnrollmentData;
   readonly "changePassword": ChangePasswordData;
   readonly "completeAccountRecovery": CompleteAccountRecoveryData;
+  readonly "completeAssetUpload": CompleteAssetUploadData;
   readonly "completeEmailChange": CompleteEmailChangeData;
   readonly "completeEmailVerification": CompleteEmailVerificationData;
   readonly "completePasswordReset": CompletePasswordResetData;
   readonly "completeSessionMfa": CompleteSessionMfaData;
   readonly "confirmRedemption": ConfirmRedemptionData;
   readonly "confirmTotpEnrollment": ConfirmTotpEnrollmentData;
+  readonly "createAssetUploadIntent": CreateAssetUploadIntentData;
   readonly "createIdentitySession": CreateIdentitySessionData;
   readonly "disableTotp": DisableTotpData;
   readonly "exchangeProductContext": ExchangeProductContextData;
+  readonly "getAssetUploadStatus": GetAssetUploadStatusData;
   readonly "getCreditGrant": GetCreditGrantData;
   readonly "getCreditSummary": GetCreditSummaryData;
   readonly "getPersonalContext": GetPersonalContextData;
   readonly "getPublicCommandReceipt": GetPublicCommandReceiptData;
   readonly "getRedemptionReceipt": GetRedemptionReceiptData;
+  readonly "getTrustedAssetGrant": GetTrustedAssetGrantData;
   readonly "getUsageDetail": GetUsageDetailData;
   readonly "issueSessionAccessGrant": IssueSessionAccessGrantData;
   readonly "listAccountProducts": ListAccountProductsData;
   readonly "listIdentitySessions": ListIdentitySessionsData;
   readonly "previewRedemption": PreviewRedemptionData;
   readonly "reauthenticateIdentitySession": ReauthenticateIdentitySessionData;
+  readonly "recoverAssetUploadCommand": RecoverAssetUploadCommandData;
   readonly "recoverRedemptionCommand": RecoverRedemptionCommandData;
   readonly "refreshIdentitySession": RefreshIdentitySessionData;
   readonly "regenerateRecoveryCodes": RegenerateRecoveryCodesData;
@@ -240,26 +278,31 @@ export interface PlatformPublicOperationResponseMap {
   readonly "beginTotpEnrollment": BeginTotpEnrollmentResponse;
   readonly "changePassword": ChangePasswordResponse;
   readonly "completeAccountRecovery": CompleteAccountRecoveryResponse;
+  readonly "completeAssetUpload": CompleteAssetUploadResponse;
   readonly "completeEmailChange": CompleteEmailChangeResponse;
   readonly "completeEmailVerification": CompleteEmailVerificationResponse;
   readonly "completePasswordReset": CompletePasswordResetResponse;
   readonly "completeSessionMfa": CompleteSessionMfaResponse;
   readonly "confirmRedemption": ConfirmRedemptionResponse;
   readonly "confirmTotpEnrollment": ConfirmTotpEnrollmentResponse;
+  readonly "createAssetUploadIntent": CreateAssetUploadIntentResponse;
   readonly "createIdentitySession": CreateIdentitySessionResponse;
   readonly "disableTotp": DisableTotpResponse;
   readonly "exchangeProductContext": ExchangeProductContextResponse;
+  readonly "getAssetUploadStatus": GetAssetUploadStatusResponse;
   readonly "getCreditGrant": GetCreditGrantResponse;
   readonly "getCreditSummary": GetCreditSummaryResponse;
   readonly "getPersonalContext": GetPersonalContextResponse;
   readonly "getPublicCommandReceipt": GetPublicCommandReceiptResponse;
   readonly "getRedemptionReceipt": GetRedemptionReceiptResponse;
+  readonly "getTrustedAssetGrant": GetTrustedAssetGrantResponse;
   readonly "getUsageDetail": GetUsageDetailResponse;
   readonly "issueSessionAccessGrant": IssueSessionAccessGrantResponse;
   readonly "listAccountProducts": ListAccountProductsResponse;
   readonly "listIdentitySessions": ListIdentitySessionsResponse;
   readonly "previewRedemption": PreviewRedemptionResponse;
   readonly "reauthenticateIdentitySession": ReauthenticateIdentitySessionResponse;
+  readonly "recoverAssetUploadCommand": RecoverAssetUploadCommandResponse;
   readonly "recoverRedemptionCommand": RecoverRedemptionCommandResponse;
   readonly "refreshIdentitySession": RefreshIdentitySessionResponse;
   readonly "regenerateRecoveryCodes": RegenerateRecoveryCodesResponse;
@@ -275,26 +318,31 @@ export interface PlatformPublicOperationErrorMap {
   readonly "beginTotpEnrollment": BeginTotpEnrollmentError;
   readonly "changePassword": ChangePasswordError;
   readonly "completeAccountRecovery": CompleteAccountRecoveryError;
+  readonly "completeAssetUpload": CompleteAssetUploadError;
   readonly "completeEmailChange": CompleteEmailChangeError;
   readonly "completeEmailVerification": CompleteEmailVerificationError;
   readonly "completePasswordReset": CompletePasswordResetError;
   readonly "completeSessionMfa": CompleteSessionMfaError;
   readonly "confirmRedemption": ConfirmRedemptionError;
   readonly "confirmTotpEnrollment": ConfirmTotpEnrollmentError;
+  readonly "createAssetUploadIntent": CreateAssetUploadIntentError;
   readonly "createIdentitySession": CreateIdentitySessionError;
   readonly "disableTotp": DisableTotpError;
   readonly "exchangeProductContext": ExchangeProductContextError;
+  readonly "getAssetUploadStatus": GetAssetUploadStatusError;
   readonly "getCreditGrant": GetCreditGrantError;
   readonly "getCreditSummary": GetCreditSummaryError;
   readonly "getPersonalContext": GetPersonalContextError;
   readonly "getPublicCommandReceipt": GetPublicCommandReceiptError;
   readonly "getRedemptionReceipt": GetRedemptionReceiptError;
+  readonly "getTrustedAssetGrant": GetTrustedAssetGrantError;
   readonly "getUsageDetail": GetUsageDetailError;
   readonly "issueSessionAccessGrant": IssueSessionAccessGrantError;
   readonly "listAccountProducts": ListAccountProductsError;
   readonly "listIdentitySessions": ListIdentitySessionsError;
   readonly "previewRedemption": PreviewRedemptionError;
   readonly "reauthenticateIdentitySession": ReauthenticateIdentitySessionError;
+  readonly "recoverAssetUploadCommand": RecoverAssetUploadCommandError;
   readonly "recoverRedemptionCommand": RecoverRedemptionCommandError;
   readonly "refreshIdentitySession": RefreshIdentitySessionError;
   readonly "regenerateRecoveryCodes": RegenerateRecoveryCodesError;
@@ -408,6 +456,21 @@ export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
     }),
     responseSchema: zCompleteAccountRecoveryResponse,
   }),
+  "completeAssetUpload": Object.freeze({
+    method: "POST",
+    path: "/v1/projects/{projectRef}/asset-upload-intents/{intentRef}:complete",
+    mutation: true,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([202]),
+    requestSchemas: Object.freeze({
+      body: zCompleteAssetUploadBody,
+      headers: zCompleteAssetUploadHeaders,
+      path: zCompleteAssetUploadPath,
+      query: null,
+    }),
+    responseSchema: zCompleteAssetUploadResponse,
+  }),
   "completeEmailChange": Object.freeze({
     method: "POST",
     path: "/v1/identity/email-changes/{id}:complete",
@@ -498,6 +561,21 @@ export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
     }),
     responseSchema: zConfirmTotpEnrollmentResponse,
   }),
+  "createAssetUploadIntent": Object.freeze({
+    method: "POST",
+    path: "/v1/projects/{projectRef}/asset-upload-intents",
+    mutation: true,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([201]),
+    requestSchemas: Object.freeze({
+      body: zCreateAssetUploadIntentBody,
+      headers: zCreateAssetUploadIntentHeaders,
+      path: zCreateAssetUploadIntentPath,
+      query: null,
+    }),
+    responseSchema: zCreateAssetUploadIntentResponse,
+  }),
   "createIdentitySession": Object.freeze({
     method: "POST",
     path: "/v1/identity/sessions",
@@ -542,6 +620,21 @@ export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
       query: null,
     }),
     responseSchema: zExchangeProductContextResponse,
+  }),
+  "getAssetUploadStatus": Object.freeze({
+    method: "GET",
+    path: "/v1/projects/{projectRef}/asset-upload-intents/{intentRef}",
+    mutation: false,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200]),
+    requestSchemas: Object.freeze({
+      body: null,
+      headers: zGetAssetUploadStatusHeaders,
+      path: zGetAssetUploadStatusPath,
+      query: null,
+    }),
+    responseSchema: zGetAssetUploadStatusResponse,
   }),
   "getCreditGrant": Object.freeze({
     method: "GET",
@@ -617,6 +710,21 @@ export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
       query: null,
     }),
     responseSchema: zGetRedemptionReceiptResponse,
+  }),
+  "getTrustedAssetGrant": Object.freeze({
+    method: "GET",
+    path: "/v1/projects/{projectRef}/assets/{assetRef}/versions/{assetVersionRef}/grants/{assetGrantRef}",
+    mutation: false,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200]),
+    requestSchemas: Object.freeze({
+      body: null,
+      headers: zGetTrustedAssetGrantHeaders,
+      path: zGetTrustedAssetGrantPath,
+      query: zGetTrustedAssetGrantQuery,
+    }),
+    responseSchema: zGetTrustedAssetGrantResponse,
   }),
   "getUsageDetail": Object.freeze({
     method: "GET",
@@ -707,6 +815,21 @@ export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
       query: null,
     }),
     responseSchema: zReauthenticateIdentitySessionResponse,
+  }),
+  "recoverAssetUploadCommand": Object.freeze({
+    method: "GET",
+    path: "/v1/projects/{projectRef}/asset-upload-commands/{commandId}",
+    mutation: false,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200]),
+    requestSchemas: Object.freeze({
+      body: null,
+      headers: zRecoverAssetUploadCommandHeaders,
+      path: zRecoverAssetUploadCommandPath,
+      query: null,
+    }),
+    responseSchema: zRecoverAssetUploadCommandResponse,
   }),
   "recoverRedemptionCommand": Object.freeze({
     method: "GET",

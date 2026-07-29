@@ -72,6 +72,23 @@ export const zAccountProduct = z.strictObject({
     ])
 });
 
+/**
+ * Durable owner command cursor. It deliberately excludes the upload capability and all object-storage facts, so command recovery cannot replay a credential.
+ */
+export const zAssetUploadOwnerReceipt = z.strictObject({
+    commandId: z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
+    operation: z.enum(['create_asset_upload_intent', 'complete_asset_upload']),
+    receiptRef: z.string().min(1).max(256),
+    receivedAt: z.iso.datetime(),
+    state: z.enum([
+        'pending',
+        'succeeded',
+        'failed',
+        'outcome_unknown'
+    ]),
+    updatedAt: z.iso.datetime()
+});
+
 export const zAuthPending = z.strictObject({
     challengeKind: z.enum(['totp', 'recovery']),
     expiresAt: z.iso.datetime(),
@@ -279,7 +296,11 @@ export const zErrorCode = z.enum([
     'REDEEM_NOT_ACCEPTED',
     'REDEEM_TEMPORARILY_UNAVAILABLE',
     'IDEMPOTENCY_CONFLICT',
-    'ACQUISITION_CHANNEL_DISABLED'
+    'ACQUISITION_CHANNEL_DISABLED',
+    'ASSET_NOT_ACCEPTED',
+    'ASSET_UPLOAD_CONFLICT',
+    'ASSET_QUOTA_EXCEEDED',
+    'ASSET_TEMPORARILY_UNAVAILABLE'
 ]);
 
 export const zErrorResponse = z.strictObject({
@@ -447,6 +468,32 @@ export const zPersonalContext = z.strictObject({
  * A canonical positive unsigned 64-bit integer encoded as a decimal string.
  */
 export const zPositiveUint64String = (z.string().min(1).max(20).regex(/^[1-9][0-9]{0,19}$/)).refine((value) => value.length < 20 || value <= "18446744073709551615", "must fit a positive uint64");
+
+/**
+ * Short-lived credential for one registered upload data plane. The endpoint is a shared service endpoint, never a provider object URL or presigned request.
+ */
+export const zAssetUploadCapability = z.strictObject({
+    capabilityEpoch: zPositiveUint64String,
+    credential: z.string().min(32).max(4096).regex(/^\S+$/),
+    expiresAt: z.iso.datetime(),
+    maximumPartBytes: zPositiveUint64String,
+    minimumPartBytes: zPositiveUint64String,
+    protocolRevision: z.literal('s3-multipart-v1'),
+    uploadEndpoint: z.url().max(512).regex(/^https:\/\//)
+});
+
+export const zAssetUploadCompleteInput = z.strictObject({
+    expectedVersion: zPositiveUint64String,
+    sessionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)
+});
+
+export const zAssetUploadIntentInput = z.strictObject({
+    clientMediaType: z.string().min(3).max(255).regex(/^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+$/),
+    expectedChecksumSha256: z.string().regex(/^[0-9a-f]{64}$/),
+    expectedSize: zPositiveUint64String,
+    filename: z.string().min(1).max(255),
+    purpose: z.string().min(1).max(128).regex(/^[a-z][a-z0-9._-]{0,127}$/)
+});
 
 export const zProjectionRevision = z.string().regex(/^(?:0|[1-9][0-9]{0,18})$/);
 
@@ -918,7 +965,6 @@ export const zReauthenticationInput = z.union([
 
 export const zSupersedeRecoveryCodeSetInput = z.strictObject({
     priorCommandId: z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
-    reauthenticationProof: z.string().min(32).max(2048),
     recoveryAction: z.literal('supersede')
 });
 
@@ -955,8 +1001,7 @@ export const zSessionMfaCompletionInput = z.union([
 export const zSupersedeTotpEnrollmentInput = z.strictObject({
     ceremonyAction: z.literal('supersede'),
     priorCommandId: z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
-    priorTransactionRef: z.string().min(16).max(128),
-    reauthenticationProof: z.string().min(32).max(2048)
+    priorTransactionRef: z.string().min(16).max(128)
 });
 
 export const zSupersedeTotpRecoveryReplacementInput = z.strictObject({
@@ -1109,6 +1154,73 @@ export const zTransactionSecretInput = z.strictObject({
     transactionSecret: z.string().min(32).max(2048)
 });
 
+/**
+ * Current owner eligibility projection. The opaque assetGrantRef is consumed by Platform Admission; it does not directly authorize storage access.
+ */
+export const zTrustedAssetGrant = z.strictObject({
+    assetGrantRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    assetRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    assetVersionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    detectedMediaType: z.string().min(3).max(255),
+    eligibilityEpoch: zPositiveUint64String,
+    projectRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    purpose: z.string().min(1).max(128).regex(/^[a-z][a-z0-9._-]{0,127}$/),
+    size: zPositiveUint64String,
+    state: z.literal('ready'),
+    subjectGeneration: zPositiveUint64String
+});
+
+export const zAssetUploadStatus = z.strictObject({
+    clientMediaType: z.string().min(3).max(255),
+    expectedSize: zPositiveUint64String,
+    expectedVersion: zPositiveUint64String,
+    intentRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    projectRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    purpose: z.string().min(1).max(128).regex(/^[a-z][a-z0-9._-]{0,127}$/),
+    retryAfter: z.iso.datetime().nullable(),
+    retryClass: z.enum([
+        'never',
+        'immediate',
+        'after_delay',
+        'after_user_action'
+    ]),
+    safeDisplayName: z.string().min(1).max(255),
+    safeReasonCode: z.string().max(128).regex(/^[A-Z][A-Z0-9_]{0,127}$/).nullable(),
+    sessionRef: z.string().min(3).max(128),
+    stage: z.enum([
+        'upload_interrupted',
+        'uploading',
+        'upload_verification',
+        'scan_waiting',
+        'scanning',
+        'promotion_recovering',
+        'ready',
+        'rejected',
+        'aborted'
+    ]),
+    terminal: z.boolean(),
+    trustedGrant: zTrustedAssetGrant.nullable()
+});
+
+export const zAssetUploadCommandResponse = z.strictObject({
+    receipt: zAssetUploadOwnerReceipt,
+    upload: zAssetUploadStatus.nullable()
+});
+
+export const zAssetUploadIntentResponse = z.strictObject({
+    capability: zAssetUploadCapability,
+    receipt: zAssetUploadOwnerReceipt,
+    upload: zAssetUploadStatus
+});
+
+export const zAssetUploadStatusResponse = z.strictObject({
+    upload: zAssetUploadStatus
+});
+
+export const zTrustedAssetGrantResponse = z.strictObject({
+    grant: zTrustedAssetGrant
+});
+
 export const zUsageCreditAllocation = z.strictObject({
     amount: zCreditAmount,
     creditGrantId: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),
@@ -1147,6 +1259,20 @@ export const zVerificationActivationResponse = z.strictObject({
     receipt: zCommandReceipt
 });
 
+export const zAssetCommandId = z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/);
+
+export const zAssetEligibilityEpoch = zPositiveUint64String;
+
+export const zAssetGrantRef = z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/);
+
+export const zAssetPurpose = z.string().min(1).max(128).regex(/^[a-z][a-z0-9._-]{0,127}$/);
+
+export const zAssetRef = z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/);
+
+export const zAssetUploadIntentRef = z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/);
+
+export const zAssetVersionRef = z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/);
+
 export const zCommandId = z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/);
 
 /**
@@ -1162,11 +1288,17 @@ export const zCsrfToken = z.string().min(32).max(512);
 
 export const zIdempotencyKey = z.string().min(16).max(191);
 
+export const zProjectRef = z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/);
+
 export const zRedemptionId = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 
 export const zTransactionRef = z.string().min(1).max(128);
 
 export const zUsageId = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+
+export const zAssetUploadCompleteRequest = zAssetUploadCompleteInput;
+
+export const zAssetUploadIntentRequest = zAssetUploadIntentInput;
 
 export const zCommandRequest = zCommandInput;
 
@@ -1584,6 +1716,92 @@ export const zExchangeProductContextHeaders = z.strictObject({
  * A Site-release-bound product context.
  */
 export const zExchangeProductContextResponse = zProductContextExchangeResponse;
+
+export const zRecoverAssetUploadCommandHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1')
+});
+
+export const zRecoverAssetUploadCommandPath = z.strictObject({
+    projectRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    commandId: z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/)
+});
+
+/**
+ * A durable owner command state without any upload credential or storage locator.
+ */
+export const zRecoverAssetUploadCommandResponse = zAssetUploadCommandResponse;
+
+export const zCreateAssetUploadIntentBody = zAssetUploadIntentRequest;
+
+export const zCreateAssetUploadIntentHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1'),
+    'X-Kokoro-Command-Id': z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
+    'Idempotency-Key': z.string().min(16).max(191),
+    'X-CSRF-Token': z.string().min(32).max(512)
+});
+
+export const zCreateAssetUploadIntentPath = z.strictObject({
+    projectRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)
+});
+
+/**
+ * A durable upload owner receipt plus a one-time short-lived upload capability.
+ */
+export const zCreateAssetUploadIntentResponse = zAssetUploadIntentResponse;
+
+export const zGetAssetUploadStatusHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1')
+});
+
+export const zGetAssetUploadStatusPath = z.strictObject({
+    projectRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    intentRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)
+});
+
+/**
+ * The current owner-visible upload, validation, scan, and promotion state.
+ */
+export const zGetAssetUploadStatusResponse = zAssetUploadStatusResponse;
+
+export const zCompleteAssetUploadBody = zAssetUploadCompleteRequest;
+
+export const zCompleteAssetUploadHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1'),
+    'X-Kokoro-Command-Id': z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
+    'Idempotency-Key': z.string().min(16).max(191),
+    'X-CSRF-Token': z.string().min(32).max(512)
+});
+
+export const zCompleteAssetUploadPath = z.strictObject({
+    projectRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    intentRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)
+});
+
+/**
+ * A durable owner command state without any upload credential or storage locator.
+ */
+export const zCompleteAssetUploadResponse = zAssetUploadCommandResponse;
+
+export const zGetTrustedAssetGrantHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1')
+});
+
+export const zGetTrustedAssetGrantPath = z.strictObject({
+    projectRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    assetRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    assetVersionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    assetGrantRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)
+});
+
+export const zGetTrustedAssetGrantQuery = z.strictObject({
+    purpose: z.string().min(1).max(128).regex(/^[a-z][a-z0-9._-]{0,127}$/),
+    eligibilityEpoch: zPositiveUint64String
+});
+
+/**
+ * A current ready owner projection with no byte or storage authority.
+ */
+export const zGetTrustedAssetGrantResponse = zTrustedAssetGrantResponse;
 
 export const zRecoverRedemptionCommandHeaders = z.strictObject({
     'Idempotency-Key': z.string().min(16).max(191),

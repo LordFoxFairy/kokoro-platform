@@ -7,10 +7,11 @@ import type {
   AssetUnitOfWorkPort,
   AssetUploadCapability,
   AssetUploadCapabilityIssuerPort,
+  AssetUploadCommandReceiptPort,
   AssetUploadRepositoryPort,
 } from "../contracts/asset-upload-ports.js";
 
-const OPERATION = "asset.create-upload-intent";
+const OPERATION = "createAssetUploadIntent";
 
 export interface CreateUploadIntentResult {
   readonly intentRef: string;
@@ -21,6 +22,7 @@ export interface CreateUploadIntentResult {
   readonly expectedSize: bigint;
   readonly expiresAt: string;
   readonly capability: AssetUploadCapability;
+  readonly commandId: string;
 }
 
 export class CreateUploadIntentService {
@@ -29,12 +31,14 @@ export class CreateUploadIntentService {
     repository: AssetUploadRepositoryPort;
     policyResolver: AssetPolicyResolverPort;
     capabilityIssuer: AssetUploadCapabilityIssuerPort;
+    receipts: AssetUploadCommandReceiptPort;
     clock?: () => Date;
     reference?: () => string;
   }>) {}
 
   async execute(input: Readonly<{
     context: VerifiedRequestSecurityContext;
+    commandId: string;
     idempotencyKey: string;
     purpose: string;
     filename: string;
@@ -66,13 +70,15 @@ export class CreateUploadIntentService {
       clientMediaType: input.clientMediaType.trim().toLowerCase(),
       expectedSize: input.expectedSize,
       expectedChecksumSha256: input.expectedChecksumSha256,
-      policyRevisionRef: policy.policy.policyRevisionRef,
-      quotaRevisionRef: policy.quotaRevisionRef,
-      storageTenantRef: policy.storageTenantRef,
-      uploadAudience: policy.uploadAudience,
-      minimumPartBytes: policy.minimumPartBytes,
-      maximumPartBytes: policy.maximumPartBytes,
-      capabilityLifetimeSeconds: policy.capabilityLifetimeSeconds,
+    });
+    const identity = Object.freeze({
+      commandId: input.commandId,
+      environment: input.context.environment,
+      region: input.context.region,
+      callerIdentity: `${authority.workloadIdentityId}:${authority.subjectRef}:${authority.subjectGeneration}`,
+      operation: OPERATION,
+      idempotencyKey: input.idempotencyKey,
+      requestDigest,
     });
     const proposed = createUploadIntent({
       intentRef: this.reference(),
@@ -99,14 +105,26 @@ export class CreateUploadIntentService {
     });
     const claim = await this.dependencies.unitOfWork.execute(
       { context: input.context, operation: OPERATION },
-      (transaction) => this.dependencies.repository.claimUploadIntent(transaction, {
-        intent: proposed,
-        session: proposedSession,
-        idempotencyKey: input.idempotencyKey,
-        requestDigest,
-        maximumInflightBytes: policy.policy.maximumInflightBytes,
-        maximumReadyBytes: policy.policy.maximumReadyBytes,
-      }),
+      async (transaction) => {
+        let receipt;
+        try {
+          receipt = await this.dependencies.receipts.begin(transaction, identity);
+        } catch (error) {
+          if (error instanceof Error && error.message === "COMMAND_DIGEST_CONFLICT") {
+            throw new Error("ASSET_IDEMPOTENCY_DIGEST_CONFLICT");
+          }
+          throw error;
+        }
+        if (receipt.commandId !== input.commandId) throw new Error("ASSET_IDEMPOTENCY_DIGEST_CONFLICT");
+        return this.dependencies.repository.claimUploadIntent(transaction, {
+          intent: proposed,
+          session: proposedSession,
+          idempotencyKey: input.idempotencyKey,
+          requestDigest,
+          maximumInflightBytes: policy.policy.maximumInflightBytes,
+          maximumReadyBytes: policy.policy.maximumReadyBytes,
+        });
+      },
     );
     if (claim.disposition === "conflict") throw new Error("ASSET_IDEMPOTENCY_DIGEST_CONFLICT");
     assertReplayAuthority(claim.intent, authority);
@@ -140,13 +158,25 @@ export class CreateUploadIntentService {
     assertCapability(capability, capabilityEpoch, expiresAt, claim.session);
     const issued = await this.dependencies.unitOfWork.execute(
       { context: input.context, operation: OPERATION },
-      (transaction) => this.dependencies.repository.markCapabilityIssued(transaction, {
-        siteRef: claim.intent.siteRef,
-        intentRef: claim.intent.intentRef,
-        expectedVersion: claim.session.expectedVersion,
-        capabilityEpoch,
-        expiresAt,
-      }),
+      async (transaction) => {
+        const session = await this.dependencies.repository.markCapabilityIssued(transaction, {
+          siteRef: claim.intent.siteRef,
+          intentRef: claim.intent.intentRef,
+          expectedVersion: claim.session.expectedVersion,
+          capabilityEpoch,
+          expiresAt,
+        });
+        const result = Object.freeze({
+          intentRef: claim.intent.intentRef,
+          sessionRef: session.sessionRef,
+        });
+        await this.dependencies.receipts.recordOutcome(transaction, identity, {
+          state: "succeeded",
+          result,
+          resultDigest: digestAssetCommand(result),
+        });
+        return session;
+      },
     );
     return Object.freeze({
       intentRef: issued.intentRef,
@@ -157,6 +187,7 @@ export class CreateUploadIntentService {
       expectedSize: claim.intent.expectedSize,
       expiresAt: issued.expiresAt,
       capability,
+      commandId: input.commandId,
     });
   }
 
