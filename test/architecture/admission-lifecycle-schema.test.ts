@@ -23,7 +23,7 @@ describe("Admission lifecycle schema", () => {
     expect(migrator).toContain('"platform.admission_session_execution_binding"');
     expect(migrator).toContain('"platform.admission_execution_manifest"');
     expect(composition).toMatch(
-      /Omit<\s*PlatformAdmissionOwnerPorts,\s*"unitOfWork" \| "lifecycle" \| "site"\s*>/u,
+      /Omit<\s*PlatformAdmissionOwnerPorts,\s*"unitOfWork" \| "lifecycle" \| "site" \| "model"\s*>/u,
     );
     expect(composition).toContain("lifecycle: new PostgresAdmissionLifecycleOwner()");
     expect(composition).toContain("site: new PostgresAdmissionSiteOwner()");

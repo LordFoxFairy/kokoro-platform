@@ -9,6 +9,8 @@ import {
   verifySiteReleaseModelCatalogRevision,
 } from "../../domain/product-model-option.js";
 import type {
+  AdmissionModelCatalogRepository,
+  AdmissionModelRuntimeCandidate,
   ModelOptionCatalogRepository,
   ModelOptionMaterializationReceipt,
   ProductModelCatalogSnapshot,
@@ -17,7 +19,8 @@ import type {
 import type { ModelOptionCatalogReadPort } from "../../../authorization/application/contracts/session-authorization-ports.js";
 import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
 
-export class PostgresProductModelOptionRepository implements ModelOptionCatalogRepository {
+export class PostgresProductModelOptionRepository
+  implements ModelOptionCatalogRepository, AdmissionModelCatalogRepository {
   async loadInventory(
     transaction: Parameters<ModelOptionCatalogRepository["loadInventory"]>[0],
     inventoryDigest: string,
@@ -143,6 +146,33 @@ export class PostgresProductModelOptionRepository implements ModelOptionCatalogR
       runtimeAvailableModelKeys: Object.freeze(strings(row.runtimeAvailableModelKeys)),
     });
   }
+
+  async loadAdmissionModelSnapshot(
+    transaction: Parameters<AdmissionModelCatalogRepository["loadAdmissionModelSnapshot"]>[0],
+    input: Parameters<AdmissionModelCatalogRepository["loadAdmissionModelSnapshot"]>[1],
+  ): ReturnType<AdmissionModelCatalogRepository["loadAdmissionModelSnapshot"]> {
+    const rows = await resolvePlatformTransaction(transaction).query<AdmissionModelSnapshotRow>(
+      `SELECT result_site_id AS "siteId",
+              result_site_release_ref AS "siteReleaseRef",
+              result_inventory_digest AS "inventoryDigest",
+              result_option_revision_payload AS "optionRevisionPayload",
+              result_runtime_candidates AS "runtimeCandidates"
+         FROM platform.resolve_admission_model_owner($1::text,$2::text,$3::text)`,
+      [input.siteId, input.siteReleaseRef, input.modelOptionRevisionRef],
+    );
+    const row = rows[0];
+    if (row === undefined) return null;
+    if (rows.length !== 1) throw new Error("ADMISSION_MODEL_SNAPSHOT_INVALID");
+    return Object.freeze({
+      siteId: requiredText(row.siteId),
+      siteReleaseRef: requiredText(row.siteReleaseRef),
+      inventoryDigest: digest(row.inventoryDigest),
+      optionRevision: verifyModelOptionRevision(row.optionRevisionPayload),
+      runtimeCandidates: Object.freeze(
+        array(row.runtimeCandidates).map(parseAdmissionRuntimeCandidate),
+      ),
+    });
+  }
 }
 
 /**
@@ -191,6 +221,13 @@ interface ProductSnapshotRow extends Record<string, unknown> {
   optionRevisionPayloads: unknown;
   runtimeAvailableModelKeys: unknown;
 }
+interface AdmissionModelSnapshotRow extends Record<string, unknown> {
+  siteId: unknown;
+  siteReleaseRef: unknown;
+  inventoryDigest: unknown;
+  optionRevisionPayload: unknown;
+  runtimeCandidates: unknown;
+}
 interface MaterializationRow extends Record<string, unknown>, ModelOptionMaterializationReceipt {}
 interface PublicationRow extends Record<string, unknown>, SiteReleaseModelCatalogPublishReceipt {}
 
@@ -212,4 +249,62 @@ function strings(value: unknown): string[] {
 
 function sameStrings(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function parseAdmissionRuntimeCandidate(value: unknown): AdmissionModelRuntimeCandidate {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("ADMISSION_MODEL_RUNTIME_CANDIDATE_INVALID");
+  }
+  const candidate = value as Record<string, unknown>;
+  if (
+    Object.keys(candidate).sort().join(",") !==
+      "adapterKind,bindingKey,bindingPriority,gatewayModelName,modelKey,modelPosition,provider,providerPriority,upstreamModel" ||
+    !identifier(candidate.modelKey) || !identifier(candidate.bindingKey) ||
+    !identifier(candidate.provider) || !boundedRuntimeName(candidate.upstreamModel) ||
+    !boundedRuntimeName(candidate.gatewayModelName) ||
+    !position(candidate.modelPosition) || !position(candidate.bindingPriority) ||
+    !position(candidate.providerPriority) ||
+    (candidate.adapterKind !== "litellm" && candidate.adapterKind !== "direct")
+  ) throw new Error("ADMISSION_MODEL_RUNTIME_CANDIDATE_INVALID");
+  return Object.freeze({
+    modelKey: candidate.modelKey,
+    modelPosition: candidate.modelPosition,
+    bindingKey: candidate.bindingKey,
+    bindingPriority: candidate.bindingPriority,
+    providerPriority: candidate.providerPriority,
+    adapterKind: candidate.adapterKind,
+    provider: candidate.provider,
+    upstreamModel: candidate.upstreamModel,
+    gatewayModelName: candidate.gatewayModelName,
+  });
+}
+
+function requiredText(value: unknown): string {
+  if (typeof value !== "string" || value.length < 1 || value.length > 256) {
+    throw new Error("ADMISSION_MODEL_SNAPSHOT_INVALID");
+  }
+  return value;
+}
+
+function digest(value: unknown): string {
+  if (typeof value !== "string" || !/^[0-9a-f]{64}$/u.test(value)) {
+    throw new Error("ADMISSION_MODEL_SNAPSHOT_INVALID");
+  }
+  return value;
+}
+
+function identifier(value: unknown): value is string {
+  return typeof value === "string" && /^[a-z0-9][a-z0-9._:-]{0,127}$/u.test(value);
+}
+
+function boundedRuntimeName(value: unknown): value is string {
+  return typeof value === "string" && value.length >= 1 && value.length <= 512 &&
+    !Array.from(value).some((character) => {
+      const point = character.codePointAt(0) ?? 0;
+      return point < 32 || point === 127;
+    });
+}
+
+function position(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 10_000;
 }

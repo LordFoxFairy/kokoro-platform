@@ -212,6 +212,55 @@ describe("Postgres Product ModelOption repository", () => {
     }
   });
 
+  it("loads the admission-only runtime projection without secret or account metadata", async () => {
+    const fixture = catalogFixture();
+    const calls: { statement: string; values: readonly unknown[] }[] = [];
+    const lease = issuePlatformTransaction({
+      query: async <Row extends Record<string, unknown>>(
+        statement: string,
+        values: readonly unknown[] = [],
+      ) => {
+        calls.push({ statement, values });
+        return [{
+          siteId: "site-a",
+          siteReleaseRef: "release-a",
+          inventoryDigest: fixture.inventory.digest,
+          optionRevisionPayload: fixture.option,
+          runtimeCandidates: [{
+            modelKey: "chat-primary", modelPosition: 0,
+            bindingKey: "binding:chat-primary", bindingPriority: 0, providerPriority: 0,
+            adapterKind: "litellm", provider: "openai-compatible",
+            upstreamModel: "chat-primary", gatewayModelName: "chat-primary",
+          }],
+        }] as unknown as readonly Row[];
+      },
+      execute: async () => 0,
+    });
+    try {
+      const result = await new PostgresProductModelOptionRepository().loadAdmissionModelSnapshot(
+        lease.transaction,
+        {
+          siteId: "site-a",
+          siteReleaseRef: "release-a",
+          modelOptionRevisionRef: fixture.option.modelOptionRevisionRef,
+        },
+      );
+      expect(result).toMatchObject({
+        siteId: "site-a",
+        siteReleaseRef: "release-a",
+        optionRevision: fixture.option,
+        runtimeCandidates: [{ modelKey: "chat-primary", adapterKind: "litellm" }],
+      });
+      expect(calls[0]?.statement).toContain("platform.resolve_admission_model_owner");
+      expect(calls[0]?.values).toEqual([
+        "site-a", "release-a", fixture.option.modelOptionRevisionRef,
+      ]);
+      expect(JSON.stringify(result)).not.toMatch(/secretRef|accountKey/u);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
   it("rejects owner output whose immutable option payload was tampered", async () => {
     const fixture = catalogFixture();
     const tampered = { ...fixture.option, label: "Tampered" };

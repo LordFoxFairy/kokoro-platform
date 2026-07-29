@@ -1,6 +1,10 @@
 import type { VerifiedRequestSecurityContext } from "../../../../shared/security-context/index.js";
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
-import type { CanonicalizedModelInventory, ModelProduct } from "../../domain/model-catalog.js";
+import type {
+  CanonicalizedModelInventory,
+  ModelProduct,
+  ProviderAdapterKind,
+} from "../../domain/model-catalog.js";
 import type {
   ModelOptionRevision,
   ProductModelOptionCatalogProjection,
@@ -32,6 +36,37 @@ export interface ProductModelCatalogSnapshot {
   readonly release: SiteReleaseModelCatalogRevision;
   readonly optionRevisions: readonly ModelOptionRevision[];
   readonly runtimeAvailableModelKeys: readonly string[];
+}
+
+export interface AdmissionModelRuntimeCandidate {
+  readonly modelKey: string;
+  readonly modelPosition: number;
+  readonly bindingKey: string;
+  readonly bindingPriority: number;
+  readonly providerPriority: number;
+  readonly adapterKind: ProviderAdapterKind;
+  readonly provider: string;
+  readonly upstreamModel: string;
+  readonly gatewayModelName: string;
+}
+
+export interface AdmissionModelSnapshot {
+  readonly siteId: string;
+  readonly siteReleaseRef: string;
+  readonly inventoryDigest: string;
+  readonly optionRevision: ModelOptionRevision;
+  readonly runtimeCandidates: readonly AdmissionModelRuntimeCandidate[];
+}
+
+export interface AdmissionModelCatalogRepository {
+  loadAdmissionModelSnapshot(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      siteId: string;
+      siteReleaseRef: string;
+      modelOptionRevisionRef: string;
+    }>,
+  ): Promise<AdmissionModelSnapshot | null>;
 }
 
 export interface ModelOptionCatalogRepository {

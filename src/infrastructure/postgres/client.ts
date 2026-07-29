@@ -784,6 +784,7 @@ const RUNTIME_IDENTITY_SQL = `
            AS "canExecuteAdminAuthorityChange",
          CASE WHEN $2='api' THEN
            has_function_privilege(current_user,'platform.resolve_product_model_option_catalog(text,text)','EXECUTE')
+           AND has_function_privilege(current_user,'platform.resolve_admission_model_owner(text,text,text)','EXECUTE')
          WHEN $2='admin' THEN
            has_function_privilege(current_user,'platform.load_model_option_inventory(text)','EXECUTE')
            AND has_function_privilege(current_user,'platform.load_model_option_revisions(text[])','EXECUTE')
@@ -1137,6 +1138,7 @@ const RUNTIME_IDENTITY_SQL = `
                  to_regprocedure('platform.resolve_model_candidates(text,text,text)'),
                  to_regprocedure('platform.find_model_selection_decision(uuid)'),
                  to_regprocedure('platform.resolve_product_model_option_catalog(text,text)'),
+                 to_regprocedure('platform.resolve_admission_model_owner(text,text,text)'),
                  to_regprocedure('platform.valid_credit_scope_policy(jsonb)')
                ]))
                OR ($2 = 'worker' AND candidate_function.oid = ANY(ARRAY[

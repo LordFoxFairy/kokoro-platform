@@ -239,6 +239,7 @@ describe("Platform Admission owner authority", () => {
       unitOfWork: _unitOfWork,
       lifecycle: _lifecycle,
       site: _site,
+      model: _model,
       ...ownerPorts
     } = dependencies;
     const authority = createPlatformAdmissionOwnerAuthority({
@@ -264,7 +265,7 @@ describe("Platform Admission owner authority", () => {
     const {
       unitOfWork: _unitOfWork,
       lifecycle: _lifecycle,
-      model: _model,
+      runtimePolicy: _runtimePolicy,
       ...ownerPorts
     } = dependencies;
 
@@ -272,7 +273,7 @@ describe("Platform Admission owner authority", () => {
       database: { internalTransaction: vi.fn() },
       ownerPorts: ownerPorts as unknown as Omit<
         PlatformAdmissionOwnerPorts,
-        "unitOfWork" | "lifecycle" | "site"
+        "unitOfWork" | "lifecycle" | "site" | "model"
       >,
       clock: () => now,
     })).toThrowError("PLATFORM_ADMISSION_OWNER_PORTS_REQUIRED");
