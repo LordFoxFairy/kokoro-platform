@@ -8,6 +8,11 @@ import { AdmissionService } from "../interfaces/connect/generated/kokoro/platfor
 import { AdmissionApplicationService } from "../modules/admission/application/admission-service.js";
 import type { AdmissionCaller, AdmissionOwnerAuthority } from "../modules/admission/application/admission-ports.js";
 import {
+  PlatformAdmissionOwnerAuthority,
+  assertPlatformAdmissionOwnerPorts,
+  type PlatformAdmissionOwnerPorts,
+} from "../modules/admission/application/platform-admission-owner-authority.js";
+import {
   GaRunRequestDraftFactory,
   type GaRunRequestDraftSealer,
 } from "../modules/admission/application/ga-run-request-draft-factory.js";
@@ -85,6 +90,31 @@ export interface AdmissionProductionComposition {
   createServer(listener: AdmissionRequestListener): Http2SecureServer;
 }
 
+export type AdmissionProductionOwnerPorts = Omit<PlatformAdmissionOwnerPorts, "unitOfWork">;
+
+/**
+ * Production owns the Admission orchestration and transaction boundary. Runtime
+ * composition may provide concrete owner adapters, but cannot replace the
+ * authority with an alternate implementation.
+ */
+export function createPlatformAdmissionOwnerAuthority(input: Readonly<{
+  database: Pick<PlatformTransactionalDatabaseClient, "internalTransaction">;
+  ownerPorts: AdmissionProductionOwnerPorts;
+  clock?: () => Date;
+}>): PlatformAdmissionOwnerAuthority {
+  const ports: PlatformAdmissionOwnerPorts = {
+    ...input.ownerPorts,
+    unitOfWork: {
+      execute: (_command, work) => input.database.internalTransaction("admission.command", work),
+    },
+  };
+  assertPlatformAdmissionOwnerPorts(ports);
+  return new PlatformAdmissionOwnerAuthority({
+    ports,
+    ...(input.clock === undefined ? {} : { clock: input.clock }),
+  });
+}
+
 /**
  * Production Admission is a private HTTP/2 Connect service. The outer listener
  * authenticates the exact client certificate and scopes the caller before any
@@ -92,7 +122,7 @@ export interface AdmissionProductionComposition {
  */
 export async function createAdmissionProductionComposition(input: Readonly<{
   database: Pick<PlatformTransactionalDatabaseClient, "internalTransaction">;
-  authority: AdmissionOwnerAuthority;
+  ownerPorts: AdmissionProductionOwnerPorts;
   gaDispatchAudience: string;
   environment?: Readonly<Record<string, string | undefined>>;
   clock?: () => Date;
@@ -112,8 +142,13 @@ export async function createAdmissionProductionComposition(input: Readonly<{
     ),
   ]);
   const callers = new AsyncLocalStorage<AdmissionCaller>();
+  const authority = createPlatformAdmissionOwnerAuthority({
+    database: input.database,
+    ownerPorts: input.ownerPorts,
+    ...(input.clock === undefined ? {} : { clock: input.clock }),
+  });
   const application = createAdmissionApplicationComposition({
-    authority: input.authority,
+    authority,
     journal: new PostgresAdmissionCommandJournal(input.database, {
       ...(input.clock === undefined ? {} : { clock: input.clock }),
     }),
