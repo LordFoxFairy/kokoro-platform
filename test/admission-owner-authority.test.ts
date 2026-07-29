@@ -137,6 +137,9 @@ function ports(events: string[] = []): PlatformAdmissionOwnerPorts {
           value: {
             executionBudgetRootRef: "budget-1",
             rootHoldRef: "hold-1",
+            authorizationSegmentRef: "segment-1",
+            segmentVersion: 1n,
+            expiresAt: "2026-07-29T12:04:00.000Z",
             estimatedCostDisplay: "≤ 10 credits",
           },
         };
@@ -150,7 +153,11 @@ function ports(events: string[] = []): PlatformAdmissionOwnerPorts {
         events.push("lifecycle.prepare");
         return {
           ...record,
+          manifestRef: input.manifestRef,
           manifestDigest: input.manifestDigest,
+          authorizationSegmentRef: input.authorizationSegmentRef,
+          segmentVersion: input.segmentVersion,
+          expiresAt: input.expiresAt,
         };
       }),
       read: vi.fn(async () => { events.push("lifecycle.read"); return record }),
@@ -261,7 +268,7 @@ describe("Platform Admission owner authority", () => {
       context: { namespace: "opaque-namespace", session_id: "session-1" },
     });
     expect(decision.prepared).toMatchObject({
-      manifestRef: "manifest-1",
+      manifestRef: expect.stringMatching(/^execution-manifest:sha256:[0-9a-f]{64}$/u),
       sessionExecutionBindingRef: "binding-1",
       capabilitySnapshotRef: "capability-1",
       configurationRevisionId: "configuration-1",
@@ -269,6 +276,25 @@ describe("Platform Admission owner authority", () => {
       rootHoldRef: "hold-1",
       authorizationSegmentRef: "segment-1",
       segmentVersion: 1n,
+    });
+    const budgetInput = vi.mocked(dependencies.budget.reserveRoot).mock.calls[0]?.[1] as
+      | Readonly<{ manifestRef?: string; manifestDigest?: string; maximumExpiresAt?: string }>
+      | undefined;
+    const lifecycleInput = vi.mocked(dependencies.lifecycle.prepare).mock.calls[0]?.[1] as
+      | Readonly<{
+        manifestRef?: string;
+        authorizationSegmentRef?: string;
+        segmentVersion?: bigint;
+        expiresAt?: string;
+      }>
+      | undefined;
+    expect(budgetInput?.manifestRef).toBe(`execution-manifest:sha256:${budgetInput?.manifestDigest}`);
+    expect(budgetInput?.maximumExpiresAt).toBe("2026-07-29T12:05:00.000Z");
+    expect(lifecycleInput).toMatchObject({
+      manifestRef: budgetInput?.manifestRef,
+      authorizationSegmentRef: "segment-1",
+      segmentVersion: 1n,
+      expiresAt: "2026-07-29T12:04:00.000Z",
     });
     expect(events).toEqual([
       "session", "tx.begin", "site", "model", "capability", "assets",

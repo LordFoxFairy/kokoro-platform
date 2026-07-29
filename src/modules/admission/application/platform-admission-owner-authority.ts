@@ -159,10 +159,16 @@ export interface AdmissionBudgetOwnerPort {
       runId: string;
       modelOptionRevisionRef: string;
       commandId: string;
+      manifestRef: string;
+      manifestDigest: string;
+      maximumExpiresAt: string;
     }>,
   ): Promise<AdmissionOwnerResolution<Readonly<{
     executionBudgetRootRef: string;
     rootHoldRef: string;
+    authorizationSegmentRef: string;
+    segmentVersion: bigint;
+    expiresAt: string;
     estimatedCostDisplay?: string | undefined;
   }>>>;
   commitRoot(
@@ -213,6 +219,7 @@ export interface AdmissionLifecycleOwnerPort {
       siteId: string;
       commandId: string;
       requestDigest: string;
+      manifestRef: string;
       manifestDigest: string;
       maximumExpiresAt: string;
       sessionExecutionBindingRef: string;
@@ -220,6 +227,9 @@ export interface AdmissionLifecycleOwnerPort {
       configurationRevisionId: string;
       executionBudgetRootRef: string;
       rootHoldRef: string;
+      authorizationSegmentRef: string;
+      segmentVersion: bigint;
+      expiresAt: string;
       ownerFacts: VerifiedGaRunRequestOwnerFacts;
       effect: PrepareRunEffect;
     }>,
@@ -337,15 +347,6 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         attachments: command.effect.attachmentRefs,
       });
       if (assets.kind !== "resolved") return assets;
-      const budget = await this.#ports.budget.reserveRoot(transaction, {
-        siteId: command.siteId,
-        projectRef: command.effect.projectRef,
-        launchId: command.effect.launchId,
-        runId: command.effect.proposedRunId,
-        modelOptionRevisionRef: command.effect.modelOptionRevisionRef,
-        commandId: command.commandId,
-      });
-      if (budget.kind !== "resolved") return budget;
       const ownerFacts: VerifiedGaRunRequestOwnerFacts = {
         kind: "run.request",
         run_id: command.effect.proposedRunId,
@@ -379,14 +380,26 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         sessionExecutionBindingRef: session.value.sessionExecutionBindingRef,
         capabilitySnapshotRef: capability.value.capabilitySnapshotRef,
         configurationRevisionId: site.value.configurationRevisionId,
-        executionBudgetRootRef: budget.value.executionBudgetRootRef,
-        rootHoldRef: budget.value.rootHoldRef,
       });
+      const manifestRef = `execution-manifest:sha256:${manifestDigest}`;
       const maximumExpiresAt = new Date(this.#now() + MAX_AUTHORIZATION_TTL_MS).toISOString();
+      const budget = await this.#ports.budget.reserveRoot(transaction, {
+        siteId: command.siteId,
+        projectRef: command.effect.projectRef,
+        launchId: command.effect.launchId,
+        runId: command.effect.proposedRunId,
+        modelOptionRevisionRef: command.effect.modelOptionRevisionRef,
+        commandId: command.commandId,
+        manifestRef,
+        manifestDigest,
+        maximumExpiresAt,
+      });
+      if (budget.kind !== "resolved") return budget;
       const record = await this.#ports.lifecycle.prepare(transaction, {
         siteId: command.siteId,
         commandId: command.commandId,
         requestDigest: command.requestDigest,
+        manifestRef,
         manifestDigest,
         maximumExpiresAt,
         sessionExecutionBindingRef: session.value.sessionExecutionBindingRef,
@@ -394,10 +407,21 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         configurationRevisionId: site.value.configurationRevisionId,
         executionBudgetRootRef: budget.value.executionBudgetRootRef,
         rootHoldRef: budget.value.rootHoldRef,
+        authorizationSegmentRef: budget.value.authorizationSegmentRef,
+        segmentVersion: budget.value.segmentVersion,
+        expiresAt: budget.value.expiresAt,
         ownerFacts,
         effect: command.effect,
       });
-      assertPreparedRecord(record, command, budget.value.rootHoldRef, manifestDigest, maximumExpiresAt, this.#now());
+      assertPreparedRecord(
+        record,
+        command,
+        budget.value,
+        manifestRef,
+        manifestDigest,
+        maximumExpiresAt,
+        this.#now(),
+      );
       const prepared = {
         manifestRef: record.manifestRef,
         manifestDigest: record.manifestDigest,
@@ -692,7 +716,13 @@ function lifecycleLookup(command: Readonly<{
 function assertPreparedRecord(
   record: AdmissionAuthorizationRecord,
   command: AdmissionAuthorityCommand & Readonly<{ effect: PrepareRunEffect }>,
-  rootHoldRef: string,
+  budget: Readonly<{
+    rootHoldRef: string;
+    authorizationSegmentRef: string;
+    segmentVersion: bigint;
+    expiresAt: string;
+  }>,
+  manifestRef: string,
   manifestDigest: string,
   maximumExpiresAt: string,
   now: number,
@@ -700,7 +730,10 @@ function assertPreparedRecord(
   if (
     record.siteId !== command.siteId || record.sessionId !== command.effect.sessionId ||
     record.launchId !== command.effect.launchId || record.runId !== command.effect.proposedRunId ||
-    record.rootHoldRef !== rootHoldRef || record.manifestDigest !== manifestDigest ||
+    record.rootHoldRef !== budget.rootHoldRef || record.manifestRef !== manifestRef ||
+    record.manifestDigest !== manifestDigest ||
+    record.authorizationSegmentRef !== budget.authorizationSegmentRef ||
+    record.segmentVersion !== budget.segmentVersion || record.expiresAt !== budget.expiresAt ||
     record.state !== "reserved" || record.segmentVersion !== 1n ||
     Date.parse(record.expiresAt) <= now || Date.parse(record.expiresAt) > Date.parse(maximumExpiresAt)
   ) throw new Error("ADMISSION_PREPARED_OWNER_RECORD_INVALID");
