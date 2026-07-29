@@ -13,6 +13,7 @@ import type {
   ReservedRunBudget,
   SegmentMutationResult,
 } from "../../application/contracts/run-budget-authority.js";
+import { lockCreditAccountAuthority } from "./credit-account-lock.js";
 
 type ReceiptRow = Record<string, unknown> & {
   requestDigest: string;
@@ -117,21 +118,8 @@ export class PostgresCreditAuthorityRepository implements CreditAuthorityReposit
     input: Parameters<CreditAuthorityRepository["lockGrantAvailability"]>[1],
   ): ReturnType<CreditAuthorityRepository["lockGrantAvailability"]> {
     const sql = resolvePlatformTransaction(transaction);
-    await sql.query<Record<string, unknown>>(
-      `SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1,0))`,
-      [`credit-account|${input.siteId}|${input.creditAccountId}|${input.unit}`],
-    );
-    const accounts = await sql.query<Record<string, unknown> & { creditAccountId: string }>(
-      `SELECT credit_account_ref AS "creditAccountId"
-       FROM platform.credit_account
-       WHERE site_ref=$1 AND credit_account_ref=$2::uuid AND billing_account_ref=$3 AND unit=$4
-         AND liability_merchant_account_ref=$5 AND state='active'
-       FOR UPDATE`,
-      [input.siteId, input.creditAccountId, input.billingAccountId, input.unit,
-        input.liabilityMerchantAccountId],
-    );
-    if (accounts.length === 0) return [];
-    if (accounts.length !== 1) throw new Error("CREDIT_ACCOUNT_IDENTITY_AMBIGUOUS");
+    const account = await lockCreditAccountAuthority(transaction, input);
+    if (account === null || account.state !== "active" || account.creditAccountId !== input.creditAccountId) return [];
     const rows = await sql.query<GrantRow>(
       `SELECT grant_fact.credit_grant_id AS "creditGrantId",
               balance.available_amount::text AS "availableAmount",

@@ -59,7 +59,8 @@ describe("PostgresCreditAuthorityRepository", () => {
 
   it("serializes the CreditAccount before taking a fresh grant-balance snapshot", async () => {
     const sql = new RecordingSql();
-    sql.accountRows = [{ creditAccountId: "00000000-0000-7000-8000-000000000001" }];
+    sql.accountRows = [{ creditAccountId: "00000000-0000-7000-8000-000000000001",
+      state: "active", aggregateVersion: 1n }];
     sql.grantRows = [{ creditGrantId: "00000000-0000-7000-8000-000000000101",
       availableAmount: "60", expiresAt: null, burnPriority: 10, issuedAt: NOW }];
     const lease = issuePlatformTransaction(sql);
@@ -71,6 +72,7 @@ describe("PostgresCreditAuthorityRepository", () => {
       });
       expect(result).toMatchObject([{ availableAmount: 60n }]);
       expect(sql.readSql()).toMatch(/pg_advisory_xact_lock[\s\S]+FROM platform.credit_account[\s\S]+FOR UPDATE[\s\S]+FROM platform.credit_grant[\s\S]+available_amount/u);
+      expect(sql.reads[0]?.values).toEqual(["credit-account|site-1|billing-1|credit_micros|merchant-1"]);
     } finally {
       revokePlatformTransaction(lease);
     }
