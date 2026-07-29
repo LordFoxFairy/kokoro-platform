@@ -49,6 +49,43 @@ describe("Commerce outbox reconciler", () => {
     }]);
   });
 
+  it("returns a claimed lease unchanged when process drain cancels delivery", async () => {
+    const outbox = new RecordingOutbox([event()]);
+    const controller = new AbortController();
+    const transport: OutboxDeliveryTransport = {
+      publish: async (_event, signal) => new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        controller.abort(new Error("PLATFORM_WORKER_DRAINING"));
+      }),
+    };
+    const cycle = createCommerceOutboxReconciliationCycle({
+      database: database(), outbox, projection: new RecordingProjection(), transport,
+      workerId: "worker-1", leaseToken: () => "lease-1",
+    });
+
+    await expect(cycle({ signal: controller.signal })).rejects.toThrow("PLATFORM_WORKER_DRAINING");
+
+    expect(outbox.completed).toEqual([]);
+    expect(outbox.retried).toEqual([]);
+  });
+
+  it("still records a delivery timeout when the process itself is not draining", async () => {
+    const outbox = new RecordingOutbox([event()]);
+    const cycle = createCommerceOutboxReconciliationCycle({
+      database: database(), outbox, projection: new RecordingProjection(),
+      transport: { publish: async () => { throw new DOMException("timed out", "TimeoutError"); } },
+      workerId: "worker-1", leaseToken: () => "lease-1", maxAttempts: 3,
+      clock: () => new Date("2026-07-29T01:00:00.000Z"),
+    });
+
+    await cycle({ signal: new AbortController().signal });
+
+    expect(outbox.retried).toEqual([expect.objectContaining({
+      eventId: "00000000-0000-7000-8000-000000000501",
+      errorCode: "OUTBOX_DELIVERY_FAILED",
+    })]);
+  });
+
   it("accepts only a consumer-authenticated HTTP acknowledgement", async () => {
     const secret = Buffer.alloc(32, 7); const value = event();
     const transport = new HmacHttpOutboxDeliveryTransport({

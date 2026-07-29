@@ -173,7 +173,11 @@ export function createCommerceOutboxReconciliationCycle(input: Readonly<{
         const acknowledgement = await input.transport.publish(event, signal);
         await input.database.internalTransaction("commerce.outbox.reconcile", (transaction) =>
           outbox.complete(transaction, { eventId: event.eventId, leaseToken: event.leaseToken, ...acknowledgement }));
-      } catch {
+      } catch (error) {
+        // A process drain is not a failed delivery attempt. Leave the claimed row untouched so
+        // its existing lease can expire and a replacement worker can reconcile the same effect
+        // without consuming retry budget or manufacturing dead-letter evidence.
+        if (signal.aborted) throw error;
         const terminal = event.attempt >= maxAttempts;
         await input.database.internalTransaction("commerce.outbox.reconcile", (transaction) =>
           outbox.retryOrDeadLetter(transaction, {
