@@ -88,6 +88,7 @@ export type StoredSegmentAllocation = Readonly<{
   budgetAllocationRef: string;
   authorizationSegmentRef: string;
   executionManifestRef: string;
+  expiresAt: string;
   allocation: BudgetAllocationRevision;
   segment: AuthorizationSegmentState;
 }>;

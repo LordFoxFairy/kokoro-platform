@@ -195,6 +195,37 @@ describe("CreditService", () => {
       revokePlatformTransaction(lease);
     }
   });
+
+  it("rejects a past or unbounded new Hold against the authority clock", async () => {
+    const repository = new RecordingCreditRepository();
+    const lease = transactionLease();
+    try {
+      const service = creditService(repository);
+      await expect(service.reserveRootBudget(lease.transaction, {
+        ...reserveInput(), expiresAt: "2026-07-29T00:00:00.000Z",
+      })).resolves.toEqual({ kind: "invalid_state", code: "CREDIT_RESERVATION_EXPIRY_INVALID" });
+      await expect(service.reserveRootBudget(lease.transaction, {
+        ...reserveInput(), businessOperationKey: "prepare:too-long",
+        expiresAt: "2026-07-29T00:15:00.001Z",
+      })).resolves.toEqual({ kind: "invalid_state", code: "CREDIT_RESERVATION_EXPIRY_INVALID" });
+      expect(repository.grantLockCount).toBe(0);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("rejects Finalize at or after Segment expiry", async () => {
+    const repository = new RecordingCreditRepository();
+    repository.loaded = { ...storedSegment(), expiresAt: "2026-07-29T00:00:00.000Z" };
+    const lease = transactionLease();
+    try {
+      await expect(creditService(repository).finalizeAuthorizationSegment(lease.transaction, segmentCommand()))
+        .resolves.toEqual({ kind: "invalid_state", code: "CREDIT_SEGMENT_EXPIRED" });
+      expect(repository.saved).toBeNull();
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
 });
 
 class RecordingCreditRepository implements CreditAuthorityRepository {
@@ -271,7 +302,7 @@ function storedSegment(state: "reserved" | "committed" = "reserved"): StoredSegm
     executionBudgetRootRef: "root-1", executionBudgetRootState: "open", executionBudgetRootVersion: 1n,
     creditHoldRef: "hold-1", creditHoldState: "open", creditHoldFenceEpoch: 1n,
     budgetAllocationRef: "allocation-1", authorizationSegmentRef: "segment-1",
-    executionManifestRef: "manifest-1",
+    executionManifestRef: "manifest-1", expiresAt: "2026-07-29T00:05:00.000Z",
     allocation: { revision: committed ? 2n : 1n, allocationEpoch: 1n, creditCeiling: 100n,
       unassignedStock: committed ? 75n : 100n, activeChildReservedStock: 0n,
       committedStock: committed ? 25n : 0n, capturedCumulative: 0n,

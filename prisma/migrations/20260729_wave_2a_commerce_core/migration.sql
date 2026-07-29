@@ -1782,6 +1782,9 @@ BEGIN
     IF root_state IS DISTINCT FROM 'open' OR hold_state IS DISTINCT FROM 'open' THEN
       RAISE EXCEPTION 'CREDIT_AUTHORIZATION_ROOT_NOT_OPEN' USING ERRCODE='23514';
     END IF;
+    IF NEW.committed_at IS NULL OR NEW.committed_at>=OLD.expires_at THEN
+      RAISE EXCEPTION 'CREDIT_AUTHORIZATION_SEGMENT_EXPIRED' USING ERRCODE='23514';
+    END IF;
     IF NEW.committed_from_allocation_revision IS NULL
        OR NEW.committed_to_allocation_revision<>NEW.committed_from_allocation_revision+1
        OR NEW.committed_at IS NULL THEN

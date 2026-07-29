@@ -45,6 +45,7 @@ type SegmentRow = Record<string, unknown> & {
   budgetAllocationRef: string;
   authorizationSegmentRef: string;
   executionManifestRef: string;
+  expiresAt: Date | string;
   revision: bigint | string;
   allocationEpoch: bigint | string;
   creditCeiling: string;
@@ -442,7 +443,7 @@ const SEGMENT_LOCK_SQL = `SELECT segment.site_ref AS "siteId",segment.billing_ac
        hold.state AS "creditHoldState",hold.fence_epoch AS "creditHoldFenceEpoch",
        segment.budget_allocation_ref AS "budgetAllocationRef",
        segment.authorization_segment_ref AS "authorizationSegmentRef",
-       segment.execution_manifest_ref AS "executionManifestRef",revision.revision,
+       segment.execution_manifest_ref AS "executionManifestRef",segment.expires_at AS "expiresAt",revision.revision,
        revision.allocation_epoch AS "allocationEpoch",revision.credit_ceiling::text AS "creditCeiling",
        revision.unassigned_stock::text AS "unassignedStock",
        revision.active_child_reserved_stock::text AS "activeChildReservedStock",
@@ -514,6 +515,7 @@ function mapSegment(row: SegmentRow): StoredSegmentAllocation {
     budgetAllocationRef: row.budgetAllocationRef,
     authorizationSegmentRef: row.authorizationSegmentRef,
     executionManifestRef: row.executionManifestRef,
+    expiresAt: instant(row.expiresAt),
     allocation: Object.freeze({
       revision: BigInt(row.revision), allocationEpoch: BigInt(row.allocationEpoch),
       creditCeiling: BigInt(row.creditCeiling), unassignedStock: BigInt(row.unassignedStock),

@@ -109,6 +109,8 @@ describe("Wave 2A Commerce authority schema", () => {
     expect(migration).toContain("CREDIT_ALLOCATION_RETURN_CONSERVATION_FAILED");
     expect(migration).toContain("CREDIT_AUTHORIZATION_SEGMENT_COMMIT_STOCK_INVALID");
     expect(migration).toContain("CREDIT_AUTHORIZATION_ROOT_NOT_OPEN");
+    expect(migration).toContain("CREDIT_AUTHORIZATION_SEGMENT_EXPIRED");
+    expect(compactMigration).toContain("NEW.committed_at>=OLD.expires_at");
     expect(migration).toContain("CREDIT_HOLD_SEGMENT_STILL_ACTIVE");
   });
 

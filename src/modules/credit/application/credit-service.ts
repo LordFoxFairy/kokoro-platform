@@ -46,6 +46,9 @@ export class CreditService implements RunBudgetAuthority {
       return { kind: "replayed", value: prior.value };
     }
     const now = this.#clock();
+    if (!validReservationWindow(input.expiresAt, now)) {
+      return { kind: "invalid_state", code: "CREDIT_RESERVATION_EXPIRY_INVALID" };
+    }
     const occurredAt = now.toISOString();
     const grants = await this.dependencies.repository.lockGrantAvailability(transaction, {
       siteId: input.siteId,
@@ -93,6 +96,9 @@ export class CreditService implements RunBudgetAuthority {
       return { kind: "invalid_state", code: "CREDIT_AUTHORIZATION_ROOT_NOT_OPEN" };
     }
     const observedAt = this.#clock().toISOString();
+    if (Date.parse(observedAt) >= Date.parse(current.expiresAt)) {
+      return { kind: "invalid_state", code: "CREDIT_SEGMENT_EXPIRED" };
+    }
     try {
       const next = Object.freeze({
         ...current,
@@ -253,4 +259,12 @@ function text(value: string): void {
 
 function instant(value: string): void {
   if (!Number.isFinite(Date.parse(value))) throw new Error("CREDIT_INSTANT_INVALID");
+}
+
+const MAX_RESERVATION_TTL_MS = 15 * 60 * 1_000;
+
+function validReservationWindow(expiresAt: string, now: Date): boolean {
+  const expiry = Date.parse(expiresAt);
+  const authorityNow = now.getTime();
+  return expiry > authorityNow && expiry <= authorityNow + MAX_RESERVATION_TTL_MS;
 }

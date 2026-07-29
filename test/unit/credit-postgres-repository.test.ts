@@ -236,7 +236,7 @@ function storedSegment(state: "committed" | "released" | "reconciliation_require
     creditHoldState: "open", creditHoldFenceEpoch: 1n,
     budgetAllocationRef: "00000000-0000-7000-8000-000000000203",
     authorizationSegmentRef: "00000000-0000-7000-8000-000000000205",
-    executionManifestRef: "manifest-1",
+    executionManifestRef: "manifest-1", expiresAt: "2026-07-29T00:05:00.000Z",
     allocation: { revision: committed ? 2n : 1n, allocationEpoch: 1n, creditCeiling: 60n,
       unassignedStock: committed ? 35n : 60n, activeChildReservedStock: 0n,
       committedStock: committed ? 25n : 0n, capturedCumulative: 0n,
