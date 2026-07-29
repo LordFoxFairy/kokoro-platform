@@ -60,6 +60,7 @@ export interface AdminAuthorityRepositoryPort {
       commandId: string;
       requestDigest: string;
       operation: string;
+      requiredPermission: string;
       admission: AdminCommandAdmission;
       breakGlassTicketRef: string;
       outcome: JsonValue;
@@ -244,6 +245,7 @@ export class AdminCommandService {
           if (admission.breakGlassTicketRef === null) throw new Error("ADMIN_BREAK_GLASS_TICKET_REQUIRED");
           await this.dependencies.repository.createPostEffectReview(transaction, {
             reviewRef, commandId: input.commandId, requestDigest, operation: admission.commandId,
+            requiredPermission: handler.definition.permission,
             admission, breakGlassTicketRef: admission.breakGlassTicketRef,
             outcome: outcome.result, outcomeDigest: digestAdminValue(outcome.result),
             expiresAt: this.postEffectReviewExpiry(admission.admittedAt),

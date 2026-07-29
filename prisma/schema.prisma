@@ -142,6 +142,7 @@ model AdminPostEffectReview {
   commandId                 String    @unique @map("command_id")
   requestDigest             String    @map("request_digest") @db.Char(64)
   operation                 String
+  requiredPermission        String    @map("required_permission")
   makerRef                  String    @map("maker_ref")
   makerGeneration           BigInt    @map("maker_generation")
   makerAuthorizationEpoch   BigInt    @map("maker_authorization_epoch")

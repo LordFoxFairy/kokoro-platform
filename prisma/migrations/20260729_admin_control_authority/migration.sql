@@ -141,6 +141,7 @@ CREATE TABLE platform.admin_post_effect_review (
   command_id TEXT NOT NULL UNIQUE REFERENCES platform.command_receipt(command_id),
   request_digest CHAR(64) NOT NULL CHECK (request_digest ~ '^[a-f0-9]{64}$'),
   operation TEXT NOT NULL,
+  required_permission TEXT NOT NULL,
   maker_ref TEXT NOT NULL,
   maker_generation BIGINT NOT NULL CHECK (maker_generation > 0),
   maker_authorization_epoch BIGINT NOT NULL CHECK (maker_authorization_epoch > 0),
@@ -419,12 +420,12 @@ BEGIN
      OR NEW.revision<>OLD.revision+1 THEN
     RAISE EXCEPTION 'ADMIN_POST_EFFECT_REVIEW_TRANSITION_INVALID' USING ERRCODE='23514';
   END IF;
-  IF ROW(OLD.review_ref,OLD.command_id,OLD.request_digest,OLD.operation,OLD.maker_ref,
+  IF ROW(OLD.review_ref,OLD.command_id,OLD.request_digest,OLD.operation,OLD.required_permission,OLD.maker_ref,
          OLD.maker_generation,OLD.maker_authorization_epoch,OLD.target_site_ref,
          OLD.environment,OLD.region,OLD.break_glass_ticket_ref,OLD.outcome,
          OLD.outcome_digest,OLD.created_at,OLD.expires_at)
      IS DISTINCT FROM
-     ROW(NEW.review_ref,NEW.command_id,NEW.request_digest,NEW.operation,NEW.maker_ref,
+     ROW(NEW.review_ref,NEW.command_id,NEW.request_digest,NEW.operation,NEW.required_permission,NEW.maker_ref,
          NEW.maker_generation,NEW.maker_authorization_epoch,NEW.target_site_ref,
          NEW.environment,NEW.region,NEW.break_glass_ticket_ref,NEW.outcome,
          NEW.outcome_digest,NEW.created_at,NEW.expires_at) THEN

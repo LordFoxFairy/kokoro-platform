@@ -7,12 +7,17 @@ import type {
   AdminDecisionRecord,
 } from "../../application/admin-command-service.js";
 import type { AdminApprovalRepositoryPort } from "../../application/admin-approval-service.js";
+import type {
+  AdminPostEffectReviewRecord,
+  AdminPostEffectReviewRepositoryPort,
+} from "../../application/admin-post-effect-review-service.js";
 import type { AdminApprovalRecord } from "../../domain/admin-approval.js";
 import type { AdminOperatorAuthority } from "../../domain/admin-command.js";
 
 export class PostgresAdminAuthorityRepository implements
   AdminAuthorityRepositoryPort,
-  AdminApprovalRepositoryPort {
+  AdminApprovalRepositoryPort,
+  AdminPostEffectReviewRepositoryPort {
   async lockOperatorAuthority(
     transaction: PlatformTransaction,
     input: Readonly<{ operatorRef: string; operatorGeneration: bigint }>,
@@ -88,13 +93,13 @@ export class PostgresAdminAuthorityRepository implements
   ): Promise<void> {
     const changed = await resolvePlatformTransaction(transaction).execute(
       `INSERT INTO platform.admin_post_effect_review
-       (review_ref,command_id,request_digest,operation,maker_ref,maker_generation,
+       (review_ref,command_id,request_digest,operation,required_permission,maker_ref,maker_generation,
         maker_authorization_epoch,target_site_ref,environment,region,break_glass_ticket_ref,
         outcome,outcome_digest,expires_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15)
        ON CONFLICT (command_id) DO NOTHING`,
       [input.reviewRef, input.commandId, input.requestDigest, input.operation,
-        input.admission.operatorRef, input.admission.operatorGeneration,
+        input.requiredPermission, input.admission.operatorRef, input.admission.operatorGeneration,
         input.admission.authorizationEpoch, input.admission.siteRef, input.admission.environment,
         input.admission.region, input.breakGlassTicketRef, JSON.stringify(input.outcome),
         input.outcomeDigest, input.expiresAt],
@@ -213,6 +218,51 @@ export class PostgresAdminAuthorityRepository implements
     );
   }
 
+  async lockReview(
+    transaction: PlatformTransaction,
+    reviewRef: string,
+  ): Promise<AdminPostEffectReviewRecord | null> {
+    const rows = await resolvePlatformTransaction(transaction).query<PostEffectReviewRow>(
+      `SELECT review_ref::text AS "reviewRef",command_id AS "commandId",operation,
+              required_permission AS "requiredPermission",maker_ref AS "makerRef",
+              maker_generation AS "makerGeneration",
+              maker_authorization_epoch AS "makerAuthorizationEpoch",
+              target_site_ref AS "siteRef",environment,region,state,revision,
+              expires_at AS "expiresAt"
+       FROM platform.admin_post_effect_review
+       WHERE review_ref=$1::uuid
+       FOR UPDATE`,
+      [reviewRef],
+    );
+    const row = rows[0];
+    if (row === undefined) return null;
+    const state = postEffectReviewState(row.state);
+    return Object.freeze({
+      ...row,
+      state,
+      makerGeneration: BigInt(row.makerGeneration),
+      makerAuthorizationEpoch: BigInt(row.makerAuthorizationEpoch),
+      revision: BigInt(row.revision),
+      expiresAt: instant(row.expiresAt),
+    });
+  }
+
+  async transitionReview(
+    transaction: PlatformTransaction,
+    input: Parameters<AdminPostEffectReviewRepositoryPort["transitionReview"]>[1],
+  ): Promise<boolean> {
+    const changed = await resolvePlatformTransaction(transaction).execute(
+      `UPDATE platform.admin_post_effect_review
+       SET state=$1,revision=revision+1,reviewer_ref=$2,reviewer_generation=$3,
+           reviewer_authorization_epoch=$4,reviewer_reason=$5,reviewed_at=$6::timestamptz
+       WHERE review_ref=$7::uuid AND state='pending' AND revision=$8`,
+      [input.state, input.reviewerRef, input.reviewerGeneration,
+        input.reviewerAuthorizationEpoch, input.reason, input.reviewedAt,
+        input.reviewRef, input.expectedRevision],
+    );
+    return changed === 1;
+  }
+
   async terminalizeApprovals(
     transaction: PlatformTransaction,
     now: string,
@@ -297,6 +347,22 @@ interface ApprovalRow extends Record<string, unknown> {
   decidedAt: Date | string | null;
 }
 
+interface PostEffectReviewRow extends Record<string, unknown> {
+  reviewRef: string;
+  commandId: string;
+  operation: string;
+  requiredPermission: string;
+  makerRef: string;
+  makerGeneration: bigint | string;
+  makerAuthorizationEpoch: bigint | string;
+  siteRef: string | null;
+  environment: string;
+  region: string;
+  state: string;
+  revision: bigint | string;
+  expiresAt: Date | string;
+}
+
 function state(value: string): AdminOperatorAuthority["state"] {
   if (value !== "active" && value !== "suspended" && value !== "revoked") {
     throw new Error("ADMIN_OPERATOR_ROW_INVALID");
@@ -310,6 +376,13 @@ function approvalState(value: string): AdminApprovalRecord["state"] {
     throw new Error("ADMIN_APPROVAL_ROW_INVALID");
   }
   return value as AdminApprovalRecord["state"];
+}
+
+function postEffectReviewState(value: string): AdminPostEffectReviewRecord["state"] {
+  if (!["pending", "acknowledged", "escalated", "expired"].includes(value)) {
+    throw new Error("ADMIN_POST_EFFECT_REVIEW_ROW_INVALID");
+  }
+  return value as AdminPostEffectReviewRecord["state"];
 }
 
 function strings(value: readonly string[]): readonly string[] {
