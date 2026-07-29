@@ -81,6 +81,16 @@ export interface PlatformTransactionalDatabaseClient
     operation: PlatformInternalOperation,
     work: (transaction: PlatformTransaction) => Promise<Result>,
   ): Promise<Result>;
+  internalScopedTransaction<Result>(
+    scope: Readonly<{
+      operation: PlatformScopedInternalOperation;
+      siteRef: string;
+      environment: string;
+      region: string;
+      scopes: readonly ["asset:worker"];
+    }>,
+    work: (transaction: PlatformTransaction) => Promise<Result>,
+  ): Promise<Result>;
   adminExecutionTransaction<Result>(
     fence: AdminExecutionTransactionFence,
     work: (transaction: PlatformTransaction) => Promise<Result>,
@@ -110,6 +120,11 @@ export type PlatformInternalOperation =
   | "admin.execution.claim"
   | "admin.execution.retry"
   | "admin.terminalize";
+export type PlatformScopedInternalOperation =
+  | "asset.upload-completion.observe"
+  | "asset.scan.evaluate"
+  | "asset.promotion.finalize"
+  | "asset.cleanup.delete";
 
 export function loadPlatformDatabaseConfig(
   role: PlatformProcessRole,
@@ -313,6 +328,50 @@ export function createPlatformDatabaseClient(
         },
       );
     },
+    internalScopedTransaction: async <Result>(scope: Readonly<{
+      operation: PlatformScopedInternalOperation;
+      siteRef: string;
+      environment: string;
+      region: string;
+      scopes: readonly ["asset:worker"];
+    }>, work: (transaction: PlatformTransaction) => Promise<Result>) => {
+      if (config.role !== "worker" || !new Set<PlatformScopedInternalOperation>([
+        "asset.upload-completion.observe", "asset.scan.evaluate", "asset.promotion.finalize",
+        "asset.cleanup.delete",
+      ]).has(scope.operation) ||
+          scope.scopes.length !== 1 || scope.scopes[0] !== "asset:worker") {
+        throw new Error("PLATFORM_SCOPED_INTERNAL_OPERATION_ROLE_FORBIDDEN");
+      }
+      scopedIdentifier(scope.siteRef, "PLATFORM_INTERNAL_SITE_INVALID");
+      scopedIdentifier(scope.environment, "PLATFORM_INTERNAL_ENVIRONMENT_INVALID");
+      scopedIdentifier(scope.region, "PLATFORM_INTERNAL_REGION_INVALID");
+      return prisma.$transaction(async (databaseTransaction) => {
+        await databaseTransaction.$queryRawUnsafe(
+          `SELECT set_config('app.operation',$1,true),set_config('app.site_id',$2,true),
+                  set_config('app.environment',$3,true),set_config('app.region',$4,true),
+                  set_config('app.workload_kind','platform_worker',true),
+                  set_config('app.actor_kind','workload',true),
+                  set_config('app.subject_id','',true),set_config('app.scopes',$5,true)`,
+          scope.operation, scope.siteRef, scope.environment, scope.region,
+          JSON.stringify(scope.scopes),
+        );
+        const lease = issuePlatformTransaction({
+          query: (statement, values = []) =>
+            databaseTransaction.$queryRawUnsafe(statement, ...values),
+          execute: (statement, values = []) =>
+            databaseTransaction.$executeRawUnsafe(statement, ...values),
+        });
+        try {
+          return await work(lease.transaction);
+        } finally {
+          revokePlatformTransaction(lease);
+        }
+      }, {
+        isolationLevel: config.transaction.isolationLevel,
+        maxWait: config.transaction.maxWaitMs,
+        timeout: config.transaction.timeoutMs,
+      });
+    },
     adminExecutionTransaction: async <Result>(
       fence: AdminExecutionTransactionFence,
       work: (transaction: PlatformTransaction) => Promise<Result>,
@@ -448,6 +507,14 @@ function hasControlCharacter(value: string): boolean {
   });
 }
 
+function scopedIdentifier(value: string, code: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/u.test(value)) throw new Error(code);
+}
+
+function sqlLiterals(values: readonly string[]): string {
+  return values.map((value) => `'${value}'`).join(",");
+}
+
 interface RuntimeIdentity {
   currentUser: string;
   currentDatabase: string;
@@ -484,6 +551,30 @@ interface RuntimeIdentity {
   canReadModelSensitiveColumn: boolean;
   hasUnexpectedPlatformPrivilege: boolean;
 }
+
+const ASSET_RELATIONS = [
+  "asset_upload_intent", "asset_upload_session", "asset_quota_account",
+  "asset_quota_reservation", "asset_blob_candidate", "asset_cleanup_group",
+  "asset_object_cleanup", "asset_object_cleanup_receipt", "asset_upload_rejection",
+  "asset_scan_evaluation", "asset_promotion_intent", "asset_blob", "asset_resource",
+  "asset_version", "asset_reference", "asset_eligibility_projection", "asset_promotion_receipt",
+] as const;
+const ASSET_API_RELATIONS = [
+  "asset_upload_intent", "asset_upload_session", "asset_quota_account",
+  "asset_quota_reservation", "asset_resource", "asset_version", "asset_reference",
+  "asset_eligibility_projection",
+] as const;
+const ASSET_API_MUTABLE_RELATIONS = ASSET_API_RELATIONS.slice(0, 4);
+const ASSET_WORKER_INSERT_RELATIONS = ASSET_RELATIONS.slice(4);
+const ASSET_WORKER_UPDATE_RELATIONS = [
+  ...ASSET_API_MUTABLE_RELATIONS, "asset_blob_candidate", "asset_cleanup_group",
+  "asset_object_cleanup", "asset_promotion_intent",
+] as const;
+const ASSET_RELATIONS_SQL = sqlLiterals(ASSET_RELATIONS);
+const ASSET_API_RELATIONS_SQL = sqlLiterals(ASSET_API_RELATIONS);
+const ASSET_API_MUTABLE_RELATIONS_SQL = sqlLiterals(ASSET_API_MUTABLE_RELATIONS);
+const ASSET_WORKER_INSERT_RELATIONS_SQL = sqlLiterals(ASSET_WORKER_INSERT_RELATIONS);
+const ASSET_WORKER_UPDATE_RELATIONS_SQL = sqlLiterals(ASSET_WORKER_UPDATE_RELATIONS);
 
 const RUNTIME_IDENTITY_SQL = `
   SELECT current_user AS "currentUser",
@@ -571,6 +662,14 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_table_privilege(current_user, 'platform.credit_budget_allocation_revision', 'SELECT,INSERT')
            AND has_table_privilege(current_user, 'platform.credit_authorization_segment', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.credit_budget_operation_receipt', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.asset_upload_intent', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.asset_upload_session', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.asset_quota_account', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.asset_quota_reservation', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.asset_resource', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.asset_version', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.asset_reference', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.asset_eligibility_projection', 'SELECT')
          WHEN $2 = 'worker' THEN
            has_table_privilege(current_user, 'platform.outbox_event', 'SELECT,UPDATE')
            AND has_table_privilege(current_user, 'platform.site', 'SELECT')
@@ -598,6 +697,23 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_table_privilege(current_user, 'platform.admin_operator_authority', 'SELECT')
            AND has_table_privilege(current_user, 'platform.admin_approval', 'SELECT,UPDATE')
            AND has_table_privilege(current_user, 'platform.admin_post_effect_review', 'SELECT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.asset_upload_intent', 'SELECT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.asset_upload_session', 'SELECT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.asset_quota_account', 'SELECT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.asset_quota_reservation', 'SELECT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.asset_blob_candidate', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.asset_cleanup_group', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.asset_object_cleanup', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.asset_object_cleanup_receipt', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.asset_upload_rejection', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.asset_scan_evaluation', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.asset_promotion_intent', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.asset_blob', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.asset_resource', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.asset_version', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.asset_reference', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.asset_eligibility_projection', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.asset_promotion_receipt', 'SELECT,INSERT')
          WHEN $2 = 'authorization' THEN
            has_table_privilege(current_user, 'platform.authorization_stream_state', 'SELECT')
            AND has_table_privilege(current_user, 'platform.authorization_event_log', 'SELECT')
@@ -630,6 +746,23 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_table_privilege(current_user, 'platform.admin_approval', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.admin_approval_decision', 'SELECT,INSERT')
            AND has_table_privilege(current_user, 'platform.admin_post_effect_review', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.asset_upload_intent', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.asset_upload_session', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.asset_quota_account', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.asset_quota_reservation', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.asset_blob_candidate', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.asset_cleanup_group', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.asset_object_cleanup', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.asset_object_cleanup_receipt', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.asset_upload_rejection', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.asset_scan_evaluation', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.asset_promotion_intent', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.asset_blob', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.asset_resource', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.asset_version', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.asset_reference', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.asset_eligibility_projection', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.asset_promotion_receipt', 'SELECT')
          END AS "hasRequiredPlatformWrites",
          has_function_privilege(current_user, 'platform.import_model_inventory(uuid,text,text,jsonb,jsonb,text)', 'EXECUTE')
            AS "canExecuteModelInventoryImport",
@@ -724,7 +857,8 @@ const RUNTIME_IDENTITY_SQL = `
                'site_activation_attempt','site_deployment_observation','site_traffic_stop_attempt',
                'site_traffic_stop_observation','site_effect_approval',
                'admin_operator_authority','admin_command_decision','admin_approval','admin_approval_decision',
-               'admin_authority_bootstrap','admin_post_effect_review'
+               'admin_authority_bootstrap','admin_post_effect_review',
+               ${ASSET_RELATIONS_SQL}
                ]) AND (
                  has_table_privilege(runtime_role.rolname, candidate.oid,
                    'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
@@ -775,7 +909,8 @@ const RUNTIME_IDENTITY_SQL = `
                'site_activation_attempt','site_deployment_observation','site_traffic_stop_attempt',
                'site_traffic_stop_observation','site_effect_approval',
                'admin_operator_authority','admin_command_decision','admin_approval','admin_approval_decision',
-               'admin_authority_bootstrap','admin_post_effect_review'
+               'admin_authority_bootstrap','admin_post_effect_review',
+               ${ASSET_RELATIONS_SQL}
                ]) AND (
                  (candidate.relname LIKE 'model\\_%' ESCAPE '\\' AND (
                    has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
@@ -800,6 +935,13 @@ const RUNTIME_IDENTITY_SQL = `
                   ]) AND NOT (
                     ($2='worker' AND candidate.relname<>'site_effect_approval') OR $2='admin'
                   ))
+                 OR
+                 ((has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
+                   OR has_any_column_privilege(runtime_role.rolname,candidate.oid,'SELECT')) AND (
+                   ($2='api' AND candidate.relname=ANY(ARRAY[${ASSET_API_RELATIONS_SQL}]))
+                   OR ($2 IN ('worker','admin') AND
+                     candidate.relname=ANY(ARRAY[${ASSET_RELATIONS_SQL}]))
+                 ))
                  OR
                  (has_table_privilege(runtime_role.rolname, candidate.oid,
                    'DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN') AND NOT (
@@ -836,6 +978,8 @@ const RUNTIME_IDENTITY_SQL = `
                      'credit_authorization_segment','credit_budget_operation_receipt'
                    ]))
                    OR ($2 = 'authorization' AND candidate.relname = ANY(ARRAY['authorization_snapshot','authorization_snapshot_record']))
+                   OR ($2 = 'api' AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
+                   OR ($2 = 'worker' AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_INSERT_RELATIONS_SQL}]))
                    OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
                      'site_deployment_binding','site_deployment_observation',
                      'site_traffic_stop_observation','authorization_site',
@@ -871,6 +1015,8 @@ const RUNTIME_IDENTITY_SQL = `
                      'site_activation_attempt','site_traffic_stop_attempt','authorization_site',
                      'authorization_site_release','authorization_product_binding'
                    ]))
+                   OR ($2 = 'api' AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
+                   OR ($2 = 'worker' AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_UPDATE_RELATIONS_SQL}]))
                    OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
                      'command_receipt','outbox_event','inbox_delivery','admin_approval',
                      'admin_post_effect_review'
@@ -911,6 +1057,8 @@ const RUNTIME_IDENTITY_SQL = `
                      'credit_authorization_segment','credit_budget_operation_receipt'
                    ]))
                    OR ($2 = 'authorization' AND candidate.relname = ANY(ARRAY['authorization_snapshot','authorization_snapshot_record']))
+                   OR ($2 = 'api' AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
+                   OR ($2 = 'worker' AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_INSERT_RELATIONS_SQL}]))
                    OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
                      'site_deployment_binding','site_deployment_observation',
                      'site_traffic_stop_observation','authorization_site',
@@ -946,6 +1094,8 @@ const RUNTIME_IDENTITY_SQL = `
                      'site_activation_attempt','site_traffic_stop_attempt','authorization_site',
                      'authorization_site_release','authorization_product_binding'
                    ]))
+                   OR ($2 = 'api' AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
+                   OR ($2 = 'worker' AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_UPDATE_RELATIONS_SQL}]))
                    OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
                      'command_receipt','outbox_event','inbox_delivery','admin_approval',
                      'admin_post_effect_review'
