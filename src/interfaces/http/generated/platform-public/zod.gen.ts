@@ -564,7 +564,7 @@ export const zRedemptionCommandReviewResponse = z.strictObject({
 
 export const zRedemptionConfirmInput = z.strictObject({
     legalAcceptanceRefs: z.array(z.string().min(1).max(128)).max(16),
-    previewCredential: z.string().min(32).max(4096).regex(/^\\S+$/)
+    previewCredential: z.string().min(32).max(4096).regex(/^\S+$/)
 });
 
 export const zRedemptionCreditPreview = z.strictObject({
@@ -677,7 +677,7 @@ export const zRedemptionPreview = z.strictObject({
     legalTermRefs: z.array(z.string().min(1).max(128)).max(16),
     planRef: z.string().max(256).nullable(),
     planVersionRef: z.string().max(256).nullable(),
-    previewCredential: z.string().min(32).max(4096).regex(/^\\S+$/),
+    previewCredential: z.string().min(32).max(4096).regex(/^\S+$/),
     previewDigest: z.string().regex(/^[0-9a-f]{64}$/),
     previewRef: z.string().min(1).max(256),
     productKind: z.enum([
