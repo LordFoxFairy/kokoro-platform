@@ -20,6 +20,10 @@ All external catalog, availability, bundle, Site-policy, catalog-reference and a
 canonical JSON is rebuilt only from allowed fields in both TypeScript and the SQL import boundary. Unknown fields never enter an
 immutable payload or its digest. A product is published by having routes in the catalog. Completeness rules apply only to those
 published products; an absent Music/Image/Video route set is legal and restores that Site product as disabled.
+Canonical identifiers, bounded control-free text, indirect secret references, integer positions, sorted unique identifier lists,
+and provider account uniqueness are enforced by the same PostgreSQL predicates at both the JSON import boundary and snapshot table
+constraints. This keeps privileged direct migrator writes from bypassing the materializer's field semantics; TypeScript uses the
+same bytewise ASCII ordering rather than a host-locale comparator.
 Activation is a separate command with its own immutable receipt and one global active-pointer CAS. A fresh activation ID can
 promote or roll back to any materialized digest; compare-and-swap prevents a stale operator from overwriting a newer decision. Site
 policies are a different concurrency domain: each `(Site, product)` has its own immutable revisions and pointer CAS. `follow_active`
@@ -54,6 +58,8 @@ database URL, all Model and Site reads share one read-only repeatable-read consi
 uses its own consistent snapshot and full-content watermark; pre-snapshot, in-snapshot and post-commit watermarks must match and no
 row may be newer than the fence. The raw fence token is not persisted: a digest of the fence and both source watermarks is embedded
 in the catalog source reference and therefore covered by the bundle digest.
+Legacy provider credentials are accepted only when already encoded as a valid `secret://`, `vault://`, or `env://` reference.
+Plaintext and bare environment-variable names fail with a non-reflective quarantine error; export never manufactures a reference.
 
 Task 7 adds the authoritative Site foreign key. Task 15 supplies Admin UI/command adapters. The legacy package remains only as a
 read-only migration source and rollback artifact until cross-repository consumers complete cutover; no new Platform consumer may

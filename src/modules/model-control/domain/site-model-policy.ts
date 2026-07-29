@@ -45,7 +45,8 @@ export function canonicalizeSiteModelPolicy(input: SiteModelPolicy): Canonicaliz
   const assignments = array(root.assignments, "MODEL_SITE_ASSIGNMENTS_INVALID")
     .map(parseAssignment)
     .sort((left, right) =>
-      `${left.role}:${String(left.position).padStart(6, "0")}:${left.modelKey}`.localeCompare(
+      canonicalCompare(
+        `${left.role}:${String(left.position).padStart(6, "0")}:${left.modelKey}`,
         `${right.role}:${String(right.position).padStart(6, "0")}:${right.modelKey}`,
       ),
     );
@@ -155,9 +156,12 @@ function identifier(value: string): string {
   return value;
 }
 function identifiers(values: readonly string[]): readonly string[] {
-  const parsed = [...new Set(values.map(identifier))].sort();
+  const parsed = [...new Set(values.map(identifier))].sort(canonicalCompare);
   if (parsed.length !== values.length) throw new Error("MODEL_LIST_DUPLICATE");
   return Object.freeze(parsed);
+}
+function canonicalCompare(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 function position(value: number): number {
   if (!Number.isInteger(value) || value < 0 || value > 10_000)

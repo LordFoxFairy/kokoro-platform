@@ -254,6 +254,40 @@ describe("canonical ModelControl", () => {
     ).toThrowError("MODEL_ROUTE_SCHEMA_UNKNOWN_FIELD");
   });
 
+  it("uses the same canonical scalar, list, and uniqueness rules enforced by PostgreSQL", () => {
+    expect(() =>
+      canonicalizeModelInventory({
+        ...inventory,
+        providers: [
+          inventory.providers[0]!,
+          {
+            ...inventory.providers[1]!,
+            provider: inventory.providers[0]!.provider,
+            accountKey: inventory.providers[0]!.accountKey,
+          },
+        ],
+      }),
+    ).toThrowError("MODEL_PROVIDER_ACCOUNT_DUPLICATE");
+    expect(() =>
+      canonicalizeModelInventory({
+        ...inventory,
+        models: [{ ...inventory.models[0]!, displayName: "unsafe\nname" }, ...inventory.models.slice(1)],
+      }),
+    ).toThrowError("MODEL_TEXT_INVALID");
+    expect(() =>
+      canonicalizeModelInventory({
+        ...inventory,
+        bindings: [{ ...inventory.bindings[0]!, key: "UPPER" }, ...inventory.bindings.slice(1)],
+      }),
+    ).toThrowError("MODEL_IDENTIFIER_INVALID");
+    expect(() =>
+      canonicalizeModelInventory({
+        ...inventory,
+        providers: [{ ...inventory.providers[0]!, secretRef: "env://" }, ...inventory.providers.slice(1)],
+      }),
+    ).toThrowError("MODEL_SECRET_REFERENCE_INVALID");
+  });
+
   it("requires route completeness only for products present in the published route set", () => {
     const chatOnly = canonicalizeModelInventory({
       ...inventory,

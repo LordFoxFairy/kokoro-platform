@@ -7,6 +7,7 @@ import {
   type ModelProduct,
 } from "../../src/modules/model-control/domain/model-catalog.js";
 import { createModelControlMigrationBundle } from "../../src/modules/model-control/migration/model-control-migration-bundle.js";
+import { parseLegacySecretReference } from "../../src/modules/model-control/migration/legacy-secret-reference.js";
 import {
   captureFencedLegacySnapshots,
   createLegacySourceWatermark,
@@ -41,7 +42,7 @@ try {
     key: string(row.id),
     provider: string(row.provider),
     accountKey: string(row.key),
-    secretRef: normalizeSecretRef(string(row.secretRef)),
+    secretRef: parseLegacySecretReference(row.secretRef),
     adapterKind: row.transportKind === "litellm" ? ("litellm" as const) : ("direct" as const),
     priority: number(row.priority),
   }));
@@ -330,9 +331,6 @@ function jsonStrings(value: unknown): string[] {
   if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== "string"))
     throw new Error("LEGACY_JSON_LIST_INVALID");
   return parsed;
-}
-function normalizeSecretRef(value: string): string {
-  return /^(?:secret|vault|env):\/\//u.test(value) ? value : `env://${value}`;
 }
 function requiredEnv(name: string): string {
   const value = process.env[name];

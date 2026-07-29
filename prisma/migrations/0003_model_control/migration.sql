@@ -2,12 +2,60 @@ SET statement_timeout = '30s';
 SET lock_timeout = '5s';
 SET idle_in_transaction_session_timeout = '30s';
 
+-- These immutable predicates are shared by the JSON import boundary and the
+-- snapshot tables.  Keeping one SQL definition prevents the function path and
+-- direct migrator writes from accepting different canonical values.
+CREATE FUNCTION platform.model_identifier_is_valid(value TEXT) RETURNS BOOLEAN
+LANGUAGE sql IMMUTABLE PARALLEL SAFE RETURN
+  value ~ '^[a-z0-9][a-z0-9._:-]{0,127}$';
+
+CREATE FUNCTION platform.model_text_is_valid(value TEXT) RETURNS BOOLEAN
+LANGUAGE sql IMMUTABLE PARALLEL SAFE RETURN
+  char_length(value) BETWEEN 1 AND 512 AND value !~ '[[:cntrl:]]';
+
+CREATE FUNCTION platform.model_secret_reference_is_valid(value TEXT) RETURNS BOOLEAN
+LANGUAGE sql IMMUTABLE PARALLEL SAFE RETURN
+  value ~ '^(secret|vault|env)://[A-Za-z0-9._:/-]+$';
+
+CREATE FUNCTION platform.model_identifier_array_is_canonical(value TEXT[], required BOOLEAN)
+RETURNS BOOLEAN LANGUAGE sql IMMUTABLE PARALLEL SAFE RETURN
+  (NOT required OR cardinality(value) > 0)
+  AND NOT EXISTS (
+    SELECT 1 FROM unnest(value) item WHERE NOT platform.model_identifier_is_valid(item)
+  )
+  AND value = ARRAY(SELECT item FROM unnest(value) item ORDER BY item COLLATE "C");
+
+CREATE FUNCTION platform.model_json_identifier_array_is_canonical(value JSONB, required BOOLEAN)
+RETURNS BOOLEAN LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $$
+BEGIN
+  IF jsonb_typeof(value) IS DISTINCT FROM 'array' THEN
+    RETURN FALSE;
+  END IF;
+  IF (required AND jsonb_array_length(value)=0)
+     OR EXISTS (
+       SELECT 1 FROM jsonb_array_elements(value) item
+       WHERE jsonb_typeof(item) IS DISTINCT FROM 'string'
+          OR NOT platform.model_identifier_is_valid(item#>>'{}')
+     )
+     OR EXISTS (
+       SELECT 1 FROM (
+         SELECT item#>>'{}' AS value,
+           lag(item#>>'{}') OVER (ORDER BY ordinal) AS previous
+         FROM jsonb_array_elements(value) WITH ORDINALITY element(item,ordinal)
+       ) ordered
+       WHERE previous IS NOT NULL AND previous COLLATE "C" >= value COLLATE "C"
+     ) THEN
+    RETURN FALSE;
+  END IF;
+  RETURN TRUE;
+END $$;
+
 CREATE TABLE platform.model_inventory_import (
   import_id UUID PRIMARY KEY,
   source_digest CHAR(64) NOT NULL UNIQUE CHECK (source_digest ~ '^[a-f0-9]{64}$'),
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   source_kind TEXT NOT NULL CHECK (source_kind IN ('legacy-kokoro-model','platform-native')),
-  source_reference TEXT NOT NULL,
+  source_reference TEXT NOT NULL CHECK (platform.model_text_is_valid(source_reference)),
   canonical_payload JSONB NOT NULL,
   counts JSONB NOT NULL,
   imported_by TEXT NOT NULL,
@@ -35,10 +83,10 @@ CREATE TABLE platform.model_inventory_pointer (
 );
 CREATE TABLE platform.model_provider_snapshot (
   import_id UUID NOT NULL REFERENCES platform.model_inventory_import(import_id),
-  provider_key TEXT NOT NULL,
-  provider TEXT NOT NULL,
-  account_key TEXT NOT NULL,
-  secret_ref TEXT NOT NULL CHECK (secret_ref ~ '^(secret|vault|env)://'),
+  provider_key TEXT NOT NULL CHECK (platform.model_identifier_is_valid(provider_key)),
+  provider TEXT NOT NULL CHECK (platform.model_identifier_is_valid(provider)),
+  account_key TEXT NOT NULL CHECK (platform.model_identifier_is_valid(account_key)),
+  secret_ref TEXT NOT NULL CHECK (platform.model_secret_reference_is_valid(secret_ref)),
   adapter_kind TEXT NOT NULL CHECK (adapter_kind IN ('litellm','direct')),
   priority INTEGER NOT NULL CHECK (priority BETWEEN 0 AND 10000),
   PRIMARY KEY (import_id, provider_key),
@@ -46,21 +94,21 @@ CREATE TABLE platform.model_provider_snapshot (
 );
 CREATE TABLE platform.model_definition_snapshot (
   import_id UUID NOT NULL REFERENCES platform.model_inventory_import(import_id),
-  model_key TEXT NOT NULL,
-  display_name TEXT NOT NULL,
-  input_modalities TEXT[] NOT NULL,
-  output_modalities TEXT[] NOT NULL,
-  capabilities TEXT[] NOT NULL CHECK (cardinality(capabilities) > 0),
-  context_window INTEGER CHECK (context_window IS NULL OR context_window > 0),
+  model_key TEXT NOT NULL CHECK (platform.model_identifier_is_valid(model_key)),
+  display_name TEXT NOT NULL CHECK (platform.model_text_is_valid(display_name)),
+  input_modalities TEXT[] NOT NULL CHECK (platform.model_identifier_array_is_canonical(input_modalities, TRUE)),
+  output_modalities TEXT[] NOT NULL CHECK (platform.model_identifier_array_is_canonical(output_modalities, TRUE)),
+  capabilities TEXT[] NOT NULL CHECK (platform.model_identifier_array_is_canonical(capabilities, TRUE)),
+  context_window INTEGER CHECK (context_window IS NULL OR context_window BETWEEN 1 AND 2147483647),
   enabled BOOLEAN NOT NULL,
   PRIMARY KEY (import_id, model_key)
 );
 CREATE TABLE platform.model_provider_binding_snapshot (
   import_id UUID NOT NULL REFERENCES platform.model_inventory_import(import_id),
-  binding_key TEXT NOT NULL,
-  model_key TEXT NOT NULL,
-  provider_key TEXT NOT NULL,
-  upstream_model TEXT NOT NULL,
+  binding_key TEXT NOT NULL CHECK (platform.model_identifier_is_valid(binding_key)),
+  model_key TEXT NOT NULL CHECK (platform.model_identifier_is_valid(model_key)),
+  provider_key TEXT NOT NULL CHECK (platform.model_identifier_is_valid(provider_key)),
+  upstream_model TEXT NOT NULL CHECK (platform.model_text_is_valid(upstream_model)),
   gateway_model_name TEXT NOT NULL CHECK (gateway_model_name ~ '^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,255}$'),
   priority INTEGER NOT NULL CHECK (priority BETWEEN 0 AND 10000),
   enabled BOOLEAN NOT NULL,
@@ -74,24 +122,24 @@ CREATE TABLE platform.model_product_route_snapshot (
   import_id UUID NOT NULL REFERENCES platform.model_inventory_import(import_id),
   product TEXT NOT NULL CHECK (product IN ('chat','music','image','video')),
   route_role TEXT NOT NULL CHECK (route_role IN ('main','generation')),
-  model_key TEXT NOT NULL,
+  model_key TEXT NOT NULL CHECK (platform.model_identifier_is_valid(model_key)),
   position INTEGER NOT NULL CHECK (position BETWEEN 0 AND 10000),
-  required_capabilities TEXT[] NOT NULL,
+  required_capabilities TEXT[] NOT NULL CHECK (platform.model_identifier_array_is_canonical(required_capabilities, TRUE)),
   PRIMARY KEY (import_id, product, route_role, position),
   UNIQUE (import_id, product, route_role, model_key),
   FOREIGN KEY (import_id, model_key) REFERENCES platform.model_definition_snapshot(import_id, model_key)
 );
 CREATE TABLE platform.model_provider_availability (
-  provider_key TEXT PRIMARY KEY,
+  provider_key TEXT PRIMARY KEY CHECK (platform.model_identifier_is_valid(provider_key)),
   status TEXT NOT NULL CHECK (status IN ('active','disabled')),
   health TEXT NOT NULL CHECK (health IN ('unknown','healthy','degraded','down')),
   epoch BIGINT NOT NULL CHECK (epoch >= 0),
-  observation_ref TEXT,
+  observation_ref TEXT CHECK (observation_ref IS NULL OR platform.model_text_is_valid(observation_ref)),
   observed_at TIMESTAMPTZ,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE platform.model_definition_availability (
-  model_key TEXT PRIMARY KEY,
+  model_key TEXT PRIMARY KEY CHECK (platform.model_identifier_is_valid(model_key)),
   status TEXT NOT NULL CHECK (status IN ('active','disabled')),
   epoch BIGINT NOT NULL CHECK (epoch >= 0),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -103,7 +151,7 @@ CREATE TABLE platform.model_provider_availability_report (
   requested_health TEXT NOT NULL CHECK (requested_health IN ('unknown','healthy','degraded','down')),
   expected_epoch BIGINT NOT NULL CHECK (expected_epoch >= 0),
   applied_epoch BIGINT NOT NULL CHECK (applied_epoch = expected_epoch + 1),
-  observation_ref TEXT,
+  observation_ref TEXT CHECK (observation_ref IS NULL OR platform.model_text_is_valid(observation_ref)),
   observed_at TIMESTAMPTZ,
   reported_by TEXT NOT NULL,
   reported_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -254,8 +302,120 @@ BEGIN
        WHERE jsonb_typeof(item) IS DISTINCT FROM 'object'
           OR NOT (item ?& ARRAY['product','role','modelKey','position','requiredCapabilities'])
           OR item - ARRAY['product','role','modelKey','position','requiredCapabilities']::TEXT[] <> '{}'::JSONB
-     ) THEN
+  ) THEN
     RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='MODEL_INVENTORY_PAYLOAD_UNKNOWN_FIELD';
+  END IF;
+  IF NOT platform.model_text_is_valid(canonical_payload#>>'{source,reference}')
+     OR EXISTS(
+       SELECT 1 FROM jsonb_array_elements(canonical_payload->'providers') provider(item)
+       WHERE jsonb_typeof(item->'key') IS DISTINCT FROM 'string'
+          OR NOT platform.model_identifier_is_valid(item->>'key')
+          OR jsonb_typeof(item->'provider') IS DISTINCT FROM 'string'
+          OR NOT platform.model_identifier_is_valid(item->>'provider')
+          OR jsonb_typeof(item->'accountKey') IS DISTINCT FROM 'string'
+          OR NOT platform.model_identifier_is_valid(item->>'accountKey')
+          OR jsonb_typeof(item->'secretRef') IS DISTINCT FROM 'string'
+          OR NOT platform.model_secret_reference_is_valid(item->>'secretRef')
+          OR jsonb_typeof(item->'adapterKind') IS DISTINCT FROM 'string'
+          OR item->>'adapterKind' NOT IN ('litellm','direct')
+          OR jsonb_typeof(item->'priority') IS DISTINCT FROM 'number'
+          OR item->>'priority' !~ '^(0|[1-9][0-9]{0,4})$'
+          OR (item->>'priority')::INTEGER NOT BETWEEN 0 AND 10000
+     ) OR EXISTS(
+       SELECT 1 FROM jsonb_array_elements(canonical_payload->'models') model(item)
+       WHERE jsonb_typeof(item->'key') IS DISTINCT FROM 'string'
+          OR NOT platform.model_identifier_is_valid(item->>'key')
+          OR jsonb_typeof(item->'displayName') IS DISTINCT FROM 'string'
+          OR NOT platform.model_text_is_valid(item->>'displayName')
+          OR NOT platform.model_json_identifier_array_is_canonical(item->'inputModalities',TRUE)
+          OR NOT platform.model_json_identifier_array_is_canonical(item->'outputModalities',TRUE)
+          OR NOT platform.model_json_identifier_array_is_canonical(item->'capabilities',TRUE)
+          OR NOT (
+            item->'contextWindow'='null'::JSONB
+            OR (
+              jsonb_typeof(item->'contextWindow')='number'
+              AND item->>'contextWindow' ~ '^[1-9][0-9]{0,9}$'
+              AND (item->>'contextWindow')::BIGINT BETWEEN 1 AND 2147483647
+            )
+          )
+          OR jsonb_typeof(item->'enabled') IS DISTINCT FROM 'boolean'
+     ) OR EXISTS(
+       SELECT 1 FROM jsonb_array_elements(canonical_payload->'bindings') binding(item)
+       WHERE jsonb_typeof(item->'key') IS DISTINCT FROM 'string'
+          OR NOT platform.model_identifier_is_valid(item->>'key')
+          OR jsonb_typeof(item->'modelKey') IS DISTINCT FROM 'string'
+          OR NOT platform.model_identifier_is_valid(item->>'modelKey')
+          OR jsonb_typeof(item->'providerKey') IS DISTINCT FROM 'string'
+          OR NOT platform.model_identifier_is_valid(item->>'providerKey')
+          OR jsonb_typeof(item->'upstreamModel') IS DISTINCT FROM 'string'
+          OR NOT platform.model_text_is_valid(item->>'upstreamModel')
+          OR jsonb_typeof(item->'gatewayModelName') IS DISTINCT FROM 'string'
+          OR item->>'gatewayModelName' !~ '^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,255}$'
+          OR jsonb_typeof(item->'priority') IS DISTINCT FROM 'number'
+          OR item->>'priority' !~ '^(0|[1-9][0-9]{0,4})$'
+          OR (item->>'priority')::INTEGER NOT BETWEEN 0 AND 10000
+          OR jsonb_typeof(item->'enabled') IS DISTINCT FROM 'boolean'
+     ) OR EXISTS(
+       SELECT 1 FROM jsonb_array_elements(canonical_payload->'productRoutes') route(item)
+       WHERE jsonb_typeof(item->'product') IS DISTINCT FROM 'string'
+          OR item->>'product' NOT IN ('chat','music','image','video')
+          OR jsonb_typeof(item->'role') IS DISTINCT FROM 'string'
+          OR item->>'role' NOT IN ('main','generation')
+          OR jsonb_typeof(item->'modelKey') IS DISTINCT FROM 'string'
+          OR NOT platform.model_identifier_is_valid(item->>'modelKey')
+          OR jsonb_typeof(item->'position') IS DISTINCT FROM 'number'
+          OR item->>'position' !~ '^(0|[1-9][0-9]{0,4})$'
+          OR (item->>'position')::INTEGER NOT BETWEEN 0 AND 10000
+          OR NOT platform.model_json_identifier_array_is_canonical(item->'requiredCapabilities',TRUE)
+     ) THEN
+    RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='MODEL_INVENTORY_PAYLOAD_NON_CANONICAL';
+  END IF;
+  IF EXISTS(
+       SELECT 1 FROM (
+         SELECT item->>'key' AS value,lag(item->>'key') OVER (ORDER BY ordinal) AS previous
+         FROM jsonb_array_elements(canonical_payload->'providers') WITH ORDINALITY element(item,ordinal)
+       ) ordered WHERE previous IS NOT NULL AND previous COLLATE "C" >= value COLLATE "C"
+     ) OR EXISTS(
+       SELECT 1 FROM (
+         SELECT item->>'key' AS value,lag(item->>'key') OVER (ORDER BY ordinal) AS previous
+         FROM jsonb_array_elements(canonical_payload->'models') WITH ORDINALITY element(item,ordinal)
+       ) ordered WHERE previous IS NOT NULL AND previous COLLATE "C" >= value COLLATE "C"
+     ) OR EXISTS(
+       SELECT 1 FROM (
+         SELECT item->>'key' AS value,lag(item->>'key') OVER (ORDER BY ordinal) AS previous
+         FROM jsonb_array_elements(canonical_payload->'bindings') WITH ORDINALITY element(item,ordinal)
+       ) ordered WHERE previous IS NOT NULL AND previous COLLATE "C" >= value COLLATE "C"
+     ) OR EXISTS(
+       SELECT 1 FROM (
+         SELECT concat(item->>'product',':',item->>'role',':',lpad(item->>'position',6,'0')) AS value,
+           lag(concat(item->>'product',':',item->>'role',':',lpad(item->>'position',6,'0')))
+             OVER (ORDER BY ordinal) AS previous
+         FROM jsonb_array_elements(canonical_payload->'productRoutes') WITH ORDINALITY element(item,ordinal)
+       ) ordered WHERE previous IS NOT NULL AND previous COLLATE "C" >= value COLLATE "C"
+     ) THEN
+    RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='MODEL_INVENTORY_PAYLOAD_NON_CANONICAL';
+  END IF;
+  IF EXISTS (
+       SELECT 1 FROM jsonb_array_elements(canonical_payload->'providers') first(item)
+       JOIN jsonb_array_elements(canonical_payload->'providers') second(other)
+         ON item->>'provider'=other->>'provider' AND item->>'accountKey'=other->>'accountKey'
+        AND item->>'key'<other->>'key'
+     ) OR EXISTS (
+       SELECT 1 FROM jsonb_array_elements(canonical_payload->'bindings') first(item)
+       JOIN jsonb_array_elements(canonical_payload->'bindings') second(other)
+         ON item->>'modelKey'=other->>'modelKey' AND item->>'providerKey'=other->>'providerKey'
+        AND item->>'upstreamModel'=other->>'upstreamModel' AND item->>'key'<other->>'key'
+     ) OR EXISTS (
+       SELECT 1 FROM jsonb_array_elements(canonical_payload->'bindings') first(item)
+       JOIN jsonb_array_elements(canonical_payload->'bindings') second(other)
+         ON item->>'gatewayModelName'=other->>'gatewayModelName' AND item->>'key'<other->>'key'
+     ) OR EXISTS (
+       SELECT 1 FROM jsonb_array_elements(canonical_payload->'productRoutes') first(item)
+       JOIN jsonb_array_elements(canonical_payload->'productRoutes') second(other)
+         ON item->>'product'=other->>'product' AND item->>'role'=other->>'role'
+        AND item->>'modelKey'=other->>'modelKey' AND item->>'position'<>other->>'position'
+     ) THEN
+    RAISE EXCEPTION USING ERRCODE='23505', MESSAGE='MODEL_INVENTORY_PAYLOAD_NON_CANONICAL';
   END IF;
   IF p_counts IS NULL OR p_counts IS DISTINCT FROM jsonb_build_object(
     'providers',jsonb_array_length(canonical_payload->'providers'),
@@ -270,19 +430,33 @@ BEGIN
        WHERE jsonb_typeof(item) IS DISTINCT FROM 'object'
           OR NOT (item ?& ARRAY['providerKey','status','health','epoch','observationRef','observedAt'])
           OR item - ARRAY['providerKey','status','health','epoch','observationRef','observedAt']::TEXT[] <> '{}'::JSONB
-          OR NULLIF(item->>'providerKey','') IS NULL
+          OR jsonb_typeof(item->'providerKey') IS DISTINCT FROM 'string'
+          OR NOT platform.model_identifier_is_valid(item->>'providerKey')
           OR item->>'status' IS NULL OR item->>'status' NOT IN ('active','disabled')
           OR item->>'health' IS NULL OR item->>'health' NOT IN ('unknown','healthy','degraded','down')
           OR item->>'epoch' IS NULL OR item->>'epoch' !~ '^(0|[1-9][0-9]*)$'
-          OR (item->'observationRef' <> 'null'::JSONB AND NULLIF(item->>'observationRef','') IS NULL)
-          OR (item->'observedAt' <> 'null'::JSONB AND NULLIF(item->>'observedAt','') IS NULL)
+          OR NOT (
+            item->'observationRef'='null'::JSONB
+            OR (jsonb_typeof(item->'observationRef')='string' AND platform.model_text_is_valid(item->>'observationRef'))
+          )
+          OR NOT (
+            item->'observedAt'='null'::JSONB
+            OR (jsonb_typeof(item->'observedAt')='string' AND item->>'observedAt' ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$')
+          )
           OR NOT EXISTS(
             SELECT 1 FROM jsonb_array_elements(canonical_payload->'providers') provider(provider_item)
             WHERE provider_item->>'key'=item->>'providerKey'
           )
      )
      OR (SELECT count(DISTINCT item->>'providerKey') FROM jsonb_array_elements(p_provider_availability) availability(item))
-        <>jsonb_array_length(canonical_payload->'providers') THEN
+        <>jsonb_array_length(canonical_payload->'providers')
+     OR EXISTS(
+       SELECT 1 FROM (
+         SELECT item->>'providerKey' AS value,
+           lag(item->>'providerKey') OVER (ORDER BY ordinal) AS previous
+         FROM jsonb_array_elements(p_provider_availability) WITH ORDINALITY availability(item,ordinal)
+       ) ordered WHERE previous IS NOT NULL AND previous COLLATE "C" >= value COLLATE "C"
+     ) THEN
     RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='MODEL_PROVIDER_AVAILABILITY_INVALID';
   END IF;
   FOREACH product_name IN ARRAY ARRAY['chat','music','image','video'] LOOP

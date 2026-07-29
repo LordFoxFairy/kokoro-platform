@@ -158,6 +158,13 @@ describe("ModelControl consumer boundary", () => {
     expect(migration).toContain(
       "IF EXISTS (SELECT 1 FROM jsonb_array_elements(canonical_payload->'productRoutes') route(item)",
     );
+    expect(migration).toContain("platform.model_identifier_is_valid");
+    expect(migration).toContain("platform.model_text_is_valid");
+    expect(migration).toContain("platform.model_identifier_array_is_canonical");
+    expect(migration).toContain("MODEL_INVENTORY_PAYLOAD_NON_CANONICAL");
+    expect(migration).toContain("CHECK (platform.model_identifier_is_valid(provider_key))");
+    expect(migration).toContain("CHECK (platform.model_secret_reference_is_valid(secret_ref))");
+    expect(migration).toContain("CHECK (platform.model_identifier_array_is_canonical(capabilities, TRUE))");
   });
 });
 

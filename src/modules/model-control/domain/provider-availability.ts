@@ -44,7 +44,7 @@ export function canonicalizeProviderOperationalAvailability(
         observedAt: observedAt === null ? null : canonicalInstant(observedAt),
       });
     })
-    .sort((left, right) => left.providerKey.localeCompare(right.providerKey));
+    .sort((left, right) => canonicalCompare(left.providerKey, right.providerKey));
   if (
     facts.length !== providerKeys.size ||
     facts.some((fact, index) => index > 0 && facts[index - 1]!.providerKey === fact.providerKey)
@@ -76,8 +76,13 @@ function identifier(value: string): string {
 }
 
 function boundedText(value: string, maximum: number): string {
-  if (value.length < 1 || value.length > maximum) throw new Error("MODEL_TEXT_INVALID");
+  if (value.length < 1 || value.length > maximum || /[\u0000-\u001f\u007f]/u.test(value))
+    throw new Error("MODEL_TEXT_INVALID");
   return value;
+}
+
+function canonicalCompare(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function canonicalInstant(value: string): string {

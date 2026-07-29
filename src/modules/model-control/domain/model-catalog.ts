@@ -85,6 +85,11 @@ export function canonicalizeModelInventory(
     }),
   );
   const providerKeys = new Set(providers.map((item) => item.key));
+  assertNoDuplicate(
+    providers,
+    (item) => `${item.provider}:${item.accountKey}`,
+    "MODEL_PROVIDER_ACCOUNT_DUPLICATE",
+  );
   const models = sortUnique(
     array(root.models, "MODEL_DEFINITIONS_INVALID").map(parseModel),
     (item) => item.key,
@@ -128,7 +133,7 @@ export function canonicalizeModelInventory(
       role: role(item.role),
       modelKey: member(item.modelKey, modelKeys, "MODEL_ROUTE_MODEL_UNKNOWN"),
       position: boundedPosition(item.position),
-      requiredCapabilities: sortedStrings(item.requiredCapabilities),
+      requiredCapabilities: sortedStrings(item.requiredCapabilities, true),
     }),
   );
   assertNoDuplicate(
@@ -231,9 +236,18 @@ function parseModel(value: unknown): CanonicalModelDefinition {
   return {
     key: identifier(requiredString(item.key, "MODEL_DEFINITION_INVALID")),
     displayName: text(requiredString(item.displayName, "MODEL_DEFINITION_INVALID")),
-    inputModalities: sortedStrings(stringArray(item.inputModalities, "MODEL_DEFINITION_INVALID")),
-    outputModalities: sortedStrings(stringArray(item.outputModalities, "MODEL_DEFINITION_INVALID")),
-    capabilities: sortedStrings(stringArray(item.capabilities, "MODEL_DEFINITION_INVALID")),
+    inputModalities: sortedStrings(
+      stringArray(item.inputModalities, "MODEL_DEFINITION_INVALID"),
+      true,
+    ),
+    outputModalities: sortedStrings(
+      stringArray(item.outputModalities, "MODEL_DEFINITION_INVALID"),
+      true,
+    ),
+    capabilities: sortedStrings(
+      stringArray(item.capabilities, "MODEL_DEFINITION_INVALID"),
+      true,
+    ),
     contextWindow:
       item.contextWindow === null
         ? null
@@ -313,7 +327,7 @@ function stringArray(value: unknown, code: string): readonly string[] {
   return value;
 }
 function sortUnique<T>(items: readonly T[], key: (item: T) => string, code: string): T[] {
-  const result = [...items].sort((a, b) => key(a).localeCompare(key(b)));
+  const result = [...items].sort((a, b) => canonicalCompare(key(a), key(b)));
   if (result.some((item, index) => index > 0 && key(result[index - 1]!) === key(item)))
     throw new Error(code);
   return result;
@@ -326,7 +340,8 @@ function identifier(value: string): string {
   return value;
 }
 function text(value: string): string {
-  if (value.length < 1 || value.length > 512) throw new Error("MODEL_TEXT_INVALID");
+  if (value.length < 1 || value.length > 512 || /[\u0000-\u001f\u007f]/u.test(value))
+    throw new Error("MODEL_TEXT_INVALID");
   return value;
 }
 function secretReference(value: string): string {
@@ -345,13 +360,17 @@ function boundedPosition(value: number): number {
   return value;
 }
 function positiveInteger(value: number, code: string): number {
-  if (!Number.isInteger(value) || value < 1) throw new Error(code);
+  if (!Number.isInteger(value) || value < 1 || value > 2_147_483_647) throw new Error(code);
   return value;
 }
-function sortedStrings(values: readonly string[]): readonly string[] {
-  const result = [...new Set(values.map(identifier))].sort();
+function sortedStrings(values: readonly string[], required = false): readonly string[] {
+  const result = [...new Set(values.map(identifier))].sort(canonicalCompare);
+  if (required && result.length === 0) throw new Error("MODEL_LIST_REQUIRED");
   if (result.length !== values.length) throw new Error("MODEL_LIST_DUPLICATE");
   return Object.freeze(result);
+}
+function canonicalCompare(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 function member(value: string, values: ReadonlySet<string>, code: string): string {
   const parsed = identifier(value);
