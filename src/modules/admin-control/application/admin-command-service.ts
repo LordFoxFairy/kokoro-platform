@@ -10,6 +10,7 @@ import {
   type AdminCommandDefinition,
   type AdminOperatorAuthority,
 } from "../domain/admin-command.js";
+import type { AdminApprovalAdmission } from "../domain/admin-approval.js";
 
 export interface AdminUnitOfWorkPort {
   execute<Result>(
@@ -49,6 +50,7 @@ export interface AdminAuthorityRepositoryPort {
       payload: JsonValue;
       payloadDigest: string;
       admission: AdminCommandAdmission;
+      expiresAt: string;
     }>,
   ): Promise<void>;
 }
@@ -81,7 +83,12 @@ export interface AdminLocalCommandHandler {
   readonly definition: AdminCommandDefinition;
   execute(
     transaction: PlatformTransaction,
-    input: Readonly<{ admission: AdminCommandAdmission; payload: JsonValue; requestDigest: string }>,
+    input: Readonly<{
+      admission: AdminCommandAdmission;
+      approval?: AdminApprovalAdmission;
+      payload: JsonValue;
+      requestDigest: string;
+    }>,
   ): Promise<AdminHandlerResult>;
 }
 
@@ -115,6 +122,7 @@ export class AdminCommandService {
     receipts: AdminReceiptPort;
     outbox: AdminOutboxPort;
     clock?: () => Date;
+    approvalTtlMs?: number;
     reference: () => string;
   }>) {}
 
@@ -198,7 +206,7 @@ export class AdminCommandService {
           const approvalRef = this.dependencies.reference();
           await this.dependencies.repository.createApproval(transaction, {
             approvalRef, commandId: input.commandId, requestDigest, payload: input.payload,
-            payloadDigest, admission,
+            payloadDigest, admission, expiresAt: this.approvalExpiry(admission.admittedAt),
           });
           const result = json({ disposition: "pending_approval", approvalRef, commandId: input.commandId });
           await this.success(transaction, identity, result);
@@ -290,6 +298,14 @@ export class AdminCommandService {
 
   private now(): string {
     return (this.dependencies.clock ?? (() => new Date()))().toISOString();
+  }
+
+  private approvalExpiry(admittedAt: string): string {
+    const ttl = this.dependencies.approvalTtlMs ?? 15 * 60_000;
+    if (!Number.isInteger(ttl) || ttl < 60_000 || ttl > 60 * 60_000) {
+      throw new Error("ADMIN_APPROVAL_TTL_INVALID");
+    }
+    return new Date(Date.parse(admittedAt) + ttl).toISOString();
   }
 }
 
