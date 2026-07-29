@@ -605,6 +605,8 @@ model AuthorizationIdentitySession {
   credentialEpoch       BigInt   @map("credential_epoch")
   authenticatedAt       DateTime @map("authenticated_at") @db.Timestamptz(6)
   expiresAt             DateTime @map("expires_at") @db.Timestamptz(6)
+  deviceLabel           String   @map("device_label")
+  lastSeenAt            DateTime @map("last_seen_at") @db.Timestamptz(6)
   createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
@@ -737,6 +739,39 @@ model IdentityRefreshCredential {
   @@unique([siteRef, familyRef, generation])
   @@index([siteRef, familyRef, generation])
   @@map("identity_refresh_credential")
+  @@schema("platform")
+}
+
+model IdentitySessionDeliveryClaim {
+  commandId      String    @id @map("command_id")
+  siteRef        String    @map("site_ref")
+  subjectRef     String    @map("subject_ref")
+  sessionRef     String    @map("session_ref")
+  requestDigest  String    @map("request_digest") @db.Char(64)
+  state          String
+  claimedAt      DateTime  @map("claimed_at") @db.Timestamptz(6)
+  supersededAt   DateTime? @map("superseded_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([siteRef, subjectRef, sessionRef])
+  @@map("identity_session_delivery_claim")
+  @@schema("platform")
+}
+
+model IdentityReceiptRecoveryCapability {
+  commandId          String    @id @map("command_id")
+  siteRef            String    @map("site_ref")
+  workloadIdentityId String    @map("workload_identity_id")
+  purpose            String
+  transactionRef     String?   @map("transaction_ref")
+  capabilityDigest   String    @map("capability_digest") @db.Char(64)
+  state              String    @default("active")
+  expiresAt          DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt         DateTime? @map("consumed_at") @db.Timestamptz(6)
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([expiresAt])
+  @@map("identity_receipt_recovery_capability")
   @@schema("platform")
 }
 

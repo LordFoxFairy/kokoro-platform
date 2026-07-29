@@ -2,6 +2,11 @@ SET statement_timeout = '30s';
 SET lock_timeout = '5s';
 SET idle_in_transaction_session_timeout = '30s';
 
+ALTER TABLE platform.authorization_identity_session
+  ADD COLUMN device_label TEXT NOT NULL
+    CHECK(length(device_label) BETWEEN 1 AND 128),
+  ADD COLUMN last_seen_at TIMESTAMPTZ NOT NULL;
+
 CREATE TABLE platform.identity_account (
   site_ref TEXT NOT NULL REFERENCES platform.authorization_site(site_ref),
   account_ref TEXT NOT NULL,
@@ -158,6 +163,44 @@ CREATE TABLE platform.identity_refresh_credential (
 CREATE INDEX identity_refresh_family_history_idx
   ON platform.identity_refresh_credential(site_ref,family_ref,generation DESC);
 
+CREATE TABLE platform.identity_session_delivery_claim (
+  command_id TEXT PRIMARY KEY REFERENCES platform.command_receipt(command_id),
+  site_ref TEXT NOT NULL,
+  subject_ref TEXT NOT NULL,
+  session_ref TEXT NOT NULL,
+  request_digest CHAR(64) NOT NULL CHECK(request_digest ~ '^[0-9a-f]{64}$'),
+  state TEXT NOT NULL CHECK(state IN ('first_claim_consumed','superseded')),
+  claimed_at TIMESTAMPTZ NOT NULL,
+  superseded_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  FOREIGN KEY(session_ref,subject_ref,site_ref)
+    REFERENCES platform.authorization_identity_session(session_ref,subject_ref,site_ref),
+  CHECK(
+    (state='first_claim_consumed' AND superseded_at IS NULL)
+    OR (state='superseded' AND superseded_at IS NOT NULL)
+  )
+);
+CREATE INDEX identity_session_delivery_owner_idx
+  ON platform.identity_session_delivery_claim(site_ref,subject_ref,session_ref);
+
+CREATE TABLE platform.identity_receipt_recovery_capability (
+  command_id TEXT PRIMARY KEY REFERENCES platform.command_receipt(command_id),
+  site_ref TEXT NOT NULL REFERENCES platform.authorization_site(site_ref),
+  workload_identity_id TEXT NOT NULL,
+  purpose TEXT NOT NULL CHECK(length(purpose) BETWEEN 1 AND 128),
+  transaction_ref TEXT,
+  capability_digest CHAR(64) NOT NULL CHECK(capability_digest ~ '^[0-9a-f]{64}$'),
+  state TEXT NOT NULL DEFAULT 'active' CHECK(state IN ('active','consumed','expired')),
+  expires_at TIMESTAMPTZ NOT NULL,
+  consumed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  FOREIGN KEY(workload_identity_id,site_ref)
+    REFERENCES platform.authorization_product_binding(workload_identity_id,site_ref),
+  CHECK((state='consumed') = (consumed_at IS NOT NULL))
+);
+CREATE INDEX identity_receipt_recovery_expiry_idx
+  ON platform.identity_receipt_recovery_capability(expires_at) WHERE state='active';
+
 REVOKE ALL ON
   platform.identity_account,
   platform.identity_password_credential,
@@ -165,7 +208,9 @@ REVOKE ALL ON
   platform.identity_verification_legal_acceptance,
   platform.identity_verification_delivery,
   platform.identity_refresh_family,
-  platform.identity_refresh_credential
+  platform.identity_refresh_credential,
+  platform.identity_session_delivery_claim,
+  platform.identity_receipt_recovery_capability
 FROM PUBLIC;
 
 ALTER DEFAULT PRIVILEGES FOR ROLE platform_migrator IN SCHEMA platform

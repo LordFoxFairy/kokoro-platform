@@ -13,8 +13,24 @@ export type StoredScopedIdentitySessionEvent = Readonly<{
   correlationId: string;
 }>;
 
+export type StoredScopedSubjectEvent = StoredScopedIdentitySessionEvent;
+
 export class PostgresScopedAuthorizationFeedRepository {
+  async reserveSubjectMutation(
+    transaction: PlatformTransaction,
+    siteRef: string,
+  ): Promise<ScopedAuthorizationReservation> {
+    return this.reserveOwnerMutation(transaction, siteRef);
+  }
+
   async reserveIdentitySessionMutation(
+    transaction: PlatformTransaction,
+    siteRef: string,
+  ): Promise<ScopedAuthorizationReservation> {
+    return this.reserveOwnerMutation(transaction, siteRef);
+  }
+
+  private async reserveOwnerMutation(
     transaction: PlatformTransaction,
     siteRef: string,
   ): Promise<ScopedAuthorizationReservation> {
@@ -45,21 +61,37 @@ export class PostgresScopedAuthorizationFeedRepository {
     });
   }
 
+  async appendSubjectCurrent(
+    transaction: PlatformTransaction,
+    event: StoredScopedSubjectEvent,
+  ): Promise<void> {
+    return this.appendOwnerCurrent(transaction, event, "subject_current_changed");
+  }
+
   async appendIdentitySessionCurrent(
     transaction: PlatformTransaction,
     event: StoredScopedIdentitySessionEvent,
   ): Promise<void> {
+    return this.appendOwnerCurrent(transaction, event, "identity_session_current_changed");
+  }
+
+  private async appendOwnerCurrent(
+    transaction: PlatformTransaction,
+    event: StoredScopedIdentitySessionEvent,
+    eventType: "subject_current_changed" | "identity_session_current_changed",
+  ): Promise<void> {
     const changed = await resolvePlatformTransaction(transaction).execute(
       `INSERT INTO platform.authorization_scoped_event_log
        (stream_sequence,event_id,site_ref,aggregate_sequence,event_type,occurred_at,
-        signing_payload,payload_digest,signing_key_revision,signature_algorithm,signature,correlation_id)
-       VALUES ($1,$2::uuid,$3,$4,'identity_session_current_changed',$5::timestamptz,
-               $6,$7,$8,'RS256',$9,$10)`,
+       signing_payload,payload_digest,signing_key_revision,signature_algorithm,signature,correlation_id)
+       VALUES ($1,$2::uuid,$3,$4,$5,$6::timestamptz,
+               $7,$8,$9,'RS256',$10,$11)`,
       [
         event.reservation.streamSequence,
         event.eventId,
         event.reservation.siteRef,
         event.reservation.aggregateSequence,
+        eventType,
         event.occurredAt,
         Buffer.from(event.signingPayload),
         event.payloadDigest,

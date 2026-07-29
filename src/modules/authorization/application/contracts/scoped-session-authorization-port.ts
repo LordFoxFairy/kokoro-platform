@@ -20,6 +20,31 @@ export type ScopedAuthorizationReservation = Readonly<{
   aggregateSequence: bigint;
 }>;
 
+export type SubjectCurrentFact = Readonly<{
+  siteRef: string;
+  subjectRef: string;
+  state: "active" | "disabled" | "removed";
+  subjectGeneration: string;
+  restrictionEpoch: string;
+  updatedAt: string;
+  retainUntil: string;
+}>;
+
+export interface ScopedSubjectAuthorizationMutationPort {
+  reserveSubjectMutation(
+    transaction: PlatformTransaction,
+    input: Readonly<{ siteRef: string }>,
+  ): Promise<ScopedAuthorizationReservation>;
+  publishSubjectCurrent(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      reservation: ScopedAuthorizationReservation;
+      current: SubjectCurrentFact;
+      correlationId: string;
+    }>,
+  ): Promise<void>;
+}
+
 /**
  * Required owner-mutation boundary for the v2 authorization feed.
  *
