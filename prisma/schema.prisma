@@ -454,6 +454,45 @@ model AuthorizationStreamState {
   @@schema("platform")
 }
 
+model AuthorizationScopedStreamState {
+  singleton    Boolean  @id @default(true)
+  highWatermark BigInt  @default(0) @map("high_watermark")
+  updatedAt    DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("authorization_scoped_stream_state")
+  @@schema("platform")
+}
+
+model AuthorizationScopedSiteCursor {
+  siteRef           String   @id @map("site_ref")
+  aggregateSequence BigInt   @default(0) @map("aggregate_sequence")
+  updatedAt         DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("authorization_scoped_site_cursor")
+  @@schema("platform")
+}
+
+model AuthorizationScopedEventLog {
+  streamSequence     BigInt   @id @map("stream_sequence")
+  eventId            String   @unique @map("event_id") @db.Uuid
+  siteRef            String   @map("site_ref")
+  aggregateSequence  BigInt   @map("aggregate_sequence")
+  eventType          String   @map("event_type")
+  occurredAt         DateTime @map("occurred_at") @db.Timestamptz(6)
+  signingPayload     Bytes    @map("signing_payload")
+  payloadDigest      String   @map("payload_digest") @db.Char(64)
+  signingKeyRevision String   @map("signing_key_revision")
+  signatureAlgorithm String   @map("signature_algorithm")
+  signature          Bytes
+  correlationId      String   @map("correlation_id")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([siteRef, aggregateSequence])
+  @@index([createdAt, streamSequence])
+  @@map("authorization_scoped_event_log")
+  @@schema("platform")
+}
+
 model AuthorizationEventLog {
   streamSequence     BigInt   @id @map("stream_sequence")
   eventId            String   @unique @map("event_id") @db.Uuid
