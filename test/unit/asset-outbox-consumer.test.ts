@@ -33,13 +33,16 @@ describe("AssetOutboxConsumer", () => {
 
     await consumer.runOneCycle({ signal: new AbortController().signal });
 
-    expect(calls).toEqual([
-      "claim",
-      "completion:session_01:2", "ack:event_01",
-      "scan:candidate_01:3", "ack:event_02",
-      "promotion:promotion_01:4", "ack:event_03",
-      "cleanup:cleanup_01:5", "ack:event_04",
+    expect(calls[0]).toBe("claim");
+    expect(calls.slice(1, 5)).toEqual([
+      "completion:session_01:2",
+      "scan:candidate_01:3",
+      "promotion:promotion_01:4",
+      "cleanup:cleanup_01:5",
     ]);
+    expect(new Set(calls.slice(5))).toEqual(new Set([
+      "ack:event_01", "ack:event_02", "ack:event_03", "ack:event_04",
+    ]));
   });
 
   it("retries a temporary domain disposition with bounded exponential backoff", async () => {
@@ -127,15 +130,22 @@ describe("AssetOutboxConsumer", () => {
         await completion;
         return { disposition: "promotion_pending" as const, assetVersionRef: "version_01" };
       });
-      const consumer = new AssetOutboxConsumer(queue([event("asset.scan.requested", {
-        kind: "asset_scan_requested_v1", siteRef: "site_01",
-        candidateRef: "candidate_01", expectedVersion: "3",
-      }, "candidate_01", 1)], calls), servicesFixture, { leaseHeartbeatMs: 1_000 });
+      const consumer = new AssetOutboxConsumer(queue([
+        event("asset.scan.requested", {
+          kind: "asset_scan_requested_v1", siteRef: "site_01",
+          candidateRef: "candidate_01", expectedVersion: "3",
+        }, "candidate_01", 1),
+        event("asset.scan.requested", {
+          kind: "asset_scan_requested_v1", siteRef: "site_01",
+          candidateRef: "candidate_02", expectedVersion: "3",
+        }, "candidate_02", 2),
+      ], calls), servicesFixture, { leaseHeartbeatMs: 1_000 });
 
       const cycle = consumer.runOneCycle({ signal: new AbortController().signal });
       await vi.waitFor(() => expect(calls).toContain("scan-started"));
       await vi.advanceTimersByTimeAsync(1_000);
       expect(calls).toContain("renew:event_01");
+      expect(calls).toContain("renew:event_02");
       finish?.();
       await cycle;
       expect(calls.indexOf("renew:event_01")).toBeLessThan(calls.indexOf("ack:event_01"));

@@ -74,33 +74,45 @@ export class AssetOutboxConsumer {
     context.signal.throwIfAborted();
     const events = await this.queue.claim();
     for (const event of events) this.#active.set(event.eventId, event);
-    for (const event of events) {
-      context.signal.throwIfAborted();
-      try {
-        const result = await this.dispatchWithLeaseHeartbeat(event);
-        if (result.disposition === "retry") {
-          await this.queue.retry({
-            eventId: event.eventId,
-            leaseToken: event.leaseToken,
-            errorCode: result.code,
-            retryAt: this.retryAt(event.attempt),
-            maxAttempts: this.#maxAttempts,
-          });
-        } else {
-          await this.queue.ack(event.eventId, event.leaseToken);
-        }
-      } catch (error) {
-        const failure = classify(error);
+    const outcomes = await Promise.allSettled(events.map((event) =>
+      this.processClaimedEvent(event, context.signal)));
+    if (context.signal.aborted) throw context.signal.reason;
+    const failures = outcomes.flatMap((outcome) =>
+      outcome.status === "rejected" ? [outcome.reason] : []);
+    if (failures.length > 0) throw new AggregateError(failures, "ASSET_WORKER_BATCH_FAILED");
+  }
+
+  private async processClaimedEvent(
+    event: ClaimedOutboxEvent,
+    signal: AbortSignal,
+  ): Promise<void> {
+    signal.throwIfAborted();
+    try {
+      const result = await this.dispatchWithLeaseHeartbeat(event);
+      signal.throwIfAborted();
+      if (result.disposition === "retry") {
         await this.queue.retry({
           eventId: event.eventId,
           leaseToken: event.leaseToken,
-          errorCode: failure.code,
-          retryAt: failure.permanent ? null : this.retryAt(event.attempt),
+          errorCode: result.code,
+          retryAt: this.retryAt(event.attempt),
           maxAttempts: this.#maxAttempts,
         });
-      } finally {
-        this.#active.delete(event.eventId);
+      } else {
+        await this.queue.ack(event.eventId, event.leaseToken);
       }
+    } catch (error) {
+      if (signal.aborted) throw signal.reason ?? error;
+      const failure = classify(error);
+      await this.queue.retry({
+        eventId: event.eventId,
+        leaseToken: event.leaseToken,
+        errorCode: failure.code,
+        retryAt: failure.permanent ? null : this.retryAt(event.attempt),
+        maxAttempts: this.#maxAttempts,
+      });
+    } finally {
+      this.#active.delete(event.eventId);
     }
   }
 
