@@ -324,7 +324,12 @@ const CANDIDATE_SQL = `
     SELECT max(term.ends_at) AS ends_at
     FROM platform.commerce_subscription_term term
     WHERE term.subscription_ref=subscription.subscription_ref AND term.site_ref=subscription.site_ref
-      AND term.state='active'
+      AND NOT EXISTS (
+        SELECT 1 FROM platform.commerce_subscription_term_revocation revocation
+        WHERE revocation.site_ref=term.site_ref
+          AND revocation.subscription_term_ref=term.subscription_term_ref
+          AND revocation.effective_at<=$3::timestamptz
+      )
   ) active_term ON TRUE
   LEFT JOIN LATERAL (
     SELECT count(*)::INTEGER AS redemption_count
@@ -340,7 +345,7 @@ const OUTPUT_SQL = `
   SELECT output.output_line_id AS "outputLineId",output.output_kind AS "outputKind",
          output.ordinal,output.cardinality,output.plan_version_ref AS "planVersionRef",
          output.credit_program_revision_ref AS "creditProgramRevisionRef",
-         credit.bucket_class AS "bucketClass",credit.unit,credit.amount::text AS amount,
+         credit.ux_bucket_class AS "bucketClass",credit.unit,credit.amount::text AS amount,
          credit.expires_after_seconds AS "creditExpiresAfterSeconds",
          output.entitlement_template_revision_ref AS "entitlementTemplateRevisionRef",
          entitlement.capability_key AS "capabilityKey",entitlement.safe_label AS "safeLabel",

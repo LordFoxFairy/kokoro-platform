@@ -104,9 +104,15 @@ CREATE TABLE platform.commerce_credit_program_revision (
   site_ref TEXT NOT NULL REFERENCES platform.authorization_site(site_ref),
   program_ref TEXT NOT NULL CHECK(length(program_ref) BETWEEN 1 AND 256),
   revision BIGINT NOT NULL CHECK(revision > 0),
-  bucket_class TEXT NOT NULL CHECK(bucket_class IN ('daily','period','permanent')),
+  ux_bucket_class TEXT NOT NULL CHECK(ux_bucket_class IN ('daily','period','permanent')),
   unit TEXT NOT NULL CHECK(length(unit) BETWEEN 1 AND 64),
   amount NUMERIC(38,0) NOT NULL CHECK(amount > 0),
+  burn_priority INTEGER NOT NULL DEFAULT 1000,
+  scope_policy JSONB NOT NULL CHECK(jsonb_typeof(scope_policy)='object'),
+  liability_merchant_account_ref TEXT NOT NULL CHECK(length(liability_merchant_account_ref) BETWEEN 1 AND 256),
+  window_kind TEXT NOT NULL CHECK(window_kind IN ('none','daily','period')),
+  calendar_zone TEXT CHECK(calendar_zone IS NULL OR length(calendar_zone) BETWEEN 1 AND 64),
+  window_anchor TEXT CHECK(window_anchor IS NULL OR length(window_anchor) BETWEEN 1 AND 128),
   expires_after_seconds BIGINT CHECK(expires_after_seconds IS NULL OR expires_after_seconds > 0),
   revision_digest CHAR(64) NOT NULL CHECK(revision_digest ~ '^[a-f0-9]{64}$'),
   published_at TIMESTAMPTZ NOT NULL,
@@ -115,8 +121,12 @@ CREATE TABLE platform.commerce_credit_program_revision (
   UNIQUE(site_ref,revision_digest),
   UNIQUE(credit_program_revision_ref,site_ref),
   CHECK(
-    (bucket_class='permanent' AND expires_after_seconds IS NULL)
-    OR (bucket_class IN ('daily','period') AND expires_after_seconds IS NOT NULL)
+    (ux_bucket_class='permanent' AND window_kind='none'
+      AND calendar_zone IS NULL AND window_anchor IS NULL AND expires_after_seconds IS NULL)
+    OR (ux_bucket_class='daily' AND window_kind='daily'
+      AND calendar_zone IS NOT NULL AND window_anchor IS NOT NULL AND expires_after_seconds IS NOT NULL)
+    OR (ux_bucket_class='period' AND window_kind='period'
+      AND calendar_zone IS NOT NULL AND window_anchor IS NOT NULL AND expires_after_seconds IS NOT NULL)
   )
 );
 
@@ -261,10 +271,8 @@ CREATE TABLE platform.commerce_subscription_term (
   source_ref TEXT NOT NULL CHECK(length(source_ref) BETWEEN 1 AND 256),
   starts_at TIMESTAMPTZ NOT NULL,
   ends_at TIMESTAMPTZ NOT NULL,
-  state TEXT NOT NULL CHECK(state IN ('active','reversed')),
-  reversed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(source_type,source_ref,plan_version_ref),
+  UNIQUE(site_ref,source_type,source_ref,plan_version_ref),
   UNIQUE(subscription_term_ref,site_ref),
   FOREIGN KEY(subscription_ref,site_ref)
     REFERENCES platform.commerce_subscription(subscription_ref,site_ref),
@@ -272,12 +280,29 @@ CREATE TABLE platform.commerce_subscription_term (
     REFERENCES platform.commerce_billing_account(billing_account_ref,site_ref),
   FOREIGN KEY(plan_version_ref,site_ref)
     REFERENCES platform.commerce_catalog_plan_version(plan_version_ref,site_ref),
-  CHECK(ends_at > starts_at),
-  CHECK((state='active' AND reversed_at IS NULL) OR (state='reversed' AND reversed_at IS NOT NULL))
+  CHECK(ends_at > starts_at)
 );
 CREATE INDEX commerce_subscription_term_account_end_idx
-  ON platform.commerce_subscription_term(site_ref,billing_account_ref,ends_at DESC)
-  WHERE state='active';
+  ON platform.commerce_subscription_term(site_ref,billing_account_ref,ends_at DESC);
+
+CREATE TABLE platform.commerce_subscription_term_revocation (
+  term_revocation_ref UUID PRIMARY KEY,
+  subscription_term_ref UUID NOT NULL,
+  site_ref TEXT NOT NULL,
+  source_type TEXT NOT NULL CHECK(source_type IN ('redemption_reversal','admin_correction','program_revocation')),
+  source_ref TEXT NOT NULL CHECK(length(source_ref) BETWEEN 1 AND 256),
+  case_ref TEXT NOT NULL CHECK(length(case_ref) BETWEEN 1 AND 256),
+  command_id TEXT NOT NULL,
+  effective_at TIMESTAMPTZ NOT NULL,
+  revocation_digest CHAR(64) NOT NULL CHECK(revocation_digest ~ '^[a-f0-9]{64}$'),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(site_ref,subscription_term_ref),
+  UNIQUE(site_ref,subscription_term_ref,source_type,source_ref),
+  FOREIGN KEY(subscription_term_ref,site_ref)
+    REFERENCES platform.commerce_subscription_term(subscription_term_ref,site_ref),
+  FOREIGN KEY(command_id,site_ref)
+    REFERENCES platform.commerce_command(command_id,site_ref)
+);
 
 CREATE TABLE platform.commerce_code_batch (
   batch_ref UUID PRIMARY KEY,
@@ -308,7 +333,7 @@ CREATE TABLE platform.commerce_redeem_code (
   lookup_digest CHAR(64) NOT NULL CHECK(lookup_digest ~ '^[a-f0-9]{64}$'),
   safe_fingerprint TEXT NOT NULL CHECK(safe_fingerprint ~ '^[A-Z0-9-]{4,32}$'),
   state TEXT NOT NULL DEFAULT 'available' CHECK(state IN ('available','claimed','void')),
-  claimed_by_command_id TEXT REFERENCES platform.commerce_command(command_id),
+  claimed_by_command_id TEXT,
   claimed_at TIMESTAMPTZ,
   voided_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -317,6 +342,8 @@ CREATE TABLE platform.commerce_redeem_code (
   UNIQUE(code_ref,batch_ref,site_ref),
   FOREIGN KEY(batch_ref,site_ref,code_lookup_key_revision)
     REFERENCES platform.commerce_code_batch(batch_ref,site_ref,code_lookup_key_revision),
+  FOREIGN KEY(claimed_by_command_id,site_ref)
+    REFERENCES platform.commerce_command(command_id,site_ref),
   CHECK(
     (state='available' AND claimed_by_command_id IS NULL AND claimed_at IS NULL AND voided_at IS NULL)
     OR (state='claimed' AND claimed_by_command_id IS NOT NULL AND claimed_at IS NOT NULL AND voided_at IS NULL)
@@ -328,21 +355,26 @@ CREATE INDEX commerce_redeem_code_batch_state_idx
 
 CREATE TABLE platform.commerce_redemption (
   redemption_id UUID PRIMARY KEY,
-  command_id TEXT NOT NULL UNIQUE REFERENCES platform.commerce_command(command_id),
+  command_id TEXT NOT NULL,
   site_ref TEXT NOT NULL,
   billing_account_ref TEXT NOT NULL,
-  code_ref UUID NOT NULL UNIQUE,
+  code_ref UUID NOT NULL,
   batch_ref UUID NOT NULL,
   redemption_program_revision_ref TEXT NOT NULL,
   product_version_ref TEXT NOT NULL,
   plan_version_ref TEXT,
-  fulfillment_ref UUID UNIQUE,
+  fulfillment_ref UUID,
   safe_code_fingerprint TEXT NOT NULL CHECK(safe_code_fingerprint ~ '^[A-Z0-9-]{4,32}$'),
   state TEXT NOT NULL CHECK(state IN ('executing','fulfilled','reversed','reconciliation_required')),
   redeemed_at TIMESTAMPTZ,
   state_observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(redemption_id,site_ref),
+  UNIQUE(site_ref,command_id),
+  UNIQUE(site_ref,code_ref),
+  UNIQUE(site_ref,fulfillment_ref),
+  FOREIGN KEY(command_id,site_ref)
+    REFERENCES platform.commerce_command(command_id,site_ref),
   FOREIGN KEY(billing_account_ref,site_ref)
     REFERENCES platform.commerce_billing_account(billing_account_ref,site_ref),
   FOREIGN KEY(code_ref,batch_ref,site_ref)
@@ -363,7 +395,7 @@ CREATE INDEX commerce_redemption_account_program_idx
 
 CREATE TABLE platform.commerce_redemption_preview (
   preview_ref UUID PRIMARY KEY,
-  command_id TEXT NOT NULL UNIQUE REFERENCES platform.commerce_command(command_id),
+  command_id TEXT NOT NULL,
   site_ref TEXT NOT NULL,
   subject_ref TEXT NOT NULL,
   subject_generation BIGINT NOT NULL CHECK(subject_generation > 0),
@@ -383,10 +415,13 @@ CREATE TABLE platform.commerce_redemption_preview (
   safe_terms JSONB NOT NULL CHECK(jsonb_typeof(safe_terms)='object'),
   state TEXT NOT NULL DEFAULT 'live' CHECK(state IN ('live','consumed','expired')),
   expires_at TIMESTAMPTZ NOT NULL,
-  consumed_by_command_id TEXT REFERENCES platform.commerce_command(command_id),
+  consumed_by_command_id TEXT,
   consumed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(preview_ref,site_ref),
+  UNIQUE(site_ref,command_id),
+  FOREIGN KEY(command_id,site_ref) REFERENCES platform.commerce_command(command_id,site_ref),
+  FOREIGN KEY(consumed_by_command_id,site_ref) REFERENCES platform.commerce_command(command_id,site_ref),
   FOREIGN KEY(subject_ref,site_ref) REFERENCES platform.authorization_subject(subject_ref,site_ref),
   FOREIGN KEY(billing_account_ref,site_ref)
     REFERENCES platform.commerce_billing_account(billing_account_ref,site_ref),
@@ -409,6 +444,528 @@ CREATE TABLE platform.commerce_redemption_preview (
 CREATE INDEX commerce_redemption_preview_expiry_idx
   ON platform.commerce_redemption_preview(expires_at) WHERE state='live';
 
+CREATE TABLE platform.commerce_redemption_legal_acceptance (
+  redemption_id UUID NOT NULL,
+  site_ref TEXT NOT NULL,
+  term_ref TEXT NOT NULL CHECK(length(term_ref) BETWEEN 1 AND 128),
+  command_id TEXT NOT NULL,
+  workload_identity_id TEXT NOT NULL,
+  site_release_ref TEXT NOT NULL,
+  accepted_at TIMESTAMPTZ NOT NULL,
+  evidence_digest CHAR(64) NOT NULL CHECK(evidence_digest ~ '^[a-f0-9]{64}$'),
+  PRIMARY KEY(site_ref,redemption_id,term_ref),
+  FOREIGN KEY(redemption_id,site_ref) REFERENCES platform.commerce_redemption(redemption_id,site_ref),
+  FOREIGN KEY(command_id,site_ref) REFERENCES platform.commerce_command(command_id,site_ref),
+  FOREIGN KEY(workload_identity_id,site_ref)
+    REFERENCES platform.authorization_product_binding(workload_identity_id,site_ref)
+);
+
+CREATE TABLE platform.commerce_entitlement_grant (
+  entitlement_grant_ref UUID PRIMARY KEY,
+  site_ref TEXT NOT NULL,
+  billing_account_ref TEXT NOT NULL,
+  entitlement_template_revision_ref TEXT NOT NULL,
+  capability_key TEXT NOT NULL CHECK(capability_key ~ '^[a-z0-9][a-z0-9._:-]{0,127}$'),
+  safe_label TEXT NOT NULL CHECK(length(safe_label) BETWEEN 1 AND 160),
+  source_type TEXT NOT NULL CHECK(source_type IN ('redemption','admin_grant','program_window')),
+  source_ref TEXT NOT NULL CHECK(length(source_ref) BETWEEN 1 AND 256),
+  effective_at TIMESTAMPTZ NOT NULL,
+  expires_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(site_ref,source_type,source_ref,entitlement_template_revision_ref),
+  UNIQUE(entitlement_grant_ref,site_ref),
+  FOREIGN KEY(billing_account_ref,site_ref)
+    REFERENCES platform.commerce_billing_account(billing_account_ref,site_ref),
+  FOREIGN KEY(entitlement_template_revision_ref,site_ref)
+    REFERENCES platform.commerce_entitlement_template_revision(entitlement_template_revision_ref,site_ref),
+  CHECK(expires_at IS NULL OR expires_at > effective_at)
+);
+CREATE INDEX commerce_entitlement_account_idx
+  ON platform.commerce_entitlement_grant(site_ref,billing_account_ref,expires_at);
+
+CREATE TABLE platform.commerce_entitlement_revocation (
+  entitlement_revocation_ref UUID PRIMARY KEY,
+  entitlement_grant_ref UUID NOT NULL,
+  site_ref TEXT NOT NULL,
+  source_type TEXT NOT NULL CHECK(source_type IN ('redemption_reversal','admin_correction','program_revocation')),
+  source_ref TEXT NOT NULL CHECK(length(source_ref) BETWEEN 1 AND 256),
+  case_ref TEXT NOT NULL CHECK(length(case_ref) BETWEEN 1 AND 256),
+  command_id TEXT NOT NULL,
+  effective_at TIMESTAMPTZ NOT NULL,
+  revocation_digest CHAR(64) NOT NULL CHECK(revocation_digest ~ '^[a-f0-9]{64}$'),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(site_ref,entitlement_grant_ref),
+  UNIQUE(site_ref,entitlement_grant_ref,source_type,source_ref),
+  FOREIGN KEY(entitlement_grant_ref,site_ref)
+    REFERENCES platform.commerce_entitlement_grant(entitlement_grant_ref,site_ref),
+  FOREIGN KEY(command_id,site_ref)
+    REFERENCES platform.commerce_command(command_id,site_ref)
+);
+
+CREATE TABLE platform.credit_account (
+  credit_account_ref UUID PRIMARY KEY,
+  site_ref TEXT NOT NULL,
+  billing_account_ref TEXT NOT NULL,
+  unit TEXT NOT NULL CHECK(length(unit) BETWEEN 1 AND 64),
+  liability_merchant_account_ref TEXT NOT NULL CHECK(length(liability_merchant_account_ref) BETWEEN 1 AND 256),
+  state TEXT NOT NULL CHECK(state IN ('active','suspended','closed')),
+  aggregate_version BIGINT NOT NULL DEFAULT 1 CHECK(aggregate_version > 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(site_ref,billing_account_ref,unit,liability_merchant_account_ref),
+  UNIQUE(credit_account_ref,site_ref),
+  UNIQUE(credit_account_ref,site_ref,unit),
+  UNIQUE(credit_account_ref,site_ref,billing_account_ref,unit,liability_merchant_account_ref),
+  FOREIGN KEY(billing_account_ref,site_ref)
+    REFERENCES platform.commerce_billing_account(billing_account_ref,site_ref)
+);
+
+CREATE TABLE platform.credit_grant (
+  credit_grant_id UUID PRIMARY KEY,
+  credit_account_ref UUID NOT NULL,
+  site_ref TEXT NOT NULL,
+  billing_account_ref TEXT NOT NULL,
+  credit_program_revision_ref TEXT NOT NULL,
+  source_type TEXT NOT NULL CHECK(source_type IN ('redemption','admin_grant','program_window')),
+  source_ref TEXT NOT NULL CHECK(length(source_ref) BETWEEN 1 AND 256),
+  source_window_key TEXT NOT NULL DEFAULT '' CHECK(length(source_window_key) <= 256),
+  issuance_journal_transaction_ref UUID NOT NULL,
+  ux_bucket_class TEXT NOT NULL CHECK(ux_bucket_class IN ('daily','period','permanent')),
+  unit TEXT NOT NULL CHECK(length(unit) BETWEEN 1 AND 64),
+  liability_merchant_account_ref TEXT NOT NULL CHECK(length(liability_merchant_account_ref) BETWEEN 1 AND 256),
+  original_amount NUMERIC(38,0) NOT NULL CHECK(original_amount > 0),
+  burn_priority INTEGER NOT NULL,
+  scope_policy JSONB NOT NULL CHECK(jsonb_typeof(scope_policy)='object'),
+  effective_at TIMESTAMPTZ NOT NULL,
+  expires_at TIMESTAMPTZ,
+  issued_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(site_ref,source_type,source_ref,credit_program_revision_ref,source_window_key),
+  UNIQUE(credit_grant_id,site_ref),
+  UNIQUE(credit_grant_id,site_ref,credit_account_ref,unit),
+  FOREIGN KEY(credit_account_ref,site_ref,billing_account_ref,unit,liability_merchant_account_ref)
+    REFERENCES platform.credit_account(
+      credit_account_ref,site_ref,billing_account_ref,unit,liability_merchant_account_ref
+    ),
+  FOREIGN KEY(credit_program_revision_ref,site_ref)
+    REFERENCES platform.commerce_credit_program_revision(credit_program_revision_ref,site_ref),
+  CHECK((ux_bucket_class='permanent' AND expires_at IS NULL) OR (ux_bucket_class<>'permanent' AND expires_at IS NOT NULL)),
+  CHECK(expires_at IS NULL OR expires_at > effective_at)
+);
+CREATE INDEX credit_grant_spend_order_idx
+  ON platform.credit_grant(credit_account_ref,expires_at ASC NULLS LAST,burn_priority ASC,issued_at ASC,credit_grant_id ASC);
+
+CREATE TABLE platform.credit_program_window_acquisition (
+  acquisition_ref UUID PRIMARY KEY,
+  site_ref TEXT NOT NULL,
+  credit_program_revision_ref TEXT NOT NULL,
+  subject_ref TEXT NOT NULL,
+  subject_generation BIGINT NOT NULL CHECK(subject_generation > 0),
+  billing_account_ref TEXT NOT NULL,
+  window_key TEXT NOT NULL CHECK(length(window_key) BETWEEN 1 AND 256),
+  fulfillment_ref UUID NOT NULL,
+  acquired_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(site_ref,credit_program_revision_ref,subject_ref,subject_generation,window_key),
+  UNIQUE(site_ref,fulfillment_ref),
+  FOREIGN KEY(credit_program_revision_ref,site_ref)
+    REFERENCES platform.commerce_credit_program_revision(credit_program_revision_ref,site_ref),
+  FOREIGN KEY(subject_ref,site_ref) REFERENCES platform.authorization_subject(subject_ref,site_ref),
+  FOREIGN KEY(billing_account_ref,site_ref)
+    REFERENCES platform.commerce_billing_account(billing_account_ref,site_ref)
+);
+
+CREATE TABLE platform.credit_hold (
+  credit_hold_ref UUID PRIMARY KEY,
+  credit_account_ref UUID NOT NULL,
+  site_ref TEXT NOT NULL,
+  execution_root_ref TEXT NOT NULL CHECK(length(execution_root_ref) BETWEEN 1 AND 256),
+  unit TEXT NOT NULL CHECK(length(unit) BETWEEN 1 AND 64),
+  requested_amount NUMERIC(38,0) NOT NULL CHECK(requested_amount > 0),
+  reserved_amount NUMERIC(38,0) NOT NULL CHECK(reserved_amount > 0),
+  captured_amount NUMERIC(38,0) NOT NULL DEFAULT 0 CHECK(captured_amount >= 0),
+  released_amount NUMERIC(38,0) NOT NULL DEFAULT 0 CHECK(released_amount >= 0),
+  state TEXT NOT NULL CHECK(state IN ('open','closing','settled','released','expired','reconciliation_required')),
+  resolution_kind TEXT CHECK(resolution_kind IS NULL OR resolution_kind IN ('reservation_expiry','known_outcome','reconciled')),
+  resolution_ref TEXT CHECK(resolution_ref IS NULL OR length(resolution_ref) BETWEEN 1 AND 256),
+  fence_epoch BIGINT NOT NULL DEFAULT 1 CHECK(fence_epoch > 0),
+  expires_at TIMESTAMPTZ NOT NULL,
+  settled_at TIMESTAMPTZ,
+  released_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(site_ref,execution_root_ref,credit_account_ref),
+  UNIQUE(credit_hold_ref,site_ref),
+  UNIQUE(credit_hold_ref,site_ref,credit_account_ref,unit),
+  UNIQUE(credit_hold_ref,site_ref,credit_account_ref,unit,execution_root_ref),
+  FOREIGN KEY(credit_account_ref,site_ref,unit)
+    REFERENCES platform.credit_account(credit_account_ref,site_ref,unit),
+  CHECK(reserved_amount = requested_amount),
+  CHECK(captured_amount + released_amount <= reserved_amount),
+  CHECK((resolution_kind IS NULL) = (resolution_ref IS NULL)),
+  CHECK(
+    (state IN ('open','closing','reconciliation_required') AND resolution_kind IS NULL)
+    OR (state='settled' AND resolution_kind IN ('known_outcome','reconciled'))
+    OR (state='released' AND resolution_kind='known_outcome')
+    OR (state='expired' AND resolution_kind='reservation_expiry')
+  ),
+  CHECK(
+    (state='open' AND settled_at IS NULL AND released_at IS NULL)
+    OR (state='closing' AND settled_at IS NULL AND released_at IS NULL)
+    OR (state='settled' AND settled_at IS NOT NULL AND released_at IS NULL
+      AND captured_amount+released_amount=reserved_amount)
+    OR (state IN ('released','expired') AND settled_at IS NULL AND released_at IS NOT NULL
+      AND captured_amount=0 AND released_amount=reserved_amount)
+    OR (state='reconciliation_required' AND settled_at IS NULL AND released_at IS NULL)
+  )
+);
+
+CREATE TABLE platform.credit_hold_allocation (
+  credit_hold_ref UUID NOT NULL,
+  credit_grant_id UUID NOT NULL,
+  site_ref TEXT NOT NULL,
+  credit_account_ref UUID NOT NULL,
+  unit TEXT NOT NULL CHECK(length(unit) BETWEEN 1 AND 64),
+  reserve_journal_transaction_ref UUID NOT NULL,
+  allocated_amount NUMERIC(38,0) NOT NULL CHECK(allocated_amount > 0),
+  allocation_ordinal INTEGER NOT NULL CHECK(allocation_ordinal >= 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY(credit_hold_ref,credit_grant_id),
+  UNIQUE(credit_hold_ref,allocation_ordinal),
+  UNIQUE(credit_hold_ref,credit_grant_id,site_ref,credit_account_ref,unit),
+  FOREIGN KEY(credit_hold_ref,site_ref,credit_account_ref,unit)
+    REFERENCES platform.credit_hold(credit_hold_ref,site_ref,credit_account_ref,unit),
+  FOREIGN KEY(credit_grant_id,site_ref,credit_account_ref,unit)
+    REFERENCES platform.credit_grant(credit_grant_id,site_ref,credit_account_ref,unit)
+);
+
+CREATE TABLE platform.credit_journal_transaction (
+  journal_transaction_ref UUID PRIMARY KEY,
+  credit_account_ref UUID NOT NULL,
+  site_ref TEXT NOT NULL,
+  unit TEXT NOT NULL CHECK(length(unit) BETWEEN 1 AND 64),
+  business_operation_key TEXT NOT NULL CHECK(length(business_operation_key) BETWEEN 1 AND 256),
+  request_digest CHAR(64) NOT NULL CHECK(request_digest ~ '^[a-f0-9]{64}$'),
+  operation_kind TEXT NOT NULL CHECK(operation_kind IN ('grant_issue','hold_reserve','hold_capture','hold_release','grant_expire','grant_revoke','correction','reversal')),
+  expected_entry_count INTEGER NOT NULL CHECK(expected_entry_count BETWEEN 2 AND 512),
+  entries_digest CHAR(64) NOT NULL CHECK(entries_digest ~ '^[a-f0-9]{64}$'),
+  reversal_of_transaction_ref UUID,
+  command_id TEXT,
+  occurred_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(site_ref,credit_account_ref,business_operation_key),
+  UNIQUE(journal_transaction_ref,site_ref),
+  UNIQUE(journal_transaction_ref,site_ref,credit_account_ref,unit),
+  FOREIGN KEY(credit_account_ref,site_ref,unit)
+    REFERENCES platform.credit_account(credit_account_ref,site_ref,unit),
+  FOREIGN KEY(reversal_of_transaction_ref,site_ref,credit_account_ref,unit)
+    REFERENCES platform.credit_journal_transaction(journal_transaction_ref,site_ref,credit_account_ref,unit),
+  FOREIGN KEY(command_id,site_ref)
+    REFERENCES platform.commerce_command(command_id,site_ref),
+  CHECK((operation_kind='reversal') = (reversal_of_transaction_ref IS NOT NULL))
+);
+
+CREATE TABLE platform.credit_journal_entry (
+  journal_transaction_ref UUID NOT NULL,
+  entry_ordinal INTEGER NOT NULL CHECK(entry_ordinal >= 0),
+  site_ref TEXT NOT NULL,
+  credit_account_ref UUID NOT NULL,
+  unit TEXT NOT NULL CHECK(length(unit) BETWEEN 1 AND 64),
+  entry_side TEXT NOT NULL CHECK(entry_side IN ('debit','credit')),
+  account_type TEXT NOT NULL CHECK(account_type IN (
+    'grant_issuance_source','customer_available','customer_reserved','customer_consumed',
+    'expired','revoked','adjustment','recovery_exposure'
+  )),
+  amount NUMERIC(38,0) NOT NULL CHECK(amount > 0),
+  credit_grant_id UUID NOT NULL,
+  credit_hold_ref UUID,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY(journal_transaction_ref,entry_ordinal),
+  FOREIGN KEY(journal_transaction_ref,site_ref,credit_account_ref,unit)
+    REFERENCES platform.credit_journal_transaction(journal_transaction_ref,site_ref,credit_account_ref,unit),
+  FOREIGN KEY(credit_grant_id,site_ref,credit_account_ref,unit)
+    REFERENCES platform.credit_grant(credit_grant_id,site_ref,credit_account_ref,unit),
+  FOREIGN KEY(credit_hold_ref,credit_grant_id,site_ref,credit_account_ref,unit)
+    REFERENCES platform.credit_hold_allocation(
+      credit_hold_ref,credit_grant_id,site_ref,credit_account_ref,unit
+    )
+);
+CREATE INDEX credit_journal_grant_idx
+  ON platform.credit_journal_entry(credit_grant_id,journal_transaction_ref,entry_ordinal);
+
+ALTER TABLE platform.credit_grant
+  ADD CONSTRAINT credit_grant_issuance_journal_fk
+  FOREIGN KEY(issuance_journal_transaction_ref,site_ref,credit_account_ref,unit)
+  REFERENCES platform.credit_journal_transaction(
+    journal_transaction_ref,site_ref,credit_account_ref,unit
+  ) DEFERRABLE INITIALLY DEFERRED;
+ALTER TABLE platform.credit_hold_allocation
+  ADD CONSTRAINT credit_hold_allocation_reserve_journal_fk
+  FOREIGN KEY(reserve_journal_transaction_ref,site_ref,credit_account_ref,unit)
+  REFERENCES platform.credit_journal_transaction(
+    journal_transaction_ref,site_ref,credit_account_ref,unit
+  ) DEFERRABLE INITIALLY DEFERRED;
+
+CREATE TABLE platform.credit_execution_budget_root (
+  execution_budget_root_ref UUID PRIMARY KEY,
+  site_ref TEXT NOT NULL,
+  execution_root_ref TEXT NOT NULL CHECK(length(execution_root_ref) BETWEEN 1 AND 256),
+  billing_account_ref TEXT NOT NULL,
+  credit_account_ref UUID NOT NULL,
+  unit TEXT NOT NULL CHECK(length(unit) BETWEEN 1 AND 64),
+  liability_merchant_account_ref TEXT NOT NULL CHECK(length(liability_merchant_account_ref) BETWEEN 1 AND 256),
+  credit_hold_ref UUID NOT NULL,
+  root_allocation_ref UUID NOT NULL,
+  authorization_budget_ref TEXT NOT NULL CHECK(length(authorization_budget_ref) BETWEEN 1 AND 256),
+  rating_policy_revision_ref TEXT NOT NULL CHECK(length(rating_policy_revision_ref) BETWEEN 1 AND 256),
+  reserved_ceiling NUMERIC(38,0) NOT NULL CHECK(reserved_ceiling > 0),
+  state TEXT NOT NULL CHECK(state IN ('open','closing','settled','reconciliation_required')),
+  aggregate_version BIGINT NOT NULL DEFAULT 1 CHECK(aggregate_version > 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(site_ref,execution_root_ref,liability_merchant_account_ref),
+  UNIQUE(site_ref,credit_hold_ref),
+  UNIQUE(execution_budget_root_ref,site_ref),
+  UNIQUE(execution_budget_root_ref,site_ref,billing_account_ref,credit_account_ref,unit,liability_merchant_account_ref),
+  UNIQUE(execution_budget_root_ref,site_ref,billing_account_ref,credit_account_ref,unit,liability_merchant_account_ref,credit_hold_ref),
+  FOREIGN KEY(credit_account_ref,site_ref,billing_account_ref,unit,liability_merchant_account_ref)
+    REFERENCES platform.credit_account(
+      credit_account_ref,site_ref,billing_account_ref,unit,liability_merchant_account_ref
+    ),
+  FOREIGN KEY(credit_hold_ref,site_ref,credit_account_ref,unit,execution_root_ref)
+    REFERENCES platform.credit_hold(credit_hold_ref,site_ref,credit_account_ref,unit,execution_root_ref)
+);
+
+CREATE TABLE platform.credit_budget_allocation (
+  budget_allocation_ref UUID PRIMARY KEY,
+  execution_budget_root_ref UUID NOT NULL,
+  site_ref TEXT NOT NULL,
+  billing_account_ref TEXT NOT NULL,
+  credit_account_ref UUID NOT NULL,
+  unit TEXT NOT NULL CHECK(length(unit) BETWEEN 1 AND 64),
+  liability_merchant_account_ref TEXT NOT NULL CHECK(length(liability_merchant_account_ref) BETWEEN 1 AND 256),
+  parent_allocation_ref UUID,
+  is_root BOOLEAN NOT NULL,
+  audience TEXT NOT NULL CHECK(audience IN (
+    'root','model_gateway','capability_runtime','job','agent_team','target_runtime'
+  )),
+  purpose TEXT NOT NULL CHECK(length(purpose) BETWEEN 1 AND 128),
+  surface_ref TEXT CHECK(surface_ref IS NULL OR length(surface_ref) BETWEEN 1 AND 256),
+  operation_ref TEXT CHECK(operation_ref IS NULL OR length(operation_ref) BETWEEN 1 AND 256),
+  agent_ref TEXT CHECK(agent_ref IS NULL OR length(agent_ref) BETWEEN 1 AND 256),
+  current_revision BIGINT NOT NULL DEFAULT 0 CHECK(current_revision >= 0),
+  current_allocation_epoch BIGINT NOT NULL DEFAULT 0 CHECK(current_allocation_epoch >= 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(budget_allocation_ref,site_ref),
+  UNIQUE(budget_allocation_ref,site_ref,execution_budget_root_ref,credit_account_ref,unit),
+  UNIQUE(budget_allocation_ref,site_ref,execution_budget_root_ref,billing_account_ref,credit_account_ref,unit,liability_merchant_account_ref),
+  FOREIGN KEY(execution_budget_root_ref,site_ref,billing_account_ref,credit_account_ref,unit,liability_merchant_account_ref)
+    REFERENCES platform.credit_execution_budget_root(
+      execution_budget_root_ref,site_ref,billing_account_ref,credit_account_ref,unit,liability_merchant_account_ref
+    ),
+  FOREIGN KEY(parent_allocation_ref,site_ref,execution_budget_root_ref,credit_account_ref,unit)
+    REFERENCES platform.credit_budget_allocation(
+      budget_allocation_ref,site_ref,execution_budget_root_ref,credit_account_ref,unit
+    ),
+  CHECK(
+    (is_root AND parent_allocation_ref IS NULL AND audience='root')
+    OR (NOT is_root AND parent_allocation_ref IS NOT NULL AND audience<>'root')
+  )
+);
+CREATE UNIQUE INDEX credit_one_root_allocation_idx
+  ON platform.credit_budget_allocation(site_ref,execution_budget_root_ref)
+  WHERE is_root;
+
+ALTER TABLE platform.credit_execution_budget_root
+  ADD CONSTRAINT credit_execution_budget_root_allocation_fk
+  FOREIGN KEY(root_allocation_ref,site_ref,execution_budget_root_ref,credit_account_ref,unit)
+  REFERENCES platform.credit_budget_allocation(
+    budget_allocation_ref,site_ref,execution_budget_root_ref,credit_account_ref,unit
+  ) DEFERRABLE INITIALLY DEFERRED;
+
+CREATE TABLE platform.credit_budget_allocation_revision (
+  allocation_revision_ref UUID PRIMARY KEY,
+  budget_allocation_ref UUID NOT NULL,
+  execution_budget_root_ref UUID NOT NULL,
+  site_ref TEXT NOT NULL,
+  billing_account_ref TEXT NOT NULL,
+  credit_account_ref UUID NOT NULL,
+  unit TEXT NOT NULL CHECK(length(unit) BETWEEN 1 AND 64),
+  liability_merchant_account_ref TEXT NOT NULL CHECK(length(liability_merchant_account_ref) BETWEEN 1 AND 256),
+  revision BIGINT NOT NULL CHECK(revision > 0),
+  allocation_epoch BIGINT NOT NULL CHECK(allocation_epoch > 0),
+  credit_ceiling NUMERIC(38,0) NOT NULL CHECK(credit_ceiling >= 0),
+  unassigned_stock NUMERIC(38,0) NOT NULL CHECK(unassigned_stock >= 0),
+  active_child_reserved_stock NUMERIC(38,0) NOT NULL CHECK(active_child_reserved_stock >= 0),
+  committed_stock NUMERIC(38,0) NOT NULL CHECK(committed_stock >= 0),
+  captured_cumulative NUMERIC(38,0) NOT NULL CHECK(captured_cumulative >= 0),
+  returned_to_parent_cumulative NUMERIC(38,0) NOT NULL CHECK(returned_to_parent_cumulative >= 0),
+  state TEXT NOT NULL CHECK(state IN ('active','returning','terminal','reconciliation_required')),
+  terminal_receipt_digest CHAR(64) CHECK(terminal_receipt_digest IS NULL OR terminal_receipt_digest ~ '^[a-f0-9]{64}$'),
+  parent_applied_revision BIGINT CHECK(parent_applied_revision IS NULL OR parent_applied_revision > 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(budget_allocation_ref,revision),
+  UNIQUE(allocation_revision_ref,budget_allocation_ref),
+  UNIQUE(budget_allocation_ref,revision,site_ref,execution_budget_root_ref),
+  UNIQUE(budget_allocation_ref,revision,site_ref,execution_budget_root_ref,credit_account_ref,unit),
+  FOREIGN KEY(budget_allocation_ref,site_ref,execution_budget_root_ref,billing_account_ref,credit_account_ref,unit,liability_merchant_account_ref)
+    REFERENCES platform.credit_budget_allocation(
+      budget_allocation_ref,site_ref,execution_budget_root_ref,billing_account_ref,credit_account_ref,unit,liability_merchant_account_ref
+    ),
+  CHECK(
+    credit_ceiling = unassigned_stock + active_child_reserved_stock + committed_stock
+      + captured_cumulative + returned_to_parent_cumulative
+  ),
+  CHECK(
+    (state='terminal' AND terminal_receipt_digest IS NOT NULL)
+    OR (state<>'terminal' AND terminal_receipt_digest IS NULL AND parent_applied_revision IS NULL)
+  )
+);
+CREATE INDEX credit_budget_allocation_latest_idx
+  ON platform.credit_budget_allocation_revision(budget_allocation_ref,revision DESC);
+
+ALTER TABLE platform.credit_budget_allocation
+  ADD CONSTRAINT credit_budget_allocation_current_revision_fk
+  FOREIGN KEY(budget_allocation_ref,current_revision)
+  REFERENCES platform.credit_budget_allocation_revision(budget_allocation_ref,revision)
+  DEFERRABLE INITIALLY DEFERRED;
+
+CREATE TABLE platform.credit_allocation_reservation_receipt (
+  allocation_reservation_receipt_ref UUID PRIMARY KEY,
+  site_ref TEXT NOT NULL,
+  execution_budget_root_ref UUID NOT NULL,
+  parent_allocation_ref UUID NOT NULL,
+  child_allocation_ref UUID NOT NULL,
+  business_operation_key TEXT NOT NULL CHECK(length(business_operation_key) BETWEEN 1 AND 256),
+  request_digest CHAR(64) NOT NULL CHECK(request_digest ~ '^[a-f0-9]{64}$'),
+  reserved_ceiling NUMERIC(38,0) NOT NULL CHECK(reserved_ceiling > 0),
+  parent_expected_revision BIGINT NOT NULL CHECK(parent_expected_revision > 0),
+  parent_resulting_revision BIGINT NOT NULL CHECK(parent_resulting_revision=parent_expected_revision+1),
+  child_initial_revision BIGINT NOT NULL DEFAULT 1 CHECK(child_initial_revision=1),
+  receipt_digest CHAR(64) NOT NULL CHECK(receipt_digest ~ '^[a-f0-9]{64}$'),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(site_ref,parent_allocation_ref,business_operation_key),
+  UNIQUE(site_ref,child_allocation_ref),
+  FOREIGN KEY(parent_allocation_ref,parent_expected_revision,site_ref,execution_budget_root_ref)
+    REFERENCES platform.credit_budget_allocation_revision(
+      budget_allocation_ref,revision,site_ref,execution_budget_root_ref
+    ),
+  FOREIGN KEY(parent_allocation_ref,parent_resulting_revision,site_ref,execution_budget_root_ref)
+    REFERENCES platform.credit_budget_allocation_revision(
+      budget_allocation_ref,revision,site_ref,execution_budget_root_ref
+    ),
+  FOREIGN KEY(child_allocation_ref,child_initial_revision,site_ref,execution_budget_root_ref)
+    REFERENCES platform.credit_budget_allocation_revision(
+      budget_allocation_ref,revision,site_ref,execution_budget_root_ref
+    )
+);
+
+CREATE TABLE platform.credit_allocation_return_receipt (
+  allocation_return_receipt_ref UUID PRIMARY KEY,
+  site_ref TEXT NOT NULL,
+  execution_budget_root_ref UUID NOT NULL,
+  parent_allocation_ref UUID NOT NULL,
+  child_allocation_ref UUID NOT NULL,
+  business_operation_key TEXT NOT NULL CHECK(length(business_operation_key) BETWEEN 1 AND 256),
+  request_digest CHAR(64) NOT NULL CHECK(request_digest ~ '^[a-f0-9]{64}$'),
+  returned_amount NUMERIC(38,0) NOT NULL CHECK(returned_amount >= 0),
+  child_terminal_revision BIGINT NOT NULL CHECK(child_terminal_revision > 1),
+  parent_resulting_revision BIGINT NOT NULL CHECK(parent_resulting_revision > 1),
+  fence_epoch BIGINT NOT NULL CHECK(fence_epoch > 0),
+  reason TEXT NOT NULL CHECK(reason IN ('completed','canceled_before_effect','fenced_recovery','root_closing')),
+  receipt_digest CHAR(64) NOT NULL CHECK(receipt_digest ~ '^[a-f0-9]{64}$'),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(site_ref,child_allocation_ref),
+  UNIQUE(site_ref,parent_allocation_ref,business_operation_key),
+  FOREIGN KEY(child_allocation_ref,child_terminal_revision,site_ref,execution_budget_root_ref)
+    REFERENCES platform.credit_budget_allocation_revision(
+      budget_allocation_ref,revision,site_ref,execution_budget_root_ref
+    ),
+  FOREIGN KEY(parent_allocation_ref,parent_resulting_revision,site_ref,execution_budget_root_ref)
+    REFERENCES platform.credit_budget_allocation_revision(
+      budget_allocation_ref,revision,site_ref,execution_budget_root_ref
+    )
+);
+
+CREATE TABLE platform.credit_authorization_segment (
+  authorization_segment_ref UUID PRIMARY KEY,
+  site_ref TEXT NOT NULL,
+  execution_budget_root_ref UUID NOT NULL,
+  budget_allocation_ref UUID NOT NULL,
+  credit_hold_ref UUID NOT NULL,
+  billing_account_ref TEXT NOT NULL,
+  credit_account_ref UUID NOT NULL,
+  unit TEXT NOT NULL CHECK(length(unit) BETWEEN 1 AND 64),
+  liability_merchant_account_ref TEXT NOT NULL CHECK(length(liability_merchant_account_ref) BETWEEN 1 AND 256),
+  execution_manifest_ref TEXT NOT NULL CHECK(length(execution_manifest_ref) BETWEEN 1 AND 256),
+  rating_policy_revision_ref TEXT NOT NULL CHECK(length(rating_policy_revision_ref) BETWEEN 1 AND 256),
+  business_operation_key TEXT NOT NULL CHECK(length(business_operation_key) BETWEEN 1 AND 256),
+  request_digest CHAR(64) NOT NULL CHECK(request_digest ~ '^[a-f0-9]{64}$'),
+  maximum_amount NUMERIC(38,0) NOT NULL CHECK(maximum_amount > 0),
+  allocation_epoch BIGINT NOT NULL CHECK(allocation_epoch > 0),
+  prepared_against_allocation_revision BIGINT NOT NULL CHECK(prepared_against_allocation_revision > 0),
+  committed_from_allocation_revision BIGINT,
+  committed_to_allocation_revision BIGINT,
+  state TEXT NOT NULL CHECK(state IN (
+    'reserved','committed','rating_pending','settled','released','expired','reconciliation_required'
+  )),
+  resolution_kind TEXT CHECK(resolution_kind IS NULL OR resolution_kind IN (
+    'not_dispatched','reservation_expiry','outcome_unknown','rated','reconciled'
+  )),
+  resolution_ref TEXT CHECK(resolution_ref IS NULL OR length(resolution_ref) BETWEEN 1 AND 256),
+  fence_epoch BIGINT NOT NULL DEFAULT 1 CHECK(fence_epoch > 0),
+  aggregate_version BIGINT NOT NULL DEFAULT 1 CHECK(aggregate_version > 0),
+  expires_at TIMESTAMPTZ NOT NULL,
+  committed_at TIMESTAMPTZ,
+  settled_at TIMESTAMPTZ,
+  released_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(authorization_segment_ref,site_ref),
+  UNIQUE(site_ref,budget_allocation_ref,business_operation_key),
+  FOREIGN KEY(budget_allocation_ref,site_ref,execution_budget_root_ref,billing_account_ref,credit_account_ref,unit,liability_merchant_account_ref)
+    REFERENCES platform.credit_budget_allocation(
+      budget_allocation_ref,site_ref,execution_budget_root_ref,billing_account_ref,credit_account_ref,unit,liability_merchant_account_ref
+    ),
+  FOREIGN KEY(execution_budget_root_ref,site_ref,billing_account_ref,credit_account_ref,unit,liability_merchant_account_ref,credit_hold_ref)
+    REFERENCES platform.credit_execution_budget_root(
+      execution_budget_root_ref,site_ref,billing_account_ref,credit_account_ref,unit,liability_merchant_account_ref,credit_hold_ref
+    ),
+  FOREIGN KEY(budget_allocation_ref,prepared_against_allocation_revision,site_ref,execution_budget_root_ref)
+    REFERENCES platform.credit_budget_allocation_revision(
+      budget_allocation_ref,revision,site_ref,execution_budget_root_ref
+    ),
+  FOREIGN KEY(budget_allocation_ref,committed_from_allocation_revision,site_ref,execution_budget_root_ref)
+    REFERENCES platform.credit_budget_allocation_revision(
+      budget_allocation_ref,revision,site_ref,execution_budget_root_ref
+    ),
+  FOREIGN KEY(budget_allocation_ref,committed_to_allocation_revision,site_ref,execution_budget_root_ref)
+    REFERENCES platform.credit_budget_allocation_revision(
+      budget_allocation_ref,revision,site_ref,execution_budget_root_ref
+  ),
+  CHECK((resolution_kind IS NULL) = (resolution_ref IS NULL)),
+  CHECK(
+    (state IN ('reserved','committed','rating_pending') AND resolution_kind IS NULL)
+    OR (state='reconciliation_required' AND resolution_kind='outcome_unknown')
+    OR (state='settled' AND resolution_kind IN ('rated','reconciled'))
+    OR (state='released' AND resolution_kind='not_dispatched')
+    OR (state='expired' AND resolution_kind='reservation_expiry')
+  ),
+  CHECK(
+    (state='reserved' AND committed_from_allocation_revision IS NULL AND committed_to_allocation_revision IS NULL
+      AND committed_at IS NULL AND settled_at IS NULL AND released_at IS NULL)
+    OR (state IN ('committed','rating_pending','reconciliation_required')
+      AND committed_from_allocation_revision IS NOT NULL AND committed_to_allocation_revision IS NOT NULL
+      AND committed_at IS NOT NULL AND settled_at IS NULL AND released_at IS NULL)
+    OR (state='settled' AND committed_from_allocation_revision IS NOT NULL
+      AND committed_to_allocation_revision IS NOT NULL
+      AND committed_at IS NOT NULL AND settled_at IS NOT NULL AND released_at IS NULL)
+    OR (state IN ('released','expired') AND committed_at IS NULL AND settled_at IS NULL AND released_at IS NOT NULL)
+  )
+);
+CREATE INDEX credit_authorization_segment_allocation_state_idx
+  ON platform.credit_authorization_segment(site_ref,budget_allocation_ref,state,expires_at);
+
 CREATE TABLE platform.commerce_fulfillment_transaction (
   fulfillment_id UUID PRIMARY KEY,
   command_id TEXT,
@@ -428,7 +985,8 @@ CREATE TABLE platform.commerce_fulfillment_transaction (
   status TEXT NOT NULL CHECK (status IN ('running','succeeded','failed')),
   completed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(source_type,source_id,purpose,cycle_key),
+  UNIQUE(site_ref,source_type,source_id,purpose,cycle_key),
+  UNIQUE(fulfillment_id,site_ref),
   FOREIGN KEY(command_id,site_ref)
     REFERENCES platform.commerce_command(command_id,site_ref),
   FOREIGN KEY(billing_account_ref,site_ref)
@@ -440,6 +998,15 @@ CREATE TABLE platform.commerce_fulfillment_transaction (
 );
 CREATE INDEX commerce_fulfillment_account_idx
   ON platform.commerce_fulfillment_transaction(site_ref,billing_account_ref);
+
+ALTER TABLE platform.commerce_redemption
+  ADD CONSTRAINT commerce_redemption_fulfillment_fk
+  FOREIGN KEY(fulfillment_ref,site_ref)
+  REFERENCES platform.commerce_fulfillment_transaction(fulfillment_id,site_ref);
+ALTER TABLE platform.credit_program_window_acquisition
+  ADD CONSTRAINT credit_program_window_fulfillment_fk
+  FOREIGN KEY(fulfillment_ref,site_ref)
+  REFERENCES platform.commerce_fulfillment_transaction(fulfillment_id,site_ref);
 
 CREATE TABLE platform.commerce_fulfillment_output_plan (
   fulfillment_id UUID NOT NULL REFERENCES platform.commerce_fulfillment_transaction(fulfillment_id),
@@ -544,13 +1111,13 @@ BEGIN
   IF OLD.status <> 'running' OR NEW.status NOT IN ('succeeded','failed') THEN
     RAISE EXCEPTION 'FULFILLMENT_STATUS_TRANSITION_INVALID' USING ERRCODE='23514';
   END IF;
-  IF ROW(OLD.command_id,OLD.site_ref,OLD.billing_account_ref,OLD.source_type,OLD.source_id,OLD.purpose,
+  IF ROW(OLD.fulfillment_id,OLD.command_id,OLD.site_ref,OLD.billing_account_ref,OLD.source_type,OLD.source_id,OLD.purpose,
          OLD.cycle_key,OLD.product_version_ref,OLD.plan_version_ref,OLD.offering_version_ref,
-         OLD.fulfillment_program_version_ref,OLD.output_plan_digest)
+         OLD.fulfillment_program_version_ref,OLD.output_plan_digest,OLD.created_at)
      IS DISTINCT FROM
-     ROW(NEW.command_id,NEW.site_ref,NEW.billing_account_ref,NEW.source_type,NEW.source_id,NEW.purpose,
+     ROW(NEW.fulfillment_id,NEW.command_id,NEW.site_ref,NEW.billing_account_ref,NEW.source_type,NEW.source_id,NEW.purpose,
          NEW.cycle_key,NEW.product_version_ref,NEW.plan_version_ref,NEW.offering_version_ref,
-         NEW.fulfillment_program_version_ref,NEW.output_plan_digest) THEN
+         NEW.fulfillment_program_version_ref,NEW.output_plan_digest,NEW.created_at) THEN
     RAISE EXCEPTION 'FULFILLMENT_IDENTITY_IMMUTABLE' USING ERRCODE='23000';
   END IF;
   IF NEW.status='succeeded' AND (
@@ -617,6 +1184,769 @@ BEGIN
   RETURN NEW;
 END $$;
 
+CREATE FUNCTION platform.assert_credit_journal_transaction_balanced() RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
+DECLARE
+  target_ref UUID := NEW.journal_transaction_ref;
+  expected_count INTEGER;
+  actual_count INTEGER;
+  min_ordinal INTEGER;
+  max_ordinal INTEGER;
+  debit_total NUMERIC(38,0);
+  credit_total NUMERIC(38,0);
+  expected_digest CHAR(64);
+  actual_digest TEXT;
+  target_operation_kind TEXT;
+  reversal_ref UUID;
+  invalid_shape BOOLEAN := FALSE;
+BEGIN
+  SELECT expected_entry_count,entries_digest,operation_kind,reversal_of_transaction_ref
+    INTO expected_count,expected_digest,target_operation_kind,reversal_ref
+  FROM platform.credit_journal_transaction
+  WHERE journal_transaction_ref=target_ref;
+  SELECT count(*)::INTEGER,
+         min(entry_ordinal),
+         max(entry_ordinal),
+         COALESCE(sum(amount) FILTER (WHERE entry_side='debit'),0),
+         COALESCE(sum(amount) FILTER (WHERE entry_side='credit'),0),
+         encode(sha256(convert_to(string_agg(
+           concat_ws('|',entry_ordinal::TEXT,site_ref,credit_account_ref::TEXT,unit,
+             entry_side,account_type,amount::TEXT,credit_grant_id::TEXT,
+             COALESCE(credit_hold_ref::TEXT,'')),
+           E'\n' ORDER BY entry_ordinal
+         ),'UTF8')),'hex')
+    INTO actual_count,min_ordinal,max_ordinal,debit_total,credit_total,actual_digest
+  FROM platform.credit_journal_entry
+  WHERE journal_transaction_ref=target_ref;
+  IF expected_count IS NULL
+     OR actual_count<>expected_count
+     OR min_ordinal<>0
+     OR max_ordinal<>expected_count-1
+     OR debit_total<>credit_total
+     OR actual_digest<>expected_digest THEN
+    RAISE EXCEPTION 'CREDIT_JOURNAL_UNBALANCED' USING ERRCODE='23514';
+  END IF;
+  SELECT CASE target_operation_kind
+    WHEN 'grant_issue' THEN EXISTS (
+      SELECT 1 FROM platform.credit_journal_entry
+      WHERE journal_transaction_ref=target_ref AND (
+        credit_hold_ref IS NOT NULL
+        OR (entry_side='debit' AND account_type<>'grant_issuance_source')
+        OR (entry_side='credit' AND account_type<>'customer_available')
+      )
+    )
+    WHEN 'hold_reserve' THEN EXISTS (
+      SELECT 1 FROM platform.credit_journal_entry
+      WHERE journal_transaction_ref=target_ref AND (
+        credit_hold_ref IS NULL
+        OR (entry_side='debit' AND account_type<>'customer_available')
+        OR (entry_side='credit' AND account_type<>'customer_reserved')
+      )
+    )
+    WHEN 'hold_capture' THEN EXISTS (
+      SELECT 1 FROM platform.credit_journal_entry
+      WHERE journal_transaction_ref=target_ref AND (
+        credit_hold_ref IS NULL
+        OR (entry_side='debit' AND account_type<>'customer_reserved')
+        OR (entry_side='credit' AND account_type<>'customer_consumed')
+      )
+    )
+    WHEN 'hold_release' THEN EXISTS (
+      SELECT 1 FROM platform.credit_journal_entry
+      WHERE journal_transaction_ref=target_ref AND (
+        credit_hold_ref IS NULL
+        OR (entry_side='debit' AND account_type<>'customer_reserved')
+        OR (entry_side='credit' AND account_type NOT IN ('customer_available','expired','revoked'))
+      )
+    )
+    WHEN 'grant_expire' THEN EXISTS (
+      SELECT 1 FROM platform.credit_journal_entry
+      WHERE journal_transaction_ref=target_ref AND (
+        credit_hold_ref IS NOT NULL
+        OR (entry_side='debit' AND account_type<>'customer_available')
+        OR (entry_side='credit' AND account_type<>'expired')
+      )
+    )
+    WHEN 'grant_revoke' THEN EXISTS (
+      SELECT 1 FROM platform.credit_journal_entry
+      WHERE journal_transaction_ref=target_ref AND (
+        (entry_side='debit' AND account_type NOT IN ('customer_available','customer_reserved'))
+        OR (entry_side='credit' AND account_type NOT IN ('revoked','recovery_exposure'))
+      )
+    )
+    WHEN 'correction' THEN
+      NOT EXISTS (
+        SELECT 1 FROM platform.credit_journal_entry
+        WHERE journal_transaction_ref=target_ref AND account_type='adjustment'
+      ) OR EXISTS (
+        SELECT 1 FROM platform.credit_journal_entry
+        WHERE journal_transaction_ref=target_ref AND account_type='grant_issuance_source'
+      )
+    WHEN 'reversal' THEN
+      EXISTS (
+        SELECT 1
+        FROM platform.credit_journal_entry original
+        LEFT JOIN platform.credit_journal_entry reversed
+          ON reversed.journal_transaction_ref=target_ref
+         AND reversed.entry_ordinal=original.entry_ordinal
+         AND reversed.site_ref=original.site_ref
+         AND reversed.credit_account_ref=original.credit_account_ref
+         AND reversed.unit=original.unit
+         AND reversed.entry_side=CASE original.entry_side WHEN 'debit' THEN 'credit' ELSE 'debit' END
+         AND reversed.account_type=original.account_type
+         AND reversed.amount=original.amount
+         AND reversed.credit_grant_id=original.credit_grant_id
+         AND reversed.credit_hold_ref IS NOT DISTINCT FROM original.credit_hold_ref
+        WHERE original.journal_transaction_ref=reversal_ref
+          AND reversed.journal_transaction_ref IS NULL
+      ) OR expected_count<>(
+        SELECT expected_entry_count FROM platform.credit_journal_transaction
+        WHERE journal_transaction_ref=reversal_ref
+      )
+    ELSE TRUE
+  END INTO invalid_shape;
+  IF invalid_shape THEN
+    RAISE EXCEPTION 'CREDIT_JOURNAL_OPERATION_SHAPE_INVALID' USING ERRCODE='23514';
+  END IF;
+  RETURN NULL;
+END $$;
+
+CREATE FUNCTION platform.assert_credit_hold_fully_allocated() RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
+DECLARE
+  target_ref UUID := NEW.credit_hold_ref;
+  reserved_total NUMERIC(38,0);
+  allocated_total NUMERIC(38,0);
+BEGIN
+  SELECT reserved_amount INTO reserved_total
+  FROM platform.credit_hold
+  WHERE credit_hold_ref=target_ref;
+  SELECT COALESCE(sum(allocated_amount),0) INTO allocated_total
+  FROM platform.credit_hold_allocation
+  WHERE credit_hold_ref=target_ref;
+  IF reserved_total IS NULL OR allocated_total<>reserved_total THEN
+    RAISE EXCEPTION 'CREDIT_HOLD_ALLOCATION_MISMATCH' USING ERRCODE='23514';
+  END IF;
+  RETURN NULL;
+END $$;
+
+CREATE FUNCTION platform.assert_credit_journal_cross_fact_conservation() RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
+DECLARE
+  payload JSONB := to_jsonb(NEW);
+  target_grant_id UUID := NULLIF(payload->>'credit_grant_id','')::UUID;
+  target_hold_ref UUID := NULLIF(payload->>'credit_hold_ref','')::UUID;
+  grant_fact platform.credit_grant%ROWTYPE;
+  program_fact platform.commerce_credit_program_revision%ROWTYPE;
+  hold_fact platform.credit_hold%ROWTYPE;
+  allocation_fact platform.credit_hold_allocation%ROWTYPE;
+  issue_debit NUMERIC(38,0);
+  issue_credit NUMERIC(38,0);
+  issue_transaction_count INTEGER;
+  reserve_debit NUMERIC(38,0);
+  reserve_credit NUMERIC(38,0);
+  reserve_transaction_count INTEGER;
+  captured_total NUMERIC(38,0);
+  released_total NUMERIC(38,0);
+  hold_captured_total NUMERIC(38,0);
+  hold_released_total NUMERIC(38,0);
+  linked_operation_kind TEXT;
+  available_balance NUMERIC(38,0);
+  reserved_balance NUMERIC(38,0);
+  consumed_balance NUMERIC(38,0);
+  expired_balance NUMERIC(38,0);
+  revoked_balance NUMERIC(38,0);
+BEGIN
+  IF target_grant_id IS NOT NULL THEN
+    SELECT * INTO grant_fact FROM platform.credit_grant
+    WHERE credit_grant_id=target_grant_id;
+    SELECT * INTO program_fact FROM platform.commerce_credit_program_revision
+    WHERE credit_program_revision_ref=grant_fact.credit_program_revision_ref;
+    SELECT operation_kind INTO linked_operation_kind
+    FROM platform.credit_journal_transaction
+    WHERE journal_transaction_ref=grant_fact.issuance_journal_transaction_ref;
+    SELECT
+      COALESCE(sum(entry.amount) FILTER (
+        WHERE entry.entry_side='debit' AND entry.account_type='grant_issuance_source'
+      ),0),
+      COALESCE(sum(entry.amount) FILTER (
+        WHERE entry.entry_side='credit' AND entry.account_type='customer_available'
+      ),0),
+      count(DISTINCT transaction.journal_transaction_ref)::INTEGER
+      INTO issue_debit,issue_credit,issue_transaction_count
+    FROM platform.credit_journal_entry entry
+    JOIN platform.credit_journal_transaction transaction
+      ON transaction.journal_transaction_ref=entry.journal_transaction_ref
+    WHERE entry.credit_grant_id=target_grant_id AND transaction.operation_kind='grant_issue';
+    SELECT
+      COALESCE(sum(CASE entry.entry_side WHEN 'credit' THEN entry.amount ELSE -entry.amount END)
+        FILTER (WHERE entry.account_type='customer_available'),0),
+      COALESCE(sum(CASE entry.entry_side WHEN 'credit' THEN entry.amount ELSE -entry.amount END)
+        FILTER (WHERE entry.account_type='customer_reserved'),0),
+      COALESCE(sum(CASE entry.entry_side WHEN 'credit' THEN entry.amount ELSE -entry.amount END)
+        FILTER (WHERE entry.account_type='customer_consumed'),0),
+      COALESCE(sum(CASE entry.entry_side WHEN 'credit' THEN entry.amount ELSE -entry.amount END)
+        FILTER (WHERE entry.account_type='expired'),0),
+      COALESCE(sum(CASE entry.entry_side WHEN 'credit' THEN entry.amount ELSE -entry.amount END)
+        FILTER (WHERE entry.account_type='revoked'),0)
+      INTO available_balance,reserved_balance,consumed_balance,expired_balance,revoked_balance
+    FROM platform.credit_journal_entry entry
+    WHERE entry.credit_grant_id=target_grant_id;
+    IF grant_fact.credit_grant_id IS NULL
+       OR program_fact.credit_program_revision_ref IS NULL
+       OR grant_fact.ux_bucket_class<>program_fact.ux_bucket_class
+       OR grant_fact.unit<>program_fact.unit
+       OR grant_fact.liability_merchant_account_ref<>program_fact.liability_merchant_account_ref
+       OR grant_fact.original_amount<>program_fact.amount
+       OR grant_fact.burn_priority<>program_fact.burn_priority
+       OR grant_fact.scope_policy IS DISTINCT FROM program_fact.scope_policy
+       OR (program_fact.expires_after_seconds IS NULL)<>(grant_fact.expires_at IS NULL)
+       OR (program_fact.expires_after_seconds IS NOT NULL AND grant_fact.expires_at<>
+         grant_fact.effective_at+(program_fact.expires_after_seconds*INTERVAL '1 second'))
+       OR linked_operation_kind<>'grant_issue'
+       OR issue_debit<>grant_fact.original_amount
+       OR issue_credit<>grant_fact.original_amount
+       OR issue_transaction_count<>1
+       OR available_balance<0 OR reserved_balance<0 OR consumed_balance<0
+       OR expired_balance<0 OR revoked_balance<0
+       OR EXISTS (
+         SELECT 1
+         FROM platform.credit_journal_entry entry
+         WHERE entry.credit_grant_id=target_grant_id
+         GROUP BY entry.journal_transaction_ref
+         HAVING COALESCE(sum(entry.amount) FILTER (WHERE entry.entry_side='debit'),0)
+              <>COALESCE(sum(entry.amount) FILTER (WHERE entry.entry_side='credit'),0)
+       )
+       OR EXISTS (
+         SELECT 1
+         FROM platform.credit_journal_entry entry
+         JOIN platform.credit_journal_transaction transaction
+           ON transaction.journal_transaction_ref=entry.journal_transaction_ref
+         WHERE entry.credit_grant_id=target_grant_id
+           AND transaction.operation_kind='grant_issue'
+           AND transaction.journal_transaction_ref<>grant_fact.issuance_journal_transaction_ref
+       ) THEN
+      RAISE EXCEPTION 'CREDIT_GRANT_ISSUANCE_JOURNAL_MISMATCH' USING ERRCODE='23514';
+    END IF;
+  END IF;
+
+  IF target_hold_ref IS NOT NULL THEN
+    SELECT * INTO hold_fact FROM platform.credit_hold WHERE credit_hold_ref=target_hold_ref;
+    FOR allocation_fact IN
+      SELECT * FROM platform.credit_hold_allocation WHERE credit_hold_ref=target_hold_ref
+    LOOP
+      SELECT operation_kind INTO linked_operation_kind
+      FROM platform.credit_journal_transaction
+      WHERE journal_transaction_ref=allocation_fact.reserve_journal_transaction_ref;
+      SELECT
+        COALESCE(sum(entry.amount) FILTER (
+          WHERE entry.entry_side='debit' AND entry.account_type='customer_available'
+        ),0),
+        COALESCE(sum(entry.amount) FILTER (
+          WHERE entry.entry_side='credit' AND entry.account_type='customer_reserved'
+        ),0),
+        count(DISTINCT transaction.journal_transaction_ref)::INTEGER
+        INTO reserve_debit,reserve_credit,reserve_transaction_count
+      FROM platform.credit_journal_entry entry
+      JOIN platform.credit_journal_transaction transaction
+        ON transaction.journal_transaction_ref=entry.journal_transaction_ref
+      WHERE entry.credit_hold_ref=target_hold_ref
+        AND entry.credit_grant_id=allocation_fact.credit_grant_id
+        AND transaction.operation_kind='hold_reserve';
+      SELECT
+        COALESCE(sum(entry.amount) FILTER (
+          WHERE transaction.operation_kind='hold_capture'
+            AND entry.entry_side='credit' AND entry.account_type='customer_consumed'
+        ),0),
+        COALESCE(sum(entry.amount) FILTER (
+          WHERE transaction.operation_kind='hold_release'
+            AND entry.entry_side='credit' AND entry.account_type IN ('customer_available','expired','revoked')
+        ),0)
+        INTO captured_total,released_total
+      FROM platform.credit_journal_entry entry
+      JOIN platform.credit_journal_transaction transaction
+        ON transaction.journal_transaction_ref=entry.journal_transaction_ref
+      WHERE entry.credit_hold_ref=target_hold_ref
+        AND entry.credit_grant_id=allocation_fact.credit_grant_id;
+      IF linked_operation_kind<>'hold_reserve'
+         OR reserve_debit<>allocation_fact.allocated_amount
+         OR reserve_credit<>allocation_fact.allocated_amount
+         OR reserve_transaction_count<>1
+         OR captured_total+released_total>allocation_fact.allocated_amount
+         OR EXISTS (
+           SELECT 1
+           FROM platform.credit_journal_entry entry
+           JOIN platform.credit_journal_transaction transaction
+             ON transaction.journal_transaction_ref=entry.journal_transaction_ref
+           WHERE entry.credit_hold_ref=target_hold_ref
+             AND entry.credit_grant_id=allocation_fact.credit_grant_id
+             AND transaction.operation_kind='hold_reserve'
+             AND transaction.journal_transaction_ref<>allocation_fact.reserve_journal_transaction_ref
+         ) THEN
+        RAISE EXCEPTION 'CREDIT_HOLD_ALLOCATION_JOURNAL_MISMATCH' USING ERRCODE='23514';
+      END IF;
+    END LOOP;
+    SELECT
+      COALESCE(sum(entry.amount) FILTER (
+        WHERE transaction.operation_kind='hold_capture'
+          AND entry.entry_side='credit' AND entry.account_type='customer_consumed'
+      ),0),
+      COALESCE(sum(entry.amount) FILTER (
+        WHERE transaction.operation_kind='hold_release'
+          AND entry.entry_side='credit' AND entry.account_type IN ('customer_available','expired','revoked')
+      ),0)
+      INTO hold_captured_total,hold_released_total
+    FROM platform.credit_journal_entry entry
+    JOIN platform.credit_journal_transaction transaction
+      ON transaction.journal_transaction_ref=entry.journal_transaction_ref
+    WHERE entry.credit_hold_ref=target_hold_ref;
+    IF hold_fact.credit_hold_ref IS NULL
+       OR hold_fact.captured_amount<>hold_captured_total
+       OR hold_fact.released_amount<>hold_released_total
+       OR (hold_fact.state IN ('settled','released','expired')
+         AND hold_captured_total+hold_released_total<>hold_fact.reserved_amount)
+       OR EXISTS (
+         SELECT 1
+         FROM platform.credit_journal_entry entry
+         JOIN platform.credit_journal_transaction transaction
+           ON transaction.journal_transaction_ref=entry.journal_transaction_ref
+         JOIN platform.credit_grant grant_fact
+           ON grant_fact.credit_grant_id=entry.credit_grant_id
+         WHERE entry.credit_hold_ref=target_hold_ref
+           AND transaction.operation_kind='hold_release'
+           AND entry.entry_side='credit'
+           AND entry.account_type<>CASE
+             WHEN EXISTS (
+               SELECT 1
+               FROM platform.credit_journal_entry revoke_entry
+               JOIN platform.credit_journal_transaction revoke_transaction
+                 ON revoke_transaction.journal_transaction_ref=revoke_entry.journal_transaction_ref
+               WHERE revoke_entry.credit_grant_id=entry.credit_grant_id
+                 AND revoke_transaction.operation_kind='grant_revoke'
+                 AND revoke_transaction.occurred_at<=transaction.occurred_at
+             ) THEN 'revoked'
+             WHEN grant_fact.expires_at IS NOT NULL AND grant_fact.expires_at<=transaction.occurred_at THEN 'expired'
+             ELSE 'customer_available'
+           END
+       ) THEN
+      RAISE EXCEPTION 'CREDIT_HOLD_JOURNAL_TOTAL_MISMATCH' USING ERRCODE='23514';
+    END IF;
+  END IF;
+  RETURN NULL;
+END $$;
+
+CREATE FUNCTION platform.advance_credit_budget_allocation_revision() RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$
+DECLARE
+  head_revision BIGINT;
+  head_epoch BIGINT;
+  target_is_root BOOLEAN;
+  root_reserved_ceiling NUMERIC(38,0);
+  prior platform.credit_budget_allocation_revision%ROWTYPE;
+BEGIN
+  SELECT allocation.current_revision,allocation.current_allocation_epoch,allocation.is_root,root.reserved_ceiling
+    INTO head_revision,head_epoch,target_is_root,root_reserved_ceiling
+  FROM platform.credit_budget_allocation allocation
+  JOIN platform.credit_execution_budget_root root
+    ON root.execution_budget_root_ref=allocation.execution_budget_root_ref
+  WHERE allocation.budget_allocation_ref=NEW.budget_allocation_ref
+  FOR UPDATE OF allocation;
+  IF head_revision IS NULL OR NEW.revision<>head_revision+1 THEN
+    RAISE EXCEPTION 'CREDIT_ALLOCATION_REVISION_CAS_FAILED' USING ERRCODE='40001';
+  END IF;
+  IF target_is_root AND NEW.credit_ceiling<>root_reserved_ceiling THEN
+    RAISE EXCEPTION 'CREDIT_ROOT_ALLOCATION_CEILING_DRIFT' USING ERRCODE='23514';
+  END IF;
+  IF head_revision=0 THEN
+    IF NEW.revision<>1 OR NEW.allocation_epoch<>1 OR NEW.state<>'active'
+       OR NEW.captured_cumulative<>0 OR NEW.returned_to_parent_cumulative<>0 THEN
+      RAISE EXCEPTION 'CREDIT_ALLOCATION_INITIAL_REVISION_INVALID' USING ERRCODE='23514';
+    END IF;
+  ELSE
+    SELECT * INTO prior
+    FROM platform.credit_budget_allocation_revision
+    WHERE budget_allocation_ref=NEW.budget_allocation_ref AND revision=head_revision;
+    IF prior.state='terminal'
+       OR NEW.allocation_epoch NOT IN (head_epoch,head_epoch+1)
+       OR NEW.credit_ceiling<>prior.credit_ceiling
+       OR NEW.captured_cumulative<prior.captured_cumulative
+       OR NEW.returned_to_parent_cumulative<prior.returned_to_parent_cumulative THEN
+      RAISE EXCEPTION 'CREDIT_ALLOCATION_REVISION_TRANSITION_INVALID' USING ERRCODE='23514';
+    END IF;
+  END IF;
+  UPDATE platform.credit_budget_allocation
+  SET current_revision=NEW.revision,current_allocation_epoch=NEW.allocation_epoch
+  WHERE budget_allocation_ref=NEW.budget_allocation_ref
+    AND current_revision=head_revision AND current_allocation_epoch=head_epoch;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'CREDIT_ALLOCATION_REVISION_CAS_FAILED' USING ERRCODE='40001';
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE FUNCTION platform.assert_credit_allocation_origin_and_root() RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
+DECLARE
+  target_allocation_ref UUID;
+  target_allocation platform.credit_budget_allocation%ROWTYPE;
+  root_fact platform.credit_execution_budget_root%ROWTYPE;
+  initial_fact platform.credit_budget_allocation_revision%ROWTYPE;
+  reservation_count INTEGER;
+  reservation_ceiling NUMERIC(38,0);
+  has_cycle BOOLEAN;
+BEGIN
+  target_allocation_ref := CASE TG_TABLE_NAME
+    WHEN 'credit_allocation_reservation_receipt' THEN NEW.child_allocation_ref
+    ELSE NEW.budget_allocation_ref
+  END;
+  SELECT * INTO target_allocation FROM platform.credit_budget_allocation
+  WHERE budget_allocation_ref=target_allocation_ref;
+  SELECT * INTO root_fact FROM platform.credit_execution_budget_root
+  WHERE execution_budget_root_ref=target_allocation.execution_budget_root_ref;
+  SELECT * INTO initial_fact FROM platform.credit_budget_allocation_revision
+  WHERE budget_allocation_ref=target_allocation_ref AND revision=1;
+  SELECT count(*)::INTEGER,max(reserved_ceiling)
+    INTO reservation_count,reservation_ceiling
+  FROM platform.credit_allocation_reservation_receipt
+  WHERE child_allocation_ref=target_allocation_ref;
+  WITH RECURSIVE lineage(budget_allocation_ref,parent_allocation_ref,path,cycle) AS (
+    SELECT allocation.budget_allocation_ref,allocation.parent_allocation_ref,
+           ARRAY[allocation.budget_allocation_ref],FALSE
+    FROM platform.credit_budget_allocation allocation
+    WHERE allocation.budget_allocation_ref=target_allocation_ref
+    UNION ALL
+    SELECT parent.budget_allocation_ref,parent.parent_allocation_ref,
+           lineage.path||parent.budget_allocation_ref,
+           parent.budget_allocation_ref=ANY(lineage.path)
+    FROM platform.credit_budget_allocation parent
+    JOIN lineage ON parent.budget_allocation_ref=lineage.parent_allocation_ref
+    WHERE NOT lineage.cycle
+  ) SELECT COALESCE(bool_or(cycle),FALSE) INTO has_cycle FROM lineage;
+  IF target_allocation.budget_allocation_ref IS NULL
+     OR root_fact.execution_budget_root_ref IS NULL
+     OR initial_fact.budget_allocation_ref IS NULL
+     OR has_cycle THEN
+    RAISE EXCEPTION 'CREDIT_ALLOCATION_ORIGIN_INVALID' USING ERRCODE='23514';
+  END IF;
+  IF target_allocation.is_root THEN
+    IF target_allocation.parent_allocation_ref IS NOT NULL
+       OR root_fact.root_allocation_ref<>target_allocation_ref
+       OR initial_fact.credit_ceiling<>root_fact.reserved_ceiling
+       OR reservation_count<>0 THEN
+      RAISE EXCEPTION 'CREDIT_ROOT_ALLOCATION_ORIGIN_INVALID' USING ERRCODE='23514';
+    END IF;
+  ELSIF target_allocation.parent_allocation_ref IS NULL
+     OR reservation_count<>1
+     OR initial_fact.credit_ceiling<>reservation_ceiling THEN
+    RAISE EXCEPTION 'CREDIT_CHILD_ALLOCATION_ORIGIN_INVALID' USING ERRCODE='23514';
+  END IF;
+  RETURN NULL;
+END $$;
+
+CREATE FUNCTION platform.guard_credit_budget_allocation_update() RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
+BEGIN
+  IF ROW(OLD.budget_allocation_ref,OLD.execution_budget_root_ref,OLD.site_ref,
+         OLD.billing_account_ref,OLD.credit_account_ref,OLD.unit,OLD.liability_merchant_account_ref,
+         OLD.parent_allocation_ref,OLD.is_root,OLD.audience,OLD.purpose,OLD.surface_ref,
+         OLD.operation_ref,OLD.agent_ref,OLD.created_at)
+     IS DISTINCT FROM
+     ROW(NEW.budget_allocation_ref,NEW.execution_budget_root_ref,NEW.site_ref,
+         NEW.billing_account_ref,NEW.credit_account_ref,NEW.unit,NEW.liability_merchant_account_ref,
+         NEW.parent_allocation_ref,NEW.is_root,NEW.audience,NEW.purpose,NEW.surface_ref,
+         NEW.operation_ref,NEW.agent_ref,NEW.created_at)
+     OR NEW.current_revision<>OLD.current_revision+1
+     OR NEW.current_allocation_epoch NOT IN (
+       OLD.current_allocation_epoch,
+       OLD.current_allocation_epoch+1
+     ) THEN
+    RAISE EXCEPTION 'CREDIT_ALLOCATION_HEAD_TRANSITION_INVALID' USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE FUNCTION platform.assert_credit_budget_allocation_conservation() RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
+DECLARE
+  target_allocation_ref UUID;
+  current_fact platform.credit_budget_allocation_revision%ROWTYPE;
+  active_child_total NUMERIC(38,0);
+  target_is_root BOOLEAN;
+  target_parent_ref UUID;
+BEGIN
+  FOR target_allocation_ref IN
+    SELECT NEW.budget_allocation_ref
+    UNION
+    SELECT parent_allocation_ref
+    FROM platform.credit_budget_allocation
+    WHERE budget_allocation_ref=NEW.budget_allocation_ref AND parent_allocation_ref IS NOT NULL
+  LOOP
+    SELECT revision.* INTO current_fact
+    FROM platform.credit_budget_allocation allocation
+    JOIN platform.credit_budget_allocation_revision revision
+      ON revision.budget_allocation_ref=allocation.budget_allocation_ref
+     AND revision.revision=allocation.current_revision
+    WHERE allocation.budget_allocation_ref=target_allocation_ref;
+    SELECT COALESCE(sum(child_revision.credit_ceiling),0)
+      INTO active_child_total
+    FROM platform.credit_budget_allocation child
+    JOIN platform.credit_budget_allocation_revision child_revision
+      ON child_revision.budget_allocation_ref=child.budget_allocation_ref
+     AND child_revision.revision=child.current_revision
+    WHERE child.parent_allocation_ref=target_allocation_ref
+      AND child_revision.state<>'terminal';
+    IF current_fact.budget_allocation_ref IS NULL
+       OR current_fact.active_child_reserved_stock<>active_child_total THEN
+      RAISE EXCEPTION 'CREDIT_ALLOCATION_CHILD_STOCK_MISMATCH' USING ERRCODE='23514';
+    END IF;
+    SELECT is_root,parent_allocation_ref INTO target_is_root,target_parent_ref
+    FROM platform.credit_budget_allocation
+    WHERE budget_allocation_ref=target_allocation_ref;
+    IF current_fact.state='terminal' AND active_child_total<>0 THEN
+      RAISE EXCEPTION 'CREDIT_ALLOCATION_DESCENDANT_STILL_ACTIVE' USING ERRCODE='23514';
+    END IF;
+    IF current_fact.state='terminal' AND (
+      (target_is_root AND current_fact.parent_applied_revision IS NOT NULL)
+      OR (NOT target_is_root AND current_fact.parent_applied_revision IS NULL)
+    ) THEN
+      RAISE EXCEPTION 'CREDIT_ALLOCATION_TERMINAL_PARENT_REVISION_INVALID' USING ERRCODE='23514';
+    END IF;
+  END LOOP;
+  RETURN NULL;
+END $$;
+
+CREATE FUNCTION platform.guard_credit_authorization_segment_transition() RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
+DECLARE
+  before_revision platform.credit_budget_allocation_revision%ROWTYPE;
+  after_revision platform.credit_budget_allocation_revision%ROWTYPE;
+  current_revision BIGINT;
+BEGIN
+  IF ROW(OLD.authorization_segment_ref,OLD.site_ref,OLD.execution_budget_root_ref,
+         OLD.budget_allocation_ref,OLD.credit_hold_ref,OLD.billing_account_ref,
+         OLD.credit_account_ref,OLD.unit,OLD.liability_merchant_account_ref,
+         OLD.execution_manifest_ref,OLD.rating_policy_revision_ref,OLD.business_operation_key,
+         OLD.request_digest,OLD.maximum_amount,OLD.allocation_epoch,
+         OLD.prepared_against_allocation_revision,OLD.expires_at,OLD.created_at)
+     IS DISTINCT FROM
+     ROW(NEW.authorization_segment_ref,NEW.site_ref,NEW.execution_budget_root_ref,
+         NEW.budget_allocation_ref,NEW.credit_hold_ref,NEW.billing_account_ref,
+         NEW.credit_account_ref,NEW.unit,NEW.liability_merchant_account_ref,
+         NEW.execution_manifest_ref,NEW.rating_policy_revision_ref,NEW.business_operation_key,
+         NEW.request_digest,NEW.maximum_amount,NEW.allocation_epoch,
+         NEW.prepared_against_allocation_revision,NEW.expires_at,NEW.created_at)
+     OR NEW.aggregate_version<>OLD.aggregate_version+1
+     OR NEW.fence_epoch<>OLD.fence_epoch+1 THEN
+    RAISE EXCEPTION 'CREDIT_AUTHORIZATION_SEGMENT_CAS_FAILED' USING ERRCODE='40001';
+  END IF;
+  IF OLD.state IN ('settled','released','expired')
+     OR (OLD.state='reserved' AND NEW.state NOT IN ('committed','released','expired'))
+     OR (OLD.state='committed' AND NEW.state NOT IN ('rating_pending','reconciliation_required'))
+     OR (OLD.state='rating_pending' AND NEW.state NOT IN ('settled','reconciliation_required'))
+     OR (OLD.state='reconciliation_required' AND NEW.state<>'settled') THEN
+    RAISE EXCEPTION 'CREDIT_AUTHORIZATION_SEGMENT_TRANSITION_INVALID' USING ERRCODE='23514';
+  END IF;
+  IF OLD.state='reserved' AND NEW.state='committed' THEN
+    IF NEW.committed_from_allocation_revision IS NULL
+       OR NEW.committed_to_allocation_revision<>NEW.committed_from_allocation_revision+1
+       OR NEW.committed_at IS NULL THEN
+      RAISE EXCEPTION 'CREDIT_AUTHORIZATION_SEGMENT_COMMIT_REVISION_INVALID' USING ERRCODE='23514';
+    END IF;
+    SELECT * INTO before_revision
+    FROM platform.credit_budget_allocation_revision
+    WHERE budget_allocation_ref=NEW.budget_allocation_ref
+      AND revision=NEW.committed_from_allocation_revision;
+    SELECT * INTO after_revision
+    FROM platform.credit_budget_allocation_revision
+    WHERE budget_allocation_ref=NEW.budget_allocation_ref
+      AND revision=NEW.committed_to_allocation_revision;
+    SELECT allocation.current_revision INTO current_revision
+    FROM platform.credit_budget_allocation allocation
+    WHERE allocation.budget_allocation_ref=NEW.budget_allocation_ref;
+    IF before_revision.budget_allocation_ref IS NULL
+       OR after_revision.budget_allocation_ref IS NULL
+       OR current_revision<>NEW.committed_to_allocation_revision
+       OR before_revision.allocation_epoch<>NEW.allocation_epoch
+       OR after_revision.allocation_epoch<>NEW.allocation_epoch
+       OR after_revision.credit_ceiling<>before_revision.credit_ceiling
+       OR after_revision.unassigned_stock<>before_revision.unassigned_stock-NEW.maximum_amount
+       OR after_revision.committed_stock<>before_revision.committed_stock+NEW.maximum_amount
+       OR after_revision.active_child_reserved_stock<>before_revision.active_child_reserved_stock
+       OR after_revision.captured_cumulative<>before_revision.captured_cumulative
+       OR after_revision.returned_to_parent_cumulative<>before_revision.returned_to_parent_cumulative THEN
+      RAISE EXCEPTION 'CREDIT_AUTHORIZATION_SEGMENT_COMMIT_STOCK_INVALID' USING ERRCODE='23514';
+    END IF;
+  ELSIF ROW(NEW.committed_from_allocation_revision,NEW.committed_to_allocation_revision)
+        IS DISTINCT FROM ROW(OLD.committed_from_allocation_revision,OLD.committed_to_allocation_revision) THEN
+    RAISE EXCEPTION 'CREDIT_AUTHORIZATION_SEGMENT_COMMIT_REVISION_IMMUTABLE' USING ERRCODE='23000';
+  END IF;
+  IF NEW.state='expired' AND (NEW.resolution_kind<>'reservation_expiry' OR now()<OLD.expires_at) THEN
+    RAISE EXCEPTION 'CREDIT_AUTHORIZATION_SEGMENT_EXPIRY_INVALID' USING ERRCODE='23514';
+  ELSIF NEW.state='released' AND NEW.resolution_kind<>'not_dispatched' THEN
+    RAISE EXCEPTION 'CREDIT_AUTHORIZATION_SEGMENT_RELEASE_EVIDENCE_REQUIRED' USING ERRCODE='23514';
+  ELSIF NEW.state='reconciliation_required' AND NEW.resolution_kind<>'outcome_unknown' THEN
+    RAISE EXCEPTION 'CREDIT_AUTHORIZATION_SEGMENT_RECONCILIATION_EVIDENCE_REQUIRED' USING ERRCODE='23514';
+  ELSIF NEW.state='settled' AND NEW.resolution_kind NOT IN ('rated','reconciled') THEN
+    RAISE EXCEPTION 'CREDIT_AUTHORIZATION_SEGMENT_SETTLEMENT_EVIDENCE_REQUIRED' USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE FUNCTION platform.assert_credit_authorization_segment_capacity() RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
+DECLARE
+  current_unassigned NUMERIC(38,0);
+  reserved_total NUMERIC(38,0);
+BEGIN
+  SELECT revision.unassigned_stock INTO current_unassigned
+  FROM platform.credit_budget_allocation allocation
+  JOIN platform.credit_budget_allocation_revision revision
+    ON revision.budget_allocation_ref=allocation.budget_allocation_ref
+   AND revision.revision=allocation.current_revision
+  WHERE allocation.budget_allocation_ref=NEW.budget_allocation_ref;
+  SELECT COALESCE(sum(maximum_amount),0) INTO reserved_total
+  FROM platform.credit_authorization_segment
+  WHERE budget_allocation_ref=NEW.budget_allocation_ref AND state='reserved';
+  IF current_unassigned IS NULL OR reserved_total>current_unassigned THEN
+    RAISE EXCEPTION 'CREDIT_AUTHORIZATION_SEGMENT_CAPACITY_EXCEEDED' USING ERRCODE='23514';
+  END IF;
+  RETURN NULL;
+END $$;
+
+CREATE FUNCTION platform.assert_credit_hold_terminal_segments_closed() RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
+BEGIN
+  IF NEW.state IN ('settled','released','expired') AND EXISTS (
+    SELECT 1 FROM platform.credit_authorization_segment segment
+    WHERE segment.credit_hold_ref=NEW.credit_hold_ref
+      AND segment.state NOT IN ('settled','released','expired')
+  ) THEN
+    RAISE EXCEPTION 'CREDIT_HOLD_SEGMENT_STILL_ACTIVE' USING ERRCODE='23514';
+  END IF;
+  RETURN NULL;
+END $$;
+
+CREATE FUNCTION platform.assert_credit_allocation_receipt_conservation() RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
+DECLARE
+  parent_before platform.credit_budget_allocation_revision%ROWTYPE;
+  parent_after platform.credit_budget_allocation_revision%ROWTYPE;
+  child_fact platform.credit_budget_allocation_revision%ROWTYPE;
+  child_parent_ref UUID;
+BEGIN
+  IF TG_TABLE_NAME='credit_allocation_reservation_receipt' THEN
+    SELECT * INTO parent_before FROM platform.credit_budget_allocation_revision
+    WHERE budget_allocation_ref=NEW.parent_allocation_ref AND revision=NEW.parent_expected_revision;
+    SELECT * INTO parent_after FROM platform.credit_budget_allocation_revision
+    WHERE budget_allocation_ref=NEW.parent_allocation_ref AND revision=NEW.parent_resulting_revision;
+    SELECT * INTO child_fact FROM platform.credit_budget_allocation_revision
+    WHERE budget_allocation_ref=NEW.child_allocation_ref AND revision=NEW.child_initial_revision;
+    SELECT parent_allocation_ref INTO child_parent_ref FROM platform.credit_budget_allocation
+    WHERE budget_allocation_ref=NEW.child_allocation_ref;
+    IF parent_before.budget_allocation_ref IS NULL
+       OR parent_after.budget_allocation_ref IS NULL
+       OR child_fact.budget_allocation_ref IS NULL
+       OR child_parent_ref IS DISTINCT FROM NEW.parent_allocation_ref
+       OR parent_after.credit_ceiling<>parent_before.credit_ceiling
+       OR parent_after.unassigned_stock<>parent_before.unassigned_stock-NEW.reserved_ceiling
+       OR parent_after.active_child_reserved_stock<>parent_before.active_child_reserved_stock+NEW.reserved_ceiling
+       OR parent_after.committed_stock<>parent_before.committed_stock
+       OR parent_after.captured_cumulative<>parent_before.captured_cumulative
+       OR parent_after.returned_to_parent_cumulative<>parent_before.returned_to_parent_cumulative
+       OR child_fact.credit_ceiling<>NEW.reserved_ceiling
+       OR child_fact.unassigned_stock<>NEW.reserved_ceiling
+       OR child_fact.active_child_reserved_stock<>0
+       OR child_fact.committed_stock<>0
+       OR child_fact.captured_cumulative<>0
+       OR child_fact.returned_to_parent_cumulative<>0
+       OR child_fact.state<>'active' THEN
+      RAISE EXCEPTION 'CREDIT_ALLOCATION_RESERVATION_CONSERVATION_FAILED' USING ERRCODE='23514';
+    END IF;
+  ELSE
+    SELECT * INTO parent_after FROM platform.credit_budget_allocation_revision
+    WHERE budget_allocation_ref=NEW.parent_allocation_ref AND revision=NEW.parent_resulting_revision;
+    SELECT * INTO parent_before FROM platform.credit_budget_allocation_revision
+    WHERE budget_allocation_ref=NEW.parent_allocation_ref AND revision=NEW.parent_resulting_revision-1;
+    SELECT * INTO child_fact FROM platform.credit_budget_allocation_revision
+    WHERE budget_allocation_ref=NEW.child_allocation_ref AND revision=NEW.child_terminal_revision;
+    SELECT parent_allocation_ref INTO child_parent_ref FROM platform.credit_budget_allocation
+    WHERE budget_allocation_ref=NEW.child_allocation_ref;
+    IF parent_before.budget_allocation_ref IS NULL
+       OR parent_after.budget_allocation_ref IS NULL
+       OR child_fact.budget_allocation_ref IS NULL
+       OR child_parent_ref IS DISTINCT FROM NEW.parent_allocation_ref
+       OR child_fact.state<>'terminal'
+       OR child_fact.unassigned_stock<>0
+       OR child_fact.active_child_reserved_stock<>0
+       OR child_fact.committed_stock<>0
+       OR child_fact.returned_to_parent_cumulative<>NEW.returned_amount
+       OR child_fact.captured_cumulative+NEW.returned_amount<>child_fact.credit_ceiling
+       OR child_fact.terminal_receipt_digest<>NEW.receipt_digest
+       OR child_fact.parent_applied_revision<>NEW.parent_resulting_revision
+       OR parent_after.credit_ceiling<>parent_before.credit_ceiling
+       OR parent_after.unassigned_stock<>parent_before.unassigned_stock+NEW.returned_amount
+       OR parent_after.active_child_reserved_stock<>parent_before.active_child_reserved_stock-child_fact.credit_ceiling
+       OR parent_after.committed_stock<>parent_before.committed_stock
+       OR parent_after.captured_cumulative<>parent_before.captured_cumulative+child_fact.captured_cumulative
+       OR parent_after.returned_to_parent_cumulative<>parent_before.returned_to_parent_cumulative THEN
+      RAISE EXCEPTION 'CREDIT_ALLOCATION_RETURN_CONSERVATION_FAILED' USING ERRCODE='23514';
+    END IF;
+  END IF;
+  RETURN NULL;
+END $$;
+
+CREATE FUNCTION platform.guard_credit_execution_budget_root_transition() RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
+BEGIN
+  IF ROW(OLD.execution_budget_root_ref,OLD.site_ref,OLD.execution_root_ref,OLD.billing_account_ref,
+         OLD.credit_account_ref,OLD.unit,OLD.liability_merchant_account_ref,OLD.credit_hold_ref,
+         OLD.root_allocation_ref,OLD.authorization_budget_ref,OLD.rating_policy_revision_ref,
+         OLD.reserved_ceiling,OLD.created_at)
+     IS DISTINCT FROM
+     ROW(NEW.execution_budget_root_ref,NEW.site_ref,NEW.execution_root_ref,NEW.billing_account_ref,
+         NEW.credit_account_ref,NEW.unit,NEW.liability_merchant_account_ref,NEW.credit_hold_ref,
+         NEW.root_allocation_ref,NEW.authorization_budget_ref,NEW.rating_policy_revision_ref,
+         NEW.reserved_ceiling,NEW.created_at)
+     OR NEW.aggregate_version<>OLD.aggregate_version+1 THEN
+    RAISE EXCEPTION 'CREDIT_EXECUTION_BUDGET_ROOT_CAS_FAILED' USING ERRCODE='40001';
+  END IF;
+  IF OLD.state='settled'
+     OR (OLD.state='open' AND NEW.state NOT IN ('closing','reconciliation_required'))
+     OR (OLD.state='closing' AND NEW.state NOT IN ('settled','reconciliation_required'))
+     OR (OLD.state='reconciliation_required' AND NEW.state NOT IN ('closing','settled')) THEN
+    RAISE EXCEPTION 'CREDIT_EXECUTION_BUDGET_ROOT_TRANSITION_INVALID' USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE FUNCTION platform.guard_credit_hold_transition() RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
+BEGIN
+  IF ROW(OLD.credit_hold_ref,OLD.credit_account_ref,OLD.site_ref,OLD.execution_root_ref,
+         OLD.unit,OLD.requested_amount,OLD.reserved_amount,OLD.expires_at,OLD.created_at)
+     IS DISTINCT FROM
+     ROW(NEW.credit_hold_ref,NEW.credit_account_ref,NEW.site_ref,NEW.execution_root_ref,
+         NEW.unit,NEW.requested_amount,NEW.reserved_amount,NEW.expires_at,NEW.created_at)
+     OR NEW.fence_epoch<>OLD.fence_epoch+1 THEN
+    RAISE EXCEPTION 'CREDIT_HOLD_IDENTITY_IMMUTABLE' USING ERRCODE='23000';
+  END IF;
+  IF NEW.captured_amount<OLD.captured_amount OR NEW.released_amount<OLD.released_amount
+     OR OLD.state IN ('settled','released','expired')
+     OR (OLD.state='open' AND NEW.state NOT IN ('open','closing','released','expired','reconciliation_required'))
+     OR (OLD.state='closing' AND NEW.state NOT IN ('closing','settled','reconciliation_required'))
+     OR (OLD.state='reconciliation_required' AND NEW.state NOT IN ('reconciliation_required','closing','settled')) THEN
+    RAISE EXCEPTION 'CREDIT_HOLD_TRANSITION_INVALID' USING ERRCODE='23514';
+  END IF;
+  IF NEW.state IN ('released','expired') THEN
+    IF NEW.state='expired' AND (NEW.resolution_kind<>'reservation_expiry' OR now()<OLD.expires_at) THEN
+      RAISE EXCEPTION 'CREDIT_HOLD_TTL_RELEASE_INVALID' USING ERRCODE='23514';
+    ELSIF NEW.state='released' AND NEW.resolution_kind<>'known_outcome' THEN
+      RAISE EXCEPTION 'CREDIT_HOLD_RELEASE_EVIDENCE_REQUIRED' USING ERRCODE='23514';
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$;
+
 CREATE TRIGGER commerce_output_plan_immutable
   BEFORE UPDATE OR DELETE ON platform.commerce_fulfillment_output_plan
   FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
@@ -644,6 +1974,18 @@ CREATE TRIGGER commerce_product_version_immutable
 CREATE TRIGGER commerce_redemption_program_revision_immutable
   BEFORE UPDATE OR DELETE ON platform.commerce_redemption_program_revision
   FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE TRIGGER commerce_subscription_term_immutable
+  BEFORE UPDATE OR DELETE ON platform.commerce_subscription_term
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE TRIGGER commerce_subscription_term_revocation_immutable
+  BEFORE UPDATE OR DELETE ON platform.commerce_subscription_term_revocation
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE TRIGGER commerce_entitlement_grant_immutable
+  BEFORE UPDATE OR DELETE ON platform.commerce_entitlement_grant
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE TRIGGER commerce_entitlement_revocation_immutable
+  BEFORE UPDATE OR DELETE ON platform.commerce_entitlement_revocation
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
 CREATE TRIGGER commerce_command_outbox_immutable
   BEFORE UPDATE OR DELETE ON platform.commerce_command_outbox
   FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
@@ -666,6 +2008,121 @@ CREATE TRIGGER commerce_code_transition
 CREATE TRIGGER commerce_preview_transition
   BEFORE UPDATE ON platform.commerce_redemption_preview
   FOR EACH ROW EXECUTE FUNCTION platform.guard_commerce_preview_transition();
+CREATE TRIGGER credit_grant_immutable
+  BEFORE UPDATE OR DELETE ON platform.credit_grant
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE TRIGGER credit_hold_no_delete
+  BEFORE DELETE ON platform.credit_hold
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE TRIGGER credit_program_window_acquisition_immutable
+  BEFORE UPDATE OR DELETE ON platform.credit_program_window_acquisition
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE TRIGGER credit_hold_allocation_immutable
+  BEFORE UPDATE OR DELETE ON platform.credit_hold_allocation
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE TRIGGER credit_journal_transaction_immutable
+  BEFORE UPDATE OR DELETE ON platform.credit_journal_transaction
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE TRIGGER credit_journal_entry_immutable
+  BEFORE UPDATE OR DELETE ON platform.credit_journal_entry
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE TRIGGER credit_budget_allocation_revision_advance
+  BEFORE INSERT ON platform.credit_budget_allocation_revision
+  FOR EACH ROW EXECUTE FUNCTION platform.advance_credit_budget_allocation_revision();
+CREATE TRIGGER credit_budget_allocation_update_guard
+  BEFORE UPDATE ON platform.credit_budget_allocation
+  FOR EACH ROW EXECUTE FUNCTION platform.guard_credit_budget_allocation_update();
+CREATE TRIGGER credit_budget_allocation_no_delete
+  BEFORE DELETE ON platform.credit_budget_allocation
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE TRIGGER credit_budget_allocation_revision_immutable
+  BEFORE UPDATE OR DELETE ON platform.credit_budget_allocation_revision
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE TRIGGER credit_allocation_reservation_receipt_immutable
+  BEFORE UPDATE OR DELETE ON platform.credit_allocation_reservation_receipt
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE TRIGGER credit_allocation_return_receipt_immutable
+  BEFORE UPDATE OR DELETE ON platform.credit_allocation_return_receipt
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE CONSTRAINT TRIGGER credit_journal_transaction_balanced_from_transaction
+  AFTER INSERT ON platform.credit_journal_transaction
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION platform.assert_credit_journal_transaction_balanced();
+CREATE CONSTRAINT TRIGGER credit_journal_transaction_balanced_from_entry
+  AFTER INSERT ON platform.credit_journal_entry
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION platform.assert_credit_journal_transaction_balanced();
+CREATE CONSTRAINT TRIGGER credit_journal_cross_fact_from_grant
+  AFTER INSERT ON platform.credit_grant
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION platform.assert_credit_journal_cross_fact_conservation();
+CREATE CONSTRAINT TRIGGER credit_journal_cross_fact_from_hold
+  AFTER INSERT OR UPDATE ON platform.credit_hold
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION platform.assert_credit_journal_cross_fact_conservation();
+CREATE CONSTRAINT TRIGGER credit_journal_cross_fact_from_hold_allocation
+  AFTER INSERT ON platform.credit_hold_allocation
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION platform.assert_credit_journal_cross_fact_conservation();
+CREATE CONSTRAINT TRIGGER credit_journal_cross_fact_from_entry
+  AFTER INSERT ON platform.credit_journal_entry
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION platform.assert_credit_journal_cross_fact_conservation();
+CREATE CONSTRAINT TRIGGER credit_budget_allocation_conservation
+  AFTER INSERT ON platform.credit_budget_allocation_revision
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION platform.assert_credit_budget_allocation_conservation();
+CREATE CONSTRAINT TRIGGER credit_budget_allocation_origin_from_allocation
+  AFTER INSERT ON platform.credit_budget_allocation
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION platform.assert_credit_allocation_origin_and_root();
+CREATE CONSTRAINT TRIGGER credit_budget_allocation_origin_from_revision
+  AFTER INSERT ON platform.credit_budget_allocation_revision
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION platform.assert_credit_allocation_origin_and_root();
+CREATE CONSTRAINT TRIGGER credit_budget_allocation_origin_from_reservation
+  AFTER INSERT ON platform.credit_allocation_reservation_receipt
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION platform.assert_credit_allocation_origin_and_root();
+CREATE CONSTRAINT TRIGGER credit_allocation_reservation_receipt_conservation
+  AFTER INSERT ON platform.credit_allocation_reservation_receipt
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION platform.assert_credit_allocation_receipt_conservation();
+CREATE CONSTRAINT TRIGGER credit_allocation_return_receipt_conservation
+  AFTER INSERT ON platform.credit_allocation_return_receipt
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION platform.assert_credit_allocation_receipt_conservation();
+CREATE CONSTRAINT TRIGGER credit_hold_fully_allocated_from_hold
+  AFTER INSERT ON platform.credit_hold
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION platform.assert_credit_hold_fully_allocated();
+CREATE CONSTRAINT TRIGGER credit_hold_fully_allocated_from_allocation
+  AFTER INSERT ON platform.credit_hold_allocation
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION platform.assert_credit_hold_fully_allocated();
+CREATE TRIGGER credit_hold_transition
+  BEFORE UPDATE ON platform.credit_hold
+  FOR EACH ROW EXECUTE FUNCTION platform.guard_credit_hold_transition();
+CREATE CONSTRAINT TRIGGER credit_hold_terminal_segments_closed
+  AFTER UPDATE ON platform.credit_hold
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION platform.assert_credit_hold_terminal_segments_closed();
+CREATE TRIGGER credit_execution_budget_root_transition
+  BEFORE UPDATE ON platform.credit_execution_budget_root
+  FOR EACH ROW EXECUTE FUNCTION platform.guard_credit_execution_budget_root_transition();
+CREATE TRIGGER credit_execution_budget_root_no_delete
+  BEFORE DELETE ON platform.credit_execution_budget_root
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE TRIGGER credit_authorization_segment_transition
+  BEFORE UPDATE ON platform.credit_authorization_segment
+  FOR EACH ROW EXECUTE FUNCTION platform.guard_credit_authorization_segment_transition();
+CREATE TRIGGER credit_authorization_segment_no_delete
+  BEFORE DELETE ON platform.credit_authorization_segment
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE CONSTRAINT TRIGGER credit_authorization_segment_capacity
+  AFTER INSERT OR UPDATE ON platform.credit_authorization_segment
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION platform.assert_credit_authorization_segment_capacity();
 
 REVOKE ALL ON
   platform.commerce_command,
@@ -683,10 +2140,27 @@ REVOKE ALL ON
   platform.commerce_redemption_program_availability,
   platform.commerce_subscription,
   platform.commerce_subscription_term,
+  platform.commerce_subscription_term_revocation,
   platform.commerce_code_batch,
   platform.commerce_redeem_code,
   platform.commerce_redemption,
   platform.commerce_redemption_preview,
+  platform.commerce_redemption_legal_acceptance,
+  platform.commerce_entitlement_grant,
+  platform.commerce_entitlement_revocation,
+  platform.credit_account,
+  platform.credit_grant,
+  platform.credit_program_window_acquisition,
+  platform.credit_hold,
+  platform.credit_hold_allocation,
+  platform.credit_journal_transaction,
+  platform.credit_journal_entry,
+  platform.credit_execution_budget_root,
+  platform.credit_budget_allocation,
+  platform.credit_budget_allocation_revision,
+  platform.credit_allocation_reservation_receipt,
+  platform.credit_allocation_return_receipt,
+  platform.credit_authorization_segment,
   platform.commerce_fulfillment_transaction,
   platform.commerce_fulfillment_output_plan,
   platform.commerce_fulfillment_actual_output,
@@ -699,3 +2173,16 @@ REVOKE ALL ON FUNCTION platform.guard_commerce_command_update() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.guard_commerce_fulfillment_transition() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.guard_commerce_code_transition() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.guard_commerce_preview_transition() FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.assert_credit_journal_transaction_balanced() FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.assert_credit_hold_fully_allocated() FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.assert_credit_journal_cross_fact_conservation() FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.advance_credit_budget_allocation_revision() FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.assert_credit_allocation_origin_and_root() FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.guard_credit_budget_allocation_update() FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.assert_credit_budget_allocation_conservation() FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.guard_credit_authorization_segment_transition() FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.assert_credit_authorization_segment_capacity() FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.assert_credit_hold_terminal_segments_closed() FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.assert_credit_allocation_receipt_conservation() FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.guard_credit_execution_budget_root_transition() FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.guard_credit_hold_transition() FROM PUBLIC;
