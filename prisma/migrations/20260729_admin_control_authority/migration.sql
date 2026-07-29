@@ -155,6 +155,7 @@ CREATE TABLE platform.admin_post_effect_review (
   reviewer_generation BIGINT CHECK (reviewer_generation > 0),
   reviewer_authorization_epoch BIGINT CHECK (reviewer_authorization_epoch > 0),
   reviewer_reason TEXT,
+  terminal_reason TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   expires_at TIMESTAMPTZ NOT NULL,
   reviewed_at TIMESTAMPTZ,
@@ -162,9 +163,11 @@ CREATE TABLE platform.admin_post_effect_review (
   FOREIGN KEY(maker_ref,maker_generation)
     REFERENCES platform.admin_operator_authority(operator_ref,operator_generation),
   CHECK (expires_at > created_at),
-  CHECK ((state='pending' AND reviewer_ref IS NULL AND reviewed_at IS NULL) OR
-         (state<>'pending' AND reviewer_ref IS NOT NULL AND reviewer_generation IS NOT NULL AND
-          reviewer_reason IS NOT NULL AND reviewed_at IS NOT NULL)),
+  CHECK ((state='pending' AND reviewer_ref IS NULL AND terminal_reason IS NULL AND reviewed_at IS NULL) OR
+         (state IN ('acknowledged','escalated') AND reviewer_ref IS NOT NULL AND
+          reviewer_generation IS NOT NULL AND reviewer_reason IS NOT NULL AND
+          terminal_reason IS NULL AND reviewed_at IS NOT NULL) OR
+         (state='expired' AND reviewer_ref IS NULL AND terminal_reason IS NOT NULL AND reviewed_at IS NOT NULL)),
   CHECK (reviewer_ref IS NULL OR reviewer_ref<>maker_ref)
 );
 CREATE INDEX admin_post_effect_review_queue_idx
@@ -271,6 +274,144 @@ BEGIN
   RETURN NEW;
 END $$;
 
+CREATE FUNCTION platform.apply_admin_authority_change(
+  p_approval_ref UUID,
+  p_change JSONB
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$
+DECLARE
+  approval_row platform.admin_approval%ROWTYPE;
+  authority_row platform.admin_operator_authority%ROWTYPE;
+  action_name TEXT;
+  operator_name TEXT;
+  generation BIGINT;
+  expected_epoch BIGINT;
+  next_epoch BIGINT;
+  governor_count INTEGER;
+BEGIN
+  IF current_setting('app.workload_kind',true)<>'platform_worker'
+     OR current_setting('app.admin_execution',true)<>'true'
+     OR current_setting('app.operation',true)<>'admin.authority.change' THEN
+    RAISE EXCEPTION 'ADMIN_AUTHORITY_EXECUTION_CONTEXT_INVALID' USING ERRCODE='42501';
+  END IF;
+  SELECT * INTO approval_row FROM platform.admin_approval
+    WHERE approval_ref=p_approval_ref FOR UPDATE;
+  IF NOT FOUND OR approval_row.state<>'execution_queued'
+     OR approval_row.operation<>'admin.authority.change'
+     OR approval_row.target_site_ref IS NOT NULL
+     OR approval_row.checker_decision<>'approve'
+     OR approval_row.payload<>p_change
+     OR approval_row.maker_ref<>current_setting('app.admin_maker_ref',true)
+     OR approval_row.maker_generation::TEXT<>current_setting('app.admin_maker_generation',true)
+     OR approval_row.maker_authorization_epoch::TEXT<>
+        current_setting('app.admin_maker_authorization_epoch',true)
+     OR approval_row.checker_ref<>current_setting('app.subject_id',true)
+     OR approval_row.checker_generation::TEXT<>current_setting('app.subject_generation',true)
+     OR approval_row.checker_authorization_epoch::TEXT<>
+        current_setting('app.admin_checker_authorization_epoch',true) THEN
+    RAISE EXCEPTION 'ADMIN_AUTHORITY_APPROVAL_EVIDENCE_INVALID' USING ERRCODE='42501';
+  END IF;
+  IF jsonb_typeof(p_change)<>'object'
+     OR COALESCE(p_change->>'action','') NOT IN ('provision','replace','suspend','revoke')
+     OR COALESCE(p_change->>'operatorRef','') !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$'
+     OR COALESCE(p_change->>'operatorGeneration','') !~ '^[1-9][0-9]{0,18}$' THEN
+    RAISE EXCEPTION 'ADMIN_AUTHORITY_CHANGE_INVALID' USING ERRCODE='22023';
+  END IF;
+  action_name:=p_change->>'action';
+  operator_name:=p_change->>'operatorRef';
+  generation:=(p_change->>'operatorGeneration')::BIGINT;
+  PERFORM set_config('app.admin_authority_function','true',true);
+
+  IF action_name='provision' THEN
+    IF p_change-ARRAY['action','operatorRef','operatorGeneration','permissions','siteScopes',
+       'environments','regions','expiresAt','breakGlassExpiresAt']::TEXT[]<>'{}'::JSONB
+       OR jsonb_typeof(p_change->'permissions')<>'array'
+       OR jsonb_array_length(p_change->'permissions')<1
+       OR jsonb_typeof(p_change->'siteScopes')<>'array'
+       OR jsonb_array_length(p_change->'siteScopes')<1
+       OR jsonb_typeof(p_change->'environments')<>'array'
+       OR jsonb_array_length(p_change->'environments')<1
+       OR jsonb_typeof(p_change->'regions')<>'array'
+       OR jsonb_array_length(p_change->'regions')<1
+       OR COALESCE(p_change->>'expiresAt','')::TIMESTAMPTZ<=now() THEN
+      RAISE EXCEPTION 'ADMIN_AUTHORITY_CHANGE_INVALID' USING ERRCODE='22023';
+    END IF;
+    INSERT INTO platform.admin_operator_authority(
+      operator_ref,operator_generation,state,permissions,site_scopes,environments,regions,
+      authorization_epoch,expires_at,break_glass_expires_at
+    ) VALUES (
+      operator_name,generation,'active',
+      ARRAY(SELECT jsonb_array_elements_text(p_change->'permissions')),
+      ARRAY(SELECT jsonb_array_elements_text(p_change->'siteScopes')),
+      ARRAY(SELECT jsonb_array_elements_text(p_change->'environments')),
+      ARRAY(SELECT jsonb_array_elements_text(p_change->'regions')),1,
+      (p_change->>'expiresAt')::TIMESTAMPTZ,
+      CASE WHEN p_change->'breakGlassExpiresAt' IS NULL OR
+                     p_change->'breakGlassExpiresAt'='null'::JSONB THEN NULL
+           ELSE (p_change->>'breakGlassExpiresAt')::TIMESTAMPTZ END
+    );
+    next_epoch:=1;
+  ELSE
+    IF COALESCE(p_change->>'expectedAuthorizationEpoch','') !~ '^[1-9][0-9]{0,18}$' THEN
+      RAISE EXCEPTION 'ADMIN_AUTHORITY_CHANGE_INVALID' USING ERRCODE='22023';
+    END IF;
+    expected_epoch:=(p_change->>'expectedAuthorizationEpoch')::BIGINT;
+    SELECT * INTO authority_row FROM platform.admin_operator_authority
+      WHERE operator_ref=operator_name AND operator_generation=generation FOR UPDATE;
+    IF NOT FOUND OR authority_row.authorization_epoch<>expected_epoch THEN
+      RAISE EXCEPTION 'ADMIN_AUTHORITY_EPOCH_CONFLICT' USING ERRCODE='40001';
+    END IF;
+    next_epoch:=expected_epoch+1;
+    IF action_name='replace' THEN
+      IF p_change-ARRAY['action','operatorRef','operatorGeneration','expectedAuthorizationEpoch',
+         'permissions','siteScopes','environments','regions','expiresAt',
+         'breakGlassExpiresAt']::TEXT[]<>'{}'::JSONB
+         OR jsonb_typeof(p_change->'permissions')<>'array'
+         OR jsonb_array_length(p_change->'permissions')<1
+         OR jsonb_typeof(p_change->'siteScopes')<>'array'
+         OR jsonb_array_length(p_change->'siteScopes')<1
+         OR jsonb_typeof(p_change->'environments')<>'array'
+         OR jsonb_array_length(p_change->'environments')<1
+         OR jsonb_typeof(p_change->'regions')<>'array'
+         OR jsonb_array_length(p_change->'regions')<1
+         OR COALESCE(p_change->>'expiresAt','')::TIMESTAMPTZ<=now() THEN
+        RAISE EXCEPTION 'ADMIN_AUTHORITY_CHANGE_INVALID' USING ERRCODE='22023';
+      END IF;
+      UPDATE platform.admin_operator_authority SET state='active',
+        permissions=ARRAY(SELECT jsonb_array_elements_text(p_change->'permissions')),
+        site_scopes=ARRAY(SELECT jsonb_array_elements_text(p_change->'siteScopes')),
+        environments=ARRAY(SELECT jsonb_array_elements_text(p_change->'environments')),
+        regions=ARRAY(SELECT jsonb_array_elements_text(p_change->'regions')),
+        authorization_epoch=next_epoch,expires_at=(p_change->>'expiresAt')::TIMESTAMPTZ,
+        break_glass_expires_at=CASE WHEN p_change->'breakGlassExpiresAt' IS NULL OR
+          p_change->'breakGlassExpiresAt'='null'::JSONB THEN NULL
+          ELSE (p_change->>'breakGlassExpiresAt')::TIMESTAMPTZ END,
+        updated_at=now()
+        WHERE operator_ref=operator_name AND operator_generation=generation;
+    ELSE
+      IF p_change-ARRAY['action','operatorRef','operatorGeneration',
+         'expectedAuthorizationEpoch']::TEXT[]<>'{}'::JSONB THEN
+        RAISE EXCEPTION 'ADMIN_AUTHORITY_CHANGE_INVALID' USING ERRCODE='22023';
+      END IF;
+      UPDATE platform.admin_operator_authority
+        SET state=CASE WHEN action_name='suspend' THEN 'suspended' ELSE 'revoked' END,
+            authorization_epoch=next_epoch,updated_at=now()
+        WHERE operator_ref=operator_name AND operator_generation=generation;
+    END IF;
+  END IF;
+
+  SELECT count(*) INTO governor_count FROM platform.admin_operator_authority
+    WHERE state='active' AND expires_at>now()
+      AND permissions @> ARRAY['admin.approval.execute','admin.authority.manage']::TEXT[];
+  IF governor_count<2 THEN
+    RAISE EXCEPTION 'ADMIN_AUTHORITY_QUORUM_REQUIRED' USING ERRCODE='23000';
+  END IF;
+  RETURN jsonb_build_object('operatorRef',operator_name,'operatorGeneration',generation::TEXT,
+    'state',CASE WHEN action_name='replace' THEN 'active'
+                 WHEN action_name='suspend' THEN 'suspended' ELSE action_name END,
+    'authorizationEpoch',next_epoch::TEXT);
+END $$;
+
 CREATE FUNCTION platform.guard_admin_post_effect_review_transition() RETURNS TRIGGER
 LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
 BEGIN
@@ -328,6 +469,11 @@ CREATE POLICY admin_operator_authority_bootstrap_insert
   ON platform.admin_operator_authority FOR INSERT
   WITH CHECK (current_setting('app.admin_bootstrap',true)='true');
 
+CREATE POLICY admin_operator_authority_governed_change
+  ON platform.admin_operator_authority FOR ALL
+  USING (current_setting('app.admin_authority_function',true)='true')
+  WITH CHECK (current_setting('app.admin_authority_function',true)='true');
+
 CREATE POLICY admin_operator_authority_control_plane
   ON platform.admin_operator_authority FOR SELECT
   USING (
@@ -337,7 +483,8 @@ CREATE POLICY admin_operator_authority_control_plane
           OR current_setting('app.operation',true)='admin.approval.execute'))
     OR
     (current_setting('app.workload_kind',true)='platform_worker'
-     AND current_setting('app.admin_execution',true)='true')
+     AND (current_setting('app.admin_execution',true)='true'
+          OR current_setting('app.operation',true)='admin.terminalize'))
   );
 CREATE POLICY admin_command_decision_insert
   ON platform.admin_command_decision FOR INSERT
@@ -357,40 +504,39 @@ CREATE POLICY admin_command_decision_insert
 CREATE POLICY admin_approval_site_control_plane
   ON platform.admin_approval
   USING (
-    ((current_setting('app.workload_kind',true)='admin_workload'
-      AND current_setting('app.actor_kind',true)='operator')
-     OR
-     (current_setting('app.workload_kind',true)='platform_worker'
-      AND current_setting('app.admin_execution',true)='true'))
-    AND environment=current_setting('app.environment',true)
-    AND region=current_setting('app.region',true)
-    AND COALESCE(target_site_ref,'')=current_setting('app.site_id',true)
-    AND (
-      current_setting('app.operation',true)='admin.approval.execute'
-      OR current_setting('app.admin_execution',true)='true'
-    )
-  )
-  WITH CHECK (
-    (
-      (current_setting('app.workload_kind',true)='admin_workload'
+    (((current_setting('app.workload_kind',true)='admin_workload'
        AND current_setting('app.actor_kind',true)='operator')
       OR
       (current_setting('app.workload_kind',true)='platform_worker'
-       AND current_setting('app.admin_execution',true)='true')
-    )
-    AND environment=current_setting('app.environment',true)
-    AND region=current_setting('app.region',true)
-    AND COALESCE(target_site_ref,'')=current_setting('app.site_id',true)
-    AND (
-      (state='pending' AND maker_ref=current_setting('app.subject_id',true)
-        AND operation=current_setting('app.operation',true))
+       AND current_setting('app.admin_execution',true)='true'))
+     AND environment=current_setting('app.environment',true)
+     AND region=current_setting('app.region',true)
+     AND COALESCE(target_site_ref,'')=current_setting('app.site_id',true)
+     AND (current_setting('app.operation',true)='admin.approval.execute'
+          OR current_setting('app.admin_execution',true)='true'))
+    OR
+    (current_setting('app.workload_kind',true)='platform_worker'
+     AND current_setting('app.operation',true)='admin.terminalize')
+  )
+  WITH CHECK (
+    (((current_setting('app.workload_kind',true)='admin_workload'
+       AND current_setting('app.actor_kind',true)='operator')
       OR
-      (state<>'pending' AND checker_ref=current_setting('app.subject_id',true)
-        AND current_setting('app.operation',true)='admin.approval.execute')
-      OR
-      (state IN ('executed','effect_rejected','expired','stale_authority')
-        AND current_setting('app.admin_execution',true)='true')
-    )
+      (current_setting('app.workload_kind',true)='platform_worker'
+       AND current_setting('app.admin_execution',true)='true'))
+     AND environment=current_setting('app.environment',true)
+     AND region=current_setting('app.region',true)
+     AND COALESCE(target_site_ref,'')=current_setting('app.site_id',true)
+     AND ((state='pending' AND maker_ref=current_setting('app.subject_id',true)
+           AND operation=current_setting('app.operation',true))
+          OR (state<>'pending' AND checker_ref=current_setting('app.subject_id',true)
+              AND current_setting('app.operation',true)='admin.approval.execute')
+          OR (state IN ('executed','effect_rejected','stale_authority')
+              AND current_setting('app.admin_execution',true)='true')))
+    OR
+    (state IN ('expired','stale_authority')
+     AND current_setting('app.workload_kind',true)='platform_worker'
+     AND current_setting('app.operation',true)='admin.terminalize')
   );
 
 CREATE POLICY admin_authority_bootstrap_owner_only
@@ -412,25 +558,28 @@ CREATE POLICY admin_approval_decision_insert
 CREATE POLICY admin_post_effect_review_control_plane
   ON platform.admin_post_effect_review
   USING (
-    current_setting('app.workload_kind',true)='admin_workload'
-    AND current_setting('app.actor_kind',true)='operator'
-    AND environment=current_setting('app.environment',true)
-    AND region=current_setting('app.region',true)
-    AND COALESCE(target_site_ref,'')=current_setting('app.site_id',true)
+    (current_setting('app.workload_kind',true)='admin_workload'
+     AND current_setting('app.actor_kind',true)='operator'
+     AND environment=current_setting('app.environment',true)
+     AND region=current_setting('app.region',true)
+     AND COALESCE(target_site_ref,'')=current_setting('app.site_id',true))
+    OR
+    (current_setting('app.workload_kind',true)='platform_worker'
+     AND current_setting('app.operation',true)='admin.terminalize')
   )
   WITH CHECK (
-    current_setting('app.workload_kind',true)='admin_workload'
-    AND current_setting('app.actor_kind',true)='operator'
-    AND environment=current_setting('app.environment',true)
-    AND region=current_setting('app.region',true)
-    AND COALESCE(target_site_ref,'')=current_setting('app.site_id',true)
-    AND (
-      (state='pending' AND maker_ref=current_setting('app.subject_id',true)
-       AND operation=current_setting('app.operation',true))
-      OR
-      (state<>'pending' AND reviewer_ref=current_setting('app.subject_id',true)
-       AND current_setting('app.operation',true)='admin.break-glass.review')
-    )
+    (current_setting('app.workload_kind',true)='admin_workload'
+     AND current_setting('app.actor_kind',true)='operator'
+     AND environment=current_setting('app.environment',true)
+     AND region=current_setting('app.region',true)
+     AND COALESCE(target_site_ref,'')=current_setting('app.site_id',true)
+     AND ((state='pending' AND maker_ref=current_setting('app.subject_id',true)
+           AND operation=current_setting('app.operation',true))
+          OR (state<>'pending' AND reviewer_ref=current_setting('app.subject_id',true)
+              AND current_setting('app.operation',true)='admin.break-glass.review')))
+    OR
+    (state='expired' AND current_setting('app.workload_kind',true)='platform_worker'
+     AND current_setting('app.operation',true)='admin.terminalize')
   );
 
 REVOKE ALL ON
@@ -442,6 +591,7 @@ REVOKE ALL ON
   platform.admin_post_effect_review
 FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.bootstrap_admin_authorities(JSONB, CHAR(64)) FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.apply_admin_authority_change(UUID, JSONB) FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.reject_admin_immutable_mutation() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.guard_admin_approval_transition() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.guard_admin_post_effect_review_transition() FROM PUBLIC;

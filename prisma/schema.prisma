@@ -156,6 +156,7 @@ model AdminPostEffectReview {
   reviewerGeneration        BigInt?   @map("reviewer_generation")
   reviewerAuthorizationEpoch BigInt?  @map("reviewer_authorization_epoch")
   reviewerReason            String?   @map("reviewer_reason")
+  terminalReason            String?   @map("terminal_reason")
   createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   expiresAt                 DateTime  @map("expires_at") @db.Timestamptz(6)
   reviewedAt                DateTime? @map("reviewed_at") @db.Timestamptz(6)

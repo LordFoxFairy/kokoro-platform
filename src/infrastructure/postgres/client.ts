@@ -81,6 +81,23 @@ export interface PlatformTransactionalDatabaseClient
     operation: PlatformInternalOperation,
     work: (transaction: PlatformTransaction) => Promise<Result>,
   ): Promise<Result>;
+  adminExecutionTransaction<Result>(
+    fence: AdminExecutionTransactionFence,
+    work: (transaction: PlatformTransaction) => Promise<Result>,
+  ): Promise<Result>;
+}
+
+export interface AdminExecutionTransactionFence {
+  readonly operation: string;
+  readonly siteRef: string | null;
+  readonly environment: string;
+  readonly region: string;
+  readonly makerRef: string;
+  readonly makerGeneration: bigint;
+  readonly makerAuthorizationEpoch: bigint;
+  readonly checkerRef: string;
+  readonly checkerGeneration: bigint;
+  readonly checkerAuthorizationEpoch: bigint;
 }
 
 export type PlatformInternalOperation =
@@ -290,6 +307,58 @@ export function createPlatformDatabaseClient(
         },
       );
     },
+    adminExecutionTransaction: async <Result>(
+      fence: AdminExecutionTransactionFence,
+      work: (transaction: PlatformTransaction) => Promise<Result>,
+    ) => {
+      if (config.role !== "worker") throw new Error("ADMIN_EXECUTION_ROLE_FORBIDDEN");
+      assertAdminExecutionFence(fence);
+      return prisma.$transaction(
+        async (databaseTransaction) => {
+          await databaseTransaction.$queryRawUnsafe(
+            `SELECT set_config('app.operation',$1,true),
+                    set_config('app.site_id',$2,true),
+                    set_config('app.environment',$3,true),
+                    set_config('app.region',$4,true),
+                    set_config('app.workload_kind','platform_worker',true),
+                    set_config('app.actor_kind','operator',true),
+                    set_config('app.subject_id',$5,true),
+                    set_config('app.subject_generation',$6,true),
+                    set_config('app.admin_execution','true',true),
+                    set_config('app.admin_maker_ref',$7,true),
+                    set_config('app.admin_maker_generation',$8,true),
+                    set_config('app.admin_maker_authorization_epoch',$9,true),
+                    set_config('app.admin_checker_authorization_epoch',$10,true)`,
+            fence.operation,
+            fence.siteRef ?? "",
+            fence.environment,
+            fence.region,
+            fence.checkerRef,
+            fence.checkerGeneration.toString(),
+            fence.makerRef,
+            fence.makerGeneration.toString(),
+            fence.makerAuthorizationEpoch.toString(),
+            fence.checkerAuthorizationEpoch.toString(),
+          );
+          const lease = issuePlatformTransaction({
+            query: (statement, values = []) =>
+              databaseTransaction.$queryRawUnsafe(statement, ...values),
+            execute: (statement, values = []) =>
+              databaseTransaction.$executeRawUnsafe(statement, ...values),
+          });
+          try {
+            return await work(lease.transaction);
+          } finally {
+            revokePlatformTransaction(lease);
+          }
+        },
+        {
+          isolationLevel: config.transaction.isolationLevel,
+          maxWait: config.transaction.maxWaitMs,
+          timeout: config.transaction.timeoutMs,
+        },
+      );
+    },
     transaction: async <Result>(
       fence: Parameters<PlatformTransactionHost["transaction"]>[0],
       work: Parameters<PlatformTransactionHost["transaction"]>[1],
@@ -348,6 +417,24 @@ export function createPlatformDatabaseClient(
   };
 }
 
+function assertAdminExecutionFence(fence: AdminExecutionTransactionFence): void {
+  for (const value of [fence.operation, fence.environment, fence.region, fence.makerRef,
+    fence.checkerRef]) {
+    if (value.length < 1 || value.length > 128 || /[\u0000-\u001f\u007f]/u.test(value)) {
+      throw new Error("ADMIN_EXECUTION_FENCE_INVALID");
+    }
+  }
+  if (fence.siteRef !== null && (fence.siteRef.length < 1 || fence.siteRef.length > 128 ||
+    /[\u0000-\u001f\u007f]/u.test(fence.siteRef))) {
+    throw new Error("ADMIN_EXECUTION_FENCE_INVALID");
+  }
+  if (fence.makerRef === fence.checkerRef || fence.makerGeneration < 1n ||
+    fence.makerAuthorizationEpoch < 1n || fence.checkerGeneration < 1n ||
+    fence.checkerAuthorizationEpoch < 1n) {
+    throw new Error("ADMIN_EXECUTION_FENCE_INVALID");
+  }
+}
+
 interface RuntimeIdentity {
   currentUser: string;
   currentDatabase: string;
@@ -378,6 +465,7 @@ interface RuntimeIdentity {
   canExecuteModelDecisionProjection: boolean;
   canExecuteModelAvailabilityReport: boolean;
   canExecuteCreditScopePolicy: boolean;
+  canExecuteAdminAuthorityChange: boolean;
   hasRequiredModelOptionFunctions: boolean;
   canSelectModelCatalogTable: boolean;
   canReadModelSensitiveColumn: boolean;
@@ -544,6 +632,8 @@ const RUNTIME_IDENTITY_SQL = `
            AS "canExecuteModelAvailabilityReport",
          has_function_privilege(current_user, 'platform.valid_credit_scope_policy(jsonb)', 'EXECUTE')
            AS "canExecuteCreditScopePolicy",
+         has_function_privilege(current_user, 'platform.apply_admin_authority_change(uuid,jsonb)', 'EXECUTE')
+           AS "canExecuteAdminAuthorityChange",
          CASE WHEN $2='api' THEN
            has_function_privilege(current_user,'platform.resolve_product_model_option_catalog(text,text)','EXECUTE')
          WHEN $2='admin' THEN
@@ -884,8 +974,10 @@ const RUNTIME_IDENTITY_SQL = `
                  to_regprocedure('platform.resolve_product_model_option_catalog(text,text)'),
                  to_regprocedure('platform.valid_credit_scope_policy(jsonb)')
                ]))
-               OR ($2 = 'worker' AND candidate_function.oid =
-                 to_regprocedure('platform.report_model_provider_availability(uuid,text,text,text,bigint,text,timestamptz,text)'))
+               OR ($2 = 'worker' AND candidate_function.oid = ANY(ARRAY[
+                 to_regprocedure('platform.report_model_provider_availability(uuid,text,text,text,bigint,text,timestamptz,text)'),
+                 to_regprocedure('platform.apply_admin_authority_change(uuid,jsonb)')
+               ]))
                OR candidate_function.oid = ANY(ARRAY[
                  to_regprocedure('platform.model_identifier_is_valid(text)'),
                  to_regprocedure('platform.model_text_is_valid(text)'),
@@ -941,6 +1033,7 @@ function validRuntimeIdentity(
     identity.canExecuteModelDecisionProjection === (config.role === "api") &&
     identity.canExecuteModelAvailabilityReport === (config.role === "worker") &&
     identity.canExecuteCreditScopePolicy === (config.role === "api" || config.role === "admin") &&
+    identity.canExecuteAdminAuthorityChange === (config.role === "worker") &&
     identity.hasRequiredModelOptionFunctions &&
     !identity.canSelectModelCatalogTable &&
     !identity.canReadModelSensitiveColumn &&

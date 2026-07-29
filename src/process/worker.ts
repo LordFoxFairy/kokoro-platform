@@ -10,6 +10,10 @@ import { createAuthorizationRetentionCycle } from "../modules/authorization/infr
 import { createCommerceOutboxReconciliationCycle, HmacHttpOutboxDeliveryTransport } from
   "../modules/commerce/infrastructure/postgres/commerce-outbox-reconciler.js";
 import { createSiteRuntimeWorkerProductionComposition } from "./site-runtime-worker-composition.js";
+import { createAdminTerminalizerCycle } from
+  "../modules/admin-control/application/admin-terminalizer.js";
+import { createAdminWorkerExecutionCycle } from
+  "../modules/admin-control/infrastructure/postgres/admin-worker-composition.js";
 
 export interface PlatformWorkerProcessStatus {
   readonly state: PlatformProcessState;
@@ -232,13 +236,24 @@ export async function runPlatformWorkerMain(): Promise<void> {
     workerId: process.env.PLATFORM_WORKER_ID ?? `platform-worker-${process.pid}`,
   });
   const siteRuntime = await createSiteRuntimeWorkerProductionComposition({ database });
+  const terminalizeAdmin = createAdminTerminalizerCycle({ database });
+  const executeAdmin = createAdminWorkerExecutionCycle({
+    database,
+    workerId: process.env.PLATFORM_WORKER_ID ?? `platform-worker-${process.pid}`,
+  });
   const worker = createPlatformWorkerProcess({
     database,
-    runOneCycle: async (context) => { await Promise.all([
-      authorizationRetention(context),
-      commerceOutbox(context),
-      siteRuntime.runOneCycle(context),
-    ]); },
+    runOneCycle: async (context) => {
+      await Promise.all([
+        authorizationRetention(context),
+        commerceOutbox(context),
+        siteRuntime.runOneCycle(context),
+        (async () => {
+          await terminalizeAdmin(context);
+          await executeAdmin(context);
+        })(),
+      ]);
+    },
     stopClaiming: siteRuntime.stopClaiming,
     returnLease: siteRuntime.returnLease,
     onCycleError: (error) => console.error("Platform Worker cycle failed", error),

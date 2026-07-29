@@ -16,7 +16,7 @@ export interface AdminCommandDefinition<CommandId extends string = string> {
 export interface AdminOperatorAuthority {
   readonly operatorRef: string;
   readonly operatorGeneration: bigint;
-  readonly state: "active" | "suspended";
+  readonly state: "active" | "suspended" | "revoked";
   readonly permissions: readonly string[];
   readonly siteScopes: readonly string[];
   readonly environments: readonly string[];

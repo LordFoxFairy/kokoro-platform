@@ -281,6 +281,9 @@ async function grantFoundationPrivileges(
     await client.query(
       `REVOKE ALL ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT), platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID), platform.report_model_provider_availability(UUID, TEXT, TEXT, TEXT, BIGINT, TEXT, TIMESTAMPTZ, TEXT), platform.load_model_option_inventory(TEXT), platform.load_model_option_revisions(TEXT[]), platform.materialize_legacy_model_options(UUID, TEXT, TEXT, TEXT, TEXT, JSONB, JSONB, TEXT), platform.publish_site_release_model_catalog(UUID, JSONB, TEXT), platform.resolve_product_model_option_catalog(TEXT, TEXT) FROM ${identifier}`,
     );
+    await client.query(
+      `REVOKE ALL ON FUNCTION platform.bootstrap_admin_authorities(JSONB, CHAR(64)), platform.apply_admin_authority_change(UUID, JSONB) FROM ${identifier}`,
+    );
     if (role === apiRole) {
       await client.query(
         `GRANT SELECT ON TABLE ${KERNEL_TABLES}, ${AUTHORIZATION_TABLES}, ${IDENTITY_TABLES}, ${COMMERCE_TABLES} TO ${identifier}`,
@@ -345,6 +348,9 @@ async function grantFoundationPrivileges(
       );
       await client.query(
         `GRANT EXECUTE ON FUNCTION platform.report_model_provider_availability(UUID, TEXT, TEXT, TEXT, BIGINT, TEXT, TIMESTAMPTZ, TEXT) TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT EXECUTE ON FUNCTION platform.apply_admin_authority_change(UUID, JSONB) TO ${identifier}`,
       );
     } else {
       await client.query(
@@ -614,6 +620,7 @@ async function assertPostMigrationAuthority(
         row.canExecuteModelDecisionProjection !== (row.roleName === apiRole) ||
         row.canExecuteModelAvailabilityReport !== (row.roleName === workerRole) ||
         row.canExecuteCreditScopePolicy !== (row.roleName === apiRole || row.roleName === adminRole) ||
+        row.canExecuteAdminAuthorityChange !== (row.roleName === workerRole) ||
         row.hasRequiredModelOptionFunctions !== true ||
         row.canSelectModelCatalogTable !== false ||
         row.canReadModelSensitiveColumn !== false ||
@@ -796,6 +803,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            AS "canExecuteModelAvailabilityReport"
          ,has_function_privilege(runtime_role.rolname, 'platform.valid_credit_scope_policy(jsonb)', 'EXECUTE')
            AS "canExecuteCreditScopePolicy"
+         ,has_function_privilege(runtime_role.rolname, 'platform.apply_admin_authority_change(uuid,jsonb)', 'EXECUTE')
+           AS "canExecuteAdminAuthorityChange"
          ,CASE WHEN runtime_role.rolname=$1 THEN
             has_function_privilege(runtime_role.rolname,'platform.resolve_product_model_option_catalog(text,text)','EXECUTE')
           WHEN runtime_role.rolname=$4 THEN
@@ -1142,8 +1151,10 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                  to_regprocedure('platform.resolve_product_model_option_catalog(text,text)'),
                  to_regprocedure('platform.valid_credit_scope_policy(jsonb)')
                ]))
-               OR (runtime_role.rolname = $3 AND candidate_function.oid =
-                 to_regprocedure('platform.report_model_provider_availability(uuid,text,text,text,bigint,text,timestamptz,text)'))
+               OR (runtime_role.rolname = $3 AND candidate_function.oid = ANY(ARRAY[
+                 to_regprocedure('platform.report_model_provider_availability(uuid,text,text,text,bigint,text,timestamptz,text)'),
+                 to_regprocedure('platform.apply_admin_authority_change(uuid,jsonb)')
+               ]))
                OR candidate_function.oid = ANY(ARRAY[
                  to_regprocedure('platform.model_identifier_is_valid(text)'),
                  to_regprocedure('platform.model_text_is_valid(text)'),

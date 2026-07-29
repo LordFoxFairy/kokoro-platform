@@ -212,6 +212,48 @@ export class PostgresAdminAuthorityRepository implements
         input.occurredAt],
     );
   }
+
+  async terminalizeApprovals(
+    transaction: PlatformTransaction,
+    now: string,
+  ): Promise<number> {
+    return resolvePlatformTransaction(transaction).execute(
+      `UPDATE platform.admin_approval approval
+       SET state=CASE WHEN approval.expires_at<=$1::timestamptz THEN 'expired'
+                      ELSE 'stale_authority' END,
+           revision=approval.revision+1,
+           result=jsonb_build_object(
+             'code',CASE WHEN approval.expires_at<=$1::timestamptz
+                         THEN 'ADMIN_APPROVAL_EXPIRED' ELSE 'ADMIN_APPROVAL_MAKER_STALE' END),
+           result_digest=CASE WHEN approval.expires_at<=$1::timestamptz
+             THEN 'ee06a990e905cdfb6b3681904c85b20387bd68012957cfd966d673a69f47805d'
+             ELSE '954a1ad9a6da7dbd16c69e46df052e8915ab2b2fac969b18fec7ff64f84805c6' END,
+           terminal_reason=CASE WHEN approval.expires_at<=$1::timestamptz
+                                THEN 'ADMIN_APPROVAL_EXPIRED' ELSE 'ADMIN_APPROVAL_MAKER_STALE' END,
+           updated_at=$1::timestamptz
+       FROM platform.admin_operator_authority maker
+       WHERE approval.state='pending'
+         AND maker.operator_ref=approval.maker_ref
+         AND maker.operator_generation=approval.maker_generation
+         AND (approval.expires_at<=$1::timestamptz OR maker.state<>'active'
+              OR maker.authorization_epoch<>approval.maker_authorization_epoch
+              OR maker.expires_at<=$1::timestamptz)`,
+      [now],
+    );
+  }
+
+  async terminalizePostEffectReviews(
+    transaction: PlatformTransaction,
+    now: string,
+  ): Promise<number> {
+    return resolvePlatformTransaction(transaction).execute(
+      `UPDATE platform.admin_post_effect_review
+       SET state='expired',revision=revision+1,terminal_reason='ADMIN_POST_EFFECT_REVIEW_EXPIRED',
+           reviewed_at=$1::timestamptz
+       WHERE state='pending' AND expires_at<=$1::timestamptz`,
+      [now],
+    );
+  }
 }
 
 interface OperatorRow extends Record<string, unknown> {
@@ -256,7 +298,9 @@ interface ApprovalRow extends Record<string, unknown> {
 }
 
 function state(value: string): AdminOperatorAuthority["state"] {
-  if (value !== "active" && value !== "suspended") throw new Error("ADMIN_OPERATOR_ROW_INVALID");
+  if (value !== "active" && value !== "suspended" && value !== "revoked") {
+    throw new Error("ADMIN_OPERATOR_ROW_INVALID");
+  }
   return value;
 }
 
