@@ -106,8 +106,11 @@ type PreparedCreditAccount = Readonly<{
 type PreparedSubscription = Readonly<{
   subscriptionId: string | null;
   state: "active" | "expired" | "revoked" | null;
+  planRef: string | null;
   activeTermEndsAt: string | null;
 }>;
+
+type PreparedSubscriptionTerm = Readonly<{ startsAt: string; endsAt: string }>;
 
 export class PostgresRedemptionConfirmationRepository implements RedemptionConfirmationRepository {
   readonly #commerce: CommerceFulfillmentWriter;
@@ -132,7 +135,7 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
     const preview = rows[0];
     if (preview === undefined || rows.length !== 1) return rejected();
     const safeTerms = redemptionSafeTermsSchema.parse(preview.safeTerms);
-    if (!matchesConfirmation(preview, safeTerms, input)) return rejected();
+    if (!matchesConfirmationBinding(preview, safeTerms, input)) return rejected();
     const sql = resolvePlatformTransaction(transaction);
     locks.enter("program_availability");
     const programs = await sql.query<ProgramConfirmationRow>(PROGRAM_FOR_CONFIRM_SQL, [
@@ -140,8 +143,15 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
       input.siteId,
     ]);
     const program = programs[0];
-    if (program === undefined || programs.length !== 1 || !programMatches(program, preview, safeTerms, input.confirmedAt)) {
-      return rejected();
+    if (program === undefined || programs.length !== 1) return rejected();
+    let catalogPlan: Readonly<{ planRef: string; state: "active" | "disabled" }> | null = null;
+    if (safeTerms.planRef !== null) {
+      const plans = await sql.query<Record<string, unknown> & { planRef: string; state: "active" | "disabled" }>(
+        PLAN_FOR_CONFIRM_SQL,
+        [input.siteId, safeTerms.planRef],
+      );
+      if (plans.length !== 1) return rejected();
+      catalogPlan = Object.freeze(plans[0]!);
     }
     locks.enter("batch_availability");
     const batches = await sql.query<Record<string, unknown> & {
@@ -151,9 +161,7 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
       redemptionProgramRevisionRef: string;
     }>(BATCH_FOR_CONFIRM_SQL, [preview.batchRef, input.siteId]);
     const batch = batches[0];
-    if (batch === undefined || batches.length !== 1 || batch.state !== "active" ||
-      batch.redemptionProgramRevisionRef !== preview.redemptionProgramRevisionRef ||
-      !activeAt(batch.startsAt, batch.endsAt, input.confirmedAt)) return rejected();
+    if (batch === undefined || batches.length !== 1) return rejected();
     locks.enter("code");
     const codes = await sql.query<Record<string, unknown> & {
       state: "available" | "claimed" | "void";
@@ -161,8 +169,7 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
       safeCodeFingerprint: string;
     }>(CODE_FOR_CONFIRM_SQL, [preview.codeRef, input.siteId]);
     const code = codes[0];
-    if (code === undefined || codes.length !== 1 || code.state !== "available" || code.batchRef !== preview.batchRef ||
-      code.safeCodeFingerprint !== preview.safeCodeFingerprint) return rejected();
+    if (code === undefined || codes.length !== 1) return rejected();
     locks.enter("billing_account");
     const accounts = await sql.query<Record<string, unknown> & {
       accountState: "active" | "suspended" | "closed";
@@ -176,9 +183,7 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
       preview.redemptionProgramRevisionRef,
     ]);
     const account = accounts[0];
-    if (account === undefined || accounts.length !== 1 || account.accountState !== "active" ||
-      account.membershipState !== "active" || account.subjectGeneration.toString() !== input.subjectGeneration ||
-      BigInt(account.redemptionCount) >= BigInt(program.maxRedemptionsPerAccount)) return rejected();
+    if (account === undefined || accounts.length !== 1) return rejected();
     const outputs = await sql.query<OutputRow>(OUTPUT_FOR_CONFIRM_SQL, [
       preview.fulfillmentProgramRevisionRef,
       input.siteId,
@@ -193,19 +198,17 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
       const subscriptions = await sql.query<Record<string, unknown> & {
         subscriptionId: string;
         state: "active" | "expired" | "revoked";
-        activeTermEndsAt: Date | string | null;
-      }>(SUBSCRIPTION_FOR_CONFIRM_SQL, [input.siteId, preview.billingAccountId, program.stackingScope, input.confirmedAt]);
+        planRef: string;
+      }>(SUBSCRIPTION_FOR_CONFIRM_SQL, [input.siteId, preview.billingAccountId, program.stackingScope]);
       if (subscriptions.length > 1) throw new Error("SUBSCRIPTION_AUTHORITY_AMBIGUOUS");
       const storedSubscription = subscriptions[0];
+      if (storedSubscription !== undefined && storedSubscription.planRef !== safeTerms.planRef) return rejected();
       subscription = Object.freeze({
         subscriptionId: storedSubscription?.subscriptionId ?? null,
         state: storedSubscription?.state ?? null,
-        activeTermEndsAt: storedSubscription?.activeTermEndsAt === null || storedSubscription?.activeTermEndsAt === undefined
-          ? null : instant(storedSubscription.activeTermEndsAt),
+        planRef: storedSubscription?.planRef ?? null,
+        activeTermEndsAt: null,
       });
-      if (!subscriptionMatchesPreview(subscription, preview, safeTerms, program.termSeconds, input.confirmedAt)) {
-        return rejected();
-      }
       locks.enter("term_allocation");
     }
     let creditAccounts = new Map<string, PreparedCreditAccount>();
@@ -218,21 +221,53 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
       }
     }
 
+    const effectRows = await sql.query<Record<string, unknown> & { effectAt: Date | string }>(
+      `SELECT clock_timestamp() AS "effectAt"`,
+    );
+    const effectAt = effectRows.length === 1 && effectRows[0] !== undefined ? instant(effectRows[0].effectAt) : null;
+    if (effectAt === null ||
+      !matchesConfirmationEffect(preview, effectAt) ||
+      !programMatches(program, preview, safeTerms, effectAt) ||
+      !planMatches(catalogPlan, safeTerms) ||
+      batch.state !== "active" || batch.redemptionProgramRevisionRef !== preview.redemptionProgramRevisionRef ||
+      !activeAt(batch.startsAt, batch.endsAt, effectAt) ||
+      code.state !== "available" || code.batchRef !== preview.batchRef ||
+      code.safeCodeFingerprint !== preview.safeCodeFingerprint ||
+      account.accountState !== "active" || account.membershipState !== "active" ||
+      account.subjectGeneration.toString() !== input.subjectGeneration ||
+      BigInt(account.redemptionCount) >= BigInt(program.maxRedemptionsPerAccount)) return rejected();
+
+    if (subscription?.subscriptionId !== null && subscription !== null) {
+      const activeTerms = await sql.query<Record<string, unknown> & { activeTermEndsAt: Date | string | null }>(
+        ACTIVE_SUBSCRIPTION_TERM_SQL,
+        [subscription.subscriptionId, input.siteId, effectAt],
+      );
+      if (activeTerms.length !== 1) throw new Error("SUBSCRIPTION_TERM_AUTHORITY_INVALID");
+      subscription = Object.freeze({
+        ...subscription,
+        activeTermEndsAt: activeTerms[0]!.activeTermEndsAt === null ? null : instant(activeTerms[0]!.activeTermEndsAt),
+      });
+    }
+    const subscriptionTerm = subscription === null ? null : resolveSubscriptionTerm(
+      subscription, preview, safeTerms, program.termSeconds!, effectAt,
+    );
+    if ((subscription === null) !== (subscriptionTerm === null)) return rejected();
+
     const claimedCode = await sql.execute(
       `UPDATE platform.commerce_redeem_code SET state='claimed',claimed_by_command_id=$3,claimed_at=$4::timestamptz
        WHERE code_ref=$1::uuid AND site_ref=$2 AND state='available'`,
-      [preview.codeRef, input.siteId, input.commandId, input.confirmedAt],
+      [preview.codeRef, input.siteId, input.commandId, effectAt],
     );
     if (claimedCode !== 1) return rejected();
     const consumedPreview = await sql.execute(
       `UPDATE platform.commerce_redemption_preview SET state='consumed',consumed_by_command_id=$3,consumed_at=$4::timestamptz
        WHERE preview_ref=$1::uuid AND site_ref=$2 AND state='live' AND expires_at>$4::timestamptz`,
-      [preview.previewRef, input.siteId, input.commandId, input.confirmedAt],
+      [preview.previewRef, input.siteId, input.commandId, effectAt],
     );
     if (consumedPreview !== 1) throw new Error("REDEMPTION_PREVIEW_CLAIM_CONFLICT");
 
     let referenceOrdinal = 0;
-    const nextRef = (purpose: string) => this.#reference(purpose, referenceOrdinal++, Date.parse(input.confirmedAt));
+    const nextRef = (purpose: string) => this.#reference(purpose, referenceOrdinal++, Date.parse(effectAt));
     const redemptionId = nextRef("redemption");
     const fulfillmentId = nextRef("fulfillment");
     let subscriptionId = subscription?.subscriptionId ?? null;
@@ -251,7 +286,7 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
         const reactivated = await sql.execute(
           `UPDATE platform.commerce_subscription SET state='active',aggregate_version=aggregate_version+1,updated_at=$3::timestamptz
            WHERE subscription_ref=$1::uuid AND site_ref=$2 AND state='expired'`,
-          [subscriptionId, input.siteId, input.confirmedAt],
+          [subscriptionId, input.siteId, effectAt],
         );
         if (reactivated !== 1) throw new Error("SUBSCRIPTION_REACTIVATION_CONFLICT");
       }
@@ -282,10 +317,10 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
        VALUES ($1::uuid,$2,$3,$4,$5::uuid,$6::uuid,$7,$8,$9,$10,'executing',$11::timestamptz)`,
       [redemptionId, input.commandId, input.siteId, preview.billingAccountId, preview.codeRef, preview.batchRef,
         preview.redemptionProgramRevisionRef, safeTerms.productVersionRef, safeTerms.planVersionRef,
-        preview.safeCodeFingerprint, input.confirmedAt],
+        preview.safeCodeFingerprint, effectAt],
     );
     if (inserted !== 1) throw new Error("REDEMPTION_INSERT_FAILED");
-    const plan = fulfillmentPlan(outputs);
+    const outputPlan = fulfillmentPlan(outputs);
     await this.#commerce.startFulfillment(transaction, {
       fulfillmentId,
       commandId: input.commandId,
@@ -301,11 +336,12 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
       fulfillmentProgramVersion: preview.fulfillmentProgramRevisionRef,
       outputPlanDigest: preview.outputPlanDigest,
     });
-    await this.#commerce.recordExpectedOutputPlan(transaction, fulfillmentId, plan);
+    await this.#commerce.recordExpectedOutputPlan(transaction, fulfillmentId, outputPlan);
     const materialized = await this.#materializeOutputs(transaction, {
       input, preview, safeTerms, outputs, redemptionId, nextRef, creditAccounts, subscriptionId,
+      subscriptionTerm, effectAt,
     });
-    await this.#commerce.recordActualOutputs(transaction, fulfillmentId, materialized.actual, plan);
+    await this.#commerce.recordActualOutputs(transaction, fulfillmentId, materialized.actual, outputPlan);
     const outputSetDigest = digest({ version: 1, outputs: materialized.receipts });
     const fulfillmentResultDigest = digest({
       version: 1,
@@ -322,7 +358,7 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
       `UPDATE platform.commerce_redemption
        SET fulfillment_ref=$2::uuid,state='fulfilled',redeemed_at=$3::timestamptz,state_observed_at=$3::timestamptz
        WHERE redemption_id=$1::uuid AND site_ref=$4 AND state='executing'`,
-      [redemptionId, fulfillmentId, input.confirmedAt, input.siteId],
+      [redemptionId, fulfillmentId, effectAt, input.siteId],
     );
     if (fulfilled !== 1) throw new Error("REDEMPTION_COMPLETION_CONFLICT");
     for (const termRef of [...input.legalAcceptanceRefs].sort((a, b) => a.localeCompare(b, "en"))) {
@@ -334,14 +370,14 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
         commandId: input.commandId,
         workloadIdentityId: input.workloadIdentityId,
         authorityReleaseRef: input.authorityReleaseRef,
-        acceptedAt: input.confirmedAt,
+        acceptedAt: effectAt,
       });
       await sql.execute(
         `INSERT INTO platform.commerce_redemption_legal_acceptance
          (redemption_id,site_ref,term_ref,command_id,workload_identity_id,site_release_ref,accepted_at,evidence_digest)
          VALUES ($1::uuid,$2,$3,$4,$5,$6,$7::timestamptz,$8)`,
         [redemptionId, input.siteId, termRef, input.commandId, input.workloadIdentityId,
-          input.authorityReleaseRef, input.confirmedAt, evidenceDigest],
+          input.authorityReleaseRef, effectAt, evidenceDigest],
       );
     }
     const eventId = nextRef("outbox");
@@ -352,7 +388,7 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
       commandId: input.commandId,
       fulfillmentId,
       outputSetDigest,
-      redeemedAt: input.confirmedAt,
+      redeemedAt: effectAt,
     });
     const eventDigest = digest(eventPayload);
     await this.#outbox.enqueue(transaction, {
@@ -377,8 +413,8 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
       kind: "succeeded" as const,
       receipt: Object.freeze({
         commandId: input.commandId,
-        commandReceivedAt: input.confirmedAt,
-        commandUpdatedAt: input.confirmedAt,
+        commandReceivedAt: effectAt,
+        commandUpdatedAt: effectAt,
         redemptionId,
         fulfillmentRef: fulfillmentId,
         outputSetDigest,
@@ -387,10 +423,10 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
         planVersionRef: safeTerms.planVersionRef,
         productRef: safeTerms.productRef,
         productVersionRef: safeTerms.productVersionRef,
-        redeemedAt: input.confirmedAt,
+        redeemedAt: effectAt,
         safeCodeFingerprint: preview.safeCodeFingerprint,
         state: "fulfilled" as const,
-        stateObservedAt: input.confirmedAt,
+        stateObservedAt: effectAt,
         reversalRefs: Object.freeze([]),
       }),
     });
@@ -483,6 +519,8 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
       nextRef: (purpose: string) => string;
       creditAccounts: ReadonlyMap<string, PreparedCreditAccount>;
       subscriptionId: string | null;
+      subscriptionTerm: PreparedSubscriptionTerm | null;
+      effectAt: string;
     }>,
   ): Promise<Readonly<{ receipts: RedemptionOutputReceipt[]; actual: ActualFulfillmentOutput[] }>> {
     const sql = resolvePlatformTransaction(transaction);
@@ -495,7 +533,7 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
             throw new Error("REDEMPTION_OUTPUT_INVALID");
           }
           const outputRef = context.nextRef("entitlement_grant");
-          const expiresAt = expiry(instant(context.preview.createdAt), output.entitlementExpiresAfterSeconds);
+          const expiresAt = expiry(context.effectAt, output.entitlementExpiresAfterSeconds);
           await sql.execute(
             `INSERT INTO platform.commerce_entitlement_grant
              (entitlement_grant_ref,site_ref,billing_account_ref,entitlement_template_revision_ref,
@@ -504,7 +542,7 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
             [outputRef, context.input.siteId, context.preview.billingAccountId,
               output.entitlementTemplateRevisionRef, output.capabilityKey, output.safeLabel,
               outputSourceRef(context.redemptionId, output.outputLineId, occurrence),
-              context.input.confirmedAt, expiresAt],
+              context.effectAt, expiresAt],
           );
           receipts.push(Object.freeze({ kind: "entitlement_grant", outputLineId: output.outputLineId,
             resourceRef: outputRef, templateRevisionRef: output.entitlementTemplateRevisionRef }));
@@ -524,7 +562,7 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
           const outputRef = context.nextRef("credit_grant");
           const journalRef = context.nextRef("grant_issue_journal");
           const sourceRef = outputSourceRef(context.redemptionId, output.outputLineId, occurrence);
-          const expiresAt = expiry(instant(context.preview.createdAt), output.creditExpiresAfterSeconds);
+          const expiresAt = expiry(context.effectAt, output.creditExpiresAfterSeconds);
           const created = await sql.execute(
             `INSERT INTO platform.credit_grant
              (credit_grant_id,credit_account_ref,site_ref,billing_account_ref,credit_program_revision_ref,
@@ -535,7 +573,7 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
             [outputRef, creditAccount.creditAccountId, context.input.siteId, context.preview.billingAccountId,
               output.creditProgramRevisionRef, sourceRef, journalRef, output.bucketClass, output.unit,
               output.liabilityMerchantAccountId, output.amount, output.burnPriority, JSON.stringify(output.scopePolicy),
-              context.input.confirmedAt, expiresAt],
+              context.effectAt, expiresAt],
           );
           if (created !== 1) throw new Error("CREDIT_GRANT_CREATE_FAILED");
           await recordGrantIssueJournal(sql, {
@@ -547,15 +585,14 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
             commandId: context.input.commandId,
             creditGrantId: outputRef,
             amount: output.amount,
-            occurredAt: context.input.confirmedAt,
+            occurredAt: context.effectAt,
           });
           receipts.push(Object.freeze({ kind: "credit_grant", outputLineId: output.outputLineId,
             resourceRef: outputRef, templateRevisionRef: output.creditProgramRevisionRef }));
           actual.push(Object.freeze({ outputLineId: output.outputLineId, occurrence,
             templateRevision: output.creditProgramRevisionRef, outputKind: "credit_grant", outputRef }));
         } else {
-          if (output.planVersionRef === null || context.subscriptionId === null ||
-            context.safeTerms.term.startsAt === null || context.safeTerms.term.endsAt === null) {
+          if (output.planVersionRef === null || context.subscriptionId === null || context.subscriptionTerm === null) {
             throw new Error("REDEMPTION_OUTPUT_INVALID");
           }
           const outputRef = context.nextRef("subscription_term");
@@ -566,7 +603,7 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
              VALUES ($1::uuid,$2::uuid,$3,$4,$5,'redemption',$6,$7::timestamptz,$8::timestamptz)`,
             [outputRef, context.subscriptionId, context.input.siteId, context.preview.billingAccountId,
               output.planVersionRef, outputSourceRef(context.redemptionId, output.outputLineId, occurrence),
-              context.safeTerms.term.startsAt, context.safeTerms.term.endsAt],
+              context.subscriptionTerm.startsAt, context.subscriptionTerm.endsAt],
           );
           if (created !== 1) throw new Error("SUBSCRIPTION_TERM_CREATE_FAILED");
           receipts.push(Object.freeze({ kind: "subscription_term", outputLineId: output.outputLineId,
@@ -601,13 +638,12 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
   }
 }
 
-function matchesConfirmation(
+function matchesConfirmationBinding(
   preview: PreviewConfirmationRow,
   safeTerms: RedemptionSafeTerms,
   input: Parameters<RedemptionConfirmationRepository["confirmRedemption"]>[1],
 ): boolean {
   return preview.state === "live" &&
-    Date.parse(instant(preview.expiresAt)) > Date.parse(input.confirmedAt) &&
     preview.previewRef === input.previewRef && preview.siteId === input.siteId &&
     preview.subjectId === input.subjectId && preview.subjectGeneration.toString() === input.subjectGeneration &&
     preview.credentialKeyRevision === input.credentialKeyRevision && preview.credentialDigest === input.credentialDigest &&
@@ -630,6 +666,20 @@ function matchesConfirmation(
       },
       expiresAt: instant(preview.expiresAt),
     });
+}
+
+function matchesConfirmationEffect(preview: PreviewConfirmationRow, effectAt: string): boolean {
+  return preview.state === "live" && Date.parse(instant(preview.expiresAt)) > Date.parse(effectAt);
+}
+
+function planMatches(
+  plan: Readonly<{ planRef: string; state: "active" | "disabled" }> | null,
+  safeTerms: RedemptionSafeTerms,
+): boolean {
+  if (safeTerms.planRef === null || safeTerms.planVersionRef === null) {
+    return safeTerms.planRef === null && safeTerms.planVersionRef === null && plan === null;
+  }
+  return plan !== null && plan.planRef === safeTerms.planRef && plan.state === "active";
 }
 
 function programMatches(
@@ -701,23 +751,35 @@ function outputsMatchPreview(
     (safeTerms.term.action === "none" ? subscriptionTerms === 0 : subscriptionTerms === 1);
 }
 
-function subscriptionMatchesPreview(
+function resolveSubscriptionTerm(
   subscription: PreparedSubscription,
   preview: PreviewConfirmationRow,
   safeTerms: RedemptionSafeTerms,
   termSeconds: bigint | string,
-  confirmedAt: string,
-): boolean {
-  if (subscription.state === "revoked" || safeTerms.term.startsAt === null || safeTerms.term.endsAt === null) return false;
+  effectAt: string,
+): PreparedSubscriptionTerm | null {
+  if (subscription.state === "revoked" || safeTerms.term.startsAt === null || safeTerms.term.endsAt === null ||
+    safeTerms.planRef === null || (subscription.subscriptionId !== null && subscription.planRef !== safeTerms.planRef)) {
+    return null;
+  }
   const startsAt = Date.parse(safeTerms.term.startsAt);
   const endsAt = Date.parse(safeTerms.term.endsAt);
   const duration = BigInt(termSeconds) * 1000n;
-  if (BigInt(endsAt) - BigInt(startsAt) !== duration) return false;
+  if (duration <= 0n || BigInt(endsAt) - BigInt(startsAt) !== duration) return null;
   const activeTermEndsAt = subscription.activeTermEndsAt;
-  if (activeTermEndsAt !== null && Date.parse(activeTermEndsAt) > Date.parse(confirmedAt)) {
-    return safeTerms.term.action === "extend_from_max" && safeTerms.term.startsAt === activeTermEndsAt;
+  let materializedStartsAt: string;
+  if (activeTermEndsAt !== null && Date.parse(activeTermEndsAt) > Date.parse(effectAt)) {
+    if (subscription.state !== "active" || safeTerms.term.action !== "extend_from_max" ||
+      safeTerms.term.startsAt !== activeTermEndsAt) return null;
+    materializedStartsAt = activeTermEndsAt;
+  } else {
+    if (safeTerms.term.startsAt !== instant(preview.createdAt)) return null;
+    materializedStartsAt = effectAt;
   }
-  return safeTerms.term.startsAt === instant(preview.createdAt);
+  return Object.freeze({
+    startsAt: materializedStartsAt,
+    endsAt: expiry(materializedStartsAt, BigInt(termSeconds))!,
+  });
 }
 
 function fulfillmentPlan(outputs: readonly OutputRow[]): readonly FulfillmentOutputLine[] {
@@ -876,7 +938,7 @@ const PROGRAM_FOR_CONFIRM_SQL = `
          availability.ends_at AS "endsAt",program.redemption_program_revision_ref AS "redemptionProgramRevisionRef",
          program.program_digest AS "programDigest",program.max_redemptions_per_account AS "maxRedemptionsPerAccount",
          product.state AS "productState",product.product_ref AS "productRef",
-         product_version.product_version_ref AS "productVersionRef",plan.plan_ref AS "planRef",
+         product_version.product_version_ref AS "productVersionRef",plan_version.plan_ref AS "planRef",
          plan_version.plan_version_ref AS "planVersionRef",product_version.revision_digest AS "productRevisionDigest",
          program.fulfillment_program_revision_ref AS "fulfillmentProgramRevisionRef",
          fulfillment.output_plan_digest AS "outputPlanDigest",plan_version.stacking_scope AS "stackingScope"
@@ -894,10 +956,14 @@ const PROGRAM_FOR_CONFIRM_SQL = `
       AND fulfillment.site_ref=program.site_ref
   LEFT JOIN platform.commerce_catalog_plan_version plan_version
     ON plan_version.plan_version_ref=product_version.plan_version_ref AND plan_version.site_ref=product_version.site_ref
-  LEFT JOIN platform.commerce_catalog_plan plan
-    ON plan.site_ref=plan_version.site_ref AND plan.plan_ref=plan_version.plan_ref
   WHERE availability.redemption_program_revision_ref=$1 AND availability.site_ref=$2
-  FOR UPDATE OF availability`;
+  FOR UPDATE OF availability,product`;
+
+const PLAN_FOR_CONFIRM_SQL = `
+  SELECT plan_ref AS "planRef",state
+  FROM platform.commerce_catalog_plan
+  WHERE site_ref=$1 AND plan_ref=$2
+  FOR UPDATE`;
 
 const BATCH_FOR_CONFIRM_SQL = `
   SELECT state,starts_at AS "startsAt",ends_at AS "endsAt",
@@ -928,20 +994,20 @@ const BILLING_FOR_CONFIRM_SQL = `
 
 const SUBSCRIPTION_FOR_CONFIRM_SQL = `
   SELECT subscription.subscription_ref AS "subscriptionId",subscription.state,
-         active_term.ends_at AS "activeTermEndsAt"
+         subscription.plan_ref AS "planRef"
   FROM platform.commerce_subscription subscription
-  LEFT JOIN LATERAL (
-    SELECT max(term.ends_at) AS ends_at
-    FROM platform.commerce_subscription_term term
-    WHERE term.subscription_ref=subscription.subscription_ref AND term.site_ref=subscription.site_ref
-      AND NOT EXISTS (
-        SELECT 1 FROM platform.commerce_subscription_term_revocation revocation
-        WHERE revocation.subscription_term_ref=term.subscription_term_ref
-          AND revocation.site_ref=term.site_ref AND revocation.effective_at<=$4::timestamptz
-      )
-  ) active_term ON TRUE
   WHERE subscription.site_ref=$1 AND subscription.billing_account_ref=$2 AND subscription.stacking_scope=$3
   FOR UPDATE OF subscription`;
+
+const ACTIVE_SUBSCRIPTION_TERM_SQL = `
+  SELECT max(term.ends_at) AS "activeTermEndsAt"
+  FROM platform.commerce_subscription_term term
+  WHERE term.subscription_ref=$1::uuid AND term.site_ref=$2 AND term.ends_at>$3::timestamptz
+    AND NOT EXISTS (
+      SELECT 1 FROM platform.commerce_subscription_term_revocation revocation
+      WHERE revocation.subscription_term_ref=term.subscription_term_ref
+        AND revocation.site_ref=term.site_ref AND revocation.effective_at<=$3::timestamptz
+    )`;
 
 const OUTPUT_FOR_CONFIRM_SQL = `
   SELECT output.output_line_id AS "outputLineId",output.output_kind AS "outputKind",

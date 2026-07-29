@@ -71,6 +71,7 @@ describe("PostgresRedemptionConfirmationRepository", () => {
         if (statement.includes("FROM platform.commerce_billing_account account")) return [{ accountState: "active",
           membershipState: "active", subjectGeneration: 2n, redemptionCount: 0n }] as never;
         if (statement.includes("FROM platform.commerce_fulfillment_program_output")) return [output] as never;
+        if (statement.includes("clock_timestamp()")) return [{ effectAt: new Date("2026-07-29T01:00:00.000Z") }] as never;
         return [];
       },
       execute: async (statement) => { statements.push(statement); return 1; },
@@ -112,6 +113,7 @@ describe("PostgresRedemptionConfirmationRepository", () => {
 
   it("issues CreditGrant and a balanced double-entry Journal under the standard account authority lock", async () => {
     const statements: string[] = [];
+    const executions: Array<{ statement: string; values: readonly unknown[] }> = [];
     const output = creditOutput();
     const preview = validPreviewRow([output], {
       productRef: "product-1", productVersionRef: "product-v1", productKind: "credit_pack",
@@ -134,9 +136,14 @@ describe("PostgresRedemptionConfirmationRepository", () => {
           membershipState: "active", subjectGeneration: 2n, redemptionCount: 0n }] as never;
         if (statement.includes("FROM platform.commerce_fulfillment_program_output")) return [output] as never;
         if (statement.includes("FROM platform.credit_account")) return [];
+        if (statement.includes("clock_timestamp()")) return [{ effectAt: new Date("2026-07-29T01:00:00.000Z") }] as never;
         return [];
       },
-      execute: async (statement) => { statements.push(statement); return 1; },
+      execute: async (statement, values = []) => {
+        statements.push(statement);
+        executions.push({ statement, values });
+        return 1;
+      },
     });
     const repository = new PostgresRedemptionConfirmationRepository({
       commerce: noOpCommerce(), outbox: { enqueue: async () => undefined }, reference: referenceFactory(),
@@ -156,6 +163,9 @@ describe("PostgresRedemptionConfirmationRepository", () => {
       expect(joined).toContain("INSERT INTO platform.credit_journal_entry");
       expect(joined).toContain("grant_issuance_source");
       expect(joined).toContain("customer_available");
+      const grantInsert = executions.find(({ statement }) => statement.includes("INSERT INTO platform.credit_grant"))!;
+      expect(grantInsert.values[13]).toBe("2026-07-29T01:00:00.000Z");
+      expect(grantInsert.values[14]).toBe("2026-07-30T01:00:00.000Z");
     } finally {
       revokePlatformTransaction(lease);
     }
@@ -178,6 +188,7 @@ describe("PostgresRedemptionConfirmationRepository", () => {
         if (statement.includes("FROM platform.commerce_redemption_program_availability")) return [{
           ...programRow(preview), stackingScope: "plan:pro", termAction: "new_subscription", termSeconds: 86400n,
         }] as never;
+        if (statement.includes("FROM platform.commerce_catalog_plan")) return [{ planRef: "plan-1", state: "active" }] as never;
         if (statement.includes("FROM platform.commerce_code_batch")) return [{ state: "active", startsAt: null,
           endsAt: null, redemptionProgramRevisionRef: preview.redemptionProgramRevisionRef }] as never;
         if (statement.includes("FROM platform.commerce_redeem_code")) return [{ state: "available",
@@ -186,6 +197,7 @@ describe("PostgresRedemptionConfirmationRepository", () => {
           membershipState: "active", subjectGeneration: 2n, redemptionCount: 0n }] as never;
         if (statement.includes("FROM platform.commerce_subscription subscription")) return [];
         if (statement.includes("FROM platform.commerce_fulfillment_program_output")) return [output] as never;
+        if (statement.includes("clock_timestamp()")) return [{ effectAt: new Date("2026-07-29T01:00:00.000Z") }] as never;
         return [];
       },
       execute: async (statement) => { statements.push(statement); return 1; },
@@ -259,6 +271,127 @@ describe("PostgresRedemptionConfirmationRepository", () => {
         commandUpdatedAt: "2026-07-29T01:00:01.000Z", state: "fulfilled",
         outputs: [{ kind: "entitlement_grant", outputLineId: "entitlement" }], reversalRefs: [],
       } });
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("rechecks Preview and availability deadlines against DB time after acquiring claim locks", async () => {
+    const statements: string[] = [];
+    const output = entitlementOutput();
+    const preview = validPreviewRow([output]);
+    const lease = issuePlatformTransaction({
+      query: async (statement) => {
+        statements.push(statement);
+        if (statement.includes("FROM platform.commerce_redemption_preview preview")) return [preview] as never;
+        if (statement.includes("FROM platform.commerce_redemption_program_availability")) return [programRow(preview)] as never;
+        if (statement.includes("FROM platform.commerce_code_batch")) return [{ state: "active", startsAt: null,
+          endsAt: null, redemptionProgramRevisionRef: preview.redemptionProgramRevisionRef }] as never;
+        if (statement.includes("FROM platform.commerce_redeem_code")) return [{ state: "available",
+          batchRef: preview.batchRef, safeCodeFingerprint: preview.safeCodeFingerprint }] as never;
+        if (statement.includes("FROM platform.commerce_billing_account account")) return [{ accountState: "active",
+          membershipState: "active", subjectGeneration: 2n, redemptionCount: 0n }] as never;
+        if (statement.includes("FROM platform.commerce_fulfillment_program_output")) return [output] as never;
+        if (statement.includes("clock_timestamp()")) return [{ effectAt: new Date("2026-07-29T01:05:00.000Z") }] as never;
+        return [];
+      },
+      execute: async (statement) => { statements.push(statement); return 1; },
+    });
+    try {
+      await expect(new PostgresRedemptionConfirmationRepository({
+        commerce: noOpCommerce(), outbox: { enqueue: async () => undefined }, reference: referenceFactory(),
+      }).confirmRedemption(lease.transaction, confirmationInput(), new CommerceLockSequence()))
+        .resolves.toEqual({ kind: "rejected", code: "REDEEM_NOT_ACCEPTED" });
+      expect(statements.filter((statement) => /^\s*(?:INSERT|UPDATE|DELETE)\b/u.test(statement))).toEqual([]);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("locks and rejects a disabled Plan before claiming a subscription Code", async () => {
+    const statements: string[] = [];
+    const output = subscriptionOutput();
+    const preview = validPreviewRow([output], {
+      productRef: "product-1", productVersionRef: "product-v1", productKind: "subscription",
+      safeProductLabel: "Pro", planRef: "plan-1", planVersionRef: "plan-v1", safePlanLabel: "Pro monthly",
+      term: { action: "new_subscription", startsAt: "2026-07-29T00:59:00.000Z",
+        endsAt: "2026-07-30T00:59:00.000Z", automaticRenewal: false },
+      credits: [], entitlements: [], legalTermRefs: ["terms-v1"],
+    });
+    const lease = issuePlatformTransaction({
+      query: async (statement) => {
+        statements.push(statement);
+        if (statement.includes("FROM platform.commerce_redemption_preview preview")) return [preview] as never;
+        if (statement.includes("FROM platform.commerce_redemption_program_availability")) return [{
+          ...programRow(preview), stackingScope: "plan:pro", termAction: "new_subscription", termSeconds: 86400n,
+        }] as never;
+        if (statement.includes("FROM platform.commerce_catalog_plan")) return [{ planRef: "plan-1", state: "disabled" }] as never;
+        if (statement.includes("FROM platform.commerce_code_batch")) return [{ state: "active", startsAt: null,
+          endsAt: null, redemptionProgramRevisionRef: preview.redemptionProgramRevisionRef }] as never;
+        if (statement.includes("FROM platform.commerce_redeem_code")) return [{ state: "available",
+          batchRef: preview.batchRef, safeCodeFingerprint: preview.safeCodeFingerprint }] as never;
+        if (statement.includes("FROM platform.commerce_billing_account account")) return [{ accountState: "active",
+          membershipState: "active", subjectGeneration: 2n, redemptionCount: 0n }] as never;
+        if (statement.includes("FROM platform.commerce_subscription subscription")) return [];
+        if (statement.includes("FROM platform.commerce_fulfillment_program_output")) return [output] as never;
+        if (statement.includes("clock_timestamp()")) return [{ effectAt: new Date("2026-07-29T01:00:00.000Z") }] as never;
+        return [];
+      },
+      execute: async (statement) => { statements.push(statement); return 1; },
+    });
+    try {
+      await expect(new PostgresRedemptionConfirmationRepository({
+        commerce: noOpCommerce(), outbox: { enqueue: async () => undefined }, reference: referenceFactory(),
+      }).confirmRedemption(lease.transaction, confirmationInput(), new CommerceLockSequence()))
+        .resolves.toEqual({ kind: "rejected", code: "REDEEM_NOT_ACCEPTED" });
+      expect(statements.some((statement) =>
+        statement.includes("FROM platform.commerce_catalog_plan") && statement.includes("FOR UPDATE"))).toBe(true);
+      expect(statements.filter((statement) => /^\s*(?:INSERT|UPDATE|DELETE)\b/u.test(statement))).toEqual([]);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("rejects an existing Subscription owned by another Plan in the same stacking scope", async () => {
+    const statements: string[] = [];
+    const output = subscriptionOutput();
+    const preview = validPreviewRow([output], {
+      productRef: "product-1", productVersionRef: "product-v1", productKind: "subscription",
+      safeProductLabel: "Pro", planRef: "plan-1", planVersionRef: "plan-v1", safePlanLabel: "Pro monthly",
+      term: { action: "new_subscription", startsAt: "2026-07-29T00:59:00.000Z",
+        endsAt: "2026-07-30T00:59:00.000Z", automaticRenewal: false },
+      credits: [], entitlements: [], legalTermRefs: ["terms-v1"],
+    });
+    const lease = issuePlatformTransaction({
+      query: async (statement) => {
+        statements.push(statement);
+        if (statement.includes("FROM platform.commerce_redemption_preview preview")) return [preview] as never;
+        if (statement.includes("FROM platform.commerce_redemption_program_availability")) return [{
+          ...programRow(preview), stackingScope: "shared-scope", termAction: "new_subscription", termSeconds: 86400n,
+        }] as never;
+        if (statement.includes("FROM platform.commerce_catalog_plan")) return [{ planRef: "plan-1", state: "active" }] as never;
+        if (statement.includes("FROM platform.commerce_code_batch")) return [{ state: "active", startsAt: null,
+          endsAt: null, redemptionProgramRevisionRef: preview.redemptionProgramRevisionRef }] as never;
+        if (statement.includes("FROM platform.commerce_redeem_code")) return [{ state: "available",
+          batchRef: preview.batchRef, safeCodeFingerprint: preview.safeCodeFingerprint }] as never;
+        if (statement.includes("FROM platform.commerce_billing_account account")) return [{ accountState: "active",
+          membershipState: "active", subjectGeneration: 2n, redemptionCount: 0n }] as never;
+        if (statement.includes("FROM platform.commerce_subscription subscription")) return [{
+          subscriptionId: "00000000-0000-7000-8000-000000000901", state: "active",
+          planRef: "plan-other", activeTermEndsAt: null,
+        }] as never;
+        if (statement.includes("FROM platform.commerce_fulfillment_program_output")) return [output] as never;
+        if (statement.includes("clock_timestamp()")) return [{ effectAt: new Date("2026-07-29T01:00:00.000Z") }] as never;
+        return [];
+      },
+      execute: async (statement) => { statements.push(statement); return 1; },
+    });
+    try {
+      await expect(new PostgresRedemptionConfirmationRepository({
+        commerce: noOpCommerce(), outbox: { enqueue: async () => undefined }, reference: referenceFactory(),
+      }).confirmRedemption(lease.transaction, confirmationInput(), new CommerceLockSequence()))
+        .resolves.toEqual({ kind: "rejected", code: "REDEEM_NOT_ACCEPTED" });
+      expect(statements.filter((statement) => /^\s*(?:INSERT|UPDATE|DELETE)\b/u.test(statement))).toEqual([]);
     } finally {
       revokePlatformTransaction(lease);
     }
