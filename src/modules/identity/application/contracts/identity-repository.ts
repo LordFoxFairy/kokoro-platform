@@ -1,5 +1,6 @@
 import type { IdentitySessionCurrentFact, SubjectCurrentFact } from "../../../authorization/application/contracts/scoped-session-authorization-port.js";
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
+import type { IdentityTotpSecretEnvelope } from "./identity-security-ports.js";
 
 export type VerificationRecord = Readonly<{
   transactionRef: string;
@@ -36,7 +37,23 @@ export type IdentitySessionSafeFact = Readonly<{
 export type SupersededIdentitySessionOwner = Readonly<{
   accountRef: string;
   subjectRef: string;
+  authenticationMethods: readonly ("password" | "totp" | "recovery_code")[];
   revoked: IdentitySessionCurrentFact;
+}>;
+
+export type IdentityAuthenticationMaterial = Readonly<{
+  accountRef: string;
+  subjectRef: string;
+  transactionRef: string;
+  challengeKind: "totp" | "recovery";
+  expiresAt: string;
+  recoverySetRef: string | null;
+  authenticator: Readonly<{
+    authenticatorRef: string;
+    envelope: IdentityTotpSecretEnvelope;
+    lastAcceptedTimeStep: number | null;
+  }> | null;
+  recoveryCodeDigests: readonly string[];
 }>;
 
 export type IdentityRefreshCredentialRecord = Readonly<{
@@ -102,15 +119,43 @@ export interface IdentityRepository {
   findAccountPassword(transaction: PlatformTransaction, input: Readonly<{
     siteRef: string; emailNormalized: string;
   }>): Promise<AccountPasswordRecord | null>;
+  recordIdentityPasswordFailure(transaction: PlatformTransaction, input: Readonly<{
+    siteRef: string; accountRef: string; subjectRef: string; passwordCredentialEpoch: string; now: string;
+  }>): Promise<void>;
+  beginIdentityAuthentication(transaction: PlatformTransaction, input: Readonly<{
+    siteRef: string; accountRef: string; subjectRef: string; passwordCredentialEpoch: string;
+    transactionRef: string; initiatingCommandId: string; requestDigest: string; now: string; expiresAt: string;
+  }>): Promise<Readonly<
+    | { kind: "password_only" }
+    | { kind: "locked" }
+    | { kind: "capacity_exceeded" }
+    | { kind: "pending"; transactionRef: string; challengeKind: "totp" | "recovery"; expiresAt: string }
+  >>;
+  loadIdentityAuthenticationMaterial(transaction: PlatformTransaction, input: Readonly<{
+    siteRef: string; transactionRef: string; now: string;
+  }>): Promise<IdentityAuthenticationMaterial | null>;
+  consumeIdentityAuthentication(transaction: PlatformTransaction, input: Readonly<{
+    siteRef: string; transactionRef: string; now: string;
+    proof: Readonly<
+      | { kind: "totp"; timeStep: number }
+      | { kind: "recovery_code"; codeDigest: string }
+      | { kind: "invalid" }
+    >;
+  }>): Promise<Readonly<
+    | { kind: "accepted"; accountRef: string; subjectRef: string; authenticationMethod: "totp" | "recovery_code" }
+    | { kind: "rejected" }
+  >>;
   createIdentitySession(transaction: PlatformTransaction, input: Readonly<{
     commandId: string; requestDigest: string; siteRef: string; accountRef: string; subjectRef: string;
     sessionRef: string; familyRef: string; sessionCredentialDigest: string;
     refreshCredentialDigest: string; authenticatedAt: string; sessionExpiresAt: string;
     refreshExpiresAt: string; retainUntil: string; deviceLabel: string;
+    authenticationMethods: readonly ("password" | "totp" | "recovery_code")[];
   }>): Promise<IdentitySessionCurrentFact>;
   consumeIdentitySessionDeliveryRecovery(transaction: PlatformTransaction, input: Readonly<{
     priorCommandId: string; newCommandId: string; siteRef: string; workloadIdentityId: string;
-    purpose: "createIdentitySession"; capabilityDigest: string; now: string; retainUntil: string;
+    purpose: "createIdentitySession" | "completeSessionMfa"; transactionRef: string | null;
+    capabilityDigest: string; now: string; retainUntil: string;
   }>): Promise<SupersededIdentitySessionOwner | null>;
   loadIdentityRefreshCredential(transaction: PlatformTransaction, input: Readonly<{
     siteRef: string; credentialDigest: string;

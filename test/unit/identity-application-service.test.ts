@@ -9,6 +9,10 @@ import { IdentitySessionAuthorizationMutation } from "../../src/modules/identity
 import { SubjectAuthorizationMutation } from "../../src/modules/identity/application/services/subject-authorization-mutation.js";
 import type { IdentityRepository } from "../../src/modules/identity/application/contracts/identity-repository.js";
 import type { CommandReceipt } from "../../src/shared/outbox-inbox/receipt.js";
+import type {
+  IdentityAuditDigesterPort,
+  IdentityTotpVerifierPort,
+} from "../../src/modules/identity/application/contracts/identity-security-ports.js";
 
 const transaction = issuePlatformTransaction({
   async query() { return []; }, async execute() { return 0; },
@@ -71,6 +75,7 @@ describe("Identity launch application service", () => {
           pepperVersion: 1, credentialEpoch: "1",
         };
       },
+      async beginIdentityAuthentication() { return { kind: "password_only" as const }; },
       async createIdentitySession(_transaction: unknown, input: Parameters<IdentityRepository["createIdentitySession"]>[1]) {
         return {
           siteRef: input.siteRef, subjectRef: input.subjectRef, identitySessionRef: input.sessionRef,
@@ -82,7 +87,7 @@ describe("Identity launch application service", () => {
     const service = createService({
       repository,
       receipts,
-      references: ["session-1", "family-1"],
+      references: ["auth-1", "session-1", "family-1"],
     });
     const input = {
       workload: workload as never, context, commandId, idempotencyKey: "i".repeat(16),
@@ -102,6 +107,191 @@ describe("Identity launch application service", () => {
       requestDigest: "a".repeat(64),
     });
     expect(recoveryBound).toBe(1);
+  });
+
+  it("returns a replayable pre-auth receipt without creating a session when MFA is active", async () => {
+    const receipts = pendingReceipts();
+    let challengeCount = 0;
+    let sessionCreated = false;
+    const repository = {
+      async bindReceiptRecoveryCapability() {},
+      async findAccountPassword() {
+        return {
+          accountRef: "account-1", subjectRef: "subject-1", passwordHash: "$argon2id$stored",
+          pepperVersion: 1, credentialEpoch: "7",
+        };
+      },
+      async beginIdentityAuthentication() {
+        challengeCount += 1;
+        return {
+          kind: "pending" as const, transactionRef: "mfa-transaction-1",
+          challengeKind: "totp" as const, expiresAt: "2026-07-29T00:05:00.000Z",
+        };
+      },
+      async createIdentitySession() { sessionCreated = true; throw new Error("must not create session"); },
+    } as unknown as IdentityRepository;
+    const service = createService({ repository, receipts, references: ["mfa-transaction-1"] });
+    const input = {
+      workload: workload as never, context, commandId, idempotencyKey: "mfa-login-key-01",
+      email: "person@example.com", password: "correct horse battery staple",
+      receiptRecoveryCapability: "r".repeat(43),
+    };
+
+    const first = await service.createIdentitySession(input);
+    const retry = await service.createIdentitySession(input);
+
+    expect(first).toEqual(retry);
+    expect(first).toMatchObject({
+      pending: { transactionRef: "mfa-transaction-1", challengeKind: "totp" },
+      receipt: { state: "committed" },
+    });
+    expect(challengeCount).toBe(1);
+    expect(sessionCreated).toBe(false);
+  });
+
+  it("records a wrong password only after the known account and credential epoch are rechecked", async () => {
+    let failures = 0;
+    let began = false;
+    const repository = {
+      async bindReceiptRecoveryCapability() {},
+      async findAccountPassword() {
+        return {
+          accountRef: "account-1", subjectRef: "subject-1", passwordHash: "$argon2id$stored",
+          pepperVersion: 1, credentialEpoch: "7",
+        };
+      },
+      async recordIdentityPasswordFailure() { failures += 1; },
+      async beginIdentityAuthentication() { began = true; return { kind: "password_only" as const }; },
+    } as unknown as IdentityRepository;
+    const service = createService({
+      repository, receipts: pendingReceipts(), references: [], passwordValid: false,
+    });
+
+    await expect(service.createIdentitySession({
+      workload: workload as never, context, commandId, idempotencyKey: "wrong-password-key",
+      email: "person@example.com", password: "incorrect password value",
+      receiptRecoveryCapability: "r".repeat(43),
+    })).rejects.toMatchObject({ code: "AUTHENTICATION_FAILED" });
+    expect(failures).toBe(1);
+    expect(began).toBe(false);
+  });
+
+  it("rejects a correct password while the account authentication budget is locked", async () => {
+    let sessionCreated = false;
+    const repository = {
+      async bindReceiptRecoveryCapability() {},
+      async findAccountPassword() {
+        return {
+          accountRef: "account-1", subjectRef: "subject-1", passwordHash: "$argon2id$stored",
+          pepperVersion: 1, credentialEpoch: "7",
+        };
+      },
+      async beginIdentityAuthentication() { return { kind: "locked" as const }; },
+      async createIdentitySession() { sessionCreated = true; throw new Error("must not create session"); },
+    } as unknown as IdentityRepository;
+    const service = createService({ repository, receipts: pendingReceipts(), references: ["auth-locked"] });
+
+    await expect(service.createIdentitySession({
+      workload: workload as never, context, commandId, idempotencyKey: "locked-password-key",
+      email: "person@example.com", password: "correct horse battery staple",
+      receiptRecoveryCapability: "r".repeat(43),
+    })).rejects.toMatchObject({ code: "AUTHENTICATION_FAILED" });
+    expect(sessionCreated).toBe(false);
+  });
+
+  it("consumes a valid TOTP challenge before issuing a password plus TOTP session", async () => {
+    let proof: Parameters<IdentityRepository["consumeIdentityAuthentication"]>[1]["proof"] | undefined;
+    let methods: readonly string[] | undefined;
+    const repository = {
+      async bindReceiptRecoveryCapability() {},
+      async loadIdentityAuthenticationMaterial() {
+        return {
+          accountRef: "account-1", subjectRef: "subject-1", transactionRef: "mfa-transaction-1",
+          challengeKind: "totp" as const, expiresAt: "2026-07-29T00:05:00.000Z",
+          recoverySetRef: null,
+          authenticator: {
+            authenticatorRef: "totp-1", lastAcceptedTimeStep: 10,
+            envelope: { algorithm: "A256GCM" as const, keyRevision: "key-1", nonce: "nonce", ciphertext: "sealed", authenticationTag: "tag" },
+          },
+          recoveryCodeDigests: [],
+        };
+      },
+      async consumeIdentityAuthentication(_transaction: unknown, input: Parameters<IdentityRepository["consumeIdentityAuthentication"]>[1]) {
+        proof = input.proof;
+        return { kind: "accepted" as const, accountRef: "account-1", subjectRef: "subject-1", authenticationMethod: "totp" as const };
+      },
+      async createIdentitySession(_transaction: unknown, input: Parameters<IdentityRepository["createIdentitySession"]>[1]) {
+        methods = input.authenticationMethods;
+        return {
+          siteRef: input.siteRef, subjectRef: input.subjectRef, identitySessionRef: input.sessionRef,
+          state: "active" as const, identitySessionEpoch: "1", credentialEpoch: "1",
+          expiresAt: input.sessionExpiresAt, updatedAt: input.authenticatedAt, retainUntil: input.retainUntil,
+        };
+      },
+    } as unknown as IdentityRepository;
+    const service = createService({
+      repository, receipts: pendingReceipts(), references: ["session-mfa-1", "family-mfa-1"],
+      totpVerifier: { async verify() { return { valid: true, timeStep: 11 }; } },
+    });
+
+    const result = await service.completeSessionMfa({
+      workload: workload as never, context, commandId, idempotencyKey: "mfa-complete-key",
+      transactionRef: "mfa-transaction-1", code: "123456",
+      receiptRecoveryCapability: "r".repeat(43),
+    });
+
+    expect(proof).toEqual({ kind: "totp", timeStep: 11 });
+    expect(methods).toEqual(["password", "totp"]);
+    expect(result).toMatchObject({ credentials: { sessionRef: "session-mfa-1" } });
+  });
+
+  it("matches a recovery code in constant-shape input and marks the session method exactly", async () => {
+    let proof: Parameters<IdentityRepository["consumeIdentityAuthentication"]>[1]["proof"] | undefined;
+    let methods: readonly string[] | undefined;
+    let recoveryDigestInput: Parameters<IdentityAuditDigesterPort>[0] | undefined;
+    const repository = {
+      async bindReceiptRecoveryCapability() {},
+      async loadIdentityAuthenticationMaterial() {
+        return {
+          accountRef: "account-1", subjectRef: "subject-1", transactionRef: "mfa-transaction-1",
+          challengeKind: "totp" as const, expiresAt: "2026-07-29T00:05:00.000Z",
+          recoverySetRef: "recovery-set-1", authenticator: null, recoveryCodeDigests: ["a".repeat(64)],
+        };
+      },
+      async consumeIdentityAuthentication(_transaction: unknown, input: Parameters<IdentityRepository["consumeIdentityAuthentication"]>[1]) {
+        proof = input.proof;
+        return { kind: "accepted" as const, accountRef: "account-1", subjectRef: "subject-1", authenticationMethod: "recovery_code" as const };
+      },
+      async createIdentitySession(_transaction: unknown, input: Parameters<IdentityRepository["createIdentitySession"]>[1]) {
+        methods = input.authenticationMethods;
+        return {
+          siteRef: input.siteRef, subjectRef: input.subjectRef, identitySessionRef: input.sessionRef,
+          state: "active" as const, identitySessionEpoch: "1", credentialEpoch: "1",
+          expiresAt: input.sessionExpiresAt, updatedAt: input.authenticatedAt, retainUntil: input.retainUntil,
+        };
+      },
+    } as unknown as IdentityRepository;
+    const service = createService({
+      repository, receipts: pendingReceipts(), references: ["session-recovery-1", "family-recovery-1"],
+      auditDigest(value) {
+        if (typeof value === "object" && value !== null && !Array.isArray(value) &&
+            value.purpose === "identity_recovery_code") recoveryDigestInput = value;
+        return "a".repeat(64);
+      },
+    });
+
+    await service.completeSessionMfa({
+      workload: workload as never, context, commandId, idempotencyKey: "recovery-code-key",
+      transactionRef: "mfa-transaction-1", code: "recovery-code-value",
+      receiptRecoveryCapability: "r".repeat(43),
+    });
+
+    expect(proof).toEqual({ kind: "recovery_code", codeDigest: "a".repeat(64) });
+    expect(recoveryDigestInput).toEqual({
+      purpose: "identity_recovery_code", siteRef: "site-1", accountRef: "account-1",
+      recoverySetRef: "recovery-set-1", code: "recovery-code-value",
+    });
+    expect(methods).toEqual(["password", "recovery_code"]);
   });
 
   it("activates the pending owner graph and full personal bootstrap without creating a session", async () => {
@@ -173,6 +363,7 @@ describe("Identity launch application service", () => {
         superseded = input;
         return {
           accountRef: "account-1", subjectRef: "subject-1",
+          authenticationMethods: ["password"] as const,
           revoked: {
             siteRef: input.siteRef, subjectRef: "subject-1", identitySessionRef: "prior-session",
             state: "revoked" as const, identitySessionEpoch: "2", credentialEpoch: "2",
@@ -329,6 +520,9 @@ function createService(input: Readonly<{
   receipts: IdentityCommandReceiptPort;
   references: string[];
   outbox?: IdentityOutboxPort;
+  totpVerifier?: IdentityTotpVerifierPort;
+  auditDigest?: IdentityAuditDigesterPort;
+  passwordValid?: boolean;
 }>) {
   const sessionPort = {
     async reserveIdentitySessionMutation() { return { siteRef: "site-1", streamSequence: 1n, aggregateSequence: 1n }; },
@@ -345,7 +539,9 @@ function createService(input: Readonly<{
     outbox: (input.outbox ?? { async enqueue() {} }) as never,
     passwordHasher: {
       async hash() { return { passwordHash: "$argon2id$stored", pepperVersion: 1 }; },
-      async verify(_password, stored) { return stored.passwordHash === "$argon2id$stored"; },
+      async verify(_password, stored) {
+        return input.passwordValid ?? stored.passwordHash === "$argon2id$stored";
+      },
     },
     dummyPasswordHash: { passwordHash: "$argon2id$dummy", pepperVersion: 1 },
     verificationCredentials: {
@@ -358,7 +554,13 @@ function createService(input: Readonly<{
     refreshCredentials: {
       issue() { return { credential: "refresh-credential", digest: "d".repeat(64) }; }, digest() { return "d".repeat(64); },
     },
-    auditDigest: () => "a".repeat(64),
+    auditDigest: input.auditDigest ?? (() => "a".repeat(64)),
+    totpSecretProtector: {
+      seal() { return { algorithm: "A256GCM", keyRevision: "key-1", nonce: "nonce", ciphertext: "sealed", authenticationTag: "tag" }; },
+      unseal() { return "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"; },
+    },
+    totpVerifier: input.totpVerifier ?? { async verify() { return { valid: false }; } },
+    dummyTotpSecret: "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
     deliverySealer: {
       seal() { return { algorithm: "A256GCM", keyRevision: "key-1", nonce: "nonce", ciphertext: "sealed", authenticationTag: "tag" }; },
     },

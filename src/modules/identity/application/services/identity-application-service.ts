@@ -9,12 +9,15 @@ import type {
   IdentityAuditDigesterPort,
   IdentityPasswordHash,
   IdentityPasswordHasherPort,
+  IdentityTotpSecretProtectorPort,
+  IdentityTotpVerifierPort,
   OpaqueCredentialPort,
   VerificationEnvelopeSealerPort,
 } from "../contracts/identity-security-ports.js";
 import { normalizeIdentityEmail } from "../../domain/identity-email.js";
 import { IdentitySessionAuthorizationMutation } from "./identity-session-authorization-mutation.js";
 import { SubjectAuthorizationMutation } from "./subject-authorization-mutation.js";
+import { digestIdentityRecoveryCode } from "./identity-recovery-code-digest.js";
 
 export interface IdentityUnitOfWorkPort {
   execute<Result>(
@@ -61,6 +64,9 @@ export class IdentityApplicationService {
     verificationCredentials: OpaqueCredentialPort;
     sessionCredentials: OpaqueCredentialPort;
     refreshCredentials: OpaqueCredentialPort;
+    totpSecretProtector: IdentityTotpSecretProtectorPort;
+    totpVerifier: IdentityTotpVerifierPort;
+    dummyTotpSecret: string;
     auditDigest: IdentityAuditDigesterPort;
     deliverySealer: VerificationEnvelopeSealerPort;
     subjectAuthorization: SubjectAuthorizationMutation;
@@ -304,7 +310,7 @@ export class IdentityApplicationService {
           email: emailNormalized, password: passwordNormalized,
           returnIntentRef: input.returnIntentRef ?? null });
     const passwordCandidate = recovery ? null : await this.dependencies.unitOfWork.execute(
-      { context: input.context, operation: "createIdentitySession.password-material" },
+      { context: input.context, operation: "createIdentitySession" },
       (transaction) => this.dependencies.repository.findAccountPassword(transaction, {
         siteRef: input.workload.siteRef,
         emailNormalized: emailNormalized ?? "",
@@ -324,6 +330,16 @@ export class IdentityApplicationService {
         const existing = await this.dependencies.receipts.begin(transaction, identity);
         assertSameCommand(existing, input.commandId);
         if (existing.state === "succeeded") {
+          const pending = authenticationPendingResult(existing.result);
+          if (pending !== null) {
+            return {
+              kind: "pending" as const,
+              response: Object.freeze({
+                receipt: receipt(input.commandId, requestDigest, pending.committedAt),
+                pending: pending.pending,
+              }),
+            };
+          }
           return { kind: "retry" as const };
         }
         if (existing.state === "failed") return { kind: "rejected" as const };
@@ -332,27 +348,33 @@ export class IdentityApplicationService {
         const refreshExpiresAt = plus(now, 30 * 24 * 60 * 60_000);
         const retainUntil = plus(sessionExpiresAt, 5 * 60_000);
         let account: Readonly<{ accountRef: string; subjectRef: string }>;
+        let authenticationMethods: readonly ("password" | "totp" | "recovery_code")[];
         if (recovery) {
-          let recovered: Awaited<ReturnType<IdentityRepository["consumeIdentitySessionDeliveryRecovery"]>> = null;
+          const recoveryResult: {
+            value: Awaited<ReturnType<IdentityRepository["consumeIdentitySessionDeliveryRecovery"]>>;
+          } = { value: null };
           await this.dependencies.sessionAuthorization.execute(
             transaction,
             { siteRef: input.workload.siteRef, correlationId: input.context.correlationId },
             async () => {
-              recovered = await this.dependencies.repository.consumeIdentitySessionDeliveryRecovery(transaction, {
+              recoveryResult.value = await this.dependencies.repository.consumeIdentitySessionDeliveryRecovery(transaction, {
                 priorCommandId: input.priorCommandId, newCommandId: input.commandId,
                 siteRef: input.workload.siteRef,
                 workloadIdentityId: input.workload.workloadIdentityId, purpose: "createIdentitySession",
+                transactionRef: null,
                 capabilityDigest: this.dependencies.auditDigest({
                   purpose: "createIdentitySession", capability: input.receiptRecoveryCapability,
                 }),
                 now, retainUntil,
               });
-              if (recovered === null) throw new IdentityApplicationError("AUTHENTICATION_FAILED");
-              return recovered.revoked;
+              if (recoveryResult.value === null) throw new IdentityApplicationError("AUTHENTICATION_FAILED");
+              return recoveryResult.value.revoked;
             },
           );
+          const recovered = recoveryResult.value;
           if (recovered === null) throw new IdentityApplicationError("AUTHENTICATION_FAILED");
           account = recovered;
+          authenticationMethods = recovered.authenticationMethods;
         } else {
           if (emailNormalized === null || passwordNormalized === null) {
             throw new Error("IDENTITY_LOGIN_INPUT_INVARIANT");
@@ -363,10 +385,41 @@ export class IdentityApplicationService {
           });
           if (passwordValid !== true || passwordCandidate === null || current === null ||
               !samePasswordAccount(passwordCandidate, current)) {
+            if (passwordValid === false && passwordCandidate !== null && current !== null &&
+                samePasswordAccount(passwordCandidate, current)) {
+              await this.dependencies.repository.recordIdentityPasswordFailure(transaction, {
+                siteRef: input.workload.siteRef, accountRef: current.accountRef,
+                subjectRef: current.subjectRef, passwordCredentialEpoch: current.credentialEpoch, now,
+              });
+            }
             await this.failure(transaction, identity, "AUTHENTICATION_FAILED");
             return { kind: "rejected" as const };
           }
           account = current;
+          const authentication = await this.dependencies.repository.beginIdentityAuthentication(transaction, {
+            siteRef: input.workload.siteRef, accountRef: current.accountRef, subjectRef: current.subjectRef,
+            passwordCredentialEpoch: current.credentialEpoch, transactionRef: this.reference(),
+            initiatingCommandId: input.commandId, requestDigest, now, expiresAt: plus(now, 5 * 60_000),
+          });
+          if (authentication.kind === "locked" || authentication.kind === "capacity_exceeded") {
+            await this.failure(transaction, identity, "AUTHENTICATION_FAILED");
+            return { kind: "rejected" as const };
+          }
+          if (authentication.kind === "pending") {
+            const pending = Object.freeze({
+              transactionRef: authentication.transactionRef,
+              challengeKind: authentication.challengeKind,
+              expiresAt: authentication.expiresAt,
+            });
+            await this.success(transaction, identity, {
+              kind: "auth_pending", pending, committedAt: now,
+            });
+            return {
+              kind: "pending" as const,
+              response: Object.freeze({ receipt: receipt(input.commandId, requestDigest, now), pending }),
+            };
+          }
+          authenticationMethods = Object.freeze(["password"] as const);
         }
         const sessionRef = this.reference();
         const familyRef = this.reference();
@@ -381,6 +434,7 @@ export class IdentityApplicationService {
             sessionRef, familyRef, sessionCredentialDigest: sessionCredential.digest,
             refreshCredentialDigest: refreshCredential.digest, authenticatedAt: now,
             sessionExpiresAt, refreshExpiresAt, retainUntil, deviceLabel: "Web session",
+            authenticationMethods,
           }),
         );
         await this.success(transaction, identity, {
@@ -395,6 +449,155 @@ export class IdentityApplicationService {
             refreshCredentialExpiresAt: refreshExpiresAt,
           }),
         };
+      },
+    );
+    if (outcome.kind === "rejected") throw new IdentityApplicationError("AUTHENTICATION_FAILED");
+    if (outcome.kind === "pending") return outcome.response;
+    if (outcome.kind === "retry") {
+      return Object.freeze({
+        kind: "delivery_unavailable" as const, commandId: input.commandId,
+        receiptRef: `command:${input.commandId}`, requestDigest,
+      });
+    }
+    return Object.freeze({ commandId: input.commandId, requestDigest, credentials: outcome.credentials });
+  }
+
+  async completeSessionMfa(input: Readonly<{
+    workload: ProductWorkloadIdentity; context: VerifiedRequestSecurityContext;
+    commandId: string; idempotencyKey: string; receiptRecoveryCapability: string;
+    transactionRef: string;
+  } & (
+    | Readonly<{ code: string }>
+    | Readonly<{ recoveryAction: "supersede_session_delivery"; priorCommandId: string }>
+  )>) {
+    const recovery = "recoveryAction" in input;
+    const code = recovery ? null : input.code.normalize("NFC");
+    const requestDigest = this.dependencies.auditDigest(recovery
+      ? { operation: "completeSessionMfa", siteRef: input.workload.siteRef,
+          transactionRef: input.transactionRef, recoveryAction: input.recoveryAction,
+          priorCommandId: input.priorCommandId }
+      : { operation: "completeSessionMfa", siteRef: input.workload.siteRef,
+          transactionRef: input.transactionRef, code });
+    let proof: Readonly<
+      | { kind: "totp"; timeStep: number }
+      | { kind: "recovery_code"; codeDigest: string }
+      | { kind: "invalid" }
+    > = Object.freeze({ kind: "invalid" as const });
+    if (!recovery) {
+      const material = await this.dependencies.unitOfWork.execute(
+        { context: input.context, operation: "completeSessionMfa" },
+        (transaction) => this.dependencies.repository.loadIdentityAuthenticationMaterial(transaction, {
+          siteRef: input.workload.siteRef, transactionRef: input.transactionRef, now: this.now(),
+        }),
+      );
+      let secret = this.dependencies.dummyTotpSecret;
+      let totpUsable = false;
+      if (material?.authenticator !== null && material?.authenticator !== undefined) {
+        try {
+          secret = this.dependencies.totpSecretProtector.unseal(material.authenticator.envelope, {
+            siteRef: input.workload.siteRef, accountRef: material.accountRef,
+            subjectRef: material.subjectRef, authenticatorRef: material.authenticator.authenticatorRef,
+          });
+          totpUsable = true;
+        } catch {
+          totpUsable = false;
+        }
+      }
+      const totp = await this.dependencies.totpVerifier.verify({
+        secret, code: code ?? "", epochSeconds: Math.floor(Date.parse(this.now()) / 1_000),
+        afterTimeStep: material?.authenticator?.lastAcceptedTimeStep ?? null,
+      });
+      const recoveryDigest = digestIdentityRecoveryCode(this.dependencies.auditDigest, {
+        siteRef: input.workload.siteRef,
+        accountRef: material?.accountRef ?? "unknown-account",
+        recoverySetRef: material?.recoverySetRef ?? "unknown-recovery-set",
+        code: code ?? "",
+      });
+      const recoveryMatched = constantTimeRecoveryCodeMatch(
+        recoveryDigest,
+        material?.recoveryCodeDigests ?? Object.freeze([]),
+      ) && material?.recoverySetRef !== null && material?.recoverySetRef !== undefined;
+      if (totpUsable && totp.valid) {
+        proof = Object.freeze({ kind: "totp" as const, timeStep: totp.timeStep });
+      } else if (recoveryMatched) {
+        proof = Object.freeze({ kind: "recovery_code" as const, codeDigest: recoveryDigest });
+      }
+    }
+
+    const outcome = await this.dependencies.unitOfWork.execute(
+      { context: input.context, operation: "completeSessionMfa" },
+      async (transaction) => {
+        const identity = commandIdentity(input, "completeSessionMfa", requestDigest);
+        const existing = await this.dependencies.receipts.begin(transaction, identity);
+        assertSameCommand(existing, input.commandId);
+        if (existing.state === "succeeded") return { kind: "retry" as const };
+        if (existing.state === "failed") return { kind: "rejected" as const };
+        const now = this.now();
+        const sessionExpiresAt = plus(now, 12 * 60 * 60_000);
+        const refreshExpiresAt = plus(now, 30 * 24 * 60 * 60_000);
+        const retainUntil = plus(sessionExpiresAt, 5 * 60_000);
+        let account: Readonly<{ accountRef: string; subjectRef: string }>;
+        let authenticationMethods: readonly ("password" | "totp" | "recovery_code")[];
+        if (recovery) {
+          const recoveryResult: {
+            value: Awaited<ReturnType<IdentityRepository["consumeIdentitySessionDeliveryRecovery"]>>;
+          } = { value: null };
+          await this.dependencies.sessionAuthorization.execute(
+            transaction,
+            { siteRef: input.workload.siteRef, correlationId: input.context.correlationId },
+            async () => {
+              recoveryResult.value = await this.dependencies.repository.consumeIdentitySessionDeliveryRecovery(transaction, {
+                priorCommandId: input.priorCommandId, newCommandId: input.commandId,
+                siteRef: input.workload.siteRef, workloadIdentityId: input.workload.workloadIdentityId,
+                purpose: "completeSessionMfa", transactionRef: input.transactionRef,
+                capabilityDigest: this.dependencies.auditDigest({
+                  purpose: "completeSessionMfa", capability: input.receiptRecoveryCapability,
+                }),
+                now, retainUntil,
+              });
+              if (recoveryResult.value === null) throw new IdentityApplicationError("AUTHENTICATION_FAILED");
+              return recoveryResult.value.revoked;
+            },
+          );
+          const recovered = recoveryResult.value;
+          if (recovered === null) throw new IdentityApplicationError("AUTHENTICATION_FAILED");
+          account = recovered;
+          authenticationMethods = recovered.authenticationMethods;
+        } else {
+          await this.bindRecovery(transaction, input, "completeSessionMfa", input.transactionRef);
+          const accepted = await this.dependencies.repository.consumeIdentityAuthentication(transaction, {
+            siteRef: input.workload.siteRef, transactionRef: input.transactionRef, now, proof,
+          });
+          if (accepted.kind === "rejected") {
+            await this.failure(transaction, identity, "AUTHENTICATION_FAILED");
+            return { kind: "rejected" as const };
+          }
+          account = accepted;
+          authenticationMethods = Object.freeze(["password", accepted.authenticationMethod]);
+        }
+        const sessionRef = this.reference();
+        const familyRef = this.reference();
+        const sessionCredential = this.dependencies.sessionCredentials.issue();
+        const refreshCredential = this.dependencies.refreshCredentials.issue();
+        await this.dependencies.sessionAuthorization.execute(
+          transaction,
+          { siteRef: input.workload.siteRef, correlationId: input.context.correlationId },
+          () => this.dependencies.repository.createIdentitySession(transaction, {
+            commandId: input.commandId, requestDigest, siteRef: input.workload.siteRef,
+            accountRef: account.accountRef, subjectRef: account.subjectRef, sessionRef, familyRef,
+            sessionCredentialDigest: sessionCredential.digest,
+            refreshCredentialDigest: refreshCredential.digest, authenticatedAt: now,
+            sessionExpiresAt, refreshExpiresAt, retainUntil, deviceLabel: "Web session",
+            authenticationMethods,
+          }),
+        );
+        await this.success(transaction, identity, {
+          sessionRef, sessionExpiresAt, refreshExpiresAt, committedAt: now,
+        });
+        return oneTimeCredentials({
+          sessionRef, sessionCredential: sessionCredential.credential, sessionExpiresAt,
+          refreshCredential: refreshCredential.credential, refreshExpiresAt,
+        });
       },
     );
     if (outcome.kind === "rejected") throw new IdentityApplicationError("AUTHENTICATION_FAILED");
@@ -722,6 +925,15 @@ function safeDigestEqual(left: string, right: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+function constantTimeRecoveryCodeMatch(candidate: string, stored: readonly string[]): boolean {
+  let matched = 0;
+  for (let index = 0; index < 10; index += 1) {
+    const digest = stored[index] ?? "0".repeat(64);
+    matched |= safeDigestEqual(candidate, digest) ? 1 : 0;
+  }
+  return matched === 1;
+}
+
 function samePasswordAccount(left: Readonly<{
   accountRef: string; subjectRef: string; passwordHash: string; pepperVersion: number; credentialEpoch: string;
 }>, right: Readonly<{
@@ -774,4 +986,24 @@ function activationResult(value: JsonValue) {
 function committedResult(value: JsonValue) {
   const root = object(value);
   return Object.freeze({ committedAt: string(root.committedAt) });
+}
+
+function authenticationPendingResult(value: JsonValue | null) {
+  if (value === null || typeof value !== "object" || Array.isArray(value) || value.kind !== "auth_pending") {
+    return null;
+  }
+  const root = object(value);
+  const pending = object(root.pending!);
+  const challengeKind = string(pending.challengeKind);
+  if (challengeKind !== "totp" && challengeKind !== "recovery") {
+    throw new Error("IDENTITY_RECEIPT_RESULT_INVALID");
+  }
+  return Object.freeze({
+    committedAt: string(root.committedAt),
+    pending: Object.freeze({
+      transactionRef: string(pending.transactionRef),
+      challengeKind,
+      expiresAt: string(pending.expiresAt),
+    }),
+  });
 }

@@ -345,6 +345,330 @@ export class PostgresIdentityRepository implements IdentityRepository {
     return row === undefined ? null : Object.freeze({ ...row, credentialEpoch: row.credentialEpoch.toString() });
   }
 
+  async beginIdentityAuthentication(
+    transaction: PlatformTransaction,
+    input: Parameters<IdentityRepository["beginIdentityAuthentication"]>[1],
+  ) {
+    const sql = resolvePlatformTransaction(transaction);
+    await sql.query(
+      `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`,
+      [`identity-auth\0${input.siteRef}\0${input.accountRef}`],
+    );
+    const accounts = await sql.query<{ credentialEpoch: bigint } & Record<string, unknown>>(
+      `SELECT credential.credential_epoch AS "credentialEpoch"
+       FROM platform.identity_account account
+       JOIN platform.identity_password_credential credential
+         ON credential.site_ref=account.site_ref AND credential.account_ref=account.account_ref
+       JOIN platform.authorization_subject subject
+         ON subject.site_ref=account.site_ref AND subject.subject_ref=account.subject_ref
+       WHERE account.site_ref=$1 AND account.account_ref=$2 AND account.subject_ref=$3
+         AND account.state='active' AND subject.state='active'
+       FOR SHARE OF account,credential,subject`,
+      [input.siteRef, input.accountRef, input.subjectRef],
+    );
+    if (accounts[0]?.credentialEpoch.toString() !== input.passwordCredentialEpoch) {
+      return Object.freeze({ kind: "locked" as const });
+    }
+    const rateRows = await sql.query<AuthRateLimitRow>(
+      `SELECT failed_attempt_count AS "failedAttemptCount",locked_until AS "lockedUntil",
+              window_started_at AS "windowStartedAt"
+       FROM platform.identity_auth_rate_limit
+       WHERE site_ref=$1 AND account_ref=$2 AND purpose='session_login'
+       FOR UPDATE`,
+      [input.siteRef, input.accountRef],
+    );
+    const rate = rateRows[0];
+    if (rate?.lockedUntil !== null && rate?.lockedUntil !== undefined &&
+        Date.parse(instant(rate.lockedUntil)) > Date.parse(input.now)) {
+      return Object.freeze({ kind: "locked" as const });
+    }
+    const authenticators = await sql.query<{ authenticatorRef: string } & Record<string, unknown>>(
+      `SELECT authenticator_ref AS "authenticatorRef"
+       FROM platform.identity_totp_authenticator
+       WHERE site_ref=$1 AND account_ref=$2 AND subject_ref=$3 AND state='active'
+       FOR SHARE`,
+      [input.siteRef, input.accountRef, input.subjectRef],
+    );
+    const recoverySets = await sql.query<{ setRef: string } & Record<string, unknown>>(
+      `SELECT set_ref AS "setRef"
+       FROM platform.identity_recovery_code_set
+       WHERE site_ref=$1 AND account_ref=$2 AND subject_ref=$3 AND state='active'
+       FOR SHARE`,
+      [input.siteRef, input.accountRef, input.subjectRef],
+    );
+    const authenticatorRef = authenticators[0]?.authenticatorRef ?? null;
+    const recoverySetRef = recoverySets[0]?.setRef ?? null;
+    if (authenticatorRef === null && recoverySetRef === null) {
+      await resetAuthenticationRateLimit(sql, {
+        siteRef: input.siteRef, accountRef: input.accountRef, now: input.now,
+      });
+      return Object.freeze({ kind: "password_only" as const });
+    }
+    await sql.execute(
+      `UPDATE platform.identity_auth_transaction
+       SET state='expired',updated_at=$3::timestamptz
+       WHERE site_ref=$1 AND account_ref=$2 AND purpose='session_login'
+         AND state='pending' AND expires_at<=$3::timestamptz`,
+      [input.siteRef, input.accountRef, input.now],
+    );
+    const pendingRows = await sql.query<{ pendingCount: number } & Record<string, unknown>>(
+      `SELECT count(*)::integer AS "pendingCount"
+       FROM platform.identity_auth_transaction
+       WHERE site_ref=$1 AND account_ref=$2 AND purpose='session_login' AND state='pending'`,
+      [input.siteRef, input.accountRef],
+    );
+    if ((pendingRows[0]?.pendingCount ?? 0) >= 5) {
+      return Object.freeze({ kind: "capacity_exceeded" as const });
+    }
+    const challengeKind = authenticatorRef === null ? "recovery" as const : "totp" as const;
+    const inserted = await sql.execute(
+      `INSERT INTO platform.identity_auth_transaction
+       (site_ref,transaction_ref,account_ref,subject_ref,purpose,challenge_kind,
+        authenticator_ref,recovery_set_ref,password_credential_epoch,initiating_command_id,request_digest,
+        state,attempt_count,max_attempts,expires_at,created_at,updated_at)
+       VALUES ($1,$2,$3,$4,'session_login',$5,$6,$7,$8::bigint,$9,$10,
+               'pending',0,5,$11::timestamptz,$12::timestamptz,$12::timestamptz)`,
+      [input.siteRef, input.transactionRef, input.accountRef, input.subjectRef, challengeKind,
+        authenticatorRef, recoverySetRef, input.passwordCredentialEpoch, input.initiatingCommandId,
+        input.requestDigest, input.expiresAt, input.now],
+    );
+    if (inserted !== 1) throw new Error("IDENTITY_AUTH_TRANSACTION_CREATE_FAILED");
+    return Object.freeze({
+      kind: "pending" as const,
+      transactionRef: input.transactionRef,
+      challengeKind,
+      expiresAt: input.expiresAt,
+    });
+  }
+
+  async recordIdentityPasswordFailure(
+    transaction: PlatformTransaction,
+    input: Parameters<IdentityRepository["recordIdentityPasswordFailure"]>[1],
+  ): Promise<void> {
+    const sql = resolvePlatformTransaction(transaction);
+    await sql.query(
+      `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`,
+      [`identity-auth\0${input.siteRef}\0${input.accountRef}`],
+    );
+    const accounts = await sql.query<{ credentialEpoch: bigint } & Record<string, unknown>>(
+      `SELECT credential.credential_epoch AS "credentialEpoch"
+       FROM platform.identity_account account
+       JOIN platform.identity_password_credential credential
+         ON credential.site_ref=account.site_ref AND credential.account_ref=account.account_ref
+       WHERE account.site_ref=$1 AND account.account_ref=$2 AND account.subject_ref=$3
+         AND account.state='active'
+       FOR SHARE OF account,credential`,
+      [input.siteRef, input.accountRef, input.subjectRef],
+    );
+    if (accounts[0]?.credentialEpoch.toString() !== input.passwordCredentialEpoch) return;
+    const rateRows = await sql.query<AuthRateLimitRow>(
+      `SELECT failed_attempt_count AS "failedAttemptCount",locked_until AS "lockedUntil",
+              window_started_at AS "windowStartedAt"
+       FROM platform.identity_auth_rate_limit
+       WHERE site_ref=$1 AND account_ref=$2 AND purpose='session_login'
+       FOR UPDATE`,
+      [input.siteRef, input.accountRef],
+    );
+    const rate = rateRows[0];
+    if (rate?.lockedUntil !== null && rate?.lockedUntil !== undefined &&
+        Date.parse(instant(rate.lockedUntil)) > Date.parse(input.now)) return;
+    await recordAuthenticationRateFailure(sql, {
+      siteRef: input.siteRef, accountRef: input.accountRef, now: input.now,
+    }, rate);
+  }
+
+  async loadIdentityAuthenticationMaterial(
+    transaction: PlatformTransaction,
+    input: Parameters<IdentityRepository["loadIdentityAuthenticationMaterial"]>[1],
+  ) {
+    const sql = resolvePlatformTransaction(transaction);
+    const rows = await sql.query<AuthMaterialRow>(
+      `SELECT auth.account_ref AS "accountRef",auth.subject_ref AS "subjectRef",
+              auth.transaction_ref AS "transactionRef",auth.challenge_kind AS "challengeKind",
+              auth.expires_at AS "expiresAt",auth.authenticator_ref AS "authenticatorRef",
+              auth.recovery_set_ref AS "recoverySetRef",
+              authenticator.secret_algorithm AS "secretAlgorithm",
+              authenticator.secret_key_revision AS "secretKeyRevision",
+              authenticator.secret_nonce AS "secretNonce",
+              authenticator.secret_ciphertext AS "secretCiphertext",
+              authenticator.secret_authentication_tag AS "secretAuthenticationTag",
+              authenticator.last_accepted_timestep AS "lastAcceptedTimeStep"
+       FROM platform.identity_auth_transaction auth
+       JOIN platform.identity_account account
+         ON account.site_ref=auth.site_ref AND account.account_ref=auth.account_ref
+           AND account.subject_ref=auth.subject_ref
+       JOIN platform.identity_password_credential credential
+         ON credential.site_ref=auth.site_ref AND credential.account_ref=auth.account_ref
+           AND credential.credential_epoch=auth.password_credential_epoch
+       LEFT JOIN platform.identity_totp_authenticator authenticator
+         ON authenticator.site_ref=auth.site_ref AND authenticator.authenticator_ref=auth.authenticator_ref
+           AND authenticator.account_ref=auth.account_ref AND authenticator.subject_ref=auth.subject_ref
+           AND authenticator.state='active'
+       WHERE auth.site_ref=$1 AND auth.transaction_ref=$2 AND auth.state='pending'
+         AND auth.expires_at>$3::timestamptz AND account.state='active'`,
+      [input.siteRef, input.transactionRef, input.now],
+    );
+    const found = rows[0];
+    if (found === undefined) return null;
+    const recoveryCodeRows = found.recoverySetRef === null ? [] : await sql.query<RecoveryDigestRow>(
+      `SELECT code.code_digest AS "codeDigest"
+       FROM platform.identity_recovery_code code
+       JOIN platform.identity_recovery_code_set code_set
+         ON code_set.site_ref=code.site_ref AND code_set.set_ref=code.set_ref
+       WHERE code.site_ref=$1 AND code.set_ref=$2 AND code.state='active' AND code_set.state='active'
+       ORDER BY code.code_digest
+       LIMIT 10`,
+      [input.siteRef, found.recoverySetRef],
+    );
+    const authenticator = found.authenticatorRef === null || found.secretAlgorithm !== "A256GCM" ||
+      found.secretKeyRevision === null || found.secretNonce === null || found.secretCiphertext === null ||
+      found.secretAuthenticationTag === null
+      ? null
+      : Object.freeze({
+        authenticatorRef: found.authenticatorRef,
+        envelope: Object.freeze({
+          algorithm: "A256GCM" as const,
+          keyRevision: found.secretKeyRevision,
+          nonce: found.secretNonce,
+          ciphertext: found.secretCiphertext,
+          authenticationTag: found.secretAuthenticationTag,
+        }),
+        lastAcceptedTimeStep: found.lastAcceptedTimeStep === null
+          ? null
+          : Number(found.lastAcceptedTimeStep),
+      });
+    return Object.freeze({
+      accountRef: found.accountRef,
+      subjectRef: found.subjectRef,
+      transactionRef: found.transactionRef,
+      challengeKind: found.challengeKind,
+      expiresAt: instant(found.expiresAt),
+      recoverySetRef: found.recoverySetRef,
+      authenticator,
+      recoveryCodeDigests: Object.freeze(recoveryCodeRows.map((row) => row.codeDigest)),
+    });
+  }
+
+  async consumeIdentityAuthentication(
+    transaction: PlatformTransaction,
+    input: Parameters<IdentityRepository["consumeIdentityAuthentication"]>[1],
+  ) {
+    const sql = resolvePlatformTransaction(transaction);
+    const ownerRows = await sql.query<{ accountRef: string } & Record<string, unknown>>(
+      `SELECT account_ref AS "accountRef"
+       FROM platform.identity_auth_transaction
+       WHERE site_ref=$1 AND transaction_ref=$2`,
+      [input.siteRef, input.transactionRef],
+    );
+    const owner = ownerRows[0];
+    if (owner === undefined) return Object.freeze({ kind: "rejected" as const });
+    await sql.query(
+      `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`,
+      [`identity-auth\0${input.siteRef}\0${owner.accountRef}`],
+    );
+    const rows = await sql.query<AuthTransactionRow>(
+      `SELECT account_ref AS "accountRef",subject_ref AS "subjectRef",
+              authenticator_ref AS "authenticatorRef",recovery_set_ref AS "recoverySetRef",
+              password_credential_epoch AS "passwordCredentialEpoch",state,attempt_count AS "attemptCount",
+              max_attempts AS "maxAttempts",expires_at AS "expiresAt"
+       FROM platform.identity_auth_transaction
+       WHERE site_ref=$1 AND transaction_ref=$2
+       FOR UPDATE`,
+      [input.siteRef, input.transactionRef],
+    );
+    const auth = rows[0];
+    if (auth === undefined) return Object.freeze({ kind: "rejected" as const });
+    const validState = auth.state === "pending" && auth.attemptCount < auth.maxAttempts &&
+      Date.parse(instant(auth.expiresAt)) > Date.parse(input.now);
+    if (!validState) {
+      if (auth.state === "pending" && Date.parse(instant(auth.expiresAt)) <= Date.parse(input.now)) {
+        await sql.execute(
+          `UPDATE platform.identity_auth_transaction SET state='expired',updated_at=$3::timestamptz
+           WHERE site_ref=$1 AND transaction_ref=$2 AND state='pending'`,
+          [input.siteRef, input.transactionRef, input.now],
+        );
+      }
+      return Object.freeze({ kind: "rejected" as const });
+    }
+    const accounts = await sql.query<{ credentialEpoch: bigint } & Record<string, unknown>>(
+      `SELECT credential.credential_epoch AS "credentialEpoch"
+       FROM platform.identity_account account
+       JOIN platform.identity_password_credential credential
+         ON credential.site_ref=account.site_ref AND credential.account_ref=account.account_ref
+       JOIN platform.authorization_subject subject
+         ON subject.site_ref=account.site_ref AND subject.subject_ref=account.subject_ref
+       WHERE account.site_ref=$1 AND account.account_ref=$2 AND account.subject_ref=$3
+         AND account.state='active' AND subject.state='active'
+       FOR SHARE OF account,credential,subject`,
+      [input.siteRef, auth.accountRef, auth.subjectRef],
+    );
+    const rateRows = await sql.query<AuthRateLimitRow>(
+      `SELECT failed_attempt_count AS "failedAttemptCount",locked_until AS "lockedUntil",
+              window_started_at AS "windowStartedAt"
+       FROM platform.identity_auth_rate_limit
+       WHERE site_ref=$1 AND account_ref=$2 AND purpose='session_login'
+       FOR UPDATE`,
+      [input.siteRef, auth.accountRef],
+    );
+    const rate = rateRows[0];
+    const rateLocked = rate?.lockedUntil !== null && rate?.lockedUntil !== undefined &&
+      Date.parse(instant(rate.lockedUntil)) > Date.parse(input.now);
+    if (rateLocked) {
+      await sql.execute(
+        `UPDATE platform.identity_auth_transaction SET state='locked',updated_at=$3::timestamptz
+         WHERE site_ref=$1 AND transaction_ref=$2 AND state='pending'`,
+        [input.siteRef, input.transactionRef, input.now],
+      );
+      return Object.freeze({ kind: "rejected" as const });
+    }
+    if (accounts[0]?.credentialEpoch.toString() !== auth.passwordCredentialEpoch.toString()) {
+      await recordAuthenticationFailure(sql, input, auth, rate);
+      return Object.freeze({ kind: "rejected" as const });
+    }
+
+    let authenticationMethod: "totp" | "recovery_code" | null = null;
+    if (input.proof.kind === "totp" && auth.authenticatorRef !== null) {
+      const accepted = await sql.execute(
+        `UPDATE platform.identity_totp_authenticator
+         SET last_accepted_timestep=$4::bigint,updated_at=$5::timestamptz
+         WHERE site_ref=$1 AND authenticator_ref=$2 AND account_ref=$3 AND state='active'
+           AND (last_accepted_timestep IS NULL OR last_accepted_timestep<$4::bigint)`,
+        [input.siteRef, auth.authenticatorRef, auth.accountRef, input.proof.timeStep, input.now],
+      );
+      if (accepted === 1) authenticationMethod = "totp";
+    } else if (input.proof.kind === "recovery_code" && auth.recoverySetRef !== null) {
+      const accepted = await sql.execute(
+        `UPDATE platform.identity_recovery_code code
+         SET state='used',used_at=$4::timestamptz
+         FROM platform.identity_recovery_code_set code_set
+         WHERE code.site_ref=$1 AND code.set_ref=$2 AND code.code_digest=$3 AND code.state='active'
+           AND code_set.site_ref=code.site_ref AND code_set.set_ref=code.set_ref AND code_set.state='active'`,
+        [input.siteRef, auth.recoverySetRef, input.proof.codeDigest, input.now],
+      );
+      if (accepted === 1) authenticationMethod = "recovery_code";
+    }
+    if (authenticationMethod === null) {
+      await recordAuthenticationFailure(sql, input, auth, rate);
+      return Object.freeze({ kind: "rejected" as const });
+    }
+    const consumed = await sql.execute(
+      `UPDATE platform.identity_auth_transaction
+       SET state='consumed',consumed_at=$3::timestamptz,updated_at=$3::timestamptz
+       WHERE site_ref=$1 AND transaction_ref=$2 AND state='pending'`,
+      [input.siteRef, input.transactionRef, input.now],
+    );
+    if (consumed !== 1) throw new Error("IDENTITY_AUTH_TRANSACTION_CONSUME_STALE");
+    await resetAuthenticationRateLimit(sql, {
+      siteRef: input.siteRef, accountRef: auth.accountRef, now: input.now,
+    });
+    return Object.freeze({
+      kind: "accepted" as const,
+      accountRef: auth.accountRef,
+      subjectRef: auth.subjectRef,
+      authenticationMethod,
+    });
+  }
+
   async createIdentitySession(
     transaction: PlatformTransaction,
     input: Parameters<IdentityRepository["createIdentitySession"]>[1],
@@ -354,10 +678,10 @@ export class PostgresIdentityRepository implements IdentityRepository {
       `INSERT INTO platform.authorization_identity_session
        (session_ref,subject_ref,site_ref,credential_digest,authentication_methods,state,
         session_epoch,credential_epoch,authenticated_at,expires_at,device_label,last_seen_at,created_at,updated_at)
-       VALUES ($1,$2,$3,$4,ARRAY['password']::TEXT[],'active',1,1,$5::timestamptz,$6::timestamptz,
-               $7,$5::timestamptz,$5::timestamptz,$5::timestamptz)`,
+       VALUES ($1,$2,$3,$4,$5::TEXT[],'active',1,1,$6::timestamptz,$7::timestamptz,
+               $8,$6::timestamptz,$6::timestamptz,$6::timestamptz)`,
       [input.sessionRef, input.subjectRef, input.siteRef, input.sessionCredentialDigest,
-        input.authenticatedAt, input.sessionExpiresAt, input.deviceLabel],
+        [...input.authenticationMethods], input.authenticatedAt, input.sessionExpiresAt, input.deviceLabel],
     );
     await sql.execute(
       `INSERT INTO platform.identity_refresh_family
@@ -404,6 +728,7 @@ export class PostgresIdentityRepository implements IdentityRepository {
               identity_session.session_epoch AS "sessionEpoch",
               identity_session.credential_epoch AS "credentialEpoch",
               identity_session.expires_at AS "sessionExpiresAt",
+              identity_session.authentication_methods AS "authenticationMethods",
               identity_session.state AS "sessionState"
        FROM platform.identity_session_delivery_claim claim
        JOIN platform.identity_receipt_recovery_capability recovery
@@ -424,7 +749,7 @@ export class PostgresIdentityRepository implements IdentityRepository {
     if (
       found === undefined || found.recoverySiteRef !== input.siteRef ||
       found.recoveryWorkloadIdentityId !== input.workloadIdentityId ||
-      found.recoveryPurpose !== input.purpose || found.recoveryTransactionRef !== null ||
+      found.recoveryPurpose !== input.purpose || found.recoveryTransactionRef !== input.transactionRef ||
       found.recoveryState !== "active" || Date.parse(instant(found.recoveryExpiresAt)) <= Date.parse(input.now) ||
       found.callerIdentity !== input.workloadIdentityId || found.operation !== input.purpose ||
       found.receiptState !== "succeeded" || found.sessionState !== "active" ||
@@ -474,6 +799,7 @@ export class PostgresIdentityRepository implements IdentityRepository {
     return Object.freeze({
       accountRef: found.accountRef,
       subjectRef: found.subjectRef,
+      authenticationMethods: identityAuthenticationMethods(found.authenticationMethods),
       revoked: Object.freeze({
         siteRef: input.siteRef, subjectRef: found.subjectRef, identitySessionRef: found.sessionRef,
         state: "revoked" as const, identitySessionEpoch: prior.identitySessionEpoch.toString(),
@@ -788,6 +1114,44 @@ interface AccountRow extends Record<string, unknown>, Omit<AccountPasswordRecord
   credentialEpoch: bigint;
 }
 
+interface AuthRateLimitRow extends Record<string, unknown> {
+  failedAttemptCount: number;
+  lockedUntil: string | Date | null;
+  windowStartedAt: string | Date;
+}
+
+interface AuthMaterialRow extends Record<string, unknown> {
+  accountRef: string;
+  subjectRef: string;
+  transactionRef: string;
+  challengeKind: "totp" | "recovery";
+  expiresAt: string | Date;
+  authenticatorRef: string | null;
+  recoverySetRef: string | null;
+  secretAlgorithm: string | null;
+  secretKeyRevision: string | null;
+  secretNonce: string | null;
+  secretCiphertext: string | null;
+  secretAuthenticationTag: string | null;
+  lastAcceptedTimeStep: bigint | null;
+}
+
+interface RecoveryDigestRow extends Record<string, unknown> {
+  codeDigest: string;
+}
+
+interface AuthTransactionRow extends Record<string, unknown> {
+  accountRef: string;
+  subjectRef: string;
+  authenticatorRef: string | null;
+  recoverySetRef: string | null;
+  passwordCredentialEpoch: bigint;
+  state: "pending" | "consumed" | "expired" | "locked";
+  attemptCount: number;
+  maxAttempts: number;
+  expiresAt: string | Date;
+}
+
 interface SessionSafeRow extends Record<string, unknown>, Omit<IdentitySessionSafeFact, "createdAt" | "lastSeenAt" | "expiresAt"> {
   createdAt: string | Date; lastSeenAt: string | Date; expiresAt: string | Date;
 }
@@ -826,7 +1190,7 @@ interface SessionDeliveryRecoveryRow extends Record<string, unknown> {
   recoverySiteRef: string; recoveryWorkloadIdentityId: string; recoveryPurpose: string;
   recoveryTransactionRef: string | null; capabilityDigest: string; recoveryState: string;
   recoveryExpiresAt: string | Date; sessionEpoch: bigint; credentialEpoch: bigint;
-  sessionExpiresAt: string | Date; sessionState: string;
+  sessionExpiresAt: string | Date; sessionState: string; authenticationMethods: unknown;
 }
 
 function verification(row: VerificationRow): VerificationRecord {
@@ -845,6 +1209,75 @@ function constantTimeDigestEqual(left: string, right: string): boolean {
   const a = Buffer.from(left, "ascii");
   const b = Buffer.from(right, "ascii");
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+async function recordAuthenticationFailure(
+  sql: PlatformSqlTransaction,
+  input: Readonly<{ siteRef: string; transactionRef: string; now: string }>,
+  auth: AuthTransactionRow,
+  rate: AuthRateLimitRow | undefined,
+): Promise<void> {
+  const nextAttempt = Math.min(auth.maxAttempts, auth.attemptCount + 1);
+  await sql.execute(
+    `UPDATE platform.identity_auth_transaction
+     SET attempt_count=$3,state=CASE WHEN $3>=max_attempts THEN 'locked' ELSE 'pending' END,
+         updated_at=$4::timestamptz
+     WHERE site_ref=$1 AND transaction_ref=$2 AND state='pending'`,
+    [input.siteRef, input.transactionRef, nextAttempt, input.now],
+  );
+  await recordAuthenticationRateFailure(sql, {
+    siteRef: input.siteRef, accountRef: auth.accountRef, now: input.now,
+  }, rate);
+}
+
+async function recordAuthenticationRateFailure(
+  sql: PlatformSqlTransaction,
+  input: Readonly<{ siteRef: string; accountRef: string; now: string }>,
+  rate: AuthRateLimitRow | undefined,
+): Promise<void> {
+  const windowExpired = rate === undefined ||
+    Date.parse(input.now) - Date.parse(instant(rate.windowStartedAt)) >= 15 * 60_000;
+  const failureCount = windowExpired ? 1 : Math.min(10, rate.failedAttemptCount + 1);
+  const windowStartedAt = windowExpired ? input.now : instant(rate.windowStartedAt);
+  const lockedUntil = failureCount >= 10
+    ? new Date(Date.parse(input.now) + 15 * 60_000).toISOString()
+    : null;
+  await sql.execute(
+    `INSERT INTO platform.identity_auth_rate_limit
+     (site_ref,account_ref,purpose,window_started_at,failed_attempt_count,locked_until,updated_at)
+     VALUES ($1,$2,'session_login',$3::timestamptz,$4,$5::timestamptz,$6::timestamptz)
+     ON CONFLICT(site_ref,account_ref,purpose) DO UPDATE
+     SET window_started_at=EXCLUDED.window_started_at,
+         failed_attempt_count=EXCLUDED.failed_attempt_count,
+         locked_until=EXCLUDED.locked_until,
+         updated_at=EXCLUDED.updated_at`,
+    [input.siteRef, input.accountRef, windowStartedAt, failureCount, lockedUntil, input.now],
+  );
+}
+
+async function resetAuthenticationRateLimit(
+  sql: PlatformSqlTransaction,
+  input: Readonly<{ siteRef: string; accountRef: string; now: string }>,
+): Promise<void> {
+  await sql.execute(
+    `INSERT INTO platform.identity_auth_rate_limit
+     (site_ref,account_ref,purpose,window_started_at,failed_attempt_count,locked_until,updated_at)
+     VALUES ($1,$2,'session_login',$3::timestamptz,0,NULL,$3::timestamptz)
+     ON CONFLICT(site_ref,account_ref,purpose) DO UPDATE
+     SET window_started_at=EXCLUDED.window_started_at,failed_attempt_count=0,locked_until=NULL,
+         updated_at=EXCLUDED.updated_at`,
+    [input.siteRef, input.accountRef, input.now],
+  );
+}
+
+function identityAuthenticationMethods(
+  value: unknown,
+): readonly ("password" | "totp" | "recovery_code")[] {
+  if (!Array.isArray(value) || value.length < 1 ||
+      value.some((method) => method !== "password" && method !== "totp" && method !== "recovery_code")) {
+    throw new Error("IDENTITY_SESSION_AUTHENTICATION_METHODS_INVALID");
+  }
+  return Object.freeze([...value]) as readonly ("password" | "totp" | "recovery_code")[];
 }
 
 async function insertSessionDeliveryClaim(

@@ -25,3 +25,32 @@ export type SealedVerificationEnvelope = Readonly<{
 export interface VerificationEnvelopeSealerPort {
   seal(content: VerificationDeliveryContent): SealedVerificationEnvelope;
 }
+
+export type IdentityTotpSecretEnvelope = Readonly<{
+  algorithm: "A256GCM";
+  keyRevision: string;
+  nonce: string;
+  ciphertext: string;
+  authenticationTag: string;
+}>;
+
+export type IdentityTotpSecretBinding = Readonly<{
+  siteRef: string;
+  accountRef: string;
+  subjectRef: string;
+  authenticatorRef: string;
+}>;
+
+export interface IdentityTotpSecretProtectorPort {
+  seal(secret: string, binding: IdentityTotpSecretBinding): IdentityTotpSecretEnvelope;
+  unseal(envelope: IdentityTotpSecretEnvelope, binding: IdentityTotpSecretBinding): string;
+}
+
+export interface IdentityTotpVerifierPort {
+  verify(input: Readonly<{
+    secret: string;
+    code: string;
+    epochSeconds: number;
+    afterTimeStep: number | null;
+  }>): Promise<Readonly<{ valid: false } | { valid: true; timeStep: number }>>;
+}

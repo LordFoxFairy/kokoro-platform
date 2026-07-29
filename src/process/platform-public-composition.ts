@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { generateSecret } from "otplib";
 import { createServer as createHttpsServer, type ServerOptions } from "node:https";
 import type { RequestListener, Server } from "node:http";
 import type { PlatformTransactionalDatabaseClient } from "../infrastructure/postgres/client.js";
@@ -31,6 +32,8 @@ import { createIdentityPasswordHasher } from "../modules/identity/infrastructure
 import { createOpaqueCredentialCodec } from "../modules/identity/infrastructure/crypto/opaque-credential.js";
 import { createIdentityAuditDigester } from "../modules/identity/infrastructure/crypto/identity-audit-digester.js";
 import { createVerificationEnvelopeSealer } from "../modules/identity/infrastructure/crypto/verification-envelope-sealer.js";
+import { createIdentityTotpVerifier } from "../modules/identity/infrastructure/crypto/identity-totp-verifier.js";
+import { createIdentityTotpSecretProtector } from "../modules/identity/infrastructure/crypto/identity-totp-secret-protector.js";
 import { PostgresScopedAuthorizationFeedRepository } from "../modules/authorization/infrastructure/postgres/scoped-authorization-feed-repository.js";
 import { SignedScopedSessionAuthorizationPublisher } from "../modules/authorization/infrastructure/postgres/signed-scoped-session-authorization-publisher.js";
 import { CommandReceiptRepository } from "../shared/outbox-inbox/receipt.js";
@@ -63,7 +66,8 @@ export async function createPlatformPublicProductionComposition(input: Readonly<
     new PostgresAuthorizationFeedRepository(),
     eventSigner,
   );
-  const [passwordHasher, verificationCredentials, sessionCredentials, refreshCredentials, auditDigest, deliverySealer] =
+  const [passwordHasher, verificationCredentials, sessionCredentials, refreshCredentials, auditDigest, deliverySealer,
+    totpSecretProtector] =
     await Promise.all([
       loadIdentityPasswordHasher(required(environment, "PLATFORM_IDENTITY_PASSWORD_PEPPER_RING_FILE")),
       loadOpaqueCredentialCodec(required(environment, "PLATFORM_IDENTITY_VERIFICATION_DIGEST_KEY_FILE")),
@@ -71,6 +75,7 @@ export async function createPlatformPublicProductionComposition(input: Readonly<
       loadOpaqueCredentialCodec(required(environment, "PLATFORM_IDENTITY_REFRESH_DIGEST_KEY_FILE")),
       loadIdentityAuditDigester(required(environment, "PLATFORM_IDENTITY_AUDIT_DIGEST_KEY_FILE")),
       loadVerificationDeliverySealer(required(environment, "PLATFORM_IDENTITY_DELIVERY_KEY_FILE")),
+      loadIdentityTotpSecretProtector(required(environment, "PLATFORM_IDENTITY_TOTP_KEY_RING_FILE")),
     ]);
   const scopedPublisher = new SignedScopedSessionAuthorizationPublisher(
     new PostgresScopedAuthorizationFeedRepository(), eventSigner,
@@ -85,6 +90,9 @@ export async function createPlatformPublicProductionComposition(input: Readonly<
     verificationCredentials,
     sessionCredentials,
     refreshCredentials,
+    totpSecretProtector,
+    totpVerifier: createIdentityTotpVerifier(),
+    dummyTotpSecret: generateSecret(),
     auditDigest,
     deliverySealer,
     subjectAuthorization: new SubjectAuthorizationMutation(scopedPublisher),
@@ -154,6 +162,29 @@ async function loadVerificationDeliverySealer(path: string) {
   return createVerificationEnvelopeSealer({
     keyRevision: root.keyRevision,
     key: secretBytes(root.keyBase64url, 32),
+  });
+}
+
+async function loadIdentityTotpSecretProtector(path: string) {
+  const root = record(JSON.parse(await readBoundedSecret(path, 64 * 1024)) as unknown, "IDENTITY_TOTP_KEY_RING_INVALID");
+  exactIdentity(root, ["version", "currentKeyRevision", "keys"]);
+  if (root.version !== 1 || typeof root.currentKeyRevision !== "string" || !Array.isArray(root.keys)) {
+    throw new Error("IDENTITY_TOTP_KEY_RING_INVALID");
+  }
+  const keys = root.keys.map((value) => {
+    const key = record(value, "IDENTITY_TOTP_KEY_RING_INVALID");
+    exactIdentity(key, ["keyRevision", "keyBase64url"]);
+    if (typeof key.keyRevision !== "string" || typeof key.keyBase64url !== "string") {
+      throw new Error("IDENTITY_TOTP_KEY_RING_INVALID");
+    }
+    return Object.freeze({
+      keyRevision: key.keyRevision,
+      key: secretBytes(key.keyBase64url, 32),
+    });
+  });
+  return createIdentityTotpSecretProtector({
+    currentKeyRevision: root.currentKeyRevision,
+    keys: Object.freeze(keys),
   });
 }
 

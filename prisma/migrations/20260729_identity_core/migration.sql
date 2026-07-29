@@ -156,6 +156,131 @@ CREATE TRIGGER verification_legal_acceptance_immutable
 BEFORE UPDATE OR DELETE ON platform.identity_verification_legal_acceptance
 FOR EACH ROW EXECUTE FUNCTION platform.reject_identity_legal_acceptance_mutation();
 
+CREATE TABLE platform.identity_totp_authenticator (
+  site_ref TEXT NOT NULL,
+  authenticator_ref TEXT NOT NULL,
+  account_ref TEXT NOT NULL,
+  subject_ref TEXT NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('pending','active','revoked')),
+  secret_algorithm TEXT NOT NULL CHECK(secret_algorithm='A256GCM'),
+  secret_key_revision TEXT NOT NULL CHECK(length(secret_key_revision) BETWEEN 1 AND 128),
+  secret_nonce TEXT NOT NULL CHECK(length(secret_nonce) BETWEEN 16 AND 32),
+  secret_ciphertext TEXT NOT NULL CHECK(length(secret_ciphertext) BETWEEN 16 AND 4096),
+  secret_authentication_tag TEXT NOT NULL CHECK(length(secret_authentication_tag) BETWEEN 20 AND 32),
+  last_accepted_timestep BIGINT CHECK(last_accepted_timestep IS NULL OR last_accepted_timestep >= 0),
+  confirmed_at TIMESTAMPTZ,
+  revoked_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY(site_ref,authenticator_ref),
+  UNIQUE(site_ref,authenticator_ref,account_ref,subject_ref),
+  FOREIGN KEY(site_ref,account_ref,subject_ref)
+    REFERENCES platform.identity_account(site_ref,account_ref,subject_ref),
+  CHECK(
+    (state='pending' AND confirmed_at IS NULL AND revoked_at IS NULL)
+    OR (state='active' AND confirmed_at IS NOT NULL AND revoked_at IS NULL)
+    OR (state='revoked' AND revoked_at IS NOT NULL)
+  )
+);
+CREATE UNIQUE INDEX identity_one_active_totp_authenticator_idx
+  ON platform.identity_totp_authenticator(site_ref,account_ref)
+  WHERE state='active';
+
+CREATE TABLE platform.identity_recovery_code_set (
+  site_ref TEXT NOT NULL,
+  set_ref TEXT NOT NULL,
+  account_ref TEXT NOT NULL,
+  subject_ref TEXT NOT NULL,
+  generation BIGINT NOT NULL CHECK(generation > 0),
+  state TEXT NOT NULL CHECK(state IN ('active','replaced','revoked')),
+  replaced_at TIMESTAMPTZ,
+  revoked_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY(site_ref,set_ref),
+  UNIQUE(site_ref,set_ref,account_ref,subject_ref),
+  UNIQUE(site_ref,account_ref,generation),
+  FOREIGN KEY(site_ref,account_ref,subject_ref)
+    REFERENCES platform.identity_account(site_ref,account_ref,subject_ref),
+  CHECK(
+    (state='active' AND replaced_at IS NULL AND revoked_at IS NULL)
+    OR (state='replaced' AND replaced_at IS NOT NULL AND revoked_at IS NULL)
+    OR (state='revoked' AND revoked_at IS NOT NULL)
+  )
+);
+CREATE UNIQUE INDEX identity_one_active_recovery_code_set_idx
+  ON platform.identity_recovery_code_set(site_ref,account_ref)
+  WHERE state='active';
+
+CREATE TABLE platform.identity_recovery_code (
+  site_ref TEXT NOT NULL,
+  set_ref TEXT NOT NULL,
+  code_digest CHAR(64) NOT NULL CHECK(code_digest ~ '^[0-9a-f]{64}$'),
+  state TEXT NOT NULL CHECK(state IN ('active','used','revoked')),
+  used_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY(site_ref,code_digest),
+  FOREIGN KEY(site_ref,set_ref)
+    REFERENCES platform.identity_recovery_code_set(site_ref,set_ref),
+  CHECK((state='used') = (used_at IS NOT NULL))
+);
+CREATE INDEX identity_recovery_code_set_idx
+  ON platform.identity_recovery_code(site_ref,set_ref,state);
+
+CREATE TABLE platform.identity_auth_rate_limit (
+  site_ref TEXT NOT NULL,
+  account_ref TEXT NOT NULL,
+  purpose TEXT NOT NULL CHECK(purpose='session_login'),
+  window_started_at TIMESTAMPTZ NOT NULL,
+  failed_attempt_count INTEGER NOT NULL CHECK(failed_attempt_count BETWEEN 0 AND 10),
+  locked_until TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY(site_ref,account_ref,purpose),
+  FOREIGN KEY(site_ref,account_ref)
+    REFERENCES platform.identity_account(site_ref,account_ref)
+);
+
+CREATE TABLE platform.identity_auth_transaction (
+  site_ref TEXT NOT NULL,
+  transaction_ref TEXT NOT NULL,
+  initiating_command_id TEXT NOT NULL UNIQUE REFERENCES platform.command_receipt(command_id),
+  account_ref TEXT NOT NULL,
+  subject_ref TEXT NOT NULL,
+  purpose TEXT NOT NULL CHECK(purpose='session_login'),
+  challenge_kind TEXT NOT NULL CHECK(challenge_kind IN ('totp','recovery')),
+  authenticator_ref TEXT,
+  recovery_set_ref TEXT,
+  password_credential_epoch BIGINT NOT NULL CHECK(password_credential_epoch > 0),
+  request_digest CHAR(64) NOT NULL CHECK(request_digest ~ '^[0-9a-f]{64}$'),
+  state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','consumed','expired','locked')),
+  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count BETWEEN 0 AND 5),
+  max_attempts INTEGER NOT NULL DEFAULT 5 CHECK(max_attempts=5),
+  expires_at TIMESTAMPTZ NOT NULL,
+  consumed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY(site_ref,transaction_ref),
+  FOREIGN KEY(site_ref,account_ref,subject_ref)
+    REFERENCES platform.identity_account(site_ref,account_ref,subject_ref),
+  FOREIGN KEY(site_ref,authenticator_ref,account_ref,subject_ref)
+    REFERENCES platform.identity_totp_authenticator(site_ref,authenticator_ref,account_ref,subject_ref),
+  FOREIGN KEY(site_ref,recovery_set_ref,account_ref,subject_ref)
+    REFERENCES platform.identity_recovery_code_set(site_ref,set_ref,account_ref,subject_ref),
+  CHECK(expires_at > created_at),
+  CHECK((state='consumed') = (consumed_at IS NOT NULL)),
+  CHECK(authenticator_ref IS NOT NULL OR recovery_set_ref IS NOT NULL),
+  CHECK(
+    (challenge_kind='totp' AND authenticator_ref IS NOT NULL)
+    OR (challenge_kind='recovery' AND recovery_set_ref IS NOT NULL)
+  )
+);
+CREATE INDEX identity_auth_transaction_pending_owner_idx
+  ON platform.identity_auth_transaction(site_ref,account_ref,purpose)
+  WHERE state='pending';
+CREATE INDEX identity_auth_transaction_expiry_idx
+  ON platform.identity_auth_transaction(expires_at)
+  WHERE state='pending';
+
 CREATE TABLE platform.identity_refresh_family (
   site_ref TEXT NOT NULL REFERENCES platform.authorization_site(site_ref),
   family_ref TEXT NOT NULL,
@@ -338,6 +463,11 @@ REVOKE ALL ON
   platform.identity_verification_transaction,
   platform.identity_verification_legal_acceptance,
   platform.identity_verification_delivery,
+  platform.identity_totp_authenticator,
+  platform.identity_recovery_code_set,
+  platform.identity_recovery_code,
+  platform.identity_auth_rate_limit,
+  platform.identity_auth_transaction,
   platform.identity_refresh_family,
   platform.identity_refresh_credential,
   platform.identity_session_delivery_claim,
