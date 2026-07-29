@@ -175,6 +175,7 @@ export interface AdmissionBudgetOwnerPort {
       manifestDigest: string;
       maximumExpiresAt: string;
       configurationRevisionId: string;
+      requestDigest: string;
       agentRef?: string | undefined;
     }>,
   ): Promise<AdmissionOwnerResolution<Readonly<{
@@ -426,6 +427,7 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         manifestDigest,
         maximumExpiresAt,
         configurationRevisionId: site.value.configurationRevisionId,
+        requestDigest: command.requestDigest,
         ...(capability.value.agent === undefined ? {} : { agentRef: capability.value.agent }),
       });
       if (budget.kind !== "resolved") return budget;

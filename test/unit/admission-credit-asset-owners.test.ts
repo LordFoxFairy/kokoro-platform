@@ -81,6 +81,7 @@ describe("native Admission Credit and Asset owners", () => {
         siteId: "site-a", projectRef: "project-a", launchId: "launch-a", runId: "run-a",
         modelOptionRevisionRef: "model-a", commandId: "command-a",
         manifestRef: "manifest-a", manifestDigest: "c".repeat(64),
+        requestDigest: "d".repeat(64),
         maximumExpiresAt: "2026-07-29T12:05:00.000Z", configurationRevisionId: "release-a",
         agentRef: "general-v3",
       })).resolves.toEqual({
@@ -95,7 +96,7 @@ describe("native Admission Credit and Asset owners", () => {
         siteId: "site-a", billingAccountId: "billing-a", creditAccountId: "credit-a",
         unit: "credit_micros", liabilityMerchantAccountId: "merchant-a",
         ratingPolicyRevisionRef: "rating-a", rootCeiling: 100000n, segmentMaximum: 75000n,
-        executionManifestRef: "manifest-a",
+        executionManifestRef: "manifest-a", requestDigest: "d".repeat(64),
         consumptionScope: { surfaceRef: "chat", capabilityKey: "chat.general", agentRef: "general-v3" },
       }));
     } finally {

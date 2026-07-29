@@ -108,7 +108,7 @@ export class PostgresAdmissionBudgetOwner implements AdmissionBudgetOwnerPort {
         agentRef: input.agentRef ?? null,
       },
       businessOperationKey: input.commandId,
-      requestDigest: input.manifestDigest,
+      requestDigest: input.requestDigest,
       rootCeiling: BigInt(policy.rootCeiling),
       segmentMaximum: BigInt(policy.segmentMaximum),
       expiresAt: input.maximumExpiresAt,
