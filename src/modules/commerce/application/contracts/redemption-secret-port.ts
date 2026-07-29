@@ -17,4 +17,11 @@ export interface RedemptionSecretPort {
     subjectGeneration: string;
     code: string;
   }>): string;
+  confirmRequestDigest(input: Readonly<{
+    siteId: string;
+    subjectId: string;
+    subjectGeneration: string;
+    previewCredential: string;
+    legalAcceptanceRefs: readonly string[];
+  }>): string;
 }

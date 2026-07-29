@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { RedemptionSecretPort } from "../../application/contracts/redemption-secret-port.js";
 import { RedemptionInputError } from "../../domain/redemption-input-error.js";
+import { commerceCanonicalJson } from "../../domain/canonical-json.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const KEY_REVISION = /^[A-Za-z0-9_-]{1,64}$/u;
@@ -77,6 +78,29 @@ export function createRedemptionSecretCodec(config: RedemptionSecretCodecConfig)
         "kokoro.commerce.preview-request-audit.v1",
         `${input.siteId}\0${input.subjectId}\0${input.subjectGeneration}\0${normalizeCode(input.code)}`,
       );
+    },
+    confirmRequestDigest(input: Readonly<{
+      siteId: string;
+      subjectId: string;
+      subjectGeneration: string;
+      previewCredential: string;
+      legalAcceptanceRefs: readonly string[];
+    }>) {
+      bounded(input.siteId, 256, "REDEMPTION_SITE_INVALID");
+      bounded(input.subjectId, 256, "REDEMPTION_SUBJECT_INVALID");
+      if (!/^[1-9][0-9]*$/u.test(input.subjectGeneration)) throw new Error("REDEMPTION_SUBJECT_GENERATION_INVALID");
+      if (input.previewCredential.length < 32 || input.previewCredential.length > 4096 || /\s/u.test(input.previewCredential)) {
+        throw new Error("REDEMPTION_PREVIEW_CREDENTIAL_INVALID");
+      }
+      if (input.legalAcceptanceRefs.length > 16) throw new Error("REDEMPTION_LEGAL_ACCEPTANCE_INVALID");
+      input.legalAcceptanceRefs.forEach((reference: string) => bounded(reference, 128, "REDEMPTION_LEGAL_ACCEPTANCE_INVALID"));
+      return hmac(auditKey, "kokoro.commerce.confirm-request-audit.v1", commerceCanonicalJson({
+        siteId: input.siteId,
+        subjectId: input.subjectId,
+        subjectGeneration: input.subjectGeneration,
+        previewCredential: input.previewCredential,
+        legalAcceptanceRefs: [...input.legalAcceptanceRefs].sort((left, right) => left.localeCompare(right, "en")),
+      }));
     },
   });
 }

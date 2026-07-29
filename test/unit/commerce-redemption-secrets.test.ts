@@ -72,4 +72,15 @@ describe("Commerce redemption secret codec", () => {
       siteId: "site-1", subjectId: "subject-1", subjectGeneration: "2", code: "----------------",
     })).toThrow(RedemptionInputError);
   });
+
+  it("binds confirm audit identity to Site, subject generation, capability and canonical legal set", () => {
+    const input = { siteId: "site-1", subjectId: "subject-1", subjectGeneration: "2",
+      previewCredential: codec.previewCredential("00000000-0000-7000-8000-000000000001"),
+      legalAcceptanceRefs: ["terms-b", "terms-a"] };
+    const digest = codec.confirmRequestDigest(input);
+    expect(digest).toMatch(/^[a-f0-9]{64}$/u);
+    expect(codec.confirmRequestDigest({ ...input, legalAcceptanceRefs: ["terms-a", "terms-b"] })).toBe(digest);
+    expect(codec.confirmRequestDigest({ ...input, siteId: "site-2" })).not.toBe(digest);
+    expect(codec.confirmRequestDigest({ ...input, subjectGeneration: "3" })).not.toBe(digest);
+  });
 });
