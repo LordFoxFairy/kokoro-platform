@@ -111,6 +111,23 @@ export class OutboxRepository {
     if (changed !== 1) throw new Error("OUTBOX_LEASE_LOST");
   }
 
+  async renewLease(
+    transaction: PlatformTransaction,
+    input: Readonly<{ eventId: string; leaseToken: string; leaseSeconds: number }>,
+  ): Promise<void> {
+    assertBoundedIdentifier(input.leaseToken, "OUTBOX_RENEW_INPUT_INVALID");
+    if (!Number.isInteger(input.leaseSeconds) || input.leaseSeconds < 1 || input.leaseSeconds > 300) {
+      throw new Error("OUTBOX_RENEW_INPUT_INVALID");
+    }
+    const changed = await resolvePlatformTransaction(transaction).execute(
+      `UPDATE platform.outbox_event
+       SET lease_expires_at=now()+make_interval(secs => $3),updated_at=now()
+       WHERE event_id=$1 AND state='leased' AND lease_token=$2`,
+      [input.eventId, input.leaseToken, input.leaseSeconds],
+    );
+    if (changed !== 1) throw new Error("OUTBOX_LEASE_LOST");
+  }
+
   async retryOrDeadLetter(
     transaction: PlatformTransaction,
     input: { readonly eventId: string; readonly leaseToken: string; readonly errorCode: string; readonly retryAt: string | null; readonly maxAttempts: number },

@@ -24,6 +24,7 @@ export const ASSET_EFFECT_EVENT_TYPES = Object.freeze([
 
 export interface AssetEffectEventQueue {
   claim(): Promise<readonly ClaimedOutboxEvent[]>;
+  renew(eventId: string, leaseToken: string): Promise<void>;
   ack(eventId: string, leaseToken: string): Promise<void>;
   retry(input: Readonly<{ eventId: string; leaseToken: string; errorCode: string;
     retryAt: string | null; maxAttempts: number }>): Promise<void>;
@@ -48,13 +49,14 @@ export class AssetOutboxConsumer {
   readonly #baseRetryMs: number;
   readonly #maxRetryMs: number;
   readonly #maxAttempts: number;
+  readonly #leaseHeartbeatMs: number;
   #claiming = true;
 
   constructor(
     private readonly queue: AssetEffectEventQueue,
     private readonly services: AssetEffectServices,
     options: Readonly<{ now?: () => string; baseRetryMs?: number; maxRetryMs?: number;
-      maxAttempts?: number }> = {},
+      maxAttempts?: number; leaseHeartbeatMs?: number }> = {},
   ) {
     this.#now = options.now ?? (() => new Date().toISOString());
     this.#baseRetryMs = boundedInteger(options.baseRetryMs ?? 1_000, 100, 60_000,
@@ -63,6 +65,8 @@ export class AssetOutboxConsumer {
       "ASSET_RETRY_MAX_INVALID");
     this.#maxAttempts = boundedInteger(options.maxAttempts ?? 12, 1, 100,
       "ASSET_RETRY_ATTEMPTS_INVALID");
+    this.#leaseHeartbeatMs = boundedInteger(options.leaseHeartbeatMs ?? 10_000, 100, 120_000,
+      "ASSET_LEASE_HEARTBEAT_INVALID");
   }
 
   async runOneCycle(context: Readonly<{ signal: AbortSignal }>): Promise<void> {
@@ -73,7 +77,7 @@ export class AssetOutboxConsumer {
     for (const event of events) {
       context.signal.throwIfAborted();
       try {
-        const result = await this.dispatch(event);
+        const result = await this.dispatchWithLeaseHeartbeat(event);
         if (result.disposition === "retry") {
           await this.queue.retry({
             eventId: event.eventId,
@@ -97,6 +101,26 @@ export class AssetOutboxConsumer {
       } finally {
         this.#active.delete(event.eventId);
       }
+    }
+  }
+
+  private async dispatchWithLeaseHeartbeat(event: ClaimedOutboxEvent): Promise<AssetEffectResult> {
+    let heartbeatFailure: unknown;
+    let heartbeat = Promise.resolve();
+    const timer = setInterval(() => {
+      heartbeat = heartbeat.then(() => this.queue.renew(event.eventId, event.leaseToken)).catch(
+        (error: unknown) => { heartbeatFailure = error; },
+      );
+    }, this.#leaseHeartbeatMs);
+    timer.unref();
+    try {
+      const result = await this.dispatch(event);
+      await heartbeat;
+      if (heartbeatFailure !== undefined) throw heartbeatFailure;
+      return result;
+    } finally {
+      clearInterval(timer);
+      await heartbeat;
     }
   }
 
@@ -159,6 +183,8 @@ export function createPostgresAssetEffectEventQueue(
       limit: claimLimit,
       leaseSeconds,
     })),
+    renew: (eventId, leaseToken) => database.internalTransaction("asset.outbox.consume",
+      (lease) => outbox.renewLease(lease, { eventId, leaseToken, leaseSeconds })),
     ack: (eventId, leaseToken) => database.internalTransaction("asset.outbox.consume",
       (lease) => outbox.complete(lease, {
       eventId,

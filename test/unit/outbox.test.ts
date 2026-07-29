@@ -97,6 +97,22 @@ describe("outbox retry bounds", () => {
     } finally { revokePlatformTransaction(lease); }
   });
 
+  it("renews only the exact active lease token", async () => {
+    const executions: Array<{ statement: string; values: readonly unknown[] }> = [];
+    const lease = issuePlatformTransaction({ query: async () => [], execute: async (statement, values = []) => {
+      executions.push({ statement, values });
+      return 1;
+    } });
+    try {
+      await new OutboxRepository().renewLease(lease.transaction, {
+        eventId: "event-01", leaseToken: "lease-01", leaseSeconds: 30,
+      });
+      expect(executions[0]?.statement).toContain("state='leased' AND lease_token=$2");
+      expect(executions[0]?.statement).toContain("lease_expires_at=now()+make_interval");
+      expect(executions[0]?.values).toEqual(["event-01", "lease-01", 30]);
+    } finally { revokePlatformTransaction(lease); }
+  });
+
   it("returns every owned lease for a bounded owner set during worker shutdown", async () => {
     const statements: unknown[] = [];
     const lease = issuePlatformTransaction({

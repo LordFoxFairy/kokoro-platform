@@ -104,6 +104,7 @@ export async function createAssetWorkerProductionComposition(input: Readonly<{
   };
   const claimLimit = optionalInteger(environment, "PLATFORM_ASSET_OUTBOX_CLAIM_LIMIT");
   const leaseSeconds = optionalInteger(environment, "PLATFORM_ASSET_OUTBOX_LEASE_SECONDS");
+  const effectiveLeaseSeconds = leaseSeconds ?? 30;
   const consumer = new AssetOutboxConsumer(
     createPostgresAssetEffectEventQueue(input.database, {
       workerId: input.workerId,
@@ -111,6 +112,7 @@ export async function createAssetWorkerProductionComposition(input: Readonly<{
       ...(leaseSeconds === undefined ? {} : { leaseSeconds }),
     }),
     services,
+    { leaseHeartbeatMs: Math.max(100, Math.floor(effectiveLeaseSeconds * 1_000 / 3)) },
   );
   const composition: AssetWorkerProductionComposition = {
     enabled: true,

@@ -114,6 +114,35 @@ describe("AssetOutboxConsumer", () => {
     await consumer.runOneCycle({ signal: new AbortController().signal });
     expect(calls.filter((value) => value === "claim")).toHaveLength(1);
   });
+
+  it("renews an in-flight lease before a slow security scan can be reclaimed", async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: string[] = [];
+      let finish: (() => void) | undefined;
+      const completion = new Promise<void>((resolve) => { finish = resolve; });
+      const servicesFixture = services(calls);
+      servicesFixture.scan.execute = vi.fn(async () => {
+        calls.push("scan-started");
+        await completion;
+        return { disposition: "promotion_pending" as const, assetVersionRef: "version_01" };
+      });
+      const consumer = new AssetOutboxConsumer(queue([event("asset.scan.requested", {
+        kind: "asset_scan_requested_v1", siteRef: "site_01",
+        candidateRef: "candidate_01", expectedVersion: "3",
+      }, "candidate_01", 1)], calls), servicesFixture, { leaseHeartbeatMs: 1_000 });
+
+      const cycle = consumer.runOneCycle({ signal: new AbortController().signal });
+      await vi.waitFor(() => expect(calls).toContain("scan-started"));
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(calls).toContain("renew:event_01");
+      finish?.();
+      await cycle;
+      expect(calls.indexOf("renew:event_01")).toBeLessThan(calls.indexOf("ack:event_01"));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 function services(calls: string[]): AssetEffectServices {
@@ -141,6 +170,7 @@ function queue(events: ClaimedOutboxEvent[], calls: string[]): AssetEffectEventQ
   let claimed = false;
   return {
     claim: async () => { calls.push("claim"); claimed = true; return events; },
+    renew: async (eventId) => { calls.push(`renew:${eventId}`); },
     ack: async (eventId) => { calls.push(`ack:${eventId}`); },
     retry: async (input) => {
       calls.push(`retry:${input.eventId}:${input.errorCode}:${input.retryAt}:${input.maxAttempts}`);
