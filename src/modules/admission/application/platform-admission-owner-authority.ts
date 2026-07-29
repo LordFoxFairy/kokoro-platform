@@ -86,6 +86,18 @@ export interface AdmissionSiteOwnerPort {
   ): Promise<AdmissionOwnerResolution<Readonly<{
     configurationRevisionId: string;
     policyDecisionRef: string;
+  }>>>;
+}
+
+export interface AdmissionRuntimePolicyOwnerPort {
+  resolve(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      siteId: string;
+      projectRef: string;
+      configurationRevisionId: string;
+    }>,
+  ): Promise<AdmissionOwnerResolution<Readonly<{
     backend: Backend;
     permissions: Permissions;
   }>>>;
@@ -279,6 +291,7 @@ export interface PlatformAdmissionOwnerPorts {
   readonly unitOfWork: AdmissionOwnerUnitOfWork;
   readonly session: AdmissionSessionOwnerPort;
   readonly site: AdmissionSiteOwnerPort;
+  readonly runtimePolicy: AdmissionRuntimePolicyOwnerPort;
   readonly model: AdmissionModelOwnerPort;
   readonly capability: AdmissionCapabilityOwnerPort;
   readonly assets: AdmissionAssetOwnerPort;
@@ -320,6 +333,12 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         locale: command.effect.clientIntent!.locale,
       });
       if (site.kind !== "resolved") return site;
+      const runtimePolicy = await this.#ports.runtimePolicy.resolve(transaction, {
+        siteId: command.siteId,
+        projectRef: command.effect.projectRef,
+        configurationRevisionId: site.value.configurationRevisionId,
+      });
+      if (runtimePolicy.kind !== "resolved") return runtimePolicy;
       const model = await this.#ports.model.resolve(transaction, {
         siteId: command.siteId,
         configurationRevisionId: site.value.configurationRevisionId,
@@ -368,8 +387,8 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
           skills: [...capability.value.skills],
           mcp_servers: [...capability.value.mcpServers],
           subagents: [...capability.value.subagents],
-          backend: site.value.backend,
-          permissions: { ...site.value.permissions },
+          backend: runtimePolicy.value.backend,
+          permissions: { ...runtimePolicy.value.permissions },
         },
         context: {
           namespace: session.value.namespace,
@@ -662,6 +681,7 @@ export function assertPlatformAdmissionOwnerPorts(
     typeof candidate.session?.resolve !== "function" ||
     typeof candidate.session.verifyFinalizeReceipts !== "function" ||
     typeof candidate.site?.resolve !== "function" ||
+    typeof candidate.runtimePolicy?.resolve !== "function" ||
     typeof candidate.model?.resolve !== "function" ||
     typeof candidate.capability?.resolve !== "function" ||
     typeof candidate.assets?.validate !== "function" ||

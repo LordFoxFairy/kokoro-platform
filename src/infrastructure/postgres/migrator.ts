@@ -285,7 +285,7 @@ async function grantFoundationPrivileges(
       `REVOKE ALL ON FUNCTION platform.bootstrap_admin_authorities(JSONB, CHAR(64)), platform.apply_admin_authority_change(UUID, JSONB) FROM ${identifier}`,
     );
     if (role === apiRole) {
-      await client.query(`GRANT SELECT ON TABLE ${KERNEL_TABLES}, ${ADMISSION_TABLES}, ${AUTHORIZATION_TABLES}, ${IDENTITY_TABLES}, ${COMMERCE_TABLES}, ${ASSET_API_TABLES} TO ${identifier}`);
+      await client.query(`GRANT SELECT ON TABLE ${KERNEL_TABLES}, ${ADMISSION_TABLES}, ${AUTHORIZATION_TABLES}, ${IDENTITY_TABLES}, ${COMMERCE_TABLES}, ${ASSET_API_TABLES}, platform.site, platform.site_release TO ${identifier}`);
       await client.query(
         `GRANT INSERT ON TABLE platform.command_receipt, platform.outbox_event, platform.inbox_delivery, platform.model_selection_decision, platform.authorization_product_context, platform.authorization_session_access_grant TO ${identifier}`,
       );

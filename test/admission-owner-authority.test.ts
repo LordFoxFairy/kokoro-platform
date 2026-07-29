@@ -98,6 +98,14 @@ function ports(events: string[] = []): PlatformAdmissionOwnerPorts {
         value: {
           configurationRevisionId: "configuration-1",
           policyDecisionRef: "policy-1",
+        },
+      };
+    }) },
+    runtimePolicy: { resolve: vi.fn(async () => {
+      events.push("runtime-policy");
+      return {
+        kind: "resolved" as const,
+        value: {
           backend: "state" as const,
           permissions: {
             approval_tools: [], review_tools: [], subagent_create: "deny" as const,
@@ -227,7 +235,12 @@ describe("Platform Admission owner authority", () => {
       const lease = issuePlatformTransaction(sql);
       try { return await work(lease.transaction); } finally { revokePlatformTransaction(lease); }
     });
-    const { unitOfWork: _unitOfWork, lifecycle: _lifecycle, ...ownerPorts } = dependencies;
+    const {
+      unitOfWork: _unitOfWork,
+      lifecycle: _lifecycle,
+      site: _site,
+      ...ownerPorts
+    } = dependencies;
     const authority = createPlatformAdmissionOwnerAuthority({
       database: { internalTransaction },
       ownerPorts,
@@ -259,7 +272,7 @@ describe("Platform Admission owner authority", () => {
       database: { internalTransaction: vi.fn() },
       ownerPorts: ownerPorts as unknown as Omit<
         PlatformAdmissionOwnerPorts,
-        "unitOfWork" | "lifecycle"
+        "unitOfWork" | "lifecycle" | "site"
       >,
       clock: () => now,
     })).toThrowError("PLATFORM_ADMISSION_OWNER_PORTS_REQUIRED");
@@ -325,7 +338,7 @@ describe("Platform Admission owner authority", () => {
       expiresAt: "2026-07-29T12:04:00.000Z",
     });
     expect(events).toEqual([
-      "session", "tx.begin", "site", "model", "capability", "assets",
+      "session", "tx.begin", "site", "runtime-policy", "model", "capability", "assets",
       "budget.reserve", "lifecycle.prepare", "tx.end",
     ]);
   });
