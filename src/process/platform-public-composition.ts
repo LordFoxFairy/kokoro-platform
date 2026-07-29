@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { createServer as createHttpsServer, type ServerOptions } from "node:https";
 import type { RequestListener, Server } from "node:http";
 import type { PlatformTransactionalDatabaseClient } from "../infrastructure/postgres/client.js";
@@ -20,6 +21,20 @@ import { PostgresProductModelOptionCatalogReader } from "../modules/model-contro
 import { loadProductWorkloadRegistry } from "../modules/authorization/infrastructure/transport/product-workload-registry.js";
 import { PlatformUnitOfWork } from "../shared/unit-of-work/unit-of-work.js";
 import { createPlatformPublicHttpHandler, type PlatformPublicHttpHandler } from "../interfaces/http/platform-public.js";
+import { createAuthorizationPublicOperations, AUTHORIZATION_PUBLIC_OPERATION_IDS } from "../modules/authorization/interfaces/http/authorization-public-operations.js";
+import { createIdentityPublicOperations, IDENTITY_LAUNCH_OPERATION_IDS } from "../modules/identity/interfaces/http/identity-public-operations.js";
+import { IdentityApplicationService } from "../modules/identity/application/services/identity-application-service.js";
+import { IdentitySessionAuthorizationMutation } from "../modules/identity/application/services/identity-session-authorization-mutation.js";
+import { SubjectAuthorizationMutation } from "../modules/identity/application/services/subject-authorization-mutation.js";
+import { PostgresIdentityRepository } from "../modules/identity/infrastructure/postgres/identity-repository.js";
+import { createIdentityPasswordHasher } from "../modules/identity/infrastructure/crypto/identity-password-hasher.js";
+import { createOpaqueCredentialCodec } from "../modules/identity/infrastructure/crypto/opaque-credential.js";
+import { createIdentityAuditDigester } from "../modules/identity/infrastructure/crypto/identity-audit-digester.js";
+import { createVerificationEnvelopeSealer } from "../modules/identity/infrastructure/crypto/verification-envelope-sealer.js";
+import { PostgresScopedAuthorizationFeedRepository } from "../modules/authorization/infrastructure/postgres/scoped-authorization-feed-repository.js";
+import { SignedScopedSessionAuthorizationPublisher } from "../modules/authorization/infrastructure/postgres/signed-scoped-session-authorization-publisher.js";
+import { CommandReceiptRepository } from "../shared/outbox-inbox/receipt.js";
+import { OutboxRepository } from "../shared/outbox-inbox/outbox.js";
 
 export interface PlatformPublicProductionComposition {
   readonly handler: PlatformPublicHttpHandler;
@@ -48,28 +63,113 @@ export async function createPlatformPublicProductionComposition(input: Readonly<
     new PostgresAuthorizationFeedRepository(),
     eventSigner,
   );
+  const [passwordHasher, verificationCredentials, sessionCredentials, refreshCredentials, auditDigest, deliverySealer] =
+    await Promise.all([
+      loadIdentityPasswordHasher(required(environment, "PLATFORM_IDENTITY_PASSWORD_PEPPER_RING_FILE")),
+      loadOpaqueCredentialCodec(required(environment, "PLATFORM_IDENTITY_VERIFICATION_DIGEST_KEY_FILE")),
+      loadOpaqueCredentialCodec(required(environment, "PLATFORM_IDENTITY_SESSION_DIGEST_KEY_FILE")),
+      loadOpaqueCredentialCodec(required(environment, "PLATFORM_IDENTITY_REFRESH_DIGEST_KEY_FILE")),
+      loadIdentityAuditDigester(required(environment, "PLATFORM_IDENTITY_AUDIT_DIGEST_KEY_FILE")),
+      loadVerificationDeliverySealer(required(environment, "PLATFORM_IDENTITY_DELIVERY_KEY_FILE")),
+    ]);
+  const scopedPublisher = new SignedScopedSessionAuthorizationPublisher(
+    new PostgresScopedAuthorizationFeedRepository(), eventSigner,
+  );
+  const identity = new IdentityApplicationService({
+    unitOfWork,
+    repository: new PostgresIdentityRepository(),
+    receipts: new CommandReceiptRepository(),
+    outbox: new OutboxRepository(),
+    passwordHasher,
+    dummyPasswordHash: await passwordHasher.hash(`dummy-${randomUUID()}-${randomUUID()}`),
+    verificationCredentials,
+    sessionCredentials,
+    refreshCredentials,
+    auditDigest,
+    deliverySealer,
+    subjectAuthorization: new SubjectAuthorizationMutation(scopedPublisher),
+    sessionAuthorization: new IdentitySessionAuthorizationMutation(scopedPublisher),
+    reference: randomUUID,
+  });
+  const authorizationOperations = createAuthorizationPublicOperations({
+    exchangeProductContext: new ExchangeProductContextService(unitOfWork, repository, modelOptions),
+    getPersonalContext: new GetPersonalContextService(unitOfWork, repository),
+    issueSessionAccessGrant: new IssueSessionAccessGrantService(unitOfWork, repository, signer, publisher),
+  });
+  const identityOperations = createIdentityPublicOperations(identity);
   const handler = createPlatformPublicHttpHandler({
     workloads,
     sessions: input.database,
-    exchangeProductContext: new ExchangeProductContextService(
-      unitOfWork,
-      repository,
-      modelOptions,
-    ),
-    getPersonalContext: new GetPersonalContextService(unitOfWork, repository),
-    issueSessionAccessGrant: new IssueSessionAccessGrantService(
-      unitOfWork,
-      repository,
-      signer,
-      publisher,
-    ),
+    operations: [...authorizationOperations, ...identityOperations],
+    requiredOperationIds: [...AUTHORIZATION_PUBLIC_OPERATION_IDS, ...IDENTITY_LAUNCH_OPERATION_IDS],
     grantSigner: signer,
+    sessionCredentialDigest: sessionCredentials.digest,
   });
   return Object.freeze({
     handler,
     secure: true as const,
     createServer: (listener: RequestListener) => createHttpsServer(tls, listener),
   });
+}
+
+async function loadIdentityPasswordHasher(path: string) {
+  const root = record(JSON.parse(await readBoundedSecret(path, 64 * 1024)) as unknown, "IDENTITY_PASSWORD_PEPPER_RING_INVALID");
+  exactIdentity(root, ["version", "currentPepperVersion", "peppers", "memoryCostKiB", "timeCost", "parallelism"]);
+  if (
+    root.version !== 1 || typeof root.currentPepperVersion !== "number" ||
+    typeof root.memoryCostKiB !== "number" || typeof root.timeCost !== "number" ||
+    typeof root.parallelism !== "number" || !Array.isArray(root.peppers)
+  ) throw new Error("IDENTITY_PASSWORD_PEPPER_RING_INVALID");
+  const peppers = root.peppers.map((value) => {
+    const pepper = record(value, "IDENTITY_PASSWORD_PEPPER_RING_INVALID");
+    exactIdentity(pepper, ["version", "secretBase64url"]);
+    if (typeof pepper.version !== "number" || typeof pepper.secretBase64url !== "string") {
+      throw new Error("IDENTITY_PASSWORD_PEPPER_RING_INVALID");
+    }
+    return Object.freeze({ version: pepper.version, secret: secretBytes(pepper.secretBase64url, 32) });
+  });
+  return createIdentityPasswordHasher({
+    currentPepperVersion: root.currentPepperVersion,
+    peppers,
+    memoryCostKiB: root.memoryCostKiB,
+    timeCost: root.timeCost,
+    parallelism: root.parallelism,
+  });
+}
+
+async function loadOpaqueCredentialCodec(path: string) {
+  return createOpaqueCredentialCodec(secretBytes((await readBoundedSecret(path, 256)).trim(), 32));
+}
+
+async function loadIdentityAuditDigester(path: string) {
+  return createIdentityAuditDigester(secretBytes((await readBoundedSecret(path, 256)).trim(), 32));
+}
+
+async function loadVerificationDeliverySealer(path: string) {
+  const root = record(JSON.parse(await readBoundedSecret(path, 4096)) as unknown, "IDENTITY_DELIVERY_KEY_INVALID");
+  exactIdentity(root, ["version", "keyRevision", "keyBase64url"]);
+  if (root.version !== 1 || typeof root.keyRevision !== "string" || typeof root.keyBase64url !== "string") {
+    throw new Error("IDENTITY_DELIVERY_KEY_INVALID");
+  }
+  return createVerificationEnvelopeSealer({
+    keyRevision: root.keyRevision,
+    key: secretBytes(root.keyBase64url, 32),
+  });
+}
+
+function secretBytes(value: string, length: number): Uint8Array {
+  if (!/^[A-Za-z0-9_-]+$/u.test(value)) throw new Error("IDENTITY_SECRET_ENCODING_INVALID");
+  const bytes = Buffer.from(value, "base64url");
+  if (bytes.byteLength !== length || bytes.toString("base64url") !== value) {
+    throw new Error("IDENTITY_SECRET_ENCODING_INVALID");
+  }
+  return bytes;
+}
+
+function exactIdentity(value: Record<string, unknown>, names: readonly string[]): void {
+  if (Object.keys(value).some((key) => !names.includes(key))) {
+    throw new Error("IDENTITY_SECRET_CONFIG_UNKNOWN_FIELD");
+  }
 }
 
 async function loadTls(environment: Readonly<Record<string, string | undefined>>): Promise<ServerOptions> {

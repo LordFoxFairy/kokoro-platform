@@ -26,6 +26,12 @@ export type PlatformPublicOperationExecution<Id extends PlatformPublicOperationI
 
 export interface PlatformPublicOperationDescriptor<Id extends PlatformPublicOperationId = PlatformPublicOperationId> {
   readonly operationId: Id;
+  readonly targetProjectRef?: (
+    input: Readonly<{
+      body: RuntimeSchemaOutput<OperationDefinition<Id>["requestSchemas"]["body"]>;
+      path: RuntimeSchemaOutput<OperationDefinition<Id>["requestSchemas"]["path"]>;
+    }>,
+  ) => string | null;
   execute(input: PlatformPublicOperationExecution<Id>): Promise<unknown>;
 }
 
@@ -41,8 +47,15 @@ export interface PlatformPublicOperationRegistry {
   match(method: string | undefined, path: string): MatchedPlatformPublicOperation | null;
 }
 
+export function definePlatformPublicOperation<Id extends PlatformPublicOperationId>(
+  descriptor: PlatformPublicOperationDescriptor<Id>,
+): PlatformPublicOperationDescriptor<Id> {
+  return Object.freeze(descriptor);
+}
+
 export function createPlatformPublicOperationRegistry(
   descriptors: readonly RegisteredPlatformPublicOperation[],
+  requiredOperationIds: readonly PlatformPublicOperationId[] = [],
 ): PlatformPublicOperationRegistry {
   const seen = new Set<PlatformPublicOperationId>();
   const routes = descriptors.map((descriptor) => {
@@ -51,6 +64,9 @@ export function createPlatformPublicOperationRegistry(
     const definition = PLATFORM_PUBLIC_OPERATIONS[descriptor.operationId];
     return Object.freeze({ descriptor, definition, matcher: compilePath(definition.path) });
   });
+  if (requiredOperationIds.some((operationId) => !seen.has(operationId))) {
+    throw new Error("PLATFORM_PUBLIC_REQUIRED_OPERATION_MISSING");
+  }
   return Object.freeze({
     match(method: string | undefined, path: string) {
       for (const route of routes) {

@@ -2,24 +2,6 @@ SET statement_timeout = '30s';
 SET lock_timeout = '5s';
 SET idle_in_transaction_session_timeout = '30s';
 
-ALTER TABLE platform.command_receipt
-  ALTER COLUMN command_id TYPE TEXT USING (
-    CASE
-      WHEN command_id::TEXT ~ '^[a-f0-9]{8}-[a-f0-9]{4}-7[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$'
-        THEN command_id::TEXT
-      ELSE replace(command_id::TEXT,'-','')
-    END
-  );
-ALTER TABLE platform.command_receipt
-  ADD CONSTRAINT command_receipt_command_id_format CHECK (
-    command_id ~ '^(?:[a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-7[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})$'
-  );
-
-ALTER TABLE platform.authorization_subject
-  ADD CONSTRAINT authorization_subject_site_identity UNIQUE(subject_ref,site_ref);
-ALTER TABLE platform.authorization_identity_session
-  ADD CONSTRAINT authorization_session_subject_site_identity UNIQUE(session_ref,subject_ref,site_ref);
-
 CREATE TABLE platform.commerce_command (
   command_id TEXT PRIMARY KEY REFERENCES platform.command_receipt(command_id),
   site_ref TEXT NOT NULL REFERENCES platform.authorization_site(site_ref),
@@ -73,6 +55,11 @@ CREATE INDEX commerce_billing_membership_subject_idx
 CREATE UNIQUE INDEX commerce_one_default_billing_account_idx
   ON platform.commerce_billing_account_membership(site_ref,subject_ref)
   WHERE state='active' AND is_default;
+
+ALTER TABLE platform.identity_personal_bootstrap
+  ADD CONSTRAINT identity_personal_bootstrap_billing_account_fk
+  FOREIGN KEY(billing_account_ref,site_ref)
+  REFERENCES platform.commerce_billing_account(billing_account_ref,site_ref);
 
 CREATE TABLE platform.commerce_fulfillment_transaction (
   fulfillment_id UUID PRIMARY KEY,

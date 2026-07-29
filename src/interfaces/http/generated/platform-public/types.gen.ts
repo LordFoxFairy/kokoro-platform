@@ -925,9 +925,11 @@ export type UsageDetailResponse = {
     usage: UsageDetail;
 };
 
+/**
+ * Durable proof that verification, Site-local account activation, and the complete personal Workspace bootstrap committed atomically. Email verification never creates a browser session.
+ */
 export type VerificationActivationResponse = {
     accountRef: string;
-    personalContextPending: boolean;
     receipt: CommandReceipt;
 };
 

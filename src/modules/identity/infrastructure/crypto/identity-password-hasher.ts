@@ -1,10 +1,7 @@
 import { createHmac } from "node:crypto";
 import { Algorithm, hash, verify } from "@node-rs/argon2";
+import type { IdentityPasswordHasherPort } from "../../application/contracts/identity-security-ports.js";
 
-export type IdentityPasswordHash = Readonly<{
-  passwordHash: string;
-  pepperVersion: number;
-}>;
 
 type Pepper = Readonly<{
   version: number;
@@ -19,10 +16,6 @@ export type IdentityPasswordHasherConfig = Readonly<{
   parallelism: number;
 }>;
 
-export type IdentityPasswordHasher = Readonly<{
-  hash(password: string): Promise<IdentityPasswordHash>;
-  verify(password: string, stored: IdentityPasswordHash): Promise<boolean>;
-}>;
 
 function prehashPassword(password: string, pepper: Uint8Array): string {
   // The Argon2 binding verifies textual inputs. Base64url preserves every bit
@@ -32,7 +25,7 @@ function prehashPassword(password: string, pepper: Uint8Array): string {
 
 export function createIdentityPasswordHasher(
   config: IdentityPasswordHasherConfig,
-): IdentityPasswordHasher {
+): IdentityPasswordHasherPort {
   if (
     !Number.isSafeInteger(config.currentPepperVersion) ||
     config.currentPepperVersion < 1 ||

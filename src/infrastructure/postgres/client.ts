@@ -401,13 +401,22 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_table_privilege(current_user, 'platform.outbox_event', 'INSERT')
            AND has_table_privilege(current_user, 'platform.inbox_delivery', 'INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.model_selection_decision', 'INSERT')
-           AND has_table_privilege(current_user, 'platform.authorization_identity_session', 'SELECT')
-           AND has_table_privilege(current_user, 'platform.authorization_project_membership', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.authorization_subject', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.authorization_identity_session', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.authorization_project', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.authorization_project_membership', 'SELECT,INSERT')
            AND has_table_privilege(current_user, 'platform.authorization_product_context', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.authorization_session_access_grant', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.authorization_stream_state', 'SELECT,UPDATE')
            AND has_table_privilege(current_user, 'platform.authorization_event_log', 'INSERT')
+           AND has_table_privilege(current_user, 'platform.identity_account', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.identity_verification_transaction', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.identity_refresh_family', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.identity_session_delivery_claim', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.identity_personal_bootstrap', 'SELECT,INSERT')
            AND has_table_privilege(current_user, 'platform.commerce_command', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.commerce_billing_account', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.commerce_billing_account_membership', 'SELECT,INSERT')
            AND has_table_privilege(current_user, 'platform.commerce_fulfillment_transaction', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.commerce_fulfillment_output_plan', 'SELECT,INSERT')
            AND has_table_privilege(current_user, 'platform.commerce_fulfillment_actual_output', 'SELECT,INSERT')
@@ -490,6 +499,11 @@ const RUNTIME_IDENTITY_SQL = `
                  'model_option_materialized_revision','model_option_role_binding',
                'model_option_materialization_quarantine','site_release_model_catalog_publication',
                'site_release_model_catalog_surface','site_release_model_catalog_option'
+               ,'identity_account','identity_password_credential','identity_login_identifier',
+               'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
+               'identity_refresh_family','identity_refresh_credential','identity_session_delivery_claim',
+               'identity_receipt_recovery_capability','identity_personal_workspace','identity_workspace_membership',
+               'identity_execution_space','identity_namespace_allocation_intent','identity_personal_bootstrap'
                ,'commerce_command','commerce_billing_account','commerce_billing_account_membership',
                'commerce_fulfillment_transaction','commerce_fulfillment_output_plan',
                'commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry'
@@ -513,6 +527,11 @@ const RUNTIME_IDENTITY_SQL = `
                  'model_option_materialized_revision','model_option_role_binding',
                'model_option_materialization_quarantine','site_release_model_catalog_publication',
                'site_release_model_catalog_surface','site_release_model_catalog_option'
+               ,'identity_account','identity_password_credential','identity_login_identifier',
+               'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
+               'identity_refresh_family','identity_refresh_credential','identity_session_delivery_claim',
+               'identity_receipt_recovery_capability','identity_personal_workspace','identity_workspace_membership',
+               'identity_execution_space','identity_namespace_allocation_intent','identity_personal_bootstrap'
                ,'commerce_command','commerce_billing_account','commerce_billing_account_membership',
                'commerce_fulfillment_transaction','commerce_fulfillment_output_plan',
                'commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry'
@@ -539,24 +558,64 @@ const RUNTIME_IDENTITY_SQL = `
                  ))
                  OR has_any_column_privilege(runtime_role.rolname, candidate.oid, 'REFERENCES')
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'INSERT') AND NOT (
-                   ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_selection_decision','authorization_product_context','authorization_session_access_grant','authorization_event_log','commerce_command','commerce_fulfillment_transaction','commerce_fulfillment_output_plan','commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry']))
+                   ($2 = 'api' AND candidate.relname = ANY(ARRAY[
+                     'command_receipt','outbox_event','inbox_delivery','model_selection_decision',
+                     'authorization_product_context','authorization_session_access_grant','authorization_event_log',
+                     'authorization_subject','authorization_identity_session','authorization_project','authorization_project_membership',
+                     'identity_account','identity_password_credential','identity_login_identifier',
+                     'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
+                     'identity_refresh_family','identity_refresh_credential','identity_session_delivery_claim',
+                     'identity_receipt_recovery_capability','identity_personal_workspace','identity_workspace_membership',
+                     'identity_execution_space','identity_namespace_allocation_intent','identity_personal_bootstrap',
+                     'commerce_command','commerce_billing_account','commerce_billing_account_membership',
+                     'commerce_fulfillment_transaction','commerce_fulfillment_output_plan',
+                     'commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry'
+                   ]))
                    OR ($2 = 'authorization' AND candidate.relname = ANY(ARRAY['authorization_snapshot','authorization_snapshot_record']))
                    OR ($2 = 'worker' AND candidate.relname = 'inbox_delivery')
                    OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership']))
                  ))
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
-                   ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','inbox_delivery','authorization_product_context','authorization_session_access_grant','authorization_stream_state','authorization_site','commerce_command','commerce_fulfillment_transaction']))
+                   ($2 = 'api' AND candidate.relname = ANY(ARRAY[
+                     'command_receipt','inbox_delivery','authorization_identity_session','authorization_product_context',
+                     'authorization_session_access_grant','authorization_stream_state','authorization_site',
+                     'identity_account','identity_password_credential','identity_login_identifier',
+                     'identity_verification_transaction','identity_verification_delivery','identity_refresh_family',
+                     'identity_refresh_credential','identity_session_delivery_claim','identity_receipt_recovery_capability',
+                     'identity_execution_space','identity_namespace_allocation_intent',
+                     'commerce_command','commerce_fulfillment_transaction'
+                   ]))
                    OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery']))
                    OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY['command_receipt','commerce_billing_account','commerce_billing_account_membership']))
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'INSERT') AND NOT (
-                   ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_selection_decision','authorization_product_context','authorization_session_access_grant','authorization_event_log','commerce_command','commerce_fulfillment_transaction','commerce_fulfillment_output_plan','commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry']))
+                   ($2 = 'api' AND candidate.relname = ANY(ARRAY[
+                     'command_receipt','outbox_event','inbox_delivery','model_selection_decision',
+                     'authorization_product_context','authorization_session_access_grant','authorization_event_log',
+                     'authorization_subject','authorization_identity_session','authorization_project','authorization_project_membership',
+                     'identity_account','identity_password_credential','identity_login_identifier',
+                     'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
+                     'identity_refresh_family','identity_refresh_credential','identity_session_delivery_claim',
+                     'identity_receipt_recovery_capability','identity_personal_workspace','identity_workspace_membership',
+                     'identity_execution_space','identity_namespace_allocation_intent','identity_personal_bootstrap',
+                     'commerce_command','commerce_billing_account','commerce_billing_account_membership',
+                     'commerce_fulfillment_transaction','commerce_fulfillment_output_plan',
+                     'commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry'
+                   ]))
                    OR ($2 = 'authorization' AND candidate.relname = ANY(ARRAY['authorization_snapshot','authorization_snapshot_record']))
                    OR ($2 = 'worker' AND candidate.relname = 'inbox_delivery')
                    OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership']))
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
-                   ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','inbox_delivery','authorization_product_context','authorization_session_access_grant','authorization_stream_state','authorization_site','commerce_command','commerce_fulfillment_transaction']))
+                   ($2 = 'api' AND candidate.relname = ANY(ARRAY[
+                     'command_receipt','inbox_delivery','authorization_identity_session','authorization_product_context',
+                     'authorization_session_access_grant','authorization_stream_state','authorization_site',
+                     'identity_account','identity_password_credential','identity_login_identifier',
+                     'identity_verification_transaction','identity_verification_delivery','identity_refresh_family',
+                     'identity_refresh_credential','identity_session_delivery_claim','identity_receipt_recovery_capability',
+                     'identity_execution_space','identity_namespace_allocation_intent',
+                     'commerce_command','commerce_fulfillment_transaction'
+                   ]))
                    OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery']))
                    OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY['command_receipt','commerce_billing_account','commerce_billing_account_membership']))
                  ))

@@ -38,12 +38,20 @@ describe("Platform Identity core security", () => {
   it("declares composite Site ownership and bounded verification/session state", async () => {
     const migration = await readFile("prisma/migrations/20260729_identity_core/migration.sql", "utf8");
     expect(migration).toContain("PRIMARY KEY(site_ref,account_ref)");
-    expect(migration).toContain("UNIQUE(site_ref,email_normalized)");
+    expect(migration).toContain("identity_login_identifier_current_value_idx");
+    expect(migration).not.toContain("UNIQUE(site_ref,email_normalized)");
     expect(migration).toContain("UNIQUE(site_ref,account_ref,subject_ref)");
     expect(migration).toContain("FOREIGN KEY(site_ref,account_ref,subject_ref)");
     expect(migration).toContain("attempt_count");
     expect(migration).toContain("max_attempts");
     expect(migration).toContain("identity_verification_legal_acceptance");
+    expect(migration).toContain("identity_login_identifier");
+    expect(migration).toContain("verification_pending");
+    expect(migration).toContain("identity_personal_workspace");
+    expect(migration).toContain("identity_workspace_membership");
+    expect(migration).toContain("identity_execution_space");
+    expect(migration).toContain("identity_namespace_allocation_intent");
+    expect(migration).toContain("identity_personal_bootstrap");
     expect(migration).toContain("length(term_ref) BETWEEN 1 AND 128");
     expect(migration).toContain("identity_verification_delivery");
     expect(migration).toContain("verification_legal_acceptance_immutable");

@@ -1105,9 +1105,11 @@ export const zUsageDetailResponse = z.strictObject({
     usage: zUsageDetail
 });
 
+/**
+ * Durable proof that verification, Site-local account activation, and the complete personal Workspace bootstrap committed atomically. Email verification never creates a browser session.
+ */
 export const zVerificationActivationResponse = z.strictObject({
     accountRef: z.string().min(1).max(128),
-    personalContextPending: z.boolean(),
     receipt: zCommandReceipt
 });
 

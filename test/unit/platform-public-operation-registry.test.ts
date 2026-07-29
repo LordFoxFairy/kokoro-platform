@@ -25,4 +25,11 @@ describe("Platform public generated operation registry", () => {
       { operationId: "beginRegistration", execute: async () => ({}) },
     ])).toThrow("PLATFORM_PUBLIC_OPERATION_DUPLICATE");
   });
+
+  it("fails composition when a required launch operation is absent", () => {
+    expect(() => createPlatformPublicOperationRegistry([
+      { operationId: "beginRegistration", execute: async () => ({}) },
+    ], ["beginRegistration", "createIdentitySession"]))
+      .toThrow("PLATFORM_PUBLIC_REQUIRED_OPERATION_MISSING");
+  });
 });

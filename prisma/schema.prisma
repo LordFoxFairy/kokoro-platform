@@ -621,14 +621,12 @@ model IdentityAccount {
   siteRef           String   @map("site_ref")
   accountRef        String   @map("account_ref")
   subjectRef        String   @map("subject_ref")
-  emailNormalized   String   @map("email_normalized")
   state             String
   accountGeneration BigInt   @default(1) @map("account_generation")
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@id([siteRef, accountRef])
-  @@unique([siteRef, emailNormalized])
   @@unique([siteRef, subjectRef])
   @@unique([siteRef, accountRef, subjectRef])
   @@map("identity_account")
@@ -648,13 +646,31 @@ model IdentityPasswordCredential {
   @@schema("platform")
 }
 
+model IdentityLoginIdentifier {
+  siteRef         String    @map("site_ref")
+  accountRef      String    @map("account_ref")
+  subjectRef      String    @map("subject_ref")
+  generation      BigInt    @default(1)
+  kind            String
+  normalizedValue String    @map("normalized_value")
+  status          String
+  verifiedAt      DateTime? @map("verified_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@id([siteRef, accountRef, kind, generation])
+  @@index([siteRef, kind, normalizedValue])
+  @@map("identity_login_identifier")
+  @@schema("platform")
+}
+
 model IdentityVerificationTransaction {
   siteRef              String    @map("site_ref")
   transactionRef       String    @map("transaction_ref")
+  accountRef           String    @map("account_ref")
+  subjectRef           String    @map("subject_ref")
   purpose              String
   emailNormalized      String    @map("email_normalized")
-  pendingPasswordHash  String?   @map("pending_password_hash")
-  pendingPepperVersion Int?      @map("pending_pepper_version")
   secretDigest         String    @map("secret_digest") @db.Char(64)
   requestDigest        String    @map("request_digest") @db.Char(64)
   state                String    @default("pending")
@@ -755,6 +771,89 @@ model IdentitySessionDeliveryClaim {
 
   @@index([siteRef, subjectRef, sessionRef])
   @@map("identity_session_delivery_claim")
+  @@schema("platform")
+}
+
+model IdentityPersonalWorkspace {
+  siteRef                 String   @map("site_ref")
+  workspaceRef            String   @map("workspace_ref")
+  personalOwnerSubjectRef String   @map("personal_owner_subject_ref")
+  displayName             String   @map("display_name")
+  kind                    String
+  state                   String
+  securityEpoch           BigInt   @default(1) @map("security_epoch")
+  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@id([siteRef, workspaceRef])
+  @@unique([siteRef, personalOwnerSubjectRef])
+  @@map("identity_personal_workspace")
+  @@schema("platform")
+}
+
+model IdentityWorkspaceMembership {
+  siteRef            String   @map("site_ref")
+  workspaceRef       String   @map("workspace_ref")
+  subjectRef         String   @map("subject_ref")
+  role               String
+  state              String
+  membershipEpoch    BigInt   @default(1) @map("membership_epoch")
+  authorizationEpoch BigInt   @default(1) @map("authorization_epoch")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@id([siteRef, workspaceRef, subjectRef])
+  @@map("identity_workspace_membership")
+  @@schema("platform")
+}
+
+model IdentityExecutionSpace {
+  siteRef            String   @map("site_ref")
+  executionSpaceRef  String   @map("execution_space_ref")
+  projectRef         String   @unique @map("project_ref")
+  executionNamespace String   @unique @map("execution_namespace")
+  state              String
+  securityEpoch      BigInt   @default(1) @map("security_epoch")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@id([siteRef, executionSpaceRef])
+  @@unique([siteRef, executionSpaceRef, executionNamespace])
+  @@map("identity_execution_space")
+  @@schema("platform")
+}
+
+model IdentityNamespaceAllocationIntent {
+  intentRef          String   @id @map("intent_ref") @db.Uuid
+  eventId            String   @unique @map("event_id") @db.Uuid
+  siteRef            String   @map("site_ref")
+  executionSpaceRef  String   @map("execution_space_ref")
+  executionNamespace String   @unique @map("execution_namespace")
+  state              String   @default("pending")
+  attemptCount       Int      @default(0) @map("attempt_count")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("identity_namespace_allocation_intent")
+  @@schema("platform")
+}
+
+model IdentityPersonalBootstrap {
+  siteRef              String   @map("site_ref")
+  subjectRef           String   @map("subject_ref")
+  subjectGeneration    BigInt   @map("subject_generation")
+  bootstrapKind        String   @map("bootstrap_kind")
+  workspaceRef         String   @map("workspace_ref")
+  billingAccountRef    String   @map("billing_account_ref")
+  projectRef           String   @map("project_ref")
+  executionSpaceRef    String   @map("execution_space_ref")
+  executionNamespace  String   @map("execution_namespace")
+  namespaceIntentRef  String   @unique @map("namespace_intent_ref") @db.Uuid
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@id([siteRef, subjectRef, subjectGeneration, bootstrapKind])
+  @@unique([siteRef, workspaceRef, billingAccountRef, projectRef, executionSpaceRef])
+  @@map("identity_personal_bootstrap")
   @@schema("platform")
 }
 
@@ -915,6 +1014,7 @@ model AuthorizationProject {
   updatedAt         DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@index([siteRef, state])
+  @@unique([projectRef, siteRef])
   @@map("authorization_project")
   @@schema("platform")
 }

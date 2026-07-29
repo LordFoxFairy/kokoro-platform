@@ -1,16 +1,7 @@
 import { createHmac, randomBytes } from "node:crypto";
+import type { OpaqueCredentialPort } from "../../application/contracts/identity-security-ports.js";
 
-export type IssuedOpaqueCredential = Readonly<{
-  credential: string;
-  digest: string;
-}>;
-
-export type OpaqueCredentialCodec = Readonly<{
-  issue(): IssuedOpaqueCredential;
-  digest(credential: string): string;
-}>;
-
-export function createOpaqueCredentialCodec(digestKey: Uint8Array): OpaqueCredentialCodec {
+export function createOpaqueCredentialCodec(digestKey: Uint8Array): OpaqueCredentialPort {
   if (digestKey.byteLength < 32) {
     throw new Error("OPAQUE_CREDENTIAL_KEY_INVALID");
   }

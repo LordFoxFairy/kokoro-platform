@@ -9,12 +9,9 @@ import type {
 } from "../../../../shared/security-context/request-security-context.js";
 import type { ProductWorkloadIdentity, RuntimeEnvironment } from "../../domain/session-access-grant.js";
 import { SessionAuthorizationError } from "../../domain/session-access-grant.js";
+import { PLATFORM_PUBLIC_OPERATIONS } from "../../../../interfaces/http/generated/platform-public/operations.gen.js";
 
-const ALLOWED_OPERATIONS = new Set([
-  "exchangeProductContext",
-  "getPersonalContext",
-  "issueSessionAccessGrant",
-]);
+const ALLOWED_OPERATIONS = new Set(Object.keys(PLATFORM_PUBLIC_OPERATIONS));
 
 declare const verifiedCsrfEvidenceBrand: unique symbol;
 export type VerifiedCsrfEvidence = Readonly<{

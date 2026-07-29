@@ -2,14 +2,16 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const migration = readFileSync(new URL("../../prisma/migrations/20260729_wave_2a_commerce_core/migration.sql", import.meta.url), "utf8");
+const identityMigration = readFileSync(new URL("../../prisma/migrations/20260729_identity_core/migration.sql", import.meta.url), "utf8");
 const migrator = readFileSync(new URL("../../src/infrastructure/postgres/migrator.ts", import.meta.url), "utf8");
 
 describe("Wave 2A Commerce authority schema", () => {
   it("upgrades legacy UUID command ids to the authoritative 32hex representation", () => {
-    expect(migration).toContain("ELSE replace(command_id::TEXT,'-','')");
-    expect(migration).toContain("WHEN command_id::TEXT ~");
-    expect(migration).toContain("[a-f0-9]{32}");
-    expect(migration).toContain("-7[a-f0-9]{3}-[89ab]");
+    expect(identityMigration).toContain("ELSE replace(command_id::TEXT,'-','')");
+    expect(identityMigration).toContain("WHEN command_id::TEXT ~");
+    expect(identityMigration).toContain("[a-f0-9]{32}");
+    expect(identityMigration).toContain("-7[a-f0-9]{3}-[89ab]");
+    expect(migration).not.toContain("ALTER COLUMN command_id TYPE TEXT");
   });
 
   it("owns BillingAccount, Site-composite membership and fulfillment lineage", () => {

@@ -1,9 +1,8 @@
 import { createHmac } from "node:crypto";
 import type { JsonValue } from "../../../../shared/outbox-inbox/receipt.js";
+import type { IdentityAuditDigesterPort } from "../../application/contracts/identity-security-ports.js";
 
-export type IdentityAuditDigester = (value: JsonValue) => string;
-
-export function createIdentityAuditDigester(key: Uint8Array): IdentityAuditDigester {
+export function createIdentityAuditDigester(key: Uint8Array): IdentityAuditDigesterPort {
   if (key.byteLength < 32) throw new Error("IDENTITY_AUDIT_DIGEST_KEY_INVALID");
   const ownedKey = Uint8Array.from(key);
   return (value) => createHmac("sha256", ownedKey)

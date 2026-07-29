@@ -58,7 +58,8 @@ CREATE TABLE platform.authorization_subject (
   subject_generation BIGINT NOT NULL CHECK (subject_generation > 0),
   restriction_epoch BIGINT NOT NULL CHECK (restriction_epoch > 0),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(subject_ref,site_ref)
 );
 CREATE INDEX authorization_subject_active_idx ON platform.authorization_subject(site_ref,state);
 
@@ -77,7 +78,8 @@ CREATE TABLE platform.authorization_identity_session (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CHECK (cardinality(authentication_methods) BETWEEN 1 AND 3),
   CHECK (authentication_methods <@ ARRAY['password','totp','recovery_code']::TEXT[]),
-  CHECK (expires_at > authenticated_at)
+  CHECK (expires_at > authenticated_at),
+  UNIQUE(session_ref,subject_ref,site_ref)
 );
 CREATE INDEX authorization_identity_session_subject_idx
   ON platform.authorization_identity_session(subject_ref,state);
@@ -92,7 +94,8 @@ CREATE TABLE platform.authorization_project (
   display_name TEXT NOT NULL,
   state TEXT NOT NULL CHECK (state IN ('active','archived')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(project_ref,site_ref)
 );
 CREATE INDEX authorization_project_active_idx ON platform.authorization_project(site_ref,state);
 

@@ -276,7 +276,7 @@ async function grantFoundationPrivileges(
       `REVOKE ALL ON FUNCTION platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT), platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID), platform.report_model_provider_availability(UUID, TEXT, TEXT, TEXT, BIGINT, TEXT, TIMESTAMPTZ, TEXT), platform.load_model_option_inventory(TEXT), platform.load_model_option_revisions(TEXT[]), platform.materialize_legacy_model_options(UUID, TEXT, TEXT, TEXT, TEXT, JSONB, JSONB, TEXT), platform.publish_site_release_model_catalog(UUID, JSONB, TEXT), platform.resolve_product_model_option_catalog(TEXT, TEXT) FROM ${identifier}`,
     );
     if (role === apiRole) {
-      await client.query(`GRANT SELECT ON TABLE ${KERNEL_TABLES}, ${AUTHORIZATION_TABLES}, ${COMMERCE_TABLES} TO ${identifier}`);
+      await client.query(`GRANT SELECT ON TABLE ${KERNEL_TABLES}, ${AUTHORIZATION_TABLES}, ${IDENTITY_TABLES}, ${COMMERCE_TABLES} TO ${identifier}`);
       await client.query(
         `GRANT INSERT ON TABLE platform.command_receipt, platform.outbox_event, platform.inbox_delivery, platform.model_selection_decision, platform.authorization_product_context, platform.authorization_session_access_grant TO ${identifier}`,
       );
@@ -286,6 +286,12 @@ async function grantFoundationPrivileges(
       await client.query(`GRANT SELECT, UPDATE ON TABLE platform.authorization_stream_state TO ${identifier}`);
       await client.query(`GRANT INSERT ON TABLE platform.authorization_event_log TO ${identifier}`);
       await client.query(`GRANT UPDATE(event_sequence) ON TABLE platform.authorization_site TO ${identifier}`);
+      await client.query(
+        `GRANT INSERT ON TABLE platform.authorization_subject, platform.authorization_identity_session, platform.authorization_project, platform.authorization_project_membership, ${IDENTITY_TABLES}, platform.commerce_billing_account, platform.commerce_billing_account_membership TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT UPDATE ON TABLE platform.authorization_identity_session, ${IDENTITY_MUTABLE_TABLES} TO ${identifier}`,
+      );
       await client.query(
         `GRANT INSERT ON TABLE platform.commerce_command, platform.commerce_fulfillment_transaction, platform.commerce_fulfillment_output_plan, platform.commerce_fulfillment_actual_output, platform.commerce_command_outbox, platform.commerce_audit_entry TO ${identifier}`,
       );
@@ -364,6 +370,38 @@ const COMMERCE_TABLES = [
   "platform.commerce_audit_entry",
 ].join(", ");
 
+const IDENTITY_TABLES = [
+  "platform.identity_account",
+  "platform.identity_password_credential",
+  "platform.identity_login_identifier",
+  "platform.identity_verification_transaction",
+  "platform.identity_verification_legal_acceptance",
+  "platform.identity_verification_delivery",
+  "platform.identity_refresh_family",
+  "platform.identity_refresh_credential",
+  "platform.identity_session_delivery_claim",
+  "platform.identity_receipt_recovery_capability",
+  "platform.identity_personal_workspace",
+  "platform.identity_workspace_membership",
+  "platform.identity_execution_space",
+  "platform.identity_namespace_allocation_intent",
+  "platform.identity_personal_bootstrap",
+].join(", ");
+
+const IDENTITY_MUTABLE_TABLES = [
+  "platform.identity_account",
+  "platform.identity_password_credential",
+  "platform.identity_login_identifier",
+  "platform.identity_verification_transaction",
+  "platform.identity_verification_delivery",
+  "platform.identity_refresh_family",
+  "platform.identity_refresh_credential",
+  "platform.identity_session_delivery_claim",
+  "platform.identity_receipt_recovery_capability",
+  "platform.identity_execution_space",
+  "platform.identity_namespace_allocation_intent",
+].join(", ");
+
 const PLATFORM_RUNTIME_TABLES = [
   "platform.command_receipt",
   "platform.outbox_event",
@@ -391,6 +429,7 @@ const PLATFORM_RUNTIME_TABLES = [
   "platform.site_release_model_catalog_surface",
   "platform.site_release_model_catalog_option",
   AUTHORIZATION_TABLES,
+  IDENTITY_TABLES,
   "platform.authorization_stream_state",
   "platform.authorization_event_log",
   "platform.authorization_snapshot",
@@ -481,13 +520,22 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            AND has_table_privilege(runtime_role.rolname, 'platform.outbox_event', 'INSERT')
            AND has_table_privilege(runtime_role.rolname, 'platform.inbox_delivery', 'INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.model_selection_decision', 'INSERT')
-           AND has_table_privilege(runtime_role.rolname, 'platform.authorization_identity_session', 'SELECT')
-           AND has_table_privilege(runtime_role.rolname, 'platform.authorization_project_membership', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.authorization_subject', 'SELECT,INSERT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.authorization_identity_session', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.authorization_project', 'SELECT,INSERT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.authorization_project_membership', 'SELECT,INSERT')
            AND has_table_privilege(runtime_role.rolname, 'platform.authorization_product_context', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.authorization_session_access_grant', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.authorization_stream_state', 'SELECT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.authorization_event_log', 'INSERT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.identity_account', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.identity_verification_transaction', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.identity_refresh_family', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.identity_session_delivery_claim', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.identity_personal_bootstrap', 'SELECT,INSERT')
            AND has_table_privilege(runtime_role.rolname, 'platform.commerce_command', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.commerce_billing_account', 'SELECT,INSERT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.commerce_billing_account_membership', 'SELECT,INSERT')
            AND has_table_privilege(runtime_role.rolname, 'platform.commerce_fulfillment_transaction', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.commerce_fulfillment_output_plan', 'SELECT,INSERT')
            AND has_table_privilege(runtime_role.rolname, 'platform.commerce_fulfillment_actual_output', 'SELECT,INSERT')
@@ -571,6 +619,11 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                'model_option_materialized_revision','model_option_role_binding',
                'model_option_materialization_quarantine','site_release_model_catalog_publication',
                'site_release_model_catalog_surface','site_release_model_catalog_option'
+               ,'identity_account','identity_password_credential','identity_login_identifier',
+               'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
+               'identity_refresh_family','identity_refresh_credential','identity_session_delivery_claim',
+               'identity_receipt_recovery_capability','identity_personal_workspace','identity_workspace_membership',
+               'identity_execution_space','identity_namespace_allocation_intent','identity_personal_bootstrap'
                ,'commerce_command','commerce_billing_account','commerce_billing_account_membership',
                'commerce_fulfillment_transaction','commerce_fulfillment_output_plan',
                'commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry'
@@ -599,6 +652,11 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                  'model_option_materialized_revision','model_option_role_binding',
                'model_option_materialization_quarantine','site_release_model_catalog_publication',
                'site_release_model_catalog_surface','site_release_model_catalog_option'
+               ,'identity_account','identity_password_credential','identity_login_identifier',
+               'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
+               'identity_refresh_family','identity_refresh_credential','identity_session_delivery_claim',
+               'identity_receipt_recovery_capability','identity_personal_workspace','identity_workspace_membership',
+               'identity_execution_space','identity_namespace_allocation_intent','identity_personal_bootstrap'
                ,'commerce_command','commerce_billing_account','commerce_billing_account_membership',
                'commerce_fulfillment_transaction','commerce_fulfillment_output_plan',
                'commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry'
@@ -620,24 +678,64 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                  ))
                  OR has_any_column_privilege(runtime_role.rolname, candidate.oid, 'REFERENCES')
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'INSERT') AND NOT (
-                   (runtime_role.rolname = $1 AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_selection_decision','authorization_product_context','authorization_session_access_grant','authorization_event_log','commerce_command','commerce_fulfillment_transaction','commerce_fulfillment_output_plan','commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry']))
+                   (runtime_role.rolname = $1 AND candidate.relname = ANY(ARRAY[
+                     'command_receipt','outbox_event','inbox_delivery','model_selection_decision',
+                     'authorization_product_context','authorization_session_access_grant','authorization_event_log',
+                     'authorization_subject','authorization_identity_session','authorization_project','authorization_project_membership',
+                     'identity_account','identity_password_credential','identity_login_identifier',
+                     'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
+                     'identity_refresh_family','identity_refresh_credential','identity_session_delivery_claim',
+                     'identity_receipt_recovery_capability','identity_personal_workspace','identity_workspace_membership',
+                     'identity_execution_space','identity_namespace_allocation_intent','identity_personal_bootstrap',
+                     'commerce_command','commerce_billing_account','commerce_billing_account_membership',
+                     'commerce_fulfillment_transaction','commerce_fulfillment_output_plan',
+                     'commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry'
+                   ]))
                    OR (runtime_role.rolname = $2 AND candidate.relname = ANY(ARRAY['authorization_snapshot','authorization_snapshot_record']))
                    OR (runtime_role.rolname = $3 AND candidate.relname = 'inbox_delivery')
                    OR (runtime_role.rolname = $4 AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership']))
                  ))
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
-                   (runtime_role.rolname = $1 AND candidate.relname = ANY(ARRAY['command_receipt','inbox_delivery','authorization_product_context','authorization_session_access_grant','authorization_stream_state','authorization_site','commerce_command','commerce_fulfillment_transaction']))
+                   (runtime_role.rolname = $1 AND candidate.relname = ANY(ARRAY[
+                     'command_receipt','inbox_delivery','authorization_identity_session','authorization_product_context',
+                     'authorization_session_access_grant','authorization_stream_state','authorization_site',
+                     'identity_account','identity_password_credential','identity_login_identifier',
+                     'identity_verification_transaction','identity_verification_delivery','identity_refresh_family',
+                     'identity_refresh_credential','identity_session_delivery_claim','identity_receipt_recovery_capability',
+                     'identity_execution_space','identity_namespace_allocation_intent',
+                     'commerce_command','commerce_fulfillment_transaction'
+                   ]))
                    OR (runtime_role.rolname = $3 AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery']))
                    OR (runtime_role.rolname = $4 AND candidate.relname = ANY(ARRAY['command_receipt','commerce_billing_account','commerce_billing_account_membership']))
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'INSERT') AND NOT (
-                   (runtime_role.rolname = $1 AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_selection_decision','authorization_product_context','authorization_session_access_grant','authorization_event_log','commerce_command','commerce_fulfillment_transaction','commerce_fulfillment_output_plan','commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry']))
+                   (runtime_role.rolname = $1 AND candidate.relname = ANY(ARRAY[
+                     'command_receipt','outbox_event','inbox_delivery','model_selection_decision',
+                     'authorization_product_context','authorization_session_access_grant','authorization_event_log',
+                     'authorization_subject','authorization_identity_session','authorization_project','authorization_project_membership',
+                     'identity_account','identity_password_credential','identity_login_identifier',
+                     'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
+                     'identity_refresh_family','identity_refresh_credential','identity_session_delivery_claim',
+                     'identity_receipt_recovery_capability','identity_personal_workspace','identity_workspace_membership',
+                     'identity_execution_space','identity_namespace_allocation_intent','identity_personal_bootstrap',
+                     'commerce_command','commerce_billing_account','commerce_billing_account_membership',
+                     'commerce_fulfillment_transaction','commerce_fulfillment_output_plan',
+                     'commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry'
+                   ]))
                    OR (runtime_role.rolname = $2 AND candidate.relname = ANY(ARRAY['authorization_snapshot','authorization_snapshot_record']))
                    OR (runtime_role.rolname = $3 AND candidate.relname = 'inbox_delivery')
                    OR (runtime_role.rolname = $4 AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership']))
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
-                   (runtime_role.rolname = $1 AND candidate.relname = ANY(ARRAY['command_receipt','inbox_delivery','authorization_product_context','authorization_session_access_grant','authorization_stream_state','authorization_site','commerce_command','commerce_fulfillment_transaction']))
+                   (runtime_role.rolname = $1 AND candidate.relname = ANY(ARRAY[
+                     'command_receipt','inbox_delivery','authorization_identity_session','authorization_product_context',
+                     'authorization_session_access_grant','authorization_stream_state','authorization_site',
+                     'identity_account','identity_password_credential','identity_login_identifier',
+                     'identity_verification_transaction','identity_verification_delivery','identity_refresh_family',
+                     'identity_refresh_credential','identity_session_delivery_claim','identity_receipt_recovery_capability',
+                     'identity_execution_space','identity_namespace_allocation_intent',
+                     'commerce_command','commerce_fulfillment_transaction'
+                   ]))
                    OR (runtime_role.rolname = $3 AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery']))
                    OR (runtime_role.rolname = $4 AND candidate.relname = ANY(ARRAY['command_receipt','commerce_billing_account','commerce_billing_account_membership']))
                  ))
