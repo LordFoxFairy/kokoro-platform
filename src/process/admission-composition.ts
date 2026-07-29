@@ -11,6 +11,7 @@ import {
   GaRunRequestDraftFactory,
   type GaRunRequestDraftSealer,
 } from "../modules/admission/application/ga-run-request-draft-factory.js";
+import { HpkeGaRunRequestDraftSealer } from "../modules/admission/infrastructure/hpke/ga-run-request-draft-sealer.js";
 import { PostgresAdmissionCommandJournal } from "../modules/admission/infrastructure/postgres/admission-command-journal.js";
 import { createAdmissionConnectService } from "../modules/admission/interfaces/connect/admission-service.js";
 import { readBoundedSecret } from "./platform-public-composition.js";
@@ -92,18 +93,22 @@ export interface AdmissionProductionComposition {
 export async function createAdmissionProductionComposition(input: Readonly<{
   database: Pick<PlatformTransactionalDatabaseClient, "internalTransaction">;
   authority: AdmissionOwnerAuthority;
-  gaRunRequestDraftSealer: GaRunRequestDraftSealer;
   gaDispatchAudience: string;
   environment?: Readonly<Record<string, string | undefined>>;
   clock?: () => Date;
 }>): Promise<AdmissionProductionComposition> {
   const environment = input.environment ?? process.env;
-  const [tls, peerRegistry] = await Promise.all([
+  const [tls, peerRegistry, gaRunRequestDraftSealer] = await Promise.all([
     loadAdmissionTls(environment),
     loadAdmissionPeers(
       required(environment, "PLATFORM_ADMISSION_MTLS_PEERS_FILE"),
       required(environment, "PLATFORM_ADMISSION_ENVIRONMENT"),
       required(environment, "PLATFORM_ADMISSION_REGION"),
+    ),
+    loadAdmissionHpkeSealer(
+      required(environment, "PLATFORM_ADMISSION_HPKE_PUBLIC_KEY_RING_FILE"),
+      input.gaDispatchAudience,
+      input.clock,
     ),
   ]);
   const callers = new AsyncLocalStorage<AdmissionCaller>();
@@ -112,7 +117,7 @@ export async function createAdmissionProductionComposition(input: Readonly<{
     journal: new PostgresAdmissionCommandJournal(input.database, {
       ...(input.clock === undefined ? {} : { clock: input.clock }),
     }),
-    gaRunRequestDraftSealer: input.gaRunRequestDraftSealer,
+    gaRunRequestDraftSealer,
     gaDispatchAudience: input.gaDispatchAudience,
     ...(input.clock === undefined ? {} : { clock: input.clock }),
   }).application;
@@ -159,6 +164,24 @@ export async function createAdmissionProductionComposition(input: Readonly<{
   return Object.freeze({
     handler,
     createServer: (listener: AdmissionRequestListener) => createSecureServer(tls, listener),
+  });
+}
+
+async function loadAdmissionHpkeSealer(
+  path: string,
+  expectedAudience: string,
+  clock: (() => Date) | undefined,
+): Promise<HpkeGaRunRequestDraftSealer> {
+  let keyRing: unknown;
+  try {
+    keyRing = JSON.parse(await readBoundedSecret(path, 256 * 1024));
+  } catch {
+    throw new Error("PLATFORM_ADMISSION_HPKE_PUBLIC_KEY_RING_INVALID");
+  }
+  return HpkeGaRunRequestDraftSealer.create({
+    keyRing,
+    expectedAudience,
+    ...(clock === undefined ? {} : { clock }),
   });
 }
 

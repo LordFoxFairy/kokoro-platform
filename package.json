@@ -46,6 +46,7 @@
     "@bufbuild/protovalidate": "1.2.0",
     "@connectrpc/connect": "2.1.2",
     "@connectrpc/connect-node": "2.1.2",
+    "@hpke/core": "1.9.0",
     "@kokoro/credit": "workspace:*",
     "@kokoro/hub": "workspace:*",
     "@kokoro/payment": "workspace:*",

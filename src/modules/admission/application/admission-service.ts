@@ -323,6 +323,7 @@ export class AdmissionApplicationService {
     ) throw new Error("ADMISSION_OWNER_FACTS_INTENT_MISMATCH");
     const executionContext = mapOpaqueExecutionContextIntent(command.effect.executionContext!);
     const material = await this.#drafts.create({
+      siteId: command.key.siteId,
       ownerFacts: decision.ownerFacts,
       executionContext,
     });

@@ -99,6 +99,7 @@ describe("Admission execution-context boundary", () => {
       .mockImplementation(async (input) => validSealed(input));
 
     const sealed = await factory(seal).create({
+      siteId: "site-1",
       ownerFacts: { ...ownerFacts, trace: { z: 1, a: { y: true, x: "value" } } },
       executionContext: { mode: "root" },
     });
@@ -125,12 +126,14 @@ describe("Admission execution-context boundary", () => {
 
     await expect(
       createDraft.create({
+        siteId: "site-1",
         ownerFacts: { ...ownerFacts, thread_id: "" } as VerifiedGaRunRequestOwnerFacts,
         executionContext: { mode: "root" },
       }),
     ).rejects.toThrow();
     await expect(
       createDraft.create({
+        siteId: "site-1",
         ownerFacts: {
           ...ownerFacts,
           trace: { unsafe: new Date("2026-07-29T12:00:00.000Z") },
@@ -146,6 +149,7 @@ describe("Admission execution-context boundary", () => {
 
     await expect(
       factory(seal).create({
+        siteId: "site-1",
         ownerFacts: {
           ...ownerFacts,
           input: { ...ownerFacts.input, content: "x".repeat(768 * 1024) },
@@ -163,7 +167,7 @@ describe("Admission execution-context boundary", () => {
     };
 
     await expect(
-      factory(seal).create({ ownerFacts, executionContext: { mode: "root" } }),
+      factory(seal).create({ siteId: "site-1", ownerFacts, executionContext: { mode: "root" } }),
     ).rejects.toThrow("ADMISSION_GA_DRAFT_PLAINTEXT_MUTATED");
   });
 
@@ -223,7 +227,7 @@ describe("Admission execution-context boundary", () => {
     const seal: GaRunRequestDraftSealer["seal"] = async (input) => maliciousResult(input);
 
     await expect(
-      factory(seal).create({ ownerFacts, executionContext: { mode: "root" } }),
+      factory(seal).create({ siteId: "site-1", ownerFacts, executionContext: { mode: "root" } }),
     ).rejects.toThrow("ADMISSION_GA_DRAFT_SEALED_MATERIAL_INVALID");
   });
 

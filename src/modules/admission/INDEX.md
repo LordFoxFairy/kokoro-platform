@@ -17,4 +17,9 @@ The application provider implements all four effect commands plus typed receipt 
 
 Session is the sole owner of immutable dispatch-publication evidence. Platform Admission is its only consumer through the Root-generated `session-dispatch-owner-evidence@v1` Connect contract. The adapter uses HTTP/2 mTLS with TLS 1.3, a five-second maximum deadline, 8 KiB request/response limits, no compression, and typed `found` / `not_found` outcomes. It preserves protobuf `uint64` values as decimal strings and fails closed unless the evidence reference, Site, Session, launch, run, authorization segment, and segment version match Platform-owned facts exactly. No browser, Site BFF, Admin, Agent, shared-secret, or legacy evidence path exists.
 
-Production activation still requires concrete owner-orchestration and run-request sealer adapters in deployment composition. There is deliberately no placeholder owner implementation, plaintext material, browser-header authentication, or legacy dual path.
+RunRequest material uses a concrete RFC 9180 HPKE sealer: DHKEM(P-256, HKDF-SHA256), HKDF-SHA256 and AES-128-GCM.
+Production loads a strict bounded public-key ring, requires one active exact-audience revision, and binds key revision, audience,
+Site, Session, run, expiry and plaintext digest into authenticated data. The private key exists only in Session; there is no
+plaintext or development fallback.
+
+Production activation still requires concrete owner-orchestration in deployment composition. There is deliberately no placeholder owner implementation, browser-header authentication, or legacy dual path.

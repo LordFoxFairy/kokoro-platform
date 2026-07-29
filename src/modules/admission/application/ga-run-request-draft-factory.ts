@@ -38,6 +38,9 @@ export interface GaRunRequestDraftSealInput {
   readonly plaintext: Uint8Array;
   readonly plaintextSha256: string;
   readonly audience: string;
+  readonly siteId: string;
+  readonly sessionId: string;
+  readonly runId: string;
   readonly maximumExpiresAt: string;
 }
 
@@ -70,6 +73,7 @@ export class GaRunRequestDraftFactory {
 
   async create(
     input: Readonly<{
+      siteId: string;
       ownerFacts: VerifiedGaRunRequestOwnerFacts;
       executionContext: ExecutionContextIntent;
     }>,
@@ -91,6 +95,9 @@ export class GaRunRequestDraftFactory {
         plaintext: sealerPlaintext,
         plaintextSha256,
         audience: this.#expectedAudience,
+        siteId: boundedOwnerReference(input.siteId, "ADMISSION_GA_DRAFT_SITE_ID_INVALID"),
+        sessionId: request.context.session_id,
+        runId: request.run_id,
         maximumExpiresAt,
       }),
     );
@@ -120,6 +127,11 @@ export class GaRunRequestDraftFactory {
     if (!Number.isFinite(value)) throw new Error("ADMISSION_GA_DRAFT_CLOCK_INVALID");
     return value;
   }
+}
+
+function boundedOwnerReference(value: string, code: string): string {
+  if (value.length < 1 || value.length > 128 || value.trim() !== value) throw new Error(code);
+  return value;
 }
 
 function boundedTrimmedString(maximumLength: number) {
