@@ -136,6 +136,80 @@ describe("Identity security management application service", () => {
     expect(JSON.stringify(eventPayload)).not.toContain("JBSWY3DPEHPK3PXP");
   });
 
+  it("does not persist receipt recovery when the enrollment authority mutation is rejected", async () => {
+    const recoveryBindings: unknown[] = [];
+    const service = createService({
+      repository: {
+        async loadSecurityOwnerMaterial() {
+          return ownerMaterial();
+        },
+        async beginTotpEnrollment() {
+          return false;
+        },
+      } as unknown as IdentitySecurityManagementRepository,
+      receiptRecovery: {
+        async bindReceiptRecoveryCapability(_transaction, input) {
+          recoveryBindings.push(input);
+        },
+      },
+      receipts: pendingReceipts(),
+      references: ["rejected-enrollment", "rejected-authenticator"],
+    });
+
+    await expect(service.beginTotpEnrollment({
+      workload,
+      context,
+      session: session as never,
+      commandId,
+      idempotencyKey: "rejected-enrollment",
+      receiptRecoveryCapability: "r".repeat(43),
+      reauthenticationProof: "reauth-proof",
+      ceremonyAction: "begin",
+    })).rejects.toMatchObject({ code: "AUTH_TRANSACTION_INVALID" });
+
+    expect(recoveryBindings).toEqual([]);
+  });
+
+  it("binds receipt recovery only after the enrollment authority mutation succeeds", async () => {
+    const callOrder: string[] = [];
+    const service = createService({
+      repository: {
+        async loadSecurityOwnerMaterial() {
+          return ownerMaterial();
+        },
+        async beginTotpEnrollment() {
+          callOrder.push("enrollment");
+          return true;
+        },
+        async appendSecurityEvent() {},
+      } as unknown as IdentitySecurityManagementRepository,
+      receiptRecovery: {
+        async bindReceiptRecoveryCapability() {
+          callOrder.push("recovery");
+        },
+      },
+      receipts: pendingReceipts(),
+      references: [
+        "accepted-enrollment",
+        "accepted-authenticator",
+        "018f1212-1212-7212-8212-121212121212",
+      ],
+    });
+
+    await service.beginTotpEnrollment({
+      workload,
+      context,
+      session: session as never,
+      commandId,
+      idempotencyKey: "accepted-enrollment",
+      receiptRecoveryCapability: "r".repeat(43),
+      reauthenticationProof: "reauth-proof",
+      ceremonyAction: "begin",
+    });
+
+    expect(callOrder).toEqual(["enrollment", "recovery"]);
+  });
+
   it("takes the TOTP issuer only from the exact active SiteRelease and isolates two Site brands", async () => {
     const issuedLabels: string[] = [];
     const siteA = createService({
@@ -799,6 +873,7 @@ function createService(
     outbox?: Readonly<{
       enqueue(transaction: unknown, event: { payload: JsonValue }): Promise<void>;
     }>;
+    receiptRecovery?: Pick<IdentityRepository, "bindReceiptRecoveryCapability">;
     issuedLabels?: string[];
     onReauthenticationDigest?: (credential: string) => void;
   }>,
@@ -810,10 +885,9 @@ function createService(
       },
     },
     repository: input.repository,
-    receiptRecovery: { async bindReceiptRecoveryCapability() {} } as unknown as Pick<
-      IdentityRepository,
-      "bindReceiptRecoveryCapability"
-    >,
+    receiptRecovery: input.receiptRecovery ?? {
+      async bindReceiptRecoveryCapability() {},
+    },
     receipts: input.receipts,
     outbox: (input.outbox ?? { async enqueue() {} }) as never,
     totpEnrollmentIssuer: {

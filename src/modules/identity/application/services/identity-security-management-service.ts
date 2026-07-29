@@ -382,7 +382,6 @@ export class IdentitySecurityManagementService {
           if (reauthenticationProofDigest === null) {
             throw new Error("IDENTITY_REAUTHENTICATION_PROOF_DIGEST_INVARIANT");
           }
-          await this.bindRecovery(transaction, input, "beginTotpEnrollment", transactionRef, now);
           accepted = await this.dependencies.repository.beginTotpEnrollment(transaction, {
             binding,
             accountRef: material.accountRef,
@@ -409,6 +408,9 @@ export class IdentitySecurityManagementService {
             supersede ? "AUTHENTICATION_FAILED" : "AUTH_TRANSACTION_INVALID",
           );
           return Object.freeze({ kind: "rejected" as const });
+        }
+        if (!supersede) {
+          await this.bindRecovery(transaction, input, "beginTotpEnrollment", transactionRef, now);
         }
         await this.securityEvent(transaction, input, {
           eventType: supersede
