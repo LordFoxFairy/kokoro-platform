@@ -452,39 +452,30 @@ function authenticatedEnvelope(
 import {
   DecidePostEffectReviewEffectSchema,
   DecideApprovalEffectSchema,
+  ChangeOperatorAuthoritySchema,
   SubmitCommandEffectSchema,
-  UpdateOperatorScopeChangeSchema,
   type DecidePostEffectReviewEffect,
   type DecideApprovalEffect,
   type SubmitCommandEffect,
 } from "./kokoro/platform/admin/v2/admin_command_pb.js";
 
-function canonicalSubmitCommandEffect(
-  context: AuthenticatedOperatorCommandContext,
-  effect: SubmitCommandEffect,
-): SubmitCommandEffect {
-  if (effect.change.case !== "updateOperatorScope") return effect;
-  const replacement = canonicalOperatorScope(effect.change.value.replacementScope, context.environment, context.region);
+function canonicalSubmitCommandEffect(effect: SubmitCommandEffect): SubmitCommandEffect {
+  if (effect.change === undefined) throw new Error("command_envelope_effect_change_missing");
   return create(SubmitCommandEffectSchema, {
-    change: {
-      case: "updateOperatorScope",
-      value: create(UpdateOperatorScopeChangeSchema, {
-        operatorRef: effect.change.value.operatorRef,
-        replacementScope: replacement,
-      }),
-    },
+    change: create(ChangeOperatorAuthoritySchema, {
+      ...effect.change,
+      permissions: uniqueSorted("effect.change.permissions", effect.change.permissions),
+      siteIds: uniqueSorted("effect.change.siteIds", effect.change.siteIds),
+      environments: uniqueSorted("effect.change.environments", effect.change.environments),
+      regions: uniqueSorted("effect.change.regions", effect.change.regions),
+    }),
     reason: effect.reason,
-    breakGlassTicketRef: effect.breakGlassTicketRef,
   });
 }
 
 function submitCommandTargets(effect: SubmitCommandEffect): string[] {
-  switch (effect.change.case) {
-    case "disableUser": return [effect.change.value.siteId, effect.change.value.userRef];
-    case "updateOperatorScope": return [effect.change.value.operatorRef];
-    case "updatePolicy": return [effect.change.value.policyRef, effect.change.value.policyRevisionRef];
-    case undefined: throw new Error("command_envelope_effect_change_missing");
-  }
+  if (effect.change === undefined) throw new Error("command_envelope_effect_change_missing");
+  return [effect.change.operatorRef];
 }
 
 export function submitCommandRequestDigest(
@@ -492,7 +483,7 @@ export function submitCommandRequestDigest(
   effect: SubmitCommandEffect,
   verified: VerifiedAuthenticatedAdminAxes,
 ): string {
-  const canonicalEffect = canonicalSubmitCommandEffect(context, effect);
+  const canonicalEffect = canonicalSubmitCommandEffect(effect);
   return authenticatedEnvelope(
     "platform-admin-command@v2",
     "kokoro.platform.admin.v2.AdminCommandService/SubmitCommand",

@@ -5,9 +5,11 @@
 import type { GenEnum, GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { enumDesc, fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import { file_buf_validate_validate } from "../../../../buf/validate/validate_pb.js";
+import type { Timestamp } from "@bufbuild/protobuf/wkt";
+import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
 import type { CommandDigestAlgorithmV2, CommandReceiptV2 } from "../../../common/v2/command_envelope_pb.js";
 import { file_kokoro_common_v2_command_envelope } from "../../../common/v2/command_envelope_pb.js";
-import type { AuthenticatedOperatorCommandContext, AuthenticatedOperatorQueryContext, OperatorScope } from "./admin_shared_pb.js";
+import type { AuthenticatedOperatorCommandContext, AuthenticatedOperatorQueryContext } from "./admin_shared_pb.js";
 import { file_kokoro_platform_admin_v2_admin_shared } from "./admin_shared_pb.js";
 import type { Message } from "@bufbuild/protobuf";
 
@@ -15,118 +17,87 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file kokoro/platform/admin/v2/admin_command.proto.
  */
 export const file_kokoro_platform_admin_v2_admin_command: GenFile = /*@__PURE__*/
-  fileDesc("Cixrb2tvcm8vcGxhdGZvcm0vYWRtaW4vdjIvYWRtaW5fY29tbWFuZC5wcm90bxIYa29rb3JvLnBsYXRmb3JtLmFkbWluLnYyIm8KEURpc2FibGVVc2VyQ2hhbmdlEhsKB3NpdGVfaWQYASABKAlCCrpIB3IFEAEYgAESHAoIdXNlcl9yZWYYAiABKAlCCrpIB3IFEAEYgAESHwoLcmVhc29uX2NvZGUYAyABKAlCCrpIB3IFEAEYgAEiiQEKGVVwZGF0ZU9wZXJhdG9yU2NvcGVDaGFuZ2USIAoMb3BlcmF0b3JfcmVmGAEgASgJQgq6SAdyBRABGIABEkoKEXJlcGxhY2VtZW50X3Njb3BlGAIgASgLMicua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLk9wZXJhdG9yU2NvcGVCBrpIA8gBASJdChJVcGRhdGVQb2xpY3lDaGFuZ2USHgoKcG9saWN5X3JlZhgBIAEoCUIKukgHcgUQARiAARInChNwb2xpY3lfcmV2aXNpb25fcmVmGAIgASgJQgq6SAdyBRABGIABIvACChNTdWJtaXRDb21tYW5kRWZmZWN0EkMKDGRpc2FibGVfdXNlchgBIAEoCzIrLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5EaXNhYmxlVXNlckNoYW5nZUgAElQKFXVwZGF0ZV9vcGVyYXRvcl9zY29wZRgCIAEoCzIzLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5VcGRhdGVPcGVyYXRvclNjb3BlQ2hhbmdlSAASRQoNdXBkYXRlX3BvbGljeRgDIAEoCzIsLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5VcGRhdGVQb2xpY3lDaGFuZ2VIABIaCgZyZWFzb24YBCABKAlCCrpIB3IFEAEYgAQSLwoWYnJlYWtfZ2xhc3NfdGlja2V0X3JlZhgFIAEoCUIKukgHcgUQARiAAUgBiAEBQg8KBmNoYW5nZRIFukgCCAFCGQoXX2JyZWFrX2dsYXNzX3RpY2tldF9yZWYitQEKFFN1Ym1pdENvbW1hbmRSZXF1ZXN0ElYKB2NvbnRleHQYASABKAsyPS5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuQXV0aGVudGljYXRlZE9wZXJhdG9yQ29tbWFuZENvbnRleHRCBrpIA8gBARJFCgZlZmZlY3QYAiABKAsyLS5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuU3VibWl0Q29tbWFuZEVmZmVjdEIGukgDyAEBIqECChVTdWJtaXRDb21tYW5kUmVzcG9uc2USRwoFc3RhdGUYASABKA4yLC5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuU3VibWl0Q29tbWFuZFN0YXRlQgq6SAeCAQQQASAAEiUKDGFwcHJvdmFsX3JlZhgCIAEoCUIKukgHcgUQARiAAUgAiAEBEi8KFnBvc3RfZWZmZWN0X3Jldmlld19yZWYYAyABKAlCCrpIB3IFEAEYgAFIAYgBARI7CgdyZWNlaXB0GAQgASgLMiIua29rb3JvLmNvbW1vbi52Mi5Db21tYW5kUmVjZWlwdFYyQga6SAPIAQFCDwoNX2FwcHJvdmFsX3JlZkIZChdfcG9zdF9lZmZlY3RfcmV2aWV3X3JlZiKeAQoURGVjaWRlQXBwcm92YWxFZmZlY3QSIAoMYXBwcm92YWxfcmVmGAEgASgJQgq6SAdyBRABGIABEkgKCGRlY2lzaW9uGAIgASgOMioua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkFwcHJvdmFsRGVjaXNpb25CCrpIB4IBBBABIAASGgoGcmVhc29uGAMgASgJQgq6SAdyBRABGIAEIrcBChVEZWNpZGVBcHByb3ZhbFJlcXVlc3QSVgoHY29udGV4dBgBIAEoCzI9Lmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5BdXRoZW50aWNhdGVkT3BlcmF0b3JDb21tYW5kQ29udGV4dEIGukgDyAEBEkYKBmVmZmVjdBgCIAEoCzIuLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5EZWNpZGVBcHByb3ZhbEVmZmVjdEIGukgDyAEBIqEBChZEZWNpZGVBcHByb3ZhbFJlc3BvbnNlEkoKBXN0YXRlGAEgASgOMi8ua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkFwcHJvdmFsRGVjaXNpb25TdGF0ZUIKukgHggEEEAEgABI7CgdyZWNlaXB0GAIgASgLMiIua29rb3JvLmNvbW1vbi52Mi5Db21tYW5kUmVjZWlwdFYyQga6SAPIAQEirAEKHERlY2lkZVBvc3RFZmZlY3RSZXZpZXdFZmZlY3QSHgoKcmV2aWV3X3JlZhgBIAEoCUIKukgHcgUQARiAARJQCghkZWNpc2lvbhgCIAEoDjIyLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5Qb3N0RWZmZWN0UmV2aWV3RGVjaXNpb25CCrpIB4IBBBABIAASGgoGcmVhc29uGAMgASgJQgq6SAdyBRABGIAEIscBCh1EZWNpZGVQb3N0RWZmZWN0UmV2aWV3UmVxdWVzdBJWCgdjb250ZXh0GAEgASgLMj0ua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkF1dGhlbnRpY2F0ZWRPcGVyYXRvckNvbW1hbmRDb250ZXh0Qga6SAPIAQESTgoGZWZmZWN0GAIgASgLMjYua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkRlY2lkZVBvc3RFZmZlY3RSZXZpZXdFZmZlY3RCBrpIA8gBASKpAQoeRGVjaWRlUG9zdEVmZmVjdFJldmlld1Jlc3BvbnNlEkoKBXN0YXRlGAEgASgOMi8ua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLlBvc3RFZmZlY3RSZXZpZXdTdGF0ZUIKukgHggEEEAEgABI7CgdyZWNlaXB0GAIgASgLMiIua29rb3JvLmNvbW1vbi52Mi5Db21tYW5kUmVjZWlwdFYyQga6SAPIAQEijQIKEUdldFJlY2VpcHRSZXF1ZXN0ElQKB2NvbnRleHQYASABKAsyOy5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuQXV0aGVudGljYXRlZE9wZXJhdG9yUXVlcnlDb250ZXh0Qga6SAPIAQESHgoKY29tbWFuZF9pZBgCIAEoCUIKukgHcgUQARiAARJQChBkaWdlc3RfYWxnb3JpdGhtGAMgASgOMioua29rb3JvLmNvbW1vbi52Mi5Db21tYW5kRGlnZXN0QWxnb3JpdGhtVjJCCrpIB4IBBBABIAASMAoOcmVxdWVzdF9kaWdlc3QYBCABKAlCGLpIFXITMg5eWzAtOWEtZl17NjR9JJgBQCJRChJHZXRSZWNlaXB0UmVzcG9uc2USOwoHcmVjZWlwdBgBIAEoCzIiLmtva29yby5jb21tb24udjIuQ29tbWFuZFJlY2VpcHRWMkIGukgDyAEBKokBChJTdWJtaXRDb21tYW5kU3RhdGUSJAogU1VCTUlUX0NPTU1BTkRfU1RBVEVfVU5TUEVDSUZJRUQQABIpCiVTVUJNSVRfQ09NTUFORF9TVEFURV9QRU5ESU5HX0FQUFJPVkFMEAESIgoeU1VCTUlUX0NPTU1BTkRfU1RBVEVfQ09NTUlUVEVEEAIqcgoQQXBwcm92YWxEZWNpc2lvbhIhCh1BUFBST1ZBTF9ERUNJU0lPTl9VTlNQRUNJRklFRBAAEh0KGUFQUFJPVkFMX0RFQ0lTSU9OX0FQUFJPVkUQARIcChhBUFBST1ZBTF9ERUNJU0lPTl9SRUpFQ1QQAiq4AQoVQXBwcm92YWxEZWNpc2lvblN0YXRlEicKI0FQUFJPVkFMX0RFQ0lTSU9OX1NUQVRFX1VOU1BFQ0lGSUVEEAASLAooQVBQUk9WQUxfREVDSVNJT05fU1RBVEVfRVhFQ1VUSU9OX1FVRVVFRBABEiQKIEFQUFJPVkFMX0RFQ0lTSU9OX1NUQVRFX1JFSkVDVEVEEAISIgoeQVBQUk9WQUxfREVDSVNJT05fU1RBVEVfREVOSUVEEAMqngEKGFBvc3RFZmZlY3RSZXZpZXdEZWNpc2lvbhIrCidQT1NUX0VGRkVDVF9SRVZJRVdfREVDSVNJT05fVU5TUEVDSUZJRUQQABIrCidQT1NUX0VGRkVDVF9SRVZJRVdfREVDSVNJT05fQUNLTk9XTEVER0UQARIoCiRQT1NUX0VGRkVDVF9SRVZJRVdfREVDSVNJT05fRVNDQUxBVEUQAiq5AQoVUG9zdEVmZmVjdFJldmlld1N0YXRlEigKJFBPU1RfRUZGRUNUX1JFVklFV19TVEFURV9VTlNQRUNJRklFRBAAEikKJVBPU1RfRUZGRUNUX1JFVklFV19TVEFURV9BQ0tOT1dMRURHRUQQARImCiJQT1NUX0VGRkVDVF9SRVZJRVdfU1RBVEVfRVNDQUxBVEVEEAISIwofUE9TVF9FRkZFQ1RfUkVWSUVXX1NUQVRFX0RFTklFRBADMvsDChNBZG1pbkNvbW1hbmRTZXJ2aWNlEnIKDVN1Ym1pdENvbW1hbmQSLi5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuU3VibWl0Q29tbWFuZFJlcXVlc3QaLy5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuU3VibWl0Q29tbWFuZFJlc3BvbnNlIgASdQoORGVjaWRlQXBwcm92YWwSLy5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuRGVjaWRlQXBwcm92YWxSZXF1ZXN0GjAua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkRlY2lkZUFwcHJvdmFsUmVzcG9uc2UiABKNAQoWRGVjaWRlUG9zdEVmZmVjdFJldmlldxI3Lmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5EZWNpZGVQb3N0RWZmZWN0UmV2aWV3UmVxdWVzdBo4Lmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5EZWNpZGVQb3N0RWZmZWN0UmV2aWV3UmVzcG9uc2UiABJpCgpHZXRSZWNlaXB0Eisua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkdldFJlY2VpcHRSZXF1ZXN0Giwua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkdldFJlY2VpcHRSZXNwb25zZSIAYgZwcm90bzM", [file_buf_validate_validate, file_kokoro_common_v2_command_envelope, file_kokoro_platform_admin_v2_admin_shared]);
+  fileDesc("Cixrb2tvcm8vcGxhdGZvcm0vYWRtaW4vdjIvYWRtaW5fY29tbWFuZC5wcm90bxIYa29rb3JvLnBsYXRmb3JtLmFkbWluLnYyIpgEChdDaGFuZ2VPcGVyYXRvckF1dGhvcml0eRJTCgZhY3Rpb24YASABKA4yNy5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuT3BlcmF0b3JBdXRob3JpdHlDaGFuZ2VBY3Rpb25CCrpIB4IBBBABIAASIAoMb3BlcmF0b3JfcmVmGAIgASgJQgq6SAdyBRABGIABEiQKE29wZXJhdG9yX2dlbmVyYXRpb24YAyABKARCB7pIBDICIAASMgocZXhwZWN0ZWRfYXV0aG9yaXphdGlvbl9lcG9jaBgEIAEoBEIHukgEMgIgAEgAiAEBEikKC3Blcm1pc3Npb25zGAUgAygJQhS6SBGSAQ4QgAIYASIHcgUQARiAARIlCghzaXRlX2lkcxgGIAMoCUITukgQkgENEGQYASIHcgUQARiAARIoCgxlbnZpcm9ubWVudHMYByADKAlCErpID5IBDBAgGAEiBnIEEAEYQBIjCgdyZWdpb25zGAggAygJQhK6SA+SAQwQQBgBIgZyBBABGEASLgoKZXhwaXJlc19hdBgJIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASOgoWYnJlYWtfZ2xhc3NfZXhwaXJlc19hdBgKIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBCHwodX2V4cGVjdGVkX2F1dGhvcml6YXRpb25fZXBvY2gifAoTU3VibWl0Q29tbWFuZEVmZmVjdBJJCgZjaGFuZ2UYASABKAsyMS5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuQ2hhbmdlT3BlcmF0b3JBdXRob3JpdHlCBrpIA8gBARIaCgZyZWFzb24YAiABKAlCCrpIB3IFEAEYgAQitQEKFFN1Ym1pdENvbW1hbmRSZXF1ZXN0ElYKB2NvbnRleHQYASABKAsyPS5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuQXV0aGVudGljYXRlZE9wZXJhdG9yQ29tbWFuZENvbnRleHRCBrpIA8gBARJFCgZlZmZlY3QYAiABKAsyLS5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuU3VibWl0Q29tbWFuZEVmZmVjdEIGukgDyAEBIqECChVTdWJtaXRDb21tYW5kUmVzcG9uc2USRwoFc3RhdGUYASABKA4yLC5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuU3VibWl0Q29tbWFuZFN0YXRlQgq6SAeCAQQQASAAEiUKDGFwcHJvdmFsX3JlZhgCIAEoCUIKukgHcgUQARiAAUgAiAEBEi8KFnBvc3RfZWZmZWN0X3Jldmlld19yZWYYAyABKAlCCrpIB3IFEAEYgAFIAYgBARI7CgdyZWNlaXB0GAQgASgLMiIua29rb3JvLmNvbW1vbi52Mi5Db21tYW5kUmVjZWlwdFYyQga6SAPIAQFCDwoNX2FwcHJvdmFsX3JlZkIZChdfcG9zdF9lZmZlY3RfcmV2aWV3X3JlZiKeAQoURGVjaWRlQXBwcm92YWxFZmZlY3QSIAoMYXBwcm92YWxfcmVmGAEgASgJQgq6SAdyBRABGIABEkgKCGRlY2lzaW9uGAIgASgOMioua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkFwcHJvdmFsRGVjaXNpb25CCrpIB4IBBBABIAASGgoGcmVhc29uGAMgASgJQgq6SAdyBRABGIAEIrcBChVEZWNpZGVBcHByb3ZhbFJlcXVlc3QSVgoHY29udGV4dBgBIAEoCzI9Lmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5BdXRoZW50aWNhdGVkT3BlcmF0b3JDb21tYW5kQ29udGV4dEIGukgDyAEBEkYKBmVmZmVjdBgCIAEoCzIuLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5EZWNpZGVBcHByb3ZhbEVmZmVjdEIGukgDyAEBIqEBChZEZWNpZGVBcHByb3ZhbFJlc3BvbnNlEkoKBXN0YXRlGAEgASgOMi8ua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkFwcHJvdmFsRGVjaXNpb25TdGF0ZUIKukgHggEEEAEgABI7CgdyZWNlaXB0GAIgASgLMiIua29rb3JvLmNvbW1vbi52Mi5Db21tYW5kUmVjZWlwdFYyQga6SAPIAQEirAEKHERlY2lkZVBvc3RFZmZlY3RSZXZpZXdFZmZlY3QSHgoKcmV2aWV3X3JlZhgBIAEoCUIKukgHcgUQARiAARJQCghkZWNpc2lvbhgCIAEoDjIyLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5Qb3N0RWZmZWN0UmV2aWV3RGVjaXNpb25CCrpIB4IBBBABIAASGgoGcmVhc29uGAMgASgJQgq6SAdyBRABGIAEIscBCh1EZWNpZGVQb3N0RWZmZWN0UmV2aWV3UmVxdWVzdBJWCgdjb250ZXh0GAEgASgLMj0ua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkF1dGhlbnRpY2F0ZWRPcGVyYXRvckNvbW1hbmRDb250ZXh0Qga6SAPIAQESTgoGZWZmZWN0GAIgASgLMjYua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkRlY2lkZVBvc3RFZmZlY3RSZXZpZXdFZmZlY3RCBrpIA8gBASKpAQoeRGVjaWRlUG9zdEVmZmVjdFJldmlld1Jlc3BvbnNlEkoKBXN0YXRlGAEgASgOMi8ua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLlBvc3RFZmZlY3RSZXZpZXdTdGF0ZUIKukgHggEEEAEgABI7CgdyZWNlaXB0GAIgASgLMiIua29rb3JvLmNvbW1vbi52Mi5Db21tYW5kUmVjZWlwdFYyQga6SAPIAQEijQIKEUdldFJlY2VpcHRSZXF1ZXN0ElQKB2NvbnRleHQYASABKAsyOy5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuQXV0aGVudGljYXRlZE9wZXJhdG9yUXVlcnlDb250ZXh0Qga6SAPIAQESHgoKY29tbWFuZF9pZBgCIAEoCUIKukgHcgUQARiAARJQChBkaWdlc3RfYWxnb3JpdGhtGAMgASgOMioua29rb3JvLmNvbW1vbi52Mi5Db21tYW5kRGlnZXN0QWxnb3JpdGhtVjJCCrpIB4IBBBABIAASMAoOcmVxdWVzdF9kaWdlc3QYBCABKAlCGLpIFXITMg5eWzAtOWEtZl17NjR9JJgBQCJRChJHZXRSZWNlaXB0UmVzcG9uc2USOwoHcmVjZWlwdBgBIAEoCzIiLmtva29yby5jb21tb24udjIuQ29tbWFuZFJlY2VpcHRWMkIGukgDyAEBKooCCh1PcGVyYXRvckF1dGhvcml0eUNoYW5nZUFjdGlvbhIwCixPUEVSQVRPUl9BVVRIT1JJVFlfQ0hBTkdFX0FDVElPTl9VTlNQRUNJRklFRBAAEi4KKk9QRVJBVE9SX0FVVEhPUklUWV9DSEFOR0VfQUNUSU9OX1BST1ZJU0lPThABEiwKKE9QRVJBVE9SX0FVVEhPUklUWV9DSEFOR0VfQUNUSU9OX1JFUExBQ0UQAhIsCihPUEVSQVRPUl9BVVRIT1JJVFlfQ0hBTkdFX0FDVElPTl9TVVNQRU5EEAMSKwonT1BFUkFUT1JfQVVUSE9SSVRZX0NIQU5HRV9BQ1RJT05fUkVWT0tFEAQqiQEKElN1Ym1pdENvbW1hbmRTdGF0ZRIkCiBTVUJNSVRfQ09NTUFORF9TVEFURV9VTlNQRUNJRklFRBAAEikKJVNVQk1JVF9DT01NQU5EX1NUQVRFX1BFTkRJTkdfQVBQUk9WQUwQARIiCh5TVUJNSVRfQ09NTUFORF9TVEFURV9DT01NSVRURUQQAipyChBBcHByb3ZhbERlY2lzaW9uEiEKHUFQUFJPVkFMX0RFQ0lTSU9OX1VOU1BFQ0lGSUVEEAASHQoZQVBQUk9WQUxfREVDSVNJT05fQVBQUk9WRRABEhwKGEFQUFJPVkFMX0RFQ0lTSU9OX1JFSkVDVBACKrgBChVBcHByb3ZhbERlY2lzaW9uU3RhdGUSJwojQVBQUk9WQUxfREVDSVNJT05fU1RBVEVfVU5TUEVDSUZJRUQQABIsCihBUFBST1ZBTF9ERUNJU0lPTl9TVEFURV9FWEVDVVRJT05fUVVFVUVEEAESJAogQVBQUk9WQUxfREVDSVNJT05fU1RBVEVfUkVKRUNURUQQAhIiCh5BUFBST1ZBTF9ERUNJU0lPTl9TVEFURV9ERU5JRUQQAyqeAQoYUG9zdEVmZmVjdFJldmlld0RlY2lzaW9uEisKJ1BPU1RfRUZGRUNUX1JFVklFV19ERUNJU0lPTl9VTlNQRUNJRklFRBAAEisKJ1BPU1RfRUZGRUNUX1JFVklFV19ERUNJU0lPTl9BQ0tOT1dMRURHRRABEigKJFBPU1RfRUZGRUNUX1JFVklFV19ERUNJU0lPTl9FU0NBTEFURRACKrkBChVQb3N0RWZmZWN0UmV2aWV3U3RhdGUSKAokUE9TVF9FRkZFQ1RfUkVWSUVXX1NUQVRFX1VOU1BFQ0lGSUVEEAASKQolUE9TVF9FRkZFQ1RfUkVWSUVXX1NUQVRFX0FDS05PV0xFREdFRBABEiYKIlBPU1RfRUZGRUNUX1JFVklFV19TVEFURV9FU0NBTEFURUQQAhIjCh9QT1NUX0VGRkVDVF9SRVZJRVdfU1RBVEVfREVOSUVEEAMy+wMKE0FkbWluQ29tbWFuZFNlcnZpY2UScgoNU3VibWl0Q29tbWFuZBIuLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5TdWJtaXRDb21tYW5kUmVxdWVzdBovLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5TdWJtaXRDb21tYW5kUmVzcG9uc2UiABJ1Cg5EZWNpZGVBcHByb3ZhbBIvLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5EZWNpZGVBcHByb3ZhbFJlcXVlc3QaMC5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuRGVjaWRlQXBwcm92YWxSZXNwb25zZSIAEo0BChZEZWNpZGVQb3N0RWZmZWN0UmV2aWV3Ejcua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkRlY2lkZVBvc3RFZmZlY3RSZXZpZXdSZXF1ZXN0Gjgua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkRlY2lkZVBvc3RFZmZlY3RSZXZpZXdSZXNwb25zZSIAEmkKCkdldFJlY2VpcHQSKy5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuR2V0UmVjZWlwdFJlcXVlc3QaLC5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuR2V0UmVjZWlwdFJlc3BvbnNlIgBiBnByb3RvMw", [file_buf_validate_validate, file_google_protobuf_timestamp, file_kokoro_common_v2_command_envelope, file_kokoro_platform_admin_v2_admin_shared]);
 
 /**
- * @generated from message kokoro.platform.admin.v2.DisableUserChange
+ * This is the exact worker-owned authority aggregate accepted by
+ * platform.apply_admin_authority_change. User lifecycle and policy mutations belong to their
+ * domain-specific owner services and must not be advertised through this control-plane service.
+ *
+ * @generated from message kokoro.platform.admin.v2.ChangeOperatorAuthority
  */
-export type DisableUserChange = Message<"kokoro.platform.admin.v2.DisableUserChange"> & {
+export type ChangeOperatorAuthority = Message<"kokoro.platform.admin.v2.ChangeOperatorAuthority"> & {
   /**
-   * @generated from field: string site_id = 1;
+   * @generated from field: kokoro.platform.admin.v2.OperatorAuthorityChangeAction action = 1;
    */
-  siteId: string;
+  action: OperatorAuthorityChangeAction;
 
   /**
-   * @generated from field: string user_ref = 2;
-   */
-  userRef: string;
-
-  /**
-   * @generated from field: string reason_code = 3;
-   */
-  reasonCode: string;
-};
-
-/**
- * Describes the message kokoro.platform.admin.v2.DisableUserChange.
- * Use `create(DisableUserChangeSchema)` to create a new message.
- */
-export const DisableUserChangeSchema: GenMessage<DisableUserChange> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v2_admin_command, 0);
-
-/**
- * @generated from message kokoro.platform.admin.v2.UpdateOperatorScopeChange
- */
-export type UpdateOperatorScopeChange = Message<"kokoro.platform.admin.v2.UpdateOperatorScopeChange"> & {
-  /**
-   * @generated from field: string operator_ref = 1;
+   * @generated from field: string operator_ref = 2;
    */
   operatorRef: string;
 
   /**
-   * @generated from field: kokoro.platform.admin.v2.OperatorScope replacement_scope = 2;
+   * @generated from field: uint64 operator_generation = 3;
    */
-  replacementScope?: OperatorScope | undefined;
+  operatorGeneration: bigint;
+
+  /**
+   * @generated from field: optional uint64 expected_authorization_epoch = 4;
+   */
+  expectedAuthorizationEpoch?: bigint | undefined;
+
+  /**
+   * @generated from field: repeated string permissions = 5;
+   */
+  permissions: string[];
+
+  /**
+   * @generated from field: repeated string site_ids = 6;
+   */
+  siteIds: string[];
+
+  /**
+   * @generated from field: repeated string environments = 7;
+   */
+  environments: string[];
+
+  /**
+   * @generated from field: repeated string regions = 8;
+   */
+  regions: string[];
+
+  /**
+   * @generated from field: google.protobuf.Timestamp expires_at = 9;
+   */
+  expiresAt?: Timestamp | undefined;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp break_glass_expires_at = 10;
+   */
+  breakGlassExpiresAt?: Timestamp | undefined;
 };
 
 /**
- * Describes the message kokoro.platform.admin.v2.UpdateOperatorScopeChange.
- * Use `create(UpdateOperatorScopeChangeSchema)` to create a new message.
+ * Describes the message kokoro.platform.admin.v2.ChangeOperatorAuthority.
+ * Use `create(ChangeOperatorAuthoritySchema)` to create a new message.
  */
-export const UpdateOperatorScopeChangeSchema: GenMessage<UpdateOperatorScopeChange> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v2_admin_command, 1);
-
-/**
- * @generated from message kokoro.platform.admin.v2.UpdatePolicyChange
- */
-export type UpdatePolicyChange = Message<"kokoro.platform.admin.v2.UpdatePolicyChange"> & {
-  /**
-   * @generated from field: string policy_ref = 1;
-   */
-  policyRef: string;
-
-  /**
-   * @generated from field: string policy_revision_ref = 2;
-   */
-  policyRevisionRef: string;
-};
-
-/**
- * Describes the message kokoro.platform.admin.v2.UpdatePolicyChange.
- * Use `create(UpdatePolicyChangeSchema)` to create a new message.
- */
-export const UpdatePolicyChangeSchema: GenMessage<UpdatePolicyChange> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v2_admin_command, 2);
+export const ChangeOperatorAuthoritySchema: GenMessage<ChangeOperatorAuthority> = /*@__PURE__*/
+  messageDesc(file_kokoro_platform_admin_v2_admin_command, 0);
 
 /**
  * @generated from message kokoro.platform.admin.v2.SubmitCommandEffect
  */
 export type SubmitCommandEffect = Message<"kokoro.platform.admin.v2.SubmitCommandEffect"> & {
   /**
-   * @generated from oneof kokoro.platform.admin.v2.SubmitCommandEffect.change
+   * @generated from field: kokoro.platform.admin.v2.ChangeOperatorAuthority change = 1;
    */
-  change: {
-    /**
-     * @generated from field: kokoro.platform.admin.v2.DisableUserChange disable_user = 1;
-     */
-    value: DisableUserChange;
-    case: "disableUser";
-  } | {
-    /**
-     * @generated from field: kokoro.platform.admin.v2.UpdateOperatorScopeChange update_operator_scope = 2;
-     */
-    value: UpdateOperatorScopeChange;
-    case: "updateOperatorScope";
-  } | {
-    /**
-     * @generated from field: kokoro.platform.admin.v2.UpdatePolicyChange update_policy = 3;
-     */
-    value: UpdatePolicyChange;
-    case: "updatePolicy";
-  } | { case: undefined; value?: undefined };
+  change?: ChangeOperatorAuthority | undefined;
 
   /**
-   * @generated from field: string reason = 4;
+   * @generated from field: string reason = 2;
    */
   reason: string;
-
-  /**
-   * Required only for an operation admitted under a BreakGlassScope. Platform resolves and binds
-   * the ticket to the authenticated operator attestation; it is never execution authority.
-   *
-   * @generated from field: optional string break_glass_ticket_ref = 5;
-   */
-  breakGlassTicketRef?: string | undefined;
 };
 
 /**
@@ -134,7 +105,7 @@ export type SubmitCommandEffect = Message<"kokoro.platform.admin.v2.SubmitComman
  * Use `create(SubmitCommandEffectSchema)` to create a new message.
  */
 export const SubmitCommandEffectSchema: GenMessage<SubmitCommandEffect> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v2_admin_command, 3);
+  messageDesc(file_kokoro_platform_admin_v2_admin_command, 1);
 
 /**
  * @generated from message kokoro.platform.admin.v2.SubmitCommandRequest
@@ -156,7 +127,7 @@ export type SubmitCommandRequest = Message<"kokoro.platform.admin.v2.SubmitComma
  * Use `create(SubmitCommandRequestSchema)` to create a new message.
  */
 export const SubmitCommandRequestSchema: GenMessage<SubmitCommandRequest> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v2_admin_command, 4);
+  messageDesc(file_kokoro_platform_admin_v2_admin_command, 2);
 
 /**
  * @generated from message kokoro.platform.admin.v2.SubmitCommandResponse
@@ -192,7 +163,7 @@ export type SubmitCommandResponse = Message<"kokoro.platform.admin.v2.SubmitComm
  * Use `create(SubmitCommandResponseSchema)` to create a new message.
  */
 export const SubmitCommandResponseSchema: GenMessage<SubmitCommandResponse> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v2_admin_command, 5);
+  messageDesc(file_kokoro_platform_admin_v2_admin_command, 3);
 
 /**
  * @generated from message kokoro.platform.admin.v2.DecideApprovalEffect
@@ -219,7 +190,7 @@ export type DecideApprovalEffect = Message<"kokoro.platform.admin.v2.DecideAppro
  * Use `create(DecideApprovalEffectSchema)` to create a new message.
  */
 export const DecideApprovalEffectSchema: GenMessage<DecideApprovalEffect> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v2_admin_command, 6);
+  messageDesc(file_kokoro_platform_admin_v2_admin_command, 4);
 
 /**
  * @generated from message kokoro.platform.admin.v2.DecideApprovalRequest
@@ -241,7 +212,7 @@ export type DecideApprovalRequest = Message<"kokoro.platform.admin.v2.DecideAppr
  * Use `create(DecideApprovalRequestSchema)` to create a new message.
  */
 export const DecideApprovalRequestSchema: GenMessage<DecideApprovalRequest> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v2_admin_command, 7);
+  messageDesc(file_kokoro_platform_admin_v2_admin_command, 5);
 
 /**
  * @generated from message kokoro.platform.admin.v2.DecideApprovalResponse
@@ -263,7 +234,7 @@ export type DecideApprovalResponse = Message<"kokoro.platform.admin.v2.DecideApp
  * Use `create(DecideApprovalResponseSchema)` to create a new message.
  */
 export const DecideApprovalResponseSchema: GenMessage<DecideApprovalResponse> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v2_admin_command, 8);
+  messageDesc(file_kokoro_platform_admin_v2_admin_command, 6);
 
 /**
  * @generated from message kokoro.platform.admin.v2.DecidePostEffectReviewEffect
@@ -290,7 +261,7 @@ export type DecidePostEffectReviewEffect = Message<"kokoro.platform.admin.v2.Dec
  * Use `create(DecidePostEffectReviewEffectSchema)` to create a new message.
  */
 export const DecidePostEffectReviewEffectSchema: GenMessage<DecidePostEffectReviewEffect> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v2_admin_command, 9);
+  messageDesc(file_kokoro_platform_admin_v2_admin_command, 7);
 
 /**
  * @generated from message kokoro.platform.admin.v2.DecidePostEffectReviewRequest
@@ -312,7 +283,7 @@ export type DecidePostEffectReviewRequest = Message<"kokoro.platform.admin.v2.De
  * Use `create(DecidePostEffectReviewRequestSchema)` to create a new message.
  */
 export const DecidePostEffectReviewRequestSchema: GenMessage<DecidePostEffectReviewRequest> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v2_admin_command, 10);
+  messageDesc(file_kokoro_platform_admin_v2_admin_command, 8);
 
 /**
  * @generated from message kokoro.platform.admin.v2.DecidePostEffectReviewResponse
@@ -334,7 +305,7 @@ export type DecidePostEffectReviewResponse = Message<"kokoro.platform.admin.v2.D
  * Use `create(DecidePostEffectReviewResponseSchema)` to create a new message.
  */
 export const DecidePostEffectReviewResponseSchema: GenMessage<DecidePostEffectReviewResponse> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v2_admin_command, 11);
+  messageDesc(file_kokoro_platform_admin_v2_admin_command, 9);
 
 /**
  * @generated from message kokoro.platform.admin.v2.GetReceiptRequest
@@ -366,7 +337,7 @@ export type GetReceiptRequest = Message<"kokoro.platform.admin.v2.GetReceiptRequ
  * Use `create(GetReceiptRequestSchema)` to create a new message.
  */
 export const GetReceiptRequestSchema: GenMessage<GetReceiptRequest> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v2_admin_command, 12);
+  messageDesc(file_kokoro_platform_admin_v2_admin_command, 10);
 
 /**
  * @generated from message kokoro.platform.admin.v2.GetReceiptResponse
@@ -383,7 +354,43 @@ export type GetReceiptResponse = Message<"kokoro.platform.admin.v2.GetReceiptRes
  * Use `create(GetReceiptResponseSchema)` to create a new message.
  */
 export const GetReceiptResponseSchema: GenMessage<GetReceiptResponse> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_admin_v2_admin_command, 13);
+  messageDesc(file_kokoro_platform_admin_v2_admin_command, 11);
+
+/**
+ * @generated from enum kokoro.platform.admin.v2.OperatorAuthorityChangeAction
+ */
+export enum OperatorAuthorityChangeAction {
+  /**
+   * @generated from enum value: OPERATOR_AUTHORITY_CHANGE_ACTION_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: OPERATOR_AUTHORITY_CHANGE_ACTION_PROVISION = 1;
+   */
+  PROVISION = 1,
+
+  /**
+   * @generated from enum value: OPERATOR_AUTHORITY_CHANGE_ACTION_REPLACE = 2;
+   */
+  REPLACE = 2,
+
+  /**
+   * @generated from enum value: OPERATOR_AUTHORITY_CHANGE_ACTION_SUSPEND = 3;
+   */
+  SUSPEND = 3,
+
+  /**
+   * @generated from enum value: OPERATOR_AUTHORITY_CHANGE_ACTION_REVOKE = 4;
+   */
+  REVOKE = 4,
+}
+
+/**
+ * Describes the enum kokoro.platform.admin.v2.OperatorAuthorityChangeAction.
+ */
+export const OperatorAuthorityChangeActionSchema: GenEnum<OperatorAuthorityChangeAction> = /*@__PURE__*/
+  enumDesc(file_kokoro_platform_admin_v2_admin_command, 0);
 
 /**
  * @generated from enum kokoro.platform.admin.v2.SubmitCommandState
@@ -409,7 +416,7 @@ export enum SubmitCommandState {
  * Describes the enum kokoro.platform.admin.v2.SubmitCommandState.
  */
 export const SubmitCommandStateSchema: GenEnum<SubmitCommandState> = /*@__PURE__*/
-  enumDesc(file_kokoro_platform_admin_v2_admin_command, 0);
+  enumDesc(file_kokoro_platform_admin_v2_admin_command, 1);
 
 /**
  * @generated from enum kokoro.platform.admin.v2.ApprovalDecision
@@ -435,7 +442,7 @@ export enum ApprovalDecision {
  * Describes the enum kokoro.platform.admin.v2.ApprovalDecision.
  */
 export const ApprovalDecisionSchema: GenEnum<ApprovalDecision> = /*@__PURE__*/
-  enumDesc(file_kokoro_platform_admin_v2_admin_command, 1);
+  enumDesc(file_kokoro_platform_admin_v2_admin_command, 2);
 
 /**
  * @generated from enum kokoro.platform.admin.v2.ApprovalDecisionState
@@ -472,7 +479,7 @@ export enum ApprovalDecisionState {
  * Describes the enum kokoro.platform.admin.v2.ApprovalDecisionState.
  */
 export const ApprovalDecisionStateSchema: GenEnum<ApprovalDecisionState> = /*@__PURE__*/
-  enumDesc(file_kokoro_platform_admin_v2_admin_command, 2);
+  enumDesc(file_kokoro_platform_admin_v2_admin_command, 3);
 
 /**
  * @generated from enum kokoro.platform.admin.v2.PostEffectReviewDecision
@@ -498,7 +505,7 @@ export enum PostEffectReviewDecision {
  * Describes the enum kokoro.platform.admin.v2.PostEffectReviewDecision.
  */
 export const PostEffectReviewDecisionSchema: GenEnum<PostEffectReviewDecision> = /*@__PURE__*/
-  enumDesc(file_kokoro_platform_admin_v2_admin_command, 3);
+  enumDesc(file_kokoro_platform_admin_v2_admin_command, 4);
 
 /**
  * @generated from enum kokoro.platform.admin.v2.PostEffectReviewState
@@ -529,7 +536,7 @@ export enum PostEffectReviewState {
  * Describes the enum kokoro.platform.admin.v2.PostEffectReviewState.
  */
 export const PostEffectReviewStateSchema: GenEnum<PostEffectReviewState> = /*@__PURE__*/
-  enumDesc(file_kokoro_platform_admin_v2_admin_command, 4);
+  enumDesc(file_kokoro_platform_admin_v2_admin_command, 5);
 
 /**
  * AdminCommandService coordinates approval for non-lifecycle administrative effects.
