@@ -13,7 +13,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file kokoro/agent/execution/v1/agent_execution_evidence.proto.
  */
 export const file_kokoro_agent_execution_v1_agent_execution_evidence: GenFile = /*@__PURE__*/
-  fileDesc("Cjhrb2tvcm8vYWdlbnQvZXhlY3V0aW9uL3YxL2FnZW50X2V4ZWN1dGlvbl9ldmlkZW5jZS5wcm90bxIZa29rb3JvLmFnZW50LmV4ZWN1dGlvbi52MSL3AwoiRHVyYWJsZUV4ZWN1dGlvbkNhbm9uaWNhbFBheWxvYWRWMRJGCgtydW5fc3RhcnRlZBgBIAEoCzIvLmtva29yby5hZ2VudC5leGVjdXRpb24udjEuUnVuU3RhcnRlZEV2aWRlbmNlVjFIABJICgxhY3Rpb25fb3duZXIYAiABKAsyMC5rb2tvcm8uYWdlbnQuZXhlY3V0aW9uLnYxLkFjdGlvbk93bmVyRXZpZGVuY2VWMUgAEkQKCnBsYW5fb3duZXIYAyABKAsyLi5rb2tvcm8uYWdlbnQuZXhlY3V0aW9uLnYxLlBsYW5Pd25lckV2aWRlbmNlVjFIABJVChNydW5fb3duZXJfY29tcGxldGVkGAQgASgLMjYua29rb3JvLmFnZW50LmV4ZWN1dGlvbi52MS5SdW5Pd25lckNvbXBsZXRlZEV2aWRlbmNlVjFIABJKCg1ydW5fY29tcGxldGVkGAUgASgLMjEua29rb3JvLmFnZW50LmV4ZWN1dGlvbi52MS5SdW5Db21wbGV0ZWRFdmlkZW5jZVYxSAASRAoKcnVuX2ZhaWxlZBgGIAEoCzIuLmtva29yby5hZ2VudC5leGVjdXRpb24udjEuUnVuRmFpbGVkRXZpZGVuY2VWMUgAQhAKB3BheWxvYWQSBbpIAggBIhYKFFJ1blN0YXJ0ZWRFdmlkZW5jZVYxIvIBChVBY3Rpb25Pd25lckV2aWRlbmNlVjESHQoJb3duZXJfcmVmGAEgASgJQgq6SAdyBRABGIACEh4KDW93bmVyX3ZlcnNpb24YAiABKARCB7pIBDICCAESHgoKc2VnbWVudF9pZBgDIAEoCUIKukgHcgUQARiAAhIfCgthY3Rpb25fbmFtZRgEIAEoCUIKukgHcgUQARiAAhIgCg1hd2FpdGluZ19raW5kGAUgASgJQgm6SAZyBBABGEASNwoVYWN0aW9uX3BheWxvYWRfc2hhMjU2GAYgASgJQhi6SBVyEzIOXlswLTlhLWZdezY0fSSYAUAirwEKE1BsYW5Pd25lckV2aWRlbmNlVjESHQoJb3duZXJfcmVmGAEgASgJQgq6SAdyBRABGIACEh4KDW93bmVyX3ZlcnNpb24YAiABKARCB7pIBDICIAASHgoKc2VnbWVudF9pZBgDIAEoCUIKukgHcgUQARiAAhI5Chdwcm9wb3NhbF9wYXlsb2FkX3NoYTI1NhgEIAEoCUIYukgVchMyDl5bMC05YS1mXXs2NH0kmAFAIqgBChtSdW5Pd25lckNvbXBsZXRlZEV2aWRlbmNlVjESLAoYZXhlY3V0aW9uX2NvbnRleHRfYW5jaG9yGAEgASgJQgq6SAdyBRABGIACEjoKGGV4ZWN1dGlvbl9jb250ZXh0X2RpZ2VzdBgCIAEoCUIYukgVchMyDl5bMC05YS1mXXs2NH0kmAFAEh8KDm93bmVyX3JldmlzaW9uGAMgASgEQge6SAQyAiAAIrEBChZSdW5Db21wbGV0ZWRFdmlkZW5jZVYxElEKBnN0YXR1cxgBIAEoDjI1Lmtva29yby5hZ2VudC5leGVjdXRpb24udjEuUnVuQ29tcGxldGVkRXZpZGVuY2VTdGF0dXNCCrpIB4IBBBABIAASRAoLdG9rZW5fdXNhZ2UYAiABKAsyLy5rb2tvcm8uYWdlbnQuZXhlY3V0aW9uLnYxLlRva2VuVXNhZ2VFdmlkZW5jZVYxIkMKFFRva2VuVXNhZ2VFdmlkZW5jZVYxEhQKDGlucHV0X3Rva2VucxgBIAEoBBIVCg1vdXRwdXRfdG9rZW5zGAIgASgEImkKE1J1bkZhaWxlZEV2aWRlbmNlVjESFwoEY29kZRgBIAEoCUIJukgGcgQQARhAEh4KCmVycm9yX2tpbmQYAiABKAlCCrpIB3IFEAEYgAESGQoHbWVzc2FnZRgDIAEoCUIIukgFcgMYgCAi7AMKGER1cmFibGVFeGVjdXRpb25FdmlkZW5jZRIgCgxldmlkZW5jZV9yZWYYASABKAlCCrpIB3IFEAEYgAISIQoQZXZpZGVuY2VfdmVyc2lvbhgCIAEoBEIHukgEMgIIARIaCgZydW5faWQYAyABKAlCCrpIB3IFEAEYgAESHAoLZHVyYWJsZV9zZXEYBCABKARCB7pIBDICIAASHAoIZXZlbnRfaWQYBSABKAlCCrpIB3IFEAEYgAISUQoEa2luZBgGIAEoDjI3Lmtva29yby5hZ2VudC5leGVjdXRpb24udjEuRHVyYWJsZUV4ZWN1dGlvbkV2aWRlbmNlS2luZEIKukgHggEEEAEgABIkChFjYW5vbmljYWxfcGF5bG9hZBgHIAEoDEIJukgGegQYgIAEEjAKDnBheWxvYWRfc2hhMjU2GAggASgJQhi6SBVyEzIOXlswLTlhLWZdezY0fSSYAUASNwoLcmVjb3JkZWRfYXQYCSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wQga6SAPIAQESKQoVcHJvZHVjZXJfaW5zdGFuY2VfcmVmGAogASgJQgq6SAdyBRABGIACEiQKE3Byb2R1Y2VyX2dlbmVyYXRpb24YCyABKARCB7pIBDICIAAiewojUHVsbER1cmFibGVFeGVjdXRpb25FdmlkZW5jZVJlcXVlc3QSGgoGcnVuX2lkGAEgASgJQgq6SAdyBRABGIABEhkKEWFmdGVyX2R1cmFibGVfc2VxGAIgASgEEh0KCXBhZ2Vfc2l6ZRgDIAEoDUIKukgHKgUYgAIgACLTAQokUHVsbER1cmFibGVFeGVjdXRpb25FdmlkZW5jZVJlc3BvbnNlElAKCGV2aWRlbmNlGAEgAygLMjMua29rb3JvLmFnZW50LmV4ZWN1dGlvbi52MS5EdXJhYmxlRXhlY3V0aW9uRXZpZGVuY2VCCbpIBpIBAxCAAhIsChZuZXh0X2FmdGVyX2R1cmFibGVfc2VxGAIgASgEQge6SAQyAiAASACIAQESEAoIaGFzX21vcmUYAyABKAhCGQoXX25leHRfYWZ0ZXJfZHVyYWJsZV9zZXEiYgoiR2V0RHVyYWJsZUV4ZWN1dGlvbkV2aWRlbmNlUmVxdWVzdBIaCgZydW5faWQYASABKAlCCrpIB3IFEAEYgAESIAoMZXZpZGVuY2VfcmVmGAIgASgJQgq6SAdyBRABGIACIiIKIER1cmFibGVFeGVjdXRpb25FdmlkZW5jZU5vdEZvdW5kItIBCiNHZXREdXJhYmxlRXhlY3V0aW9uRXZpZGVuY2VSZXNwb25zZRJHCghldmlkZW5jZRgBIAEoCzIzLmtva29yby5hZ2VudC5leGVjdXRpb24udjEuRHVyYWJsZUV4ZWN1dGlvbkV2aWRlbmNlSAASUAoJbm90X2ZvdW5kGAIgASgLMjsua29rb3JvLmFnZW50LmV4ZWN1dGlvbi52MS5EdXJhYmxlRXhlY3V0aW9uRXZpZGVuY2VOb3RGb3VuZEgAQhAKB291dGNvbWUSBbpIAggBIjwKHkdldFJ1bkR1cmFibGVDaGVja3BvaW50UmVxdWVzdBIaCgZydW5faWQYASABKAlCCrpIB3IFEAEYgAEizgEKH0dldFJ1bkR1cmFibGVDaGVja3BvaW50UmVzcG9uc2USRwoIZXZpZGVuY2UYASABKAsyMy5rb2tvcm8uYWdlbnQuZXhlY3V0aW9uLnYxLkR1cmFibGVFeGVjdXRpb25FdmlkZW5jZUgAElAKCW5vdF9mb3VuZBgCIAEoCzI7Lmtva29yby5hZ2VudC5leGVjdXRpb24udjEuRHVyYWJsZUV4ZWN1dGlvbkV2aWRlbmNlTm90Rm91bmRIAEIQCgdvdXRjb21lEgW6SAIIASr+AgocRHVyYWJsZUV4ZWN1dGlvbkV2aWRlbmNlS2luZBIvCitEVVJBQkxFX0VYRUNVVElPTl9FVklERU5DRV9LSU5EX1VOU1BFQ0lGSUVEEAASLworRFVSQUJMRV9FWEVDVVRJT05fRVZJREVOQ0VfS0lORF9SVU5fU1RBUlRFRBABEjAKLERVUkFCTEVfRVhFQ1VUSU9OX0VWSURFTkNFX0tJTkRfQUNUSU9OX09XTkVSEAISLgoqRFVSQUJMRV9FWEVDVVRJT05fRVZJREVOQ0VfS0lORF9QTEFOX09XTkVSEAMSNwozRFVSQUJMRV9FWEVDVVRJT05fRVZJREVOQ0VfS0lORF9SVU5fT1dORVJfQ09NUExFVEVEEAQSMQotRFVSQUJMRV9FWEVDVVRJT05fRVZJREVOQ0VfS0lORF9SVU5fQ09NUExFVEVEEAUSLgoqRFVSQUJMRV9FWEVDVVRJT05fRVZJREVOQ0VfS0lORF9SVU5fRkFJTEVEEAYqpQEKGlJ1bkNvbXBsZXRlZEV2aWRlbmNlU3RhdHVzEi0KKVJVTl9DT01QTEVURURfRVZJREVOQ0VfU1RBVFVTX1VOU1BFQ0lGSUVEEAASKwonUlVOX0NPTVBMRVRFRF9FVklERU5DRV9TVEFUVVNfQ09NUExFVEVEEAESKwonUlVOX0NPTVBMRVRFRF9FVklERU5DRV9TVEFUVVNfQ0FOQ0VMTEVEEAIy+QMKHUFnZW50RXhlY3V0aW9uRXZpZGVuY2VTZXJ2aWNlEqEBChxQdWxsRHVyYWJsZUV4ZWN1dGlvbkV2aWRlbmNlEj4ua29rb3JvLmFnZW50LmV4ZWN1dGlvbi52MS5QdWxsRHVyYWJsZUV4ZWN1dGlvbkV2aWRlbmNlUmVxdWVzdBo/Lmtva29yby5hZ2VudC5leGVjdXRpb24udjEuUHVsbER1cmFibGVFeGVjdXRpb25FdmlkZW5jZVJlc3BvbnNlIgASngEKG0dldER1cmFibGVFeGVjdXRpb25FdmlkZW5jZRI9Lmtva29yby5hZ2VudC5leGVjdXRpb24udjEuR2V0RHVyYWJsZUV4ZWN1dGlvbkV2aWRlbmNlUmVxdWVzdBo+Lmtva29yby5hZ2VudC5leGVjdXRpb24udjEuR2V0RHVyYWJsZUV4ZWN1dGlvbkV2aWRlbmNlUmVzcG9uc2UiABKSAQoXR2V0UnVuRHVyYWJsZUNoZWNrcG9pbnQSOS5rb2tvcm8uYWdlbnQuZXhlY3V0aW9uLnYxLkdldFJ1bkR1cmFibGVDaGVja3BvaW50UmVxdWVzdBo6Lmtva29yby5hZ2VudC5leGVjdXRpb24udjEuR2V0UnVuRHVyYWJsZUNoZWNrcG9pbnRSZXNwb25zZSIAYgZwcm90bzM", [file_buf_validate_validate, file_google_protobuf_timestamp]);
+  fileDesc("Cjhrb2tvcm8vYWdlbnQvZXhlY3V0aW9uL3YxL2FnZW50X2V4ZWN1dGlvbl9ldmlkZW5jZS5wcm90bxIZa29rb3JvLmFnZW50LmV4ZWN1dGlvbi52MSL3AwoiRHVyYWJsZUV4ZWN1dGlvbkNhbm9uaWNhbFBheWxvYWRWMRJGCgtydW5fc3RhcnRlZBgBIAEoCzIvLmtva29yby5hZ2VudC5leGVjdXRpb24udjEuUnVuU3RhcnRlZEV2aWRlbmNlVjFIABJICgxhY3Rpb25fb3duZXIYAiABKAsyMC5rb2tvcm8uYWdlbnQuZXhlY3V0aW9uLnYxLkFjdGlvbk93bmVyRXZpZGVuY2VWMUgAEkQKCnBsYW5fb3duZXIYAyABKAsyLi5rb2tvcm8uYWdlbnQuZXhlY3V0aW9uLnYxLlBsYW5Pd25lckV2aWRlbmNlVjFIABJVChNydW5fb3duZXJfY29tcGxldGVkGAQgASgLMjYua29rb3JvLmFnZW50LmV4ZWN1dGlvbi52MS5SdW5Pd25lckNvbXBsZXRlZEV2aWRlbmNlVjFIABJKCg1ydW5fY29tcGxldGVkGAUgASgLMjEua29rb3JvLmFnZW50LmV4ZWN1dGlvbi52MS5SdW5Db21wbGV0ZWRFdmlkZW5jZVYxSAASRAoKcnVuX2ZhaWxlZBgGIAEoCzIuLmtva29yby5hZ2VudC5leGVjdXRpb24udjEuUnVuRmFpbGVkRXZpZGVuY2VWMUgAQhAKB3BheWxvYWQSBbpIAggBIhYKFFJ1blN0YXJ0ZWRFdmlkZW5jZVYxImcKE0FjdGlvblJpc2tTdW1tYXJ5VjESGAoFbGV2ZWwYASABKAlCCbpIBnIEEAEYQBIaCgZzb3VyY2UYAiABKAlCCrpIB3IFEAEYgAESGgoGcmVhc29uGAMgASgJQgq6SAdyBRABGIAgIsQGChVBY3Rpb25Pd25lckV2aWRlbmNlVjESHQoJb3duZXJfcmVmGAEgASgJQgq6SAdyBRABGIACEh4KDW93bmVyX3ZlcnNpb24YAiABKARCB7pIBDICCAESHgoKc2VnbWVudF9pZBgDIAEoCUIKukgHcgUQARiAAhIfCgthY3Rpb25fbmFtZRgEIAEoCUIKukgHcgUQARiAAhJSCg1hd2FpdGluZ19raW5kGAUgASgOMi8ua29rb3JvLmFnZW50LmV4ZWN1dGlvbi52MS5BY3Rpb25Bd2FpdGluZ0tpbmRWMUIKukgHggEEEAEgABI3ChVhY3Rpb25fcGF5bG9hZF9zaGEyNTYYBiABKAlCGLpIFXITMg5eWzAtOWEtZl17NjR9JJgBQBIdCgtkZXNjcmlwdGlvbhgHIAEoCUIIukgFcgMYgCASXQoRYWxsb3dlZF9kZWNpc2lvbnMYCCADKA4yKy5rb2tvcm8uYWdlbnQuZXhlY3V0aW9uLnYxLkFjdGlvbkRlY2lzaW9uVjFCFbpIEpIBDwgBEAUYASIHggEEEAEgABIxChJwZW5kaW5nX293bmVyX3JlZnMYCSADKAlCFbpIEpIBDwgBEEAYASIHcgUQARiAAhIQCghlZGl0YWJsZRgKIAEoCBJBCgRyaXNrGAsgASgLMi4ua29rb3JvLmFnZW50LmV4ZWN1dGlvbi52MS5BY3Rpb25SaXNrU3VtbWFyeVYxSACIAQESKQoRc2FmZV9yZXF1ZXN0X2pzb24YDCABKAxCCbpIBnoEGICAAUgBiAEBEikKEGlucHV0X3NjaGVtYV9yZWYYDSABKAlCCrpIB3IFEAEYgAJIAogBARIuChZzYWZlX2lucHV0X3NjaGVtYV9qc29uGA4gASgMQgm6SAZ6BBiAgAFIA4gBARIrChNzYWZlX3Jlc3VsdF9wcmV2aWV3GA8gASgJQgm6SAZyBBiAgAFIBIgBAUIHCgVfcmlza0IUChJfc2FmZV9yZXF1ZXN0X2pzb25CEwoRX2lucHV0X3NjaGVtYV9yZWZCGQoXX3NhZmVfaW5wdXRfc2NoZW1hX2pzb25CFgoUX3NhZmVfcmVzdWx0X3ByZXZpZXcijgEKClBsYW5TdGVwVjESHAoIc3RlcF9yZWYYASABKAlCCrpIB3IFEAEYgAISGQoFbGFiZWwYAiABKAlCCrpIB3IFEAEYgAgSRwoGc3RhdHVzGAMgASgOMisua29rb3JvLmFnZW50LmV4ZWN1dGlvbi52MS5QbGFuU3RlcFN0YXR1c1YxQgq6SAeCAQQQASAAIuoCChNQbGFuT3duZXJFdmlkZW5jZVYxEh0KCW93bmVyX3JlZhgBIAEoCUIKukgHcgUQARiAAhIeCg1vd25lcl92ZXJzaW9uGAIgASgEQge6SAQyAiAAEh4KCnNlZ21lbnRfaWQYAyABKAlCCrpIB3IFEAEYgAISOQoXcHJvcG9zYWxfcGF5bG9hZF9zaGEyNTYYBCABKAlCGLpIFXITMg5eWzAtOWEtZl17NjR9JJgBQBIbCgdzdW1tYXJ5GAUgASgJQgq6SAdyBRABGIAgEj8KBXN0ZXBzGAYgAygLMiUua29rb3JvLmFnZW50LmV4ZWN1dGlvbi52MS5QbGFuU3RlcFYxQgm6SAaSAQMQgAISWwoRYWxsb3dlZF9kZWNpc2lvbnMYByADKA4yKS5rb2tvcm8uYWdlbnQuZXhlY3V0aW9uLnYxLlBsYW5EZWNpc2lvblYxQhW6SBKSAQ8IARACGAEiB4IBBBABIAAiqAEKG1J1bk93bmVyQ29tcGxldGVkRXZpZGVuY2VWMRIsChhleGVjdXRpb25fY29udGV4dF9hbmNob3IYASABKAlCCrpIB3IFEAEYgAISOgoYZXhlY3V0aW9uX2NvbnRleHRfZGlnZXN0GAIgASgJQhi6SBVyEzIOXlswLTlhLWZdezY0fSSYAUASHwoOb3duZXJfcmV2aXNpb24YAyABKARCB7pIBDICIAAisQEKFlJ1bkNvbXBsZXRlZEV2aWRlbmNlVjESUQoGc3RhdHVzGAEgASgOMjUua29rb3JvLmFnZW50LmV4ZWN1dGlvbi52MS5SdW5Db21wbGV0ZWRFdmlkZW5jZVN0YXR1c0IKukgHggEEEAEgABJECgt0b2tlbl91c2FnZRgCIAEoCzIvLmtva29yby5hZ2VudC5leGVjdXRpb24udjEuVG9rZW5Vc2FnZUV2aWRlbmNlVjEiQwoUVG9rZW5Vc2FnZUV2aWRlbmNlVjESFAoMaW5wdXRfdG9rZW5zGAEgASgEEhUKDW91dHB1dF90b2tlbnMYAiABKAQiaQoTUnVuRmFpbGVkRXZpZGVuY2VWMRIXCgRjb2RlGAEgASgJQgm6SAZyBBABGEASHgoKZXJyb3Jfa2luZBgCIAEoCUIKukgHcgUQARiAARIZCgdtZXNzYWdlGAMgASgJQgi6SAVyAxiAICLsAwoYRHVyYWJsZUV4ZWN1dGlvbkV2aWRlbmNlEiAKDGV2aWRlbmNlX3JlZhgBIAEoCUIKukgHcgUQARiAAhIhChBldmlkZW5jZV92ZXJzaW9uGAIgASgEQge6SAQyAggBEhoKBnJ1bl9pZBgDIAEoCUIKukgHcgUQARiAARIcCgtkdXJhYmxlX3NlcRgEIAEoBEIHukgEMgIgABIcCghldmVudF9pZBgFIAEoCUIKukgHcgUQARiAAhJRCgRraW5kGAYgASgOMjcua29rb3JvLmFnZW50LmV4ZWN1dGlvbi52MS5EdXJhYmxlRXhlY3V0aW9uRXZpZGVuY2VLaW5kQgq6SAeCAQQQASAAEiQKEWNhbm9uaWNhbF9wYXlsb2FkGAcgASgMQgm6SAZ6BBiAgAQSMAoOcGF5bG9hZF9zaGEyNTYYCCABKAlCGLpIFXITMg5eWzAtOWEtZl17NjR9JJgBQBI3CgtyZWNvcmRlZF9hdBgJIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBCBrpIA8gBARIpChVwcm9kdWNlcl9pbnN0YW5jZV9yZWYYCiABKAlCCrpIB3IFEAEYgAISJAoTcHJvZHVjZXJfZ2VuZXJhdGlvbhgLIAEoBEIHukgEMgIgACJ7CiNQdWxsRHVyYWJsZUV4ZWN1dGlvbkV2aWRlbmNlUmVxdWVzdBIaCgZydW5faWQYASABKAlCCrpIB3IFEAEYgAESGQoRYWZ0ZXJfZHVyYWJsZV9zZXEYAiABKAQSHQoJcGFnZV9zaXplGAMgASgNQgq6SAcqBRiAAiAAItMBCiRQdWxsRHVyYWJsZUV4ZWN1dGlvbkV2aWRlbmNlUmVzcG9uc2USUAoIZXZpZGVuY2UYASADKAsyMy5rb2tvcm8uYWdlbnQuZXhlY3V0aW9uLnYxLkR1cmFibGVFeGVjdXRpb25FdmlkZW5jZUIJukgGkgEDEIACEiwKFm5leHRfYWZ0ZXJfZHVyYWJsZV9zZXEYAiABKARCB7pIBDICIABIAIgBARIQCghoYXNfbW9yZRgDIAEoCEIZChdfbmV4dF9hZnRlcl9kdXJhYmxlX3NlcSJiCiJHZXREdXJhYmxlRXhlY3V0aW9uRXZpZGVuY2VSZXF1ZXN0EhoKBnJ1bl9pZBgBIAEoCUIKukgHcgUQARiAARIgCgxldmlkZW5jZV9yZWYYAiABKAlCCrpIB3IFEAEYgAIiIgogRHVyYWJsZUV4ZWN1dGlvbkV2aWRlbmNlTm90Rm91bmQi0gEKI0dldER1cmFibGVFeGVjdXRpb25FdmlkZW5jZVJlc3BvbnNlEkcKCGV2aWRlbmNlGAEgASgLMjMua29rb3JvLmFnZW50LmV4ZWN1dGlvbi52MS5EdXJhYmxlRXhlY3V0aW9uRXZpZGVuY2VIABJQCglub3RfZm91bmQYAiABKAsyOy5rb2tvcm8uYWdlbnQuZXhlY3V0aW9uLnYxLkR1cmFibGVFeGVjdXRpb25FdmlkZW5jZU5vdEZvdW5kSABCEAoHb3V0Y29tZRIFukgCCAEiPAoeR2V0UnVuRHVyYWJsZUNoZWNrcG9pbnRSZXF1ZXN0EhoKBnJ1bl9pZBgBIAEoCUIKukgHcgUQARiAASLOAQofR2V0UnVuRHVyYWJsZUNoZWNrcG9pbnRSZXNwb25zZRJHCghldmlkZW5jZRgBIAEoCzIzLmtva29yby5hZ2VudC5leGVjdXRpb24udjEuRHVyYWJsZUV4ZWN1dGlvbkV2aWRlbmNlSAASUAoJbm90X2ZvdW5kGAIgASgLMjsua29rb3JvLmFnZW50LmV4ZWN1dGlvbi52MS5EdXJhYmxlRXhlY3V0aW9uRXZpZGVuY2VOb3RGb3VuZEgAQhAKB291dGNvbWUSBbpIAggBKv4CChxEdXJhYmxlRXhlY3V0aW9uRXZpZGVuY2VLaW5kEi8KK0RVUkFCTEVfRVhFQ1VUSU9OX0VWSURFTkNFX0tJTkRfVU5TUEVDSUZJRUQQABIvCitEVVJBQkxFX0VYRUNVVElPTl9FVklERU5DRV9LSU5EX1JVTl9TVEFSVEVEEAESMAosRFVSQUJMRV9FWEVDVVRJT05fRVZJREVOQ0VfS0lORF9BQ1RJT05fT1dORVIQAhIuCipEVVJBQkxFX0VYRUNVVElPTl9FVklERU5DRV9LSU5EX1BMQU5fT1dORVIQAxI3CjNEVVJBQkxFX0VYRUNVVElPTl9FVklERU5DRV9LSU5EX1JVTl9PV05FUl9DT01QTEVURUQQBBIxCi1EVVJBQkxFX0VYRUNVVElPTl9FVklERU5DRV9LSU5EX1JVTl9DT01QTEVURUQQBRIuCipEVVJBQkxFX0VYRUNVVElPTl9FVklERU5DRV9LSU5EX1JVTl9GQUlMRUQQBirnAQoUQWN0aW9uQXdhaXRpbmdLaW5kVjESJwojQUNUSU9OX0FXQUlUSU5HX0tJTkRfVjFfVU5TUEVDSUZJRUQQABIpCiVBQ1RJT05fQVdBSVRJTkdfS0lORF9WMV9UT09MX0FQUFJPVkFMEAESLQopQUNUSU9OX0FXQUlUSU5HX0tJTkRfVjFfQVNLX1VTRVJfUVVFU1RJT04QAhIpCiVBQ1RJT05fQVdBSVRJTkdfS0lORF9WMV9SRVNVTFRfUkVWSUVXEAMSIQodQUNUSU9OX0FXQUlUSU5HX0tJTkRfVjFfSU5QVVQQBCrRAQoQQWN0aW9uRGVjaXNpb25WMRIiCh5BQ1RJT05fREVDSVNJT05fVjFfVU5TUEVDSUZJRUQQABIeChpBQ1RJT05fREVDSVNJT05fVjFfQVBQUk9WRRABEhsKF0FDVElPTl9ERUNJU0lPTl9WMV9FRElUEAISHQoZQUNUSU9OX0RFQ0lTSU9OX1YxX1JFSkVDVBADEh4KGkFDVElPTl9ERUNJU0lPTl9WMV9SRVNQT05EEAQSHQoZQUNUSU9OX0RFQ0lTSU9OX1YxX1NVQk1JVBAFKqABChBQbGFuU3RlcFN0YXR1c1YxEiMKH1BMQU5fU1RFUF9TVEFUVVNfVjFfVU5TUEVDSUZJRUQQABIfChtQTEFOX1NURVBfU1RBVFVTX1YxX1BFTkRJTkcQARIjCh9QTEFOX1NURVBfU1RBVFVTX1YxX0lOX1BST0dSRVNTEAISIQodUExBTl9TVEVQX1NUQVRVU19WMV9DT01QTEVURUQQAypsCg5QbGFuRGVjaXNpb25WMRIgChxQTEFOX0RFQ0lTSU9OX1YxX1VOU1BFQ0lGSUVEEAASGwoXUExBTl9ERUNJU0lPTl9WMV9BQ0NFUFQQARIbChdQTEFOX0RFQ0lTSU9OX1YxX1JFSkVDVBACKqUBChpSdW5Db21wbGV0ZWRFdmlkZW5jZVN0YXR1cxItCilSVU5fQ09NUExFVEVEX0VWSURFTkNFX1NUQVRVU19VTlNQRUNJRklFRBAAEisKJ1JVTl9DT01QTEVURURfRVZJREVOQ0VfU1RBVFVTX0NPTVBMRVRFRBABEisKJ1JVTl9DT01QTEVURURfRVZJREVOQ0VfU1RBVFVTX0NBTkNFTExFRBACMvkDCh1BZ2VudEV4ZWN1dGlvbkV2aWRlbmNlU2VydmljZRKhAQocUHVsbER1cmFibGVFeGVjdXRpb25FdmlkZW5jZRI+Lmtva29yby5hZ2VudC5leGVjdXRpb24udjEuUHVsbER1cmFibGVFeGVjdXRpb25FdmlkZW5jZVJlcXVlc3QaPy5rb2tvcm8uYWdlbnQuZXhlY3V0aW9uLnYxLlB1bGxEdXJhYmxlRXhlY3V0aW9uRXZpZGVuY2VSZXNwb25zZSIAEp4BChtHZXREdXJhYmxlRXhlY3V0aW9uRXZpZGVuY2USPS5rb2tvcm8uYWdlbnQuZXhlY3V0aW9uLnYxLkdldER1cmFibGVFeGVjdXRpb25FdmlkZW5jZVJlcXVlc3QaPi5rb2tvcm8uYWdlbnQuZXhlY3V0aW9uLnYxLkdldER1cmFibGVFeGVjdXRpb25FdmlkZW5jZVJlc3BvbnNlIgASkgEKF0dldFJ1bkR1cmFibGVDaGVja3BvaW50Ejkua29rb3JvLmFnZW50LmV4ZWN1dGlvbi52MS5HZXRSdW5EdXJhYmxlQ2hlY2twb2ludFJlcXVlc3QaOi5rb2tvcm8uYWdlbnQuZXhlY3V0aW9uLnYxLkdldFJ1bkR1cmFibGVDaGVja3BvaW50UmVzcG9uc2UiAGIGcHJvdG8z", [file_buf_validate_validate, file_google_protobuf_timestamp]);
 
 /**
  * canonical_payload is the deterministic protobuf serialization of exactly
@@ -86,6 +86,33 @@ export const RunStartedEvidenceV1Schema: GenMessage<RunStartedEvidenceV1> = /*@_
   messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 1);
 
 /**
+ * @generated from message kokoro.agent.execution.v1.ActionRiskSummaryV1
+ */
+export type ActionRiskSummaryV1 = Message<"kokoro.agent.execution.v1.ActionRiskSummaryV1"> & {
+  /**
+   * @generated from field: string level = 1;
+   */
+  level: string;
+
+  /**
+   * @generated from field: string source = 2;
+   */
+  source: string;
+
+  /**
+   * @generated from field: string reason = 3;
+   */
+  reason: string;
+};
+
+/**
+ * Describes the message kokoro.agent.execution.v1.ActionRiskSummaryV1.
+ * Use `create(ActionRiskSummaryV1Schema)` to create a new message.
+ */
+export const ActionRiskSummaryV1Schema: GenMessage<ActionRiskSummaryV1> = /*@__PURE__*/
+  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 2);
+
+/**
  * @generated from message kokoro.agent.execution.v1.ActionOwnerEvidenceV1
  */
 export type ActionOwnerEvidenceV1 = Message<"kokoro.agent.execution.v1.ActionOwnerEvidenceV1"> & {
@@ -110,9 +137,9 @@ export type ActionOwnerEvidenceV1 = Message<"kokoro.agent.execution.v1.ActionOwn
   actionName: string;
 
   /**
-   * @generated from field: string awaiting_kind = 5;
+   * @generated from field: kokoro.agent.execution.v1.ActionAwaitingKindV1 awaiting_kind = 5;
    */
-  awaitingKind: string;
+  awaitingKind: ActionAwaitingKindV1;
 
   /**
    * SHA-256 of the canonical full Agent action-owner event payload. Session
@@ -121,6 +148,56 @@ export type ActionOwnerEvidenceV1 = Message<"kokoro.agent.execution.v1.ActionOwn
    * @generated from field: string action_payload_sha256 = 6;
    */
   actionPayloadSha256: string;
+
+  /**
+   * @generated from field: string description = 7;
+   */
+  description: string;
+
+  /**
+   * @generated from field: repeated kokoro.agent.execution.v1.ActionDecisionV1 allowed_decisions = 8;
+   */
+  allowedDecisions: ActionDecisionV1[];
+
+  /**
+   * @generated from field: repeated string pending_owner_refs = 9;
+   */
+  pendingOwnerRefs: string[];
+
+  /**
+   * @generated from field: bool editable = 10;
+   */
+  editable: boolean;
+
+  /**
+   * @generated from field: optional kokoro.agent.execution.v1.ActionRiskSummaryV1 risk = 11;
+   */
+  risk?: ActionRiskSummaryV1 | undefined;
+
+  /**
+   * These are bounded canonical JSON objects produced by Agent's redaction
+   * policy. They are presentation facts, never executable tool arguments.
+   *
+   * @generated from field: optional bytes safe_request_json = 12;
+   */
+  safeRequestJson?: Uint8Array | undefined;
+
+  /**
+   * @generated from field: optional string input_schema_ref = 13;
+   */
+  inputSchemaRef?: string | undefined;
+
+  /**
+   * @generated from field: optional bytes safe_input_schema_json = 14;
+   */
+  safeInputSchemaJson?: Uint8Array | undefined;
+
+  /**
+   * Present only for result-review owners and already bounded/redacted by Agent.
+   *
+   * @generated from field: optional string safe_result_preview = 15;
+   */
+  safeResultPreview?: string | undefined;
 };
 
 /**
@@ -128,7 +205,34 @@ export type ActionOwnerEvidenceV1 = Message<"kokoro.agent.execution.v1.ActionOwn
  * Use `create(ActionOwnerEvidenceV1Schema)` to create a new message.
  */
 export const ActionOwnerEvidenceV1Schema: GenMessage<ActionOwnerEvidenceV1> = /*@__PURE__*/
-  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 2);
+  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 3);
+
+/**
+ * @generated from message kokoro.agent.execution.v1.PlanStepV1
+ */
+export type PlanStepV1 = Message<"kokoro.agent.execution.v1.PlanStepV1"> & {
+  /**
+   * @generated from field: string step_ref = 1;
+   */
+  stepRef: string;
+
+  /**
+   * @generated from field: string label = 2;
+   */
+  label: string;
+
+  /**
+   * @generated from field: kokoro.agent.execution.v1.PlanStepStatusV1 status = 3;
+   */
+  status: PlanStepStatusV1;
+};
+
+/**
+ * Describes the message kokoro.agent.execution.v1.PlanStepV1.
+ * Use `create(PlanStepV1Schema)` to create a new message.
+ */
+export const PlanStepV1Schema: GenMessage<PlanStepV1> = /*@__PURE__*/
+  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 4);
 
 /**
  * @generated from message kokoro.agent.execution.v1.PlanOwnerEvidenceV1
@@ -155,6 +259,21 @@ export type PlanOwnerEvidenceV1 = Message<"kokoro.agent.execution.v1.PlanOwnerEv
    * @generated from field: string proposal_payload_sha256 = 4;
    */
   proposalPayloadSha256: string;
+
+  /**
+   * @generated from field: string summary = 5;
+   */
+  summary: string;
+
+  /**
+   * @generated from field: repeated kokoro.agent.execution.v1.PlanStepV1 steps = 6;
+   */
+  steps: PlanStepV1[];
+
+  /**
+   * @generated from field: repeated kokoro.agent.execution.v1.PlanDecisionV1 allowed_decisions = 7;
+   */
+  allowedDecisions: PlanDecisionV1[];
 };
 
 /**
@@ -162,7 +281,7 @@ export type PlanOwnerEvidenceV1 = Message<"kokoro.agent.execution.v1.PlanOwnerEv
  * Use `create(PlanOwnerEvidenceV1Schema)` to create a new message.
  */
 export const PlanOwnerEvidenceV1Schema: GenMessage<PlanOwnerEvidenceV1> = /*@__PURE__*/
-  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 3);
+  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 5);
 
 /**
  * @generated from message kokoro.agent.execution.v1.RunOwnerCompletedEvidenceV1
@@ -189,7 +308,7 @@ export type RunOwnerCompletedEvidenceV1 = Message<"kokoro.agent.execution.v1.Run
  * Use `create(RunOwnerCompletedEvidenceV1Schema)` to create a new message.
  */
 export const RunOwnerCompletedEvidenceV1Schema: GenMessage<RunOwnerCompletedEvidenceV1> = /*@__PURE__*/
-  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 4);
+  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 6);
 
 /**
  * @generated from message kokoro.agent.execution.v1.RunCompletedEvidenceV1
@@ -214,7 +333,7 @@ export type RunCompletedEvidenceV1 = Message<"kokoro.agent.execution.v1.RunCompl
  * Use `create(RunCompletedEvidenceV1Schema)` to create a new message.
  */
 export const RunCompletedEvidenceV1Schema: GenMessage<RunCompletedEvidenceV1> = /*@__PURE__*/
-  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 5);
+  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 7);
 
 /**
  * @generated from message kokoro.agent.execution.v1.TokenUsageEvidenceV1
@@ -236,7 +355,7 @@ export type TokenUsageEvidenceV1 = Message<"kokoro.agent.execution.v1.TokenUsage
  * Use `create(TokenUsageEvidenceV1Schema)` to create a new message.
  */
 export const TokenUsageEvidenceV1Schema: GenMessage<TokenUsageEvidenceV1> = /*@__PURE__*/
-  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 6);
+  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 8);
 
 /**
  * @generated from message kokoro.agent.execution.v1.RunFailedEvidenceV1
@@ -263,7 +382,7 @@ export type RunFailedEvidenceV1 = Message<"kokoro.agent.execution.v1.RunFailedEv
  * Use `create(RunFailedEvidenceV1Schema)` to create a new message.
  */
 export const RunFailedEvidenceV1Schema: GenMessage<RunFailedEvidenceV1> = /*@__PURE__*/
-  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 7);
+  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 9);
 
 /**
  * @generated from message kokoro.agent.execution.v1.DurableExecutionEvidence
@@ -330,7 +449,7 @@ export type DurableExecutionEvidence = Message<"kokoro.agent.execution.v1.Durabl
  * Use `create(DurableExecutionEvidenceSchema)` to create a new message.
  */
 export const DurableExecutionEvidenceSchema: GenMessage<DurableExecutionEvidence> = /*@__PURE__*/
-  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 8);
+  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 10);
 
 /**
  * @generated from message kokoro.agent.execution.v1.PullDurableExecutionEvidenceRequest
@@ -359,7 +478,7 @@ export type PullDurableExecutionEvidenceRequest = Message<"kokoro.agent.executio
  * Use `create(PullDurableExecutionEvidenceRequestSchema)` to create a new message.
  */
 export const PullDurableExecutionEvidenceRequestSchema: GenMessage<PullDurableExecutionEvidenceRequest> = /*@__PURE__*/
-  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 9);
+  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 11);
 
 /**
  * @generated from message kokoro.agent.execution.v1.PullDurableExecutionEvidenceResponse
@@ -386,7 +505,7 @@ export type PullDurableExecutionEvidenceResponse = Message<"kokoro.agent.executi
  * Use `create(PullDurableExecutionEvidenceResponseSchema)` to create a new message.
  */
 export const PullDurableExecutionEvidenceResponseSchema: GenMessage<PullDurableExecutionEvidenceResponse> = /*@__PURE__*/
-  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 10);
+  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 12);
 
 /**
  * @generated from message kokoro.agent.execution.v1.GetDurableExecutionEvidenceRequest
@@ -408,7 +527,7 @@ export type GetDurableExecutionEvidenceRequest = Message<"kokoro.agent.execution
  * Use `create(GetDurableExecutionEvidenceRequestSchema)` to create a new message.
  */
 export const GetDurableExecutionEvidenceRequestSchema: GenMessage<GetDurableExecutionEvidenceRequest> = /*@__PURE__*/
-  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 11);
+  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 13);
 
 /**
  * @generated from message kokoro.agent.execution.v1.DurableExecutionEvidenceNotFound
@@ -421,7 +540,7 @@ export type DurableExecutionEvidenceNotFound = Message<"kokoro.agent.execution.v
  * Use `create(DurableExecutionEvidenceNotFoundSchema)` to create a new message.
  */
 export const DurableExecutionEvidenceNotFoundSchema: GenMessage<DurableExecutionEvidenceNotFound> = /*@__PURE__*/
-  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 12);
+  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 14);
 
 /**
  * @generated from message kokoro.agent.execution.v1.GetDurableExecutionEvidenceResponse
@@ -450,7 +569,7 @@ export type GetDurableExecutionEvidenceResponse = Message<"kokoro.agent.executio
  * Use `create(GetDurableExecutionEvidenceResponseSchema)` to create a new message.
  */
 export const GetDurableExecutionEvidenceResponseSchema: GenMessage<GetDurableExecutionEvidenceResponse> = /*@__PURE__*/
-  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 13);
+  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 15);
 
 /**
  * @generated from message kokoro.agent.execution.v1.GetRunDurableCheckpointRequest
@@ -467,7 +586,7 @@ export type GetRunDurableCheckpointRequest = Message<"kokoro.agent.execution.v1.
  * Use `create(GetRunDurableCheckpointRequestSchema)` to create a new message.
  */
 export const GetRunDurableCheckpointRequestSchema: GenMessage<GetRunDurableCheckpointRequest> = /*@__PURE__*/
-  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 14);
+  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 16);
 
 /**
  * @generated from message kokoro.agent.execution.v1.GetRunDurableCheckpointResponse
@@ -496,7 +615,7 @@ export type GetRunDurableCheckpointResponse = Message<"kokoro.agent.execution.v1
  * Use `create(GetRunDurableCheckpointResponseSchema)` to create a new message.
  */
 export const GetRunDurableCheckpointResponseSchema: GenMessage<GetRunDurableCheckpointResponse> = /*@__PURE__*/
-  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 15);
+  messageDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 17);
 
 /**
  * @generated from enum kokoro.agent.execution.v1.DurableExecutionEvidenceKind
@@ -545,6 +664,140 @@ export const DurableExecutionEvidenceKindSchema: GenEnum<DurableExecutionEvidenc
   enumDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 0);
 
 /**
+ * @generated from enum kokoro.agent.execution.v1.ActionAwaitingKindV1
+ */
+export enum ActionAwaitingKindV1 {
+  /**
+   * @generated from enum value: ACTION_AWAITING_KIND_V1_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: ACTION_AWAITING_KIND_V1_TOOL_APPROVAL = 1;
+   */
+  TOOL_APPROVAL = 1,
+
+  /**
+   * @generated from enum value: ACTION_AWAITING_KIND_V1_ASK_USER_QUESTION = 2;
+   */
+  ASK_USER_QUESTION = 2,
+
+  /**
+   * @generated from enum value: ACTION_AWAITING_KIND_V1_RESULT_REVIEW = 3;
+   */
+  RESULT_REVIEW = 3,
+
+  /**
+   * @generated from enum value: ACTION_AWAITING_KIND_V1_INPUT = 4;
+   */
+  INPUT = 4,
+}
+
+/**
+ * Describes the enum kokoro.agent.execution.v1.ActionAwaitingKindV1.
+ */
+export const ActionAwaitingKindV1Schema: GenEnum<ActionAwaitingKindV1> = /*@__PURE__*/
+  enumDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 1);
+
+/**
+ * @generated from enum kokoro.agent.execution.v1.ActionDecisionV1
+ */
+export enum ActionDecisionV1 {
+  /**
+   * @generated from enum value: ACTION_DECISION_V1_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: ACTION_DECISION_V1_APPROVE = 1;
+   */
+  APPROVE = 1,
+
+  /**
+   * @generated from enum value: ACTION_DECISION_V1_EDIT = 2;
+   */
+  EDIT = 2,
+
+  /**
+   * @generated from enum value: ACTION_DECISION_V1_REJECT = 3;
+   */
+  REJECT = 3,
+
+  /**
+   * @generated from enum value: ACTION_DECISION_V1_RESPOND = 4;
+   */
+  RESPOND = 4,
+
+  /**
+   * @generated from enum value: ACTION_DECISION_V1_SUBMIT = 5;
+   */
+  SUBMIT = 5,
+}
+
+/**
+ * Describes the enum kokoro.agent.execution.v1.ActionDecisionV1.
+ */
+export const ActionDecisionV1Schema: GenEnum<ActionDecisionV1> = /*@__PURE__*/
+  enumDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 2);
+
+/**
+ * @generated from enum kokoro.agent.execution.v1.PlanStepStatusV1
+ */
+export enum PlanStepStatusV1 {
+  /**
+   * @generated from enum value: PLAN_STEP_STATUS_V1_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: PLAN_STEP_STATUS_V1_PENDING = 1;
+   */
+  PENDING = 1,
+
+  /**
+   * @generated from enum value: PLAN_STEP_STATUS_V1_IN_PROGRESS = 2;
+   */
+  IN_PROGRESS = 2,
+
+  /**
+   * @generated from enum value: PLAN_STEP_STATUS_V1_COMPLETED = 3;
+   */
+  COMPLETED = 3,
+}
+
+/**
+ * Describes the enum kokoro.agent.execution.v1.PlanStepStatusV1.
+ */
+export const PlanStepStatusV1Schema: GenEnum<PlanStepStatusV1> = /*@__PURE__*/
+  enumDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 3);
+
+/**
+ * @generated from enum kokoro.agent.execution.v1.PlanDecisionV1
+ */
+export enum PlanDecisionV1 {
+  /**
+   * @generated from enum value: PLAN_DECISION_V1_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: PLAN_DECISION_V1_ACCEPT = 1;
+   */
+  ACCEPT = 1,
+
+  /**
+   * @generated from enum value: PLAN_DECISION_V1_REJECT = 2;
+   */
+  REJECT = 2,
+}
+
+/**
+ * Describes the enum kokoro.agent.execution.v1.PlanDecisionV1.
+ */
+export const PlanDecisionV1Schema: GenEnum<PlanDecisionV1> = /*@__PURE__*/
+  enumDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 4);
+
+/**
  * @generated from enum kokoro.agent.execution.v1.RunCompletedEvidenceStatus
  */
 export enum RunCompletedEvidenceStatus {
@@ -568,7 +821,7 @@ export enum RunCompletedEvidenceStatus {
  * Describes the enum kokoro.agent.execution.v1.RunCompletedEvidenceStatus.
  */
 export const RunCompletedEvidenceStatusSchema: GenEnum<RunCompletedEvidenceStatus> = /*@__PURE__*/
-  enumDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 1);
+  enumDesc(file_kokoro_agent_execution_v1_agent_execution_evidence, 5);
 
 /**
  * Agent is the sole authority for immutable durable execution facts. Session
