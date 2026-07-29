@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": ".",
+    "outDir": "dist",
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "baseUrl": "."
+  },
+  "include": ["src/infrastructure/postgres/**/*.ts", "src/process/**/*.ts", "prisma.config.ts"],
+  "exclude": ["**/*.test.ts"]
+}

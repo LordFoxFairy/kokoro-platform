@@ -1,0 +1,25 @@
+generator client {
+  provider               = "prisma-client"
+  output                 = "../src/generated/platform-prisma"
+  runtime                = "nodejs"
+  moduleFormat           = "esm"
+  generatedFileExtension = "ts"
+  importFileExtension    = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+  schemas  = ["platform"]
+}
+
+/// Migration-owned marker for the single Platform PostgreSQL authority.
+/// Owner module tables are added to this schema by subsequent migrations.
+model PlatformFoundation {
+  singleton     Boolean  @id @default(true)
+  schemaVersion Int
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(6)
+
+  @@map("platform_foundation")
+  @@schema("platform")
+}

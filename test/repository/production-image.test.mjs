@@ -38,6 +38,18 @@ const validPrismaPackage = Object.freeze({
   sideEffects: false,
 });
 
+const platformCandidateEntries = Object.freeze([
+  "dist/prisma.config.js",
+  "dist/src/infrastructure/postgres/migrator.js",
+  "dist/src/generated/platform-prisma/client.js",
+  "dist/src/process/api.js",
+  "dist/src/process/worker.js",
+  "prisma/schema.prisma",
+  "prisma/migrations/migration_lock.toml",
+  "prisma/migrations/0001_platform_foundation/migration.sql",
+  "node_modules/prisma/build/index.js",
+]);
+
 function createElf64Header(machine = 62) {
   const header = Buffer.alloc(64);
   header.set([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01]);
@@ -58,6 +70,7 @@ async function writeMinimalImageLayout(imageRoot) {
   await mkdir(resolve(imageRoot, "node_modules/.pnpm/fastify@5.10.0"), { recursive: true });
   for (const entry of [
     "deploy/docker/runtime-entrypoint.mjs",
+    ...platformCandidateEntries,
     "kokoro-platform-kit/dist/index.js",
     "kokoro-site/dist/interfaces/http/main.js",
     "kokoro-user/dist/interfaces/http/main.js",
@@ -75,12 +88,24 @@ async function writeMinimalImageLayout(imageRoot) {
 async function writeValidPrismaFixture(imageRoot, nativeEngine = prismaNativeEngines.x86_64) {
   const prismaRoot = resolve(imageRoot, "kokoro-user/generated/prisma");
   await mkdir(resolve(prismaRoot, "runtime"), { recursive: true });
-  await writeFile(resolve(prismaRoot, "index.js"), "module.exports = { PrismaClient: class PrismaClient {} };\n");
+  await writeFile(
+    resolve(prismaRoot, "index.js"),
+    "module.exports = { PrismaClient: class PrismaClient {} };\n",
+  );
   await writeFile(resolve(prismaRoot, "index.d.ts"), "export declare class PrismaClient {}\n");
   await writeFile(resolve(prismaRoot, "package.json"), `${JSON.stringify(validPrismaPackage)}\n`);
-  await writeFile(resolve(prismaRoot, "schema.prisma"), "generator client { provider = \"prisma-client-js\" }\n");
-  await writeFile(resolve(prismaRoot, "runtime/library.js"), "module.exports = { getPrismaClient() {} };\n");
-  await writeFile(resolve(prismaRoot, nativeEngine.filename), createElf64Header(nativeEngine.machine));
+  await writeFile(
+    resolve(prismaRoot, "schema.prisma"),
+    'generator client { provider = "prisma-client-js" }\n',
+  );
+  await writeFile(
+    resolve(prismaRoot, "runtime/library.js"),
+    "module.exports = { getPrismaClient() {} };\n",
+  );
+  await writeFile(
+    resolve(prismaRoot, nativeEngine.filename),
+    createElf64Header(nativeEngine.machine),
+  );
   await writeFile(resolve(prismaRoot, "query_engine_bg.wasm"), createMinimalWasmModule());
   return prismaRoot;
 }
@@ -89,11 +114,15 @@ function assertProductionDockerfile(dockerfile) {
   assert.match(dockerfile, /^FROM .* AS build$/mu);
   assert.match(dockerfile, /^FROM .* AS prod-deps$/mu);
   assert.match(dockerfile, /^FROM .* AS runtime$/mu);
+  assert.doesNotMatch(dockerfile, /^FROM node:22-/mu);
+  assert.match(dockerfile, /^FROM node:24-bookworm-slim@sha256:[a-f0-9]{64} AS build$/mu);
   const buildStage = dockerfile.slice(
     dockerfile.search(/^FROM .* AS build$/mu),
     dockerfile.search(/^FROM .* AS prod-deps$/mu),
   );
-  const buildInstallCommands = [...buildStage.matchAll(/^RUN (pnpm install[^\n]+)$/gmu)].map((match) => match[1]);
+  const buildInstallCommands = [...buildStage.matchAll(/^RUN (pnpm install[^\n]+)$/gmu)].map(
+    (match) => match[1],
+  );
   assert.deepEqual(buildInstallCommands, [
     "pnpm install --config.auto-install-peers=false --frozen-lockfile --ignore-scripts",
   ]);
@@ -101,7 +130,9 @@ function assertProductionDockerfile(dockerfile) {
     dockerfile.search(/^FROM .* AS prod-deps$/mu),
     dockerfile.search(/^FROM .* AS runtime$/mu),
   );
-  const prodInstallCommands = [...prodDeps.matchAll(/^RUN (pnpm install[^\n]+)$/gmu)].map((match) => match[1]);
+  const prodInstallCommands = [...prodDeps.matchAll(/^RUN (pnpm install[^\n]+)$/gmu)].map(
+    (match) => match[1],
+  );
   assert.deepEqual(prodInstallCommands, [
     "pnpm install --prod --no-optional --config.auto-install-peers=false --frozen-lockfile --ignore-scripts",
   ]);
@@ -117,6 +148,7 @@ function assertProductionDockerfile(dockerfile) {
     );
   }
   assert.match(dockerfile, /COPY .*--from=build .*\/dist/u);
+  assert.match(dockerfile, /COPY .*--from=build \/app\/prisma \.\/prisma/u);
   assert.match(dockerfile, /pnpm db:generate && pnpm build:runtime/u);
   for (const workspace of [
     "kokoro-platform-admin",
@@ -150,14 +182,22 @@ function assertProductionDockerfile(dockerfile) {
     const [source, destination] = [copy[1], copy[2]].map((value) => value.replace(/^\.\//u, ""));
     const paths = [source, destination];
     assert.equal(
-      paths.some((path) => /(?:\.tsx?|\.map)$/u.test(path) || path.split("/").some((segment) => developmentSegment.test(segment))),
+      paths.some(
+        (path) =>
+          /(?:\.tsx?|\.map)$/u.test(path) ||
+          path.split("/").some((segment) => developmentSegment.test(segment)),
+      ),
       false,
       `runtime COPY must not include development source: ${source} -> ${destination}`,
     );
   }
   const entrypointCopy = copies.find((match) => match[2].replace(/^\.\//u, "") === target);
   assert.ok(entrypointCopy, `runtime CMD target ${target} must be copied to the same image path`);
-  assert.equal(entrypointCopy[1], target, "runtime entrypoint source and destination must stay aligned");
+  assert.equal(
+    entrypointCopy[1],
+    target,
+    "runtime entrypoint source and destination must stay aligned",
+  );
 
   assert.doesNotMatch(runtime, /pnpm install(?! --prod)/u);
   assert.doesNotMatch(runtime, /\btsx\b/u);
@@ -184,7 +224,10 @@ test("the artifact gate rejects a targeted runtime entrypoint COPY mutation", as
     "deploy/docker/runtime-entrypoint.mjs ./deploy/runtime-entrypoint.mjs",
   );
   assert.notEqual(mutated, dockerfile, "mutation fixture must alter the entrypoint COPY");
-  assert.throws(() => assertProductionDockerfile(mutated), /must be copied to the same image path/u);
+  assert.throws(
+    () => assertProductionDockerfile(mutated),
+    /must be copied to the same image path/u,
+  );
 });
 
 test("the artifact gate rejects source and disguised source-tree COPY mutations", async () => {
@@ -241,6 +284,7 @@ test("the image verifier rejects a leaked development executable", async (contex
   await mkdir(resolve(imageRoot, "node_modules/.bin"), { recursive: true });
   await writeFile(resolve(imageRoot, "node_modules/.bin/tsx"), "#!/bin/sh\n");
   for (const entry of [
+    ...platformCandidateEntries,
     "kokoro-site/dist/interfaces/http/main.js",
     "kokoro-user/dist/interfaces/http/main.js",
     "kokoro-model/dist/interfaces/http/main.js",
@@ -262,6 +306,7 @@ test("the image verifier rejects development trees in every workspace", async (c
   await mkdir(resolve(imageRoot, "node_modules/.pnpm/fastify@5.10.0"), { recursive: true });
   for (const entry of [
     "deploy/docker/runtime-entrypoint.mjs",
+    ...platformCandidateEntries,
     "kokoro-platform-kit/dist/index.js",
     "kokoro-site/dist/interfaces/http/main.js",
     "kokoro-user/dist/interfaces/http/main.js",
@@ -297,6 +342,7 @@ test("the image verifier rejects unexpected top-level application files", async 
   await mkdir(resolve(imageRoot, "node_modules/.pnpm/fastify@5.10.0"), { recursive: true });
   for (const entry of [
     "deploy/docker/runtime-entrypoint.mjs",
+    ...platformCandidateEntries,
     "kokoro-platform-kit/dist/index.js",
     "kokoro-site/dist/interfaces/http/main.js",
     "kokoro-user/dist/interfaces/http/main.js",
@@ -319,6 +365,7 @@ test("the image verifier recursively rejects source artifacts and disguised dev 
   await mkdir(resolve(imageRoot, "node_modules/.pnpm/fastify@5.10.0"), { recursive: true });
   for (const entry of [
     "deploy/docker/runtime-entrypoint.mjs",
+    ...platformCandidateEntries,
     "kokoro-platform-kit/dist/index.js",
     "kokoro-site/dist/interfaces/http/main.js",
     "kokoro-user/dist/interfaces/http/main.js",
@@ -422,12 +469,17 @@ test("the image verifier rejects counterfeit or corrupt Prisma runtime artifacts
     },
     {
       name: "magic-only native engine",
-      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, debianPrismaEngine), Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x01])),
+      mutate: (prismaRoot) =>
+        writeFile(
+          resolve(prismaRoot, debianPrismaEngine),
+          Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x01]),
+        ),
       error: /invalid generated Prisma native engine/u,
     },
     {
       name: "truncated ELF64 header",
-      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, debianPrismaEngine), createElf64Header().subarray(0, 63)),
+      mutate: (prismaRoot) =>
+        writeFile(resolve(prismaRoot, debianPrismaEngine), createElf64Header().subarray(0, 63)),
       error: /invalid generated Prisma native engine/u,
     },
     {
@@ -468,12 +520,14 @@ test("the image verifier rejects counterfeit or corrupt Prisma runtime artifacts
     },
     {
       name: "unsupported ELF machine",
-      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, debianPrismaEngine), createElf64Header(3)),
+      mutate: (prismaRoot) =>
+        writeFile(resolve(prismaRoot, debianPrismaEngine), createElf64Header(3)),
       error: /invalid generated Prisma native engine/u,
     },
     {
       name: "ELF machine does not match engine target",
-      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, debianPrismaEngine), createElf64Header(183)),
+      mutate: (prismaRoot) =>
+        writeFile(resolve(prismaRoot, debianPrismaEngine), createElf64Header(183)),
       error: /invalid generated Prisma native engine/u,
     },
     {
@@ -486,7 +540,8 @@ test("the image verifier rejects counterfeit or corrupt Prisma runtime artifacts
     },
     {
       name: "duplicate native engine",
-      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, "libquery_engine-copy.so.node"), createElf64Header()),
+      mutate: (prismaRoot) =>
+        writeFile(resolve(prismaRoot, "libquery_engine-copy.so.node"), createElf64Header()),
       error: /unexpected generated Prisma native engine/u,
     },
     {
@@ -501,12 +556,20 @@ test("the image verifier rejects counterfeit or corrupt Prisma runtime artifacts
     },
     {
       name: "magic-only Wasm engine",
-      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, "query_engine_bg.wasm"), Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01])),
+      mutate: (prismaRoot) =>
+        writeFile(
+          resolve(prismaRoot, "query_engine_bg.wasm"),
+          Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01]),
+        ),
       error: /invalid generated Prisma Wasm engine/u,
     },
     {
       name: "truncated Wasm header",
-      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, "query_engine_bg.wasm"), createMinimalWasmModule().subarray(0, 7)),
+      mutate: (prismaRoot) =>
+        writeFile(
+          resolve(prismaRoot, "query_engine_bg.wasm"),
+          createMinimalWasmModule().subarray(0, 7),
+        ),
       error: /invalid generated Prisma Wasm engine/u,
     },
     {
@@ -520,12 +583,17 @@ test("the image verifier rejects counterfeit or corrupt Prisma runtime artifacts
     },
     {
       name: "invalid Wasm module body",
-      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, "query_engine_bg.wasm"), Buffer.concat([createMinimalWasmModule(), Buffer.from([0xff])])),
+      mutate: (prismaRoot) =>
+        writeFile(
+          resolve(prismaRoot, "query_engine_bg.wasm"),
+          Buffer.concat([createMinimalWasmModule(), Buffer.from([0xff])]),
+        ),
       error: /invalid generated Prisma Wasm engine/u,
     },
     {
       name: "duplicate Wasm engine",
-      mutate: (prismaRoot) => writeFile(resolve(prismaRoot, "query_engine_copy.wasm"), createMinimalWasmModule()),
+      mutate: (prismaRoot) =>
+        writeFile(resolve(prismaRoot, "query_engine_copy.wasm"), createMinimalWasmModule()),
       error: /unexpected generated Prisma Wasm engine/u,
     },
   ];

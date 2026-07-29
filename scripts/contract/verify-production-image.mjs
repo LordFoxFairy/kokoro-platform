@@ -23,7 +23,14 @@ const workspaceLayouts = Object.freeze({
   "kokoro-credit": new Set(["dist", "generated", "node_modules", "package.json"]),
   "kokoro-payment": new Set(["dist", "generated", "node_modules", "package.json"]),
 });
-const topLevelLayout = new Set(["deploy", "node_modules", "package.json", ...Object.keys(workspaceLayouts)]);
+const topLevelLayout = new Set([
+  "deploy",
+  "dist",
+  "node_modules",
+  "package.json",
+  "prisma",
+  ...Object.keys(workspaceLayouts),
+]);
 const developmentTreePattern = /(?:^|[-_.])(?:src|test|tests|coverage|dev)(?:$|[-_.])/u;
 const prismaRootFiles = new Set([
   "client.d.ts",
@@ -65,6 +72,15 @@ const elfMagic = Buffer.from([0x7f, 0x45, 0x4c, 0x46]);
 const wasmHeader = Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
 const requiredEntries = Object.freeze([
   "deploy/docker/runtime-entrypoint.mjs",
+  "dist/prisma.config.js",
+  "dist/src/infrastructure/postgres/migrator.js",
+  "dist/src/generated/platform-prisma/client.js",
+  "dist/src/process/api.js",
+  "dist/src/process/worker.js",
+  "prisma/schema.prisma",
+  "prisma/migrations/migration_lock.toml",
+  "prisma/migrations/0001_platform_foundation/migration.sql",
+  "node_modules/prisma/build/index.js",
   "kokoro-platform-kit/dist/index.js",
   "kokoro-site/dist/interfaces/http/main.js",
   "kokoro-user/dist/interfaces/http/main.js",
@@ -143,7 +159,8 @@ async function assertElf64Engine(path, expectedMachine, label) {
 
 async function assertWasmEngine(path, label) {
   const bytes = await readFile(path);
-  let valid = bytes.length >= wasmHeader.length && bytes.subarray(0, wasmHeader.length).equals(wasmHeader);
+  let valid =
+    bytes.length >= wasmHeader.length && bytes.subarray(0, wasmHeader.length).equals(wasmHeader);
   if (valid) {
     try {
       valid = globalThis.WebAssembly.validate(bytes);
@@ -199,9 +216,13 @@ async function assertGeneratedPrisma(directory, label) {
   for (const entry of await readdir(prismaDirectory, { withFileTypes: true })) {
     if (entry.isDirectory()) {
       if (entry.name !== "runtime") {
-        throw new Error(`Production image contains unexpected generated Prisma file: ${label}/prisma/${entry.name}`);
+        throw new Error(
+          `Production image contains unexpected generated Prisma file: ${label}/prisma/${entry.name}`,
+        );
       }
-      for (const runtimeEntry of await readdir(resolve(prismaDirectory, "runtime"), { withFileTypes: true })) {
+      for (const runtimeEntry of await readdir(resolve(prismaDirectory, "runtime"), {
+        withFileTypes: true,
+      })) {
         if (!runtimeEntry.isFile() || !prismaRuntimeFiles.has(runtimeEntry.name)) {
           throw new Error(
             `Production image contains unexpected generated Prisma file: ${label}/prisma/runtime/${runtimeEntry.name}`,
@@ -213,7 +234,9 @@ async function assertGeneratedPrisma(directory, label) {
     }
     if (entry.name.endsWith(".node")) {
       if (!entry.isFile() || !prismaNativeEngines.has(entry.name) || nativeEngine !== undefined) {
-        throw new Error(`Production image contains unexpected generated Prisma native engine: ${label}/prisma/${entry.name}`);
+        throw new Error(
+          `Production image contains unexpected generated Prisma native engine: ${label}/prisma/${entry.name}`,
+        );
       }
       nativeEngine = entry.name;
       rootFiles.add(entry.name);
@@ -221,24 +244,32 @@ async function assertGeneratedPrisma(directory, label) {
     }
     if (entry.name.endsWith(".wasm")) {
       if (!entry.isFile() || entry.name !== prismaWasmEngine || hasWasmEngine) {
-        throw new Error(`Production image contains unexpected generated Prisma Wasm engine: ${label}/prisma/${entry.name}`);
+        throw new Error(
+          `Production image contains unexpected generated Prisma Wasm engine: ${label}/prisma/${entry.name}`,
+        );
       }
       hasWasmEngine = true;
       rootFiles.add(entry.name);
       continue;
     }
     if (!entry.isFile() || !prismaRootFiles.has(entry.name)) {
-      throw new Error(`Production image contains unexpected generated Prisma file: ${label}/prisma/${entry.name}`);
+      throw new Error(
+        `Production image contains unexpected generated Prisma file: ${label}/prisma/${entry.name}`,
+      );
     }
     rootFiles.add(entry.name);
   }
   for (const required of ["index.js", "package.json"]) {
     if (!rootFiles.has(required)) {
-      throw new Error(`Production image is missing generated Prisma runtime: ${label}/prisma/${required}`);
+      throw new Error(
+        `Production image is missing generated Prisma runtime: ${label}/prisma/${required}`,
+      );
     }
   }
   if (!hasRuntimeLibrary) {
-    throw new Error(`Production image is missing generated Prisma runtime: ${label}/prisma/runtime/library.js`);
+    throw new Error(
+      `Production image is missing generated Prisma runtime: ${label}/prisma/runtime/library.js`,
+    );
   }
   if (nativeEngine === undefined) {
     throw new Error(`Production image is missing generated Prisma engine: ${label}/prisma`);
@@ -252,7 +283,10 @@ async function assertGeneratedPrisma(directory, label) {
     resolve(prismaDirectory, "runtime/library.js"),
     `${label}/prisma/runtime/library.js`,
   );
-  await assertPrismaPackage(resolve(prismaDirectory, "package.json"), `${label}/prisma/package.json`);
+  await assertPrismaPackage(
+    resolve(prismaDirectory, "package.json"),
+    `${label}/prisma/package.json`,
+  );
   await assertElf64Engine(
     resolve(prismaDirectory, nativeEngine),
     prismaNativeEngines.get(nativeEngine),
@@ -275,6 +309,33 @@ export async function verifyProductionImage(root) {
     new Set(["runtime-entrypoint.mjs"]),
     "deploy/docker",
   );
+  await assertAllowedChildren(
+    resolve(root, "prisma"),
+    new Set(["migrations", "schema.prisma"]),
+    "prisma",
+  );
+  await assertAllowedChildren(
+    resolve(root, "prisma/migrations"),
+    new Set(["0001_platform_foundation", "migration_lock.toml"]),
+    "prisma/migrations",
+  );
+  await assertAllowedChildren(
+    resolve(root, "prisma/migrations/0001_platform_foundation"),
+    new Set(["migration.sql"]),
+    "prisma/migrations/0001_platform_foundation",
+  );
+  await assertAllowedChildren(resolve(root, "dist"), new Set(["prisma.config.js", "src"]), "dist");
+  await assertAllowedChildren(
+    resolve(root, "dist/src"),
+    new Set(["generated", "infrastructure", "process"]),
+    "dist/src",
+  );
+  await assertAllowedChildren(
+    resolve(root, "dist/src/infrastructure"),
+    new Set(["postgres"]),
+    "dist/src/infrastructure",
+  );
+  await assertRuntimeTree(resolve(root, "dist/src"), "platform-runtime");
   for (const [workspace, allowed] of Object.entries(workspaceLayouts)) {
     await assertRuntimeTree(resolve(root, workspace, "dist"), `${workspace}/dist`);
     if (allowed.has("public")) {
@@ -287,7 +348,9 @@ export async function verifyProductionImage(root) {
 
   const installed = await readdir(resolve(root, "node_modules/.pnpm"));
   const leaked = installed.filter((entry) =>
-    forbiddenPackages.some((name) => entry === name || entry.startsWith(`${name}@`) || entry.startsWith(name)),
+    forbiddenPackages.some(
+      (name) => entry === name || entry.startsWith(`${name}@`) || entry.startsWith(name),
+    ),
   );
   if (leaked.length > 0) {
     throw new Error(`Production image contains development packages: ${leaked.sort().join(", ")}`);

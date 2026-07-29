@@ -140,7 +140,7 @@ test("platform CI is lock-driven and separates local from integration gates", as
   const packageJson = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
 
   assert.equal(packageJson.packageManager, "pnpm@11.2.2");
-  assert.match(workflow, /node-version:\s*["']?22["']?/u);
+  assert.match(workflow, /node-version:\s*["']?24["']?/u);
   assert.match(workflow, /corepack enable/u);
   assert.match(workflow, /pnpm install --frozen-lockfile/u);
   assertProductionAuditGate(workflow);

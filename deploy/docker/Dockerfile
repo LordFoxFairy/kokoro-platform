@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS build
+FROM node:24-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d AS build
 
 WORKDIR /app
 ENV PNPM_HOME=/pnpm
@@ -30,7 +30,7 @@ RUN DATABASE_URL_SITE=mysql://placeholder:placeholder@mysql:3306/kokoro \
   DATABASE_URL_ADMIN=mysql://placeholder:placeholder@mysql:3306/kokoro \
   sh -c "pnpm rebuild -r && pnpm db:generate && pnpm build:runtime"
 
-FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS prod-deps
+FROM node:24-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d AS prod-deps
 
 WORKDIR /app
 ENV PNPM_HOME=/pnpm
@@ -48,7 +48,7 @@ COPY kokoro-credit/package.json ./kokoro-credit/package.json
 COPY kokoro-payment/package.json ./kokoro-payment/package.json
 RUN pnpm install --prod --no-optional --config.auto-install-peers=false --frozen-lockfile --ignore-scripts
 
-FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS runtime
+FROM node:24-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d AS runtime
 
 WORKDIR /app
 RUN apt-get update \
@@ -60,6 +60,8 @@ ENV KOKORO_SERVICE_PACKAGE=@kokoro/user
 
 COPY --chown=node:node --from=prod-deps /app/node_modules ./node_modules
 COPY --chown=node:node --from=prod-deps /app/package.json ./package.json
+COPY --chown=node:node --from=build /app/dist ./dist
+COPY --chown=node:node --from=build /app/prisma ./prisma
 COPY --chown=node:node --from=prod-deps /app/kokoro-platform-kit/node_modules ./kokoro-platform-kit/node_modules
 COPY --chown=node:node --from=build /app/kokoro-platform-kit/package.json ./kokoro-platform-kit/package.json
 COPY --chown=node:node --from=build /app/kokoro-platform-kit/dist ./kokoro-platform-kit/dist

@@ -2,6 +2,23 @@
 
 Kokoro 平台域父仓库。它不是单个业务模块，而是平台能力的主控层：登记平台模块、统一本地运行、统一验证、约束模块边界，并把各子仓的后台入口和内部调用面挂起来。
 
+## 数据库迁移状态（必须先读）
+
+当前存在两个**有明确先后关系、不能混称为双真源**的阶段：
+
+- 现行 legacy 模块仍通过各自 Prisma 6 schema、MySQL database 和独立 HTTP process 工作；现有
+  `pnpm db:migrate`、integration CI 与回滚基线继续服务这一阶段。
+- 根目录 Prisma 7/PostgreSQL 18 是 Wave 1 的 `transition-candidate`。它当前只包含 foundation marker、
+  PG18/数据库/角色/ACL preflight、migration advisory lock，以及 API/Worker/Migrator 的 health/bootstrap
+  deployable。`activationAuthorized=false`、`runtimeTraffic=false`，尚未承载 Site、Identity、Model、Credit、
+  Payment、Hub 或 Admin 业务事实。
+- `platform-api`、`platform-worker` 与 `platform-migrator` 使用三个互异数据库角色。Task 3 阶段 API/Worker
+  只能读取 foundation marker；后续业务表权限必须随 owner migration 精确授予，不能使用全表 DML 默认权限。
+- 只有 Root 管理的 PostgreSQL component、兼容、备份恢复和切换证据全部通过后，Task 19 才能移除 legacy
+  MySQL 写面并把 candidate 晋升为唯一 Platform authority。
+
+因此，本仓当前的 PostgreSQL 代码是可构建、可部署但不接业务流量的候选基础，不代表 Platform 业务模块已经迁移完成。
+
 ## 当前形态
 
 ```text
@@ -16,7 +33,7 @@ kokoro-platform
   kokoro-payment/              套餐、订单、支付事件、支付 provider 配置
 ```
 
-第一阶段先实现平台管理核心，不做产物系统。存储策略保持清晰：
+Legacy 当前阶段的存储形态如下；它是过渡基线，不是 Wave 1 最终目标：
 
 ```text
 MySQL + Prisma:
@@ -55,7 +72,9 @@ user     ensureUserWithPersonalTeam、listTeamsForUser
 
 仍需产品决策的边界（hold 过期回收、refund 回链、PaymentEvent/webhook 驱动、Subscription、ModelLabel 解析、team/邀请/权限、品牌/SEO 投影等）见 `docs/platform/2026-06-29-audit-and-known-boundaries.md`。
 
-这些模块都必须自己持有 Prisma schema、migration、service、repository、HTTP/internal API、admin manifest 和 `.env.example`。平台根不写 InMemory fallback，也不保存各模块的业务建库 SQL。早期统一连接一个 MySQL database：`kokoro`，通过模块目录和表名隔离复杂度。
+这些 legacy 模块目前仍持有 Prisma schema、migration、service、repository、HTTP/internal API、admin manifest
+和 `.env.example`。根 PostgreSQL migration 从 foundation 开始，后续按 owner module 迁入；禁止通过本地 self-RPC
+模拟同一 Platform bounded context。
 
 LiteLLM、支付宝、微信支付、Stripe、Paddle、Strapi 等第三方能力不在平台内从 0 复刻。平台只保存自己的配置、映射、事件、审计和嵌入策略；能 OAuth 或 iframe/admin link 接入的，优先接入成熟系统。
 
@@ -95,13 +114,19 @@ docs/platform/multi-site/
 
 本地基础设施:
   docker-compose.yml 只启动本地 MySQL，并创建 kokoro database。
+
+PostgreSQL transition candidate:
+  prisma/                         单一 Platform PostgreSQL schema/migration owner
+  src/infrastructure/postgres/    受限 client、PG18/role/ACL preflight、migrator
+  src/process/                    candidate API/Worker health 与 drain bootstrap
+  deployables.yaml                activationAuthorized=false 的制品角色清单
 ```
 
 平台根不做这些事：
 
 ```text
 不保存各模块 env 示例。
-不保存业务建库 init SQL。
+除单一 Platform Prisma migration 外，不保存旁路业务建库 SQL。
 不定义中央业务契约子仓。
 不替代各模块自己的 Prisma schema、迁移、API、admin manifest。
 不直接修改 credit/payment/model/user 的业务数据。
@@ -128,13 +153,17 @@ kokoro-litellm/.env.example
 pnpm install
 pnpm dev:db
 pnpm db:migrate
+pnpm build:runtime
+# 仅在 Root 签发候选角色与数据库 lease 后：
+pnpm db:migrate:platform
 pnpm db:generate
 pnpm test
 pnpm test:integration
 pnpm typecheck
 ```
 
-平台服务不提供运行时 InMemory fallback。本地和集成测试都应该连接真实数据库。
+平台服务不提供运行时 InMemory fallback。Legacy integration 仍连接真实 MySQL；PostgreSQL component test 必须
+连接 Root 签发的 PG18 leased database/roles，不得私启第二套 Compose。
 
 本地 `.env.example` 默认使用 `mysql://root:kokoro_root@127.0.0.1:3307/kokoro`，这样 Prisma `migrate dev` 可以创建 shadow database。生产环境必须替换为受限账号。生产可以继续单库，也可以在规模变大后拆库；拆库是部署拓扑变化，不应该改变模块内部领域边界。
 
