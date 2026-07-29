@@ -307,6 +307,11 @@ describe("Platform Admission owner authority", () => {
 
     expect(decision.kind).toBe("accepted");
     if (decision.kind !== "accepted") throw new Error("unexpected decision");
+    expect(dependencies.session.resolve).toHaveBeenCalledWith({
+      siteId: "site-1", projectRef: "project-1", sessionId: "session-1", launchId: "launch-1",
+      runId: "run-1", triggerMessageId: "message-1", commandId: "command-1",
+      requestDigest: "d".repeat(64),
+    }, expect.any(AbortSignal));
     expect(decision.ownerFacts).toEqual({
       kind: "run.request",
       run_id: "run-1",
@@ -385,6 +390,12 @@ describe("Platform Admission owner authority", () => {
     });
 
     expect(decision.kind).toBe("committed");
+    expect(dependencies.session.verifyFinalizeReceipts).toHaveBeenCalledWith({
+      siteId: "site-1", sessionId: "session-1", launchId: "launch-1", manifestRef: "manifest-1",
+      authorizationSegmentRef: "segment-1", expectedSegmentVersion: 1n,
+      sessionIntentReceiptRef: "intent-receipt-1", commandId: "command-finalize",
+      requestDigest: "e".repeat(64),
+    }, expect.any(AbortSignal));
     expect(events).toEqual([
       "tx.begin", "lifecycle.read", "tx.end",
       "session.finalize-rpc",

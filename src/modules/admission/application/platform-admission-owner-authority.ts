@@ -51,27 +51,28 @@ export interface AdmissionOwnerUnitOfWork {
 export interface AdmissionSessionOwnerPort {
   resolve(
     input: Readonly<{
-      caller: AdmissionAuthorityCommand["caller"];
       siteId: string;
-      sessionAccessGrant: string;
       projectRef: string;
       sessionId: string;
       launchId: string;
       runId: string;
       triggerMessageId: string;
-      triggerMessageContent: string;
+      commandId: string;
+      requestDigest: string;
     }>,
     signal: AbortSignal,
-  ): Promise<AdmissionOwnerResolution<Readonly<{
-    threadId: string;
-  }>>>;
+  ): Promise<AdmissionOwnerResolution<Readonly<{ threadId: string }>>>;
   verifyFinalizeReceipts(
     input: Readonly<{
       siteId: string;
       sessionId: string;
       launchId: string;
+      manifestRef: string;
+      authorizationSegmentRef: string;
+      expectedSegmentVersion: bigint;
       sessionIntentReceiptRef: string;
-      prerequisiteReceiptRefs: readonly string[];
+      commandId: string;
+      requestDigest: string;
     }>,
     signal: AbortSignal,
   ): Promise<Readonly<{ kind: "verified" }> | Denied | Pending>;
@@ -367,15 +368,14 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
     command: Parameters<AdmissionOwnerAuthority["prepareRun"]>[0],
   ): Promise<PrepareRunOwnerDecision> {
     const session = await this.#ports.session.resolve({
-      caller: command.caller,
       siteId: command.siteId,
-      sessionAccessGrant: command.effect.sessionAccessGrant,
       projectRef: command.effect.projectRef,
       sessionId: command.effect.sessionId,
       launchId: command.effect.launchId,
       runId: command.effect.proposedRunId,
       triggerMessageId: command.effect.triggerMessageId,
-      triggerMessageContent: command.effect.triggerMessageContent,
+      commandId: command.commandId,
+      requestDigest: command.requestDigest,
     }, AbortSignal.timeout(5_000));
     if (session.kind !== "resolved") return session;
     return this.#ports.unitOfWork.execute(command, async (transaction) => {
@@ -568,8 +568,12 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
       siteId: command.siteId,
       sessionId: observed.sessionId,
       launchId: observed.launchId,
+      manifestRef: command.effect.manifestRef,
+      authorizationSegmentRef: command.effect.authorizationSegmentRef,
+      expectedSegmentVersion: command.effect.expectedSegmentVersion,
       sessionIntentReceiptRef: command.effect.sessionIntentReceiptRef,
-      prerequisiteReceiptRefs: command.effect.prerequisiteReceiptRefs,
+      commandId: command.commandId,
+      requestDigest: command.requestDigest,
     }, AbortSignal.timeout(5_000));
     if (verified.kind !== "verified") return verified;
     return this.#ports.unitOfWork.execute(command, async (transaction) => {
