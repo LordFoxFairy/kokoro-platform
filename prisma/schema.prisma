@@ -212,6 +212,36 @@ model AdmissionCommand {
   @@schema("platform")
 }
 
+model AdmissionLaunchProfileSnapshot {
+  launchProfileRef String   @id @map("launch_profile_ref")
+  siteId           String   @map("site_ref")
+  siteReleaseRef   String   @map("site_release_ref")
+  snapshotDigest   String   @map("snapshot_digest") @db.Char(64)
+  snapshot         Json
+  publishedAt      DateTime @map("published_at") @db.Timestamptz(6)
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([siteReleaseRef, siteId])
+  @@unique([launchProfileRef, siteReleaseRef, siteId])
+  @@map("admission_launch_profile_snapshot")
+  @@schema("platform")
+}
+
+model AdmissionCapabilityCatalogSnapshot {
+  agentCatalogRef String   @id @map("agent_catalog_ref")
+  siteId          String   @map("site_ref")
+  siteReleaseRef  String   @map("site_release_ref")
+  snapshotDigest  String   @map("snapshot_digest") @db.Char(64)
+  snapshot        Json
+  publishedAt     DateTime @map("published_at") @db.Timestamptz(6)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([siteReleaseRef, siteId])
+  @@unique([agentCatalogRef, siteReleaseRef, siteId])
+  @@map("admission_capability_catalog_snapshot")
+  @@schema("platform")
+}
+
 model AdmissionSessionExecutionBinding {
   siteId                  String   @map("site_id")
   sessionId               String   @map("session_id")

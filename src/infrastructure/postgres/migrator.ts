@@ -286,7 +286,7 @@ async function grantFoundationPrivileges(
     );
     if (role === apiRole) {
       await client.query(
-        `GRANT SELECT ON TABLE ${KERNEL_TABLES}, ${ADMISSION_TABLES}, ${AUTHORIZATION_TABLES}, ${IDENTITY_TABLES}, ${COMMERCE_TABLES}, ${ASSET_API_TABLES}, platform.site, platform.site_release TO ${identifier}`,
+        `GRANT SELECT ON TABLE ${KERNEL_TABLES}, ${ADMISSION_TABLES}, ${ADMISSION_RUNTIME_SNAPSHOT_TABLES}, ${AUTHORIZATION_TABLES}, ${IDENTITY_TABLES}, ${COMMERCE_TABLES}, ${ASSET_API_TABLES}, platform.site, platform.site_release TO ${identifier}`,
       );
       await client.query(
         `GRANT SELECT(site_ref,subject_ref,subject_generation,project_ref,intent_ref,state,updated_at) ON TABLE platform.asset_blob_candidate TO ${identifier}`,
@@ -404,7 +404,7 @@ async function grantFoundationPrivileges(
       );
     } else {
       await client.query(
-        `GRANT SELECT ON TABLE platform.command_receipt, platform.outbox_event, ${AUTHORIZATION_TABLES}, ${SITE_TABLES} TO ${identifier}`,
+        `GRANT SELECT ON TABLE platform.command_receipt, platform.outbox_event, ${ADMISSION_RUNTIME_SNAPSHOT_TABLES}, ${AUTHORIZATION_TABLES}, ${SITE_TABLES} TO ${identifier}`,
       );
       await client.query(
         `GRANT INSERT ON TABLE platform.command_receipt, platform.outbox_event TO ${identifier}`,
@@ -412,6 +412,9 @@ async function grantFoundationPrivileges(
       await client.query(`GRANT UPDATE ON TABLE platform.command_receipt TO ${identifier}`);
       await client.query(
         `GRANT INSERT ON TABLE platform.site, platform.site_project_binding, platform.site_release, platform.site_activation_attempt, platform.site_traffic_stop_attempt, platform.site_effect_approval TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT INSERT ON TABLE ${ADMISSION_RUNTIME_SNAPSHOT_TABLES} TO ${identifier}`,
       );
       await client.query(
         `GRANT UPDATE(state,active_release_ref,security_epoch,policy_epoch,revocation_epoch,runtime_binding_epoch,tombstoned_at,updated_at) ON TABLE platform.site TO ${identifier}`,
@@ -472,6 +475,11 @@ const ADMISSION_TABLES = [
   "platform.admission_command",
   "platform.admission_session_execution_binding",
   "platform.admission_execution_manifest",
+].join(", ");
+
+const ADMISSION_RUNTIME_SNAPSHOT_TABLES = [
+  "platform.admission_launch_profile_snapshot",
+  "platform.admission_capability_catalog_snapshot",
 ].join(", ");
 
 const AUTHORIZATION_TABLES = [
@@ -700,6 +708,7 @@ const PLATFORM_RUNTIME_TABLES = [
   "platform.outbox_event",
   "platform.inbox_delivery",
   ADMISSION_TABLES,
+  ADMISSION_RUNTIME_SNAPSHOT_TABLES,
   "platform.model_inventory_import",
   "platform.model_inventory_activation",
   "platform.model_inventory_pointer",

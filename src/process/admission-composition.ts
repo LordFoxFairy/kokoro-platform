@@ -21,6 +21,10 @@ import { HpkeGaRunRequestDraftSealer } from "../modules/admission/infrastructure
 import { PostgresAdmissionCommandJournal } from "../modules/admission/infrastructure/postgres/admission-command-journal.js";
 import { PostgresAdmissionLifecycleOwner } from "../modules/admission/infrastructure/postgres/admission-lifecycle-owner.js";
 import { PostgresAdmissionModelOwner } from "../modules/admission/infrastructure/postgres/admission-model-owner.js";
+import {
+  PostgresAdmissionCapabilityOwner,
+  PostgresAdmissionRuntimePolicyOwner,
+} from "../modules/admission/infrastructure/postgres/admission-runtime-owners.js";
 import { PostgresAdmissionSiteOwner } from "../modules/admission/infrastructure/postgres/admission-site-owner.js";
 import { createAdmissionConnectService } from "../modules/admission/interfaces/connect/admission-service.js";
 import { readBoundedSecret } from "./platform-public-composition.js";
@@ -96,7 +100,7 @@ export interface AdmissionProductionComposition {
 
 export type AdmissionProductionOwnerPorts = Omit<
   PlatformAdmissionOwnerPorts,
-  "unitOfWork" | "lifecycle" | "site" | "model"
+  "unitOfWork" | "lifecycle" | "site" | "model" | "runtimePolicy" | "capability"
 >;
 
 /**
@@ -113,6 +117,8 @@ export function createPlatformAdmissionOwnerAuthority(input: Readonly<{
     ...input.ownerPorts,
     site: new PostgresAdmissionSiteOwner(),
     model: new PostgresAdmissionModelOwner(),
+    runtimePolicy: new PostgresAdmissionRuntimePolicyOwner(),
+    capability: new PostgresAdmissionCapabilityOwner(),
     lifecycle: new PostgresAdmissionLifecycleOwner(),
     unitOfWork: {
       execute: (command, work) => input.database.internalTransaction(
