@@ -174,6 +174,8 @@ export interface AdmissionBudgetOwnerPort {
       manifestRef: string;
       manifestDigest: string;
       maximumExpiresAt: string;
+      configurationRevisionId: string;
+      agentRef?: string | undefined;
     }>,
   ): Promise<AdmissionOwnerResolution<Readonly<{
     executionBudgetRootRef: string;
@@ -185,11 +187,18 @@ export interface AdmissionBudgetOwnerPort {
   }>>>;
   commitRoot(
     transaction: PlatformTransaction,
-    input: Readonly<{ siteId: string; rootHoldRef: string; authorizationSegmentRef: string }>,
+    input: Readonly<{
+      siteId: string; rootHoldRef: string; authorizationSegmentRef: string;
+      manifestRef: string; expectedSegmentVersion: bigint; commandId: string; requestDigest: string;
+    }>,
   ): Promise<void>;
   releaseRoot(
     transaction: PlatformTransaction,
-    input: Readonly<{ siteId: string; rootHoldRef: string; authorizationSegmentRef: string; reasonCode: string }>,
+    input: Readonly<{
+      siteId: string; rootHoldRef: string; authorizationSegmentRef: string; reasonCode: string;
+      manifestRef: string; expectedSegmentVersion: bigint; commandId: string; requestDigest: string;
+      noDispatchEvidenceRef: string;
+    }>,
   ): Promise<void>;
   reconcileRoot(
     transaction: PlatformTransaction,
@@ -197,6 +206,10 @@ export interface AdmissionBudgetOwnerPort {
       siteId: string;
       rootHoldRef: string;
       authorizationSegmentRef: string;
+      manifestRef: string;
+      expectedSegmentVersion: bigint;
+      commandId: string;
+      requestDigest: string;
       terminalEvidenceRef?: string | undefined;
     }>,
   ): Promise<"settled" | "reconciliation_required">;
@@ -412,6 +425,8 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         manifestRef,
         manifestDigest,
         maximumExpiresAt,
+        configurationRevisionId: site.value.configurationRevisionId,
+        ...(capability.value.agent === undefined ? {} : { agentRef: capability.value.agent }),
       });
       if (budget.kind !== "resolved") return budget;
       const record = await this.#ports.lifecycle.prepare(transaction, {
@@ -510,6 +525,11 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
           rootHoldRef: record.rootHoldRef,
           authorizationSegmentRef: record.authorizationSegmentRef,
           reasonCode: "AUTHORIZATION_EXPIRED",
+          manifestRef: record.manifestRef,
+          expectedSegmentVersion: record.segmentVersion,
+          commandId: command.commandId,
+          requestDigest: command.requestDigest,
+          noDispatchEvidenceRef: `admission-expiry:${record.manifestDigest}`,
         });
         await this.#ports.lifecycle.expire(transaction, record);
         return { kind: "expired", expired: { expiredAt: timestampFromDate(this.#date()) } };
@@ -518,6 +538,10 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         siteId: command.siteId,
         rootHoldRef: record.rootHoldRef,
         authorizationSegmentRef: record.authorizationSegmentRef,
+        manifestRef: record.manifestRef,
+        expectedSegmentVersion: record.segmentVersion,
+        commandId: command.commandId,
+        requestDigest: command.requestDigest,
       });
       const changed = await this.#ports.lifecycle.commit(transaction, record);
       assertTransition(changed, record, "committed");
@@ -566,6 +590,11 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         rootHoldRef: locked.rootHoldRef,
         authorizationSegmentRef: locked.authorizationSegmentRef,
         reasonCode: command.effect.reasonCode,
+        manifestRef: locked.manifestRef,
+        expectedSegmentVersion: locked.segmentVersion,
+        commandId: command.commandId,
+        requestDigest: command.requestDigest,
+        noDispatchEvidenceRef: evidence.evidenceRef,
       });
       const changed = await this.#ports.lifecycle.release(transaction, locked, evidence);
       assertTransition(changed, locked, "released");
@@ -644,6 +673,10 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
           siteId: command.siteId,
           rootHoldRef: locked.rootHoldRef,
           authorizationSegmentRef: locked.authorizationSegmentRef,
+          manifestRef: locked.manifestRef,
+          expectedSegmentVersion: locked.segmentVersion,
+          commandId: command.commandId,
+          requestDigest: command.requestDigest,
           terminalEvidenceRef: executionEvidence.terminalEvidenceRef,
         });
         const changed = budget === "settled"

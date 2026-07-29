@@ -17,7 +17,7 @@ const permissionsSchema = z.object({
   filesystem: z.enum(["read_only", "workspace_write"]),
 }).strict();
 
-const launchProfileSchema = z.object({
+export const admissionLaunchProfileSnapshotSchema = z.object({
   schemaVersion: z.literal(1),
   siteId: reference,
   siteReleaseRef: reference,
@@ -98,7 +98,7 @@ export class PostgresAdmissionRuntimePolicyOwner implements AdmissionRuntimePoli
     );
     const row = single(rows, "ADMISSION_LAUNCH_PROFILE_OWNER_CORRUPT");
     if (row === undefined) return denied("ADMISSION_LAUNCH_PROFILE_NOT_AVAILABLE");
-    const parsed = launchProfileSchema.safeParse(row.payload);
+    const parsed = admissionLaunchProfileSnapshotSchema.safeParse(row.payload);
     if (
       !parsed.success || row.siteId !== input.siteId || row.siteReleaseRef !== input.configurationRevisionId ||
       parsed.data.siteId !== input.siteId || parsed.data.siteReleaseRef !== input.configurationRevisionId ||

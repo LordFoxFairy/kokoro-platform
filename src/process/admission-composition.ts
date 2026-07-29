@@ -22,6 +22,10 @@ import { PostgresAdmissionCommandJournal } from "../modules/admission/infrastruc
 import { PostgresAdmissionLifecycleOwner } from "../modules/admission/infrastructure/postgres/admission-lifecycle-owner.js";
 import { PostgresAdmissionModelOwner } from "../modules/admission/infrastructure/postgres/admission-model-owner.js";
 import {
+  PostgresAdmissionAssetOwner,
+  PostgresAdmissionBudgetOwner,
+} from "../modules/admission/infrastructure/postgres/admission-credit-asset-owners.js";
+import {
   PostgresAdmissionCapabilityOwner,
   PostgresAdmissionRuntimePolicyOwner,
 } from "../modules/admission/infrastructure/postgres/admission-runtime-owners.js";
@@ -100,7 +104,7 @@ export interface AdmissionProductionComposition {
 
 export type AdmissionProductionOwnerPorts = Omit<
   PlatformAdmissionOwnerPorts,
-  "unitOfWork" | "lifecycle" | "site" | "model" | "runtimePolicy" | "capability"
+  "unitOfWork" | "lifecycle" | "site" | "model" | "runtimePolicy" | "capability" | "assets" | "budget"
 >;
 
 /**
@@ -119,6 +123,8 @@ export function createPlatformAdmissionOwnerAuthority(input: Readonly<{
     model: new PostgresAdmissionModelOwner(),
     runtimePolicy: new PostgresAdmissionRuntimePolicyOwner(),
     capability: new PostgresAdmissionCapabilityOwner(),
+    assets: new PostgresAdmissionAssetOwner(),
+    budget: new PostgresAdmissionBudgetOwner(),
     lifecycle: new PostgresAdmissionLifecycleOwner(),
     unitOfWork: {
       execute: (command, work) => input.database.internalTransaction(
