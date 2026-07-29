@@ -8,6 +8,7 @@ import {
   type ModelProduct,
 } from "../../src/modules/model-control/domain/model-catalog.js";
 import { createModelControlMigrationBundle } from "../../src/modules/model-control/migration/model-control-migration-bundle.js";
+import { createLegacyModelOptionMigrationArtifact } from "../../src/modules/model-control/migration/legacy-model-option-artifact.js";
 import { parseLegacySecretReference } from "../../src/modules/model-control/migration/legacy-secret-reference.js";
 import {
   captureFencedLegacySnapshots,
@@ -51,7 +52,7 @@ try {
   const sitePayload = sameDatabase
     ? payload<CombinedPayload>(captures, "model+site").site
     : payload<SitePayload>(captures, "site");
-  const { providerRows, modelRows, policyRows } = modelPayload;
+  const { providerRows, modelRows, labelRows, policyRows } = modelPayload;
   const { siteRows } = sitePayload;
   const providers = providerRows.map((row) => ({
     key: string(row.id),
@@ -105,9 +106,29 @@ try {
     observationRef: `legacy:model_provider_accounts:${string(row.id)}`,
     observedAt: instant(row.updatedAt),
   }));
+  const modelOptionMigration = createLegacyModelOptionMigrationArtifact({
+    labels: labelRows.map((row) => ({
+      legacyLabelId: string(row.id),
+      key: string(row.key),
+      displayName: string(row.displayName),
+      description: nullableString(row.description),
+      featureKey: string(row.featureKey),
+      tier: nullableString(row.tier),
+      defaultBindingId: nullableString(row.defaultBindingId),
+      status: enumValue(row.status, ["active", "disabled"] as const),
+    })),
+    bindings: modelRows.map((row) => ({
+      legacyBindingId: string(row.id),
+      modelKey: string(row.id),
+      labelKeys: jsonStrings(row.labelKeys),
+      priority: number(row.priority),
+    })),
+    referencedLabelKeys: policyRows.map((row) => string(row.labelKey)),
+  });
   const bundle = createModelControlMigrationBundle({
     catalog: canonical,
     providerAvailability,
+    modelOptionMigration,
     sites: siteIds.map((siteId) => {
       const hiddenLabels = new Set(
         policyRows
@@ -124,7 +145,7 @@ try {
   });
   await writeFile(outputPath, `${JSON.stringify(bundle)}\n`, { encoding: "utf8", flag: "wx" });
   process.stdout.write(
-    `${JSON.stringify({ outputPath, bundleDigest: bundle.bundleDigest, catalogDigest: canonical.digest, counts: canonical.counts, sitePolicies: bundle.sitePolicyCommands.length, fence: { fencedAt: fence.fencedAt, sources: captures.map(({ name, watermark }) => ({ name, watermark })) } })}\n`,
+    `${JSON.stringify({ outputPath, bundleDigest: bundle.bundleDigest, catalogDigest: canonical.digest, counts: canonical.counts, modelOptionMigration: { artifactDigest: modelOptionMigration.artifactDigest, options: modelOptionMigration.options.length, quarantine: modelOptionMigration.quarantine.length }, sitePolicies: bundle.sitePolicyCommands.length, fence: { fencedAt: fence.fencedAt, sources: captures.map(({ name, watermark }) => ({ name, watermark })) } })}\n`,
   );
 } finally {
   await Promise.allSettled(connections.map((connection) => connection.end()));
@@ -133,6 +154,7 @@ try {
 interface ModelPayload {
   readonly providerRows: Record<string, unknown>[];
   readonly modelRows: Record<string, unknown>[];
+  readonly labelRows: Record<string, unknown>[];
   readonly policyRows: Record<string, unknown>[];
 }
 interface SitePayload {
@@ -213,10 +235,13 @@ async function readModelPayload(connection: Connection): Promise<ModelPayload> {
   const [modelRows] = await connection.query<LegacyRow[]>(
     `SELECT id, providerAccountId, provider, modelName, displayName, featureKey, labelKeys, inputModalities, outputModalities, transportKind, gatewayModelName, contextWindow, priority, status FROM model_bindings WHERE deletedAt IS NULL ORDER BY featureKey, priority, id`,
   );
+  const [labelRows] = await connection.query<LegacyRow[]>(
+    `SELECT id, \`key\`, displayName, description, featureKey, tier, defaultBindingId, status FROM model_labels ORDER BY \`key\`, id`,
+  );
   const [policyRows] = await connection.query<LegacyRow[]>(
     `SELECT siteId, labelKey, status FROM model_site_policies ORDER BY siteId, labelKey`,
   );
-  return { providerRows, modelRows, policyRows };
+  return { providerRows, modelRows, labelRows, policyRows };
 }
 
 async function readSitePayload(connection: Connection): Promise<SitePayload> {
@@ -264,6 +289,9 @@ const MODEL_WATERMARK_ROWS = `
   UNION ALL SELECT 'model-binding',id,updatedAt,
     SHA2(JSON_OBJECT('id',id,'providerAccountId',providerAccountId,'provider',provider,'modelName',modelName,'displayName',displayName,'featureKey',featureKey,'labelKeys',labelKeys,'inputModalities',inputModalities,'outputModalities',outputModalities,'transportKind',transportKind,'gatewayModelName',gatewayModelName,'contextWindow',contextWindow,'priority',priority,'status',status,'deletedAt',deletedAt),256)
   FROM model_bindings
+  UNION ALL SELECT 'model-label',id,updatedAt,
+    SHA2(JSON_OBJECT('id',id,'key',\`key\`,'displayName',displayName,'description',description,'featureKey',featureKey,'tier',tier,'defaultBindingId',defaultBindingId,'status',status),256)
+  FROM model_labels
   UNION ALL SELECT 'model-site-policy',id,updatedAt,
     SHA2(JSON_OBJECT('id',id,'siteId',siteId,'labelKey',labelKey,'status',status),256)
   FROM model_site_policies`;
@@ -314,7 +342,9 @@ function capabilities(row: Record<string, unknown>): string[] {
   ].sort();
 }
 function byPriority(a: Record<string, unknown>, b: Record<string, unknown>): number {
-  return number(a.priority) - number(b.priority) || string(a.id).localeCompare(string(b.id));
+  const left = string(a.id);
+  const right = string(b.id);
+  return number(a.priority) - number(b.priority) || (left < right ? -1 : left > right ? 1 : 0);
 }
 function argument(name: string): string {
   const index = process.argv.indexOf(name);

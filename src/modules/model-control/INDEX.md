@@ -70,6 +70,17 @@ fence. Only a digest of the lease evidence and captured watermarks enters the ca
 Legacy provider credentials are accepted only when already encoded as a valid `secret://`, `vault://`, or `env://` reference.
 Plaintext and bare environment-variable names fail with a non-reflective quarantine error; export never manufactures a reference.
 
+Legacy `ModelLabel` is public product-option metadata, not a logical model definition. Export therefore preserves every label as a
+separate, recursively closed and content-addressed `modelOptionMigration` artifact instead of adding `productOptions` to the base
+inventory. A valid label records its legacy identity, product, presentation fields, enabled state, ordered candidate logical-model
+keys and the default selected through `defaultBindingId -> ModelBinding.id -> modelKey`; invalid, duplicate, unresolved and orphan
+facts become non-reflective hashed quarantine entries. The artifact and its quarantine counts are covered by the bundle digest, and
+its digest is also bound into the import command identity. Bundle import reports it explicitly as
+`pending_site_release_materialization`: the source bundle remains the artifact of record and its digest is conflict-bound to the
+import receipt, but the artifact has not been persisted as product configuration or published.
+Task 7 owns the immutable `ModelOptionRevision`/`SiteRelease` aggregate, selector defaults and the consumer that materializes this
+artifact. Cutover is not complete until that owner consumes or explicitly resolves every option/quarantine fact.
+
 Task 7 adds the authoritative Site foreign key. Task 15 supplies Admin UI/command adapters. The legacy package remains only as a
 read-only migration source and rollback artifact until cross-repository consumers complete cutover; no new Platform consumer may
 import it or use `KOKORO_MODEL_BASE_URL`.

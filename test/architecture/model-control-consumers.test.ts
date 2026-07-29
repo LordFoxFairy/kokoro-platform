@@ -95,18 +95,32 @@ describe("ModelControl consumer boundary", () => {
 
   it("journals every ModelControl command and exposes activation through a durable owner outbox", async () => {
     const [importService, activationService, policyService, journal, migrator] = await Promise.all([
-      readFile(resolve("src/modules/model-control/application/services/import-model-control.ts"), "utf8"),
-      readFile(resolve("src/modules/model-control/application/services/activate-model-inventory.ts"), "utf8"),
-      readFile(resolve("src/modules/model-control/application/services/change-site-model-policy.ts"), "utf8"),
-      readFile(resolve("src/modules/model-control/infrastructure/postgres/model-control-command-journal.ts"), "utf8"),
+      readFile(
+        resolve("src/modules/model-control/application/services/import-model-control.ts"),
+        "utf8",
+      ),
+      readFile(
+        resolve("src/modules/model-control/application/services/activate-model-inventory.ts"),
+        "utf8",
+      ),
+      readFile(
+        resolve("src/modules/model-control/application/services/change-site-model-policy.ts"),
+        "utf8",
+      ),
+      readFile(
+        resolve(
+          "src/modules/model-control/infrastructure/postgres/model-control-command-journal.ts",
+        ),
+        "utf8",
+      ),
       readFile(resolve("src/infrastructure/postgres/migrator.ts"), "utf8"),
     ]);
     for (const service of [importService, activationService, policyService]) {
       expect(service).toContain("this.journal.begin(transaction, command)");
       expect(service).toContain("this.journal.succeed(transaction, command, receipt, context)");
     }
-    expect(journal).toContain('owner: event.owner');
-    expect(journal).toContain('eventType: event.eventType');
+    expect(journal).toContain("owner: event.owner");
+    expect(journal).toContain("eventType: event.eventType");
     expect(journal).toContain('state: "succeeded"');
     expect(migrator).toContain(
       "GRANT INSERT ON TABLE platform.command_receipt, platform.outbox_event",
@@ -167,6 +181,20 @@ describe("ModelControl consumer boundary", () => {
     expect(snapshot).toContain("MODEL_LEGACY_EXPORT_FENCE_VIOLATED");
   });
 
+  it("preserves legacy ModelLabel facts as a separate pending migration artifact", async () => {
+    const [exporter, importer, catalog] = await Promise.all([
+      readFile(resolve("scripts/model-control/export-legacy.mts"), "utf8"),
+      readFile(resolve("scripts/model-control/import-bundle.mts"), "utf8"),
+      readFile(resolve("src/modules/model-control/domain/model-catalog.ts"), "utf8"),
+    ]);
+    expect(exporter).toContain("FROM model_labels");
+    expect(exporter).toContain("defaultBindingId");
+    expect(exporter).toContain("modelOptionMigration");
+    expect(importer).toContain("pendingModelOptionMigration");
+    expect(importer).toContain("migrationArtifactDigest");
+    expect(catalog).not.toContain("productOptions");
+  });
+
   it("keeps SQL import schemas closed and validates only published products", async () => {
     const migration = await readFile(
       resolve("prisma/migrations/0003_model_control/migration.sql"),
@@ -189,7 +217,9 @@ describe("ModelControl consumer boundary", () => {
     expect(migration).toContain("MODEL_INVENTORY_PAYLOAD_NON_CANONICAL");
     expect(migration).toContain("CHECK (platform.model_identifier_is_valid(provider_key))");
     expect(migration).toContain("CHECK (platform.model_secret_reference_is_valid(secret_ref))");
-    expect(migration).toContain("CHECK (platform.model_identifier_array_is_canonical(capabilities, TRUE))");
+    expect(migration).toContain(
+      "CHECK (platform.model_identifier_array_is_canonical(capabilities, TRUE))",
+    );
   });
 });
 

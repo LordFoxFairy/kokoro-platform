@@ -10,6 +10,10 @@ import {
   type ProviderOperationalAvailability,
 } from "../domain/provider-availability.js";
 import { canonicalizeSiteModelPolicy, type SiteModelPolicy } from "../domain/site-model-policy.js";
+import {
+  verifyLegacyModelOptionMigrationArtifact,
+  type LegacyModelOptionMigrationArtifact,
+} from "./legacy-model-option-artifact.js";
 
 export interface ModelControlMigrationBundle {
   readonly schemaVersion: 1;
@@ -20,6 +24,7 @@ export interface ModelControlMigrationBundle {
   readonly catalogDigest: string;
   readonly catalog: CanonicalizedModelInventory["document"];
   readonly providerAvailability: readonly ProviderOperationalAvailability[];
+  readonly modelOptionMigration: LegacyModelOptionMigrationArtifact;
   readonly sitePolicyCommands: readonly {
     readonly changeId: string;
     readonly expectedRevision: "0";
@@ -31,6 +36,7 @@ export interface ModelControlMigrationBundle {
 export function createModelControlMigrationBundle(input: {
   readonly catalog: CanonicalizedModelInventory;
   readonly providerAvailability: readonly ProviderOperationalAvailability[];
+  readonly modelOptionMigration: LegacyModelOptionMigrationArtifact;
   readonly sites: readonly {
     readonly siteId: string;
     readonly hiddenModelKeys: readonly string[];
@@ -40,6 +46,7 @@ export function createModelControlMigrationBundle(input: {
     input.providerAvailability,
     new Set(input.catalog.document.providers.map((provider) => provider.key)),
   );
+  const modelOptionMigration = verifyLegacyModelOptionMigrationArtifact(input.modelOptionMigration);
   const sites = uniqueSortedSites(input.sites);
   const sitePolicyCommands = sites.flatMap(({ siteId, hiddenModelKeys }) =>
     modelProducts.map((product) => {
@@ -98,6 +105,7 @@ export function createModelControlMigrationBundle(input: {
     catalogDigest: input.catalog.digest,
     catalog: input.catalog.document,
     providerAvailability,
+    modelOptionMigration,
     sitePolicyCommands,
   };
   return deepFreeze({
@@ -118,6 +126,7 @@ export function verifyModelControlMigrationBundle(input: unknown): ModelControlM
       "catalogDigest",
       "catalog",
       "providerAvailability",
+      "modelOptionMigration",
       "sitePolicyCommands",
     ],
     "MODEL_MIGRATION_BUNDLE_SCHEMA_UNKNOWN_FIELD",
@@ -137,6 +146,9 @@ export function verifyModelControlMigrationBundle(input: unknown): ModelControlM
       parseProviderAvailability,
     ),
     new Set(catalog.document.providers.map((provider) => provider.key)),
+  );
+  const modelOptionMigration = verifyLegacyModelOptionMigrationArtifact(
+    candidate.modelOptionMigration,
   );
   const sitePolicyCommands = array(
     candidate.sitePolicyCommands,
@@ -187,6 +199,7 @@ export function verifyModelControlMigrationBundle(input: unknown): ModelControlM
     catalogDigest: catalog.digest,
     catalog: catalog.document,
     providerAvailability,
+    modelOptionMigration,
     sitePolicyCommands,
   };
   if (
@@ -230,8 +243,8 @@ function assertCommandOrder(
   commands: readonly ModelControlMigrationBundle["sitePolicyCommands"][number][],
 ): void {
   const keys = commands.map((command) => `${command.policy.siteId}:${command.policy.product}`);
-  const sites = [...new Set(commands.map((command) => command.policy.siteId))].sort((left, right) =>
-    left.localeCompare(right),
+  const sites = [...new Set(commands.map((command) => command.policy.siteId))].sort(
+    canonicalCompare,
   );
   const expectedKeys = sites.flatMap((siteId) =>
     modelProducts.map((product) => `${siteId}:${product}`),
@@ -248,9 +261,9 @@ function uniqueSortedSites(
   const sites = [...input]
     .map((site) => ({
       siteId: identifier(site.siteId),
-      hiddenModelKeys: [...new Set(site.hiddenModelKeys.map(identifier))].sort(),
+      hiddenModelKeys: [...new Set(site.hiddenModelKeys.map(identifier))].sort(canonicalCompare),
     }))
-    .sort((left, right) => left.siteId.localeCompare(right.siteId));
+    .sort((left, right) => canonicalCompare(left.siteId, right.siteId));
   if (sites.some((site, index) => index > 0 && sites[index - 1]!.siteId === site.siteId))
     throw new Error("MODEL_MIGRATION_SITE_DUPLICATE");
   return sites;
@@ -277,9 +290,13 @@ function stableJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
   return `{${Object.entries(value as Record<string, unknown>)
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort(([left], [right]) => canonicalCompare(left, right))
     .map(([key, child]) => `${JSON.stringify(key)}:${stableJson(child)}`)
     .join(",")}}`;
+}
+
+function canonicalCompare(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function deepFreeze<T>(value: T): T {

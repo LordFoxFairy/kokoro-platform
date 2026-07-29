@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { canonicalizeModelInventory } from "../../src/modules/model-control/domain/model-catalog.js";
+import { createLegacyModelOptionMigrationArtifact } from "../../src/modules/model-control/migration/legacy-model-option-artifact.js";
 
 describe("ModelControl legacy migration bundle", () => {
   it("preserves provider operational facts and emits every Site deterministically", async () => {
@@ -17,6 +18,7 @@ describe("ModelControl legacy migration bundle", () => {
           observedAt: "2026-07-28T12:00:00.000Z",
         },
       ],
+      modelOptionMigration: emptyModelOptionMigration(),
       sites: [
         { siteId: "site-b", hiddenModelKeys: [] },
         { siteId: "site-a", hiddenModelKeys: ["chat-primary"] },
@@ -58,6 +60,7 @@ describe("ModelControl legacy migration bundle", () => {
     const valid = createModelControlMigrationBundle({
       catalog: catalog(),
       providerAvailability: [availability()],
+      modelOptionMigration: emptyModelOptionMigration(),
       sites: [{ siteId: "site-a", hiddenModelKeys: [] }],
     });
     const mutations = [
@@ -112,6 +115,7 @@ describe("ModelControl legacy migration bundle", () => {
     const bundle = createModelControlMigrationBundle({
       catalog: chatOnly,
       providerAvailability: [availability()],
+      modelOptionMigration: emptyModelOptionMigration(),
       sites: [{ siteId: "site-a", hiddenModelKeys: [] }],
     });
     expect(bundle.sitePolicyCommands.map(({ policy }) => [policy.product, policy.enabled])).toEqual(
@@ -134,6 +138,14 @@ function availability() {
     observationRef: "legacy:model_provider_accounts:provider-a",
     observedAt: "2026-07-28T12:00:00.000Z",
   };
+}
+
+function emptyModelOptionMigration() {
+  return createLegacyModelOptionMigrationArtifact({
+    labels: [],
+    bindings: [],
+    referencedLabelKeys: [],
+  });
 }
 
 function catalog() {

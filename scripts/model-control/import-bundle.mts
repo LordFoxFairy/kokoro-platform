@@ -81,10 +81,15 @@ try {
       importId: bundle.importId,
       inventory: bundle.catalog,
       providerAvailability: bundle.providerAvailability,
+      migrationArtifactDigest: bundle.modelOptionMigration.artifactDigest,
     },
     context,
   );
-  const activated = await new ActivateModelInventoryService(unitOfWork, repository, journal).activate(
+  const activated = await new ActivateModelInventoryService(
+    unitOfWork,
+    repository,
+    journal,
+  ).activate(
     {
       activationId: bundle.activationId,
       targetDigest: bundle.catalogDigest,
@@ -106,7 +111,7 @@ try {
       ),
     );
   process.stdout.write(
-    `${JSON.stringify({ bundleDigest: bundle.bundleDigest, imported, activated, sitePolicies })}\n`,
+    `${JSON.stringify({ bundleDigest: bundle.bundleDigest, imported, activated, sitePolicies, pendingModelOptionMigration: { state: "pending_site_release_materialization", artifactDigest: bundle.modelOptionMigration.artifactDigest, options: bundle.modelOptionMigration.options.length, quarantine: bundle.modelOptionMigration.quarantine.length } })}\n`,
   );
 } finally {
   await database.disconnect();

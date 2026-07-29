@@ -27,6 +27,7 @@ describe("ModelControl command identity and outbox", () => {
       security,
       effect: {
         inventoryDigest: "a".repeat(64),
+        modelOptionMigrationDigest: "b".repeat(64),
         source: { kind: "legacy-kokoro-model", reference: "legacy#snapshot=one" },
         providerAvailability: [
           {
@@ -46,9 +47,16 @@ describe("ModelControl command identity and outbox", () => {
         ...base.input,
         effect: {
           ...base.input.effect,
-          providerAvailability: [
-            { ...base.input.effect.providerAvailability[0]!, health: "down" },
-          ],
+          providerAvailability: [{ ...base.input.effect.providerAvailability[0]!, health: "down" }],
+        },
+      }).requestDigest,
+    ).not.toBe(base.requestDigest);
+    expect(
+      createModelControlCommand({
+        ...base.input,
+        effect: {
+          ...base.input.effect,
+          modelOptionMigrationDigest: "c".repeat(64),
         },
       }).requestDigest,
     ).not.toBe(base.requestDigest);

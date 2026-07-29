@@ -41,6 +41,7 @@ export type ModelControlCommandInput =
       readonly security: ModelControlCommandSecurityFacts;
       readonly effect: {
         readonly inventoryDigest: string;
+        readonly modelOptionMigrationDigest: string | null;
         readonly source: CanonicalModelInventory["source"];
         readonly providerAvailability: readonly ProviderOperationalAvailability[];
       };
@@ -66,7 +67,9 @@ export type ModelControlCommandInput =
       };
     };
 
-export interface ModelControlCommand<Input extends ModelControlCommandInput = ModelControlCommandInput> {
+export interface ModelControlCommand<
+  Input extends ModelControlCommandInput = ModelControlCommandInput,
+> {
   readonly commandId: string;
   readonly operation: Input["operation"];
   readonly requestDigest: string;
@@ -113,7 +116,10 @@ export function createModelControlCommand<const Input extends ModelControlComman
       actorSubjectGeneration: epoch(input.security.actorSubjectGeneration),
     },
   }) as Input;
-  if (canonicalInput.security.actorKind !== "operator" && canonicalInput.security.actorKind !== "workload")
+  if (
+    canonicalInput.security.actorKind !== "operator" &&
+    canonicalInput.security.actorKind !== "workload"
+  )
     throw new Error("MODEL_CONTROL_COMMAND_ACTOR_INVALID");
   return Object.freeze({
     commandId: canonicalInput.commandId,
