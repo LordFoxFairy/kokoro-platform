@@ -465,10 +465,26 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_table_privilege(current_user, 'platform.credit_authorization_segment', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.credit_budget_operation_receipt', 'SELECT,INSERT')
          WHEN $2 = 'worker' THEN
-           has_table_privilege(current_user, 'platform.command_receipt', 'UPDATE')
-           AND has_table_privilege(current_user, 'platform.outbox_event', 'UPDATE')
-           AND has_table_privilege(current_user, 'platform.inbox_delivery', 'INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.authorization_session_access_grant', 'SELECT')
+           has_table_privilege(current_user, 'platform.outbox_event', 'SELECT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.site', 'SELECT')
+           AND has_any_column_privilege(current_user, 'platform.site', 'UPDATE')
+           AND has_table_privilege(current_user, 'platform.site_project_binding', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.site_release', 'SELECT')
+           AND has_any_column_privilege(current_user, 'platform.site_release', 'UPDATE')
+           AND has_table_privilege(current_user, 'platform.site_deployment_binding', 'SELECT,INSERT')
+           AND has_any_column_privilege(current_user, 'platform.site_deployment_binding', 'UPDATE')
+           AND has_table_privilege(current_user, 'platform.site_activation_attempt', 'SELECT')
+           AND has_any_column_privilege(current_user, 'platform.site_activation_attempt', 'UPDATE')
+           AND has_table_privilege(current_user, 'platform.site_deployment_observation', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.site_traffic_stop_attempt', 'SELECT')
+           AND has_any_column_privilege(current_user, 'platform.site_traffic_stop_attempt', 'UPDATE')
+           AND has_table_privilege(current_user, 'platform.site_traffic_stop_observation', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.authorization_site', 'SELECT,INSERT')
+           AND has_any_column_privilege(current_user, 'platform.authorization_site', 'UPDATE')
+           AND has_table_privilege(current_user, 'platform.authorization_site_release', 'SELECT,INSERT')
+           AND has_any_column_privilege(current_user, 'platform.authorization_site_release', 'UPDATE')
+           AND has_table_privilege(current_user, 'platform.authorization_product_binding', 'SELECT,INSERT')
+           AND has_any_column_privilege(current_user, 'platform.authorization_product_binding', 'UPDATE')
          WHEN $2 = 'authorization' THEN
            has_table_privilege(current_user, 'platform.authorization_stream_state', 'SELECT')
            AND has_table_privilege(current_user, 'platform.authorization_event_log', 'SELECT')
@@ -481,6 +497,21 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_table_privilege(current_user, 'platform.authorization_site', 'SELECT')
            AND has_table_privilege(current_user, 'platform.commerce_billing_account', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.commerce_billing_account_membership', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.site', 'SELECT,INSERT')
+           AND has_any_column_privilege(current_user, 'platform.site', 'UPDATE')
+           AND has_table_privilege(current_user, 'platform.site_project_binding', 'SELECT,INSERT')
+           AND has_any_column_privilege(current_user, 'platform.site_project_binding', 'UPDATE')
+           AND has_table_privilege(current_user, 'platform.site_release', 'SELECT,INSERT')
+           AND has_any_column_privilege(current_user, 'platform.site_release', 'UPDATE')
+           AND has_table_privilege(current_user, 'platform.site_activation_attempt', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.site_deployment_binding', 'SELECT')
+           AND has_any_column_privilege(current_user, 'platform.site_deployment_binding', 'UPDATE')
+           AND has_table_privilege(current_user, 'platform.site_traffic_stop_attempt', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.site_traffic_stop_observation', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.site_effect_approval', 'SELECT,INSERT')
+           AND has_any_column_privilege(current_user, 'platform.site_effect_approval', 'UPDATE')
+           AND has_any_column_privilege(current_user, 'platform.authorization_site', 'UPDATE')
+           AND has_any_column_privilege(current_user, 'platform.authorization_product_binding', 'UPDATE')
          END AS "hasRequiredPlatformWrites",
          has_function_privilege(current_user, 'platform.import_model_inventory(uuid,text,text,jsonb,jsonb,text)', 'EXECUTE')
            AS "canExecuteModelInventoryImport",
@@ -568,7 +599,10 @@ const RUNTIME_IDENTITY_SQL = `
                'credit_journal_transaction','credit_journal_entry','credit_execution_budget_root',
                'credit_budget_allocation','credit_budget_allocation_revision',
                'credit_allocation_reservation_receipt','credit_allocation_return_receipt',
-               'credit_authorization_segment','credit_budget_operation_receipt'
+               'credit_authorization_segment','credit_budget_operation_receipt',
+               'site','site_project_binding','site_release','site_deployment_binding',
+               'site_activation_attempt','site_deployment_observation','site_traffic_stop_attempt',
+               'site_traffic_stop_observation','site_effect_approval'
                ]) AND (
                  has_table_privilege(runtime_role.rolname, candidate.oid,
                    'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
@@ -614,7 +648,10 @@ const RUNTIME_IDENTITY_SQL = `
                'credit_journal_transaction','credit_journal_entry','credit_execution_budget_root',
                'credit_budget_allocation','credit_budget_allocation_revision',
                'credit_allocation_reservation_receipt','credit_allocation_return_receipt',
-               'credit_authorization_segment','credit_budget_operation_receipt'
+               'credit_authorization_segment','credit_budget_operation_receipt',
+               'site','site_project_binding','site_release','site_deployment_binding',
+               'site_activation_attempt','site_deployment_observation','site_traffic_stop_attempt',
+               'site_traffic_stop_observation','site_effect_approval'
                ]) AND (
                  (candidate.relname LIKE 'model\\_%' ESCAPE '\\' AND (
                    has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
@@ -629,6 +666,16 @@ const RUNTIME_IDENTITY_SQL = `
                    'authorization_snapshot','authorization_snapshot_record','authorization_site',
                    'authorization_session_access_grant'
                  ]))
+                 OR
+                 ((has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
+                   OR has_any_column_privilege(runtime_role.rolname,candidate.oid,'SELECT'))
+                  AND candidate.relname = ANY(ARRAY[
+                    'site','site_project_binding','site_release','site_deployment_binding',
+                    'site_activation_attempt','site_deployment_observation','site_traffic_stop_attempt',
+                    'site_traffic_stop_observation','site_effect_approval'
+                  ]) AND NOT (
+                    ($2='worker' AND candidate.relname<>'site_effect_approval') OR $2='admin'
+                  ))
                  OR
                  (has_table_privilege(runtime_role.rolname, candidate.oid,
                    'DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN') AND NOT (
@@ -665,8 +712,16 @@ const RUNTIME_IDENTITY_SQL = `
                      'credit_authorization_segment','credit_budget_operation_receipt'
                    ]))
                    OR ($2 = 'authorization' AND candidate.relname = ANY(ARRAY['authorization_snapshot','authorization_snapshot_record']))
-                   OR ($2 = 'worker' AND candidate.relname = 'inbox_delivery')
-                   OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership']))
+                   OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
+                     'site_deployment_binding','site_deployment_observation',
+                     'site_traffic_stop_observation','authorization_site',
+                     'authorization_site_release','authorization_product_binding'
+                   ]))
+                   OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY[
+                     'command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership',
+                     'site','site_project_binding','site_release','site_activation_attempt',
+                     'site_traffic_stop_attempt','site_effect_approval'
+                   ]))
                  ))
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
                    ($2 = 'api' AND candidate.relname = ANY(ARRAY[
@@ -685,8 +740,16 @@ const RUNTIME_IDENTITY_SQL = `
                      'commerce_redemption_preview','credit_account','credit_hold',
                      'credit_execution_budget_root','credit_authorization_segment','commerce_fulfillment_transaction'
                    ]))
-                   OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery']))
-                   OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY['command_receipt','commerce_billing_account','commerce_billing_account_membership']))
+                   OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
+                     'outbox_event','site','site_release','site_deployment_binding',
+                     'site_activation_attempt','site_traffic_stop_attempt','authorization_site',
+                     'authorization_site_release','authorization_product_binding'
+                   ]))
+                   OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY[
+                     'command_receipt','commerce_billing_account','commerce_billing_account_membership',
+                     'site','site_project_binding','site_release','site_deployment_binding',
+                     'site_effect_approval','authorization_site','authorization_product_binding'
+                   ]))
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'INSERT') AND NOT (
                    ($2 = 'api' AND candidate.relname = ANY(ARRAY[
@@ -716,8 +779,16 @@ const RUNTIME_IDENTITY_SQL = `
                      'credit_authorization_segment','credit_budget_operation_receipt'
                    ]))
                    OR ($2 = 'authorization' AND candidate.relname = ANY(ARRAY['authorization_snapshot','authorization_snapshot_record']))
-                   OR ($2 = 'worker' AND candidate.relname = 'inbox_delivery')
-                   OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership']))
+                   OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
+                     'site_deployment_binding','site_deployment_observation',
+                     'site_traffic_stop_observation','authorization_site',
+                     'authorization_site_release','authorization_product_binding'
+                   ]))
+                   OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY[
+                     'command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership',
+                     'site','site_project_binding','site_release','site_activation_attempt',
+                     'site_traffic_stop_attempt','site_effect_approval'
+                   ]))
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
                    ($2 = 'api' AND candidate.relname = ANY(ARRAY[
@@ -736,8 +807,16 @@ const RUNTIME_IDENTITY_SQL = `
                      'commerce_redemption_preview','credit_account','credit_hold',
                      'credit_execution_budget_root','credit_authorization_segment','commerce_fulfillment_transaction'
                    ]))
-                   OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery']))
-                   OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY['command_receipt','commerce_billing_account','commerce_billing_account_membership']))
+                   OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
+                     'outbox_event','site','site_release','site_deployment_binding',
+                     'site_activation_attempt','site_traffic_stop_attempt','authorization_site',
+                     'authorization_site_release','authorization_product_binding'
+                   ]))
+                   OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY[
+                     'command_receipt','commerce_billing_account','commerce_billing_account_membership',
+                     'site','site_project_binding','site_release','site_deployment_binding',
+                     'site_effect_approval','authorization_site','authorization_product_binding'
+                   ]))
                  ))
                ))
                OR (candidate.relname = 'platform_foundation' AND (
