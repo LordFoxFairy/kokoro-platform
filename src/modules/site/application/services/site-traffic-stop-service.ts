@@ -8,25 +8,31 @@ import {
 } from "../../domain/site-traffic-stop.js";
 import type { SiteAuthorityJournal, SiteAuthorityReceipt } from "../contracts/site-authority-ports.js";
 import type { SiteTrafficStopRepository } from "../contracts/site-traffic-stop-ports.js";
+import {
+  siteTrafficStopEffectDigest,
+  type SiteEffectApprovalAuthority,
+} from "../contracts/site-effect-approval.js";
 import { createSiteAuthorityCommand } from "../site-command.js";
 
 type CommandInput = Readonly<{ commandId: string; idempotencyKey: string }>;
 
 export class SiteTrafficStopService {
   readonly #now: () => string;
+  readonly #approvalAuthority: SiteEffectApprovalAuthority;
 
   constructor(
     private readonly unitOfWork: PlatformUnitOfWork,
     private readonly repository: SiteTrafficStopRepository,
     private readonly journal: SiteAuthorityJournal,
-    options: Readonly<{ now?: () => string }> = {},
+    options: Readonly<{ now?: () => string; approvalAuthority?: SiteEffectApprovalAuthority }> = {},
   ) {
     this.#now = options.now ?? (() => new Date().toISOString());
+    this.#approvalAuthority = options.approvalAuthority ?? denyApprovalAuthority;
   }
 
   requestTrafficStop(
     input: CommandInput & Readonly<{
-      attemptRef: string; siteRef: string; action: "suspend" | "decommission";
+      attemptRef: string; approvalRef: string; siteRef: string; action: "suspend" | "decommission";
     }>,
     context: VerifiedRequestSecurityContext,
   ): Promise<SiteAuthorityReceipt> {
@@ -44,6 +50,12 @@ export class SiteTrafficStopService {
         return Object.freeze({ attemptRef: existing.attemptRef, state: existing.state, replayed: true });
       }
       if (existing !== null) throw new Error("SITE_TRAFFIC_STOP_REF_CONFLICT");
+      await this.#approvalAuthority.consume(transaction, {
+        approvalRef: input.approvalRef,
+        siteRef: input.siteRef,
+        operation: `site.traffic-stop.${input.action}`,
+        effectDigest: siteTrafficStopEffectDigest(input),
+      }, context);
       const site = await this.repository.loadSiteForUpdate(transaction, input.siteRef);
       const environment = deploymentEnvironment(context);
       const deployment = await this.repository.loadActiveDeploymentForUpdate(
@@ -138,6 +150,10 @@ export class SiteTrafficStopService {
     });
   }
 }
+
+const denyApprovalAuthority: SiteEffectApprovalAuthority = Object.freeze({
+  consume: async () => { throw new Error("SITE_EFFECT_APPROVAL_AUTHORITY_REQUIRED"); },
+});
 
 function admin(context: VerifiedRequestSecurityContext, siteRef: string): void {
   if (context.trustedCaller.kind !== "admin_workload" || context.actor.kind !== "operator") {

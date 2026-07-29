@@ -16,6 +16,10 @@ import type {
   SiteAuthorityReceipt,
   SiteAuthorityRepository,
 } from "../contracts/site-authority-ports.js";
+import {
+  siteActivationEffectDigest,
+  type SiteEffectApprovalAuthority,
+} from "../contracts/site-effect-approval.js";
 import { createSiteAuthorityCommand } from "../site-command.js";
 
 interface CommandInput {
@@ -25,19 +29,22 @@ interface CommandInput {
 
 export class SiteLifecycleService {
   readonly #now: () => string;
+  readonly #approvalAuthority: SiteEffectApprovalAuthority;
 
   constructor(
     private readonly unitOfWork: PlatformUnitOfWork,
     private readonly repository: SiteAuthorityRepository,
     private readonly journal: SiteAuthorityJournal,
-    options: Readonly<{ now?: () => string }> = {},
+    options: Readonly<{ now?: () => string; approvalAuthority?: SiteEffectApprovalAuthority }> = {},
   ) {
     this.#now = options.now ?? (() => new Date().toISOString());
+    this.#approvalAuthority = options.approvalAuthority ?? denyApprovalAuthority;
   }
 
   beginActivation(
     input: CommandInput & Readonly<{
       attemptRef: string;
+      approvalRef: string;
       siteRef: string;
       candidateReleaseRef: string;
       expectedActiveReleaseRef: string | null;
@@ -69,6 +76,12 @@ export class SiteLifecycleService {
         return Object.freeze({ attemptRef: existing.attemptRef, state: existing.state, replayed: true });
       }
       if (existing !== null) throw new Error("SITE_ACTIVATION_REF_CONFLICT");
+      await this.#approvalAuthority.consume(transaction, {
+        approvalRef: input.approvalRef,
+        siteRef: input.siteRef,
+        operation: "site.activation.begin",
+        effectDigest: siteActivationEffectDigest(input),
+      }, context);
       const site = await this.repository.loadSiteForUpdate(transaction, input.siteRef);
       const candidate = await this.repository.loadReleaseForUpdate(
         transaction,
@@ -353,6 +366,10 @@ export class SiteLifecycleService {
     });
   }
 }
+
+const denyApprovalAuthority: SiteEffectApprovalAuthority = Object.freeze({
+  consume: async () => { throw new Error("SITE_EFFECT_APPROVAL_AUTHORITY_REQUIRED"); },
+});
 
 function admin(context: VerifiedRequestSecurityContext, siteRef: string): void {
   if (context.trustedCaller.kind !== "admin_workload" || context.actor.kind !== "operator") {

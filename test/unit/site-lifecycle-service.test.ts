@@ -48,11 +48,13 @@ describe("SiteLifecycleService", () => {
     };
     const service = new SiteLifecycleService(unitOfWork(), repository, journal, {
       now: () => "2026-07-28T12:00:00.000Z",
+      approvalAuthority: { consume: async (transaction) => { calls.push(`approval:${token(transaction)}`); } },
     });
 
     const receipt = await service.beginActivation({
       commandId: "01983f57-8cf1-7000-8000-000000000001",
       idempotencyKey: "activation-command-01",
+      approvalRef: "approval_01",
       attemptRef: "activation_02",
       siteRef: "site_01",
       candidateReleaseRef: "release_02",
@@ -65,7 +67,9 @@ describe("SiteLifecycleService", () => {
     expect(saved).toMatchObject({ candidateReleaseRef: "release_02", expectedActiveReleaseRef: "release_01" });
     expect(saved).toMatchObject({ runtimeBindingEpoch: 4n });
     expect(new Set(calls.map((value) => value.split(":")[1]))).toEqual(new Set(["one"]));
-    expect(calls.map((value) => value.split(":")[0])).toEqual(["begin", "site", "release", "insert", "succeed"]);
+    expect(calls.map((value) => value.split(":")[0])).toEqual([
+      "begin", "approval", "site", "release", "insert", "succeed",
+    ]);
   });
 
   it("fails closed when an operator targets a different Site", async () => {
@@ -76,6 +80,7 @@ describe("SiteLifecycleService", () => {
     expect(() => service.beginActivation({
       commandId: "01983f57-8cf1-7000-8000-000000000001",
       idempotencyKey: "activation-command-01",
+      approvalRef: "approval_01",
       attemptRef: "activation_02",
       siteRef: "site_01",
       candidateReleaseRef: "release_02",

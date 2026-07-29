@@ -35,16 +35,18 @@ describe("SiteTrafficStopService", () => {
     const service = new SiteTrafficStopService(unitOfWork({
       siteRef: "site_01", state: "active", activeReleaseRef: "release_01",
       securityEpoch: 4n, policyEpoch: 7n, revocationEpoch: 3n, runtimeBindingEpoch: 8n,
-    }), repository, journal, { now: () => "2026-07-29T13:00:00.000Z" });
+    }), repository, journal, { now: () => "2026-07-29T13:00:00.000Z",
+      approvalAuthority: { consume: async () => { calls.push("approval"); } } });
 
     await expect(service.requestTrafficStop({
       commandId: "01983f57-8cf1-7000-8000-000000000021",
       idempotencyKey: "site-traffic-stop-command-01", attemptRef: "traffic_stop_01",
+      approvalRef: "approval_01",
       siteRef: "site_01", action: "suspend",
     }, await context("site.traffic-stop.request", "admin_workload"))).resolves.toEqual({
       attemptRef: "traffic_stop_01", state: "requested", replayed: false,
     });
-    expect(calls).toEqual(["begin", "fence:suspending:requested", "succeed"]);
+    expect(calls).toEqual(["begin", "approval", "fence:suspending:requested", "succeed"]);
   });
 });
 

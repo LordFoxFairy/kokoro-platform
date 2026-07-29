@@ -11,7 +11,7 @@ describe("Site authority schema", () => {
     for (const table of [
       "site", "site_project_binding", "site_release", "site_deployment_binding",
       "site_activation_attempt", "site_deployment_observation", "site_traffic_stop_attempt",
-      "site_traffic_stop_observation",
+      "site_traffic_stop_observation", "site_effect_approval",
     ]) expect(migration).toContain(`CREATE TABLE platform.${table}`);
     expect(migration).toContain("site_release_immutable_facts");
     expect(migration).toContain("site_deployment_observation_immutable");
@@ -24,6 +24,10 @@ describe("Site authority schema", () => {
     expect(migration).toContain("site_traffic_stop_observation_immutable");
     expect(migration).toContain("provider_namespace TEXT NOT NULL");
     expect(migration).toContain("UNIQUE(provider_namespace,provider_project_ref,environment)");
+    expect(migration).toContain("CHECK(maker_subject_ref<>checker_subject_ref)");
+    expect(migration).toContain("site_effect_approval_terminal");
+    expect(migration).toContain("ENABLE ROW LEVEL SECURITY");
+    expect(migration).toContain("FORCE ROW LEVEL SECURITY");
   });
 
   it("keeps runtime roles least-privileged and revokes PUBLIC", () => {

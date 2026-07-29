@@ -1,0 +1,45 @@
+import { describe, expect, it } from "vitest";
+import { PostgresSiteEffectApprovalAuthority } from "../../src/modules/site/infrastructure/postgres/site-effect-approval-authority.js";
+import { issuePlatformTransaction, revokePlatformTransaction } from "../../src/shared/unit-of-work/platform-transaction.js";
+
+describe("PostgresSiteEffectApprovalAuthority", () => {
+  it("requires a distinct approved checker and consumes the exact effect once", async () => {
+    const calls: { statement: string; values: readonly unknown[] }[] = [];
+    const lease = issuePlatformTransaction({ query: async () => [], execute: async (statement, values = []) => {
+      calls.push({ statement, values }); return 1;
+    } });
+    const authority = new PostgresSiteEffectApprovalAuthority();
+    try {
+      await authority.request(lease.transaction, {
+        approvalRef: "approval_01", siteRef: "site_01", operation: "site.activation.begin",
+        effectDigest: "a".repeat(64), makerSubjectRef: "operator_maker",
+        requestedAt: "2026-07-30T10:00:00.000Z", expiresAt: "2026-07-30T10:10:00.000Z",
+      });
+      await authority.approve(lease.transaction, {
+        approvalRef: "approval_01", siteRef: "site_01", operation: "site.activation.begin",
+        effectDigest: "a".repeat(64), checkerSubjectRef: "operator_checker",
+        decidedAt: "2026-07-30T10:01:00.000Z",
+      });
+      await authority.consume(lease.transaction, {
+        approvalRef: "approval_01", siteRef: "site_01", operation: "site.activation.begin",
+        effectDigest: "a".repeat(64),
+      }, { actor: { kind: "operator", subjectId: "operator_checker" } } as never);
+      const sql = calls.map(({ statement }) => statement).join("\n");
+      expect(sql).toContain("maker_subject_ref<>$6");
+      expect(sql).toContain("checker_subject_ref=$6");
+      expect(sql).toContain("state='consumed'");
+      expect(sql).toContain("expires_at>now()");
+    } finally { revokePlatformTransaction(lease); }
+  });
+
+  it("fails closed when approval CAS does not change exactly one row", async () => {
+    const lease = issuePlatformTransaction({ query: async () => [], execute: async () => 0 });
+    try {
+      await expect(new PostgresSiteEffectApprovalAuthority().approve(lease.transaction, {
+        approvalRef: "approval_01", siteRef: "site_01", operation: "site.traffic-stop.suspend",
+        effectDigest: "a".repeat(64), checkerSubjectRef: "operator_checker",
+        decidedAt: "2026-07-30T10:01:00.000Z",
+      })).rejects.toThrow("SITE_EFFECT_APPROVAL_DECISION_CONFLICT");
+    } finally { revokePlatformTransaction(lease); }
+  });
+});

@@ -182,6 +182,37 @@ CREATE TABLE platform.site_traffic_stop_observation (
   UNIQUE(attempt_ref,payload_digest)
 );
 
+CREATE TABLE platform.site_effect_approval (
+  approval_ref TEXT PRIMARY KEY,
+  site_ref TEXT NOT NULL REFERENCES platform.site(site_ref),
+  operation TEXT NOT NULL CHECK(operation IN (
+    'site.activation.begin',
+    'site.traffic-stop.suspend',
+    'site.traffic-stop.decommission'
+  )),
+  effect_digest CHAR(64) NOT NULL CHECK(effect_digest ~ '^[0-9a-f]{64}$'),
+  state TEXT NOT NULL CHECK(state IN ('pending','approved','consumed','revoked')),
+  maker_subject_ref TEXT NOT NULL,
+  checker_subject_ref TEXT,
+  requested_at TIMESTAMPTZ NOT NULL,
+  decided_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ NOT NULL,
+  consumed_request_id TEXT,
+  consumed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK(expires_at>requested_at),
+  CHECK(maker_subject_ref<>checker_subject_ref),
+  CHECK(state NOT IN ('approved','consumed') OR checker_subject_ref IS NOT NULL),
+  CHECK(state<>'pending' OR checker_subject_ref IS NULL),
+  CHECK(state NOT IN ('approved','consumed') OR decided_at IS NOT NULL),
+  CHECK(state<>'pending' OR decided_at IS NULL),
+  CHECK((state='consumed')=(consumed_at IS NOT NULL)),
+  CHECK(state<>'consumed' OR consumed_request_id IS NOT NULL)
+);
+CREATE INDEX site_effect_approval_lookup_idx
+  ON platform.site_effect_approval(site_ref,operation,effect_digest,state,expires_at);
+
 CREATE FUNCTION platform.site_release_immutable_facts() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
@@ -267,6 +298,104 @@ CREATE TRIGGER site_traffic_stop_observation_immutable
 BEFORE UPDATE OR DELETE ON platform.site_traffic_stop_observation FOR EACH ROW
 EXECUTE FUNCTION platform.reject_site_deployment_observation_update();
 
+CREATE FUNCTION platform.site_effect_approval_terminal() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF ROW(NEW.approval_ref,NEW.site_ref,NEW.operation,NEW.effect_digest,
+         NEW.maker_subject_ref,NEW.requested_at,NEW.expires_at,NEW.created_at)
+     IS DISTINCT FROM
+     ROW(OLD.approval_ref,OLD.site_ref,OLD.operation,OLD.effect_digest,
+         OLD.maker_subject_ref,OLD.requested_at,OLD.expires_at,OLD.created_at) THEN
+    RAISE EXCEPTION 'Site effect approval immutable facts cannot change';
+  END IF;
+  IF NOT ((OLD.state='pending' AND NEW.state IN ('pending','approved','revoked')) OR
+          (OLD.state='approved' AND NEW.state IN ('approved','consumed','revoked')) OR
+          (OLD.state='consumed' AND NEW IS NOT DISTINCT FROM OLD) OR
+          (OLD.state='revoked' AND NEW IS NOT DISTINCT FROM OLD)) THEN
+    RAISE EXCEPTION 'Site effect approval transition invalid';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION platform.site_effect_approval_terminal() FROM PUBLIC;
+CREATE TRIGGER site_effect_approval_terminal
+BEFORE UPDATE ON platform.site_effect_approval FOR EACH ROW
+EXECUTE FUNCTION platform.site_effect_approval_terminal();
+
+-- Site authority is scoped by the verified transaction context. The worker is a
+-- separately credentialed reconciler and must locate claimed attempts before it
+-- can establish a row-specific Site context; its table/column grants remain the
+-- second, least-privilege boundary.
+ALTER TABLE platform.site ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.site FORCE ROW LEVEL SECURITY;
+CREATE POLICY site_scope ON platform.site
+  USING(site_ref=NULLIF(current_setting('app.site_id',true),'') OR current_setting('app.workload_kind',true)='platform_worker')
+  WITH CHECK(site_ref=NULLIF(current_setting('app.site_id',true),'') OR current_setting('app.workload_kind',true)='platform_worker');
+
+ALTER TABLE platform.site_project_binding ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.site_project_binding FORCE ROW LEVEL SECURITY;
+CREATE POLICY site_project_binding_scope ON platform.site_project_binding
+  USING(site_ref=NULLIF(current_setting('app.site_id',true),'') OR current_setting('app.workload_kind',true)='platform_worker')
+  WITH CHECK(site_ref=NULLIF(current_setting('app.site_id',true),'') OR current_setting('app.workload_kind',true)='platform_worker');
+
+ALTER TABLE platform.site_release ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.site_release FORCE ROW LEVEL SECURITY;
+CREATE POLICY site_release_scope ON platform.site_release
+  USING(site_ref=NULLIF(current_setting('app.site_id',true),'') OR current_setting('app.workload_kind',true)='platform_worker')
+  WITH CHECK(site_ref=NULLIF(current_setting('app.site_id',true),'') OR current_setting('app.workload_kind',true)='platform_worker');
+
+ALTER TABLE platform.site_deployment_binding ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.site_deployment_binding FORCE ROW LEVEL SECURITY;
+CREATE POLICY site_deployment_binding_scope ON platform.site_deployment_binding
+  USING(site_ref=NULLIF(current_setting('app.site_id',true),'') OR current_setting('app.workload_kind',true)='platform_worker')
+  WITH CHECK(site_ref=NULLIF(current_setting('app.site_id',true),'') OR current_setting('app.workload_kind',true)='platform_worker');
+
+ALTER TABLE platform.site_activation_attempt ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.site_activation_attempt FORCE ROW LEVEL SECURITY;
+CREATE POLICY site_activation_attempt_scope ON platform.site_activation_attempt
+  USING(site_ref=NULLIF(current_setting('app.site_id',true),'') OR current_setting('app.workload_kind',true)='platform_worker')
+  WITH CHECK(site_ref=NULLIF(current_setting('app.site_id',true),'') OR current_setting('app.workload_kind',true)='platform_worker');
+
+ALTER TABLE platform.site_traffic_stop_attempt ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.site_traffic_stop_attempt FORCE ROW LEVEL SECURITY;
+CREATE POLICY site_traffic_stop_attempt_scope ON platform.site_traffic_stop_attempt
+  USING(site_ref=NULLIF(current_setting('app.site_id',true),'') OR current_setting('app.workload_kind',true)='platform_worker')
+  WITH CHECK(site_ref=NULLIF(current_setting('app.site_id',true),'') OR current_setting('app.workload_kind',true)='platform_worker');
+
+ALTER TABLE platform.site_effect_approval ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.site_effect_approval FORCE ROW LEVEL SECURITY;
+CREATE POLICY site_effect_approval_scope ON platform.site_effect_approval
+  USING(site_ref=NULLIF(current_setting('app.site_id',true),'') OR current_setting('app.workload_kind',true)='platform_worker')
+  WITH CHECK(site_ref=NULLIF(current_setting('app.site_id',true),'') OR current_setting('app.workload_kind',true)='platform_worker');
+
+ALTER TABLE platform.site_deployment_observation ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.site_deployment_observation FORCE ROW LEVEL SECURITY;
+CREATE POLICY site_deployment_observation_scope ON platform.site_deployment_observation
+  USING(current_setting('app.workload_kind',true)='platform_worker' OR EXISTS (
+    SELECT 1 FROM platform.site_activation_attempt attempt
+    WHERE attempt.attempt_ref=site_deployment_observation.attempt_ref
+      AND attempt.site_ref=NULLIF(current_setting('app.site_id',true),'')
+  ))
+  WITH CHECK(current_setting('app.workload_kind',true)='platform_worker' OR EXISTS (
+    SELECT 1 FROM platform.site_activation_attempt attempt
+    WHERE attempt.attempt_ref=site_deployment_observation.attempt_ref
+      AND attempt.site_ref=NULLIF(current_setting('app.site_id',true),'')
+  ));
+
+ALTER TABLE platform.site_traffic_stop_observation ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.site_traffic_stop_observation FORCE ROW LEVEL SECURITY;
+CREATE POLICY site_traffic_stop_observation_scope ON platform.site_traffic_stop_observation
+  USING(current_setting('app.workload_kind',true)='platform_worker' OR EXISTS (
+    SELECT 1 FROM platform.site_traffic_stop_attempt attempt
+    WHERE attempt.attempt_ref=site_traffic_stop_observation.attempt_ref
+      AND attempt.site_ref=NULLIF(current_setting('app.site_id',true),'')
+  ))
+  WITH CHECK(current_setting('app.workload_kind',true)='platform_worker' OR EXISTS (
+    SELECT 1 FROM platform.site_traffic_stop_attempt attempt
+    WHERE attempt.attempt_ref=site_traffic_stop_observation.attempt_ref
+      AND attempt.site_ref=NULLIF(current_setting('app.site_id',true),'')
+  ));
+
 REVOKE ALL ON
   platform.site,
   platform.site_project_binding,
@@ -275,5 +404,6 @@ REVOKE ALL ON
   platform.site_activation_attempt,
   platform.site_deployment_observation,
   platform.site_traffic_stop_attempt,
-  platform.site_traffic_stop_observation
+  platform.site_traffic_stop_observation,
+  platform.site_effect_approval
 FROM PUBLIC;

@@ -606,6 +606,27 @@ model SiteTrafficStopObservationAuthority {
   @@schema("platform")
 }
 
+model SiteEffectApprovalAuthority {
+  approvalRef       String    @id @map("approval_ref")
+  siteRef           String    @map("site_ref")
+  operation         String
+  effectDigest      String    @map("effect_digest") @db.Char(64)
+  state             String
+  makerSubjectRef   String    @map("maker_subject_ref")
+  checkerSubjectRef String?   @map("checker_subject_ref")
+  requestedAt       DateTime  @map("requested_at") @db.Timestamptz(6)
+  decidedAt         DateTime? @map("decided_at") @db.Timestamptz(6)
+  expiresAt         DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedRequestId String?   @map("consumed_request_id")
+  consumedAt        DateTime? @map("consumed_at") @db.Timestamptz(6)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([siteRef, operation, effectDigest, state, expiresAt])
+  @@map("site_effect_approval")
+  @@schema("platform")
+}
+
 model AuthorizationSite {
   siteRef         String   @id @map("site_ref")
   state           String
