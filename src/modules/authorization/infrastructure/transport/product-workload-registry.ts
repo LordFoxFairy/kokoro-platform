@@ -16,6 +16,14 @@ const ALLOWED_OPERATIONS = new Set([
   "issueSessionAccessGrant",
 ]);
 
+declare const verifiedCsrfEvidenceBrand: unique symbol;
+export type VerifiedCsrfEvidence = Readonly<{
+  readonly workloadIdentityId: string;
+  readonly digest: string;
+  readonly [verifiedCsrfEvidenceBrand]: true;
+}>;
+const issuedCsrfEvidence = new WeakSet<object>();
+
 export class ProductWorkloadRegistry implements TrustedCallerCryptographicVerifier {
   readonly #byFingerprint: ReadonlyMap<string, ProductWorkloadIdentity>;
   readonly #registryRevision: string;
@@ -126,12 +134,23 @@ export class ProductWorkloadRegistry implements TrustedCallerCryptographicVerifi
     return this.verifyCsrfEvidence(workload, token) !== null;
   }
 
-  verifyCsrfEvidence(workload: ProductWorkloadIdentity, token: string | undefined): string | null {
+  verifyCsrfEvidence(workload: ProductWorkloadIdentity, token: string | undefined): VerifiedCsrfEvidence | null {
     if (token === undefined || token.length < 32 || token.length > 512) return null;
     const digest = createHash("sha256").update(token, "utf8").digest("hex");
     const actual = Buffer.from(digest, "ascii");
     const expected = Buffer.from(workload.csrfSha256, "ascii");
-    return actual.length === expected.length && timingSafeEqual(actual, expected) ? digest : null;
+    if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null;
+    const evidence = Object.freeze({ workloadIdentityId: workload.workloadIdentityId, digest }) as VerifiedCsrfEvidence;
+    issuedCsrfEvidence.add(evidence);
+    return evidence;
+  }
+
+  verifiedCsrfDigest(workload: ProductWorkloadIdentity, evidence: VerifiedCsrfEvidence): string {
+    if (
+      !issuedCsrfEvidence.has(evidence) || evidence.workloadIdentityId !== workload.workloadIdentityId ||
+      evidence.digest !== workload.csrfSha256
+    ) throw new SessionAuthorizationError("WORKLOAD_NOT_AUTHORIZED");
+    return evidence.digest;
   }
 
   async verify(

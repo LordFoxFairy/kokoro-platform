@@ -9,16 +9,24 @@ describe("Platform Public mutation evidence", () => {
     const token = "raw-token-that-is-long-enough-to-verify-123456";
     const csrfEvidenceDigest = createHash("sha256").update(token, "utf8").digest("hex");
     const { registry, workload } = fixture(csrfEvidenceDigest);
-    expect(registry.verifyCsrfEvidence(workload, token)).toBe(csrfEvidenceDigest);
-    const context = await buildPlatformPublicRequestSecurityContext({ workload, session: null, operation: "exchangeProductContext", requestId: "req", correlationId: "corr", now: "2026-07-28T00:00:00.000Z", projectRef: null, registry, csrfEvidenceDigest });
+    const csrfEvidence = registry.verifyCsrfEvidence(workload, token);
+    expect(csrfEvidence).not.toBeNull();
+    const context = await buildPlatformPublicRequestSecurityContext({ workload, session: null, operation: "exchangeProductContext", requestId: "req", correlationId: "corr", now: "2026-07-28T00:00:00.000Z", projectRef: null, registry, csrfEvidence: csrfEvidence! });
     expect(context.evidence).toContainEqual({ kind: "csrf_verification", evidenceId: csrfEvidenceDigest, issuer: "kokoro-platform-public" });
     expect(JSON.stringify(context)).not.toContain(token);
   });
 
   it("does not manufacture CSRF evidence for a read context", async () => {
     const { registry, workload } = fixture("c".repeat(64));
-    const context = await buildPlatformPublicRequestSecurityContext({ workload, session: null, operation: "getPersonalContext", requestId: "req", correlationId: "corr", now: "2026-07-28T00:00:00.000Z", projectRef: null, registry, csrfEvidenceDigest: null });
+    const context = await buildPlatformPublicRequestSecurityContext({ workload, session: null, operation: "getPersonalContext", requestId: "req", correlationId: "corr", now: "2026-07-28T00:00:00.000Z", projectRef: null, registry, csrfEvidence: null });
     expect(context.evidence.some((item) => item.kind === "csrf_verification")).toBe(false);
+  });
+
+  it("rejects a forged raw digest or object without registry provenance", async () => {
+    const { registry, workload } = fixture("c".repeat(64));
+    const base = { workload, session: null, operation: "exchangeProductContext" as const, requestId: "req", correlationId: "corr", now: "2026-07-28T00:00:00.000Z", projectRef: null, registry };
+    await expect(buildPlatformPublicRequestSecurityContext({ ...base, csrfEvidence: "c".repeat(64) as never })).rejects.toThrow("WORKLOAD_NOT_AUTHORIZED");
+    await expect(buildPlatformPublicRequestSecurityContext({ ...base, csrfEvidence: { workloadIdentityId: workload.workloadIdentityId, digest: "c".repeat(64) } as never })).rejects.toThrow("WORKLOAD_NOT_AUTHORIZED");
   });
 });
 

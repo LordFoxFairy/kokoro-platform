@@ -13,6 +13,7 @@ import {
   type SessionGrantResource,
 } from "../../modules/authorization/domain/session-access-grant.js";
 import { ProductWorkloadRegistry } from "../../modules/authorization/infrastructure/transport/product-workload-registry.js";
+import type { VerifiedCsrfEvidence } from "../../modules/authorization/infrastructure/transport/product-workload-registry.js";
 import { verifyRequestSecurityContext, type VerifiedRequestSecurityContext } from "../../shared/security-context/request-security-context.js";
 import {
   zExchangeProductContextBody,
@@ -64,12 +65,12 @@ export function createPlatformPublicHttpHandler(input: Readonly<{
         let session: AuthenticatedUserSession | null = null;
         if (operation === "exchangeProductContext") {
           const headers = requestValue(zExchangeProductContextHeaders, mutationHeaders(request));
-          const csrfEvidenceDigest = input.workloads.verifyCsrfEvidence(workload, headers["X-CSRF-Token"]);
-          if (csrfEvidenceDigest === null) {
+          const csrfEvidence = input.workloads.verifyCsrfEvidence(workload, headers["X-CSRF-Token"]);
+          if (csrfEvidence === null) {
             throw new SessionAuthorizationError("WORKLOAD_NOT_AUTHORIZED");
           }
           const commandBody = requestValue(zExchangeProductContextBody, await readJsonBody(request));
-          const context = await buildPlatformPublicRequestSecurityContext({ workload, session: null, operation, requestId, correlationId, now, projectRef: null, registry: input.workloads, csrfEvidenceDigest });
+          const context = await buildPlatformPublicRequestSecurityContext({ workload, session: null, operation, requestId, correlationId, now, projectRef: null, registry: input.workloads, csrfEvidence });
           const result = await input.exchangeProductContext.execute({
             workload,
             context,
@@ -86,14 +87,14 @@ export function createPlatformPublicHttpHandler(input: Readonly<{
         if (operation === "getPersonalContext") {
           requestValue(zGetPersonalContextHeaders, readHeaders(request, ["Kokoro-Contract-Version"]));
           session = await authenticateSession(input.sessions, request, workload, now);
-          const context = await buildPlatformPublicRequestSecurityContext({ workload, session, operation, requestId, correlationId, now, projectRef: null, registry: input.workloads, csrfEvidenceDigest: null });
+          const context = await buildPlatformPublicRequestSecurityContext({ workload, session, operation, requestId, correlationId, now, projectRef: null, registry: input.workloads, csrfEvidence: null });
           const result = await input.getPersonalContext.execute({ workload, session, context });
           sendJson(response, 200, zGetPersonalContextResponse.parse(result));
           return true;
         }
         const headers = requestValue(zIssueSessionAccessGrantHeaders, mutationHeaders(request, false));
-        const csrfEvidenceDigest = input.workloads.verifyCsrfEvidence(workload, headers["X-CSRF-Token"]);
-        if (csrfEvidenceDigest === null) {
+        const csrfEvidence = input.workloads.verifyCsrfEvidence(workload, headers["X-CSRF-Token"]);
+        if (csrfEvidence === null) {
           throw new SessionAuthorizationError("WORKLOAD_NOT_AUTHORIZED");
         }
         const grantInput = requestValue(zIssueSessionAccessGrantBody, await readJsonBody(request));
@@ -107,7 +108,7 @@ export function createPlatformPublicHttpHandler(input: Readonly<{
           now,
           projectRef: grantInput.projectRef,
           registry: input.workloads,
-          csrfEvidenceDigest,
+          csrfEvidence,
         });
         const grant = await input.issueSessionAccessGrant.execute({
           workload,
@@ -194,7 +195,7 @@ export async function buildPlatformPublicRequestSecurityContext(input: Readonly<
   now: string;
   projectRef: string | null;
   registry: ProductWorkloadRegistry;
-  csrfEvidenceDigest: string | null;
+  csrfEvidence: VerifiedCsrfEvidence | null;
 }>): Promise<VerifiedRequestSecurityContext> {
   const expiresAt = instant(new Date(Date.parse(input.now) + 60_000));
   const actor = input.session === null
@@ -245,9 +246,9 @@ export async function buildPlatformPublicRequestSecurityContext(input: Readonly<
         evidenceId: input.workload.certificateSha256,
         issuer: "kokoro-platform-product-workload-registry",
       },
-      ...(input.csrfEvidenceDigest === null ? [] : [{
+      ...(input.csrfEvidence === null ? [] : [{
         kind: "csrf_verification",
-        evidenceId: input.csrfEvidenceDigest,
+        evidenceId: input.registry.verifiedCsrfDigest(input.workload, input.csrfEvidence),
         issuer: "kokoro-platform-public",
       }]),
       ...(input.session === null ? [] : [{
