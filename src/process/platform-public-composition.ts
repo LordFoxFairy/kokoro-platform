@@ -217,7 +217,7 @@ export async function createPlatformPublicProductionComposition(
   });
 }
 
-async function loadRedemptionSecretCodec(path: string) {
+export async function loadRedemptionSecretCodec(path: string) {
   const root = record(JSON.parse(await readBoundedSecret(path, 64 * 1024)) as unknown, "REDEMPTION_KEY_RING_INVALID");
   exactCommerce(root, [
     "version", "currentCodeLookupKeyRevision", "codeLookupKeys",

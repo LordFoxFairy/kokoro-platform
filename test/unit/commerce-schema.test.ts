@@ -42,6 +42,23 @@ describe("Wave 2A Commerce authority schema", () => {
     expect(migration).toContain("UNIQUE(site_ref,output_plan_digest)");
   });
 
+  it("owns formal maker-checker issuance and one-time Code export facts", () => {
+    expect(migration).toContain("batch_selector CHAR(10) NOT NULL");
+    expect(migration).toContain("created_by_subject_ref TEXT NOT NULL");
+    expect(migration).toContain("CREATE TABLE platform.commerce_code_batch_approval (");
+    expect(migration).toContain("CHECK(maker_subject_ref<>checker_subject_ref)");
+    expect(migration).toContain("CREATE TABLE platform.commerce_code_secret_export (");
+    expect(migration).toContain("commerce_code_secret_export_immutable");
+  });
+
+  it("forces default-deny Site RLS across all fresh Commerce and Credit authority tables", () => {
+    expect(migration).toContain("ALTER TABLE platform.%I FORCE ROW LEVEL SECURITY");
+    expect(migration).toContain("CREATE POLICY site_isolation");
+    expect(migration).toContain("current_setting(''app.site_id'',true)");
+    expect(migration).toContain("ALTER TABLE platform.commerce_fulfillment_actual_output FORCE ROW LEVEL SECURITY");
+    expect(migration).toContain("ALTER TABLE platform.commerce_command_outbox FORCE ROW LEVEL SECURITY");
+  });
+
   it("keeps preview non-reserving and freezes its complete confirmation binding", () => {
     expect(migration).toContain("CREATE TABLE platform.commerce_redemption_preview (");
     expect(migration).toContain("subject_generation BIGINT NOT NULL");

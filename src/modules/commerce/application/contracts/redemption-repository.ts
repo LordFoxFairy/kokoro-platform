@@ -3,6 +3,7 @@ import type { RedemptionPreviewCandidate, StoredRedemptionPreview } from "../../
 
 export interface RedemptionCodeLookupCandidate {
   readonly keyRevision: string;
+  readonly batchSelector: string;
   readonly lookupDigest: string;
 }
 

@@ -56,5 +56,5 @@ REVOKE ALL ON
   platform.authorization_scoped_event_log
 FROM PUBLIC;
 
-ALTER DEFAULT PRIVILEGES FOR ROLE platform_migrator IN SCHEMA platform
+ALTER DEFAULT PRIVILEGES IN SCHEMA platform
   REVOKE ALL ON TABLES FROM PUBLIC;

@@ -1,11 +1,11 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
-import type { RedemptionSecretPort } from "../../application/contracts/redemption-secret-port.js";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import type { RedemptionCodeIssuancePort, RedemptionSecretPort } from "../../application/contracts/redemption-secret-port.js";
 import { RedemptionInputError } from "../../domain/redemption-input-error.js";
 import { commerceCanonicalJson } from "../../domain/canonical-json.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const KEY_REVISION = /^[A-Za-z0-9_-]{1,64}$/u;
-const CODE = /^[A-Z0-9]{16,256}$/u;
+const CODE = /^KC1-([0-9A-HJKMNP-TV-Z]{8})-([0-9A-HJKMNP-TV-Z]{10})-([0-9A-HJKMNP-TV-Z]{32})-([0-9A-HJKMNP-TV-Z]{8})$/u;
 
 export type RedemptionHmacKey = Readonly<{ keyRevision: string; key: Uint8Array }>;
 
@@ -17,16 +17,12 @@ export type RedemptionSecretCodecConfig = Readonly<{
   requestAuditKey: Uint8Array;
 }>;
 
-export function createRedemptionSecretCodec(config: RedemptionSecretCodecConfig): RedemptionSecretPort {
+export function createRedemptionSecretCodec(config: RedemptionSecretCodecConfig): RedemptionSecretPort & RedemptionCodeIssuancePort {
   const codeKeys = keyMap(config.codeLookupKeys, config.currentCodeLookupKeyRevision);
   const previewKeys = keyMap(config.previewCredentialKeys, config.currentPreviewCredentialKeyRevision);
   const auditKey = ownedKey(config.requestAuditKey);
-  const orderedCodeKeys = Object.freeze([
-    [config.currentCodeLookupKeyRevision, codeKeys.get(config.currentCodeLookupKeyRevision)!] as const,
-    ...[...codeKeys.entries()]
-      .filter(([revision]) => revision !== config.currentCodeLookupKeyRevision)
-      .sort(([left], [right]) => left.localeCompare(right, "en")),
-  ]);
+  const codeSelectors = new Map([...codeKeys].map(([revision, key]) => [selector(revision, 8), [revision, key] as const]));
+  if (codeSelectors.size !== codeKeys.size) throw new Error("REDEMPTION_KEY_SELECTOR_COLLISION");
 
   function previewCredential(previewRef: string, keyRevision: string = config.currentPreviewCredentialKeyRevision): string {
     if (!UUID.test(previewRef)) throw new Error("REDEMPTION_PREVIEW_REF_INVALID");
@@ -39,13 +35,31 @@ export function createRedemptionSecretCodec(config: RedemptionSecretCodecConfig)
 
   return Object.freeze({
     currentCodeLookupKeyRevision: config.currentCodeLookupKeyRevision,
+    issueCode(siteId: string, batchRef: string) {
+      bounded(siteId, 256, "REDEMPTION_SITE_INVALID");
+      if (!UUID.test(batchRef)) throw new Error("REDEMPTION_BATCH_REF_INVALID");
+      const keyRevision = config.currentCodeLookupKeyRevision;
+      const keySelector = selector(keyRevision, 8);
+      const batchSelector = selector(batchRef, 10);
+      const payload = base32(randomBytes(20));
+      const prefix = `KC1-${keySelector}-${batchSelector}-${payload}`;
+      const code = `${prefix}-${selector(prefix, 8)}`;
+      const normalized = normalizeCode(code);
+      return Object.freeze({
+        code, keyRevision, batchSelector,
+        lookupDigest: hmac(codeKeys.get(keyRevision)!, "kokoro.commerce.code-lookup.v1", `${siteId}\0${normalized}`),
+        safeFingerprint: `CODE-${hmac(auditKey, "kokoro.commerce.safe-code-fingerprint.v1", `${siteId}\0${normalized}`).slice(0, 16).toUpperCase()}`,
+      });
+    },
     codeLookupCandidates(code: string, siteId: string) {
       const normalized = normalizeCode(code);
       bounded(siteId, 256, "REDEMPTION_SITE_INVALID");
-      return Object.freeze(orderedCodeKeys.map(([keyRevision, key]) => Object.freeze({
-        keyRevision,
-        lookupDigest: hmac(key, "kokoro.commerce.code-lookup.v1", `${siteId}\0${normalized}`),
-      })));
+      const match = CODE.exec(normalized)!;
+      const selected = codeSelectors.get(match[1]!);
+      if (selected === undefined) throw new RedemptionInputError();
+      const [keyRevision, key] = selected;
+      return Object.freeze([Object.freeze({ keyRevision, batchSelector: match[2]!,
+        lookupDigest: hmac(key, "kokoro.commerce.code-lookup.v1", `${siteId}\0${normalized}`) })]);
     },
     safeCodeFingerprint(code: string, siteId: string) {
       const normalized = normalizeCode(code);
@@ -122,9 +136,24 @@ function ownedKey(key: Uint8Array): Uint8Array {
 }
 
 function normalizeCode(value: string): string {
-  const normalized = value.normalize("NFKC").toUpperCase().replaceAll("-", "");
-  if (!CODE.test(normalized)) throw new RedemptionInputError();
+  const normalized = value.normalize("NFKC").toUpperCase();
+  const match = CODE.exec(normalized);
+  if (match === null || selector(normalized.slice(0, normalized.lastIndexOf("-")), 8) !== match[4]) throw new RedemptionInputError();
   return normalized;
+}
+
+const BASE32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+function base32(bytes: Uint8Array): string {
+  let bits = 0; let buffer = 0; let output = "";
+  for (const byte of bytes) {
+    buffer = (buffer << 8) | byte; bits += 8;
+    while (bits >= 5) { bits -= 5; output += BASE32[(buffer >>> bits) & 31]; }
+  }
+  if (bits > 0) output += BASE32[(buffer << (5 - bits)) & 31];
+  return output;
+}
+function selector(value: string, length: number): string {
+  return base32(createHash("sha256").update(value, "utf8").digest()).slice(0, length);
 }
 
 function hmac(key: Uint8Array, domain: string, value: string, encoding: "hex" | "base64url" = "hex"): string {

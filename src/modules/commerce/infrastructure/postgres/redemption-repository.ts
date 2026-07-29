@@ -86,6 +86,7 @@ export class PostgresRedemptionRepository implements RedemptionRepository {
       input.siteId,
       JSON.stringify(input.lookupCandidates.map((item) => ({
         key_revision: item.keyRevision,
+        batch_selector: item.batchSelector,
         lookup_digest: item.lookupDigest,
       }))),
       input.billingAccountId,
@@ -298,12 +299,13 @@ const CANDIDATE_SQL = `
          effect.observed_at AS "observedAt",
          product_version.legal_term_refs AS "legalTermRefs"
   FROM effect
-  CROSS JOIN jsonb_to_recordset($2::jsonb) AS lookup(key_revision TEXT,lookup_digest TEXT)
+  CROSS JOIN jsonb_to_recordset($2::jsonb) AS lookup(key_revision TEXT,batch_selector TEXT,lookup_digest TEXT)
   JOIN platform.commerce_redeem_code code
     ON code.site_ref=$1 AND code.code_lookup_key_revision=lookup.key_revision
       AND code.lookup_digest=lookup.lookup_digest AND code.state='available'
   JOIN platform.commerce_code_batch batch
     ON batch.batch_ref=code.batch_ref AND batch.site_ref=code.site_ref AND batch.state='active'
+      AND batch.batch_selector=lookup.batch_selector
       AND (batch.starts_at IS NULL OR batch.starts_at <= effect.observed_at)
       AND (batch.ends_at IS NULL OR batch.ends_at > effect.observed_at)
   JOIN platform.commerce_redemption_program_revision program

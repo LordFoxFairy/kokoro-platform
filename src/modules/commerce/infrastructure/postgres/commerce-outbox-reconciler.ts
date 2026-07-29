@@ -27,8 +27,16 @@ export interface OutboxDeliveryTransport {
 
 export class PostgresCommerceOutboxProjection implements CommerceOutboxProjection {
   async assertDeliverable(transaction: PlatformTransaction, event: ClaimedOutboxEvent): Promise<void> {
-    if (event.owner === "commerce") return this.#assertCommerce(transaction, fulfillmentEvent(event));
-    if (event.owner === "credit") return this.#assertCredit(transaction, creditEvent(event));
+    if (event.owner === "commerce") {
+      const payload = fulfillmentEvent(event);
+      await bindSite(transaction, payload.siteId);
+      return this.#assertCommerce(transaction, payload);
+    }
+    if (event.owner === "credit") {
+      const payload = creditEvent(event);
+      await bindSite(transaction, payload.siteId);
+      return this.#assertCredit(transaction, payload);
+    }
     throw new Error("OUTBOX_OWNER_UNSUPPORTED");
   }
 
@@ -223,4 +231,10 @@ function instant(value: Date | string): string {
   const parsed = value instanceof Date ? value : new Date(value);
   if (!Number.isFinite(parsed.getTime())) throw new Error("COMMERCE_OUTBOX_TIMESTAMP_INVALID");
   return parsed.toISOString();
+}
+async function bindSite(transaction: PlatformTransaction, siteId: string): Promise<void> {
+  const rows = await resolvePlatformTransaction(transaction).query<Record<string, unknown> & { siteId: string }>(
+    `SELECT set_config('app.site_id',$1,true) AS "siteId"`, [siteId],
+  );
+  if (rows[0]?.siteId !== siteId) throw new Error("OUTBOX_SITE_BINDING_FAILED");
 }

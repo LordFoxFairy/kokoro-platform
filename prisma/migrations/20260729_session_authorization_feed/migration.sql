@@ -92,5 +92,5 @@ REVOKE ALL ON
   platform.authorization_snapshot_record
 FROM PUBLIC;
 
-ALTER DEFAULT PRIVILEGES FOR ROLE platform_migrator IN SCHEMA platform
+ALTER DEFAULT PRIVILEGES IN SCHEMA platform
   REVOKE ALL ON TABLES FROM PUBLIC;

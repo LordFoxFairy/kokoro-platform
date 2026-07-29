@@ -54,10 +54,10 @@ describe("PostgresRedemptionRepository preview", () => {
       const result = await new PostgresRedemptionRepository().resolvePreviewCandidate(lease.transaction, {
         siteId: "site-1",
         billingAccountId: "billing-1",
-        lookupCandidates: [{ keyRevision: "code-1", lookupDigest: "d".repeat(64) }],
+        lookupCandidates: [{ keyRevision: "code-1", batchSelector: "0123456789", lookupDigest: "d".repeat(64) }],
       });
       expect(JSON.parse(calls[0]!.values[1] as string)).toEqual([
-        { key_revision: "code-1", lookup_digest: "d".repeat(64) },
+        { key_revision: "code-1", batch_selector: "0123456789", lookup_digest: "d".repeat(64) },
       ]);
       expect(calls[0]!.statement).toContain("commerce_redemption_program_availability");
       expect(calls[0]!.statement).toContain("clock_timestamp()");
@@ -104,7 +104,7 @@ describe("PostgresRedemptionRepository preview", () => {
       try {
         await expect(new PostgresRedemptionRepository().resolvePreviewCandidate(lease.transaction, {
           siteId: "site-1", billingAccountId: "billing-1",
-          lookupCandidates: [{ keyRevision: "code-1", lookupDigest: "d".repeat(64) }],
+          lookupCandidates: [{ keyRevision: "code-1", batchSelector: "0123456789", lookupDigest: "d".repeat(64) }],
         })).rejects.toBeInstanceOf(RedemptionPolicyError);
       } finally {
         revokePlatformTransaction(lease);

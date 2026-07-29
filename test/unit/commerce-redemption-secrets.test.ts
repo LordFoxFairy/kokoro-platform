@@ -17,20 +17,16 @@ describe("Commerce redemption secret codec", () => {
     requestAuditKey: Buffer.alloc(32, 3),
   });
 
-  it("normalizes user formatting and returns only keyed lookup candidates", () => {
-    expect(codec.codeLookupCandidates("abcd-efgh-ijkl-mnop", "site-1")).toEqual(
-      codec.codeLookupCandidates("ABCDEFGHIJKLMNOP", "site-1"),
-    );
-    expect(codec.codeLookupCandidates("ABCDEFGHIJKLMNOP", "site-2")).not.toEqual(
-      codec.codeLookupCandidates("ABCDEFGHIJKLMNOP", "site-1"),
-    );
-    expect(codec.codeLookupCandidates("ABCDEFGHIJKLMNOP", "site-1").map((item) => item.keyRevision))
-      .toEqual(["code-2026-07", "code-2026-06"]);
-    expect(codec.safeCodeFingerprint("abcd-efgh-ijkl-mnop", "site-1")).toMatch(/^CODE-[A-F0-9]{16}$/u);
-    expect(codec.safeCodeFingerprint("abcd-efgh-ijkl-mnop", "site-1")).not.toContain("ABCD");
-    expect(codec.safeCodeFingerprint("abcd-efgh-ijkl-mnop", "site-1")).not.toContain("MNOP");
-    expect(codec.safeCodeFingerprint("abcd-efgh-ijkl-mnop", "site-1"))
-      .not.toBe(codec.safeCodeFingerprint("abcd-efgh-ijkl-mnop", "site-2"));
+  it("issues a high-entropy selector/checksum/batch-bound code and resolves exactly one key", () => {
+    const issued = codec.issueCode("site-1", "00000000-0000-7000-8000-000000000111");
+    expect(issued.code).toMatch(/^KC1-[0-9A-HJKMNP-TV-Z]{8}-[0-9A-HJKMNP-TV-Z]{10}-[0-9A-HJKMNP-TV-Z]{32}-[0-9A-HJKMNP-TV-Z]{8}$/u);
+    expect(codec.codeLookupCandidates(issued.code.toLowerCase(), "site-1")).toEqual([{
+      keyRevision: "code-2026-07", batchSelector: issued.batchSelector, lookupDigest: issued.lookupDigest,
+    }]);
+    expect(codec.codeLookupCandidates(issued.code, "site-2")[0]?.lookupDigest).not.toBe(issued.lookupDigest);
+    expect(codec.safeCodeFingerprint(issued.code, "site-1")).toBe(issued.safeFingerprint);
+    const tampered = `${issued.code.slice(0, -1)}${issued.code.endsWith("0") ? "1" : "0"}`;
+    expect(() => codec.codeLookupCandidates(tampered, "site-1")).toThrow(RedemptionInputError);
   });
 
   it("issues a deterministic opaque preview capability and verifies key rotation", () => {
@@ -59,9 +55,10 @@ describe("Commerce redemption secret codec", () => {
   });
 
   it("uses a separate keyed domain for durable request audit digests", () => {
-    const lookup = codec.codeLookupCandidates("ABCDEFGHIJKLMNOP", "site-1")[0]!;
+    const issued = codec.issueCode("site-1", "00000000-0000-7000-8000-000000000111");
+    const lookup = codec.codeLookupCandidates(issued.code, "site-1")[0]!;
     const audit = codec.previewRequestDigest({
-      siteId: "site-1", subjectId: "subject-1", subjectGeneration: "2", code: "ABCDEFGHIJKLMNOP",
+      siteId: "site-1", subjectId: "subject-1", subjectGeneration: "2", code: issued.code,
     });
     expect(audit).toMatch(/^[a-f0-9]{64}$/u);
     expect(audit).not.toBe(lookup.lookupDigest);

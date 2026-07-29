@@ -358,6 +358,8 @@ CREATE TABLE platform.commerce_code_batch (
   site_ref TEXT NOT NULL,
   redemption_program_revision_ref TEXT NOT NULL,
   code_lookup_key_revision TEXT NOT NULL CHECK(code_lookup_key_revision ~ '^[A-Za-z0-9_-]{1,64}$'),
+  batch_selector CHAR(10) NOT NULL CHECK(batch_selector ~ '^[0-9A-HJKMNP-TV-Z]{10}$'),
+  created_by_subject_ref TEXT NOT NULL CHECK(length(created_by_subject_ref) BETWEEN 1 AND 256),
   state TEXT NOT NULL CHECK(state IN ('draft','active','paused','retired')),
   starts_at TIMESTAMPTZ,
   ends_at TIMESTAMPTZ,
@@ -365,6 +367,7 @@ CREATE TABLE platform.commerce_code_batch (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   activated_at TIMESTAMPTZ,
   UNIQUE(batch_ref,site_ref),
+  UNIQUE(site_ref,batch_selector),
   UNIQUE(batch_ref,site_ref,code_lookup_key_revision),
   FOREIGN KEY(redemption_program_revision_ref,site_ref)
     REFERENCES platform.commerce_redemption_program_revision(redemption_program_revision_ref,site_ref),
@@ -401,6 +404,31 @@ CREATE TABLE platform.commerce_redeem_code (
 );
 CREATE INDEX commerce_redeem_code_batch_state_idx
   ON platform.commerce_redeem_code(batch_ref,state);
+
+CREATE TABLE platform.commerce_code_batch_approval (
+  batch_ref UUID PRIMARY KEY,
+  site_ref TEXT NOT NULL,
+  maker_subject_ref TEXT NOT NULL CHECK(length(maker_subject_ref) BETWEEN 1 AND 256),
+  checker_subject_ref TEXT NOT NULL CHECK(length(checker_subject_ref) BETWEEN 1 AND 256),
+  approval_command_id TEXT NOT NULL,
+  approved_at TIMESTAMPTZ NOT NULL,
+  approval_digest CHAR(64) NOT NULL CHECK(approval_digest ~ '^[a-f0-9]{64}$'),
+  FOREIGN KEY(batch_ref,site_ref) REFERENCES platform.commerce_code_batch(batch_ref,site_ref),
+  FOREIGN KEY(approval_command_id,site_ref) REFERENCES platform.commerce_command(command_id,site_ref),
+  CHECK(maker_subject_ref<>checker_subject_ref)
+);
+
+CREATE TABLE platform.commerce_code_secret_export (
+  batch_ref UUID PRIMARY KEY,
+  site_ref TEXT NOT NULL,
+  export_command_id TEXT NOT NULL,
+  exported_to_subject_ref TEXT NOT NULL CHECK(length(exported_to_subject_ref) BETWEEN 1 AND 256),
+  code_count INTEGER NOT NULL CHECK(code_count BETWEEN 1 AND 10000),
+  export_digest CHAR(64) NOT NULL CHECK(export_digest ~ '^[a-f0-9]{64}$'),
+  exported_at TIMESTAMPTZ NOT NULL,
+  FOREIGN KEY(batch_ref,site_ref) REFERENCES platform.commerce_code_batch(batch_ref,site_ref),
+  FOREIGN KEY(export_command_id,site_ref) REFERENCES platform.commerce_command(command_id,site_ref)
+);
 
 CREATE TABLE platform.commerce_redemption (
   redemption_id UUID PRIMARY KEY,
@@ -2082,6 +2110,12 @@ CREATE TRIGGER commerce_command_outbox_immutable
 CREATE TRIGGER commerce_audit_immutable
   BEFORE UPDATE OR DELETE ON platform.commerce_audit_entry
   FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE TRIGGER commerce_code_batch_approval_immutable
+  BEFORE UPDATE OR DELETE ON platform.commerce_code_batch_approval
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE TRIGGER commerce_code_secret_export_immutable
+  BEFORE UPDATE OR DELETE ON platform.commerce_code_secret_export
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
 CREATE CONSTRAINT TRIGGER commerce_output_plan_contiguous
   AFTER INSERT ON platform.commerce_fulfillment_output_plan
   DEFERRABLE INITIALLY DEFERRED
@@ -2236,6 +2270,8 @@ REVOKE ALL ON
   platform.commerce_subscription_term_revocation,
   platform.commerce_code_batch,
   platform.commerce_redeem_code,
+  platform.commerce_code_batch_approval,
+  platform.commerce_code_secret_export,
   platform.commerce_redemption,
   platform.commerce_redemption_preview,
   platform.commerce_redemption_legal_acceptance,
@@ -2281,3 +2317,52 @@ REVOKE ALL ON FUNCTION platform.assert_credit_hold_terminal_segments_closed() FR
 REVOKE ALL ON FUNCTION platform.assert_credit_allocation_receipt_conservation() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.guard_credit_execution_budget_root_transition() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.guard_credit_hold_transition() FROM PUBLIC;
+
+DO $$
+DECLARE
+  target RECORD;
+BEGIN
+  FOR target IN
+    SELECT table_name FROM information_schema.columns
+    WHERE table_schema='platform' AND column_name='site_ref'
+      AND (table_name LIKE 'commerce\_%' ESCAPE '\' OR table_name LIKE 'credit\_%' ESCAPE '\')
+    ORDER BY table_name
+  LOOP
+    EXECUTE format('ALTER TABLE platform.%I ENABLE ROW LEVEL SECURITY',target.table_name);
+    EXECUTE format('ALTER TABLE platform.%I FORCE ROW LEVEL SECURITY',target.table_name);
+    EXECUTE format(
+      'CREATE POLICY site_isolation ON platform.%I USING (site_ref=current_setting(''app.site_id'',true)) WITH CHECK (site_ref=current_setting(''app.site_id'',true))',
+      target.table_name
+    );
+  END LOOP;
+END $$;
+
+ALTER TABLE platform.commerce_fulfillment_output_plan ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.commerce_fulfillment_output_plan FORCE ROW LEVEL SECURITY;
+CREATE POLICY site_isolation ON platform.commerce_fulfillment_output_plan
+  USING (EXISTS (SELECT 1 FROM platform.commerce_fulfillment_transaction parent
+    WHERE parent.fulfillment_id=commerce_fulfillment_output_plan.fulfillment_id
+      AND parent.site_ref=current_setting('app.site_id',true)))
+  WITH CHECK (EXISTS (SELECT 1 FROM platform.commerce_fulfillment_transaction parent
+    WHERE parent.fulfillment_id=commerce_fulfillment_output_plan.fulfillment_id
+      AND parent.site_ref=current_setting('app.site_id',true)));
+
+ALTER TABLE platform.commerce_fulfillment_actual_output ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.commerce_fulfillment_actual_output FORCE ROW LEVEL SECURITY;
+CREATE POLICY site_isolation ON platform.commerce_fulfillment_actual_output
+  USING (EXISTS (SELECT 1 FROM platform.commerce_fulfillment_transaction parent
+    WHERE parent.fulfillment_id=commerce_fulfillment_actual_output.fulfillment_id
+      AND parent.site_ref=current_setting('app.site_id',true)))
+  WITH CHECK (EXISTS (SELECT 1 FROM platform.commerce_fulfillment_transaction parent
+    WHERE parent.fulfillment_id=commerce_fulfillment_actual_output.fulfillment_id
+      AND parent.site_ref=current_setting('app.site_id',true)));
+
+ALTER TABLE platform.commerce_command_outbox ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.commerce_command_outbox FORCE ROW LEVEL SECURITY;
+CREATE POLICY site_isolation ON platform.commerce_command_outbox
+  USING (EXISTS (SELECT 1 FROM platform.commerce_command parent
+    WHERE parent.command_id=commerce_command_outbox.command_id
+      AND parent.site_ref=current_setting('app.site_id',true)))
+  WITH CHECK (EXISTS (SELECT 1 FROM platform.commerce_command parent
+    WHERE parent.command_id=commerce_command_outbox.command_id
+      AND parent.site_ref=current_setting('app.site_id',true)));
