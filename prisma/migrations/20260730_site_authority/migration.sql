@@ -166,7 +166,7 @@ CREATE TABLE platform.site_traffic_stop_attempt (
   CHECK((state='requested')=(provider_operation_key IS NULL))
 );
 CREATE UNIQUE INDEX site_one_open_traffic_stop_idx ON platform.site_traffic_stop_attempt(site_ref)
-  WHERE state IN ('requested','stop_requested','observing','unknown');
+  WHERE state IN ('requested','stop_requested','observing','failed','unknown');
 CREATE INDEX site_traffic_stop_reconcile_idx
   ON platform.site_traffic_stop_attempt(state,updated_at,site_ref);
 

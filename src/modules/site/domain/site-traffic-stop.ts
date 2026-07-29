@@ -92,7 +92,7 @@ export function recordSiteTrafficStopEffectFailure(
 ): SiteTrafficStopAttempt {
   verifyAttempt(attempt);
   identifier(failureCode, "SITE_TRAFFIC_STOP_FAILURE_CODE_INVALID");
-  if (!attempt.providerOperationKey || !["stop_requested", "observing", "unknown"].includes(attempt.state)) {
+  if (!attempt.providerOperationKey || !["stop_requested", "observing", "unknown", "failed"].includes(attempt.state)) {
     throw new Error("SITE_TRAFFIC_STOP_TRANSITION_INVALID");
   }
   return Object.freeze({ ...attempt, state: outcome, failureCode });
@@ -104,7 +104,7 @@ export function observeSiteTrafficStop(
 ): Readonly<{ attempt: SiteTrafficStopAttempt; site: Pick<SiteAggregate, "state" | "activeReleaseRef"> }> {
   verifyAttempt(attempt);
   observationValue({ ...observation, attemptRef: attempt.attemptRef });
-  if (!["stop_requested", "observing", "unknown"].includes(attempt.state)) {
+  if (!["stop_requested", "observing", "unknown", "failed"].includes(attempt.state)) {
     throw new Error("SITE_TRAFFIC_STOP_TRANSITION_INVALID");
   }
   if (observation.providerOperationKey !== attempt.providerOperationKey ||

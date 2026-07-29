@@ -188,7 +188,7 @@ export function observePromotion(
   activation(attempt);
   identifier(observation.deploymentRef, "SITE_DEPLOYMENT_REF_INVALID");
   instant(observation.observedAt, "SITE_DEPLOYMENT_OBSERVED_AT_INVALID");
-  if (attempt.state !== "promote_requested" && attempt.state !== "observing" && attempt.state !== "unknown") {
+  if (!["promote_requested", "observing", "unknown", "failed"].includes(attempt.state)) {
     throw new Error("SITE_ACTIVATION_TRANSITION_INVALID");
   }
   if (
@@ -214,7 +214,7 @@ export function recordActivationEffectFailure(
 ): ActivationAttempt {
   activation(attempt);
   identifier(failureCode, "SITE_ACTIVATION_FAILURE_CODE_INVALID");
-  if (!["promote_requested", "observing", "unknown"].includes(attempt.state)) {
+  if (!["promote_requested", "observing", "unknown", "failed"].includes(attempt.state)) {
     throw new Error("SITE_ACTIVATION_TRANSITION_INVALID");
   }
   return Object.freeze({ ...attempt, state: outcome, failureCode });

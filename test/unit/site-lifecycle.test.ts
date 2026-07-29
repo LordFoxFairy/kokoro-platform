@@ -206,7 +206,7 @@ describe("Site lifecycle", () => {
     })).toThrow("SITE_RELEASE_DIGEST_INVALID");
   });
 
-  it("keeps ambiguous promotion effects reconcilable but definitive rejection terminal", () => {
+  it("keeps ambiguous and rejected promotion effects reconcilable under the same operation key", () => {
     const armed = requestPromotion(beginActivation({
       ...activationBinding, attemptRef: "activation_02", site: activeSite, candidate,
       expectedActiveReleaseRef: "release_01", requestedAt: "2026-07-28T12:00:00.000Z",
@@ -219,11 +219,11 @@ describe("Site lifecycle", () => {
     }).state).toBe("pointer_committing");
     const failed = recordActivationEffectFailure(armed, "failed", "PROVIDER_REJECTED");
     expect(failed).toMatchObject({ state: "failed", failureCode: "PROVIDER_REJECTED" });
-    expect(() => observePromotion(failed, {
+    expect(observePromotion(failed, {
       providerOperationKey: "provider-operation-activation-02", deploymentRef: "deployment_02",
       releaseRef: "release_02", webArtifactDigest: "a".repeat(64),
       observedAt: "2026-07-28T12:01:00.000Z", healthy: true, trafficReady: true,
-    })).toThrow("SITE_ACTIVATION_TRANSITION_INVALID");
+    })).toMatchObject({ state: "pointer_committing", failureCode: null });
   });
 
   it("requires a fresh activation after suspension and makes decommission irreversible", () => {

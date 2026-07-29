@@ -56,7 +56,7 @@ describe("Site traffic stop", () => {
     expect(reconciled.attempt.state).toBe("succeeded");
   });
 
-  it("records definitive rejection as failed without claiming traffic stopped", () => {
+  it("keeps definitive rejection fenced and reconcilable without claiming traffic stopped", () => {
     const begun = beginSiteTrafficStop({
       attemptRef: "traffic_stop_01", action: "suspend", site, deployment,
       providerNamespace: "vercel", requestedAt: "2026-07-29T13:00:00.000Z",
@@ -67,5 +67,12 @@ describe("Site traffic stop", () => {
       "PROVIDER_REJECTED",
     );
     expect(failed).toMatchObject({ state: "failed", failureCode: "PROVIDER_REJECTED" });
+    const reconciled = observeSiteTrafficStop(failed, {
+      observationRef: "01983f57-8cf1-7000-8000-000000000023",
+      providerOperationKey: "vercel:traffic-stop:01", deploymentRef: "deployment_01",
+      status: "stopped", observedAt: "2026-07-29T13:02:00.000Z",
+      payloadDigest: "d".repeat(64),
+    });
+    expect(reconciled.attempt).toMatchObject({ state: "succeeded", failureCode: null });
   });
 });
