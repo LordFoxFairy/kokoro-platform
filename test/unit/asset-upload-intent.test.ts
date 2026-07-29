@@ -52,8 +52,11 @@ describe("Asset upload intent", () => {
       capabilityAudience: "https://upload.example.test", minimumPartBytes: 100n,
       maximumPartBytes: 10_000_000n, capabilityLifetimeSeconds: 300 });
     const uploading = markUploadCapabilityIssued(session, 1n, 1n, "2026-07-28T12:05:00.000Z");
-    expect(() => beginUploadCompletion(uploading, 1n)).toThrow("ASSET_UPLOAD_COMPLETION_CONFLICT");
-    expect(beginUploadCompletion(uploading, 2n)).toMatchObject({ state: "completing", expectedVersion: 3n });
+    expect(() => beginUploadCompletion(uploading, 1n, "2026-07-28T12:01:00.000Z"))
+      .toThrow("ASSET_UPLOAD_COMPLETION_CONFLICT");
+    expect(beginUploadCompletion(uploading, 2n, "2026-07-28T12:01:00.000Z"))
+      .toMatchObject({ state: "completing", expectedVersion: 3n,
+        completionRequestedAt: "2026-07-28T12:01:00.000Z" });
   });
 
   it("never treats a display name as an object key or lets bidi/control characters survive", () => {

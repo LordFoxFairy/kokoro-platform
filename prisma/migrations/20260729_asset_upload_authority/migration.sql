@@ -55,6 +55,7 @@ CREATE TABLE platform.asset_upload_session (
   capability_lifetime_seconds INTEGER NOT NULL CHECK (capability_lifetime_seconds BETWEEN 30 AND 900),
   capability_epoch BIGINT NOT NULL DEFAULT 0 CHECK (capability_epoch >= 0),
   capability_expires_at TIMESTAMPTZ,
+  completion_requested_at TIMESTAMPTZ,
   state TEXT NOT NULL CHECK (state IN (
     'awaiting_capability','uploading','completing','reconciling_upload',
     'validating','completed','aborting','aborted','rejected'
@@ -72,7 +73,11 @@ CREATE TABLE platform.asset_upload_session (
   FOREIGN KEY(project_ref,site_ref)
     REFERENCES platform.authorization_project(project_ref,site_ref),
   CHECK (capability_expires_at IS NULL OR capability_expires_at <= expires_at),
-  CHECK ((capability_epoch=0 AND capability_expires_at IS NULL) OR capability_epoch > 0)
+  CHECK ((capability_epoch=0 AND capability_expires_at IS NULL) OR capability_epoch > 0),
+  CHECK (
+    (state IN ('awaiting_capability','uploading') AND completion_requested_at IS NULL)
+    OR (state NOT IN ('awaiting_capability','uploading') AND completion_requested_at IS NOT NULL)
+  )
 );
 CREATE INDEX asset_upload_session_owner_idx
   ON platform.asset_upload_session(site_ref,subject_ref,state,expires_at);
@@ -155,6 +160,16 @@ BEGIN
   END IF;
   IF NEW.expected_version <> OLD.expected_version+1 THEN
     RAISE EXCEPTION 'ASSET_UPLOAD_SESSION_VERSION_INVALID' USING ERRCODE='40001';
+  END IF;
+  IF OLD.completion_requested_at IS NOT NULL AND
+     NEW.completion_requested_at IS DISTINCT FROM OLD.completion_requested_at THEN
+    RAISE EXCEPTION 'ASSET_UPLOAD_COMPLETION_TIME_IMMUTABLE' USING ERRCODE='23000';
+  END IF;
+  IF NEW.state IN ('awaiting_capability','uploading') AND NEW.completion_requested_at IS NOT NULL THEN
+    RAISE EXCEPTION 'ASSET_UPLOAD_COMPLETION_TIME_INVALID' USING ERRCODE='23514';
+  END IF;
+  IF NEW.state NOT IN ('awaiting_capability','uploading') AND NEW.completion_requested_at IS NULL THEN
+    RAISE EXCEPTION 'ASSET_UPLOAD_COMPLETION_TIME_REQUIRED' USING ERRCODE='23514';
   END IF;
   IF NEW.capability_epoch <> OLD.capability_epoch THEN
     IF OLD.state NOT IN ('awaiting_capability','uploading') OR NEW.state<>'uploading'

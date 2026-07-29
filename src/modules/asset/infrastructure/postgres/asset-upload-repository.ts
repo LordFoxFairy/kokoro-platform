@@ -136,7 +136,8 @@ export class PostgresAssetUploadRepository implements AssetUploadRepositoryPort,
     await lockCurrentAuthority(sql, pair.intent, "asset.complete-upload");
     const rows = await sql.query<SessionRow>(
       `UPDATE platform.asset_upload_session AS session
-       SET state='completing',expected_version=expected_version+1,updated_at=now()
+       SET state='completing',completion_requested_at=now(),
+           expected_version=expected_version+1,updated_at=now()
        WHERE site_ref=$1 AND intent_ref=$2 AND session_ref=$3
          AND expected_version=$4::bigint AND state='uploading' AND now()<expires_at
        RETURNING ${SESSION_COLUMNS}`,
@@ -196,14 +197,15 @@ async function insertSession(sql: PlatformSqlTransaction, value: AssetUploadSess
      (session_ref,intent_ref,site_ref,subject_ref,subject_generation,project_ref,purpose,
       quota_revision_ref,storage_tenant_ref,storage_region,quarantine_object_ref,protocol_revision,
       capability_audience,minimum_part_bytes,maximum_part_bytes,capability_lifetime_seconds,
-      capability_epoch,capability_expires_at,state,expected_version,expires_at)
+      capability_epoch,capability_expires_at,completion_requested_at,state,expected_version,expires_at)
      VALUES ($1,$2,$3,$4,$5::bigint,$6,$7,$8,$9,$10,$11,$12,$13,$14::bigint,$15::bigint,
-       $16,$17::bigint,$18::timestamptz,$19,$20::bigint,$21::timestamptz)`,
+       $16,$17::bigint,$18::timestamptz,$19::timestamptz,$20,$21::bigint,$22::timestamptz)`,
     [value.sessionRef, value.intentRef, value.siteRef, value.subjectRef, value.subjectGeneration,
       value.projectRef, value.purpose, value.quotaRevisionRef, value.storageTenantRef,
       value.storageRegion, value.quarantineObjectRef, value.protocolRevision, value.capabilityAudience,
       value.minimumPartBytes, value.maximumPartBytes, value.capabilityLifetimeSeconds,
-      value.capabilityEpoch, value.capabilityExpiresAt, value.state, value.expectedVersion, value.expiresAt],
+      value.capabilityEpoch, value.capabilityExpiresAt, value.completionRequestedAt,
+      value.state, value.expectedVersion, value.expiresAt],
   );
 }
 
@@ -260,6 +262,7 @@ const SESSION_COLUMNS = `
   session.maximum_part_bytes AS "maximumPartBytes",
   session.capability_lifetime_seconds AS "capabilityLifetimeSeconds",
   session.capability_epoch AS "capabilityEpoch",session.capability_expires_at AS "capabilityExpiresAt",
+  session.completion_requested_at AS "completionRequestedAt",
   session.state AS "sessionState",session.expected_version AS "sessionExpectedVersion",
   session.expires_at AS "sessionExpiresAt"`;
 
@@ -277,6 +280,7 @@ type SessionRow = Readonly<{
   protocolRevision: AssetUploadSession["protocolRevision"]; capabilityAudience: string;
   minimumPartBytes: bigint; maximumPartBytes: bigint; capabilityLifetimeSeconds: number;
   capabilityEpoch: bigint; capabilityExpiresAt: Date | string | null;
+  completionRequestedAt: Date | string | null;
   sessionState: AssetUploadSession["state"]; sessionExpectedVersion: bigint; sessionExpiresAt: Date | string;
 }>;
 type QuotaAccountRow = Readonly<{
@@ -310,6 +314,7 @@ function hydrateSession(row: SessionRow): AssetUploadSession {
     maximumPartBytes: row.maximumPartBytes, capabilityLifetimeSeconds: row.capabilityLifetimeSeconds,
     capabilityEpoch: row.capabilityEpoch,
     capabilityExpiresAt: row.capabilityExpiresAt === null ? null : instant(row.capabilityExpiresAt),
+    completionRequestedAt: row.completionRequestedAt === null ? null : instant(row.completionRequestedAt),
     state: row.sessionState, expectedVersion: row.sessionExpectedVersion, expiresAt: instant(row.sessionExpiresAt),
   });
 }

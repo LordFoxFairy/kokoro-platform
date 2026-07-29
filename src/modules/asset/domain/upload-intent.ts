@@ -58,6 +58,7 @@ export interface AssetUploadSession {
   readonly capabilityLifetimeSeconds: number;
   readonly capabilityEpoch: bigint;
   readonly capabilityExpiresAt: string | null;
+  readonly completionRequestedAt: string | null;
   readonly state: UploadSessionState;
   readonly expectedVersion: bigint;
   readonly expiresAt: string;
@@ -169,6 +170,7 @@ export function createUploadSession(input: Readonly<{
     capabilityLifetimeSeconds: input.capabilityLifetimeSeconds,
     capabilityEpoch: 0n,
     capabilityExpiresAt: null,
+    completionRequestedAt: null,
     state: "awaiting_capability",
     expectedVersion: 1n,
     expiresAt: input.intent.expiresAt,
@@ -204,12 +206,18 @@ export function markUploadCapabilityIssued(
 export function beginUploadCompletion(
   value: AssetUploadSession,
   expectedVersion: bigint,
+  requestedAt: string,
 ): AssetUploadSession {
   verifyUploadSession(value);
   if (value.state !== "uploading" || value.expectedVersion !== expectedVersion) {
     throw new Error("ASSET_UPLOAD_COMPLETION_CONFLICT");
   }
-  return Object.freeze({ ...value, state: "completing", expectedVersion: increment(value.expectedVersion) });
+  instant(requestedAt, "ASSET_UPLOAD_COMPLETION_TIME_INVALID");
+  if (Date.parse(requestedAt) >= Date.parse(value.expiresAt)) {
+    throw new Error("ASSET_UPLOAD_SESSION_EXPIRED");
+  }
+  return Object.freeze({ ...value, completionRequestedAt: requestedAt,
+    state: "completing", expectedVersion: increment(value.expectedVersion) });
 }
 
 export function verifyUploadIntent(value: AssetUploadIntent): AssetUploadIntent {
@@ -253,6 +261,14 @@ export function verifyUploadSession(value: AssetUploadSession): AssetUploadSessi
   ) throw new Error("ASSET_UPLOAD_SESSION_VALUE_INVALID");
   instant(value.expiresAt, "ASSET_UPLOAD_EXPIRY_INVALID");
   if (value.capabilityExpiresAt !== null) instant(value.capabilityExpiresAt, "ASSET_UPLOAD_CAPABILITY_EXPIRY_INVALID");
+  if (value.completionRequestedAt !== null) {
+    instant(value.completionRequestedAt, "ASSET_UPLOAD_COMPLETION_TIME_INVALID");
+  }
+  if (
+    (["awaiting_capability", "uploading"] as UploadSessionState[]).includes(value.state)
+      ? value.completionRequestedAt !== null
+      : value.completionRequestedAt === null
+  ) throw new Error("ASSET_UPLOAD_COMPLETION_TIME_INVALID");
   if (!new Set<UploadSessionState>(["awaiting_capability", "uploading", "completing",
     "reconciling_upload", "validating", "completed", "aborting", "aborted", "rejected"]).has(value.state)) {
     throw new Error("ASSET_UPLOAD_SESSION_STATE_INVALID");

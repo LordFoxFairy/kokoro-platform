@@ -1796,6 +1796,7 @@ model AssetUploadSession {
   capabilityLifetimeSeconds Int       @map("capability_lifetime_seconds")
   capabilityEpoch           BigInt    @default(0) @map("capability_epoch")
   capabilityExpiresAt       DateTime? @map("capability_expires_at") @db.Timestamptz(6)
+  completionRequestedAt     DateTime? @map("completion_requested_at") @db.Timestamptz(6)
   state                     String
   expectedVersion           BigInt    @map("expected_version")
   expiresAt                 DateTime  @map("expires_at") @db.Timestamptz(6)

@@ -130,7 +130,8 @@ function databaseSessionRow(overrides: Record<string, unknown>) {
     protocolRevision: session.protocolRevision, capabilityAudience: session.capabilityAudience,
     minimumPartBytes: session.minimumPartBytes, maximumPartBytes: session.maximumPartBytes,
     capabilityLifetimeSeconds: session.capabilityLifetimeSeconds, capabilityEpoch: session.capabilityEpoch,
-    capabilityExpiresAt: session.capabilityExpiresAt, sessionState: session.state,
+    capabilityExpiresAt: session.capabilityExpiresAt,
+    completionRequestedAt: session.completionRequestedAt, sessionState: session.state,
     sessionExpectedVersion: session.expectedVersion, sessionExpiresAt: session.expiresAt,
     ...overrides,
   };

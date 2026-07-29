@@ -35,7 +35,7 @@ const uploading = {
 function fixture() {
   let receipt: CommandReceipt | null = null;
   const beginCompletion = vi.fn(async (_transaction, input: { expectedVersion: bigint }) =>
-    beginUploadCompletion(uploading, input.expectedVersion));
+    beginUploadCompletion(uploading, input.expectedVersion, "2026-07-28T12:01:00.000Z"));
   const enqueue = vi.fn(async () => undefined);
   const service = new CompleteUploadService({
     unitOfWork: { execute: async (_fence, work) => work(transaction) },
