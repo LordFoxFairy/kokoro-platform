@@ -171,6 +171,7 @@ describe("Postgres Identity security-management SiteRelease authority", () => {
           proof: {
             proofDigest: "a".repeat(64),
             workloadIdentityId: "workload-1",
+            expectedAuthStrengthPolicyRevision: "default-v1",
             target: {
               audience: "platform-public",
               operationId: "disableTotp",
@@ -189,11 +190,16 @@ describe("Postgres Identity security-management SiteRelease authority", () => {
       expect(statement).toContain("subject_generation=$11::bigint");
       expect(statement).toContain("session_epoch=$12::bigint");
       expect(statement).toContain("credential_epoch=$15::bigint");
-      expect(statement).toContain("state='active' AND expires_at>$14::timestamptz");
+      expect(statement).toContain("auth_strength_policy_revision=$16");
+      expect(statement).toContain("authorization_site_release release");
+      expect(statement).toContain("authorization_product_binding binding");
+      expect(statement).toContain("release.state='active'");
+      expect(statement).toContain("binding.state='active'");
+      expect(statement).toContain("proof.state='active' AND proof.expires_at>$14::timestamptz");
       expect(values).toEqual([
         "a".repeat(64), "site-1", "release-1", "workload-1", "account-1",
         "subject-1", "session-1", "platform-public", "disableTotp", "identity_account",
-        "3", "4", "2".repeat(32), "2026-07-29T00:00:00.000Z", "5",
+        "3", "4", "2".repeat(32), "2026-07-29T00:00:00.000Z", "5", "default-v1",
       ]);
     } finally {
       revokePlatformTransaction(lease);
@@ -253,6 +259,55 @@ describe("Postgres Identity security-management SiteRelease authority", () => {
       revokePlatformTransaction(lease);
     }
   });
+
+  it.each([
+    "auth-strength policy revision",
+    "active SiteRelease",
+    "active workload binding",
+  ])("rejects a stale %s before mutating the TOTP factor", async () => {
+    let factorMutations = 0;
+    const statements: string[] = [];
+    const lease = issuePlatformTransaction({
+      async query(statement) {
+        statements.push(statement);
+        if (statement.includes("pg_advisory_xact_lock")) return [];
+        if (statement.includes("FROM platform.identity_account account")) {
+          return [activeOwnerRow()] as never;
+        }
+        if (statement.includes("FROM platform.identity_reauthentication_proof proof")) return [];
+        return [];
+      },
+      async execute(statement) {
+        if (statement.includes("UPDATE platform.identity_totp_authenticator")) factorMutations += 1;
+        return statement.includes("identity_reauthentication_proof") ? 0 : 1;
+      },
+    });
+    try {
+      await expect(new PostgresIdentitySecurityManagementRepository().disableTotp(
+        lease.transaction,
+        {
+          binding: binding(), accountRef: "account-1", authenticatorRef: "authenticator-1",
+          timeStep: 101, commandId: "2".repeat(32), now: "2026-07-29T00:00:00.000Z",
+          proof: {
+            proofDigest: "a".repeat(64), workloadIdentityId: "workload-1",
+            expectedAuthStrengthPolicyRevision: "default-v1",
+            target: { audience: "platform-public", operationId: "disableTotp",
+              resourceKind: "identity_account" },
+          },
+        },
+      )).resolves.toBeNull();
+      expect(factorMutations).toBe(0);
+      const proofLock = statements.findIndex((statement) =>
+        statement.includes("FROM platform.identity_reauthentication_proof proof"));
+      expect(proofLock).toBeGreaterThan(-1);
+      expect(statements[proofLock]).toContain("proof.auth_strength_policy_revision=$15");
+      expect(statements[proofLock]).toContain("release.state='active'");
+      expect(statements[proofLock]).toContain("binding.state='active'");
+      expect(statements[proofLock]).toContain("FOR UPDATE OF proof");
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
 });
 
 function binding() {
@@ -294,5 +349,19 @@ function ownerRow(identityIssuerLabel: string) {
     secretAuthenticationTag: null,
     lastAcceptedTimeStep: null,
     recoverySetRef: null,
+  };
+}
+
+function activeOwnerRow() {
+  return {
+    ...ownerRow("Acme AI"),
+    authenticatorRef: "authenticator-1",
+    secretAlgorithm: "A256GCM",
+    secretKeyRevision: "key-1",
+    secretNonce: "nonce",
+    secretCiphertext: "sealed",
+    secretAuthenticationTag: "tag",
+    lastAcceptedTimeStep: 100n,
+    recoverySetRef: "recovery-set-1",
   };
 }

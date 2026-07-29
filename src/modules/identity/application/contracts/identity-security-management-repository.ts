@@ -1,6 +1,13 @@
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
 import type { IdentityTotpSecretEnvelope } from "./identity-security-ports.js";
 
+export class IdentitySecurityAtomicRejection extends Error {
+  constructor() {
+    super("IDENTITY_SECURITY_ATOMIC_REJECTION");
+    this.name = "IdentitySecurityAtomicRejection";
+  }
+}
+
 export type IdentitySecuritySessionBinding = Readonly<{
   siteRef: string;
   siteReleaseRef: string;
@@ -19,6 +26,7 @@ export type IdentitySecurityOwnerMaterial = Readonly<{
   sessionRef: string;
   emailNormalized: string;
   identityIssuerLabel: string;
+  authStrengthPolicyRevision: string;
   accountSecurityEpoch: string;
   subjectGeneration: string;
   sessionEpoch: string;
@@ -91,6 +99,7 @@ export type IdentityReauthenticationChallengeProof = Readonly<
 export type IdentityReauthenticationProofBinding = Readonly<{
   proofDigest: string;
   workloadIdentityId: string;
+  expectedAuthStrengthPolicyRevision: string;
   target: IdentityReauthenticationTarget;
 }>;
 
@@ -306,7 +315,6 @@ export interface IdentitySecurityManagementRepository {
       capabilityDigest: string;
       setRef: string;
       recoveryCodeDigests: readonly RecoveryCodeDigest[];
-      proof: IdentityReauthenticationProofBinding;
       now: string;
     }>,
   ): Promise<Readonly<{ accountRef: string; accountSecurityEpoch: string }> | null>;

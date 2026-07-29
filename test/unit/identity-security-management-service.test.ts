@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { issuePlatformTransaction } from "../../src/shared/unit-of-work/platform-transaction.js";
 import type { CommandReceipt, JsonValue } from "../../src/shared/outbox-inbox/receipt.js";
 import type { IdentitySecurityManagementRepository } from "../../src/modules/identity/application/contracts/identity-security-management-repository.js";
+import { IdentitySecurityAtomicRejection } from "../../src/modules/identity/application/contracts/identity-security-management-repository.js";
 import type { IdentityRepository } from "../../src/modules/identity/application/contracts/identity-repository.js";
 import { IdentitySecurityManagementService } from "../../src/modules/identity/application/services/identity-security-management-service.js";
 import { createIdentityAuditDigester } from "../../src/modules/identity/infrastructure/crypto/identity-audit-digester.js";
@@ -378,21 +379,7 @@ describe("Identity security management application service", () => {
 
   it("disables TOTP only when fresh possession and the exact proof are consumed atomically", async () => {
     let mutation: Parameters<IdentitySecurityManagementRepository["disableTotp"]>[1] | undefined;
-    const material = {
-      ...ownerMaterial(),
-      authenticator: {
-        authenticatorRef: "authenticator-1",
-        envelope: {
-          algorithm: "A256GCM" as const,
-          keyRevision: "key-1",
-          nonce: "nonce",
-          ciphertext: "sealed",
-          authenticationTag: "tag",
-        },
-        lastAcceptedTimeStep: 100,
-      },
-      recoverySetRef: "recovery-set-1",
-    };
+    const material = activeTotpMaterial();
     const repository = {
       async loadActiveTotpMaterial() {
         return material;
@@ -420,7 +407,6 @@ describe("Identity security management application service", () => {
       session: session as never,
       commandId,
       idempotencyKey: "disable-1",
-      receiptRecoveryCapability: "r".repeat(43),
       code: "123456",
       reauthenticationProof: "reauth-proof",
     });
@@ -435,6 +421,76 @@ describe("Identity security management application service", () => {
         target: { operationId: "disableTotp", resourceKind: "identity_account" },
       },
     });
+  });
+
+  it("returns the same public rejection for invalid TOTP and invalid reauthentication proof", async () => {
+    const invoke = async (totpValid: boolean) => {
+      const repository = {
+        async loadActiveTotpMaterial() {
+          return activeTotpMaterial();
+        },
+        async disableTotp() {
+          return null;
+        },
+        async appendSecurityEvent() {},
+      } as unknown as IdentitySecurityManagementRepository;
+      const service = createService({
+        repository,
+        receipts: pendingReceipts(),
+        references: [],
+        totpVerifier: {
+          async verify() {
+            return totpValid
+              ? { valid: true as const, timeStep: 101 }
+              : { valid: false as const };
+          },
+        },
+      });
+      return service.disableTotp({
+        workload,
+        context,
+        session: session as never,
+        commandId,
+        idempotencyKey: totpValid ? "invalid-proof" : "invalid-totp",
+        code: "123456",
+        reauthenticationProof: "reauth-proof",
+      });
+    };
+
+    await expect(invoke(false)).rejects.toMatchObject({ code: "AUTHENTICATION_FAILED" });
+    await expect(invoke(true)).rejects.toMatchObject({ code: "AUTHENTICATION_FAILED" });
+  });
+
+  it("maps an atomic proof conflict to the same authentication rejection", async () => {
+    const repository = {
+      async loadActiveTotpMaterial() {
+        return activeTotpMaterial();
+      },
+      async disableTotp() {
+        throw new IdentitySecurityAtomicRejection();
+      },
+      async appendSecurityEvent() {},
+    } as unknown as IdentitySecurityManagementRepository;
+    const service = createService({
+      repository,
+      receipts: pendingReceipts(),
+      references: [],
+      totpVerifier: {
+        async verify() {
+          return { valid: true as const, timeStep: 101 };
+        },
+      },
+    });
+
+    await expect(service.disableTotp({
+      workload,
+      context,
+      session: session as never,
+      commandId,
+      idempotencyKey: "atomic-proof-conflict",
+      code: "123456",
+      reauthenticationProof: "reauth-proof",
+    })).rejects.toMatchObject({ code: "AUTHENTICATION_FAILED" });
   });
 
   it("delivers regenerated recovery codes once and binds the replacement to its proof", async () => {
@@ -500,6 +556,109 @@ describe("Identity security management application service", () => {
     });
     expect(mutation?.recoveryCodeDigests).toHaveLength(10);
   });
+
+  it("supersedes a lost enrollment delivery with only the caller-held recovery capability", async () => {
+    let digestCalls = 0;
+    let superseded = false;
+    const repository = {
+      async loadSecurityOwnerMaterial() {
+        return ownerMaterial();
+      },
+      async supersedeTotpEnrollment() {
+        superseded = true;
+        return true;
+      },
+      async consumeReauthenticationProof() {
+        throw new Error("supersede must not consume a new proof");
+      },
+      async appendSecurityEvent() {},
+    } as unknown as IdentitySecurityManagementRepository;
+    const service = createService({
+      repository,
+      receipts: pendingReceipts(),
+      references: [
+        "replacement-enrollment",
+        "replacement-authenticator",
+        "018f6666-6666-7666-8666-666666666666",
+      ],
+      onReauthenticationDigest() {
+        digestCalls += 1;
+      },
+    });
+
+    const result = await service.beginTotpEnrollment({
+      workload,
+      context,
+      session: session as never,
+      commandId,
+      idempotencyKey: "supersede-enrollment",
+      receiptRecoveryCapability: "r".repeat(43),
+      ceremonyAction: "supersede",
+      priorCommandId: "2".repeat(32),
+      priorTransactionRef: "lost-enrollment",
+    } as never);
+
+    expect(result).toMatchObject({
+      commandId,
+      transaction: { transactionRef: "replacement-enrollment" },
+    });
+    expect(superseded).toBe(true);
+    expect(digestCalls).toBe(0);
+  });
+
+  it("supersedes a lost recovery-code delivery with capability only and no new proof", async () => {
+    let digestCalls = 0;
+    let mutation:
+      | Parameters<IdentitySecurityManagementRepository["supersedeRecoveryCodes"]>[1]
+      | undefined;
+    const repository = {
+      async loadActiveTotpMaterial() {
+        return {
+          ...ownerMaterial(),
+          authenticator: {
+            authenticatorRef: "authenticator-1",
+            envelope: {
+              algorithm: "A256GCM" as const,
+              keyRevision: "key-1",
+              nonce: "nonce",
+              ciphertext: "sealed",
+              authenticationTag: "tag",
+            },
+            lastAcceptedTimeStep: 100,
+          },
+        };
+      },
+      async supersedeRecoveryCodes(_transaction: unknown, input: NonNullable<typeof mutation>) {
+        mutation = input;
+        return { accountRef: "account-1", accountSecurityEpoch: "8" };
+      },
+      async appendSecurityEvent() {},
+    } as unknown as IdentitySecurityManagementRepository;
+    const service = createService({
+      repository,
+      receipts: pendingReceipts(),
+      recoveryCodes: Array.from({ length: 10 }, (_, index) => `superseded-code-${index}`),
+      references: ["superseded-set", "018f7777-7777-7777-8777-777777777777"],
+      onReauthenticationDigest() {
+        digestCalls += 1;
+      },
+    });
+
+    const result = await service.regenerateRecoveryCodes({
+      workload,
+      context,
+      session: session as never,
+      commandId,
+      idempotencyKey: "supersede-recovery-codes",
+      receiptRecoveryCapability: "r".repeat(43),
+      recoveryAction: "supersede",
+      priorCommandId: "2".repeat(32),
+    } as never);
+
+    expect(result).toMatchObject({ commandId, recoveryCodes: expect.any(Array) });
+    expect(mutation).not.toHaveProperty("proof");
+    expect(digestCalls).toBe(0);
+  });
 });
 
 function createService(
@@ -515,6 +674,7 @@ function createService(
       enqueue(transaction: unknown, event: { payload: JsonValue }): Promise<void>;
     }>;
     issuedLabels?: string[];
+    onReauthenticationDigest?: (credential: string) => void;
   }>,
 ) {
   return new IdentitySecurityManagementService({
@@ -576,7 +736,8 @@ function createService(
       issue() {
         return { credential: "reauth-proof", digest: "e".repeat(64) };
       },
-      digest() {
+      digest(credential) {
+        input.onReauthenticationDigest?.(credential);
         return "e".repeat(64);
       },
     },
@@ -611,6 +772,24 @@ function ownerMaterial(identityIssuerLabel = "Acme AI") {
     authenticator: null,
     recoverySetRef: null,
     recoveryCodeDigests: [],
+  };
+}
+
+function activeTotpMaterial() {
+  return {
+    ...ownerMaterial(),
+    authenticator: {
+      authenticatorRef: "authenticator-1",
+      envelope: {
+        algorithm: "A256GCM" as const,
+        keyRevision: "key-1",
+        nonce: "nonce",
+        ciphertext: "sealed",
+        authenticationTag: "tag",
+      },
+      lastAcceptedTimeStep: 100,
+    },
+    recoverySetRef: "recovery-set-1",
   };
 }
 

@@ -151,7 +151,6 @@ export function createIdentityPublicOperations(
           commandId: input.headers["X-Kokoro-Command-Id"],
           idempotencyKey: input.headers["Idempotency-Key"],
           receiptRecoveryCapability: recovery(input.receiptRecoveryCapability),
-          reauthenticationProof: input.body.reauthenticationProof,
         };
         if (input.body.ceremonyAction === "supersede") {
           return securityManagement.beginTotpEnrollment({
@@ -164,6 +163,7 @@ export function createIdentityPublicOperations(
         return securityManagement.beginTotpEnrollment({
           ...common,
           ceremonyAction: input.body.ceremonyAction,
+          reauthenticationProof: input.body.reauthenticationProof,
         });
       },
     }),
@@ -191,7 +191,6 @@ export function createIdentityPublicOperations(
           workload: input.workload, context: input.context, session: input.session,
           commandId: input.headers["X-Kokoro-Command-Id"],
           idempotencyKey: input.headers["Idempotency-Key"],
-          receiptRecoveryCapability: recovery(input.receiptRecoveryCapability),
           code: input.body.code, reauthenticationProof: input.body.reauthenticationProof,
         });
       },
@@ -205,13 +204,13 @@ export function createIdentityPublicOperations(
           commandId: input.headers["X-Kokoro-Command-Id"],
           idempotencyKey: input.headers["Idempotency-Key"],
           receiptRecoveryCapability: recovery(input.receiptRecoveryCapability),
-          reauthenticationProof: input.body.reauthenticationProof,
         };
         return input.body.recoveryAction === "supersede"
           ? securityManagement.regenerateRecoveryCodes({ ...common,
               recoveryAction: input.body.recoveryAction, priorCommandId: input.body.priorCommandId })
           : securityManagement.regenerateRecoveryCodes({ ...common,
-              recoveryAction: input.body.recoveryAction });
+              recoveryAction: input.body.recoveryAction,
+              reauthenticationProof: input.body.reauthenticationProof });
       },
     }),
     definePlatformPublicOperation({

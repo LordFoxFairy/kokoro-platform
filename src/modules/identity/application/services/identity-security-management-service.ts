@@ -24,6 +24,7 @@ import type {
   IdentitySecurityManagementRepository,
   IdentitySecuritySessionBinding,
 } from "../contracts/identity-security-management-repository.js";
+import { IdentitySecurityAtomicRejection } from "../contracts/identity-security-management-repository.js";
 import type {
   IdentityAuditDigesterPort,
   IdentityPasswordHash,
@@ -284,9 +285,8 @@ export class IdentitySecurityManagementService {
         commandId: string;
         idempotencyKey: string;
         receiptRecoveryCapability: string;
-        reauthenticationProof: string;
       } & (
-        | Readonly<{ ceremonyAction: "begin" }>
+        | Readonly<{ ceremonyAction: "begin"; reauthenticationProof: string }>
         | Readonly<{
             ceremonyAction: "supersede";
             priorCommandId: string;
@@ -296,9 +296,9 @@ export class IdentitySecurityManagementService {
     >,
   ) {
     const supersede = input.ceremonyAction === "supersede";
-    const reauthenticationProofDigest = this.dependencies.reauthenticationCredentials.digest(
-      input.reauthenticationProof,
-    );
+    const reauthenticationProofDigest = supersede
+      ? null
+      : this.dependencies.reauthenticationCredentials.digest(input.reauthenticationProof);
     const requestDigest = this.dependencies.auditDigest(
       supersede
         ? {
@@ -308,7 +308,6 @@ export class IdentitySecurityManagementService {
             ceremonyAction: input.ceremonyAction,
             priorCommandId: input.priorCommandId,
             priorTransactionRef: input.priorTransactionRef,
-            reauthenticationProofDigest,
           }
         : {
             operation: "beginTotpEnrollment",
@@ -388,15 +387,21 @@ export class IdentitySecurityManagementService {
           await this.failure(transaction, identity, "AUTH_TRANSACTION_INVALID");
           return Object.freeze({ kind: "rejected" as const });
         }
-        const proofConsumed = await this.dependencies.repository.consumeReauthenticationProof(transaction, {
-          binding, accountRef: material.accountRef, commandId: input.commandId, now,
-          proof: {
-            proofDigest: reauthenticationProofDigest,
-            workloadIdentityId: input.workload.workloadIdentityId,
-            target: sensitiveTarget("beginTotpEnrollment"),
-          },
-        });
-        if (!proofConsumed) throw new IdentityApplicationError("AUTHENTICATION_FAILED");
+        if (!supersede) {
+          if (reauthenticationProofDigest === null) {
+            throw new Error("IDENTITY_REAUTHENTICATION_PROOF_DIGEST_INVARIANT");
+          }
+          const proofConsumed = await this.dependencies.repository.consumeReauthenticationProof(transaction, {
+            binding, accountRef: material.accountRef, commandId: input.commandId, now,
+            proof: {
+              proofDigest: reauthenticationProofDigest,
+              workloadIdentityId: input.workload.workloadIdentityId,
+              expectedAuthStrengthPolicyRevision: material.authStrengthPolicyRevision,
+              target: sensitiveTarget("beginTotpEnrollment"),
+            },
+          });
+          if (!proofConsumed) throw new IdentityApplicationError("AUTHENTICATION_FAILED");
+        }
         await this.securityEvent(transaction, input, {
           eventType: supersede
             ? "identity.totp.enrollment_superseded"
@@ -556,7 +561,6 @@ export class IdentitySecurityManagementService {
     session: AuthenticatedUserSession;
     commandId: string;
     idempotencyKey: string;
-    receiptRecoveryCapability: string;
     code: string;
     reauthenticationProof: string;
   }>) {
@@ -589,9 +593,10 @@ export class IdentitySecurityManagementService {
       secret, code, epochSeconds: Math.floor(Date.parse(now) / 1_000),
       afterTimeStep: material?.authenticator?.lastAcceptedTimeStep ?? null,
     });
-    const outcome = await this.dependencies.unitOfWork.execute(
-      { context: input.context, operation: "disableTotp" },
-      async (transaction) => {
+    const outcome = await rejectAtomicSecurityMutation(
+      this.dependencies.unitOfWork.execute(
+        { context: input.context, operation: "disableTotp" },
+        async (transaction) => {
         const identity = commandIdentity(input, "disableTotp", requestDigest);
         const existing = await this.dependencies.receipts.begin(transaction, identity);
         assertSameCommand(existing, input.commandId);
@@ -609,6 +614,7 @@ export class IdentitySecurityManagementService {
           timeStep: usable && verification.valid ? verification.timeStep : null,
           commandId: input.commandId,
           proof: { proofDigest, workloadIdentityId: input.workload.workloadIdentityId,
+            expectedAuthStrengthPolicyRevision: material.authStrengthPolicyRevision,
             target: sensitiveTarget("disableTotp") },
           now,
         });
@@ -624,7 +630,8 @@ export class IdentitySecurityManagementService {
         await this.success(transaction, identity, { kind: "totp_disabled", accountRef: changed.accountRef,
           accountSecurityEpoch: changed.accountSecurityEpoch, committedAt: now });
         return Object.freeze({ kind: "committed" as const, committedAt: now });
-      },
+        },
+      ),
     );
     if (outcome.kind === "rejected") throw new IdentityApplicationError("AUTHENTICATION_FAILED");
     return Object.freeze({ receipt: committedReceipt(input.commandId, requestDigest, outcome.committedAt) });
@@ -638,18 +645,19 @@ export class IdentitySecurityManagementService {
       commandId: string;
       idempotencyKey: string;
       receiptRecoveryCapability: string;
-      reauthenticationProof: string;
     } & (
-      | Readonly<{ recoveryAction: "regenerate" }>
+      | Readonly<{ recoveryAction: "regenerate"; reauthenticationProof: string }>
       | Readonly<{ recoveryAction: "supersede"; priorCommandId: string }>
     )>,
   ) {
     const supersede = input.recoveryAction === "supersede";
-    const proofDigest = this.dependencies.reauthenticationCredentials.digest(input.reauthenticationProof);
+    const proofDigest = supersede
+      ? null
+      : this.dependencies.reauthenticationCredentials.digest(input.reauthenticationProof);
     const requestDigest = this.dependencies.auditDigest(supersede
       ? { operation: "regenerateRecoveryCodes", siteRef: input.workload.siteRef,
           sessionRef: input.session.identitySessionRef, recoveryAction: input.recoveryAction,
-          priorCommandId: input.priorCommandId, reauthenticationProofDigest: proofDigest }
+          priorCommandId: input.priorCommandId }
       : { operation: "regenerateRecoveryCodes", siteRef: input.workload.siteRef,
           sessionRef: input.session.identitySessionRef, recoveryAction: input.recoveryAction,
           reauthenticationProofDigest: proofDigest });
@@ -670,17 +678,15 @@ export class IdentitySecurityManagementService {
         recoverySetRef: setRef, code: recoveryCode,
       }),
     }));
-    const outcome = await this.dependencies.unitOfWork.execute(
-      { context: input.context, operation: "regenerateRecoveryCodes" },
-      async (transaction) => {
+    const outcome = await rejectAtomicSecurityMutation(
+      this.dependencies.unitOfWork.execute(
+        { context: input.context, operation: "regenerateRecoveryCodes" },
+        async (transaction) => {
         const identity = commandIdentity(input, "regenerateRecoveryCodes", requestDigest);
         const existing = await this.dependencies.receipts.begin(transaction, identity);
         assertSameCommand(existing, input.commandId);
         if (existing.state === "succeeded") return Object.freeze({ kind: "retry" as const });
         if (existing.state === "failed") return Object.freeze({ kind: "rejected" as const });
-        const proof = Object.freeze({ proofDigest,
-          workloadIdentityId: input.workload.workloadIdentityId,
-          target: sensitiveTarget("regenerateRecoveryCodes") });
         let changed: Readonly<{ accountRef: string; accountSecurityEpoch: string }> | null;
         if (supersede) {
           changed = await this.dependencies.repository.supersedeRecoveryCodes(transaction, {
@@ -689,9 +695,14 @@ export class IdentitySecurityManagementService {
             workloadIdentityId: input.workload.workloadIdentityId,
             capabilityDigest: this.recoveryDigest("regenerateRecoveryCodes",
               input.receiptRecoveryCapability),
-            setRef, recoveryCodeDigests, proof, now,
+            setRef, recoveryCodeDigests, now,
           });
         } else {
+          if (proofDigest === null) throw new Error("IDENTITY_REAUTHENTICATION_PROOF_DIGEST_INVARIANT");
+          const proof = Object.freeze({ proofDigest,
+            workloadIdentityId: input.workload.workloadIdentityId,
+            expectedAuthStrengthPolicyRevision: material.authStrengthPolicyRevision,
+            target: sensitiveTarget("regenerateRecoveryCodes") });
           changed = await this.dependencies.repository.regenerateRecoveryCodes(transaction, {
             binding, accountRef: material.accountRef, commandId: input.commandId, requestDigest,
             setRef, recoveryCodeDigests, proof, now,
@@ -714,7 +725,8 @@ export class IdentitySecurityManagementService {
           accountRef: changed.accountRef, accountSecurityEpoch: changed.accountSecurityEpoch,
           generatedAt: now, committedAt: now });
         return Object.freeze({ kind: "fresh" as const });
-      },
+        },
+      ),
     );
     if (outcome.kind === "rejected") throw new IdentityApplicationError("AUTHENTICATION_FAILED");
     if (outcome.kind === "retry") return deliveryUnavailable(input.commandId, requestDigest);
@@ -1035,6 +1047,17 @@ function deliveryUnavailable(commandId: string, requestDigest: string) {
     receiptRef: `command:${commandId}`,
     requestDigest,
   });
+}
+
+async function rejectAtomicSecurityMutation<Result>(work: Promise<Result>): Promise<Result> {
+  try {
+    return await work;
+  } catch (error) {
+    if (error instanceof IdentitySecurityAtomicRejection) {
+      throw new IdentityApplicationError("AUTHENTICATION_FAILED");
+    }
+    throw error;
+  }
 }
 
 function plus(value: string, milliseconds: number): string {

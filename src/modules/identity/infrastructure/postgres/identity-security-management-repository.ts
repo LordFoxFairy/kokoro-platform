@@ -10,6 +10,7 @@ import type {
   RecoveryCodeDigest,
   TotpEnrollmentMaterial,
 } from "../../application/contracts/identity-security-management-repository.js";
+import { IdentitySecurityAtomicRejection } from "../../application/contracts/identity-security-management-repository.js";
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
 import {
   resolvePlatformTransaction,
@@ -316,7 +317,8 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
     if (
       owner === undefined ||
       !bindingMatches(owner, input.binding) ||
-      !validIdentityIssuerLabel(owner.identityIssuerLabel)
+      !validIdentityIssuerLabel(owner.identityIssuerLabel) ||
+      !validRevision(owner.authStrengthPolicyRevision)
     )
       return null;
     return Object.freeze({
@@ -325,6 +327,7 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
       sessionRef: owner.sessionRef,
       emailNormalized: owner.emailNormalized,
       identityIssuerLabel: owner.identityIssuerLabel,
+      authStrengthPolicyRevision: owner.authStrengthPolicyRevision,
       accountSecurityEpoch: owner.accountSecurityEpoch.toString(),
       subjectGeneration: owner.subjectGeneration.toString(),
       sessionEpoch: owner.sessionEpoch.toString(),
@@ -646,6 +649,9 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
     if (owner === undefined || !bindingMatches(owner, input.binding) || owner.accountRef !== input.accountRef ||
         owner.authenticatorRef !== input.authenticatorRef || input.timeStep === null ||
         (owner.lastAcceptedTimeStep !== null && input.timeStep <= Number(owner.lastAcceptedTimeStep))) return null;
+    if (!await lockReauthenticationProof(sql, {
+      binding: input.binding, accountRef: input.accountRef, proof: input.proof, now: input.now,
+    })) return null;
     const factor = await sql.execute(
       `UPDATE platform.identity_totp_authenticator
        SET state='revoked',last_accepted_timestep=$4::bigint,revoked_at=$5::timestamptz,updated_at=$5::timestamptz
@@ -658,7 +664,7 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
     if (!await consumeReauthenticationProof(sql, {
       binding: input.binding, accountRef: input.accountRef, commandId: input.commandId,
       proof: input.proof, now: input.now,
-    })) throw new Error("IDENTITY_REAUTHENTICATION_PROOF_STALE");
+    })) throw new IdentitySecurityAtomicRejection();
     const epoch = await incrementSecurityEpoch(sql, input.binding.siteRef, input.accountRef, input.now);
     return Object.freeze({ accountRef: input.accountRef, accountSecurityEpoch: epoch });
   }
@@ -671,6 +677,9 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
     await lockAccount(sql, input.binding.siteRef, input.accountRef);
     const owner = await lockSecurityOwner(sql, input.binding, input.now);
     if (owner === null || owner.accountRef !== input.accountRef) return null;
+    if (!await lockReauthenticationProof(sql, {
+      binding: input.binding, accountRef: input.accountRef, proof: input.proof, now: input.now,
+    })) return null;
     await replaceRecoveryCodeSet(sql, {
       siteRef: input.binding.siteRef, accountRef: input.accountRef, subjectRef: input.binding.subjectRef,
       setRef: input.setRef, recoveryCodeDigests: input.recoveryCodeDigests, now: input.now,
@@ -678,7 +687,7 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
     if (!await consumeReauthenticationProof(sql, {
       binding: input.binding, accountRef: input.accountRef, commandId: input.commandId,
       proof: input.proof, now: input.now,
-    })) throw new Error("IDENTITY_REAUTHENTICATION_PROOF_STALE");
+    })) throw new IdentitySecurityAtomicRejection();
     const epoch = await incrementSecurityEpoch(sql, input.binding.siteRef, input.accountRef, input.now);
     await insertRecoveryCodeDeliveryClaim(sql, {
       commandId: input.commandId, siteRef: input.binding.siteRef, accountRef: input.accountRef,
@@ -739,10 +748,6 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
       siteRef: input.binding.siteRef, accountRef: input.accountRef, subjectRef: input.binding.subjectRef,
       setRef: input.setRef, recoveryCodeDigests: input.recoveryCodeDigests, now: input.now,
     });
-    if (!await consumeReauthenticationProof(sql, {
-      binding: input.binding, accountRef: input.accountRef, commandId: input.newCommandId,
-      proof: input.proof, now: input.now,
-    })) throw new Error("IDENTITY_REAUTHENTICATION_PROOF_STALE");
     const epoch = await incrementSecurityEpoch(sql, input.binding.siteRef, input.accountRef, input.now);
     await insertRecoveryCodeDeliveryClaim(sql, {
       commandId: input.newCommandId, siteRef: input.binding.siteRef, accountRef: input.accountRef,
@@ -784,7 +789,8 @@ const securityOwnerSelect = `SELECT account.account_ref AS "accountRef",account.
   session.session_ref AS "sessionRef",session.session_epoch AS "sessionEpoch",
   session.credential_epoch AS "credentialEpoch",session.authenticated_at AS "authenticatedAt",
   session.authentication_methods AS "authenticationMethods",
-  identifier.normalized_value AS "emailNormalized",release.identity_issuer_label AS "identityIssuerLabel"
+  identifier.normalized_value AS "emailNormalized",release.identity_issuer_label AS "identityIssuerLabel",
+  release.identity_auth_strength_policy_revision AS "authStrengthPolicyRevision"
   FROM platform.identity_account account
   JOIN platform.authorization_subject subject
     ON subject.subject_ref=account.subject_ref AND subject.site_ref=account.site_ref
@@ -1093,22 +1099,70 @@ async function consumeReauthenticationProof(
   }>,
 ): Promise<boolean> {
   const changed = await sql.execute(
-    `UPDATE platform.identity_reauthentication_proof
+    `UPDATE platform.identity_reauthentication_proof proof
      SET state='consumed',consumed_at=$14::timestamptz,consuming_command_id=$13,updated_at=$14::timestamptz
-     WHERE proof_digest=$1 AND site_ref=$2 AND site_release_ref=$3 AND workload_identity_id=$4
-       AND account_ref=$5 AND subject_ref=$6 AND session_ref=$7 AND audience=$8 AND operation_id=$9
-       AND resource_kind=$10 AND resource_ref=$5 AND account_security_epoch=(
+     FROM platform.authorization_site_release release,
+          platform.authorization_product_binding binding
+     WHERE proof.proof_digest=$1 AND proof.site_ref=$2 AND proof.site_release_ref=$3
+       AND proof.workload_identity_id=$4 AND proof.account_ref=$5 AND proof.subject_ref=$6
+       AND proof.session_ref=$7 AND proof.audience=$8 AND proof.operation_id=$9
+       AND proof.resource_kind=$10 AND proof.resource_ref=$5 AND proof.account_security_epoch=(
          SELECT security_epoch FROM platform.identity_account WHERE site_ref=$2 AND account_ref=$5
        )
-       AND subject_generation=$11::bigint AND session_epoch=$12::bigint
-       AND credential_epoch=$15::bigint AND state='active' AND expires_at>$14::timestamptz`,
+       AND proof.subject_generation=$11::bigint AND proof.session_epoch=$12::bigint
+       AND proof.credential_epoch=$15::bigint AND proof.auth_strength_policy_revision=$16
+       AND proof.state='active' AND proof.expires_at>$14::timestamptz
+       AND release.site_ref=proof.site_ref AND release.release_ref=proof.site_release_ref
+       AND release.state='active' AND release.identity_auth_strength_policy_revision=$16
+       AND binding.workload_identity_id=proof.workload_identity_id
+       AND binding.site_ref=proof.site_ref AND binding.release_ref=proof.site_release_ref
+       AND binding.state='active'`,
     [input.proof.proofDigest, input.binding.siteRef, input.binding.siteReleaseRef,
       input.proof.workloadIdentityId, input.accountRef, input.binding.subjectRef, input.binding.sessionRef,
       input.proof.target.audience, input.proof.target.operationId, input.proof.target.resourceKind,
       input.binding.subjectGeneration, input.binding.sessionEpoch, input.commandId, input.now,
-      input.binding.credentialEpoch],
+      input.binding.credentialEpoch, input.proof.expectedAuthStrengthPolicyRevision],
   );
   return changed === 1;
+}
+
+async function lockReauthenticationProof(
+  sql: PlatformSqlTransaction,
+  input: Readonly<{
+    binding: IdentitySecuritySessionBinding;
+    accountRef: string;
+    proof: IdentityReauthenticationProofBinding;
+    now: string;
+  }>,
+): Promise<boolean> {
+  const rows = await sql.query<Record<string, unknown>>(
+    `SELECT 1
+     FROM platform.identity_reauthentication_proof proof
+     JOIN platform.authorization_site_release release
+       ON release.site_ref=proof.site_ref AND release.release_ref=proof.site_release_ref
+     JOIN platform.authorization_product_binding binding
+       ON binding.workload_identity_id=proof.workload_identity_id
+         AND binding.site_ref=proof.site_ref AND binding.release_ref=proof.site_release_ref
+     JOIN platform.identity_account account
+       ON account.site_ref=proof.site_ref AND account.account_ref=proof.account_ref
+     WHERE proof.proof_digest=$1 AND proof.site_ref=$2 AND proof.site_release_ref=$3
+       AND proof.workload_identity_id=$4 AND proof.account_ref=$5 AND proof.subject_ref=$6
+       AND proof.session_ref=$7 AND proof.audience=$8 AND proof.operation_id=$9
+       AND proof.resource_kind=$10 AND proof.resource_ref=$5
+       AND proof.account_security_epoch=account.security_epoch
+       AND proof.subject_generation=$11::bigint AND proof.session_epoch=$12::bigint
+       AND proof.credential_epoch=$13::bigint AND proof.auth_strength_policy_revision=$15
+       AND proof.state='active' AND proof.expires_at>$14::timestamptz
+       AND release.state='active' AND release.identity_auth_strength_policy_revision=$15
+       AND binding.state='active'
+     FOR UPDATE OF proof FOR SHARE OF release,binding`,
+    [input.proof.proofDigest, input.binding.siteRef, input.binding.siteReleaseRef,
+      input.proof.workloadIdentityId, input.accountRef, input.binding.subjectRef, input.binding.sessionRef,
+      input.proof.target.audience, input.proof.target.operationId, input.proof.target.resourceKind,
+      input.binding.subjectGeneration, input.binding.sessionEpoch, input.binding.credentialEpoch,
+      input.now, input.proof.expectedAuthStrengthPolicyRevision],
+  );
+  return rows.length === 1;
 }
 
 function sensitiveOperation(value: string): value is IdentityReauthenticationTarget["operationId"] {
@@ -1492,6 +1546,7 @@ interface SecurityOwnerRow extends Record<string, unknown> {
   sessionRef: string;
   emailNormalized: string;
   identityIssuerLabel: string;
+  authStrengthPolicyRevision: string;
   accountSecurityEpoch: bigint;
   subjectGeneration: bigint;
   sessionEpoch: bigint;
