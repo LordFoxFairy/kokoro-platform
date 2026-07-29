@@ -33,7 +33,7 @@ import {
 } from "../modules/admission/infrastructure/postgres/admission-runtime-owners.js";
 import { PostgresAdmissionSiteOwner } from "../modules/admission/infrastructure/postgres/admission-site-owner.js";
 import { createAdmissionConnectService } from "../modules/admission/interfaces/connect/admission-service.js";
-import { readBoundedSecret } from "./platform-public-composition.js";
+import { readBoundedPrivateFile, readBoundedRegularFile } from "./secret-files.js";
 
 export interface AdmissionDraftComposition {
   readonly gaRunRequestDraftFactory: GaRunRequestDraftFactory;
@@ -246,7 +246,7 @@ async function loadAdmissionHpkeSealer(
 ): Promise<HpkeGaRunRequestDraftSealer> {
   let keyRing: unknown;
   try {
-    keyRing = JSON.parse(await readBoundedSecret(path, 256 * 1024));
+    keyRing = JSON.parse(await readAdmissionFile(path, 256 * 1024));
   } catch {
     throw new Error("PLATFORM_ADMISSION_HPKE_PUBLIC_KEY_RING_INVALID");
   }
@@ -267,7 +267,7 @@ async function loadAdmissionPeers(
   environment: string,
   region: string,
 ): Promise<readonly AdmissionPeer[]> {
-  const parsed = JSON.parse(await readBoundedSecret(path, 256 * 1024)) as unknown;
+  const parsed = JSON.parse(await readAdmissionFile(path, 256 * 1024)) as unknown;
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("PLATFORM_ADMISSION_MTLS_PEERS_INVALID");
   }
@@ -329,9 +329,19 @@ async function loadAdmissionTls(
   environment: Readonly<Record<string, string | undefined>>,
 ): Promise<SecureServerOptions> {
   const [key, cert, ca] = await Promise.all([
-    readBoundedSecret(required(environment, "PLATFORM_ADMISSION_TLS_KEY_FILE"), 64 * 1024),
-    readBoundedSecret(required(environment, "PLATFORM_ADMISSION_TLS_CERT_FILE"), 64 * 1024),
-    readBoundedSecret(required(environment, "PLATFORM_ADMISSION_TLS_CLIENT_CA_FILE"), 256 * 1024),
+    readBoundedPrivateFile(
+      required(environment, "PLATFORM_ADMISSION_TLS_KEY_FILE"),
+      64 * 1024,
+      "PLATFORM_ADMISSION_TLS_KEY_FILE_INVALID",
+    ),
+    readAdmissionFile(
+      required(environment, "PLATFORM_ADMISSION_TLS_CERT_FILE"),
+      64 * 1024,
+    ),
+    readAdmissionFile(
+      required(environment, "PLATFORM_ADMISSION_TLS_CLIENT_CA_FILE"),
+      256 * 1024,
+    ),
   ]);
   if (!key.includes("BEGIN PRIVATE KEY") || !cert.includes("BEGIN CERTIFICATE") || !ca.includes("BEGIN CERTIFICATE")) {
     throw new Error("PLATFORM_ADMISSION_TLS_MATERIAL_INVALID");
@@ -345,6 +355,14 @@ async function loadAdmissionTls(
     allowHTTP1: false,
     minVersion: "TLSv1.3",
   });
+}
+
+function readAdmissionFile(path: string, maximumBytes: number): Promise<string> {
+  return readBoundedRegularFile(
+    path,
+    maximumBytes,
+    "PLATFORM_ADMISSION_TRUST_FILE_INVALID",
+  );
 }
 
 function required(environment: Readonly<Record<string, string | undefined>>, name: string): string {

@@ -1,5 +1,3 @@
-import { open, readFile } from "node:fs/promises";
-import { constants as fileSystemConstants } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { generateSecret } from "otplib";
 import { createServer as createHttpsServer, type ServerOptions } from "node:https";
@@ -23,7 +21,7 @@ import type {
   AuthorizationEventSigningKeyConfig,
 } from "../modules/authorization/infrastructure/jose/session-authorization-event-signer.js";
 import { PostgresProductModelOptionCatalogReader } from "../modules/model-control/infrastructure/postgres/product-model-option-repository.js";
-import { loadProductWorkloadRegistry } from "../modules/authorization/infrastructure/transport/product-workload-registry.js";
+import { ProductWorkloadRegistry } from "../modules/authorization/infrastructure/transport/product-workload-registry.js";
 import { PlatformUnitOfWork } from "../shared/unit-of-work/unit-of-work.js";
 import {
   createPlatformPublicHttpHandler,
@@ -85,6 +83,7 @@ import {
   ASSET_PUBLIC_OPERATION_IDS,
   createAssetPublicOperations,
 } from "../modules/asset/interfaces/http/asset-public-operations.js";
+import { readBoundedPrivateFile, readBoundedRegularFile } from "./secret-files.js";
 
 export interface PlatformPublicProductionComposition {
   readonly handler: PlatformPublicHttpHandler;
@@ -261,18 +260,39 @@ export async function createPlatformPublicProductionComposition(
 
 async function loadAssetUploadPolicies(path: string) {
   return parseAssetUploadPolicyRegistry(
-    JSON.parse(await readBoundedSecret(path, 2 * 1024 * 1024)) as unknown,
+    JSON.parse(await readBoundedRegularFile(
+      path,
+      2 * 1024 * 1024,
+      "ASSET_UPLOAD_POLICY_REGISTRY_FILE_INVALID",
+    )) as unknown,
   );
+}
+
+async function loadProductWorkloadRegistry(path: string): Promise<ProductWorkloadRegistry> {
+  const raw = await readBoundedRegularFile(
+    path,
+    1024 * 1024,
+    "PRODUCT_WORKLOAD_REGISTRY_FILE_INVALID",
+  );
+  return ProductWorkloadRegistry.parse(JSON.parse(raw) as unknown);
 }
 
 async function loadAssetUploadCapabilityKeys(path: string) {
   return parseAssetUploadCapabilityKeyRing(
-    JSON.parse(await readBoundedPrivateFile(path, 64 * 1024, "ASSET_CAPABILITY_KEY_RING_PERMISSIONS_INVALID")) as unknown,
+    JSON.parse(await readBoundedPrivateFile(
+      path,
+      64 * 1024,
+      "ASSET_CAPABILITY_KEY_RING_FILE_INVALID",
+    )) as unknown,
   );
 }
 
 export async function loadRedemptionSecretCodec(path: string) {
-  const root = record(JSON.parse(await readBoundedSecret(path, 64 * 1024)) as unknown, "REDEMPTION_KEY_RING_INVALID");
+  const root = record(JSON.parse(await readBoundedPrivateFile(
+    path,
+    64 * 1024,
+    "REDEMPTION_KEY_RING_FILE_INVALID",
+  )) as unknown, "REDEMPTION_KEY_RING_INVALID");
   exactCommerce(root, [
     "version", "currentCodeLookupKeyRevision", "codeLookupKeys",
     "currentPreviewCredentialKeyRevision", "previewCredentialKeys", "requestAuditKeyBase64url",
@@ -306,7 +326,11 @@ function exactCommerce(value: Record<string, unknown>, names: readonly string[])
 
 async function loadIdentityPasswordHasher(path: string) {
   const root = record(
-    JSON.parse(await readBoundedSecret(path, 64 * 1024)) as unknown,
+    JSON.parse(await readBoundedPrivateFile(
+      path,
+      64 * 1024,
+      "IDENTITY_PASSWORD_PEPPER_RING_FILE_INVALID",
+    )) as unknown,
     "IDENTITY_PASSWORD_PEPPER_RING_INVALID",
   );
   exactIdentity(root, [
@@ -347,16 +371,28 @@ async function loadIdentityPasswordHasher(path: string) {
 }
 
 async function loadOpaqueCredentialCodec(path: string) {
-  return createOpaqueCredentialCodec(secretBytes((await readBoundedSecret(path, 256)).trim(), 32));
+  return createOpaqueCredentialCodec(secretBytes((await readBoundedPrivateFile(
+    path,
+    256,
+    "IDENTITY_SESSION_CREDENTIAL_KEY_FILE_INVALID",
+  )).trim(), 32));
 }
 
 async function loadIdentityAuditDigester(path: string) {
-  return createIdentityAuditDigester(secretBytes((await readBoundedSecret(path, 256)).trim(), 32));
+  return createIdentityAuditDigester(secretBytes((await readBoundedPrivateFile(
+    path,
+    256,
+    "IDENTITY_AUDIT_KEY_FILE_INVALID",
+  )).trim(), 32));
 }
 
 async function loadVerificationDeliverySealer(path: string) {
   const root = record(
-    JSON.parse(await readBoundedSecret(path, 4096)) as unknown,
+    JSON.parse(await readBoundedPrivateFile(
+      path,
+      4096,
+      "IDENTITY_DELIVERY_KEY_FILE_INVALID",
+    )) as unknown,
     "IDENTITY_DELIVERY_KEY_INVALID",
   );
   exactIdentity(root, ["version", "keyRevision", "keyBase64url"]);
@@ -375,7 +411,11 @@ async function loadVerificationDeliverySealer(path: string) {
 
 export async function loadIdentityTotpSecretProtector(path: string) {
   const root = record(
-    JSON.parse(await readBoundedPrivateSecret(path, 64 * 1024)) as unknown,
+    JSON.parse(await readBoundedPrivateFile(
+      path,
+      64 * 1024,
+      "IDENTITY_TOTP_KEY_RING_PERMISSIONS_INVALID",
+    )) as unknown,
     "IDENTITY_TOTP_KEY_RING_INVALID",
   );
   exactIdentity(root, ["version", "currentKeyRevision", "keys"]);
@@ -405,43 +445,6 @@ export async function loadIdentityTotpSecretProtector(path: string) {
   });
 }
 
-export async function readBoundedPrivateSecret(path: string, maximumBytes: number): Promise<string> {
-  return readBoundedPrivateFile(path, maximumBytes, "IDENTITY_TOTP_KEY_RING_PERMISSIONS_INVALID");
-}
-
-async function readBoundedPrivateFile(
-  path: string,
-  maximumBytes: number,
-  permissionsCode: string,
-): Promise<string> {
-  if (!path.startsWith("/")) throw new Error("PLATFORM_SECRET_FILE_MUST_BE_ABSOLUTE");
-  let handle;
-  try {
-    handle = await open(path, fileSystemConstants.O_RDONLY | fileSystemConstants.O_NOFOLLOW);
-    const metadata = await handle.stat();
-    if (!metadata.isFile() || (metadata.mode & 0o077) !== 0) {
-      throw new Error(permissionsCode);
-    }
-    if (metadata.size < 1 || metadata.size > maximumBytes)
-      throw new Error("PLATFORM_SECRET_FILE_INVALID");
-    const value = await handle.readFile("utf8");
-    if (Buffer.byteLength(value, "utf8") > maximumBytes)
-      throw new Error("PLATFORM_SECRET_FILE_INVALID");
-    return value;
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      (error.message === permissionsCode ||
-        error.message === "PLATFORM_SECRET_FILE_INVALID" ||
-        error.message === "PLATFORM_SECRET_FILE_MUST_BE_ABSOLUTE")
-    )
-      throw error;
-    throw new Error(permissionsCode, { cause: error });
-  } finally {
-    await handle?.close();
-  }
-}
-
 function secretBytes(value: string, length: number): Uint8Array {
   if (!/^[A-Za-z0-9_-]+$/u.test(value)) throw new Error("IDENTITY_SECRET_ENCODING_INVALID");
   const bytes = Buffer.from(value, "base64url");
@@ -461,9 +464,21 @@ async function loadTls(
   environment: Readonly<Record<string, string | undefined>>,
 ): Promise<ServerOptions> {
   const [key, cert, ca] = await Promise.all([
-    readBoundedSecret(required(environment, "PLATFORM_PUBLIC_TLS_KEY_FILE"), 64 * 1024),
-    readBoundedSecret(required(environment, "PLATFORM_PUBLIC_TLS_CERT_FILE"), 64 * 1024),
-    readBoundedSecret(required(environment, "PLATFORM_PUBLIC_TLS_CLIENT_CA_FILE"), 256 * 1024),
+    readBoundedPrivateFile(
+      required(environment, "PLATFORM_PUBLIC_TLS_KEY_FILE"),
+      64 * 1024,
+      "PLATFORM_PUBLIC_TLS_KEY_FILE_INVALID",
+    ),
+    readBoundedRegularFile(
+      required(environment, "PLATFORM_PUBLIC_TLS_CERT_FILE"),
+      64 * 1024,
+      "PLATFORM_PUBLIC_TLS_TRUST_FILE_INVALID",
+    ),
+    readBoundedRegularFile(
+      required(environment, "PLATFORM_PUBLIC_TLS_CLIENT_CA_FILE"),
+      256 * 1024,
+      "PLATFORM_PUBLIC_TLS_TRUST_FILE_INVALID",
+    ),
   ]);
   if (
     !key.includes("BEGIN PRIVATE KEY") ||
@@ -484,7 +499,11 @@ async function loadTls(
 }
 
 export async function loadSessionAccessKeyRing(path: string): Promise<SessionAccessKeyRingConfig> {
-  const parsed = JSON.parse(await readBoundedSecret(path, 512 * 1024)) as unknown;
+  const parsed = JSON.parse(await readBoundedPrivateFile(
+    path,
+    512 * 1024,
+    "SESSION_ACCESS_KEY_RING_FILE_INVALID",
+  )) as unknown;
   const root = record(parsed, "SESSION_ACCESS_KEY_RING_INVALID");
   exact(root, ["version", "issuer", "maximumTtlSeconds", "keys"]);
   if (root.version !== 2 || !Array.isArray(root.keys))
@@ -530,7 +549,11 @@ export async function loadSessionAccessKeyRing(path: string): Promise<SessionAcc
 export async function loadAuthorizationEventKeyRing(
   path: string,
 ): Promise<AuthorizationEventKeyRingConfig> {
-  const parsed = JSON.parse(await readBoundedSecret(path, 512 * 1024)) as unknown;
+  const parsed = JSON.parse(await readBoundedPrivateFile(
+    path,
+    512 * 1024,
+    "AUTHORIZATION_EVENT_KEY_RING_FILE_INVALID",
+  )) as unknown;
   const root = record(parsed, "AUTHORIZATION_EVENT_KEY_RING_INVALID");
   exactAuthorization(root, ["version", "keys"]);
   if (root.version !== 1 || !Array.isArray(root.keys))
@@ -564,15 +587,6 @@ export async function loadAuthorizationEventKeyRing(
     });
   });
   return Object.freeze({ keys: Object.freeze(keys) });
-}
-
-export async function readBoundedSecret(path: string, maximumBytes: number): Promise<string> {
-  if (!path.startsWith("/")) throw new Error("PLATFORM_SECRET_FILE_MUST_BE_ABSOLUTE");
-  const value = await readFile(path, "utf8");
-  if (value.length < 1 || Buffer.byteLength(value, "utf8") > maximumBytes) {
-    throw new Error("PLATFORM_SECRET_FILE_INVALID");
-  }
-  return value;
 }
 
 function required(environment: Readonly<Record<string, string | undefined>>, name: string): string {

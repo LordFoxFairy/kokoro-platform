@@ -10,7 +10,7 @@ import {
   type AuthorizationPublicVerificationKeyConfig,
 } from "../modules/authorization/infrastructure/jose/session-authorization-verification-key-set.js";
 import { PostgresAuthorizationFeedRepository } from "../modules/authorization/infrastructure/postgres/authorization-feed-repository.js";
-import { readBoundedSecret } from "./platform-public-composition.js";
+import { readBoundedPrivateFile, readBoundedRegularFile } from "./secret-files.js";
 
 export type SessionAuthorizationRequestListener = (
   request: Http2ServerRequest,
@@ -87,7 +87,7 @@ export async function createSessionAuthorizationProductionComposition(input: Rea
 type Peer = Readonly<{ fingerprint256: string; sanUri: string }>;
 
 async function loadPeers(path: string): Promise<readonly Peer[]> {
-  const parsed = JSON.parse(await readBoundedSecret(path, 256 * 1024)) as unknown;
+  const parsed = JSON.parse(await readAuthorizationFile(path, 256 * 1024)) as unknown;
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("PLATFORM_AUTHORIZATION_MTLS_PEERS_INVALID");
   }
@@ -134,9 +134,19 @@ function authorizedPeer(request: Http2ServerRequest, peers: readonly Peer[]): bo
 
 async function loadTls(environment: Readonly<Record<string, string | undefined>>): Promise<SecureServerOptions> {
   const [key, cert, ca] = await Promise.all([
-    readBoundedSecret(required(environment, "PLATFORM_AUTHORIZATION_TLS_KEY_FILE"), 64 * 1024),
-    readBoundedSecret(required(environment, "PLATFORM_AUTHORIZATION_TLS_CERT_FILE"), 64 * 1024),
-    readBoundedSecret(required(environment, "PLATFORM_AUTHORIZATION_TLS_CLIENT_CA_FILE"), 256 * 1024),
+    readBoundedPrivateFile(
+      required(environment, "PLATFORM_AUTHORIZATION_TLS_KEY_FILE"),
+      64 * 1024,
+      "PLATFORM_AUTHORIZATION_TLS_KEY_FILE_INVALID",
+    ),
+    readAuthorizationFile(
+      required(environment, "PLATFORM_AUTHORIZATION_TLS_CERT_FILE"),
+      64 * 1024,
+    ),
+    readAuthorizationFile(
+      required(environment, "PLATFORM_AUTHORIZATION_TLS_CLIENT_CA_FILE"),
+      256 * 1024,
+    ),
   ]);
   if (!key.includes("BEGIN PRIVATE KEY") || !cert.includes("BEGIN CERTIFICATE") || !ca.includes("BEGIN CERTIFICATE")) {
     throw new Error("PLATFORM_AUTHORIZATION_TLS_MATERIAL_INVALID");
@@ -153,7 +163,11 @@ async function loadTls(environment: Readonly<Record<string, string | undefined>>
 }
 
 async function loadCursorSecret(path: string): Promise<Uint8Array> {
-  const raw = await readBoundedSecret(path, 256);
+  const raw = await readBoundedPrivateFile(
+    path,
+    256,
+    "PLATFORM_AUTHORIZATION_CURSOR_SECRET_FILE_INVALID",
+  );
   const encoded = raw.trim();
   if (!/^[A-Za-z0-9_-]{43,172}$/u.test(encoded)) throw new Error("PLATFORM_AUTHORIZATION_CURSOR_SECRET_INVALID");
   const value = Buffer.from(encoded, "base64url");
@@ -167,7 +181,7 @@ export async function loadAuthorizationVerificationKeys(
   path: string,
   expectedPurpose: AuthorizationPublicVerificationKeyConfig["purpose"],
 ): Promise<readonly AuthorizationPublicVerificationKeyConfig[]> {
-  const parsed = JSON.parse(await readBoundedSecret(path, 512 * 1024)) as unknown;
+  const parsed = JSON.parse(await readAuthorizationFile(path, 512 * 1024)) as unknown;
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("AUTHORIZATION_VERIFICATION_KEY_SET_INVALID");
   }
@@ -196,6 +210,14 @@ export async function loadAuthorizationVerificationKeys(
       notAfter: key.notAfter,
     });
   }));
+}
+
+function readAuthorizationFile(path: string, maximumBytes: number): Promise<string> {
+  return readBoundedRegularFile(
+    path,
+    maximumBytes,
+    "PLATFORM_AUTHORIZATION_TRUST_FILE_INVALID",
+  );
 }
 
 function required(environment: Readonly<Record<string, string | undefined>>, name: string): string {

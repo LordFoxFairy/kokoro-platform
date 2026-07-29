@@ -1,5 +1,4 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
 import { TLSSocket } from "node:tls";
 import type {
@@ -186,12 +185,6 @@ export class ProductWorkloadRegistry implements TrustedCallerCryptographicVerifi
       keyVersion: this.#registryRevision,
     });
   }
-}
-
-export async function loadProductWorkloadRegistry(path: string): Promise<ProductWorkloadRegistry> {
-  const raw = await readFile(path, "utf8");
-  if (raw.length > 1_048_576) throw new Error("PRODUCT_WORKLOAD_REGISTRY_TOO_LARGE");
-  return ProductWorkloadRegistry.parse(JSON.parse(raw) as unknown);
 }
 
 function object(value: unknown, code: string): Record<string, unknown> {

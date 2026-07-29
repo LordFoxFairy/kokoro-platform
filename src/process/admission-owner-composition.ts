@@ -2,7 +2,7 @@ import { createAgentExecutionEvidenceClient } from "../interfaces/connect/agent-
 import { createSessionDispatchOwnerEvidenceClient } from "../interfaces/connect/dispatch-owner-evidence-client.js";
 import { createSessionAdmissionOwnerClient } from "../interfaces/connect/session-admission-owner-client.js";
 import type { AdmissionProductionOwnerPorts } from "./admission-composition.js";
-import { readBoundedPrivateSecret, readBoundedSecret } from "./platform-public-composition.js";
+import { readBoundedPrivateFile, readBoundedRegularFile } from "./secret-files.js";
 
 const CERTIFICATE_MAXIMUM_BYTES = 64 * 1024;
 const CERTIFICATE_AUTHORITY_MAXIMUM_BYTES = 256 * 1024;
@@ -37,8 +37,17 @@ export async function loadAdmissionOutboundOwnerConfiguration(input: Readonly<{
   readPrivateSecret?: SecretReader;
 }> = {}): Promise<AdmissionOutboundOwnerConfiguration> {
   const environment = input.environment ?? process.env;
-  const readSecret = input.readSecret ?? readBoundedSecret;
-  const readPrivateSecret = input.readPrivateSecret ?? readBoundedPrivateSecret;
+  const readSecret = input.readSecret ?? ((path, maximumBytes) => readBoundedRegularFile(
+    path,
+    maximumBytes,
+    "PLATFORM_ADMISSION_OUTBOUND_TRUST_FILE_INVALID",
+  ));
+  const readPrivateSecret = input.readPrivateSecret ?? ((path, maximumBytes) =>
+    readBoundedPrivateFile(
+      path,
+      maximumBytes,
+      "PLATFORM_ADMISSION_OUTBOUND_KEY_FILE_INVALID",
+    ));
   const [certificatePem, privateKeyPem, sessionCaPem, agentCaPem] = await Promise.all([
     readSecret(
       required(environment, "PLATFORM_ADMISSION_OUTBOUND_TLS_CERT_FILE"),
