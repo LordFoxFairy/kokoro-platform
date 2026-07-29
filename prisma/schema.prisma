@@ -433,6 +433,127 @@ model SiteReleaseModelCatalogOption {
   @@schema("platform")
 }
 
+model SiteAuthority {
+  siteRef          String    @id @map("site_ref")
+  siteKey          String    @unique @map("site_key")
+  state            String
+  activeReleaseRef String?   @map("active_release_ref")
+  securityEpoch    BigInt    @default(1) @map("security_epoch")
+  policyEpoch      BigInt    @default(1) @map("policy_epoch")
+  revocationEpoch  BigInt    @default(1) @map("revocation_epoch")
+  tombstonedAt     DateTime? @map("tombstoned_at") @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([state])
+  @@map("site")
+  @@schema("platform")
+}
+
+model SiteProjectBindingAuthority {
+  bindingRef          String   @id @map("binding_ref")
+  siteRef             String   @map("site_ref")
+  repositoryRef       String   @unique @map("repository_ref")
+  providerProjectRef  String   @unique @map("provider_project_ref")
+  environment         String
+  workloadIdentityId  String   @unique @map("workload_identity_id")
+  bindingEpoch        BigInt   @default(1) @map("binding_epoch")
+  state               String
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([bindingRef, siteRef])
+  @@index([siteRef, environment, state])
+  @@map("site_project_binding")
+  @@schema("platform")
+}
+
+model SiteReleaseAuthority {
+  releaseRef                         String   @id @map("release_ref")
+  siteRef                            String   @map("site_ref")
+  state                              String
+  webArtifactDigest                  String   @map("web_artifact_digest") @db.Char(64)
+  releaseManifestDigest              String   @map("release_manifest_digest") @db.Char(64)
+  certificationDigest                String   @map("certification_digest") @db.Char(64)
+  launchProfileRef                   String   @map("launch_profile_ref")
+  siteConfigRevisionRef              String   @map("site_config_revision_ref")
+  legalRevisionRef                   String   @map("legal_revision_ref")
+  featurePolicyRevision              String   @map("feature_policy_revision")
+  modelOptionCatalogRef              String   @map("model_option_catalog_ref")
+  agentCatalogRef                    String   @map("agent_catalog_ref")
+  identityIssuerLabel                String   @map("identity_issuer_label")
+  identityAuthStrengthPolicyRevision String   @map("identity_auth_strength_policy_revision")
+  enabledSurfaceIds                  Json     @map("enabled_surface_ids")
+  localePolicy                       Json     @map("locale_policy")
+  createdAt                          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                          DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([releaseRef, siteRef])
+  @@index([siteRef, state])
+  @@map("site_release")
+  @@schema("platform")
+}
+
+model SiteDeploymentBindingAuthority {
+  deploymentRef          String   @id @map("deployment_ref")
+  bindingRef             String   @map("binding_ref")
+  siteRef                String   @map("site_ref")
+  releaseRef             String   @map("release_ref")
+  environment            String
+  region                 String
+  audience               String
+  sessionContractRevision String  @map("session_contract_revision")
+  webArtifactDigest      String   @map("web_artifact_digest") @db.Char(64)
+  bindingEpoch           BigInt   @default(1) @map("binding_epoch")
+  state                  String
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([deploymentRef, siteRef, releaseRef])
+  @@index([siteRef, environment, state])
+  @@map("site_deployment_binding")
+  @@schema("platform")
+}
+
+model SiteActivationAttemptAuthority {
+  attemptRef                    String    @id @map("attempt_ref")
+  siteRef                       String    @map("site_ref")
+  candidateReleaseRef           String    @map("candidate_release_ref")
+  expectedActiveReleaseRef      String?   @map("expected_active_release_ref")
+  candidateWebArtifactDigest    String    @map("candidate_web_artifact_digest") @db.Char(64)
+  candidateManifestDigest       String    @map("candidate_manifest_digest") @db.Char(64)
+  candidateCertificationDigest  String    @map("candidate_certification_digest") @db.Char(64)
+  state                         String
+  requestedAt                   DateTime  @map("requested_at") @db.Timestamptz(6)
+  providerOperationKey          String?   @unique @map("provider_operation_key")
+  deploymentRef                 String?   @map("deployment_ref")
+  observedAt                    DateTime? @map("observed_at") @db.Timestamptz(6)
+  createdAt                     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                     DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([siteRef, state, requestedAt])
+  @@map("site_activation_attempt")
+  @@schema("platform")
+}
+
+model SiteDeploymentObservationAuthority {
+  observationRef       String   @id @map("observation_ref") @db.Uuid
+  attemptRef           String   @map("attempt_ref")
+  providerOperationKey String   @map("provider_operation_key")
+  deploymentRef        String   @map("deployment_ref")
+  releaseRef           String   @map("release_ref")
+  webArtifactDigest    String   @map("web_artifact_digest") @db.Char(64)
+  healthy              Boolean
+  trafficReady         Boolean  @map("traffic_ready")
+  observedAt           DateTime @map("observed_at") @db.Timestamptz(6)
+  payloadDigest        String   @map("payload_digest") @db.Char(64)
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([attemptRef, observedAt])
+  @@map("site_deployment_observation")
+  @@schema("platform")
+}
+
 model AuthorizationSite {
   siteRef         String   @id @map("site_ref")
   state           String

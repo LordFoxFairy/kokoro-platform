@@ -50,6 +50,21 @@ export interface ActivationAttempt {
   readonly observedAt: string | null;
 }
 
+export function verifySiteAggregate(value: SiteAggregate): SiteAggregate {
+  site(value);
+  return Object.freeze({ ...value });
+}
+
+export function verifySiteRelease(value: SiteRelease): SiteRelease {
+  release(value);
+  return Object.freeze({ ...value });
+}
+
+export function verifyActivationAttempt(value: ActivationAttempt): ActivationAttempt {
+  activation(value);
+  return Object.freeze({ ...value });
+}
+
 export function beginActivation(input: Readonly<{
   attemptRef: string;
   site: SiteAggregate;
