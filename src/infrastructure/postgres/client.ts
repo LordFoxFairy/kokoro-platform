@@ -1,5 +1,12 @@
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../../generated/platform-prisma/client.js";
+import {
+  issuePlatformTransaction,
+  revokePlatformTransaction,
+  type PlatformSqlTransaction,
+} from "../../shared/unit-of-work/platform-transaction.js";
+import type { PlatformTransactionHost } from "../../shared/unit-of-work/unit-of-work.js";
+import { assertVerifiedRequestSecurityContext } from "../../shared/security-context/request-security-context.js";
 
 export type PlatformProcessRole = "api" | "worker" | "migrator";
 export type PlatformCredentialClass = "api" | "worker" | "migrator";
@@ -54,6 +61,10 @@ export interface PlatformDatabaseClient {
   disconnect(): Promise<void>;
   checkHealth(): Promise<void>;
 }
+
+export interface PlatformTransactionalDatabaseClient
+  extends PlatformDatabaseClient,
+    PlatformTransactionHost {}
 
 export function loadPlatformDatabaseConfig(
   role: PlatformProcessRole,
@@ -125,7 +136,7 @@ export function loadPlatformDatabaseConfig(
 
 export function createPlatformDatabaseClient(
   config: PlatformDatabaseConfig,
-): PlatformDatabaseClient {
+): PlatformTransactionalDatabaseClient {
   if (config.role === "migrator") {
     throw new Error("PLATFORM_MIGRATOR_CANNOT_CREATE_RUNTIME_CLIENT");
   }
@@ -167,6 +178,49 @@ export function createPlatformDatabaseClient(
     checkHealth: async () => {
       await prisma.$queryRaw`SELECT "schemaVersion" FROM platform.platform_foundation WHERE singleton = TRUE`;
     },
+    transaction: async <Result>(fence: Parameters<PlatformTransactionHost["transaction"]>[0], work: Parameters<PlatformTransactionHost["transaction"]>[1]) =>
+      prisma.$transaction(async (databaseTransaction) => {
+        const context = fence.context;
+        assertVerifiedRequestSecurityContext(context, new Date().toISOString());
+        await databaseTransaction.$queryRawUnsafe(
+          `SELECT set_config('app.operation', $1, true),
+                  set_config('app.site_id', $2, true),
+                  set_config('app.workspace_id', $3, true),
+                  set_config('app.project_id', $4, true),
+                  set_config('app.subject_id', $5, true),
+                  set_config('app.subject_generation', $6, true),
+                  set_config('app.purpose', $7, true),
+                  set_config('app.policy_epoch', $8, true),
+                  set_config('app.environment', $9, true),
+                  set_config('app.region', $10, true)`,
+          fence.operation,
+          context.target.siteId ?? "",
+          context.target.workspaceId ?? "",
+          context.target.projectId ?? "",
+          context.actor.subjectId,
+          context.actor.subjectGeneration,
+          context.target.purpose,
+          context.policyEpoch,
+          context.environment,
+          context.region,
+        );
+        const sql: PlatformSqlTransaction = {
+          query: (statement, values = []) =>
+            databaseTransaction.$queryRawUnsafe(statement, ...values),
+          execute: (statement, values = []) =>
+            databaseTransaction.$executeRawUnsafe(statement, ...values),
+        };
+        const lease = issuePlatformTransaction(sql);
+        try {
+          return await work(lease.transaction) as Result;
+        } finally {
+          revokePlatformTransaction(lease);
+        }
+      }, {
+        isolationLevel: config.transaction.isolationLevel,
+        maxWait: config.transaction.maxWaitMs,
+        timeout: config.transaction.timeoutMs,
+      }),
   };
 }
 

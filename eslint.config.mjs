@@ -54,6 +54,30 @@ export default [
     },
   },
   {
+    files: ["src/modules/*/domain/**/*.ts", "src/modules/*/application/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@prisma/**", "**/generated/platform-prisma/**", "**/infrastructure/**"],
+              message: "Domain/application code depends on public owner ports, never ORM or infrastructure implementations.",
+            },
+            {
+              group: ["**/shared/unit-of-work/platform-transaction*"],
+              message: "Application code imports the opaque transaction from the public unit-of-work barrel.",
+            },
+            {
+              group: ["**/security-context/request-security-context*", "**/policy/domain/verified-risk-decision*"],
+              message: "Application code consumes verified capabilities; cryptographic issuance is an interface/infrastructure responsibility.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     files: paymentReadRuntimeFiles,
     languageOptions: {
       globals: {
