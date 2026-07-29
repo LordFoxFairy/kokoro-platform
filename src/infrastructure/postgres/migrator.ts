@@ -285,7 +285,27 @@ async function grantFoundationPrivileges(
       `REVOKE ALL ON FUNCTION platform.bootstrap_admin_authorities(JSONB, CHAR(64)), platform.apply_admin_authority_change(UUID, JSONB) FROM ${identifier}`,
     );
     if (role === apiRole) {
-      await client.query(`GRANT SELECT ON TABLE ${KERNEL_TABLES}, ${ADMISSION_TABLES}, ${AUTHORIZATION_TABLES}, ${IDENTITY_TABLES}, ${COMMERCE_TABLES}, ${ASSET_API_TABLES}, platform.site, platform.site_release TO ${identifier}`);
+      await client.query(
+        `GRANT SELECT ON TABLE ${KERNEL_TABLES}, ${ADMISSION_TABLES}, ${AUTHORIZATION_TABLES}, ${IDENTITY_TABLES}, ${COMMERCE_TABLES}, ${ASSET_API_TABLES}, platform.site, platform.site_release TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT SELECT(site_ref,subject_ref,subject_generation,project_ref,intent_ref,state,updated_at) ON TABLE platform.asset_blob_candidate TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT SELECT(site_ref,subject_ref,subject_generation,project_ref,intent_ref,state,updated_at) ON TABLE platform.asset_promotion_intent TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT SELECT(site_ref,intent_ref,rejection_ref) ON TABLE platform.asset_upload_rejection TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT SELECT(site_ref,subject_ref,subject_generation,project_ref,asset_ref,purpose,state) ON TABLE platform.asset_resource TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT SELECT(site_ref,asset_ref,asset_version_ref,source_upload_intent_ref,eligibility_epoch,detected_media_type,size,state) ON TABLE platform.asset_version TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT SELECT(site_ref,asset_version_ref,eligibility_ref,subject_ref,subject_generation,project_ref,purpose,eligibility_epoch,state) ON TABLE platform.asset_eligibility_projection TO ${identifier}`,
+      );
       await client.query(
         `GRANT INSERT ON TABLE platform.command_receipt, platform.outbox_event, platform.inbox_delivery, platform.model_selection_decision, platform.authorization_product_context, platform.authorization_session_access_grant TO ${identifier}`,
       );
@@ -293,7 +313,9 @@ async function grantFoundationPrivileges(
         `GRANT UPDATE ON TABLE platform.command_receipt, platform.inbox_delivery, platform.authorization_product_context, platform.authorization_session_access_grant TO ${identifier}`,
       );
       await client.query(`GRANT INSERT, UPDATE ON TABLE ${ADMISSION_TABLES} TO ${identifier}`);
-      await client.query(`GRANT SELECT, UPDATE ON TABLE platform.authorization_stream_state TO ${identifier}`);
+      await client.query(
+        `GRANT SELECT, UPDATE ON TABLE platform.authorization_stream_state TO ${identifier}`,
+      );
       await client.query(`GRANT INSERT ON TABLE platform.authorization_event_log TO ${identifier}`);
       await client.query(
         `GRANT UPDATE(event_sequence) ON TABLE platform.authorization_site TO ${identifier}`,
@@ -331,18 +353,36 @@ async function grantFoundationPrivileges(
         `GRANT SELECT ON TABLE ${KERNEL_TABLES}, ${SITE_RECONCILIATION_TABLES}, platform.authorization_site, platform.authorization_site_release, platform.authorization_product_binding, platform.authorization_event_log, platform.authorization_snapshot, platform.authorization_product_context, platform.authorization_session_access_grant, platform.commerce_redemption, platform.commerce_fulfillment_transaction, platform.credit_budget_operation_receipt, platform.credit_authorization_segment, platform.admin_operator_authority, platform.admin_approval, platform.admin_post_effect_review TO ${identifier}`,
       );
       await client.query(`GRANT INSERT ON TABLE platform.inbox_delivery TO ${identifier}`);
-      await client.query(`GRANT INSERT ON TABLE platform.site_deployment_binding, platform.site_deployment_observation, platform.site_traffic_stop_observation, platform.authorization_site, platform.authorization_site_release, platform.authorization_product_binding TO ${identifier}`);
+      await client.query(
+        `GRANT INSERT ON TABLE platform.site_deployment_binding, platform.site_deployment_observation, platform.site_traffic_stop_observation, platform.authorization_site, platform.authorization_site_release, platform.authorization_product_binding TO ${identifier}`,
+      );
       await client.query(
         `GRANT UPDATE ON TABLE platform.command_receipt, platform.outbox_event, platform.inbox_delivery TO ${identifier}`,
       );
-      await client.query(`GRANT UPDATE(state,active_release_ref,policy_epoch,tombstoned_at,updated_at) ON TABLE platform.site TO ${identifier}`);
-      await client.query(`GRANT UPDATE(state,updated_at) ON TABLE platform.site_release TO ${identifier}`);
-      await client.query(`GRANT UPDATE(state,updated_at) ON TABLE platform.site_deployment_binding TO ${identifier}`);
-      await client.query(`GRANT UPDATE(state,provider_operation_key,deployment_ref,observed_at,failure_code,updated_at) ON TABLE platform.site_activation_attempt TO ${identifier}`);
-      await client.query(`GRANT UPDATE(state,provider_operation_key,observed_at,failure_code,updated_at) ON TABLE platform.site_traffic_stop_attempt TO ${identifier}`);
-      await client.query(`GRANT UPDATE(state,security_epoch,policy_epoch,revocation_epoch,updated_at) ON TABLE platform.authorization_site TO ${identifier}`);
-      await client.query(`GRANT UPDATE(state,updated_at) ON TABLE platform.authorization_site_release TO ${identifier}`);
-      await client.query(`GRANT UPDATE(workload_identity_id,deployment_ref,release_ref,environment,region,audience,session_contract_revision,binding_epoch,state,updated_at) ON TABLE platform.authorization_product_binding TO ${identifier}`);
+      await client.query(
+        `GRANT UPDATE(state,active_release_ref,policy_epoch,tombstoned_at,updated_at) ON TABLE platform.site TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT UPDATE(state,updated_at) ON TABLE platform.site_release TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT UPDATE(state,updated_at) ON TABLE platform.site_deployment_binding TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT UPDATE(state,provider_operation_key,deployment_ref,observed_at,failure_code,updated_at) ON TABLE platform.site_activation_attempt TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT UPDATE(state,provider_operation_key,observed_at,failure_code,updated_at) ON TABLE platform.site_traffic_stop_attempt TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT UPDATE(state,security_epoch,policy_epoch,revocation_epoch,updated_at) ON TABLE platform.authorization_site TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT UPDATE(state,updated_at) ON TABLE platform.authorization_site_release TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT UPDATE(workload_identity_id,deployment_ref,release_ref,environment,region,audience,session_contract_revision,binding_epoch,state,updated_at) ON TABLE platform.authorization_product_binding TO ${identifier}`,
+      );
       await client.query(
         `GRANT UPDATE ON TABLE platform.admin_approval, platform.admin_post_effect_review TO ${identifier}`,
       );
@@ -370,14 +410,30 @@ async function grantFoundationPrivileges(
         `GRANT INSERT ON TABLE platform.command_receipt, platform.outbox_event TO ${identifier}`,
       );
       await client.query(`GRANT UPDATE ON TABLE platform.command_receipt TO ${identifier}`);
-      await client.query(`GRANT INSERT ON TABLE platform.site, platform.site_project_binding, platform.site_release, platform.site_activation_attempt, platform.site_traffic_stop_attempt, platform.site_effect_approval TO ${identifier}`);
-      await client.query(`GRANT UPDATE(state,active_release_ref,security_epoch,policy_epoch,revocation_epoch,runtime_binding_epoch,tombstoned_at,updated_at) ON TABLE platform.site TO ${identifier}`);
-      await client.query(`GRANT UPDATE(state,binding_epoch,updated_at) ON TABLE platform.site_project_binding TO ${identifier}`);
-      await client.query(`GRANT UPDATE(state,updated_at) ON TABLE platform.site_release TO ${identifier}`);
-      await client.query(`GRANT UPDATE(state,updated_at) ON TABLE platform.site_deployment_binding TO ${identifier}`);
-      await client.query(`GRANT UPDATE(state,checker_subject_ref,decided_at,consumed_request_id,consumed_at,updated_at) ON TABLE platform.site_effect_approval TO ${identifier}`);
-      await client.query(`GRANT UPDATE(state,security_epoch,revocation_epoch,updated_at) ON TABLE platform.authorization_site TO ${identifier}`);
-      await client.query(`GRANT UPDATE(state,updated_at) ON TABLE platform.authorization_product_binding TO ${identifier}`);
+      await client.query(
+        `GRANT INSERT ON TABLE platform.site, platform.site_project_binding, platform.site_release, platform.site_activation_attempt, platform.site_traffic_stop_attempt, platform.site_effect_approval TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT UPDATE(state,active_release_ref,security_epoch,policy_epoch,revocation_epoch,runtime_binding_epoch,tombstoned_at,updated_at) ON TABLE platform.site TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT UPDATE(state,binding_epoch,updated_at) ON TABLE platform.site_project_binding TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT UPDATE(state,updated_at) ON TABLE platform.site_release TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT UPDATE(state,updated_at) ON TABLE platform.site_deployment_binding TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT UPDATE(state,checker_subject_ref,decided_at,consumed_request_id,consumed_at,updated_at) ON TABLE platform.site_effect_approval TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT UPDATE(state,security_epoch,revocation_epoch,updated_at) ON TABLE platform.authorization_site TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT UPDATE(state,updated_at) ON TABLE platform.authorization_product_binding TO ${identifier}`,
+      );
       await client.query(`GRANT SELECT ON TABLE ${COMMERCE_TABLES} TO ${identifier}`);
       await client.query(
         `GRANT INSERT, UPDATE ON TABLE platform.commerce_billing_account, platform.commerce_billing_account_membership TO ${identifier}`,
@@ -496,17 +552,24 @@ const ASSET_RELATIONS = [
   "asset_eligibility_projection",
   "asset_promotion_receipt",
 ] as const;
-const ASSET_API_RELATIONS = [
+const ASSET_API_MUTABLE_RELATIONS = [
   "asset_upload_intent",
   "asset_upload_session",
   "asset_quota_account",
   "asset_quota_reservation",
+] as const;
+const ASSET_API_OWNER_READ_RELATIONS = [
+  "asset_blob_candidate",
+  "asset_upload_rejection",
+  "asset_promotion_intent",
   "asset_resource",
   "asset_version",
-  "asset_reference",
   "asset_eligibility_projection",
 ] as const;
-const ASSET_API_MUTABLE_RELATIONS = ASSET_API_RELATIONS.slice(0, 4);
+const ASSET_API_RELATIONS = [
+  ...ASSET_API_MUTABLE_RELATIONS,
+  ...ASSET_API_OWNER_READ_RELATIONS,
+] as const;
 const ASSET_WORKER_INSERT_RELATIONS = ASSET_RELATIONS.slice(4);
 const ASSET_WORKER_UPDATE_RELATIONS = [
   ...ASSET_API_MUTABLE_RELATIONS,
@@ -516,10 +579,32 @@ const ASSET_WORKER_UPDATE_RELATIONS = [
   "asset_promotion_intent",
 ] as const;
 const ASSET_TABLES = ASSET_RELATIONS.map((name) => `platform.${name}`).join(", ");
-const ASSET_API_TABLES = ASSET_API_RELATIONS.map((name) => `platform.${name}`).join(", ");
+const ASSET_API_TABLES = ASSET_API_MUTABLE_RELATIONS.map((name) => `platform.${name}`).join(", ");
 const ASSET_RELATIONS_SQL = sqlLiterals(ASSET_RELATIONS);
 const ASSET_API_RELATIONS_SQL = sqlLiterals(ASSET_API_RELATIONS);
 const ASSET_API_MUTABLE_RELATIONS_SQL = sqlLiterals(ASSET_API_MUTABLE_RELATIONS);
+const ASSET_API_OWNER_READ_RELATIONS_SQL = sqlLiterals(ASSET_API_OWNER_READ_RELATIONS);
+const ASSET_API_OWNER_READ_COLUMN_ALLOWLIST_SQL = `
+  (candidate.relname='asset_blob_candidate' AND candidate_column.attname=ANY(ARRAY[
+    'site_ref','subject_ref','subject_generation','project_ref','intent_ref','state','updated_at'
+  ])) OR
+  (candidate.relname='asset_promotion_intent' AND candidate_column.attname=ANY(ARRAY[
+    'site_ref','subject_ref','subject_generation','project_ref','intent_ref','state','updated_at'
+  ])) OR
+  (candidate.relname='asset_upload_rejection' AND candidate_column.attname=ANY(ARRAY[
+    'site_ref','intent_ref','rejection_ref'
+  ])) OR
+  (candidate.relname='asset_resource' AND candidate_column.attname=ANY(ARRAY[
+    'site_ref','subject_ref','subject_generation','project_ref','asset_ref','purpose','state'
+  ])) OR
+  (candidate.relname='asset_version' AND candidate_column.attname=ANY(ARRAY[
+    'site_ref','asset_ref','asset_version_ref','source_upload_intent_ref','eligibility_epoch',
+    'detected_media_type','size','state'
+  ])) OR
+  (candidate.relname='asset_eligibility_projection' AND candidate_column.attname=ANY(ARRAY[
+    'site_ref','asset_version_ref','eligibility_ref','subject_ref','subject_generation','project_ref',
+    'purpose','eligibility_epoch','state'
+  ]))`;
 const ASSET_WORKER_INSERT_RELATIONS_SQL = sqlLiterals(ASSET_WORKER_INSERT_RELATIONS);
 const ASSET_WORKER_UPDATE_RELATIONS_SQL = sqlLiterals(ASSET_WORKER_UPDATE_RELATIONS);
 
@@ -684,7 +769,8 @@ async function assertPostMigrationAuthority(
         row.canExecuteModelCandidatesProjection !== (row.roleName === apiRole) ||
         row.canExecuteModelDecisionProjection !== (row.roleName === apiRole) ||
         row.canExecuteModelAvailabilityReport !== (row.roleName === workerRole) ||
-        row.canExecuteCreditScopePolicy !== (row.roleName === apiRole || row.roleName === adminRole) ||
+        row.canExecuteCreditScopePolicy !==
+          (row.roleName === apiRole || row.roleName === adminRole) ||
         row.canExecuteAdminAuthorityChange !== (row.roleName === workerRole) ||
         row.hasRequiredModelOptionFunctions !== true ||
         row.canSelectModelCatalogTable !== false ||
@@ -794,10 +880,47 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            AND has_table_privilege(runtime_role.rolname, 'platform.asset_upload_session', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.asset_quota_account', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.asset_quota_reservation', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(runtime_role.rolname, 'platform.asset_resource', 'SELECT')
-           AND has_table_privilege(runtime_role.rolname, 'platform.asset_version', 'SELECT')
-           AND has_table_privilege(runtime_role.rolname, 'platform.asset_reference', 'SELECT')
-           AND has_table_privilege(runtime_role.rolname, 'platform.asset_eligibility_projection', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_blob_candidate', 'site_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_blob_candidate', 'subject_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_blob_candidate', 'subject_generation', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_blob_candidate', 'project_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_blob_candidate', 'intent_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_blob_candidate', 'state', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_blob_candidate', 'updated_at', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_promotion_intent', 'site_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_promotion_intent', 'subject_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_promotion_intent', 'subject_generation', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_promotion_intent', 'project_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_promotion_intent', 'intent_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_promotion_intent', 'state', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_promotion_intent', 'updated_at', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_upload_rejection', 'site_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_upload_rejection', 'intent_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_upload_rejection', 'rejection_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_resource', 'site_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_resource', 'subject_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_resource', 'subject_generation', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_resource', 'project_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_resource', 'asset_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_resource', 'purpose', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_resource', 'state', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_version', 'site_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_version', 'asset_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_version', 'asset_version_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_version', 'source_upload_intent_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_version', 'eligibility_epoch', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_version', 'detected_media_type', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_version', 'size', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_version', 'state', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_eligibility_projection', 'site_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_eligibility_projection', 'asset_version_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_eligibility_projection', 'eligibility_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_eligibility_projection', 'subject_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_eligibility_projection', 'subject_generation', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_eligibility_projection', 'project_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_eligibility_projection', 'purpose', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_eligibility_projection', 'eligibility_epoch', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.asset_eligibility_projection', 'state', 'SELECT')
          WHEN runtime_role.rolname = $3 THEN
            has_table_privilege(runtime_role.rolname, 'platform.outbox_event', 'SELECT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.command_receipt', 'UPDATE')
@@ -1072,11 +1195,24 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                  ))
                  OR
                  ((has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
-                   OR has_any_column_privilege(runtime_role.rolname,candidate.oid,'SELECT')) AND (
-                   (runtime_role.rolname=$1 AND candidate.relname=ANY(ARRAY[${ASSET_API_RELATIONS_SQL}]))
-                   OR (runtime_role.rolname IN ($3,$4) AND
-                     candidate.relname=ANY(ARRAY[${ASSET_RELATIONS_SQL}]))
-                 ))
+                   OR has_any_column_privilege(runtime_role.rolname,candidate.oid,'SELECT'))
+                  AND candidate.relname=ANY(ARRAY[${ASSET_RELATIONS_SQL}]) AND NOT (
+                    (runtime_role.rolname=$1 AND
+                      candidate.relname=ANY(ARRAY[${ASSET_API_RELATIONS_SQL}]))
+                    OR (runtime_role.rolname IN ($3,$4))
+                  ))
+                 OR
+                 (runtime_role.rolname=$1
+                  AND candidate.relname=ANY(ARRAY[${ASSET_API_OWNER_READ_RELATIONS_SQL}])
+                  AND (has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT') OR EXISTS (
+                    SELECT 1 FROM pg_attribute candidate_column
+                    WHERE candidate_column.attrelid=candidate.oid
+                      AND candidate_column.attnum>0 AND NOT candidate_column.attisdropped
+                      AND has_column_privilege(
+                        runtime_role.rolname,candidate.oid,candidate_column.attnum,'SELECT'
+                      )
+                      AND NOT (${ASSET_API_OWNER_READ_COLUMN_ALLOWLIST_SQL})
+                  )))
                  OR
                  (has_table_privilege(runtime_role.rolname, candidate.oid,
                    'DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN') AND NOT (

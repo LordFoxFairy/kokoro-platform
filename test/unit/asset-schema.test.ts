@@ -1,24 +1,26 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const migration = readFileSync(new URL(
-  "../../prisma/migrations/20260729_asset_upload_authority/migration.sql",
-  import.meta.url,
-), "utf8");
-const migrator = readFileSync(new URL(
-  "../../src/infrastructure/postgres/migrator.ts",
-  import.meta.url,
-), "utf8");
-const databaseClient = readFileSync(new URL(
-  "../../src/infrastructure/postgres/client.ts",
-  import.meta.url,
-), "utf8");
+const migration = readFileSync(
+  new URL("../../prisma/migrations/20260729_asset_upload_authority/migration.sql", import.meta.url),
+  "utf8",
+);
+const migrator = readFileSync(
+  new URL("../../src/infrastructure/postgres/migrator.ts", import.meta.url),
+  "utf8",
+);
+const databaseClient = readFileSync(
+  new URL("../../src/infrastructure/postgres/client.ts", import.meta.url),
+  "utf8",
+);
 
 describe("Asset persistence authority", () => {
   it("freezes the observed provider version and binds candidates to their scan event", () => {
     expect(migration).toContain("CREATE TABLE platform.asset_blob_candidate");
     expect(migration).toContain("provider_version_ref TEXT NOT NULL");
-    expect(migration).toContain("scan_event_id UUID NOT NULL UNIQUE REFERENCES platform.outbox_event(event_id)");
+    expect(migration).toContain(
+      "scan_event_id UUID NOT NULL UNIQUE REFERENCES platform.outbox_event(event_id)",
+    );
     expect(migration).toContain("CHECK (observed_at >= completion_requested_at)");
     expect(migration).toContain("CREATE TABLE platform.asset_upload_rejection");
     expect(migration).toContain("CREATE TRIGGER asset_upload_rejection_immutable");
@@ -45,18 +47,50 @@ describe("Asset persistence authority", () => {
     expect(databaseClient).toContain('"asset.upload-completion.observe"');
     expect(databaseClient).toContain('"asset.scan.evaluate"');
     expect(databaseClient).toContain('"asset.cleanup.delete"');
-    expect(databaseClient).toContain("config.role !== \"worker\"");
+    expect(databaseClient).toContain('config.role !== "worker"');
     expect(databaseClient).toContain('scope.scopes[0] !== "asset:worker"');
   });
 
+  it("lets the public API read only owner-visible asset status columns", () => {
+    expect(migrator).toContain(
+      "GRANT SELECT(site_ref,subject_ref,subject_generation,project_ref,intent_ref,state,updated_at) ON TABLE platform.asset_blob_candidate",
+    );
+    expect(migrator).toContain(
+      "GRANT SELECT(site_ref,subject_ref,subject_generation,project_ref,intent_ref,state,updated_at) ON TABLE platform.asset_promotion_intent",
+    );
+    expect(migrator).toContain(
+      "GRANT SELECT(site_ref,intent_ref,rejection_ref) ON TABLE platform.asset_upload_rejection",
+    );
+    expect(migrator).not.toContain(
+      "GRANT SELECT ON TABLE platform.asset_blob_candidate TO ${identifier}",
+    );
+    expect(migrator).not.toContain(
+      "GRANT SELECT ON TABLE platform.asset_promotion_intent TO ${identifier}",
+    );
+  });
+
   it("forces Site-scoped row policies for candidate and rejection storage", () => {
-    expect(migration).toContain("ALTER TABLE platform.asset_blob_candidate FORCE ROW LEVEL SECURITY");
-    expect(migration).toContain("ALTER TABLE platform.asset_upload_rejection FORCE ROW LEVEL SECURITY");
-    expect(migration).toContain("ALTER TABLE platform.asset_scan_evaluation FORCE ROW LEVEL SECURITY");
-    expect(migration).toContain("ALTER TABLE platform.asset_promotion_intent FORCE ROW LEVEL SECURITY");
-    expect(migration).toContain("ALTER TABLE platform.asset_cleanup_group FORCE ROW LEVEL SECURITY");
-    expect(migration).toContain("ALTER TABLE platform.asset_object_cleanup FORCE ROW LEVEL SECURITY");
-    expect(migration).toContain("ALTER TABLE platform.asset_object_cleanup_receipt FORCE ROW LEVEL SECURITY");
+    expect(migration).toContain(
+      "ALTER TABLE platform.asset_blob_candidate FORCE ROW LEVEL SECURITY",
+    );
+    expect(migration).toContain(
+      "ALTER TABLE platform.asset_upload_rejection FORCE ROW LEVEL SECURITY",
+    );
+    expect(migration).toContain(
+      "ALTER TABLE platform.asset_scan_evaluation FORCE ROW LEVEL SECURITY",
+    );
+    expect(migration).toContain(
+      "ALTER TABLE platform.asset_promotion_intent FORCE ROW LEVEL SECURITY",
+    );
+    expect(migration).toContain(
+      "ALTER TABLE platform.asset_cleanup_group FORCE ROW LEVEL SECURITY",
+    );
+    expect(migration).toContain(
+      "ALTER TABLE platform.asset_object_cleanup FORCE ROW LEVEL SECURITY",
+    );
+    expect(migration).toContain(
+      "ALTER TABLE platform.asset_object_cleanup_receipt FORCE ROW LEVEL SECURITY",
+    );
     expect(migration).toContain("CREATE POLICY asset_blob_candidate_worker_scope");
     expect(migration).toContain("CREATE POLICY asset_upload_rejection_worker_scope");
     expect(migration).toContain("CREATE POLICY asset_object_cleanup_worker_scope");
