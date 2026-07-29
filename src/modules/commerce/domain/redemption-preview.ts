@@ -34,6 +34,20 @@ export const redemptionSafeTermsSchema = z.strictObject({
 
 export type RedemptionSafeTerms = z.infer<typeof redemptionSafeTermsSchema>;
 
+/**
+ * Redemption is intentionally limited to one-shot, non-expiring credit packs in
+ * this release. Daily/period programs require a calendar-window acquisition
+ * authority and must not be approximated with a relative expiry grant.
+ */
+export const redemptionReleaseCapabilities = Object.freeze({
+  creditGrantBucketClasses: Object.freeze(["permanent"] as const),
+  calendarWindowCreditAcquisition: false,
+});
+
+export function isSupportedRedemptionSafeTerms(terms: RedemptionSafeTerms): boolean {
+  return terms.credits.every((credit) => credit.bucketClass === "permanent" && credit.expiresAt === null);
+}
+
 export class RedemptionPolicyError extends Error {
   constructor() {
     super("REDEMPTION_POLICY_REJECTED");

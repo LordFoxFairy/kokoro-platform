@@ -26,7 +26,12 @@ Platform through HTTP/RPC and never exposes a Prisma client to application code.
   revision, so key rotation cannot silently return a credential that confirm would reject.
 - `previewRedemption` is a required production public operation. It uses the generic command receipt fence and returns the same safe
   preview on an exact idempotent replay while the preview remains live.
+- `confirmRedemption`, command recovery, and durable receipt reads are public operations. Confirmation re-locks every mutable
+  authority, binds the effect to the database clock, claims the Code, and materializes all fulfillment outputs atomically.
+- The latest release supports permanent Credit packs, immutable non-renewing SubscriptionTerms, and EntitlementGrants. Daily/period
+  Credit programs fail closed in redemption until calendar-window acquisition is a real owner workflow; relative-expiry grants are
+  not used as an approximation.
+- Fulfilled-redemption outbox events are reconciled by the Platform worker against the durable Redemption and fulfillment projection
+  before delivery is completed, with bounded retry and dead-letter handling.
 
-Confirm/claim, SubscriptionTerm, EntitlementGrant, CreditGrant/journal/hold allocation, receipt projections, and reconciliation are the
-next owner slice. All module ports accept only the opaque `PlatformTransaction`; no sibling module may introduce a second transaction
-or self-RPC.
+All module ports accept only the opaque `PlatformTransaction`; no sibling module may introduce a second transaction or self-RPC.

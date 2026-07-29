@@ -11,6 +11,7 @@ import type { CommerceRepository } from "../../application/contracts/repository.
 import { PostgresCommerceRepository } from "./repository.js";
 import {
   publishedFulfillmentOutputPlanDigest,
+  isSupportedRedemptionSafeTerms,
   redemptionPreviewDigest,
   redemptionSafeTermsSchema,
   type RedemptionSafeTerms,
@@ -159,6 +160,7 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
     const preview = rows[0];
     if (preview === undefined || rows.length !== 1) return rejected();
     const safeTerms = redemptionSafeTermsSchema.parse(preview.safeTerms);
+    if (!isSupportedRedemptionSafeTerms(safeTerms)) return rejected();
     if (!matchesConfirmationBinding(preview, safeTerms, input)) return rejected();
     const sql = resolvePlatformTransaction(transaction);
     locks.enter("program_availability");

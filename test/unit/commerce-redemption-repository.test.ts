@@ -6,13 +6,14 @@ import {
   type PlatformSqlTransaction,
 } from "../../src/shared/unit-of-work/platform-transaction.js";
 import { publishedFulfillmentOutputPlanDigest } from "../../src/modules/commerce/domain/redemption-preview.js";
+import { RedemptionPolicyError } from "../../src/modules/commerce/domain/redemption-preview.js";
 
 describe("PostgresRedemptionRepository preview", () => {
   it("uses snake-case HMAC lookup DTOs and expands frozen output cardinality", async () => {
     const calls: { statement: string; values: readonly unknown[] }[] = [];
     const outputRows = [
       { outputLineId: "term", outputKind: "subscription_term" as const, ordinal: 0, cardinality: 1, planVersionRef: "plan-v1", creditProgramRevisionRef: null, bucketClass: null, unit: null, amount: null, creditExpiresAfterSeconds: null, entitlementTemplateRevisionRef: null, capabilityKey: null, safeLabel: null, entitlementExpiresAfterSeconds: null },
-      { outputLineId: "credits", outputKind: "credit_grant" as const, ordinal: 1, cardinality: 2, planVersionRef: null, creditProgramRevisionRef: "credit-v1", bucketClass: "period" as const, unit: "credit", amount: "100", creditExpiresAfterSeconds: 86400n, entitlementTemplateRevisionRef: null, capabilityKey: null, safeLabel: null, entitlementExpiresAfterSeconds: null },
+      { outputLineId: "credits", outputKind: "credit_grant" as const, ordinal: 1, cardinality: 2, planVersionRef: null, creditProgramRevisionRef: "credit-v1", bucketClass: "permanent" as const, unit: "credit", amount: "100", creditExpiresAfterSeconds: null, entitlementTemplateRevisionRef: null, capabilityKey: null, safeLabel: null, entitlementExpiresAfterSeconds: null },
     ];
     const outputPlanDigest = publishedFulfillmentOutputPlanDigest({
       siteId: "site-1",
@@ -74,4 +75,40 @@ describe("PostgresRedemptionRepository preview", () => {
       revokePlatformTransaction(lease);
     }
   });
+
+  it.each(["daily", "period"] as const)(
+    "fails closed for %s credit outputs until calendar-window acquisition is an authority",
+    async (bucketClass) => {
+      const outputRows = [{
+        outputLineId: "credits", outputKind: "credit_grant" as const, ordinal: 0, cardinality: 1,
+        planVersionRef: null, creditProgramRevisionRef: "credit-v1", bucketClass, unit: "credit",
+        amount: "100", creditExpiresAfterSeconds: 86400n, entitlementTemplateRevisionRef: null,
+        capabilityKey: null, safeLabel: null, entitlementExpiresAfterSeconds: null,
+      }];
+      const outputPlanDigest = publishedFulfillmentOutputPlanDigest({
+        siteId: "site-1", fulfillmentProgramRevisionRef: "fulfillment-v1", lines: outputRows,
+      });
+      const lease = issuePlatformTransaction({
+        execute: async () => 0,
+        query: async (statement) => statement.includes("jsonb_to_recordset") ? [{
+          codeRef: "00000000-0000-7000-8000-000000000001",
+          batchRef: "00000000-0000-7000-8000-000000000002",
+          redemptionProgramRevisionRef: "redeem-program-v1", fulfillmentProgramRevisionRef: "fulfillment-v1",
+          productRevisionDigest: "a".repeat(64), programDigest: "b".repeat(64), outputPlanDigest,
+          safeCodeFingerprint: "CODE-0123456789ABCDEF", productRef: "product-1",
+          productVersionRef: "product-v1", productKind: "credit_pack", safeProductLabel: "Credits",
+          planRef: null, planVersionRef: null, safePlanLabel: null, termAction: null, termSeconds: null,
+          activeTermEndsAt: null, observedAt: new Date("2026-07-29T01:00:30.000Z"), legalTermRefs: [],
+        }] as never : outputRows as never,
+      });
+      try {
+        await expect(new PostgresRedemptionRepository().resolvePreviewCandidate(lease.transaction, {
+          siteId: "site-1", billingAccountId: "billing-1",
+          lookupCandidates: [{ keyRevision: "code-1", lookupDigest: "d".repeat(64) }],
+        })).rejects.toBeInstanceOf(RedemptionPolicyError);
+      } finally {
+        revokePlatformTransaction(lease);
+      }
+    },
+  );
 });

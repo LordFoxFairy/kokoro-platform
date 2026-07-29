@@ -4,7 +4,12 @@ import { PostgresRedemptionConfirmationRepository } from
   "../../src/modules/commerce/infrastructure/postgres/redemption-confirmation-repository.js";
 import { issuePlatformTransaction, revokePlatformTransaction, type PlatformSqlTransaction } from
   "../../src/shared/unit-of-work/platform-transaction.js";
-import { publishedFulfillmentOutputPlanDigest, redemptionPreviewDigest, redemptionSafeTermsSchema } from
+import {
+  publishedFulfillmentOutputPlanDigest,
+  redemptionPreviewDigest,
+  redemptionSafeTermsSchema,
+  type PublishedFulfillmentOutputLine,
+} from
   "../../src/modules/commerce/domain/redemption-preview.js";
 import { CommerceLockSequence } from "../../src/workflows/commerce/lock-order.js";
 import { commerceCanonicalJson } from "../../src/modules/commerce/domain/canonical-json.js";
@@ -125,8 +130,8 @@ describe("PostgresRedemptionConfirmationRepository", () => {
       productRef: "product-1", productVersionRef: "product-v1", productKind: "credit_pack",
       safeProductLabel: "Credits", planRef: null, planVersionRef: null, safePlanLabel: null,
       term: { action: "none", startsAt: null, endsAt: null, automaticRenewal: false },
-      credits: [{ creditProgramRevisionRef: "credit-v1", bucketClass: "period", unit: "credit",
-        amount: "100", expiresAt: "2026-07-30T00:59:00.000Z" }],
+      credits: [{ creditProgramRevisionRef: "credit-v1", bucketClass: "permanent", unit: "credit",
+        amount: "100", expiresAt: null }],
       entitlements: [], legalTermRefs: ["terms-v1"],
     });
     const lease = issuePlatformTransaction({
@@ -171,11 +176,43 @@ describe("PostgresRedemptionConfirmationRepository", () => {
       expect(joined).toContain("customer_available");
       const grantInsert = executions.find(({ statement }) => statement.includes("INSERT INTO platform.credit_grant"))!;
       expect(grantInsert.values[13]).toBe("2026-07-29T01:00:00.000Z");
-      expect(grantInsert.values[14]).toBe("2026-07-30T01:00:00.000Z");
+      expect(grantInsert.values[14]).toBeNull();
     } finally {
       revokePlatformTransaction(lease);
     }
   });
+
+  it.each(["daily", "period"] as const)(
+    "rejects a %s Credit preview before locking or mutating authorities",
+    async (bucketClass) => {
+      const statements: string[] = [];
+      const output = { ...creditOutput(), bucketClass, creditExpiresAfterSeconds: 86400n };
+      const preview = validPreviewRow([output], {
+        productRef: "product-1", productVersionRef: "product-v1", productKind: "credit_pack",
+        safeProductLabel: "Credits", planRef: null, planVersionRef: null, safePlanLabel: null,
+        term: { action: "none", startsAt: null, endsAt: null, automaticRenewal: false },
+        credits: [{ creditProgramRevisionRef: "credit-v1", bucketClass, unit: "credit",
+          amount: "100", expiresAt: "2026-07-30T00:59:00.000Z" }],
+        entitlements: [], legalTermRefs: ["terms-v1"],
+      });
+      const lease = issuePlatformTransaction({
+        query: async (statement) => {
+          statements.push(statement);
+          return statement.includes("FROM platform.commerce_redemption_preview preview") ? [preview] as never : [];
+        },
+        execute: async (statement) => { statements.push(statement); return 1; },
+      });
+      try {
+        await expect(new PostgresRedemptionConfirmationRepository().confirmRedemption(
+          lease.transaction, confirmationInput(), new CommerceLockSequence(),
+        )).resolves.toEqual({ kind: "rejected", code: "REDEEM_NOT_ACCEPTED" });
+        expect(statements).toHaveLength(1);
+        expect(statements.filter((statement) => /^\s*(?:INSERT|UPDATE|DELETE)\b/u.test(statement))).toEqual([]);
+      } finally {
+        revokePlatformTransaction(lease);
+      }
+    },
+  );
 
   it("locks the subscription authority and creates an immutable non-renewing term", async () => {
     const statements: string[] = [];
@@ -510,8 +547,7 @@ function previewRow(overrides: Record<string, unknown> = {}) {
 }
 
 function validPreviewRow(
-  outputs: Array<ReturnType<typeof entitlementOutput> | ReturnType<typeof creditOutput> |
-    ReturnType<typeof subscriptionOutput>>,
+  outputs: readonly PublishedFulfillmentOutputLine[],
   safeTerms?: Record<string, unknown>,
 ) {
   const row = previewRow(safeTerms === undefined ? {} : { safeTerms });
@@ -548,8 +584,8 @@ function entitlementOutput() {
 function creditOutput() {
   return {
     outputLineId: "credits", outputKind: "credit_grant" as const, ordinal: 0, cardinality: 1,
-    planVersionRef: null, creditProgramRevisionRef: "credit-v1", bucketClass: "period" as const,
-    unit: "credit", amount: "100", creditExpiresAfterSeconds: 86400n,
+    planVersionRef: null, creditProgramRevisionRef: "credit-v1", bucketClass: "permanent" as const,
+    unit: "credit", amount: "100", creditExpiresAfterSeconds: null,
     liabilityMerchantAccountId: "merchant-1", burnPriority: 100, scopePolicy: {
       version: 1, surfaceRefs: ["general.chat"], capabilityKeys: ["general.chat.message"],
       agentRefs: [], allowUnattributedAgent: true,

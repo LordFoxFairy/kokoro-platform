@@ -3,6 +3,7 @@ import type { RedemptionRepository } from "../../application/contracts/redemptio
 import {
   redemptionSafeTermsSchema,
   RedemptionPolicyError,
+  isSupportedRedemptionSafeTerms,
   publishedFulfillmentOutputPlanDigest,
   type RedemptionSafeTerms,
   type StoredRedemptionPreview,
@@ -209,6 +210,9 @@ function terms(row: CandidateRow, outputs: readonly OutputRow[], now: string): R
       if (output.creditProgramRevisionRef === null || output.bucketClass === null || output.unit === null || output.amount === null) {
         throw new Error("REDEMPTION_PROGRAM_OUTPUT_INVALID");
       }
+      if (output.bucketClass !== "permanent" || output.creditExpiresAfterSeconds !== null) {
+        throw new RedemptionPolicyError();
+      }
       for (let occurrence = 0; occurrence < output.cardinality; occurrence += 1) {
         credits.push(Object.freeze({
           creditProgramRevisionRef: output.creditProgramRevisionRef,
@@ -249,7 +253,7 @@ function terms(row: CandidateRow, outputs: readonly OutputRow[], now: string): R
     ? null
     : row.termAction === "extend_from_max" && hasActiveTerm ? activeTermEndsAt : now;
   const end = start === null ? null : expiry(start, row.termSeconds);
-  return redemptionSafeTermsSchema.parse({
+  const safeTerms = redemptionSafeTermsSchema.parse({
     productRef: row.productRef,
     productVersionRef: row.productVersionRef,
     productKind: row.productKind,
@@ -262,6 +266,8 @@ function terms(row: CandidateRow, outputs: readonly OutputRow[], now: string): R
     entitlements,
     legalTermRefs: row.legalTermRefs,
   });
+  if (!isSupportedRedemptionSafeTerms(safeTerms)) throw new RedemptionPolicyError();
+  return safeTerms;
 }
 
 function expiry(now: string, seconds: bigint | null): string | null {
