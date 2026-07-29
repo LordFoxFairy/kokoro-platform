@@ -148,6 +148,111 @@ describe("Postgres Identity security-management SiteRelease authority", () => {
       revokePlatformTransaction(lease);
     }
   });
+
+  it("consumes a proof only for its exact SiteRelease, workload, target, owner and frozen epochs", async () => {
+    let statement = "";
+    let values: readonly unknown[] = [];
+    const lease = issuePlatformTransaction({
+      async query() {
+        return [];
+      },
+      async execute(sql, parameters = []) {
+        statement = sql;
+        values = parameters;
+        return 1;
+      },
+    });
+    try {
+      const consumed = await new PostgresIdentitySecurityManagementRepository()
+        .consumeReauthenticationProof(lease.transaction, {
+          binding: binding(),
+          accountRef: "account-1",
+          commandId: "2".repeat(32),
+          proof: {
+            proofDigest: "a".repeat(64),
+            workloadIdentityId: "workload-1",
+            target: {
+              audience: "platform-public",
+              operationId: "disableTotp",
+              resourceKind: "identity_account",
+            },
+          },
+          now: "2026-07-29T00:00:00.000Z",
+        });
+
+      expect(consumed).toBe(true);
+      expect(statement).toContain("site_release_ref=$3");
+      expect(statement).toContain("workload_identity_id=$4");
+      expect(statement).toContain("operation_id=$9");
+      expect(statement).toContain("resource_ref=$5");
+      expect(statement).toContain("account_security_epoch=(");
+      expect(statement).toContain("subject_generation=$11::bigint");
+      expect(statement).toContain("session_epoch=$12::bigint");
+      expect(statement).toContain("credential_epoch=$15::bigint");
+      expect(statement).toContain("state='active' AND expires_at>$14::timestamptz");
+      expect(values).toEqual([
+        "a".repeat(64), "site-1", "release-1", "workload-1", "account-1",
+        "subject-1", "session-1", "platform-public", "disableTotp", "identity_account",
+        "3", "4", "2".repeat(32), "2026-07-29T00:00:00.000Z", "5",
+      ]);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("supersedes a lost proof delivery only through its bound recovery capability", async () => {
+    const transfers: (readonly unknown[])[] = [];
+    const priorCommandId = "1".repeat(32);
+    const newCommandId = "2".repeat(32);
+    const lease = issuePlatformTransaction({
+      async query(statement) {
+        if (statement.includes("pg_advisory_xact_lock")) return [];
+        if (statement.includes("FROM platform.identity_account account")) {
+          return [ownerRow("Acme AI")] as never;
+        }
+        if (statement.includes("FROM platform.identity_reauthentication_proof proof")) {
+          return [{
+            proofDigest: "a".repeat(64), proofState: "active",
+            proofExpiresAt: "2026-07-29T00:05:00.000Z", audience: "platform-public",
+            operationId: "regenerateRecoveryCodes", resourceKind: "identity_account",
+            authStrengthPolicyRevision: "default-v1", claimState: "first_claim_consumed",
+            claimRequestDigest: "b".repeat(64), receiptRequestDigest: "b".repeat(64),
+            operation: "reauthenticateIdentitySession", receiptState: "succeeded",
+            callerIdentity: "workload-1", recoverySiteRef: "site-1",
+            recoveryWorkloadIdentityId: "workload-1",
+            recoveryPurpose: "reauthenticateIdentitySession", capabilityDigest: "c".repeat(64),
+            recoveryState: "active", recoveryExpiresAt: "2026-07-30T00:00:00.000Z",
+          }] as never;
+        }
+        return [];
+      },
+      async execute(statement, values = []) {
+        if (statement.includes("UPDATE platform.identity_receipt_recovery_capability")) {
+          transfers.push(values);
+        }
+        return 1;
+      },
+    });
+    try {
+      const result = await new PostgresIdentitySecurityManagementRepository()
+        .supersedeReauthenticationProof(lease.transaction, {
+          binding: binding(), accountRef: "account-1", expectedAccountSecurityEpoch: "7",
+          priorCommandId, newCommandId, requestDigest: "d".repeat(64),
+          workloadIdentityId: "workload-1", capabilityDigest: "c".repeat(64),
+          proofDigest: "e".repeat(64), now: "2026-07-29T00:00:00.000Z",
+          expiresAt: "2026-07-29T00:05:00.000Z",
+        });
+
+      expect(result).toEqual({
+        target: { audience: "platform-public", operationId: "regenerateRecoveryCodes",
+          resourceKind: "identity_account" },
+        authStrengthPolicyRevision: "default-v1",
+      });
+      expect(transfers).toEqual([[priorCommandId, newCommandId]]);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
 });
 
 function binding() {
@@ -180,6 +285,7 @@ function ownerRow(identityIssuerLabel: string) {
     passwordHash: "$argon2id$stored",
     pepperVersion: 1,
     passwordCredentialEpoch: 2n,
+    authStrengthPolicyRevision: "default-v1",
     authenticatorRef: null,
     secretAlgorithm: null,
     secretKeyRevision: null,

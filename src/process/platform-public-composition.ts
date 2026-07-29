@@ -94,6 +94,7 @@ export async function createPlatformPublicProductionComposition(
     verificationCredentials,
     sessionCredentials,
     refreshCredentials,
+    reauthenticationCredentials,
     auditDigest,
     deliverySealer,
     totpSecretProtector,
@@ -106,6 +107,7 @@ export async function createPlatformPublicProductionComposition(
     ),
     loadOpaqueCredentialCodec(required(environment, "PLATFORM_IDENTITY_SESSION_DIGEST_KEY_FILE")),
     loadOpaqueCredentialCodec(required(environment, "PLATFORM_IDENTITY_REFRESH_DIGEST_KEY_FILE")),
+    loadOpaqueCredentialCodec(required(environment, "PLATFORM_IDENTITY_REAUTH_DIGEST_KEY_FILE")),
     loadIdentityAuditDigester(required(environment, "PLATFORM_IDENTITY_AUDIT_DIGEST_KEY_FILE")),
     loadVerificationDeliverySealer(required(environment, "PLATFORM_IDENTITY_DELIVERY_KEY_FILE")),
     loadIdentityTotpSecretProtector(required(environment, "PLATFORM_IDENTITY_TOTP_KEY_RING_FILE")),
@@ -115,13 +117,14 @@ export async function createPlatformPublicProductionComposition(
     eventSigner,
   );
   const identityRepository = new PostgresIdentityRepository();
+  const dummyPasswordHash = await passwordHasher.hash(`dummy-${randomUUID()}-${randomUUID()}`);
   const identity = new IdentityApplicationService({
     unitOfWork,
     repository: identityRepository,
     receipts: new CommandReceiptRepository(),
     outbox: new OutboxRepository(),
     passwordHasher,
-    dummyPasswordHash: await passwordHasher.hash(`dummy-${randomUUID()}-${randomUUID()}`),
+    dummyPasswordHash,
     verificationCredentials,
     sessionCredentials,
     refreshCredentials,
@@ -144,6 +147,9 @@ export async function createPlatformPublicProductionComposition(
     recoveryCodeIssuer: createIdentityRecoveryCodeIssuer(),
     totpSecretProtector,
     totpVerifier: createIdentityTotpVerifier(),
+    passwordHasher,
+    dummyPasswordHash,
+    reauthenticationCredentials,
     dummyTotpSecret: generateSecret(),
     auditDigest,
     reference: randomUUID,

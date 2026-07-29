@@ -10,8 +10,11 @@ export const IDENTITY_LAUNCH_OPERATION_IDS = Object.freeze([
   "completeEmailVerification",
   "createIdentitySession",
   "completeSessionMfa",
+  "reauthenticateIdentitySession",
   "beginTotpEnrollment",
   "confirmTotpEnrollment",
+  "disableTotp",
+  "regenerateRecoveryCodes",
   "refreshIdentitySession",
   "listIdentitySessions",
   "revokeIdentitySessions",
@@ -111,6 +114,33 @@ export function createIdentityPublicOperations(
       },
     }),
     definePlatformPublicOperation({
+      operationId: "reauthenticateIdentitySession",
+      async execute(input) {
+        if (input.session === null) throw new IdentityApplicationError("AUTHENTICATION_FAILED");
+        const common = {
+          workload: input.workload, context: input.context, session: input.session,
+          commandId: input.headers["X-Kokoro-Command-Id"],
+          idempotencyKey: input.headers["Idempotency-Key"],
+          receiptRecoveryCapability: recovery(input.receiptRecoveryCapability),
+        };
+        if (input.body.stage === "supersede") {
+          return securityManagement.reauthenticateIdentitySession({
+            ...common, stage: input.body.stage, priorCommandId: input.body.priorCommandId,
+          });
+        }
+        if (input.body.stage === "mfa") {
+          return securityManagement.reauthenticateIdentitySession({
+            ...common, stage: input.body.stage, challengeKind: input.body.challengeKind,
+            proofCode: input.body.proofCode, transactionRef: input.body.transactionRef,
+            target: input.body.target,
+          });
+        }
+        return securityManagement.reauthenticateIdentitySession({
+          ...common, stage: input.body.stage, password: input.body.password, target: input.body.target,
+        });
+      },
+    }),
+    definePlatformPublicOperation({
       operationId: "beginTotpEnrollment",
       async execute(input) {
         if (input.session === null) throw new IdentityApplicationError("AUTHENTICATION_FAILED");
@@ -121,6 +151,7 @@ export function createIdentityPublicOperations(
           commandId: input.headers["X-Kokoro-Command-Id"],
           idempotencyKey: input.headers["Idempotency-Key"],
           receiptRecoveryCapability: recovery(input.receiptRecoveryCapability),
+          reauthenticationProof: input.body.reauthenticationProof,
         };
         if (input.body.ceremonyAction === "supersede") {
           return securityManagement.beginTotpEnrollment({
@@ -150,6 +181,37 @@ export function createIdentityPublicOperations(
           transactionRef: input.body.transactionRef,
           code: input.body.code,
         });
+      },
+    }),
+    definePlatformPublicOperation({
+      operationId: "disableTotp",
+      async execute(input) {
+        if (input.session === null) throw new IdentityApplicationError("AUTHENTICATION_FAILED");
+        return securityManagement.disableTotp({
+          workload: input.workload, context: input.context, session: input.session,
+          commandId: input.headers["X-Kokoro-Command-Id"],
+          idempotencyKey: input.headers["Idempotency-Key"],
+          receiptRecoveryCapability: recovery(input.receiptRecoveryCapability),
+          code: input.body.code, reauthenticationProof: input.body.reauthenticationProof,
+        });
+      },
+    }),
+    definePlatformPublicOperation({
+      operationId: "regenerateRecoveryCodes",
+      async execute(input) {
+        if (input.session === null) throw new IdentityApplicationError("AUTHENTICATION_FAILED");
+        const common = {
+          workload: input.workload, context: input.context, session: input.session,
+          commandId: input.headers["X-Kokoro-Command-Id"],
+          idempotencyKey: input.headers["Idempotency-Key"],
+          receiptRecoveryCapability: recovery(input.receiptRecoveryCapability),
+          reauthenticationProof: input.body.reauthenticationProof,
+        };
+        return input.body.recoveryAction === "supersede"
+          ? securityManagement.regenerateRecoveryCodes({ ...common,
+              recoveryAction: input.body.recoveryAction, priorCommandId: input.body.priorCommandId })
+          : securityManagement.regenerateRecoveryCodes({ ...common,
+              recoveryAction: input.body.recoveryAction });
       },
     }),
     definePlatformPublicOperation({

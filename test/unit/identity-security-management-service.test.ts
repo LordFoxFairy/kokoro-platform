@@ -67,6 +67,9 @@ describe("Identity security management application service", () => {
         enrollment = input;
         return true;
       },
+      async consumeReauthenticationProof() {
+        return true;
+      },
       async appendSecurityEvent() {},
     } as unknown as IdentitySecurityManagementRepository;
     const service = createService({
@@ -93,6 +96,7 @@ describe("Identity security management application service", () => {
       commandId,
       idempotencyKey: "enroll-1",
       receiptRecoveryCapability: "r".repeat(43),
+      reauthenticationProof: "reauth-proof",
       ceremonyAction: "begin",
     });
     const retry = await service.beginTotpEnrollment({
@@ -102,6 +106,7 @@ describe("Identity security management application service", () => {
       commandId,
       idempotencyKey: "enroll-1",
       receiptRecoveryCapability: "r".repeat(43),
+      reauthenticationProof: "reauth-proof",
       ceremonyAction: "begin",
     });
 
@@ -148,6 +153,7 @@ describe("Identity security management application service", () => {
       commandId,
       idempotencyKey: "site-a",
       receiptRecoveryCapability: "r".repeat(43),
+      reauthenticationProof: "reauth-proof",
       ceremonyAction: "begin",
     });
     await siteB.beginTotpEnrollment({
@@ -157,6 +163,7 @@ describe("Identity security management application service", () => {
       commandId: "2".repeat(32),
       idempotencyKey: "site-b",
       receiptRecoveryCapability: "s".repeat(43),
+      reauthenticationProof: "reauth-proof",
       ceremonyAction: "begin",
     });
 
@@ -185,6 +192,7 @@ describe("Identity security management application service", () => {
       commandId,
       idempotencyKey: "unknown-release",
       receiptRecoveryCapability: "r".repeat(43),
+      reauthenticationProof: "reauth-proof",
       ceremonyAction: "begin" as const,
     };
 
@@ -302,6 +310,196 @@ describe("Identity security management application service", () => {
     ).rejects.toMatchObject({ code: "AUTH_TRANSACTION_INVALID" });
     expect(timeStep).toBeNull();
   });
+
+  it("issues a short-lived one-time proof bound to the exact sensitive target", async () => {
+    let issued:
+      | Parameters<IdentitySecurityManagementRepository["issueReauthenticationProof"]>[1]
+      | undefined;
+    let receiptResult: JsonValue | null = null;
+    const repository = {
+      async loadReauthenticationMaterial() {
+        return ownerMaterial();
+      },
+      async issueReauthenticationProof(_transaction: unknown, input: NonNullable<typeof issued>) {
+        issued = input;
+        return true;
+      },
+      async appendSecurityEvent() {},
+    } as unknown as IdentitySecurityManagementRepository;
+    const service = createService({
+      repository,
+      receipts: pendingReceipts((result) => {
+        receiptResult = result;
+      }),
+      references: ["discarded-challenge-ref", "018f3333-3333-7333-8333-333333333333"],
+    });
+
+    const result = await service.reauthenticateIdentitySession({
+      workload,
+      context,
+      session: session as never,
+      commandId,
+      idempotencyKey: "reauth-1",
+      receiptRecoveryCapability: "r".repeat(43),
+      stage: "password",
+      password: "correct horse battery staple",
+      target: {
+        audience: "platform-public",
+        operationId: "disableTotp",
+        resource: { kind: "identity_account" },
+      },
+    });
+
+    expect(result).toMatchObject({
+      commandId,
+      proof: {
+        operationId: "disableTotp",
+        resourceKind: "identity_account",
+        reauthenticationProof: "reauth-proof",
+        sessionRef: "session-1",
+        sessionEpoch: "4",
+        userSecurityEpoch: "7",
+      },
+    });
+    expect(issued).toMatchObject({
+      accountRef: "account-1",
+      expectedAccountSecurityEpoch: "7",
+      passwordCredentialEpoch: "2",
+      proofDigest: "e".repeat(64),
+      target: {
+        audience: "platform-public",
+        operationId: "disableTotp",
+        resourceKind: "identity_account",
+      },
+    });
+    expect(Date.parse(issued?.expiresAt ?? "")).toBe(Date.parse(issued?.now ?? "") + 5 * 60_000);
+    expect(JSON.stringify(receiptResult)).not.toContain("reauth-proof");
+  });
+
+  it("disables TOTP only when fresh possession and the exact proof are consumed atomically", async () => {
+    let mutation: Parameters<IdentitySecurityManagementRepository["disableTotp"]>[1] | undefined;
+    const material = {
+      ...ownerMaterial(),
+      authenticator: {
+        authenticatorRef: "authenticator-1",
+        envelope: {
+          algorithm: "A256GCM" as const,
+          keyRevision: "key-1",
+          nonce: "nonce",
+          ciphertext: "sealed",
+          authenticationTag: "tag",
+        },
+        lastAcceptedTimeStep: 100,
+      },
+      recoverySetRef: "recovery-set-1",
+    };
+    const repository = {
+      async loadActiveTotpMaterial() {
+        return material;
+      },
+      async disableTotp(_transaction: unknown, input: NonNullable<typeof mutation>) {
+        mutation = input;
+        return { accountRef: "account-1", accountSecurityEpoch: "8" };
+      },
+      async appendSecurityEvent() {},
+    } as unknown as IdentitySecurityManagementRepository;
+    const service = createService({
+      repository,
+      receipts: pendingReceipts(),
+      references: ["018f4444-4444-7444-8444-444444444444"],
+      totpVerifier: {
+        async verify() {
+          return { valid: true as const, timeStep: 101 };
+        },
+      },
+    });
+
+    const result = await service.disableTotp({
+      workload,
+      context,
+      session: session as never,
+      commandId,
+      idempotencyKey: "disable-1",
+      receiptRecoveryCapability: "r".repeat(43),
+      code: "123456",
+      reauthenticationProof: "reauth-proof",
+    });
+
+    expect(result.receipt).toMatchObject({ commandId, state: "committed" });
+    expect(mutation).toMatchObject({
+      accountRef: "account-1",
+      authenticatorRef: "authenticator-1",
+      timeStep: 101,
+      proof: {
+        proofDigest: "e".repeat(64),
+        target: { operationId: "disableTotp", resourceKind: "identity_account" },
+      },
+    });
+  });
+
+  it("delivers regenerated recovery codes once and binds the replacement to its proof", async () => {
+    let mutation:
+      | Parameters<IdentitySecurityManagementRepository["regenerateRecoveryCodes"]>[1]
+      | undefined;
+    const codes = Array.from({ length: 10 }, (_, index) => `replacement-code-${index}`);
+    const repository = {
+      async loadActiveTotpMaterial() {
+        return {
+          ...ownerMaterial(),
+          authenticator: {
+            authenticatorRef: "authenticator-1",
+            envelope: {
+              algorithm: "A256GCM" as const,
+              keyRevision: "key-1",
+              nonce: "nonce",
+              ciphertext: "sealed",
+              authenticationTag: "tag",
+            },
+            lastAcceptedTimeStep: 100,
+          },
+        };
+      },
+      async regenerateRecoveryCodes(_transaction: unknown, input: NonNullable<typeof mutation>) {
+        mutation = input;
+        return { accountRef: "account-1", accountSecurityEpoch: "8" };
+      },
+      async appendSecurityEvent() {},
+    } as unknown as IdentitySecurityManagementRepository;
+    const service = createService({
+      repository,
+      receipts: pendingReceipts(),
+      recoveryCodes: codes,
+      references: [
+        "replacement-set-1",
+        "018f5555-5555-7555-8555-555555555555",
+        "discarded-retry-set",
+      ],
+    });
+    const request = {
+      workload,
+      context,
+      session: session as never,
+      commandId,
+      idempotencyKey: "regenerate-1",
+      receiptRecoveryCapability: "r".repeat(43),
+      reauthenticationProof: "reauth-proof",
+      recoveryAction: "regenerate" as const,
+    };
+
+    const fresh = await service.regenerateRecoveryCodes(request);
+    const retry = await service.regenerateRecoveryCodes(request);
+
+    expect(fresh).toMatchObject({ commandId, recoveryCodes: codes });
+    expect(retry).toMatchObject({ kind: "delivery_unavailable", commandId });
+    expect(mutation).toMatchObject({
+      setRef: "replacement-set-1",
+      proof: {
+        proofDigest: "e".repeat(64),
+        target: { operationId: "regenerateRecoveryCodes", resourceKind: "identity_account" },
+      },
+    });
+    expect(mutation?.recoveryCodeDigests).toHaveLength(10);
+  });
 });
 
 function createService(
@@ -365,6 +563,23 @@ function createService(
         return { valid: false as const };
       },
     },
+    passwordHasher: {
+      async hash() {
+        return { passwordHash: "$argon2id$test", pepperVersion: 1 };
+      },
+      async verify() {
+        return true;
+      },
+    },
+    dummyPasswordHash: { passwordHash: "$argon2id$dummy", pepperVersion: 1 },
+    reauthenticationCredentials: {
+      issue() {
+        return { credential: "reauth-proof", digest: "e".repeat(64) };
+      },
+      digest() {
+        return "e".repeat(64);
+      },
+    },
     dummyTotpSecret: "JBSWY3DPEHPK3PXP",
     auditDigest,
     clock: () => new Date("2026-07-29T00:00:00.000Z"),
@@ -392,6 +607,7 @@ function ownerMaterial(identityIssuerLabel = "Acme AI") {
     passwordHash: "$argon2id$stored",
     pepperVersion: 1,
     passwordCredentialEpoch: "2",
+    authStrengthPolicyRevision: "default-v1",
     authenticator: null,
     recoverySetRef: null,
     recoveryCodeDigests: [],
@@ -406,6 +622,9 @@ function beginRepository(
       return material;
     },
     async beginTotpEnrollment() {
+      return true;
+    },
+    async consumeReauthenticationProof() {
       return true;
     },
     async appendSecurityEvent() {},

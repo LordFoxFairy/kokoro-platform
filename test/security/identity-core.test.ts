@@ -76,6 +76,12 @@ describe("Platform Identity core security", () => {
     expect(migration).toContain("credential_epoch");
     expect(migration).toContain("identity_totp_enrollment_delivery_claim");
     expect(migration).toContain("identity_recovery_code_delivery_claim");
+    expect(migration).toContain("identity_reauthentication_challenge");
+    expect(migration).toContain("identity_reauthentication_proof");
+    expect(migration).toContain("identity_reauthentication_delivery_claim");
+    expect(migration).toContain("expires_at <= created_at + INTERVAL '5 minutes'");
+    expect(migration).toContain("CHECK(resource_ref=account_ref)");
+    expect(migration).toContain("auth_strength_policy_revision");
     expect(migration).toContain("identity_security_event");
     expect(migration).toContain("identity_security_event_immutable");
     expect(migration).not.toMatch(/manual_entry_secret|recovery_code_plaintext|otpauth_uri/iu);
@@ -83,6 +89,11 @@ describe("Platform Identity core security", () => {
     expect(authorization).toContain("identity_issuer_label=btrim(identity_issuer_label)");
     expect(authorization).toContain("length(identity_issuer_label) BETWEEN 1 AND 64");
     expect(authorization).toContain("authorization_site_release_identity_brand_immutable");
+    expect(authorization).toContain(
+      "BEFORE UPDATE OF identity_issuer_label,identity_auth_strength_policy_revision",
+    );
+    expect(authorization).toContain("UNIQUE(workload_identity_id,site_ref,release_ref)");
+    expect(migration).toContain("FOREIGN KEY(workload_identity_id,site_ref,site_release_ref)");
     expect(migration).toContain("device_label");
     expect(migration).toContain("last_seen_at");
     expect(migration).toContain("UNIQUE(site_ref,family_ref,generation)");

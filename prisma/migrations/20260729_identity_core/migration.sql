@@ -234,7 +234,7 @@ CREATE INDEX identity_recovery_code_set_idx
 CREATE TABLE platform.identity_auth_rate_limit (
   site_ref TEXT NOT NULL,
   account_ref TEXT NOT NULL,
-  purpose TEXT NOT NULL CHECK(purpose='session_login'),
+  purpose TEXT NOT NULL CHECK(purpose IN ('session_login','reauthentication')),
   window_started_at TIMESTAMPTZ NOT NULL,
   failed_attempt_count INTEGER NOT NULL CHECK(failed_attempt_count BETWEEN 0 AND 10),
   locked_until TIMESTAMPTZ,
@@ -283,6 +283,63 @@ CREATE INDEX identity_auth_transaction_pending_owner_idx
   WHERE state='pending';
 CREATE INDEX identity_auth_transaction_expiry_idx
   ON platform.identity_auth_transaction(expires_at)
+  WHERE state='pending';
+
+CREATE TABLE platform.identity_reauthentication_challenge (
+  site_ref TEXT NOT NULL,
+  transaction_ref TEXT NOT NULL,
+  initiating_command_id TEXT NOT NULL UNIQUE REFERENCES platform.command_receipt(command_id),
+  consuming_command_id TEXT UNIQUE REFERENCES platform.command_receipt(command_id),
+  site_release_ref TEXT NOT NULL,
+  workload_identity_id TEXT NOT NULL,
+  account_ref TEXT NOT NULL,
+  subject_ref TEXT NOT NULL,
+  session_ref TEXT NOT NULL,
+  audience TEXT NOT NULL CHECK(audience='platform-public'),
+  operation_id TEXT NOT NULL CHECK(operation_id IN ('beginTotpEnrollment','disableTotp','regenerateRecoveryCodes')),
+  resource_kind TEXT NOT NULL CHECK(resource_kind='identity_account'),
+  resource_ref TEXT NOT NULL,
+  account_security_epoch BIGINT NOT NULL CHECK(account_security_epoch > 0),
+  subject_generation BIGINT NOT NULL CHECK(subject_generation > 0),
+  session_epoch BIGINT NOT NULL CHECK(session_epoch > 0),
+  credential_epoch BIGINT NOT NULL CHECK(credential_epoch > 0),
+  password_credential_epoch BIGINT NOT NULL CHECK(password_credential_epoch > 0),
+  auth_strength_policy_revision TEXT NOT NULL CHECK(
+    length(auth_strength_policy_revision) BETWEEN 1 AND 128
+    AND auth_strength_policy_revision ~ '^[A-Za-z0-9_.-]+$'
+  ),
+  authenticator_ref TEXT NOT NULL,
+  recovery_set_ref TEXT,
+  state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','consumed','expired','locked')),
+  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count BETWEEN 0 AND 5),
+  max_attempts INTEGER NOT NULL DEFAULT 5 CHECK(max_attempts=5),
+  expires_at TIMESTAMPTZ NOT NULL,
+  consumed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY(site_ref,transaction_ref),
+  FOREIGN KEY(site_ref,account_ref,subject_ref)
+    REFERENCES platform.identity_account(site_ref,account_ref,subject_ref),
+  FOREIGN KEY(session_ref,subject_ref,site_ref)
+    REFERENCES platform.authorization_identity_session(session_ref,subject_ref,site_ref),
+  FOREIGN KEY(site_ref,authenticator_ref,account_ref,subject_ref)
+    REFERENCES platform.identity_totp_authenticator(site_ref,authenticator_ref,account_ref,subject_ref),
+  FOREIGN KEY(site_ref,recovery_set_ref,account_ref,subject_ref)
+    REFERENCES platform.identity_recovery_code_set(site_ref,set_ref,account_ref,subject_ref),
+  FOREIGN KEY(workload_identity_id,site_ref,site_release_ref)
+    REFERENCES platform.authorization_product_binding(workload_identity_id,site_ref,release_ref),
+  CHECK(resource_ref=account_ref),
+  CHECK(expires_at > created_at AND expires_at <= created_at + INTERVAL '5 minutes'),
+  CHECK(
+    (state='consumed' AND consumed_at IS NOT NULL AND consuming_command_id IS NOT NULL)
+    OR (state<>'consumed' AND consumed_at IS NULL AND consuming_command_id IS NULL)
+  )
+);
+CREATE UNIQUE INDEX identity_one_pending_reauthentication_challenge_idx
+  ON platform.identity_reauthentication_challenge(site_ref,account_ref,session_ref,operation_id)
+  WHERE state='pending';
+CREATE INDEX identity_reauthentication_challenge_expiry_idx
+  ON platform.identity_reauthentication_challenge(expires_at)
   WHERE state='pending';
 
 CREATE TABLE platform.identity_totp_enrollment_transaction (
@@ -344,6 +401,72 @@ CREATE TABLE platform.identity_totp_enrollment_delivery_claim (
   )
 );
 
+CREATE TABLE platform.identity_reauthentication_proof (
+  proof_digest CHAR(64) PRIMARY KEY CHECK(proof_digest ~ '^[0-9a-f]{64}$'),
+  issuing_command_id TEXT NOT NULL UNIQUE REFERENCES platform.command_receipt(command_id),
+  site_ref TEXT NOT NULL,
+  site_release_ref TEXT NOT NULL,
+  workload_identity_id TEXT NOT NULL,
+  account_ref TEXT NOT NULL,
+  subject_ref TEXT NOT NULL,
+  session_ref TEXT NOT NULL,
+  audience TEXT NOT NULL CHECK(audience='platform-public'),
+  operation_id TEXT NOT NULL CHECK(operation_id IN ('beginTotpEnrollment','disableTotp','regenerateRecoveryCodes')),
+  resource_kind TEXT NOT NULL CHECK(resource_kind='identity_account'),
+  resource_ref TEXT NOT NULL,
+  account_security_epoch BIGINT NOT NULL CHECK(account_security_epoch > 0),
+  subject_generation BIGINT NOT NULL CHECK(subject_generation > 0),
+  session_epoch BIGINT NOT NULL CHECK(session_epoch > 0),
+  credential_epoch BIGINT NOT NULL CHECK(credential_epoch > 0),
+  auth_strength_policy_revision TEXT NOT NULL CHECK(length(auth_strength_policy_revision) BETWEEN 1 AND 128),
+  state TEXT NOT NULL CHECK(state IN ('active','consumed','revoked','superseded')),
+  issued_at TIMESTAMPTZ NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  consumed_at TIMESTAMPTZ,
+  consuming_command_id TEXT REFERENCES platform.command_receipt(command_id),
+  superseded_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  FOREIGN KEY(site_ref,account_ref,subject_ref)
+    REFERENCES platform.identity_account(site_ref,account_ref,subject_ref),
+  FOREIGN KEY(session_ref,subject_ref,site_ref)
+    REFERENCES platform.authorization_identity_session(session_ref,subject_ref,site_ref),
+  FOREIGN KEY(workload_identity_id,site_ref,site_release_ref)
+    REFERENCES platform.authorization_product_binding(workload_identity_id,site_ref,release_ref),
+  CHECK(resource_ref=account_ref),
+  CHECK(expires_at > issued_at AND expires_at-issued_at <= INTERVAL '5 minutes'),
+  CHECK(
+    (state='active' AND consumed_at IS NULL AND consuming_command_id IS NULL AND superseded_at IS NULL)
+    OR (state='consumed' AND consumed_at IS NOT NULL AND consuming_command_id IS NOT NULL AND superseded_at IS NULL)
+    OR (state='revoked' AND consumed_at IS NULL AND consuming_command_id IS NULL AND superseded_at IS NULL)
+    OR (state='superseded' AND consumed_at IS NULL AND consuming_command_id IS NULL AND superseded_at IS NOT NULL)
+  )
+);
+CREATE INDEX identity_reauthentication_proof_owner_idx
+  ON platform.identity_reauthentication_proof(site_ref,account_ref,state,expires_at);
+
+CREATE TABLE platform.identity_reauthentication_delivery_claim (
+  command_id TEXT PRIMARY KEY REFERENCES platform.command_receipt(command_id),
+  proof_digest CHAR(64) NOT NULL UNIQUE REFERENCES platform.identity_reauthentication_proof(proof_digest),
+  site_ref TEXT NOT NULL,
+  account_ref TEXT NOT NULL,
+  subject_ref TEXT NOT NULL,
+  session_ref TEXT NOT NULL,
+  request_digest CHAR(64) NOT NULL CHECK(request_digest ~ '^[0-9a-f]{64}$'),
+  state TEXT NOT NULL CHECK(state IN ('first_claim_consumed','superseded')),
+  claimed_at TIMESTAMPTZ NOT NULL,
+  superseded_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  FOREIGN KEY(site_ref,account_ref,subject_ref)
+    REFERENCES platform.identity_account(site_ref,account_ref,subject_ref),
+  FOREIGN KEY(session_ref,subject_ref,site_ref)
+    REFERENCES platform.authorization_identity_session(session_ref,subject_ref,site_ref),
+  CHECK(
+    (state='first_claim_consumed' AND superseded_at IS NULL)
+    OR (state='superseded' AND superseded_at IS NOT NULL)
+  )
+);
+
 CREATE TABLE platform.identity_recovery_code_delivery_claim (
   command_id TEXT PRIMARY KEY REFERENCES platform.command_receipt(command_id),
   site_ref TEXT NOT NULL,
@@ -351,7 +474,7 @@ CREATE TABLE platform.identity_recovery_code_delivery_claim (
   subject_ref TEXT NOT NULL,
   session_ref TEXT NOT NULL,
   set_ref TEXT NOT NULL,
-  purpose TEXT NOT NULL CHECK(purpose='confirmTotpEnrollment'),
+  purpose TEXT NOT NULL CHECK(purpose IN ('confirmTotpEnrollment','regenerateRecoveryCodes')),
   request_digest CHAR(64) NOT NULL CHECK(request_digest ~ '^[0-9a-f]{64}$'),
   state TEXT NOT NULL CHECK(state IN ('first_claim_consumed','superseded')),
   claimed_at TIMESTAMPTZ NOT NULL,
@@ -583,8 +706,11 @@ REVOKE ALL ON
   platform.identity_recovery_code,
   platform.identity_auth_rate_limit,
   platform.identity_auth_transaction,
+  platform.identity_reauthentication_challenge,
   platform.identity_totp_enrollment_transaction,
   platform.identity_totp_enrollment_delivery_claim,
+  platform.identity_reauthentication_proof,
+  platform.identity_reauthentication_delivery_claim,
   platform.identity_recovery_code_delivery_claim,
   platform.identity_security_event,
   platform.identity_refresh_family,

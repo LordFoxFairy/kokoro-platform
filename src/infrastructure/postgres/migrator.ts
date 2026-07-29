@@ -394,8 +394,11 @@ const IDENTITY_TABLES = [
   "platform.identity_recovery_code",
   "platform.identity_auth_rate_limit",
   "platform.identity_auth_transaction",
+  "platform.identity_reauthentication_challenge",
   "platform.identity_totp_enrollment_transaction",
   "platform.identity_totp_enrollment_delivery_claim",
+  "platform.identity_reauthentication_proof",
+  "platform.identity_reauthentication_delivery_claim",
   "platform.identity_recovery_code_delivery_claim",
   "platform.identity_security_event",
   "platform.identity_refresh_family",
@@ -420,8 +423,11 @@ const IDENTITY_MUTABLE_TABLES = [
   "platform.identity_recovery_code",
   "platform.identity_auth_rate_limit",
   "platform.identity_auth_transaction",
+  "platform.identity_reauthentication_challenge",
   "platform.identity_totp_enrollment_transaction",
   "platform.identity_totp_enrollment_delivery_claim",
+  "platform.identity_reauthentication_proof",
+  "platform.identity_reauthentication_delivery_claim",
   "platform.identity_recovery_code_delivery_claim",
   "platform.identity_refresh_family",
   "platform.identity_refresh_credential",
@@ -560,12 +566,15 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            AND has_table_privilege(runtime_role.rolname, 'platform.identity_account', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.identity_verification_transaction', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.identity_auth_transaction', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.identity_reauthentication_challenge', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.identity_totp_authenticator', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.identity_recovery_code_set', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.identity_recovery_code', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.identity_auth_rate_limit', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.identity_totp_enrollment_transaction', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.identity_totp_enrollment_delivery_claim', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.identity_reauthentication_proof', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.identity_reauthentication_delivery_claim', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.identity_recovery_code_delivery_claim', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.identity_security_event', 'SELECT,INSERT')
            AND has_table_privilege(runtime_role.rolname, 'platform.identity_refresh_family', 'SELECT,INSERT,UPDATE')
@@ -660,8 +669,9 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                ,'identity_account','identity_password_credential','identity_login_identifier',
                'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
                'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
-               'identity_auth_rate_limit','identity_auth_transaction',
+               'identity_auth_rate_limit','identity_auth_transaction','identity_reauthentication_challenge',
                'identity_totp_enrollment_transaction','identity_totp_enrollment_delivery_claim',
+               'identity_reauthentication_proof','identity_reauthentication_delivery_claim',
                'identity_recovery_code_delivery_claim','identity_security_event',
                'identity_refresh_family','identity_refresh_credential','identity_session_delivery_claim',
                'identity_receipt_recovery_capability','identity_personal_workspace','identity_workspace_membership',
@@ -697,8 +707,9 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                ,'identity_account','identity_password_credential','identity_login_identifier',
                'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
                'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
-               'identity_auth_rate_limit','identity_auth_transaction',
+               'identity_auth_rate_limit','identity_auth_transaction','identity_reauthentication_challenge',
                'identity_totp_enrollment_transaction','identity_totp_enrollment_delivery_claim',
+               'identity_reauthentication_proof','identity_reauthentication_delivery_claim',
                'identity_recovery_code_delivery_claim','identity_security_event',
                'identity_refresh_family','identity_refresh_credential','identity_session_delivery_claim',
                'identity_receipt_recovery_capability','identity_personal_workspace','identity_workspace_membership',
@@ -731,8 +742,9 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                      'identity_account','identity_password_credential','identity_login_identifier',
                      'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
                      'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
-                     'identity_auth_rate_limit','identity_auth_transaction',
+                     'identity_auth_rate_limit','identity_auth_transaction','identity_reauthentication_challenge',
                'identity_totp_enrollment_transaction','identity_totp_enrollment_delivery_claim',
+               'identity_reauthentication_proof','identity_reauthentication_delivery_claim',
                'identity_recovery_code_delivery_claim','identity_security_event',
                      'identity_refresh_family','identity_refresh_credential','identity_session_delivery_claim',
                      'identity_receipt_recovery_capability','identity_personal_workspace','identity_workspace_membership',
@@ -752,8 +764,9 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                      'identity_account','identity_password_credential','identity_login_identifier',
                      'identity_verification_transaction','identity_verification_delivery',
                      'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
-                     'identity_auth_rate_limit','identity_auth_transaction',
+                     'identity_auth_rate_limit','identity_auth_transaction','identity_reauthentication_challenge',
                'identity_totp_enrollment_transaction','identity_totp_enrollment_delivery_claim',
+               'identity_reauthentication_proof','identity_reauthentication_delivery_claim',
                'identity_recovery_code_delivery_claim','identity_refresh_family',
                      'identity_refresh_credential','identity_session_delivery_claim','identity_receipt_recovery_capability',
                      'identity_execution_space','identity_namespace_allocation_intent',
@@ -770,8 +783,9 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                      'identity_account','identity_password_credential','identity_login_identifier',
                      'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
                      'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
-                     'identity_auth_rate_limit','identity_auth_transaction',
+                     'identity_auth_rate_limit','identity_auth_transaction','identity_reauthentication_challenge',
                'identity_totp_enrollment_transaction','identity_totp_enrollment_delivery_claim',
+               'identity_reauthentication_proof','identity_reauthentication_delivery_claim',
                'identity_recovery_code_delivery_claim','identity_security_event',
                      'identity_refresh_family','identity_refresh_credential','identity_session_delivery_claim',
                      'identity_receipt_recovery_capability','identity_personal_workspace','identity_workspace_membership',
@@ -791,8 +805,9 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                      'identity_account','identity_password_credential','identity_login_identifier',
                      'identity_verification_transaction','identity_verification_delivery',
                      'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
-                     'identity_auth_rate_limit','identity_auth_transaction',
+                     'identity_auth_rate_limit','identity_auth_transaction','identity_reauthentication_challenge',
                'identity_totp_enrollment_transaction','identity_totp_enrollment_delivery_claim',
+               'identity_reauthentication_proof','identity_reauthentication_delivery_claim',
                'identity_recovery_code_delivery_claim','identity_refresh_family',
                      'identity_refresh_credential','identity_session_delivery_claim','identity_receipt_recovery_capability',
                      'identity_execution_space','identity_namespace_allocation_intent',

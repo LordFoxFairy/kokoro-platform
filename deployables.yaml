@@ -21,7 +21,7 @@ deployables:
     inboundContracts: []
     declaredInboundContracts: [platform-public-http, platform-admission-connect]
     outboundContracts: []
-    secretClasses: [platform-api-database, workload-verification, identity-totp-encryption-keyring]
+    secretClasses: [platform-api-database, workload-verification, identity-totp-encryption-keyring, identity-reauthentication-digest-key]
     audience: platform-api
     scalingKey: http-concurrency
     readiness: /health/ready

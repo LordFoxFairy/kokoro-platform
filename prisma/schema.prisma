@@ -538,18 +538,19 @@ model AuthorizationSnapshotRecord {
 }
 
 model AuthorizationSiteRelease {
-  releaseRef            String   @id @map("release_ref")
-  siteRef               String   @map("site_ref")
-  state                 String
-  webArtifactDigest     String   @map("web_artifact_digest") @db.Char(64)
-  enabledSurfaceIds     Json     @map("enabled_surface_ids")
-  featurePolicyRevision String   @map("feature_policy_revision")
-  modelOptionCatalogRef String   @map("model_option_catalog_ref")
-  agentCatalogRef       String   @map("agent_catalog_ref")
-  identityIssuerLabel   String   @map("identity_issuer_label")
-  localePolicy          Json     @map("locale_policy")
-  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt             DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  releaseRef                         String   @id @map("release_ref")
+  siteRef                            String   @map("site_ref")
+  state                              String
+  webArtifactDigest                  String   @map("web_artifact_digest") @db.Char(64)
+  enabledSurfaceIds                  Json     @map("enabled_surface_ids")
+  featurePolicyRevision              String   @map("feature_policy_revision")
+  modelOptionCatalogRef              String   @map("model_option_catalog_ref")
+  agentCatalogRef                    String   @map("agent_catalog_ref")
+  identityIssuerLabel                String   @map("identity_issuer_label")
+  identityAuthStrengthPolicyRevision String   @map("identity_auth_strength_policy_revision")
+  localePolicy                       Json     @map("locale_policy")
+  createdAt                          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                          DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@unique([releaseRef, siteRef])
   @@unique([releaseRef, siteRef, modelOptionCatalogRef])
@@ -573,6 +574,7 @@ model AuthorizationProductBinding {
   createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt               DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
+  @@unique([workloadIdentityId, siteRef, releaseRef])
   @@index([siteRef, state])
   @@map("authorization_product_binding")
   @@schema("platform")
@@ -819,6 +821,42 @@ model IdentityAuthTransaction {
   @@schema("platform")
 }
 
+model IdentityReauthenticationChallenge {
+  siteRef                    String    @map("site_ref")
+  transactionRef             String    @map("transaction_ref")
+  initiatingCommandId        String    @unique @map("initiating_command_id")
+  consumingCommandId         String?   @unique @map("consuming_command_id")
+  siteReleaseRef             String    @map("site_release_ref")
+  workloadIdentityId         String    @map("workload_identity_id")
+  accountRef                 String    @map("account_ref")
+  subjectRef                 String    @map("subject_ref")
+  sessionRef                 String    @map("session_ref")
+  audience                   String
+  operationId                String    @map("operation_id")
+  resourceKind               String    @map("resource_kind")
+  resourceRef                String    @map("resource_ref")
+  accountSecurityEpoch       BigInt    @map("account_security_epoch")
+  subjectGeneration          BigInt    @map("subject_generation")
+  sessionEpoch               BigInt    @map("session_epoch")
+  credentialEpoch            BigInt    @map("credential_epoch")
+  passwordCredentialEpoch    BigInt    @map("password_credential_epoch")
+  authStrengthPolicyRevision String    @map("auth_strength_policy_revision")
+  authenticatorRef           String    @map("authenticator_ref")
+  recoverySetRef             String?   @map("recovery_set_ref")
+  state                      String    @default("pending")
+  attemptCount               Int       @default(0) @map("attempt_count")
+  maxAttempts                Int       @default(5) @map("max_attempts")
+  expiresAt                  DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt                 DateTime? @map("consumed_at") @db.Timestamptz(6)
+  createdAt                  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@id([siteRef, transactionRef])
+  @@index([expiresAt])
+  @@map("identity_reauthentication_challenge")
+  @@schema("platform")
+}
+
 model IdentityTotpEnrollmentTransaction {
   siteRef              String    @map("site_ref")
   transactionRef       String    @map("transaction_ref")
@@ -860,6 +898,55 @@ model IdentityTotpEnrollmentDeliveryClaim {
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@map("identity_totp_enrollment_delivery_claim")
+  @@schema("platform")
+}
+
+model IdentityReauthenticationProof {
+  proofDigest                String    @id @map("proof_digest") @db.Char(64)
+  issuingCommandId           String    @unique @map("issuing_command_id")
+  siteRef                    String    @map("site_ref")
+  siteReleaseRef             String    @map("site_release_ref")
+  workloadIdentityId         String    @map("workload_identity_id")
+  accountRef                 String    @map("account_ref")
+  subjectRef                 String    @map("subject_ref")
+  sessionRef                 String    @map("session_ref")
+  audience                   String
+  operationId                String    @map("operation_id")
+  resourceKind               String    @map("resource_kind")
+  resourceRef                String    @map("resource_ref")
+  accountSecurityEpoch       BigInt    @map("account_security_epoch")
+  subjectGeneration          BigInt    @map("subject_generation")
+  sessionEpoch               BigInt    @map("session_epoch")
+  credentialEpoch            BigInt    @map("credential_epoch")
+  authStrengthPolicyRevision String    @map("auth_strength_policy_revision")
+  state                      String
+  issuedAt                   DateTime  @map("issued_at") @db.Timestamptz(6)
+  expiresAt                  DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt                 DateTime? @map("consumed_at") @db.Timestamptz(6)
+  consumingCommandId         String?   @map("consuming_command_id")
+  supersededAt               DateTime? @map("superseded_at") @db.Timestamptz(6)
+  createdAt                  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([siteRef, accountRef, state, expiresAt])
+  @@map("identity_reauthentication_proof")
+  @@schema("platform")
+}
+
+model IdentityReauthenticationDeliveryClaim {
+  commandId     String    @id @map("command_id")
+  proofDigest   String    @unique @map("proof_digest") @db.Char(64)
+  siteRef       String    @map("site_ref")
+  accountRef    String    @map("account_ref")
+  subjectRef    String    @map("subject_ref")
+  sessionRef    String    @map("session_ref")
+  requestDigest String    @map("request_digest") @db.Char(64)
+  state         String
+  claimedAt     DateTime  @map("claimed_at") @db.Timestamptz(6)
+  supersededAt  DateTime? @map("superseded_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("identity_reauthentication_delivery_claim")
   @@schema("platform")
 }
 
