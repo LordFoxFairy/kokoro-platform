@@ -36,6 +36,7 @@ describe("ConfirmRedemptionService", () => {
         workloadIdentityId: "workload-1",
       });
       expect(repository.confirmed?.credentialDigest).toMatch(/^[a-f0-9]{64}$/u);
+      expect(repository.lockSequence).toBeInstanceOf(CommerceLockSequence);
     } finally {
       harness.close();
     }
@@ -106,6 +107,7 @@ describe("ConfirmRedemptionService", () => {
 
 class FakeConfirmationRepository implements RedemptionConfirmationRepository {
   confirmed: Parameters<RedemptionConfirmationRepository["confirmRedemption"]>[1] | null = null;
+  lockSequence: CommerceLockSequence | null = null;
   finds = 0;
   commandFinds = 0;
   storedReceipt: StoredRedemptionReceipt = receipt();
@@ -117,8 +119,10 @@ class FakeConfirmationRepository implements RedemptionConfirmationRepository {
   async confirmRedemption(
     _transaction: Parameters<RedemptionConfirmationRepository["confirmRedemption"]>[0],
     input: Parameters<RedemptionConfirmationRepository["confirmRedemption"]>[1],
+    locks?: CommerceLockSequence,
   ): ReturnType<RedemptionConfirmationRepository["confirmRedemption"]> {
     this.confirmed = input;
+    this.lockSequence = locks ?? null;
     return this.result;
   }
 

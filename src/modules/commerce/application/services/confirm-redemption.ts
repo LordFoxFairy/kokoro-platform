@@ -92,7 +92,7 @@ export class ConfirmRedemptionService {
     });
     await this.dependencies.fence.execute(
       { context: input.context, identity },
-      async ({ transaction, authority }) => {
+      async ({ transaction, authority, locks }) => {
         const observedAt = this.#clock().toISOString();
         const outcome = await this.dependencies.repository.confirmRedemption(transaction, {
           siteId,
@@ -106,7 +106,7 @@ export class ConfirmRedemptionService {
           authorityReleaseRef: authority.releaseRef,
           workloadIdentityId: input.context.trustedCaller.workloadIdentityId,
           confirmedAt: observedAt,
-        });
+        }, locks);
         if (outcome.kind === "succeeded") {
           const result: JsonValue = Object.freeze({
             kind: "redemption_succeeded",
