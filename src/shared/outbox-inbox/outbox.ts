@@ -18,6 +18,11 @@ export interface ClaimedOutboxEvent extends OutboxEvent {
   readonly attempt: number;
 }
 
+export interface OutboxDeliveryAcknowledgement {
+  readonly deliveryId: string;
+  readonly acknowledgedAt: string;
+}
+
 export class OutboxRepository {
   async enqueue(transaction: PlatformTransaction, event: OutboxEvent): Promise<void> {
     assertDigest(event.payloadDigest);
@@ -32,11 +37,16 @@ export class OutboxRepository {
         event.payloadDigest, event.correlationId, event.causationId],
     );
     if (existing.length === 0) {
-      const row = await sql.query<{ payloadDigest: string }>(
-        `SELECT payload_digest AS "payloadDigest" FROM platform.outbox_event WHERE event_id=$1`,
+      const row = await sql.query<OutboxEvent & Record<string, unknown>>(
+        `SELECT event_id AS "eventId",owner,event_type AS "eventType",aggregate_id AS "aggregateId",
+                payload,payload_digest AS "payloadDigest",correlation_id AS "correlationId",
+                causation_id AS "causationId"
+         FROM platform.outbox_event WHERE event_id=$1`,
         [event.eventId],
       );
-      if (row[0]?.payloadDigest !== event.payloadDigest) throw new Error("OUTBOX_EVENT_DIGEST_CONFLICT");
+      if (row[0] === undefined || !sameEnvelope(row[0], event)) {
+        throw new Error("OUTBOX_EVENT_ENVELOPE_CONFLICT");
+      }
     }
   }
 
@@ -71,12 +81,18 @@ export class OutboxRepository {
     );
   }
 
-  async complete(transaction: PlatformTransaction, eventId: string, leaseToken: string): Promise<void> {
+  async complete(
+    transaction: PlatformTransaction,
+    input: Readonly<{ eventId: string; leaseToken: string }> & OutboxDeliveryAcknowledgement,
+  ): Promise<void> {
+    assertBoundedIdentifier(input.deliveryId, "OUTBOX_DELIVERY_ACK_INVALID");
+    if (!Number.isFinite(Date.parse(input.acknowledgedAt))) throw new Error("OUTBOX_DELIVERY_ACK_INVALID");
     const changed = await resolvePlatformTransaction(transaction).execute(
-      `UPDATE platform.outbox_event SET state='delivered', delivered_at=now(), lease_owner=NULL,
+      `UPDATE platform.outbox_event SET state='delivered', delivered_at=$4::timestamptz,
+       consumer_delivery_id=$3,consumer_acknowledged_at=$4::timestamptz,lease_owner=NULL,
        lease_token=NULL, lease_expires_at=NULL, updated_at=now()
        WHERE event_id=$1 AND state='leased' AND lease_token=$2`,
-      [eventId, leaseToken],
+      [input.eventId, input.leaseToken, input.deliveryId, input.acknowledgedAt],
     );
     if (changed !== 1) throw new Error("OUTBOX_LEASE_LOST");
   }
@@ -97,6 +113,19 @@ export class OutboxRepository {
     );
     if (changed !== 1) throw new Error("OUTBOX_LEASE_LOST");
   }
+}
+
+function sameEnvelope(stored: OutboxEvent, candidate: OutboxEvent): boolean {
+  return stored.eventId === candidate.eventId && stored.owner === candidate.owner &&
+    stored.eventType === candidate.eventType && stored.aggregateId === candidate.aggregateId &&
+    stableJson(stored.payload) === stableJson(candidate.payload) && stored.payloadDigest === candidate.payloadDigest &&
+    stored.correlationId === candidate.correlationId && stored.causationId === candidate.causationId;
+}
+
+function stableJson(value: JsonValue): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key]!)}`).join(",")}}`;
 }
 
 function assertBoundedIdentifier(value: string, code: string): void {

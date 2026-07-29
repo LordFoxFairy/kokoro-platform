@@ -60,6 +60,8 @@ model OutboxEvent {
   leaseExpiresAt DateTime? @map("lease_expires_at") @db.Timestamptz(6)
   lastErrorCode  String?   @map("last_error_code")
   deliveredAt    DateTime? @map("delivered_at") @db.Timestamptz(6)
+  consumerDeliveryId String? @map("consumer_delivery_id")
+  consumerAcknowledgedAt DateTime? @map("consumer_acknowledged_at") @db.Timestamptz(6)
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
 

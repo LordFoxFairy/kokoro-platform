@@ -7,7 +7,7 @@ import {
 } from "../infrastructure/postgres/client.js";
 import type { PlatformProcessState } from "./api.js";
 import { createAuthorizationRetentionCycle } from "../modules/authorization/infrastructure/postgres/authorization-retention.js";
-import { createCommerceOutboxReconciliationCycle } from
+import { createCommerceOutboxReconciliationCycle, HmacHttpOutboxDeliveryTransport } from
   "../modules/commerce/infrastructure/postgres/commerce-outbox-reconciler.js";
 
 export interface PlatformWorkerProcessStatus {
@@ -222,6 +222,12 @@ export async function runPlatformWorkerMain(): Promise<void> {
   });
   const commerceOutbox = createCommerceOutboxReconciliationCycle({
     database,
+    transport: new HmacHttpOutboxDeliveryTransport({
+      endpoint: requireEnvironment("PLATFORM_OUTBOX_DELIVERY_ENDPOINT"),
+      keyId: requireEnvironment("PLATFORM_OUTBOX_DELIVERY_KEY_ID"),
+      secretBase64: requireEnvironment("PLATFORM_OUTBOX_DELIVERY_SECRET_BASE64"),
+      timeoutMs: Number.parseInt(process.env.PLATFORM_OUTBOX_DELIVERY_TIMEOUT_MS ?? "10000", 10),
+    }),
     workerId: process.env.PLATFORM_WORKER_ID ?? `platform-worker-${process.pid}`,
   });
   const worker = createPlatformWorkerProcess({
@@ -242,6 +248,12 @@ export async function runPlatformWorkerMain(): Promise<void> {
   process.once("SIGTERM", shutdown);
   await worker.start();
   console.log("Platform Worker ready");
+}
+
+function requireEnvironment(name: string): string {
+  const value = process.env[name];
+  if (value === undefined || value.length === 0) throw new Error(`${name}_REQUIRED`);
+  return value;
 }
 
 if (isMainModule()) {

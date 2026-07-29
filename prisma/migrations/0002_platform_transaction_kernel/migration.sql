@@ -36,9 +36,12 @@ CREATE TABLE platform.outbox_event (
   lease_expires_at TIMESTAMPTZ,
   last_error_code TEXT,
   delivered_at TIMESTAMPTZ,
+  consumer_delivery_id TEXT,
+  consumer_acknowledged_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CHECK ((state = 'leased') = (lease_owner IS NOT NULL AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL))
+  CHECK ((state = 'leased') = (lease_owner IS NOT NULL AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL)),
+  CHECK ((state = 'delivered') = (consumer_delivery_id IS NOT NULL AND consumer_acknowledged_at IS NOT NULL))
 );
 CREATE INDEX outbox_claim_idx ON platform.outbox_event (owner, available_at, created_at)
   WHERE state IN ('pending','leased');
