@@ -7,6 +7,10 @@ import type {
 import type { CanonicalModelInventory } from "../domain/model-catalog.js";
 import type { ProviderOperationalAvailability } from "../domain/provider-availability.js";
 import type { VerifiedRequestSecurityContext } from "../../../shared/security-context/index.js";
+import type {
+  ModelOptionMaterializationReceipt,
+  SiteReleaseModelCatalogPublishReceipt,
+} from "./contracts/product-model-option-ports.js";
 
 export interface ModelControlCommandSecurityFacts {
   readonly environment: string;
@@ -48,6 +52,28 @@ export type ModelControlCommandInput =
     }
   | {
       readonly commandId: string;
+      readonly operation: "model.option.migration.materialize";
+      readonly security: ModelControlCommandSecurityFacts;
+      readonly effect: {
+        readonly artifactDigest: string;
+        readonly inventoryDigest: string;
+        readonly compilerVersion: "model-option-compiler.v1";
+      };
+    }
+  | {
+      readonly commandId: string;
+      readonly operation: "model.site-release-catalog.publish";
+      readonly security: ModelControlCommandSecurityFacts;
+      readonly effect: {
+        readonly siteId: string;
+        readonly siteReleaseRef: string;
+        readonly inventoryDigest: string;
+        readonly modelOptionCatalogRef: string;
+        readonly catalogDigest: string;
+      };
+    }
+  | {
+      readonly commandId: string;
       readonly operation: "model.inventory.activate";
       readonly security: ModelControlCommandSecurityFacts;
       readonly effect: {
@@ -79,7 +105,9 @@ export interface ModelControlCommand<
 export type ModelControlCommandReceipt =
   | ModelInventoryImportReceipt
   | ModelInventoryActivationReceipt
-  | SiteModelPolicyChangeReceipt;
+  | SiteModelPolicyChangeReceipt
+  | ModelOptionMaterializationReceipt
+  | SiteReleaseModelCatalogPublishReceipt;
 
 export interface ModelControlCommittedEvent {
   readonly eventId: string;
@@ -87,7 +115,9 @@ export interface ModelControlCommittedEvent {
   readonly eventType:
     | "model.inventory.materialized.v1"
     | "model.inventory.activated.v1"
-    | "model.site-policy.changed.v1";
+    | "model.site-policy.changed.v1"
+    | "model.option-revisions.materialized.v1"
+    | "model.site-release-catalog.published.v1";
   readonly aggregateId: string;
   readonly payload: {
     readonly schemaVersion: 1;
@@ -149,13 +179,23 @@ export function modelControlEventFor(
   } else if (command.operation === "model.inventory.activate") {
     eventType = "model.inventory.activated.v1";
     aggregateId = (stableReceipt as Omit<ModelInventoryActivationReceipt, "replayed">).targetDigest;
-  } else {
+  } else if (command.operation === "model.site-policy.change") {
     eventType = "model.site-policy.changed.v1";
     const effect = command.input.effect as Extract<
       ModelControlCommandInput,
       { operation: "model.site-policy.change" }
     >["effect"];
     aggregateId = `${effect.siteId}:${effect.product}`;
+  } else if (command.operation === "model.option.migration.materialize") {
+    eventType = "model.option-revisions.materialized.v1";
+    aggregateId = (
+      stableReceipt as Omit<ModelOptionMaterializationReceipt, "replayed">
+    ).materializationDigest;
+  } else {
+    eventType = "model.site-release-catalog.published.v1";
+    aggregateId = (
+      stableReceipt as Omit<SiteReleaseModelCatalogPublishReceipt, "replayed">
+    ).modelOptionCatalogRef;
   }
   const payload = deepFreeze({
     schemaVersion: 1 as const,

@@ -5,6 +5,9 @@ export { ReportModelProviderAvailabilityService } from "./application/services/r
 export { ActivateModelInventoryService } from "./application/services/activate-model-inventory.js";
 export { ChangeSiteModelPolicyService } from "./application/services/change-site-model-policy.js";
 export { ResolveModelPolicyService } from "./application/services/resolve-model-policy.js";
+export { MaterializeLegacyModelOptionsService } from "./application/services/materialize-legacy-model-options.js";
+export { PublishSiteReleaseModelCatalogService } from "./application/services/publish-site-release-model-catalog.js";
+export { ReadProductModelOptionCatalogsService } from "./application/services/read-product-model-option-catalogs.js";
 export type {
   ModelControlApplication,
   ModelInventoryActivationAdministration,
@@ -17,6 +20,13 @@ export type {
 } from "./application/contracts/model-control-ports.js";
 export type { ModelControlCommandJournal } from "./application/contracts/model-control-command-journal.js";
 export type {
+  ModelOptionMaterializationAdministration,
+  ModelOptionMaterializationReceipt,
+  ProductModelOptionCatalogApplication,
+  SiteReleaseModelCatalogAdministration,
+  SiteReleaseModelCatalogPublishReceipt,
+} from "./application/contracts/product-model-option-ports.js";
+export type {
   ModelControlCommand,
   ModelControlCommandInput,
   ModelControlCommittedEvent,
@@ -28,6 +38,13 @@ export type {
 } from "./domain/model-catalog.js";
 export type { SiteModelPolicy } from "./domain/site-model-policy.js";
 export type { ProviderOperationalAvailability } from "./domain/provider-availability.js";
+export type {
+  ModelOptionRevision,
+  ProductModelOptionCatalogProjection,
+  PublishedModelOption,
+  SiteReleaseModelCatalogRevision,
+  SurfaceModelOptionCatalog,
+} from "./domain/product-model-option.js";
 
 export const modelControlPlatformModule = {
   id: "model",
