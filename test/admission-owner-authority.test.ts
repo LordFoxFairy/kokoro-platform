@@ -91,6 +91,13 @@ function ports(events: string[] = []): PlatformAdmissionOwnerPorts {
         return { kind: "verified" as const };
       }),
     },
+    sessionGrant: { resolve: vi.fn(async () => {
+      events.push("session-grant");
+      return {
+        kind: "resolved" as const,
+        value: { subjectRef: "subject-1", subjectGeneration: 1n },
+      };
+    }) },
     site: { resolve: vi.fn(async () => {
       events.push("site");
       return {
@@ -240,6 +247,7 @@ describe("Platform Admission owner authority", () => {
       lifecycle: _lifecycle,
       site: _site,
       model: _model,
+      sessionGrant: _sessionGrant,
       ...ownerPorts
     } = dependencies;
     const authority = createPlatformAdmissionOwnerAuthority({
@@ -273,7 +281,8 @@ describe("Platform Admission owner authority", () => {
       database: { internalTransaction: vi.fn() },
       ownerPorts: ownerPorts as unknown as Omit<
         PlatformAdmissionOwnerPorts,
-        "unitOfWork" | "lifecycle" | "site" | "model" | "runtimePolicy" | "capability" | "assets" | "budget"
+        "unitOfWork" | "lifecycle" | "site" | "model" | "runtimePolicy" | "capability" |
+        "assets" | "budget" | "sessionGrant"
       >,
       clock: () => now,
     })).toThrowError("PLATFORM_ADMISSION_OWNER_PORTS_REQUIRED");
@@ -339,8 +348,8 @@ describe("Platform Admission owner authority", () => {
       expiresAt: "2026-07-29T12:04:00.000Z",
     });
     expect(events).toEqual([
-      "session", "tx.begin", "site", "runtime-policy", "model", "capability", "assets",
-      "budget.reserve", "lifecycle.prepare", "tx.end",
+      "session", "tx.begin", "site", "session-grant", "runtime-policy", "model", "capability",
+      "assets", "budget.reserve", "lifecycle.prepare", "tx.end",
     ]);
   });
 

@@ -81,11 +81,13 @@ export class PostgresAdmissionBudgetOwner implements AdmissionBudgetOwnerPort {
          JOIN platform.credit_account AS credit
            ON credit.site_ref=billing.site_ref
           AND credit.billing_account_ref=billing.billing_account_ref
-          AND credit.unit=$3 AND credit.liability_merchant_account_ref=$4
+          AND credit.unit=$5 AND credit.liability_merchant_account_ref=$6
           AND credit.state='active'
         WHERE bootstrap.site_ref=$1 AND bootstrap.project_ref=$2
+          AND bootstrap.subject_ref=$3 AND bootstrap.subject_generation=$4
         LIMIT 2`,
-      [input.siteId, input.projectRef, policy.unit, policy.liabilityMerchantAccountRef],
+      [input.siteId, input.projectRef, input.subjectRef, input.subjectGeneration,
+        policy.unit, policy.liabilityMerchantAccountRef],
     );
     const billing = only(authorities, "ADMISSION_BILLING_AUTHORITY_AMBIGUOUS");
     if (billing === undefined) return denied("ADMISSION_BILLING_ACCOUNT_NOT_AVAILABLE");
@@ -199,12 +201,13 @@ export class PostgresAdmissionAssetOwner implements AdmissionAssetOwnerPort {
             AND eligibility.purpose=resource.purpose
             AND eligibility.eligibility_epoch=version.eligibility_epoch
           WHERE resource.site_ref=$1 AND resource.project_ref=$2
-            AND resource.asset_ref=$3 AND version.asset_version_ref=$4
-            AND eligibility.eligibility_ref=$5
+            AND resource.subject_ref=$3 AND resource.subject_generation=$4
+            AND resource.asset_ref=$5 AND version.asset_version_ref=$6
+            AND eligibility.eligibility_ref=$7
             AND resource.purpose='chat_run_input'
             AND resource.state='active' AND version.state='ready' AND eligibility.state='ready'
           LIMIT 2`,
-        [input.siteId, input.projectRef, attachment.assetRef,
+        [input.siteId, input.projectRef, input.subjectRef, input.subjectGeneration, attachment.assetRef,
           attachment.assetVersionRef, attachment.assetGrantRef],
       );
       const grant = only(rows, "ADMISSION_ASSET_GRANT_AMBIGUOUS");

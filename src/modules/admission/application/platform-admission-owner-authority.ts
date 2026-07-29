@@ -79,6 +79,23 @@ export interface AdmissionSessionOwnerPort {
   ): Promise<Readonly<{ kind: "verified" }> | Denied | Pending>;
 }
 
+export interface AdmissionSessionGrantOwnerPort {
+  resolve(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      siteId: string;
+      projectRef: string;
+      sessionId: string;
+      runId: string;
+      configurationRevisionId: string;
+      credential: string;
+    }>,
+  ): Promise<AdmissionOwnerResolution<Readonly<{
+    subjectRef: string;
+    subjectGeneration: bigint;
+  }>>>;
+}
+
 export interface AdmissionSiteOwnerPort {
   resolve(
     transaction: PlatformTransaction,
@@ -152,6 +169,8 @@ export interface AdmissionAssetOwnerPort {
       siteId: string;
       projectRef: string;
       sessionId: string;
+      subjectRef: string;
+      subjectGeneration: bigint;
       attachments: readonly Readonly<{
         assetRef: string;
         assetVersionRef: string;
@@ -175,6 +194,8 @@ export interface AdmissionBudgetOwnerPort {
       manifestDigest: string;
       maximumExpiresAt: string;
       configurationRevisionId: string;
+      subjectRef: string;
+      subjectGeneration: bigint;
       requestDigest: string;
       agentRef?: string | undefined;
     }>,
@@ -304,6 +325,7 @@ export interface AdmissionExecutionEvidenceOwnerPort {
 export interface PlatformAdmissionOwnerPorts {
   readonly unitOfWork: AdmissionOwnerUnitOfWork;
   readonly session: AdmissionSessionOwnerPort;
+  readonly sessionGrant: AdmissionSessionGrantOwnerPort;
   readonly site: AdmissionSiteOwnerPort;
   readonly runtimePolicy: AdmissionRuntimePolicyOwnerPort;
   readonly model: AdmissionModelOwnerPort;
@@ -347,6 +369,15 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         locale: command.effect.clientIntent!.locale,
       });
       if (site.kind !== "resolved") return site;
+      const sessionGrant = await this.#ports.sessionGrant.resolve(transaction, {
+        siteId: command.siteId,
+        projectRef: command.effect.projectRef,
+        sessionId: command.effect.sessionId,
+        runId: command.effect.proposedRunId,
+        configurationRevisionId: site.value.configurationRevisionId,
+        credential: command.effect.sessionAccessGrant,
+      });
+      if (sessionGrant.kind !== "resolved") return sessionGrant;
       const runtimePolicy = await this.#ports.runtimePolicy.resolve(transaction, {
         siteId: command.siteId,
         projectRef: command.effect.projectRef,
@@ -377,6 +408,8 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         siteId: command.siteId,
         projectRef: command.effect.projectRef,
         sessionId: command.effect.sessionId,
+        subjectRef: sessionGrant.value.subjectRef,
+        subjectGeneration: sessionGrant.value.subjectGeneration,
         attachments: command.effect.attachmentRefs,
       });
       if (assets.kind !== "resolved") return assets;
@@ -427,6 +460,8 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         manifestDigest,
         maximumExpiresAt,
         configurationRevisionId: site.value.configurationRevisionId,
+        subjectRef: sessionGrant.value.subjectRef,
+        subjectGeneration: sessionGrant.value.subjectGeneration,
         requestDigest: command.requestDigest,
         ...(capability.value.agent === undefined ? {} : { agentRef: capability.value.agent }),
       });
@@ -715,6 +750,7 @@ export function assertPlatformAdmissionOwnerPorts(
     typeof candidate?.unitOfWork?.execute !== "function" ||
     typeof candidate.session?.resolve !== "function" ||
     typeof candidate.session.verifyFinalizeReceipts !== "function" ||
+    typeof candidate.sessionGrant?.resolve !== "function" ||
     typeof candidate.site?.resolve !== "function" ||
     typeof candidate.runtimePolicy?.resolve !== "function" ||
     typeof candidate.model?.resolve !== "function" ||

@@ -25,7 +25,12 @@ const profile = {
 } as const;
 
 class OwnerSql implements PlatformSqlTransaction {
-  async query<Row extends Record<string, unknown>>(statement: string): Promise<readonly Row[]> {
+  readonly calls: Array<Readonly<{ statement: string; values: readonly unknown[] }>> = [];
+  async query<Row extends Record<string, unknown>>(
+    statement: string,
+    values: readonly unknown[] = [],
+  ): Promise<readonly Row[]> {
+    this.calls.push({ statement, values });
     if (statement.includes("admission_launch_profile_snapshot")) return [{
       launchProfileRef: `launch-profile:sha256:${digest(profile)}`,
       snapshotDigest: digest(profile), payload: profile,
@@ -83,6 +88,7 @@ describe("native Admission Credit and Asset owners", () => {
         manifestRef: "manifest-a", manifestDigest: "c".repeat(64),
         requestDigest: "d".repeat(64),
         maximumExpiresAt: "2026-07-29T12:05:00.000Z", configurationRevisionId: "release-a",
+        subjectRef: "subject-a", subjectGeneration: 3n,
         agentRef: "general-v3",
       })).resolves.toEqual({
         kind: "resolved",
@@ -99,6 +105,8 @@ describe("native Admission Credit and Asset owners", () => {
         executionManifestRef: "manifest-a", requestDigest: "d".repeat(64),
         consumptionScope: { surfaceRef: "chat", capabilityKey: "chat.general", agentRef: "general-v3" },
       }));
+      expect(sql.calls.find(({ statement }) => statement.includes("identity_personal_bootstrap"))?.values)
+        .toEqual(["site-a", "project-a", "subject-a", 3n, "credit_micros", "merchant-a"]);
     } finally {
       revokePlatformTransaction(lease);
     }
@@ -132,12 +140,16 @@ describe("native Admission Credit and Asset owners", () => {
   });
 
   it("validates every attachment against the trusted ready AssetGrant projection", async () => {
-    const lease = issuePlatformTransaction(new OwnerSql());
+    const sql = new OwnerSql();
+    const lease = issuePlatformTransaction(sql);
     try {
       await expect(new PostgresAdmissionAssetOwner().validate(lease.transaction, {
         siteId: "site-a", projectRef: "project-a", sessionId: "session-a",
+        subjectRef: "subject-a", subjectGeneration: 3n,
         attachments: [{ assetRef: "asset-a", assetVersionRef: "asset-version-a", assetGrantRef: "grant-a" }],
       })).resolves.toEqual({ kind: "resolved", value: undefined });
+      expect(sql.calls.find(({ statement }) => statement.includes("asset_eligibility_projection"))?.values)
+        .toEqual(["site-a", "project-a", "subject-a", 3n, "asset-a", "asset-version-a", "grant-a"]);
     } finally {
       revokePlatformTransaction(lease);
     }

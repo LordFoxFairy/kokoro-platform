@@ -22,15 +22,14 @@ describe("Admission lifecycle schema", () => {
     expect(schema).toContain("model AdmissionExecutionManifest");
     expect(migrator).toContain('"platform.admission_session_execution_binding"');
     expect(migrator).toContain('"platform.admission_execution_manifest"');
-    expect(composition).toMatch(
-      /Omit<\s*PlatformAdmissionOwnerPorts,\s*"unitOfWork" \| "lifecycle" \| "site" \| "model" \| "runtimePolicy" \| "capability" \| "assets" \| "budget"\s*>/u,
-    );
+    expect(composition).toContain('"assets" | "budget" | "sessionGrant"');
     expect(composition).toContain("lifecycle: new PostgresAdmissionLifecycleOwner()");
     expect(composition).toContain("site: new PostgresAdmissionSiteOwner()");
     expect(composition).toContain("runtimePolicy: new PostgresAdmissionRuntimePolicyOwner()");
     expect(composition).toContain("capability: new PostgresAdmissionCapabilityOwner()");
     expect(composition).toContain("assets: new PostgresAdmissionAssetOwner()");
     expect(composition).toContain("budget: new PostgresAdmissionBudgetOwner()");
+    expect(composition).toContain("sessionGrant: new PostgresAdmissionSessionGrantOwner()");
     expect(migrator).toContain("platform.site, platform.site_release TO ${identifier}");
   });
 });

@@ -189,6 +189,9 @@ CREATE INDEX authorization_grant_revocation_idx
   ON platform.authorization_session_access_grant(site_ref,revocation_epoch,expires_at);
 CREATE INDEX authorization_grant_subject_idx
   ON platform.authorization_session_access_grant(subject_ref,expires_at);
+CREATE UNIQUE INDEX authorization_grant_credential_digest_unique_idx
+  ON platform.authorization_session_access_grant(credential_digest)
+  WHERE credential_digest IS NOT NULL;
 
 REVOKE ALL ON
   platform.authorization_site,

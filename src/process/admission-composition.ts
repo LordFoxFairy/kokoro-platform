@@ -21,6 +21,7 @@ import { HpkeGaRunRequestDraftSealer } from "../modules/admission/infrastructure
 import { PostgresAdmissionCommandJournal } from "../modules/admission/infrastructure/postgres/admission-command-journal.js";
 import { PostgresAdmissionLifecycleOwner } from "../modules/admission/infrastructure/postgres/admission-lifecycle-owner.js";
 import { PostgresAdmissionModelOwner } from "../modules/admission/infrastructure/postgres/admission-model-owner.js";
+import { PostgresAdmissionSessionGrantOwner } from "../modules/admission/infrastructure/postgres/admission-session-grant-owner.js";
 import {
   PostgresAdmissionAssetOwner,
   PostgresAdmissionBudgetOwner,
@@ -104,7 +105,8 @@ export interface AdmissionProductionComposition {
 
 export type AdmissionProductionOwnerPorts = Omit<
   PlatformAdmissionOwnerPorts,
-  "unitOfWork" | "lifecycle" | "site" | "model" | "runtimePolicy" | "capability" | "assets" | "budget"
+  "unitOfWork" | "lifecycle" | "site" | "model" | "runtimePolicy" | "capability" |
+  "assets" | "budget" | "sessionGrant"
 >;
 
 /**
@@ -123,6 +125,7 @@ export function createPlatformAdmissionOwnerAuthority(input: Readonly<{
     model: new PostgresAdmissionModelOwner(),
     runtimePolicy: new PostgresAdmissionRuntimePolicyOwner(),
     capability: new PostgresAdmissionCapabilityOwner(),
+    sessionGrant: new PostgresAdmissionSessionGrantOwner(),
     assets: new PostgresAdmissionAssetOwner(),
     budget: new PostgresAdmissionBudgetOwner(),
     lifecycle: new PostgresAdmissionLifecycleOwner(),
