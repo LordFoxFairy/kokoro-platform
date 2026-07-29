@@ -18,17 +18,18 @@ describe("PreviewRedemptionService", () => {
     const repository = new FakeRedemptionRepository();
     let referenceTime: number | null = null;
     try {
+      const secrets = createRedemptionSecretCodec({
+        currentCodeLookupKeyRevision: "code-1",
+        codeLookupKeys: [{ keyRevision: "code-1", key: Buffer.alloc(32, 1) }],
+        currentPreviewCredentialKeyRevision: "preview-1",
+        previewCredentialKeys: [{ keyRevision: "preview-1", key: Buffer.alloc(32, 2) }],
+        requestAuditKey: Buffer.alloc(32, 3),
+      });
       const service = new PreviewRedemptionService({
         unitOfWork: { execute: async (_fence, work) => work(lease.transaction) },
         fence: new FakeFence(lease.transaction),
         repository,
-        secrets: createRedemptionSecretCodec({
-          currentCodeLookupKeyRevision: "code-1",
-          codeLookupKeys: [{ keyRevision: "code-1", key: Buffer.alloc(32, 1) }],
-          currentPreviewCredentialKeyRevision: "preview-1",
-          previewCredentialKeys: [{ keyRevision: "preview-1", key: Buffer.alloc(32, 2) }],
-          requestAuditKey: Buffer.alloc(32, 3),
-        }),
+        secrets,
         reference: (now) => {
           referenceTime = now;
           return "00000000-0000-7000-8000-000000000101";
@@ -40,7 +41,7 @@ describe("PreviewRedemptionService", () => {
         context: context(),
         commandId: "00000000-0000-7000-8000-000000000201",
         idempotencyKey: "preview-operation-0001",
-        code: "ABCDEFGHIJKLMNOP",
+        code: secrets.issueCode("site-1", "00000000-0000-7000-8000-000000000402").code,
       });
 
       expect(referenceTime).toBe(Date.parse("2026-07-29T01:00:30.000Z"));
