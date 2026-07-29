@@ -305,7 +305,7 @@ async function grantFoundationPrivileges(
         `GRANT UPDATE ON TABLE platform.authorization_identity_session, ${IDENTITY_MUTABLE_TABLES} TO ${identifier}`,
       );
       await client.query(
-        `GRANT INSERT ON TABLE platform.commerce_command, platform.commerce_subscription, platform.commerce_subscription_term, platform.commerce_subscription_term_revocation, platform.commerce_redemption, platform.commerce_redemption_preview, platform.commerce_redemption_legal_acceptance, platform.commerce_entitlement_grant, platform.commerce_entitlement_revocation, platform.credit_account, platform.credit_grant, platform.credit_program_window_acquisition, platform.credit_hold, platform.credit_hold_allocation, platform.credit_journal_transaction, platform.credit_journal_entry, platform.credit_execution_budget_root, platform.credit_budget_allocation, platform.credit_budget_allocation_revision, platform.credit_allocation_reservation_receipt, platform.credit_allocation_return_receipt, platform.credit_authorization_segment, platform.commerce_fulfillment_transaction, platform.commerce_fulfillment_output_plan, platform.commerce_fulfillment_actual_output, platform.commerce_command_outbox, platform.commerce_audit_entry TO ${identifier}`,
+        `GRANT INSERT ON TABLE platform.commerce_command, platform.commerce_subscription, platform.commerce_subscription_term, platform.commerce_subscription_term_revocation, platform.commerce_redemption, platform.commerce_redemption_preview, platform.commerce_redemption_legal_acceptance, platform.commerce_entitlement_grant, platform.commerce_entitlement_revocation, platform.credit_account, platform.credit_grant, platform.credit_program_window_acquisition, platform.credit_hold, platform.credit_hold_allocation, platform.credit_journal_transaction, platform.credit_journal_entry, platform.credit_execution_budget_root, platform.credit_budget_allocation, platform.credit_budget_allocation_revision, platform.credit_allocation_reservation_receipt, platform.credit_allocation_return_receipt, platform.credit_authorization_segment, platform.credit_budget_operation_receipt, platform.commerce_fulfillment_transaction, platform.commerce_fulfillment_output_plan, platform.commerce_fulfillment_actual_output, platform.commerce_command_outbox, platform.commerce_audit_entry TO ${identifier}`,
       );
       await client.query(
         `GRANT UPDATE ON TABLE platform.commerce_command, platform.commerce_subscription, platform.commerce_redeem_code, platform.commerce_redemption, platform.commerce_redemption_preview, platform.credit_account, platform.credit_hold, platform.credit_execution_budget_root, platform.credit_authorization_segment, platform.commerce_fulfillment_transaction TO ${identifier}`,
@@ -408,6 +408,7 @@ const COMMERCE_TABLES = [
   "platform.credit_allocation_reservation_receipt",
   "platform.credit_allocation_return_receipt",
   "platform.credit_authorization_segment",
+  "platform.credit_budget_operation_receipt",
   "platform.commerce_fulfillment_transaction",
   "platform.commerce_fulfillment_output_plan",
   "platform.commerce_fulfillment_actual_output",
@@ -638,6 +639,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            AND has_table_privilege(runtime_role.rolname, 'platform.credit_allocation_reservation_receipt', 'SELECT,INSERT')
            AND has_table_privilege(runtime_role.rolname, 'platform.credit_allocation_return_receipt', 'SELECT,INSERT')
            AND has_table_privilege(runtime_role.rolname, 'platform.credit_authorization_segment', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.credit_budget_operation_receipt', 'SELECT,INSERT')
            AND has_table_privilege(runtime_role.rolname, 'platform.commerce_fulfillment_transaction', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.commerce_fulfillment_output_plan', 'SELECT,INSERT')
            AND has_table_privilege(runtime_role.rolname, 'platform.commerce_fulfillment_actual_output', 'SELECT,INSERT')
@@ -746,7 +748,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                'credit_journal_transaction','credit_journal_entry','credit_execution_budget_root',
                'credit_budget_allocation','credit_budget_allocation_revision',
                'credit_allocation_reservation_receipt','credit_allocation_return_receipt',
-               'credit_authorization_segment'
+               'credit_authorization_segment','credit_budget_operation_receipt'
                ]) AND (
                  (candidate.relname LIKE 'model\\_%' ESCAPE '\\' AND (
                    has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
@@ -797,7 +799,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                'credit_journal_transaction','credit_journal_entry','credit_execution_budget_root',
                'credit_budget_allocation','credit_budget_allocation_revision',
                'credit_allocation_reservation_receipt','credit_allocation_return_receipt',
-               'credit_authorization_segment'
+               'credit_authorization_segment','credit_budget_operation_receipt'
                ]) AND (
                  (runtime_role.rolname = $2 AND (
                    has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
@@ -840,7 +842,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                      'credit_journal_transaction','credit_journal_entry','credit_execution_budget_root',
                      'credit_budget_allocation','credit_budget_allocation_revision',
                      'credit_allocation_reservation_receipt','credit_allocation_return_receipt',
-                     'credit_authorization_segment'
+                     'credit_authorization_segment','credit_budget_operation_receipt'
                    ]))
                    OR (runtime_role.rolname = $2 AND candidate.relname = ANY(ARRAY['authorization_snapshot','authorization_snapshot_record']))
                    OR (runtime_role.rolname = $3 AND candidate.relname = 'inbox_delivery')
@@ -891,7 +893,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                      'credit_journal_transaction','credit_journal_entry','credit_execution_budget_root',
                      'credit_budget_allocation','credit_budget_allocation_revision',
                      'credit_allocation_reservation_receipt','credit_allocation_return_receipt',
-                     'credit_authorization_segment'
+                     'credit_authorization_segment','credit_budget_operation_receipt'
                    ]))
                    OR (runtime_role.rolname = $2 AND candidate.relname = ANY(ARRAY['authorization_snapshot','authorization_snapshot_record']))
                    OR (runtime_role.rolname = $3 AND candidate.relname = 'inbox_delivery')

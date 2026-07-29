@@ -966,6 +966,30 @@ CREATE TABLE platform.credit_authorization_segment (
 CREATE INDEX credit_authorization_segment_allocation_state_idx
   ON platform.credit_authorization_segment(site_ref,budget_allocation_ref,state,expires_at);
 
+CREATE TABLE platform.credit_budget_operation_receipt (
+  operation_receipt_ref UUID PRIMARY KEY,
+  site_ref TEXT NOT NULL REFERENCES platform.authorization_site(site_ref),
+  operation_kind TEXT NOT NULL CHECK(operation_kind IN (
+    'reserve_root','finalize_segment','release_segment','reconcile_segment'
+  )),
+  business_operation_key TEXT NOT NULL CHECK(length(business_operation_key) BETWEEN 1 AND 256),
+  request_digest CHAR(64) NOT NULL CHECK(request_digest ~ '^[a-f0-9]{64}$'),
+  execution_budget_root_ref UUID NOT NULL,
+  authorization_segment_ref UUID NOT NULL,
+  outcome_kind TEXT NOT NULL CHECK(outcome_kind IN ('accepted','reconciliation_required')),
+  result JSONB NOT NULL CHECK(jsonb_typeof(result)='object'),
+  result_digest CHAR(64) NOT NULL CHECK(result_digest ~ '^[a-f0-9]{64}$'),
+  outbox_event_ref UUID NOT NULL UNIQUE REFERENCES platform.outbox_event(event_id),
+  completed_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(site_ref,operation_kind,business_operation_key),
+  UNIQUE(operation_receipt_ref,site_ref),
+  FOREIGN KEY(execution_budget_root_ref,site_ref)
+    REFERENCES platform.credit_execution_budget_root(execution_budget_root_ref,site_ref),
+  FOREIGN KEY(authorization_segment_ref,site_ref)
+    REFERENCES platform.credit_authorization_segment(authorization_segment_ref,site_ref)
+);
+
 CREATE TABLE platform.commerce_fulfillment_transaction (
   fulfillment_id UUID PRIMARY KEY,
   command_id TEXT,
@@ -1721,6 +1745,8 @@ DECLARE
   before_revision platform.credit_budget_allocation_revision%ROWTYPE;
   after_revision platform.credit_budget_allocation_revision%ROWTYPE;
   current_revision BIGINT;
+  root_state TEXT;
+  hold_state TEXT;
 BEGIN
   IF ROW(OLD.authorization_segment_ref,OLD.site_ref,OLD.execution_budget_root_ref,
          OLD.budget_allocation_ref,OLD.credit_hold_ref,OLD.billing_account_ref,
@@ -1747,6 +1773,15 @@ BEGIN
     RAISE EXCEPTION 'CREDIT_AUTHORIZATION_SEGMENT_TRANSITION_INVALID' USING ERRCODE='23514';
   END IF;
   IF OLD.state='reserved' AND NEW.state='committed' THEN
+    SELECT root.state,hold.state INTO root_state,hold_state
+    FROM platform.credit_execution_budget_root root
+    JOIN platform.credit_hold hold
+      ON hold.credit_hold_ref=root.credit_hold_ref AND hold.site_ref=root.site_ref
+    WHERE root.execution_budget_root_ref=NEW.execution_budget_root_ref
+      AND root.site_ref=NEW.site_ref;
+    IF root_state IS DISTINCT FROM 'open' OR hold_state IS DISTINCT FROM 'open' THEN
+      RAISE EXCEPTION 'CREDIT_AUTHORIZATION_ROOT_NOT_OPEN' USING ERRCODE='23514';
+    END IF;
     IF NEW.committed_from_allocation_revision IS NULL
        OR NEW.committed_to_allocation_revision<>NEW.committed_from_allocation_revision+1
        OR NEW.committed_at IS NULL THEN
@@ -2119,6 +2154,9 @@ CREATE TRIGGER credit_authorization_segment_transition
 CREATE TRIGGER credit_authorization_segment_no_delete
   BEFORE DELETE ON platform.credit_authorization_segment
   FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE TRIGGER credit_budget_operation_receipt_immutable
+  BEFORE UPDATE OR DELETE ON platform.credit_budget_operation_receipt
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
 CREATE CONSTRAINT TRIGGER credit_authorization_segment_capacity
   AFTER INSERT OR UPDATE ON platform.credit_authorization_segment
   DEFERRABLE INITIALLY DEFERRED
@@ -2161,6 +2199,7 @@ REVOKE ALL ON
   platform.credit_allocation_reservation_receipt,
   platform.credit_allocation_return_receipt,
   platform.credit_authorization_segment,
+  platform.credit_budget_operation_receipt,
   platform.commerce_fulfillment_transaction,
   platform.commerce_fulfillment_output_plan,
   platform.commerce_fulfillment_actual_output,

@@ -108,7 +108,20 @@ describe("Wave 2A Commerce authority schema", () => {
     expect(migration).toContain("CREDIT_CHILD_ALLOCATION_ORIGIN_INVALID");
     expect(migration).toContain("CREDIT_ALLOCATION_RETURN_CONSERVATION_FAILED");
     expect(migration).toContain("CREDIT_AUTHORIZATION_SEGMENT_COMMIT_STOCK_INVALID");
+    expect(migration).toContain("CREDIT_AUTHORIZATION_ROOT_NOT_OPEN");
     expect(migration).toContain("CREDIT_HOLD_SEGMENT_STILL_ACTIVE");
+  });
+
+  it("persists budget command replay evidence and its outbox event in the same authority schema", () => {
+    expect(migration).toContain("CREATE TABLE platform.credit_budget_operation_receipt (");
+    expect(compactMigration).toContain(
+      "UNIQUE(site_ref,operation_kind,business_operation_key)",
+    );
+    expect(migration).toContain("request_digest CHAR(64) NOT NULL");
+    expect(migration).toContain("result_digest CHAR(64) NOT NULL");
+    expect(migration).toContain("REFERENCES platform.outbox_event(event_id)");
+    expect(migration).toContain("credit_budget_operation_receipt_immutable");
+    expect(migrator).toContain("platform.credit_budget_operation_receipt");
   });
 
   it("keeps UX bucket labels out of burn authority and freezes window semantics", () => {

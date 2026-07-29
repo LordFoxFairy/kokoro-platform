@@ -448,6 +448,17 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_table_privilege(current_user, 'platform.commerce_fulfillment_actual_output', 'SELECT,INSERT')
            AND has_table_privilege(current_user, 'platform.commerce_command_outbox', 'SELECT,INSERT')
            AND has_table_privilege(current_user, 'platform.commerce_audit_entry', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.credit_account', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.credit_grant', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.credit_hold', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.credit_hold_allocation', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.credit_journal_transaction', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.credit_journal_entry', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.credit_execution_budget_root', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.credit_budget_allocation', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.credit_budget_allocation_revision', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.credit_authorization_segment', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.credit_budget_operation_receipt', 'SELECT,INSERT')
          WHEN $2 = 'worker' THEN
            has_table_privilege(current_user, 'platform.command_receipt', 'UPDATE')
            AND has_table_privilege(current_user, 'platform.outbox_event', 'UPDATE')
@@ -537,7 +548,20 @@ const RUNTIME_IDENTITY_SQL = `
                'identity_execution_space','identity_namespace_allocation_intent','identity_personal_bootstrap'
                ,'commerce_command','commerce_billing_account','commerce_billing_account_membership',
                'commerce_fulfillment_transaction','commerce_fulfillment_output_plan',
-               'commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry'
+               'commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry',
+               'commerce_catalog_product','commerce_catalog_plan','commerce_catalog_plan_version',
+               'commerce_credit_program_revision','commerce_entitlement_template_revision',
+               'commerce_fulfillment_program_revision','commerce_fulfillment_program_output',
+               'commerce_catalog_product_version','commerce_redemption_program_revision',
+               'commerce_redemption_program_availability','commerce_subscription','commerce_subscription_term',
+               'commerce_subscription_term_revocation','commerce_code_batch','commerce_redeem_code',
+               'commerce_redemption','commerce_redemption_preview','commerce_redemption_legal_acceptance',
+               'commerce_entitlement_grant','commerce_entitlement_revocation','credit_account','credit_grant',
+               'credit_program_window_acquisition','credit_hold','credit_hold_allocation',
+               'credit_journal_transaction','credit_journal_entry','credit_execution_budget_root',
+               'credit_budget_allocation','credit_budget_allocation_revision',
+               'credit_allocation_reservation_receipt','credit_allocation_return_receipt',
+               'credit_authorization_segment','credit_budget_operation_receipt'
                ]) AND (
                  has_table_privilege(runtime_role.rolname, candidate.oid,
                    'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
@@ -570,7 +594,20 @@ const RUNTIME_IDENTITY_SQL = `
                'identity_execution_space','identity_namespace_allocation_intent','identity_personal_bootstrap'
                ,'commerce_command','commerce_billing_account','commerce_billing_account_membership',
                'commerce_fulfillment_transaction','commerce_fulfillment_output_plan',
-               'commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry'
+               'commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry',
+               'commerce_catalog_product','commerce_catalog_plan','commerce_catalog_plan_version',
+               'commerce_credit_program_revision','commerce_entitlement_template_revision',
+               'commerce_fulfillment_program_revision','commerce_fulfillment_program_output',
+               'commerce_catalog_product_version','commerce_redemption_program_revision',
+               'commerce_redemption_program_availability','commerce_subscription','commerce_subscription_term',
+               'commerce_subscription_term_revocation','commerce_code_batch','commerce_redeem_code',
+               'commerce_redemption','commerce_redemption_preview','commerce_redemption_legal_acceptance',
+               'commerce_entitlement_grant','commerce_entitlement_revocation','credit_account','credit_grant',
+               'credit_program_window_acquisition','credit_hold','credit_hold_allocation',
+               'credit_journal_transaction','credit_journal_entry','credit_execution_budget_root',
+               'credit_budget_allocation','credit_budget_allocation_revision',
+               'credit_allocation_reservation_receipt','credit_allocation_return_receipt',
+               'credit_authorization_segment','credit_budget_operation_receipt'
                ]) AND (
                  (candidate.relname LIKE 'model\\_%' ESCAPE '\\' AND (
                    has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
@@ -610,7 +647,15 @@ const RUNTIME_IDENTITY_SQL = `
                      'identity_execution_space','identity_namespace_allocation_intent','identity_personal_bootstrap',
                      'commerce_command','commerce_billing_account','commerce_billing_account_membership',
                      'commerce_fulfillment_transaction','commerce_fulfillment_output_plan',
-                     'commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry'
+                     'commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry',
+                     'commerce_subscription','commerce_subscription_term','commerce_subscription_term_revocation',
+                     'commerce_redemption','commerce_redemption_preview','commerce_redemption_legal_acceptance',
+                     'commerce_entitlement_grant','commerce_entitlement_revocation','credit_account','credit_grant',
+                     'credit_program_window_acquisition','credit_hold','credit_hold_allocation',
+                     'credit_journal_transaction','credit_journal_entry','credit_execution_budget_root',
+                     'credit_budget_allocation','credit_budget_allocation_revision',
+                     'credit_allocation_reservation_receipt','credit_allocation_return_receipt',
+                     'credit_authorization_segment','credit_budget_operation_receipt'
                    ]))
                    OR ($2 = 'authorization' AND candidate.relname = ANY(ARRAY['authorization_snapshot','authorization_snapshot_record']))
                    OR ($2 = 'worker' AND candidate.relname = 'inbox_delivery')
@@ -629,7 +674,9 @@ const RUNTIME_IDENTITY_SQL = `
                'identity_recovery_code_delivery_claim','identity_refresh_family',
                      'identity_refresh_credential','identity_session_delivery_claim','identity_receipt_recovery_capability',
                      'identity_execution_space','identity_namespace_allocation_intent',
-                     'commerce_command','commerce_fulfillment_transaction'
+                     'commerce_command','commerce_subscription','commerce_redeem_code','commerce_redemption',
+                     'commerce_redemption_preview','credit_account','credit_hold',
+                     'credit_execution_budget_root','credit_authorization_segment','commerce_fulfillment_transaction'
                    ]))
                    OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery']))
                    OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY['command_receipt','commerce_billing_account','commerce_billing_account_membership']))
@@ -651,7 +698,15 @@ const RUNTIME_IDENTITY_SQL = `
                      'identity_execution_space','identity_namespace_allocation_intent','identity_personal_bootstrap',
                      'commerce_command','commerce_billing_account','commerce_billing_account_membership',
                      'commerce_fulfillment_transaction','commerce_fulfillment_output_plan',
-                     'commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry'
+                     'commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry',
+                     'commerce_subscription','commerce_subscription_term','commerce_subscription_term_revocation',
+                     'commerce_redemption','commerce_redemption_preview','commerce_redemption_legal_acceptance',
+                     'commerce_entitlement_grant','commerce_entitlement_revocation','credit_account','credit_grant',
+                     'credit_program_window_acquisition','credit_hold','credit_hold_allocation',
+                     'credit_journal_transaction','credit_journal_entry','credit_execution_budget_root',
+                     'credit_budget_allocation','credit_budget_allocation_revision',
+                     'credit_allocation_reservation_receipt','credit_allocation_return_receipt',
+                     'credit_authorization_segment','credit_budget_operation_receipt'
                    ]))
                    OR ($2 = 'authorization' AND candidate.relname = ANY(ARRAY['authorization_snapshot','authorization_snapshot_record']))
                    OR ($2 = 'worker' AND candidate.relname = 'inbox_delivery')
@@ -670,7 +725,9 @@ const RUNTIME_IDENTITY_SQL = `
                'identity_recovery_code_delivery_claim','identity_refresh_family',
                      'identity_refresh_credential','identity_session_delivery_claim','identity_receipt_recovery_capability',
                      'identity_execution_space','identity_namespace_allocation_intent',
-                     'commerce_command','commerce_fulfillment_transaction'
+                     'commerce_command','commerce_subscription','commerce_redeem_code','commerce_redemption',
+                     'commerce_redemption_preview','credit_account','credit_hold',
+                     'credit_execution_budget_root','credit_authorization_segment','commerce_fulfillment_transaction'
                    ]))
                    OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery']))
                    OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY['command_receipt','commerce_billing_account','commerce_billing_account_membership']))
