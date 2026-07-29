@@ -147,6 +147,33 @@ export class PostgresSiteRuntimeStateStore implements SiteRuntimeStateStore {
     });
   }
 
+  recordActivationFailure(
+    attemptRef: string,
+    outcome: "failed" | "unknown",
+    code: string,
+  ): Promise<SiteRuntimeStep> {
+    return this.transactions.execute(async (transaction) => {
+      const attempt = await this.activation(transaction, attemptRef);
+      const next = recordActivationEffectFailure(attempt, outcome, code);
+      await this.repository.updateActivation(transaction, next);
+      if (next.state === "draining") return this.activationDrain(transaction, next);
+      return this.promotion(transaction, next, "observe_promotion");
+    });
+  }
+
+  recordTrafficStopFailure(
+    attemptRef: string,
+    outcome: "failed" | "unknown",
+    code: string,
+  ): Promise<SiteRuntimeStep> {
+    return this.transactions.execute(async (transaction) => {
+      const attempt = await this.trafficStop(transaction, attemptRef);
+      const next = recordSiteTrafficStopEffectFailure(attempt, outcome, code);
+      await this.repository.updateTrafficStop(transaction, next);
+      return this.trafficStep(transaction, next, "observe_site_traffic");
+    });
+  }
+
   private async commitActivation(
     transaction: PlatformTransaction,
     attempt: ActivationAttempt,

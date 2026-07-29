@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   SiteDeploymentProviderRegistry,
+  SiteProviderEffectError,
   type SiteDeploymentProvider,
 } from "../../src/modules/site/application/contracts/site-deployment-provider.js";
 import type {
@@ -26,6 +27,8 @@ describe("SiteRuntimeDispatcher", () => {
       },
       prepareTrafficStop: async () => ({ kind: "complete" }),
       acceptTrafficStop: async () => ({ kind: "complete" }),
+      recordActivationFailure: async () => ({ kind: "complete" }),
+      recordTrafficStopFailure: async () => ({ kind: "complete" }),
     };
     const provider = fakeProvider(calls);
     const dispatcher = new SiteRuntimeDispatcher(state, new SiteDeploymentProviderRegistry([provider]));
@@ -42,6 +45,19 @@ describe("SiteRuntimeDispatcher", () => {
     );
     await expect(dispatcher.runActivation("activation_01", new AbortController().signal))
       .rejects.toThrow("SITE_PROVIDER_NOT_CONFIGURED:cloudflare");
+  });
+
+  it("persists an ambiguous RPC effect before scheduling reconciliation", async () => {
+    const failures: string[] = [];
+    const state = stateReturning(promotionStep("promote"), failures);
+    const provider: SiteDeploymentProvider = {
+      ...fakeProvider([]),
+      promote: async () => { throw new SiteProviderEffectError("unknown", "PROVIDER_TIMEOUT"); },
+    };
+    const dispatcher = new SiteRuntimeDispatcher(state, new SiteDeploymentProviderRegistry([provider]));
+    await expect(dispatcher.runActivation("activation_01", new AbortController().signal))
+      .rejects.toThrow("PROVIDER_TIMEOUT");
+    expect(failures).toEqual(["activation:unknown:PROVIDER_TIMEOUT"]);
   });
 });
 
@@ -62,11 +78,17 @@ function drainStep(): SiteRuntimeStep {
     deploymentRef: "deployment_01", environment: "production", region: "us-east-1",
   } };
 }
-function stateReturning(step: SiteRuntimeStep): SiteRuntimeStateStore {
+function stateReturning(step: SiteRuntimeStep, failures: string[] = []): SiteRuntimeStateStore {
   return { prepareActivation: async () => step, acceptPromotion: async () => ({ kind: "complete" }),
     acceptActivationDrain: async () => ({ kind: "complete" }),
     prepareTrafficStop: async () => ({ kind: "complete" }),
-    acceptTrafficStop: async () => ({ kind: "complete" }) };
+    acceptTrafficStop: async () => ({ kind: "complete" }),
+    recordActivationFailure: async (_ref, outcome, code) => {
+      failures.push(`activation:${outcome}:${code}`); return step;
+    },
+    recordTrafficStopFailure: async (_ref, outcome, code) => {
+      failures.push(`traffic:${outcome}:${code}`); return step;
+    } };
 }
 function fakeProvider(calls: string[]): SiteDeploymentProvider {
   return {

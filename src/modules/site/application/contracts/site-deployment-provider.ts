@@ -41,6 +41,16 @@ export interface SiteDeploymentProvider {
   observeTrafficStop(command: SiteTrafficStopCommand, signal: AbortSignal): Promise<SiteTrafficStopProviderObservation>;
 }
 
+export class SiteProviderEffectError extends Error {
+  constructor(
+    readonly outcome: "failed" | "unknown",
+    readonly code: string,
+  ) {
+    super(code);
+    if (!/^[A-Z][A-Z0-9_]{2,127}$/u.test(code)) throw new Error("SITE_PROVIDER_ERROR_CODE_INVALID");
+  }
+}
+
 export class SiteDeploymentProviderRegistry {
   readonly #providers: ReadonlyMap<string, SiteDeploymentProvider>;
 

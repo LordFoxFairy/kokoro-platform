@@ -37,6 +37,16 @@ export interface SiteRuntimeStateStore {
     attemptRef: string,
     observation: SiteTrafficStopProviderObservation,
   ): Promise<SiteRuntimeStep>;
+  recordActivationFailure(
+    attemptRef: string,
+    outcome: "failed" | "unknown",
+    code: string,
+  ): Promise<SiteRuntimeStep>;
+  recordTrafficStopFailure(
+    attemptRef: string,
+    outcome: "failed" | "unknown",
+    code: string,
+  ): Promise<SiteRuntimeStep>;
 }
 
 export interface SiteRuntimeTransactionRunner {

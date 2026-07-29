@@ -53,6 +53,21 @@ describe("outbox retry bounds", () => {
       ]);
     } finally { revokePlatformTransaction(lease); }
   });
+
+  it("returns a leased event to pending without consuming another attempt", async () => {
+    let statement = "";
+    const lease = issuePlatformTransaction({ query: async () => [], execute: async (value) => {
+      statement = value; return 1;
+    } });
+    try {
+      await new OutboxRepository().release(lease.transaction, {
+        eventId: "event", leaseToken: "lease", errorCode: "SITE_SHUTDOWN",
+      });
+      expect(statement).toContain("state='pending'");
+      expect(statement).not.toContain("attempt=attempt+1");
+      expect(statement).toContain("lease_token=NULL");
+    } finally { revokePlatformTransaction(lease); }
+  });
 });
 
 function event(): OutboxEvent {

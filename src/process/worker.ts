@@ -9,6 +9,7 @@ import type { PlatformProcessState } from "./api.js";
 import { createAuthorizationRetentionCycle } from "../modules/authorization/infrastructure/postgres/authorization-retention.js";
 import { createCommerceOutboxReconciliationCycle, HmacHttpOutboxDeliveryTransport } from
   "../modules/commerce/infrastructure/postgres/commerce-outbox-reconciler.js";
+import { createSiteRuntimeWorkerProductionComposition } from "./site-runtime-worker-composition.js";
 
 export interface PlatformWorkerProcessStatus {
   readonly state: PlatformProcessState;
@@ -230,12 +231,16 @@ export async function runPlatformWorkerMain(): Promise<void> {
     }),
     workerId: process.env.PLATFORM_WORKER_ID ?? `platform-worker-${process.pid}`,
   });
+  const siteRuntime = await createSiteRuntimeWorkerProductionComposition({ database });
   const worker = createPlatformWorkerProcess({
     database,
-    runOneCycle: async (context) => {
-      await commerceOutbox(context);
-      await authorizationRetention(context);
-    },
+    runOneCycle: async (context) => { await Promise.all([
+      authorizationRetention(context),
+      commerceOutbox(context),
+      siteRuntime.runOneCycle(context),
+    ]); },
+    stopClaiming: siteRuntime.stopClaiming,
+    returnLease: siteRuntime.returnLease,
     onCycleError: (error) => console.error("Platform Worker cycle failed", error),
   });
   const shutdown = () => {

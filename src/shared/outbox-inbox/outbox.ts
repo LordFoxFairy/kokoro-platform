@@ -113,6 +113,22 @@ export class OutboxRepository {
     );
     if (changed !== 1) throw new Error("OUTBOX_LEASE_LOST");
   }
+
+  async release(
+    transaction: PlatformTransaction,
+    input: { readonly eventId: string; readonly leaseToken: string; readonly errorCode: string },
+  ): Promise<void> {
+    assertBoundedIdentifier(input.leaseToken, "OUTBOX_RELEASE_INPUT_INVALID");
+    assertBoundedIdentifier(input.errorCode, "OUTBOX_RELEASE_INPUT_INVALID");
+    const changed = await resolvePlatformTransaction(transaction).execute(
+      `UPDATE platform.outbox_event SET state='pending',available_at=now(),last_error_code=$3,
+       lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=now()
+       WHERE event_id=$1 AND state='leased' AND lease_token=$2`,
+      [input.eventId, input.leaseToken, input.errorCode],
+    );
+    if (changed !== 1) throw new Error("OUTBOX_LEASE_LOST");
+  }
+
 }
 
 function sameEnvelope(stored: OutboxEvent, candidate: OutboxEvent): boolean {
