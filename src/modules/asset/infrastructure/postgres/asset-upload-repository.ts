@@ -11,6 +11,7 @@ import {
   type AssetUploadIntent,
   type AssetUploadSession,
 } from "../../domain/upload-intent.js";
+import { persistAssetCleanupPlan } from "./asset-cleanup-repository.js";
 
 export class PostgresAssetUploadRepository implements AssetUploadRepositoryPort,
   AssetUploadCompletionRepositoryPort, AssetCompletionWorkerRepositoryPort {
@@ -274,6 +275,7 @@ export class PostgresAssetUploadRepository implements AssetUploadRepositoryPort,
     if (!reservation || reservation.state !== "reserved") {
       throw new Error("ASSET_QUOTA_RESERVATION_INVALID");
     }
+    assertCompletionCleanupPlan(pair.session, input.cleanupPlan);
     const sessionChanged = await sql.execute(
       `UPDATE platform.asset_upload_session
        SET state='rejected',expected_version=expected_version+1,updated_at=now()
@@ -292,28 +294,60 @@ export class PostgresAssetUploadRepository implements AssetUploadRepositoryPort,
     const quotaChanged = await sql.execute(
       `UPDATE platform.asset_quota_account
        SET reserved_inflight_bytes=reserved_inflight_bytes-$4::bigint,
+           trash_retained_bytes=trash_retained_bytes+$5::bigint,
            expected_version=expected_version+1,updated_at=now()
        WHERE site_ref=$1 AND subject_ref=$2 AND purpose=$3
          AND reserved_inflight_bytes >= $4::bigint`,
-      [input.siteRef, reservation.subjectRef, reservation.purpose, reservation.reservedBytes],
+      [input.siteRef, reservation.subjectRef, reservation.purpose, reservation.reservedBytes,
+        retainedBytes(input.cleanupPlan)],
     );
-    if (quotaChanged !== 1) throw new Error("ASSET_QUOTA_RELEASE_CONFLICT");
+    if (quotaChanged !== 1) throw new Error("ASSET_QUOTA_RETENTION_CONFLICT");
     const reservationChanged = await sql.execute(
       `UPDATE platform.asset_quota_reservation
-       SET state='released',release_evidence_ref=$4,updated_at=now()
+       SET state='trash_retained',updated_at=now()
        WHERE site_ref=$1 AND intent_ref=$2 AND session_ref=$3 AND state='reserved'`,
-      [input.siteRef, input.intentRef, input.sessionRef, input.cleanupEvent.eventId],
+      [input.siteRef, input.intentRef, input.sessionRef],
     );
-    if (reservationChanged !== 1) throw new Error("ASSET_QUOTA_RELEASE_CONFLICT");
-    await enqueue(sql, input.cleanupEvent);
-    await sql.execute(
+    if (reservationChanged !== 1) throw new Error("ASSET_QUOTA_RETENTION_CONFLICT");
+    await persistAssetCleanupPlan(sql, {
+      siteRef: input.siteRef,
+      subjectRef: reservation.subjectRef,
+      purpose: reservation.purpose,
+      intentRef: input.intentRef,
+      sessionRef: input.sessionRef,
+      sourceKind: "upload_completion_rejection",
+      sourceRef: input.sessionRef,
+      reasonCode: input.reasonCode,
+    }, input.cleanupPlan);
+    const rejectionChanged = await sql.execute(
       `INSERT INTO platform.asset_upload_rejection
-       (rejection_ref,site_ref,intent_ref,session_ref,reason_code,cleanup_event_id)
-       VALUES ($1::uuid,$2,$3,$4,$5,$1::uuid)`,
-      [input.cleanupEvent.eventId, input.siteRef, input.intentRef, input.sessionRef,
-        input.reasonCode],
+       (rejection_ref,site_ref,intent_ref,session_ref,reason_code,cleanup_group_ref)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [input.rejectionRef, input.siteRef, input.intentRef, input.sessionRef,
+        input.reasonCode, input.cleanupPlan.cleanupGroupRef],
     );
+    if (rejectionChanged !== 1) throw new Error("ASSET_UPLOAD_REJECTION_NOT_PERSISTED");
     return "rejected";
+  }
+}
+
+function retainedBytes(
+  plan: Parameters<AssetCompletionWorkerRepositoryPort["rejectCompletion"]>[1]["cleanupPlan"],
+): bigint {
+  return plan.targets.reduce((total, target) => total + target.retainedBytes, 0n);
+}
+
+function assertCompletionCleanupPlan(
+  session: AssetUploadSession,
+  plan: Parameters<AssetCompletionWorkerRepositoryPort["rejectCompletion"]>[1]["cleanupPlan"],
+): void {
+  const target = plan.targets[0];
+  if (plan.terminalReservationState !== "released" || plan.targets.length !== 1 || !target ||
+      target.objectRole !== "quarantine" || target.storageTenantRef !== session.storageTenantRef ||
+      target.storageRegion !== session.storageRegion ||
+      target.objectRef !== session.quarantineObjectRef || target.retainedBytes < 1n ||
+      target.providerVersionRef.length < 1) {
+    throw new Error("ASSET_CLEANUP_PLAN_INVALID");
   }
 }
 

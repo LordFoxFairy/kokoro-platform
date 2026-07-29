@@ -98,11 +98,7 @@ CREATE TABLE platform.asset_quota_account (
   PRIMARY KEY(site_ref,subject_ref,purpose),
   FOREIGN KEY(subject_ref,site_ref)
     REFERENCES platform.authorization_subject(subject_ref,site_ref),
-  CHECK (reserved_inflight_bytes <= maximum_inflight_bytes),
-  CHECK (
-    reserved_inflight_bytes+quarantine_bytes+ready_asset_bytes+trash_retained_bytes
-      <= maximum_ready_bytes
-  )
+  CHECK (reserved_inflight_bytes <= maximum_inflight_bytes)
 );
 
 CREATE TABLE platform.asset_quota_reservation (
@@ -114,7 +110,9 @@ CREATE TABLE platform.asset_quota_reservation (
   session_ref TEXT NOT NULL UNIQUE,
   quota_revision_ref TEXT NOT NULL,
   reserved_bytes BIGINT NOT NULL CHECK (reserved_bytes > 0),
-  state TEXT NOT NULL CHECK (state IN ('reserved','committed','releasing','released','promoted')),
+  state TEXT NOT NULL CHECK (state IN (
+    'reserved','committed','trash_retained','releasing','released','promoted'
+  )),
   release_evidence_ref TEXT,
   expires_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -172,18 +170,115 @@ CREATE TABLE platform.asset_blob_candidate (
 CREATE INDEX asset_blob_candidate_scan_idx
   ON platform.asset_blob_candidate(site_ref,state,observed_at);
 
+CREATE TABLE platform.asset_cleanup_group (
+  cleanup_group_ref TEXT PRIMARY KEY,
+  site_ref TEXT NOT NULL,
+  subject_ref TEXT NOT NULL,
+  purpose TEXT NOT NULL CHECK (length(purpose) BETWEEN 1 AND 128),
+  intent_ref TEXT NOT NULL,
+  session_ref TEXT NOT NULL,
+  source_kind TEXT NOT NULL CHECK (source_kind IN (
+    'upload_completion_rejection','scan_rejection','promotion_rejection','promotion_success'
+  )),
+  source_ref TEXT NOT NULL,
+  reason_code TEXT NOT NULL CHECK (length(reason_code) BETWEEN 1 AND 128),
+  terminal_reservation_state TEXT NOT NULL CHECK (
+    terminal_reservation_state IN ('released','promoted')
+  ),
+  retained_bytes BIGINT NOT NULL CHECK (retained_bytes > 0),
+  released_bytes BIGINT NOT NULL DEFAULT 0 CHECK (
+    released_bytes >= 0 AND released_bytes <= retained_bytes
+  ),
+  state TEXT NOT NULL CHECK (state IN ('pending','cleaning','completed')),
+  expected_version BIGINT NOT NULL CHECK (expected_version > 0),
+  completed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(site_ref,cleanup_group_ref),
+  UNIQUE(site_ref,source_kind,source_ref),
+  FOREIGN KEY(site_ref,intent_ref)
+    REFERENCES platform.asset_upload_intent(site_ref,intent_ref),
+  FOREIGN KEY(site_ref,session_ref)
+    REFERENCES platform.asset_upload_session(site_ref,session_ref),
+  FOREIGN KEY(subject_ref,site_ref)
+    REFERENCES platform.authorization_subject(subject_ref,site_ref),
+  CHECK ((state='completed') = (completed_at IS NOT NULL)),
+  CHECK ((state='completed') = (released_bytes=retained_bytes))
+);
+CREATE INDEX asset_cleanup_group_state_idx
+  ON platform.asset_cleanup_group(site_ref,state,updated_at);
+
+CREATE TABLE platform.asset_object_cleanup (
+  cleanup_ref TEXT PRIMARY KEY,
+  cleanup_group_ref TEXT NOT NULL,
+  site_ref TEXT NOT NULL,
+  intent_ref TEXT NOT NULL,
+  session_ref TEXT NOT NULL,
+  storage_tenant_ref TEXT NOT NULL,
+  storage_region TEXT NOT NULL,
+  object_role TEXT NOT NULL CHECK (object_role IN ('quarantine','trusted_copy')),
+  object_ref TEXT NOT NULL,
+  provider_version_ref TEXT NOT NULL,
+  retained_bytes BIGINT NOT NULL CHECK (retained_bytes > 0),
+  state TEXT NOT NULL CHECK (state IN (
+    'pending_delete','deleting','delete_unavailable','completed'
+  )),
+  expected_version BIGINT NOT NULL CHECK (expected_version > 0),
+  cleanup_event_id UUID NOT NULL UNIQUE REFERENCES platform.outbox_event(event_id),
+  last_error_code TEXT,
+  completed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  FOREIGN KEY(site_ref,cleanup_group_ref)
+    REFERENCES platform.asset_cleanup_group(site_ref,cleanup_group_ref),
+  FOREIGN KEY(site_ref,intent_ref)
+    REFERENCES platform.asset_upload_intent(site_ref,intent_ref),
+  FOREIGN KEY(site_ref,session_ref)
+    REFERENCES platform.asset_upload_session(site_ref,session_ref),
+  UNIQUE(site_ref,cleanup_ref),
+  UNIQUE(storage_tenant_ref,storage_region,object_ref,provider_version_ref),
+  CHECK ((state='delete_unavailable') = (last_error_code IS NOT NULL)),
+  CHECK ((state='completed') = (completed_at IS NOT NULL))
+);
+CREATE INDEX asset_object_cleanup_state_idx
+  ON platform.asset_object_cleanup(site_ref,state,updated_at);
+
+CREATE TABLE platform.asset_object_cleanup_receipt (
+  receipt_ref TEXT PRIMARY KEY,
+  site_ref TEXT NOT NULL,
+  cleanup_group_ref TEXT NOT NULL,
+  cleanup_ref TEXT NOT NULL UNIQUE,
+  storage_tenant_ref TEXT NOT NULL,
+  storage_region TEXT NOT NULL,
+  object_ref TEXT NOT NULL,
+  provider_version_ref TEXT NOT NULL,
+  retained_bytes BIGINT NOT NULL CHECK (retained_bytes > 0),
+  provider_disposition TEXT NOT NULL CHECK (provider_disposition IN (
+    'deleted','already_absent','absent_after_unknown'
+  )),
+  confirmed_absent_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  FOREIGN KEY(site_ref,cleanup_group_ref)
+    REFERENCES platform.asset_cleanup_group(site_ref,cleanup_group_ref),
+  FOREIGN KEY(site_ref,cleanup_ref)
+    REFERENCES platform.asset_object_cleanup(site_ref,cleanup_ref),
+  UNIQUE(storage_tenant_ref,storage_region,object_ref,provider_version_ref)
+);
+
 CREATE TABLE platform.asset_upload_rejection (
-  rejection_ref UUID PRIMARY KEY,
+  rejection_ref TEXT PRIMARY KEY,
   site_ref TEXT NOT NULL,
   intent_ref TEXT NOT NULL UNIQUE,
   session_ref TEXT NOT NULL UNIQUE,
   reason_code TEXT NOT NULL CHECK (length(reason_code) BETWEEN 1 AND 128),
-  cleanup_event_id UUID NOT NULL UNIQUE REFERENCES platform.outbox_event(event_id),
+  cleanup_group_ref TEXT NOT NULL UNIQUE,
   rejected_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   FOREIGN KEY(site_ref,intent_ref)
     REFERENCES platform.asset_upload_intent(site_ref,intent_ref),
   FOREIGN KEY(site_ref,session_ref)
-    REFERENCES platform.asset_upload_session(site_ref,session_ref)
+    REFERENCES platform.asset_upload_session(site_ref,session_ref),
+  FOREIGN KEY(site_ref,cleanup_group_ref)
+    REFERENCES platform.asset_cleanup_group(site_ref,cleanup_group_ref)
 );
 
 CREATE TABLE platform.asset_scan_evaluation (
@@ -247,7 +342,7 @@ CREATE TABLE platform.asset_promotion_intent (
   copied_provider_etag_digest CHAR(64),
   copied_at TIMESTAMPTZ,
   failure_code TEXT,
-  cleanup_event_id UUID UNIQUE REFERENCES platform.outbox_event(event_id),
+  cleanup_group_ref TEXT UNIQUE,
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   FOREIGN KEY(site_ref,candidate_ref)
@@ -260,12 +355,15 @@ CREATE TABLE platform.asset_promotion_intent (
     REFERENCES platform.authorization_subject(subject_ref,site_ref),
   FOREIGN KEY(project_ref,site_ref)
     REFERENCES platform.authorization_project(project_ref,site_ref),
+  FOREIGN KEY(site_ref,cleanup_group_ref)
+    REFERENCES platform.asset_cleanup_group(site_ref,cleanup_group_ref),
   UNIQUE(site_ref,intent_ref,purpose),
   UNIQUE(site_ref,promotion_ref),
   UNIQUE(storage_tenant_ref,storage_region,trusted_object_ref),
   CHECK ((copied_provider_version_ref IS NULL) = (copied_at IS NULL)),
   CHECK (copied_provider_etag_digest IS NULL OR copied_provider_etag_digest ~ '^[a-f0-9]{64}$'),
-  CHECK ((state='rejected') = (failure_code IS NOT NULL AND cleanup_event_id IS NOT NULL))
+  CHECK ((state='rejected') = (failure_code IS NOT NULL)),
+  CHECK ((state IN ('completed','rejected')) = (cleanup_group_ref IS NOT NULL))
 );
 CREATE INDEX asset_promotion_intent_state_idx
   ON platform.asset_promotion_intent(site_ref,state,updated_at);
@@ -449,8 +547,51 @@ BEGIN
     (OLD.state='checksum_verified' AND NEW.state='scanning')
     OR (OLD.state='scan_unavailable' AND NEW.state='scanning')
     OR (OLD.state='scanning' AND NEW.state IN ('scan_unavailable','promotion_ready','rejected'))
+    OR (OLD.state='promotion_ready' AND NEW.state='rejected')
   ) THEN
     RAISE EXCEPTION 'ASSET_BLOB_CANDIDATE_TRANSITION_INVALID' USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE FUNCTION platform.guard_asset_cleanup_group_update() RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
+BEGIN
+  IF ROW(OLD.cleanup_group_ref,OLD.site_ref,OLD.subject_ref,OLD.purpose,OLD.intent_ref,
+    OLD.session_ref,OLD.source_kind,OLD.source_ref,OLD.reason_code,
+    OLD.terminal_reservation_state,OLD.retained_bytes,OLD.created_at)
+    IS DISTINCT FROM
+    ROW(NEW.cleanup_group_ref,NEW.site_ref,NEW.subject_ref,NEW.purpose,NEW.intent_ref,
+    NEW.session_ref,NEW.source_kind,NEW.source_ref,NEW.reason_code,
+    NEW.terminal_reservation_state,NEW.retained_bytes,NEW.created_at) THEN
+    RAISE EXCEPTION 'ASSET_CLEANUP_GROUP_IDENTITY_IMMUTABLE' USING ERRCODE='23000';
+  END IF;
+  IF NEW.expected_version<>OLD.expected_version+1 OR NEW.released_bytes<=OLD.released_bytes
+    OR NOT ((OLD.state='pending' AND NEW.state IN ('cleaning','completed'))
+      OR (OLD.state='cleaning' AND NEW.state IN ('cleaning','completed'))) THEN
+    RAISE EXCEPTION 'ASSET_CLEANUP_GROUP_TRANSITION_INVALID' USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE FUNCTION platform.guard_asset_object_cleanup_update() RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
+BEGIN
+  IF ROW(OLD.cleanup_ref,OLD.cleanup_group_ref,OLD.site_ref,OLD.intent_ref,OLD.session_ref,
+    OLD.storage_tenant_ref,OLD.storage_region,OLD.object_role,OLD.object_ref,
+    OLD.provider_version_ref,OLD.retained_bytes,OLD.cleanup_event_id,OLD.created_at)
+    IS DISTINCT FROM
+    ROW(NEW.cleanup_ref,NEW.cleanup_group_ref,NEW.site_ref,NEW.intent_ref,NEW.session_ref,
+    NEW.storage_tenant_ref,NEW.storage_region,NEW.object_role,NEW.object_ref,
+    NEW.provider_version_ref,NEW.retained_bytes,NEW.cleanup_event_id,NEW.created_at) THEN
+    RAISE EXCEPTION 'ASSET_OBJECT_CLEANUP_IDENTITY_IMMUTABLE' USING ERRCODE='23000';
+  END IF;
+  IF NEW.expected_version<>OLD.expected_version+1 OR NOT (
+    (OLD.state='pending_delete' AND NEW.state='deleting')
+    OR (OLD.state='delete_unavailable' AND NEW.state='deleting')
+    OR (OLD.state='deleting' AND NEW.state IN ('delete_unavailable','completed'))
+  ) THEN
+    RAISE EXCEPTION 'ASSET_OBJECT_CLEANUP_TRANSITION_INVALID' USING ERRCODE='23514';
   END IF;
   RETURN NEW;
 END $$;
@@ -628,6 +769,12 @@ ALTER TABLE platform.asset_quota_reservation ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform.asset_quota_reservation FORCE ROW LEVEL SECURITY;
 ALTER TABLE platform.asset_blob_candidate ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform.asset_blob_candidate FORCE ROW LEVEL SECURITY;
+ALTER TABLE platform.asset_cleanup_group ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.asset_cleanup_group FORCE ROW LEVEL SECURITY;
+ALTER TABLE platform.asset_object_cleanup ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.asset_object_cleanup FORCE ROW LEVEL SECURITY;
+ALTER TABLE platform.asset_object_cleanup_receipt ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.asset_object_cleanup_receipt FORCE ROW LEVEL SECURITY;
 ALTER TABLE platform.asset_upload_rejection ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform.asset_upload_rejection FORCE ROW LEVEL SECURITY;
 ALTER TABLE platform.asset_scan_evaluation ENABLE ROW LEVEL SECURITY;
@@ -709,6 +856,33 @@ CREATE POLICY asset_blob_candidate_worker_scope ON platform.asset_blob_candidate
       AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker')
     OR (current_setting('app.workload_kind',true)='admin_workload'
       AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:admin')));
+CREATE POLICY asset_cleanup_group_worker_scope ON platform.asset_cleanup_group
+  USING(site_ref=NULLIF(current_setting('app.site_id',true),'')
+    AND ((current_setting('app.workload_kind',true)='platform_worker'
+      AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker')
+    OR (current_setting('app.workload_kind',true)='admin_workload'
+      AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:admin')))
+  WITH CHECK(site_ref=NULLIF(current_setting('app.site_id',true),'')
+    AND current_setting('app.workload_kind',true)='platform_worker'
+    AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker');
+CREATE POLICY asset_object_cleanup_worker_scope ON platform.asset_object_cleanup
+  USING(site_ref=NULLIF(current_setting('app.site_id',true),'')
+    AND ((current_setting('app.workload_kind',true)='platform_worker'
+      AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker')
+    OR (current_setting('app.workload_kind',true)='admin_workload'
+      AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:admin')))
+  WITH CHECK(site_ref=NULLIF(current_setting('app.site_id',true),'')
+    AND current_setting('app.workload_kind',true)='platform_worker'
+    AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker');
+CREATE POLICY asset_object_cleanup_receipt_worker_scope ON platform.asset_object_cleanup_receipt
+  USING(site_ref=NULLIF(current_setting('app.site_id',true),'')
+    AND ((current_setting('app.workload_kind',true)='platform_worker'
+      AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker')
+    OR (current_setting('app.workload_kind',true)='admin_workload'
+      AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:admin')))
+  WITH CHECK(site_ref=NULLIF(current_setting('app.site_id',true),'')
+    AND current_setting('app.workload_kind',true)='platform_worker'
+    AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker');
 CREATE POLICY asset_upload_rejection_worker_scope ON platform.asset_upload_rejection
   USING(site_ref=NULLIF(current_setting('app.site_id',true),'')
     AND ((current_setting('app.workload_kind',true)='platform_worker'
@@ -828,6 +1002,15 @@ CREATE TRIGGER asset_scan_evaluation_immutable
 CREATE TRIGGER asset_blob_candidate_update_guard
   BEFORE UPDATE ON platform.asset_blob_candidate
   FOR EACH ROW EXECUTE FUNCTION platform.guard_asset_blob_candidate_update();
+CREATE TRIGGER asset_cleanup_group_update_guard
+  BEFORE UPDATE ON platform.asset_cleanup_group
+  FOR EACH ROW EXECUTE FUNCTION platform.guard_asset_cleanup_group_update();
+CREATE TRIGGER asset_object_cleanup_update_guard
+  BEFORE UPDATE ON platform.asset_object_cleanup
+  FOR EACH ROW EXECUTE FUNCTION platform.guard_asset_object_cleanup_update();
+CREATE TRIGGER asset_object_cleanup_receipt_immutable
+  BEFORE UPDATE OR DELETE ON platform.asset_object_cleanup_receipt
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_asset_immutable_mutation();
 CREATE TRIGGER asset_promotion_intent_update_guard
   BEFORE UPDATE ON platform.asset_promotion_intent
   FOR EACH ROW EXECUTE FUNCTION platform.guard_asset_promotion_intent_update();
@@ -856,6 +1039,9 @@ REVOKE ALL ON
   platform.asset_quota_account,
   platform.asset_quota_reservation,
   platform.asset_blob_candidate,
+  platform.asset_cleanup_group,
+  platform.asset_object_cleanup,
+  platform.asset_object_cleanup_receipt,
   platform.asset_upload_rejection,
   platform.asset_scan_evaluation,
   platform.asset_promotion_intent,
@@ -870,6 +1056,8 @@ REVOKE ALL ON FUNCTION platform.guard_asset_upload_intent_update() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.guard_asset_upload_session_update() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.reject_asset_immutable_mutation() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.guard_asset_blob_candidate_update() FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.guard_asset_cleanup_group_update() FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.guard_asset_object_cleanup_update() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.guard_asset_promotion_intent_update() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.guard_asset_blob_update() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.guard_asset_resource_update() FROM PUBLIC;

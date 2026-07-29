@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   CopyObjectCommand,
+  DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
   S3Client,
@@ -9,6 +10,8 @@ import {
 } from "@aws-sdk/client-s3";
 import type { AssetQuarantineObjectStorePort } from "../../application/contracts/asset-completion-worker-ports.js";
 import type { AssetTrustedObjectStorePort } from "../../application/contracts/asset-promotion-worker-ports.js";
+import type { AssetObjectCleanupStorePort } from
+  "../../application/contracts/asset-cleanup-worker-ports.js";
 
 export interface AssetS3StorageRoute {
   readonly storageTenantRef: string;
@@ -29,7 +32,7 @@ type ResolvedRoute = Readonly<{
 }>;
 
 export class S3AssetObjectStore implements
-  AssetQuarantineObjectStorePort, AssetTrustedObjectStorePort {
+  AssetQuarantineObjectStorePort, AssetTrustedObjectStorePort, AssetObjectCleanupStorePort {
   private readonly routes = new Map<string, ResolvedRoute>();
 
   constructor(
@@ -92,9 +95,18 @@ export class S3AssetObjectStore implements
     enforceMaximum(input.expectedSize, route.configuration.maximumObjectBytes);
     const existing = await this.head(route, input.targetObjectRef);
     if (existing !== null) {
-      await this.assertExactTarget(route, input.targetObjectRef, existing,
-        input.expectedSize, input.expectedChecksumSha256);
-      return Object.freeze({ disposition: "accepted" });
+      try {
+        await this.assertExactTarget(route, input.targetObjectRef, existing,
+          input.expectedSize, input.expectedChecksumSha256);
+        return Object.freeze({ disposition: "accepted" });
+      } catch (error) {
+        if (error instanceof Error && error.message === "ASSET_TRUSTED_OBJECT_CONFLICT") {
+          // The promotion service observes and freezes the conflicting target version, then
+          // rejects the promotion and creates exact cleanup work for both physical copies.
+          return Object.freeze({ disposition: "outcome_unknown" });
+        }
+        throw error;
+      }
     }
     const source = await this.head(route, input.sourceObjectRef, input.sourceProviderVersionRef);
     if (source === null || immutableVersion(source) !== input.sourceProviderVersionRef) {
@@ -139,6 +151,39 @@ export class S3AssetObjectStore implements
     return Object.freeze({ disposition: "present" as const, providerVersionRef,
       providerEtagDigest: etagDigest(head.ETag), size, checksumSha256,
       observedAt: new Date().toISOString() });
+  }
+
+  async deleteExact(input: Readonly<{
+    storageTenantRef: string;
+    storageRegion: string;
+    objectRef: string;
+    providerVersionRef: string;
+    expectedSize: bigint;
+  }>) {
+    const route = this.resolve(input.storageTenantRef, input.storageRegion);
+    const before = await this.head(route, input.objectRef, input.providerVersionRef);
+    if (before === null) return Object.freeze({ disposition: "confirmed_absent" as const,
+      providerDisposition: "already_absent" as const, observedAt: new Date().toISOString() });
+    if (immutableVersion(before) !== input.providerVersionRef ||
+        objectSize(before, route.configuration.maximumObjectBytes) !== input.expectedSize) {
+      throw new Error("ASSET_CLEANUP_OBJECT_VERSION_MISMATCH");
+    }
+    let providerDisposition: "deleted" | "absent_after_unknown" = "deleted";
+    try {
+      await route.client.send(new DeleteObjectCommand({
+        Bucket: route.configuration.bucket,
+        Key: input.objectRef,
+        VersionId: input.providerVersionRef,
+      }));
+    } catch {
+      providerDisposition = "absent_after_unknown";
+    }
+    const after = await this.head(route, input.objectRef, input.providerVersionRef);
+    return after === null
+      ? Object.freeze({ disposition: "confirmed_absent" as const, providerDisposition,
+        observedAt: new Date().toISOString() })
+      : Object.freeze({ disposition: "retry" as const,
+        code: "ASSET_OBJECT_DELETE_OUTCOME_UNKNOWN" as const });
   }
 
   private resolve(storageTenantRef: string, storageRegion: string): ResolvedRoute {
@@ -298,5 +343,6 @@ function notFound(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
   const candidate = error as { name?: unknown; $metadata?: { httpStatusCode?: unknown } };
   return candidate.name === "NotFound" || candidate.name === "NoSuchKey" ||
+    candidate.name === "NoSuchVersion" ||
     candidate.$metadata?.httpStatusCode === 404;
 }

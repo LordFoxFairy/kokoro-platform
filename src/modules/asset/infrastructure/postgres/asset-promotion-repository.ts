@@ -6,6 +6,7 @@ import type { AssetPromotionWorkerRepositoryPort } from
   "../../application/contracts/asset-promotion-worker-ports.js";
 import { verifyAssetPromotionIntent, type AssetPromotionIntent } from
   "../../domain/promotion-intent.js";
+import { persistAssetCleanupPlan } from "./asset-cleanup-repository.js";
 
 export class PostgresAssetPromotionRepository implements AssetPromotionWorkerRepositoryPort {
   async claimPromotionWork(
@@ -86,10 +87,12 @@ export class PostgresAssetPromotionRepository implements AssetPromotionWorkerRep
     await insertReadyFacts(sql, input);
     const completed = await sql.execute(
       `UPDATE platform.asset_promotion_intent
-       SET state='completed',expected_version=expected_version+1,updated_at=$4::timestamptz
+       SET state='completed',expected_version=expected_version+1,cleanup_group_ref=$5,
+           updated_at=$4::timestamptz
        WHERE site_ref=$1 AND promotion_ref=$2 AND expected_version=$3::bigint
          AND state='ready_to_finalize'`,
-      [input.promotion.siteRef, input.promotion.promotionRef, currentVersion, input.completedAt],
+      [input.promotion.siteRef, input.promotion.promotionRef, currentVersion, input.completedAt,
+        input.cleanupPlan.cleanupGroupRef],
     );
     if (completed !== 1) throw new Error("ASSET_PROMOTION_COMPLETION_CONFLICT");
     return "committed";
@@ -100,19 +103,110 @@ export class PostgresAssetPromotionRepository implements AssetPromotionWorkerRep
     input: Parameters<AssetPromotionWorkerRepositoryPort["rejectPromotion"]>[1],
   ): ReturnType<AssetPromotionWorkerRepositoryPort["rejectPromotion"]> {
     const sql = resolvePlatformTransaction(transaction);
-    const changed = await sql.execute(
-      `UPDATE platform.asset_promotion_intent
-       SET state='rejected',expected_version=expected_version+1,failure_code=$4,
-           cleanup_event_id=$5::uuid,updated_at=now()
-       WHERE site_ref=$1 AND promotion_ref=$2 AND expected_version=$3::bigint
-         AND state IN ('pending_copy','observing_copy','ready_to_finalize')`,
-      [input.siteRef, input.promotionRef, input.expectedVersion, input.reasonCode,
-        input.cleanupEvent.eventId],
+    const ownerRows = await sql.query<{
+      subjectRef: string;
+      purpose: string;
+      intentRef: string;
+      sessionRef: string;
+      quarantineBytes: bigint;
+      storageTenantRef: string;
+      storageRegion: string;
+      quarantineObjectRef: string;
+      quarantineProviderVersionRef: string;
+      trustedObjectRef: string;
+      state: string;
+      expectedVersion: bigint;
+    }>(
+      `SELECT subject_ref AS "subjectRef",purpose,intent_ref AS "intentRef",
+              session_ref AS "sessionRef",size AS "quarantineBytes",
+              storage_tenant_ref AS "storageTenantRef",storage_region AS "storageRegion",
+              quarantine_object_ref AS "quarantineObjectRef",
+              quarantine_provider_version_ref AS "quarantineProviderVersionRef",
+              trusted_object_ref AS "trustedObjectRef",state,
+              expected_version AS "expectedVersion"
+       FROM platform.asset_promotion_intent
+       WHERE site_ref=$1 AND promotion_ref=$2 FOR UPDATE`,
+      [input.siteRef, input.promotionRef],
     );
-    if (changed !== 1) return "superseded";
-    await enqueue(sql, input.cleanupEvent);
+    const owner = ownerRows[0];
+    if (!owner || owner.expectedVersion !== input.expectedVersion ||
+        !new Set(["pending_copy", "observing_copy", "ready_to_finalize"]).has(owner.state)) {
+      return "superseded";
+    }
+    await terminalizeRejectedPromotion(sql, input, owner);
+    // The cleanup group must exist before the promotion row points at it because the
+    // cleanup_group_ref foreign key is intentionally immediate (not deferred).
+    await exactlyOne(sql, `UPDATE platform.asset_promotion_intent
+      SET state='rejected',expected_version=expected_version+1,failure_code=$4,
+          cleanup_group_ref=$5,updated_at=now()
+      WHERE site_ref=$1 AND promotion_ref=$2 AND expected_version=$3::bigint
+        AND state IN ('pending_copy','observing_copy','ready_to_finalize')`,
+    [input.siteRef, input.promotionRef, input.expectedVersion, input.reasonCode,
+      input.cleanupPlan.cleanupGroupRef], "ASSET_PROMOTION_REJECTION_CONFLICT");
     return "committed";
   }
+}
+
+async function terminalizeRejectedPromotion(
+  sql: PlatformSqlTransaction,
+  input: Parameters<AssetPromotionWorkerRepositoryPort["rejectPromotion"]>[1],
+  owner: Readonly<{
+    subjectRef: string;
+    purpose: string;
+    intentRef: string;
+    sessionRef: string;
+    quarantineBytes: bigint;
+    storageTenantRef: string;
+    storageRegion: string;
+    quarantineObjectRef: string;
+    quarantineProviderVersionRef: string;
+    trustedObjectRef: string;
+  }>,
+): Promise<void> {
+  assertRejectedPromotionCleanupPlan(input, owner);
+  await exactlyOne(sql, `UPDATE platform.asset_blob_candidate candidate
+    SET state='rejected',expected_version=expected_version+1,updated_at=now()
+    FROM platform.asset_promotion_intent promotion
+    WHERE promotion.site_ref=$1 AND promotion.promotion_ref=$2
+      AND candidate.site_ref=promotion.site_ref AND candidate.candidate_ref=promotion.candidate_ref
+      AND candidate.state='promotion_ready'`,
+  [input.siteRef, input.promotionRef], "ASSET_BLOB_CANDIDATE_REJECTION_CONFLICT");
+  await exactlyOne(sql, `UPDATE platform.asset_upload_session
+    SET state='rejected',expected_version=expected_version+1,updated_at=now()
+    WHERE site_ref=$1 AND intent_ref=$2 AND session_ref=$3 AND state='validating'`,
+  [input.siteRef, owner.intentRef, owner.sessionRef], "ASSET_UPLOAD_SESSION_REJECTION_CONFLICT");
+  await exactlyOne(sql, `UPDATE platform.asset_upload_intent
+    SET state='rejected',expected_version=expected_version+1,updated_at=now()
+    WHERE site_ref=$1 AND intent_ref=$2 AND state='admitted'`,
+  [input.siteRef, owner.intentRef], "ASSET_UPLOAD_INTENT_REJECTION_CONFLICT");
+  const retained = input.cleanupPlan.targets.reduce((total, target) =>
+    total + target.retainedBytes, 0n);
+  await exactlyOne(sql, `UPDATE platform.asset_quota_account
+    SET quarantine_bytes=quarantine_bytes-$4::bigint,
+        trash_retained_bytes=trash_retained_bytes+$5::bigint,
+        expected_version=expected_version+1,updated_at=now()
+    WHERE site_ref=$1 AND subject_ref=$2 AND purpose=$3 AND quarantine_bytes >= $4::bigint`,
+  [input.siteRef, owner.subjectRef, owner.purpose, owner.quarantineBytes, retained],
+  "ASSET_QUOTA_RETENTION_CONFLICT");
+  await exactlyOne(sql, `UPDATE platform.asset_quota_reservation
+    SET state='trash_retained',updated_at=now()
+    WHERE site_ref=$1 AND intent_ref=$2 AND session_ref=$3 AND state='committed'`,
+  [input.siteRef, owner.intentRef, owner.sessionRef], "ASSET_QUOTA_RETENTION_CONFLICT");
+  await persistAssetCleanupPlan(sql, {
+    siteRef: input.siteRef,
+    subjectRef: owner.subjectRef,
+    purpose: owner.purpose,
+    intentRef: owner.intentRef,
+    sessionRef: owner.sessionRef,
+    sourceKind: "promotion_rejection",
+    sourceRef: input.promotionRef,
+    reasonCode: input.reasonCode,
+  }, input.cleanupPlan);
+  await exactlyOne(sql, `INSERT INTO platform.asset_upload_rejection
+    (rejection_ref,site_ref,intent_ref,session_ref,reason_code,cleanup_group_ref)
+    VALUES ($1,$2,$3,$4,$5,$6)`,
+  [input.rejectionRef, input.siteRef, owner.intentRef, owner.sessionRef,
+    input.reasonCode, input.cleanupPlan.cleanupGroupRef], "ASSET_UPLOAD_REJECTION_NOT_PERSISTED");
 }
 
 async function insertReadyFacts(
@@ -120,6 +214,7 @@ async function insertReadyFacts(
   input: Parameters<AssetPromotionWorkerRepositoryPort["finalizePromotion"]>[1],
 ): Promise<void> {
   const value = input.promotion;
+  assertSuccessfulPromotionCleanupPlan(input);
   await exactlyOne(sql, `INSERT INTO platform.asset_blob
     (blob_ref,site_ref,storage_tenant_ref,storage_region,trusted_object_ref,
      provider_version_ref,provider_etag_digest,checksum_sha256,size,state,created_at)
@@ -164,14 +259,15 @@ async function insertReadyFacts(
     value.checksumSha256, input.completedAt], "ASSET_PROMOTION_RECEIPT_NOT_PERSISTED");
   await exactlyOne(sql, `UPDATE platform.asset_quota_account
     SET quarantine_bytes=quarantine_bytes-$4::bigint,ready_asset_bytes=ready_asset_bytes+$4::bigint,
+        trash_retained_bytes=trash_retained_bytes+$4::bigint,
         expected_version=expected_version+1,updated_at=$5::timestamptz
     WHERE site_ref=$1 AND subject_ref=$2 AND purpose=$3 AND quarantine_bytes >= $4::bigint`,
   [value.siteRef, value.subjectRef, value.purpose, value.size, input.completedAt],
   "ASSET_READY_QUOTA_TRANSITION_CONFLICT");
   await exactlyOne(sql, `UPDATE platform.asset_quota_reservation
-    SET state='promoted',release_evidence_ref=$4,updated_at=$5::timestamptz
+    SET state='trash_retained',updated_at=$4::timestamptz
     WHERE site_ref=$1 AND intent_ref=$2 AND session_ref=$3 AND state='committed'`,
-  [value.siteRef, value.intentRef, value.sessionRef, input.receiptRef, input.completedAt],
+  [value.siteRef, value.intentRef, value.sessionRef, input.completedAt],
   "ASSET_READY_QUOTA_TRANSITION_CONFLICT");
   await exactlyOne(sql, `UPDATE platform.asset_upload_session
     SET state='completed',expected_version=expected_version+1,updated_at=$4::timestamptz
@@ -182,7 +278,59 @@ async function insertReadyFacts(
     SET state='completed',expected_version=expected_version+1,updated_at=$3::timestamptz
     WHERE site_ref=$1 AND intent_ref=$2 AND state='admitted'`,
   [value.siteRef, value.intentRef, input.completedAt], "ASSET_UPLOAD_COMPLETION_CONFLICT");
+  await persistAssetCleanupPlan(sql, {
+    siteRef: value.siteRef,
+    subjectRef: value.subjectRef,
+    purpose: value.purpose,
+    intentRef: value.intentRef,
+    sessionRef: value.sessionRef,
+    sourceKind: "promotion_success",
+    sourceRef: value.promotionRef,
+    reasonCode: "ASSET_PROMOTED_QUARANTINE_CLEANUP",
+  }, input.cleanupPlan);
   await enqueue(sql, input.readyEvent);
+}
+
+function assertSuccessfulPromotionCleanupPlan(
+  input: Parameters<AssetPromotionWorkerRepositoryPort["finalizePromotion"]>[1],
+): void {
+  const value = input.promotion;
+  const target = input.cleanupPlan.targets[0];
+  if (input.cleanupPlan.terminalReservationState !== "promoted" ||
+      input.cleanupPlan.targets.length !== 1 || !target || target.objectRole !== "quarantine" ||
+      target.storageTenantRef !== value.storageTenantRef ||
+      target.storageRegion !== value.storageRegion || target.objectRef !== value.quarantineObjectRef ||
+      target.providerVersionRef !== value.quarantineProviderVersionRef ||
+      target.retainedBytes !== value.size) {
+    throw new Error("ASSET_CLEANUP_PLAN_INVALID");
+  }
+}
+
+function assertRejectedPromotionCleanupPlan(
+  input: Parameters<AssetPromotionWorkerRepositoryPort["rejectPromotion"]>[1],
+  owner: Readonly<{
+    quarantineBytes: bigint;
+    storageTenantRef: string;
+    storageRegion: string;
+    quarantineObjectRef: string;
+    quarantineProviderVersionRef: string;
+    trustedObjectRef: string;
+  }>,
+): void {
+  const quarantine = input.cleanupPlan.targets.find((target) => target.objectRole === "quarantine");
+  const trusted = input.cleanupPlan.targets.find((target) => target.objectRole === "trusted_copy");
+  if (input.cleanupPlan.terminalReservationState !== "released" ||
+      input.cleanupPlan.targets.length !== 2 || !quarantine || !trusted ||
+      quarantine.storageTenantRef !== owner.storageTenantRef ||
+      quarantine.storageRegion !== owner.storageRegion ||
+      quarantine.objectRef !== owner.quarantineObjectRef ||
+      quarantine.providerVersionRef !== owner.quarantineProviderVersionRef ||
+      quarantine.retainedBytes !== owner.quarantineBytes ||
+      trusted.storageTenantRef !== owner.storageTenantRef ||
+      trusted.storageRegion !== owner.storageRegion || trusted.objectRef !== owner.trustedObjectRef ||
+      trusted.providerVersionRef.length < 1 || trusted.retainedBytes < 1n) {
+    throw new Error("ASSET_CLEANUP_PLAN_INVALID");
+  }
 }
 
 async function lockCurrentPromotionAuthority(

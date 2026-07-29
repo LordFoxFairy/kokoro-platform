@@ -68,16 +68,29 @@ export class ProcessUploadCompletionService {
       throw new Error("ASSET_OBSERVATION_INVARIANT");
     }
     if (decision.disposition === "rejected") {
-      const event = eventEnvelope(input, "asset.quarantine.cleanup.requested", json({
-        kind: "asset_quarantine_cleanup_requested_v1", siteRef: input.siteRef,
-        intentRef: input.intentRef, sessionRef: input.sessionRef, reasonCode: decision.code,
-      }), this.reference(), input.sessionRef);
+      if (observation.disposition !== "present") throw new Error("ASSET_OBSERVATION_INVARIANT");
+      const cleanupGroupRef = this.reference();
+      const cleanupRef = this.reference();
+      const cleanupEvent = eventEnvelope(input, "asset.object.cleanup.requested", json({
+        kind: "asset_object_cleanup_requested_v1", siteRef: input.siteRef,
+        cleanupRef, expectedVersion: "1",
+      }), this.reference(), cleanupRef);
       const result = await this.dependencies.unitOfWork.execute(
         { operation: "asset.upload-completion.observe", siteRef: input.siteRef },
         (transaction) => this.dependencies.repository.rejectCompletion(transaction, {
           siteRef: input.siteRef, intentRef: input.intentRef, sessionRef: input.sessionRef,
           expectedSessionVersion: work.session.expectedVersion, reasonCode: decision.code,
-          cleanupEvent: event,
+          rejectionRef: this.reference(),
+          cleanupPlan: Object.freeze({ cleanupGroupRef, terminalReservationState: "released",
+            targets: Object.freeze([Object.freeze({ cleanupRef, objectRole: "quarantine",
+              storageTenantRef: work.session.storageTenantRef,
+              storageRegion: work.session.storageRegion,
+              objectRef: work.session.quarantineObjectRef,
+              providerVersionRef: observation.providerVersionRef,
+              retainedBytes: observation.size,
+              cleanupEvent,
+            })]),
+          }),
         }),
       );
       return result === "superseded"

@@ -40,6 +40,17 @@ describe("ProcessAssetPromotionService", () => {
       receiptRef: "promotion_receipt_01",
       referenceRef: "asset_reference_01",
       eligibilityRef: "asset_eligibility_01",
+      cleanupPlan: {
+        cleanupGroupRef: "cleanup_group_01",
+        terminalReservationState: "promoted",
+        targets: [expect.objectContaining({
+          cleanupRef: "cleanup_quarantine_01",
+          objectRole: "quarantine",
+          providerVersionRef: "provider_version_01",
+          retainedBytes: 1234n,
+          cleanupEvent: expect.objectContaining({ eventType: "asset.object.cleanup.requested" }),
+        })],
+      },
     }));
   });
 
@@ -61,7 +72,17 @@ describe("ProcessAssetPromotionService", () => {
     });
     expect(harness.rejectPromotion).toHaveBeenCalledWith(transaction, expect.objectContaining({
       reasonCode: "ASSET_TRUSTED_OBJECT_SIZE_MISMATCH",
-      cleanupEvent: expect.objectContaining({ eventType: "asset.trusted-copy.cleanup.requested" }),
+      cleanupPlan: {
+        cleanupGroupRef: "cleanup_group_01",
+        terminalReservationState: "released",
+        targets: [
+          expect.objectContaining({ objectRole: "trusted_copy", objectRef: "trusted/blob_01",
+            providerVersionRef: "trusted_version_01", retainedBytes: 1235n }),
+          expect.objectContaining({ objectRole: "quarantine",
+            objectRef: "quarantine/opaque_0123456789",
+            providerVersionRef: "provider_version_01", retainedBytes: 1234n }),
+        ],
+      },
     }));
     expect(harness.finalizePromotion).not.toHaveBeenCalled();
   });
@@ -86,8 +107,11 @@ function fixture(input: Readonly<{
   const markObserving = vi.fn(async () => "committed" as const);
   const finalizePromotion = vi.fn(async () => "committed" as const);
   const rejectPromotion = vi.fn(async () => "committed" as const);
-  const references = ["promotion_receipt_01", "asset_reference_01", "asset_eligibility_01", "ready_event_01",
-    "trusted_cleanup_event_01"];
+  const references = input.observation === "mismatch"
+    ? ["cleanup_group_01", "cleanup_trusted_01", "trusted_cleanup_event_01",
+      "cleanup_quarantine_01", "quarantine_cleanup_event_01", "rejection_01"]
+    : ["promotion_receipt_01", "asset_reference_01", "asset_eligibility_01", "ready_event_01",
+      "cleanup_group_01", "cleanup_quarantine_01", "quarantine_cleanup_event_01"];
   const service = new ProcessAssetPromotionService({
     unitOfWork: { execute: async (_scope, work) => work(transaction) },
     repository: {

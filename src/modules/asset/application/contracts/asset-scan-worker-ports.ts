@@ -7,6 +7,7 @@ import type {
   AssetScanEvaluation,
   AssetScanObservation,
 } from "../../domain/scan-evaluation.js";
+import type { AssetCleanupGroupPlan } from "./asset-cleanup-worker-ports.js";
 
 export type AssetScanWork =
   | Readonly<{ disposition: "work"; candidate: BlobCandidate }>
@@ -23,7 +24,8 @@ export type PersistedAssetScanDecision =
     disposition: "rejected";
     code: string;
     evaluation: AssetScanEvaluation;
-    cleanupEvent: OutboxEvent;
+    rejectionRef: string;
+    cleanupPlan: AssetCleanupGroupPlan;
   }>
   | Readonly<{
     disposition: "unavailable";

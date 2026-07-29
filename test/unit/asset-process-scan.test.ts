@@ -75,7 +75,17 @@ describe("ProcessAssetScanService", () => {
     expect(harness.recordDecision).toHaveBeenCalledWith(transaction, expect.objectContaining({
       decision: expect.objectContaining({
         disposition: "rejected",
-        cleanupEvent: expect.objectContaining({ eventType: "asset.quarantine.cleanup.requested" }),
+        cleanupPlan: {
+          cleanupGroupRef: "cleanup_group_01",
+          terminalReservationState: "released",
+          targets: [expect.objectContaining({
+            cleanupRef: "cleanup_quarantine_01",
+            objectRole: "quarantine",
+            providerVersionRef: "provider_version_01",
+            retainedBytes: 1234n,
+            cleanupEvent: expect.objectContaining({ eventType: "asset.object.cleanup.requested" }),
+          })],
+        },
       }),
     }));
   });
@@ -102,8 +112,11 @@ function fixture(input: Readonly<{
     occurredAt: "2026-07-28T12:02:00.000Z",
   }));
   const recordDecision = vi.fn(async () => "committed" as const);
-  const references = ["scan_evaluation_01", "promotion_01", "asset_01", "asset_version_01",
-    "blob_01", "promotion_event_01", "cleanup_event_01"];
+  const references = input.malwareDisposition === "detected"
+    ? ["scan_evaluation_01", "cleanup_group_01", "cleanup_quarantine_01", "cleanup_event_01",
+      "rejection_01"]
+    : ["scan_evaluation_01", "promotion_01", "asset_01", "asset_version_01",
+      "blob_01", "promotion_event_01"];
   const service = new ProcessAssetScanService({
     unitOfWork: { execute: async (_scope, work) => work(transaction) },
     repository: {

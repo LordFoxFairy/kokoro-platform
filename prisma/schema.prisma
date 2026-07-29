@@ -1883,15 +1883,87 @@ model AssetBlobCandidate {
 }
 
 model AssetUploadRejection {
-  rejectionRef   String   @id @map("rejection_ref") @db.Uuid
+  rejectionRef   String   @id @map("rejection_ref")
   siteRef        String   @map("site_ref")
   intentRef      String   @unique @map("intent_ref")
   sessionRef     String   @unique @map("session_ref")
   reasonCode     String   @map("reason_code")
-  cleanupEventId String   @unique @map("cleanup_event_id") @db.Uuid
+  cleanupGroupRef String  @unique @map("cleanup_group_ref")
   rejectedAt     DateTime @default(now()) @map("rejected_at") @db.Timestamptz(6)
 
   @@map("asset_upload_rejection")
+  @@schema("platform")
+}
+
+model AssetCleanupGroup {
+  cleanupGroupRef          String    @id @map("cleanup_group_ref")
+  siteRef                  String    @map("site_ref")
+  subjectRef               String    @map("subject_ref")
+  purpose                  String
+  intentRef                String    @map("intent_ref")
+  sessionRef               String    @map("session_ref")
+  sourceKind               String    @map("source_kind")
+  sourceRef                String    @map("source_ref")
+  reasonCode               String    @map("reason_code")
+  terminalReservationState String    @map("terminal_reservation_state")
+  retainedBytes            BigInt    @map("retained_bytes")
+  releasedBytes            BigInt    @default(0) @map("released_bytes")
+  state                    String
+  expectedVersion          BigInt    @map("expected_version")
+  completedAt              DateTime? @map("completed_at") @db.Timestamptz(6)
+  createdAt                DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([siteRef, cleanupGroupRef])
+  @@unique([siteRef, sourceKind, sourceRef])
+  @@index([siteRef, state, updatedAt])
+  @@map("asset_cleanup_group")
+  @@schema("platform")
+}
+
+model AssetObjectCleanup {
+  cleanupRef        String    @id @map("cleanup_ref")
+  cleanupGroupRef   String    @map("cleanup_group_ref")
+  siteRef           String    @map("site_ref")
+  intentRef         String    @map("intent_ref")
+  sessionRef        String    @map("session_ref")
+  storageTenantRef  String    @map("storage_tenant_ref")
+  storageRegion     String    @map("storage_region")
+  objectRole        String    @map("object_role")
+  objectRef         String    @map("object_ref")
+  providerVersionRef String   @map("provider_version_ref")
+  retainedBytes     BigInt    @map("retained_bytes")
+  state             String
+  expectedVersion   BigInt    @map("expected_version")
+  cleanupEventId    String    @unique @map("cleanup_event_id") @db.Uuid
+  lastErrorCode     String?   @map("last_error_code")
+  completedAt       DateTime? @map("completed_at") @db.Timestamptz(6)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([siteRef, cleanupRef])
+  @@unique([storageTenantRef, storageRegion, objectRef, providerVersionRef])
+  @@index([siteRef, state, updatedAt])
+  @@map("asset_object_cleanup")
+  @@schema("platform")
+}
+
+model AssetObjectCleanupReceipt {
+  receiptRef          String   @id @map("receipt_ref")
+  siteRef             String   @map("site_ref")
+  cleanupGroupRef     String   @map("cleanup_group_ref")
+  cleanupRef          String   @unique @map("cleanup_ref")
+  storageTenantRef    String   @map("storage_tenant_ref")
+  storageRegion       String   @map("storage_region")
+  objectRef           String   @map("object_ref")
+  providerVersionRef  String   @map("provider_version_ref")
+  retainedBytes       BigInt   @map("retained_bytes")
+  providerDisposition String   @map("provider_disposition")
+  confirmedAbsentAt   DateTime @map("confirmed_absent_at") @db.Timestamptz(6)
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([storageTenantRef, storageRegion, objectRef, providerVersionRef])
+  @@map("asset_object_cleanup_receipt")
   @@schema("platform")
 }
 
@@ -1952,7 +2024,7 @@ model AssetPromotionIntent {
   copiedProviderEtagDigest     String?   @map("copied_provider_etag_digest") @db.Char(64)
   copiedAt                     DateTime? @map("copied_at") @db.Timestamptz(6)
   failureCode                  String?   @map("failure_code")
-  cleanupEventId               String?   @unique @map("cleanup_event_id") @db.Uuid
+  cleanupGroupRef              String?   @unique @map("cleanup_group_ref")
   createdAt                    DateTime  @map("created_at") @db.Timestamptz(6)
   updatedAt                    DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
 

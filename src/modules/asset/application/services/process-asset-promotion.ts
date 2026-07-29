@@ -70,17 +70,37 @@ export class ProcessAssetPromotionService {
         : decision;
     }
     if (decision.disposition === "rejected") {
-      const cleanupEvent = eventEnvelope(input, "asset.trusted-copy.cleanup.requested",
-        promotion.promotionRef, json({ kind: "asset_trusted_copy_cleanup_requested_v1",
-          siteRef: promotion.siteRef, promotionRef: promotion.promotionRef,
-          reasonCode: decision.code }), this.reference());
+      if (observation.disposition !== "present") throw new Error("ASSET_OBSERVATION_INVARIANT");
+      const cleanupGroupRef = this.reference();
+      const trustedCleanupRef = this.reference();
+      const trustedCleanupEvent = cleanupEventEnvelope(input, trustedCleanupRef, this.reference());
+      const quarantineCleanupRef = this.reference();
+      const quarantineCleanupEvent = cleanupEventEnvelope(input, quarantineCleanupRef, this.reference());
       const rejected = await this.dependencies.unitOfWork.execute(scope, (transaction) =>
         this.dependencies.repository.rejectPromotion(transaction, {
           promotionRef: promotion.promotionRef,
           siteRef: promotion.siteRef,
           expectedVersion: promotion.expectedVersion,
           reasonCode: decision.code,
-          cleanupEvent,
+          rejectionRef: this.reference(),
+          cleanupPlan: Object.freeze({ cleanupGroupRef, terminalReservationState: "released",
+            targets: Object.freeze([
+              Object.freeze({ cleanupRef: trustedCleanupRef, objectRole: "trusted_copy" as const,
+                storageTenantRef: promotion.storageTenantRef,
+                storageRegion: promotion.storageRegion,
+                objectRef: promotion.trustedObjectRef,
+                providerVersionRef: observation.providerVersionRef,
+                retainedBytes: observation.size,
+                cleanupEvent: trustedCleanupEvent }),
+              Object.freeze({ cleanupRef: quarantineCleanupRef, objectRole: "quarantine" as const,
+                storageTenantRef: promotion.storageTenantRef,
+                storageRegion: promotion.storageRegion,
+                objectRef: promotion.quarantineObjectRef,
+                providerVersionRef: promotion.quarantineProviderVersionRef,
+                retainedBytes: promotion.size,
+                cleanupEvent: quarantineCleanupEvent }),
+            ]),
+          }),
         }));
       return rejected === "superseded"
         ? Object.freeze({ disposition: "superseded" })
@@ -93,6 +113,9 @@ export class ProcessAssetPromotionService {
       json({ kind: "asset_version_ready_v1", siteRef: promotion.siteRef,
         assetRef: promotion.assetRef, assetVersionRef: promotion.assetVersionRef,
         eligibilityRef }), this.reference());
+    const cleanupGroupRef = this.reference();
+    const cleanupRef = this.reference();
+    const cleanupEvent = cleanupEventEnvelope(input, cleanupRef, this.reference());
     const finalized = await this.dependencies.unitOfWork.execute(scope, (transaction) =>
       this.dependencies.repository.finalizePromotion(transaction, {
         promotion,
@@ -101,6 +124,16 @@ export class ProcessAssetPromotionService {
         receiptRef,
         referenceRef,
         eligibilityRef,
+        cleanupPlan: Object.freeze({ cleanupGroupRef, terminalReservationState: "promoted",
+          targets: Object.freeze([Object.freeze({ cleanupRef, objectRole: "quarantine" as const,
+            storageTenantRef: promotion.storageTenantRef,
+            storageRegion: promotion.storageRegion,
+            objectRef: promotion.quarantineObjectRef,
+            providerVersionRef: promotion.quarantineProviderVersionRef,
+            retainedBytes: promotion.size,
+            cleanupEvent,
+          })]),
+        }),
         readyEvent,
         completedAt: this.now(),
       }));
@@ -133,6 +166,16 @@ function eventEnvelope(
 
 function json(value: Readonly<Record<string, string>>): JsonValue {
   return Object.freeze({ ...value });
+}
+
+function cleanupEventEnvelope(
+  input: Readonly<{ eventId: string; correlationId: string; siteRef: string }>,
+  cleanupRef: string,
+  eventId: string,
+) {
+  return eventEnvelope(input, "asset.object.cleanup.requested", cleanupRef,
+    json({ kind: "asset_object_cleanup_requested_v1", siteRef: input.siteRef,
+      cleanupRef, expectedVersion: "1" }), eventId);
 }
 
 function bounded(value: string, code: string): void {

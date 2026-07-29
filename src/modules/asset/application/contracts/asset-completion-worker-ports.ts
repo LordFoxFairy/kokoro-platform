@@ -2,12 +2,13 @@ import type { OutboxEvent } from "../../../../shared/outbox-inbox/outbox.js";
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
 import type { BlobCandidate, QuarantineObjectObservation } from "../../domain/blob-candidate.js";
 import type { AssetUploadIntent, AssetUploadSession } from "../../domain/upload-intent.js";
+import type { AssetCleanupGroupPlan } from "./asset-cleanup-worker-ports.js";
 
 export interface AssetWorkerUnitOfWorkPort {
   execute<Result>(
     scope: Readonly<{
       operation: "asset.upload-completion.observe" | "asset.scan.evaluate" |
-        "asset.promotion.finalize";
+        "asset.promotion.finalize" | "asset.cleanup.delete";
       siteRef: string;
     }>,
     work: (transaction: PlatformTransaction) => Promise<Result>,
@@ -44,7 +45,8 @@ export interface AssetCompletionWorkerRepositoryPort {
       sessionRef: string;
       expectedSessionVersion: bigint;
       reasonCode: string;
-      cleanupEvent: OutboxEvent;
+      rejectionRef: string;
+      cleanupPlan: AssetCleanupGroupPlan;
     }>,
   ): Promise<"rejected" | "replay" | "superseded">;
 }

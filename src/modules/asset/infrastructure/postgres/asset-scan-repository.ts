@@ -9,6 +9,7 @@ import type {
 import { verifyBlobCandidate, type BlobCandidate } from "../../domain/blob-candidate.js";
 import type { AssetPromotionIntent } from "../../domain/promotion-intent.js";
 import type { AssetScanEvaluation } from "../../domain/scan-evaluation.js";
+import { persistAssetCleanupPlan } from "./asset-cleanup-repository.js";
 
 export class PostgresAssetScanRepository implements AssetScanWorkerRepositoryPort {
   async claimScanWork(
@@ -159,31 +160,68 @@ async function rejectUpload(
   const quotaChanged = await sql.execute(
     `UPDATE platform.asset_quota_account
      SET quarantine_bytes=quarantine_bytes-$4::bigint,
+         trash_retained_bytes=trash_retained_bytes+$4::bigint,
          expected_version=expected_version+1,updated_at=now()
      WHERE site_ref=$1 AND subject_ref=$2 AND purpose=$3
        AND quarantine_bytes >= $4::bigint`,
     [decision.evaluation.siteRef, reservation.subjectRef, reservation.purpose, reservation.reservedBytes],
   );
-  if (quotaChanged !== 1) throw new Error("ASSET_QUOTA_RELEASE_CONFLICT");
+  if (quotaChanged !== 1) throw new Error("ASSET_QUOTA_RETENTION_CONFLICT");
   const reservationChanged = await sql.execute(
     `UPDATE platform.asset_quota_reservation reservation
-     SET state='released',release_evidence_ref=$3,updated_at=now()
+     SET state='trash_retained',updated_at=now()
      FROM platform.asset_blob_candidate candidate
      WHERE candidate.site_ref=$1 AND candidate.candidate_ref=$2
        AND reservation.site_ref=candidate.site_ref AND reservation.intent_ref=candidate.intent_ref
        AND reservation.state='committed'`,
-    [decision.evaluation.siteRef, decision.evaluation.candidateRef, decision.cleanupEvent.eventId],
+    [decision.evaluation.siteRef, decision.evaluation.candidateRef],
   );
-  if (reservationChanged !== 1) throw new Error("ASSET_QUOTA_RELEASE_CONFLICT");
-  await enqueue(sql, decision.cleanupEvent);
+  if (reservationChanged !== 1) throw new Error("ASSET_QUOTA_RETENTION_CONFLICT");
+  const candidateRows = await sql.query<{
+    intentRef: string;
+    sessionRef: string;
+    storageTenantRef: string;
+    storageRegion: string;
+    objectRef: string;
+    providerVersionRef: string;
+    retainedBytes: bigint;
+  }>(
+    `SELECT intent_ref AS "intentRef",session_ref AS "sessionRef",
+            storage_tenant_ref AS "storageTenantRef",storage_region AS "storageRegion",
+            quarantine_object_ref AS "objectRef",provider_version_ref AS "providerVersionRef",
+            observed_size AS "retainedBytes"
+     FROM platform.asset_blob_candidate WHERE site_ref=$1 AND candidate_ref=$2`,
+    [decision.evaluation.siteRef, decision.evaluation.candidateRef],
+  );
+  const candidate = candidateRows[0];
+  if (!candidate) throw new Error("ASSET_BLOB_CANDIDATE_NOT_FOUND");
+  const target = decision.cleanupPlan.targets[0];
+  if (decision.cleanupPlan.terminalReservationState !== "released" ||
+      decision.cleanupPlan.targets.length !== 1 || !target || target.objectRole !== "quarantine" ||
+      target.storageTenantRef !== candidate.storageTenantRef ||
+      target.storageRegion !== candidate.storageRegion || target.objectRef !== candidate.objectRef ||
+      target.providerVersionRef !== candidate.providerVersionRef ||
+      target.retainedBytes !== candidate.retainedBytes) {
+    throw new Error("ASSET_CLEANUP_PLAN_INVALID");
+  }
+  await persistAssetCleanupPlan(sql, {
+    siteRef: decision.evaluation.siteRef,
+    subjectRef: reservation.subjectRef,
+    purpose: reservation.purpose,
+    intentRef: candidate.intentRef,
+    sessionRef: candidate.sessionRef,
+    sourceKind: "scan_rejection",
+    sourceRef: decision.evaluation.evaluationRef,
+    reasonCode: decision.code,
+  }, decision.cleanupPlan);
   const rejectionChanged = await sql.execute(
     `INSERT INTO platform.asset_upload_rejection
-     (rejection_ref,site_ref,intent_ref,session_ref,reason_code,cleanup_event_id)
-     SELECT $3::uuid,candidate.site_ref,candidate.intent_ref,candidate.session_ref,$4,$3::uuid
+     (rejection_ref,site_ref,intent_ref,session_ref,reason_code,cleanup_group_ref)
+     SELECT $3,candidate.site_ref,candidate.intent_ref,candidate.session_ref,$4,$5
      FROM platform.asset_blob_candidate candidate
      WHERE candidate.site_ref=$1 AND candidate.candidate_ref=$2`,
     [decision.evaluation.siteRef, decision.evaluation.candidateRef,
-      decision.cleanupEvent.eventId, decision.code],
+      decision.rejectionRef, decision.code, decision.cleanupPlan.cleanupGroupRef],
   );
   if (rejectionChanged !== 1) throw new Error("ASSET_UPLOAD_REJECTION_NOT_PERSISTED");
 }

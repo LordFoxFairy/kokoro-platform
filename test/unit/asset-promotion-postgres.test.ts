@@ -58,6 +58,7 @@ describe("PostgresAssetPromotionRepository", () => {
           observedAt: "2026-07-28T12:02:05.000Z" },
         receiptRef: "promotion_receipt_01", referenceRef: "asset_reference_01",
         eligibilityRef: "asset_eligibility_01",
+        cleanupPlan: promotionCleanupPlan,
         readyEvent: { eventId: "0198577b-4a7c-7abc-8abc-0123456789ab", owner: "asset",
           eventType: "asset.version.ready", aggregateId: "asset_version_01",
           payload: { kind: "asset_version_ready_v1" }, payloadDigest: "e".repeat(64),
@@ -73,7 +74,9 @@ describe("PostgresAssetPromotionRepository", () => {
         "INSERT INTO platform.asset_eligibility_projection",
         "INSERT INTO platform.asset_promotion_receipt",
         "ready_asset_bytes=ready_asset_bytes+$4",
-        "SET state='promoted'",
+        "SET state='trash_retained'",
+        "INSERT INTO platform.asset_cleanup_group",
+        "INSERT INTO platform.asset_object_cleanup",
         "SET state='completed'",
         "INSERT INTO platform.outbox_event",
       ];
@@ -86,6 +89,103 @@ describe("PostgresAssetPromotionRepository", () => {
       revokePlatformTransaction(lease);
     }
   });
+
+  it("terminalizes a mismatched copy and retains both exact versions until cleanup receipts", async () => {
+    const statements: string[] = [];
+    const sql: PlatformSqlTransaction = {
+      query: async <Row extends Record<string, unknown>>(statement: string): Promise<readonly Row[]> => {
+        statements.push(statement);
+        if (statement.includes("FROM platform.asset_promotion_intent")) return rows<Row>({
+          subjectRef: "subject_01", purpose: "chat.attachment",
+          intentRef: "upload_intent_01", sessionRef: "upload_session_01",
+          quarantineBytes: 1234n, storageTenantRef: "storage_tenant_01",
+          storageRegion: "us-east-1", quarantineObjectRef: "quarantine/opaque_0123456789",
+          quarantineProviderVersionRef: "provider_version_01", trustedObjectRef: "trusted/blob_01",
+          state: "pending_copy", expectedVersion: 1n,
+        });
+        throw new Error(`unexpected query: ${statement}`);
+      },
+      execute: async (statement) => { statements.push(statement); return 1; },
+    };
+    const lease = issuePlatformTransaction(sql);
+    try {
+      await expect(new PostgresAssetPromotionRepository().rejectPromotion(lease.transaction, {
+        promotionRef: "promotion_01", siteRef: "site_01", expectedVersion: 1n,
+        reasonCode: "ASSET_TRUSTED_OBJECT_SIZE_MISMATCH", rejectionRef: "rejection_01",
+        cleanupPlan: rejectionCleanupPlan,
+      })).resolves.toBe("committed");
+      expect(statements.some((value) => value.includes("candidate.state='promotion_ready'"))).toBe(true);
+      expect(statements.some((value) => value.includes("quarantine_bytes=quarantine_bytes-$4")))
+        .toBe(true);
+      expect(statements.some((value) => value.includes("trash_retained_bytes=trash_retained_bytes+$5")))
+        .toBe(true);
+      expect(statements.filter((value) => value.includes("INSERT INTO platform.asset_object_cleanup")))
+        .toHaveLength(2);
+      expect(statements.some((value) => value.includes("INSERT INTO platform.asset_upload_rejection")))
+        .toBe(true);
+      const cleanupGroupInsert = statements.findIndex((value) =>
+        value.includes("INSERT INTO platform.asset_cleanup_group"));
+      const promotionRejection = statements.findIndex((value) =>
+        value.includes("UPDATE platform.asset_promotion_intent") && value.includes("state='rejected'"));
+      expect(cleanupGroupInsert).toBeGreaterThan(-1);
+      expect(promotionRejection).toBeGreaterThan(cleanupGroupInsert);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+});
+
+const promotionCleanupPlan = Object.freeze({
+  cleanupGroupRef: "cleanup_group_01",
+  terminalReservationState: "promoted" as const,
+  targets: Object.freeze([Object.freeze({
+    cleanupRef: "cleanup_quarantine_01",
+    objectRole: "quarantine" as const,
+    storageTenantRef: "storage_tenant_01",
+    storageRegion: "us-east-1",
+    objectRef: "quarantine/opaque_0123456789",
+    providerVersionRef: "provider_version_01",
+    retainedBytes: 1234n,
+    cleanupEvent: Object.freeze({
+      eventId: "0198577b-4a7c-7abc-8abc-0123456789ac",
+      owner: "asset",
+      eventType: "asset.object.cleanup.requested",
+      aggregateId: "cleanup_quarantine_01",
+      payload: { kind: "asset_object_cleanup_requested_v1" },
+      payloadDigest: "f".repeat(64),
+      correlationId: "correlation_01",
+      causationId: "promotion_event_01",
+    }),
+  })]),
+});
+
+const rejectionCleanupPlan = Object.freeze({
+  cleanupGroupRef: "cleanup_group_rejected_01",
+  terminalReservationState: "released" as const,
+  targets: Object.freeze([
+    Object.freeze({
+      cleanupRef: "cleanup_trusted_01", objectRole: "trusted_copy" as const,
+      storageTenantRef: "storage_tenant_01", storageRegion: "us-east-1",
+      objectRef: "trusted/blob_01", providerVersionRef: "trusted_version_bad_01",
+      retainedBytes: 1235n,
+      cleanupEvent: Object.freeze({ eventId: "0198577b-4a7c-7abc-8abc-0123456789ad",
+        owner: "asset", eventType: "asset.object.cleanup.requested",
+        aggregateId: "cleanup_trusted_01", payload: { kind: "asset_object_cleanup_requested_v1" },
+        payloadDigest: "1".repeat(64), correlationId: "correlation_01",
+        causationId: "promotion_event_01" }),
+    }),
+    Object.freeze({
+      cleanupRef: "cleanup_quarantine_01", objectRole: "quarantine" as const,
+      storageTenantRef: "storage_tenant_01", storageRegion: "us-east-1",
+      objectRef: "quarantine/opaque_0123456789", providerVersionRef: "provider_version_01",
+      retainedBytes: 1234n,
+      cleanupEvent: Object.freeze({ eventId: "0198577b-4a7c-7abc-8abc-0123456789ae",
+        owner: "asset", eventType: "asset.object.cleanup.requested",
+        aggregateId: "cleanup_quarantine_01", payload: { kind: "asset_object_cleanup_requested_v1" },
+        payloadDigest: "2".repeat(64), correlationId: "correlation_01",
+        causationId: "promotion_event_01" }),
+    }),
+  ]),
 });
 
 function promotionRow(overrides: Record<string, unknown> = {}) {

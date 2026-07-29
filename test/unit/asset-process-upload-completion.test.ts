@@ -70,7 +70,18 @@ describe("ProcessUploadCompletionService", () => {
     });
     expect(mismatch.rejectCompletion).toHaveBeenCalledWith(transaction, expect.objectContaining({
       reasonCode: "ASSET_OBJECT_CHECKSUM_MISMATCH",
-      cleanupEvent: expect.objectContaining({ eventType: "asset.quarantine.cleanup.requested" }),
+      cleanupPlan: {
+        cleanupGroupRef: "cleanup_group_01",
+        terminalReservationState: "released",
+        targets: [expect.objectContaining({
+          cleanupRef: "cleanup_quarantine_01",
+          objectRole: "quarantine",
+          objectRef: "quarantine/opaque_0123456789",
+          providerVersionRef: "provider_version_01",
+          retainedBytes: 1234n,
+          cleanupEvent: expect.objectContaining({ eventType: "asset.object.cleanup.requested" }),
+        })],
+      },
     }));
   });
 
@@ -88,7 +99,10 @@ function fixture(input: Readonly<{
   const commitCandidate = vi.fn(async () => input.commit ?? "committed" as const);
   const rejectCompletion = vi.fn(async () => "rejected" as const);
   const computeSha256 = vi.fn(async () => "a".repeat(64));
-  const references = ["blob_candidate_01", "scan_event_01", "blob_candidate_02", "cleanup_event_01"];
+  const references = input.disposition !== "absent" && input.checksumSha256 === "c".repeat(64)
+    ? ["blob_candidate_01", "cleanup_group_01", "cleanup_quarantine_01", "cleanup_event_01",
+      "rejection_01"]
+    : ["blob_candidate_01", "scan_event_01"];
   const service = new ProcessUploadCompletionService({
     unitOfWork: { execute: async (_operation, work) => work(transaction) },
     repository: {

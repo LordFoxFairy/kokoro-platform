@@ -162,7 +162,7 @@ describe("PostgresAssetUploadRepository", () => {
     }
   });
 
-  it("rejects a mismatched object by releasing quota and durably queuing cleanup in one transaction", async () => {
+  it("rejects a mismatched object by retaining physical quota until durable cleanup completes", async () => {
     const statements: string[] = [];
     const completing = beginUploadCompletion({
       ...session,
@@ -203,11 +203,12 @@ describe("PostgresAssetUploadRepository", () => {
         sessionRef: session.sessionRef,
         expectedSessionVersion: completing.expectedVersion,
         reasonCode: "ASSET_OBJECT_CHECKSUM_MISMATCH",
-        cleanupEvent,
+        rejectionRef: "rejection_01",
+        cleanupPlan,
       })).resolves.toBe("rejected");
       const sessionReject = statements.findIndex((value) => value.includes("SET state='rejected'"));
       const quotaRelease = statements.findIndex((value) => value.includes("reserved_inflight_bytes=reserved_inflight_bytes-$4"));
-      const reservationRelease = statements.findIndex((value) => value.includes("SET state='released'"));
+      const reservationRelease = statements.findIndex((value) => value.includes("SET state='trash_retained'"));
       const outboxInsert = statements.findIndex((value) => value.includes("INSERT INTO platform.outbox_event"));
       const rejectionInsert = statements.findIndex((value) => value.includes("INSERT INTO platform.asset_upload_rejection"));
       expect(sessionReject).toBeGreaterThanOrEqual(0);
@@ -257,12 +258,26 @@ const scanEvent: OutboxEvent = Object.freeze({
 const cleanupEvent: OutboxEvent = Object.freeze({
   eventId: "0198577b-4a7c-7abc-8abc-0123456789ac",
   owner: "asset",
-  eventType: "asset.quarantine.cleanup.requested",
-  aggregateId: session.sessionRef,
-  payload: { kind: "asset_quarantine_cleanup_requested_v1" },
+  eventType: "asset.object.cleanup.requested",
+  aggregateId: "cleanup_quarantine_01",
+  payload: { kind: "asset_object_cleanup_requested_v1" },
   payloadDigest: "e".repeat(64),
   correlationId: "correlation_01",
   causationId: "completion_event_01",
+});
+const cleanupPlan = Object.freeze({
+  cleanupGroupRef: "cleanup_group_01",
+  terminalReservationState: "released" as const,
+  targets: Object.freeze([Object.freeze({
+    cleanupRef: "cleanup_quarantine_01",
+    objectRole: "quarantine" as const,
+    storageTenantRef: session.storageTenantRef,
+    storageRegion: session.storageRegion,
+    objectRef: session.quarantineObjectRef,
+    providerVersionRef: "provider_version_01",
+    retainedBytes: 1234n,
+    cleanupEvent,
+  })]),
 });
 
 function databaseRow(digest: string, sessionOverrides: Record<string, unknown> = {}) {

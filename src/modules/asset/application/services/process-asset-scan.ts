@@ -86,11 +86,24 @@ export class ProcessAssetScanService {
         evaluation: decision.evaluation });
     }
     if (decision.disposition === "rejected") {
+      const cleanupGroupRef = this.reference();
+      const cleanupRef = this.reference();
+      const cleanupEvent = eventEnvelope(input, "asset.object.cleanup.requested", cleanupRef,
+        json({ kind: "asset_object_cleanup_requested_v1", siteRef: input.siteRef,
+          cleanupRef, expectedVersion: "1" }), this.reference());
       return Object.freeze({ disposition: decision.disposition, code: decision.code,
         evaluation: decision.evaluation,
-        cleanupEvent: eventEnvelope(input, "asset.quarantine.cleanup.requested", candidate.sessionRef,
-          json({ kind: "asset_quarantine_cleanup_requested_v1", siteRef: input.siteRef,
-            candidateRef: candidate.candidateRef, reasonCode: decision.code }), this.reference()),
+        rejectionRef: this.reference(),
+        cleanupPlan: Object.freeze({ cleanupGroupRef, terminalReservationState: "released",
+          targets: Object.freeze([Object.freeze({ cleanupRef, objectRole: "quarantine",
+            storageTenantRef: candidate.storageTenantRef,
+            storageRegion: candidate.storageRegion,
+            objectRef: candidate.quarantineObjectRef,
+            providerVersionRef: candidate.providerVersionRef,
+            retainedBytes: candidate.observedSize,
+            cleanupEvent,
+          })]),
+        }),
       });
     }
     const promotionRef = this.reference();
