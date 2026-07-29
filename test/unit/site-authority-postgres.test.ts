@@ -104,6 +104,36 @@ describe("Postgres Site authority", () => {
     } finally { revokePlatformTransaction(lease); }
   });
 
+  it("loads the exact provider project generation and draining deployment under lock", async () => {
+    const calls: { statement: string; values: readonly unknown[] }[] = [];
+    const lease = issuePlatformTransaction({
+      query: async <Row extends Record<string, unknown>>(statement: string, values = []) => {
+        calls.push({ statement, values });
+        return (statement.includes("FROM platform.site_project_binding")
+          ? [{ providerNamespace: "vercel", providerProjectRef: "project_01" }]
+          : [{ deploymentRef: "deployment_01", webArtifactDigest: "f".repeat(64),
+            providerNamespace: "vercel", providerProjectRef: "project_01",
+            environment: "production", region: "us-east-1" }]) as unknown as readonly Row[];
+      },
+      execute: async () => 0,
+    });
+    try {
+      const repository = new PostgresSiteAuthorityRepository();
+      await expect(repository.loadRuntimeProjectBindingForUpdate(lease.transaction, {
+        bindingRef: "binding_01", siteRef: "site_01", bindingEpoch: 3n,
+        environment: "production", region: "us-east-1",
+      })).resolves.toEqual({ providerNamespace: "vercel", providerProjectRef: "project_01" });
+      await expect(repository.loadDrainingRuntimeDeploymentForUpdate(
+        lease.transaction, "site_01", "production", "us-east-1", "release_01",
+      )).resolves.toMatchObject({ deploymentRef: "deployment_01", providerNamespace: "vercel" });
+      expect(calls[0]?.statement).toContain("binding_epoch=$3");
+      expect(calls[0]?.statement).toContain("FOR UPDATE");
+      expect(calls[1]?.statement).toContain("deployment.region=$3");
+      expect(calls[1]?.statement).toContain("project.provider_project_ref");
+      expect(calls[1]?.statement).toContain("FOR UPDATE OF deployment,project");
+    } finally { revokePlatformTransaction(lease); }
+  });
+
   it("commits candidate, pointer, draining release and attempt under an exact pointer CAS", async () => {
     const calls: { statement: string; values: readonly unknown[] }[] = [];
     const lease = issuePlatformTransaction({

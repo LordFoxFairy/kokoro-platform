@@ -4,6 +4,7 @@ import type {
   ProviderBoundDeployment,
   SiteTrafficStopRepository,
 } from "../../application/contracts/site-traffic-stop-ports.js";
+import type { SiteRuntimeRepository } from "../../application/contracts/site-runtime-state.js";
 import type {
   PublishedSiteRelease,
   SiteAuthorityDefinition,
@@ -28,7 +29,8 @@ import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.
 import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
 
 export class PostgresSiteAuthorityRepository implements
-  SiteAuthorityRepository, SitePublicationRepository, SiteTrafficStopRepository {
+  SiteAuthorityRepository, SitePublicationRepository, SiteTrafficStopRepository,
+  SiteRuntimeRepository {
   async loadActiveProjectBindingForUpdate(
     transaction: PlatformTransaction,
     siteRef: string,
@@ -43,6 +45,23 @@ export class PostgresSiteAuthorityRepository implements
        WHERE site_ref=$1 AND environment=$2 AND region=$3 AND state='active' FOR UPDATE`,
       [siteRef, environment, region],
     );
+    return rows[0] === undefined ? null : Object.freeze({ ...rows[0] });
+  }
+
+  async loadRuntimeProjectBindingForUpdate(
+    transaction: PlatformTransaction,
+    input: Parameters<SiteRuntimeRepository["loadRuntimeProjectBindingForUpdate"]>[1],
+  ): Promise<Readonly<{ providerNamespace: string; providerProjectRef: string }> | null> {
+    const rows = await resolvePlatformTransaction(transaction).query<{
+      providerNamespace: string; providerProjectRef: string;
+    }>(
+      `SELECT provider_namespace AS "providerNamespace",provider_project_ref AS "providerProjectRef"
+       FROM platform.site_project_binding
+       WHERE binding_ref=$1 AND site_ref=$2 AND ($3::bigint IS NULL OR binding_epoch=$3)
+         AND environment=$4 AND region=$5 AND state='active' FOR UPDATE`,
+      [input.bindingRef, input.siteRef, input.bindingEpoch ?? null, input.environment, input.region],
+    );
+    if (rows.length > 1) throw new Error("SITE_RUNTIME_PROJECT_BINDING_CONFLICT");
     return rows[0] === undefined ? null : Object.freeze({ ...rows[0] });
   }
 
@@ -266,6 +285,37 @@ export class PostgresSiteAuthorityRepository implements
        FROM platform.site_deployment_binding
        WHERE site_ref=$1 AND environment=$2 AND release_ref=$3 AND state='draining' FOR UPDATE`,
       [siteRef, environment, releaseRef],
+    );
+    if (rows.length > 1) throw new Error("SITE_DRAINING_DEPLOYMENT_CONFLICT");
+    return rows[0] === undefined ? null : Object.freeze({ ...rows[0] });
+  }
+
+  async loadDrainingRuntimeDeploymentForUpdate(
+    transaction: PlatformTransaction,
+    siteRef: string,
+    environment: "development" | "preview" | "production",
+    region: string,
+    releaseRef: string,
+  ): Promise<Readonly<{ deploymentRef: string; webArtifactDigest: string;
+    providerNamespace: string; providerProjectRef: string;
+    environment: "development" | "preview" | "production"; region: string }> | null> {
+    const rows = await resolvePlatformTransaction(transaction).query<{
+      deploymentRef: string; webArtifactDigest: string; providerNamespace: string;
+      providerProjectRef: string; environment: "development" | "preview" | "production";
+      region: string;
+    }>(
+      `SELECT deployment.deployment_ref AS "deploymentRef",
+              deployment.web_artifact_digest AS "webArtifactDigest",
+              deployment.environment,deployment.region,
+              project.provider_namespace AS "providerNamespace",
+              project.provider_project_ref AS "providerProjectRef"
+       FROM platform.site_deployment_binding deployment
+       JOIN platform.site_project_binding project
+         ON project.binding_ref=deployment.binding_ref AND project.site_ref=deployment.site_ref
+       WHERE deployment.site_ref=$1 AND deployment.environment=$2 AND deployment.region=$3
+         AND deployment.release_ref=$4 AND deployment.state='draining' AND project.state='active'
+       FOR UPDATE OF deployment,project`,
+      [siteRef, environment, region, releaseRef],
     );
     if (rows.length > 1) throw new Error("SITE_DRAINING_DEPLOYMENT_CONFLICT");
     return rows[0] === undefined ? null : Object.freeze({ ...rows[0] });

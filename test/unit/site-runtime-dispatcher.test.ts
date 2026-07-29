@@ -56,7 +56,8 @@ function promotionStep(
   } };
 }
 function drainStep(): SiteRuntimeStep {
-  return { kind: "stop_activation_drain", providerNamespace: "vercel", command: {
+  return { kind: "stop_activation_drain", providerNamespace: "vercel",
+    webArtifactDigest: "4".repeat(64), command: {
     operationKey: "drain-op", siteRef: "site_01", providerProjectRef: "project_01",
     deploymentRef: "deployment_01", environment: "production", region: "us-east-1",
   } };
