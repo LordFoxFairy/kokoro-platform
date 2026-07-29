@@ -259,23 +259,23 @@ async function grantFoundationPrivileges(
     await client.query(
       `ALTER DEFAULT PRIVILEGES IN SCHEMA platform REVOKE ALL ON FUNCTIONS FROM ${identifier}`,
     );
-    await client.query(`REVOKE ALL ON TABLE ${KERNEL_AND_MODEL_TABLES} FROM ${identifier}`);
+    await client.query(`REVOKE ALL ON TABLE ${PLATFORM_RUNTIME_TABLES} FROM ${identifier}`);
     await client.query(
       `REVOKE ALL ON FUNCTION platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT), platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID), platform.report_model_provider_availability(UUID, TEXT, TEXT, TEXT, BIGINT, TEXT, TIMESTAMPTZ, TEXT) FROM ${identifier}`,
     );
     if (role === apiRole) {
-      await client.query(`GRANT SELECT ON TABLE ${KERNEL_TABLES} TO ${identifier}`);
+      await client.query(`GRANT SELECT ON TABLE ${KERNEL_TABLES}, ${AUTHORIZATION_TABLES} TO ${identifier}`);
       await client.query(
-        `GRANT INSERT ON TABLE platform.command_receipt, platform.outbox_event, platform.inbox_delivery, platform.model_selection_decision TO ${identifier}`,
+        `GRANT INSERT ON TABLE platform.command_receipt, platform.outbox_event, platform.inbox_delivery, platform.model_selection_decision, platform.authorization_product_context, platform.authorization_session_access_grant TO ${identifier}`,
       );
       await client.query(
-        `GRANT UPDATE ON TABLE platform.command_receipt, platform.inbox_delivery TO ${identifier}`,
+        `GRANT UPDATE ON TABLE platform.command_receipt, platform.inbox_delivery, platform.authorization_product_context, platform.authorization_session_access_grant TO ${identifier}`,
       );
       await client.query(
         `GRANT EXECUTE ON FUNCTION platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID) TO ${identifier}`,
       );
     } else if (role === workerRole) {
-      await client.query(`GRANT SELECT ON TABLE ${KERNEL_TABLES} TO ${identifier}`);
+      await client.query(`GRANT SELECT ON TABLE ${KERNEL_TABLES}, platform.authorization_site, platform.authorization_product_context, platform.authorization_session_access_grant TO ${identifier}`);
       await client.query(`GRANT INSERT ON TABLE platform.inbox_delivery TO ${identifier}`);
       await client.query(
         `GRANT UPDATE ON TABLE platform.command_receipt, platform.outbox_event, platform.inbox_delivery TO ${identifier}`,
@@ -285,7 +285,7 @@ async function grantFoundationPrivileges(
       );
     } else {
       await client.query(
-        `GRANT SELECT ON TABLE platform.command_receipt, platform.outbox_event TO ${identifier}`,
+        `GRANT SELECT ON TABLE platform.command_receipt, platform.outbox_event, ${AUTHORIZATION_TABLES} TO ${identifier}`,
       );
       await client.query(
         `GRANT INSERT ON TABLE platform.command_receipt, platform.outbox_event TO ${identifier}`,
@@ -306,7 +306,19 @@ const KERNEL_TABLES = [
   "platform.inbox_delivery",
 ].join(", ");
 
-const KERNEL_AND_MODEL_TABLES = [
+const AUTHORIZATION_TABLES = [
+  "platform.authorization_site",
+  "platform.authorization_site_release",
+  "platform.authorization_product_binding",
+  "platform.authorization_subject",
+  "platform.authorization_identity_session",
+  "platform.authorization_project",
+  "platform.authorization_project_membership",
+  "platform.authorization_product_context",
+  "platform.authorization_session_access_grant",
+].join(", ");
+
+const PLATFORM_RUNTIME_TABLES = [
   "platform.command_receipt",
   "platform.outbox_event",
   "platform.inbox_delivery",
@@ -324,6 +336,7 @@ const KERNEL_AND_MODEL_TABLES = [
   "platform.model_site_assignment_revision",
   "platform.model_site_policy_pointer",
   "platform.model_selection_decision",
+  AUTHORIZATION_TABLES,
 ].join(", ");
 
 async function assertPostMigrationAuthority(
@@ -402,12 +415,18 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            AND has_table_privilege(runtime_role.rolname, 'platform.outbox_event', 'INSERT')
            AND has_table_privilege(runtime_role.rolname, 'platform.inbox_delivery', 'INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.model_selection_decision', 'INSERT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.authorization_identity_session', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.authorization_project_membership', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.authorization_product_context', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.authorization_session_access_grant', 'SELECT,INSERT,UPDATE')
          WHEN runtime_role.rolname = $2 THEN
            has_table_privilege(runtime_role.rolname, 'platform.command_receipt', 'UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.outbox_event', 'UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.inbox_delivery', 'INSERT,UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.authorization_session_access_grant', 'SELECT')
          ELSE has_table_privilege(runtime_role.rolname, 'platform.command_receipt', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.outbox_event', 'SELECT,INSERT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.authorization_site', 'SELECT')
          END AS "hasRequiredPlatformWrites"
          ,has_function_privilege(runtime_role.rolname, 'platform.import_model_inventory(uuid,text,text,jsonb,jsonb,text)', 'EXECUTE')
            AS "canExecuteModelInventoryImport"
@@ -448,7 +467,11 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                  'model_inventory_import','model_inventory_activation','model_inventory_pointer','model_provider_snapshot',
                  'model_definition_snapshot','model_provider_binding_snapshot','model_product_route_snapshot','model_provider_availability',
                  'model_definition_availability','model_provider_availability_report','model_site_policy_revision',
-                 'model_site_assignment_revision','model_site_policy_pointer','model_selection_decision'
+                 'model_site_assignment_revision','model_site_policy_pointer','model_selection_decision',
+                 'authorization_site','authorization_site_release','authorization_product_binding',
+                 'authorization_subject','authorization_identity_session','authorization_project',
+                 'authorization_project_membership','authorization_product_context',
+                 'authorization_session_access_grant'
                ]) AND (
                  (candidate.relname LIKE 'model\\_%' ESCAPE '\\' AND (
                    has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
@@ -465,28 +488,32 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                  'model_inventory_pointer','model_provider_snapshot','model_definition_snapshot','model_provider_binding_snapshot',
                  'model_product_route_snapshot','model_provider_availability',
                  'model_definition_availability','model_provider_availability_report','model_site_policy_revision',
-                 'model_site_assignment_revision','model_site_policy_pointer','model_selection_decision'
+                 'model_site_assignment_revision','model_site_policy_pointer','model_selection_decision',
+                 'authorization_site','authorization_site_release','authorization_product_binding',
+                 'authorization_subject','authorization_identity_session','authorization_project',
+                 'authorization_project_membership','authorization_product_context',
+                 'authorization_session_access_grant'
                ]) AND (
                  has_table_privilege(runtime_role.rolname, candidate.oid,
                    'DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
                  OR has_any_column_privilege(runtime_role.rolname, candidate.oid, 'REFERENCES')
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'INSERT') AND NOT (
-                   (runtime_role.rolname = $1 AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_selection_decision']))
+                   (runtime_role.rolname = $1 AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_selection_decision','authorization_product_context','authorization_session_access_grant']))
                    OR (runtime_role.rolname = $2 AND candidate.relname = 'inbox_delivery')
                    OR (runtime_role.rolname = $3 AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event']))
                  ))
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
-                   (runtime_role.rolname = $1 AND candidate.relname = ANY(ARRAY['command_receipt','inbox_delivery']))
+                   (runtime_role.rolname = $1 AND candidate.relname = ANY(ARRAY['command_receipt','inbox_delivery','authorization_product_context','authorization_session_access_grant']))
                    OR (runtime_role.rolname = $2 AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery']))
                    OR (runtime_role.rolname = $3 AND candidate.relname = 'command_receipt')
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'INSERT') AND NOT (
-                   (runtime_role.rolname = $1 AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_selection_decision']))
+                   (runtime_role.rolname = $1 AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_selection_decision','authorization_product_context','authorization_session_access_grant']))
                    OR (runtime_role.rolname = $2 AND candidate.relname = 'inbox_delivery')
                    OR (runtime_role.rolname = $3 AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event']))
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
-                   (runtime_role.rolname = $1 AND candidate.relname = ANY(ARRAY['command_receipt','inbox_delivery']))
+                   (runtime_role.rolname = $1 AND candidate.relname = ANY(ARRAY['command_receipt','inbox_delivery','authorization_product_context','authorization_session_access_grant']))
                    OR (runtime_role.rolname = $2 AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery']))
                    OR (runtime_role.rolname = $3 AND candidate.relname = 'command_receipt')
                  ))

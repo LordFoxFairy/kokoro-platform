@@ -7,6 +7,8 @@ import {
 } from "../../shared/unit-of-work/platform-transaction.js";
 import type { PlatformTransactionHost } from "../../shared/unit-of-work/unit-of-work.js";
 import { assertVerifiedRequestSecurityContext } from "../../shared/security-context/request-security-context.js";
+import type { SessionAuthenticationPort } from "../../modules/authorization/application/contracts/session-authorization-ports.js";
+import type { AuthenticatedUserSession } from "../../modules/authorization/domain/session-access-grant.js";
 
 export type PlatformProcessRole = "api" | "worker" | "admin" | "migrator";
 export type PlatformCredentialClass = "api" | "worker" | "admin" | "migrator";
@@ -68,7 +70,7 @@ export interface PlatformDatabaseClient {
 }
 
 export interface PlatformTransactionalDatabaseClient
-  extends PlatformDatabaseClient, PlatformTransactionHost {}
+  extends PlatformDatabaseClient, PlatformTransactionHost, SessionAuthenticationPort {}
 
 export function loadPlatformDatabaseConfig(
   role: PlatformProcessRole,
@@ -182,6 +184,43 @@ export function createPlatformDatabaseClient(
     disconnect: () => prisma.$disconnect(),
     checkHealth: async () => {
       await prisma.$queryRaw`SELECT "schemaVersion" FROM platform.platform_foundation WHERE singleton = TRUE`;
+    },
+    authenticateUserSession: async (input) => {
+      const rows = await prisma.$queryRawUnsafe<Array<AuthenticatedUserSession & Record<string, unknown>>>(
+        `SELECT identity_session.session_ref AS "identitySessionRef",
+                identity_session.subject_ref AS "subjectRef", identity_session.site_ref AS "siteRef",
+                subject.subject_generation::text AS "subjectGeneration",
+                identity_session.session_epoch::text AS "identitySessionEpoch",
+                subject.restriction_epoch::text AS "restrictionEpoch",
+                identity_session.credential_epoch::text AS "credentialEpoch",
+                identity_session.authentication_methods AS "authenticationMethods",
+                identity_session.authenticated_at AS "authenticatedAt",
+                identity_session.expires_at AS "expiresAt"
+         FROM platform.authorization_identity_session identity_session
+         JOIN platform.authorization_subject subject
+           ON subject.subject_ref=identity_session.subject_ref AND subject.site_ref=identity_session.site_ref
+         JOIN platform.authorization_site site ON site.site_ref=identity_session.site_ref
+         WHERE identity_session.credential_digest=$1 AND identity_session.site_ref=$2
+           AND identity_session.state='active' AND identity_session.expires_at>$3::timestamptz
+           AND subject.state='active' AND site.state='active'
+         LIMIT 1`,
+        input.credentialDigest,
+        input.siteRef,
+        input.now,
+      );
+      const row = rows[0];
+      if (row === undefined) return null;
+      const methods = row.authenticationMethods;
+      if (
+        !Array.isArray(methods) || methods.length < 1 ||
+        methods.some((method) => !["password", "totp", "recovery_code"].includes(method))
+      ) return null;
+      return Object.freeze({
+        ...row,
+        authenticationMethods: Object.freeze([...methods]),
+        authenticatedAt: new Date(row.authenticatedAt).toISOString(),
+        expiresAt: new Date(row.expiresAt).toISOString(),
+      });
     },
     transaction: async <Result>(
       fence: Parameters<PlatformTransactionHost["transaction"]>[0],
@@ -317,12 +356,18 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_table_privilege(current_user, 'platform.outbox_event', 'INSERT')
            AND has_table_privilege(current_user, 'platform.inbox_delivery', 'INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.model_selection_decision', 'INSERT')
+           AND has_table_privilege(current_user, 'platform.authorization_identity_session', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.authorization_project_membership', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.authorization_product_context', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.authorization_session_access_grant', 'SELECT,INSERT,UPDATE')
          WHEN $2 = 'worker' THEN
            has_table_privilege(current_user, 'platform.command_receipt', 'UPDATE')
            AND has_table_privilege(current_user, 'platform.outbox_event', 'UPDATE')
            AND has_table_privilege(current_user, 'platform.inbox_delivery', 'INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.authorization_session_access_grant', 'SELECT')
          ELSE has_table_privilege(current_user, 'platform.command_receipt', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.outbox_event', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.authorization_site', 'SELECT')
          END AS "hasRequiredPlatformWrites",
          has_function_privilege(current_user, 'platform.import_model_inventory(uuid,text,text,jsonb,jsonb,text)', 'EXECUTE')
            AS "canExecuteModelInventoryImport",
@@ -362,7 +407,11 @@ const RUNTIME_IDENTITY_SQL = `
                  'model_inventory_import','model_inventory_activation','model_inventory_pointer','model_provider_snapshot',
                  'model_definition_snapshot','model_provider_binding_snapshot','model_product_route_snapshot','model_provider_availability',
                  'model_definition_availability','model_provider_availability_report','model_site_policy_revision',
-                 'model_site_assignment_revision','model_site_policy_pointer','model_selection_decision'
+                 'model_site_assignment_revision','model_site_policy_pointer','model_selection_decision',
+                 'authorization_site','authorization_site_release','authorization_product_binding',
+                 'authorization_subject','authorization_identity_session','authorization_project',
+                 'authorization_project_membership','authorization_product_context',
+                 'authorization_session_access_grant'
                ]) AND (
                  has_table_privilege(runtime_role.rolname, candidate.oid,
                    'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
@@ -374,7 +423,11 @@ const RUNTIME_IDENTITY_SQL = `
                  'model_inventory_pointer','model_provider_snapshot','model_definition_snapshot','model_provider_binding_snapshot',
                  'model_product_route_snapshot','model_provider_availability',
                  'model_definition_availability','model_provider_availability_report','model_site_policy_revision',
-                 'model_site_assignment_revision','model_site_policy_pointer','model_selection_decision'
+                 'model_site_assignment_revision','model_site_policy_pointer','model_selection_decision',
+                 'authorization_site','authorization_site_release','authorization_product_binding',
+                 'authorization_subject','authorization_identity_session','authorization_project',
+                 'authorization_project_membership','authorization_product_context',
+                 'authorization_session_access_grant'
                ]) AND (
                  (candidate.relname LIKE 'model\\_%' ESCAPE '\\' AND (
                    has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
@@ -385,22 +438,22 @@ const RUNTIME_IDENTITY_SQL = `
                    'DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
                  OR has_any_column_privilege(runtime_role.rolname, candidate.oid, 'REFERENCES')
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'INSERT') AND NOT (
-                   ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_selection_decision']))
+                   ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_selection_decision','authorization_product_context','authorization_session_access_grant']))
                    OR ($2 = 'worker' AND candidate.relname = 'inbox_delivery')
                    OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event']))
                  ))
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
-                   ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','inbox_delivery']))
+                   ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','inbox_delivery','authorization_product_context','authorization_session_access_grant']))
                    OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery']))
                    OR ($2 = 'admin' AND candidate.relname = 'command_receipt')
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'INSERT') AND NOT (
-                   ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_selection_decision']))
+                   ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_selection_decision','authorization_product_context','authorization_session_access_grant']))
                    OR ($2 = 'worker' AND candidate.relname = 'inbox_delivery')
                    OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event']))
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
-                   ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','inbox_delivery']))
+                   ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','inbox_delivery','authorization_product_context','authorization_session_access_grant']))
                    OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery']))
                    OR ($2 = 'admin' AND candidate.relname = 'command_receipt')
                  ))

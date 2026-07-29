@@ -95,7 +95,7 @@ describe("Platform PostgreSQL authority", () => {
 });
 
 describe("Platform migrator", () => {
-  it("preflights PG18/roles, locks migration, grants marker-only access, and sanitizes env", async () => {
+  it("preflights PG18/roles, locks migration, grants role-scoped access, and sanitizes env", async () => {
     const events: string[] = [];
     const lockClient: MigrationLockClient = {
       async connect() {
@@ -193,7 +193,7 @@ describe("Platform migrator", () => {
       `SELECT pg_advisory_lock(hashtext($1)):${MIGRATION_ADVISORY_LOCK}`,
       "execute",
     ]);
-    expect(events.filter((event) => event === "grant")).toHaveLength(37);
+    expect(events.filter((event) => event === "grant")).toHaveLength(40);
     expect(events.slice(-3)).toEqual([
       "verify-authority",
       `SELECT pg_advisory_unlock(hashtext($1)):${MIGRATION_ADVISORY_LOCK}`,

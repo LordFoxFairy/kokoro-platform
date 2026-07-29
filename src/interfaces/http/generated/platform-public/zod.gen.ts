@@ -451,41 +451,6 @@ export const zPersonalContext = z.strictObject({
  */
 export const zPositiveUint64String = (z.string().min(1).max(20).regex(/^[1-9][0-9]{0,19}$/)).refine((value) => value.length < 20 || value <= "18446744073709551615", "must fit a positive uint64");
 
-/**
- * Deployment-level Site authority. It is resolved exclusively from the authenticated ProductWorkload and registered deployment; it never contains user-specific state.
- */
-export const zProductContext = z.strictObject({
-    agentCatalogRef: z.string().min(1).max(256),
-    audience: z.string().min(1).max(256),
-    cacheMaxAgeSeconds: z.int().gte(0).lte(300),
-    deploymentRef: z.string().min(1).max(256),
-    enabledSurfaceIds: z.array(z.string().min(1).max(128)).max(256),
-    expiresAt: z.iso.datetime(),
-    featurePolicyRevision: z.string().min(1).max(128),
-    issuedAt: z.iso.datetime(),
-    localePolicy: zLocalePolicy,
-    modelOptionCatalogRef: z.string().min(1).max(256),
-    policyEpoch: zPositiveUint64String,
-    productContextRef: z.string().min(1).max(256),
-    region: z.string().min(1).max(128),
-    revocationEpoch: zPositiveUint64String,
-    runtimeEnvironment: z.enum([
-        'development',
-        'preview',
-        'production'
-    ]),
-    sessionContractRevision: z.string().min(1).max(128),
-    siteProjectBindingRef: z.string().min(1).max(256),
-    siteRef: z.string().min(1).max(128),
-    siteReleaseRef: z.string().min(1).max(128),
-    webArtifactDigest: z.string().regex(/^[0-9a-f]{64}$/)
-});
-
-export const zProductContextExchangeResponse = z.strictObject({
-    context: zProductContext,
-    receipt: zCommandReceipt
-});
-
 export const zProjectionRevision = z.string().regex(/^(?:0|[1-9][0-9]{0,18})$/);
 
 export const zProjectionFreshness = z.strictObject({
@@ -513,6 +478,21 @@ export const zCreditSummaryResponse = z.strictObject({
     activeHoldCount: z.int().gte(0),
     freshness: zProjectionFreshness,
     units: z.array(zCreditUnitSummary).max(16)
+});
+
+/**
+ * Immutable, Site-release-published product option safe for an end-user selector. Provider, route, credential, price internals, fallback order, and the hidden orchestration model are deliberately absent. Admission resolves the revision reference to the complete bundle.
+ */
+export const zPublishedModelOption = z.strictObject({
+    availability: z.enum(['available', 'temporarily_unavailable']),
+    badges: z.array(z.string().min(1).max(64)).max(16),
+    description: z.string().max(512).optional(),
+    inputModalities: z.array(z.string().regex(/^[a-z][a-z0-9._-]{0,63}$/)).min(1).max(16),
+    label: z.string().min(1).max(128),
+    modelOptionRevisionRef: z.string().min(1).max(256),
+    optionKey: z.string().regex(/^[a-z][a-z0-9._-]{1,127}$/),
+    outputModalities: z.array(z.string().regex(/^[a-z][a-z0-9._-]{0,63}$/)).min(1).max(16),
+    supportedEfforts: z.array(z.string().min(1).max(64)).max(16)
 });
 
 export const zReauthenticationPending = z.strictObject({
@@ -996,6 +976,53 @@ export const zPublicCommandReceiptResponse = z.union([
     zCommittedSupersedingPublicCommandReceiptResponse,
     zCommittedSupersededPublicCommandReceiptResponse
 ]);
+
+/**
+ * The complete safe selector snapshot for one enabled product surface. A music, image, or video option may resolve internally to both a generation model and a main chat/orchestration model; the browser never selects or learns those base bindings independently.
+ */
+export const zSurfaceModelOptionCatalog = z.strictObject({
+    catalogRevisionRef: z.string().min(1).max(256),
+    defaultModelOptionRevisionRef: z.string().min(1).max(256),
+    options: z.array(zPublishedModelOption).min(1).max(256),
+    publishedAt: z.iso.datetime(),
+    surfaceId: z.string().min(1).max(128)
+});
+
+/**
+ * Deployment-level Site authority. It is resolved exclusively from the authenticated ProductWorkload and registered deployment; it never contains user-specific state.
+ */
+export const zProductContext = z.strictObject({
+    agentCatalogRef: z.string().min(1).max(256),
+    audience: z.string().min(1).max(256),
+    cacheMaxAgeSeconds: z.int().gte(0).lte(300),
+    deploymentRef: z.string().min(1).max(256),
+    enabledSurfaceIds: z.array(z.string().min(1).max(128)).max(256),
+    expiresAt: z.iso.datetime(),
+    featurePolicyRevision: z.string().min(1).max(128),
+    issuedAt: z.iso.datetime(),
+    localePolicy: zLocalePolicy,
+    modelOptionCatalogRef: z.string().min(1).max(256),
+    modelOptionCatalogs: z.array(zSurfaceModelOptionCatalog).max(64),
+    policyEpoch: zPositiveUint64String,
+    productContextRef: z.string().min(1).max(256),
+    region: z.string().min(1).max(128),
+    revocationEpoch: zPositiveUint64String,
+    runtimeEnvironment: z.enum([
+        'development',
+        'preview',
+        'production'
+    ]),
+    sessionContractRevision: z.string().min(1).max(128),
+    siteProjectBindingRef: z.string().min(1).max(256),
+    siteRef: z.string().min(1).max(128),
+    siteReleaseRef: z.string().min(1).max(128),
+    webArtifactDigest: z.string().regex(/^[0-9a-f]{64}$/)
+});
+
+export const zProductContextExchangeResponse = z.strictObject({
+    context: zProductContext,
+    receipt: zCommandReceipt
+});
 
 export const zTotpConfirmationInput = z.strictObject({
     code: z.string().min(6).max(32),

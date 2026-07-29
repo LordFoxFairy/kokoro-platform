@@ -478,6 +478,7 @@ export type ProductContext = {
     issuedAt: string;
     localePolicy: LocalePolicy;
     modelOptionCatalogRef: string;
+    modelOptionCatalogs: Array<SurfaceModelOptionCatalog>;
     policyEpoch: PositiveUint64String;
     productContextRef: string;
     region: string;
@@ -505,6 +506,21 @@ export type ProjectionFreshness = {
 export type ProjectionRevision = string;
 
 export type PublicCommandReceiptResponse = AcceptedPublicCommandReceiptResponse | OutcomeUnknownPublicCommandReceiptResponse | CommittedTerminalPublicCommandReceiptResponse | RejectedTerminalPublicCommandReceiptResponse | CommittedSupersedingPublicCommandReceiptResponse | CommittedSupersededPublicCommandReceiptResponse;
+
+/**
+ * Immutable, Site-release-published product option safe for an end-user selector. Provider, route, credential, price internals, fallback order, and the hidden orchestration model are deliberately absent. Admission resolves the revision reference to the complete bundle.
+ */
+export type PublishedModelOption = {
+    availability: 'available' | 'temporarily_unavailable';
+    badges: Array<string>;
+    description?: string;
+    inputModalities: Array<string>;
+    label: string;
+    modelOptionRevisionRef: string;
+    optionKey: string;
+    outputModalities: Array<string>;
+    supportedEfforts: Array<string>;
+};
 
 export type ReauthenticationInput = PasswordReauthenticationInput | MfaReauthenticationInput | SupersedeReauthenticationProofInput;
 
@@ -852,6 +868,17 @@ export type SupersedingCeremony = {
 export type SupersedingCeremonyReconciliation = {
     ceremony: SupersedingCeremony;
     kind: 'superseding_ceremony_required';
+};
+
+/**
+ * The complete safe selector snapshot for one enabled product surface. A music, image, or video option may resolve internally to both a generation model and a main chat/orchestration model; the browser never selects or learns those base bindings independently.
+ */
+export type SurfaceModelOptionCatalog = {
+    catalogRevisionRef: string;
+    defaultModelOptionRevisionRef: string;
+    options: Array<PublishedModelOption>;
+    publishedAt: string;
+    surfaceId: string;
 };
 
 export type TotpConfirmationInput = {

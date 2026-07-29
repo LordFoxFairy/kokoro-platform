@@ -303,3 +303,167 @@ model ModelSelectionDecision {
   @@map("model_selection_decision")
   @@schema("platform")
 }
+
+model AuthorizationSite {
+  siteRef         String   @id @map("site_ref")
+  state           String
+  securityEpoch   BigInt   @map("security_epoch")
+  policyEpoch     BigInt   @map("policy_epoch")
+  revocationEpoch BigInt   @map("revocation_epoch")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("authorization_site")
+  @@schema("platform")
+}
+
+model AuthorizationSiteRelease {
+  releaseRef            String   @id @map("release_ref")
+  siteRef               String   @map("site_ref")
+  state                 String
+  webArtifactDigest     String   @map("web_artifact_digest") @db.Char(64)
+  enabledSurfaceIds     Json     @map("enabled_surface_ids")
+  featurePolicyRevision String   @map("feature_policy_revision")
+  modelOptionCatalogRef String   @map("model_option_catalog_ref")
+  agentCatalogRef       String   @map("agent_catalog_ref")
+  localePolicy          Json     @map("locale_policy")
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([releaseRef, siteRef])
+  @@index([siteRef, state])
+  @@map("authorization_site_release")
+  @@schema("platform")
+}
+
+model AuthorizationProductBinding {
+  bindingRef              String   @id @map("binding_ref")
+  workloadIdentityId      String   @unique @map("workload_identity_id")
+  deploymentRef           String   @unique @map("deployment_ref")
+  siteRef                 String   @map("site_ref")
+  releaseRef              String   @map("release_ref")
+  environment             String
+  region                  String
+  audience                String
+  sessionContractRevision String   @map("session_contract_revision")
+  bindingEpoch            BigInt   @map("binding_epoch")
+  state                   String
+  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([siteRef, state])
+  @@map("authorization_product_binding")
+  @@schema("platform")
+}
+
+model AuthorizationSubject {
+  subjectRef        String   @id @map("subject_ref")
+  siteRef           String   @map("site_ref")
+  displayName       String   @map("display_name")
+  avatarUrl         String?  @map("avatar_url")
+  state             String
+  subjectGeneration BigInt   @map("subject_generation")
+  restrictionEpoch  BigInt   @map("restriction_epoch")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([siteRef, state])
+  @@map("authorization_subject")
+  @@schema("platform")
+}
+
+model AuthorizationIdentitySession {
+  sessionRef            String   @id @map("session_ref")
+  subjectRef            String   @map("subject_ref")
+  siteRef               String   @map("site_ref")
+  credentialDigest      String   @unique @map("credential_digest") @db.Char(64)
+  authenticationMethods String[] @map("authentication_methods")
+  state                 String
+  sessionEpoch          BigInt   @map("session_epoch")
+  credentialEpoch       BigInt   @map("credential_epoch")
+  authenticatedAt       DateTime @map("authenticated_at") @db.Timestamptz(6)
+  expiresAt             DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([subjectRef, state])
+  @@index([siteRef, state, expiresAt])
+  @@map("authorization_identity_session")
+  @@schema("platform")
+}
+
+model AuthorizationProject {
+  projectRef        String   @id @map("project_ref")
+  siteRef           String   @map("site_ref")
+  workspaceRef      String   @map("workspace_ref")
+  executionSpaceRef String   @map("execution_space_ref")
+  displayName       String   @map("display_name")
+  state             String
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([siteRef, state])
+  @@map("authorization_project")
+  @@schema("platform")
+}
+
+model AuthorizationProjectMembership {
+  projectRef        String   @map("project_ref")
+  subjectRef        String   @map("subject_ref")
+  state             String
+  membershipEpoch   BigInt   @map("membership_epoch")
+  authorizationEpoch BigInt  @map("authorization_epoch")
+  isDefault         Boolean  @default(false) @map("is_default")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@id([projectRef, subjectRef])
+  @@index([subjectRef, state])
+  @@map("authorization_project_membership")
+  @@schema("platform")
+}
+
+model AuthorizationProductContext {
+  productContextRef String   @id @map("product_context_ref")
+  bindingRef        String   @map("binding_ref")
+  siteRef           String   @map("site_ref")
+  releaseRef        String   @map("release_ref")
+  snapshotDigest    String   @map("snapshot_digest") @db.Char(64)
+  policyEpoch       BigInt   @map("policy_epoch")
+  revocationEpoch   BigInt   @map("revocation_epoch")
+  issuedAt          DateTime @map("issued_at") @db.Timestamptz(6)
+  expiresAt         DateTime @map("expires_at") @db.Timestamptz(6)
+
+  @@index([bindingRef, expiresAt(sort: Desc)])
+  @@map("authorization_product_context")
+  @@schema("platform")
+}
+
+model AuthorizationSessionAccessGrant {
+  grantRef          String    @id @map("grant_ref") @db.Uuid
+  bindingRef        String    @map("binding_ref")
+  siteRef           String    @map("site_ref")
+  subjectRef        String    @map("subject_ref")
+  identitySessionRef String   @map("identity_session_ref")
+  projectRef        String    @map("project_ref")
+  purpose           String
+  audience          String
+  resource          Json
+  claimsDigest      String    @map("claims_digest") @db.Char(64)
+  credentialDigest  String?   @map("credential_digest") @db.Char(64)
+  keyRevision       String    @map("key_revision")
+  policyEpoch       BigInt    @map("policy_epoch")
+  revocationEpoch   BigInt    @map("revocation_epoch")
+  deliveryState     String    @map("delivery_state")
+  deliveryErrorCode String?   @map("delivery_error_code")
+  issuedAt          DateTime  @map("issued_at") @db.Timestamptz(6)
+  notBefore         DateTime  @map("not_before") @db.Timestamptz(6)
+  expiresAt         DateTime  @map("expires_at") @db.Timestamptz(6)
+  deliveredAt       DateTime? @map("delivered_at") @db.Timestamptz(6)
+  failedAt          DateTime? @map("failed_at") @db.Timestamptz(6)
+
+  @@index([siteRef, revocationEpoch, expiresAt])
+  @@index([subjectRef, expiresAt])
+  @@map("authorization_session_access_grant")
+  @@schema("platform")
+}

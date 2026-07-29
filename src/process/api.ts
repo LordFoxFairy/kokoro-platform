@@ -1,4 +1,4 @@
-import { createServer, type Server } from "node:http";
+import { createServer, type RequestListener, type Server } from "node:http";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -6,6 +6,9 @@ import {
   loadPlatformDatabaseConfig,
   type PlatformDatabaseClient,
 } from "../infrastructure/postgres/client.js";
+import type { PlatformPublicHttpHandler } from "../interfaces/http/platform-public.js";
+import type { ModelOptionCatalogReadPort } from "../modules/authorization/application/contracts/session-authorization-ports.js";
+import { createPlatformPublicProductionComposition } from "./platform-public-composition.js";
 
 export type PlatformProcessState = "stopped" | "starting" | "running" | "draining" | "failed";
 
@@ -24,8 +27,12 @@ export interface PlatformApiProcess {
 
 export function createPlatformApiProcess(options: {
   database: PlatformDatabaseClient;
+  publicHttp?: PlatformPublicHttpHandler;
+  serverFactory?: (listener: RequestListener) => Server;
+  secure?: boolean;
 }): PlatformApiProcess {
   const { database } = options;
+  const serverFactory = options.serverFactory ?? createServer;
   let state: PlatformProcessState = "stopped";
   let ready = false;
   let server: Server | undefined;
@@ -99,7 +106,7 @@ export function createPlatformApiProcess(options: {
       await database.checkHealth();
       if (currentState() !== "starting") throw new Error("PLATFORM_API_START_ABORTED");
 
-      server = createServer(async (request, response) => {
+      server = serverFactory(async (request, response) => {
         response.setHeader("content-type", "application/json; charset=utf-8");
         response.setHeader("cache-control", "no-store");
         if (request.method === "GET" && request.url === "/health/live") {
@@ -125,6 +132,26 @@ export function createPlatformApiProcess(options: {
           }
           return;
         }
+        if (state !== "draining" && options.publicHttp !== undefined) {
+          try {
+            if (await options.publicHttp.handle(request, response)) return;
+          } catch {
+            if (!response.headersSent) {
+              response.statusCode = 503;
+              response.setHeader("content-type", "application/problem+json; charset=utf-8");
+              response.end(JSON.stringify({
+                code: "INTERNAL_UNAVAILABLE",
+                retryClass: "after_delay",
+                requestId: "unavailable",
+                correlationId: "unavailable",
+                safeMessage: "The service is temporarily unavailable.",
+              }));
+            } else {
+              response.destroy();
+            }
+            return;
+          }
+        }
         response.statusCode = state === "draining" ? 503 : 404;
         response.end(JSON.stringify({ error: state === "draining" ? "draining" : "not_found" }));
       });
@@ -135,7 +162,7 @@ export function createPlatformApiProcess(options: {
       ready = true;
       const bound = server.address();
       if (!bound || typeof bound === "string") throw new Error("PLATFORM_API_ADDRESS_UNAVAILABLE");
-      return `http://${address.host}:${bound.port}`;
+      return `${options.secure === true ? "https" : "http"}://${address.host}:${bound.port}`;
     } catch (error) {
       ready = false;
       const failedServer = server;
@@ -214,9 +241,20 @@ function isMainModule(): boolean {
   return entry !== undefined && pathToFileURL(resolve(entry)).href === import.meta.url;
 }
 
-export async function runPlatformApiMain(): Promise<void> {
+export async function runPlatformApiMain(input: Readonly<{
+  modelOptions: ModelOptionCatalogReadPort;
+}>): Promise<void> {
   const database = createPlatformDatabaseClient(loadPlatformDatabaseConfig("api"));
-  const api = createPlatformApiProcess({ database });
+  const publicComposition = await createPlatformPublicProductionComposition({
+    database,
+    modelOptions: input.modelOptions,
+  });
+  const api = createPlatformApiProcess({
+    database,
+    publicHttp: publicComposition.handler,
+    serverFactory: publicComposition.createServer,
+    secure: publicComposition.secure,
+  });
   const port = Number.parseInt(process.env.PLATFORM_API_PORT ?? "4100", 10);
   const shutdown = () => {
     void api.shutdown().catch((error: unknown) => {
@@ -231,8 +269,12 @@ export async function runPlatformApiMain(): Promise<void> {
 }
 
 if (isMainModule()) {
-  runPlatformApiMain().catch((error: unknown) => {
+  failStandaloneWithoutModelOptionOwner().catch((error: unknown) => {
     process.exitCode = 1;
     console.error("Platform API failed to start", error);
   });
+}
+
+async function failStandaloneWithoutModelOptionOwner(): Promise<never> {
+  throw new Error("PLATFORM_MODEL_OPTION_CATALOG_PROVIDER_REQUIRED");
 }
