@@ -218,6 +218,69 @@ describe("canonical ModelControl", () => {
     });
   });
 
+  it("rejects unknown fields at every canonical catalog object boundary", () => {
+    expect(() =>
+      canonicalizeModelInventory({ ...inventory, claims: { admin: true } } as never),
+    ).toThrowError("MODEL_INVENTORY_SCHEMA_UNKNOWN_FIELD");
+    expect(() =>
+      canonicalizeModelInventory({
+        ...inventory,
+        source: { ...inventory.source, siteId: "site-a" },
+      } as never),
+    ).toThrowError("MODEL_INVENTORY_SOURCE_SCHEMA_UNKNOWN_FIELD");
+    expect(() =>
+      canonicalizeModelInventory({
+        ...inventory,
+        providers: [{ ...inventory.providers[0]!, rawSecret: "plaintext" }],
+      } as never),
+    ).toThrowError("MODEL_PROVIDER_SCHEMA_UNKNOWN_FIELD");
+    expect(() =>
+      canonicalizeModelInventory({
+        ...inventory,
+        models: [{ ...inventory.models[0]!, siteId: "site-a" }],
+      } as never),
+    ).toThrowError("MODEL_DEFINITION_SCHEMA_UNKNOWN_FIELD");
+    expect(() =>
+      canonicalizeModelInventory({
+        ...inventory,
+        bindings: [{ ...inventory.bindings[0]!, claims: ["admin"] }],
+      } as never),
+    ).toThrowError("MODEL_BINDING_SCHEMA_UNKNOWN_FIELD");
+    expect(() =>
+      canonicalizeModelInventory({
+        ...inventory,
+        productRoutes: [{ ...inventory.productRoutes[0]!, rawSecret: "plaintext" }],
+      } as never),
+    ).toThrowError("MODEL_ROUTE_SCHEMA_UNKNOWN_FIELD");
+  });
+
+  it("requires route completeness only for products present in the published route set", () => {
+    const chatOnly = canonicalizeModelInventory({
+      ...inventory,
+      models: inventory.models.filter((model) => model.capabilities.includes("chat")),
+      bindings: inventory.bindings.filter((binding) => binding.modelKey.startsWith("chat-")),
+      productRoutes: inventory.productRoutes.filter((route) => route.product === "chat"),
+    });
+    expect(new Set(chatOnly.document.productRoutes.map((route) => route.product))).toEqual(
+      new Set(["chat"]),
+    );
+    expect(() =>
+      canonicalizeModelInventory({
+        ...chatOnly.document,
+        productRoutes: [
+          ...chatOnly.document.productRoutes,
+          {
+            product: "image",
+            role: "main",
+            modelKey: "chat-safe",
+            position: 0,
+            requiredCapabilities: ["chat"],
+          },
+        ],
+      }),
+    ).toThrowError("MODEL_PRODUCT_GENERATION_REQUIRED:image");
+  });
+
   it("keeps Site policy outside the global catalog and pins replacement assignments", () => {
     const catalog = canonicalizeModelInventory(inventory);
     expect(catalog.document).not.toHaveProperty("sitePolicies");

@@ -51,7 +51,90 @@ describe("ModelControl legacy migration bundle", () => {
       }),
     ).toThrowError("MODEL_MIGRATION_BUNDLE_DIGEST_MISMATCH");
   });
+
+  it("rejects unknown bundle, availability, command, policy, catalog, and assignment fields", async () => {
+    const { createModelControlMigrationBundle, verifyModelControlMigrationBundle } =
+      await import("../../src/modules/model-control/migration/model-control-migration-bundle.js");
+    const valid = createModelControlMigrationBundle({
+      catalog: catalog(),
+      providerAvailability: [availability()],
+      sites: [{ siteId: "site-a", hiddenModelKeys: [] }],
+    });
+    const mutations = [
+      { ...valid, claims: { admin: true } },
+      { ...valid, catalog: { ...valid.catalog, siteId: "site-a" } },
+      {
+        ...valid,
+        providerAvailability: [{ ...valid.providerAvailability[0]!, rawSecret: "plaintext" }],
+      },
+      {
+        ...valid,
+        sitePolicyCommands: [{ ...valid.sitePolicyCommands[0]!, claims: ["admin"] }],
+      },
+      {
+        ...valid,
+        sitePolicyCommands: [
+          {
+            ...valid.sitePolicyCommands[0]!,
+            policy: { ...valid.sitePolicyCommands[0]!.policy, rawSecret: "plaintext" },
+          },
+        ],
+      },
+      {
+        ...valid,
+        sitePolicyCommands: [
+          {
+            ...valid.sitePolicyCommands[0]!,
+            policy: {
+              ...valid.sitePolicyCommands[0]!.policy,
+              assignments: [
+                { ...valid.sitePolicyCommands[0]!.policy.assignments[0]!, claims: ["admin"] },
+              ],
+            },
+          },
+        ],
+      },
+    ];
+    for (const mutation of mutations)
+      expect(() => verifyModelControlMigrationBundle(mutation)).toThrow(/UNKNOWN_FIELD/u);
+  });
+
+  it("emits disabled policies for legal products absent from a chat-only catalog", async () => {
+    const { createModelControlMigrationBundle } =
+      await import("../../src/modules/model-control/migration/model-control-migration-bundle.js");
+    const full = catalog();
+    const chatOnly = canonicalizeModelInventory({
+      ...full.document,
+      models: full.document.models.filter((model) => model.capabilities.includes("chat")),
+      bindings: full.document.bindings.filter((binding) => binding.modelKey.startsWith("chat-")),
+      productRoutes: full.document.productRoutes.filter((route) => route.product === "chat"),
+    });
+    const bundle = createModelControlMigrationBundle({
+      catalog: chatOnly,
+      providerAvailability: [availability()],
+      sites: [{ siteId: "site-a", hiddenModelKeys: [] }],
+    });
+    expect(bundle.sitePolicyCommands.map(({ policy }) => [policy.product, policy.enabled])).toEqual(
+      [
+        ["chat", true],
+        ["music", false],
+        ["image", false],
+        ["video", false],
+      ],
+    );
+  });
 });
+
+function availability() {
+  return {
+    providerKey: "provider-a",
+    status: "disabled" as const,
+    health: "down" as const,
+    epoch: "0",
+    observationRef: "legacy:model_provider_accounts:provider-a",
+    observedAt: "2026-07-28T12:00:00.000Z",
+  };
+}
 
 function catalog() {
   const productRoutes = [

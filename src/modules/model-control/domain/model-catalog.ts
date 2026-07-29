@@ -64,47 +64,47 @@ export interface CanonicalizedModelInventory {
 export function canonicalizeModelInventory(
   input: CanonicalModelInventory,
 ): CanonicalizedModelInventory {
-  if (input.schemaVersion !== 1) throw new Error("MODEL_INVENTORY_VERSION_UNSUPPORTED");
-  const providers = sortUnique(input.providers, (item) => item.key, "MODEL_PROVIDER_DUPLICATE").map(
-    (item) =>
-      Object.freeze({
-        ...item,
-        key: identifier(item.key),
-        provider: identifier(item.provider),
-        accountKey: identifier(item.accountKey),
-        secretRef: secretReference(item.secretRef),
-        priority: boundedPosition(item.priority),
-        adapterKind: adapterKind(item.adapterKind),
-      }),
+  const root = strictRecord(
+    input,
+    ["schemaVersion", "source", "providers", "models", "bindings", "productRoutes"],
+    "MODEL_INVENTORY_SCHEMA_UNKNOWN_FIELD",
+  );
+  if (root.schemaVersion !== 1) throw new Error("MODEL_INVENTORY_VERSION_UNSUPPORTED");
+  const providers = sortUnique(
+    array(root.providers, "MODEL_PROVIDERS_INVALID").map(parseProvider),
+    (item) => item.key,
+    "MODEL_PROVIDER_DUPLICATE",
+  ).map((item) =>
+    Object.freeze({
+      key: identifier(item.key),
+      provider: identifier(item.provider),
+      accountKey: identifier(item.accountKey),
+      secretRef: secretReference(item.secretRef),
+      priority: boundedPosition(item.priority),
+      adapterKind: adapterKind(item.adapterKind),
+    }),
   );
   const providerKeys = new Set(providers.map((item) => item.key));
-  const models = sortUnique(input.models, (item) => item.key, "MODEL_DEFINITION_DUPLICATE").map(
-    (item) =>
-      Object.freeze({
-        ...item,
-        key: identifier(item.key),
-        displayName: text(item.displayName),
-        inputModalities: sortedStrings(item.inputModalities),
-        outputModalities: sortedStrings(item.outputModalities),
-        capabilities: sortedStrings(item.capabilities),
-        contextWindow:
-          item.contextWindow === null
-            ? null
-            : positiveInteger(item.contextWindow, "MODEL_CONTEXT_WINDOW_INVALID"),
-      }),
-  );
+  const models = sortUnique(
+    array(root.models, "MODEL_DEFINITIONS_INVALID").map(parseModel),
+    (item) => item.key,
+    "MODEL_DEFINITION_DUPLICATE",
+  ).map((item) => Object.freeze(item));
   const modelKeys = new Set(models.map((item) => item.key));
-  const bindings = sortUnique(input.bindings, (item) => item.key, "MODEL_BINDING_DUPLICATE").map(
-    (item) =>
-      Object.freeze({
-        ...item,
-        key: identifier(item.key),
-        modelKey: member(item.modelKey, modelKeys, "MODEL_BINDING_MODEL_UNKNOWN"),
-        providerKey: member(item.providerKey, providerKeys, "MODEL_BINDING_PROVIDER_UNKNOWN"),
-        upstreamModel: text(item.upstreamModel),
-        gatewayModelName: gatewayName(item.gatewayModelName),
-        priority: boundedPosition(item.priority),
-      }),
+  const bindings = sortUnique(
+    array(root.bindings, "MODEL_BINDINGS_INVALID").map(parseBinding),
+    (item) => item.key,
+    "MODEL_BINDING_DUPLICATE",
+  ).map((item) =>
+    Object.freeze({
+      key: identifier(item.key),
+      modelKey: member(item.modelKey, modelKeys, "MODEL_BINDING_MODEL_UNKNOWN"),
+      providerKey: member(item.providerKey, providerKeys, "MODEL_BINDING_PROVIDER_UNKNOWN"),
+      upstreamModel: text(item.upstreamModel),
+      gatewayModelName: gatewayName(item.gatewayModelName),
+      priority: boundedPosition(item.priority),
+      enabled: item.enabled,
+    }),
   );
   assertNoDuplicate(
     bindings,
@@ -119,12 +119,11 @@ export function canonicalizeModelInventory(
     )
       throw new Error("MODEL_ENABLED_WITHOUT_BINDING");
   const productRoutes = sortUnique(
-    input.productRoutes,
+    array(root.productRoutes, "MODEL_PRODUCT_ROUTES_INVALID").map(parseRoute),
     routePositionKey,
     "MODEL_PRODUCT_ROUTE_POSITION_DUPLICATE",
   ).map((item) =>
     Object.freeze({
-      ...item,
       product: product(item.product),
       role: role(item.role),
       modelKey: member(item.modelKey, modelKeys, "MODEL_ROUTE_MODEL_UNKNOWN"),
@@ -144,7 +143,8 @@ export function canonicalizeModelInventory(
     if (!item.requiredCapabilities.every((capability) => model.capabilities.includes(capability)))
       throw new Error("MODEL_ROUTE_CAPABILITY_IMPOSSIBLE");
   }
-  for (const name of modelProducts) {
+  const publishedProducts = new Set(productRoutes.map((item) => item.product));
+  for (const name of publishedProducts) {
     if (
       !productRoutes.some(
         (item) =>
@@ -167,12 +167,18 @@ export function canonicalizeModelInventory(
     )
       throw new Error(`MODEL_PRODUCT_GENERATION_REQUIRED:${name}`);
   }
-  const sourceKind = input.source.kind;
-  if (sourceKind !== "legacy-kokoro-model" && sourceKind !== "platform-native")
-    throw new Error("MODEL_INVENTORY_SOURCE_INVALID");
+  const source = strictRecord(
+    root.source,
+    ["kind", "reference"],
+    "MODEL_INVENTORY_SOURCE_SCHEMA_UNKNOWN_FIELD",
+  );
+  const sourceKind = parseSourceKind(source.kind);
   const document = deepFreeze({
     schemaVersion: 1 as const,
-    source: { kind: sourceKind, reference: text(input.source.reference) },
+    source: {
+      kind: sourceKind,
+      reference: text(requiredString(source.reference, "MODEL_INVENTORY_SOURCE_INVALID")),
+    },
     providers,
     models,
     bindings,
@@ -192,6 +198,85 @@ export function canonicalizeModelInventory(
   });
 }
 
+function parseProvider(value: unknown): CanonicalProvider {
+  const item = strictRecord(
+    value,
+    ["key", "provider", "accountKey", "secretRef", "adapterKind", "priority"],
+    "MODEL_PROVIDER_SCHEMA_UNKNOWN_FIELD",
+  );
+  return {
+    key: requiredString(item.key, "MODEL_PROVIDER_INVALID"),
+    provider: requiredString(item.provider, "MODEL_PROVIDER_INVALID"),
+    accountKey: requiredString(item.accountKey, "MODEL_PROVIDER_INVALID"),
+    secretRef: requiredString(item.secretRef, "MODEL_PROVIDER_INVALID"),
+    adapterKind: adapterKind(requiredString(item.adapterKind, "MODEL_PROVIDER_INVALID")),
+    priority: requiredNumber(item.priority, "MODEL_PROVIDER_INVALID"),
+  };
+}
+
+function parseModel(value: unknown): CanonicalModelDefinition {
+  const item = strictRecord(
+    value,
+    [
+      "key",
+      "displayName",
+      "inputModalities",
+      "outputModalities",
+      "capabilities",
+      "contextWindow",
+      "enabled",
+    ],
+    "MODEL_DEFINITION_SCHEMA_UNKNOWN_FIELD",
+  );
+  return {
+    key: identifier(requiredString(item.key, "MODEL_DEFINITION_INVALID")),
+    displayName: text(requiredString(item.displayName, "MODEL_DEFINITION_INVALID")),
+    inputModalities: sortedStrings(stringArray(item.inputModalities, "MODEL_DEFINITION_INVALID")),
+    outputModalities: sortedStrings(stringArray(item.outputModalities, "MODEL_DEFINITION_INVALID")),
+    capabilities: sortedStrings(stringArray(item.capabilities, "MODEL_DEFINITION_INVALID")),
+    contextWindow:
+      item.contextWindow === null
+        ? null
+        : positiveInteger(
+            requiredNumber(item.contextWindow, "MODEL_CONTEXT_WINDOW_INVALID"),
+            "MODEL_CONTEXT_WINDOW_INVALID",
+          ),
+    enabled: requiredBoolean(item.enabled, "MODEL_DEFINITION_INVALID"),
+  };
+}
+
+function parseBinding(value: unknown): CanonicalProviderModelBinding {
+  const item = strictRecord(
+    value,
+    ["key", "modelKey", "providerKey", "upstreamModel", "gatewayModelName", "priority", "enabled"],
+    "MODEL_BINDING_SCHEMA_UNKNOWN_FIELD",
+  );
+  return {
+    key: requiredString(item.key, "MODEL_BINDING_INVALID"),
+    modelKey: requiredString(item.modelKey, "MODEL_BINDING_INVALID"),
+    providerKey: requiredString(item.providerKey, "MODEL_BINDING_INVALID"),
+    upstreamModel: requiredString(item.upstreamModel, "MODEL_BINDING_INVALID"),
+    gatewayModelName: requiredString(item.gatewayModelName, "MODEL_BINDING_INVALID"),
+    priority: requiredNumber(item.priority, "MODEL_BINDING_INVALID"),
+    enabled: requiredBoolean(item.enabled, "MODEL_BINDING_INVALID"),
+  };
+}
+
+function parseRoute(value: unknown): CanonicalProductRoute {
+  const item = strictRecord(
+    value,
+    ["product", "role", "modelKey", "position", "requiredCapabilities"],
+    "MODEL_ROUTE_SCHEMA_UNKNOWN_FIELD",
+  );
+  return {
+    product: product(requiredString(item.product, "MODEL_ROUTE_INVALID")),
+    role: role(requiredString(item.role, "MODEL_ROUTE_INVALID")),
+    modelKey: requiredString(item.modelKey, "MODEL_ROUTE_INVALID"),
+    position: requiredNumber(item.position, "MODEL_ROUTE_INVALID"),
+    requiredCapabilities: stringArray(item.requiredCapabilities, "MODEL_ROUTE_INVALID"),
+  };
+}
+
 function stableJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
@@ -199,6 +284,33 @@ function stableJson(value: unknown): string {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([key, child]) => `${JSON.stringify(key)}:${stableJson(child)}`)
     .join(",")}}`;
+}
+function strictRecord(value: unknown, allowed: readonly string[], code: string) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(code);
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some((key) => !allowed.includes(key))) throw new Error(code);
+  return record;
+}
+function array(value: unknown, code: string): readonly unknown[] {
+  if (!Array.isArray(value)) throw new Error(code);
+  return value;
+}
+function requiredString(value: unknown, code: string): string {
+  if (typeof value !== "string") throw new Error(code);
+  return value;
+}
+function requiredNumber(value: unknown, code: string): number {
+  if (typeof value !== "number") throw new Error(code);
+  return value;
+}
+function requiredBoolean(value: unknown, code: string): boolean {
+  if (typeof value !== "boolean") throw new Error(code);
+  return value;
+}
+function stringArray(value: unknown, code: string): readonly string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string"))
+    throw new Error(code);
+  return value;
 }
 function sortUnique<T>(items: readonly T[], key: (item: T) => string, code: string): T[] {
   const result = [...items].sort((a, b) => key(a).localeCompare(key(b)));
@@ -257,6 +369,11 @@ function role(value: string): ModelRouteRole {
 }
 function adapterKind(value: string): ProviderAdapterKind {
   if (value !== "litellm" && value !== "direct") throw new Error("MODEL_ADAPTER_KIND_INVALID");
+  return value;
+}
+function parseSourceKind(value: unknown): CanonicalModelInventory["source"]["kind"] {
+  if (value !== "legacy-kokoro-model" && value !== "platform-native")
+    throw new Error("MODEL_INVENTORY_SOURCE_INVALID");
   return value;
 }
 function deepFreeze<T>(value: T): T {

@@ -127,6 +127,38 @@ describe("ModelControl consumer boundary", () => {
     expect(migration).toContain("set_config('app.site_id',site_key,true)");
     expect(packageManifest).toContain("model-control:import-bundle");
   });
+
+  it("exports legacy state only under an explicit cross-source consistency fence", async () => {
+    const [exporter, snapshot] = await Promise.all([
+      readFile(resolve("scripts/model-control/export-legacy.mts"), "utf8"),
+      readFile(resolve("src/modules/model-control/migration/legacy-export-snapshot.ts"), "utf8"),
+    ]);
+    expect(exporter).toContain('argument("--fence-token")');
+    expect(exporter).toContain('argument("--fenced-at")');
+    expect(exporter).toContain("START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY");
+    expect(exporter).toContain("captureCrossDatabase");
+    expect(exporter).toContain("COMBINED_WATERMARK_SQL");
+    expect(snapshot).toContain("assertSameWatermark");
+    expect(snapshot).toContain("MODEL_LEGACY_EXPORT_FENCE_VIOLATED");
+  });
+
+  it("keeps SQL import schemas closed and validates only published products", async () => {
+    const migration = await readFile(
+      resolve("prisma/migrations/0003_model_control/migration.sql"),
+      "utf8",
+    );
+    expect(migration).toContain("MODEL_INVENTORY_PAYLOAD_UNKNOWN_FIELD");
+    expect(migration).toContain("MODEL_SITE_POLICY_UNKNOWN_FIELD");
+    expect(migration).toContain(
+      "canonical_payload - ARRAY['schemaVersion','source','providers','models','bindings','productRoutes']",
+    );
+    expect(migration).toContain(
+      "item - ARRAY['key','provider','accountKey','secretRef','adapterKind','priority']",
+    );
+    expect(migration).toContain(
+      "IF EXISTS (SELECT 1 FROM jsonb_array_elements(canonical_payload->'productRoutes') route(item)",
+    );
+  });
 });
 
 function migratorWorkerGrant(repository: string, migration: string): boolean {

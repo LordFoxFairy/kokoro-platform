@@ -28,25 +28,22 @@ export interface CanonicalizedSiteModelPolicy {
 }
 
 export function canonicalizeSiteModelPolicy(input: SiteModelPolicy): CanonicalizedSiteModelPolicy {
-  if (input.schemaVersion !== 1) throw new Error("MODEL_SITE_POLICY_VERSION_UNSUPPORTED");
-  const siteId = identifier(input.siteId);
-  const product = parseProduct(input.product);
-  const catalog = parseCatalog(input.catalog);
-  if (input.assignmentMode !== "inherit" && input.assignmentMode !== "replace")
-    throw new Error("MODEL_SITE_ASSIGNMENT_MODE_INVALID");
-  if (catalog.mode === "follow_active" && input.assignmentMode !== "inherit")
+  const root = strictRecord(
+    input,
+    ["schemaVersion", "siteId", "product", "enabled", "catalog", "assignmentMode", "assignments"],
+    "MODEL_SITE_POLICY_SCHEMA_UNKNOWN_FIELD",
+  );
+  if (root.schemaVersion !== 1) throw new Error("MODEL_SITE_POLICY_VERSION_UNSUPPORTED");
+  const siteId = identifier(requiredString(root.siteId, "MODEL_SITE_POLICY_INVALID"));
+  const product = parseProduct(requiredString(root.product, "MODEL_SITE_POLICY_INVALID"));
+  const enabled = requiredBoolean(root.enabled, "MODEL_SITE_POLICY_INVALID");
+  const catalog = parseCatalog(root.catalog);
+  const assignmentMode = parseAssignmentMode(root.assignmentMode);
+  if (catalog.mode === "follow_active" && assignmentMode !== "inherit")
     throw new Error("MODEL_SITE_REPLACE_REQUIRES_PINNED_CATALOG");
 
-  const assignments = [...input.assignments]
-    .map((assignment) =>
-      Object.freeze({
-        ...assignment,
-        role: parseRole(assignment.role),
-        modelKey: identifier(assignment.modelKey),
-        position: position(assignment.position),
-        requiredCapabilities: identifiers(assignment.requiredCapabilities),
-      }),
-    )
+  const assignments = array(root.assignments, "MODEL_SITE_ASSIGNMENTS_INVALID")
+    .map(parseAssignment)
     .sort((left, right) =>
       `${left.role}:${String(left.position).padStart(6, "0")}:${left.modelKey}`.localeCompare(
         `${right.role}:${String(right.position).padStart(6, "0")}:${right.modelKey}`,
@@ -62,9 +59,9 @@ export function canonicalizeSiteModelPolicy(input: SiteModelPolicy): Canonicaliz
     (item) => `${item.role}:${item.modelKey}`,
     "MODEL_SITE_ASSIGNMENT_MODEL_DUPLICATE",
   );
-  if (input.assignmentMode === "inherit" && assignments.length > 0)
+  if (assignmentMode === "inherit" && assignments.length > 0)
     throw new Error("MODEL_SITE_INHERIT_ASSIGNMENTS_FORBIDDEN");
-  if (input.assignmentMode === "replace" && input.enabled) {
+  if (assignmentMode === "replace" && enabled) {
     if (
       !assignments.some(
         (item) =>
@@ -92,9 +89,9 @@ export function canonicalizeSiteModelPolicy(input: SiteModelPolicy): Canonicaliz
     schemaVersion: 1 as const,
     siteId,
     product,
-    enabled: input.enabled,
+    enabled,
     catalog,
-    assignmentMode: input.assignmentMode,
+    assignmentMode,
     assignments,
   });
   const canonicalJson = stableJson(document);
@@ -105,14 +102,39 @@ export function canonicalizeSiteModelPolicy(input: SiteModelPolicy): Canonicaliz
   });
 }
 
-function parseCatalog(value: SiteModelPolicy["catalog"]): SiteModelPolicy["catalog"] {
-  if (value.mode === "follow_active") {
-    if (value.digest !== null) throw new Error("MODEL_SITE_ACTIVE_CATALOG_DIGEST_FORBIDDEN");
+function parseCatalog(value: unknown): SiteModelPolicy["catalog"] {
+  const catalog = strictRecord(
+    value,
+    ["mode", "digest"],
+    "MODEL_SITE_CATALOG_SCHEMA_UNKNOWN_FIELD",
+  );
+  if (catalog.mode === "follow_active") {
+    if (catalog.digest !== null) throw new Error("MODEL_SITE_ACTIVE_CATALOG_DIGEST_FORBIDDEN");
     return Object.freeze({ mode: "follow_active", digest: null });
   }
-  if (value.mode !== "pinned" || !/^[a-f0-9]{64}$/u.test(value.digest))
+  if (
+    catalog.mode !== "pinned" ||
+    typeof catalog.digest !== "string" ||
+    !/^[a-f0-9]{64}$/u.test(catalog.digest)
+  )
     throw new Error("MODEL_SITE_CATALOG_INVALID");
-  return Object.freeze({ mode: "pinned", digest: value.digest });
+  return Object.freeze({ mode: "pinned", digest: catalog.digest });
+}
+function parseAssignment(value: unknown): SiteModelAssignment {
+  const assignment = strictRecord(
+    value,
+    ["role", "modelKey", "position", "requiredCapabilities", "enabled"],
+    "MODEL_SITE_ASSIGNMENT_SCHEMA_UNKNOWN_FIELD",
+  );
+  return Object.freeze({
+    role: parseRole(requiredString(assignment.role, "MODEL_SITE_ASSIGNMENT_INVALID")),
+    modelKey: identifier(requiredString(assignment.modelKey, "MODEL_SITE_ASSIGNMENT_INVALID")),
+    position: position(requiredNumber(assignment.position, "MODEL_SITE_ASSIGNMENT_INVALID")),
+    requiredCapabilities: identifiers(
+      stringArray(assignment.requiredCapabilities, "MODEL_SITE_ASSIGNMENT_INVALID"),
+    ),
+    enabled: requiredBoolean(assignment.enabled, "MODEL_SITE_ASSIGNMENT_INVALID"),
+  });
 }
 function parseProduct(value: string): ModelProduct {
   if (!(modelProducts as readonly string[]).includes(value))
@@ -121,6 +143,11 @@ function parseProduct(value: string): ModelProduct {
 }
 function parseRole(value: string): ModelRouteRole {
   if (value !== "main" && value !== "generation") throw new Error("MODEL_ROUTE_ROLE_INVALID");
+  return value;
+}
+function parseAssignmentMode(value: unknown): SiteModelPolicy["assignmentMode"] {
+  if (value !== "inherit" && value !== "replace")
+    throw new Error("MODEL_SITE_ASSIGNMENT_MODE_INVALID");
   return value;
 }
 function identifier(value: string): string {
@@ -158,5 +185,32 @@ function deepFreeze<T>(value: T): T {
     for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
     Object.freeze(value);
   }
+  return value;
+}
+function strictRecord(value: unknown, allowed: readonly string[], code: string) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(code);
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some((key) => !allowed.includes(key))) throw new Error(code);
+  return record;
+}
+function array(value: unknown, code: string): readonly unknown[] {
+  if (!Array.isArray(value)) throw new Error(code);
+  return value;
+}
+function requiredString(value: unknown, code: string): string {
+  if (typeof value !== "string") throw new Error(code);
+  return value;
+}
+function requiredNumber(value: unknown, code: string): number {
+  if (typeof value !== "number") throw new Error(code);
+  return value;
+}
+function requiredBoolean(value: unknown, code: string): boolean {
+  if (typeof value !== "boolean") throw new Error(code);
+  return value;
+}
+function stringArray(value: unknown, code: string): readonly string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string"))
+    throw new Error(code);
   return value;
 }

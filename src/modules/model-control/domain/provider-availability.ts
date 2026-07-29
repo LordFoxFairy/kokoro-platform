@@ -13,22 +13,35 @@ export function canonicalizeProviderOperationalAvailability(
 ): readonly ProviderOperationalAvailability[] {
   const facts = [...input]
     .map((fact) => {
-      if (!providerKeys.has(fact.providerKey))
-        throw new Error("MODEL_AVAILABILITY_PROVIDER_UNKNOWN");
-      if (fact.status !== "active" && fact.status !== "disabled")
+      const value = strictRecord(
+        fact,
+        ["providerKey", "status", "health", "epoch", "observationRef", "observedAt"],
+        "MODEL_AVAILABILITY_SCHEMA_UNKNOWN_FIELD",
+      );
+      const providerKey = requiredString(value.providerKey, "MODEL_AVAILABILITY_PROVIDER_INVALID");
+      const status = value.status;
+      const health = value.health;
+      const epoch = requiredString(value.epoch, "MODEL_AVAILABILITY_EPOCH_INVALID");
+      if (!providerKeys.has(providerKey)) throw new Error("MODEL_AVAILABILITY_PROVIDER_UNKNOWN");
+      if (status !== "active" && status !== "disabled")
         throw new Error("MODEL_AVAILABILITY_STATUS_INVALID");
-      if (!("unknown healthy degraded down".split(" ") as string[]).includes(fact.health))
+      if (
+        health !== "unknown" &&
+        health !== "healthy" &&
+        health !== "degraded" &&
+        health !== "down"
+      )
         throw new Error("MODEL_AVAILABILITY_HEALTH_INVALID");
-      if (!/^(?:0|[1-9][0-9]*)$/u.test(fact.epoch))
-        throw new Error("MODEL_AVAILABILITY_EPOCH_INVALID");
+      if (!/^(?:0|[1-9][0-9]*)$/u.test(epoch)) throw new Error("MODEL_AVAILABILITY_EPOCH_INVALID");
+      const observationRef = nullableString(value.observationRef, "MODEL_AVAILABILITY_REF_INVALID");
+      const observedAt = nullableString(value.observedAt, "MODEL_AVAILABILITY_TIME_INVALID");
       return Object.freeze({
-        providerKey: identifier(fact.providerKey),
-        status: fact.status,
-        health: fact.health,
-        epoch: fact.epoch,
-        observationRef:
-          fact.observationRef === null ? null : boundedText(fact.observationRef, 512),
-        observedAt: fact.observedAt === null ? null : canonicalInstant(fact.observedAt),
+        providerKey: identifier(providerKey),
+        status,
+        health,
+        epoch,
+        observationRef: observationRef === null ? null : boundedText(observationRef, 512),
+        observedAt: observedAt === null ? null : canonicalInstant(observedAt),
       });
     })
     .sort((left, right) => left.providerKey.localeCompare(right.providerKey));
@@ -40,9 +53,25 @@ export function canonicalizeProviderOperationalAvailability(
   return Object.freeze(facts);
 }
 
+function strictRecord(value: unknown, allowed: readonly string[], code: string) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(code);
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some((key) => !allowed.includes(key))) throw new Error(code);
+  return record;
+}
+
+function requiredString(value: unknown, code: string): string {
+  if (typeof value !== "string") throw new Error(code);
+  return value;
+}
+
+function nullableString(value: unknown, code: string): string | null {
+  if (value === null) return null;
+  return requiredString(value, code);
+}
+
 function identifier(value: string): string {
-  if (!/^[a-z0-9][a-z0-9._:-]{0,127}$/u.test(value))
-    throw new Error("MODEL_IDENTIFIER_INVALID");
+  if (!/^[a-z0-9][a-z0-9._:-]{0,127}$/u.test(value)) throw new Error("MODEL_IDENTIFIER_INVALID");
   return value;
 }
 

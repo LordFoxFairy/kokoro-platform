@@ -16,6 +16,10 @@ Provider execution and secrets remain behind the remote Model Gateway: selection
 
 Catalog releases contain only definitions/providers/bindings/default product routes. Materialization is content-addressed and
 immutable: importing an already known digest returns the original materialization receipt and never changes runtime traffic.
+All external catalog, availability, bundle, Site-policy, catalog-reference and assignment objects use recursively closed schemas;
+canonical JSON is rebuilt only from allowed fields in both TypeScript and the SQL import boundary. Unknown fields never enter an
+immutable payload or its digest. A product is published by having routes in the catalog. Completeness rules apply only to those
+published products; an absent Music/Image/Video route set is legal and restores that Site product as disabled.
 Activation is a separate command with its own immutable receipt and one global active-pointer CAS. A fresh activation ID can
 promote or roll back to any materialized digest; compare-and-swap prevents a stale operator from overwriting a newer decision. Site
 policies are a different concurrency domain: each `(Site, product)` has its own immutable revisions and pointer CAS. `follow_active`
@@ -45,6 +49,11 @@ per Site. A product whose hidden routes leave no viable main/generation path is 
 policy. Import verifies the whole bundle digest and a signed migration context, then replays fixed import, activation and Site change
 IDs. Re-running the same bundle returns the same receipts and revisions; a changed payload under a reused ID fails closed. Cross-Site
 replay is available only to the admin migration purpose carrying `model:site-policy:migrate`; ordinary commands remain exact-Site.
+Export requires an operator-held write quiesce identified by `--fence-token` and `--fenced-at`. When both sources resolve to one
+database URL, all Model and Site reads share one read-only repeatable-read consistent snapshot. With separate databases, each source
+uses its own consistent snapshot and full-content watermark; pre-snapshot, in-snapshot and post-commit watermarks must match and no
+row may be newer than the fence. The raw fence token is not persisted: a digest of the fence and both source watermarks is embedded
+in the catalog source reference and therefore covered by the bundle digest.
 
 Task 7 adds the authoritative Site foreign key. Task 15 supplies Admin UI/command adapters. The legacy package remains only as a
 read-only migration source and rollback artifact until cross-repository consumers complete cutover; no new Platform consumer may

@@ -107,12 +107,27 @@ export function createModelControlMigrationBundle(input: {
 }
 
 export function verifyModelControlMigrationBundle(input: unknown): ModelControlMigrationBundle {
-  const candidate = record(input, "MODEL_MIGRATION_BUNDLE_INVALID");
+  const candidate = strictRecord(
+    input,
+    [
+      "schemaVersion",
+      "bundleDigest",
+      "importId",
+      "activationId",
+      "expectedPointerRevision",
+      "catalogDigest",
+      "catalog",
+      "providerAvailability",
+      "sitePolicyCommands",
+    ],
+    "MODEL_MIGRATION_BUNDLE_SCHEMA_UNKNOWN_FIELD",
+  );
   if (candidate.schemaVersion !== 1) throw new Error("MODEL_MIGRATION_BUNDLE_VERSION_INVALID");
   const catalog = canonicalizeModelInventory(
-    record(
+    strictRecord(
       candidate.catalog,
-      "MODEL_MIGRATION_CATALOG_INVALID",
+      ["schemaVersion", "source", "providers", "models", "bindings", "productRoutes"],
+      "MODEL_MIGRATION_CATALOG_SCHEMA_UNKNOWN_FIELD",
     ) as unknown as CanonicalModelInventory,
   );
   if (candidate.catalogDigest !== catalog.digest)
@@ -127,9 +142,25 @@ export function verifyModelControlMigrationBundle(input: unknown): ModelControlM
     candidate.sitePolicyCommands,
     "MODEL_MIGRATION_SITE_COMMANDS_INVALID",
   ).map((value) => {
-    const command = record(value, "MODEL_MIGRATION_SITE_COMMAND_INVALID");
+    const command = strictRecord(
+      value,
+      ["changeId", "expectedRevision", "policyDigest", "policy"],
+      "MODEL_MIGRATION_SITE_COMMAND_SCHEMA_UNKNOWN_FIELD",
+    );
     const policy = canonicalizeSiteModelPolicy(
-      record(command.policy, "MODEL_MIGRATION_SITE_POLICY_INVALID") as unknown as SiteModelPolicy,
+      strictRecord(
+        command.policy,
+        [
+          "schemaVersion",
+          "siteId",
+          "product",
+          "enabled",
+          "catalog",
+          "assignmentMode",
+          "assignments",
+        ],
+        "MODEL_MIGRATION_SITE_POLICY_SCHEMA_UNKNOWN_FIELD",
+      ) as unknown as SiteModelPolicy,
     );
     if (
       command.expectedRevision !== "0" ||
@@ -171,7 +202,11 @@ export function verifyModelControlMigrationBundle(input: unknown): ModelControlM
 }
 
 function parseProviderAvailability(value: unknown): ProviderOperationalAvailability {
-  const fact = record(value, "MODEL_MIGRATION_AVAILABILITY_INVALID");
+  const fact = strictRecord(
+    value,
+    ["providerKey", "status", "health", "epoch", "observationRef", "observedAt"],
+    "MODEL_MIGRATION_AVAILABILITY_SCHEMA_UNKNOWN_FIELD",
+  );
   return {
     providerKey: string(fact.providerKey, "MODEL_MIGRATION_AVAILABILITY_INVALID"),
     status: string(fact.status, "MODEL_MIGRATION_AVAILABILITY_INVALID") as "active" | "disabled",
@@ -258,6 +293,12 @@ function deepFreeze<T>(value: T): T {
 function record(value: unknown, code: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(code);
   return value as Record<string, unknown>;
+}
+
+function strictRecord(value: unknown, allowed: readonly string[], code: string) {
+  const result = record(value, code);
+  if (Object.keys(result).some((key) => !allowed.includes(key))) throw new Error(code);
+  return result;
 }
 
 function array(value: unknown, code: string): readonly unknown[] {

@@ -1,5 +1,5 @@
 import { writeFile } from "node:fs/promises";
-import mysql from "mysql2/promise";
+import mysql, { type Connection, type RowDataPacket } from "mysql2/promise";
 import {
   canonicalizeModelInventory,
   type CanonicalModelInventory,
@@ -7,25 +7,36 @@ import {
   type ModelProduct,
 } from "../../src/modules/model-control/domain/model-catalog.js";
 import { createModelControlMigrationBundle } from "../../src/modules/model-control/migration/model-control-migration-bundle.js";
+import {
+  captureFencedLegacySnapshots,
+  createLegacySourceWatermark,
+  legacySnapshotReference,
+  sameLegacyDatabaseIdentity,
+  type CapturedLegacySnapshot,
+  type LegacySnapshotParticipant,
+} from "../../src/modules/model-control/migration/legacy-export-snapshot.js";
 
 const outputPath = argument("--output");
 const modelDatabaseUrl = requiredEnv("DATABASE_URL_MODEL");
 const siteDatabaseUrl = requiredEnv("DATABASE_URL_SITE");
-const connection = await mysql.createConnection({ uri: modelDatabaseUrl, rowsAsArray: false });
-const siteConnection = await mysql.createConnection({ uri: siteDatabaseUrl, rowsAsArray: false });
+const fence = {
+  token: argument("--fence-token"),
+  fencedAt: argument("--fenced-at"),
+};
+const connections: Connection[] = [];
 try {
-  const [providerRows] = await connection.query<Record<string, unknown>[]>(
-    `SELECT id, provider, \`key\`, secretRef, priority, transportKind, status, healthStatus, updatedAt FROM model_provider_accounts WHERE deletedAt IS NULL ORDER BY provider, \`key\``,
-  );
-  const [modelRows] = await connection.query<Record<string, unknown>[]>(
-    `SELECT id, providerAccountId, provider, modelName, displayName, featureKey, labelKeys, inputModalities, outputModalities, transportKind, gatewayModelName, contextWindow, priority, status FROM model_bindings WHERE deletedAt IS NULL ORDER BY featureKey, priority, id`,
-  );
-  const [policyRows] = await connection.query<Record<string, unknown>[]>(
-    `SELECT siteId, labelKey, status FROM model_site_policies ORDER BY siteId, labelKey`,
-  );
-  const [siteRows] = await siteConnection.query<Record<string, unknown>[]>(
-    `SELECT id FROM site_sites WHERE deletedAt IS NULL ORDER BY id`,
-  );
+  const sameDatabase = sameLegacyDatabaseIdentity(modelDatabaseUrl, siteDatabaseUrl);
+  const captures: readonly CapturedLegacySnapshot<unknown>[] = sameDatabase
+    ? await captureSingleDatabase(modelDatabaseUrl, connections, fence)
+    : await captureCrossDatabase(modelDatabaseUrl, siteDatabaseUrl, connections, fence);
+  const modelPayload = sameDatabase
+    ? payload<CombinedPayload>(captures, "model+site").model
+    : payload<ModelPayload>(captures, "model");
+  const sitePayload = sameDatabase
+    ? payload<CombinedPayload>(captures, "model+site").site
+    : payload<SitePayload>(captures, "site");
+  const { providerRows, modelRows, policyRows } = modelPayload;
+  const { siteRows } = sitePayload;
   const providers = providerRows.map((row) => ({
     key: string(row.id),
     provider: string(row.provider),
@@ -60,7 +71,10 @@ try {
     throw new Error("LEGACY_MODEL_POLICY_SITE_UNKNOWN");
   const inventory: CanonicalModelInventory = {
     schemaVersion: 1,
-    source: { kind: "legacy-kokoro-model", reference: argument("--source-ref") },
+    source: {
+      kind: "legacy-kokoro-model",
+      reference: legacySnapshotReference(argument("--source-ref"), fence, captures),
+    },
     providers,
     models,
     bindings,
@@ -94,11 +108,154 @@ try {
   });
   await writeFile(outputPath, `${JSON.stringify(bundle)}\n`, { encoding: "utf8", flag: "wx" });
   process.stdout.write(
-    `${JSON.stringify({ outputPath, bundleDigest: bundle.bundleDigest, catalogDigest: canonical.digest, counts: canonical.counts, sitePolicies: bundle.sitePolicyCommands.length })}\n`,
+    `${JSON.stringify({ outputPath, bundleDigest: bundle.bundleDigest, catalogDigest: canonical.digest, counts: canonical.counts, sitePolicies: bundle.sitePolicyCommands.length, fence: { fencedAt: fence.fencedAt, sources: captures.map(({ name, watermark }) => ({ name, watermark })) } })}\n`,
   );
 } finally {
-  await Promise.all([connection.end(), siteConnection.end()]);
+  await Promise.allSettled(connections.map((connection) => connection.end()));
 }
+
+interface ModelPayload {
+  readonly providerRows: Record<string, unknown>[];
+  readonly modelRows: Record<string, unknown>[];
+  readonly policyRows: Record<string, unknown>[];
+}
+interface SitePayload {
+  readonly siteRows: Record<string, unknown>[];
+}
+interface CombinedPayload {
+  readonly model: ModelPayload;
+  readonly site: SitePayload;
+}
+type LegacyRow = RowDataPacket & Record<string, unknown>;
+
+async function captureSingleDatabase(
+  databaseUrl: string,
+  connections: Connection[],
+  fence: { readonly token: string; readonly fencedAt: string },
+): Promise<readonly CapturedLegacySnapshot<unknown>[]> {
+  const snapshot = await openConnection(databaseUrl, connections);
+  const verifier = await openConnection(databaseUrl, connections);
+  return captureFencedLegacySnapshots<unknown>(
+    [
+      mysqlParticipant("model+site", snapshot, verifier, COMBINED_WATERMARK_SQL, async () => ({
+        model: await readModelPayload(snapshot),
+        site: await readSitePayload(snapshot),
+      })),
+    ],
+    fence,
+  );
+}
+
+async function captureCrossDatabase(
+  modelDatabaseUrl: string,
+  siteDatabaseUrl: string,
+  connections: Connection[],
+  fence: { readonly token: string; readonly fencedAt: string },
+): Promise<readonly CapturedLegacySnapshot<unknown>[]> {
+  const modelSnapshot = await openConnection(modelDatabaseUrl, connections);
+  const modelVerifier = await openConnection(modelDatabaseUrl, connections);
+  const siteSnapshot = await openConnection(siteDatabaseUrl, connections);
+  const siteVerifier = await openConnection(siteDatabaseUrl, connections);
+  return captureFencedLegacySnapshots<unknown>(
+    [
+      mysqlParticipant("model", modelSnapshot, modelVerifier, MODEL_WATERMARK_SQL, () =>
+        readModelPayload(modelSnapshot),
+      ),
+      mysqlParticipant("site", siteSnapshot, siteVerifier, SITE_WATERMARK_SQL, () =>
+        readSitePayload(siteSnapshot),
+      ),
+    ],
+    fence,
+  );
+}
+
+function mysqlParticipant<Payload>(
+  name: string,
+  snapshot: Connection,
+  verifier: Connection,
+  watermarkSql: string,
+  readPayload: () => Promise<Payload>,
+): LegacySnapshotParticipant<Payload> {
+  return {
+    name,
+    readCurrentWatermark: () => readWatermark(verifier, watermarkSql),
+    beginConsistentSnapshot: async () => {
+      await snapshot.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+      await snapshot.query("START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY");
+    },
+    readSnapshotWatermark: () => readWatermark(snapshot, watermarkSql),
+    readPayload,
+    commit: () => snapshot.commit(),
+    rollback: () => snapshot.rollback(),
+  };
+}
+
+async function readModelPayload(connection: Connection): Promise<ModelPayload> {
+  const [providerRows] = await connection.query<LegacyRow[]>(
+    `SELECT id, provider, \`key\`, secretRef, priority, transportKind, status, healthStatus, updatedAt FROM model_provider_accounts WHERE deletedAt IS NULL ORDER BY provider, \`key\``,
+  );
+  const [modelRows] = await connection.query<LegacyRow[]>(
+    `SELECT id, providerAccountId, provider, modelName, displayName, featureKey, labelKeys, inputModalities, outputModalities, transportKind, gatewayModelName, contextWindow, priority, status FROM model_bindings WHERE deletedAt IS NULL ORDER BY featureKey, priority, id`,
+  );
+  const [policyRows] = await connection.query<LegacyRow[]>(
+    `SELECT siteId, labelKey, status FROM model_site_policies ORDER BY siteId, labelKey`,
+  );
+  return { providerRows, modelRows, policyRows };
+}
+
+async function readSitePayload(connection: Connection): Promise<SitePayload> {
+  const [siteRows] = await connection.query<LegacyRow[]>(
+    `SELECT id FROM site_sites WHERE deletedAt IS NULL ORDER BY id`,
+  );
+  return { siteRows };
+}
+
+async function readWatermark(connection: Connection, sql: string) {
+  const [rows] = await connection.query<LegacyRow[]>(sql);
+  return createLegacySourceWatermark(
+    rows.map((row) => ({
+      sourceName: string(row.sourceName),
+      rowKey: string(row.rowKey),
+      rowVersion: string(row.rowVersion),
+      updatedAt: date(row.updatedAt),
+    })),
+  );
+}
+
+async function openConnection(databaseUrl: string, connections: Connection[]) {
+  const connection = await mysql.createConnection({
+    uri: databaseUrl,
+    rowsAsArray: false,
+    timezone: "Z",
+  });
+  connections.push(connection);
+  return connection;
+}
+
+function payload<Payload>(
+  captures: readonly CapturedLegacySnapshot<unknown>[],
+  name: string,
+): Payload {
+  const capture = captures.find((candidate) => candidate.name === name);
+  if (!capture) throw new Error(`MODEL_LEGACY_EXPORT_SOURCE_MISSING:${name}`);
+  return capture.payload as Payload;
+}
+
+const MODEL_WATERMARK_ROWS = `
+  SELECT 'model-provider' AS sourceName,id AS rowKey,updatedAt,
+    SHA2(JSON_OBJECT('id',id,'provider',provider,'key',\`key\`,'secretRef',secretRef,'priority',priority,'transportKind',transportKind,'status',status,'healthStatus',healthStatus,'deletedAt',deletedAt),256) AS rowVersion
+  FROM model_provider_accounts
+  UNION ALL SELECT 'model-binding',id,updatedAt,
+    SHA2(JSON_OBJECT('id',id,'providerAccountId',providerAccountId,'provider',provider,'modelName',modelName,'displayName',displayName,'featureKey',featureKey,'labelKeys',labelKeys,'inputModalities',inputModalities,'outputModalities',outputModalities,'transportKind',transportKind,'gatewayModelName',gatewayModelName,'contextWindow',contextWindow,'priority',priority,'status',status,'deletedAt',deletedAt),256)
+  FROM model_bindings
+  UNION ALL SELECT 'model-site-policy',id,updatedAt,
+    SHA2(JSON_OBJECT('id',id,'siteId',siteId,'labelKey',labelKey,'status',status),256)
+  FROM model_site_policies`;
+const SITE_WATERMARK_ROWS = `SELECT 'site' AS sourceName,id AS rowKey,updatedAt,
+  SHA2(JSON_OBJECT('id',id,'deletedAt',deletedAt),256) AS rowVersion FROM site_sites`;
+const MODEL_WATERMARK_SQL = `SELECT sourceName,rowKey,rowVersion,updatedAt FROM (${MODEL_WATERMARK_ROWS}) source_rows ORDER BY sourceName,rowKey`;
+const SITE_WATERMARK_SQL = `SELECT sourceName,rowKey,rowVersion,updatedAt FROM (${SITE_WATERMARK_ROWS}) source_rows ORDER BY sourceName,rowKey`;
+const COMBINED_WATERMARK_SQL = `SELECT sourceName,rowKey,rowVersion,updatedAt FROM (${MODEL_WATERMARK_ROWS} UNION ALL ${SITE_WATERMARK_ROWS}) source_rows ORDER BY sourceName,rowKey`;
 
 function routes(rows: Record<string, unknown>[]): CanonicalProductRoute[] {
   const chat = rows
@@ -113,19 +270,20 @@ function routes(rows: Record<string, unknown>[]): CanonicalProductRoute[] {
     }));
   const result: CanonicalProductRoute[] = [...chat];
   for (const product of ["music", "image", "video"] as const) {
-    result.push(...chat.map((route) => ({ ...route, product })));
-    result.push(
-      ...rows
-        .filter((row) => row.featureKey === product && row.status === "active")
-        .sort(byPriority)
-        .map((row, position) => ({
-          product,
-          role: "generation" as const,
-          modelKey: string(row.id),
-          position,
-          requiredCapabilities: [`${product}.generate`],
-        })),
-    );
+    const generation = rows
+      .filter((row) => row.featureKey === product && row.status === "active")
+      .sort(byPriority)
+      .map((row, position) => ({
+        product,
+        role: "generation" as const,
+        modelKey: string(row.id),
+        position,
+        requiredCapabilities: [`${product}.generate`],
+      }));
+    if (generation.length > 0) {
+      result.push(...chat.map((route) => ({ ...route, product })));
+      result.push(...generation);
+    }
   }
   return result;
 }
@@ -151,6 +309,10 @@ function argument(name: string): string {
 function string(value: unknown): string {
   if (typeof value !== "string" || !value) throw new Error("LEGACY_STRING_INVALID");
   return value;
+}
+function date(value: unknown): string | Date {
+  if (value instanceof Date || typeof value === "string") return value;
+  throw new Error("LEGACY_DATE_INVALID");
 }
 function number(value: unknown): number {
   const parsed = Number(value);

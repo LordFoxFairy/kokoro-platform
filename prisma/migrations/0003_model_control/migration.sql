@@ -218,7 +218,13 @@ BEGIN
     RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='MODEL_INVENTORY_DIGEST_MISMATCH';
   END IF;
   canonical_payload := p_canonical_json::JSONB;
-  IF canonical_payload->>'schemaVersion' IS DISTINCT FROM '1'
+  IF jsonb_typeof(canonical_payload) IS DISTINCT FROM 'object'
+     OR NOT (canonical_payload ?& ARRAY['schemaVersion','source','providers','models','bindings','productRoutes'])
+     OR canonical_payload - ARRAY['schemaVersion','source','providers','models','bindings','productRoutes']::TEXT[] <> '{}'::JSONB
+     OR canonical_payload->>'schemaVersion' IS DISTINCT FROM '1'
+     OR jsonb_typeof(canonical_payload->'source') IS DISTINCT FROM 'object'
+     OR NOT ((canonical_payload->'source') ?& ARRAY['kind','reference'])
+     OR (canonical_payload->'source') - ARRAY['kind','reference']::TEXT[] <> '{}'::JSONB
      OR canonical_payload#>>'{source,kind}' IS NULL
      OR canonical_payload#>>'{source,kind}' NOT IN ('legacy-kokoro-model','platform-native')
      OR NULLIF(canonical_payload#>>'{source,reference}', '') IS NULL
@@ -227,6 +233,29 @@ BEGIN
      OR jsonb_typeof(canonical_payload->'bindings') IS DISTINCT FROM 'array'
      OR jsonb_typeof(canonical_payload->'productRoutes') IS DISTINCT FROM 'array' THEN
     RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='MODEL_INVENTORY_PAYLOAD_INVALID';
+  END IF;
+  IF EXISTS(
+       SELECT 1 FROM jsonb_array_elements(canonical_payload->'providers') provider(item)
+       WHERE jsonb_typeof(item) IS DISTINCT FROM 'object'
+          OR NOT (item ?& ARRAY['key','provider','accountKey','secretRef','adapterKind','priority'])
+          OR item - ARRAY['key','provider','accountKey','secretRef','adapterKind','priority']::TEXT[] <> '{}'::JSONB
+     ) OR EXISTS(
+       SELECT 1 FROM jsonb_array_elements(canonical_payload->'models') model(item)
+       WHERE jsonb_typeof(item) IS DISTINCT FROM 'object'
+          OR NOT (item ?& ARRAY['key','displayName','inputModalities','outputModalities','capabilities','contextWindow','enabled'])
+          OR item - ARRAY['key','displayName','inputModalities','outputModalities','capabilities','contextWindow','enabled']::TEXT[] <> '{}'::JSONB
+     ) OR EXISTS(
+       SELECT 1 FROM jsonb_array_elements(canonical_payload->'bindings') binding(item)
+       WHERE jsonb_typeof(item) IS DISTINCT FROM 'object'
+          OR NOT (item ?& ARRAY['key','modelKey','providerKey','upstreamModel','gatewayModelName','priority','enabled'])
+          OR item - ARRAY['key','modelKey','providerKey','upstreamModel','gatewayModelName','priority','enabled']::TEXT[] <> '{}'::JSONB
+     ) OR EXISTS(
+       SELECT 1 FROM jsonb_array_elements(canonical_payload->'productRoutes') route(item)
+       WHERE jsonb_typeof(item) IS DISTINCT FROM 'object'
+          OR NOT (item ?& ARRAY['product','role','modelKey','position','requiredCapabilities'])
+          OR item - ARRAY['product','role','modelKey','position','requiredCapabilities']::TEXT[] <> '{}'::JSONB
+     ) THEN
+    RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='MODEL_INVENTORY_PAYLOAD_UNKNOWN_FIELD';
   END IF;
   IF p_counts IS NULL OR p_counts IS DISTINCT FROM jsonb_build_object(
     'providers',jsonb_array_length(canonical_payload->'providers'),
@@ -257,15 +286,18 @@ BEGIN
     RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='MODEL_PROVIDER_AVAILABILITY_INVALID';
   END IF;
   FOREACH product_name IN ARRAY ARRAY['chat','music','image','video'] LOOP
-    IF NOT EXISTS (SELECT 1 FROM jsonb_array_elements(canonical_payload->'productRoutes') route(item)
-      WHERE item->>'product'=product_name AND item->>'role'='main' AND item->>'position'='0'
-        AND item->'requiredCapabilities' ? 'chat') THEN
-      RAISE EXCEPTION USING ERRCODE='23514', MESSAGE='MODEL_PRODUCT_MAIN_REQUIRED:'||product_name;
-    END IF;
-    IF product_name <> 'chat' AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(canonical_payload->'productRoutes') route(item)
-      WHERE item->>'product'=product_name AND item->>'role'='generation' AND item->>'position'='0'
-        AND item->'requiredCapabilities' ? (product_name||'.generate')) THEN
-      RAISE EXCEPTION USING ERRCODE='23514', MESSAGE='MODEL_PRODUCT_GENERATION_REQUIRED:'||product_name;
+    IF EXISTS (SELECT 1 FROM jsonb_array_elements(canonical_payload->'productRoutes') route(item)
+      WHERE item->>'product'=product_name) THEN
+      IF NOT EXISTS (SELECT 1 FROM jsonb_array_elements(canonical_payload->'productRoutes') route(item)
+        WHERE item->>'product'=product_name AND item->>'role'='main' AND item->>'position'='0'
+          AND item->'requiredCapabilities' ? 'chat') THEN
+        RAISE EXCEPTION USING ERRCODE='23514', MESSAGE='MODEL_PRODUCT_MAIN_REQUIRED:'||product_name;
+      END IF;
+      IF product_name <> 'chat' AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(canonical_payload->'productRoutes') route(item)
+        WHERE item->>'product'=product_name AND item->>'role'='generation' AND item->>'position'='0'
+          AND item->'requiredCapabilities' ? (product_name||'.generate')) THEN
+        RAISE EXCEPTION USING ERRCODE='23514', MESSAGE='MODEL_PRODUCT_GENERATION_REQUIRED:'||product_name;
+      END IF;
     END IF;
   END LOOP;
   IF EXISTS (SELECT 1 FROM jsonb_array_elements(canonical_payload->'models') model(item)
@@ -415,7 +447,13 @@ BEGIN
   cross_site_migration:=NULLIF(current_setting('app.site_id',true),'') IS NULL
     AND current_setting('app.purpose',true)='model_control_migration'
     AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'model:site-policy:migrate';
-  IF policy->>'schemaVersion' IS DISTINCT FROM '1' OR NULLIF(site_key,'') IS NULL
+  IF jsonb_typeof(policy) IS DISTINCT FROM 'object'
+     OR NOT (policy ?& ARRAY['schemaVersion','siteId','product','enabled','catalog','assignmentMode','assignments'])
+     OR policy - ARRAY['schemaVersion','siteId','product','enabled','catalog','assignmentMode','assignments']::TEXT[] <> '{}'::JSONB
+     OR jsonb_typeof(policy->'catalog') IS DISTINCT FROM 'object'
+     OR NOT ((policy->'catalog') ?& ARRAY['mode','digest'])
+     OR (policy->'catalog') - ARRAY['mode','digest']::TEXT[] <> '{}'::JSONB
+     OR policy->>'schemaVersion' IS DISTINCT FROM '1' OR NULLIF(site_key,'') IS NULL
      OR product_key IS NULL OR product_key NOT IN ('chat','music','image','video')
      OR policy->>'enabled' IS NULL OR policy->>'enabled' NOT IN ('true','false')
      OR catalog_mode_value IS NULL OR catalog_mode_value NOT IN ('follow_active','pinned')
@@ -423,6 +461,14 @@ BEGIN
      OR jsonb_typeof(policy->'assignments') IS DISTINCT FROM 'array'
      OR (current_setting('app.site_id',true) IS DISTINCT FROM site_key AND NOT cross_site_migration) THEN
     RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='MODEL_SITE_POLICY_PAYLOAD_INVALID';
+  END IF;
+  IF EXISTS(
+    SELECT 1 FROM jsonb_array_elements(policy->'assignments') assignment(item)
+    WHERE jsonb_typeof(item) IS DISTINCT FROM 'object'
+       OR NOT (item ?& ARRAY['role','modelKey','position','requiredCapabilities','enabled'])
+       OR item - ARRAY['role','modelKey','position','requiredCapabilities','enabled']::TEXT[] <> '{}'::JSONB
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='MODEL_SITE_POLICY_UNKNOWN_FIELD';
   END IF;
   IF cross_site_migration THEN PERFORM set_config('app.site_id',site_key,true); END IF;
   IF catalog_mode_value='follow_active' AND (catalog_digest_value IS NOT NULL OR assignment_mode_value<>'inherit') THEN
