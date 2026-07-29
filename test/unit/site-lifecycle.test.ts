@@ -28,10 +28,19 @@ const candidate: SiteRelease = Object.freeze({
   releaseManifestDigest: "b".repeat(64),
   certificationDigest: "c".repeat(64),
 });
+const activationBinding = Object.freeze({
+  siteProjectBindingRef: "binding_01",
+  siteProjectBindingEpoch: 1n,
+  environment: "production" as const,
+  region: "us-east-1",
+  audience: "site-product",
+  sessionContractRevision: "browser-v3",
+});
 
 describe("Site lifecycle", () => {
   it("promotes an observed immutable release with an exact active-pointer CAS", () => {
     const preparing = beginActivation({
+      ...activationBinding,
       attemptRef: "activation_02",
       site: activeSite,
       candidate,
@@ -67,6 +76,7 @@ describe("Site lifecycle", () => {
   it("never overwrites a pointer changed by another activation", () => {
     const attempt = observePromotion(
       requestPromotion(beginActivation({
+        ...activationBinding,
         attemptRef: "activation_02",
         site: activeSite,
         candidate,
@@ -95,6 +105,7 @@ describe("Site lifecycle", () => {
 
   it("rejects unobserved, unhealthy, mismatched, and uncertified candidates", () => {
     const preparing = beginActivation({
+      ...activationBinding,
       attemptRef: "activation_02",
       site: activeSite,
       candidate,
@@ -118,6 +129,7 @@ describe("Site lifecycle", () => {
       trafficReady: true,
     })).toThrow("SITE_DEPLOYMENT_OBSERVATION_MISMATCH");
     expect(() => beginActivation({
+      ...activationBinding,
       attemptRef: "activation_03",
       site: activeSite,
       candidate: { ...candidate, certificationDigest: "" },

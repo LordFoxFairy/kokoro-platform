@@ -93,6 +93,12 @@ CREATE TABLE platform.site_activation_attempt (
   candidate_web_artifact_digest CHAR(64) NOT NULL CHECK(candidate_web_artifact_digest ~ '^[0-9a-f]{64}$'),
   candidate_manifest_digest CHAR(64) NOT NULL CHECK(candidate_manifest_digest ~ '^[0-9a-f]{64}$'),
   candidate_certification_digest CHAR(64) NOT NULL CHECK(candidate_certification_digest ~ '^[0-9a-f]{64}$'),
+  site_project_binding_ref TEXT NOT NULL,
+  site_project_binding_epoch BIGINT NOT NULL CHECK(site_project_binding_epoch > 0),
+  environment TEXT NOT NULL CHECK(environment IN ('development','preview','production')),
+  region TEXT NOT NULL,
+  audience TEXT NOT NULL,
+  session_contract_revision TEXT NOT NULL,
   state TEXT NOT NULL CHECK(state IN ('preparing','promote_requested','observing','pointer_committing','draining','succeeded','failed','unknown')),
   requested_at TIMESTAMPTZ NOT NULL,
   provider_operation_key TEXT UNIQUE,
@@ -102,6 +108,9 @@ CREATE TABLE platform.site_activation_attempt (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   FOREIGN KEY(candidate_release_ref,site_ref) REFERENCES platform.site_release(release_ref,site_ref),
   FOREIGN KEY(expected_active_release_ref,site_ref) REFERENCES platform.site_release(release_ref,site_ref),
+  FOREIGN KEY(site_project_binding_ref,site_ref) REFERENCES platform.site_project_binding(binding_ref,site_ref),
+  FOREIGN KEY(deployment_ref,site_ref,candidate_release_ref)
+    REFERENCES platform.site_deployment_binding(deployment_ref,site_ref,release_ref),
   CHECK((state='preparing') OR provider_operation_key IS NOT NULL),
   CHECK((state NOT IN ('pointer_committing','draining','succeeded')) OR
         (deployment_ref IS NOT NULL AND observed_at IS NOT NULL))

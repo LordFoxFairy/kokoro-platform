@@ -11,12 +11,30 @@ import {
   verifySiteRelease,
   type ActivationAttempt,
   type SiteAggregate,
+  type SiteDeploymentBinding,
+  type SiteDeploymentObservation,
   type SiteRelease,
 } from "../../domain/site-lifecycle.js";
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
 import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
 
 export class PostgresSiteAuthorityRepository implements SiteAuthorityRepository, SitePublicationRepository {
+  async loadActiveProjectBindingForUpdate(
+    transaction: PlatformTransaction,
+    siteRef: string,
+    environment: "development" | "preview" | "production",
+  ): Promise<Readonly<{ bindingRef: string; bindingEpoch: bigint }> | null> {
+    const rows = await resolvePlatformTransaction(transaction).query<{
+      bindingRef: string; bindingEpoch: bigint;
+    }>(
+      `SELECT binding_ref AS "bindingRef", binding_epoch AS "bindingEpoch"
+       FROM platform.site_project_binding
+       WHERE site_ref=$1 AND environment=$2 AND state='active' FOR UPDATE`,
+      [siteRef, environment],
+    );
+    return rows[0] === undefined ? null : Object.freeze({ ...rows[0] });
+  }
+
   async insertSiteWithProjectBinding(
     transaction: PlatformTransaction,
     site: SiteAuthorityDefinition,
@@ -106,6 +124,9 @@ export class PostgresSiteAuthorityRepository implements SiteAuthorityRepository,
               candidate_web_artifact_digest AS "candidateWebArtifactDigest",
               candidate_manifest_digest AS "candidateManifestDigest",
               candidate_certification_digest AS "candidateCertificationDigest",
+              site_project_binding_ref AS "siteProjectBindingRef",
+              site_project_binding_epoch AS "siteProjectBindingEpoch",
+              environment,region,audience,session_contract_revision AS "sessionContractRevision",
               state, requested_at AS "requestedAt", provider_operation_key AS "providerOperationKey",
               deployment_ref AS "deploymentRef", observed_at AS "observedAt"
        FROM platform.site_activation_attempt WHERE attempt_ref=$1 FOR UPDATE`,
@@ -124,8 +145,9 @@ export class PostgresSiteAuthorityRepository implements SiteAuthorityRepository,
       `INSERT INTO platform.site_activation_attempt
        (attempt_ref,site_ref,candidate_release_ref,expected_active_release_ref,
         candidate_web_artifact_digest,candidate_manifest_digest,candidate_certification_digest,
-        state,requested_at,provider_operation_key,deployment_ref,observed_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::timestamptz,$10,$11,$12::timestamptz)`,
+        site_project_binding_ref,site_project_binding_epoch,environment,region,audience,
+        session_contract_revision,state,requested_at,provider_operation_key,deployment_ref,observed_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::timestamptz,$16,$17,$18::timestamptz)`,
       activationValues(value),
     );
     if (changed !== 1) throw new Error("SITE_ACTIVATION_INSERT_FAILED");
@@ -141,12 +163,57 @@ export class PostgresSiteAuthorityRepository implements SiteAuthorityRepository,
        SET state=$2,provider_operation_key=$3,deployment_ref=$4,observed_at=$5::timestamptz,updated_at=now()
        WHERE attempt_ref=$1 AND site_ref=$6 AND candidate_release_ref=$7
          AND candidate_web_artifact_digest=$8 AND candidate_manifest_digest=$9
-         AND candidate_certification_digest=$10`,
+         AND candidate_certification_digest=$10 AND site_project_binding_ref=$11
+         AND site_project_binding_epoch=$12 AND environment=$13 AND region=$14
+         AND audience=$15 AND session_contract_revision=$16`,
       [value.attemptRef, value.state, value.providerOperationKey, value.deploymentRef, value.observedAt,
         value.siteRef, value.candidateReleaseRef, value.candidateWebArtifactDigest,
-        value.candidateManifestDigest, value.candidateCertificationDigest],
+        value.candidateManifestDigest, value.candidateCertificationDigest, value.siteProjectBindingRef,
+        value.siteProjectBindingEpoch, value.environment, value.region, value.audience,
+        value.sessionContractRevision],
     );
     if (changed !== 1) throw new Error("SITE_ACTIVATION_UPDATE_CONFLICT");
+  }
+
+  async recordObservationAndCandidateDeployment(
+    transaction: PlatformTransaction,
+    observation: SiteDeploymentObservation,
+    deployment: SiteDeploymentBinding,
+  ): Promise<void> {
+    const sql = resolvePlatformTransaction(transaction);
+    const observationInserted = await sql.execute(
+      `INSERT INTO platform.site_deployment_observation
+       (observation_ref,attempt_ref,provider_operation_key,deployment_ref,release_ref,
+        web_artifact_digest,healthy,traffic_ready,observed_at,payload_digest)
+       VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9::timestamptz,$10)`,
+      [observation.observationRef, observation.attemptRef, observation.providerOperationKey,
+        observation.deploymentRef, observation.releaseRef, observation.webArtifactDigest,
+        observation.healthy, observation.trafficReady, observation.observedAt,
+        observation.payloadDigest],
+    );
+    if (observationInserted !== 1) throw new Error("SITE_DEPLOYMENT_OBSERVATION_INSERT_FAILED");
+
+    const deploymentInserted = await sql.execute(
+      `INSERT INTO platform.site_deployment_binding
+       (deployment_ref,binding_ref,site_ref,release_ref,environment,region,audience,
+        session_contract_revision,web_artifact_digest,binding_epoch,state)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'candidate')
+       ON CONFLICT (deployment_ref) DO NOTHING`,
+      [deployment.deploymentRef, deployment.bindingRef, deployment.siteRef, deployment.releaseRef,
+        deployment.environment, deployment.region, deployment.audience,
+        deployment.sessionContractRevision, deployment.webArtifactDigest, deployment.bindingEpoch],
+    );
+    if (deploymentInserted === 1) return;
+    const existing = await sql.query<Record<string, unknown>>(
+      `SELECT 1 FROM platform.site_deployment_binding
+       WHERE deployment_ref=$1 AND binding_ref=$2 AND site_ref=$3 AND release_ref=$4
+         AND environment=$5 AND region=$6 AND audience=$7 AND session_contract_revision=$8
+         AND web_artifact_digest=$9 AND binding_epoch=$10 AND state='candidate' FOR UPDATE`,
+      [deployment.deploymentRef, deployment.bindingRef, deployment.siteRef, deployment.releaseRef,
+        deployment.environment, deployment.region, deployment.audience,
+        deployment.sessionContractRevision, deployment.webArtifactDigest, deployment.bindingEpoch],
+    );
+    if (existing.length !== 1) throw new Error("SITE_DEPLOYMENT_BINDING_CONFLICT");
   }
 
   async commitActivation(
@@ -157,6 +224,26 @@ export class PostgresSiteAuthorityRepository implements SiteAuthorityRepository,
     const candidate = verifySiteRelease(input.candidate);
     const attempt = verifyActivationAttempt(input.attempt);
     const sql = resolvePlatformTransaction(transaction);
+    if (attempt.deploymentRef === null) throw new Error("SITE_DEPLOYMENT_BINDING_REQUIRED");
+    if (input.expectedActiveReleaseRef !== null) {
+      const drainingDeployment = await sql.execute(
+        `UPDATE platform.site_deployment_binding SET state='draining',updated_at=now()
+         WHERE site_ref=$1 AND environment=$2 AND release_ref=$3 AND state='active'`,
+        [site.siteRef, attempt.environment, input.expectedActiveReleaseRef],
+      );
+      if (drainingDeployment !== 1) throw new Error("SITE_ACTIVE_DEPLOYMENT_CONFLICT");
+    }
+    const activeDeployment = await sql.execute(
+      `UPDATE platform.site_deployment_binding SET state='active',updated_at=now()
+       WHERE deployment_ref=$1 AND binding_ref=$2 AND site_ref=$3 AND release_ref=$4
+         AND environment=$5 AND region=$6 AND audience=$7 AND session_contract_revision=$8
+         AND web_artifact_digest=$9 AND binding_epoch=$10 AND state='candidate'`,
+      [attempt.deploymentRef, attempt.siteProjectBindingRef, attempt.siteRef,
+        attempt.candidateReleaseRef, attempt.environment, attempt.region, attempt.audience,
+        attempt.sessionContractRevision, attempt.candidateWebArtifactDigest,
+        attempt.siteProjectBindingEpoch],
+    );
+    if (activeDeployment !== 1) throw new Error("SITE_CANDIDATE_DEPLOYMENT_CONFLICT");
     const pointer = await sql.execute(
       `UPDATE platform.site
        SET state=$1,active_release_ref=$2,policy_epoch=$4,updated_at=now()
@@ -217,6 +304,9 @@ type ActivationRow = Record<string, unknown> & {
   attemptRef: string; siteRef: string; candidateReleaseRef: string;
   expectedActiveReleaseRef: string | null; candidateWebArtifactDigest: string;
   candidateManifestDigest: string; candidateCertificationDigest: string; state: string;
+  siteProjectBindingRef: string; siteProjectBindingEpoch: bigint;
+  environment: "development" | "preview" | "production"; region: string; audience: string;
+  sessionContractRevision: string;
   requestedAt: Date | string; providerOperationKey: string | null; deploymentRef: string | null;
   observedAt: Date | string | null;
 };
@@ -240,8 +330,9 @@ function activationRow(row: ActivationRow): ActivationAttempt {
 function activationValues(value: ActivationAttempt): readonly unknown[] {
   return [value.attemptRef, value.siteRef, value.candidateReleaseRef,
     value.expectedActiveReleaseRef, value.candidateWebArtifactDigest, value.candidateManifestDigest,
-    value.candidateCertificationDigest, value.state, value.requestedAt, value.providerOperationKey,
-    value.deploymentRef, value.observedAt];
+    value.candidateCertificationDigest, value.siteProjectBindingRef, value.siteProjectBindingEpoch,
+    value.environment, value.region, value.audience, value.sessionContractRevision,
+    value.state, value.requestedAt, value.providerOperationKey, value.deploymentRef, value.observedAt];
 }
 
 function siteState(value: string): value is SiteAggregate["state"] {

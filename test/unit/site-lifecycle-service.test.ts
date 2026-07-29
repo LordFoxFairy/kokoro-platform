@@ -28,11 +28,13 @@ describe("SiteLifecycleService", () => {
     const calls: string[] = [];
     let saved: ActivationAttempt | null = null;
     const repository: SiteAuthorityRepository = {
+      loadActiveProjectBindingForUpdate: async () => ({ bindingRef: "binding_01", bindingEpoch: 1n }),
       loadSiteForUpdate: async (transaction) => { calls.push(`site:${token(transaction)}`); return site; },
       loadReleaseForUpdate: async (transaction) => { calls.push(`release:${token(transaction)}`); return release; },
       loadActivationForUpdate: async () => null,
       insertActivation: async (transaction, attempt) => { calls.push(`insert:${token(transaction)}`); saved = attempt; },
       updateActivation: async () => { throw new Error("unexpected"); },
+      recordObservationAndCandidateDeployment: async () => { throw new Error("unexpected"); },
       commitActivation: async () => { throw new Error("unexpected"); },
       updateSite: async () => { throw new Error("unexpected"); },
     };
@@ -51,6 +53,8 @@ describe("SiteLifecycleService", () => {
       siteRef: "site_01",
       candidateReleaseRef: "release_02",
       expectedActiveReleaseRef: "release_01",
+      audience: "site-product",
+      sessionContractRevision: "browser-v3",
     }, await context("site.activation.begin", "site_01", "admin_workload"));
 
     expect(receipt).toEqual({ attemptRef: "activation_02", state: "preparing", replayed: false });
@@ -71,6 +75,8 @@ describe("SiteLifecycleService", () => {
       siteRef: "site_01",
       candidateReleaseRef: "release_02",
       expectedActiveReleaseRef: "release_01",
+      audience: "site-product",
+      sessionContractRevision: "browser-v3",
     }, wrongSite)).toThrow(
       "SITE_ADMIN_SCOPE_MISMATCH",
     );
@@ -95,6 +101,44 @@ describe("SiteLifecycleService", () => {
       "SITE_WORKER_REQUIRED",
     );
   });
+
+  it("persists the immutable provider observation and candidate deployment before pointer commit", async () => {
+    const saved: unknown[] = [];
+    const activation: ActivationAttempt = Object.freeze({
+      attemptRef: "activation_02", siteRef: "site_01", candidateReleaseRef: "release_02",
+      expectedActiveReleaseRef: "release_01", candidateWebArtifactDigest: "a".repeat(64),
+      candidateManifestDigest: "b".repeat(64), candidateCertificationDigest: "c".repeat(64),
+      siteProjectBindingRef: "binding_01", siteProjectBindingEpoch: 3n,
+      environment: "production", region: "us-east-1", audience: "site-product",
+      sessionContractRevision: "browser-v3", state: "promote_requested",
+      requestedAt: "2026-07-28T12:00:00.000Z",
+      providerOperationKey: "provider-operation-activation-02", deploymentRef: null, observedAt: null,
+    });
+    const repository: SiteAuthorityRepository = {
+      ...emptyRepository(),
+      loadActivationForUpdate: async () => activation,
+      recordObservationAndCandidateDeployment: async (_transaction, observation, deployment) => {
+        saved.push(observation, deployment);
+      },
+      updateActivation: async (_transaction, value) => { saved.push(value); },
+    };
+    const service = new SiteLifecycleService(unitOfWork(), repository, emptyJournal(), {
+      now: () => "2026-07-28T12:01:00.000Z",
+    });
+    const receipt = await service.observeActivation({
+      commandId: "01983f57-8cf1-7000-8000-000000000002",
+      idempotencyKey: "observe-command-01", attemptRef: "activation_02",
+      providerOperationKey: "provider-operation-activation-02", deploymentRef: "deployment_02",
+      releaseRef: "release_02", webArtifactDigest: "a".repeat(64), healthy: true, trafficReady: true,
+    }, await context("site.activation.observe", "site_01", "platform_worker"));
+
+    expect(receipt).toEqual({ attemptRef: "activation_02", state: "pointer_committing", replayed: false });
+    expect(saved[0]).toMatchObject({ observationRef: "01983f57-8cf1-7000-8000-000000000002",
+      deploymentRef: "deployment_02", healthy: true, trafficReady: true });
+    expect(saved[1]).toMatchObject({ deploymentRef: "deployment_02", bindingRef: "binding_01",
+      releaseRef: "release_02", bindingEpoch: 3n, state: "candidate" });
+    expect(saved[2]).toMatchObject({ state: "pointer_committing", deploymentRef: "deployment_02" });
+  });
 });
 
 function unitOfWork(): PlatformUnitOfWork {
@@ -114,11 +158,13 @@ function token(transaction: PlatformTransaction): string {
 
 function emptyRepository(): SiteAuthorityRepository {
   return {
+    loadActiveProjectBindingForUpdate: async () => null,
     loadSiteForUpdate: async () => null,
     loadReleaseForUpdate: async () => null,
     loadActivationForUpdate: async () => null,
     insertActivation: async () => undefined,
     updateActivation: async () => undefined,
+    recordObservationAndCandidateDeployment: async () => undefined,
     commitActivation: async () => undefined,
     updateSite: async () => undefined,
   };

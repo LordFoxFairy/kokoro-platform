@@ -72,9 +72,11 @@ function releaseInput() {
 
 function baseRepository(): SiteAuthorityRepository & SitePublicationRepository {
   return {
+    loadActiveProjectBindingForUpdate: async () => null,
     loadSiteForUpdate: async () => null, loadReleaseForUpdate: async () => null,
     loadActivationForUpdate: async () => null, insertActivation: async () => undefined,
     updateActivation: async () => undefined, commitActivation: async () => undefined,
+    recordObservationAndCandidateDeployment: async () => undefined,
     updateSite: async () => undefined, insertSiteWithProjectBinding: async () => undefined,
     insertRelease: async () => undefined,
   };

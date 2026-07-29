@@ -523,6 +523,12 @@ model SiteActivationAttemptAuthority {
   candidateWebArtifactDigest    String    @map("candidate_web_artifact_digest") @db.Char(64)
   candidateManifestDigest       String    @map("candidate_manifest_digest") @db.Char(64)
   candidateCertificationDigest  String    @map("candidate_certification_digest") @db.Char(64)
+  siteProjectBindingRef         String    @map("site_project_binding_ref")
+  siteProjectBindingEpoch       BigInt    @map("site_project_binding_epoch")
+  environment                   String
+  region                        String
+  audience                      String
+  sessionContractRevision       String    @map("session_contract_revision")
   state                         String
   requestedAt                   DateTime  @map("requested_at") @db.Timestamptz(6)
   providerOperationKey          String?   @unique @map("provider_operation_key")

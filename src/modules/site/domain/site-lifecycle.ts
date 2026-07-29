@@ -43,11 +43,44 @@ export interface ActivationAttempt {
   readonly candidateWebArtifactDigest: string;
   readonly candidateManifestDigest: string;
   readonly candidateCertificationDigest: string;
+  readonly siteProjectBindingRef: string;
+  readonly siteProjectBindingEpoch: bigint;
+  readonly environment: "development" | "preview" | "production";
+  readonly region: string;
+  readonly audience: string;
+  readonly sessionContractRevision: string;
   readonly state: ActivationState;
   readonly requestedAt: string;
   readonly providerOperationKey: string | null;
   readonly deploymentRef: string | null;
   readonly observedAt: string | null;
+}
+
+export interface SiteDeploymentBinding {
+  readonly deploymentRef: string;
+  readonly bindingRef: string;
+  readonly siteRef: string;
+  readonly releaseRef: string;
+  readonly environment: "development" | "preview" | "production";
+  readonly region: string;
+  readonly audience: string;
+  readonly sessionContractRevision: string;
+  readonly webArtifactDigest: string;
+  readonly bindingEpoch: bigint;
+  readonly state: "candidate" | "active" | "draining" | "revoked";
+}
+
+export interface SiteDeploymentObservation {
+  readonly observationRef: string;
+  readonly attemptRef: string;
+  readonly providerOperationKey: string;
+  readonly deploymentRef: string;
+  readonly releaseRef: string;
+  readonly webArtifactDigest: string;
+  readonly healthy: boolean;
+  readonly trafficReady: boolean;
+  readonly observedAt: string;
+  readonly payloadDigest: string;
 }
 
 export function verifySiteAggregate(value: SiteAggregate): SiteAggregate {
@@ -70,12 +103,23 @@ export function beginActivation(input: Readonly<{
   site: SiteAggregate;
   candidate: SiteRelease;
   expectedActiveReleaseRef: string | null;
+  siteProjectBindingRef: string;
+  siteProjectBindingEpoch: bigint;
+  environment: "development" | "preview" | "production";
+  region: string;
+  audience: string;
+  sessionContractRevision: string;
   requestedAt: string;
 }>): ActivationAttempt {
   identifier(input.attemptRef, "SITE_ACTIVATION_REF_INVALID");
   site(input.site);
   release(input.candidate);
   instant(input.requestedAt, "SITE_ACTIVATION_TIME_INVALID");
+  identifier(input.siteProjectBindingRef, "SITE_PROJECT_BINDING_REF_INVALID");
+  epoch(input.siteProjectBindingEpoch);
+  bounded(input.region, "SITE_REGION_INVALID");
+  bounded(input.audience, "SITE_AUDIENCE_INVALID");
+  bounded(input.sessionContractRevision, "SITE_SESSION_CONTRACT_REVISION_INVALID");
   if (input.site.state === "decommissioned" || input.site.state === "decommissioning") {
     throw new Error("SITE_NOT_ACTIVATABLE");
   }
@@ -93,6 +137,12 @@ export function beginActivation(input: Readonly<{
     candidateWebArtifactDigest: input.candidate.webArtifactDigest,
     candidateManifestDigest: input.candidate.releaseManifestDigest,
     candidateCertificationDigest: input.candidate.certificationDigest,
+    siteProjectBindingRef: input.siteProjectBindingRef,
+    siteProjectBindingEpoch: input.siteProjectBindingEpoch,
+    environment: input.environment,
+    region: input.region,
+    audience: input.audience,
+    sessionContractRevision: input.sessionContractRevision,
     state: "preparing",
     requestedAt: input.requestedAt,
     providerOperationKey: null,
@@ -134,12 +184,43 @@ export function observePromotion(
     attempt.candidateReleaseRef !== observation.releaseRef ||
     attempt.candidateWebArtifactDigest !== observation.webArtifactDigest
   ) throw new Error("SITE_DEPLOYMENT_OBSERVATION_MISMATCH");
+  if (attempt.deploymentRef !== null && attempt.deploymentRef !== observation.deploymentRef) {
+    throw new Error("SITE_DEPLOYMENT_REF_CONFLICT");
+  }
   if (!observation.healthy || !observation.trafficReady) {
     return Object.freeze({ ...attempt, state: "observing", deploymentRef: observation.deploymentRef,
       observedAt: observation.observedAt });
   }
   return Object.freeze({ ...attempt, state: "pointer_committing",
     deploymentRef: observation.deploymentRef, observedAt: observation.observedAt });
+}
+
+export function deploymentBindingForObservation(
+  attempt: ActivationAttempt,
+  observation: SiteDeploymentObservation,
+): SiteDeploymentBinding {
+  activation(attempt);
+  deploymentObservation(observation);
+  if (
+    observation.attemptRef !== attempt.attemptRef ||
+    observation.providerOperationKey !== attempt.providerOperationKey ||
+    observation.releaseRef !== attempt.candidateReleaseRef ||
+    observation.webArtifactDigest !== attempt.candidateWebArtifactDigest ||
+    (attempt.deploymentRef !== null && attempt.deploymentRef !== observation.deploymentRef)
+  ) throw new Error("SITE_DEPLOYMENT_OBSERVATION_MISMATCH");
+  return Object.freeze({
+    deploymentRef: observation.deploymentRef,
+    bindingRef: attempt.siteProjectBindingRef,
+    siteRef: attempt.siteRef,
+    releaseRef: attempt.candidateReleaseRef,
+    environment: attempt.environment,
+    region: attempt.region,
+    audience: attempt.audience,
+    sessionContractRevision: attempt.sessionContractRevision,
+    webArtifactDigest: attempt.candidateWebArtifactDigest,
+    bindingEpoch: attempt.siteProjectBindingEpoch,
+    state: "candidate",
+  });
 }
 
 export function activateObservedRelease(input: Readonly<{
@@ -227,14 +308,51 @@ function activation(value: ActivationAttempt): void {
   identifier(value.attemptRef, "SITE_ACTIVATION_REF_INVALID");
   identifier(value.siteRef, "SITE_REF_INVALID");
   identifier(value.candidateReleaseRef, "SITE_RELEASE_REF_INVALID");
+  if (value.expectedActiveReleaseRef !== null) identifier(value.expectedActiveReleaseRef, "SITE_RELEASE_REF_INVALID");
   digest(value.candidateWebArtifactDigest);
   digest(value.candidateManifestDigest);
   digest(value.candidateCertificationDigest);
+  identifier(value.siteProjectBindingRef, "SITE_PROJECT_BINDING_REF_INVALID");
+  epoch(value.siteProjectBindingEpoch);
+  bounded(value.region, "SITE_REGION_INVALID");
+  bounded(value.audience, "SITE_AUDIENCE_INVALID");
+  bounded(value.sessionContractRevision, "SITE_SESSION_CONTRACT_REVISION_INVALID");
   instant(value.requestedAt, "SITE_ACTIVATION_TIME_INVALID");
+  if (value.environment !== "development" && value.environment !== "preview" && value.environment !== "production") {
+    throw new Error("SITE_ENVIRONMENT_INVALID");
+  }
+  if (value.providerOperationKey !== null) identifier(value.providerOperationKey, "SITE_PROVIDER_OPERATION_KEY_INVALID");
+  if (value.deploymentRef !== null) identifier(value.deploymentRef, "SITE_DEPLOYMENT_REF_INVALID");
+  if (value.observedAt !== null) instant(value.observedAt, "SITE_DEPLOYMENT_OBSERVED_AT_INVALID");
+  if (value.state === "preparing" && (value.providerOperationKey !== null || value.deploymentRef !== null || value.observedAt !== null)) {
+    throw new Error("SITE_ACTIVATION_STATE_INVALID");
+  }
+  if (value.state !== "preparing" && value.providerOperationKey === null) throw new Error("SITE_ACTIVATION_STATE_INVALID");
+  if (["pointer_committing", "draining", "succeeded"].includes(value.state) &&
+      (value.deploymentRef === null || value.observedAt === null)) throw new Error("SITE_ACTIVATION_STATE_INVALID");
+  if ((value.deploymentRef === null) !== (value.observedAt === null)) throw new Error("SITE_ACTIVATION_STATE_INVALID");
+}
+
+function deploymentObservation(value: SiteDeploymentObservation): void {
+  identifier(value.attemptRef, "SITE_ACTIVATION_REF_INVALID");
+  identifier(value.providerOperationKey, "SITE_PROVIDER_OPERATION_KEY_INVALID");
+  identifier(value.deploymentRef, "SITE_DEPLOYMENT_REF_INVALID");
+  identifier(value.releaseRef, "SITE_RELEASE_REF_INVALID");
+  digest(value.webArtifactDigest);
+  digest(value.payloadDigest);
+  instant(value.observedAt, "SITE_DEPLOYMENT_OBSERVED_AT_INVALID");
+  if (!/^[0-9a-f-]{36}$/u.test(value.observationRef)) throw new Error("SITE_OBSERVATION_REF_INVALID");
 }
 
 function identifier(value: string, code: string): void {
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/u.test(value)) throw new Error(code);
+}
+
+function bounded(value: string, code: string): void {
+  if (value.length < 1 || value.length > 255 || Array.from(value).some((character) => {
+    const point = character.codePointAt(0) ?? 0;
+    return point < 32 || point === 127;
+  })) throw new Error(code);
 }
 
 function digest(value: string): void {

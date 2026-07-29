@@ -4,6 +4,7 @@ import {
   activateObservedRelease,
   beginActivation,
   beginDecommission,
+  deploymentBindingForObservation,
   observePromotion,
   requestPromotion,
   resumeSite,
@@ -40,6 +41,8 @@ export class SiteLifecycleService {
       siteRef: string;
       candidateReleaseRef: string;
       expectedActiveReleaseRef: string | null;
+      audience: string;
+      sessionContractRevision: string;
     }>,
     context: VerifiedRequestSecurityContext,
   ): Promise<SiteAuthorityReceipt> {
@@ -48,31 +51,49 @@ export class SiteLifecycleService {
       attemptRef: input.attemptRef,
       candidateReleaseRef: input.candidateReleaseRef,
       expectedActiveReleaseRef: input.expectedActiveReleaseRef,
+      audience: input.audience,
+      sessionContractRevision: input.sessionContractRevision,
     });
     return this.unitOfWork.execute({ context, operation: command.operation }, async (transaction) => {
+      const environment = deploymentEnvironment(context);
       const disposition = await this.journal.begin(transaction, command);
+      const existing = await this.repository.loadActivationForUpdate(transaction, input.attemptRef);
+      if (disposition === "replay") {
+        if (existing === null || existing.siteRef !== input.siteRef ||
+            existing.candidateReleaseRef !== input.candidateReleaseRef ||
+            existing.expectedActiveReleaseRef !== input.expectedActiveReleaseRef ||
+            existing.audience !== input.audience ||
+            existing.sessionContractRevision !== input.sessionContractRevision) {
+          throw new Error("SITE_ACTIVATION_REPLAY_CONFLICT");
+        }
+        return Object.freeze({ attemptRef: existing.attemptRef, state: existing.state, replayed: true });
+      }
+      if (existing !== null) throw new Error("SITE_ACTIVATION_REF_CONFLICT");
       const site = await this.repository.loadSiteForUpdate(transaction, input.siteRef);
       const candidate = await this.repository.loadReleaseForUpdate(
         transaction,
         input.siteRef,
         input.candidateReleaseRef,
       );
-      if (site === null || candidate === null) throw new Error("SITE_ACTIVATION_TARGET_NOT_FOUND");
-      const existing = await this.repository.loadActivationForUpdate(transaction, input.attemptRef);
-      if (disposition === "replay") {
-        if (existing === null || existing.siteRef !== input.siteRef ||
-            existing.candidateReleaseRef !== input.candidateReleaseRef ||
-            existing.expectedActiveReleaseRef !== input.expectedActiveReleaseRef) {
-          throw new Error("SITE_ACTIVATION_REPLAY_CONFLICT");
-        }
-        return Object.freeze({ attemptRef: existing.attemptRef, state: existing.state, replayed: true });
+      const binding = await this.repository.loadActiveProjectBindingForUpdate(
+        transaction,
+        input.siteRef,
+        environment,
+      );
+      if (site === null || candidate === null || binding === null) {
+        throw new Error("SITE_ACTIVATION_TARGET_NOT_FOUND");
       }
-      if (existing !== null) throw new Error("SITE_ACTIVATION_REF_CONFLICT");
       const attempt = beginActivation({
         attemptRef: input.attemptRef,
         site,
         candidate,
         expectedActiveReleaseRef: input.expectedActiveReleaseRef,
+        siteProjectBindingRef: binding.bindingRef,
+        siteProjectBindingEpoch: binding.bindingEpoch,
+        environment,
+        region: context.region,
+        audience: input.audience,
+        sessionContractRevision: input.sessionContractRevision,
         requestedAt: this.#now(),
       });
       await this.repository.insertActivation(transaction, attempt);
@@ -122,8 +143,37 @@ export class SiteLifecycleService {
       healthy: input.healthy,
       trafficReady: input.trafficReady,
     });
-    return this.updateAttempt(command, context, input.attemptRef, (attempt) =>
-      observePromotion(attempt, { ...input, observedAt: this.#now() }));
+    return this.unitOfWork.execute({ context, operation: command.operation }, async (transaction) => {
+      const disposition = await this.journal.begin(transaction, command);
+      const current = await this.repository.loadActivationForUpdate(transaction, input.attemptRef);
+      if (current === null || current.siteRef !== siteRef) throw new Error("SITE_ACTIVATION_NOT_FOUND");
+      if (disposition === "replay") {
+        return Object.freeze({ attemptRef: current.attemptRef, state: current.state, replayed: true });
+      }
+      if (current.environment !== context.environment || current.region !== context.region) {
+        throw new Error("SITE_ACTIVATION_RUNTIME_SCOPE_MISMATCH");
+      }
+      const observedAt = this.#now();
+      const observation = Object.freeze({
+        observationRef: input.commandId,
+        attemptRef: input.attemptRef,
+        providerOperationKey: input.providerOperationKey,
+        deploymentRef: input.deploymentRef,
+        releaseRef: input.releaseRef,
+        webArtifactDigest: input.webArtifactDigest,
+        healthy: input.healthy,
+        trafficReady: input.trafficReady,
+        observedAt,
+        payloadDigest: command.requestDigest,
+      });
+      const next = observePromotion(current, observation);
+      const deployment = deploymentBindingForObservation(current, observation);
+      await this.repository.recordObservationAndCandidateDeployment(transaction, observation, deployment);
+      await this.repository.updateActivation(transaction, next);
+      const receipt = Object.freeze({ attemptRef: next.attemptRef, state: next.state, replayed: false });
+      await this.journal.succeed(transaction, command, receipt, context);
+      return receipt;
+    });
   }
 
   commitActivation(
@@ -229,4 +279,13 @@ function targetSite(context: VerifiedRequestSecurityContext): string {
   const siteRef = context.target.siteId;
   if (siteRef === null) throw new Error("SITE_SCOPE_REQUIRED");
   return siteRef;
+}
+
+function deploymentEnvironment(
+  context: VerifiedRequestSecurityContext,
+): "development" | "preview" | "production" {
+  if (context.environment !== "development" && context.environment !== "preview" && context.environment !== "production") {
+    throw new Error("SITE_ENVIRONMENT_INVALID");
+  }
+  return context.environment;
 }

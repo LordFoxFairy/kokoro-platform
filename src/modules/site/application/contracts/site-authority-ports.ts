@@ -2,11 +2,18 @@ import type { VerifiedRequestSecurityContext } from "../../../../shared/security
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
 import type {
   ActivationAttempt,
+  SiteDeploymentBinding,
+  SiteDeploymentObservation,
   SiteAggregate,
   SiteRelease,
 } from "../../domain/site-lifecycle.js";
 
 export interface SiteAuthorityRepository {
+  loadActiveProjectBindingForUpdate(
+    transaction: PlatformTransaction,
+    siteRef: string,
+    environment: "development" | "preview" | "production",
+  ): Promise<Readonly<{ bindingRef: string; bindingEpoch: bigint }> | null>;
   loadSiteForUpdate(transaction: PlatformTransaction, siteRef: string): Promise<SiteAggregate | null>;
   loadReleaseForUpdate(
     transaction: PlatformTransaction,
@@ -19,6 +26,11 @@ export interface SiteAuthorityRepository {
   ): Promise<ActivationAttempt | null>;
   insertActivation(transaction: PlatformTransaction, attempt: ActivationAttempt): Promise<void>;
   updateActivation(transaction: PlatformTransaction, attempt: ActivationAttempt): Promise<void>;
+  recordObservationAndCandidateDeployment(
+    transaction: PlatformTransaction,
+    observation: SiteDeploymentObservation,
+    deployment: SiteDeploymentBinding,
+  ): Promise<void>;
   commitActivation(
     transaction: PlatformTransaction,
     input: Readonly<{

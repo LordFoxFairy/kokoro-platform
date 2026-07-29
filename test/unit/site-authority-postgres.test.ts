@@ -17,6 +17,9 @@ const attempt: ActivationAttempt = Object.freeze({
   attemptRef: "activation_02", siteRef: "site_01", candidateReleaseRef: "release_02",
   expectedActiveReleaseRef: "release_01", candidateWebArtifactDigest: "a".repeat(64),
   candidateManifestDigest: "b".repeat(64), candidateCertificationDigest: "c".repeat(64),
+  siteProjectBindingRef: "binding_01", siteProjectBindingEpoch: 1n,
+  environment: "production", region: "us-east-1", audience: "site-product",
+  sessionContractRevision: "browser-v3",
   state: "draining", requestedAt: "2026-07-28T12:00:00.000Z",
   providerOperationKey: "provider-operation-activation-02", deploymentRef: "deployment_02",
   observedAt: "2026-07-28T12:01:00.000Z",
@@ -93,12 +96,41 @@ describe("Postgres Site authority", () => {
         site, candidate: release, attempt,
         expectedActiveReleaseRef: "release_01", drainingReleaseRef: "release_01",
       });
-      expect(calls).toHaveLength(4);
-      expect(calls[0]?.statement).toContain("active_release_ref IS NOT DISTINCT FROM $3");
-      expect(calls[0]?.values).toContain("release_01");
-      expect(calls[1]?.statement).toContain("site_release");
-      expect(calls[2]?.statement).toContain("site_release");
-      expect(calls[3]?.statement).toContain("site_activation_attempt");
+      expect(calls).toHaveLength(6);
+      expect(calls[0]?.statement).toContain("site_deployment_binding");
+      expect(calls[0]?.statement).toContain("state='draining'");
+      expect(calls[1]?.statement).toContain("site_deployment_binding");
+      expect(calls[1]?.statement).toContain("state='active'");
+      expect(calls[2]?.statement).toContain("active_release_ref IS NOT DISTINCT FROM $3");
+      expect(calls[2]?.values).toContain("release_01");
+      expect(calls[3]?.statement).toContain("site_release");
+      expect(calls[4]?.statement).toContain("site_release");
+      expect(calls[5]?.statement).toContain("site_activation_attempt");
+    } finally { revokePlatformTransaction(lease); }
+  });
+
+  it("records provider evidence and its exact candidate deployment in the owner transaction", async () => {
+    const calls: { statement: string; values: readonly unknown[] }[] = [];
+    const lease = issuePlatformTransaction({
+      query: async () => [],
+      execute: async (statement, values = []) => { calls.push({ statement, values }); return 1; },
+    });
+    try {
+      await new PostgresSiteAuthorityRepository().recordObservationAndCandidateDeployment(
+        lease.transaction,
+        { observationRef: "01983f57-8cf1-7000-8000-000000000002", attemptRef: "activation_02",
+          providerOperationKey: "provider-operation-activation-02", deploymentRef: "deployment_02",
+          releaseRef: "release_02", webArtifactDigest: "a".repeat(64), healthy: true,
+          trafficReady: true, observedAt: "2026-07-28T12:01:00.000Z", payloadDigest: "d".repeat(64) },
+        { deploymentRef: "deployment_02", bindingRef: "binding_01", siteRef: "site_01",
+          releaseRef: "release_02", environment: "production", region: "us-east-1",
+          audience: "site-product", sessionContractRevision: "browser-v3",
+          webArtifactDigest: "a".repeat(64), bindingEpoch: 3n, state: "candidate" },
+      );
+      expect(calls).toHaveLength(2);
+      expect(calls[0]?.statement).toContain("site_deployment_observation");
+      expect(calls[1]?.statement).toContain("site_deployment_binding");
+      expect(calls[1]?.statement).toContain("ON CONFLICT (deployment_ref) DO NOTHING");
     } finally { revokePlatformTransaction(lease); }
   });
 
@@ -106,14 +138,14 @@ describe("Postgres Site authority", () => {
     let executions = 0;
     const lease = issuePlatformTransaction({
       query: async () => [],
-      execute: async () => { executions += 1; return 0; },
+      execute: async () => { executions += 1; return executions < 3 ? 1 : 0; },
     });
     try {
       await expect(new PostgresSiteAuthorityRepository().commitActivation(lease.transaction, {
         site, candidate: release, attempt,
         expectedActiveReleaseRef: "release_01", drainingReleaseRef: "release_01",
       })).rejects.toThrow("SITE_ACTIVE_POINTER_CONFLICT");
-      expect(executions).toBe(1);
+      expect(executions).toBe(3);
     } finally { revokePlatformTransaction(lease); }
   });
 
