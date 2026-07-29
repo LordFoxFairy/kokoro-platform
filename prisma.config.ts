@@ -1,9 +1,10 @@
 import { defineConfig } from "prisma/config";
+import { resolve } from "node:path";
 
 export default defineConfig({
-  schema: "prisma/schema.prisma",
+  schema: resolve(process.cwd(), "prisma/schema.prisma"),
   migrations: {
-    path: "prisma/migrations",
+    path: resolve(process.cwd(), "prisma/migrations"),
   },
   datasource: {
     // Generation is intentionally offline. The checked migrator is the only

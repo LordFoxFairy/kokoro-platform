@@ -13,6 +13,7 @@ const migratorDatabaseUrl = requireLeasedDatabaseUrl(
 const apiDatabaseUrl = requireLeasedDatabaseUrl(process.env.DATABASE_URL_PLATFORM_API_TEST);
 const migratorUser = decodeURIComponent(new URL(migratorDatabaseUrl).username);
 const apiUser = decodeURIComponent(new URL(apiDatabaseUrl).username);
+const authorizationUser = requireRole(process.env.PLATFORM_DATABASE_AUTHORIZATION_ROLE);
 const workerUser = requireRole(process.env.PLATFORM_DATABASE_WORKER_ROLE);
 const adminUser = requireRole(process.env.PLATFORM_DATABASE_ADMIN_ROLE);
 const databaseName = decodeURIComponent(new URL(migratorDatabaseUrl).pathname.slice(1));
@@ -27,6 +28,7 @@ describe("Platform PostgreSQL foundation", () => {
         PLATFORM_DATABASE_CREDENTIAL_CLASS: "migrator",
         PLATFORM_DATABASE_MIGRATOR_ROLE: migratorUser,
         PLATFORM_DATABASE_API_ROLE: apiUser,
+        PLATFORM_DATABASE_AUTHORIZATION_ROLE: authorizationUser,
         PLATFORM_DATABASE_WORKER_ROLE: workerUser,
         PLATFORM_DATABASE_ADMIN_ROLE: adminUser,
         PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,

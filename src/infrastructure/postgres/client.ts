@@ -368,6 +368,7 @@ interface RuntimeIdentity {
   canExecuteModelCandidatesProjection: boolean;
   canExecuteModelDecisionProjection: boolean;
   canExecuteModelAvailabilityReport: boolean;
+  canExecuteCreditScopePolicy: boolean;
   hasRequiredModelOptionFunctions: boolean;
   canSelectModelCatalogTable: boolean;
   canReadModelSensitiveColumn: boolean;
@@ -490,6 +491,8 @@ const RUNTIME_IDENTITY_SQL = `
            AS "canExecuteModelDecisionProjection",
          has_function_privilege(current_user, 'platform.report_model_provider_availability(uuid,text,text,text,bigint,text,timestamptz,text)', 'EXECUTE')
            AS "canExecuteModelAvailabilityReport",
+         has_function_privilege(current_user, 'platform.valid_credit_scope_policy(jsonb)', 'EXECUTE')
+           AS "canExecuteCreditScopePolicy",
          CASE WHEN $2='api' THEN
            has_function_privilege(current_user,'platform.resolve_product_model_option_catalog(text,text)','EXECUTE')
          WHEN $2='admin' THEN
@@ -753,15 +756,24 @@ const RUNTIME_IDENTITY_SQL = `
                  to_regprocedure('platform.load_model_option_inventory(text)'),
                  to_regprocedure('platform.load_model_option_revisions(text[])'),
                  to_regprocedure('platform.materialize_legacy_model_options(uuid,text,text,text,text,jsonb,jsonb,text)'),
-                 to_regprocedure('platform.publish_site_release_model_catalog(uuid,jsonb,text)')
+                 to_regprocedure('platform.publish_site_release_model_catalog(uuid,jsonb,text)'),
+                 to_regprocedure('platform.valid_credit_scope_policy(jsonb)')
                ]))
                OR ($2 = 'api' AND candidate_function.oid = ANY(ARRAY[
                  to_regprocedure('platform.resolve_model_candidates(text,text,text)'),
                  to_regprocedure('platform.find_model_selection_decision(uuid)'),
-                 to_regprocedure('platform.resolve_product_model_option_catalog(text,text)')
+                 to_regprocedure('platform.resolve_product_model_option_catalog(text,text)'),
+                 to_regprocedure('platform.valid_credit_scope_policy(jsonb)')
                ]))
                OR ($2 = 'worker' AND candidate_function.oid =
                  to_regprocedure('platform.report_model_provider_availability(uuid,text,text,text,bigint,text,timestamptz,text)'))
+               OR candidate_function.oid = ANY(ARRAY[
+                 to_regprocedure('platform.model_identifier_is_valid(text)'),
+                 to_regprocedure('platform.model_text_is_valid(text)'),
+                 to_regprocedure('platform.model_secret_reference_is_valid(text)'),
+                 to_regprocedure('platform.model_identifier_array_is_canonical(text[],boolean)'),
+                 to_regprocedure('platform.model_json_identifier_array_is_canonical(jsonb,boolean)')
+               ])
              )
          ) AS "hasUnexpectedPlatformPrivilege"
   FROM pg_database database_row
@@ -809,6 +821,7 @@ function validRuntimeIdentity(
     identity.canExecuteModelCandidatesProjection === (config.role === "api") &&
     identity.canExecuteModelDecisionProjection === (config.role === "api") &&
     identity.canExecuteModelAvailabilityReport === (config.role === "worker") &&
+    identity.canExecuteCreditScopePolicy === (config.role === "api" || config.role === "admin") &&
     identity.hasRequiredModelOptionFunctions &&
     !identity.canSelectModelCatalogTable &&
     !identity.canReadModelSensitiveColumn &&

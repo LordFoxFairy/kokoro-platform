@@ -947,15 +947,24 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                  to_regprocedure('platform.load_model_option_inventory(text)'),
                  to_regprocedure('platform.load_model_option_revisions(text[])'),
                  to_regprocedure('platform.materialize_legacy_model_options(uuid,text,text,text,text,jsonb,jsonb,text)'),
-                 to_regprocedure('platform.publish_site_release_model_catalog(uuid,jsonb,text)')
+                 to_regprocedure('platform.publish_site_release_model_catalog(uuid,jsonb,text)'),
+                 to_regprocedure('platform.valid_credit_scope_policy(jsonb)')
                ]))
                OR (runtime_role.rolname = $1 AND candidate_function.oid = ANY(ARRAY[
                  to_regprocedure('platform.resolve_model_candidates(text,text,text)'),
                  to_regprocedure('platform.find_model_selection_decision(uuid)'),
-                 to_regprocedure('platform.resolve_product_model_option_catalog(text,text)')
+                 to_regprocedure('platform.resolve_product_model_option_catalog(text,text)'),
+                 to_regprocedure('platform.valid_credit_scope_policy(jsonb)')
                ]))
                OR (runtime_role.rolname = $3 AND candidate_function.oid =
                  to_regprocedure('platform.report_model_provider_availability(uuid,text,text,text,bigint,text,timestamptz,text)'))
+               OR candidate_function.oid = ANY(ARRAY[
+                 to_regprocedure('platform.model_identifier_is_valid(text)'),
+                 to_regprocedure('platform.model_text_is_valid(text)'),
+                 to_regprocedure('platform.model_secret_reference_is_valid(text)'),
+                 to_regprocedure('platform.model_identifier_array_is_canonical(text[],boolean)'),
+                 to_regprocedure('platform.model_json_identifier_array_is_canonical(jsonb,boolean)')
+               ])
              )
          ) AS "hasUnexpectedPlatformPrivilege"
   FROM pg_roles runtime_role

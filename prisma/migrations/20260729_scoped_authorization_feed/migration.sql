@@ -39,9 +39,16 @@ CREATE TABLE platform.authorization_scoped_event_log (
 CREATE INDEX authorization_scoped_event_retention_idx
   ON platform.authorization_scoped_event_log(created_at,stream_sequence);
 
+CREATE FUNCTION platform.reject_scoped_authorization_feed_update() RETURNS trigger
+LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
+BEGIN
+  RAISE EXCEPTION 'AUTHORIZATION_SCOPED_EVENT_IMMUTABLE' USING ERRCODE='23514';
+END $$;
+REVOKE ALL ON FUNCTION platform.reject_scoped_authorization_feed_update() FROM PUBLIC;
+
 CREATE TRIGGER authorization_scoped_event_immutable
 BEFORE UPDATE ON platform.authorization_scoped_event_log
-FOR EACH ROW EXECUTE FUNCTION platform.reject_authorization_feed_update();
+FOR EACH ROW EXECUTE FUNCTION platform.reject_scoped_authorization_feed_update();
 
 REVOKE ALL ON
   platform.authorization_scoped_stream_state,
