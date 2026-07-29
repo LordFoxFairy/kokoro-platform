@@ -14,6 +14,7 @@ import { defineAdminCommand, type AdminOperatorAuthority } from
 
 const transaction = Object.freeze({}) as PlatformTransaction;
 const commandId = "018f1212-1212-7212-8212-121212121212";
+const requestDigest = "b".repeat(64);
 const authority: AdminOperatorAuthority = Object.freeze({
   operatorRef: "operator_01", operatorGeneration: 3n, state: "active",
   permissions: ["site.lifecycle.*", "credit.balance.adjust"], siteScopes: ["site_01"],
@@ -39,6 +40,7 @@ describe("Admin command application service", () => {
     expect(harness.approvals).toHaveLength(1);
     expect(harness.approvals[0]).toMatchObject({ commandId, payload: { siteRef: "site_01" } });
     expect(harness.receipt?.state).toBe("succeeded");
+    expect(harness.receipt?.requestDigest).toBe(requestDigest);
     expect(harness.events).toMatchObject([{ owner: "admin-control",
       eventType: "admin.command.approval.requested" }]);
   });
@@ -204,6 +206,7 @@ function createHarness(input: Readonly<{
 function submission(operation: string) {
   return Object.freeze({
     context: context(operation), commandId, idempotencyKey: "admin-operation-0001", operation,
+    requestDigest,
     targetSiteRef: "site_01", reason: "security incident 1842", breakGlassTicketRef: null,
     payload: { siteRef: "site_01" } satisfies JsonValue,
   });

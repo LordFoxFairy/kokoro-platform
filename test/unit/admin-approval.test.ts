@@ -22,6 +22,7 @@ import {
 
 const transaction = Object.freeze({}) as PlatformTransaction;
 const executionCommandId = "018f1313-1313-7313-8313-131313131313";
+const decisionRequestDigest = "c".repeat(64);
 const definition = defineAdminCommand({
   commandId: "site.suspend", permission: "site.lifecycle.suspend", effectClass: "dangerous",
   scopeKind: "site", approvalPolicy: "pre_effect", reasonRequired: true,
@@ -93,6 +94,7 @@ describe("Admin maker/checker approval", () => {
       eventType: "admin.approval.execution.requested",
       payload: { ownerOperation: "site.suspend", approvalRef: "approval_01" } }]);
     expect(harness.receipt?.state).toBe("succeeded");
+    expect(harness.receipt?.requestDigest).toBe(decisionRequestDigest);
   });
 
   it("lets the checker reject without invoking the business owner handler", async () => {
@@ -181,6 +183,7 @@ function serviceHarness(input: Readonly<{
 function decision(value: "approve" | "reject") {
   return Object.freeze({ context: checkerContext(), commandId: executionCommandId,
     idempotencyKey: "approval-decision-0001", approvalRef: "approval_01",
+    requestDigest: decisionRequestDigest,
     decision: value, reason: "independent approval" });
 }
 

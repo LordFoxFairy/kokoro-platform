@@ -1,4 +1,4 @@
-import type { CommandIdentity, CommandReceipt, JsonValue } from
+import { assertDigest, type CommandIdentity, type CommandReceipt, type JsonValue } from
   "../../../shared/outbox-inbox/receipt.js";
 import type { OutboxEvent } from "../../../shared/outbox-inbox/outbox.js";
 import type { VerifiedRequestSecurityContext } from "../../../shared/security-context/index.js";
@@ -77,23 +77,15 @@ export class AdminApprovalService {
     context: VerifiedRequestSecurityContext;
     commandId: string;
     idempotencyKey: string;
+    requestDigest: string;
     approvalRef: string;
     decision: "approve" | "reject";
     reason: string;
   }>): Promise<AdminApprovalSubmissionResult> {
     bounded(input.approvalRef, "ADMIN_APPROVAL_REF_INVALID");
     bounded(input.idempotencyKey, "ADMIN_IDEMPOTENCY_KEY_INVALID");
-    const requestDigest = digestAdminValue({
-      commandId: input.commandId,
-      operation: "admin.approval.execute",
-      approvalRef: input.approvalRef,
-      decision: input.decision,
-      reason: input.reason,
-      checkerRef: input.context.actor.subjectId,
-      checkerGeneration: input.context.actor.subjectGeneration,
-      environment: input.context.environment,
-      region: input.context.region,
-    });
+    assertDigest(input.requestDigest);
+    const requestDigest = input.requestDigest;
     const identity: CommandIdentity = Object.freeze({
       commandId: input.commandId,
       environment: input.context.environment,

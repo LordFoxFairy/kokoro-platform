@@ -1,4 +1,5 @@
-import type { JsonValue, CommandIdentity, CommandReceipt } from "../../../shared/outbox-inbox/receipt.js";
+import { assertDigest, type JsonValue, type CommandIdentity, type CommandReceipt } from
+  "../../../shared/outbox-inbox/receipt.js";
 import type { OutboxEvent } from "../../../shared/outbox-inbox/outbox.js";
 import type { VerifiedRequestSecurityContext } from "../../../shared/security-context/index.js";
 import type { PlatformTransaction } from "../../../shared/unit-of-work/index.js";
@@ -146,6 +147,7 @@ export class AdminCommandService {
     context: VerifiedRequestSecurityContext;
     commandId: string;
     idempotencyKey: string;
+    requestDigest: string;
     operation: string;
     targetSiteRef: string | null;
     reason: string | null;
@@ -154,19 +156,9 @@ export class AdminCommandService {
   }>): Promise<AdminCommandSubmissionResult> {
     const handler = this.dependencies.registry.require(input.operation);
     bounded(input.idempotencyKey, 8, 128, "ADMIN_IDEMPOTENCY_KEY_INVALID");
+    assertDigest(input.requestDigest);
     const payloadDigest = digestAdminValue(input.payload);
-    const requestDigest = digestAdminValue({
-      commandId: input.commandId,
-      operation: input.operation,
-      targetSiteRef: input.targetSiteRef,
-      reason: input.reason,
-      breakGlassTicketRef: input.breakGlassTicketRef,
-      payloadDigest,
-      operatorRef: input.context.actor.subjectId,
-      operatorGeneration: input.context.actor.subjectGeneration,
-      environment: input.context.environment,
-      region: input.context.region,
-    });
+    const requestDigest = input.requestDigest;
     const identity = Object.freeze({
       commandId: input.commandId,
       environment: input.context.environment,
