@@ -50,7 +50,7 @@ Keep domain/application independent of transport and persistence. Add deployable
 
 ## Current gotchas
 
-General Admission, redeem fulfillment, and Model Gateway production contracts remain later waves.
+General Admission now has a transition-candidate boundary for strict opaque execution-context mapping and sealed GA request-draft construction. It is not an active provider: Prepare/Finalize/Release/Reconcile, the production sealer adapter, command receipts, and runtime traffic remain later work. Redeem fulfillment and Model Gateway production contracts also remain later waves.
 
 ## Verification
 
