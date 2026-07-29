@@ -28,6 +28,7 @@ export interface ProductWorkloadIdentity {
   readonly audience: string;
   readonly allowedOperations: readonly string[];
   readonly bindingEpoch: string;
+  readonly siteSecurityEpoch: string;
   readonly policyEpoch: string;
   readonly csrfSha256: string;
 }

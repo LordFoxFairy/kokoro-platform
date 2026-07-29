@@ -25,7 +25,7 @@ model PlatformFoundation {
 }
 
 model CommandReceipt {
-  commandId      String   @id @map("command_id") @db.Uuid
+  commandId      String   @id @map("command_id")
   environment    String
   region         String
   callerIdentity String   @map("caller_identity")
@@ -496,6 +496,7 @@ model AuthorizationSubject {
   updatedAt         DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@index([siteRef, state])
+  @@unique([subjectRef, siteRef])
   @@map("authorization_subject")
   @@schema("platform")
 }
@@ -516,7 +517,137 @@ model AuthorizationIdentitySession {
 
   @@index([subjectRef, state])
   @@index([siteRef, state, expiresAt])
+  @@unique([sessionRef, subjectRef, siteRef])
   @@map("authorization_identity_session")
+  @@schema("platform")
+}
+
+model CommerceCommand {
+  commandId       String    @id @map("command_id")
+  siteRef         String    @map("site_ref")
+  actorKind       String    @map("actor_kind")
+  actorSubject    String    @map("actor_subject")
+  authorizationSubjectRef String? @map("authorization_subject_ref")
+  actorGeneration BigInt    @map("actor_generation")
+  commandVersion  String    @map("command_version")
+  completedAt     DateTime? @map("completed_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([siteRef, actorSubject])
+  @@unique([commandId, siteRef])
+  @@map("commerce_command")
+  @@schema("platform")
+}
+
+model CommerceBillingAccount {
+  billingAccountRef String   @id @map("billing_account_ref")
+  siteRef           String   @map("site_ref")
+  state             String
+  aggregateVersion  BigInt   @default(1) @map("aggregate_version")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([billingAccountRef, siteRef])
+  @@index([siteRef, state])
+  @@map("commerce_billing_account")
+  @@schema("platform")
+}
+
+model CommerceBillingAccountMembership {
+  billingAccountRef String   @map("billing_account_ref")
+  siteRef           String   @map("site_ref")
+  subjectRef        String   @map("subject_ref")
+  subjectGeneration BigInt   @map("subject_generation")
+  state             String
+  membershipEpoch   BigInt   @map("membership_epoch")
+  isDefault         Boolean  @default(false) @map("is_default")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@id([billingAccountRef, subjectRef])
+  @@index([siteRef, subjectRef, state])
+  @@map("commerce_billing_account_membership")
+  @@schema("platform")
+}
+
+model CommerceFulfillmentTransaction {
+  fulfillmentId               String    @id @map("fulfillment_id") @db.Uuid
+  commandId                   String?   @map("command_id")
+  siteRef                     String    @map("site_ref")
+  billingAccountRef           String    @map("billing_account_ref")
+  sourceType                  String    @map("source_type")
+  sourceId                    String    @map("source_id")
+  purpose                     String
+  cycleKey                    String    @map("cycle_key")
+  productVersionRef           String    @map("product_version_ref")
+  planVersionRef              String?   @map("plan_version_ref")
+  offeringVersionRef          String    @map("offering_version_ref")
+  fulfillmentProgramVersionRef String   @map("fulfillment_program_version_ref")
+  outputPlanDigest            String    @map("output_plan_digest") @db.Char(64)
+  outputSetDigest             String?   @map("output_set_digest") @db.Char(64)
+  resultDigest                String?   @map("result_digest") @db.Char(64)
+  status                      String
+  completedAt                 DateTime? @map("completed_at") @db.Timestamptz(6)
+  createdAt                   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([sourceType, sourceId, purpose, cycleKey])
+  @@index([siteRef, billingAccountRef])
+  @@map("commerce_fulfillment_transaction")
+  @@schema("platform")
+}
+
+model CommerceFulfillmentOutputPlan {
+  fulfillmentId   String @map("fulfillment_id") @db.Uuid
+  outputLineId    String @map("output_line_id")
+  ordinal         Int
+  cardinality     Int
+  templateRevision String @map("template_revision")
+  outputKind      String @map("output_kind")
+  disposition     String
+
+  @@id([fulfillmentId, outputLineId])
+  @@unique([fulfillmentId, ordinal])
+  @@unique([fulfillmentId, outputLineId, cardinality, templateRevision, outputKind])
+  @@map("commerce_fulfillment_output_plan")
+  @@schema("platform")
+}
+
+model CommerceFulfillmentActualOutput {
+  fulfillmentId   String   @map("fulfillment_id") @db.Uuid
+  outputLineId    String   @map("output_line_id")
+  occurrence      Int
+  cardinality     Int
+  templateRevision String  @map("template_revision")
+  outputKind      String   @map("output_kind")
+  outputRef       String   @map("output_ref")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@id([fulfillmentId, outputLineId, occurrence])
+  @@unique([fulfillmentId, outputKind, outputRef])
+  @@map("commerce_fulfillment_actual_output")
+  @@schema("platform")
+}
+
+model CommerceCommandOutbox {
+  commandId String @map("command_id")
+  eventId   String @map("event_id") @db.Uuid
+
+  @@id([commandId, eventId])
+  @@unique([eventId])
+  @@map("commerce_command_outbox")
+  @@schema("platform")
+}
+
+model CommerceAuditEntry {
+  auditId       String   @id @map("audit_id") @db.Uuid
+  commandId     String   @map("command_id")
+  siteRef       String   @map("site_ref")
+  eventType     String   @map("event_type")
+  payloadDigest String   @map("payload_digest") @db.Char(64)
+  occurredAt    DateTime @default(now()) @map("occurred_at") @db.Timestamptz(6)
+
+  @@index([siteRef, occurredAt])
+  @@map("commerce_audit_entry")
   @@schema("platform")
 }
 

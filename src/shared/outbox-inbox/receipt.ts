@@ -23,13 +23,14 @@ export interface CommandReceipt extends CommandIdentity {
 export class CommandReceiptRepository {
   async begin(transaction: PlatformTransaction, identity: CommandIdentity): Promise<CommandReceipt> {
     assertDigest(identity.requestDigest);
+    const commandId = canonicalCommandId(identity.commandId);
     const sql = resolvePlatformTransaction(transaction);
     await sql.execute(
       `INSERT INTO platform.command_receipt
        (command_id, environment, region, caller_identity, operation, idempotency_key, request_digest)
        VALUES ($1,$2,$3,$4,$5,$6,$7)
        ON CONFLICT (environment, caller_identity, operation, idempotency_key) DO NOTHING`,
-      [identity.commandId, identity.environment, identity.region, identity.callerIdentity,
+      [commandId, identity.environment, identity.region, identity.callerIdentity,
         identity.operation, identity.idempotencyKey, identity.requestDigest],
     );
     const receipt = await this.#find(sql, identity);
@@ -64,7 +65,8 @@ export class CommandReceiptRepository {
               operation, idempotency_key AS "idempotencyKey", request_digest AS "requestDigest",
               state, result, result_digest AS "resultDigest"
        FROM platform.command_receipt
-       WHERE environment=$1 AND caller_identity=$2 AND operation=$3 AND idempotency_key=$4`,
+       WHERE environment=$1 AND caller_identity=$2 AND operation=$3 AND idempotency_key=$4
+       FOR UPDATE`,
       [identity.environment, identity.callerIdentity, identity.operation, identity.idempotencyKey],
     );
     const receipt = rows[0];
@@ -77,4 +79,15 @@ type ReceiptRow = CommandReceipt & Record<string, unknown>;
 
 export function assertDigest(value: string): void {
   if (!/^[a-f0-9]{64}$/u.test(value)) throw new Error("SHA256_DIGEST_REQUIRED");
+}
+
+export function canonicalCommandId(value: string): string {
+  const normalized = value.toLowerCase();
+  if (/^[a-f0-9]{32}$/u.test(normalized) || /^[a-f0-9]{8}-[a-f0-9]{4}-7[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(normalized)) {
+    return normalized;
+  }
+  if (/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(normalized)) {
+    return normalized.replaceAll("-", "");
+  }
+  throw new Error("COMMAND_ID_INVALID");
 }

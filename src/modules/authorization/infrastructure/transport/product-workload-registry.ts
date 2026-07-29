@@ -54,6 +54,7 @@ export class ProductWorkloadRegistry implements TrustedCallerCryptographicVerifi
         "audience",
         "allowedOperations",
         "bindingEpoch",
+        "siteSecurityEpoch",
         "policyEpoch",
         "csrfSha256",
       ]);
@@ -76,6 +77,7 @@ export class ProductWorkloadRegistry implements TrustedCallerCryptographicVerifi
         allowedOperations.some((operation) => !ALLOWED_OPERATIONS.has(operation))
       ) throw new Error("PRODUCT_WORKLOAD_OPERATIONS_INVALID");
       const bindingEpoch = positiveEpoch(item.bindingEpoch);
+      const siteSecurityEpoch = positiveEpoch(item.siteSecurityEpoch);
       const policyEpoch = positiveEpoch(item.policyEpoch);
       const registration: ProductWorkloadIdentity = Object.freeze({
         certificateSha256,
@@ -91,6 +93,7 @@ export class ProductWorkloadRegistry implements TrustedCallerCryptographicVerifi
         audience: reference(item.audience, 256),
         allowedOperations: Object.freeze(allowedOperations),
         bindingEpoch,
+        siteSecurityEpoch,
         policyEpoch,
         csrfSha256: digest(item.csrfSha256),
       });
@@ -120,10 +123,15 @@ export class ProductWorkloadRegistry implements TrustedCallerCryptographicVerifi
   }
 
   verifyCsrf(workload: ProductWorkloadIdentity, token: string | undefined): boolean {
-    if (token === undefined || token.length < 32 || token.length > 512) return false;
-    const actual = Buffer.from(createHash("sha256").update(token, "utf8").digest("hex"), "ascii");
+    return this.verifyCsrfEvidence(workload, token) !== null;
+  }
+
+  verifyCsrfEvidence(workload: ProductWorkloadIdentity, token: string | undefined): string | null {
+    if (token === undefined || token.length < 32 || token.length > 512) return null;
+    const digest = createHash("sha256").update(token, "utf8").digest("hex");
+    const actual = Buffer.from(digest, "ascii");
     const expected = Buffer.from(workload.csrfSha256, "ascii");
-    return actual.length === expected.length && timingSafeEqual(actual, expected);
+    return actual.length === expected.length && timingSafeEqual(actual, expected) ? digest : null;
   }
 
   async verify(
@@ -136,10 +144,12 @@ export class ProductWorkloadRegistry implements TrustedCallerCryptographicVerifi
       registration === undefined ||
       registration.workloadIdentityId !== context.trustedCaller.workloadIdentityId ||
       registration.siteRef !== context.trustedCaller.siteId ||
+      registration.siteReleaseRef !== context.trustedCaller.siteReleaseRef ||
       registration.environment !== context.environment ||
       registration.region !== context.region ||
       registration.audience !== context.audience ||
       registration.bindingEpoch !== context.trustedCaller.bindingEpoch ||
+      registration.siteSecurityEpoch !== context.trustedCaller.siteSecurityEpoch ||
       registration.policyEpoch !== context.policyEpoch ||
       !registration.allowedOperations.includes(operation)
     ) throw new SessionAuthorizationError("WORKLOAD_NOT_AUTHORIZED");
@@ -151,7 +161,9 @@ export class ProductWorkloadRegistry implements TrustedCallerCryptographicVerifi
       region: registration.region,
       allowedOperations: registration.allowedOperations,
       siteId: registration.siteRef,
+      siteReleaseRef: registration.siteReleaseRef,
       bindingEpoch: registration.bindingEpoch,
+      siteSecurityEpoch: registration.siteSecurityEpoch,
       issuedAt: context.trustedCaller.issuedAt,
       expiresAt: context.trustedCaller.expiresAt,
       issuer: "kokoro-platform-product-workload-registry",

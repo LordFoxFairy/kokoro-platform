@@ -5,6 +5,8 @@ export interface TrustedCallerContext {
   readonly kind: WorkloadKind;
   readonly workloadIdentityId: string;
   readonly siteId?: string;
+  readonly siteReleaseRef?: string;
+  readonly siteSecurityEpoch?: string;
   readonly environment: string;
   readonly region: string;
   readonly audience: string;
@@ -81,6 +83,8 @@ export interface VerifiedTrustedCallerClaims {
   readonly region: string;
   readonly allowedOperations: readonly string[];
   readonly siteId: string | null;
+  readonly siteReleaseRef?: string | null;
+  readonly siteSecurityEpoch?: string | null;
   readonly bindingEpoch: string;
   readonly issuedAt: string;
   readonly expiresAt: string;
@@ -110,7 +114,9 @@ export async function verifyRequestSecurityContext(
   if (context.audience !== options.expectedAudience || context.environment !== options.expectedEnvironment || context.region !== options.expectedRegion) throw new Error("REQUEST_SECURITY_CONTEXT_DEPLOYMENT_MISMATCH");
   const claims = await options.callerVerifier.verify(context, options.operation);
   const callerSiteId = context.trustedCaller.siteId ?? null;
-  if (claims.workloadIdentityId !== context.trustedCaller.workloadIdentityId || claims.kind !== context.trustedCaller.kind || claims.audience !== context.trustedCaller.audience || claims.environment !== context.trustedCaller.environment || claims.region !== context.trustedCaller.region || claims.siteId !== callerSiteId || claims.bindingEpoch !== context.trustedCaller.bindingEpoch || claims.issuedAt !== context.trustedCaller.issuedAt || claims.expiresAt !== context.trustedCaller.expiresAt || !sameStrings(claims.allowedOperations, context.trustedCaller.allowedOperations) || !claims.allowedOperations.includes(options.operation) || claims.issuer.length === 0 || claims.keyVersion.length === 0 || !context.evidence.some((item) => item.issuer === claims.issuer)) throw new Error("TRUSTED_CALLER_ATTESTATION_MISMATCH");
+  const callerSiteReleaseRef = context.trustedCaller.siteReleaseRef ?? null;
+  const callerSiteSecurityEpoch = context.trustedCaller.siteSecurityEpoch ?? null;
+  if (claims.workloadIdentityId !== context.trustedCaller.workloadIdentityId || claims.kind !== context.trustedCaller.kind || claims.audience !== context.trustedCaller.audience || claims.environment !== context.trustedCaller.environment || claims.region !== context.trustedCaller.region || claims.siteId !== callerSiteId || (claims.siteReleaseRef ?? null) !== callerSiteReleaseRef || (claims.siteSecurityEpoch ?? null) !== callerSiteSecurityEpoch || claims.bindingEpoch !== context.trustedCaller.bindingEpoch || claims.issuedAt !== context.trustedCaller.issuedAt || claims.expiresAt !== context.trustedCaller.expiresAt || !sameStrings(claims.allowedOperations, context.trustedCaller.allowedOperations) || !claims.allowedOperations.includes(options.operation) || claims.issuer.length === 0 || claims.keyVersion.length === 0 || !context.evidence.some((item) => item.issuer === claims.issuer)) throw new Error("TRUSTED_CALLER_ATTESTATION_MISMATCH");
   const verified = Object.defineProperty({ ...context }, verifiedContextBrand, { value: true }) as VerifiedRequestSecurityContext;
   deepFreeze(verified);
   verifiedContexts.add(verified);
@@ -158,11 +164,12 @@ export function parseRequestSecurityContext(input: unknown): RequestSecurityCont
 
 function parseTrustedCaller(input: unknown): TrustedCallerContext {
   const value = record(input, "TRUSTED_CALLER_INVALID");
-  rejectUnknown(value, ["kind", "workloadIdentityId", "siteId", "environment", "region", "audience", "allowedOperations", "bindingEpoch", "issuedAt", "expiresAt"]);
+  rejectUnknown(value, ["kind", "workloadIdentityId", "siteId", "siteReleaseRef", "siteSecurityEpoch", "environment", "region", "audience", "allowedOperations", "bindingEpoch", "issuedAt", "expiresAt"]);
   const kind = text(value.kind);
   if (!["site_product", "admin_workload", "platform_worker"].includes(kind)) throw new Error("TRUSTED_CALLER_KIND_INVALID");
-  const caller: TrustedCallerContext = { kind: kind as WorkloadKind, workloadIdentityId: text(value.workloadIdentityId), environment: text(value.environment), region: text(value.region), audience: text(value.audience), allowedOperations: strings(value.allowedOperations), bindingEpoch: epoch(value.bindingEpoch), issuedAt: instant(value.issuedAt), expiresAt: instant(value.expiresAt), ...(value.siteId === undefined ? {} : { siteId: text(value.siteId) }) };
-  if (caller.kind === "site_product" && !caller.siteId) throw new Error("TRUSTED_SITE_REQUIRED");
+  const caller: TrustedCallerContext = { kind: kind as WorkloadKind, workloadIdentityId: text(value.workloadIdentityId), environment: text(value.environment), region: text(value.region), audience: text(value.audience), allowedOperations: strings(value.allowedOperations), bindingEpoch: epoch(value.bindingEpoch), issuedAt: instant(value.issuedAt), expiresAt: instant(value.expiresAt), ...(value.siteId === undefined ? {} : { siteId: text(value.siteId) }), ...(value.siteReleaseRef === undefined ? {} : { siteReleaseRef: text(value.siteReleaseRef) }), ...(value.siteSecurityEpoch === undefined ? {} : { siteSecurityEpoch: epoch(value.siteSecurityEpoch) }) };
+  if (caller.kind === "site_product" && (!caller.siteId || caller.siteReleaseRef === undefined || caller.siteSecurityEpoch === undefined)) throw new Error("TRUSTED_SITE_REQUIRED");
+  if (caller.kind !== "site_product" && (caller.siteReleaseRef !== undefined || caller.siteSecurityEpoch !== undefined)) throw new Error("TRUSTED_SITE_SECURITY_EPOCH_INVALID");
   return deepFreeze(caller);
 }
 

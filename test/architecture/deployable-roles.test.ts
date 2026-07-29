@@ -193,7 +193,7 @@ describe("Platform migrator", () => {
       `SELECT pg_advisory_lock(hashtext($1)):${MIGRATION_ADVISORY_LOCK}`,
       "execute",
     ]);
-    expect(events.filter((event) => event === "grant")).toHaveLength(40);
+    expect(events.filter((event) => event === "grant")).toHaveLength(44);
     expect(events.slice(-3)).toEqual([
       "verify-authority",
       `SELECT pg_advisory_unlock(hashtext($1)):${MIGRATION_ADVISORY_LOCK}`,
