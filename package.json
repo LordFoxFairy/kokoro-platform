@@ -31,7 +31,7 @@
     "start:worker": "node dist/src/process/worker.js",
     "test:repository": "node --test test/repository/*.test.mjs",
     "test:platform": "vitest run test/*.test.ts test/architecture/*.test.ts",
-    "test:admin-control": "vitest run test/unit/admin-*.test.ts",
+    "test:admin-control": "vitest run test/unit/admin-*.test.ts test/unit/outbox.test.ts",
     "test:component:postgres": "vitest run test/component/postgres-foundation.test.ts --no-file-parallelism",
     "test": "pnpm run test:repository && pnpm run test:platform && pnpm run test:admin-control && pnpm -r test",
     "test:integration": "pnpm -r test:integration",
