@@ -23,9 +23,9 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
     input: Parameters<IdentitySecurityManagementRepository["loadReauthenticationMaterial"]>[1],
   ): Promise<IdentityReauthenticationMaterial | null> {
     const rows = await resolvePlatformTransaction(transaction).query<ReauthenticationOwnerRow>(
-      `${reauthenticationOwnerSelect} FOR SHARE OF account,subject,session,credential`,
-      [input.binding.siteRef, input.binding.subjectRef, input.binding.sessionRef, input.now,
-        input.binding.siteReleaseRef],
+      `${reauthenticationOwnerSelect}
+       FOR SHARE OF site,release,product_binding,account,subject,session,credential`,
+      securityAuthorityValues(input.binding, input.now),
     );
     return reauthenticationMaterial(rows[0], input.binding);
   }
@@ -37,9 +37,9 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
     const sql = resolvePlatformTransaction(transaction);
     await lockAccount(sql, input.binding.siteRef, input.accountRef);
     const rows = await sql.query<ReauthenticationOwnerRow>(
-      `${reauthenticationOwnerSelect} FOR SHARE OF account,subject,session,credential`,
-      [input.binding.siteRef, input.binding.subjectRef, input.binding.sessionRef, input.now,
-        input.binding.siteReleaseRef],
+      `${reauthenticationOwnerSelect}
+       FOR SHARE OF site,release,product_binding,account,subject,session,credential`,
+      securityAuthorityValues(input.binding, input.now),
     );
     const owner = rows[0];
     if (owner === undefined || !bindingMatches(owner, input.binding) || owner.accountRef !== input.accountRef ||
@@ -63,12 +63,14 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
     const sql = resolvePlatformTransaction(transaction);
     await lockAccount(sql, input.binding.siteRef, input.accountRef);
     const rows = await sql.query<ReauthenticationOwnerRow>(
-      `${reauthenticationOwnerSelect} FOR UPDATE OF account,subject,session,credential`,
-      [input.binding.siteRef, input.binding.subjectRef, input.binding.sessionRef, input.now,
-        input.binding.siteReleaseRef],
+      `${reauthenticationOwnerSelect}
+       FOR UPDATE OF account,subject,session,credential
+       FOR SHARE OF site,release,product_binding`,
+      securityAuthorityValues(input.binding, input.now),
     );
     const owner = rows[0];
     if (owner === undefined || !bindingMatches(owner, input.binding) || owner.accountRef !== input.accountRef ||
+        input.workloadIdentityId !== input.binding.workloadIdentityId ||
         owner.accountSecurityEpoch.toString() !== input.expectedAccountSecurityEpoch ||
         owner.passwordCredentialEpoch.toString() !== input.passwordCredentialEpoch ||
         owner.authStrengthPolicyRevision !== input.authStrengthPolicyRevision) return false;
@@ -85,12 +87,14 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
     const sql = resolvePlatformTransaction(transaction);
     await lockAccount(sql, input.binding.siteRef, input.accountRef);
     const rows = await sql.query<ReauthenticationOwnerRow>(
-      `${reauthenticationOwnerSelect} FOR UPDATE OF account,subject,session,credential`,
-      [input.binding.siteRef, input.binding.subjectRef, input.binding.sessionRef, input.now,
-        input.binding.siteReleaseRef],
+      `${reauthenticationOwnerSelect}
+       FOR UPDATE OF account,subject,session,credential
+       FOR SHARE OF site,release,product_binding`,
+      securityAuthorityValues(input.binding, input.now),
     );
     const owner = rows[0];
     if (owner === undefined || !bindingMatches(owner, input.binding) || owner.accountRef !== input.accountRef ||
+        input.workloadIdentityId !== input.binding.workloadIdentityId ||
         owner.accountSecurityEpoch.toString() !== input.expectedAccountSecurityEpoch ||
         owner.passwordCredentialEpoch.toString() !== input.passwordCredentialEpoch ||
         owner.authStrengthPolicyRevision !== input.authStrengthPolicyRevision ||
@@ -140,7 +144,9 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
       `${reauthenticationChallengeSelect}
        WHERE challenge.site_ref=$1 AND challenge.transaction_ref=$2 AND challenge.state='pending'
          AND challenge.expires_at>$3::timestamptz`,
-      [input.binding.siteRef, input.transactionRef, input.now],
+      [input.binding.siteRef, input.transactionRef, input.now,
+        input.binding.siteProjectBindingRef, input.binding.workloadIdentityId,
+        input.binding.bindingEpoch],
     );
     const row = rows[0];
     if (row === undefined || !challengeMatches(row, input)) return null;
@@ -168,8 +174,11 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
     const challengeRows = await sql.query<ReauthenticationChallengeRow>(
       `${reauthenticationChallengeSelect}
        WHERE challenge.site_ref=$1 AND challenge.transaction_ref=$2
-       FOR UPDATE OF challenge,account,subject,session,credential,authenticator`,
-      [input.binding.siteRef, input.transactionRef],
+       FOR UPDATE OF challenge,account,subject,session,credential,authenticator
+       FOR SHARE OF site,release,product_binding`,
+      [input.binding.siteRef, input.transactionRef, input.now,
+        input.binding.siteProjectBindingRef, input.binding.workloadIdentityId,
+        input.binding.bindingEpoch],
     );
     const challenge = challengeRows[0];
     if (challenge === undefined || challenge.state !== "pending" ||
@@ -227,13 +236,16 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
     const sql = resolvePlatformTransaction(transaction);
     await lockAccount(sql, input.binding.siteRef, input.accountRef);
     const ownerRows = await sql.query<ReauthenticationOwnerRow>(
-      `${reauthenticationOwnerSelect} FOR UPDATE OF account,subject,session,credential`,
-      [input.binding.siteRef, input.binding.subjectRef, input.binding.sessionRef, input.now,
-        input.binding.siteReleaseRef],
+      `${reauthenticationOwnerSelect}
+       FOR UPDATE OF account,subject,session,credential
+       FOR SHARE OF site,release,product_binding`,
+      securityAuthorityValues(input.binding, input.now),
     );
     const owner = ownerRows[0];
     if (owner === undefined || !bindingMatches(owner, input.binding) || owner.accountRef !== input.accountRef ||
-        owner.accountSecurityEpoch.toString() !== input.expectedAccountSecurityEpoch) return null;
+        input.workloadIdentityId !== input.binding.workloadIdentityId ||
+        owner.accountSecurityEpoch.toString() !== input.expectedAccountSecurityEpoch ||
+        owner.authStrengthPolicyRevision !== input.expectedAuthStrengthPolicyRevision) return null;
     const priorRows = await sql.query<ReauthenticationRecoveryRow>(
       `SELECT proof.proof_digest AS "proofDigest",proof.state AS "proofState",proof.expires_at AS "proofExpiresAt",
               proof.audience,proof.operation_id AS "operationId",proof.resource_kind AS "resourceKind",
@@ -280,7 +292,7 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
       [input.priorCommandId, input.newCommandId],
     );
     if (proofChanged !== 1 || claimChanged !== 1 || recoveryChanged !== 1) {
-      throw new Error("IDENTITY_REAUTHENTICATION_SUPERSEDE_STALE");
+      throw new IdentitySecurityAtomicRejection();
     }
     const target = Object.freeze({
       audience: "platform-public" as const, operationId: prior.operationId,
@@ -304,14 +316,9 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
   ): Promise<IdentitySecurityOwnerMaterial | null> {
     const sql = resolvePlatformTransaction(transaction);
     const rows = await sql.query<SecurityOwnerRow>(
-      `${securityOwnerSelect} FOR SHARE OF account,subject,session`,
-      [
-        input.binding.siteRef,
-        input.binding.subjectRef,
-        input.binding.sessionRef,
-        input.now,
-        input.binding.siteReleaseRef,
-      ],
+      `${securityOwnerSelect}
+       FOR SHARE OF site,release,product_binding,account,subject,session`,
+      securityAuthorityValues(input.binding, input.now),
     );
     const owner = rows[0];
     if (
@@ -363,7 +370,10 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
     await lockAccount(sql, input.binding.siteRef, input.accountRef);
     const owner = await lockSecurityOwner(sql, input.binding, input.now);
     if (
+      owner === null ||
       !expectedOwner(owner, input.accountRef, input.expectedAccountSecurityEpoch) ||
+      input.workloadIdentityId !== input.binding.workloadIdentityId ||
+      owner.authStrengthPolicyRevision !== input.expectedAuthStrengthPolicyRevision ||
       (await activeTotpExists(sql, input.binding.siteRef, input.accountRef))
     )
       return false;
@@ -428,7 +438,7 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
       [input.binding.siteRef, prior.authenticatorRef, input.now],
     );
     if (transferred !== 1 || claim !== 1 || enrollment !== 1 || factor !== 1) {
-      throw new Error("IDENTITY_TOTP_ENROLLMENT_SUPERSEDE_STALE");
+      throw new IdentitySecurityAtomicRejection();
     }
     await insertTotpEnrollment(sql, {
       binding: input.binding,
@@ -641,9 +651,10 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
     const sql = resolvePlatformTransaction(transaction);
     await lockAccount(sql, input.binding.siteRef, input.accountRef);
     const ownerRows = await sql.query<ReauthenticationOwnerRow>(
-      `${reauthenticationOwnerSelect} FOR UPDATE OF account,subject,session,credential`,
-      [input.binding.siteRef, input.binding.subjectRef, input.binding.sessionRef, input.now,
-        input.binding.siteReleaseRef],
+      `${reauthenticationOwnerSelect}
+       FOR UPDATE OF account,subject,session,credential
+       FOR SHARE OF site,release,product_binding`,
+      securityAuthorityValues(input.binding, input.now),
     );
     const owner = ownerRows[0];
     if (owner === undefined || !bindingMatches(owner, input.binding) || owner.accountRef !== input.accountRef ||
@@ -704,7 +715,9 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
     const sql = resolvePlatformTransaction(transaction);
     await lockAccount(sql, input.binding.siteRef, input.accountRef);
     const owner = await lockSecurityOwner(sql, input.binding, input.now);
-    if (owner === null || owner.accountRef !== input.accountRef) return null;
+    if (owner === null || owner.accountRef !== input.accountRef ||
+        input.workloadIdentityId !== input.binding.workloadIdentityId ||
+        owner.authStrengthPolicyRevision !== input.expectedAuthStrengthPolicyRevision) return null;
     const rows = await sql.query<RecoveryCodeRecoveryRow>(
       `SELECT claim.set_ref AS "setRef",claim.state AS "claimState",claim.request_digest AS "claimRequestDigest",
               receipt.request_digest AS "receiptRequestDigest",receipt.operation,receipt.state AS "receiptState",
@@ -743,7 +756,7 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
        WHERE command_id=$1 AND state='active'`,
       [input.priorCommandId, input.newCommandId, input.setRef],
     );
-    if (claim !== 1 || recovery !== 1) throw new Error("IDENTITY_RECOVERY_CODE_SUPERSEDE_STALE");
+    if (claim !== 1 || recovery !== 1) throw new IdentitySecurityAtomicRejection();
     await replaceRecoveryCodeSet(sql, {
       siteRef: input.binding.siteRef, accountRef: input.accountRef, subjectRef: input.binding.subjectRef,
       setRef: input.setRef, recoveryCodeDigests: input.recoveryCodeDigests, now: input.now,
@@ -784,7 +797,12 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
   }
 }
 
-const securityOwnerSelect = `SELECT account.account_ref AS "accountRef",account.subject_ref AS "subjectRef",
+const securityOwnerSelect = `SELECT account.site_ref AS "siteRef",
+  site.state AS "siteState",release.release_ref AS "siteReleaseRef",release.state AS "releaseState",
+  product_binding.binding_ref AS "siteProjectBindingRef",
+  product_binding.workload_identity_id AS "workloadIdentityId",
+  product_binding.binding_epoch AS "bindingEpoch",product_binding.state AS "bindingState",
+  account.account_ref AS "accountRef",account.subject_ref AS "subjectRef",
   account.security_epoch AS "accountSecurityEpoch",subject.subject_generation AS "subjectGeneration",
   session.session_ref AS "sessionRef",session.session_epoch AS "sessionEpoch",
   session.credential_epoch AS "credentialEpoch",session.authenticated_at AS "authenticatedAt",
@@ -792,12 +810,18 @@ const securityOwnerSelect = `SELECT account.account_ref AS "accountRef",account.
   identifier.normalized_value AS "emailNormalized",release.identity_issuer_label AS "identityIssuerLabel",
   release.identity_auth_strength_policy_revision AS "authStrengthPolicyRevision"
   FROM platform.identity_account account
+  JOIN platform.authorization_site site
+    ON site.site_ref=account.site_ref AND site.state='active'
   JOIN platform.authorization_subject subject
     ON subject.subject_ref=account.subject_ref AND subject.site_ref=account.site_ref
   JOIN platform.authorization_identity_session session
     ON session.subject_ref=account.subject_ref AND session.site_ref=account.site_ref
   JOIN platform.authorization_site_release release
     ON release.site_ref=account.site_ref AND release.release_ref=$5 AND release.state='active'
+  JOIN platform.authorization_product_binding product_binding
+    ON product_binding.binding_ref=$6 AND product_binding.workload_identity_id=$7
+      AND product_binding.site_ref=account.site_ref AND product_binding.release_ref=release.release_ref
+      AND product_binding.binding_epoch=$8::bigint AND product_binding.state='active'
   JOIN platform.identity_login_identifier identifier
     ON identifier.site_ref=account.site_ref AND identifier.account_ref=account.account_ref
       AND identifier.subject_ref=account.subject_ref AND identifier.kind='email' AND identifier.status='active'
@@ -805,7 +829,12 @@ const securityOwnerSelect = `SELECT account.account_ref AS "accountRef",account.
     AND account.state='active' AND subject.state='active' AND session.state='active'
     AND session.expires_at>$4::timestamptz`;
 
-const reauthenticationOwnerSelect = `SELECT account.account_ref AS "accountRef",account.subject_ref AS "subjectRef",
+const reauthenticationOwnerSelect = `SELECT account.site_ref AS "siteRef",
+  site.state AS "siteState",release.release_ref AS "siteReleaseRef",release.state AS "releaseState",
+  product_binding.binding_ref AS "siteProjectBindingRef",
+  product_binding.workload_identity_id AS "workloadIdentityId",
+  product_binding.binding_epoch AS "bindingEpoch",product_binding.state AS "bindingState",
+  account.account_ref AS "accountRef",account.subject_ref AS "subjectRef",
   account.security_epoch AS "accountSecurityEpoch",subject.subject_generation AS "subjectGeneration",
   session.session_ref AS "sessionRef",session.session_epoch AS "sessionEpoch",
   session.credential_epoch AS "credentialEpoch",session.authenticated_at AS "authenticatedAt",
@@ -820,12 +849,18 @@ const reauthenticationOwnerSelect = `SELECT account.account_ref AS "accountRef",
   authenticator.last_accepted_timestep AS "lastAcceptedTimeStep",
   recovery_set.set_ref AS "recoverySetRef"
   FROM platform.identity_account account
+  JOIN platform.authorization_site site
+    ON site.site_ref=account.site_ref AND site.state='active'
   JOIN platform.authorization_subject subject
     ON subject.subject_ref=account.subject_ref AND subject.site_ref=account.site_ref
   JOIN platform.authorization_identity_session session
     ON session.subject_ref=account.subject_ref AND session.site_ref=account.site_ref
   JOIN platform.authorization_site_release release
     ON release.site_ref=account.site_ref AND release.release_ref=$5 AND release.state='active'
+  JOIN platform.authorization_product_binding product_binding
+    ON product_binding.binding_ref=$6 AND product_binding.workload_identity_id=$7
+      AND product_binding.site_ref=account.site_ref AND product_binding.release_ref=release.release_ref
+      AND product_binding.binding_epoch=$8::bigint AND product_binding.state='active'
   JOIN platform.identity_password_credential credential
     ON credential.site_ref=account.site_ref AND credential.account_ref=account.account_ref
   JOIN platform.identity_login_identifier identifier
@@ -865,6 +900,8 @@ const reauthenticationChallengeSelect = `SELECT challenge.site_ref AS "siteRef",
   authenticator.last_accepted_timestep AS "lastAcceptedTimeStep",
   active_recovery_set.set_ref AS "currentRecoverySetRef"
   FROM platform.identity_reauthentication_challenge challenge
+  JOIN platform.authorization_site site
+    ON site.site_ref=challenge.site_ref AND site.state='active'
   JOIN platform.identity_account account
     ON account.site_ref=challenge.site_ref AND account.account_ref=challenge.account_ref
       AND account.subject_ref=challenge.subject_ref AND account.state='active'
@@ -878,6 +915,11 @@ const reauthenticationChallengeSelect = `SELECT challenge.site_ref AS "siteRef",
   JOIN platform.authorization_site_release release
     ON release.site_ref=challenge.site_ref AND release.release_ref=challenge.site_release_ref
       AND release.state='active'
+  JOIN platform.authorization_product_binding product_binding
+    ON product_binding.binding_ref=$4 AND product_binding.workload_identity_id=$5
+      AND product_binding.site_ref=challenge.site_ref
+      AND product_binding.release_ref=challenge.site_release_ref
+      AND product_binding.binding_epoch=$6::bigint AND product_binding.state='active'
   JOIN platform.identity_totp_authenticator authenticator
     ON authenticator.site_ref=challenge.site_ref AND authenticator.authenticator_ref=challenge.authenticator_ref
       AND authenticator.account_ref=challenge.account_ref AND authenticator.subject_ref=challenge.subject_ref
@@ -934,7 +976,8 @@ function challengeMatches(
 ): boolean {
   const methods = authenticationMethods(row.authenticationMethods);
   return row.siteRef === input.binding.siteRef && row.siteReleaseRef === input.binding.siteReleaseRef &&
-    row.workloadIdentityId === input.workloadIdentityId && row.subjectRef === input.binding.subjectRef &&
+    input.workloadIdentityId === input.binding.workloadIdentityId &&
+    row.workloadIdentityId === input.binding.workloadIdentityId && row.subjectRef === input.binding.subjectRef &&
     row.sessionRef === input.binding.sessionRef && row.audience === input.target.audience &&
     row.operationId === input.target.operationId && row.resourceKind === input.target.resourceKind &&
     row.resourceRef === row.accountRef && row.accountSecurityEpoch === row.currentAccountSecurityEpoch &&
@@ -1101,7 +1144,8 @@ async function consumeReauthenticationProof(
   const changed = await sql.execute(
     `UPDATE platform.identity_reauthentication_proof proof
      SET state='consumed',consumed_at=$14::timestamptz,consuming_command_id=$13,updated_at=$14::timestamptz
-     FROM platform.authorization_site_release release,
+     FROM platform.authorization_site site,
+          platform.authorization_site_release release,
           platform.authorization_product_binding binding
      WHERE proof.proof_digest=$1 AND proof.site_ref=$2 AND proof.site_release_ref=$3
        AND proof.workload_identity_id=$4 AND proof.account_ref=$5 AND proof.subject_ref=$6
@@ -1112,16 +1156,19 @@ async function consumeReauthenticationProof(
        AND proof.subject_generation=$11::bigint AND proof.session_epoch=$12::bigint
        AND proof.credential_epoch=$15::bigint AND proof.auth_strength_policy_revision=$16
        AND proof.state='active' AND proof.expires_at>$14::timestamptz
+       AND site.site_ref=proof.site_ref AND site.state='active'
        AND release.site_ref=proof.site_ref AND release.release_ref=proof.site_release_ref
        AND release.state='active' AND release.identity_auth_strength_policy_revision=$16
+       AND binding.binding_ref=$17 AND binding.workload_identity_id=$18
        AND binding.workload_identity_id=proof.workload_identity_id
        AND binding.site_ref=proof.site_ref AND binding.release_ref=proof.site_release_ref
-       AND binding.state='active'`,
+       AND binding.binding_epoch=$19::bigint AND binding.state='active'`,
     [input.proof.proofDigest, input.binding.siteRef, input.binding.siteReleaseRef,
       input.proof.workloadIdentityId, input.accountRef, input.binding.subjectRef, input.binding.sessionRef,
       input.proof.target.audience, input.proof.target.operationId, input.proof.target.resourceKind,
       input.binding.subjectGeneration, input.binding.sessionEpoch, input.commandId, input.now,
-      input.binding.credentialEpoch, input.proof.expectedAuthStrengthPolicyRevision],
+      input.binding.credentialEpoch, input.proof.expectedAuthStrengthPolicyRevision,
+      input.binding.siteProjectBindingRef, input.binding.workloadIdentityId, input.binding.bindingEpoch],
   );
   return changed === 1;
 }
@@ -1138,6 +1185,8 @@ async function lockReauthenticationProof(
   const rows = await sql.query<Record<string, unknown>>(
     `SELECT 1
      FROM platform.identity_reauthentication_proof proof
+     JOIN platform.authorization_site site
+       ON site.site_ref=proof.site_ref
      JOIN platform.authorization_site_release release
        ON release.site_ref=proof.site_ref AND release.release_ref=proof.site_release_ref
      JOIN platform.authorization_product_binding binding
@@ -1153,14 +1202,17 @@ async function lockReauthenticationProof(
        AND proof.subject_generation=$11::bigint AND proof.session_epoch=$12::bigint
        AND proof.credential_epoch=$13::bigint AND proof.auth_strength_policy_revision=$15
        AND proof.state='active' AND proof.expires_at>$14::timestamptz
+       AND site.state='active'
        AND release.state='active' AND release.identity_auth_strength_policy_revision=$15
-       AND binding.state='active'
-     FOR UPDATE OF proof FOR SHARE OF release,binding`,
+       AND binding.binding_ref=$16 AND binding.workload_identity_id=$17
+       AND binding.binding_epoch=$18::bigint AND binding.state='active'
+     FOR UPDATE OF proof FOR SHARE OF site,release,binding`,
     [input.proof.proofDigest, input.binding.siteRef, input.binding.siteReleaseRef,
       input.proof.workloadIdentityId, input.accountRef, input.binding.subjectRef, input.binding.sessionRef,
       input.proof.target.audience, input.proof.target.operationId, input.proof.target.resourceKind,
       input.binding.subjectGeneration, input.binding.sessionEpoch, input.binding.credentialEpoch,
-      input.now, input.proof.expectedAuthStrengthPolicyRevision],
+      input.now, input.proof.expectedAuthStrengthPolicyRevision,
+      input.binding.siteProjectBindingRef, input.binding.workloadIdentityId, input.binding.bindingEpoch],
   );
   return rows.length === 1;
 }
@@ -1189,8 +1241,10 @@ async function lockSecurityOwner(
   now: string,
 ): Promise<SecurityOwnerRow | null> {
   const rows = await sql.query<SecurityOwnerRow>(
-    `${securityOwnerSelect} FOR UPDATE OF account,subject,session`,
-    [binding.siteRef, binding.subjectRef, binding.sessionRef, now, binding.siteReleaseRef],
+    `${securityOwnerSelect}
+     FOR UPDATE OF account,subject,session
+     FOR SHARE OF site,release,product_binding`,
+    securityAuthorityValues(binding, now),
   );
   const owner = rows[0];
   return owner !== undefined && bindingMatches(owner, binding) ? owner : null;
@@ -1211,6 +1265,14 @@ function expectedOwner(
 function bindingMatches(owner: SecurityOwnerRow, binding: IdentitySecuritySessionBinding): boolean {
   const methods = authenticationMethods(owner.authenticationMethods);
   return (
+    owner.siteRef === binding.siteRef &&
+    owner.siteState === "active" &&
+    owner.siteReleaseRef === binding.siteReleaseRef &&
+    owner.releaseState === "active" &&
+    owner.siteProjectBindingRef === binding.siteProjectBindingRef &&
+    owner.workloadIdentityId === binding.workloadIdentityId &&
+    owner.bindingEpoch.toString() === binding.bindingEpoch &&
+    owner.bindingState === "active" &&
     owner.subjectRef === binding.subjectRef &&
     owner.sessionRef === binding.sessionRef &&
     owner.subjectGeneration.toString() === binding.subjectGeneration &&
@@ -1220,6 +1282,22 @@ function bindingMatches(owner: SecurityOwnerRow, binding: IdentitySecuritySessio
     methods.length === binding.authenticationMethods.length &&
     methods.every((method, index) => method === binding.authenticationMethods[index])
   );
+}
+
+function securityAuthorityValues(
+  binding: IdentitySecuritySessionBinding,
+  now: string,
+): readonly unknown[] {
+  return [
+    binding.siteRef,
+    binding.subjectRef,
+    binding.sessionRef,
+    now,
+    binding.siteReleaseRef,
+    binding.siteProjectBindingRef,
+    binding.workloadIdentityId,
+    binding.bindingEpoch,
+  ];
 }
 
 async function expireTotpEnrollments(
@@ -1541,6 +1619,14 @@ function instant(value: string | Date): string {
 }
 
 interface SecurityOwnerRow extends Record<string, unknown> {
+  siteRef: string;
+  siteState: string;
+  siteReleaseRef: string;
+  releaseState: string;
+  siteProjectBindingRef: string;
+  workloadIdentityId: string;
+  bindingEpoch: bigint;
+  bindingState: string;
   accountRef: string;
   subjectRef: string;
   sessionRef: string;

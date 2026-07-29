@@ -11,6 +11,9 @@ export class IdentitySecurityAtomicRejection extends Error {
 export type IdentitySecuritySessionBinding = Readonly<{
   siteRef: string;
   siteReleaseRef: string;
+  siteProjectBindingRef: string;
+  workloadIdentityId: string;
+  bindingEpoch: string;
   subjectRef: string;
   sessionRef: string;
   subjectGeneration: string;
@@ -189,6 +192,7 @@ export interface IdentitySecurityManagementRepository {
       binding: IdentitySecuritySessionBinding;
       accountRef: string;
       expectedAccountSecurityEpoch: string;
+      expectedAuthStrengthPolicyRevision: string;
       priorCommandId: string;
       newCommandId: string;
       requestDigest: string;
@@ -240,6 +244,7 @@ export interface IdentitySecurityManagementRepository {
       binding: IdentitySecuritySessionBinding;
       accountRef: string;
       expectedAccountSecurityEpoch: string;
+      expectedAuthStrengthPolicyRevision: string;
       priorCommandId: string;
       priorTransactionRef: string;
       newCommandId: string;
@@ -310,6 +315,7 @@ export interface IdentitySecurityManagementRepository {
       accountRef: string;
       priorCommandId: string;
       newCommandId: string;
+      expectedAuthStrengthPolicyRevision: string;
       requestDigest: string;
       workloadIdentityId: string;
       capabilityDigest: string;

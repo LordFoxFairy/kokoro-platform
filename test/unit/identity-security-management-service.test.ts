@@ -413,6 +413,11 @@ describe("Identity security management application service", () => {
 
     expect(result.receipt).toMatchObject({ commandId, state: "committed" });
     expect(mutation).toMatchObject({
+      binding: {
+        siteProjectBindingRef: "binding-1",
+        workloadIdentityId: "workload-1",
+        bindingEpoch: "1",
+      },
       accountRef: "account-1",
       authenticatorRef: "authenticator-1",
       timeStep: 101,
@@ -606,6 +611,67 @@ describe("Identity security management application service", () => {
     expect(digestCalls).toBe(0);
   });
 
+  it("maps stale workload authority during enrollment supersede to authentication failure", async () => {
+    const repository = {
+      async loadSecurityOwnerMaterial() {
+        return ownerMaterial();
+      },
+      async supersedeTotpEnrollment() {
+        return false;
+      },
+      async appendSecurityEvent() {},
+    } as unknown as IdentitySecurityManagementRepository;
+    const service = createService({
+      repository,
+      receipts: pendingReceipts(),
+      references: [
+        "replacement-enrollment",
+        "replacement-authenticator",
+      ],
+    });
+
+    await expect(service.beginTotpEnrollment({
+      workload,
+      context,
+      session: session as never,
+      commandId,
+      idempotencyKey: "stale-authority",
+      receiptRecoveryCapability: "r".repeat(43),
+      ceremonyAction: "supersede",
+      priorCommandId: "2".repeat(32),
+      priorTransactionRef: "lost-enrollment",
+    })).rejects.toMatchObject({ code: "AUTHENTICATION_FAILED" });
+  });
+
+  it("maps a concurrent enrollment-supersede conflict to authentication failure", async () => {
+    const repository = {
+      async loadSecurityOwnerMaterial() {
+        return ownerMaterial();
+      },
+      async supersedeTotpEnrollment() {
+        throw new IdentitySecurityAtomicRejection();
+      },
+      async appendSecurityEvent() {},
+    } as unknown as IdentitySecurityManagementRepository;
+    const service = createService({
+      repository,
+      receipts: pendingReceipts(),
+      references: ["replacement-enrollment", "replacement-authenticator"],
+    });
+
+    await expect(service.beginTotpEnrollment({
+      workload,
+      context,
+      session: session as never,
+      commandId,
+      idempotencyKey: "concurrent-supersede",
+      receiptRecoveryCapability: "r".repeat(43),
+      ceremonyAction: "supersede",
+      priorCommandId: "2".repeat(32),
+      priorTransactionRef: "lost-enrollment",
+    })).rejects.toMatchObject({ code: "AUTHENTICATION_FAILED" });
+  });
+
   it("supersedes a lost recovery-code delivery with capability only and no new proof", async () => {
     let digestCalls = 0;
     let mutation:
@@ -657,6 +723,14 @@ describe("Identity security management application service", () => {
 
     expect(result).toMatchObject({ commandId, recoveryCodes: expect.any(Array) });
     expect(mutation).not.toHaveProperty("proof");
+    expect(mutation).toMatchObject({
+      binding: {
+        siteProjectBindingRef: "binding-1",
+        workloadIdentityId: "workload-1",
+        bindingEpoch: "1",
+      },
+      expectedAuthStrengthPolicyRevision: "default-v1",
+    });
     expect(digestCalls).toBe(0);
   });
 });

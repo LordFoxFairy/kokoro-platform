@@ -134,9 +134,10 @@ export class IdentitySecurityManagementService {
     let policyRevision = material?.authStrengthPolicyRevision ?? challenge?.authStrengthPolicyRevision ?? "unknown";
     let accountRef = material?.accountRef ?? challenge?.accountRef ?? null;
     let accountSecurityEpoch = material?.accountSecurityEpoch ?? null;
-    const outcome = await this.dependencies.unitOfWork.execute(
-      { context: input.context, operation: "reauthenticateIdentitySession" },
-      async (transaction) => {
+    const outcome = await rejectAtomicSecurityMutation(
+      this.dependencies.unitOfWork.execute(
+        { context: input.context, operation: "reauthenticateIdentitySession" },
+        async (transaction) => {
         const identity = commandIdentity(input, "reauthenticateIdentitySession", requestDigest);
         const existing = await this.dependencies.receipts.begin(transaction, identity);
         assertSameCommand(existing, input.commandId);
@@ -161,6 +162,7 @@ export class IdentitySecurityManagementService {
           if (material === null) throw new Error("IDENTITY_REAUTHENTICATION_MATERIAL_INVARIANT");
           const recovered = await this.dependencies.repository.supersedeReauthenticationProof(transaction, {
             binding, accountRef: material.accountRef, expectedAccountSecurityEpoch: material.accountSecurityEpoch,
+            expectedAuthStrengthPolicyRevision: material.authStrengthPolicyRevision,
             priorCommandId: input.priorCommandId, newCommandId: input.commandId, requestDigest,
             workloadIdentityId: input.workload.workloadIdentityId,
             capabilityDigest: this.recoveryDigest("reauthenticateIdentitySession", input.receiptRecoveryCapability),
@@ -252,7 +254,8 @@ export class IdentitySecurityManagementService {
           issuedAt: now, expiresAt, committedAt: now,
         });
         return Object.freeze({ kind: "fresh" as const });
-      },
+        },
+      ),
     );
     if (outcome.kind === "rejected") throw new IdentityApplicationError("AUTHENTICATION_FAILED");
     if (outcome.kind === "retry") return deliveryUnavailable(input.commandId, requestDigest);
@@ -339,9 +342,10 @@ export class IdentitySecurityManagementService {
       authenticatorRef,
     });
     const expiresAt = plus(now, 10 * 60_000);
-    const outcome = await this.dependencies.unitOfWork.execute(
-      { context: input.context, operation: "beginTotpEnrollment" },
-      async (transaction) => {
+    const outcome = await rejectAtomicSecurityMutation(
+      this.dependencies.unitOfWork.execute(
+        { context: input.context, operation: "beginTotpEnrollment" },
+        async (transaction) => {
         const identity = commandIdentity(input, "beginTotpEnrollment", requestDigest);
         const existing = await this.dependencies.receipts.begin(transaction, identity);
         assertSameCommand(existing, input.commandId);
@@ -353,6 +357,7 @@ export class IdentitySecurityManagementService {
             binding,
             accountRef: material.accountRef,
             expectedAccountSecurityEpoch: material.accountSecurityEpoch,
+            expectedAuthStrengthPolicyRevision: material.authStrengthPolicyRevision,
             priorCommandId: input.priorCommandId,
             priorTransactionRef: input.priorTransactionRef,
             newCommandId: input.commandId,
@@ -384,7 +389,11 @@ export class IdentitySecurityManagementService {
           });
         }
         if (!accepted) {
-          await this.failure(transaction, identity, "AUTH_TRANSACTION_INVALID");
+          await this.failure(
+            transaction,
+            identity,
+            supersede ? "AUTHENTICATION_FAILED" : "AUTH_TRANSACTION_INVALID",
+          );
           return Object.freeze({ kind: "rejected" as const });
         }
         if (!supersede) {
@@ -420,9 +429,14 @@ export class IdentitySecurityManagementService {
           committedAt: now,
         });
         return Object.freeze({ kind: "fresh" as const });
-      },
+        },
+      ),
     );
-    if (outcome.kind === "rejected") throw new IdentityApplicationError("AUTH_TRANSACTION_INVALID");
+    if (outcome.kind === "rejected") {
+      throw new IdentityApplicationError(
+        supersede ? "AUTHENTICATION_FAILED" : "AUTH_TRANSACTION_INVALID",
+      );
+    }
     if (outcome.kind === "retry") return deliveryUnavailable(input.commandId, requestDigest);
     return Object.freeze({
       commandId: input.commandId,
@@ -692,6 +706,7 @@ export class IdentitySecurityManagementService {
           changed = await this.dependencies.repository.supersedeRecoveryCodes(transaction, {
             binding, accountRef: material.accountRef, priorCommandId: input.priorCommandId,
             newCommandId: input.commandId, requestDigest,
+            expectedAuthStrengthPolicyRevision: material.authStrengthPolicyRevision,
             workloadIdentityId: input.workload.workloadIdentityId,
             capabilityDigest: this.recoveryDigest("regenerateRecoveryCodes",
               input.receiptRecoveryCapability),
@@ -915,6 +930,9 @@ function sessionBinding(
   return Object.freeze({
     siteRef: workload.siteRef,
     siteReleaseRef: workload.siteReleaseRef,
+    siteProjectBindingRef: workload.siteProjectBindingRef,
+    workloadIdentityId: workload.workloadIdentityId,
+    bindingEpoch: workload.bindingEpoch,
     subjectRef: session.subjectRef,
     sessionRef: session.identitySessionRef,
     subjectGeneration: session.subjectGeneration,
