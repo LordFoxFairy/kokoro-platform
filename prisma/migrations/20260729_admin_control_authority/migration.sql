@@ -195,7 +195,6 @@ BEGIN
     RAISE EXCEPTION 'ADMIN_AUTHORITY_BOOTSTRAP_SEALED' USING ERRCODE='55000';
   END IF;
   IF p_configuration_digest IS NULL OR p_configuration_digest !~ '^[a-f0-9]{64}$'
-     OR encode(sha256(convert_to(p_authorities::TEXT,'UTF8')),'hex')<>p_configuration_digest
      OR jsonb_typeof(p_authorities)<>'array'
      OR jsonb_array_length(p_authorities)<2 OR jsonb_array_length(p_authorities)>16 THEN
     RAISE EXCEPTION 'ADMIN_AUTHORITY_BOOTSTRAP_INVALID' USING ERRCODE='22023';
