@@ -9,6 +9,12 @@
     "sourceMap": false,
     "baseUrl": "."
   },
-  "include": ["src/infrastructure/postgres/**/*.ts", "src/process/**/*.ts", "prisma.config.ts"],
+  "include": [
+    "src/infrastructure/postgres/**/*.ts",
+    "src/shared/**/*.ts",
+    "src/modules/**/*.ts",
+    "src/process/**/*.ts",
+    "prisma.config.ts"
+  ],
   "exclude": ["**/*.test.ts"]
 }

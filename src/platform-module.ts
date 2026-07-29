@@ -9,12 +9,13 @@ export type PlatformModuleKind =
   | "gateway"
   | "capability-hub";
 
-export type PlatformStorageKind = "mysql" | "mongo" | "external" | "none";
+export type PlatformStorageKind = "mysql" | "postgresql" | "mongo" | "external" | "none";
 
 export type PlatformRuntimeSurface =
   | "http"
   | "internal-api"
   | "admin-manifest"
+  | "local-application"
   | "external-service";
 
 export interface PlatformModuleStorage {

@@ -8,8 +8,8 @@ import {
 import type { PlatformTransactionHost } from "../../shared/unit-of-work/unit-of-work.js";
 import { assertVerifiedRequestSecurityContext } from "../../shared/security-context/request-security-context.js";
 
-export type PlatformProcessRole = "api" | "worker" | "migrator";
-export type PlatformCredentialClass = "api" | "worker" | "migrator";
+export type PlatformProcessRole = "api" | "worker" | "admin" | "migrator";
+export type PlatformCredentialClass = "api" | "worker" | "admin" | "migrator";
 
 const ROLE_DEFAULTS = {
   api: { poolMax: 20, credentialClass: "api", identityEnv: "PLATFORM_DATABASE_API_ROLE" },
@@ -17,6 +17,11 @@ const ROLE_DEFAULTS = {
     poolMax: 8,
     credentialClass: "worker",
     identityEnv: "PLATFORM_DATABASE_WORKER_ROLE",
+  },
+  admin: {
+    poolMax: 4,
+    credentialClass: "admin",
+    identityEnv: "PLATFORM_DATABASE_ADMIN_ROLE",
   },
   migrator: {
     poolMax: 1,
@@ -63,8 +68,7 @@ export interface PlatformDatabaseClient {
 }
 
 export interface PlatformTransactionalDatabaseClient
-  extends PlatformDatabaseClient,
-    PlatformTransactionHost {}
+  extends PlatformDatabaseClient, PlatformTransactionHost {}
 
 export function loadPlatformDatabaseConfig(
   role: PlatformProcessRole,
@@ -164,6 +168,7 @@ export function createPlatformDatabaseClient(
         const rows = await prisma.$queryRawUnsafe<RuntimeIdentity[]>(
           RUNTIME_IDENTITY_SQL,
           config.migratorDatabaseUser,
+          config.role,
         );
         if (!validRuntimeIdentity(rows[0], config)) {
           throw new Error("PLATFORM_RUNTIME_DATABASE_ROLE_INVALID");
@@ -178,12 +183,16 @@ export function createPlatformDatabaseClient(
     checkHealth: async () => {
       await prisma.$queryRaw`SELECT "schemaVersion" FROM platform.platform_foundation WHERE singleton = TRUE`;
     },
-    transaction: async <Result>(fence: Parameters<PlatformTransactionHost["transaction"]>[0], work: Parameters<PlatformTransactionHost["transaction"]>[1]) =>
-      prisma.$transaction(async (databaseTransaction) => {
-        const context = fence.context;
-        assertVerifiedRequestSecurityContext(context, new Date().toISOString());
-        await databaseTransaction.$queryRawUnsafe(
-          `SELECT set_config('app.operation', $1, true),
+    transaction: async <Result>(
+      fence: Parameters<PlatformTransactionHost["transaction"]>[0],
+      work: Parameters<PlatformTransactionHost["transaction"]>[1],
+    ) =>
+      prisma.$transaction(
+        async (databaseTransaction) => {
+          const context = fence.context;
+          assertVerifiedRequestSecurityContext(context, new Date().toISOString());
+          await databaseTransaction.$queryRawUnsafe(
+            `SELECT set_config('app.operation', $1, true),
                   set_config('app.site_id', $2, true),
                   set_config('app.workspace_id', $3, true),
                   set_config('app.project_id', $4, true),
@@ -192,35 +201,41 @@ export function createPlatformDatabaseClient(
                   set_config('app.purpose', $7, true),
                   set_config('app.policy_epoch', $8, true),
                   set_config('app.environment', $9, true),
-                  set_config('app.region', $10, true)`,
-          fence.operation,
-          context.target.siteId ?? "",
-          context.target.workspaceId ?? "",
-          context.target.projectId ?? "",
-          context.actor.subjectId,
-          context.actor.subjectGeneration,
-          context.target.purpose,
-          context.policyEpoch,
-          context.environment,
-          context.region,
-        );
-        const sql: PlatformSqlTransaction = {
-          query: (statement, values = []) =>
-            databaseTransaction.$queryRawUnsafe(statement, ...values),
-          execute: (statement, values = []) =>
-            databaseTransaction.$executeRawUnsafe(statement, ...values),
-        };
-        const lease = issuePlatformTransaction(sql);
-        try {
-          return await work(lease.transaction) as Result;
-        } finally {
-          revokePlatformTransaction(lease);
-        }
-      }, {
-        isolationLevel: config.transaction.isolationLevel,
-        maxWait: config.transaction.maxWaitMs,
-        timeout: config.transaction.timeoutMs,
-      }),
+                  set_config('app.region', $10, true),
+                  set_config('app.workload_kind', $11, true),
+                  set_config('app.actor_kind', $12, true)`,
+            fence.operation,
+            context.target.siteId ?? "",
+            context.target.workspaceId ?? "",
+            context.target.projectId ?? "",
+            context.actor.subjectId,
+            context.actor.subjectGeneration,
+            context.target.purpose,
+            context.policyEpoch,
+            context.environment,
+            context.region,
+            context.trustedCaller.kind,
+            context.actor.kind,
+          );
+          const sql: PlatformSqlTransaction = {
+            query: (statement, values = []) =>
+              databaseTransaction.$queryRawUnsafe(statement, ...values),
+            execute: (statement, values = []) =>
+              databaseTransaction.$executeRawUnsafe(statement, ...values),
+          };
+          const lease = issuePlatformTransaction(sql);
+          try {
+            return (await work(lease.transaction)) as Result;
+          } finally {
+            revokePlatformTransaction(lease);
+          }
+        },
+        {
+          isolationLevel: config.transaction.isolationLevel,
+          maxWait: config.transaction.maxWaitMs,
+          timeout: config.transaction.timeoutMs,
+        },
+      ),
   };
 }
 
@@ -246,6 +261,10 @@ interface RuntimeIdentity {
   hasAnyMembership: boolean;
   ownsPlatformRelation: boolean;
   ownsPlatformFunction: boolean;
+  hasRequiredPlatformWrites: boolean;
+  canExecuteModelInventoryImport: boolean;
+  canExecuteModelInventoryActivate: boolean;
+  canExecuteModelSitePolicyChange: boolean;
   hasUnexpectedPlatformPrivilege: boolean;
 }
 
@@ -286,6 +305,26 @@ const RUNTIME_IDENTITY_SQL = `
            WHERE owned_function.pronamespace = platform_schema.oid
              AND owned_function.proowner = runtime_role.oid
          ) AS "ownsPlatformFunction",
+         CASE WHEN $2 = 'api' THEN
+           has_table_privilege(current_user, 'platform.command_receipt', 'INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.outbox_event', 'INSERT')
+           AND has_table_privilege(current_user, 'platform.inbox_delivery', 'INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.model_selection_decision', 'INSERT')
+         WHEN $2 = 'worker' THEN
+           has_table_privilege(current_user, 'platform.command_receipt', 'UPDATE')
+           AND has_table_privilege(current_user, 'platform.outbox_event', 'UPDATE')
+           AND has_table_privilege(current_user, 'platform.inbox_delivery', 'INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.model_provider_availability', 'UPDATE')
+           AND has_table_privilege(current_user, 'platform.model_definition_availability', 'UPDATE')
+           AND has_table_privilege(current_user, 'platform.model_selection_decision', 'INSERT')
+         ELSE TRUE
+         END AS "hasRequiredPlatformWrites",
+         has_function_privilege(current_user, 'platform.import_model_inventory(uuid,text,text,jsonb,text)', 'EXECUTE')
+           AS "canExecuteModelInventoryImport",
+         has_function_privilege(current_user, 'platform.activate_model_inventory(uuid,text,bigint,text)', 'EXECUTE')
+           AS "canExecuteModelInventoryActivate",
+         has_function_privilege(current_user, 'platform.put_model_site_policy(uuid,text,text,text,bigint)', 'EXECUTE')
+           AS "canExecuteModelSitePolicyChange",
          EXISTS (
            SELECT 1 FROM pg_class candidate
            WHERE candidate.relnamespace = platform_schema.oid
@@ -293,11 +332,44 @@ const RUNTIME_IDENTITY_SQL = `
                (candidate.relkind = 'S' AND has_sequence_privilege(
                  runtime_role.rolname, candidate.oid, 'USAGE,SELECT,UPDATE'
                ))
-               OR (candidate.relkind <> 'S' AND candidate.relname <> 'platform_foundation' AND (
+               OR (candidate.relkind <> 'S' AND candidate.relname <> ALL(ARRAY[
+                 'platform_foundation','command_receipt','outbox_event','inbox_delivery',
+                 'model_inventory_import','model_inventory_activation','model_inventory_pointer','model_provider_snapshot',
+                 'model_definition_snapshot','model_provider_binding_snapshot','model_product_route_snapshot','model_provider_availability',
+                 'model_definition_availability','model_site_policy_revision',
+                 'model_site_assignment_revision','model_site_policy_pointer','model_selection_decision'
+               ]) AND (
                  has_table_privilege(runtime_role.rolname, candidate.oid,
                    'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
                  OR has_any_column_privilege(runtime_role.rolname, candidate.oid,
                    'SELECT,INSERT,UPDATE,REFERENCES')
+               ))
+               OR (candidate.relname = ANY(ARRAY[
+                 'command_receipt','outbox_event','inbox_delivery','model_inventory_import','model_inventory_activation',
+                 'model_inventory_pointer','model_provider_snapshot','model_definition_snapshot','model_provider_binding_snapshot',
+                 'model_product_route_snapshot','model_provider_availability',
+                 'model_definition_availability','model_site_policy_revision',
+                 'model_site_assignment_revision','model_site_policy_pointer','model_selection_decision'
+               ]) AND (
+                 has_table_privilege(runtime_role.rolname, candidate.oid,
+                   'DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+                 OR has_any_column_privilege(runtime_role.rolname, candidate.oid, 'REFERENCES')
+                 OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'INSERT') AND NOT (
+                   ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_selection_decision']))
+                   OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY['inbox_delivery','model_selection_decision']))
+                 ))
+                 OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
+                   ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','inbox_delivery']))
+                   OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_provider_availability','model_definition_availability']))
+                 ))
+                 OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'INSERT') AND NOT (
+                   ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_selection_decision']))
+                   OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY['inbox_delivery','model_selection_decision']))
+                 ))
+                 OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
+                   ($2 = 'api' AND candidate.relname = ANY(ARRAY['command_receipt','inbox_delivery']))
+                   OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY['command_receipt','outbox_event','inbox_delivery','model_provider_availability','model_definition_availability']))
+                 ))
                ))
                OR (candidate.relname = 'platform_foundation' AND (
                  has_table_privilege(runtime_role.rolname, candidate.oid,
@@ -310,6 +382,11 @@ const RUNTIME_IDENTITY_SQL = `
            SELECT 1 FROM pg_proc candidate_function
            WHERE candidate_function.pronamespace = platform_schema.oid
              AND has_function_privilege(runtime_role.rolname, candidate_function.oid, 'EXECUTE')
+             AND NOT ($2 = 'admin' AND candidate_function.oid = ANY(ARRAY[
+               to_regprocedure('platform.import_model_inventory(uuid,text,text,jsonb,text)'),
+               to_regprocedure('platform.activate_model_inventory(uuid,text,bigint,text)'),
+               to_regprocedure('platform.put_model_site_policy(uuid,text,text,text,bigint)')
+             ]))
          ) AS "hasUnexpectedPlatformPrivilege"
   FROM pg_database database_row
   JOIN pg_roles db_owner ON db_owner.oid = database_row.datdba
@@ -349,6 +426,10 @@ function validRuntimeIdentity(
     !identity.hasAnyMembership &&
     !identity.ownsPlatformRelation &&
     !identity.ownsPlatformFunction &&
+    identity.hasRequiredPlatformWrites &&
+    identity.canExecuteModelInventoryImport === (config.role === "admin") &&
+    identity.canExecuteModelInventoryActivate === (config.role === "admin") &&
+    identity.canExecuteModelSitePolicyChange === (config.role === "admin") &&
     !identity.hasUnexpectedPlatformPrivilege,
   );
 }

@@ -14,6 +14,7 @@ const apiDatabaseUrl = requireLeasedDatabaseUrl(process.env.DATABASE_URL_PLATFOR
 const migratorUser = decodeURIComponent(new URL(migratorDatabaseUrl).username);
 const apiUser = decodeURIComponent(new URL(apiDatabaseUrl).username);
 const workerUser = requireRole(process.env.PLATFORM_DATABASE_WORKER_ROLE);
+const adminUser = requireRole(process.env.PLATFORM_DATABASE_ADMIN_ROLE);
 const databaseName = decodeURIComponent(new URL(migratorDatabaseUrl).pathname.slice(1));
 let database: PlatformDatabaseClient;
 
@@ -27,6 +28,7 @@ describe("Platform PostgreSQL foundation", () => {
         PLATFORM_DATABASE_MIGRATOR_ROLE: migratorUser,
         PLATFORM_DATABASE_API_ROLE: apiUser,
         PLATFORM_DATABASE_WORKER_ROLE: workerUser,
+        PLATFORM_DATABASE_ADMIN_ROLE: adminUser,
         PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
         PATH: process.env.PATH,
       },
@@ -130,6 +132,6 @@ function requireLeasedDatabaseUrl(value: string | undefined): string {
 }
 
 function requireRole(value: string | undefined): string {
-  if (!value) throw new Error("PLATFORM_DATABASE_WORKER_ROLE_REQUIRED");
+  if (!value) throw new Error("PLATFORM_DATABASE_RUNTIME_ROLE_REQUIRED");
   return value;
 }

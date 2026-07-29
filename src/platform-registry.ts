@@ -1,10 +1,10 @@
 import { creditPlatformModule } from "@kokoro/credit";
 import { hubPlatformModule } from "@kokoro/hub";
-import { modelPlatformModule } from "@kokoro/model";
 import { paymentPlatformModule } from "@kokoro/payment";
 import { sitePlatformModule } from "@kokoro/site";
 import { userPlatformModule } from "@kokoro/user";
 import type { PlatformModuleDescriptor } from "./platform-module.js";
+import { modelControlPlatformModule } from "./modules/model-control/index.js";
 
 const litellmPlatformModule = {
   id: "litellm",
@@ -38,7 +38,7 @@ const litellmPlatformModule = {
 export const platformModules = [
   sitePlatformModule,
   userPlatformModule,
-  modelPlatformModule,
+  modelControlPlatformModule,
   creditPlatformModule,
   paymentPlatformModule,
   hubPlatformModule,
@@ -79,7 +79,11 @@ export function assertPlatformRegistryIntegrity(
       throw new Error(`module ${module.id} admin manifest must declare manifestExport`);
     }
 
-    if (module.status === "active" && !module.service) {
+    if (
+      module.status === "active" &&
+      !module.service &&
+      !module.runtime.surfaces.includes("local-application")
+    ) {
       throw new Error(`active module ${module.id} must declare service discovery metadata`);
     }
   }

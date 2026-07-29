@@ -8,12 +8,12 @@ Kokoro 平台域父仓库。它不是单个业务模块，而是平台能力的�
 
 - 现行 legacy 模块仍通过各自 Prisma 6 schema、MySQL database 和独立 HTTP process 工作；现有
   `pnpm db:migrate`、integration CI 与回滚基线继续服务这一阶段。
-- 根目录 Prisma 7/PostgreSQL 18 是 Wave 1 的 `transition-candidate`。它当前只包含 foundation marker、
-  PG18/数据库/角色/ACL preflight、migration advisory lock，以及 API/Worker/Migrator 的 health/bootstrap
-  deployable。`activationAuthorized=false`、`runtimeTraffic=false`，尚未承载 Site、Identity、Model、Credit、
-  Payment、Hub 或 Admin 业务事实。
-- `platform-api`、`platform-worker` 与 `platform-migrator` 使用三个互异数据库角色。Task 3 阶段 API/Worker
-  只能读取 foundation marker；后续业务表权限必须随 owner migration 精确授予，不能使用全表 DML 默认权限。
+- 根目录 Prisma 7/PostgreSQL 18 是 Wave 1 的 `transition-candidate`。它包含 foundation、事务/UoW/收件箱与
+  发件箱内核，以及候选 ModelControl owner；其他业务域仍待迁移。所有 deployable 仍保持
+  `activationAuthorized=false`、`runtimeTraffic=false`。
+- `platform-api`、`platform-worker`、`platform-admin` 与 `platform-migrator` 使用四个互异数据库角色。
+  Admin 只执行签名控制面函数，API/Worker 无管理函数权限；每张业务表和函数都由 owner migration 精确授权，
+  不使用全表 DML 默认权限。
 - 只有 Root 管理的 PostgreSQL component、兼容、备份恢复和切换证据全部通过后，Task 19 才能移除 legacy
   MySQL 写面并把 candidate 晋升为唯一 Platform authority。
 

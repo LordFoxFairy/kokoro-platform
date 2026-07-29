@@ -89,3 +89,200 @@ model InboxDelivery {
   @@map("inbox_delivery")
   @@schema("platform")
 }
+
+model ModelInventoryImport {
+  importId         String   @id @map("import_id") @db.Uuid
+  sourceDigest     String   @unique @map("source_digest") @db.Char(64)
+  schemaVersion    Int      @map("schema_version")
+  sourceKind       String   @map("source_kind")
+  sourceReference  String   @map("source_reference")
+  canonicalPayload Json     @map("canonical_payload")
+  counts           Json
+  importedBy       String   @map("imported_by")
+  importedAt       DateTime @default(now()) @map("imported_at") @db.Timestamptz(6)
+
+  @@unique([importId, sourceDigest])
+  @@map("model_inventory_import")
+  @@schema("platform")
+}
+
+model ModelInventoryActivation {
+  activationId      String   @id @map("activation_id") @db.Uuid
+  targetImportId    String   @map("target_import_id") @db.Uuid
+  targetDigest      String   @map("target_digest") @db.Char(64)
+  expectedRevision  BigInt   @map("expected_revision")
+  activatedRevision BigInt   @unique @map("activated_revision")
+  activatedBy       String   @map("activated_by")
+  activatedAt       DateTime @default(now()) @map("activated_at") @db.Timestamptz(6)
+
+  @@unique([activationId, targetImportId, activatedRevision])
+  @@map("model_inventory_activation")
+  @@schema("platform")
+}
+
+model ModelInventoryPointer {
+  singleton    Boolean  @id @default(true)
+  importId     String   @map("import_id") @db.Uuid
+  activationId String   @map("activation_id") @db.Uuid
+  revision     BigInt
+  updatedAt    DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("model_inventory_pointer")
+  @@schema("platform")
+}
+
+model ModelProviderSnapshot {
+  importId    String @map("import_id") @db.Uuid
+  providerKey String @map("provider_key")
+  provider    String
+  accountKey  String @map("account_key")
+  secretRef   String @map("secret_ref")
+  adapterKind String @map("adapter_kind")
+  priority    Int
+
+  @@id([importId, providerKey])
+  @@unique([importId, provider, accountKey])
+  @@map("model_provider_snapshot")
+  @@schema("platform")
+}
+
+model ModelDefinitionSnapshot {
+  importId         String   @map("import_id") @db.Uuid
+  modelKey         String   @map("model_key")
+  displayName      String   @map("display_name")
+  inputModalities  String[] @map("input_modalities")
+  outputModalities String[] @map("output_modalities")
+  capabilities     String[]
+  contextWindow    Int?     @map("context_window")
+  enabled          Boolean
+
+  @@id([importId, modelKey])
+  @@map("model_definition_snapshot")
+  @@schema("platform")
+}
+
+model ModelProviderBindingSnapshot {
+  importId         String  @map("import_id") @db.Uuid
+  bindingKey       String  @map("binding_key")
+  modelKey         String  @map("model_key")
+  providerKey      String  @map("provider_key")
+  upstreamModel    String  @map("upstream_model")
+  gatewayModelName String  @map("gateway_model_name")
+  priority         Int
+  enabled          Boolean
+
+  @@id([importId, bindingKey])
+  @@unique([importId, modelKey, providerKey, upstreamModel])
+  @@unique([importId, gatewayModelName])
+  @@map("model_provider_binding_snapshot")
+  @@schema("platform")
+}
+
+model ModelProductRouteSnapshot {
+  importId             String   @map("import_id") @db.Uuid
+  product              String
+  routeRole            String   @map("route_role")
+  modelKey             String   @map("model_key")
+  position             Int
+  requiredCapabilities String[] @map("required_capabilities")
+
+  @@id([importId, product, routeRole, position])
+  @@unique([importId, product, routeRole, modelKey])
+  @@map("model_product_route_snapshot")
+  @@schema("platform")
+}
+
+model ModelProviderAvailability {
+  providerKey    String    @id @map("provider_key")
+  status         String
+  health         String
+  epoch          BigInt
+  observationRef String?   @map("observation_ref")
+  observedAt     DateTime? @map("observed_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("model_provider_availability")
+  @@schema("platform")
+}
+
+model ModelDefinitionAvailability {
+  modelKey  String   @id @map("model_key")
+  status    String
+  epoch     BigInt
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("model_definition_availability")
+  @@schema("platform")
+}
+
+model ModelSitePolicyRevision {
+  siteId           String   @map("site_id")
+  product          String
+  revision         BigInt
+  changeId         String   @map("change_id") @db.Uuid
+  policyDigest     String   @map("policy_digest") @db.Char(64)
+  catalogMode      String   @map("catalog_mode")
+  catalogDigest    String?  @map("catalog_digest") @db.Char(64)
+  enabled          Boolean
+  assignmentMode   String   @map("assignment_mode")
+  canonicalPayload Json     @map("canonical_payload")
+  changedBy        String   @map("changed_by")
+  changedAt        DateTime @default(now()) @map("changed_at") @db.Timestamptz(6)
+
+  @@id([siteId, product, revision])
+  @@unique([siteId, product, changeId])
+  @@unique([siteId, product, revision, policyDigest])
+  @@map("model_site_policy_revision")
+  @@schema("platform")
+}
+
+model ModelSiteAssignmentRevision {
+  siteId               String   @map("site_id")
+  product              String
+  policyRevision       BigInt   @map("policy_revision")
+  routeRole            String   @map("route_role")
+  modelKey             String   @map("model_key")
+  position             Int
+  requiredCapabilities String[] @map("required_capabilities")
+  enabled              Boolean
+
+  @@id([siteId, product, policyRevision, routeRole, position])
+  @@unique([siteId, product, policyRevision, routeRole, modelKey])
+  @@map("model_site_assignment_revision")
+  @@schema("platform")
+}
+
+model ModelSitePolicyPointer {
+  siteId       String   @map("site_id")
+  product      String
+  revision     BigInt
+  policyDigest String   @map("policy_digest") @db.Char(64)
+  updatedAt    DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@id([siteId, product])
+  @@map("model_site_policy_pointer")
+  @@schema("platform")
+}
+
+model ModelSelectionDecision {
+  decisionId           String   @id @map("decision_id") @db.Uuid
+  decisionDigest       String   @map("decision_digest") @db.Char(64)
+  siteId               String   @map("site_id")
+  product              String
+  routeRole            String   @map("route_role")
+  requestDigest        String   @map("request_digest") @db.Char(64)
+  requiredCapabilities Json     @map("required_capabilities")
+  inventoryDigest      String   @map("inventory_digest") @db.Char(64)
+  policyRevision       BigInt   @map("policy_revision")
+  selectedModelKey     String?  @map("selected_model_key")
+  selectedBindingKey   String?  @map("selected_binding_key")
+  selectedRoute        Json?    @map("selected_route")
+  candidateBindingKeys Json     @map("candidate_binding_keys")
+  rejections           Json
+  reason               String
+  decidedAt            DateTime @map("decided_at") @db.Timestamptz(6)
+
+  @@index([siteId, decidedAt(sort: Desc)])
+  @@map("model_selection_decision")
+  @@schema("platform")
+}

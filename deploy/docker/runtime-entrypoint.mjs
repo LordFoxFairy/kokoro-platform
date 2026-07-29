@@ -10,6 +10,7 @@ const serviceEntries = Object.freeze({
   "@kokoro/hub": { module: "../../kokoro-hub/dist/interfaces/http/main.js" },
   "@kokoro/platform-admin": { module: "../../kokoro-platform-admin/dist/main.js" },
   "platform-api": { module: "../../dist/src/process/api.js", start: "runPlatformApiMain" },
+  "platform-admin": { module: "../../dist/src/process/admin.js", start: "runPlatformAdminMain" },
   "platform-worker": { module: "../../dist/src/process/worker.js", start: "runPlatformWorkerMain" },
   "platform-migrator": {
     module: "../../dist/src/infrastructure/postgres/migrator.js",

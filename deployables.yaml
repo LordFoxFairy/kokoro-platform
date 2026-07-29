@@ -14,13 +14,12 @@ deployables:
       migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
       expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
       credentialClass: platform-api
-      permissions: foundation-marker-read-only
+      permissions: bounded-transactional-api
       ddl: forbidden
     activationAuthorized: false
     runtimeTraffic: false
     inboundContracts: []
-    declaredInboundContracts:
-      [platform-public-http, platform-admin-connect, platform-admission-connect]
+    declaredInboundContracts: [platform-public-http, platform-admission-connect]
     outboundContracts: []
     secretClasses: [platform-api-database, workload-verification]
     audience: platform-api
@@ -42,7 +41,7 @@ deployables:
       migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
       expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
       credentialClass: platform-worker
-      permissions: foundation-marker-read-only
+      permissions: bounded-transactional-worker
       ddl: forbidden
     inboundContracts: []
     activationAuthorized: false
@@ -57,6 +56,33 @@ deployables:
     runbookOwner: platform
     releaseOwner: platform
 
+  - id: platform-admin
+    command: node --conditions=kokoro-runtime deploy/docker/runtime-entrypoint.mjs
+    selectorEnvironment: KOKORO_SERVICE_PACKAGE=platform-admin
+    processRole: admin
+    database:
+      environmentVariable: DATABASE_URL_PLATFORM
+      authorityMode: transition-candidate
+      expectedUserEnvironmentVariable: PLATFORM_DATABASE_ADMIN_ROLE
+      migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
+      expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
+      credentialClass: platform-admin
+      permissions: signed-control-plane-functions-only
+      ddl: forbidden
+    inboundContracts: []
+    declaredInboundContracts: [platform-admin-connect]
+    activationAuthorized: false
+    runtimeTraffic: false
+    outboundContracts: []
+    secretClasses: [platform-admin-database, workload-verification]
+    audience: platform-admin
+    scalingKey: admin-command-concurrency
+    readiness: /health/ready
+    drain: http-graceful
+    sloOwner: platform
+    runbookOwner: platform
+    releaseOwner: platform
+
   - id: platform-migrator
     command: node --conditions=kokoro-runtime deploy/docker/runtime-entrypoint.mjs
     selectorEnvironment: KOKORO_SERVICE_PACKAGE=platform-migrator
@@ -67,6 +93,7 @@ deployables:
       expectedUserEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
       apiRoleEnvironmentVariable: PLATFORM_DATABASE_API_ROLE
       workerRoleEnvironmentVariable: PLATFORM_DATABASE_WORKER_ROLE
+      adminRoleEnvironmentVariable: PLATFORM_DATABASE_ADMIN_ROLE
       expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
       credentialClass: platform-migrator
       permissions: migration-ddl
