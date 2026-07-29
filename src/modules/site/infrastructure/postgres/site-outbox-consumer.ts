@@ -109,7 +109,10 @@ export function createPostgresSiteRuntimeEventQueue(
       leaseSeconds,
     })),
     ack: (eventId, leaseToken) => database.internalTransaction("site.runtime.consume",
-      (transaction) => outbox.complete(transaction, eventId, leaseToken)),
+      (transaction) => outbox.complete(transaction, {
+        eventId, leaseToken, deliveryId: `site-runtime:${eventId}`,
+        acknowledgedAt: new Date().toISOString(),
+      })),
     retry: (input) => database.internalTransaction("site.runtime.consume",
       (transaction) => outbox.retryOrDeadLetter(transaction, input)),
     release: (eventId, leaseToken, reason) => database.internalTransaction("site.runtime.consume",

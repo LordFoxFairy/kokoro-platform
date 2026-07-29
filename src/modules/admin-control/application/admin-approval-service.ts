@@ -41,6 +41,9 @@ export interface AdminApprovalRepositoryPort extends Pick<
       approvalRef: string;
       executionCommandId: string;
       checkerRef: string;
+      targetSiteRef: string | null;
+      environment: string;
+      region: string;
       allowed: boolean;
       reasonCode: string;
       requestDigest: string;
@@ -214,7 +217,8 @@ export class AdminApprovalService {
     return this.dependencies.repository.recordApprovalDecision(transaction, {
       decisionRef: this.dependencies.reference(), approvalRef: input.approvalRef,
       executionCommandId: input.commandId, checkerRef: input.context.actor.subjectId,
-      allowed, reasonCode, requestDigest, occurredAt: this.now(),
+      targetSiteRef: input.context.target.siteId, environment: input.context.environment,
+      region: input.context.region, allowed, reasonCode, requestDigest, occurredAt: this.now(),
     });
   }
 

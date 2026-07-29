@@ -512,6 +512,10 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_any_column_privilege(current_user, 'platform.site_effect_approval', 'UPDATE')
            AND has_any_column_privilege(current_user, 'platform.authorization_site', 'UPDATE')
            AND has_any_column_privilege(current_user, 'platform.authorization_product_binding', 'UPDATE')
+           AND has_table_privilege(current_user, 'platform.admin_operator_authority', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.admin_command_decision', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.admin_approval', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.admin_approval_decision', 'SELECT,INSERT')
          END AS "hasRequiredPlatformWrites",
          has_function_privilege(current_user, 'platform.import_model_inventory(uuid,text,text,jsonb,jsonb,text)', 'EXECUTE')
            AS "canExecuteModelInventoryImport",
@@ -602,7 +606,8 @@ const RUNTIME_IDENTITY_SQL = `
                'credit_authorization_segment','credit_budget_operation_receipt',
                'site','site_project_binding','site_release','site_deployment_binding',
                'site_activation_attempt','site_deployment_observation','site_traffic_stop_attempt',
-               'site_traffic_stop_observation','site_effect_approval'
+               'site_traffic_stop_observation','site_effect_approval',
+               'admin_operator_authority','admin_command_decision','admin_approval','admin_approval_decision'
                ]) AND (
                  has_table_privilege(runtime_role.rolname, candidate.oid,
                    'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
@@ -651,7 +656,8 @@ const RUNTIME_IDENTITY_SQL = `
                'credit_authorization_segment','credit_budget_operation_receipt',
                'site','site_project_binding','site_release','site_deployment_binding',
                'site_activation_attempt','site_deployment_observation','site_traffic_stop_attempt',
-               'site_traffic_stop_observation','site_effect_approval'
+               'site_traffic_stop_observation','site_effect_approval',
+               'admin_operator_authority','admin_command_decision','admin_approval','admin_approval_decision'
                ]) AND (
                  (candidate.relname LIKE 'model\\_%' ESCAPE '\\' AND (
                    has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
@@ -720,7 +726,8 @@ const RUNTIME_IDENTITY_SQL = `
                    OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY[
                      'command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership',
                      'site','site_project_binding','site_release','site_activation_attempt',
-                     'site_traffic_stop_attempt','site_effect_approval'
+                     'site_traffic_stop_attempt','site_effect_approval',
+                     'admin_command_decision','admin_approval','admin_approval_decision'
                    ]))
                  ))
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
@@ -750,6 +757,7 @@ const RUNTIME_IDENTITY_SQL = `
                      'site','site_project_binding','site_release','site_deployment_binding',
                      'site_effect_approval','authorization_site','authorization_product_binding'
                    ]))
+                   OR ($2 = 'admin' AND candidate.relname = 'admin_approval')
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'INSERT') AND NOT (
                    ($2 = 'api' AND candidate.relname = ANY(ARRAY[
@@ -787,7 +795,8 @@ const RUNTIME_IDENTITY_SQL = `
                    OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY[
                      'command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership',
                      'site','site_project_binding','site_release','site_activation_attempt',
-                     'site_traffic_stop_attempt','site_effect_approval'
+                     'site_traffic_stop_attempt','site_effect_approval',
+                     'admin_command_decision','admin_approval','admin_approval_decision'
                    ]))
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
@@ -817,6 +826,7 @@ const RUNTIME_IDENTITY_SQL = `
                      'site','site_project_binding','site_release','site_deployment_binding',
                      'site_effect_approval','authorization_site','authorization_product_binding'
                    ]))
+                   OR ($2 = 'admin' AND candidate.relname = 'admin_approval')
                  ))
                ))
                OR (candidate.relname = 'platform_foundation' AND (

@@ -43,6 +43,107 @@ model CommandReceipt {
   @@schema("platform")
 }
 
+model AdminOperatorAuthority {
+  operatorRef         String    @map("operator_ref")
+  operatorGeneration  BigInt    @map("operator_generation")
+  state               String
+  permissions         String[]
+  siteScopes          String[]  @map("site_scopes")
+  environments        String[]
+  regions             String[]
+  authorizationEpoch  BigInt    @map("authorization_epoch")
+  expiresAt           DateTime  @map("expires_at") @db.Timestamptz(6)
+  breakGlassExpiresAt DateTime? @map("break_glass_expires_at") @db.Timestamptz(6)
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@id([operatorRef, operatorGeneration])
+  @@index([state, expiresAt])
+  @@map("admin_operator_authority")
+  @@schema("platform")
+}
+
+model AdminCommandDecision {
+  decisionRef          String   @id @map("decision_ref") @db.Uuid
+  commandId            String   @map("command_id")
+  requestDigest        String   @map("request_digest") @db.Char(64)
+  operatorRef          String   @map("operator_ref")
+  operatorGeneration   BigInt   @map("operator_generation")
+  operation            String
+  targetSiteRef        String?  @map("target_site_ref")
+  environment          String
+  region               String
+  allowed              Boolean
+  reasonCode           String   @map("reason_code")
+  effectClass          String   @map("effect_class")
+  approvalPolicy       String   @map("approval_policy")
+  operatorReason       String?  @map("operator_reason")
+  breakGlassTicketRef  String?  @map("break_glass_ticket_ref")
+  authorizationEpoch  BigInt?  @map("authorization_epoch")
+  occurredAt           DateTime @map("occurred_at") @db.Timestamptz(6)
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([operatorRef, occurredAt])
+  @@index([targetSiteRef, occurredAt])
+  @@map("admin_command_decision")
+  @@schema("platform")
+}
+
+model AdminApproval {
+  approvalRef              String    @id @map("approval_ref") @db.Uuid
+  commandId                String    @unique @map("command_id")
+  requestDigest            String    @map("request_digest") @db.Char(64)
+  payload                  Json
+  payloadDigest            String    @map("payload_digest") @db.Char(64)
+  operation                String
+  makerRef                 String    @map("maker_ref")
+  makerGeneration          BigInt    @map("maker_generation")
+  makerAuthorizationEpoch BigInt    @map("maker_authorization_epoch")
+  targetSiteRef            String?   @map("target_site_ref")
+  environment              String
+  region                   String
+  effectClass              String    @map("effect_class")
+  approvalPolicy           String    @map("approval_policy")
+  operatorReason           String    @map("operator_reason")
+  admittedAt               DateTime  @map("admitted_at") @db.Timestamptz(6)
+  expiresAt                DateTime  @map("expires_at") @db.Timestamptz(6)
+  state                    String    @default("pending")
+  revision                 BigInt    @default(1)
+  checkerRef               String?   @map("checker_ref")
+  checkerGeneration        BigInt?   @map("checker_generation")
+  checkerAuthorizationEpoch BigInt?  @map("checker_authorization_epoch")
+  checkerDecision          String?   @map("checker_decision")
+  checkerReason            String?   @map("checker_reason")
+  result                   Json?
+  resultDigest             String?   @map("result_digest") @db.Char(64)
+  decidedAt                DateTime? @map("decided_at") @db.Timestamptz(6)
+  createdAt                DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([environment, region, targetSiteRef, state, expiresAt])
+  @@map("admin_approval")
+  @@schema("platform")
+}
+
+model AdminApprovalDecision {
+  decisionRef        String   @id @map("decision_ref") @db.Uuid
+  approvalRef        String   @map("approval_ref")
+  executionCommandId String   @map("execution_command_id")
+  checkerRef         String   @map("checker_ref")
+  targetSiteRef      String?  @map("target_site_ref")
+  environment        String
+  region             String
+  allowed            Boolean
+  reasonCode         String   @map("reason_code")
+  requestDigest      String   @map("request_digest") @db.Char(64)
+  occurredAt         DateTime @map("occurred_at") @db.Timestamptz(6)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([approvalRef, occurredAt])
+  @@map("admin_approval_decision")
+  @@schema("platform")
+}
+
 model OutboxEvent {
   eventId        String    @id @map("event_id") @db.Uuid
   owner          String
