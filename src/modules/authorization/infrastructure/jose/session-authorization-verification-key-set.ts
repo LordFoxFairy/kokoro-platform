@@ -14,7 +14,7 @@ export interface AuthorizationPublicVerificationKeyConfig {
 export async function createSessionAuthorizationVerificationKeySet(
   keys: readonly AuthorizationPublicVerificationKeyConfig[],
 ): Promise<SessionAuthorizationVerificationKeySet> {
-  if (keys.length < 2 || keys.length > 16) throw new Error("AUTHORIZATION_VERIFICATION_KEY_SET_INVALID");
+  if (keys.length < 2 || keys.length > 8) throw new Error("AUTHORIZATION_VERIFICATION_KEY_SET_INVALID");
   const now = Date.now();
   const identities = new Set<string>();
   const imported = await Promise.all(keys.map(async (key) => {

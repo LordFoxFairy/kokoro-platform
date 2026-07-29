@@ -470,7 +470,7 @@ model AuthorizationEventLog {
   createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@unique([siteRef, aggregateSequence])
-  @@index([occurredAt, streamSequence])
+  @@index([createdAt, streamSequence])
   @@map("authorization_event_log")
   @@schema("platform")
 }

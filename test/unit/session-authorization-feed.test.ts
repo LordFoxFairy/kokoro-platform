@@ -46,4 +46,13 @@ describe("PostgreSQL authorization feed", () => {
     expect(source).toContain("FROM platform.authorization_session_access_grant");
     expect(source).not.toContain("signing_payload_grant_ref");
   });
+
+  it("retains events by append time and only deletes a safe stream prefix", async () => {
+    const source = await import("node:fs/promises").then(({ readFile }) =>
+      readFile("src/modules/authorization/infrastructure/postgres/authorization-feed-repository.ts", "utf8"));
+    const retention = source.slice(source.indexOf("async retain("));
+    expect(retention).toContain("created_at");
+    expect(retention).toContain("MIN(stream_sequence)");
+    expect(retention).not.toContain("WHERE occurred_at<");
+  });
 });

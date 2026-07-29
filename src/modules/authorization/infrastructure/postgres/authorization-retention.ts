@@ -20,7 +20,7 @@ export function createAuthorizationRetentionCycle(input: Readonly<{
     await input.database.internalTransaction("authorization.retention", (transaction) =>
       repository.retain(transaction, {
         now: now.toISOString(),
-        eventsBefore: new Date(now.getTime() - input.retentionMs).toISOString(),
+        appendedBefore: new Date(now.getTime() - input.retentionMs).toISOString(),
       }));
   };
 }

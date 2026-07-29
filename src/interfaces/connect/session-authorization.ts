@@ -28,6 +28,7 @@ import {
 } from "./generated-authorization/kokoro/platform/authorization/v1/session_authorization_pb.js";
 
 export type SessionAuthorizationFeedService = ServiceImpl<typeof SessionAuthorizationService>;
+const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;
 
 export function createSessionAuthorizationFeedService(input: Readonly<{
   database: Pick<PlatformTransactionalDatabaseClient, "internalTransaction">;
@@ -47,6 +48,9 @@ export function createSessionAuthorizationFeedService(input: Readonly<{
   return {
     async pullAuthorizationEvents(request, context) {
       const limit = boundedLimit(request.limit);
+      if (request.afterStreamSequence > POSTGRES_BIGINT_MAX) {
+        throw new ConnectError("after_stream_sequence invalid", Code.InvalidArgument);
+      }
       const waitMs = request.waitMs ?? 0;
       if (waitMs < 0 || waitMs > 30_000) throw new ConnectError("wait_ms invalid", Code.InvalidArgument);
       const deadline = clock().getTime() + waitMs;
@@ -280,7 +284,9 @@ function createSnapshotCursorCodec(secret: Uint8Array, clock: () => Date) {
         !/^(?:0|[1-9][0-9]*)$/u.test(value.o) || typeof value.e !== "string" ||
         Date.parse(value.e) <= clock().getTime()
       ) throw new ConnectError("cursor invalid", Code.FailedPrecondition);
-      return BigInt(value.o);
+      const ordinal = BigInt(value.o);
+      if (ordinal > POSTGRES_BIGINT_MAX) throw new ConnectError("cursor invalid", Code.InvalidArgument);
+      return ordinal;
     },
   });
 }
@@ -288,10 +294,14 @@ function createSnapshotCursorCodec(secret: Uint8Array, clock: () => Date) {
 function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) throw new ConnectError("request aborted", Code.Canceled);
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, milliseconds);
-    signal.addEventListener("abort", () => {
+    const onAbort = () => {
       clearTimeout(timer);
       reject(new ConnectError("request aborted", Code.Canceled));
-    }, { once: true });
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    signal.addEventListener("abort", onAbort, { once: true });
   });
 }

@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { createSecureServer, type Http2SecureServer, type SecureServerOptions } from "node:http2";
 import type { Http2ServerRequest, Http2ServerResponse } from "node:http2";
 import { TLSSocket } from "node:tls";
@@ -120,9 +119,11 @@ function authorizedPeer(request: Http2ServerRequest, peers: readonly Peer[]): bo
   if (!(socket instanceof TLSSocket) || socket.authorized !== true || socket.authorizationError != null) return false;
   const certificate = socket.getPeerCertificate();
   const now = Date.now();
+  const validFrom = Date.parse(certificate.valid_from);
+  const validTo = Date.parse(certificate.valid_to);
   if (
     !certificate.fingerprint256 || !certificate.subjectaltname ||
-    Date.parse(certificate.valid_from) > now || Date.parse(certificate.valid_to) <= now
+    !Number.isFinite(validFrom) || !Number.isFinite(validTo) || validFrom > now || validTo <= now
   ) return false;
   const sanUris = certificate.subjectaltname.split(/,\s*/u)
     .filter((entry) => entry.startsWith("URI:"))
@@ -152,10 +153,13 @@ async function loadTls(environment: Readonly<Record<string, string | undefined>>
 }
 
 async function loadCursorSecret(path: string): Promise<Uint8Array> {
-  const encoded = (await readFile(path, "utf8")).trim();
+  const raw = await readBoundedSecret(path, 256);
+  const encoded = raw.trim();
   if (!/^[A-Za-z0-9_-]{43,172}$/u.test(encoded)) throw new Error("PLATFORM_AUTHORIZATION_CURSOR_SECRET_INVALID");
   const value = Buffer.from(encoded, "base64url");
-  if (value.byteLength < 32 || value.byteLength > 128) throw new Error("PLATFORM_AUTHORIZATION_CURSOR_SECRET_INVALID");
+  if (
+    value.byteLength < 32 || value.byteLength > 128 || value.toString("base64url") !== encoded
+  ) throw new Error("PLATFORM_AUTHORIZATION_CURSOR_SECRET_INVALID");
   return new Uint8Array(value);
 }
 

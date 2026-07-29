@@ -48,7 +48,7 @@ CREATE TABLE platform.authorization_event_log (
   UNIQUE(site_ref,aggregate_sequence)
 );
 CREATE INDEX authorization_event_retention_idx
-  ON platform.authorization_event_log(occurred_at,stream_sequence);
+  ON platform.authorization_event_log(created_at,stream_sequence);
 
 CREATE TABLE platform.authorization_snapshot (
   snapshot_ref UUID PRIMARY KEY,
@@ -74,6 +74,7 @@ BEGIN
   RAISE EXCEPTION 'authorization feed records are immutable';
 END;
 $$;
+REVOKE ALL ON FUNCTION platform.reject_authorization_feed_update() FROM PUBLIC;
 CREATE TRIGGER authorization_event_immutable
 BEFORE UPDATE ON platform.authorization_event_log
 FOR EACH ROW EXECUTE FUNCTION platform.reject_authorization_feed_update();
@@ -90,30 +91,6 @@ REVOKE ALL ON
   platform.authorization_snapshot,
   platform.authorization_snapshot_record
 FROM PUBLIC;
-
-GRANT SELECT,UPDATE ON TABLE platform.authorization_stream_state TO platform_api;
-GRANT INSERT ON TABLE platform.authorization_event_log TO platform_api;
-GRANT SELECT ON TABLE
-  platform.authorization_stream_state,
-  platform.authorization_event_log,
-  platform.authorization_snapshot,
-  platform.authorization_snapshot_record,
-  platform.authorization_site,
-  platform.authorization_session_access_grant
-TO platform_authorization;
-GRANT INSERT ON TABLE
-  platform.authorization_snapshot,
-  platform.authorization_snapshot_record
-TO platform_authorization;
-GRANT SELECT,DELETE ON TABLE
-  platform.authorization_event_log,
-  platform.authorization_snapshot
-TO platform_worker;
-GRANT SELECT ON TABLE
-  platform.authorization_site,
-  platform.authorization_session_access_grant
-TO platform_api,platform_worker;
-GRANT UPDATE(event_sequence) ON TABLE platform.authorization_site TO platform_api;
 
 ALTER DEFAULT PRIVILEGES FOR ROLE platform_migrator IN SCHEMA platform
   REVOKE ALL ON TABLES FROM PUBLIC;

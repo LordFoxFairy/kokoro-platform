@@ -322,7 +322,7 @@ export class PostgresAuthorizationFeedRepository {
 
   async retain(
     transaction: PlatformTransaction,
-    input: Readonly<{ now: string; eventsBefore: string }>,
+    input: Readonly<{ now: string; appendedBefore: string }>,
   ): Promise<Readonly<{ snapshotsDeleted: number; eventsDeleted: number }>> {
     const sql = resolvePlatformTransaction(transaction);
     const snapshotsDeleted = await sql.execute(
@@ -330,8 +330,16 @@ export class PostgresAuthorizationFeedRepository {
       [input.now],
     );
     const eventsDeleted = await sql.execute(
-      `DELETE FROM platform.authorization_event_log WHERE occurred_at<$1::timestamptz`,
-      [input.eventsBefore],
+      `WITH retention_boundary AS (
+         SELECT MIN(stream_sequence) AS first_retained
+         FROM platform.authorization_event_log
+         WHERE created_at >= $1::timestamptz
+       )
+       DELETE FROM platform.authorization_event_log event
+       USING retention_boundary boundary
+       WHERE event.created_at < $1::timestamptz
+         AND (boundary.first_retained IS NULL OR event.stream_sequence < boundary.first_retained)`,
+      [input.appendedBefore],
     );
     return Object.freeze({ snapshotsDeleted, eventsDeleted });
   }

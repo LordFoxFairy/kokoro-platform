@@ -35,6 +35,24 @@ describe("Session authorization feed security", () => {
     expect(outcome.value.highWatermarkStreamSequence).toBe(4n);
   });
 
+  it("rejects a uint64 pull cursor that PostgreSQL bigint cannot represent", async () => {
+    let queried = false;
+    const service = createService({
+      readWindow: async () => {
+        queried = true;
+        throw new Error("must not query");
+      },
+    });
+    await expect(service.pullAuthorizationEvents(
+      create(PullAuthorizationEventsRequestSchema, {
+        afterStreamSequence: 9_223_372_036_854_775_808n,
+        limit: 10,
+      }),
+      { signal: new AbortController().signal } as never,
+    )).rejects.toMatchObject({ code: 3 });
+    expect(queried).toBe(false);
+  });
+
   it("binds an opaque snapshot cursor to its random snapshot reference and MAC", async () => {
     let snapshotRef = "";
     const record = create(AuthorizationSnapshotRecordSchema, {});
@@ -72,6 +90,39 @@ describe("Session authorization feed security", () => {
     )).rejects.toMatchObject({ code: 3 });
   });
 
+  it("rejects a signed cursor ordinal that PostgreSQL bigint cannot represent", async () => {
+    let snapshotRef = "";
+    const record = create(AuthorizationSnapshotRecordSchema, {});
+    const service = createService({
+      createSnapshot: async (_transaction, input) => {
+        snapshotRef = input.snapshotRef;
+        return { highWatermark: 0n, recordCount: 2 };
+      },
+      readSnapshotPage: async () => ({
+        highWatermark: 0n,
+        keySetRevision: "a".repeat(64),
+        frozenAt: "2026-07-29T00:00:00.000Z",
+        expiresAt: "2026-07-29T00:05:00.000Z",
+        records: [
+          { ordinal: 9_223_372_036_854_775_808n, record },
+          { ordinal: 9_223_372_036_854_775_809n, record },
+        ],
+      }),
+    }, () => new Date("2026-07-29T00:00:00.000Z"));
+    const first = await service.getAuthorizationSnapshotPage(
+      create(GetAuthorizationSnapshotPageRequestSchema, { limit: 1 }),
+      {} as never,
+    );
+    await expect(service.getAuthorizationSnapshotPage(
+      create(GetAuthorizationSnapshotPageRequestSchema, {
+        snapshotRef,
+        pageCursor: first.page?.nextPageCursor,
+        limit: 1,
+      }),
+      {} as never,
+    )).rejects.toMatchObject({ code: 3 });
+  });
+
   it("derives an order-independent purpose-scoped public key-set revision", async () => {
     const event = key("shared-revision", "event_signing", true);
     const grant = key("shared-revision", "session_access_grant", true);
@@ -89,6 +140,18 @@ describe("Session authorization feed security", () => {
       { ...event, current: false },
       grant,
     ])).rejects.toThrow("AUTHORIZATION_VERIFICATION_KEY_INVALID");
+  });
+
+  it("caps the combined verification key set at the wire contract maximum", async () => {
+    const event = key("event-current", "event_signing", true);
+    const grant = key("grant-current", "session_access_grant", true);
+    const extra = Array.from({ length: 7 }, (_, index) => ({
+      ...grant,
+      keyRevision: `grant-previous-${index}`,
+      current: false,
+    }));
+    await expect(createSessionAuthorizationVerificationKeySet([event, grant, ...extra]))
+      .rejects.toThrow("AUTHORIZATION_VERIFICATION_KEY_SET_INVALID");
   });
 
   it("publishes both verification purposes without exposing signing material", async () => {
@@ -109,9 +172,8 @@ describe("Session authorization feed security", () => {
 
   it("keeps feed and snapshot rows immutable under least-privilege grants", async () => {
     const migration = await readFile("prisma/migrations/20260729_session_authorization_feed/migration.sql", "utf8");
-    expect(migration).toContain("GRANT SELECT,UPDATE ON TABLE platform.authorization_stream_state TO platform_api");
-    expect(migration).toContain("GRANT INSERT ON TABLE platform.authorization_event_log TO platform_api");
-    expect(migration).toContain("TO platform_authorization");
+    expect(migration).not.toMatch(/\bTO platform_(?:api|authorization|worker)\b/u);
+    expect(migration).toContain("REVOKE ALL ON FUNCTION platform.reject_authorization_feed_update() FROM PUBLIC");
     expect(migration).not.toContain("GRANT SELECT,INSERT,UPDATE ON TABLE");
     expect(migration).toContain("CREATE TRIGGER authorization_event_immutable");
     expect(migration).toContain("CREATE TRIGGER authorization_snapshot_immutable");
