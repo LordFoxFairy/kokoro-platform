@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export function digestAssetCommand(value: Readonly<Record<string, unknown>>): string {
+export function digestAssetCommand(value: unknown): string {
   return createHash("sha256").update(stableJson(value), "utf8").digest("hex");
 }
 

@@ -1,6 +1,7 @@
 import type { VerifiedRequestSecurityContext } from "../../../../shared/security-context/index.js";
 import { createUploadIntent, createUploadSession } from "../../domain/upload-intent.js";
 import { digestAssetCommand } from "../asset-digest.js";
+import { resolveAssetUserAuthority } from "../asset-user-authority.js";
 import type {
   AssetPolicyResolverPort,
   AssetUnitOfWorkPort,
@@ -41,7 +42,7 @@ export class CreateUploadIntentService {
     expectedSize: bigint;
     expectedChecksumSha256: string;
   }>): Promise<CreateUploadIntentResult> {
-    const authority = this.authority(input.context);
+    const authority = resolveAssetUserAuthority(input.context, OPERATION);
     bounded(input.idempotencyKey, 8, 128, "ASSET_IDEMPOTENCY_KEY_INVALID");
     const now = this.now();
     const policy = await this.dependencies.policyResolver.resolve({
@@ -158,27 +159,6 @@ export class CreateUploadIntentService {
     });
   }
 
-  private authority(context: VerifiedRequestSecurityContext) {
-    const siteRef = context.trustedCaller.siteId;
-    const siteReleaseRef = context.trustedCaller.siteReleaseRef;
-    const projectRef = context.target.projectId;
-    if (
-      context.trustedCaller.kind !== "site_product" || siteRef === undefined ||
-      siteReleaseRef === undefined || context.target.siteId !== siteRef || projectRef === null ||
-      context.target.purpose !== OPERATION || context.actor.kind !== "user" ||
-      !context.trustedCaller.allowedOperations.includes(OPERATION)
-    ) throw new Error("ASSET_UPLOAD_AUTHORITY_INVALID");
-    return Object.freeze({
-      siteRef,
-      workloadIdentityId: context.trustedCaller.workloadIdentityId,
-      siteReleaseRef,
-      bindingEpoch: positiveBigint(context.trustedCaller.bindingEpoch, "ASSET_BINDING_EPOCH_INVALID"),
-      subjectRef: context.actor.subjectId,
-      subjectGeneration: positiveBigint(context.actor.subjectGeneration, "ASSET_SUBJECT_GENERATION_INVALID"),
-      projectRef,
-    });
-  }
-
   private now(): string {
     return (this.dependencies.clock ?? (() => new Date()))().toISOString();
   }
@@ -236,11 +216,6 @@ function assertCapability(
 
 function minimumExpiry(left: string, right: string): string {
   return Date.parse(left) <= Date.parse(right) ? left : right;
-}
-
-function positiveBigint(value: string, code: string): bigint {
-  if (!/^[1-9][0-9]*$/u.test(value)) throw new Error(code);
-  return BigInt(value);
 }
 
 function bounded(value: string, minimum: number, maximum: number, code: string): void {

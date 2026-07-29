@@ -1,6 +1,7 @@
 import { assertDigest } from "../../../../shared/outbox-inbox/receipt.js";
 import { resolvePlatformTransaction, type PlatformSqlTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
 import type { AssetUploadRepositoryPort, ClaimUploadIntentResult } from "../../application/contracts/asset-upload-ports.js";
+import type { AssetUploadCompletionRepositoryPort } from "../../application/contracts/asset-upload-completion-ports.js";
 import {
   verifyUploadIntent,
   verifyUploadSession,
@@ -8,7 +9,7 @@ import {
   type AssetUploadSession,
 } from "../../domain/upload-intent.js";
 
-export class PostgresAssetUploadRepository implements AssetUploadRepositoryPort {
+export class PostgresAssetUploadRepository implements AssetUploadRepositoryPort, AssetUploadCompletionRepositoryPort {
   async claimUploadIntent(
     transaction: Parameters<AssetUploadRepositoryPort["claimUploadIntent"]>[0],
     input: Parameters<AssetUploadRepositoryPort["claimUploadIntent"]>[1],
@@ -16,7 +17,7 @@ export class PostgresAssetUploadRepository implements AssetUploadRepositoryPort 
     assertDigest(input.requestDigest);
     if (input.maximumInflightBytes < input.intent.expectedSize) throw new Error("ASSET_QUOTA_POLICY_INVALID");
     const sql = resolvePlatformTransaction(transaction);
-    await lockCurrentAuthority(sql, input.intent);
+    await lockCurrentAuthority(sql, input.intent, "asset.create-upload-intent");
     const inserted = await sql.query<{ intentRef: string }>(
       `INSERT INTO platform.asset_upload_intent
        (intent_ref,site_ref,workload_identity_id,site_release_ref,binding_epoch,subject_ref,
@@ -106,7 +107,7 @@ export class PostgresAssetUploadRepository implements AssetUploadRepositoryPort 
     const sql = resolvePlatformTransaction(transaction);
     const pair = await loadByIntent(sql, input.siteRef, input.intentRef);
     if (pair === null) throw new Error("ASSET_UPLOAD_INTENT_NOT_FOUND");
-    await lockCurrentAuthority(sql, pair.intent);
+    await lockCurrentAuthority(sql, pair.intent, "asset.create-upload-intent");
     const rows = await sql.query<SessionRow>(
       `UPDATE platform.asset_upload_session AS session
        SET capability_epoch=$4::bigint,capability_expires_at=$5::timestamptz,
@@ -121,9 +122,37 @@ export class PostgresAssetUploadRepository implements AssetUploadRepositoryPort 
     if (!session) throw new Error("ASSET_UPLOAD_CAPABILITY_CONFLICT");
     return hydrateSession(session);
   }
+
+  async beginCompletion(
+    transaction: Parameters<AssetUploadCompletionRepositoryPort["beginCompletion"]>[0],
+    input: Parameters<AssetUploadCompletionRepositoryPort["beginCompletion"]>[1],
+  ): Promise<AssetUploadSession> {
+    const sql = resolvePlatformTransaction(transaction);
+    const pair = await loadByIntent(sql, input.authority.siteRef, input.intentRef);
+    if (pair === null || pair.session.sessionRef !== input.sessionRef) {
+      throw new Error("ASSET_UPLOAD_SESSION_NOT_FOUND");
+    }
+    assertAuthority(pair.intent, input.authority);
+    await lockCurrentAuthority(sql, pair.intent, "asset.complete-upload");
+    const rows = await sql.query<SessionRow>(
+      `UPDATE platform.asset_upload_session AS session
+       SET state='completing',expected_version=expected_version+1,updated_at=now()
+       WHERE site_ref=$1 AND intent_ref=$2 AND session_ref=$3
+         AND expected_version=$4::bigint AND state='uploading' AND now()<expires_at
+       RETURNING ${SESSION_COLUMNS}`,
+      [input.authority.siteRef, input.intentRef, input.sessionRef, input.expectedVersion],
+    );
+    const session = rows[0];
+    if (!session) throw new Error("ASSET_UPLOAD_COMPLETION_CONFLICT");
+    return hydrateSession(session);
+  }
 }
 
-async function lockCurrentAuthority(sql: PlatformSqlTransaction, intent: AssetUploadIntent): Promise<void> {
+async function lockCurrentAuthority(
+  sql: PlatformSqlTransaction,
+  intent: AssetUploadIntent,
+  operation: "asset.create-upload-intent" | "asset.complete-upload",
+): Promise<void> {
   const rows = await sql.query<{ allowed: boolean }>(
     `SELECT TRUE AS allowed
      FROM platform.authorization_product_binding binding
@@ -137,16 +166,28 @@ async function lockCurrentAuthority(sql: PlatformSqlTransaction, intent: AssetUp
        AND binding.binding_epoch=$4::bigint AND binding.state='active'
        AND subject.subject_generation=$6::bigint AND subject.state='active'
        AND project.state='active' AND membership.state='active'
-       AND current_setting('app.operation',true)='asset.create-upload-intent'
+       AND current_setting('app.operation',true)=$8
        AND current_setting('app.site_id',true)=binding.site_ref
        AND current_setting('app.subject_id',true)=subject.subject_ref
        AND current_setting('app.subject_generation',true)=subject.subject_generation::text
        AND current_setting('app.project_id',true)=project.project_ref
      FOR UPDATE OF binding,subject,project,membership`,
     [intent.workloadIdentityId, intent.siteRef, intent.siteReleaseRef, intent.bindingEpoch,
-      intent.subjectRef, intent.subjectGeneration, intent.projectRef],
+      intent.subjectRef, intent.subjectGeneration, intent.projectRef, operation],
   );
   if (!rows[0]?.allowed) throw new Error("ASSET_UPLOAD_AUTHORITY_STALE");
+}
+
+function assertAuthority(
+  intent: AssetUploadIntent,
+  authority: Parameters<AssetUploadCompletionRepositoryPort["beginCompletion"]>[1]["authority"],
+): void {
+  if (
+    intent.siteRef !== authority.siteRef || intent.workloadIdentityId !== authority.workloadIdentityId ||
+    intent.siteReleaseRef !== authority.siteReleaseRef || intent.bindingEpoch !== authority.bindingEpoch ||
+    intent.subjectRef !== authority.subjectRef || intent.subjectGeneration !== authority.subjectGeneration ||
+    intent.projectRef !== authority.projectRef
+  ) throw new Error("ASSET_UPLOAD_AUTHORITY_STALE");
 }
 
 async function insertSession(sql: PlatformSqlTransaction, value: AssetUploadSession): Promise<void> {

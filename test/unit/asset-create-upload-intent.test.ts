@@ -103,7 +103,7 @@ describe("CreateUploadIntentService", () => {
   it("rejects untrusted Site, actor generation, project, and operation before policy resolution", async () => {
     const { service, issue } = fixture();
     await expect(service.execute({ ...command, context: { ...context, target: { ...context.target, siteId: "site_02" } } as VerifiedRequestSecurityContext }))
-      .rejects.toThrow("ASSET_UPLOAD_AUTHORITY_INVALID");
+      .rejects.toThrow("ASSET_USER_AUTHORITY_INVALID");
     expect(issue).not.toHaveBeenCalled();
   });
 });
