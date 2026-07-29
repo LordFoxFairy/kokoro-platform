@@ -39,8 +39,14 @@ describe("Platform Identity core security", () => {
     const migration = await readFile("prisma/migrations/20260729_identity_core/migration.sql", "utf8");
     expect(migration).toContain("PRIMARY KEY(site_ref,account_ref)");
     expect(migration).toContain("UNIQUE(site_ref,email_normalized)");
+    expect(migration).toContain("UNIQUE(site_ref,account_ref,subject_ref)");
+    expect(migration).toContain("FOREIGN KEY(site_ref,account_ref,subject_ref)");
     expect(migration).toContain("attempt_count");
     expect(migration).toContain("max_attempts");
+    expect(migration).toContain("identity_verification_legal_acceptance");
+    expect(migration).toContain("identity_verification_delivery");
+    expect(migration).toContain("verification_legal_acceptance_immutable");
+    expect(migration).toContain("outbox_event(event_id)");
     expect(migration).toContain("identity_refresh_credential");
     expect(migration).toContain("UNIQUE(site_ref,family_ref,generation)");
     expect(migration).toContain("REVOKE ALL ON");

@@ -589,6 +589,7 @@ model IdentityAccount {
   @@id([siteRef, accountRef])
   @@unique([siteRef, emailNormalized])
   @@unique([siteRef, subjectRef])
+  @@unique([siteRef, accountRef, subjectRef])
   @@map("identity_account")
   @@schema("platform")
 }
@@ -616,6 +617,7 @@ model IdentityVerificationTransaction {
   secretDigest         String    @map("secret_digest") @db.Char(64)
   requestDigest        String    @map("request_digest") @db.Char(64)
   state                String    @default("pending")
+  deliveryState        String    @default("queued") @map("delivery_state")
   attemptCount         Int       @default(0) @map("attempt_count")
   maxAttempts          Int       @map("max_attempts")
   resendCount          Int       @default(0) @map("resend_count")
@@ -627,6 +629,39 @@ model IdentityVerificationTransaction {
   @@id([siteRef, transactionRef])
   @@index([siteRef, emailNormalized, createdAt])
   @@map("identity_verification_transaction")
+  @@schema("platform")
+}
+
+model IdentityVerificationLegalAcceptance {
+  siteRef            String   @map("site_ref")
+  transactionRef     String   @map("transaction_ref")
+  termRef            String   @map("term_ref")
+  acceptedAt         DateTime @map("accepted_at") @db.Timestamptz(6)
+  evidenceDigest     String   @map("evidence_digest") @db.Char(64)
+  workloadIdentityId String   @map("workload_identity_id")
+  siteReleaseRef     String   @map("site_release_ref")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@id([siteRef, transactionRef, termRef])
+  @@map("identity_verification_legal_acceptance")
+  @@schema("platform")
+}
+
+model IdentityVerificationDelivery {
+  siteRef        String    @map("site_ref")
+  transactionRef String    @map("transaction_ref")
+  deliveryRef    String    @map("delivery_ref") @db.Uuid
+  eventId        String    @unique @map("event_id") @db.Uuid
+  state          String    @default("queued")
+  attemptCount   Int       @default(0) @map("attempt_count")
+  deliveredAt    DateTime? @map("delivered_at") @db.Timestamptz(6)
+  failedAt       DateTime? @map("failed_at") @db.Timestamptz(6)
+  lastErrorCode  String?   @map("last_error_code")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@id([siteRef, transactionRef, deliveryRef])
+  @@map("identity_verification_delivery")
   @@schema("platform")
 }
 
