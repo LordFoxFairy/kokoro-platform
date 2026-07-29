@@ -134,6 +134,28 @@ describe("Postgres Site authority", () => {
     } finally { revokePlatformTransaction(lease); }
   });
 
+  it("atomically revokes the drained deployment, retires its release, and completes activation", async () => {
+    const statements: string[] = [];
+    const lease = issuePlatformTransaction({ query: async () => [], execute: async (statement) => {
+      statements.push(statement); return 1;
+    } });
+    try {
+      await new PostgresSiteAuthorityRepository().recordDrainObservationAndComplete(
+        lease.transaction,
+        { observationRef: "01983f57-8cf1-7000-8000-000000000003", attemptRef: "activation_02",
+          providerOperationKey: "provider-drain-operation-01", deploymentRef: "deployment_01",
+          releaseRef: "release_01", webArtifactDigest: "f".repeat(64), healthy: false,
+          trafficReady: false, observedAt: "2026-07-28T12:03:00.000Z", payloadDigest: "e".repeat(64) },
+        { ...attempt, state: "succeeded" },
+      );
+      expect(statements).toHaveLength(4);
+      expect(statements[0]).toContain("site_deployment_observation");
+      expect(statements[1]).toContain("state='revoked'");
+      expect(statements[2]).toContain("state='retired'");
+      expect(statements[3]).toContain("state='succeeded'");
+    } finally { revokePlatformTransaction(lease); }
+  });
+
   it("does not continue after an active pointer CAS loses", async () => {
     let executions = 0;
     const lease = issuePlatformTransaction({

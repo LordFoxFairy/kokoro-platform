@@ -4,6 +4,7 @@ import {
   activateObservedRelease,
   beginActivation,
   beginDecommission,
+  completeActivationDrain,
   deploymentBindingForObservation,
   observePromotion,
   requestPromotion,
@@ -211,6 +212,66 @@ export class SiteLifecycleService {
       });
       const receipt = Object.freeze({ attemptRef: result.attempt.attemptRef,
         state: result.attempt.state, replayed: false });
+      await this.journal.succeed(transaction, command, receipt, context);
+      return receipt;
+    });
+  }
+
+  completeActivationDrain(
+    input: CommandInput & Readonly<{
+      attemptRef: string;
+      siteRef: string;
+      providerOperationKey: string;
+      deploymentRef: string;
+      releaseRef: string;
+      webArtifactDigest: string;
+    }>,
+    context: VerifiedRequestSecurityContext,
+  ): Promise<SiteAuthorityReceipt> {
+    worker(context, input.siteRef);
+    const command = createSiteAuthorityCommand("site.activation.complete-drain", input.siteRef, input, context, {
+      attemptRef: input.attemptRef,
+      providerOperationKey: input.providerOperationKey,
+      deploymentRef: input.deploymentRef,
+      releaseRef: input.releaseRef,
+      webArtifactDigest: input.webArtifactDigest,
+    });
+    return this.unitOfWork.execute({ context, operation: command.operation }, async (transaction) => {
+      const disposition = await this.journal.begin(transaction, command);
+      const current = await this.repository.loadActivationForUpdate(transaction, input.attemptRef);
+      if (current === null || current.siteRef !== input.siteRef) throw new Error("SITE_ACTIVATION_NOT_FOUND");
+      if (disposition === "replay" && current.state === "succeeded") {
+        return Object.freeze({ attemptRef: current.attemptRef, state: current.state, replayed: true });
+      }
+      if (current.expectedActiveReleaseRef === null || current.environment !== deploymentEnvironment(context) ||
+          current.region !== context.region || current.expectedActiveReleaseRef !== input.releaseRef) {
+        throw new Error("SITE_DRAIN_SCOPE_MISMATCH");
+      }
+      const deployment = await this.repository.loadDrainingDeploymentForUpdate(
+        transaction,
+        input.siteRef,
+        current.environment,
+        current.expectedActiveReleaseRef,
+      );
+      if (deployment === null || deployment.deploymentRef !== input.deploymentRef ||
+          deployment.webArtifactDigest !== input.webArtifactDigest) {
+        throw new Error("SITE_DRAIN_DEPLOYMENT_MISMATCH");
+      }
+      const observation = Object.freeze({
+        observationRef: input.commandId,
+        attemptRef: input.attemptRef,
+        providerOperationKey: input.providerOperationKey,
+        deploymentRef: input.deploymentRef,
+        releaseRef: input.releaseRef,
+        webArtifactDigest: input.webArtifactDigest,
+        healthy: false,
+        trafficReady: false,
+        observedAt: this.#now(),
+        payloadDigest: command.requestDigest,
+      });
+      const next = completeActivationDrain(current, observation);
+      await this.repository.recordDrainObservationAndComplete(transaction, observation, next);
+      const receipt = Object.freeze({ attemptRef: next.attemptRef, state: next.state, replayed: false });
       await this.journal.succeed(transaction, command, receipt, context);
       return receipt;
     });

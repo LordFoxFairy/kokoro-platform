@@ -35,6 +35,8 @@ describe("SiteLifecycleService", () => {
       insertActivation: async (transaction, attempt) => { calls.push(`insert:${token(transaction)}`); saved = attempt; },
       updateActivation: async () => { throw new Error("unexpected"); },
       recordObservationAndCandidateDeployment: async () => { throw new Error("unexpected"); },
+      loadDrainingDeploymentForUpdate: async () => { throw new Error("unexpected"); },
+      recordDrainObservationAndComplete: async () => { throw new Error("unexpected"); },
       commitActivation: async () => { throw new Error("unexpected"); },
       updateSite: async () => { throw new Error("unexpected"); },
     };
@@ -139,6 +141,44 @@ describe("SiteLifecycleService", () => {
       releaseRef: "release_02", bindingEpoch: 3n, state: "candidate" });
     expect(saved[2]).toMatchObject({ state: "pointer_committing", deploymentRef: "deployment_02" });
   });
+
+  it("retires the exact drained deployment and release before completing activation", async () => {
+    let completed: unknown = null;
+    const draining: ActivationAttempt = Object.freeze({
+      attemptRef: "activation_02", siteRef: "site_01", candidateReleaseRef: "release_02",
+      expectedActiveReleaseRef: "release_01", candidateWebArtifactDigest: "a".repeat(64),
+      candidateManifestDigest: "b".repeat(64), candidateCertificationDigest: "c".repeat(64),
+      siteProjectBindingRef: "binding_01", siteProjectBindingEpoch: 3n,
+      environment: "production", region: "us-east-1", audience: "site-product",
+      sessionContractRevision: "browser-v3", state: "draining",
+      requestedAt: "2026-07-28T12:00:00.000Z",
+      providerOperationKey: "provider-operation-activation-02", deploymentRef: "deployment_02",
+      observedAt: "2026-07-28T12:01:00.000Z",
+    });
+    const repository: SiteAuthorityRepository = {
+      ...emptyRepository(),
+      loadActivationForUpdate: async () => draining,
+      loadDrainingDeploymentForUpdate: async () => ({
+        deploymentRef: "deployment_01", webArtifactDigest: "f".repeat(64),
+      }),
+      recordDrainObservationAndComplete: async (_transaction, observation, value) => {
+        completed = { observation, value };
+      },
+    };
+    const service = new SiteLifecycleService(unitOfWork(), repository, emptyJournal(), {
+      now: () => "2026-07-28T12:03:00.000Z",
+    });
+    const receipt = await service.completeActivationDrain({
+      commandId: "01983f57-8cf1-7000-8000-000000000003",
+      idempotencyKey: "drain-command-0001", attemptRef: "activation_02", siteRef: "site_01",
+      providerOperationKey: "provider-drain-operation-01", deploymentRef: "deployment_01",
+      releaseRef: "release_01", webArtifactDigest: "f".repeat(64),
+    }, await context("site.activation.complete-drain", "site_01", "platform_worker"));
+
+    expect(receipt).toEqual({ attemptRef: "activation_02", state: "succeeded", replayed: false });
+    expect(completed).toMatchObject({ observation: { deploymentRef: "deployment_01",
+      releaseRef: "release_01", healthy: false, trafficReady: false }, value: { state: "succeeded" } });
+  });
 });
 
 function unitOfWork(): PlatformUnitOfWork {
@@ -165,6 +205,8 @@ function emptyRepository(): SiteAuthorityRepository {
     insertActivation: async () => undefined,
     updateActivation: async () => undefined,
     recordObservationAndCandidateDeployment: async () => undefined,
+    loadDrainingDeploymentForUpdate: async () => null,
+    recordDrainObservationAndComplete: async () => undefined,
     commitActivation: async () => undefined,
     updateSite: async () => undefined,
   };

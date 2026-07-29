@@ -262,6 +262,23 @@ export function activateObservedRelease(input: Readonly<{
   });
 }
 
+export function completeActivationDrain(
+  attempt: ActivationAttempt,
+  observation: SiteDeploymentObservation,
+): ActivationAttempt {
+  activation(attempt);
+  deploymentObservation(observation);
+  if (attempt.state !== "draining" || attempt.expectedActiveReleaseRef === null) {
+    throw new Error("SITE_ACTIVATION_DRAIN_STATE_INVALID");
+  }
+  if (
+    observation.attemptRef !== attempt.attemptRef ||
+    observation.releaseRef !== attempt.expectedActiveReleaseRef ||
+    observation.trafficReady || observation.healthy
+  ) throw new Error("SITE_DRAIN_OBSERVATION_MISMATCH");
+  return Object.freeze({ ...attempt, state: "succeeded" });
+}
+
 export function suspendSite(value: SiteAggregate): SiteAggregate {
   site(value);
   if (value.state !== "active") throw new Error("SITE_SUSPEND_STATE_INVALID");

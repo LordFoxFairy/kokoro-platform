@@ -31,6 +31,17 @@ export interface SiteAuthorityRepository {
     observation: SiteDeploymentObservation,
     deployment: SiteDeploymentBinding,
   ): Promise<void>;
+  loadDrainingDeploymentForUpdate(
+    transaction: PlatformTransaction,
+    siteRef: string,
+    environment: "development" | "preview" | "production",
+    releaseRef: string,
+  ): Promise<Readonly<{ deploymentRef: string; webArtifactDigest: string }> | null>;
+  recordDrainObservationAndComplete(
+    transaction: PlatformTransaction,
+    observation: SiteDeploymentObservation,
+    attempt: ActivationAttempt,
+  ): Promise<void>;
   commitActivation(
     transaction: PlatformTransaction,
     input: Readonly<{

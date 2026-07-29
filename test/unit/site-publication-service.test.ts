@@ -77,6 +77,8 @@ function baseRepository(): SiteAuthorityRepository & SitePublicationRepository {
     loadActivationForUpdate: async () => null, insertActivation: async () => undefined,
     updateActivation: async () => undefined, commitActivation: async () => undefined,
     recordObservationAndCandidateDeployment: async () => undefined,
+    loadDrainingDeploymentForUpdate: async () => null,
+    recordDrainObservationAndComplete: async () => undefined,
     updateSite: async () => undefined, insertSiteWithProjectBinding: async () => undefined,
     insertRelease: async () => undefined,
   };

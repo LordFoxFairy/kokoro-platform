@@ -216,6 +216,67 @@ export class PostgresSiteAuthorityRepository implements SiteAuthorityRepository,
     if (existing.length !== 1) throw new Error("SITE_DEPLOYMENT_BINDING_CONFLICT");
   }
 
+  async loadDrainingDeploymentForUpdate(
+    transaction: PlatformTransaction,
+    siteRef: string,
+    environment: "development" | "preview" | "production",
+    releaseRef: string,
+  ): Promise<Readonly<{ deploymentRef: string; webArtifactDigest: string }> | null> {
+    const rows = await resolvePlatformTransaction(transaction).query<{
+      deploymentRef: string; webArtifactDigest: string;
+    }>(
+      `SELECT deployment_ref AS "deploymentRef", web_artifact_digest AS "webArtifactDigest"
+       FROM platform.site_deployment_binding
+       WHERE site_ref=$1 AND environment=$2 AND release_ref=$3 AND state='draining' FOR UPDATE`,
+      [siteRef, environment, releaseRef],
+    );
+    if (rows.length > 1) throw new Error("SITE_DRAINING_DEPLOYMENT_CONFLICT");
+    return rows[0] === undefined ? null : Object.freeze({ ...rows[0] });
+  }
+
+  async recordDrainObservationAndComplete(
+    transaction: PlatformTransaction,
+    observation: SiteDeploymentObservation,
+    attempt: ActivationAttempt,
+  ): Promise<void> {
+    const value = verifyActivationAttempt(attempt);
+    if (value.state !== "succeeded" || value.expectedActiveReleaseRef !== observation.releaseRef) {
+      throw new Error("SITE_DRAIN_COMPLETION_INVALID");
+    }
+    const sql = resolvePlatformTransaction(transaction);
+    const observationInserted = await sql.execute(
+      `INSERT INTO platform.site_deployment_observation
+       (observation_ref,attempt_ref,provider_operation_key,deployment_ref,release_ref,
+        web_artifact_digest,healthy,traffic_ready,observed_at,payload_digest)
+       VALUES ($1::uuid,$2,$3,$4,$5,$6,false,false,$7::timestamptz,$8)`,
+      [observation.observationRef, observation.attemptRef, observation.providerOperationKey,
+        observation.deploymentRef, observation.releaseRef, observation.webArtifactDigest,
+        observation.observedAt, observation.payloadDigest],
+    );
+    if (observationInserted !== 1) throw new Error("SITE_DRAIN_OBSERVATION_INSERT_FAILED");
+    const deploymentRevoked = await sql.execute(
+      `UPDATE platform.site_deployment_binding SET state='revoked',updated_at=now()
+       WHERE deployment_ref=$1 AND site_ref=$2 AND release_ref=$3 AND environment=$4
+         AND web_artifact_digest=$5 AND state='draining'`,
+      [observation.deploymentRef, value.siteRef, observation.releaseRef, value.environment,
+        observation.webArtifactDigest],
+    );
+    if (deploymentRevoked !== 1) throw new Error("SITE_DRAIN_DEPLOYMENT_CONFLICT");
+    const releaseRetired = await sql.execute(
+      `UPDATE platform.site_release SET state='retired',updated_at=now()
+       WHERE release_ref=$1 AND site_ref=$2 AND state='draining'`,
+      [observation.releaseRef, value.siteRef],
+    );
+    if (releaseRetired !== 1) throw new Error("SITE_DRAIN_RELEASE_CONFLICT");
+    const activationCompleted = await sql.execute(
+      `UPDATE platform.site_activation_attempt SET state='succeeded',updated_at=now()
+       WHERE attempt_ref=$1 AND site_ref=$2 AND state='draining'
+         AND expected_active_release_ref=$3`,
+      [value.attemptRef, value.siteRef, observation.releaseRef],
+    );
+    if (activationCompleted !== 1) throw new Error("SITE_DRAIN_ACTIVATION_CONFLICT");
+  }
+
   async commitActivation(
     transaction: PlatformTransaction,
     input: Parameters<SiteAuthorityRepository["commitActivation"]>[1],
