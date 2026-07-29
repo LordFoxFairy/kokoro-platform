@@ -19,7 +19,8 @@ const policy = Object.freeze({
     maximumReadyBytes: 1_000_000_000n,
     allowedClientMediaTypes: Object.freeze(["image/png"]), expiresAt: "2026-07-29T12:00:00.000Z" }),
   quotaRevisionRef: "quota_revision_01", storageTenantRef: "storage_tenant_01",
-  uploadAudience: "https://upload.example.test", minimumPartBytes: 5_242_880n,
+  uploadAudience: "https://upload.example.test", allowedOrigins: ["https://chat.example.test"],
+  minimumPartBytes: 5_242_880n,
   maximumPartBytes: 10_000_000n, capabilityLifetimeSeconds: 300,
 });
 
@@ -95,7 +96,9 @@ describe("CreateUploadIntentService", () => {
     expect(storedSession()).toMatchObject({ quarantineObjectRef: "quarantine/asset_ref_03",
       capabilityEpoch: 1n, state: "uploading" });
     expect(issue).toHaveBeenCalledWith(expect.objectContaining({
-      siteRef: "site_01", subjectGeneration: 4n, projectRef: "project_01", purpose: "chat.attachment",
+      siteRef: "site_01", workloadIdentityId: "workload_01", siteReleaseRef: "release_01",
+      bindingEpoch: 7n, subjectGeneration: 4n, projectRef: "project_01", purpose: "chat.attachment",
+      allowedOrigins: ["https://chat.example.test"],
       expectedSize: 1234n, capabilityEpoch: 1n,
     }));
     expect(receipt()).toMatchObject({ state: "succeeded",

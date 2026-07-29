@@ -15,6 +15,7 @@ export interface AssetPolicyResolution {
   readonly quotaRevisionRef: string;
   readonly storageTenantRef: string;
   readonly uploadAudience: string;
+  readonly allowedOrigins: readonly string[];
   readonly minimumPartBytes: bigint;
   readonly maximumPartBytes: bigint;
   readonly capabilityLifetimeSeconds: number;
@@ -98,6 +99,9 @@ export interface AssetUploadCapabilityIssuerPort {
     storageTenantRef: string;
     storageRegion: string;
     siteRef: string;
+    workloadIdentityId: string;
+    siteReleaseRef: string;
+    bindingEpoch: bigint;
     subjectRef: string;
     subjectGeneration: bigint;
     projectRef: string;
@@ -111,5 +115,6 @@ export interface AssetUploadCapabilityIssuerPort {
     expiresAt: string;
     minimumPartBytes: bigint;
     maximumPartBytes: bigint;
+    allowedOrigins: readonly string[];
   }>): Promise<AssetUploadCapability>;
 }

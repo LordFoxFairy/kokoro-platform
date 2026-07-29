@@ -141,6 +141,9 @@ export class CreateUploadIntentService {
       storageTenantRef: claim.session.storageTenantRef,
       storageRegion: claim.session.storageRegion,
       siteRef: claim.intent.siteRef,
+      workloadIdentityId: claim.intent.workloadIdentityId,
+      siteReleaseRef: claim.intent.siteReleaseRef,
+      bindingEpoch: claim.intent.bindingEpoch,
       subjectRef: claim.intent.subjectRef,
       subjectGeneration: claim.intent.subjectGeneration,
       projectRef: claim.intent.projectRef,
@@ -154,6 +157,7 @@ export class CreateUploadIntentService {
       expiresAt,
       minimumPartBytes: claim.session.minimumPartBytes,
       maximumPartBytes: claim.session.maximumPartBytes,
+      allowedOrigins: policy.allowedOrigins,
     });
     assertCapability(capability, capabilityEpoch, expiresAt, claim.session);
     const issued = await this.dependencies.unitOfWork.execute(
@@ -209,6 +213,7 @@ function verifyPolicyResolution(
   bounded(value.uploadAudience, 3, 256, "ASSET_UPLOAD_AUDIENCE_INVALID");
   if (
     value.minimumPartBytes < 1n || value.maximumPartBytes < value.minimumPartBytes ||
+    value.allowedOrigins.length < 1 || value.allowedOrigins.length > 32 ||
     !Number.isInteger(value.capabilityLifetimeSeconds) || value.capabilityLifetimeSeconds < 30 ||
     value.capabilityLifetimeSeconds > 900 || Date.parse(value.policy.expiresAt) <= Date.parse(now)
   ) throw new Error("ASSET_POLICY_RESOLUTION_INVALID");

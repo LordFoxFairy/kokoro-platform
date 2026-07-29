@@ -4,6 +4,7 @@ import type {
   AssetUploadCapabilityIssuerPort,
 } from "../../application/contracts/asset-upload-ports.js";
 import type { AssetUploadEndpointResolver } from "../config/asset-upload-policy-registry.js";
+import { exactHttpsOrigin } from "../config/asset-upload-policy-registry.js";
 
 export interface AssetUploadCapabilityKeyRing {
   readonly currentKeyRevision: string;
@@ -16,6 +17,9 @@ export interface AssetUploadCapabilityClaims {
   readonly storageTenantRef: string;
   readonly storageRegion: string;
   readonly siteRef: string;
+  readonly workloadIdentityId: string;
+  readonly siteReleaseRef: string;
+  readonly bindingEpoch: string;
   readonly subjectRef: string;
   readonly subjectGeneration: string;
   readonly projectRef: string;
@@ -29,6 +33,7 @@ export interface AssetUploadCapabilityClaims {
   readonly expiresAt: string;
   readonly minimumPartBytes: string;
   readonly maximumPartBytes: string;
+  readonly allowedOrigins: readonly string[];
 }
 
 export class SealedAssetUploadCapabilityIssuer implements AssetUploadCapabilityIssuerPort {
@@ -60,6 +65,9 @@ export class SealedAssetUploadCapabilityIssuer implements AssetUploadCapabilityI
       storageTenantRef: input.storageTenantRef,
       storageRegion: input.storageRegion,
       siteRef: input.siteRef,
+      workloadIdentityId: input.workloadIdentityId,
+      siteReleaseRef: input.siteReleaseRef,
+      bindingEpoch: input.bindingEpoch.toString(),
       subjectRef: input.subjectRef,
       subjectGeneration: input.subjectGeneration.toString(),
       projectRef: input.projectRef,
@@ -73,7 +81,9 @@ export class SealedAssetUploadCapabilityIssuer implements AssetUploadCapabilityI
       expiresAt: input.expiresAt,
       minimumPartBytes: input.minimumPartBytes.toString(),
       maximumPartBytes: input.maximumPartBytes.toString(),
+      allowedOrigins: Object.freeze([...input.allowedOrigins]),
     });
+    if (parseClaims(claims) === null) throw new Error("ASSET_CAPABILITY_CLAIMS_INVALID");
     return Object.freeze({
       protocolRevision: "s3-multipart-v1" as const,
       uploadEndpoint: this.endpoints.resolveEndpoint(input.audience),
@@ -148,17 +158,50 @@ function parseClaims(value: unknown): AssetUploadCapabilityClaims | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const claims = value as Record<string, unknown>;
   const fields = [
-    "version", "audience", "storageTenantRef", "storageRegion", "siteRef", "subjectRef",
-    "subjectGeneration", "projectRef", "purpose", "intentRef", "sessionRef", "quarantineObjectRef",
-    "expectedSize", "expectedChecksumSha256", "capabilityEpoch", "expiresAt", "minimumPartBytes",
-    "maximumPartBytes",
+    "version", "audience", "storageTenantRef", "storageRegion", "siteRef", "workloadIdentityId",
+    "siteReleaseRef", "bindingEpoch", "subjectRef", "subjectGeneration", "projectRef", "purpose",
+    "intentRef", "sessionRef", "quarantineObjectRef", "expectedSize", "expectedChecksumSha256",
+    "capabilityEpoch", "expiresAt", "minimumPartBytes", "maximumPartBytes", "allowedOrigins",
   ];
   if (Object.keys(claims).length !== fields.length || fields.some((field) => !(field in claims)) || claims.version !== 1) return null;
-  for (const field of fields.slice(1)) if (typeof claims[field] !== "string") return null;
-  if (!/^[1-9][0-9]*$/u.test(claims.subjectGeneration as string) ||
-    !/^[1-9][0-9]*$/u.test(claims.expectedSize as string) ||
-    !/^[1-9][0-9]*$/u.test(claims.capabilityEpoch as string) ||
-    !/^[0-9a-f]{64}$/u.test(claims.expectedChecksumSha256 as string) ||
-    !Number.isFinite(Date.parse(claims.expiresAt as string))) return null;
-  return Object.freeze(claims) as unknown as AssetUploadCapabilityClaims;
+  const textFields = [
+    "audience", "storageTenantRef", "storageRegion", "siteRef", "workloadIdentityId",
+    "siteReleaseRef", "bindingEpoch", "subjectRef", "subjectGeneration", "projectRef", "purpose",
+    "intentRef", "sessionRef", "quarantineObjectRef", "expectedSize", "expectedChecksumSha256",
+    "capabilityEpoch", "expiresAt", "minimumPartBytes", "maximumPartBytes",
+  ];
+  if (textFields.some((field) => typeof claims[field] !== "string") ||
+      !Array.isArray(claims.allowedOrigins)) return null;
+  const boundedFields = [
+    "audience", "storageTenantRef", "storageRegion", "siteRef", "workloadIdentityId",
+    "siteReleaseRef", "subjectRef", "projectRef", "intentRef", "sessionRef",
+  ];
+  if (boundedFields.some((field) => !boundedText(claims[field], 1, 256)) ||
+      !boundedText(claims.purpose, 1, 128) ||
+      !boundedText(claims.quarantineObjectRef, 16, 1_024) ||
+      !positiveUint64(claims.bindingEpoch) || !positiveUint64(claims.subjectGeneration) ||
+      !positiveUint64(claims.expectedSize) || !positiveUint64(claims.capabilityEpoch) ||
+      !positiveUint64(claims.minimumPartBytes) || !positiveUint64(claims.maximumPartBytes) ||
+      BigInt(claims.minimumPartBytes as string) > BigInt(claims.maximumPartBytes as string) ||
+      !/^[0-9a-f]{64}$/u.test(claims.expectedChecksumSha256 as string) ||
+      !Number.isFinite(Date.parse(claims.expiresAt as string))) return null;
+  const allowedOrigins = claims.allowedOrigins;
+  if (allowedOrigins.length < 1 || allowedOrigins.length > 32 ||
+      allowedOrigins.some((origin) => typeof origin !== "string" || exactHttpsOrigin(origin) === null) ||
+      new Set(allowedOrigins).size !== allowedOrigins.length) return null;
+  return Object.freeze({ ...claims,
+    allowedOrigins: Object.freeze([...allowedOrigins]) }) as unknown as AssetUploadCapabilityClaims;
+}
+
+function positiveUint64(value: unknown): boolean {
+  if (typeof value !== "string" || !/^[1-9][0-9]{0,19}$/u.test(value)) return false;
+  return value.length < 20 || value <= "18446744073709551615";
+}
+
+function boundedText(value: unknown, minimum: number, maximum: number): boolean {
+  return typeof value === "string" && value.length >= minimum && value.length <= maximum &&
+    ![...value].some((character) => {
+      const point = character.codePointAt(0) ?? 0;
+      return point < 32 || point === 127;
+    });
 }

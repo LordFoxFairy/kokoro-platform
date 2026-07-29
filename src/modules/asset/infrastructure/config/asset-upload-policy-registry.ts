@@ -14,6 +14,7 @@ export interface AssetUploadPolicyProfile {
   readonly storageRegion: string;
   readonly uploadAudience: string;
   readonly uploadEndpoint: string;
+  readonly allowedOrigins: readonly string[];
   readonly allowedClientMediaTypes: readonly string[];
   readonly maximumFileBytes: bigint;
   readonly maximumInflightBytes: bigint;
@@ -26,6 +27,7 @@ export interface AssetUploadPolicyProfile {
 
 export interface AssetUploadEndpointResolver {
   resolveEndpoint(audience: string): string;
+  allowsOrigin(audience: string, origin: string): boolean;
 }
 
 export class AssetUploadPolicyRegistry implements AssetPolicyResolverPort, AssetUploadEndpointResolver {
@@ -42,6 +44,7 @@ export class AssetUploadPolicyRegistry implements AssetPolicyResolverPort, Asset
     }
     this.#profiles = Object.freeze(profiles.map((profile) => Object.freeze({
       ...profile,
+      allowedOrigins: Object.freeze([...profile.allowedOrigins]),
       allowedClientMediaTypes: Object.freeze([...profile.allowedClientMediaTypes]),
     })));
   }
@@ -70,6 +73,7 @@ export class AssetUploadPolicyRegistry implements AssetPolicyResolverPort, Asset
       quotaRevisionRef: profile.quotaRevisionRef,
       storageTenantRef: profile.storageTenantRef,
       uploadAudience: profile.uploadAudience,
+      allowedOrigins: profile.allowedOrigins,
       minimumPartBytes: profile.minimumPartBytes,
       maximumPartBytes: profile.maximumPartBytes,
       capabilityLifetimeSeconds: profile.capabilityLifetimeSeconds,
@@ -81,6 +85,12 @@ export class AssetUploadPolicyRegistry implements AssetPolicyResolverPort, Asset
       .map((profile) => profile.uploadEndpoint);
     if (matches.length === 0 || new Set(matches).size !== 1) throw new Error("ASSET_UPLOAD_AUDIENCE_INVALID");
     return matches[0]!;
+  }
+
+  allowsOrigin(audience: string, origin: string): boolean {
+    if (exactHttpsOrigin(origin) === null) return false;
+    return this.#profiles.some((profile) =>
+      profile.uploadAudience === audience && profile.allowedOrigins.includes(origin));
   }
 }
 
@@ -96,16 +106,20 @@ function parseProfile(value: unknown): AssetUploadPolicyProfile {
   exact(profile, [
     "siteRef", "siteReleaseRef", "bindingEpoch", "purpose", "policyRevisionRef", "quotaRevisionRef",
     "storageTenantRef", "storageRegion", "uploadAudience", "uploadEndpoint", "allowedClientMediaTypes",
+    "allowedOrigins",
     "maximumFileBytes", "maximumInflightBytes", "maximumReadyBytes", "minimumPartBytes",
     "maximumPartBytes", "capabilityLifetimeSeconds", "sessionLifetimeSeconds",
   ], "ASSET_POLICY_REGISTRY_INVALID");
-  if (!Array.isArray(profile.allowedClientMediaTypes)) throw new Error("ASSET_POLICY_REGISTRY_INVALID");
+  if (!Array.isArray(profile.allowedClientMediaTypes) || !Array.isArray(profile.allowedOrigins)) {
+    throw new Error("ASSET_POLICY_REGISTRY_INVALID");
+  }
   return Object.freeze({
     siteRef: text(profile.siteRef), siteReleaseRef: text(profile.siteReleaseRef),
     bindingEpoch: positive(profile.bindingEpoch), purpose: text(profile.purpose),
     policyRevisionRef: text(profile.policyRevisionRef), quotaRevisionRef: text(profile.quotaRevisionRef),
     storageTenantRef: text(profile.storageTenantRef), storageRegion: text(profile.storageRegion),
     uploadAudience: text(profile.uploadAudience), uploadEndpoint: text(profile.uploadEndpoint),
+    allowedOrigins: Object.freeze(profile.allowedOrigins.map((item) => text(item))),
     allowedClientMediaTypes: Object.freeze(profile.allowedClientMediaTypes.map((item) => text(item).toLowerCase())),
     maximumFileBytes: positive(profile.maximumFileBytes), maximumInflightBytes: positive(profile.maximumInflightBytes),
     maximumReadyBytes: positive(profile.maximumReadyBytes), minimumPartBytes: positive(profile.minimumPartBytes),
@@ -126,6 +140,9 @@ function validateProfile(value: AssetUploadPolicyProfile): void {
   if (
     endpoint.protocol !== "https:" || endpoint.username !== "" || endpoint.password !== "" ||
     endpoint.search !== "" || endpoint.hash !== "" || value.uploadEndpoint.length > 512 ||
+    value.allowedOrigins.length < 1 || value.allowedOrigins.length > 32 ||
+    new Set(value.allowedOrigins).size !== value.allowedOrigins.length ||
+    value.allowedOrigins.some((origin) => exactHttpsOrigin(origin) === null) ||
     value.allowedClientMediaTypes.length < 1 || value.allowedClientMediaTypes.length > 256 ||
     new Set(value.allowedClientMediaTypes).size !== value.allowedClientMediaTypes.length ||
     value.allowedClientMediaTypes.some((mediaType) =>
@@ -135,6 +152,21 @@ function validateProfile(value: AssetUploadPolicyProfile): void {
     value.capabilityLifetimeSeconds < 30 || value.capabilityLifetimeSeconds > 900 ||
     value.sessionLifetimeSeconds < value.capabilityLifetimeSeconds || value.sessionLifetimeSeconds > 86_400
   ) throw new Error("ASSET_POLICY_REGISTRY_INVALID");
+}
+
+export function exactHttpsOrigin(value: string): string | null {
+  if (value.length < 1 || value.length > 512) return null;
+  try {
+    const parsed = new URL(value);
+    if (
+      parsed.protocol !== "https:" || parsed.username !== "" || parsed.password !== "" ||
+      parsed.pathname !== "/" || parsed.search !== "" || parsed.hash !== "" ||
+      parsed.origin !== value
+    ) return null;
+    return parsed.origin;
+  } catch {
+    return null;
+  }
 }
 
 function record(value: unknown, code: string): Record<string, unknown> {
