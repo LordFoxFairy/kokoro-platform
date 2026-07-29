@@ -4,7 +4,7 @@ SET idle_in_transaction_session_timeout = '30s';
 
 CREATE TABLE platform.authorization_site (
   site_ref TEXT PRIMARY KEY,
-  state TEXT NOT NULL CHECK (state IN ('active','suspended','decommissioning')),
+  state TEXT NOT NULL CHECK (state IN ('active','suspended','decommissioning','decommissioned')),
   security_epoch BIGINT NOT NULL CHECK (security_epoch > 0),
   policy_epoch BIGINT NOT NULL CHECK (policy_epoch > 0),
   revocation_epoch BIGINT NOT NULL CHECK (revocation_epoch > 0),

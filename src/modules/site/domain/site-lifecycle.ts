@@ -1,6 +1,7 @@
 export type SiteState =
   | "preview_ready"
   | "active"
+  | "suspending"
   | "suspended"
   | "decommissioning"
   | "decommissioned";
@@ -57,6 +58,7 @@ export interface ActivationAttempt {
   readonly providerOperationKey: string | null;
   readonly deploymentRef: string | null;
   readonly observedAt: string | null;
+  readonly failureCode: string | null;
 }
 
 export interface SiteDeploymentBinding {
@@ -157,6 +159,7 @@ export function beginActivation(input: Readonly<{
     providerOperationKey: null,
     deploymentRef: null,
     observedAt: null,
+    failureCode: null,
   });
 }
 
@@ -198,10 +201,23 @@ export function observePromotion(
   }
   if (!observation.healthy || !observation.trafficReady) {
     return Object.freeze({ ...attempt, state: "observing", deploymentRef: observation.deploymentRef,
-      observedAt: observation.observedAt });
+      observedAt: observation.observedAt, failureCode: null });
   }
   return Object.freeze({ ...attempt, state: "pointer_committing",
-    deploymentRef: observation.deploymentRef, observedAt: observation.observedAt });
+    deploymentRef: observation.deploymentRef, observedAt: observation.observedAt, failureCode: null });
+}
+
+export function recordActivationEffectFailure(
+  attempt: ActivationAttempt,
+  outcome: "failed" | "unknown",
+  failureCode: string,
+): ActivationAttempt {
+  activation(attempt);
+  identifier(failureCode, "SITE_ACTIVATION_FAILURE_CODE_INVALID");
+  if (!["promote_requested", "observing", "unknown"].includes(attempt.state)) {
+    throw new Error("SITE_ACTIVATION_TRANSITION_INVALID");
+  }
+  return Object.freeze({ ...attempt, state: outcome, failureCode });
 }
 
 export function deploymentBindingForObservation(
@@ -355,6 +371,7 @@ function activation(value: ActivationAttempt): void {
   if (value.providerOperationKey !== null) identifier(value.providerOperationKey, "SITE_PROVIDER_OPERATION_KEY_INVALID");
   if (value.deploymentRef !== null) identifier(value.deploymentRef, "SITE_DEPLOYMENT_REF_INVALID");
   if (value.observedAt !== null) instant(value.observedAt, "SITE_DEPLOYMENT_OBSERVED_AT_INVALID");
+  if (value.failureCode !== null) identifier(value.failureCode, "SITE_ACTIVATION_FAILURE_CODE_INVALID");
   if (value.state === "preparing" && (value.providerOperationKey !== null || value.deploymentRef !== null || value.observedAt !== null)) {
     throw new Error("SITE_ACTIVATION_STATE_INVALID");
   }

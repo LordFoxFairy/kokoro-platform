@@ -3,13 +3,12 @@ import type { PlatformUnitOfWork } from "../../../../shared/unit-of-work/index.j
 import {
   activateObservedRelease,
   beginActivation,
-  beginDecommission,
   completeActivationDrain,
   deploymentBindingForObservation,
   observePromotion,
   requestPromotion,
+  recordActivationEffectFailure,
   resumeSite,
-  suspendSite,
 } from "../../domain/site-lifecycle.js";
 import type {
   SiteAuthorityCommand,
@@ -80,6 +79,7 @@ export class SiteLifecycleService {
         transaction,
         input.siteRef,
         environment,
+        context.region,
       );
       if (site === null || candidate === null || binding === null) {
         throw new Error("SITE_ACTIVATION_TARGET_NOT_FOUND");
@@ -127,6 +127,24 @@ export class SiteLifecycleService {
       requestPromotion(attempt, input.providerOperationKey));
   }
 
+  recordActivationProviderFailure(
+    input: CommandInput & Readonly<{
+      attemptRef: string; siteRef: string; outcome: "failed" | "unknown"; failureCode: string;
+    }>,
+    context: VerifiedRequestSecurityContext,
+  ): Promise<SiteAuthorityReceipt> {
+    worker(context, input.siteRef);
+    const command = createSiteAuthorityCommand(
+      "site.activation.effect-failure",
+      input.siteRef,
+      input,
+      context,
+      { attemptRef: input.attemptRef, outcome: input.outcome, failureCode: input.failureCode },
+    );
+    return this.updateAttempt(command, context, input.attemptRef, (attempt) =>
+      recordActivationEffectFailure(attempt, input.outcome, input.failureCode));
+  }
+
   observeActivation(
     input: CommandInput & Readonly<{
       attemptRef: string;
@@ -134,6 +152,8 @@ export class SiteLifecycleService {
       deploymentRef: string;
       releaseRef: string;
       webArtifactDigest: string;
+      observedAt: string;
+      providerPayloadDigest: string;
       healthy: boolean;
       trafficReady: boolean;
     }>,
@@ -147,6 +167,8 @@ export class SiteLifecycleService {
       deploymentRef: input.deploymentRef,
       releaseRef: input.releaseRef,
       webArtifactDigest: input.webArtifactDigest,
+      observedAt: input.observedAt,
+      providerPayloadDigest: input.providerPayloadDigest,
       healthy: input.healthy,
       trafficReady: input.trafficReady,
     });
@@ -160,7 +182,6 @@ export class SiteLifecycleService {
       if (current.environment !== context.environment || current.region !== context.region) {
         throw new Error("SITE_ACTIVATION_RUNTIME_SCOPE_MISMATCH");
       }
-      const observedAt = this.#now();
       const observation = Object.freeze({
         observationRef: input.commandId,
         attemptRef: input.attemptRef,
@@ -170,8 +191,8 @@ export class SiteLifecycleService {
         webArtifactDigest: input.webArtifactDigest,
         healthy: input.healthy,
         trafficReady: input.trafficReady,
-        observedAt,
-        payloadDigest: command.requestDigest,
+        observedAt: input.observedAt,
+        payloadDigest: input.providerPayloadDigest,
       });
       const next = observePromotion(current, observation);
       const deployment = deploymentBindingForObservation(current, observation);
@@ -231,6 +252,9 @@ export class SiteLifecycleService {
       deploymentRef: string;
       releaseRef: string;
       webArtifactDigest: string;
+      trafficStatus: "stopped";
+      observedAt: string;
+      providerPayloadDigest: string;
     }>,
     context: VerifiedRequestSecurityContext,
   ): Promise<SiteAuthorityReceipt> {
@@ -241,6 +265,9 @@ export class SiteLifecycleService {
       deploymentRef: input.deploymentRef,
       releaseRef: input.releaseRef,
       webArtifactDigest: input.webArtifactDigest,
+      trafficStatus: input.trafficStatus,
+      observedAt: input.observedAt,
+      providerPayloadDigest: input.providerPayloadDigest,
     });
     return this.unitOfWork.execute({ context, operation: command.operation }, async (transaction) => {
       const disposition = await this.journal.begin(transaction, command);
@@ -272,8 +299,8 @@ export class SiteLifecycleService {
         webArtifactDigest: input.webArtifactDigest,
         healthy: false,
         trafficReady: false,
-        observedAt: this.#now(),
-        payloadDigest: command.requestDigest,
+        observedAt: input.observedAt,
+        payloadDigest: input.providerPayloadDigest,
       });
       const next = completeActivationDrain(current, observation);
       await this.repository.recordDrainObservationAndComplete(transaction, observation, next);
@@ -283,13 +310,13 @@ export class SiteLifecycleService {
     });
   }
 
-  changeSiteState(
-    input: CommandInput & Readonly<{ siteRef: string; action: "suspend" | "resume" | "decommission" }>,
+  resume(
+    input: CommandInput & Readonly<{ siteRef: string }>,
     context: VerifiedRequestSecurityContext,
   ): Promise<SiteAuthorityReceipt> {
     admin(context, input.siteRef);
-    const operation = `site.${input.action}`;
-    const command = createSiteAuthorityCommand(operation, input.siteRef, input, context, { action: input.action });
+    const operation = "site.resume";
+    const command = createSiteAuthorityCommand(operation, input.siteRef, input, context, {});
     return this.unitOfWork.execute({ context, operation }, async (transaction) => {
       const disposition = await this.journal.begin(transaction, command);
       const current = await this.repository.loadSiteForUpdate(transaction, input.siteRef);
@@ -297,8 +324,7 @@ export class SiteLifecycleService {
       if (disposition === "replay") {
         return Object.freeze({ siteRef: current.siteRef, state: current.state, replayed: true });
       }
-      const next = input.action === "suspend" ? suspendSite(current) :
-        input.action === "resume" ? resumeSite(current) : beginDecommission(current);
+      const next = resumeSite(current);
       await this.repository.updateSite(transaction, next);
       const receipt = Object.freeze({ siteRef: next.siteRef, state: next.state, replayed: false });
       await this.journal.succeed(transaction, command, receipt, context);

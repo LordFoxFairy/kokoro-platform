@@ -13,6 +13,7 @@ export interface SiteAuthorityRepository {
     transaction: PlatformTransaction,
     siteRef: string,
     environment: "development" | "preview" | "production",
+    region: string,
   ): Promise<Readonly<{ bindingRef: string; bindingEpoch: bigint }> | null>;
   reserveRuntimeBindingEpoch(
     transaction: PlatformTransaction,

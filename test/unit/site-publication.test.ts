@@ -11,10 +11,18 @@ describe("Site publication", () => {
     const binding = createSiteProjectBinding({
       bindingRef: "binding_01", siteRef: site.siteRef,
       repositoryRef: "github:thefoxfairy/image-studio", providerProjectRef: "vercel:project-image-studio",
+      providerNamespace: "vercel", region: "us-east-1",
       environment: "production", workloadIdentityId: "spiffe://kokoro/site/image-studio/production",
     });
     expect(site).toMatchObject({ state: "preview_ready", activeReleaseRef: null });
-    expect(binding).toMatchObject({ state: "active", bindingEpoch: 1n, siteRef: "site_01" });
+    expect(binding).toMatchObject({ state: "active", bindingEpoch: 1n, siteRef: "site_01",
+      providerNamespace: "vercel", region: "us-east-1" });
+    expect(() => createSiteProjectBinding({
+      bindingRef: "binding_02", siteRef: site.siteRef,
+      repositoryRef: "github:thefoxfairy/image-studio", providerProjectRef: "project-image-studio",
+      providerNamespace: "Vercel/unsafe", region: "us-east-1",
+      environment: "production", workloadIdentityId: "spiffe://kokoro/site/image-studio/production",
+    })).toThrow("SITE_PROVIDER_NAMESPACE_INVALID");
   });
 
   it("freezes the complete certified release snapshot without provider secrets", () => {

@@ -24,7 +24,7 @@ const attempt: ActivationAttempt = Object.freeze({
   sessionContractRevision: "browser-v3",
   state: "draining", requestedAt: "2026-07-28T12:00:00.000Z",
   providerOperationKey: "provider-operation-activation-02", deploymentRef: "deployment_02",
-  observedAt: "2026-07-28T12:01:00.000Z",
+  observedAt: "2026-07-28T12:01:00.000Z", failureCode: null,
 });
 
 describe("Postgres Site authority", () => {
@@ -37,7 +37,8 @@ describe("Postgres Site authority", () => {
       await new PostgresSiteAuthorityRepository().insertSiteWithProjectBinding(lease.transaction,
         { ...site, siteKey: "image-studio", state: "preview_ready", activeReleaseRef: null },
         { bindingRef: "binding_01", siteRef: "site_01", repositoryRef: "github:org/image-studio",
-          providerProjectRef: "vercel:image-studio", environment: "production",
+          providerNamespace: "vercel", providerProjectRef: "image-studio", environment: "production",
+          region: "us-east-1",
           workloadIdentityId: "spiffe://kokoro/site/image-studio", bindingEpoch: 1n, state: "active" });
       expect(calls).toHaveLength(2);
       expect(calls[0]?.statement).toContain("INSERT INTO platform.site");
@@ -177,6 +178,30 @@ describe("Postgres Site authority", () => {
       expect(statements[1]).toContain("state='revoked'");
       expect(statements[2]).toContain("state='retired'");
       expect(statements[3]).toContain("state='succeeded'");
+    } finally { revokePlatformTransaction(lease); }
+  });
+
+  it("atomically fences authorization before a provider traffic-stop effect", async () => {
+    const statements: string[] = [];
+    const lease = issuePlatformTransaction({ query: async () => [], execute: async (statement) => {
+      statements.push(statement); return 1;
+    } });
+    try {
+      await new PostgresSiteAuthorityRepository().beginTrafficStop(
+        lease.transaction,
+        { ...site, state: "suspending" },
+        {
+          attemptRef: "traffic_stop_01", siteRef: "site_01", action: "suspend",
+          releaseRef: "release_02", deploymentRef: "deployment_02", bindingRef: "binding_01",
+          runtimeBindingEpoch: 4n, providerNamespace: "vercel", environment: "production",
+          region: "us-east-1", state: "requested", requestedAt: "2026-07-29T13:00:00.000Z",
+          providerOperationKey: null, observedAt: null, failureCode: null,
+        },
+      );
+      expect(statements.join("\n")).toContain("platform.site_traffic_stop_attempt");
+      expect(statements.join("\n")).toContain("platform.authorization_site");
+      expect(statements.join("\n")).toContain("platform.authorization_product_binding");
+      expect(statements.join("\n")).toContain("state='draining'");
     } finally { revokePlatformTransaction(lease); }
   });
 

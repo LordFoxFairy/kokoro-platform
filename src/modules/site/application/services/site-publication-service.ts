@@ -39,6 +39,7 @@ export class SitePublicationService {
       siteKey: string;
       bindingRef: string;
       repositoryRef: string;
+      providerNamespace: string;
       providerProjectRef: string;
       environment: "development" | "preview" | "production";
       workloadIdentityId: string;
@@ -47,12 +48,14 @@ export class SitePublicationService {
   ): Promise<SiteAuthorityReceipt> {
     admin(context, input.siteRef);
     const site = createPreviewReadySite(input);
-    const binding = createSiteProjectBinding(input);
+    const binding = createSiteProjectBinding({ ...input, region: context.region });
     const command = createSiteAuthorityCommand("site.register", input.siteRef, input, context, {
       siteKey: input.siteKey,
       bindingRef: input.bindingRef,
       repositoryRef: input.repositoryRef,
+      providerNamespace: input.providerNamespace,
       providerProjectRef: input.providerProjectRef,
+      region: context.region,
       environment: input.environment,
       workloadIdentityId: input.workloadIdentityId,
     });

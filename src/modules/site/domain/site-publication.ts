@@ -8,8 +8,10 @@ export interface SiteProjectBinding {
   readonly bindingRef: string;
   readonly siteRef: string;
   readonly repositoryRef: string;
+  readonly providerNamespace: string;
   readonly providerProjectRef: string;
   readonly environment: "development" | "preview" | "production";
+  readonly region: string;
   readonly workloadIdentityId: string;
   readonly bindingEpoch: bigint;
   readonly state: "active" | "revoked";
@@ -53,14 +55,20 @@ export function createSiteProjectBinding(input: Readonly<{
   bindingRef: string;
   siteRef: string;
   repositoryRef: string;
+  providerNamespace: string;
   providerProjectRef: string;
   environment: "development" | "preview" | "production";
+  region: string;
   workloadIdentityId: string;
 }>): SiteProjectBinding {
   identifier(input.bindingRef, "SITE_PROJECT_BINDING_REF_INVALID");
   identifier(input.siteRef, "SITE_REF_INVALID");
   bounded(input.repositoryRef, "SITE_REPOSITORY_REF_INVALID");
+  if (!/^[a-z][a-z0-9.-]{1,63}$/u.test(input.providerNamespace)) {
+    throw new Error("SITE_PROVIDER_NAMESPACE_INVALID");
+  }
   bounded(input.providerProjectRef, "SITE_PROVIDER_PROJECT_REF_INVALID");
+  bounded(input.region, "SITE_REGION_INVALID");
   bounded(input.workloadIdentityId, "SITE_WORKLOAD_IDENTITY_INVALID");
   return Object.freeze({ ...input, bindingEpoch: 1n, state: "active" });
 }

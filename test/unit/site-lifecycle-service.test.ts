@@ -100,11 +100,36 @@ describe("SiteLifecycleService", () => {
       deploymentRef: "deployment_02",
       releaseRef: "release_02",
       webArtifactDigest: "a".repeat(64),
+      observedAt: "2026-07-28T12:01:00.000Z", providerPayloadDigest: "d".repeat(64),
       healthy: true,
       trafficReady: true,
     }, admin)).toThrow(
       "SITE_WORKER_REQUIRED",
     );
+  });
+
+  it("persists ambiguous promotion effects for worker reconciliation", async () => {
+    let saved: ActivationAttempt | null = null;
+    const current: ActivationAttempt = Object.freeze({
+      attemptRef: "activation_02", siteRef: "site_01", candidateReleaseRef: "release_02",
+      expectedActiveReleaseRef: "release_01", candidateWebArtifactDigest: "a".repeat(64),
+      candidateManifestDigest: "b".repeat(64), candidateCertificationDigest: "c".repeat(64),
+      siteProjectBindingRef: "binding_01", siteProjectBindingEpoch: 3n, runtimeBindingEpoch: 4n,
+      environment: "production", region: "us-east-1", audience: "site-product",
+      sessionContractRevision: "browser-v3", state: "promote_requested",
+      requestedAt: "2026-07-28T12:00:00.000Z", providerOperationKey: "provider-operation-activation-02",
+      deploymentRef: null, observedAt: null, failureCode: null,
+    });
+    const repository: SiteAuthorityRepository = {
+      ...emptyRepository(), loadActivationForUpdate: async () => current,
+      updateActivation: async (_transaction, value) => { saved = value; },
+    };
+    const service = new SiteLifecycleService(unitOfWork(), repository, emptyJournal());
+    await service.recordActivationProviderFailure({
+      commandId: "01983f57-8cf1-7000-8000-000000000004", idempotencyKey: "effect-failure-command-01",
+      attemptRef: "activation_02", siteRef: "site_01", outcome: "unknown", failureCode: "PROVIDER_TIMEOUT",
+    }, await context("site.activation.effect-failure", "site_01", "platform_worker"));
+    expect(saved).toMatchObject({ state: "unknown", failureCode: "PROVIDER_TIMEOUT" });
   });
 
   it("persists the immutable provider observation and candidate deployment before pointer commit", async () => {
@@ -119,6 +144,7 @@ describe("SiteLifecycleService", () => {
       sessionContractRevision: "browser-v3", state: "promote_requested",
       requestedAt: "2026-07-28T12:00:00.000Z",
       providerOperationKey: "provider-operation-activation-02", deploymentRef: null, observedAt: null,
+      failureCode: null,
     });
     const repository: SiteAuthorityRepository = {
       ...emptyRepository(),
@@ -136,6 +162,7 @@ describe("SiteLifecycleService", () => {
       idempotencyKey: "observe-command-01", attemptRef: "activation_02",
       providerOperationKey: "provider-operation-activation-02", deploymentRef: "deployment_02",
       releaseRef: "release_02", webArtifactDigest: "a".repeat(64), healthy: true, trafficReady: true,
+      observedAt: "2026-07-28T12:01:00.000Z", providerPayloadDigest: "d".repeat(64),
     }, await context("site.activation.observe", "site_01", "platform_worker"));
 
     expect(receipt).toEqual({ attemptRef: "activation_02", state: "pointer_committing", replayed: false });
@@ -158,7 +185,7 @@ describe("SiteLifecycleService", () => {
       sessionContractRevision: "browser-v3", state: "draining",
       requestedAt: "2026-07-28T12:00:00.000Z",
       providerOperationKey: "provider-operation-activation-02", deploymentRef: "deployment_02",
-      observedAt: "2026-07-28T12:01:00.000Z",
+      observedAt: "2026-07-28T12:01:00.000Z", failureCode: null,
     });
     const repository: SiteAuthorityRepository = {
       ...emptyRepository(),
@@ -177,12 +204,15 @@ describe("SiteLifecycleService", () => {
       commandId: "01983f57-8cf1-7000-8000-000000000003",
       idempotencyKey: "drain-command-0001", attemptRef: "activation_02", siteRef: "site_01",
       providerOperationKey: "provider-drain-operation-01", deploymentRef: "deployment_01",
-      releaseRef: "release_01", webArtifactDigest: "f".repeat(64),
+      releaseRef: "release_01", webArtifactDigest: "f".repeat(64), trafficStatus: "stopped",
+      observedAt: "2026-07-28T12:02:45.000Z", providerPayloadDigest: "9".repeat(64),
     }, await context("site.activation.complete-drain", "site_01", "platform_worker"));
 
     expect(receipt).toEqual({ attemptRef: "activation_02", state: "succeeded", replayed: false });
     expect(completed).toMatchObject({ observation: { deploymentRef: "deployment_01",
-      releaseRef: "release_01", healthy: false, trafficReady: false }, value: { state: "succeeded" } });
+      releaseRef: "release_01", healthy: false, trafficReady: false,
+      observedAt: "2026-07-28T12:02:45.000Z", payloadDigest: "9".repeat(64) },
+    value: { state: "succeeded" } });
   });
 });
 

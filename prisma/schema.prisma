@@ -455,8 +455,10 @@ model SiteProjectBindingAuthority {
   bindingRef          String   @id @map("binding_ref")
   siteRef             String   @map("site_ref")
   repositoryRef       String   @unique @map("repository_ref")
-  providerProjectRef  String   @unique @map("provider_project_ref")
+  providerNamespace   String   @map("provider_namespace")
+  providerProjectRef  String   @map("provider_project_ref")
   environment         String
+  region              String
   workloadIdentityId  String   @unique @map("workload_identity_id")
   bindingEpoch        BigInt   @default(1) @map("binding_epoch")
   state               String
@@ -464,6 +466,7 @@ model SiteProjectBindingAuthority {
   updatedAt           DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@unique([bindingRef, siteRef])
+  @@unique([providerNamespace, providerProjectRef, environment])
   @@index([siteRef, environment, state])
   @@map("site_project_binding")
   @@schema("platform")
@@ -536,6 +539,7 @@ model SiteActivationAttemptAuthority {
   providerOperationKey          String?   @unique @map("provider_operation_key")
   deploymentRef                 String?   @map("deployment_ref")
   observedAt                    DateTime? @map("observed_at") @db.Timestamptz(6)
+  failureCode                   String?   @map("failure_code")
   createdAt                     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                     DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
 
@@ -560,6 +564,45 @@ model SiteDeploymentObservationAuthority {
 
   @@index([attemptRef, observedAt])
   @@map("site_deployment_observation")
+  @@schema("platform")
+}
+
+model SiteTrafficStopAttemptAuthority {
+  attemptRef          String    @id @map("attempt_ref")
+  siteRef             String    @map("site_ref")
+  action              String
+  releaseRef          String    @map("release_ref")
+  deploymentRef       String    @map("deployment_ref")
+  bindingRef          String    @map("binding_ref")
+  runtimeBindingEpoch BigInt    @map("runtime_binding_epoch")
+  providerNamespace   String    @map("provider_namespace")
+  environment         String
+  region              String
+  state               String
+  requestedAt         DateTime  @map("requested_at") @db.Timestamptz(6)
+  providerOperationKey String?  @unique @map("provider_operation_key")
+  observedAt          DateTime? @map("observed_at") @db.Timestamptz(6)
+  failureCode         String?   @map("failure_code")
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([siteRef, state, updatedAt])
+  @@map("site_traffic_stop_attempt")
+  @@schema("platform")
+}
+
+model SiteTrafficStopObservationAuthority {
+  observationRef      String   @id @map("observation_ref") @db.Uuid
+  attemptRef          String   @map("attempt_ref")
+  providerOperationKey String  @map("provider_operation_key")
+  deploymentRef       String   @map("deployment_ref")
+  status              String
+  observedAt          DateTime @map("observed_at") @db.Timestamptz(6)
+  payloadDigest       String   @map("payload_digest") @db.Char(64)
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([attemptRef, payloadDigest])
+  @@map("site_traffic_stop_observation")
   @@schema("platform")
 }
 

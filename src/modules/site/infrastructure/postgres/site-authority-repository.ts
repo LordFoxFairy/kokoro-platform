@@ -1,6 +1,10 @@
 import type { SiteAuthorityRepository } from "../../application/contracts/site-authority-ports.js";
 import type { SitePublicationRepository } from "../../application/contracts/site-publication-ports.js";
 import type {
+  ProviderBoundDeployment,
+  SiteTrafficStopRepository,
+} from "../../application/contracts/site-traffic-stop-ports.js";
+import type {
   PublishedSiteRelease,
   SiteAuthorityDefinition,
   SiteProjectBinding,
@@ -15,22 +19,29 @@ import {
   type SiteDeploymentObservation,
   type SiteRelease,
 } from "../../domain/site-lifecycle.js";
+import {
+  verifySiteTrafficStopAttempt,
+  type SiteTrafficStopAttempt,
+  type SiteTrafficStopObservation,
+} from "../../domain/site-traffic-stop.js";
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
 import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
 
-export class PostgresSiteAuthorityRepository implements SiteAuthorityRepository, SitePublicationRepository {
+export class PostgresSiteAuthorityRepository implements
+  SiteAuthorityRepository, SitePublicationRepository, SiteTrafficStopRepository {
   async loadActiveProjectBindingForUpdate(
     transaction: PlatformTransaction,
     siteRef: string,
     environment: "development" | "preview" | "production",
+    region: string,
   ): Promise<Readonly<{ bindingRef: string; bindingEpoch: bigint }> | null> {
     const rows = await resolvePlatformTransaction(transaction).query<{
       bindingRef: string; bindingEpoch: bigint;
     }>(
       `SELECT binding_ref AS "bindingRef", binding_epoch AS "bindingEpoch"
        FROM platform.site_project_binding
-       WHERE site_ref=$1 AND environment=$2 AND state='active' FOR UPDATE`,
-      [siteRef, environment],
+       WHERE site_ref=$1 AND environment=$2 AND region=$3 AND state='active' FOR UPDATE`,
+      [siteRef, environment, region],
     );
     return rows[0] === undefined ? null : Object.freeze({ ...rows[0] });
   }
@@ -52,11 +63,12 @@ export class PostgresSiteAuthorityRepository implements SiteAuthorityRepository,
     if (insertedSite !== 1) throw new Error("SITE_INSERT_FAILED");
     const insertedBinding = await sql.execute(
       `INSERT INTO platform.site_project_binding
-       (binding_ref,site_ref,repository_ref,provider_project_ref,environment,
+       (binding_ref,site_ref,repository_ref,provider_namespace,provider_project_ref,environment,region,
         workload_identity_id,binding_epoch,state)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [binding.bindingRef, binding.siteRef, binding.repositoryRef, binding.providerProjectRef,
-        binding.environment, binding.workloadIdentityId, binding.bindingEpoch, binding.state],
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [binding.bindingRef, binding.siteRef, binding.repositoryRef, binding.providerNamespace,
+        binding.providerProjectRef, binding.environment, binding.region, binding.workloadIdentityId,
+        binding.bindingEpoch, binding.state],
     );
     if (insertedBinding !== 1) throw new Error("SITE_PROJECT_BINDING_INSERT_FAILED");
   }
@@ -151,7 +163,7 @@ export class PostgresSiteAuthorityRepository implements SiteAuthorityRepository,
               runtime_binding_epoch AS "runtimeBindingEpoch",
               environment,region,audience,session_contract_revision AS "sessionContractRevision",
               state, requested_at AS "requestedAt", provider_operation_key AS "providerOperationKey",
-              deployment_ref AS "deploymentRef", observed_at AS "observedAt"
+              deployment_ref AS "deploymentRef", observed_at AS "observedAt",failure_code AS "failureCode"
        FROM platform.site_activation_attempt WHERE attempt_ref=$1 FOR UPDATE`,
       [attemptRef],
     );
@@ -169,8 +181,8 @@ export class PostgresSiteAuthorityRepository implements SiteAuthorityRepository,
        (attempt_ref,site_ref,candidate_release_ref,expected_active_release_ref,
         candidate_web_artifact_digest,candidate_manifest_digest,candidate_certification_digest,
         site_project_binding_ref,site_project_binding_epoch,runtime_binding_epoch,environment,region,audience,
-        session_contract_revision,state,requested_at,provider_operation_key,deployment_ref,observed_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::timestamptz,$17,$18,$19::timestamptz)`,
+        session_contract_revision,state,requested_at,provider_operation_key,deployment_ref,observed_at,failure_code)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::timestamptz,$17,$18,$19::timestamptz,$20)`,
       activationValues(value),
     );
     if (changed !== 1) throw new Error("SITE_ACTIVATION_INSERT_FAILED");
@@ -183,15 +195,16 @@ export class PostgresSiteAuthorityRepository implements SiteAuthorityRepository,
     const value = verifyActivationAttempt(attempt);
     const changed = await resolvePlatformTransaction(transaction).execute(
       `UPDATE platform.site_activation_attempt
-       SET state=$2,provider_operation_key=$3,deployment_ref=$4,observed_at=$5::timestamptz,updated_at=now()
-       WHERE attempt_ref=$1 AND site_ref=$6 AND candidate_release_ref=$7
-         AND candidate_web_artifact_digest=$8 AND candidate_manifest_digest=$9
-         AND candidate_certification_digest=$10 AND site_project_binding_ref=$11
-         AND site_project_binding_epoch=$12 AND runtime_binding_epoch=$13
-         AND environment=$14 AND region=$15
-         AND audience=$16 AND session_contract_revision=$17`,
+       SET state=$2,provider_operation_key=$3,deployment_ref=$4,observed_at=$5::timestamptz,
+           failure_code=$6,updated_at=now()
+       WHERE attempt_ref=$1 AND site_ref=$7 AND candidate_release_ref=$8
+         AND candidate_web_artifact_digest=$9 AND candidate_manifest_digest=$10
+         AND candidate_certification_digest=$11 AND site_project_binding_ref=$12
+         AND site_project_binding_epoch=$13 AND runtime_binding_epoch=$14
+         AND environment=$15 AND region=$16
+         AND audience=$17 AND session_contract_revision=$18`,
       [value.attemptRef, value.state, value.providerOperationKey, value.deploymentRef, value.observedAt,
-        value.siteRef, value.candidateReleaseRef, value.candidateWebArtifactDigest,
+        value.failureCode, value.siteRef, value.candidateReleaseRef, value.candidateWebArtifactDigest,
         value.candidateManifestDigest, value.candidateCertificationDigest, value.siteProjectBindingRef,
         value.siteProjectBindingEpoch, value.runtimeBindingEpoch, value.environment, value.region, value.audience,
         value.sessionContractRevision],
@@ -256,6 +269,169 @@ export class PostgresSiteAuthorityRepository implements SiteAuthorityRepository,
     );
     if (rows.length > 1) throw new Error("SITE_DRAINING_DEPLOYMENT_CONFLICT");
     return rows[0] === undefined ? null : Object.freeze({ ...rows[0] });
+  }
+
+  async loadActiveDeploymentForUpdate(
+    transaction: PlatformTransaction,
+    siteRef: string,
+    environment: "development" | "preview" | "production",
+    region: string,
+  ): Promise<ProviderBoundDeployment | null> {
+    const rows = await resolvePlatformTransaction(transaction).query<ProviderBoundDeployment & Record<string, unknown>>(
+      `SELECT deployment.deployment_ref AS "deploymentRef",deployment.binding_ref AS "bindingRef",
+              deployment.site_ref AS "siteRef",deployment.release_ref AS "releaseRef",
+              deployment.environment,deployment.region,deployment.audience,
+              deployment.session_contract_revision AS "sessionContractRevision",
+              deployment.web_artifact_digest AS "webArtifactDigest",
+              deployment.binding_epoch AS "bindingEpoch",deployment.state,
+              project.provider_namespace AS "providerNamespace"
+       FROM platform.site_deployment_binding deployment
+       JOIN platform.site_project_binding project
+         ON project.binding_ref=deployment.binding_ref AND project.site_ref=deployment.site_ref
+       WHERE deployment.site_ref=$1 AND deployment.environment=$2 AND deployment.region=$3
+         AND deployment.state='active' AND project.state='active' FOR UPDATE OF deployment,project`,
+      [siteRef, environment, region],
+    );
+    if (rows.length > 1) throw new Error("SITE_ACTIVE_DEPLOYMENT_CONFLICT");
+    return rows[0] === undefined ? null : Object.freeze({ ...rows[0] });
+  }
+
+  async loadTrafficStopForUpdate(
+    transaction: PlatformTransaction,
+    attemptRef: string,
+  ): Promise<SiteTrafficStopAttempt | null> {
+    const rows = await resolvePlatformTransaction(transaction).query<TrafficStopRow>(
+      `SELECT attempt_ref AS "attemptRef",site_ref AS "siteRef",action,
+              release_ref AS "releaseRef",deployment_ref AS "deploymentRef",binding_ref AS "bindingRef",
+              runtime_binding_epoch AS "runtimeBindingEpoch",provider_namespace AS "providerNamespace",
+              environment,region,state,requested_at AS "requestedAt",
+              provider_operation_key AS "providerOperationKey",observed_at AS "observedAt",
+              failure_code AS "failureCode"
+       FROM platform.site_traffic_stop_attempt WHERE attempt_ref=$1 FOR UPDATE`,
+      [attemptRef],
+    );
+    const row = rows[0];
+    return row === undefined ? null : verifySiteTrafficStopAttempt(trafficStopRow(row));
+  }
+
+  async beginTrafficStop(
+    transaction: PlatformTransaction,
+    site: SiteAggregate,
+    attempt: SiteTrafficStopAttempt,
+  ): Promise<void> {
+    const owner = verifySiteAggregate(site);
+    const value = verifySiteTrafficStopAttempt(attempt);
+    const sql = resolvePlatformTransaction(transaction);
+    const inserted = await sql.execute(
+      `INSERT INTO platform.site_traffic_stop_attempt
+       (attempt_ref,site_ref,action,release_ref,deployment_ref,binding_ref,runtime_binding_epoch,
+        provider_namespace,environment,region,state,requested_at,provider_operation_key,observed_at,failure_code)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::timestamptz,$13,$14::timestamptz,$15)`,
+      trafficStopValues(value),
+    );
+    if (inserted !== 1) throw new Error("SITE_TRAFFIC_STOP_INSERT_FAILED");
+    const draining = await sql.execute(
+      `UPDATE platform.site_deployment_binding SET state='draining',updated_at=now()
+       WHERE deployment_ref=$1 AND site_ref=$2 AND release_ref=$3
+         AND binding_epoch=$4 AND state='active'`,
+      [value.deploymentRef, value.siteRef, value.releaseRef, value.runtimeBindingEpoch],
+    );
+    if (draining !== 1) throw new Error("SITE_TRAFFIC_STOP_DEPLOYMENT_CONFLICT");
+    const fenced = await sql.execute(
+      `UPDATE platform.site SET state=$2,security_epoch=$3,revocation_epoch=$4,updated_at=now()
+       WHERE site_ref=$1 AND state='active' AND active_release_ref=$5
+         AND runtime_binding_epoch=$6`,
+      [owner.siteRef, owner.state, owner.securityEpoch, owner.revocationEpoch,
+        value.releaseRef, value.runtimeBindingEpoch],
+    );
+    if (fenced !== 1) throw new Error("SITE_TRAFFIC_STOP_SITE_CONFLICT");
+    const authorizationSite = await sql.execute(
+      `UPDATE platform.authorization_site
+       SET state=$2,security_epoch=$3,revocation_epoch=$4,updated_at=now()
+       WHERE site_ref=$1 AND state='active'
+         AND security_epoch<$3 AND revocation_epoch<$4`,
+      [owner.siteRef, value.action === "suspend" ? "suspended" : "decommissioning",
+        owner.securityEpoch, owner.revocationEpoch],
+    );
+    if (authorizationSite !== 1) throw new Error("SITE_TRAFFIC_STOP_AUTHORIZATION_CONFLICT");
+    const authorizationBinding = await sql.execute(
+      `UPDATE platform.authorization_product_binding SET state='revoked',updated_at=now()
+       WHERE binding_ref=$1 AND site_ref=$2 AND deployment_ref=$3
+         AND binding_epoch=$4 AND state='active'`,
+      [value.bindingRef, value.siteRef, value.deploymentRef, value.runtimeBindingEpoch],
+    );
+    if (authorizationBinding !== 1) throw new Error("SITE_TRAFFIC_STOP_BINDING_CONFLICT");
+  }
+
+  async updateTrafficStop(
+    transaction: PlatformTransaction,
+    attempt: SiteTrafficStopAttempt,
+  ): Promise<void> {
+    const value = verifySiteTrafficStopAttempt(attempt);
+    const changed = await resolvePlatformTransaction(transaction).execute(
+      `UPDATE platform.site_traffic_stop_attempt
+       SET state=$2,provider_operation_key=$3,observed_at=$4::timestamptz,
+           failure_code=$5,updated_at=now()
+       WHERE attempt_ref=$1 AND site_ref=$6 AND deployment_ref=$7 AND runtime_binding_epoch=$8`,
+      [value.attemptRef, value.state, value.providerOperationKey, value.observedAt,
+        value.failureCode, value.siteRef, value.deploymentRef, value.runtimeBindingEpoch],
+    );
+    if (changed !== 1) throw new Error("SITE_TRAFFIC_STOP_UPDATE_CONFLICT");
+  }
+
+  async recordTrafficStopObservation(
+    transaction: PlatformTransaction,
+    observation: SiteTrafficStopObservation,
+    attempt: SiteTrafficStopAttempt,
+    site: Pick<SiteAggregate, "state" | "activeReleaseRef">,
+  ): Promise<void> {
+    const value = verifySiteTrafficStopAttempt(attempt);
+    const sql = resolvePlatformTransaction(transaction);
+    const inserted = await sql.execute(
+      `INSERT INTO platform.site_traffic_stop_observation
+       (observation_ref,attempt_ref,provider_operation_key,deployment_ref,status,observed_at,payload_digest)
+       VALUES ($1::uuid,$2,$3,$4,$5,$6::timestamptz,$7)`,
+      [observation.observationRef, observation.attemptRef, observation.providerOperationKey,
+        observation.deploymentRef, observation.status, observation.observedAt, observation.payloadDigest],
+    );
+    if (inserted !== 1) throw new Error("SITE_TRAFFIC_STOP_OBSERVATION_INSERT_FAILED");
+    await this.updateTrafficStop(transaction, value);
+    if (value.state !== "succeeded") return;
+    const revoked = await sql.execute(
+      `UPDATE platform.site_deployment_binding SET state='revoked',updated_at=now()
+       WHERE deployment_ref=$1 AND site_ref=$2 AND state='draining'`,
+      [value.deploymentRef, value.siteRef],
+    );
+    if (revoked !== 1) throw new Error("SITE_TRAFFIC_STOP_DEPLOYMENT_CONFLICT");
+    if (value.action === "decommission") {
+      const release = await sql.execute(
+        `UPDATE platform.site_release SET state='retired',updated_at=now()
+         WHERE release_ref=$1 AND site_ref=$2 AND state='active'`,
+        [value.releaseRef, value.siteRef],
+      );
+      if (release !== 1) throw new Error("SITE_TRAFFIC_STOP_RELEASE_CONFLICT");
+      const authorizationRelease = await sql.execute(
+        `UPDATE platform.authorization_site_release SET state='revoked',updated_at=now()
+         WHERE release_ref=$1 AND site_ref=$2 AND state='active'`,
+        [value.releaseRef, value.siteRef],
+      );
+      if (authorizationRelease !== 1) throw new Error("SITE_TRAFFIC_STOP_AUTHORIZATION_RELEASE_CONFLICT");
+    }
+    const completed = await sql.execute(
+      `UPDATE platform.site SET state=$2,active_release_ref=$3,
+         tombstoned_at=CASE WHEN $2='decommissioned' THEN $4::timestamptz ELSE NULL END,updated_at=now()
+       WHERE site_ref=$1 AND state=$5 AND runtime_binding_epoch=$6`,
+      [value.siteRef, site.state, site.activeReleaseRef, observation.observedAt,
+        value.action === "suspend" ? "suspending" : "decommissioning", value.runtimeBindingEpoch],
+    );
+    if (completed !== 1) throw new Error("SITE_TRAFFIC_STOP_COMPLETION_CONFLICT");
+    const authorizationCompleted = await sql.execute(
+      `UPDATE platform.authorization_site SET state=$2,updated_at=now()
+       WHERE site_ref=$1 AND state=$3`,
+      [value.siteRef, value.action === "suspend" ? "suspended" : "decommissioned",
+        value.action === "suspend" ? "suspended" : "decommissioning"],
+    );
+    if (authorizationCompleted !== 1) throw new Error("SITE_TRAFFIC_STOP_AUTHORIZATION_COMPLETION_CONFLICT");
   }
 
   async recordDrainObservationAndComplete(
@@ -471,6 +647,14 @@ type ActivationRow = Record<string, unknown> & {
   sessionContractRevision: string;
   requestedAt: Date | string; providerOperationKey: string | null; deploymentRef: string | null;
   observedAt: Date | string | null;
+  failureCode: string | null;
+};
+type TrafficStopRow = Record<string, unknown> & {
+  attemptRef: string; siteRef: string; action: string; releaseRef: string; deploymentRef: string;
+  bindingRef: string; runtimeBindingEpoch: bigint; providerNamespace: string;
+  environment: "development" | "preview" | "production"; region: string; state: string;
+  requestedAt: Date | string; providerOperationKey: string | null; observedAt: Date | string | null;
+  failureCode: string | null;
 };
 
 function siteRow(row: SiteRow): SiteAggregate {
@@ -489,16 +673,38 @@ function activationRow(row: ActivationRow): ActivationAttempt {
     observedAt: row.observedAt === null ? null : instant(row.observedAt) };
 }
 
+function trafficStopRow(row: TrafficStopRow): SiteTrafficStopAttempt {
+  if (!(["suspend", "decommission"] as const).includes(row.action as "suspend" | "decommission") ||
+      !["requested", "stop_requested", "observing", "succeeded", "failed", "unknown"].includes(row.state)) {
+    throw new Error("SITE_TRAFFIC_STOP_PERSISTED_STATE_INVALID");
+  }
+  return {
+    ...row,
+    action: row.action as SiteTrafficStopAttempt["action"],
+    state: row.state as SiteTrafficStopAttempt["state"],
+    requestedAt: instant(row.requestedAt),
+    observedAt: row.observedAt === null ? null : instant(row.observedAt),
+  };
+}
+
 function activationValues(value: ActivationAttempt): readonly unknown[] {
   return [value.attemptRef, value.siteRef, value.candidateReleaseRef,
     value.expectedActiveReleaseRef, value.candidateWebArtifactDigest, value.candidateManifestDigest,
     value.candidateCertificationDigest, value.siteProjectBindingRef, value.siteProjectBindingEpoch,
     value.runtimeBindingEpoch, value.environment, value.region, value.audience, value.sessionContractRevision,
-    value.state, value.requestedAt, value.providerOperationKey, value.deploymentRef, value.observedAt];
+    value.state, value.requestedAt, value.providerOperationKey, value.deploymentRef, value.observedAt,
+    value.failureCode];
+}
+
+function trafficStopValues(value: SiteTrafficStopAttempt): readonly unknown[] {
+  return [value.attemptRef, value.siteRef, value.action, value.releaseRef, value.deploymentRef,
+    value.bindingRef, value.runtimeBindingEpoch, value.providerNamespace, value.environment,
+    value.region, value.state, value.requestedAt, value.providerOperationKey, value.observedAt,
+    value.failureCode];
 }
 
 function siteState(value: string): value is SiteAggregate["state"] {
-  return ["preview_ready", "active", "suspended", "decommissioning", "decommissioned"].includes(value);
+  return ["preview_ready", "active", "suspending", "suspended", "decommissioning", "decommissioned"].includes(value);
 }
 function releaseState(value: string): value is SiteRelease["state"] {
   return ["ready", "active", "draining", "retired"].includes(value);

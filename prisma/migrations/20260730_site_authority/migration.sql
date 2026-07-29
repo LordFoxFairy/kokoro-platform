@@ -5,7 +5,7 @@ SET idle_in_transaction_session_timeout = '30s';
 CREATE TABLE platform.site (
   site_ref TEXT PRIMARY KEY,
   site_key TEXT NOT NULL UNIQUE CHECK(site_key ~ '^[a-z][a-z0-9-]{2,62}$'),
-  state TEXT NOT NULL CHECK(state IN ('preview_ready','active','suspended','decommissioning','decommissioned')),
+  state TEXT NOT NULL CHECK(state IN ('preview_ready','active','suspending','suspended','decommissioning','decommissioned')),
   active_release_ref TEXT,
   security_epoch BIGINT NOT NULL DEFAULT 1 CHECK(security_epoch > 0),
   policy_epoch BIGINT NOT NULL DEFAULT 1 CHECK(policy_epoch > 0),
@@ -14,8 +14,8 @@ CREATE TABLE platform.site (
   tombstoned_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CHECK(state<>'active' OR active_release_ref IS NOT NULL),
-  CHECK(state NOT IN ('preview_ready','decommissioning','decommissioned') OR active_release_ref IS NULL),
+  CHECK(state NOT IN ('active','suspending') OR active_release_ref IS NOT NULL),
+  CHECK(state NOT IN ('preview_ready','decommissioned') OR active_release_ref IS NULL),
   CHECK((state='decommissioned')=(tombstoned_at IS NOT NULL))
 );
 CREATE INDEX site_state_idx ON platform.site(state);
@@ -24,14 +24,17 @@ CREATE TABLE platform.site_project_binding (
   binding_ref TEXT PRIMARY KEY,
   site_ref TEXT NOT NULL REFERENCES platform.site(site_ref),
   repository_ref TEXT NOT NULL UNIQUE,
-  provider_project_ref TEXT NOT NULL UNIQUE,
+  provider_namespace TEXT NOT NULL CHECK(provider_namespace ~ '^[a-z][a-z0-9.-]{1,63}$'),
+  provider_project_ref TEXT NOT NULL,
   environment TEXT NOT NULL CHECK(environment IN ('development','preview','production')),
+  region TEXT NOT NULL,
   workload_identity_id TEXT NOT NULL,
   binding_epoch BIGINT NOT NULL DEFAULT 1 CHECK(binding_epoch > 0),
   state TEXT NOT NULL CHECK(state IN ('active','revoked')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(binding_ref,site_ref),
+  UNIQUE(provider_namespace,provider_project_ref,environment),
   UNIQUE(workload_identity_id)
 );
 CREATE UNIQUE INDEX site_one_active_project_environment_idx
@@ -106,6 +109,7 @@ CREATE TABLE platform.site_activation_attempt (
   provider_operation_key TEXT UNIQUE,
   deployment_ref TEXT,
   observed_at TIMESTAMPTZ,
+  failure_code TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   FOREIGN KEY(candidate_release_ref,site_ref) REFERENCES platform.site_release(release_ref,site_ref),
@@ -137,6 +141,46 @@ CREATE TABLE platform.site_deployment_observation (
 );
 CREATE INDEX site_deployment_observation_attempt_idx
   ON platform.site_deployment_observation(attempt_ref,observed_at);
+
+CREATE TABLE platform.site_traffic_stop_attempt (
+  attempt_ref TEXT PRIMARY KEY,
+  site_ref TEXT NOT NULL REFERENCES platform.site(site_ref),
+  action TEXT NOT NULL CHECK(action IN ('suspend','decommission')),
+  release_ref TEXT NOT NULL,
+  deployment_ref TEXT NOT NULL,
+  binding_ref TEXT NOT NULL,
+  runtime_binding_epoch BIGINT NOT NULL CHECK(runtime_binding_epoch > 0),
+  provider_namespace TEXT NOT NULL CHECK(provider_namespace ~ '^[a-z][a-z0-9.-]{1,63}$'),
+  environment TEXT NOT NULL CHECK(environment IN ('development','preview','production')),
+  region TEXT NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('requested','stop_requested','observing','succeeded','failed','unknown')),
+  requested_at TIMESTAMPTZ NOT NULL,
+  provider_operation_key TEXT UNIQUE,
+  observed_at TIMESTAMPTZ,
+  failure_code TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  FOREIGN KEY(deployment_ref,site_ref,release_ref)
+    REFERENCES platform.site_deployment_binding(deployment_ref,site_ref,release_ref),
+  FOREIGN KEY(binding_ref,site_ref) REFERENCES platform.site_project_binding(binding_ref,site_ref),
+  CHECK((state='requested')=(provider_operation_key IS NULL))
+);
+CREATE UNIQUE INDEX site_one_open_traffic_stop_idx ON platform.site_traffic_stop_attempt(site_ref)
+  WHERE state IN ('requested','stop_requested','observing','unknown');
+CREATE INDEX site_traffic_stop_reconcile_idx
+  ON platform.site_traffic_stop_attempt(state,updated_at,site_ref);
+
+CREATE TABLE platform.site_traffic_stop_observation (
+  observation_ref UUID PRIMARY KEY,
+  attempt_ref TEXT NOT NULL REFERENCES platform.site_traffic_stop_attempt(attempt_ref),
+  provider_operation_key TEXT NOT NULL,
+  deployment_ref TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('serving','stopped','unknown')),
+  observed_at TIMESTAMPTZ NOT NULL,
+  payload_digest CHAR(64) NOT NULL CHECK(payload_digest ~ '^[0-9a-f]{64}$'),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(attempt_ref,payload_digest)
+);
 
 CREATE FUNCTION platform.site_release_immutable_facts() RETURNS trigger
 LANGUAGE plpgsql AS $$
@@ -219,11 +263,17 @@ CREATE TRIGGER site_deployment_observation_immutable
 BEFORE UPDATE OR DELETE ON platform.site_deployment_observation FOR EACH ROW
 EXECUTE FUNCTION platform.reject_site_deployment_observation_update();
 
+CREATE TRIGGER site_traffic_stop_observation_immutable
+BEFORE UPDATE OR DELETE ON platform.site_traffic_stop_observation FOR EACH ROW
+EXECUTE FUNCTION platform.reject_site_deployment_observation_update();
+
 REVOKE ALL ON
   platform.site,
   platform.site_project_binding,
   platform.site_release,
   platform.site_deployment_binding,
   platform.site_activation_attempt,
-  platform.site_deployment_observation
+  platform.site_deployment_observation,
+  platform.site_traffic_stop_attempt,
+  platform.site_traffic_stop_observation
 FROM PUBLIC;
