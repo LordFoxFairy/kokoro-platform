@@ -407,6 +407,131 @@ export class IdentityApplicationService {
     return Object.freeze({ commandId: input.commandId, requestDigest, credentials: outcome.credentials });
   }
 
+  async refreshIdentitySession(input: Readonly<{
+    workload: ProductWorkloadIdentity; context: VerifiedRequestSecurityContext;
+    commandId: string; idempotencyKey: string; receiptRecoveryCapability: string;
+  } & (
+    | Readonly<{ opaqueCredential: string }>
+    | Readonly<{ recoveryAction: "supersede_refresh_delivery"; priorCommandId: string }>
+  )>) {
+    const recovery = "recoveryAction" in input;
+    const requestDigest = this.dependencies.auditDigest(recovery
+      ? { operation: "refreshIdentitySession", siteRef: input.workload.siteRef,
+          recoveryAction: input.recoveryAction, priorCommandId: input.priorCommandId }
+      : { operation: "refreshIdentitySession", siteRef: input.workload.siteRef,
+          refreshCredential: input.opaqueCredential });
+    const outcome = await this.dependencies.unitOfWork.execute(
+      { context: input.context, operation: "refreshIdentitySession" },
+      async (transaction) => {
+        const identity = commandIdentity(input, "refreshIdentitySession", requestDigest);
+        const existing = await this.dependencies.receipts.begin(transaction, identity);
+        assertSameCommand(existing, input.commandId);
+        if (existing.state === "succeeded") return { kind: "retry" as const };
+        if (existing.state === "failed") return { kind: "rejected" as const };
+        const now = this.now();
+        const proposedSessionExpiresAt = plus(now, 12 * 60 * 60_000);
+        if (recovery) {
+          const sessionCredential = this.dependencies.sessionCredentials.issue();
+          const refreshCredential = this.dependencies.refreshCredentials.issue();
+          const recoveryResult: {
+            value: Awaited<ReturnType<IdentityRepository["supersedeIdentityRefreshDelivery"]>>;
+          } = { value: null };
+          await this.dependencies.sessionAuthorization.execute(
+            transaction,
+            { siteRef: input.workload.siteRef, correlationId: input.context.correlationId },
+            async () => {
+              recoveryResult.value = await this.dependencies.repository.supersedeIdentityRefreshDelivery(transaction, {
+                priorCommandId: input.priorCommandId, newCommandId: input.commandId, requestDigest,
+                siteRef: input.workload.siteRef, workloadIdentityId: input.workload.workloadIdentityId,
+                purpose: "refreshIdentitySession",
+                capabilityDigest: this.dependencies.auditDigest({
+                  purpose: "refreshIdentitySession", capability: input.receiptRecoveryCapability,
+                }),
+                sessionCredentialDigest: sessionCredential.digest,
+                refreshCredentialDigest: refreshCredential.digest, now,
+                sessionExpiresAt: proposedSessionExpiresAt,
+                retainUntil: plus(proposedSessionExpiresAt, 5 * 60_000),
+              });
+              if (recoveryResult.value === null) throw new IdentityApplicationError("AUTHENTICATION_FAILED");
+              return recoveryResult.value.current;
+            },
+          );
+          const recovered = recoveryResult.value;
+          if (recovered === null) throw new IdentityApplicationError("AUTHENTICATION_FAILED");
+          await this.success(transaction, identity, {
+            sessionRef: recovered.sessionRef, sessionExpiresAt: recovered.current.expiresAt,
+            refreshExpiresAt: recovered.refreshExpiresAt, committedAt: now,
+          });
+          return oneTimeCredentials({
+            sessionRef: recovered.sessionRef, sessionCredential: sessionCredential.credential,
+            sessionExpiresAt: recovered.current.expiresAt,
+            refreshCredential: refreshCredential.credential,
+            refreshExpiresAt: recovered.refreshExpiresAt,
+          });
+        }
+
+        await this.bindRecovery(transaction, input, "refreshIdentitySession", null);
+        const credential = await this.dependencies.repository.loadIdentityRefreshCredential(transaction, {
+          siteRef: input.workload.siteRef,
+          credentialDigest: this.safeRefreshDigest(input.opaqueCredential),
+        });
+        if (credential === null || credential.familyState !== "active" || credential.sessionState !== "active" ||
+            Date.parse(credential.credentialExpiresAt) <= Date.parse(now) ||
+            Date.parse(credential.absoluteExpiresAt) <= Date.parse(now)) {
+          await this.failure(transaction, identity, "AUTHENTICATION_FAILED");
+          return { kind: "rejected" as const };
+        }
+        const sessionExpiresAt = earlier(proposedSessionExpiresAt, credential.absoluteExpiresAt);
+        const retainUntil = plus(sessionExpiresAt, 5 * 60_000);
+        if (credential.credentialState !== "active" || credential.generation !== credential.currentGeneration) {
+          await this.dependencies.sessionAuthorization.execute(
+            transaction,
+            { siteRef: input.workload.siteRef, correlationId: input.context.correlationId },
+            () => this.dependencies.repository.revokeIdentityRefreshFamilyForReplay(transaction, {
+              siteRef: input.workload.siteRef, subjectRef: credential.subjectRef,
+              sessionRef: credential.sessionRef, familyRef: credential.familyRef,
+              expectedCurrentGeneration: credential.currentGeneration, now, retainUntil,
+            }),
+          );
+          await this.failure(transaction, identity, "AUTHENTICATION_FAILED");
+          return { kind: "rejected" as const };
+        }
+        const sessionCredential = this.dependencies.sessionCredentials.issue();
+        const refreshCredential = this.dependencies.refreshCredentials.issue();
+        await this.dependencies.sessionAuthorization.execute(
+          transaction,
+          { siteRef: input.workload.siteRef, correlationId: input.context.correlationId },
+          () => this.dependencies.repository.rotateIdentityRefreshCredential(transaction, {
+            commandId: input.commandId, requestDigest, siteRef: input.workload.siteRef,
+            subjectRef: credential.subjectRef, sessionRef: credential.sessionRef,
+            familyRef: credential.familyRef, expectedGeneration: credential.currentGeneration,
+            newGeneration: credential.currentGeneration + 1,
+            sessionCredentialDigest: sessionCredential.digest,
+            refreshCredentialDigest: refreshCredential.digest, now, sessionExpiresAt,
+            refreshExpiresAt: credential.absoluteExpiresAt, retainUntil,
+          }),
+        );
+        await this.success(transaction, identity, {
+          sessionRef: credential.sessionRef, sessionExpiresAt,
+          refreshExpiresAt: credential.absoluteExpiresAt, committedAt: now,
+        });
+        return oneTimeCredentials({
+          sessionRef: credential.sessionRef, sessionCredential: sessionCredential.credential,
+          sessionExpiresAt, refreshCredential: refreshCredential.credential,
+          refreshExpiresAt: credential.absoluteExpiresAt,
+        });
+      },
+    );
+    if (outcome.kind === "rejected") throw new IdentityApplicationError("AUTHENTICATION_FAILED");
+    if (outcome.kind === "retry") {
+      return Object.freeze({
+        kind: "delivery_unavailable" as const, commandId: input.commandId,
+        receiptRef: `command:${input.commandId}`, requestDigest,
+      });
+    }
+    return Object.freeze({ commandId: input.commandId, requestDigest, credentials: outcome.credentials });
+  }
+
   async listIdentitySessions(input: Readonly<{
     workload: ProductWorkloadIdentity; context: VerifiedRequestSecurityContext; session: AuthenticatedUserSession;
   }>): Promise<Readonly<{ revision: string; sessions: readonly IdentitySessionSafeFact[] }>> {
@@ -515,6 +640,11 @@ export class IdentityApplicationService {
     try { return this.dependencies.verificationCredentials.digest(secret); }
     catch { return "0".repeat(64); }
   }
+
+  private safeRefreshDigest(credential: string): string {
+    try { return this.dependencies.refreshCredentials.digest(credential); }
+    catch { return "0".repeat(64); }
+  }
 }
 
 function commandIdentity(
@@ -561,6 +691,25 @@ function assertRecoveryCapability(value: string): void {
 
 function plus(instant: string, milliseconds: number): string {
   return new Date(Date.parse(instant) + milliseconds).toISOString();
+}
+
+function earlier(left: string, right: string): string {
+  return Date.parse(left) <= Date.parse(right) ? left : right;
+}
+
+function oneTimeCredentials(input: Readonly<{
+  sessionRef: string; sessionCredential: string; sessionExpiresAt: string;
+  refreshCredential: string; refreshExpiresAt: string;
+}>) {
+  return Object.freeze({
+    kind: "fresh" as const,
+    credentials: Object.freeze({
+      sessionRef: input.sessionRef, sessionCredential: input.sessionCredential,
+      sessionCredentialExpiresAt: input.sessionExpiresAt,
+      refreshCredential: input.refreshCredential,
+      refreshCredentialExpiresAt: input.refreshExpiresAt,
+    }),
+  });
 }
 
 function validVerification(value: VerificationRecord | null, now: string): value is VerificationRecord {

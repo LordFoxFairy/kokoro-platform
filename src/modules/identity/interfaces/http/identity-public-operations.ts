@@ -8,6 +8,7 @@ export const IDENTITY_LAUNCH_OPERATION_IDS = Object.freeze([
   "resendEmailVerification",
   "completeEmailVerification",
   "createIdentitySession",
+  "refreshIdentitySession",
   "listIdentitySessions",
   "revokeIdentitySessions",
 ] as const);
@@ -68,6 +69,23 @@ export function createIdentityPublicOperations(
           ...common, email: input.body.email, password: input.body.password,
           ...(input.body.returnIntentRef === undefined ? {} : { returnIntentRef: input.body.returnIntentRef }),
         });
+      },
+    }),
+    definePlatformPublicOperation({
+      operationId: "refreshIdentitySession",
+      async execute(input) {
+        const common = {
+          workload: input.workload, context: input.context,
+          commandId: input.headers["X-Kokoro-Command-Id"],
+          idempotencyKey: input.headers["Idempotency-Key"],
+          receiptRecoveryCapability: recovery(input.receiptRecoveryCapability),
+        };
+        if ("recoveryAction" in input.body) {
+          return service.refreshIdentitySession({
+            ...common, recoveryAction: input.body.recoveryAction, priorCommandId: input.body.priorCommandId,
+          });
+        }
+        return service.refreshIdentitySession({ ...common, opaqueCredential: input.body.opaqueCredential });
       },
     }),
     definePlatformPublicOperation({

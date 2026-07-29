@@ -202,6 +202,126 @@ describe("Identity launch application service", () => {
     });
     expect(superseded).toMatchObject({ priorCommandId, newCommandId: commandId, purpose: "createIdentitySession" });
   });
+
+  it("rotates a refresh credential and publishes the exact session epoch", async () => {
+    let rotation: Parameters<IdentityRepository["rotateIdentityRefreshCredential"]>[1] | undefined;
+    const repository = {
+      async bindReceiptRecoveryCapability() {},
+      async loadIdentityRefreshCredential() {
+        return {
+          accountRef: "account-1", subjectRef: "subject-1", sessionRef: "session-1", familyRef: "family-1",
+          generation: 1, currentGeneration: 1, credentialState: "active" as const,
+          familyState: "active" as const, sessionState: "active" as const,
+          credentialExpiresAt: "2026-08-28T00:00:00.000Z",
+          absoluteExpiresAt: "2026-08-28T00:00:00.000Z",
+        };
+      },
+      async rotateIdentityRefreshCredential(_transaction: unknown, input: NonNullable<typeof rotation>) {
+        rotation = input;
+        return {
+          siteRef: input.siteRef, subjectRef: input.subjectRef, identitySessionRef: input.sessionRef,
+          state: "active" as const, identitySessionEpoch: "1", credentialEpoch: "2",
+          expiresAt: input.sessionExpiresAt, updatedAt: input.now, retainUntil: input.retainUntil,
+        };
+      },
+    } as unknown as IdentityRepository;
+    const service = createService({ repository, receipts: pendingReceipts(), references: [] });
+
+    const result = await service.refreshIdentitySession({
+      workload: workload as never, context, commandId, idempotencyKey: "k".repeat(16),
+      opaqueCredential: "r".repeat(43), receiptRecoveryCapability: "c".repeat(43),
+    });
+
+    expect(result).toMatchObject({
+      commandId,
+      credentials: { sessionRef: "session-1", sessionCredential: "session-credential", refreshCredential: "refresh-credential" },
+    });
+    expect(rotation).toMatchObject({ expectedGeneration: 1, newGeneration: 2, sessionRef: "session-1" });
+  });
+
+  it("revokes the whole refresh family when an old generation is replayed", async () => {
+    let revoked = false;
+    const repository = {
+      async bindReceiptRecoveryCapability() {},
+      async loadIdentityRefreshCredential() {
+        return {
+          accountRef: "account-1", subjectRef: "subject-1", sessionRef: "session-1", familyRef: "family-1",
+          generation: 1, currentGeneration: 2, credentialState: "consumed" as const,
+          familyState: "active" as const, sessionState: "active" as const,
+          credentialExpiresAt: "2026-08-28T00:00:00.000Z",
+          absoluteExpiresAt: "2026-08-28T00:00:00.000Z",
+        };
+      },
+      async revokeIdentityRefreshFamilyForReplay() {
+        revoked = true;
+        return {
+          siteRef: "site-1", subjectRef: "subject-1", identitySessionRef: "session-1",
+          state: "revoked" as const, identitySessionEpoch: "2", credentialEpoch: "3",
+          expiresAt: "2026-07-29T12:00:00.000Z", updatedAt: "2026-07-29T00:00:00.000Z",
+          retainUntil: "2026-07-29T12:05:00.000Z",
+        };
+      },
+    } as unknown as IdentityRepository;
+    const service = createService({ repository, receipts: pendingReceipts(), references: [] });
+
+    await expect(service.refreshIdentitySession({
+      workload: workload as never, context, commandId, idempotencyKey: "l".repeat(16),
+      opaqueCredential: "r".repeat(43), receiptRecoveryCapability: "c".repeat(43),
+    })).rejects.toMatchObject({ code: "AUTHENTICATION_FAILED" });
+    expect(revoked).toBe(true);
+  });
+
+  it("rejects an expired refresh credential before attempting rotation", async () => {
+    let rotated = false;
+    const repository = {
+      async bindReceiptRecoveryCapability() {},
+      async loadIdentityRefreshCredential() {
+        return {
+          accountRef: "account-1", subjectRef: "subject-1", sessionRef: "session-1", familyRef: "family-1",
+          generation: 1, currentGeneration: 1, credentialState: "active" as const,
+          familyState: "active" as const, sessionState: "active" as const,
+          credentialExpiresAt: "2026-07-28T23:59:59.000Z",
+          absoluteExpiresAt: "2026-08-28T00:00:00.000Z",
+        };
+      },
+      async rotateIdentityRefreshCredential() { rotated = true; throw new Error("unexpected rotation"); },
+    } as unknown as IdentityRepository;
+    const service = createService({ repository, receipts: pendingReceipts(), references: [] });
+
+    await expect(service.refreshIdentitySession({
+      workload: workload as never, context, commandId, idempotencyKey: "n".repeat(16),
+      opaqueCredential: "r".repeat(43), receiptRecoveryCapability: "c".repeat(43),
+    })).rejects.toMatchObject({ code: "AUTHENTICATION_FAILED" });
+    expect(rotated).toBe(false);
+  });
+
+  it("transfers refresh delivery recovery to the superseding command", async () => {
+    const priorCommandId = "3".repeat(32);
+    let recovery: Parameters<IdentityRepository["supersedeIdentityRefreshDelivery"]>[1] | undefined;
+    const repository = {
+      async supersedeIdentityRefreshDelivery(_transaction: unknown, input: NonNullable<typeof recovery>) {
+        recovery = input;
+        return {
+          sessionRef: "session-1", refreshExpiresAt: "2026-08-28T00:00:00.000Z",
+          current: {
+            siteRef: input.siteRef, subjectRef: "subject-1", identitySessionRef: "session-1",
+            state: "active" as const, identitySessionEpoch: "1", credentialEpoch: "3",
+            expiresAt: input.sessionExpiresAt, updatedAt: input.now, retainUntil: input.retainUntil,
+          },
+        };
+      },
+    } as unknown as IdentityRepository;
+    const service = createService({ repository, receipts: pendingReceipts(), references: [] });
+
+    const result = await service.refreshIdentitySession({
+      workload: workload as never, context, commandId, idempotencyKey: "m".repeat(16),
+      recoveryAction: "supersede_refresh_delivery", priorCommandId,
+      receiptRecoveryCapability: "c".repeat(43),
+    });
+
+    expect(result).toMatchObject({ credentials: { sessionRef: "session-1" } });
+    expect(recovery).toMatchObject({ priorCommandId, newCommandId: commandId, purpose: "refreshIdentitySession" });
+  });
 });
 
 function createService(input: Readonly<{

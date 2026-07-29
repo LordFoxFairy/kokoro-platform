@@ -7,7 +7,10 @@ import type {
 } from "../../application/contracts/identity-repository.js";
 import type { IdentitySessionCurrentFact, SubjectCurrentFact } from "../../../authorization/application/contracts/scoped-session-authorization-port.js";
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
-import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
+import {
+  resolvePlatformTransaction,
+  type PlatformSqlTransaction,
+} from "../../../../shared/unit-of-work/platform-transaction.js";
 
 export class PostgresIdentityRepository implements IdentityRepository {
   async createVerification(
@@ -480,6 +483,218 @@ export class PostgresIdentityRepository implements IdentityRepository {
     });
   }
 
+  async loadIdentityRefreshCredential(
+    transaction: PlatformTransaction,
+    input: Parameters<IdentityRepository["loadIdentityRefreshCredential"]>[1],
+  ) {
+    const rows = await resolvePlatformTransaction(transaction).query<RefreshCredentialRow>(
+      `SELECT family.account_ref AS "accountRef",family.subject_ref AS "subjectRef",
+              family.session_ref AS "sessionRef",family.family_ref AS "familyRef",
+              credential.generation, family.current_generation AS "currentGeneration",
+              credential.state AS "credentialState",family.state AS "familyState",
+              identity_session.state AS "sessionState",credential.expires_at AS "credentialExpiresAt",
+              family.absolute_expires_at AS "absoluteExpiresAt"
+       FROM platform.identity_refresh_credential credential
+       JOIN platform.identity_refresh_family family
+         ON family.site_ref=credential.site_ref AND family.family_ref=credential.family_ref
+       JOIN platform.authorization_identity_session identity_session
+         ON identity_session.site_ref=family.site_ref AND identity_session.session_ref=family.session_ref
+           AND identity_session.subject_ref=family.subject_ref
+       WHERE credential.site_ref=$1 AND credential.credential_digest=$2
+       FOR UPDATE OF credential,family,identity_session`,
+      [input.siteRef, input.credentialDigest],
+    );
+    const found = rows[0];
+    return found === undefined ? null : Object.freeze({
+      ...found,
+      generation: Number(found.generation), currentGeneration: Number(found.currentGeneration),
+      credentialExpiresAt: instant(found.credentialExpiresAt),
+      absoluteExpiresAt: instant(found.absoluteExpiresAt),
+    });
+  }
+
+  async rotateIdentityRefreshCredential(
+    transaction: PlatformTransaction,
+    input: Parameters<IdentityRepository["rotateIdentityRefreshCredential"]>[1],
+  ): Promise<IdentitySessionCurrentFact> {
+    const sql = resolvePlatformTransaction(transaction);
+    const consumed = await sql.execute(
+      `UPDATE platform.identity_refresh_credential
+       SET state='consumed',consumed_at=$5::timestamptz
+       WHERE site_ref=$1 AND family_ref=$2 AND generation=$3 AND state='active'
+         AND expires_at>$4::timestamptz`,
+      [input.siteRef, input.familyRef, input.expectedGeneration, input.now, input.now],
+    );
+    const family = await sql.execute(
+      `UPDATE platform.identity_refresh_family
+       SET current_generation=$4,updated_at=$5::timestamptz
+       WHERE site_ref=$1 AND family_ref=$2 AND current_generation=$3 AND state='active'
+         AND absolute_expires_at>$5::timestamptz`,
+      [input.siteRef, input.familyRef, input.expectedGeneration, input.newGeneration, input.now],
+    );
+    if (consumed !== 1 || family !== 1) throw new Error("IDENTITY_REFRESH_ROTATION_STALE");
+    await sql.execute(
+      `INSERT INTO platform.identity_refresh_credential
+       (site_ref,family_ref,generation,credential_digest,state,expires_at,created_at)
+       VALUES ($1,$2,$3,$4,'active',$5::timestamptz,$6::timestamptz)`,
+      [input.siteRef, input.familyRef, input.newGeneration, input.refreshCredentialDigest,
+        input.refreshExpiresAt, input.now],
+    );
+    const currentRows = await sql.query<ActiveSessionRow>(
+      `UPDATE platform.authorization_identity_session
+       SET credential_digest=$4,credential_epoch=credential_epoch+1,
+           expires_at=$5::timestamptz,last_seen_at=$6::timestamptz,updated_at=$6::timestamptz
+       WHERE site_ref=$1 AND subject_ref=$2 AND session_ref=$3 AND state='active'
+       RETURNING session_epoch AS "identitySessionEpoch",credential_epoch AS "credentialEpoch"`,
+      [input.siteRef, input.subjectRef, input.sessionRef, input.sessionCredentialDigest,
+        input.sessionExpiresAt, input.now],
+    );
+    const current = currentRows[0];
+    if (current === undefined) throw new Error("IDENTITY_REFRESH_SESSION_STALE");
+    await insertSessionDeliveryClaim(sql, {
+      commandId: input.commandId, siteRef: input.siteRef, subjectRef: input.subjectRef,
+      sessionRef: input.sessionRef, requestDigest: input.requestDigest, claimedAt: input.now,
+    });
+    return activeSessionFact(input, current);
+  }
+
+  async revokeIdentityRefreshFamilyForReplay(
+    transaction: PlatformTransaction,
+    input: Parameters<IdentityRepository["revokeIdentityRefreshFamilyForReplay"]>[1],
+  ): Promise<IdentitySessionCurrentFact> {
+    const sql = resolvePlatformTransaction(transaction);
+    const family = await sql.execute(
+      `UPDATE platform.identity_refresh_family
+       SET state='revoked',revoked_at=$5::timestamptz,revoke_reason='refresh_replay',updated_at=$5::timestamptz
+       WHERE site_ref=$1 AND family_ref=$2 AND session_ref=$3
+         AND current_generation=$4 AND state='active'`,
+      [input.siteRef, input.familyRef, input.sessionRef, input.expectedCurrentGeneration, input.now],
+    );
+    if (family !== 1) throw new Error("IDENTITY_REFRESH_REPLAY_STALE");
+    await sql.execute(
+      `UPDATE platform.identity_refresh_credential SET state='revoked'
+       WHERE site_ref=$1 AND family_ref=$2 AND state='active'`,
+      [input.siteRef, input.familyRef],
+    );
+    const rows = await sql.query<RevokedSessionRow>(
+      `UPDATE platform.authorization_identity_session
+       SET state='revoked',session_epoch=session_epoch+1,credential_epoch=credential_epoch+1,
+           updated_at=$4::timestamptz
+       WHERE site_ref=$1 AND subject_ref=$2 AND session_ref=$3 AND state='active'
+       RETURNING session_epoch AS "identitySessionEpoch",credential_epoch AS "credentialEpoch",
+                 expires_at AS "expiresAt"`,
+      [input.siteRef, input.subjectRef, input.sessionRef, input.now],
+    );
+    const revoked = rows[0];
+    if (revoked === undefined) throw new Error("IDENTITY_REFRESH_REPLAY_SESSION_STALE");
+    return Object.freeze({
+      siteRef: input.siteRef, subjectRef: input.subjectRef, identitySessionRef: input.sessionRef,
+      state: "revoked", identitySessionEpoch: revoked.identitySessionEpoch.toString(),
+      credentialEpoch: revoked.credentialEpoch.toString(), expiresAt: instant(revoked.expiresAt),
+      updatedAt: input.now, retainUntil: input.retainUntil,
+    });
+  }
+
+  async supersedeIdentityRefreshDelivery(
+    transaction: PlatformTransaction,
+    input: Parameters<IdentityRepository["supersedeIdentityRefreshDelivery"]>[1],
+  ) {
+    const sql = resolvePlatformTransaction(transaction);
+    const rows = await sql.query<RefreshDeliveryRecoveryRow>(
+      `SELECT claim.subject_ref AS "subjectRef",claim.session_ref AS "sessionRef",
+              claim.request_digest AS "claimRequestDigest",receipt.request_digest AS "receiptRequestDigest",
+              receipt.caller_identity AS "callerIdentity",receipt.operation,receipt.state AS "receiptState",
+              recovery.site_ref AS "recoverySiteRef",recovery.workload_identity_id AS "recoveryWorkloadIdentityId",
+              recovery.purpose AS "recoveryPurpose",recovery.transaction_ref AS "recoveryTransactionRef",
+              recovery.capability_digest AS "capabilityDigest",recovery.state AS "recoveryState",
+              recovery.expires_at AS "recoveryExpiresAt",family.family_ref AS "familyRef",
+              family.current_generation AS "currentGeneration",family.absolute_expires_at AS "absoluteExpiresAt",
+              identity_session.state AS "sessionState"
+       FROM platform.identity_session_delivery_claim claim
+       JOIN platform.identity_receipt_recovery_capability recovery ON recovery.command_id=claim.command_id
+       JOIN platform.command_receipt receipt ON receipt.command_id=claim.command_id
+       JOIN platform.authorization_identity_session identity_session
+         ON identity_session.site_ref=claim.site_ref AND identity_session.session_ref=claim.session_ref
+           AND identity_session.subject_ref=claim.subject_ref
+       JOIN platform.identity_refresh_family family
+         ON family.site_ref=claim.site_ref AND family.session_ref=claim.session_ref AND family.state='active'
+       JOIN platform.identity_refresh_credential credential
+         ON credential.site_ref=family.site_ref AND credential.family_ref=family.family_ref
+           AND credential.generation=family.current_generation AND credential.state='active'
+       WHERE claim.command_id=$1 AND claim.site_ref=$2 AND claim.state='first_claim_consumed'
+       FOR UPDATE OF claim,recovery,receipt,identity_session,family,credential`,
+      [input.priorCommandId, input.siteRef],
+    );
+    const found = rows[0];
+    if (
+      found === undefined || found.recoverySiteRef !== input.siteRef ||
+      found.recoveryWorkloadIdentityId !== input.workloadIdentityId ||
+      found.recoveryPurpose !== input.purpose || found.recoveryTransactionRef !== null ||
+      found.recoveryState !== "active" || Date.parse(instant(found.recoveryExpiresAt)) <= Date.parse(input.now) ||
+      found.callerIdentity !== input.workloadIdentityId || found.operation !== input.purpose ||
+      found.receiptState !== "succeeded" || found.sessionState !== "active" ||
+      Date.parse(instant(found.absoluteExpiresAt)) <= Date.parse(input.now) ||
+      found.claimRequestDigest !== found.receiptRequestDigest ||
+      !constantTimeDigestEqual(found.capabilityDigest, input.capabilityDigest)
+    ) return null;
+    const newGeneration = Number(found.currentGeneration) + 1;
+    const transferred = await sql.execute(
+      `UPDATE platform.identity_receipt_recovery_capability SET command_id=$2
+       WHERE command_id=$1 AND state='active'`,
+      [input.priorCommandId, input.newCommandId],
+    );
+    const superseded = await sql.execute(
+      `UPDATE platform.identity_session_delivery_claim SET state='superseded',superseded_at=$2::timestamptz
+       WHERE command_id=$1 AND state='first_claim_consumed'`,
+      [input.priorCommandId, input.now],
+    );
+    const priorCredential = await sql.execute(
+      `UPDATE platform.identity_refresh_credential SET state='revoked'
+       WHERE site_ref=$1 AND family_ref=$2 AND generation=$3 AND state='active'`,
+      [input.siteRef, found.familyRef, Number(found.currentGeneration)],
+    );
+    const family = await sql.execute(
+      `UPDATE platform.identity_refresh_family SET current_generation=$3,updated_at=$5::timestamptz
+       WHERE site_ref=$1 AND family_ref=$2 AND current_generation=$4 AND state='active'`,
+      [input.siteRef, found.familyRef, newGeneration, Number(found.currentGeneration), input.now],
+    );
+    if (transferred !== 1 || superseded !== 1 || priorCredential !== 1 || family !== 1) {
+      throw new Error("IDENTITY_REFRESH_DELIVERY_RECOVERY_STALE");
+    }
+    const refreshExpiresAt = instant(found.absoluteExpiresAt);
+    const sessionExpiresAt = Date.parse(input.sessionExpiresAt) <= Date.parse(refreshExpiresAt)
+      ? input.sessionExpiresAt
+      : refreshExpiresAt;
+    await sql.execute(
+      `INSERT INTO platform.identity_refresh_credential
+       (site_ref,family_ref,generation,credential_digest,state,expires_at,created_at)
+       VALUES ($1,$2,$3,$4,'active',$5::timestamptz,$6::timestamptz)`,
+      [input.siteRef, found.familyRef, newGeneration, input.refreshCredentialDigest, refreshExpiresAt, input.now],
+    );
+    const currentRows = await sql.query<ActiveSessionRow>(
+      `UPDATE platform.authorization_identity_session
+       SET credential_digest=$4,credential_epoch=credential_epoch+1,
+           expires_at=$5::timestamptz,last_seen_at=$6::timestamptz,updated_at=$6::timestamptz
+       WHERE site_ref=$1 AND subject_ref=$2 AND session_ref=$3 AND state='active'
+       RETURNING session_epoch AS "identitySessionEpoch",credential_epoch AS "credentialEpoch"`,
+      [input.siteRef, found.subjectRef, found.sessionRef, input.sessionCredentialDigest,
+        sessionExpiresAt, input.now],
+    );
+    const current = currentRows[0];
+    if (current === undefined) throw new Error("IDENTITY_REFRESH_DELIVERY_SESSION_STALE");
+    await insertSessionDeliveryClaim(sql, {
+      commandId: input.newCommandId, siteRef: input.siteRef, subjectRef: found.subjectRef,
+      sessionRef: found.sessionRef, requestDigest: input.requestDigest, claimedAt: input.now,
+    });
+    return Object.freeze({
+      current: activeSessionFact({
+        ...input, subjectRef: found.subjectRef, sessionRef: found.sessionRef, sessionExpiresAt,
+      }, current),
+      sessionRef: found.sessionRef,
+      refreshExpiresAt,
+    });
+  }
+
   async listIdentitySessions(
     transaction: PlatformTransaction,
     input: Parameters<IdentityRepository["listIdentitySessions"]>[1],
@@ -581,6 +796,29 @@ interface RevokedSessionRow extends Record<string, unknown> {
   identitySessionEpoch: bigint; credentialEpoch: bigint; expiresAt: string | Date;
 }
 
+interface ActiveSessionRow extends Record<string, unknown> {
+  identitySessionEpoch: bigint; credentialEpoch: bigint;
+}
+
+interface RefreshCredentialRow extends Record<string, unknown> {
+  accountRef: string; subjectRef: string; sessionRef: string; familyRef: string;
+  generation: bigint | number; currentGeneration: bigint | number;
+  credentialState: "active" | "consumed" | "revoked";
+  familyState: "active" | "revoked" | "expired";
+  sessionState: "active" | "revoked" | "expired";
+  credentialExpiresAt: string | Date;
+  absoluteExpiresAt: string | Date;
+}
+
+interface RefreshDeliveryRecoveryRow extends Record<string, unknown> {
+  subjectRef: string; sessionRef: string; claimRequestDigest: string; receiptRequestDigest: string;
+  callerIdentity: string; operation: string; receiptState: string;
+  recoverySiteRef: string; recoveryWorkloadIdentityId: string; recoveryPurpose: string;
+  recoveryTransactionRef: string | null; capabilityDigest: string; recoveryState: string;
+  recoveryExpiresAt: string | Date; familyRef: string; currentGeneration: bigint | number;
+  absoluteExpiresAt: string | Date; sessionState: string;
+}
+
 interface SessionDeliveryRecoveryRow extends Record<string, unknown> {
   accountRef: string; subjectRef: string; sessionRef: string;
   claimRequestDigest: string; receiptRequestDigest: string;
@@ -607,4 +845,35 @@ function constantTimeDigestEqual(left: string, right: string): boolean {
   const a = Buffer.from(left, "ascii");
   const b = Buffer.from(right, "ascii");
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+async function insertSessionDeliveryClaim(
+  sql: PlatformSqlTransaction,
+  input: Readonly<{
+    commandId: string; siteRef: string; subjectRef: string; sessionRef: string;
+    requestDigest: string; claimedAt: string;
+  }>,
+): Promise<void> {
+  const changed = await sql.execute(
+    `INSERT INTO platform.identity_session_delivery_claim
+     (command_id,site_ref,subject_ref,session_ref,request_digest,state,claimed_at)
+     VALUES ($1,$2,$3,$4,$5,'first_claim_consumed',$6::timestamptz)`,
+    [input.commandId, input.siteRef, input.subjectRef, input.sessionRef, input.requestDigest, input.claimedAt],
+  );
+  if (changed !== 1) throw new Error("IDENTITY_SESSION_DELIVERY_CREATE_FAILED");
+}
+
+function activeSessionFact(
+  input: Readonly<{
+    siteRef: string; subjectRef: string; sessionRef: string; now: string;
+    sessionExpiresAt: string; retainUntil: string;
+  }>,
+  current: ActiveSessionRow,
+): IdentitySessionCurrentFact {
+  return Object.freeze({
+    siteRef: input.siteRef, subjectRef: input.subjectRef, identitySessionRef: input.sessionRef,
+    state: "active", identitySessionEpoch: current.identitySessionEpoch.toString(),
+    credentialEpoch: current.credentialEpoch.toString(), expiresAt: input.sessionExpiresAt,
+    updatedAt: input.now, retainUntil: input.retainUntil,
+  });
 }

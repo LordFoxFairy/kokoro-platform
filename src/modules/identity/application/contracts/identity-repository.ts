@@ -39,6 +39,20 @@ export type SupersededIdentitySessionOwner = Readonly<{
   revoked: IdentitySessionCurrentFact;
 }>;
 
+export type IdentityRefreshCredentialRecord = Readonly<{
+  accountRef: string;
+  subjectRef: string;
+  sessionRef: string;
+  familyRef: string;
+  generation: number;
+  currentGeneration: number;
+  credentialState: "active" | "consumed" | "revoked";
+  familyState: "active" | "revoked" | "expired";
+  sessionState: "active" | "revoked" | "expired";
+  credentialExpiresAt: string;
+  absoluteExpiresAt: string;
+}>;
+
 export interface IdentityRepository {
   createVerification(transaction: PlatformTransaction, input: Readonly<{
     siteRef: string;
@@ -98,6 +112,27 @@ export interface IdentityRepository {
     priorCommandId: string; newCommandId: string; siteRef: string; workloadIdentityId: string;
     purpose: "createIdentitySession"; capabilityDigest: string; now: string; retainUntil: string;
   }>): Promise<SupersededIdentitySessionOwner | null>;
+  loadIdentityRefreshCredential(transaction: PlatformTransaction, input: Readonly<{
+    siteRef: string; credentialDigest: string;
+  }>): Promise<IdentityRefreshCredentialRecord | null>;
+  rotateIdentityRefreshCredential(transaction: PlatformTransaction, input: Readonly<{
+    commandId: string; requestDigest: string; siteRef: string; subjectRef: string;
+    sessionRef: string; familyRef: string; expectedGeneration: number; newGeneration: number;
+    sessionCredentialDigest: string; refreshCredentialDigest: string; now: string;
+    sessionExpiresAt: string; refreshExpiresAt: string; retainUntil: string;
+  }>): Promise<IdentitySessionCurrentFact>;
+  revokeIdentityRefreshFamilyForReplay(transaction: PlatformTransaction, input: Readonly<{
+    siteRef: string; subjectRef: string; sessionRef: string; familyRef: string;
+    expectedCurrentGeneration: number; now: string; retainUntil: string;
+  }>): Promise<IdentitySessionCurrentFact>;
+  supersedeIdentityRefreshDelivery(transaction: PlatformTransaction, input: Readonly<{
+    priorCommandId: string; newCommandId: string; requestDigest: string; siteRef: string;
+    workloadIdentityId: string; purpose: "refreshIdentitySession"; capabilityDigest: string;
+    sessionCredentialDigest: string; refreshCredentialDigest: string; now: string;
+    sessionExpiresAt: string; retainUntil: string;
+  }>): Promise<Readonly<{
+    current: IdentitySessionCurrentFact; sessionRef: string; refreshExpiresAt: string;
+  }> | null>;
   listIdentitySessions(transaction: PlatformTransaction, input: Readonly<{
     siteRef: string; subjectRef: string; currentSessionRef: string; now: string;
   }>): Promise<readonly IdentitySessionSafeFact[]>;
