@@ -246,6 +246,10 @@ export class AssetMultipartService {
     if (current.state === "uploaded" || current.state === "integrity_rejected") return before;
     if (["aborting", "aborted"].includes(current.state)) throw new Error("UPLOAD_STATE_CONFLICT");
     const ordered = resolveParts(before.parts, input.parts, input.claims, input.expectedSize);
+    const receiptRef = this.reference();
+    const effectToken = this.reference();
+    const claimedAt = this.now();
+    const claimedMonotonic = this.monotonicNow();
     const snapshot = await this.dependencies.unitOfWork.execute(
       input.claims,
       "asset.multipart.complete",
@@ -255,13 +259,23 @@ export class AssetMultipartService {
         expectedVersion: input.expectedVersion,
         idempotencyKey: input.idempotencyKey,
         requestDigest,
-        receiptRef: this.reference(),
-        now: this.now(),
+        receiptRef,
+        effectToken,
+        effectLeaseExpiresAt: leaseExpiry(claimedAt, input.claims.expiresAt),
+        now: claimedAt,
       }),
     );
     const upload = requiredUpload(snapshot);
     if (upload.state === "uploaded" || upload.state === "integrity_rejected") return snapshot;
+    if (upload.completionEffectToken !== effectToken) return snapshot;
     if (upload.providerUploadId === null) throw new Error("UPLOAD_STATE_CONFLICT");
+    let signal: AbortSignal;
+    try {
+      signal = this.effectSignal(claimedMonotonic, input.claims.expiresAt);
+    } catch (error) {
+      await this.releaseCompletionEffect(input.claims, upload, effectToken);
+      throw error;
+    }
     try {
       await this.dependencies.store.complete({
         ...route(input.claims),
@@ -271,12 +285,17 @@ export class AssetMultipartService {
           providerEtag: requiredProviderEtag(part),
           checksumSha256: part.checksumSha256,
         })),
+        signal,
       });
-    } catch {
+    } catch (error) {
+      if (!(error instanceof AssetMultipartProviderOutcomeUnknownError)) {
+        await this.releaseCompletionEffect(input.claims, upload, effectToken);
+        throw error;
+      }
       // CompleteMultipartUpload may have committed even when its response was lost. Observation,
       // never the transport exception, decides whether the object is terminal.
     }
-    return this.reconcileCompletion(input.claims, upload, ordered);
+    return this.reconcileCompletion(input.claims, upload, effectToken, signal);
   }
 
   async abort(input: Readonly<{
@@ -293,17 +312,22 @@ export class AssetMultipartService {
       expectedVersion: input.expectedVersion,
       capabilityEpoch: input.claims.capabilityEpoch,
     });
-    let current = await this.status(input.claims, input.uploadRef);
+    const current = await this.status(input.claims, input.uploadRef);
     const currentUpload = requiredUpload(current);
     if (currentUpload.state === "aborted") return current;
     if (currentUpload.state === "uploaded" || currentUpload.state === "integrity_rejected") {
       throw new Error("UPLOAD_STATE_CONFLICT");
     }
-    if (currentUpload.state === "completing") {
-      current = await this.reconcileCompletion(input.claims, currentUpload, committedParts(current.parts));
-      const reconciled = requiredUpload(current);
-      if (reconciled.state !== "outcome_unknown") throw new Error("UPLOAD_STATE_CONFLICT");
+    if (currentUpload.state === "outcome_unknown" && currentUpload.outcomeOperation === "abort") {
+      return current;
     }
+    if (!["uploading", "aborting"].includes(currentUpload.state)) {
+      throw new Error("UPLOAD_STATE_CONFLICT");
+    }
+    const receiptRef = this.reference();
+    const effectToken = this.reference();
+    const claimedAt = this.now();
+    const claimedMonotonic = this.monotonicNow();
     const snapshot = await this.dependencies.unitOfWork.execute(
       input.claims,
       "asset.multipart.abort",
@@ -313,8 +337,10 @@ export class AssetMultipartService {
         expectedVersion: input.expectedVersion,
         idempotencyKey: input.idempotencyKey,
         requestDigest,
-        receiptRef: this.reference(),
-        now: this.now(),
+        receiptRef,
+        effectToken,
+        effectLeaseExpiresAt: leaseExpiry(claimedAt, input.claims.expiresAt),
+        now: claimedAt,
       }),
     );
     const upload = requiredUpload(snapshot);
@@ -322,18 +348,33 @@ export class AssetMultipartService {
     if (upload.state === "uploaded" || upload.state === "integrity_rejected") {
       throw new Error("UPLOAD_STATE_CONFLICT");
     }
+    if (upload.abortEffectToken !== effectToken) return snapshot;
     if (upload.providerUploadId === null) throw new Error("UPLOAD_STATE_CONFLICT");
+    let signal: AbortSignal;
+    try {
+      signal = this.effectSignal(claimedMonotonic, input.claims.expiresAt);
+    } catch (error) {
+      await this.releaseAbortEffect(input.claims, upload, effectToken);
+      throw error;
+    }
     let providerDisposition: "aborted" | "already_absent" | null = null;
     try {
       providerDisposition = await this.dependencies.store.abort({
         ...route(input.claims),
         providerUploadId: upload.providerUploadId,
+        signal,
       });
-    } catch {
+    } catch (error) {
+      if (!(error instanceof AssetMultipartProviderOutcomeUnknownError)) {
+        await this.releaseAbortEffect(input.claims, upload, effectToken);
+        throw error;
+      }
       // Abort may have committed even when the response was lost. A missing multipart upload is
       // not proof that a completed object is absent, so reconciliation always observes the key.
     }
-    const reconciled = await this.reconcileAbort(input.claims, upload, providerDisposition);
+    const reconciled = await this.reconcileAbort(
+      input.claims, upload, effectToken, signal, providerDisposition,
+    );
     if (requiredUpload(reconciled).state === "uploaded") {
       throw new Error("UPLOAD_STATE_CONFLICT");
     }
@@ -417,33 +458,99 @@ export class AssetMultipartService {
   private async reconcileCompletion(
     claims: AssetUploadCapabilityClaims,
     upload: NonNullable<AuthorizedAssetMultipartSnapshot["upload"]>,
-    _parts: readonly StoredAssetMultipartPart[],
+    effectToken: string,
+    signal: AbortSignal,
   ): Promise<AuthorizedAssetMultipartSnapshot> {
     try {
       const observed = await this.dependencies.store.observeCompleted({
         ...route(claims),
         expectedSize: BigInt(claims.expectedSize),
         expectedChecksumSha256: claims.expectedChecksumSha256,
+        signal,
       });
-      return this.finishCompletion(claims, upload,
+      return this.finishCompletion(claims, upload, effectToken,
         observed === "exact" ? "uploaded" : "outcome_unknown");
     } catch (error) {
-      if (isIntegrityMismatch(error)) return this.rejectIntegrity(claims, upload);
-      return this.finishCompletion(claims, upload, "outcome_unknown");
+      if (isIntegrityMismatch(error)) {
+        return this.rejectIntegrity(claims, upload, "complete", effectToken);
+      }
+      return this.finishCompletion(claims, upload, effectToken, "outcome_unknown");
     }
   }
 
   private async retryCompletion(
     claims: AssetUploadCapabilityClaims,
     upload: NonNullable<AuthorizedAssetMultipartSnapshot["upload"]>,
-    _snapshot: AuthorizedAssetMultipartSnapshot,
+    snapshot: AuthorizedAssetMultipartSnapshot,
   ): Promise<AuthorizedAssetMultipartSnapshot> {
-    return this.reconcileCompletion(claims, upload, []);
+    if (upload.providerUploadId === null) return snapshot;
+    const effectToken = this.reference();
+    const claimedAt = this.now();
+    const claimedMonotonic = this.monotonicNow();
+    const claimed = await this.dependencies.unitOfWork.execute(
+      claims,
+      "asset.multipart.complete",
+      (transaction) => this.dependencies.repository.claimCompletionEffect(transaction, {
+        claims,
+        uploadRef: upload.uploadRef,
+        expectedVersion: upload.expectedVersion,
+        effectToken,
+        effectLeaseExpiresAt: leaseExpiry(claimedAt, claims.expiresAt),
+        now: claimedAt,
+      }),
+    );
+    const owned = requiredUpload(claimed);
+    if (owned.completionEffectToken !== effectToken) return claimed;
+    let signal: AbortSignal;
+    try {
+      signal = this.effectSignal(claimedMonotonic, claims.expiresAt);
+    } catch (error) {
+      await this.releaseCompletionEffect(claims, owned, effectToken);
+      throw error;
+    }
+    try {
+      const observed = await this.dependencies.store.observeCompleted({
+        ...route(claims),
+        expectedSize: BigInt(claims.expectedSize),
+        expectedChecksumSha256: claims.expectedChecksumSha256,
+        signal,
+      });
+      if (observed === "exact") {
+        return this.finishCompletion(claims, owned, effectToken, "uploaded");
+      }
+    } catch (error) {
+      if (isIntegrityMismatch(error)) {
+        return this.rejectIntegrity(claims, owned, "complete", effectToken);
+      }
+      return this.finishCompletion(claims, owned, effectToken, "outcome_unknown");
+    }
+    const frozen = committedParts(claimed.parts);
+    try {
+      await this.dependencies.store.complete({
+        ...route(claims),
+        providerUploadId: owned.providerUploadId!,
+        parts: frozen.map((part) => ({
+          partNumber: part.partNumber,
+          providerEtag: requiredProviderEtag(part),
+          checksumSha256: part.checksumSha256,
+        })),
+        signal,
+      });
+    } catch (error) {
+      if (!(error instanceof AssetMultipartProviderOutcomeUnknownError)) {
+        await this.releaseCompletionEffect(claims, owned, effectToken);
+        throw error;
+      }
+      // The same provider upload and frozen parts are safe to observe after an ambiguous replay.
+    }
+    return this.reconcileCompletion(claims, owned, effectToken, signal);
   }
 
   private async reconcileAbort(
     claims: AssetUploadCapabilityClaims,
     upload: NonNullable<AuthorizedAssetMultipartSnapshot["upload"]>,
+    effectToken: string,
+    signal: AbortSignal,
     providerDisposition: "aborted" | "already_absent" | null,
   ): Promise<AuthorizedAssetMultipartSnapshot> {
     try {
@@ -451,14 +558,17 @@ export class AssetMultipartService {
         ...route(claims),
         expectedSize: BigInt(claims.expectedSize),
         expectedChecksumSha256: claims.expectedChecksumSha256,
+        signal,
       });
       return observed === "exact"
-        ? this.finishAbort(claims, upload, "uploaded")
-        : this.finishAbort(claims, upload,
+        ? this.finishAbort(claims, upload, effectToken, "uploaded")
+        : this.finishAbort(claims, upload, effectToken,
           providerDisposition === null ? "outcome_unknown" : "aborted");
     } catch (error) {
-      if (isIntegrityMismatch(error)) return this.rejectIntegrity(claims, upload);
-      return this.finishAbort(claims, upload, "outcome_unknown");
+      if (isIntegrityMismatch(error)) {
+        return this.rejectIntegrity(claims, upload, "abort", effectToken);
+      }
+      return this.finishAbort(claims, upload, effectToken, "outcome_unknown");
     }
   }
 
@@ -468,21 +578,68 @@ export class AssetMultipartService {
     snapshot: AuthorizedAssetMultipartSnapshot,
   ): Promise<AuthorizedAssetMultipartSnapshot> {
     if (upload.providerUploadId === null) return snapshot;
+    const effectToken = this.reference();
+    const claimedAt = this.now();
+    const claimedMonotonic = this.monotonicNow();
+    const claimed = await this.dependencies.unitOfWork.execute(
+      claims,
+      "asset.multipart.abort",
+      (transaction) => this.dependencies.repository.claimAbortEffect(transaction, {
+        claims,
+        uploadRef: upload.uploadRef,
+        expectedVersion: upload.expectedVersion,
+        effectToken,
+        effectLeaseExpiresAt: leaseExpiry(claimedAt, claims.expiresAt),
+        now: claimedAt,
+      }),
+    );
+    const owned = requiredUpload(claimed);
+    if (owned.abortEffectToken !== effectToken) return claimed;
+    let signal: AbortSignal;
+    try {
+      signal = this.effectSignal(claimedMonotonic, claims.expiresAt);
+    } catch (error) {
+      await this.releaseAbortEffect(claims, owned, effectToken);
+      throw error;
+    }
+    try {
+      const observed = await this.dependencies.store.observeCompleted({
+        ...route(claims),
+        expectedSize: BigInt(claims.expectedSize),
+        expectedChecksumSha256: claims.expectedChecksumSha256,
+        signal,
+      });
+      if (observed === "exact") {
+        return this.finishAbort(claims, owned, effectToken, "uploaded");
+      }
+    } catch (error) {
+      if (isIntegrityMismatch(error)) {
+        return this.rejectIntegrity(claims, owned, "abort", effectToken);
+      }
+      return this.finishAbort(claims, owned, effectToken, "outcome_unknown");
+    }
     let providerDisposition: "aborted" | "already_absent" | null = null;
     try {
       providerDisposition = await this.dependencies.store.abort({
         ...route(claims),
-        providerUploadId: upload.providerUploadId,
+        providerUploadId: owned.providerUploadId!,
+        signal,
       });
-    } catch {
+    } catch (error) {
+      if (!(error instanceof AssetMultipartProviderOutcomeUnknownError)) {
+        await this.releaseAbortEffect(claims, owned, effectToken);
+        throw error;
+      }
       // Reconciliation below owns the final decision.
     }
-    return this.reconcileAbort(claims, upload, providerDisposition);
+    return this.reconcileAbort(claims, owned, effectToken, signal, providerDisposition);
   }
 
   private rejectIntegrity(
     claims: AssetUploadCapabilityClaims,
     upload: NonNullable<AuthorizedAssetMultipartSnapshot["upload"]>,
+    effectOperation: "complete" | "abort",
+    effectToken: string,
   ): Promise<AuthorizedAssetMultipartSnapshot> {
     const eventId = this.reference();
     return this.dependencies.unitOfWork.execute(
@@ -493,6 +650,8 @@ export class AssetMultipartService {
         uploadRef: upload.uploadRef,
         expectedVersion: upload.expectedVersion,
         safeReasonCode: "UPLOAD_PART_INVALID",
+        effectOperation,
+        effectToken,
         eventId,
         correlationId: upload.completionReceiptRef ?? eventId,
         now: this.now(),
@@ -503,6 +662,7 @@ export class AssetMultipartService {
   private finishCompletion(
     claims: AssetUploadCapabilityClaims,
     upload: NonNullable<AuthorizedAssetMultipartSnapshot["upload"]>,
+    effectToken: string,
     state: "uploaded" | "outcome_unknown",
   ) {
     return this.dependencies.unitOfWork.execute(
@@ -512,7 +672,26 @@ export class AssetMultipartService {
         claims,
         uploadRef: upload.uploadRef,
         expectedVersion: upload.expectedVersion,
+        effectToken,
         state,
+        now: this.now(),
+      }),
+    );
+  }
+
+  private releaseCompletionEffect(
+    claims: AssetUploadCapabilityClaims,
+    upload: NonNullable<AuthorizedAssetMultipartSnapshot["upload"]>,
+    effectToken: string,
+  ) {
+    return this.dependencies.unitOfWork.execute(
+      claims,
+      "asset.multipart.complete",
+      (transaction) => this.dependencies.repository.releaseCompletionEffect(transaction, {
+        claims,
+        uploadRef: upload.uploadRef,
+        expectedVersion: upload.expectedVersion,
+        effectToken,
         now: this.now(),
       }),
     );
@@ -521,6 +700,7 @@ export class AssetMultipartService {
   private finishAbort(
     claims: AssetUploadCapabilityClaims,
     upload: NonNullable<AuthorizedAssetMultipartSnapshot["upload"]>,
+    effectToken: string,
     state: "aborted" | "uploaded" | "outcome_unknown",
   ) {
     return this.dependencies.unitOfWork.execute(
@@ -530,7 +710,26 @@ export class AssetMultipartService {
         claims,
         uploadRef: upload.uploadRef,
         expectedVersion: upload.expectedVersion,
+        effectToken,
         state,
+        now: this.now(),
+      }),
+    );
+  }
+
+  private releaseAbortEffect(
+    claims: AssetUploadCapabilityClaims,
+    upload: NonNullable<AuthorizedAssetMultipartSnapshot["upload"]>,
+    effectToken: string,
+  ) {
+    return this.dependencies.unitOfWork.execute(
+      claims,
+      "asset.multipart.abort",
+      (transaction) => this.dependencies.repository.releaseAbortEffect(transaction, {
+        claims,
+        uploadRef: upload.uploadRef,
+        expectedVersion: upload.expectedVersion,
+        effectToken,
         now: this.now(),
       }),
     );
@@ -585,6 +784,9 @@ function resolveParts(
   expectedSize: bigint,
 ): readonly StoredAssetMultipartPart[] {
   if (requested.length < 1 || requested.length > 10_000) throw new Error("UPLOAD_PART_INVALID");
+  if (stored.some((part) => part.state !== "committed")) {
+    throw new Error("UPLOAD_STATE_CONFLICT");
+  }
   const committed = stored.filter((part) => part.state === "committed");
   if (requested.length !== committed.length) throw new Error("UPLOAD_PART_INVALID");
   const byReceipt = new Map(committed.map((part) => [part.partReceipt, part]));
@@ -651,9 +853,9 @@ function requiredProviderEtag(part: StoredAssetMultipartPart): string {
   return part.providerEtag;
 }
 
-const EFFECT_LEASE_MS = 30_000;
-const EFFECT_LEASE_SAFETY_MS = 5_000;
-const PROVIDER_EFFECT_TIMEOUT_MS = 20_000;
+const EFFECT_LEASE_MS = 120_000;
+const EFFECT_LEASE_SAFETY_MS = 20_000;
+const PROVIDER_EFFECT_TIMEOUT_MS = 90_000;
 
 function leaseExpiry(value: string, capabilityExpiresAt: string): string {
   return new Date(Math.min(
@@ -663,6 +865,9 @@ function leaseExpiry(value: string, capabilityExpiresAt: string): string {
 }
 
 function committedParts(parts: readonly StoredAssetMultipartPart[]): readonly StoredAssetMultipartPart[] {
+  if (parts.some((part) => part.state !== "committed")) {
+    throw new Error("UPLOAD_STATE_CONFLICT");
+  }
   const committed = parts
     .filter((part) => part.state === "committed")
     .sort((left, right) => left.partNumber - right.partNumber);

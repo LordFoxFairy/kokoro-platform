@@ -33,9 +33,13 @@ export interface StoredAssetMultipartUpload {
   readonly completionIdempotencyKey: string | null;
   readonly completionRequestDigest: string | null;
   readonly completionReceiptRef: string | null;
+  readonly completionEffectToken: string | null;
+  readonly completionEffectLeaseExpiresAt: string | null;
   readonly abortIdempotencyKey: string | null;
   readonly abortRequestDigest: string | null;
   readonly abortReceiptRef: string | null;
+  readonly abortEffectToken: string | null;
+  readonly abortEffectLeaseExpiresAt: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -168,6 +172,29 @@ export interface AssetMultipartRepositoryPort {
       idempotencyKey: string;
       requestDigest: string;
       receiptRef: string;
+      effectToken: string;
+      effectLeaseExpiresAt: string;
+      now: string;
+    }>,
+  ): Promise<AuthorizedAssetMultipartSnapshot>;
+  claimCompletionEffect(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      claims: AssetUploadCapabilityClaims;
+      uploadRef: string;
+      expectedVersion: bigint;
+      effectToken: string;
+      effectLeaseExpiresAt: string;
+      now: string;
+    }>,
+  ): Promise<AuthorizedAssetMultipartSnapshot>;
+  releaseCompletionEffect(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      claims: AssetUploadCapabilityClaims;
+      uploadRef: string;
+      expectedVersion: bigint;
+      effectToken: string;
       now: string;
     }>,
   ): Promise<AuthorizedAssetMultipartSnapshot>;
@@ -177,6 +204,7 @@ export interface AssetMultipartRepositoryPort {
       claims: AssetUploadCapabilityClaims;
       uploadRef: string;
       expectedVersion: bigint;
+      effectToken: string;
       state: "uploaded" | "outcome_unknown";
       now: string;
     }>,
@@ -188,6 +216,8 @@ export interface AssetMultipartRepositoryPort {
       uploadRef: string;
       expectedVersion: bigint;
       safeReasonCode: "UPLOAD_PART_INVALID";
+      effectOperation: "complete" | "abort";
+      effectToken: string;
       eventId: string;
       correlationId: string;
       now: string;
@@ -202,6 +232,29 @@ export interface AssetMultipartRepositoryPort {
       idempotencyKey: string;
       requestDigest: string;
       receiptRef: string;
+      effectToken: string;
+      effectLeaseExpiresAt: string;
+      now: string;
+    }>,
+  ): Promise<AuthorizedAssetMultipartSnapshot>;
+  claimAbortEffect(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      claims: AssetUploadCapabilityClaims;
+      uploadRef: string;
+      expectedVersion: bigint;
+      effectToken: string;
+      effectLeaseExpiresAt: string;
+      now: string;
+    }>,
+  ): Promise<AuthorizedAssetMultipartSnapshot>;
+  releaseAbortEffect(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      claims: AssetUploadCapabilityClaims;
+      uploadRef: string;
+      expectedVersion: bigint;
+      effectToken: string;
       now: string;
     }>,
   ): Promise<AuthorizedAssetMultipartSnapshot>;
@@ -211,6 +264,7 @@ export interface AssetMultipartRepositoryPort {
       claims: AssetUploadCapabilityClaims;
       uploadRef: string;
       expectedVersion: bigint;
+      effectToken: string;
       state: "aborted" | "uploaded" | "outcome_unknown";
       now: string;
     }>,
@@ -252,12 +306,14 @@ export interface AssetMultipartStorePort {
       providerEtag: string;
       checksumSha256: string;
     }>[];
+    signal: AbortSignal;
   }>): Promise<void>;
   abort(input: Readonly<{
     storageTenantRef: string;
     storageRegion: string;
     objectRef: string;
     providerUploadId: string;
+    signal: AbortSignal;
   }>): Promise<"aborted" | "already_absent">;
   observeCompleted(input: Readonly<{
     storageTenantRef: string;
@@ -265,6 +321,7 @@ export interface AssetMultipartStorePort {
     objectRef: string;
     expectedSize: bigint;
     expectedChecksumSha256: string;
+    signal: AbortSignal;
   }>): Promise<"absent" | "exact">;
 }
 

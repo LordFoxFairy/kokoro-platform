@@ -194,6 +194,7 @@ describe("S3AssetObjectStore multipart data plane", () => {
   it("completes with the exact provider etag and per-part SHA-256", async () => {
     const send = vi.fn().mockResolvedValue({});
     const store = new S3AssetObjectStore([route], () => ({ send } as never));
+    const signal = new AbortController().signal;
 
     await store.complete({
       storageTenantRef: route.storageTenantRef,
@@ -205,6 +206,7 @@ describe("S3AssetObjectStore multipart data plane", () => {
         providerEtag: "provider-etag-01",
         checksumSha256: "a".repeat(64),
       }],
+      signal,
     });
 
     const command = send.mock.calls[0]?.[0] as CompleteMultipartUploadCommand;
@@ -214,6 +216,34 @@ describe("S3AssetObjectStore multipart data plane", () => {
       ETag: "provider-etag-01",
       ChecksumSHA256: Buffer.from("a".repeat(64), "hex").toString("base64"),
     }]);
+    expect(send.mock.calls[0]?.[1]).toEqual({ abortSignal: signal });
+  });
+
+  it("passes the same deadline signal to abort and completed-object observation", async () => {
+    const signal = new AbortController().signal;
+    const send = vi.fn()
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ VersionId: "provider_version_01", ContentLength: 1234 });
+    const store = new S3AssetObjectStore([route], () => ({ send } as never));
+
+    await expect(store.abort({
+      storageTenantRef: route.storageTenantRef,
+      storageRegion: route.storageRegion,
+      objectRef: "quarantine/opaque_0123456789",
+      providerUploadId: "provider_upload_01",
+      signal,
+    })).resolves.toBe("aborted");
+    await expect(store.observeCompleted({
+      storageTenantRef: route.storageTenantRef,
+      storageRegion: route.storageRegion,
+      objectRef: "quarantine/opaque_0123456789",
+      expectedSize: 1235n,
+      expectedChecksumSha256: "a".repeat(64),
+      signal,
+    })).rejects.toThrow("ASSET_MULTIPART_OBJECT_MISMATCH");
+
+    expect(send.mock.calls[0]?.[1]).toEqual({ abortSignal: signal });
+    expect(send.mock.calls[1]?.[1]).toEqual({ abortSignal: signal });
   });
 
   it("propagates source stream failure into the provider body and tears the pipeline down", async () => {
@@ -262,6 +292,7 @@ describe("S3AssetObjectStore multipart data plane", () => {
       objectRef: "quarantine/opaque_0123456789",
       expectedSize: 1234n,
       expectedChecksumSha256: "a".repeat(64),
+      signal: new AbortController().signal,
     })).rejects.toThrow("ASSET_MULTIPART_OBJECT_MISMATCH");
   });
 });

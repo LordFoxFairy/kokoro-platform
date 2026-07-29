@@ -305,13 +305,72 @@ export class PostgresAssetMultipartRepository implements AssetMultipartRepositor
     if (upload.completionRequestDigest !== null) {
       if (upload.completionRequestDigest !== input.requestDigest ||
           upload.completionIdempotencyKey !== input.idempotencyKey) throw new Error("UPLOAD_STATE_CONFLICT");
-      return before;
+      return this.claimCompletionEffect(transaction, {
+        claims: input.claims,
+        uploadRef: input.uploadRef,
+        expectedVersion: upload.expectedVersion,
+        effectToken: input.effectToken,
+        effectLeaseExpiresAt: input.effectLeaseExpiresAt,
+        now: input.now,
+      });
     }
     expectUpload(before, input.expectedVersion, ["uploading"]);
+    if (before.parts.some((part) => part.state !== "committed")) {
+      throw new Error("UPLOAD_STATE_CONFLICT");
+    }
     await this.updateUpload(transaction, input.claims, input.uploadRef, input.expectedVersion,
       `state='completing',outcome_operation=NULL,completion_idempotency_key=$5,
-       completion_request_digest=$6,completion_receipt_ref=$7`,
-      [input.idempotencyKey, input.requestDigest, input.receiptRef], input.now, ["uploading"]);
+       completion_request_digest=$6,completion_receipt_ref=$7,
+       completion_effect_token=$8,completion_effect_lease_expires_at=$9::timestamptz`,
+      [input.idempotencyKey, input.requestDigest, input.receiptRef, input.effectToken,
+        input.effectLeaseExpiresAt], input.now, ["uploading"]);
+    return this.required(transaction, input.claims, input.uploadRef);
+  }
+
+  async claimCompletionEffect(
+    transaction: Parameters<AssetMultipartRepositoryPort["claimCompletionEffect"]>[0],
+    input: Parameters<AssetMultipartRepositoryPort["claimCompletionEffect"]>[1],
+  ): Promise<AuthorizedAssetMultipartSnapshot> {
+    const before = await this.required(transaction, input.claims, input.uploadRef);
+    const upload = requiredUpload(before);
+    if (upload.state === "uploaded" || upload.state === "integrity_rejected") return before;
+    if (upload.state !== "completing" &&
+        !(upload.state === "outcome_unknown" && upload.outcomeOperation === "complete")) {
+      throw new Error("UPLOAD_STATE_CONFLICT");
+    }
+    const changed = await resolvePlatformTransaction(transaction).execute(
+      `UPDATE platform.asset_multipart_upload
+       SET completion_effect_token=$5,completion_effect_lease_expires_at=$6::timestamptz,
+           expected_version=expected_version+1,updated_at=$7::timestamptz
+       WHERE site_ref=$1 AND upload_ref=$2 AND expected_version=$3::bigint
+         AND capability_epoch=$4::bigint
+         AND (state='completing' OR (state='outcome_unknown' AND outcome_operation='complete'))
+         AND (completion_effect_token IS NULL OR
+              completion_effect_lease_expires_at<=$7::timestamptz)`,
+      [input.claims.siteRef, input.uploadRef, input.expectedVersion,
+        input.claims.capabilityEpoch, input.effectToken, input.effectLeaseExpiresAt, input.now],
+    );
+    return changed === 1
+      ? this.required(transaction, input.claims, input.uploadRef)
+      : before;
+  }
+
+  async releaseCompletionEffect(
+    transaction: Parameters<AssetMultipartRepositoryPort["releaseCompletionEffect"]>[0],
+    input: Parameters<AssetMultipartRepositoryPort["releaseCompletionEffect"]>[1],
+  ): Promise<AuthorizedAssetMultipartSnapshot> {
+    await this.required(transaction, input.claims, input.uploadRef);
+    const changed = await resolvePlatformTransaction(transaction).execute(
+      `UPDATE platform.asset_multipart_upload
+       SET completion_effect_token=NULL,completion_effect_lease_expires_at=NULL,
+           expected_version=expected_version+1,updated_at=$6::timestamptz
+       WHERE site_ref=$1 AND upload_ref=$2 AND expected_version=$3::bigint
+         AND capability_epoch=$4::bigint AND completion_effect_token=$5
+         AND (state='completing' OR (state='outcome_unknown' AND outcome_operation='complete'))`,
+      [input.claims.siteRef, input.uploadRef, input.expectedVersion,
+        input.claims.capabilityEpoch, input.effectToken, input.now],
+    );
+    if (changed !== 1) throw new Error("UPLOAD_STATE_CONFLICT");
     return this.required(transaction, input.claims, input.uploadRef);
   }
 
@@ -323,11 +382,19 @@ export class PostgresAssetMultipartRepository implements AssetMultipartRepositor
     if ((input.state === "uploaded" && before.upload?.state === "uploaded") ||
         (input.state === "outcome_unknown" && before.upload?.state === "outcome_unknown" &&
           before.upload.outcomeOperation === "complete")) return before;
-    await this.updateUpload(transaction, input.claims, input.uploadRef, input.expectedVersion,
-      input.state === "uploaded"
-        ? `state='uploaded',outcome_operation=NULL`
-        : `state='outcome_unknown',outcome_operation='complete'`,
-      [], input.now, ["completing", "outcome_unknown"]);
+    const changed = await resolvePlatformTransaction(transaction).execute(
+      `UPDATE platform.asset_multipart_upload
+       SET state=$6,outcome_operation=$7,completion_effect_token=NULL,
+           completion_effect_lease_expires_at=NULL,expected_version=expected_version+1,
+           updated_at=$8::timestamptz
+       WHERE site_ref=$1 AND upload_ref=$2 AND expected_version=$3::bigint
+         AND capability_epoch=$4::bigint AND completion_effect_token=$5
+         AND (state='completing' OR (state='outcome_unknown' AND outcome_operation='complete'))`,
+      [input.claims.siteRef, input.uploadRef, input.expectedVersion,
+        input.claims.capabilityEpoch, input.effectToken, input.state,
+        input.state === "outcome_unknown" ? "complete" : null, input.now],
+    );
+    if (changed !== 1) throw new Error("UPLOAD_STATE_CONFLICT");
     return this.required(transaction, input.claims, input.uploadRef);
   }
 
@@ -341,17 +408,30 @@ export class PostgresAssetMultipartRepository implements AssetMultipartRepositor
     if (input.safeReasonCode !== "UPLOAD_PART_INVALID") {
       throw new Error("UPLOAD_PART_INVALID");
     }
+    const effectColumn = input.effectOperation === "complete"
+      ? "completion_effect_token"
+      : "abort_effect_token";
+    const activeToken = input.effectOperation === "complete"
+      ? upload.completionEffectToken
+      : upload.abortEffectToken;
+    if (activeToken !== input.effectToken ||
+        (upload.state === "outcome_unknown" && upload.outcomeOperation !== input.effectOperation)) {
+      throw new Error("UPLOAD_STATE_CONFLICT");
+    }
     const sql = resolvePlatformTransaction(transaction);
     const uploads = await sql.query<UploadRow>(
       `UPDATE platform.asset_multipart_upload upload
        SET state='integrity_rejected',outcome_operation=NULL,
-           expected_version=expected_version+1,updated_at=$5::timestamptz
+           completion_effect_token=NULL,completion_effect_lease_expires_at=NULL,
+           abort_effect_token=NULL,abort_effect_lease_expires_at=NULL,
+           expected_version=expected_version+1,updated_at=$6::timestamptz
        WHERE upload.site_ref=$1 AND upload.upload_ref=$2
          AND upload.expected_version=$3::bigint AND upload.capability_epoch=$4::bigint
+         AND upload.${effectColumn}=$5
          AND upload.state IN ('completing','aborting','outcome_unknown')
        RETURNING ${UPLOAD_COLUMNS}`,
       [input.claims.siteRef, input.uploadRef, input.expectedVersion,
-        input.claims.capabilityEpoch, input.now],
+        input.claims.capabilityEpoch, input.effectToken, input.now],
     );
     const terminal = uploads[0];
     if (terminal === undefined) throw new Error("UPLOAD_STATE_CONFLICT");
@@ -410,14 +490,72 @@ export class PostgresAssetMultipartRepository implements AssetMultipartRepositor
     if (upload.abortRequestDigest !== null) {
       if (upload.abortRequestDigest !== input.requestDigest ||
           upload.abortIdempotencyKey !== input.idempotencyKey) throw new Error("UPLOAD_STATE_CONFLICT");
-      return before;
+      return this.claimAbortEffect(transaction, {
+        claims: input.claims,
+        uploadRef: input.uploadRef,
+        expectedVersion: upload.expectedVersion,
+        effectToken: input.effectToken,
+        effectLeaseExpiresAt: input.effectLeaseExpiresAt,
+        now: input.now,
+      });
     }
-    expectUpload(before, input.expectedVersion, ["uploading", "outcome_unknown"]);
+    expectUpload(before, input.expectedVersion, ["uploading"]);
+    if (before.parts.some((part) => part.state === "pending")) {
+      throw new Error("UPLOAD_STATE_CONFLICT");
+    }
     await this.updateUpload(transaction, input.claims, input.uploadRef, input.expectedVersion,
       `state='aborting',outcome_operation=NULL,abort_idempotency_key=$5,
-       abort_request_digest=$6,abort_receipt_ref=$7`,
-      [input.idempotencyKey, input.requestDigest, input.receiptRef], input.now,
-      ["uploading", "outcome_unknown"]);
+       abort_request_digest=$6,abort_receipt_ref=$7,abort_effect_token=$8,
+       abort_effect_lease_expires_at=$9::timestamptz`,
+      [input.idempotencyKey, input.requestDigest, input.receiptRef, input.effectToken,
+        input.effectLeaseExpiresAt], input.now,
+      ["uploading"]);
+    return this.required(transaction, input.claims, input.uploadRef);
+  }
+
+  async claimAbortEffect(
+    transaction: Parameters<AssetMultipartRepositoryPort["claimAbortEffect"]>[0],
+    input: Parameters<AssetMultipartRepositoryPort["claimAbortEffect"]>[1],
+  ): Promise<AuthorizedAssetMultipartSnapshot> {
+    const before = await this.required(transaction, input.claims, input.uploadRef);
+    const upload = requiredUpload(before);
+    if (upload.state === "aborted") return before;
+    if (upload.state !== "aborting" &&
+        !(upload.state === "outcome_unknown" && upload.outcomeOperation === "abort")) {
+      throw new Error("UPLOAD_STATE_CONFLICT");
+    }
+    const changed = await resolvePlatformTransaction(transaction).execute(
+      `UPDATE platform.asset_multipart_upload
+       SET abort_effect_token=$5,abort_effect_lease_expires_at=$6::timestamptz,
+           expected_version=expected_version+1,updated_at=$7::timestamptz
+       WHERE site_ref=$1 AND upload_ref=$2 AND expected_version=$3::bigint
+         AND capability_epoch=$4::bigint
+         AND (state='aborting' OR (state='outcome_unknown' AND outcome_operation='abort'))
+         AND (abort_effect_token IS NULL OR abort_effect_lease_expires_at<=$7::timestamptz)`,
+      [input.claims.siteRef, input.uploadRef, input.expectedVersion,
+        input.claims.capabilityEpoch, input.effectToken, input.effectLeaseExpiresAt, input.now],
+    );
+    return changed === 1
+      ? this.required(transaction, input.claims, input.uploadRef)
+      : before;
+  }
+
+  async releaseAbortEffect(
+    transaction: Parameters<AssetMultipartRepositoryPort["releaseAbortEffect"]>[0],
+    input: Parameters<AssetMultipartRepositoryPort["releaseAbortEffect"]>[1],
+  ): Promise<AuthorizedAssetMultipartSnapshot> {
+    await this.required(transaction, input.claims, input.uploadRef);
+    const changed = await resolvePlatformTransaction(transaction).execute(
+      `UPDATE platform.asset_multipart_upload
+       SET abort_effect_token=NULL,abort_effect_lease_expires_at=NULL,
+           expected_version=expected_version+1,updated_at=$6::timestamptz
+       WHERE site_ref=$1 AND upload_ref=$2 AND expected_version=$3::bigint
+         AND capability_epoch=$4::bigint AND abort_effect_token=$5
+         AND (state='aborting' OR (state='outcome_unknown' AND outcome_operation='abort'))`,
+      [input.claims.siteRef, input.uploadRef, input.expectedVersion,
+        input.claims.capabilityEpoch, input.effectToken, input.now],
+    );
+    if (changed !== 1) throw new Error("UPLOAD_STATE_CONFLICT");
     return this.required(transaction, input.claims, input.uploadRef);
   }
 
@@ -430,12 +568,19 @@ export class PostgresAssetMultipartRepository implements AssetMultipartRepositor
         (input.state === "uploaded" && before.upload?.state === "uploaded") ||
         (input.state === "outcome_unknown" && before.upload?.state === "outcome_unknown" &&
           before.upload.outcomeOperation === "abort")) return before;
-    const assignment = input.state === "outcome_unknown"
-      ? `state='outcome_unknown',outcome_operation='abort'`
-      : `state=$5,outcome_operation=NULL`;
-    await this.updateUpload(transaction, input.claims, input.uploadRef, input.expectedVersion,
-      assignment, input.state === "outcome_unknown" ? [] : [input.state], input.now,
-      ["aborting", "outcome_unknown"]);
+    const changed = await resolvePlatformTransaction(transaction).execute(
+      `UPDATE platform.asset_multipart_upload
+       SET state=$6,outcome_operation=$7,abort_effect_token=NULL,
+           abort_effect_lease_expires_at=NULL,expected_version=expected_version+1,
+           updated_at=$8::timestamptz
+       WHERE site_ref=$1 AND upload_ref=$2 AND expected_version=$3::bigint
+         AND capability_epoch=$4::bigint AND abort_effect_token=$5
+         AND (state='aborting' OR (state='outcome_unknown' AND outcome_operation='abort'))`,
+      [input.claims.siteRef, input.uploadRef, input.expectedVersion,
+        input.claims.capabilityEpoch, input.effectToken, input.state,
+        input.state === "outcome_unknown" ? "abort" : null, input.now],
+    );
+    if (changed !== 1) throw new Error("UPLOAD_STATE_CONFLICT");
     return this.required(transaction, input.claims, input.uploadRef);
   }
 
@@ -501,9 +646,13 @@ type UploadRow = Readonly<{
   completionIdempotencyKey: string | null;
   completionRequestDigest: string | null;
   completionReceiptRef: string | null;
+  completionEffectToken: string | null;
+  completionEffectLeaseExpiresAt: Date | string | null;
   abortIdempotencyKey: string | null;
   abortRequestDigest: string | null;
   abortReceiptRef: string | null;
+  abortEffectToken: string | null;
+  abortEffectLeaseExpiresAt: Date | string | null;
   uploadCreatedAt: Date | string | null;
   uploadUpdatedAt: Date | string | null;
 }>;
@@ -552,9 +701,17 @@ function hydrateUpload(row: UploadRow): StoredAssetMultipartUpload {
     completionIdempotencyKey: row.completionIdempotencyKey,
     completionRequestDigest: row.completionRequestDigest,
     completionReceiptRef: row.completionReceiptRef,
+    completionEffectToken: row.completionEffectToken,
+    completionEffectLeaseExpiresAt: row.completionEffectLeaseExpiresAt === null
+      ? null
+      : instant(row.completionEffectLeaseExpiresAt),
     abortIdempotencyKey: row.abortIdempotencyKey,
     abortRequestDigest: row.abortRequestDigest,
     abortReceiptRef: row.abortReceiptRef,
+    abortEffectToken: row.abortEffectToken,
+    abortEffectLeaseExpiresAt: row.abortEffectLeaseExpiresAt === null
+      ? null
+      : instant(row.abortEffectLeaseExpiresAt),
     createdAt: instant(row.uploadCreatedAt),
     updatedAt: instant(row.uploadUpdatedAt),
   });
@@ -600,9 +757,13 @@ const UPLOAD_COLUMNS = `
   upload.completion_idempotency_key AS "completionIdempotencyKey",
   upload.completion_request_digest AS "completionRequestDigest",
   upload.completion_receipt_ref AS "completionReceiptRef",
+  upload.completion_effect_token AS "completionEffectToken",
+  upload.completion_effect_lease_expires_at AS "completionEffectLeaseExpiresAt",
   upload.abort_idempotency_key AS "abortIdempotencyKey",
   upload.abort_request_digest AS "abortRequestDigest",
   upload.abort_receipt_ref AS "abortReceiptRef",
+  upload.abort_effect_token AS "abortEffectToken",
+  upload.abort_effect_lease_expires_at AS "abortEffectLeaseExpiresAt",
   upload.created_at AS "uploadCreatedAt",upload.updated_at AS "uploadUpdatedAt"`;
 
 function requiredUpload(value: AuthorizedAssetMultipartSnapshot): StoredAssetMultipartUpload {

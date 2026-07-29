@@ -213,7 +213,8 @@ export class S3AssetObjectStore implements
           "ASSET_MULTIPART_PART_OUTCOME_UNKNOWN", { cause: error },
         );
       }
-      if (sourceFailure !== null || isDeterministicPartFailure(error)) {
+      if (sourceFailure !== null || isDeterministicPartFailure(error) ||
+          definitelyRejectedProviderWrite(error)) {
         throw new AssetMultipartProviderRejectedError(
           error instanceof Error ? error.message : "ASSET_MULTIPART_PART_REJECTED",
           { cause: error },
@@ -240,18 +241,29 @@ export class S3AssetObjectStore implements
           !/^[a-f0-9]{64}$/u.test(part.checksumSha256))) {
       throw new Error("ASSET_MULTIPART_PARTS_INVALID");
     }
-    await route.client.send(new CompleteMultipartUploadCommand({
-      Bucket: route.configuration.bucket,
-      Key: input.objectRef,
-      UploadId: input.providerUploadId,
-      MultipartUpload: {
-        Parts: input.parts.map((part) => ({
-          PartNumber: part.partNumber,
-          ETag: part.providerEtag,
-          ChecksumSHA256: Buffer.from(part.checksumSha256, "hex").toString("base64"),
-        })),
-      },
-    }));
+    try {
+      await route.client.send(new CompleteMultipartUploadCommand({
+        Bucket: route.configuration.bucket,
+        Key: input.objectRef,
+        UploadId: input.providerUploadId,
+        MultipartUpload: {
+          Parts: input.parts.map((part) => ({
+            PartNumber: part.partNumber,
+            ETag: part.providerEtag,
+            ChecksumSHA256: Buffer.from(part.checksumSha256, "hex").toString("base64"),
+          })),
+        },
+      }), { abortSignal: input.signal });
+    } catch (error) {
+      if (definitelyRejectedProviderWrite(error)) {
+        throw new AssetMultipartProviderRejectedError(
+          "ASSET_MULTIPART_COMPLETION_REJECTED", { cause: error },
+        );
+      }
+      throw new AssetMultipartProviderOutcomeUnknownError(
+        "ASSET_MULTIPART_COMPLETION_OUTCOME_UNKNOWN", { cause: error },
+      );
+    }
   }
 
   async abort(input: Parameters<AssetMultipartStorePort["abort"]>[0]) {
@@ -262,17 +274,24 @@ export class S3AssetObjectStore implements
         Bucket: route.configuration.bucket,
         Key: input.objectRef,
         UploadId: input.providerUploadId,
-      }));
+      }), { abortSignal: input.signal });
       return "aborted" as const;
     } catch (error) {
       if (noSuchUpload(error)) return "already_absent" as const;
-      throw error;
+      if (definitelyRejectedProviderWrite(error)) {
+        throw new AssetMultipartProviderRejectedError(
+          "ASSET_MULTIPART_ABORT_REJECTED", { cause: error },
+        );
+      }
+      throw new AssetMultipartProviderOutcomeUnknownError(
+        "ASSET_MULTIPART_ABORT_OUTCOME_UNKNOWN", { cause: error },
+      );
     }
   }
 
   async observeCompleted(input: Parameters<AssetMultipartStorePort["observeCompleted"]>[0]) {
     const route = this.resolve(input.storageTenantRef, input.storageRegion);
-    const head = await this.head(route, input.objectRef);
+    const head = await this.head(route, input.objectRef, undefined, input.signal);
     if (head === null) return "absent" as const;
     const versionRef = immutableVersion(head);
     let observedSize: bigint;
@@ -296,6 +315,7 @@ export class S3AssetObjectStore implements
         input.objectRef,
         versionRef,
         input.expectedSize,
+        input.signal,
       );
     } catch (error) {
       if (isDeterministicSizeFailure(error)) {
@@ -438,6 +458,7 @@ export class S3AssetObjectStore implements
     route: ResolvedRoute,
     objectRef: string,
     versionRef?: string,
+    signal?: AbortSignal,
   ): Promise<HeadObjectOutput | null> {
     validateObjectRef(objectRef);
     try {
@@ -446,7 +467,7 @@ export class S3AssetObjectStore implements
         Key: objectRef,
         VersionId: versionRef,
         ChecksumMode: "ENABLED",
-      }));
+      }), signal === undefined ? undefined : { abortSignal: signal });
     } catch (error) {
       if (notFound(error)) return null;
       throw error;
@@ -458,13 +479,14 @@ export class S3AssetObjectStore implements
     objectRef: string,
     versionRef: string,
     maximumBytes: bigint,
+    signal?: AbortSignal,
   ): Promise<string> {
     const output: GetObjectOutput = await route.client.send(new GetObjectCommand({
       Bucket: route.configuration.bucket,
       Key: objectRef,
       VersionId: versionRef,
       ChecksumMode: "ENABLED",
-    }));
+    }), signal === undefined ? undefined : { abortSignal: signal });
     if (output.VersionId !== undefined && output.VersionId !== versionRef) {
       throw new Error("ASSET_OBJECT_VERSION_MISMATCH");
     }
@@ -476,11 +498,37 @@ export class S3AssetObjectStore implements
     if (typeof body[Symbol.asyncIterator] !== "function") {
       throw new Error("ASSET_OBJECT_STREAM_UNSUPPORTED");
     }
-    for await (const chunk of body) {
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      bytes += BigInt(buffer.byteLength);
-      enforceMaximum(bytes, maximumBytes);
-      hash.update(buffer);
+    const destroyable = output.Body as unknown as { destroy?: () => void };
+    if (signal !== undefined && typeof destroyable.destroy !== "function") {
+      throw new Error("ASSET_OBJECT_STREAM_ABORT_UNSUPPORTED");
+    }
+    const abortRead = () => destroyable.destroy?.();
+    if (isAborted(signal)) {
+      abortRead();
+      throw new AssetMultipartProviderOutcomeUnknownError(
+        "ASSET_MULTIPART_OBSERVATION_OUTCOME_UNKNOWN",
+      );
+    }
+    signal?.addEventListener("abort", abortRead, { once: true });
+    try {
+      for await (const chunk of body) {
+        if (isAborted(signal)) {
+          throw new AssetMultipartProviderOutcomeUnknownError(
+            "ASSET_MULTIPART_OBSERVATION_OUTCOME_UNKNOWN",
+          );
+        }
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        bytes += BigInt(buffer.byteLength);
+        enforceMaximum(bytes, maximumBytes);
+        hash.update(buffer);
+      }
+      if (isAborted(signal)) {
+        throw new AssetMultipartProviderOutcomeUnknownError(
+          "ASSET_MULTIPART_OBSERVATION_OUTCOME_UNKNOWN",
+        );
+      }
+    } finally {
+      signal?.removeEventListener("abort", abortRead);
     }
     return hash.digest("hex");
   }
@@ -632,4 +680,8 @@ function isDeterministicPartFailure(error: unknown): boolean {
     "ASSET_MULTIPART_PART_CHECKSUM_MISMATCH",
     "ASSET_MULTIPART_PROVIDER_ETAG_INVALID",
   ].includes(error.message);
+}
+
+function isAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
 }

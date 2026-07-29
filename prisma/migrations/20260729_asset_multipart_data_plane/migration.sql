@@ -24,9 +24,13 @@ CREATE TABLE platform.asset_multipart_upload (
   completion_idempotency_key TEXT CHECK (length(completion_idempotency_key) BETWEEN 16 AND 191),
   completion_request_digest CHAR(64) CHECK (completion_request_digest ~ '^[a-f0-9]{64}$'),
   completion_receipt_ref TEXT UNIQUE,
+  completion_effect_token TEXT,
+  completion_effect_lease_expires_at TIMESTAMPTZ,
   abort_idempotency_key TEXT CHECK (length(abort_idempotency_key) BETWEEN 16 AND 191),
   abort_request_digest CHAR(64) CHECK (abort_request_digest ~ '^[a-f0-9]{64}$'),
   abort_receipt_ref TEXT UNIQUE,
+  abort_effect_token TEXT,
+  abort_effect_lease_expires_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL,
   UNIQUE(site_ref,upload_ref),
@@ -43,6 +47,12 @@ CREATE TABLE platform.asset_multipart_upload (
   CHECK ((abort_idempotency_key IS NULL) = (abort_receipt_ref IS NULL)),
   CHECK ((initiation_effect_token IS NULL) = (initiation_effect_lease_expires_at IS NULL)),
   CHECK (initiation_effect_token IS NULL OR state IN ('initiating','outcome_unknown')),
+  CHECK ((completion_effect_token IS NULL) = (completion_effect_lease_expires_at IS NULL)),
+  CHECK (completion_effect_token IS NULL OR state='completing' OR
+    (state='outcome_unknown' AND outcome_operation='complete')),
+  CHECK ((abort_effect_token IS NULL) = (abort_effect_lease_expires_at IS NULL)),
+  CHECK (abort_effect_token IS NULL OR state='aborting' OR
+    (state='outcome_unknown' AND outcome_operation='abort')),
   CHECK (provider_upload_id IS NOT NULL OR state IN ('initiating','outcome_unknown'))
 );
 CREATE INDEX asset_multipart_upload_reconcile_idx
@@ -93,8 +103,8 @@ BEGIN
     OR NOT CASE OLD.state
       WHEN 'initiating' THEN NEW.state IN ('initiating','uploading','outcome_unknown')
       WHEN 'uploading' THEN NEW.state IN ('completing','aborting')
-      WHEN 'completing' THEN NEW.state IN ('uploaded','integrity_rejected','outcome_unknown')
-      WHEN 'aborting' THEN NEW.state IN ('aborted','uploaded','integrity_rejected','outcome_unknown')
+      WHEN 'completing' THEN NEW.state IN ('completing','uploaded','integrity_rejected','outcome_unknown')
+      WHEN 'aborting' THEN NEW.state IN ('aborting','aborted','uploaded','integrity_rejected','outcome_unknown')
       WHEN 'outcome_unknown' THEN NEW.state IN (
         'uploading','completing','uploaded','aborting','aborted','integrity_rejected','outcome_unknown'
       )

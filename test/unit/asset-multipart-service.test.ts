@@ -169,7 +169,10 @@ describe("AssetMultipartService", () => {
 
   it("durably rejects a completed object with deterministic integrity mismatch", async () => {
     const uploading = snapshot("uploading", 1n);
-    const completing = snapshot("completing", 2n);
+    const completing = uploadSnapshot(snapshot("completing", 2n), {
+      completionEffectToken: "completion_effect_token_01",
+      completionEffectLeaseExpiresAt: "2026-07-29T12:03:00.000Z",
+    });
     const rejected = snapshot("integrity_rejected", 3n);
     const repository = {
       readAuthorized: vi.fn().mockResolvedValue(uploading),
@@ -186,6 +189,7 @@ describe("AssetMultipartService", () => {
       store,
       reference: references([
         "completion_receipt_01",
+        "completion_effect_token_01",
         "0198577b-4a7c-7abc-8abc-0123456789ab",
       ]),
       clock: () => new Date("2026-07-29T12:01:00.000Z"),
@@ -210,7 +214,10 @@ describe("AssetMultipartService", () => {
 
   it("records an observed completed object and rejects abort even when provider upload is absent", async () => {
     const uploading = snapshot("uploading", 1n);
-    const aborting = snapshot("aborting", 2n);
+    const aborting = uploadSnapshot(snapshot("aborting", 2n), {
+      abortEffectToken: "abort_effect_token_01",
+      abortEffectLeaseExpiresAt: "2026-07-29T12:03:00.000Z",
+    });
     const uploaded = snapshot("uploaded", 3n);
     const repository = {
       readAuthorized: vi.fn().mockResolvedValue(uploading),
@@ -225,7 +232,7 @@ describe("AssetMultipartService", () => {
       unitOfWork: unitOfWork(),
       repository,
       store,
-      reference: references(["abort_receipt_0001"]),
+      reference: references(["abort_receipt_0001", "abort_effect_token_01"]),
       clock: () => new Date("2026-07-29T12:01:00.000Z"),
     });
 
@@ -243,7 +250,10 @@ describe("AssetMultipartService", () => {
 
   it("keeps abort outcome unknown when transport failed and only the completed object is absent", async () => {
     const uploading = snapshot("uploading", 1n);
-    const aborting = snapshot("aborting", 2n);
+    const aborting = uploadSnapshot(snapshot("aborting", 2n), {
+      abortEffectToken: "abort_effect_token_02",
+      abortEffectLeaseExpiresAt: "2099-07-29T12:03:00.000Z",
+    });
     const unknown = snapshot("outcome_unknown", 3n);
     const repository = {
       readAuthorized: vi.fn().mockResolvedValue(uploading),
@@ -251,12 +261,14 @@ describe("AssetMultipartService", () => {
       finishAbort: vi.fn().mockResolvedValue(unknown),
     } as unknown as AssetMultipartRepositoryPort;
     const store = {
-      abort: vi.fn().mockRejectedValue(new Error("transport_timeout")),
+      abort: vi.fn().mockRejectedValue(
+        new AssetMultipartProviderOutcomeUnknownError("transport_timeout"),
+      ),
       observeCompleted: vi.fn().mockResolvedValue("absent"),
     } as unknown as AssetMultipartStorePort;
     const service = new AssetMultipartService({
       unitOfWork: unitOfWork(), repository, store,
-      reference: references(["abort_receipt_0002"]),
+      reference: references(["abort_receipt_0002", "abort_effect_token_02"]),
     });
 
     await expect(service.abort({
@@ -417,6 +429,207 @@ describe("AssetMultipartService", () => {
       state: "outcome_unknown",
     }));
   });
+
+  it("allows only the durable completion effect owner to invoke CompleteMultipartUpload", async () => {
+    const uploading = snapshot("uploading", 1n);
+    const ownedByAnotherCall = uploadSnapshot(snapshot("completing", 2n), {
+      completionEffectToken: "winning_completion_effect_01",
+      completionEffectLeaseExpiresAt: "2026-07-29T12:03:00.000Z",
+    });
+    const repository = {
+      readAuthorized: vi.fn().mockResolvedValue(uploading),
+      beginCompletion: vi.fn().mockResolvedValue(ownedByAnotherCall),
+    } as unknown as AssetMultipartRepositoryPort;
+    const store = {
+      complete: vi.fn(),
+      observeCompleted: vi.fn(),
+    } as unknown as AssetMultipartStorePort;
+    const service = new AssetMultipartService({
+      unitOfWork: unitOfWork(), repository, store,
+      reference: references(["completion_receipt_01", "losing_completion_effect_01"]),
+      clock: () => new Date("2026-07-29T12:01:00.000Z"),
+    });
+
+    await expect(service.complete({
+      claims,
+      uploadRef: "multipart_upload_01",
+      expectedVersion: 1n,
+      expectedSize: 1234n,
+      expectedChecksumSha256: "a".repeat(64),
+      parts: [{ partNumber: 1, partReceipt: "multipart_part_receipt_01" }],
+      idempotencyKey: "completion-key-0001",
+    })).resolves.toBe(ownedByAnotherCall);
+    expect(store.complete).not.toHaveBeenCalled();
+    expect(store.observeCompleted).not.toHaveBeenCalled();
+  });
+
+  it("reconciles and safely resubmits only the frozen upload when completion was unknown", async () => {
+    const unknown = uploadSnapshot(snapshot("outcome_unknown", 3n), {
+      outcomeOperation: "complete",
+      completionEffectToken: null,
+      completionEffectLeaseExpiresAt: null,
+    });
+    const claimed = uploadSnapshot(unknown, {
+      expectedVersion: 4n,
+      completionEffectToken: "completion_effect_token_01",
+      completionEffectLeaseExpiresAt: "2026-07-29T12:03:00.000Z",
+    });
+    const uploaded = uploadSnapshot(snapshot("uploaded", 5n), {
+      completionEffectToken: null,
+      completionEffectLeaseExpiresAt: null,
+    });
+    const repository = {
+      readAuthorized: vi.fn().mockResolvedValue(unknown),
+      claimCompletionEffect: vi.fn().mockResolvedValue(claimed),
+      finishCompletion: vi.fn().mockResolvedValue(uploaded),
+    } as unknown as AssetMultipartRepositoryPort;
+    const store = {
+      observeCompleted: vi.fn()
+        .mockResolvedValueOnce("absent")
+        .mockResolvedValueOnce("exact"),
+      complete: vi.fn().mockResolvedValue(undefined),
+    } as unknown as AssetMultipartStorePort;
+    const service = new AssetMultipartService({
+      unitOfWork: unitOfWork(), repository, store,
+      reference: references(["completion_effect_token_01"]),
+      clock: () => new Date("2026-07-29T12:01:00.000Z"),
+    });
+
+    await expect(service.status(claims, "multipart_upload_01")).resolves.toMatchObject({
+      upload: { state: "uploaded" },
+    });
+    expect(store.complete).toHaveBeenCalledOnce();
+    expect(store.complete).toHaveBeenCalledWith(expect.objectContaining({
+      providerUploadId: "provider_upload_01",
+      parts: [expect.objectContaining({ partNumber: 1, providerEtag: "provider-etag-01" })],
+      signal: expect.any(AbortSignal),
+    }));
+  });
+
+  it("allows only the durable abort effect owner to invoke AbortMultipartUpload", async () => {
+    const uploading = snapshot("uploading", 1n);
+    const ownedByAnotherCall = uploadSnapshot(snapshot("aborting", 2n), {
+      abortEffectToken: "winning_abort_effect_01",
+      abortEffectLeaseExpiresAt: "2026-07-29T12:03:00.000Z",
+    });
+    const repository = {
+      readAuthorized: vi.fn().mockResolvedValue(uploading),
+      beginAbort: vi.fn().mockResolvedValue(ownedByAnotherCall),
+    } as unknown as AssetMultipartRepositoryPort;
+    const store = {
+      abort: vi.fn(),
+      observeCompleted: vi.fn(),
+    } as unknown as AssetMultipartStorePort;
+    const service = new AssetMultipartService({
+      unitOfWork: unitOfWork(), repository, store,
+      reference: references(["abort_receipt_0001", "losing_abort_effect_01"]),
+      clock: () => new Date("2026-07-29T12:01:00.000Z"),
+    });
+
+    await expect(service.abort({
+      claims,
+      uploadRef: "multipart_upload_01",
+      expectedVersion: 1n,
+      idempotencyKey: "abort-idempotency-01",
+    })).resolves.toBe(ownedByAnotherCall);
+    expect(store.abort).not.toHaveBeenCalled();
+    expect(store.observeCompleted).not.toHaveBeenCalled();
+  });
+
+  it("aborts complete and abort provider calls before their durable leases can be reclaimed", async () => {
+    const uploading = snapshot("uploading", 1n);
+    const completing = uploadSnapshot(snapshot("completing", 2n), {
+      completionEffectToken: "completion_effect_token_01",
+      completionEffectLeaseExpiresAt: "2099-07-29T12:03:00.000Z",
+    });
+    const unknown = uploadSnapshot(snapshot("outcome_unknown", 3n), {
+      outcomeOperation: "complete",
+      completionEffectToken: null,
+      completionEffectLeaseExpiresAt: null,
+    });
+    const repository = {
+      readAuthorized: vi.fn().mockResolvedValue(uploading),
+      beginCompletion: vi.fn().mockResolvedValue(completing),
+      finishCompletion: vi.fn().mockResolvedValue(unknown),
+    } as unknown as AssetMultipartRepositoryPort;
+    const signals: AbortSignal[] = [];
+    const waitForDeadline = vi.fn(async (input: { signal: AbortSignal }) => {
+      signals.push(input.signal);
+      await new Promise<void>((_resolve, reject) => input.signal.addEventListener(
+        "abort", () => reject(new AssetMultipartProviderOutcomeUnknownError("provider_deadline")),
+        { once: true },
+      ));
+    });
+    const store = {
+      complete: waitForDeadline,
+      observeCompleted: vi.fn(async (input: { signal: AbortSignal }) => {
+        signals.push(input.signal);
+        throw new AssetMultipartProviderOutcomeUnknownError("observation_deadline");
+      }),
+    } as unknown as AssetMultipartStorePort;
+    const service = new AssetMultipartService({
+      unitOfWork: unitOfWork(), repository, store,
+      reference: references(["completion_receipt_01", "completion_effect_token_01"]),
+      providerEffectTimeoutMs: 5,
+    });
+
+    await expect(service.complete({
+      claims,
+      uploadRef: "multipart_upload_01",
+      expectedVersion: 1n,
+      expectedSize: 1234n,
+      expectedChecksumSha256: "a".repeat(64),
+      parts: [{ partNumber: 1, partReceipt: "multipart_part_receipt_01" }],
+      idempotencyKey: "completion-key-0001",
+    })).resolves.toMatchObject({ upload: { state: "outcome_unknown" } });
+    expect(signals.length).toBeGreaterThan(0);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+    expect(repository.finishCompletion).toHaveBeenCalledWith(expect.anything(),
+      expect.objectContaining({ effectToken: "completion_effect_token_01" }));
+  });
+
+  it("reconciles and safely resubmits abort only for the frozen provider upload", async () => {
+    const unknown = uploadSnapshot(snapshot("outcome_unknown", 3n), {
+      outcomeOperation: "abort",
+      abortEffectToken: null,
+      abortEffectLeaseExpiresAt: null,
+    });
+    const claimed = uploadSnapshot(unknown, {
+      expectedVersion: 4n,
+      abortEffectToken: "abort_effect_token_01",
+      abortEffectLeaseExpiresAt: "2026-07-29T12:03:00.000Z",
+    });
+    const aborted = uploadSnapshot(snapshot("aborting", 5n), {
+      state: "aborted",
+      abortEffectToken: null,
+      abortEffectLeaseExpiresAt: null,
+    });
+    const repository = {
+      readAuthorized: vi.fn().mockResolvedValue(unknown),
+      claimAbortEffect: vi.fn().mockResolvedValue(claimed),
+      finishAbort: vi.fn().mockResolvedValue(aborted),
+    } as unknown as AssetMultipartRepositoryPort;
+    const store = {
+      observeCompleted: vi.fn().mockResolvedValue("absent"),
+      abort: vi.fn().mockResolvedValue("aborted"),
+    } as unknown as AssetMultipartStorePort;
+    const service = new AssetMultipartService({
+      unitOfWork: unitOfWork(), repository, store,
+      reference: references(["abort_effect_token_01"]),
+      clock: () => new Date("2026-07-29T12:01:00.000Z"),
+    });
+
+    await expect(service.status(claims, "multipart_upload_01")).resolves.toMatchObject({
+      upload: { state: "aborted" },
+    });
+    expect(store.abort).toHaveBeenCalledOnce();
+    expect(store.abort).toHaveBeenCalledWith(expect.objectContaining({
+      providerUploadId: "provider_upload_01",
+      signal: expect.any(AbortSignal),
+    }));
+    expect(repository.finishAbort).toHaveBeenCalledWith(expect.anything(),
+      expect.objectContaining({ effectToken: "abort_effect_token_01", state: "aborted" }));
+  });
 });
 
 function snapshot(
@@ -446,9 +659,13 @@ function snapshot(
       completionIdempotencyKey: state === "uploading" ? null : "completion-key-0001",
       completionRequestDigest: state === "uploading" ? null : "c".repeat(64),
       completionReceiptRef: state === "uploading" ? null : "completion_receipt_01",
+      completionEffectToken: null,
+      completionEffectLeaseExpiresAt: null,
       abortIdempotencyKey: null,
       abortRequestDigest: null,
       abortReceiptRef: null,
+      abortEffectToken: null,
+      abortEffectLeaseExpiresAt: null,
       createdAt: "2026-07-29T12:00:00.000Z",
       updatedAt: "2026-07-29T12:01:00.000Z",
     }),
@@ -466,6 +683,16 @@ function snapshot(
       effectLeaseExpiresAt: partState === "pending" ? "2026-07-29T12:01:30.000Z" : null,
     })]),
   });
+}
+
+function uploadSnapshot(
+  value: AuthorizedAssetMultipartSnapshot,
+  overrides: Readonly<Record<string, unknown>>,
+): AuthorizedAssetMultipartSnapshot {
+  return Object.freeze({
+    ...value,
+    upload: Object.freeze({ ...value.upload!, ...overrides }),
+  }) as AuthorizedAssetMultipartSnapshot;
 }
 
 function initiationSnapshot(

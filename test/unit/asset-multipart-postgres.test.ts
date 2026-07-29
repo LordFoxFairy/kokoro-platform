@@ -128,6 +128,88 @@ describe("PostgresAssetMultipartRepository", () => {
     }
   });
 
+  it("does not transfer a live completion effect lease to an exact concurrent retry", async () => {
+    const active = uploadRow({
+      uploadState: "completing",
+      uploadExpectedVersion: 2n,
+      completionIdempotencyKey: "completion-key-0001",
+      completionRequestDigest: "c".repeat(64),
+      completionReceiptRef: "completion_receipt_01",
+      completionEffectToken: "active_completion_effect_01",
+      completionEffectLeaseExpiresAt: "2026-07-29T12:03:00.000Z",
+    });
+    const sql = multipartSql(active, 0);
+    const lease = issuePlatformTransaction(sql);
+    try {
+      await expect(new PostgresAssetMultipartRepository().claimCompletionEffect(
+        lease.transaction,
+        {
+          claims,
+          uploadRef: "multipart_upload_01",
+          expectedVersion: 2n,
+          effectToken: "losing_completion_effect_01",
+          effectLeaseExpiresAt: "2026-07-29T12:04:00.000Z",
+          now: "2026-07-29T12:01:00.000Z",
+        },
+      )).resolves.toMatchObject({
+        upload: { completionEffectToken: "active_completion_effect_01" },
+      });
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("reclaims an expired abort effect lease with version and token fencing", async () => {
+    let reads = 0;
+    const before = uploadRow({
+      uploadState: "outcome_unknown",
+      outcomeOperation: "abort",
+      uploadExpectedVersion: 3n,
+      abortIdempotencyKey: "abort-idempotency-01",
+      abortRequestDigest: "d".repeat(64),
+      abortReceiptRef: "abort_receipt_0001",
+      abortEffectToken: null,
+      abortEffectLeaseExpiresAt: null,
+    });
+    const after = { ...before, uploadExpectedVersion: 4n,
+      abortEffectToken: "new_abort_effect_01",
+      abortEffectLeaseExpiresAt: "2026-07-29T12:03:00.000Z" };
+    const sql: PlatformSqlTransaction = {
+      query: async <Row extends Record<string, unknown>>(statement: string): Promise<readonly Row[]> => {
+        if (statement.includes("FROM platform.asset_upload_intent intent")) {
+          return rows<Row>({ authoritySiteRef: claims.siteRef,
+            authorityIntentRef: claims.intentRef, authoritySessionRef: claims.sessionRef });
+        }
+        if (statement.includes("FROM platform.asset_multipart_upload upload")) {
+          reads += 1;
+          return rows<Row>(reads === 1 ? before : after);
+        }
+        if (statement.includes("FROM platform.asset_multipart_part")) return [];
+        throw new Error(`unexpected query: ${statement}`);
+      },
+      execute: async (statement, parameters) => {
+        expect(statement).toContain("abort_effect_token=$5");
+        expect(parameters?.[4]).toBe("new_abort_effect_01");
+        return 1;
+      },
+    };
+    const lease = issuePlatformTransaction(sql);
+    try {
+      await expect(new PostgresAssetMultipartRepository().claimAbortEffect(lease.transaction, {
+        claims,
+        uploadRef: "multipart_upload_01",
+        expectedVersion: 3n,
+        effectToken: "new_abort_effect_01",
+        effectLeaseExpiresAt: "2026-07-29T12:03:00.000Z",
+        now: "2026-07-29T12:01:00.000Z",
+      })).resolves.toMatchObject({
+        upload: { expectedVersion: 4n, abortEffectToken: "new_abort_effect_01" },
+      });
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
   it("locks owner authority before locking the non-null multipart row separately", async () => {
     const statements: string[] = [];
     const sql: PlatformSqlTransaction = {
@@ -212,13 +294,16 @@ describe("PostgresAssetMultipartRepository", () => {
           return rows<Row>(uploadRow({ uploadState: "completing", uploadExpectedVersion: 2n,
             completionIdempotencyKey: "completion-key-0001",
             completionRequestDigest: "c".repeat(64),
-            completionReceiptRef: "completion_receipt_01" }));
+            completionReceiptRef: "completion_receipt_01",
+            completionEffectToken: "completion_effect_token_01",
+            completionEffectLeaseExpiresAt: "2026-07-29T12:01:30.000Z" }));
         }
         if (statement.includes("UPDATE platform.asset_multipart_upload upload")) {
           return rows<Row>(uploadRow({ uploadState: "integrity_rejected", uploadExpectedVersion: 3n,
             completionIdempotencyKey: "completion-key-0001",
             completionRequestDigest: "c".repeat(64),
-            completionReceiptRef: "completion_receipt_01" }));
+            completionReceiptRef: "completion_receipt_01",
+            completionEffectToken: null, completionEffectLeaseExpiresAt: null }));
         }
         if (statement.includes("UPDATE platform.asset_upload_session session")) {
           return rows<Row>({ expectedVersion: 3n });
@@ -238,6 +323,8 @@ describe("PostgresAssetMultipartRepository", () => {
         uploadRef: "multipart_upload_01",
         expectedVersion: 2n,
         safeReasonCode: "UPLOAD_PART_INVALID",
+        effectOperation: "complete",
+        effectToken: "completion_effect_token_01",
         eventId: "0198577b-4a7c-7abc-8abc-0123456789ab",
         correlationId: "completion_receipt_01",
         now: "2026-07-29T12:01:00.000Z",
@@ -276,9 +363,13 @@ function uploadRow(overrides: Readonly<Record<string, unknown>> = {}) {
     completionIdempotencyKey: null,
     completionRequestDigest: null,
     completionReceiptRef: null,
+    completionEffectToken: null,
+    completionEffectLeaseExpiresAt: null,
     abortIdempotencyKey: null,
     abortRequestDigest: null,
     abortReceiptRef: null,
+    abortEffectToken: null,
+    abortEffectLeaseExpiresAt: null,
     uploadCreatedAt: "2026-07-29T12:00:00.000Z",
     uploadUpdatedAt: "2026-07-29T12:00:00.000Z",
     ...overrides,
@@ -287,4 +378,22 @@ function uploadRow(overrides: Readonly<Record<string, unknown>> = {}) {
 
 function rows<Row extends Record<string, unknown>>(value: Record<string, unknown>): readonly Row[] {
   return [value as Row];
+}
+
+function multipartSql(
+  upload: Readonly<Record<string, unknown>>,
+  changed: number,
+): PlatformSqlTransaction {
+  return {
+    query: async <Row extends Record<string, unknown>>(statement: string): Promise<readonly Row[]> => {
+      if (statement.includes("FROM platform.asset_upload_intent intent")) {
+        return rows<Row>({ authoritySiteRef: claims.siteRef,
+          authorityIntentRef: claims.intentRef, authoritySessionRef: claims.sessionRef });
+      }
+      if (statement.includes("FROM platform.asset_multipart_upload upload")) return rows<Row>(upload);
+      if (statement.includes("FROM platform.asset_multipart_part")) return [];
+      throw new Error(`unexpected query: ${statement}`);
+    },
+    execute: async () => changed,
+  };
 }
