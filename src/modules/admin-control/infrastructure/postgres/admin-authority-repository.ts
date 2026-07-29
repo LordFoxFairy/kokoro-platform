@@ -267,7 +267,8 @@ export class PostgresAdminAuthorityRepository implements
     transaction: PlatformTransaction,
     now: string,
   ): Promise<number> {
-    return resolvePlatformTransaction(transaction).execute(
+    const sql = resolvePlatformTransaction(transaction);
+    const pending = await sql.execute(
       `UPDATE platform.admin_approval approval
        SET state=CASE WHEN approval.expires_at<=$1::timestamptz THEN 'expired'
                       ELSE 'stale_authority' END,
@@ -290,6 +291,23 @@ export class PostgresAdminAuthorityRepository implements
               OR maker.expires_at<=$1::timestamptz)`,
       [now],
     );
+    const orphaned = await sql.execute(
+      `UPDATE platform.admin_approval approval
+       SET state='effect_rejected',revision=approval.revision+1,
+           result=jsonb_build_object('code','ADMIN_EXECUTION_ORPHANED'),
+           result_digest='93cfcb5bcd27b14942713e2c8defad6697d7715eba1c89c7089d38b02b96905b',
+           terminal_reason='ADMIN_EXECUTION_ORPHANED',updated_at=$1::timestamptz
+       WHERE approval.state='execution_queued'
+         AND approval.updated_at<=$1::timestamptz-make_interval(mins => 5)
+         AND NOT EXISTS (
+           SELECT 1 FROM platform.outbox_event event
+           WHERE event.owner='admin-execution'
+             AND event.aggregate_id=approval.approval_ref::text
+             AND event.state IN ('pending','leased')
+         )`,
+      [now],
+    );
+    return pending + orphaned;
   }
 
   async terminalizePostEffectReviews(

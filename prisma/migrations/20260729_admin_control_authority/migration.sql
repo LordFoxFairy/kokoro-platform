@@ -534,7 +534,7 @@ CREATE POLICY admin_approval_site_control_plane
           OR (state IN ('executed','effect_rejected','stale_authority')
               AND current_setting('app.admin_execution',true)='true')))
     OR
-    (state IN ('expired','stale_authority')
+    (state IN ('expired','stale_authority','effect_rejected')
      AND current_setting('app.workload_kind',true)='platform_worker'
      AND current_setting('app.operation',true)='admin.terminalize')
   );

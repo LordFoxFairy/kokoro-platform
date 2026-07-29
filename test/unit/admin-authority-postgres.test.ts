@@ -66,4 +66,22 @@ describe("PostgresAdminAuthorityRepository", () => {
       revokePlatformTransaction(lease);
     }
   });
+
+  it("terminalizes dead-lettered or missing execution events instead of leaving approvals queued", async () => {
+    const statements: string[] = [];
+    const lease = issuePlatformTransaction({
+      query: async () => [],
+      execute: async (statement) => { statements.push(statement); return 1; },
+    });
+    try {
+      await expect(new PostgresAdminAuthorityRepository().terminalizeApprovals(
+        lease.transaction, "2026-07-29T12:00:00.000Z",
+      )).resolves.toBe(2);
+      expect(statements[1]).toContain("approval.state='execution_queued'");
+      expect(statements[1]).toContain("event.state IN ('pending','leased')");
+      expect(statements[1]).toContain("ADMIN_EXECUTION_ORPHANED");
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
 });
