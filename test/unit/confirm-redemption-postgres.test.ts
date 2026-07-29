@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import { PostgresRedemptionConfirmationRepository } from
   "../../src/modules/commerce/infrastructure/postgres/redemption-confirmation-repository.js";
 import { issuePlatformTransaction, revokePlatformTransaction, type PlatformSqlTransaction } from
@@ -6,6 +7,7 @@ import { issuePlatformTransaction, revokePlatformTransaction, type PlatformSqlTr
 import { publishedFulfillmentOutputPlanDigest, redemptionPreviewDigest, redemptionSafeTermsSchema } from
   "../../src/modules/commerce/domain/redemption-preview.js";
 import { CommerceLockSequence } from "../../src/workflows/commerce/lock-order.js";
+import { commerceCanonicalJson } from "../../src/modules/commerce/domain/canonical-json.js";
 
 describe("PostgresRedemptionConfirmationRepository", () => {
   it("rejects an expired Preview before any claim or fulfillment mutation", async () => {
@@ -57,6 +59,7 @@ describe("PostgresRedemptionConfirmationRepository", () => {
     const statements: string[] = [];
     const commerceCalls: string[] = [];
     const events: unknown[] = [];
+    const audits: unknown[] = [];
     const output = entitlementOutput();
     const preview = validPreviewRow([output]);
     const lease = issuePlatformTransaction({
@@ -83,7 +86,7 @@ describe("PostgresRedemptionConfirmationRepository", () => {
         recordActualOutputs: async () => { commerceCalls.push("actual"); },
         completeFulfillment: async () => { commerceCalls.push("complete"); },
         linkOutboxEvent: async () => { commerceCalls.push("link"); },
-        recordAudit: async () => { commerceCalls.push("audit"); },
+        recordAudit: async (_transaction, audit) => { commerceCalls.push("audit"); audits.push(audit); },
       },
       outbox: { enqueue: async (_transaction, event) => { events.push(event); } },
       reference: referenceFactory(),
@@ -106,6 +109,9 @@ describe("PostgresRedemptionConfirmationRepository", () => {
         .toBe(true);
       expect(JSON.stringify(events)).not.toContain("previewCredential");
       expect(JSON.stringify(events)).not.toContain("credentialDigest");
+      const receiptDigest = result.kind === "succeeded" ? result.receipt.outputSetDigest : null;
+      expect((events[0] as { payload: { outputSetDigest: string } }).payload.outputSetDigest).toBe(receiptDigest);
+      expect((audits[0] as { payloadDigest: string }).payloadDigest).toBe(receiptDigest);
     } finally {
       revokePlatformTransaction(lease);
     }
@@ -250,7 +256,9 @@ describe("PostgresRedemptionConfirmationRepository", () => {
           commandId: confirmationInput().commandId,
           redemptionId: "00000000-0000-7000-8000-000000000301",
           fulfillmentRef: "00000000-0000-7000-8000-000000000302",
-          outputSetDigest: "a".repeat(64), planRef: null, planVersionRef: null,
+          outputSetDigest: outputSetDigest([{ kind: "entitlement_grant", outputLineId: "entitlement",
+            resourceRef: "00000000-0000-7000-8000-000000000303", templateRevisionRef: "entitlement-v1" }]),
+          planRef: null, planVersionRef: null,
           productRef: "product-1", productVersionRef: "product-v1",
           redeemedAt: new Date("2026-07-29T01:00:00.000Z"), safeCodeFingerprint: "CODE-0123456789ABCDEF",
           state: "fulfilled", stateObservedAt: new Date("2026-07-29T01:00:00.000Z"),
@@ -271,6 +279,70 @@ describe("PostgresRedemptionConfirmationRepository", () => {
         commandUpdatedAt: "2026-07-29T01:00:01.000Z", state: "fulfilled",
         outputs: [{ kind: "entitlement_grant", outputLineId: "entitlement" }], reversalRefs: [],
       } });
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("recovers a command cursor only by the authenticated actor's idempotency key", async () => {
+    const statements: string[] = [];
+    const lease = issuePlatformTransaction({
+      query: async (statement) => {
+        statements.push(statement);
+        if (statement.includes("receipt.idempotency_key")) return [{
+          commandId: confirmationInput().commandId, requestDigest: "d".repeat(64), state: "pending",
+          commandReceivedAt: new Date("2026-07-29T01:00:00.000Z"),
+          commandUpdatedAt: new Date("2026-07-29T01:00:01.000Z"),
+        }] as never;
+        return [];
+      },
+      execute: async () => 0,
+    });
+    try {
+      await expect(new PostgresRedemptionConfirmationRepository().findConfirmationByIdempotencyKey(
+        lease.transaction,
+        { siteId: "site-1", subjectId: "subject-1", subjectGeneration: "2", idempotencyKey: "confirm-1" },
+      )).resolves.toEqual({
+        commandId: confirmationInput().commandId, requestDigest: "d".repeat(64),
+        confirmation: { state: "pending", commandReceivedAt: "2026-07-29T01:00:00.000Z",
+          commandUpdatedAt: "2026-07-29T01:00:01.000Z" },
+      });
+      expect(statements[0]).toContain("command.actor_subject=$2");
+      expect(statements[0]).toContain("command.actor_generation=$3::bigint");
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("loads a receipt by Redemption id with actor ownership and canonical output ordering", async () => {
+    const statements: string[] = [];
+    const output = { kind: "entitlement_grant" as const, outputLineId: "entitlement",
+      resourceRef: "00000000-0000-7000-8000-000000000303", templateRevisionRef: "entitlement-v1" };
+    const lease = issuePlatformTransaction({
+      query: async (statement) => {
+        statements.push(statement);
+        if (statement.includes("redemption.redemption_id=$1::uuid")) return [{
+          commandId: confirmationInput().commandId,
+          redemptionId: "00000000-0000-7000-8000-000000000301",
+          fulfillmentRef: "00000000-0000-7000-8000-000000000302",
+          outputSetDigest: outputSetDigest([output]), planRef: null, planVersionRef: null,
+          productRef: "product-1", productVersionRef: "product-v1",
+          redeemedAt: new Date("2026-07-29T01:00:00.000Z"), safeCodeFingerprint: "CODE-0123456789ABCDEF",
+          state: "fulfilled", stateObservedAt: new Date("2026-07-29T01:00:00.000Z"),
+        }] as never;
+        if (statement.includes("FROM platform.commerce_fulfillment_actual_output actual")) return [output] as never;
+        return [];
+      },
+      execute: async () => 0,
+    });
+    try {
+      await expect(new PostgresRedemptionConfirmationRepository().findRedemptionReceipt(
+        lease.transaction,
+        { siteId: "site-1", subjectId: "subject-1", subjectGeneration: "2",
+          redemptionId: "00000000-0000-7000-8000-000000000301" },
+      )).resolves.toMatchObject({ outputs: [output], state: "fulfilled" });
+      expect(statements[0]).toContain("command.actor_subject=$3");
+      expect(statements[1]).toContain("ORDER BY expected.ordinal,actual.occurrence");
     } finally {
       revokePlatformTransaction(lease);
     }
@@ -526,4 +598,8 @@ function noOpCommerce() {
     linkOutboxEvent: async () => undefined,
     recordAudit: async () => undefined,
   };
+}
+
+function outputSetDigest(outputs: readonly Record<string, string>[]): string {
+  return createHash("sha256").update(commerceCanonicalJson({ version: 1, outputs }), "utf8").digest("hex");
 }

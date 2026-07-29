@@ -27,6 +27,14 @@ export type StoredRedemptionReceipt = Readonly<{
   reversalRefs: readonly string[];
 }>;
 
+export type RedemptionReceiptRecord = Omit<StoredRedemptionReceipt, "commandReceivedAt" | "commandUpdatedAt">;
+
+export type RecoveredRedemptionCommand = Readonly<{
+  commandId: string;
+  requestDigest: string;
+  confirmation: StoredRedemptionConfirmation;
+}>;
+
 export type ConfirmRedemptionRepositoryInput = Readonly<{
   siteId: string;
   subjectId: string;
@@ -78,4 +86,22 @@ export interface RedemptionConfirmationRepository {
       commandId: string;
     }>,
   ): Promise<StoredRedemptionConfirmation | null>;
+  findConfirmationByIdempotencyKey(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      siteId: string;
+      subjectId: string;
+      subjectGeneration: string;
+      idempotencyKey: string;
+    }>,
+  ): Promise<RecoveredRedemptionCommand | null>;
+  findRedemptionReceipt(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      siteId: string;
+      subjectId: string;
+      subjectGeneration: string;
+      redemptionId: string;
+    }>,
+  ): Promise<RedemptionReceiptRecord | null>;
 }

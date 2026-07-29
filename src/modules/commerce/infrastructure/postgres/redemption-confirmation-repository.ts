@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type {
   RedemptionConfirmationRepository,
   RedemptionOutputReceipt,
+  RedemptionReceiptRecord,
   StoredRedemptionConfirmation,
 } from "../../application/contracts/redemption-confirmation-repository.js";
 import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
@@ -111,6 +112,29 @@ type PreparedSubscription = Readonly<{
 }>;
 
 type PreparedSubscriptionTerm = Readonly<{ startsAt: string; endsAt: string }>;
+
+type ConfirmationCommandRow = Record<string, unknown> & {
+  commandId: string;
+  requestDigest: string;
+  state: "pending" | "succeeded" | "failed" | "outcome_unknown";
+  commandReceivedAt: Date | string;
+  commandUpdatedAt: Date | string;
+};
+
+type RedemptionReceiptRow = Record<string, unknown> & {
+  commandId: string;
+  redemptionId: string;
+  fulfillmentRef: string;
+  outputSetDigest: string;
+  planRef: string | null;
+  planVersionRef: string | null;
+  productRef: string;
+  productVersionRef: string;
+  redeemedAt: Date | string;
+  safeCodeFingerprint: string;
+  state: "fulfilled" | "reversed" | "reconciliation_required";
+  stateObservedAt: Date | string;
+};
 
 export class PostgresRedemptionConfirmationRepository implements RedemptionConfirmationRepository {
   readonly #commerce: CommerceFulfillmentWriter;
@@ -407,7 +431,7 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
       commandId: input.commandId,
       siteId: input.siteId,
       eventType: "commerce.redemption.fulfilled",
-      payloadDigest: eventDigest,
+      payloadDigest: outputSetDigest,
     });
     return Object.freeze({
       kind: "succeeded" as const,
@@ -437,75 +461,39 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
     input: Parameters<RedemptionConfirmationRepository["findConfirmationByCommand"]>[1],
   ): Promise<StoredRedemptionConfirmation | null> {
     const sql = resolvePlatformTransaction(transaction);
-    const commands = await sql.query<Record<string, unknown> & {
-      state: "pending" | "succeeded" | "failed" | "outcome_unknown";
-      commandReceivedAt: Date | string;
-      commandUpdatedAt: Date | string;
-    }>(CONFIRMATION_COMMAND_SQL, [input.commandId, input.siteId, input.subjectId, input.subjectGeneration]);
+    const commands = await sql.query<ConfirmationCommandRow>(CONFIRMATION_COMMAND_SQL, [
+      input.commandId, input.siteId, input.subjectId, input.subjectGeneration,
+    ]);
     const command = commands[0];
     if (command === undefined || commands.length !== 1) return null;
-    const commandReceivedAt = instant(command.commandReceivedAt);
-    const commandUpdatedAt = instant(command.commandUpdatedAt);
-    if (command.state === "failed") return Object.freeze({
-      state: "failed" as const,
-      commandReceivedAt,
-      commandUpdatedAt,
-      code: "REDEEM_NOT_ACCEPTED" as const,
-    });
-    if (command.state === "pending" || command.state === "outcome_unknown") return Object.freeze({
-      state: command.state,
-      commandReceivedAt,
-      commandUpdatedAt,
-    });
-    const redemptions = await sql.query<Record<string, unknown> & {
-      commandId: string;
-      redemptionId: string;
-      fulfillmentRef: string;
-      outputSetDigest: string;
-      planRef: string | null;
-      planVersionRef: string | null;
-      productRef: string;
-      productVersionRef: string;
-      redeemedAt: Date | string;
-      safeCodeFingerprint: string;
-      state: "fulfilled" | "reversed" | "reconciliation_required";
-      stateObservedAt: Date | string;
-    }>(REDEMPTION_RECEIPT_SQL, [input.commandId, input.siteId]);
-    const redemption = redemptions[0];
-    if (redemption === undefined || redemptions.length !== 1) return null;
-    const outputs = await sql.query<Record<string, unknown> & RedemptionOutputReceipt>(REDEMPTION_OUTPUT_RECEIPT_SQL, [
-      redemption.fulfillmentRef,
+    return loadConfirmation(sql, command, input.siteId);
+  }
+
+  async findConfirmationByIdempotencyKey(
+    transaction: Parameters<RedemptionConfirmationRepository["findConfirmationByIdempotencyKey"]>[0],
+    input: Parameters<RedemptionConfirmationRepository["findConfirmationByIdempotencyKey"]>[1],
+  ): ReturnType<RedemptionConfirmationRepository["findConfirmationByIdempotencyKey"]> {
+    const sql = resolvePlatformTransaction(transaction);
+    const commands = await sql.query<ConfirmationCommandRow>(CONFIRMATION_BY_IDEMPOTENCY_SQL, [
+      input.siteId, input.subjectId, input.subjectGeneration, input.idempotencyKey,
     ]);
-    const reversals = await sql.query<Record<string, unknown> & { reversalRef: string }>(REDEMPTION_REVERSAL_RECEIPT_SQL, [
-      redemption.redemptionId,
-      input.siteId,
-    ]);
-    return Object.freeze({
-      state: "succeeded" as const,
-      receipt: Object.freeze({
-        commandId: redemption.commandId,
-        commandReceivedAt,
-        commandUpdatedAt,
-        redemptionId: redemption.redemptionId,
-        fulfillmentRef: redemption.fulfillmentRef,
-        outputSetDigest: redemption.outputSetDigest,
-        outputs: Object.freeze(outputs.map((output) => Object.freeze({
-          kind: output.kind,
-          outputLineId: output.outputLineId,
-          resourceRef: output.resourceRef,
-          templateRevisionRef: output.templateRevisionRef,
-        }))),
-        planRef: redemption.planRef,
-        planVersionRef: redemption.planVersionRef,
-        productRef: redemption.productRef,
-        productVersionRef: redemption.productVersionRef,
-        redeemedAt: instant(redemption.redeemedAt),
-        safeCodeFingerprint: redemption.safeCodeFingerprint,
-        state: redemption.state,
-        stateObservedAt: instant(redemption.stateObservedAt),
-        reversalRefs: Object.freeze(reversals.map((row) => row.reversalRef)),
-      }),
+    const command = commands[0];
+    if (command === undefined || commands.length !== 1) return null;
+    const confirmation = await loadConfirmation(sql, command, input.siteId);
+    return confirmation === null ? null : Object.freeze({
+      commandId: command.commandId,
+      requestDigest: command.requestDigest,
+      confirmation,
     });
+  }
+
+  async findRedemptionReceipt(
+    transaction: Parameters<RedemptionConfirmationRepository["findRedemptionReceipt"]>[0],
+    input: Parameters<RedemptionConfirmationRepository["findRedemptionReceipt"]>[1],
+  ): ReturnType<RedemptionConfirmationRepository["findRedemptionReceipt"]> {
+    return loadReceipt(resolvePlatformTransaction(transaction), REDEMPTION_RECEIPT_BY_ID_SQL, [
+      input.redemptionId, input.siteId, input.subjectId, input.subjectGeneration,
+    ], input.siteId);
   }
 
   async #materializeOutputs(
@@ -636,6 +624,75 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
     }
     return locked;
   }
+}
+
+async function loadConfirmation(
+  sql: ReturnType<typeof resolvePlatformTransaction>,
+  command: ConfirmationCommandRow,
+  siteId: string,
+): Promise<StoredRedemptionConfirmation | null> {
+  const commandReceivedAt = instant(command.commandReceivedAt);
+  const commandUpdatedAt = instant(command.commandUpdatedAt);
+  if (command.state === "failed") return Object.freeze({
+    state: "failed" as const,
+    commandReceivedAt,
+    commandUpdatedAt,
+    code: "REDEEM_NOT_ACCEPTED" as const,
+  });
+  if (command.state === "pending" || command.state === "outcome_unknown") return Object.freeze({
+    state: command.state,
+    commandReceivedAt,
+    commandUpdatedAt,
+  });
+  const receipt = await loadReceipt(sql, REDEMPTION_RECEIPT_SQL, [command.commandId, siteId], siteId);
+  return receipt === null ? null : Object.freeze({
+    state: "succeeded" as const,
+    receipt: Object.freeze({ ...receipt, commandReceivedAt, commandUpdatedAt }),
+  });
+}
+
+async function loadReceipt(
+  sql: ReturnType<typeof resolvePlatformTransaction>,
+  statement: string,
+  values: readonly unknown[],
+  siteId: string,
+): Promise<RedemptionReceiptRecord | null> {
+  const redemptions = await sql.query<RedemptionReceiptRow>(statement, values);
+  const redemption = redemptions[0];
+  if (redemption === undefined || redemptions.length !== 1) return null;
+  const storedOutputs = await sql.query<Record<string, unknown> & RedemptionOutputReceipt>(
+    REDEMPTION_OUTPUT_RECEIPT_SQL,
+    [redemption.fulfillmentRef],
+  );
+  const outputs = Object.freeze(storedOutputs.map((output) => Object.freeze({
+    kind: output.kind,
+    outputLineId: output.outputLineId,
+    resourceRef: output.resourceRef,
+    templateRevisionRef: output.templateRevisionRef,
+  })));
+  if (digest({ version: 1, outputs }) !== redemption.outputSetDigest) {
+    throw new Error("REDEMPTION_OUTPUT_SET_DIGEST_MISMATCH");
+  }
+  const reversals = await sql.query<Record<string, unknown> & { reversalRef: string }>(
+    REDEMPTION_REVERSAL_RECEIPT_SQL,
+    [redemption.redemptionId, siteId],
+  );
+  return Object.freeze({
+    commandId: redemption.commandId,
+    redemptionId: redemption.redemptionId,
+    fulfillmentRef: redemption.fulfillmentRef,
+    outputSetDigest: redemption.outputSetDigest,
+    outputs,
+    planRef: redemption.planRef,
+    planVersionRef: redemption.planVersionRef,
+    productRef: redemption.productRef,
+    productVersionRef: redemption.productVersionRef,
+    redeemedAt: instant(redemption.redeemedAt),
+    safeCodeFingerprint: redemption.safeCodeFingerprint,
+    state: redemption.state,
+    stateObservedAt: instant(redemption.stateObservedAt),
+    reversalRefs: Object.freeze(reversals.map((row) => row.reversalRef)),
+  });
 }
 
 function matchesConfirmationBinding(
@@ -1031,11 +1088,21 @@ const OUTPUT_FOR_CONFIRM_SQL = `
   ORDER BY output.ordinal`;
 
 const CONFIRMATION_COMMAND_SQL = `
-  SELECT receipt.state,receipt.created_at AS "commandReceivedAt",receipt.updated_at AS "commandUpdatedAt"
+  SELECT receipt.command_id AS "commandId",receipt.request_digest AS "requestDigest",receipt.state,
+         receipt.created_at AS "commandReceivedAt",receipt.updated_at AS "commandUpdatedAt"
   FROM platform.command_receipt receipt
   JOIN platform.commerce_command command ON command.command_id=receipt.command_id
   WHERE receipt.command_id=$1 AND command.site_ref=$2 AND command.actor_kind='user'
     AND command.actor_subject=$3 AND command.actor_generation=$4::bigint
+    AND receipt.operation='confirmRedemption'`;
+
+const CONFIRMATION_BY_IDEMPOTENCY_SQL = `
+  SELECT receipt.command_id AS "commandId",receipt.request_digest AS "requestDigest",receipt.state,
+         receipt.created_at AS "commandReceivedAt",receipt.updated_at AS "commandUpdatedAt"
+  FROM platform.commerce_command command
+  JOIN platform.command_receipt receipt ON receipt.command_id=command.command_id
+  WHERE command.site_ref=$1 AND command.actor_kind='user' AND command.actor_subject=$2
+    AND command.actor_generation=$3::bigint AND receipt.idempotency_key=$4
     AND receipt.operation='confirmRedemption'`;
 
 const REDEMPTION_RECEIPT_SQL = `
@@ -1056,12 +1123,35 @@ const REDEMPTION_RECEIPT_SQL = `
     AND redemption.state IN ('fulfilled','reversed','reconciliation_required')
     AND fulfillment.status='succeeded'`;
 
+const REDEMPTION_RECEIPT_BY_ID_SQL = `
+  SELECT redemption.command_id AS "commandId",redemption.redemption_id AS "redemptionId",
+         redemption.fulfillment_ref AS "fulfillmentRef",fulfillment.output_set_digest AS "outputSetDigest",
+         product_version.plan_version_ref AS "planVersionRef",plan_version.plan_ref AS "planRef",
+         product_version.product_ref AS "productRef",product_version.product_version_ref AS "productVersionRef",
+         redemption.redeemed_at AS "redeemedAt",redemption.safe_code_fingerprint AS "safeCodeFingerprint",
+         redemption.state,redemption.state_observed_at AS "stateObservedAt"
+  FROM platform.commerce_redemption redemption
+  JOIN platform.commerce_command command
+    ON command.command_id=redemption.command_id AND command.site_ref=redemption.site_ref
+  JOIN platform.commerce_fulfillment_transaction fulfillment
+    ON fulfillment.fulfillment_id=redemption.fulfillment_ref AND fulfillment.site_ref=redemption.site_ref
+  JOIN platform.commerce_catalog_product_version product_version
+    ON product_version.product_version_ref=redemption.product_version_ref AND product_version.site_ref=redemption.site_ref
+  LEFT JOIN platform.commerce_catalog_plan_version plan_version
+    ON plan_version.plan_version_ref=redemption.plan_version_ref AND plan_version.site_ref=redemption.site_ref
+  WHERE redemption.redemption_id=$1::uuid AND redemption.site_ref=$2
+    AND command.actor_kind='user' AND command.actor_subject=$3 AND command.actor_generation=$4::bigint
+    AND redemption.state IN ('fulfilled','reversed','reconciliation_required')
+    AND fulfillment.status='succeeded'`;
+
 const REDEMPTION_OUTPUT_RECEIPT_SQL = `
   SELECT actual.output_kind AS kind,actual.output_line_id AS "outputLineId",
          actual.output_ref AS "resourceRef",actual.template_revision AS "templateRevisionRef"
   FROM platform.commerce_fulfillment_actual_output actual
+  JOIN platform.commerce_fulfillment_output_plan expected
+    ON expected.fulfillment_id=actual.fulfillment_id AND expected.output_line_id=actual.output_line_id
   WHERE actual.fulfillment_id=$1::uuid
-  ORDER BY actual.output_line_id,actual.occurrence`;
+  ORDER BY expected.ordinal,actual.occurrence`;
 
 const REDEMPTION_REVERSAL_RECEIPT_SQL = `
   SELECT reversal_ref AS "reversalRef" FROM (

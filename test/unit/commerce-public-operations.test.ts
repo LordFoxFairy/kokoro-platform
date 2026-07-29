@@ -10,8 +10,14 @@ describe("Commerce public operations", () => {
     const operations = createCommercePublicOperations({
       preview: { execute: async (input) => { calls.push({ preview: input }); return { preview: true } as never; } },
       confirm: { execute: async (input) => { calls.push({ confirm: input }); return { kind: "rejected" } as never; } },
+      queries: {
+        recoverCommand: async (input) => { calls.push({ recover: input }); return { kind: "executing" } as never; },
+        getReceipt: async (input) => { calls.push({ receipt: input }); return { redemption: true } as never; },
+      },
     });
-    expect(COMMERCE_PUBLIC_OPERATION_IDS).toEqual(["previewRedemption", "confirmRedemption"]);
+    expect(COMMERCE_PUBLIC_OPERATION_IDS).toEqual([
+      "previewRedemption", "confirmRedemption", "recoverRedemptionCommand", "getRedemptionReceipt",
+    ]);
     expect(operations.map((operation) => operation.operationId)).toEqual(COMMERCE_PUBLIC_OPERATION_IDS);
     const confirm = operations.find((operation) => operation.operationId === "confirmRedemption")!;
     expect(confirm.successStatus?.({ kind: "accepted" })).toBe(202);

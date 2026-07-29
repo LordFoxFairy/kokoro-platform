@@ -136,6 +136,9 @@ class FakeConfirmationRepository implements RedemptionConfirmationRepository {
     };
     return { state: "succeeded", receipt: this.storedReceipt };
   }
+
+  async findConfirmationByIdempotencyKey() { return null; }
+  async findRedemptionReceipt() { return null; }
 }
 
 function serviceHarness(repository: RedemptionConfirmationRepository) {

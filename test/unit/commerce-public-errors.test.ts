@@ -32,4 +32,13 @@ describe("Commerce public problem mapping", () => {
       new Error("IDEMPOTENCY_CONFLICT"), "request-1", "correlation-1",
     )).toMatchObject({ status: 409, body: { code: "IDEMPOTENCY_CONFLICT", retryClass: "never" } });
   });
+
+  it("does not disclose whether another actor owns a redemption lookup", () => {
+    expect(platformPublicSafeProblem(
+      new CommerceApplicationError("REDEMPTION_NOT_FOUND"), "request-1", "correlation-1",
+    )).toMatchObject({
+      status: 404,
+      body: { code: "NOT_FOUND", retryClass: "never", safeMessage: "The requested resource was not found." },
+    });
+  });
 });

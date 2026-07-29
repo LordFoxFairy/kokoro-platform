@@ -1,19 +1,25 @@
 import type {
   ConfirmRedemptionResponse,
+  GetRedemptionReceiptResponse,
   PreviewRedemptionResponse,
+  RecoverRedemptionCommandResponse,
 } from "../../../../interfaces/http/generated/platform-public/types.gen.js";
 import { definePlatformPublicOperation } from "../../../../interfaces/http/platform-public-operation-registry.js";
 import type { PreviewRedemptionService } from "../../application/services/preview-redemption.js";
 import type { ConfirmRedemptionService } from "../../application/services/confirm-redemption.js";
+import type { RedemptionQueryService } from "../../application/services/redemption-query.js";
 
 export const COMMERCE_PUBLIC_OPERATION_IDS = Object.freeze([
   "previewRedemption",
   "confirmRedemption",
+  "recoverRedemptionCommand",
+  "getRedemptionReceipt",
 ] as const);
 
 export function createCommercePublicOperations(dependencies: Readonly<{
   preview: Pick<PreviewRedemptionService, "execute">;
   confirm: Pick<ConfirmRedemptionService, "execute">;
+  queries: Pick<RedemptionQueryService, "recoverCommand" | "getReceipt">;
 }>) {
   return Object.freeze([
     definePlatformPublicOperation({
@@ -51,6 +57,33 @@ export function createCommercePublicOperations(dependencies: Readonly<{
             reversalRefs: [...result.redemption.reversalRefs],
           },
         };
+      },
+    }),
+    definePlatformPublicOperation({
+      operationId: "recoverRedemptionCommand",
+      async execute(input): Promise<RecoverRedemptionCommandResponse> {
+        const result = await dependencies.queries.recoverCommand({
+          context: input.context,
+          idempotencyKey: input.headers["Idempotency-Key"],
+        });
+        if (result.kind !== "succeeded") return result;
+        return {
+          ...result,
+          redemption: {
+            ...result.redemption,
+            outputs: result.redemption.outputs.map((output) => ({ ...output })),
+            reversalRefs: [...result.redemption.reversalRefs],
+          },
+        };
+      },
+    }),
+    definePlatformPublicOperation({
+      operationId: "getRedemptionReceipt",
+      async execute(input): Promise<GetRedemptionReceiptResponse> {
+        return dependencies.queries.getReceipt({
+          context: input.context,
+          redemptionId: input.path.id,
+        });
       },
     }),
   ]);

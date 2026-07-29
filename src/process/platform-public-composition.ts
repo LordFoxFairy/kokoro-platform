@@ -64,6 +64,7 @@ import { CommerceCommandFence } from "../modules/commerce/application/command-fe
 import { PreviewRedemptionService } from "../modules/commerce/application/services/preview-redemption.js";
 import { authorizeCommerceCommand } from "../workflows/commerce/authorize-command.js";
 import { createCommercePublicOperations, COMMERCE_PUBLIC_OPERATION_IDS } from "../modules/commerce/interfaces/http/commerce-public-operations.js";
+import { RedemptionQueryService } from "../modules/commerce/application/services/redemption-query.js";
 import { ConfirmRedemptionService } from "../modules/commerce/application/services/confirm-redemption.js";
 import { PostgresRedemptionConfirmationRepository } from "../modules/commerce/infrastructure/postgres/redemption-confirmation-repository.js";
 
@@ -177,6 +178,7 @@ export async function createPlatformPublicProductionComposition(
   const identityOperations = createIdentityPublicOperations(identity, identitySecurityManagement);
   const redemptionRepository = new PostgresRedemptionRepository();
   const commerceRepository = new PostgresCommerceRepository();
+  const redemptionConfirmationRepository = new PostgresRedemptionConfirmationRepository({ commerce: commerceRepository });
   const commerceFence = new CommerceCommandFence(
     unitOfWork,
     commerceRepository,
@@ -192,9 +194,10 @@ export async function createPlatformPublicProductionComposition(
     confirm: new ConfirmRedemptionService({
       unitOfWork,
       fence: commerceFence,
-      repository: new PostgresRedemptionConfirmationRepository({ commerce: commerceRepository }),
+      repository: redemptionConfirmationRepository,
       secrets: redemptionSecrets,
     }),
+    queries: new RedemptionQueryService({ unitOfWork, repository: redemptionConfirmationRepository }),
   });
   const handler = createPlatformPublicHttpHandler({
     workloads,

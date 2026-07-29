@@ -5,6 +5,7 @@ import type { JsonValue } from "../../../../shared/outbox-inbox/receipt.js";
 import type { CommerceCommandFence } from "../command-fence.js";
 import type {
   RedemptionConfirmationRepository,
+  StoredRedemptionConfirmation,
   StoredRedemptionReceipt,
 } from "../contracts/redemption-confirmation-repository.js";
 import type { RedemptionSecretPort } from "../contracts/redemption-secret-port.js";
@@ -133,22 +134,24 @@ export class ConfirmRedemptionService {
       }),
     );
     if (stored === null) throw new CommerceApplicationError("REDEEM_TEMPORARILY_UNAVAILABLE");
-    if (stored.state === "succeeded") return succeededView(stored.receipt, requestDigest);
-    if (stored.state === "failed") {
-      return rejectedView(
-        identity.commandId,
-        requestDigest,
-        stored.commandReceivedAt,
-        stored.commandUpdatedAt,
-        stored.code,
-      );
-    }
-    return Object.freeze({
-      kind: stored.state === "outcome_unknown" ? "outcome_unknown" as const : "executing" as const,
-      command: cursor(identity.commandId, requestDigest, stored.commandReceivedAt, stored.commandUpdatedAt),
-      retryAfter: new Date(Date.parse(stored.commandUpdatedAt) + 2_000).toISOString(),
-    });
+    return redemptionCommandView(stored, requestDigest, identity.commandId);
   }
+}
+
+export function redemptionCommandView(
+  stored: StoredRedemptionConfirmation,
+  requestDigest: string,
+  commandId: string,
+): ConfirmRedemptionView {
+  if (stored.state === "succeeded") return succeededView(stored.receipt, requestDigest);
+  if (stored.state === "failed") {
+    return rejectedView(commandId, requestDigest, stored.commandReceivedAt, stored.commandUpdatedAt, stored.code);
+  }
+  return Object.freeze({
+    kind: stored.state === "outcome_unknown" ? "outcome_unknown" as const : "executing" as const,
+    command: cursor(commandId, requestDigest, stored.commandReceivedAt, stored.commandUpdatedAt),
+    retryAfter: new Date(Date.parse(stored.commandUpdatedAt) + 2_000).toISOString(),
+  });
 }
 
 function succeededView(receipt: StoredRedemptionReceipt, requestDigest: string): ConfirmRedemptionView {
