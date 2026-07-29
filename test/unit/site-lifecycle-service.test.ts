@@ -16,6 +16,7 @@ import { PlatformUnitOfWork } from "../../src/shared/unit-of-work/unit-of-work.j
 const site: SiteAggregate = Object.freeze({
   siteRef: "site_01", state: "active", activeReleaseRef: "release_01",
   securityEpoch: 2n, policyEpoch: 5n, revocationEpoch: 1n,
+  runtimeBindingEpoch: 3n,
 });
 const release: SiteRelease = Object.freeze({
   releaseRef: "release_02", siteRef: "site_01", state: "ready",
@@ -29,6 +30,7 @@ describe("SiteLifecycleService", () => {
     let saved: ActivationAttempt | null = null;
     const repository: SiteAuthorityRepository = {
       loadActiveProjectBindingForUpdate: async () => ({ bindingRef: "binding_01", bindingEpoch: 1n }),
+      reserveRuntimeBindingEpoch: async () => 4n,
       loadSiteForUpdate: async (transaction) => { calls.push(`site:${token(transaction)}`); return site; },
       loadReleaseForUpdate: async (transaction) => { calls.push(`release:${token(transaction)}`); return release; },
       loadActivationForUpdate: async () => null,
@@ -61,6 +63,7 @@ describe("SiteLifecycleService", () => {
 
     expect(receipt).toEqual({ attemptRef: "activation_02", state: "preparing", replayed: false });
     expect(saved).toMatchObject({ candidateReleaseRef: "release_02", expectedActiveReleaseRef: "release_01" });
+    expect(saved).toMatchObject({ runtimeBindingEpoch: 4n });
     expect(new Set(calls.map((value) => value.split(":")[1]))).toEqual(new Set(["one"]));
     expect(calls.map((value) => value.split(":")[0])).toEqual(["begin", "site", "release", "insert", "succeed"]);
   });
@@ -111,6 +114,7 @@ describe("SiteLifecycleService", () => {
       expectedActiveReleaseRef: "release_01", candidateWebArtifactDigest: "a".repeat(64),
       candidateManifestDigest: "b".repeat(64), candidateCertificationDigest: "c".repeat(64),
       siteProjectBindingRef: "binding_01", siteProjectBindingEpoch: 3n,
+      runtimeBindingEpoch: 4n,
       environment: "production", region: "us-east-1", audience: "site-product",
       sessionContractRevision: "browser-v3", state: "promote_requested",
       requestedAt: "2026-07-28T12:00:00.000Z",
@@ -138,7 +142,7 @@ describe("SiteLifecycleService", () => {
     expect(saved[0]).toMatchObject({ observationRef: "01983f57-8cf1-7000-8000-000000000002",
       deploymentRef: "deployment_02", healthy: true, trafficReady: true });
     expect(saved[1]).toMatchObject({ deploymentRef: "deployment_02", bindingRef: "binding_01",
-      releaseRef: "release_02", bindingEpoch: 3n, state: "candidate" });
+      releaseRef: "release_02", bindingEpoch: 4n, state: "candidate" });
     expect(saved[2]).toMatchObject({ state: "pointer_committing", deploymentRef: "deployment_02" });
   });
 
@@ -149,6 +153,7 @@ describe("SiteLifecycleService", () => {
       expectedActiveReleaseRef: "release_01", candidateWebArtifactDigest: "a".repeat(64),
       candidateManifestDigest: "b".repeat(64), candidateCertificationDigest: "c".repeat(64),
       siteProjectBindingRef: "binding_01", siteProjectBindingEpoch: 3n,
+      runtimeBindingEpoch: 4n,
       environment: "production", region: "us-east-1", audience: "site-product",
       sessionContractRevision: "browser-v3", state: "draining",
       requestedAt: "2026-07-28T12:00:00.000Z",
@@ -199,6 +204,7 @@ function token(transaction: PlatformTransaction): string {
 function emptyRepository(): SiteAuthorityRepository {
   return {
     loadActiveProjectBindingForUpdate: async () => null,
+    reserveRuntimeBindingEpoch: async () => { throw new Error("unexpected"); },
     loadSiteForUpdate: async () => null,
     loadReleaseForUpdate: async () => null,
     loadActivationForUpdate: async () => null,

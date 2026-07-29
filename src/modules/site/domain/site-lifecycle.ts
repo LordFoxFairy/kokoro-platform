@@ -14,6 +14,8 @@ export interface SiteAggregate {
   readonly securityEpoch: bigint;
   readonly policyEpoch: bigint;
   readonly revocationEpoch: bigint;
+  /** Monotonic Site-owned generation fencing every runtime deployment identity. */
+  readonly runtimeBindingEpoch: bigint;
 }
 
 export interface SiteRelease {
@@ -45,6 +47,7 @@ export interface ActivationAttempt {
   readonly candidateCertificationDigest: string;
   readonly siteProjectBindingRef: string;
   readonly siteProjectBindingEpoch: bigint;
+  readonly runtimeBindingEpoch: bigint;
   readonly environment: "development" | "preview" | "production";
   readonly region: string;
   readonly audience: string;
@@ -105,6 +108,7 @@ export function beginActivation(input: Readonly<{
   expectedActiveReleaseRef: string | null;
   siteProjectBindingRef: string;
   siteProjectBindingEpoch: bigint;
+  runtimeBindingEpoch: bigint;
   environment: "development" | "preview" | "production";
   region: string;
   audience: string;
@@ -117,6 +121,10 @@ export function beginActivation(input: Readonly<{
   instant(input.requestedAt, "SITE_ACTIVATION_TIME_INVALID");
   identifier(input.siteProjectBindingRef, "SITE_PROJECT_BINDING_REF_INVALID");
   epoch(input.siteProjectBindingEpoch);
+  epoch(input.runtimeBindingEpoch);
+  if (input.runtimeBindingEpoch !== nextEpoch(input.site.runtimeBindingEpoch)) {
+    throw new Error("SITE_RUNTIME_BINDING_EPOCH_STALE");
+  }
   bounded(input.region, "SITE_REGION_INVALID");
   bounded(input.audience, "SITE_AUDIENCE_INVALID");
   bounded(input.sessionContractRevision, "SITE_SESSION_CONTRACT_REVISION_INVALID");
@@ -139,6 +147,7 @@ export function beginActivation(input: Readonly<{
     candidateCertificationDigest: input.candidate.certificationDigest,
     siteProjectBindingRef: input.siteProjectBindingRef,
     siteProjectBindingEpoch: input.siteProjectBindingEpoch,
+    runtimeBindingEpoch: input.runtimeBindingEpoch,
     environment: input.environment,
     region: input.region,
     audience: input.audience,
@@ -218,7 +227,7 @@ export function deploymentBindingForObservation(
     audience: attempt.audience,
     sessionContractRevision: attempt.sessionContractRevision,
     webArtifactDigest: attempt.candidateWebArtifactDigest,
-    bindingEpoch: attempt.siteProjectBindingEpoch,
+    bindingEpoch: attempt.runtimeBindingEpoch,
     state: "candidate",
   });
 }
@@ -251,6 +260,9 @@ export function activateObservedRelease(input: Readonly<{
   if (input.currentActiveReleaseRef !== input.attempt.expectedActiveReleaseRef ||
       input.site.activeReleaseRef !== input.attempt.expectedActiveReleaseRef) {
     throw new Error("SITE_ACTIVE_POINTER_CONFLICT");
+  }
+  if (input.attempt.runtimeBindingEpoch !== input.site.runtimeBindingEpoch) {
+    throw new Error("SITE_RUNTIME_BINDING_EPOCH_STALE");
   }
   const drainingReleaseRef = input.site.activeReleaseRef;
   return Object.freeze({
@@ -309,6 +321,7 @@ function site(value: SiteAggregate): void {
   epoch(value.securityEpoch);
   epoch(value.policyEpoch);
   epoch(value.revocationEpoch);
+  epoch(value.runtimeBindingEpoch);
   if (value.state === "active" && value.activeReleaseRef === null) throw new Error("SITE_ACTIVE_RELEASE_REQUIRED");
   if (value.activeReleaseRef !== null) identifier(value.activeReleaseRef, "SITE_RELEASE_REF_INVALID");
 }
@@ -331,6 +344,7 @@ function activation(value: ActivationAttempt): void {
   digest(value.candidateCertificationDigest);
   identifier(value.siteProjectBindingRef, "SITE_PROJECT_BINDING_REF_INVALID");
   epoch(value.siteProjectBindingEpoch);
+  epoch(value.runtimeBindingEpoch);
   bounded(value.region, "SITE_REGION_INVALID");
   bounded(value.audience, "SITE_AUDIENCE_INVALID");
   bounded(value.sessionContractRevision, "SITE_SESSION_CONTRACT_REVISION_INVALID");
@@ -387,4 +401,8 @@ function epoch(value: bigint): void {
 function increment(value: bigint): bigint {
   if (value >= 9_223_372_036_854_775_807n) throw new Error("SITE_EPOCH_EXHAUSTED");
   return value + 1n;
+}
+
+function nextEpoch(value: bigint): bigint {
+  return increment(value);
 }

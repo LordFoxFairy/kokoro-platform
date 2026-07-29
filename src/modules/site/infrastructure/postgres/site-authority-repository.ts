@@ -43,10 +43,11 @@ export class PostgresSiteAuthorityRepository implements SiteAuthorityRepository,
     const sql = resolvePlatformTransaction(transaction);
     const insertedSite = await sql.execute(
       `INSERT INTO platform.site
-       (site_ref,site_key,state,active_release_ref,security_epoch,policy_epoch,revocation_epoch)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+       (site_ref,site_key,state,active_release_ref,security_epoch,policy_epoch,revocation_epoch,
+        runtime_binding_epoch)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
       [site.siteRef, site.siteKey, site.state, site.activeReleaseRef, site.securityEpoch,
-        site.policyEpoch, site.revocationEpoch],
+        site.policyEpoch, site.revocationEpoch, site.runtimeBindingEpoch],
     );
     if (insertedSite !== 1) throw new Error("SITE_INSERT_FAILED");
     const insertedBinding = await sql.execute(
@@ -88,12 +89,33 @@ export class PostgresSiteAuthorityRepository implements SiteAuthorityRepository,
     const rows = await resolvePlatformTransaction(transaction).query<SiteRow>(
       `SELECT site_ref AS "siteRef", state, active_release_ref AS "activeReleaseRef",
               security_epoch AS "securityEpoch", policy_epoch AS "policyEpoch",
-              revocation_epoch AS "revocationEpoch"
+              revocation_epoch AS "revocationEpoch",
+              runtime_binding_epoch AS "runtimeBindingEpoch"
        FROM platform.site WHERE site_ref=$1 FOR UPDATE`,
       [siteRef],
     );
     const row = rows[0];
     return row === undefined ? null : verifySiteAggregate(siteRow(row));
+  }
+
+  async reserveRuntimeBindingEpoch(
+    transaction: PlatformTransaction,
+    siteRef: string,
+    expectedEpoch: bigint,
+  ): Promise<bigint> {
+    const rows = await resolvePlatformTransaction(transaction).query<{ runtimeBindingEpoch: bigint }>(
+      `UPDATE platform.site
+       SET runtime_binding_epoch=runtime_binding_epoch+1,updated_at=now()
+       WHERE site_ref=$1 AND runtime_binding_epoch=$2
+         AND state IN ('preview_ready','active')
+       RETURNING runtime_binding_epoch AS "runtimeBindingEpoch"`,
+      [siteRef, expectedEpoch],
+    );
+    const reserved = rows[0]?.runtimeBindingEpoch;
+    if (reserved === undefined || reserved !== expectedEpoch + 1n) {
+      throw new Error("SITE_RUNTIME_BINDING_EPOCH_CONFLICT");
+    }
+    return reserved;
   }
 
   async loadReleaseForUpdate(
@@ -126,6 +148,7 @@ export class PostgresSiteAuthorityRepository implements SiteAuthorityRepository,
               candidate_certification_digest AS "candidateCertificationDigest",
               site_project_binding_ref AS "siteProjectBindingRef",
               site_project_binding_epoch AS "siteProjectBindingEpoch",
+              runtime_binding_epoch AS "runtimeBindingEpoch",
               environment,region,audience,session_contract_revision AS "sessionContractRevision",
               state, requested_at AS "requestedAt", provider_operation_key AS "providerOperationKey",
               deployment_ref AS "deploymentRef", observed_at AS "observedAt"
@@ -145,9 +168,9 @@ export class PostgresSiteAuthorityRepository implements SiteAuthorityRepository,
       `INSERT INTO platform.site_activation_attempt
        (attempt_ref,site_ref,candidate_release_ref,expected_active_release_ref,
         candidate_web_artifact_digest,candidate_manifest_digest,candidate_certification_digest,
-        site_project_binding_ref,site_project_binding_epoch,environment,region,audience,
+        site_project_binding_ref,site_project_binding_epoch,runtime_binding_epoch,environment,region,audience,
         session_contract_revision,state,requested_at,provider_operation_key,deployment_ref,observed_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::timestamptz,$16,$17,$18::timestamptz)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::timestamptz,$17,$18,$19::timestamptz)`,
       activationValues(value),
     );
     if (changed !== 1) throw new Error("SITE_ACTIVATION_INSERT_FAILED");
@@ -164,12 +187,13 @@ export class PostgresSiteAuthorityRepository implements SiteAuthorityRepository,
        WHERE attempt_ref=$1 AND site_ref=$6 AND candidate_release_ref=$7
          AND candidate_web_artifact_digest=$8 AND candidate_manifest_digest=$9
          AND candidate_certification_digest=$10 AND site_project_binding_ref=$11
-         AND site_project_binding_epoch=$12 AND environment=$13 AND region=$14
-         AND audience=$15 AND session_contract_revision=$16`,
+         AND site_project_binding_epoch=$12 AND runtime_binding_epoch=$13
+         AND environment=$14 AND region=$15
+         AND audience=$16 AND session_contract_revision=$17`,
       [value.attemptRef, value.state, value.providerOperationKey, value.deploymentRef, value.observedAt,
         value.siteRef, value.candidateReleaseRef, value.candidateWebArtifactDigest,
         value.candidateManifestDigest, value.candidateCertificationDigest, value.siteProjectBindingRef,
-        value.siteProjectBindingEpoch, value.environment, value.region, value.audience,
+        value.siteProjectBindingEpoch, value.runtimeBindingEpoch, value.environment, value.region, value.audience,
         value.sessionContractRevision],
     );
     if (changed !== 1) throw new Error("SITE_ACTIVATION_UPDATE_CONFLICT");
@@ -302,7 +326,7 @@ export class PostgresSiteAuthorityRepository implements SiteAuthorityRepository,
       [attempt.deploymentRef, attempt.siteProjectBindingRef, attempt.siteRef,
         attempt.candidateReleaseRef, attempt.environment, attempt.region, attempt.audience,
         attempt.sessionContractRevision, attempt.candidateWebArtifactDigest,
-        attempt.siteProjectBindingEpoch],
+        attempt.runtimeBindingEpoch],
     );
     if (activeDeployment !== 1) throw new Error("SITE_CANDIDATE_DEPLOYMENT_CONFLICT");
     const pointer = await sql.execute(
@@ -339,15 +363,90 @@ export class PostgresSiteAuthorityRepository implements SiteAuthorityRepository,
       [attempt.attemptRef, attempt.state, attempt.siteRef, attempt.candidateReleaseRef],
     );
     if (committed !== 1) throw new Error("SITE_ACTIVATION_COMMIT_CONFLICT");
+
+    const authorizationSite = await sql.execute(
+      `INSERT INTO platform.authorization_site
+       (site_ref,state,security_epoch,policy_epoch,revocation_epoch)
+       VALUES ($1,'active',$2,$3,$4)
+       ON CONFLICT (site_ref) DO UPDATE
+       SET state='active',security_epoch=EXCLUDED.security_epoch,
+           policy_epoch=EXCLUDED.policy_epoch,revocation_epoch=EXCLUDED.revocation_epoch,
+           updated_at=now()
+       WHERE platform.authorization_site.security_epoch<=EXCLUDED.security_epoch
+         AND platform.authorization_site.policy_epoch<=EXCLUDED.policy_epoch
+         AND platform.authorization_site.revocation_epoch<=EXCLUDED.revocation_epoch`,
+      [site.siteRef, site.securityEpoch, site.policyEpoch, site.revocationEpoch],
+    );
+    if (authorizationSite !== 1) throw new Error("SITE_AUTHORIZATION_SITE_CONFLICT");
+
+    if (input.expectedActiveReleaseRef !== null) {
+      const retiredAuthorizationRelease = await sql.execute(
+        `UPDATE platform.authorization_site_release SET state='retired',updated_at=now()
+         WHERE release_ref=$1 AND site_ref=$2 AND state='active'`,
+        [input.expectedActiveReleaseRef, site.siteRef],
+      );
+      if (retiredAuthorizationRelease !== 1) {
+        throw new Error("SITE_AUTHORIZATION_RELEASE_RETIRE_CONFLICT");
+      }
+    }
+
+    const authorizationRelease = await sql.execute(
+      `INSERT INTO platform.authorization_site_release
+       (release_ref,site_ref,state,web_artifact_digest,enabled_surface_ids,
+        feature_policy_revision,model_option_catalog_ref,agent_catalog_ref,
+        identity_issuer_label,identity_auth_strength_policy_revision,locale_policy)
+       SELECT release_ref,site_ref,'active',web_artifact_digest,enabled_surface_ids,
+              feature_policy_revision,model_option_catalog_ref,agent_catalog_ref,
+              identity_issuer_label,identity_auth_strength_policy_revision,locale_policy
+       FROM platform.site_release WHERE release_ref=$1 AND site_ref=$2
+       ON CONFLICT (release_ref) DO UPDATE SET state='active',updated_at=now()
+       WHERE platform.authorization_site_release.site_ref=EXCLUDED.site_ref
+         AND platform.authorization_site_release.web_artifact_digest=EXCLUDED.web_artifact_digest
+         AND platform.authorization_site_release.enabled_surface_ids=EXCLUDED.enabled_surface_ids
+         AND platform.authorization_site_release.feature_policy_revision=EXCLUDED.feature_policy_revision
+         AND platform.authorization_site_release.model_option_catalog_ref=EXCLUDED.model_option_catalog_ref
+         AND platform.authorization_site_release.agent_catalog_ref=EXCLUDED.agent_catalog_ref
+         AND platform.authorization_site_release.identity_issuer_label=EXCLUDED.identity_issuer_label
+         AND platform.authorization_site_release.identity_auth_strength_policy_revision=
+             EXCLUDED.identity_auth_strength_policy_revision
+         AND platform.authorization_site_release.locale_policy=EXCLUDED.locale_policy`,
+      [candidate.releaseRef, site.siteRef],
+    );
+    if (authorizationRelease !== 1) throw new Error("SITE_AUTHORIZATION_RELEASE_CONFLICT");
+
+    const authorizationBinding = await sql.execute(
+      `INSERT INTO platform.authorization_product_binding
+       (binding_ref,workload_identity_id,deployment_ref,site_ref,release_ref,environment,
+        region,audience,session_contract_revision,binding_epoch,state)
+       SELECT deployment.binding_ref,project.workload_identity_id,deployment.deployment_ref,
+              deployment.site_ref,deployment.release_ref,deployment.environment,deployment.region,
+              deployment.audience,deployment.session_contract_revision,deployment.binding_epoch,'active'
+       FROM platform.site_deployment_binding deployment
+       JOIN platform.site_project_binding project
+         ON project.binding_ref=deployment.binding_ref AND project.site_ref=deployment.site_ref
+       WHERE deployment.deployment_ref=$1 AND deployment.site_ref=$2
+         AND deployment.state='active' AND project.state='active'
+       ON CONFLICT (binding_ref) DO UPDATE
+       SET workload_identity_id=EXCLUDED.workload_identity_id,
+           deployment_ref=EXCLUDED.deployment_ref,release_ref=EXCLUDED.release_ref,
+           environment=EXCLUDED.environment,region=EXCLUDED.region,audience=EXCLUDED.audience,
+           session_contract_revision=EXCLUDED.session_contract_revision,
+           binding_epoch=EXCLUDED.binding_epoch,state='active',updated_at=now()
+       WHERE platform.authorization_product_binding.site_ref=EXCLUDED.site_ref
+         AND platform.authorization_product_binding.binding_epoch < EXCLUDED.binding_epoch`,
+      [attempt.deploymentRef, site.siteRef],
+    );
+    if (authorizationBinding !== 1) throw new Error("SITE_AUTHORIZATION_BINDING_CONFLICT");
   }
 
   async updateSite(transaction: PlatformTransaction, site: SiteAggregate): Promise<void> {
     const value = verifySiteAggregate(site);
     const changed = await resolvePlatformTransaction(transaction).execute(
       `UPDATE platform.site SET state=$2,active_release_ref=$3,security_epoch=$4,
-         policy_epoch=$5,revocation_epoch=$6,updated_at=now() WHERE site_ref=$1`,
+         policy_epoch=$5,revocation_epoch=$6,runtime_binding_epoch=$7,updated_at=now()
+       WHERE site_ref=$1`,
       [value.siteRef, value.state, value.activeReleaseRef, value.securityEpoch,
-        value.policyEpoch, value.revocationEpoch],
+        value.policyEpoch, value.revocationEpoch, value.runtimeBindingEpoch],
     );
     if (changed !== 1) throw new Error("SITE_UPDATE_CONFLICT");
   }
@@ -356,6 +455,7 @@ export class PostgresSiteAuthorityRepository implements SiteAuthorityRepository,
 type SiteRow = Record<string, unknown> & {
   siteRef: string; state: string; activeReleaseRef: string | null;
   securityEpoch: bigint; policyEpoch: bigint; revocationEpoch: bigint;
+  runtimeBindingEpoch: bigint;
 };
 type ReleaseRow = Record<string, unknown> & {
   releaseRef: string; siteRef: string; state: string; webArtifactDigest: string;
@@ -366,6 +466,7 @@ type ActivationRow = Record<string, unknown> & {
   expectedActiveReleaseRef: string | null; candidateWebArtifactDigest: string;
   candidateManifestDigest: string; candidateCertificationDigest: string; state: string;
   siteProjectBindingRef: string; siteProjectBindingEpoch: bigint;
+  runtimeBindingEpoch: bigint;
   environment: "development" | "preview" | "production"; region: string; audience: string;
   sessionContractRevision: string;
   requestedAt: Date | string; providerOperationKey: string | null; deploymentRef: string | null;
@@ -392,7 +493,7 @@ function activationValues(value: ActivationAttempt): readonly unknown[] {
   return [value.attemptRef, value.siteRef, value.candidateReleaseRef,
     value.expectedActiveReleaseRef, value.candidateWebArtifactDigest, value.candidateManifestDigest,
     value.candidateCertificationDigest, value.siteProjectBindingRef, value.siteProjectBindingEpoch,
-    value.environment, value.region, value.audience, value.sessionContractRevision,
+    value.runtimeBindingEpoch, value.environment, value.region, value.audience, value.sessionContractRevision,
     value.state, value.requestedAt, value.providerOperationKey, value.deploymentRef, value.observedAt];
 }
 

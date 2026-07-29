@@ -18,6 +18,8 @@ describe("Site authority schema", () => {
     expect(migration).toContain("UNIQUE(workload_identity_id)");
     expect(migration).toContain("UNIQUE(deployment_ref)");
     expect(migration).toContain("WHERE state='active'");
+    expect(migration).toContain("runtime_binding_epoch BIGINT NOT NULL DEFAULT 1");
+    expect(migration).toContain("site_runtime_binding_epoch_monotonic");
   });
 
   it("keeps runtime roles least-privileged and revokes PUBLIC", () => {

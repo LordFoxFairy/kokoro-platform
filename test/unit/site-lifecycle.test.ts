@@ -3,6 +3,7 @@ import {
   activateObservedRelease,
   beginActivation,
   beginDecommission,
+  deploymentBindingForObservation,
   observePromotion,
   requestPromotion,
   resumeSite,
@@ -18,6 +19,7 @@ const activeSite: SiteAggregate = Object.freeze({
   securityEpoch: 4n,
   policyEpoch: 7n,
   revocationEpoch: 3n,
+  runtimeBindingEpoch: 7n,
 });
 
 const candidate: SiteRelease = Object.freeze({
@@ -31,6 +33,7 @@ const candidate: SiteRelease = Object.freeze({
 const activationBinding = Object.freeze({
   siteProjectBindingRef: "binding_01",
   siteProjectBindingEpoch: 1n,
+  runtimeBindingEpoch: 8n,
   environment: "production" as const,
   region: "us-east-1",
   audience: "site-product",
@@ -59,7 +62,7 @@ describe("Site lifecycle", () => {
     });
 
     const activated = activateObservedRelease({
-      site: activeSite,
+      site: { ...activeSite, runtimeBindingEpoch: 8n },
       candidate,
       attempt: observed,
       currentActiveReleaseRef: "release_01",
@@ -71,6 +74,40 @@ describe("Site lifecycle", () => {
     expect(activated.candidate.state).toBe("active");
     expect(activated.drainingReleaseRef).toBe("release_01");
     expect(activated.attempt.state).toBe("draining");
+  });
+
+  it("uses the Site-reserved monotonic runtime epoch for every observed deployment", () => {
+    const attempt = requestPromotion(beginActivation({
+      ...activationBinding,
+      attemptRef: "activation_02",
+      site: activeSite,
+      candidate,
+      expectedActiveReleaseRef: "release_01",
+      requestedAt: "2026-07-28T12:00:00.000Z",
+    }), "provider-operation-activation-02");
+    const observation = {
+      observationRef: "01983f57-8cf1-7000-8000-000000000002",
+      attemptRef: "activation_02",
+      providerOperationKey: "provider-operation-activation-02",
+      deploymentRef: "deployment_02",
+      releaseRef: "release_02",
+      webArtifactDigest: "a".repeat(64),
+      healthy: true,
+      trafficReady: true,
+      observedAt: "2026-07-28T12:01:00.000Z",
+      payloadDigest: "d".repeat(64),
+    } as const;
+
+    expect(deploymentBindingForObservation(attempt, observation).bindingEpoch).toBe(8n);
+    expect(() => beginActivation({
+      ...activationBinding,
+      runtimeBindingEpoch: 7n,
+      attemptRef: "activation_stale",
+      site: activeSite,
+      candidate,
+      expectedActiveReleaseRef: "release_01",
+      requestedAt: "2026-07-28T12:00:00.000Z",
+    })).toThrow("SITE_RUNTIME_BINDING_EPOCH_STALE");
   });
 
   it("never overwrites a pointer changed by another activation", () => {
@@ -101,6 +138,36 @@ describe("Site lifecycle", () => {
       currentActiveReleaseRef: "release_other",
       committedAt: "2026-07-28T12:02:00.000Z",
     })).toThrow("SITE_ACTIVE_POINTER_CONFLICT");
+  });
+
+  it("never activates an older runtime generation after a newer one was reserved", () => {
+    const attempt = observePromotion(
+      requestPromotion(beginActivation({
+        ...activationBinding,
+        attemptRef: "activation_02",
+        site: activeSite,
+        candidate,
+        expectedActiveReleaseRef: "release_01",
+        requestedAt: "2026-07-28T12:00:00.000Z",
+      }), "provider-operation-activation-02"),
+      {
+        providerOperationKey: "provider-operation-activation-02",
+        deploymentRef: "deployment_02",
+        releaseRef: "release_02",
+        webArtifactDigest: "a".repeat(64),
+        observedAt: "2026-07-28T12:01:00.000Z",
+        healthy: true,
+        trafficReady: true,
+      },
+    );
+
+    expect(() => activateObservedRelease({
+      site: { ...activeSite, runtimeBindingEpoch: 9n },
+      candidate,
+      attempt,
+      currentActiveReleaseRef: "release_01",
+      committedAt: "2026-07-28T12:02:00.000Z",
+    })).toThrow("SITE_RUNTIME_BINDING_EPOCH_STALE");
   });
 
   it("rejects unobserved, unhealthy, mismatched, and uncertified candidates", () => {

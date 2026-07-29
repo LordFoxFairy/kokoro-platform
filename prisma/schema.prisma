@@ -441,6 +441,7 @@ model SiteAuthority {
   securityEpoch    BigInt    @default(1) @map("security_epoch")
   policyEpoch      BigInt    @default(1) @map("policy_epoch")
   revocationEpoch  BigInt    @default(1) @map("revocation_epoch")
+  runtimeBindingEpoch BigInt @default(1) @map("runtime_binding_epoch")
   tombstonedAt     DateTime? @map("tombstoned_at") @db.Timestamptz(6)
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
@@ -525,6 +526,7 @@ model SiteActivationAttemptAuthority {
   candidateCertificationDigest  String    @map("candidate_certification_digest") @db.Char(64)
   siteProjectBindingRef         String    @map("site_project_binding_ref")
   siteProjectBindingEpoch       BigInt    @map("site_project_binding_epoch")
+  runtimeBindingEpoch           BigInt    @map("runtime_binding_epoch")
   environment                   String
   region                        String
   audience                      String
@@ -538,6 +540,7 @@ model SiteActivationAttemptAuthority {
   updatedAt                     DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@index([siteRef, state, requestedAt])
+  @@unique([siteRef, runtimeBindingEpoch])
   @@map("site_activation_attempt")
   @@schema("platform")
 }

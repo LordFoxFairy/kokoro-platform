@@ -45,6 +45,7 @@ export function createPreviewReadySite(input: Readonly<{
     securityEpoch: 1n,
     policyEpoch: 1n,
     revocationEpoch: 1n,
+    runtimeBindingEpoch: 1n,
   });
 }
 

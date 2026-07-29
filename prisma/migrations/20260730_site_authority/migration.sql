@@ -10,6 +10,7 @@ CREATE TABLE platform.site (
   security_epoch BIGINT NOT NULL DEFAULT 1 CHECK(security_epoch > 0),
   policy_epoch BIGINT NOT NULL DEFAULT 1 CHECK(policy_epoch > 0),
   revocation_epoch BIGINT NOT NULL DEFAULT 1 CHECK(revocation_epoch > 0),
+  runtime_binding_epoch BIGINT NOT NULL DEFAULT 1 CHECK(runtime_binding_epoch > 0),
   tombstoned_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -95,6 +96,7 @@ CREATE TABLE platform.site_activation_attempt (
   candidate_certification_digest CHAR(64) NOT NULL CHECK(candidate_certification_digest ~ '^[0-9a-f]{64}$'),
   site_project_binding_ref TEXT NOT NULL,
   site_project_binding_epoch BIGINT NOT NULL CHECK(site_project_binding_epoch > 0),
+  runtime_binding_epoch BIGINT NOT NULL CHECK(runtime_binding_epoch > 0),
   environment TEXT NOT NULL CHECK(environment IN ('development','preview','production')),
   region TEXT NOT NULL,
   audience TEXT NOT NULL,
@@ -111,6 +113,7 @@ CREATE TABLE platform.site_activation_attempt (
   FOREIGN KEY(site_project_binding_ref,site_ref) REFERENCES platform.site_project_binding(binding_ref,site_ref),
   FOREIGN KEY(deployment_ref,site_ref,candidate_release_ref)
     REFERENCES platform.site_deployment_binding(deployment_ref,site_ref,release_ref),
+  UNIQUE(site_ref,runtime_binding_epoch),
   CHECK((state='preparing') OR provider_operation_key IS NOT NULL),
   CHECK((state NOT IN ('pointer_committing','draining','succeeded')) OR
         (deployment_ref IS NOT NULL AND observed_at IS NOT NULL))
@@ -174,7 +177,8 @@ BEGIN
     RAISE EXCEPTION 'decommissioned Site is terminal';
   END IF;
   IF NEW.security_epoch < OLD.security_epoch OR NEW.policy_epoch < OLD.policy_epoch OR
-     NEW.revocation_epoch < OLD.revocation_epoch THEN
+     NEW.revocation_epoch < OLD.revocation_epoch OR
+     NEW.runtime_binding_epoch < OLD.runtime_binding_epoch THEN
     RAISE EXCEPTION 'Site epochs cannot decrease';
   END IF;
   RETURN NEW;
@@ -184,6 +188,25 @@ REVOKE ALL ON FUNCTION platform.site_decommissioned_terminal() FROM PUBLIC;
 CREATE TRIGGER site_decommissioned_terminal
 BEFORE UPDATE ON platform.site FOR EACH ROW
 EXECUTE FUNCTION platform.site_decommissioned_terminal();
+
+CREATE FUNCTION platform.site_runtime_binding_epoch_guard() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM platform.site owner
+    WHERE owner.site_ref=NEW.site_ref
+      AND owner.runtime_binding_epoch>=NEW.runtime_binding_epoch
+  ) THEN
+    RAISE EXCEPTION 'Site runtime binding epoch is not owner-reserved';
+  END IF;
+  RETURN NULL;
+END;
+$$;
+REVOKE ALL ON FUNCTION platform.site_runtime_binding_epoch_guard() FROM PUBLIC;
+CREATE CONSTRAINT TRIGGER site_runtime_binding_epoch_monotonic
+AFTER INSERT OR UPDATE ON platform.site_activation_attempt
+DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+EXECUTE FUNCTION platform.site_runtime_binding_epoch_guard();
 
 CREATE FUNCTION platform.reject_site_deployment_observation_update() RETURNS trigger
 LANGUAGE plpgsql AS $$

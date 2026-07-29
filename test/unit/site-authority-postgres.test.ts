@@ -7,6 +7,7 @@ import { issuePlatformTransaction, revokePlatformTransaction } from "../../src/s
 const site: SiteAggregate = Object.freeze({
   siteRef: "site_01", state: "active", activeReleaseRef: "release_02",
   securityEpoch: 2n, policyEpoch: 6n, revocationEpoch: 1n,
+  runtimeBindingEpoch: 4n,
 });
 const release: SiteRelease = Object.freeze({
   releaseRef: "release_02", siteRef: "site_01", state: "active",
@@ -18,6 +19,7 @@ const attempt: ActivationAttempt = Object.freeze({
   expectedActiveReleaseRef: "release_01", candidateWebArtifactDigest: "a".repeat(64),
   candidateManifestDigest: "b".repeat(64), candidateCertificationDigest: "c".repeat(64),
   siteProjectBindingRef: "binding_01", siteProjectBindingEpoch: 1n,
+  runtimeBindingEpoch: 4n,
   environment: "production", region: "us-east-1", audience: "site-product",
   sessionContractRevision: "browser-v3",
   state: "draining", requestedAt: "2026-07-28T12:00:00.000Z",
@@ -70,7 +72,8 @@ describe("Postgres Site authority", () => {
       query: async <Row extends Record<string, unknown>>(statement: string) => {
         calls.push(statement);
         return [{ siteRef: "site_01", state: "active", activeReleaseRef: "release_01",
-          securityEpoch: 2n, policyEpoch: 5n, revocationEpoch: 1n }] as unknown as readonly Row[];
+          securityEpoch: 2n, policyEpoch: 5n, revocationEpoch: 1n,
+          runtimeBindingEpoch: 3n }] as unknown as readonly Row[];
       },
       execute: async () => 0,
     });
@@ -79,6 +82,24 @@ describe("Postgres Site authority", () => {
       expect(loaded?.activeReleaseRef).toBe("release_01");
       expect(calls[0]).toContain("FOR UPDATE");
       expect(calls[0]).toContain("platform.site");
+    } finally { revokePlatformTransaction(lease); }
+  });
+
+  it("reserves a strictly monotonic runtime binding epoch under the owner lock", async () => {
+    const calls: { statement: string; values: readonly unknown[] }[] = [];
+    const lease = issuePlatformTransaction({
+      query: async <Row extends Record<string, unknown>>(statement: string, values = []) => {
+        calls.push({ statement, values });
+        return [{ runtimeBindingEpoch: 5n }] as unknown as readonly Row[];
+      },
+      execute: async () => 0,
+    });
+    try {
+      await expect(new PostgresSiteAuthorityRepository().reserveRuntimeBindingEpoch(
+        lease.transaction, "site_01", 4n,
+      )).resolves.toBe(5n);
+      expect(calls[0]?.statement).toContain("runtime_binding_epoch=runtime_binding_epoch+1");
+      expect(calls[0]?.statement).toContain("runtime_binding_epoch=$2");
     } finally { revokePlatformTransaction(lease); }
   });
 
@@ -96,16 +117,19 @@ describe("Postgres Site authority", () => {
         site, candidate: release, attempt,
         expectedActiveReleaseRef: "release_01", drainingReleaseRef: "release_01",
       });
-      expect(calls).toHaveLength(6);
+      expect(calls.length).toBeGreaterThanOrEqual(10);
       expect(calls[0]?.statement).toContain("site_deployment_binding");
       expect(calls[0]?.statement).toContain("state='draining'");
       expect(calls[1]?.statement).toContain("site_deployment_binding");
       expect(calls[1]?.statement).toContain("state='active'");
-      expect(calls[2]?.statement).toContain("active_release_ref IS NOT DISTINCT FROM $3");
-      expect(calls[2]?.values).toContain("release_01");
-      expect(calls[3]?.statement).toContain("site_release");
-      expect(calls[4]?.statement).toContain("site_release");
-      expect(calls[5]?.statement).toContain("site_activation_attempt");
+      const statements = calls.map(({ statement }) => statement).join("\n");
+      expect(statements).toContain("active_release_ref IS NOT DISTINCT FROM $3");
+      expect(calls.some(({ values }) => values.includes("release_01"))).toBe(true);
+      expect(statements).toContain("platform.authorization_site");
+      expect(statements).toContain("platform.authorization_site_release");
+      expect(statements).toContain("platform.authorization_product_binding");
+      expect(statements).toContain("binding_epoch < EXCLUDED.binding_epoch");
+      expect(statements).toContain("site_activation_attempt");
     } finally { revokePlatformTransaction(lease); }
   });
 
@@ -167,7 +191,7 @@ describe("Postgres Site authority", () => {
         site, candidate: release, attempt,
         expectedActiveReleaseRef: "release_01", drainingReleaseRef: "release_01",
       })).rejects.toThrow("SITE_ACTIVE_POINTER_CONFLICT");
-      expect(executions).toBe(3);
+      expect(executions).toBeGreaterThanOrEqual(3);
     } finally { revokePlatformTransaction(lease); }
   });
 

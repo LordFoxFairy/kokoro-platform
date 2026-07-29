@@ -84,6 +84,11 @@ export class SiteLifecycleService {
       if (site === null || candidate === null || binding === null) {
         throw new Error("SITE_ACTIVATION_TARGET_NOT_FOUND");
       }
+      const runtimeBindingEpoch = await this.repository.reserveRuntimeBindingEpoch(
+        transaction,
+        input.siteRef,
+        site.runtimeBindingEpoch,
+      );
       const attempt = beginActivation({
         attemptRef: input.attemptRef,
         site,
@@ -91,6 +96,7 @@ export class SiteLifecycleService {
         expectedActiveReleaseRef: input.expectedActiveReleaseRef,
         siteProjectBindingRef: binding.bindingRef,
         siteProjectBindingEpoch: binding.bindingEpoch,
+        runtimeBindingEpoch,
         environment,
         region: context.region,
         audience: input.audience,

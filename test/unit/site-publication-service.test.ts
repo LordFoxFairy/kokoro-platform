@@ -12,7 +12,7 @@ describe("SitePublicationService", () => {
     const repository = {
       ...baseRepository(),
       loadSiteForUpdate: async () => ({ siteRef: "site_01", state: "preview_ready", activeReleaseRef: null,
-        securityEpoch: 1n, policyEpoch: 1n, revocationEpoch: 1n }),
+        securityEpoch: 1n, policyEpoch: 1n, revocationEpoch: 1n, runtimeBindingEpoch: 1n }),
       loadReleaseForUpdate: async () => null,
       insertRelease: async (_transaction, release) => { calls.push(`release:${release.releaseRef}`); },
     } satisfies SiteAuthorityRepository & SitePublicationRepository;
@@ -73,6 +73,7 @@ function releaseInput() {
 function baseRepository(): SiteAuthorityRepository & SitePublicationRepository {
   return {
     loadActiveProjectBindingForUpdate: async () => null,
+    reserveRuntimeBindingEpoch: async () => { throw new Error("unexpected"); },
     loadSiteForUpdate: async () => null, loadReleaseForUpdate: async () => null,
     loadActivationForUpdate: async () => null, insertActivation: async () => undefined,
     updateActivation: async () => undefined, commitActivation: async () => undefined,
