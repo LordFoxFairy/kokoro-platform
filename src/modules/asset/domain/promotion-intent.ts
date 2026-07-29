@@ -29,6 +29,25 @@ export interface AssetPromotionIntent {
   readonly createdAt: string;
 }
 
+export type TrustedBlobObservation =
+  | Readonly<{ disposition: "absent"; observedAt: string }>
+  | Readonly<{
+    disposition: "present";
+    providerVersionRef: string;
+    providerEtagDigest: string;
+    size: bigint;
+    checksumSha256: string;
+    observedAt: string;
+  }>;
+
+export type TrustedBlobDecision =
+  | Readonly<{ disposition: "retry"; code: "ASSET_TRUSTED_OBJECT_NOT_VISIBLE" }>
+  | Readonly<{
+    disposition: "rejected";
+    code: "ASSET_TRUSTED_OBJECT_SIZE_MISMATCH" | "ASSET_TRUSTED_OBJECT_CHECKSUM_MISMATCH";
+  }>
+  | Readonly<{ disposition: "ready"; observation: Extract<TrustedBlobObservation, { disposition: "present" }> }>;
+
 export function createAssetPromotionIntent(input: Readonly<{
   promotionRef: string;
   assetRef: string;
@@ -86,10 +105,71 @@ export function createAssetPromotionIntent(input: Readonly<{
   });
 }
 
+export function evaluateTrustedBlobObservation(input: Readonly<{
+  promotion: AssetPromotionIntent;
+  observation: TrustedBlobObservation;
+}>): TrustedBlobDecision {
+  if (!new Set<AssetPromotionIntent["state"]>([
+    "pending_copy", "observing_copy", "ready_to_finalize",
+  ]).has(input.promotion.state)) {
+    throw new Error("ASSET_PROMOTION_NOT_OBSERVABLE");
+  }
+  if (!Number.isFinite(Date.parse(input.observation.observedAt)) ||
+      Date.parse(input.observation.observedAt) < Date.parse(input.promotion.createdAt)) {
+    throw new Error("ASSET_TRUSTED_OBJECT_OBSERVATION_TIME_INVALID");
+  }
+  if (input.observation.disposition === "absent") {
+    return Object.freeze({ disposition: "retry", code: "ASSET_TRUSTED_OBJECT_NOT_VISIBLE" });
+  }
+  identifier(input.observation.providerVersionRef, "ASSET_TRUSTED_PROVIDER_VERSION_INVALID");
+  digest(input.observation.providerEtagDigest, "ASSET_TRUSTED_PROVIDER_ETAG_INVALID");
+  digest(input.observation.checksumSha256, "ASSET_TRUSTED_OBJECT_CHECKSUM_INVALID");
+  if (input.observation.size !== input.promotion.size) {
+    return Object.freeze({ disposition: "rejected", code: "ASSET_TRUSTED_OBJECT_SIZE_MISMATCH" });
+  }
+  if (input.observation.checksumSha256 !== input.promotion.checksumSha256) {
+    return Object.freeze({ disposition: "rejected", code: "ASSET_TRUSTED_OBJECT_CHECKSUM_MISMATCH" });
+  }
+  return Object.freeze({ disposition: "ready", observation: input.observation });
+}
+
+export function verifyAssetPromotionIntent(value: AssetPromotionIntent): AssetPromotionIntent {
+  for (const [candidate, code] of [
+    [value.promotionRef, "ASSET_PROMOTION_REF_INVALID"],
+    [value.siteRef, "ASSET_SITE_REF_INVALID"],
+    [value.subjectRef, "ASSET_SUBJECT_REF_INVALID"],
+    [value.projectRef, "ASSET_PROJECT_REF_INVALID"],
+    [value.intentRef, "ASSET_UPLOAD_INTENT_REF_INVALID"],
+    [value.sessionRef, "ASSET_UPLOAD_SESSION_REF_INVALID"],
+    [value.candidateRef, "ASSET_BLOB_CANDIDATE_REF_INVALID"],
+    [value.evaluationRef, "ASSET_SCAN_EVALUATION_REF_INVALID"],
+    [value.policyRevisionRef, "ASSET_POLICY_REVISION_INVALID"],
+    [value.assetRef, "ASSET_REF_INVALID"],
+    [value.assetVersionRef, "ASSET_VERSION_REF_INVALID"],
+    [value.blobRef, "ASSET_BLOB_REF_INVALID"],
+    [value.storageTenantRef, "ASSET_STORAGE_TENANT_INVALID"],
+    [value.quarantineProviderVersionRef, "ASSET_PROVIDER_VERSION_INVALID"],
+  ] as const) identifier(candidate, code);
+  bounded(value.quarantineObjectRef, 8, 256, "ASSET_QUARANTINE_OBJECT_REF_INVALID");
+  bounded(value.trustedObjectRef, 8, 256, "ASSET_TRUSTED_OBJECT_REF_INVALID");
+  digest(value.checksumSha256, "ASSET_PROMOTION_CHECKSUM_INVALID");
+  if (
+    value.subjectGeneration < 1n || value.size < 1n || value.expectedVersion < 1n ||
+    !Number.isFinite(Date.parse(value.createdAt)) ||
+    !new Set<AssetPromotionIntent["state"]>(["pending_copy", "observing_copy",
+      "ready_to_finalize", "completed", "rejected"]).has(value.state)
+  ) throw new Error("ASSET_PROMOTION_VALUE_INVALID");
+  return Object.freeze({ ...value });
+}
+
 function identifier(value: string, code: string): void {
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/u.test(value)) throw new Error(code);
 }
 
 function bounded(value: string, minimum: number, maximum: number, code: string): void {
   if (value.length < minimum || value.length > maximum) throw new Error(code);
+}
+
+function digest(value: string, code: string): void {
+  if (!/^[a-f0-9]{64}$/u.test(value)) throw new Error(code);
 }

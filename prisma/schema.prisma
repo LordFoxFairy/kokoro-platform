@@ -1816,7 +1816,11 @@ model AssetQuotaAccount {
   purpose               String
   quotaRevisionRef      String   @map("quota_revision_ref")
   maximumInflightBytes  BigInt   @map("maximum_inflight_bytes")
+  maximumReadyBytes     BigInt   @map("maximum_ready_bytes")
   reservedInflightBytes BigInt   @default(0) @map("reserved_inflight_bytes")
+  quarantineBytes       BigInt   @default(0) @map("quarantine_bytes")
+  readyAssetBytes       BigInt   @default(0) @map("ready_asset_bytes")
+  trashRetainedBytes    BigInt   @default(0) @map("trash_retained_bytes")
   expectedVersion       BigInt   @default(1) @map("expected_version")
   updatedAt             DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
@@ -1947,12 +1951,129 @@ model AssetPromotionIntent {
   copiedProviderVersionRef     String?   @map("copied_provider_version_ref")
   copiedProviderEtagDigest     String?   @map("copied_provider_etag_digest") @db.Char(64)
   copiedAt                     DateTime? @map("copied_at") @db.Timestamptz(6)
+  failureCode                  String?   @map("failure_code")
+  cleanupEventId               String?   @unique @map("cleanup_event_id") @db.Uuid
   createdAt                    DateTime  @map("created_at") @db.Timestamptz(6)
   updatedAt                    DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@unique([siteRef, intentRef, purpose])
+  @@unique([siteRef, promotionRef])
   @@unique([storageTenantRef, storageRegion, trustedObjectRef])
   @@index([siteRef, state, updatedAt])
   @@map("asset_promotion_intent")
+  @@schema("platform")
+}
+
+model AssetBlob {
+  blobRef                    String   @id @map("blob_ref")
+  siteRef                    String   @map("site_ref")
+  storageTenantRef           String   @map("storage_tenant_ref")
+  storageRegion              String   @map("storage_region")
+  trustedObjectRef           String   @map("trusted_object_ref")
+  providerVersionRef         String   @map("provider_version_ref")
+  providerEtagDigest         String   @map("provider_etag_digest") @db.Char(64)
+  checksumSha256             String   @map("checksum_sha256") @db.Char(64)
+  size                       BigInt
+  state                      String
+  createdAt                  DateTime @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([siteRef, blobRef])
+  @@unique([storageTenantRef, storageRegion, trustedObjectRef, providerVersionRef])
+  @@map("asset_blob")
+  @@schema("platform")
+}
+
+model AssetResource {
+  assetRef          String   @id @map("asset_ref")
+  siteRef           String   @map("site_ref")
+  subjectRef        String   @map("subject_ref")
+  subjectGeneration BigInt   @map("subject_generation")
+  projectRef        String   @map("project_ref")
+  purpose           String
+  state             String
+  expectedVersion   BigInt   @map("expected_version")
+  createdAt         DateTime @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([siteRef, assetRef])
+  @@index([siteRef, subjectRef, projectRef, state, updatedAt])
+  @@map("asset_resource")
+  @@schema("platform")
+}
+
+model AssetVersion {
+  assetVersionRef      String   @id @map("asset_version_ref")
+  siteRef              String   @map("site_ref")
+  assetRef             String   @map("asset_ref")
+  blobRef              String   @map("blob_ref")
+  sourceUploadIntentRef String  @unique @map("source_upload_intent_ref")
+  scanEvaluationRef    String   @unique @map("scan_evaluation_ref")
+  policyRevisionRef    String   @map("policy_revision_ref")
+  detectedMediaType    String   @map("detected_media_type")
+  checksumSha256       String   @map("checksum_sha256") @db.Char(64)
+  size                 BigInt
+  state                String
+  eligibilityEpoch     BigInt   @map("eligibility_epoch")
+  createdAt            DateTime @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([siteRef, assetVersionRef])
+  @@index([siteRef, assetRef, state, createdAt])
+  @@map("asset_version")
+  @@schema("platform")
+}
+
+model AssetReference {
+  referenceRef   String    @id @map("reference_ref")
+  siteRef        String    @map("site_ref")
+  assetVersionRef String   @map("asset_version_ref")
+  ownerContext   String    @map("owner_context")
+  resourceRef    String    @map("resource_ref")
+  resourceVersion BigInt   @map("resource_version")
+  purpose        String
+  state          String
+  createdAt      DateTime  @map("created_at") @db.Timestamptz(6)
+  releasedAt     DateTime? @map("released_at") @db.Timestamptz(6)
+
+  @@unique([siteRef, ownerContext, resourceRef, resourceVersion, assetVersionRef, purpose])
+  @@index([siteRef, ownerContext, resourceRef, resourceVersion, state])
+  @@map("asset_reference")
+  @@schema("platform")
+}
+
+model AssetEligibilityProjection {
+  eligibilityRef    String   @id @map("eligibility_ref")
+  siteRef           String   @map("site_ref")
+  assetVersionRef   String   @unique @map("asset_version_ref")
+  subjectRef        String   @map("subject_ref")
+  subjectGeneration BigInt   @map("subject_generation")
+  projectRef        String   @map("project_ref")
+  purpose           String
+  policyRevisionRef String   @map("policy_revision_ref")
+  scanEvaluationRef String   @map("scan_evaluation_ref")
+  eligibilityEpoch  BigInt   @map("eligibility_epoch")
+  state             String
+  createdAt         DateTime @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([siteRef, assetVersionRef, eligibilityEpoch])
+  @@index([siteRef, subjectRef, projectRef, purpose, state])
+  @@map("asset_eligibility_projection")
+  @@schema("platform")
+}
+
+model AssetPromotionReceipt {
+  receiptRef               String   @id @map("receipt_ref")
+  siteRef                  String   @map("site_ref")
+  promotionRef             String   @unique @map("promotion_ref")
+  assetRef                 String   @unique @map("asset_ref")
+  assetVersionRef          String   @unique @map("asset_version_ref")
+  blobRef                  String   @unique @map("blob_ref")
+  trustedProviderVersionRef String  @map("trusted_provider_version_ref")
+  checksumSha256           String   @map("checksum_sha256") @db.Char(64)
+  completedAt              DateTime @map("completed_at") @db.Timestamptz(6)
+
+  @@map("asset_promotion_receipt")
   @@schema("platform")
 }

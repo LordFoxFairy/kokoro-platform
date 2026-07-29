@@ -15,6 +15,7 @@ export interface AssetPolicySnapshot {
   readonly storageRegion: string;
   readonly maximumFileBytes: bigint;
   readonly maximumInflightBytes: bigint;
+  readonly maximumReadyBytes: bigint;
   readonly allowedClientMediaTypes: readonly string[];
   readonly expiresAt: string;
 }
@@ -102,7 +103,10 @@ export function createUploadIntent(input: Readonly<{
   if (Date.parse(input.policy.expiresAt) <= Date.parse(input.now)) throw new Error("ASSET_POLICY_EXPIRED");
   identifier(input.policy.policyRevisionRef, "ASSET_POLICY_REVISION_INVALID");
   bounded(input.policy.storageRegion, 1, 128, "ASSET_STORAGE_REGION_INVALID");
-  if (input.policy.maximumInflightBytes < input.policy.maximumFileBytes) {
+  if (
+    input.policy.maximumInflightBytes < input.policy.maximumFileBytes ||
+    input.policy.maximumReadyBytes < input.policy.maximumFileBytes
+  ) {
     throw new Error("ASSET_POLICY_QUOTA_INVALID");
   }
   return Object.freeze({

@@ -12,6 +12,7 @@ const intent = createUploadIntent({
   clientMediaType: "image/png", expectedSize: 1234n, expectedChecksumSha256: "a".repeat(64),
   policy: { policyRevisionRef: "asset_policy_01", purpose: "chat.attachment", storageRegion: "us-east-1",
     maximumFileBytes: 10_000_000n, maximumInflightBytes: 100_000_000n,
+    maximumReadyBytes: 1_000_000_000n,
     allowedClientMediaTypes: ["image/png"], expiresAt: "2026-07-29T12:00:00.000Z" },
   now: "2026-07-28T12:00:00.000Z",
 });
@@ -33,7 +34,8 @@ describe("PostgresAssetUploadRepository", () => {
         if (statement.includes("INSERT INTO platform.asset_upload_intent")) return result<Row>({ intentRef: intent.intentRef });
         if (statement.includes("FROM platform.asset_quota_account")) return result<Row>({
           quotaRevisionRef: "quota_revision_01", maximumInflightBytes: 100_000_000n,
-          reservedInflightBytes: 0n,
+          maximumReadyBytes: 1_000_000_000n, reservedInflightBytes: 0n,
+          quarantineBytes: 0n, readyAssetBytes: 0n, trashRetainedBytes: 0n,
         });
         throw new Error(`unexpected query: ${statement}`);
       },
@@ -44,6 +46,7 @@ describe("PostgresAssetUploadRepository", () => {
       const result = await new PostgresAssetUploadRepository().claimUploadIntent(lease.transaction, {
         intent, session, idempotencyKey: "upload-command-01", requestDigest,
         maximumInflightBytes: 100_000_000n,
+        maximumReadyBytes: 1_000_000_000n,
       });
       expect(result).toMatchObject({ disposition: "created", intent: { intentRef: "upload_intent_01" },
         session: { sessionRef: "upload_session_01" } });
@@ -72,6 +75,7 @@ describe("PostgresAssetUploadRepository", () => {
       await expect(new PostgresAssetUploadRepository().claimUploadIntent(lease.transaction, {
         intent, session, idempotencyKey: "upload-command-01", requestDigest,
         maximumInflightBytes: 100_000_000n,
+        maximumReadyBytes: 1_000_000_000n,
       })).resolves.toMatchObject({ disposition: "replay" });
       expect(executed).toHaveLength(0);
     } finally {
@@ -121,10 +125,15 @@ describe("PostgresAssetUploadRepository", () => {
         scanEvent,
       })).resolves.toBe("committed");
       const sessionCas = statements.findIndex((value) => value.includes("SET state='validating'"));
+      const quotaTransition = statements.findIndex((value) =>
+        value.includes("quarantine_bytes=quarantine_bytes+$4"));
+      const reservationCommit = statements.findIndex((value) => value.includes("SET state='committed'"));
       const outboxInsert = statements.findIndex((value) => value.includes("INSERT INTO platform.outbox_event"));
       const candidateInsert = statements.findIndex((value) => value.includes("INSERT INTO platform.asset_blob_candidate"));
       expect(sessionCas).toBeGreaterThanOrEqual(0);
-      expect(outboxInsert).toBeGreaterThan(sessionCas);
+      expect(quotaTransition).toBeGreaterThan(sessionCas);
+      expect(reservationCommit).toBeGreaterThan(quotaTransition);
+      expect(outboxInsert).toBeGreaterThan(reservationCommit);
       expect(candidateInsert).toBeGreaterThan(outboxInsert);
     } finally {
       revokePlatformTransaction(lease);

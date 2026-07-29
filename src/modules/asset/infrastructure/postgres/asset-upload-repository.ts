@@ -19,7 +19,10 @@ export class PostgresAssetUploadRepository implements AssetUploadRepositoryPort,
     input: Parameters<AssetUploadRepositoryPort["claimUploadIntent"]>[1],
   ): Promise<ClaimUploadIntentResult> {
     assertDigest(input.requestDigest);
-    if (input.maximumInflightBytes < input.intent.expectedSize) throw new Error("ASSET_QUOTA_POLICY_INVALID");
+    if (
+      input.maximumInflightBytes < input.intent.expectedSize ||
+      input.maximumReadyBytes < input.intent.expectedSize
+    ) throw new Error("ASSET_QUOTA_POLICY_INVALID");
     const sql = resolvePlatformTransaction(transaction);
     await lockCurrentAuthority(sql, input.intent, "asset.create-upload-intent");
     const inserted = await sql.query<{ intentRef: string }>(
@@ -53,16 +56,20 @@ export class PostgresAssetUploadRepository implements AssetUploadRepositoryPort,
 
     await sql.execute(
       `INSERT INTO platform.asset_quota_account
-       (site_ref,subject_ref,purpose,quota_revision_ref,maximum_inflight_bytes,reserved_inflight_bytes)
-       VALUES ($1,$2,$3,$4,$5::bigint,0)
+       (site_ref,subject_ref,purpose,quota_revision_ref,maximum_inflight_bytes,maximum_ready_bytes,
+        reserved_inflight_bytes,quarantine_bytes,ready_asset_bytes,trash_retained_bytes)
+       VALUES ($1,$2,$3,$4,$5::bigint,$6::bigint,0,0,0,0)
        ON CONFLICT (site_ref,subject_ref,purpose) DO NOTHING`,
       [input.intent.siteRef, input.intent.subjectRef, input.intent.purpose,
-        input.session.quotaRevisionRef, input.maximumInflightBytes],
+        input.session.quotaRevisionRef, input.maximumInflightBytes, input.maximumReadyBytes],
     );
     const accounts = await sql.query<QuotaAccountRow>(
       `SELECT quota_revision_ref AS "quotaRevisionRef",
               maximum_inflight_bytes AS "maximumInflightBytes",
-              reserved_inflight_bytes AS "reservedInflightBytes"
+              maximum_ready_bytes AS "maximumReadyBytes",
+              reserved_inflight_bytes AS "reservedInflightBytes",
+              quarantine_bytes AS "quarantineBytes",ready_asset_bytes AS "readyAssetBytes",
+              trash_retained_bytes AS "trashRetainedBytes"
        FROM platform.asset_quota_account
        WHERE site_ref=$1 AND subject_ref=$2 AND purpose=$3
        FOR UPDATE`,
@@ -70,20 +77,33 @@ export class PostgresAssetUploadRepository implements AssetUploadRepositoryPort,
     );
     const account = accounts[0];
     if (!account) throw new Error("ASSET_QUOTA_ACCOUNT_NOT_FOUND");
-    if (account.quotaRevisionRef !== input.session.quotaRevisionRef || account.maximumInflightBytes !== input.maximumInflightBytes) {
-      if (account.reservedInflightBytes > input.maximumInflightBytes) throw new Error("ASSET_UPLOAD_QUOTA_EXCEEDED");
+    if (
+      account.quotaRevisionRef !== input.session.quotaRevisionRef ||
+      account.maximumInflightBytes !== input.maximumInflightBytes ||
+      account.maximumReadyBytes !== input.maximumReadyBytes
+    ) {
+      if (
+        account.reservedInflightBytes > input.maximumInflightBytes ||
+        account.reservedInflightBytes + account.quarantineBytes + account.readyAssetBytes +
+          account.trashRetainedBytes > input.maximumReadyBytes
+      ) throw new Error("ASSET_UPLOAD_QUOTA_EXCEEDED");
       await sql.execute(
         `UPDATE platform.asset_quota_account
          SET quota_revision_ref=$4,maximum_inflight_bytes=$5::bigint,
+             maximum_ready_bytes=$6::bigint,
              expected_version=expected_version+1,updated_at=now()
          WHERE site_ref=$1 AND subject_ref=$2 AND purpose=$3`,
         [input.intent.siteRef, input.intent.subjectRef, input.intent.purpose,
-          input.session.quotaRevisionRef, input.maximumInflightBytes],
+          input.session.quotaRevisionRef, input.maximumInflightBytes, input.maximumReadyBytes],
       );
     }
     if (account.reservedInflightBytes + input.intent.expectedSize > input.maximumInflightBytes) {
       throw new Error("ASSET_UPLOAD_QUOTA_EXCEEDED");
     }
+    if (
+      account.reservedInflightBytes + account.quarantineBytes + account.readyAssetBytes +
+        account.trashRetainedBytes + input.intent.expectedSize > input.maximumReadyBytes
+    ) throw new Error("ASSET_STORAGE_QUOTA_EXCEEDED");
     await sql.execute(
       `UPDATE platform.asset_quota_account
        SET reserved_inflight_bytes=reserved_inflight_bytes+$4::bigint,
@@ -184,6 +204,28 @@ export class PostgresAssetUploadRepository implements AssetUploadRepositoryPort,
         input.expectedSessionVersion],
     );
     if (changed !== 1) return "superseded";
+    const quotaChanged = await sql.execute(
+      `UPDATE platform.asset_quota_account account
+       SET reserved_inflight_bytes=reserved_inflight_bytes-$4::bigint,
+           quarantine_bytes=quarantine_bytes+$4::bigint,
+           expected_version=expected_version+1,updated_at=now()
+       FROM platform.asset_quota_reservation reservation
+       WHERE account.site_ref=$1 AND account.subject_ref=$2 AND account.purpose=$3
+         AND reservation.site_ref=account.site_ref AND reservation.intent_ref=$5
+         AND reservation.session_ref=$6 AND reservation.state='reserved'
+         AND reservation.reserved_bytes=$4::bigint
+         AND account.reserved_inflight_bytes >= $4::bigint`,
+      [input.candidate.siteRef, input.candidate.subjectRef, input.candidate.purpose,
+        input.candidate.observedSize, input.candidate.intentRef, input.candidate.sessionRef],
+    );
+    if (quotaChanged !== 1) throw new Error("ASSET_QUARANTINE_QUOTA_TRANSITION_CONFLICT");
+    const reservationChanged = await sql.execute(
+      `UPDATE platform.asset_quota_reservation
+       SET state='committed',updated_at=now()
+       WHERE site_ref=$1 AND intent_ref=$2 AND session_ref=$3 AND state='reserved'`,
+      [input.candidate.siteRef, input.candidate.intentRef, input.candidate.sessionRef],
+    );
+    if (reservationChanged !== 1) throw new Error("ASSET_QUARANTINE_QUOTA_TRANSITION_CONFLICT");
     await enqueue(sql, input.scanEvent);
     const inserted = await sql.execute(
       `INSERT INTO platform.asset_blob_candidate
@@ -422,7 +464,13 @@ type SessionRow = Readonly<{
   sessionState: AssetUploadSession["state"]; sessionExpectedVersion: bigint; sessionExpiresAt: Date | string;
 }>;
 type QuotaAccountRow = Readonly<{
-  quotaRevisionRef: string; maximumInflightBytes: bigint; reservedInflightBytes: bigint;
+  quotaRevisionRef: string;
+  maximumInflightBytes: bigint;
+  maximumReadyBytes: bigint;
+  reservedInflightBytes: bigint;
+  quarantineBytes: bigint;
+  readyAssetBytes: bigint;
+  trashRetainedBytes: bigint;
 }>;
 type UploadPair = Readonly<{ intent: AssetUploadIntent; session: AssetUploadSession; requestDigest: string }>;
 

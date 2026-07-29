@@ -47,6 +47,7 @@ export interface AssetUploadRepositoryPort {
       idempotencyKey: string;
       requestDigest: string;
       maximumInflightBytes: bigint;
+      maximumReadyBytes: bigint;
     }>,
   ): Promise<ClaimUploadIntentResult>;
 

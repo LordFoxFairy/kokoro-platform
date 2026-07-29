@@ -105,6 +105,7 @@ export class CreateUploadIntentService {
         idempotencyKey: input.idempotencyKey,
         requestDigest,
         maximumInflightBytes: policy.policy.maximumInflightBytes,
+        maximumReadyBytes: policy.policy.maximumReadyBytes,
       }),
     );
     if (claim.disposition === "conflict") throw new Error("ASSET_IDEMPOTENCY_DIGEST_CONFLICT");

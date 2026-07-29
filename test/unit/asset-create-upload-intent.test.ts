@@ -14,6 +14,7 @@ const context = Object.freeze({
 const policy = Object.freeze({
   policy: Object.freeze({ policyRevisionRef: "asset_policy_01", purpose: "chat.attachment",
     storageRegion: "us-east-1", maximumFileBytes: 10_000_000n, maximumInflightBytes: 100_000_000n,
+    maximumReadyBytes: 1_000_000_000n,
     allowedClientMediaTypes: Object.freeze(["image/png"]), expiresAt: "2026-07-29T12:00:00.000Z" }),
   quotaRevisionRef: "quota_revision_01", storageTenantRef: "storage_tenant_01",
   uploadAudience: "https://upload.example.test", minimumPartBytes: 5_242_880n,

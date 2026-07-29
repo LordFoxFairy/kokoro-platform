@@ -12,6 +12,7 @@ const policy = Object.freeze({
   storageRegion: "us-east-1",
   maximumFileBytes: 10_000_000n,
   maximumInflightBytes: 100_000_000n,
+  maximumReadyBytes: 1_000_000_000n,
   allowedClientMediaTypes: Object.freeze(["image/png", "text/plain"]),
   expiresAt: "2026-07-29T12:00:00.000Z",
 });

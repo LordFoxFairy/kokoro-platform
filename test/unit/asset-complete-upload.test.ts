@@ -20,6 +20,7 @@ const intent = createUploadIntent({
   clientMediaType: "image/png", expectedSize: 1234n, expectedChecksumSha256: "a".repeat(64),
   policy: { policyRevisionRef: "asset_policy_01", purpose: "chat.attachment", storageRegion: "us-east-1",
     maximumFileBytes: 10_000_000n, maximumInflightBytes: 100_000_000n,
+    maximumReadyBytes: 1_000_000_000n,
     allowedClientMediaTypes: ["image/png"], expiresAt: "2026-07-29T12:00:00.000Z" },
   now: "2026-07-28T12:00:00.000Z",
 });

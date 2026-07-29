@@ -135,7 +135,7 @@ async function rejectUpload(
     [decision.evaluation.siteRef, decision.evaluation.candidateRef],
   );
   const reservation = reservations[0];
-  if (!reservation || reservation.state !== "reserved") throw new Error("ASSET_QUOTA_RESERVATION_INVALID");
+  if (!reservation || reservation.state !== "committed") throw new Error("ASSET_QUOTA_RESERVATION_INVALID");
   const sessionChanged = await sql.execute(
     `UPDATE platform.asset_upload_session session
      SET state='rejected',expected_version=expected_version+1,updated_at=now()
@@ -158,10 +158,10 @@ async function rejectUpload(
   if (intentChanged !== 1) throw new Error("ASSET_UPLOAD_INTENT_REJECTION_CONFLICT");
   const quotaChanged = await sql.execute(
     `UPDATE platform.asset_quota_account
-     SET reserved_inflight_bytes=reserved_inflight_bytes-$4::bigint,
+     SET quarantine_bytes=quarantine_bytes-$4::bigint,
          expected_version=expected_version+1,updated_at=now()
      WHERE site_ref=$1 AND subject_ref=$2 AND purpose=$3
-       AND reserved_inflight_bytes >= $4::bigint`,
+       AND quarantine_bytes >= $4::bigint`,
     [decision.evaluation.siteRef, reservation.subjectRef, reservation.purpose, reservation.reservedBytes],
   );
   if (quotaChanged !== 1) throw new Error("ASSET_QUOTA_RELEASE_CONFLICT");
@@ -171,7 +171,7 @@ async function rejectUpload(
      FROM platform.asset_blob_candidate candidate
      WHERE candidate.site_ref=$1 AND candidate.candidate_ref=$2
        AND reservation.site_ref=candidate.site_ref AND reservation.intent_ref=candidate.intent_ref
-       AND reservation.state='reserved'`,
+       AND reservation.state='committed'`,
     [decision.evaluation.siteRef, decision.evaluation.candidateRef, decision.cleanupEvent.eventId],
   );
   if (reservationChanged !== 1) throw new Error("ASSET_QUOTA_RELEASE_CONFLICT");
