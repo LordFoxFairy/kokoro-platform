@@ -22,6 +22,26 @@ describe("Wave 2A Commerce authority schema", () => {
     expect(migration).toContain("UNIQUE(source_type,source_id,purpose,cycle_key)");
   });
 
+  it("stores no raw Code and binds every published output revision to one Site", () => {
+    expect(migration).toContain("CREATE TABLE platform.commerce_redeem_code (");
+    expect(migration).toContain("lookup_digest CHAR(64) NOT NULL");
+    expect(migration).toContain("safe_fingerprint TEXT NOT NULL");
+    expect(migration).not.toMatch(/(?:raw|plaintext)_code/iu);
+    expect(migration).toContain("FOREIGN KEY(fulfillment_program_revision_ref,site_ref)");
+    expect(migration).toContain("FOREIGN KEY(credit_program_revision_ref,site_ref)");
+    expect(migration).toContain("UNIQUE(site_ref,output_plan_digest)");
+  });
+
+  it("keeps preview non-reserving and freezes its complete confirmation binding", () => {
+    expect(migration).toContain("CREATE TABLE platform.commerce_redemption_preview (");
+    expect(migration).toContain("subject_generation BIGINT NOT NULL");
+    expect(migration).toContain("billing_account_ref TEXT NOT NULL");
+    expect(migration).toContain("product_revision_digest CHAR(64) NOT NULL");
+    expect(migration).toContain("program_digest CHAR(64) NOT NULL");
+    expect(migration).toContain("output_plan_digest CHAR(64) NOT NULL");
+    expect(migration).not.toContain("reserved_by_preview");
+  });
+
   it("makes output truth and audit append-only and validates the exact set at success", () => {
     expect(migration).toContain("commerce_output_plan_contiguous");
     expect(migration).toContain("commerce_command_update_guard");

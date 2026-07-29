@@ -61,6 +61,354 @@ ALTER TABLE platform.identity_personal_bootstrap
   FOREIGN KEY(billing_account_ref,site_ref)
   REFERENCES platform.commerce_billing_account(billing_account_ref,site_ref);
 
+CREATE TABLE platform.commerce_catalog_product (
+  site_ref TEXT NOT NULL REFERENCES platform.authorization_site(site_ref),
+  product_ref TEXT NOT NULL CHECK(length(product_ref) BETWEEN 1 AND 256),
+  kind TEXT NOT NULL CHECK(kind IN ('free','credit_pack','subscription','bundle')),
+  state TEXT NOT NULL CHECK(state IN ('active','disabled')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY(site_ref,product_ref)
+);
+
+CREATE TABLE platform.commerce_catalog_plan (
+  site_ref TEXT NOT NULL REFERENCES platform.authorization_site(site_ref),
+  plan_ref TEXT NOT NULL CHECK(length(plan_ref) BETWEEN 1 AND 256),
+  state TEXT NOT NULL CHECK(state IN ('active','disabled')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY(site_ref,plan_ref)
+);
+
+CREATE TABLE platform.commerce_catalog_plan_version (
+  plan_version_ref TEXT PRIMARY KEY CHECK(length(plan_version_ref) BETWEEN 1 AND 256),
+  site_ref TEXT NOT NULL,
+  plan_ref TEXT NOT NULL,
+  revision BIGINT NOT NULL CHECK(revision > 0),
+  safe_label TEXT NOT NULL CHECK(length(safe_label) BETWEEN 1 AND 160),
+  term_action TEXT NOT NULL CHECK(term_action IN ('none','new_subscription','extend_from_max','reject_if_active')),
+  term_seconds BIGINT CHECK(term_seconds IS NULL OR term_seconds > 0),
+  stacking_scope TEXT NOT NULL CHECK(length(stacking_scope) BETWEEN 1 AND 128),
+  revision_digest CHAR(64) NOT NULL CHECK(revision_digest ~ '^[a-f0-9]{64}$'),
+  published_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(site_ref,plan_ref,revision),
+  UNIQUE(site_ref,revision_digest),
+  UNIQUE(plan_version_ref,site_ref),
+  FOREIGN KEY(site_ref,plan_ref) REFERENCES platform.commerce_catalog_plan(site_ref,plan_ref),
+  CHECK((term_action='none' AND term_seconds IS NULL) OR (term_action<>'none' AND term_seconds IS NOT NULL))
+);
+
+CREATE TABLE platform.commerce_credit_program_revision (
+  credit_program_revision_ref TEXT PRIMARY KEY CHECK(length(credit_program_revision_ref) BETWEEN 1 AND 256),
+  site_ref TEXT NOT NULL REFERENCES platform.authorization_site(site_ref),
+  program_ref TEXT NOT NULL CHECK(length(program_ref) BETWEEN 1 AND 256),
+  revision BIGINT NOT NULL CHECK(revision > 0),
+  bucket_class TEXT NOT NULL CHECK(bucket_class IN ('daily','period','permanent')),
+  unit TEXT NOT NULL CHECK(length(unit) BETWEEN 1 AND 64),
+  amount NUMERIC(38,0) NOT NULL CHECK(amount > 0),
+  expires_after_seconds BIGINT CHECK(expires_after_seconds IS NULL OR expires_after_seconds > 0),
+  revision_digest CHAR(64) NOT NULL CHECK(revision_digest ~ '^[a-f0-9]{64}$'),
+  published_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(site_ref,program_ref,revision),
+  UNIQUE(site_ref,revision_digest),
+  UNIQUE(credit_program_revision_ref,site_ref),
+  CHECK(
+    (bucket_class='permanent' AND expires_after_seconds IS NULL)
+    OR (bucket_class IN ('daily','period') AND expires_after_seconds IS NOT NULL)
+  )
+);
+
+CREATE TABLE platform.commerce_entitlement_template_revision (
+  entitlement_template_revision_ref TEXT PRIMARY KEY CHECK(length(entitlement_template_revision_ref) BETWEEN 1 AND 256),
+  site_ref TEXT NOT NULL REFERENCES platform.authorization_site(site_ref),
+  template_ref TEXT NOT NULL CHECK(length(template_ref) BETWEEN 1 AND 256),
+  revision BIGINT NOT NULL CHECK(revision > 0),
+  capability_key TEXT NOT NULL CHECK(capability_key ~ '^[a-z0-9][a-z0-9._:-]{0,127}$'),
+  safe_label TEXT NOT NULL CHECK(length(safe_label) BETWEEN 1 AND 160),
+  expires_after_seconds BIGINT CHECK(expires_after_seconds IS NULL OR expires_after_seconds > 0),
+  revision_digest CHAR(64) NOT NULL CHECK(revision_digest ~ '^[a-f0-9]{64}$'),
+  published_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(site_ref,template_ref,revision),
+  UNIQUE(site_ref,revision_digest),
+  UNIQUE(entitlement_template_revision_ref,site_ref)
+);
+
+CREATE TABLE platform.commerce_fulfillment_program_revision (
+  fulfillment_program_revision_ref TEXT PRIMARY KEY CHECK(length(fulfillment_program_revision_ref) BETWEEN 1 AND 256),
+  site_ref TEXT NOT NULL REFERENCES platform.authorization_site(site_ref),
+  program_ref TEXT NOT NULL CHECK(length(program_ref) BETWEEN 1 AND 256),
+  revision BIGINT NOT NULL CHECK(revision > 0),
+  output_plan_digest CHAR(64) NOT NULL CHECK(output_plan_digest ~ '^[a-f0-9]{64}$'),
+  published_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(site_ref,program_ref,revision),
+  UNIQUE(site_ref,output_plan_digest),
+  UNIQUE(fulfillment_program_revision_ref,site_ref)
+);
+
+CREATE TABLE platform.commerce_fulfillment_program_output (
+  fulfillment_program_revision_ref TEXT NOT NULL,
+  site_ref TEXT NOT NULL,
+  output_line_id TEXT NOT NULL CHECK(length(output_line_id) BETWEEN 1 AND 128),
+  ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+  cardinality INTEGER NOT NULL CHECK(cardinality BETWEEN 1 AND 100),
+  output_kind TEXT NOT NULL CHECK(output_kind IN ('subscription_term','entitlement_grant','credit_grant')),
+  plan_version_ref TEXT,
+  entitlement_template_revision_ref TEXT,
+  credit_program_revision_ref TEXT,
+  PRIMARY KEY(fulfillment_program_revision_ref,output_line_id),
+  UNIQUE(fulfillment_program_revision_ref,ordinal),
+  FOREIGN KEY(fulfillment_program_revision_ref,site_ref)
+    REFERENCES platform.commerce_fulfillment_program_revision(fulfillment_program_revision_ref,site_ref),
+  FOREIGN KEY(plan_version_ref,site_ref)
+    REFERENCES platform.commerce_catalog_plan_version(plan_version_ref,site_ref),
+  FOREIGN KEY(entitlement_template_revision_ref,site_ref)
+    REFERENCES platform.commerce_entitlement_template_revision(entitlement_template_revision_ref,site_ref),
+  FOREIGN KEY(credit_program_revision_ref,site_ref)
+    REFERENCES platform.commerce_credit_program_revision(credit_program_revision_ref,site_ref),
+  CHECK(
+    (output_kind='subscription_term' AND plan_version_ref IS NOT NULL AND entitlement_template_revision_ref IS NULL AND credit_program_revision_ref IS NULL)
+    OR (output_kind='entitlement_grant' AND plan_version_ref IS NULL AND entitlement_template_revision_ref IS NOT NULL AND credit_program_revision_ref IS NULL)
+    OR (output_kind='credit_grant' AND plan_version_ref IS NULL AND entitlement_template_revision_ref IS NULL AND credit_program_revision_ref IS NOT NULL)
+  )
+);
+ALTER TABLE platform.commerce_fulfillment_program_output
+  ADD CONSTRAINT commerce_subscription_term_cardinality_one
+  CHECK(output_kind<>'subscription_term' OR cardinality=1);
+
+CREATE TABLE platform.commerce_catalog_product_version (
+  product_version_ref TEXT PRIMARY KEY CHECK(length(product_version_ref) BETWEEN 1 AND 256),
+  site_ref TEXT NOT NULL,
+  product_ref TEXT NOT NULL,
+  revision BIGINT NOT NULL CHECK(revision > 0),
+  safe_label TEXT NOT NULL CHECK(length(safe_label) BETWEEN 1 AND 160),
+  plan_version_ref TEXT,
+  fulfillment_program_revision_ref TEXT NOT NULL,
+  legal_term_refs TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[] CHECK(cardinality(legal_term_refs) <= 16),
+  revision_digest CHAR(64) NOT NULL CHECK(revision_digest ~ '^[a-f0-9]{64}$'),
+  published_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(site_ref,product_ref,revision),
+  UNIQUE(site_ref,revision_digest),
+  UNIQUE(product_version_ref,site_ref),
+  FOREIGN KEY(site_ref,product_ref) REFERENCES platform.commerce_catalog_product(site_ref,product_ref),
+  FOREIGN KEY(plan_version_ref,site_ref) REFERENCES platform.commerce_catalog_plan_version(plan_version_ref,site_ref),
+  FOREIGN KEY(fulfillment_program_revision_ref,site_ref)
+    REFERENCES platform.commerce_fulfillment_program_revision(fulfillment_program_revision_ref,site_ref)
+);
+
+CREATE TABLE platform.commerce_redemption_program_revision (
+  redemption_program_revision_ref TEXT PRIMARY KEY CHECK(length(redemption_program_revision_ref) BETWEEN 1 AND 256),
+  site_ref TEXT NOT NULL REFERENCES platform.authorization_site(site_ref),
+  program_ref TEXT NOT NULL CHECK(length(program_ref) BETWEEN 1 AND 256),
+  revision BIGINT NOT NULL CHECK(revision > 0),
+  product_version_ref TEXT NOT NULL,
+  fulfillment_program_revision_ref TEXT NOT NULL,
+  program_digest CHAR(64) NOT NULL CHECK(program_digest ~ '^[a-f0-9]{64}$'),
+  max_redemptions_per_account INTEGER NOT NULL DEFAULT 1 CHECK(max_redemptions_per_account BETWEEN 1 AND 10000),
+  published_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(site_ref,program_ref,revision),
+  UNIQUE(site_ref,program_digest),
+  UNIQUE(redemption_program_revision_ref,site_ref),
+  FOREIGN KEY(product_version_ref,site_ref)
+    REFERENCES platform.commerce_catalog_product_version(product_version_ref,site_ref),
+  FOREIGN KEY(fulfillment_program_revision_ref,site_ref)
+    REFERENCES platform.commerce_fulfillment_program_revision(fulfillment_program_revision_ref,site_ref)
+);
+
+CREATE TABLE platform.commerce_redemption_program_availability (
+  site_ref TEXT NOT NULL,
+  redemption_program_revision_ref TEXT NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('active','paused','retired')),
+  starts_at TIMESTAMPTZ,
+  ends_at TIMESTAMPTZ,
+  availability_epoch BIGINT NOT NULL DEFAULT 1 CHECK(availability_epoch > 0),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY(site_ref,redemption_program_revision_ref),
+  FOREIGN KEY(redemption_program_revision_ref,site_ref)
+    REFERENCES platform.commerce_redemption_program_revision(redemption_program_revision_ref,site_ref),
+  CHECK(ends_at IS NULL OR starts_at IS NULL OR ends_at > starts_at)
+);
+
+CREATE TABLE platform.commerce_subscription (
+  subscription_ref UUID PRIMARY KEY,
+  site_ref TEXT NOT NULL,
+  billing_account_ref TEXT NOT NULL,
+  stacking_scope TEXT NOT NULL CHECK(length(stacking_scope) BETWEEN 1 AND 128),
+  plan_ref TEXT NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('active','expired','revoked')),
+  aggregate_version BIGINT NOT NULL DEFAULT 1 CHECK(aggregate_version > 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(site_ref,billing_account_ref,stacking_scope),
+  UNIQUE(subscription_ref,site_ref),
+  FOREIGN KEY(billing_account_ref,site_ref)
+    REFERENCES platform.commerce_billing_account(billing_account_ref,site_ref),
+  FOREIGN KEY(site_ref,plan_ref) REFERENCES platform.commerce_catalog_plan(site_ref,plan_ref)
+);
+
+CREATE TABLE platform.commerce_subscription_term (
+  subscription_term_ref UUID PRIMARY KEY,
+  subscription_ref UUID NOT NULL,
+  site_ref TEXT NOT NULL,
+  billing_account_ref TEXT NOT NULL,
+  plan_version_ref TEXT NOT NULL,
+  source_type TEXT NOT NULL CHECK(source_type IN ('redemption','admin_grant','program_window')),
+  source_ref TEXT NOT NULL CHECK(length(source_ref) BETWEEN 1 AND 256),
+  starts_at TIMESTAMPTZ NOT NULL,
+  ends_at TIMESTAMPTZ NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('active','reversed')),
+  reversed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(source_type,source_ref,plan_version_ref),
+  UNIQUE(subscription_term_ref,site_ref),
+  FOREIGN KEY(subscription_ref,site_ref)
+    REFERENCES platform.commerce_subscription(subscription_ref,site_ref),
+  FOREIGN KEY(billing_account_ref,site_ref)
+    REFERENCES platform.commerce_billing_account(billing_account_ref,site_ref),
+  FOREIGN KEY(plan_version_ref,site_ref)
+    REFERENCES platform.commerce_catalog_plan_version(plan_version_ref,site_ref),
+  CHECK(ends_at > starts_at),
+  CHECK((state='active' AND reversed_at IS NULL) OR (state='reversed' AND reversed_at IS NOT NULL))
+);
+CREATE INDEX commerce_subscription_term_account_end_idx
+  ON platform.commerce_subscription_term(site_ref,billing_account_ref,ends_at DESC)
+  WHERE state='active';
+
+CREATE TABLE platform.commerce_code_batch (
+  batch_ref UUID PRIMARY KEY,
+  site_ref TEXT NOT NULL,
+  redemption_program_revision_ref TEXT NOT NULL,
+  code_lookup_key_revision TEXT NOT NULL CHECK(code_lookup_key_revision ~ '^[A-Za-z0-9_-]{1,64}$'),
+  state TEXT NOT NULL CHECK(state IN ('draft','active','paused','retired')),
+  starts_at TIMESTAMPTZ,
+  ends_at TIMESTAMPTZ,
+  inventory_count INTEGER NOT NULL CHECK(inventory_count >= 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  activated_at TIMESTAMPTZ,
+  UNIQUE(batch_ref,site_ref),
+  UNIQUE(batch_ref,site_ref,code_lookup_key_revision),
+  FOREIGN KEY(redemption_program_revision_ref,site_ref)
+    REFERENCES platform.commerce_redemption_program_revision(redemption_program_revision_ref,site_ref),
+  CHECK(ends_at IS NULL OR starts_at IS NULL OR ends_at > starts_at),
+  CHECK((state='draft' AND activated_at IS NULL) OR (state<>'draft' AND activated_at IS NOT NULL))
+);
+CREATE INDEX commerce_code_batch_program_idx
+  ON platform.commerce_code_batch(site_ref,redemption_program_revision_ref,state);
+
+CREATE TABLE platform.commerce_redeem_code (
+  code_ref UUID PRIMARY KEY,
+  batch_ref UUID NOT NULL,
+  site_ref TEXT NOT NULL,
+  code_lookup_key_revision TEXT NOT NULL CHECK(code_lookup_key_revision ~ '^[A-Za-z0-9_-]{1,64}$'),
+  lookup_digest CHAR(64) NOT NULL CHECK(lookup_digest ~ '^[a-f0-9]{64}$'),
+  safe_fingerprint TEXT NOT NULL CHECK(safe_fingerprint ~ '^[A-Z0-9-]{4,32}$'),
+  state TEXT NOT NULL DEFAULT 'available' CHECK(state IN ('available','claimed','void')),
+  claimed_by_command_id TEXT REFERENCES platform.commerce_command(command_id),
+  claimed_at TIMESTAMPTZ,
+  voided_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(site_ref,lookup_digest),
+  UNIQUE(code_ref,site_ref),
+  UNIQUE(code_ref,batch_ref,site_ref),
+  FOREIGN KEY(batch_ref,site_ref,code_lookup_key_revision)
+    REFERENCES platform.commerce_code_batch(batch_ref,site_ref,code_lookup_key_revision),
+  CHECK(
+    (state='available' AND claimed_by_command_id IS NULL AND claimed_at IS NULL AND voided_at IS NULL)
+    OR (state='claimed' AND claimed_by_command_id IS NOT NULL AND claimed_at IS NOT NULL AND voided_at IS NULL)
+    OR (state='void' AND claimed_by_command_id IS NULL AND claimed_at IS NULL AND voided_at IS NOT NULL)
+  )
+);
+CREATE INDEX commerce_redeem_code_batch_state_idx
+  ON platform.commerce_redeem_code(batch_ref,state);
+
+CREATE TABLE platform.commerce_redemption (
+  redemption_id UUID PRIMARY KEY,
+  command_id TEXT NOT NULL UNIQUE REFERENCES platform.commerce_command(command_id),
+  site_ref TEXT NOT NULL,
+  billing_account_ref TEXT NOT NULL,
+  code_ref UUID NOT NULL UNIQUE,
+  batch_ref UUID NOT NULL,
+  redemption_program_revision_ref TEXT NOT NULL,
+  product_version_ref TEXT NOT NULL,
+  plan_version_ref TEXT,
+  fulfillment_ref UUID UNIQUE,
+  safe_code_fingerprint TEXT NOT NULL CHECK(safe_code_fingerprint ~ '^[A-Z0-9-]{4,32}$'),
+  state TEXT NOT NULL CHECK(state IN ('executing','fulfilled','reversed','reconciliation_required')),
+  redeemed_at TIMESTAMPTZ,
+  state_observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(redemption_id,site_ref),
+  FOREIGN KEY(billing_account_ref,site_ref)
+    REFERENCES platform.commerce_billing_account(billing_account_ref,site_ref),
+  FOREIGN KEY(code_ref,batch_ref,site_ref)
+    REFERENCES platform.commerce_redeem_code(code_ref,batch_ref,site_ref),
+  FOREIGN KEY(redemption_program_revision_ref,site_ref)
+    REFERENCES platform.commerce_redemption_program_revision(redemption_program_revision_ref,site_ref),
+  FOREIGN KEY(product_version_ref,site_ref)
+    REFERENCES platform.commerce_catalog_product_version(product_version_ref,site_ref),
+  FOREIGN KEY(plan_version_ref,site_ref)
+    REFERENCES platform.commerce_catalog_plan_version(plan_version_ref,site_ref),
+  CHECK(
+    (state='executing' AND redeemed_at IS NULL)
+    OR (state<>'executing' AND redeemed_at IS NOT NULL)
+  )
+);
+CREATE INDEX commerce_redemption_account_program_idx
+  ON platform.commerce_redemption(site_ref,billing_account_ref,redemption_program_revision_ref,state);
+
+CREATE TABLE platform.commerce_redemption_preview (
+  preview_ref UUID PRIMARY KEY,
+  command_id TEXT NOT NULL UNIQUE REFERENCES platform.commerce_command(command_id),
+  site_ref TEXT NOT NULL,
+  subject_ref TEXT NOT NULL,
+  subject_generation BIGINT NOT NULL CHECK(subject_generation > 0),
+  billing_account_ref TEXT NOT NULL,
+  code_ref UUID NOT NULL,
+  batch_ref UUID NOT NULL,
+  redemption_program_revision_ref TEXT NOT NULL,
+  product_version_ref TEXT NOT NULL,
+  plan_version_ref TEXT,
+  fulfillment_program_revision_ref TEXT NOT NULL,
+  product_revision_digest CHAR(64) NOT NULL CHECK(product_revision_digest ~ '^[a-f0-9]{64}$'),
+  program_digest CHAR(64) NOT NULL CHECK(program_digest ~ '^[a-f0-9]{64}$'),
+  output_plan_digest CHAR(64) NOT NULL CHECK(output_plan_digest ~ '^[a-f0-9]{64}$'),
+  preview_digest CHAR(64) NOT NULL CHECK(preview_digest ~ '^[a-f0-9]{64}$'),
+  credential_key_revision TEXT NOT NULL CHECK(credential_key_revision ~ '^[A-Za-z0-9_-]{1,64}$'),
+  credential_digest CHAR(64) NOT NULL CHECK(credential_digest ~ '^[a-f0-9]{64}$'),
+  safe_terms JSONB NOT NULL CHECK(jsonb_typeof(safe_terms)='object'),
+  state TEXT NOT NULL DEFAULT 'live' CHECK(state IN ('live','consumed','expired')),
+  expires_at TIMESTAMPTZ NOT NULL,
+  consumed_by_command_id TEXT REFERENCES platform.commerce_command(command_id),
+  consumed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(preview_ref,site_ref),
+  FOREIGN KEY(subject_ref,site_ref) REFERENCES platform.authorization_subject(subject_ref,site_ref),
+  FOREIGN KEY(billing_account_ref,site_ref)
+    REFERENCES platform.commerce_billing_account(billing_account_ref,site_ref),
+  FOREIGN KEY(code_ref,batch_ref,site_ref) REFERENCES platform.commerce_redeem_code(code_ref,batch_ref,site_ref),
+  FOREIGN KEY(redemption_program_revision_ref,site_ref)
+    REFERENCES platform.commerce_redemption_program_revision(redemption_program_revision_ref,site_ref),
+  FOREIGN KEY(product_version_ref,site_ref)
+    REFERENCES platform.commerce_catalog_product_version(product_version_ref,site_ref),
+  FOREIGN KEY(plan_version_ref,site_ref)
+    REFERENCES platform.commerce_catalog_plan_version(plan_version_ref,site_ref),
+  FOREIGN KEY(fulfillment_program_revision_ref,site_ref)
+    REFERENCES platform.commerce_fulfillment_program_revision(fulfillment_program_revision_ref,site_ref),
+  CHECK(expires_at > created_at),
+  CHECK(
+    (state='live' AND consumed_by_command_id IS NULL AND consumed_at IS NULL)
+    OR (state='consumed' AND consumed_by_command_id IS NOT NULL AND consumed_at IS NOT NULL)
+    OR (state='expired' AND consumed_by_command_id IS NULL AND consumed_at IS NULL)
+  )
+);
+CREATE INDEX commerce_redemption_preview_expiry_idx
+  ON platform.commerce_redemption_preview(expires_at) WHERE state='live';
+
 CREATE TABLE platform.commerce_fulfillment_transaction (
   fulfillment_id UUID PRIMARY KEY,
   command_id TEXT,
@@ -231,11 +579,70 @@ BEGIN
   RETURN NEW;
 END $$;
 
+CREATE FUNCTION platform.guard_commerce_code_transition() RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
+BEGIN
+  IF ROW(OLD.code_ref,OLD.batch_ref,OLD.site_ref,OLD.code_lookup_key_revision,OLD.lookup_digest,
+         OLD.safe_fingerprint,OLD.created_at)
+     IS DISTINCT FROM
+     ROW(NEW.code_ref,NEW.batch_ref,NEW.site_ref,NEW.code_lookup_key_revision,NEW.lookup_digest,
+         NEW.safe_fingerprint,NEW.created_at) THEN
+    RAISE EXCEPTION 'REDEEM_CODE_IDENTITY_IMMUTABLE' USING ERRCODE='23000';
+  END IF;
+  IF OLD.state <> 'available' OR NEW.state NOT IN ('claimed','void') THEN
+    RAISE EXCEPTION 'REDEEM_CODE_TRANSITION_INVALID' USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE FUNCTION platform.guard_commerce_preview_transition() RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
+BEGIN
+  IF ROW(OLD.preview_ref,OLD.command_id,OLD.site_ref,OLD.subject_ref,OLD.subject_generation,
+         OLD.billing_account_ref,OLD.code_ref,OLD.batch_ref,OLD.redemption_program_revision_ref,
+         OLD.product_version_ref,OLD.plan_version_ref,OLD.fulfillment_program_revision_ref,
+         OLD.product_revision_digest,OLD.program_digest,OLD.output_plan_digest,OLD.preview_digest,
+         OLD.credential_key_revision,OLD.credential_digest,OLD.safe_terms,OLD.expires_at,OLD.created_at)
+     IS DISTINCT FROM
+     ROW(NEW.preview_ref,NEW.command_id,NEW.site_ref,NEW.subject_ref,NEW.subject_generation,
+         NEW.billing_account_ref,NEW.code_ref,NEW.batch_ref,NEW.redemption_program_revision_ref,
+         NEW.product_version_ref,NEW.plan_version_ref,NEW.fulfillment_program_revision_ref,
+         NEW.product_revision_digest,NEW.program_digest,NEW.output_plan_digest,NEW.preview_digest,
+         NEW.credential_key_revision,NEW.credential_digest,NEW.safe_terms,NEW.expires_at,NEW.created_at) THEN
+    RAISE EXCEPTION 'REDEMPTION_PREVIEW_IDENTITY_IMMUTABLE' USING ERRCODE='23000';
+  END IF;
+  IF OLD.state <> 'live' OR NEW.state NOT IN ('consumed','expired') THEN
+    RAISE EXCEPTION 'REDEMPTION_PREVIEW_TRANSITION_INVALID' USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
+END $$;
+
 CREATE TRIGGER commerce_output_plan_immutable
   BEFORE UPDATE OR DELETE ON platform.commerce_fulfillment_output_plan
   FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
 CREATE TRIGGER commerce_actual_output_immutable
   BEFORE UPDATE OR DELETE ON platform.commerce_fulfillment_actual_output
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE TRIGGER commerce_plan_version_immutable
+  BEFORE UPDATE OR DELETE ON platform.commerce_catalog_plan_version
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE TRIGGER commerce_credit_program_revision_immutable
+  BEFORE UPDATE OR DELETE ON platform.commerce_credit_program_revision
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE TRIGGER commerce_entitlement_template_revision_immutable
+  BEFORE UPDATE OR DELETE ON platform.commerce_entitlement_template_revision
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE TRIGGER commerce_fulfillment_program_revision_immutable
+  BEFORE UPDATE OR DELETE ON platform.commerce_fulfillment_program_revision
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE TRIGGER commerce_fulfillment_program_output_immutable
+  BEFORE UPDATE OR DELETE ON platform.commerce_fulfillment_program_output
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE TRIGGER commerce_product_version_immutable
+  BEFORE UPDATE OR DELETE ON platform.commerce_catalog_product_version
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE TRIGGER commerce_redemption_program_revision_immutable
+  BEFORE UPDATE OR DELETE ON platform.commerce_redemption_program_revision
   FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
 CREATE TRIGGER commerce_command_outbox_immutable
   BEFORE UPDATE OR DELETE ON platform.commerce_command_outbox
@@ -253,11 +660,33 @@ CREATE TRIGGER commerce_command_update_guard
 CREATE TRIGGER commerce_fulfillment_transition
   BEFORE INSERT OR UPDATE ON platform.commerce_fulfillment_transaction
   FOR EACH ROW EXECUTE FUNCTION platform.guard_commerce_fulfillment_transition();
+CREATE TRIGGER commerce_code_transition
+  BEFORE UPDATE ON platform.commerce_redeem_code
+  FOR EACH ROW EXECUTE FUNCTION platform.guard_commerce_code_transition();
+CREATE TRIGGER commerce_preview_transition
+  BEFORE UPDATE ON platform.commerce_redemption_preview
+  FOR EACH ROW EXECUTE FUNCTION platform.guard_commerce_preview_transition();
 
 REVOKE ALL ON
   platform.commerce_command,
   platform.commerce_billing_account,
   platform.commerce_billing_account_membership,
+  platform.commerce_catalog_product,
+  platform.commerce_catalog_plan,
+  platform.commerce_catalog_plan_version,
+  platform.commerce_credit_program_revision,
+  platform.commerce_entitlement_template_revision,
+  platform.commerce_fulfillment_program_revision,
+  platform.commerce_fulfillment_program_output,
+  platform.commerce_catalog_product_version,
+  platform.commerce_redemption_program_revision,
+  platform.commerce_redemption_program_availability,
+  platform.commerce_subscription,
+  platform.commerce_subscription_term,
+  platform.commerce_code_batch,
+  platform.commerce_redeem_code,
+  platform.commerce_redemption,
+  platform.commerce_redemption_preview,
   platform.commerce_fulfillment_transaction,
   platform.commerce_fulfillment_output_plan,
   platform.commerce_fulfillment_actual_output,
@@ -268,3 +697,5 @@ REVOKE ALL ON FUNCTION platform.reject_commerce_immutable_mutation() FROM PUBLIC
 REVOKE ALL ON FUNCTION platform.assert_commerce_output_plan_contiguous() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.guard_commerce_command_update() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.guard_commerce_fulfillment_transition() FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.guard_commerce_code_transition() FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.guard_commerce_preview_transition() FROM PUBLIC;

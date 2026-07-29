@@ -37,7 +37,7 @@ export async function authorizeCommerceCommand(
   const callerSite = context.trustedCaller.siteId;
   const sessionId = context.actor.sessionId;
   if (
-    operation !== "confirmRedemption" ||
+    !["previewRedemption", "confirmRedemption"].includes(operation) ||
     context.trustedCaller.kind !== "site_product" || callerSite === undefined ||
     context.actor.kind !== "user" || sessionId === undefined ||
     context.target.siteId !== callerSite || context.actor.sessionEpoch === undefined ||

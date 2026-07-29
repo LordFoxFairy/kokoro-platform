@@ -57,6 +57,13 @@ import { PostgresScopedAuthorizationFeedRepository } from "../modules/authorizat
 import { SignedScopedSessionAuthorizationPublisher } from "../modules/authorization/infrastructure/postgres/signed-scoped-session-authorization-publisher.js";
 import { CommandReceiptRepository } from "../shared/outbox-inbox/receipt.js";
 import { OutboxRepository } from "../shared/outbox-inbox/outbox.js";
+import { createRedemptionSecretCodec } from "../modules/commerce/infrastructure/crypto/redemption-secret-codec.js";
+import { PostgresRedemptionRepository } from "../modules/commerce/infrastructure/postgres/redemption-repository.js";
+import { PostgresCommerceRepository } from "../modules/commerce/infrastructure/postgres/repository.js";
+import { CommerceCommandFence } from "../modules/commerce/application/command-fence.js";
+import { PreviewRedemptionService } from "../modules/commerce/application/services/preview-redemption.js";
+import { authorizeCommerceCommand } from "../workflows/commerce/authorize-command.js";
+import { createCommercePublicOperations, COMMERCE_PUBLIC_OPERATION_IDS } from "../modules/commerce/interfaces/http/commerce-public-operations.js";
 
 export interface PlatformPublicProductionComposition {
   readonly handler: PlatformPublicHttpHandler;
@@ -72,13 +79,14 @@ export async function createPlatformPublicProductionComposition(
   }>,
 ): Promise<PlatformPublicProductionComposition> {
   const environment = input.environment ?? process.env;
-  const [workloads, keyRing, eventKeyRing, tls] = await Promise.all([
+  const [workloads, keyRing, eventKeyRing, tls, redemptionSecrets] = await Promise.all([
     loadProductWorkloadRegistry(required(environment, "PLATFORM_PRODUCT_WORKLOAD_REGISTRY_FILE")),
     loadSessionAccessKeyRing(required(environment, "PLATFORM_SESSION_ACCESS_KEY_RING_FILE")),
     loadAuthorizationEventKeyRing(
       required(environment, "PLATFORM_AUTHORIZATION_EVENT_KEY_RING_FILE"),
     ),
     loadTls(environment),
+    loadRedemptionSecretCodec(required(environment, "PLATFORM_COMMERCE_REDEMPTION_KEY_RING_FILE")),
   ]);
   const signer = await createSessionAccessGrantSigner(keyRing);
   const eventSigner = await createSessionAuthorizationEventSigner(eventKeyRing);
@@ -165,11 +173,23 @@ export async function createPlatformPublicProductionComposition(
     ),
   });
   const identityOperations = createIdentityPublicOperations(identity, identitySecurityManagement);
+  const redemptionRepository = new PostgresRedemptionRepository();
+  const commerceFence = new CommerceCommandFence(
+    unitOfWork,
+    new PostgresCommerceRepository(),
+    (transaction, context, operation) => authorizeCommerceCommand(transaction, context, operation, new Date().toISOString()),
+  );
+  const commerceOperations = createCommercePublicOperations(new PreviewRedemptionService({
+    unitOfWork,
+    fence: commerceFence,
+    repository: redemptionRepository,
+    secrets: redemptionSecrets,
+  }));
   const handler = createPlatformPublicHttpHandler({
     workloads,
     sessions: input.database,
-    operations: [...authorizationOperations, ...identityOperations],
-    requiredOperationIds: [...AUTHORIZATION_PUBLIC_OPERATION_IDS, ...IDENTITY_LAUNCH_OPERATION_IDS],
+    operations: [...authorizationOperations, ...identityOperations, ...commerceOperations],
+    requiredOperationIds: [...AUTHORIZATION_PUBLIC_OPERATION_IDS, ...IDENTITY_LAUNCH_OPERATION_IDS, ...COMMERCE_PUBLIC_OPERATION_IDS],
     grantSigner: signer,
     sessionCredentialDigest: sessionCredentials.digest,
   });
@@ -178,6 +198,39 @@ export async function createPlatformPublicProductionComposition(
     secure: true as const,
     createServer: (listener: RequestListener) => createHttpsServer(tls, listener),
   });
+}
+
+async function loadRedemptionSecretCodec(path: string) {
+  const root = record(JSON.parse(await readBoundedSecret(path, 64 * 1024)) as unknown, "REDEMPTION_KEY_RING_INVALID");
+  exactCommerce(root, [
+    "version", "currentCodeLookupKeyRevision", "codeLookupKeys",
+    "currentPreviewCredentialKeyRevision", "previewCredentialKeys", "requestAuditKeyBase64url",
+  ]);
+  if (
+    root.version !== 1 || typeof root.currentCodeLookupKeyRevision !== "string" ||
+    typeof root.currentPreviewCredentialKeyRevision !== "string" || typeof root.requestAuditKeyBase64url !== "string" ||
+    !Array.isArray(root.codeLookupKeys) || !Array.isArray(root.previewCredentialKeys)
+  ) throw new Error("REDEMPTION_KEY_RING_INVALID");
+  return createRedemptionSecretCodec({
+    currentCodeLookupKeyRevision: root.currentCodeLookupKeyRevision,
+    codeLookupKeys: root.codeLookupKeys.map(redemptionKey),
+    currentPreviewCredentialKeyRevision: root.currentPreviewCredentialKeyRevision,
+    previewCredentialKeys: root.previewCredentialKeys.map(redemptionKey),
+    requestAuditKey: secretBytes(root.requestAuditKeyBase64url, 32),
+  });
+}
+
+function redemptionKey(value: unknown) {
+  const key = record(value, "REDEMPTION_KEY_RING_INVALID");
+  exactCommerce(key, ["keyRevision", "keyBase64url"]);
+  if (typeof key.keyRevision !== "string" || typeof key.keyBase64url !== "string") {
+    throw new Error("REDEMPTION_KEY_RING_INVALID");
+  }
+  return Object.freeze({ keyRevision: key.keyRevision, key: secretBytes(key.keyBase64url, 32) });
+}
+
+function exactCommerce(value: Record<string, unknown>, names: readonly string[]): void {
+  if (Object.keys(value).some((key) => !names.includes(key))) throw new Error("REDEMPTION_KEY_RING_UNKNOWN_FIELD");
 }
 
 async function loadIdentityPasswordHasher(path: string) {

@@ -14,5 +14,19 @@ Platform through HTTP/RPC and never exposes a Prisma client to application code.
 - The database rejects non-contiguous output plans, output mutation, illegal fulfillment transitions, and successful fulfillment whose
   actual multiset does not exactly satisfy the frozen plan.
 
-Catalog, Subscription, Entitlement, Credit, Code inventory, and HTTP command workflows remain later owner slices. Their ports accept
-only the opaque `PlatformTransaction`; no sibling module may introduce a second transaction or self-RPC.
+## Redemption acquisition
+
+- Product, Plan, CreditProgram, EntitlementTemplate, FulfillmentProgram, and RedemptionProgram revisions are immutable published
+  facts. Operational availability lives on mutable parent/availability records instead of rewriting a published revision.
+- Code inventory stores only a Site-domain-separated HMAC lookup digest and an independent keyed safe fingerprint. Raw and normalized
+  Code material exists only in the request stack while the HMAC is computed; it is forbidden from receipts, outbox, audit, errors,
+  logs, and projections.
+- Preview is a non-reserving read of active inventory. Its short-lived opaque credential is bound to Site, subject generation,
+  BillingAccount, Code identity, and frozen product/program/output-plan digests. The credential is reconstructed with its stored key
+  revision, so key rotation cannot silently return a credential that confirm would reject.
+- `previewRedemption` is a required production public operation. It uses the generic command receipt fence and returns the same safe
+  preview on an exact idempotent replay while the preview remains live.
+
+Confirm/claim, SubscriptionTerm, EntitlementGrant, CreditGrant/journal/hold allocation, receipt projections, and reconciliation are the
+next owner slice. All module ports accept only the opaque `PlatformTransaction`; no sibling module may introduce a second transaction
+or self-RPC.
