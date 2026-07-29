@@ -88,7 +88,10 @@ export type PlatformInternalOperation =
   | "authorization.snapshot.create"
   | "authorization.retention"
   | "commerce.outbox.reconcile"
-  | "site.runtime.consume";
+  | "site.runtime.consume"
+  | "admin.execution.claim"
+  | "admin.execution.retry"
+  | "admin.terminalize";
 
 export function loadPlatformDatabaseConfig(
   role: PlatformProcessRole,
@@ -252,7 +255,10 @@ export function createPlatformDatabaseClient(
         config.role === "worker"
           ? operation === "authorization.retention" ||
             operation === "commerce.outbox.reconcile" ||
-            operation === "site.runtime.consume"
+            operation === "site.runtime.consume" ||
+            operation === "admin.execution.claim" ||
+            operation === "admin.execution.retry" ||
+            operation === "admin.terminalize"
           : config.role === "authorization" &&
             (operation === "authorization.feed.read" ||
               operation === "authorization.snapshot.create");
@@ -485,6 +491,12 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_any_column_privilege(current_user, 'platform.authorization_site_release', 'UPDATE')
            AND has_table_privilege(current_user, 'platform.authorization_product_binding', 'SELECT,INSERT')
            AND has_any_column_privilege(current_user, 'platform.authorization_product_binding', 'UPDATE')
+           AND has_table_privilege(current_user, 'platform.command_receipt', 'UPDATE')
+           AND has_table_privilege(current_user, 'platform.inbox_delivery', 'INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.authorization_session_access_grant', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.admin_operator_authority', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.admin_approval', 'SELECT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.admin_post_effect_review', 'SELECT,UPDATE')
          WHEN $2 = 'authorization' THEN
            has_table_privilege(current_user, 'platform.authorization_stream_state', 'SELECT')
            AND has_table_privilege(current_user, 'platform.authorization_event_log', 'SELECT')
@@ -516,6 +528,7 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_table_privilege(current_user, 'platform.admin_command_decision', 'SELECT,INSERT')
            AND has_table_privilege(current_user, 'platform.admin_approval', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.admin_approval_decision', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.admin_post_effect_review', 'SELECT,INSERT,UPDATE')
          END AS "hasRequiredPlatformWrites",
          has_function_privilege(current_user, 'platform.import_model_inventory(uuid,text,text,jsonb,jsonb,text)', 'EXECUTE')
            AS "canExecuteModelInventoryImport",
@@ -607,7 +620,8 @@ const RUNTIME_IDENTITY_SQL = `
                'site','site_project_binding','site_release','site_deployment_binding',
                'site_activation_attempt','site_deployment_observation','site_traffic_stop_attempt',
                'site_traffic_stop_observation','site_effect_approval',
-               'admin_operator_authority','admin_command_decision','admin_approval','admin_approval_decision'
+               'admin_operator_authority','admin_command_decision','admin_approval','admin_approval_decision',
+               'admin_authority_bootstrap','admin_post_effect_review'
                ]) AND (
                  has_table_privilege(runtime_role.rolname, candidate.oid,
                    'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
@@ -657,7 +671,8 @@ const RUNTIME_IDENTITY_SQL = `
                'site','site_project_binding','site_release','site_deployment_binding',
                'site_activation_attempt','site_deployment_observation','site_traffic_stop_attempt',
                'site_traffic_stop_observation','site_effect_approval',
-               'admin_operator_authority','admin_command_decision','admin_approval','admin_approval_decision'
+               'admin_operator_authority','admin_command_decision','admin_approval','admin_approval_decision',
+               'admin_authority_bootstrap','admin_post_effect_review'
                ]) AND (
                  (candidate.relname LIKE 'model\\_%' ESCAPE '\\' AND (
                    has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
@@ -727,7 +742,8 @@ const RUNTIME_IDENTITY_SQL = `
                      'command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership',
                      'site','site_project_binding','site_release','site_activation_attempt',
                      'site_traffic_stop_attempt','site_effect_approval',
-                     'admin_command_decision','admin_approval','admin_approval_decision'
+                     'admin_command_decision','admin_approval','admin_approval_decision',
+                     'admin_post_effect_review'
                    ]))
                  ))
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
@@ -752,10 +768,15 @@ const RUNTIME_IDENTITY_SQL = `
                      'site_activation_attempt','site_traffic_stop_attempt','authorization_site',
                      'authorization_site_release','authorization_product_binding'
                    ]))
+                   OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
+                     'command_receipt','outbox_event','inbox_delivery','admin_approval',
+                     'admin_post_effect_review'
+                   ]))
                    OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY[
                      'command_receipt','commerce_billing_account','commerce_billing_account_membership',
                      'site','site_project_binding','site_release','site_deployment_binding',
-                     'site_effect_approval','authorization_site','authorization_product_binding'
+                     'site_effect_approval','authorization_site','authorization_product_binding',
+                     'admin_approval','admin_post_effect_review'
                    ]))
                    OR ($2 = 'admin' AND candidate.relname = 'admin_approval')
                  ))
@@ -796,7 +817,8 @@ const RUNTIME_IDENTITY_SQL = `
                      'command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership',
                      'site','site_project_binding','site_release','site_activation_attempt',
                      'site_traffic_stop_attempt','site_effect_approval',
-                     'admin_command_decision','admin_approval','admin_approval_decision'
+                     'admin_command_decision','admin_approval','admin_approval_decision',
+                     'admin_post_effect_review'
                    ]))
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
@@ -821,10 +843,15 @@ const RUNTIME_IDENTITY_SQL = `
                      'site_activation_attempt','site_traffic_stop_attempt','authorization_site',
                      'authorization_site_release','authorization_product_binding'
                    ]))
+                   OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
+                     'command_receipt','outbox_event','inbox_delivery','admin_approval',
+                     'admin_post_effect_review'
+                   ]))
                    OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY[
                      'command_receipt','commerce_billing_account','commerce_billing_account_membership',
                      'site','site_project_binding','site_release','site_deployment_binding',
-                     'site_effect_approval','authorization_site','authorization_product_binding'
+                     'site_effect_approval','authorization_site','authorization_product_binding',
+                     'admin_approval','admin_post_effect_review'
                    ]))
                    OR ($2 = 'admin' AND candidate.relname = 'admin_approval')
                  ))

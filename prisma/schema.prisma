@@ -63,6 +63,17 @@ model AdminOperatorAuthority {
   @@schema("platform")
 }
 
+model AdminAuthorityBootstrap {
+  singleton           Boolean   @id @default(true)
+  state               String    @default("open")
+  configurationDigest String?   @map("configuration_digest") @db.Char(64)
+  sealedAt            DateTime? @map("sealed_at") @db.Timestamptz(6)
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("admin_authority_bootstrap")
+  @@schema("platform")
+}
+
 model AdminCommandDecision {
   decisionRef          String   @id @map("decision_ref") @db.Uuid
   commandId            String   @map("command_id")
@@ -116,12 +127,42 @@ model AdminApproval {
   checkerReason            String?   @map("checker_reason")
   result                   Json?
   resultDigest             String?   @map("result_digest") @db.Char(64)
+  terminalReason           String?   @map("terminal_reason")
   decidedAt                DateTime? @map("decided_at") @db.Timestamptz(6)
   createdAt                DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@index([environment, region, targetSiteRef, state, expiresAt])
   @@map("admin_approval")
+  @@schema("platform")
+}
+
+model AdminPostEffectReview {
+  reviewRef                 String    @id @map("review_ref") @db.Uuid
+  commandId                 String    @unique @map("command_id")
+  requestDigest             String    @map("request_digest") @db.Char(64)
+  operation                 String
+  makerRef                  String    @map("maker_ref")
+  makerGeneration           BigInt    @map("maker_generation")
+  makerAuthorizationEpoch   BigInt    @map("maker_authorization_epoch")
+  targetSiteRef             String?   @map("target_site_ref")
+  environment               String
+  region                    String
+  breakGlassTicketRef       String    @map("break_glass_ticket_ref")
+  outcome                   Json
+  outcomeDigest             String    @map("outcome_digest") @db.Char(64)
+  state                     String    @default("pending")
+  reviewerRef               String?   @map("reviewer_ref")
+  reviewerGeneration        BigInt?   @map("reviewer_generation")
+  reviewerAuthorizationEpoch BigInt?  @map("reviewer_authorization_epoch")
+  reviewerReason            String?   @map("reviewer_reason")
+  createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt                 DateTime  @map("expires_at") @db.Timestamptz(6)
+  reviewedAt                DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  revision                  BigInt    @default(1)
+
+  @@index([environment, region, targetSiteRef, state, expiresAt])
+  @@map("admin_post_effect_review")
   @@schema("platform")
 }
 

@@ -51,6 +51,7 @@ describe("PostgresAdminAuthorityRepository", () => {
         checker: {
           approvalRef: "018f1414-1414-7414-8414-141414141414",
           commandId: "018f1212-1212-7212-8212-121212121212",
+          ownerOperation: "site.suspend",
           checkerRef: "checker_01", checkerGeneration: 4n, checkerAuthorizationEpoch: 11n,
           makerRef: "maker_01", makerGeneration: 2n, makerAuthorizationEpoch: 8n,
           siteRef: "site_01", environment: "production", region: "us-east-1",

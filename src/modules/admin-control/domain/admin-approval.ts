@@ -6,7 +6,14 @@ import type {
   AdminOperatorAuthority,
 } from "./admin-command.js";
 
-export type AdminApprovalState = "pending" | "executed" | "rejected" | "effect_rejected" | "expired";
+export type AdminApprovalState =
+  | "pending"
+  | "execution_queued"
+  | "executed"
+  | "rejected"
+  | "effect_rejected"
+  | "expired"
+  | "stale_authority";
 
 export interface AdminApprovalRecord {
   readonly approvalRef: string;
@@ -15,6 +22,7 @@ export interface AdminApprovalRecord {
   readonly payload: JsonValue;
   readonly payloadDigest: string;
   readonly admission: AdminCommandAdmission;
+  readonly checker: AdminApprovalAdmission | null;
   readonly state: AdminApprovalState;
   readonly revision: bigint;
   readonly expiresAt: string;
@@ -23,6 +31,7 @@ export interface AdminApprovalRecord {
 export interface AdminApprovalAdmission {
   readonly approvalRef: string;
   readonly commandId: string;
+  readonly ownerOperation: string;
   readonly checkerRef: string;
   readonly checkerGeneration: bigint;
   readonly checkerAuthorizationEpoch: bigint;
@@ -105,6 +114,7 @@ export function admitAdminApproval(input: Readonly<{
   return Object.freeze({
     approvalRef: approval.approvalRef,
     commandId: approval.commandId,
+    ownerOperation: definition.commandId,
     checkerRef: checkerAuthority.operatorRef,
     checkerGeneration: checkerAuthority.operatorGeneration,
     checkerAuthorizationEpoch: checkerAuthority.authorizationEpoch,

@@ -53,6 +53,20 @@ export interface AdminAuthorityRepositoryPort {
       expiresAt: string;
     }>,
   ): Promise<void>;
+  createPostEffectReview(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      reviewRef: string;
+      commandId: string;
+      requestDigest: string;
+      operation: string;
+      admission: AdminCommandAdmission;
+      breakGlassTicketRef: string;
+      outcome: JsonValue;
+      outcomeDigest: string;
+      expiresAt: string;
+    }>,
+  ): Promise<void>;
 }
 
 export interface AdminDecisionRecord {
@@ -111,7 +125,8 @@ export class AdminLocalCommandRegistry {
 
 export type AdminCommandSubmissionResult =
   | Readonly<{ disposition: "pending_approval"; approvalRef: string; commandId: string }>
-  | Readonly<{ disposition: "succeeded" | "review_required"; commandId: string; result: JsonValue }>
+  | Readonly<{ disposition: "succeeded"; commandId: string; result: JsonValue }>
+  | Readonly<{ disposition: "review_required"; reviewRef: string; commandId: string; result: JsonValue }>
   | Readonly<{ disposition: "denied" | "rejected"; commandId: string; code: string }>;
 
 export class AdminCommandService {
@@ -222,12 +237,29 @@ export class AdminCommandService {
           await this.event(transaction, input, admission, requestDigest, "admin.command.rejected", result);
           return Object.freeze({ disposition: "rejected", commandId: input.commandId, code: outcome.code });
         }
-        const disposition = admission.approvalPolicy === "post_effect_review" ? "review_required" : "succeeded";
-        const result = json({ disposition, commandId: input.commandId, result: outcome.result });
+        const reviewRef = admission.approvalPolicy === "post_effect_review"
+          ? this.dependencies.reference()
+          : null;
+        if (reviewRef !== null) {
+          if (admission.breakGlassTicketRef === null) throw new Error("ADMIN_BREAK_GLASS_TICKET_REQUIRED");
+          await this.dependencies.repository.createPostEffectReview(transaction, {
+            reviewRef, commandId: input.commandId, requestDigest, operation: admission.commandId,
+            admission, breakGlassTicketRef: admission.breakGlassTicketRef,
+            outcome: outcome.result, outcomeDigest: digestAdminValue(outcome.result),
+            expiresAt: this.postEffectReviewExpiry(admission.admittedAt),
+          });
+        }
+        const disposition = reviewRef === null ? "succeeded" : "review_required";
+        const result = json({ disposition, commandId: input.commandId, result: outcome.result,
+          ...(reviewRef === null ? {} : { reviewRef }) });
         await this.success(transaction, identity, result);
         await this.event(transaction, input, admission, requestDigest,
           disposition === "review_required" ? "admin.command.break-glass.executed" : "admin.command.succeeded", result);
-        return Object.freeze({ disposition, commandId: input.commandId, result: outcome.result });
+        return reviewRef === null
+          ? Object.freeze({ disposition: "succeeded" as const, commandId: input.commandId,
+            result: outcome.result })
+          : Object.freeze({ disposition: "review_required" as const, reviewRef,
+            commandId: input.commandId, result: outcome.result });
       },
     );
   }
@@ -307,6 +339,10 @@ export class AdminCommandService {
     }
     return new Date(Date.parse(admittedAt) + ttl).toISOString();
   }
+
+  private postEffectReviewExpiry(admittedAt: string): string {
+    return new Date(Date.parse(admittedAt) + 24 * 60 * 60_000).toISOString();
+  }
 }
 
 function restore(receipt: CommandReceipt): AdminCommandSubmissionResult {
@@ -322,8 +358,12 @@ function restore(receipt: CommandReceipt): AdminCommandSubmissionResult {
   if ((value.disposition === "denied" || value.disposition === "rejected") && typeof value.code === "string") {
     return Object.freeze({ disposition: value.disposition, commandId: value.commandId, code: value.code });
   }
-  if ((value.disposition === "succeeded" || value.disposition === "review_required") && "result" in value) {
+  if (value.disposition === "succeeded" && "result" in value) {
     return Object.freeze({ disposition: value.disposition, commandId: value.commandId, result: value.result });
+  }
+  if (value.disposition === "review_required" && "result" in value && typeof value.reviewRef === "string") {
+    return Object.freeze({ disposition: value.disposition, reviewRef: value.reviewRef,
+      commandId: value.commandId, result: value.result });
   }
   throw new Error("ADMIN_COMMAND_RECEIPT_INVALID");
 }

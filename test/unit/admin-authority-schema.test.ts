@@ -22,6 +22,17 @@ describe("Admin control-plane authority schema", () => {
     expect(migration).toContain("CHECK (checker_ref IS NULL OR checker_ref<>maker_ref)");
     expect(migration).toContain("admin_command_decision_immutable");
     expect(migration).toContain("admin_approval_transition_guard");
+    expect(migration).toContain("'execution_queued'");
+    expect(migration).toContain("OLD.state='pending' AND NEW.state IN ('execution_queued','rejected','expired','stale_authority')");
+    expect(migration).toContain("OLD.state='execution_queued' AND NEW.state IN ('executed','effect_rejected','stale_authority')");
+  });
+
+  it("has a sealed offline bootstrap and durable post-effect review authority", () => {
+    expect(migration).toContain("CREATE TABLE platform.admin_authority_bootstrap");
+    expect(migration).toContain("CREATE FUNCTION platform.bootstrap_admin_authorities");
+    expect(migration).toContain("ADMIN_AUTHORITY_BOOTSTRAP_SEALED");
+    expect(migration).toContain("CREATE TABLE platform.admin_post_effect_review");
+    expect(migration).toContain("post_effect_review_no_delete");
   });
 
   it("forces RLS across Site, operator, environment and region axes", () => {
@@ -39,6 +50,12 @@ describe("Admin control-plane authority schema", () => {
     expect(migrator).toContain("const ADMIN_TABLES");
     expect(migrator).toContain("GRANT INSERT ON TABLE platform.admin_command_decision");
     expect(migrator).toContain("GRANT UPDATE ON TABLE platform.admin_approval");
+    expect(migration).toContain(
+      "REVOKE ALL ON FUNCTION platform.bootstrap_admin_authorities(JSONB, CHAR(64)) FROM PUBLIC",
+    );
+    expect(migrator).toContain("platform.admin_post_effect_review");
+    expect(migrator).not.toContain("GRANT INSERT ON TABLE platform.admin_operator_authority");
+    expect(migrator).not.toContain("GRANT EXECUTE ON FUNCTION platform.bootstrap_admin_authorities");
     expect(client).toContain("'platform.admin_operator_authority', 'SELECT'");
     expect(client).toContain("'platform.admin_approval', 'SELECT,INSERT,UPDATE'");
   });

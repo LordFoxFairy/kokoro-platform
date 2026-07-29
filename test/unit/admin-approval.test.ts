@@ -49,7 +49,7 @@ const payload: JsonValue = Object.freeze({ siteRef: "site_01" });
 const approval: AdminApprovalRecord = Object.freeze({
   approvalRef: "approval_01", commandId: "018f1212-1212-7212-8212-121212121212",
   requestDigest: "a".repeat(64), payload, payloadDigest: digestAdminValue(payload),
-  admission: originalAdmission, state: "pending", revision: 1n,
+  admission: originalAdmission, checker: null, state: "pending", revision: 1n,
   expiresAt: "2026-07-28T13:15:00.000Z",
 });
 
@@ -76,22 +76,22 @@ describe("Admin maker/checker approval", () => {
       .toThrow("ADMIN_MAKER_AUTHORITY_STALE");
   });
 
-  it("executes the frozen owner command and approval transition in one Platform transaction", async () => {
+  it("queues the frozen owner command without executing it on the approval operation axis", async () => {
     const harness = serviceHarness({ handlerResult: { disposition: "succeeded",
       result: { deploymentRef: "deployment_01" } } });
 
     const result = await harness.service.decide(decision("approve"));
 
-    expect(result).toEqual({ disposition: "executed", commandId: executionCommandId,
-      approvalRef: "approval_01", result: { deploymentRef: "deployment_01" } });
-    expect(harness.executions).toBe(1);
-    expect(harness.handlerTransaction).toBe(transaction);
-    expect(harness.handlerInput).toMatchObject({ admission: originalAdmission,
-      approval: { checkerRef: "checker_01", makerRef: "maker_01" },
-      payload, requestDigest: approval.requestDigest });
+    expect(result).toEqual({ disposition: "execution_queued", commandId: executionCommandId,
+      approvalRef: "approval_01" });
+    expect(harness.executions).toBe(0);
+    expect(harness.handlerTransaction).toBeNull();
+    expect(harness.handlerInput).toBeUndefined();
     expect(harness.transitions).toMatchObject([{ approvalRef: "approval_01",
-      expectedRevision: 1n, state: "executed" }]);
-    expect(harness.events).toMatchObject([{ eventType: "admin.approval.executed" }]);
+      expectedRevision: 1n, state: "execution_queued" }]);
+    expect(harness.events).toMatchObject([{ owner: "admin-execution",
+      eventType: "admin.approval.execution.requested",
+      payload: { ownerOperation: "site.suspend", approvalRef: "approval_01" } }]);
     expect(harness.receipt?.state).toBe("succeeded");
   });
 

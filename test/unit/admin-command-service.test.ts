@@ -63,6 +63,31 @@ describe("Admin command application service", () => {
     });
   });
 
+  it("persists a durable independent post-effect review for break-glass execution", async () => {
+    const harness = createHarness({
+      definition: defineAdminCommand({ commandId: "site.emergency-revoke",
+        permission: "site.lifecycle.emergency-revoke", effectClass: "break_glass",
+        scopeKind: "site", approvalPolicy: "post_effect_review", reasonRequired: true }),
+      authority: { ...authority, permissions: ["site.lifecycle.emergency-revoke"],
+        breakGlassExpiresAt: "2026-07-28T13:10:00.000Z" },
+      result: { disposition: "succeeded", result: { revoked: true } },
+    });
+    const security = context("site.emergency-revoke");
+    const result = await harness.service.submit({
+      ...submission("site.emergency-revoke"),
+      context: { ...security, target: { ...security.target,
+        scopes: ["site:lifecycle", "admin:break-glass"] } } as VerifiedRequestSecurityContext,
+      breakGlassTicketRef: "incident_1842",
+    });
+
+    expect(result).toMatchObject({ disposition: "review_required" });
+    expect(harness.executions).toBe(1);
+    expect(harness.reviews).toMatchObject([{
+      commandId, operation: "site.emergency-revoke", breakGlassTicketRef: "incident_1842",
+      outcome: { revoked: true },
+    }]);
+  });
+
   it("fails closed and durably records a denied authority decision before any handler runs", async () => {
     const harness = createHarness({
       definition: defineAdminCommand({ commandId: "site.suspend", permission: "site.lifecycle.suspend",
@@ -123,6 +148,7 @@ function createHarness(input: Readonly<{
 }>) {
   const decisions: AdminDecisionRecord[] = [];
   const approvals: unknown[] = [];
+  const reviews: unknown[] = [];
   const events: OutboxEvent[] = [];
   let receipt: CommandReceipt | null = null;
   let executions = 0;
@@ -147,6 +173,7 @@ function createHarness(input: Readonly<{
       },
       async recordDecision(_transaction, decision) { decisions.push(decision); },
       async createApproval(_transaction, approval) { approvals.push(approval); },
+      async createPostEffectReview(_transaction, review) { reviews.push(review); },
     },
     receipts: {
       async begin(_transaction, identity) {
@@ -165,7 +192,7 @@ function createHarness(input: Readonly<{
     reference: () => `reference_${++reference}`,
   });
   return {
-    service, decisions, approvals, events,
+    service, decisions, approvals, reviews, events,
     get receipt() { return receipt; },
     get executions() { return executions; },
     get authorityLoads() { return authorityLoads; },

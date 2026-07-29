@@ -322,11 +322,12 @@ async function grantFoundationPrivileges(
       );
     } else if (role === workerRole) {
       await client.query(
-        `GRANT SELECT ON TABLE platform.outbox_event, ${SITE_RECONCILIATION_TABLES}, platform.authorization_site, platform.authorization_site_release, platform.authorization_product_binding, platform.authorization_event_log, platform.authorization_snapshot, platform.commerce_redemption, platform.commerce_fulfillment_transaction, platform.credit_budget_operation_receipt, platform.credit_authorization_segment TO ${identifier}`,
+        `GRANT SELECT ON TABLE ${KERNEL_TABLES}, ${SITE_RECONCILIATION_TABLES}, platform.authorization_site, platform.authorization_site_release, platform.authorization_product_binding, platform.authorization_event_log, platform.authorization_snapshot, platform.authorization_product_context, platform.authorization_session_access_grant, platform.commerce_redemption, platform.commerce_fulfillment_transaction, platform.credit_budget_operation_receipt, platform.credit_authorization_segment, platform.admin_operator_authority, platform.admin_approval, platform.admin_post_effect_review TO ${identifier}`,
       );
+      await client.query(`GRANT INSERT ON TABLE platform.inbox_delivery TO ${identifier}`);
       await client.query(`GRANT INSERT ON TABLE platform.site_deployment_binding, platform.site_deployment_observation, platform.site_traffic_stop_observation, platform.authorization_site, platform.authorization_site_release, platform.authorization_product_binding TO ${identifier}`);
       await client.query(
-        `GRANT UPDATE ON TABLE platform.outbox_event TO ${identifier}`,
+        `GRANT UPDATE ON TABLE platform.command_receipt, platform.outbox_event, platform.inbox_delivery TO ${identifier}`,
       );
       await client.query(`GRANT UPDATE(state,active_release_ref,policy_epoch,tombstoned_at,updated_at) ON TABLE platform.site TO ${identifier}`);
       await client.query(`GRANT UPDATE(state,updated_at) ON TABLE platform.site_release TO ${identifier}`);
@@ -336,6 +337,9 @@ async function grantFoundationPrivileges(
       await client.query(`GRANT UPDATE(state,security_epoch,policy_epoch,revocation_epoch,updated_at) ON TABLE platform.authorization_site TO ${identifier}`);
       await client.query(`GRANT UPDATE(state,updated_at) ON TABLE platform.authorization_site_release TO ${identifier}`);
       await client.query(`GRANT UPDATE(workload_identity_id,deployment_ref,release_ref,environment,region,audience,session_contract_revision,binding_epoch,state,updated_at) ON TABLE platform.authorization_product_binding TO ${identifier}`);
+      await client.query(
+        `GRANT UPDATE ON TABLE platform.admin_approval, platform.admin_post_effect_review TO ${identifier}`,
+      );
       await client.query(
         `GRANT SELECT, DELETE ON TABLE platform.authorization_event_log, platform.authorization_snapshot TO ${identifier}`,
       );
@@ -364,9 +368,11 @@ async function grantFoundationPrivileges(
       );
       await client.query(`GRANT SELECT ON TABLE ${ADMIN_TABLES} TO ${identifier}`);
       await client.query(
-        `GRANT INSERT ON TABLE platform.admin_command_decision, platform.admin_approval, platform.admin_approval_decision TO ${identifier}`,
+        `GRANT INSERT ON TABLE platform.admin_command_decision, platform.admin_approval, platform.admin_approval_decision, platform.admin_post_effect_review TO ${identifier}`,
       );
-      await client.query(`GRANT UPDATE ON TABLE platform.admin_approval TO ${identifier}`);
+      await client.query(
+        `GRANT UPDATE ON TABLE platform.admin_approval, platform.admin_post_effect_review TO ${identifier}`,
+      );
       await client.query(
         `GRANT INSERT ON TABLE platform.commerce_command, platform.commerce_redemption_program_revision, platform.commerce_redemption_program_availability, platform.commerce_code_batch, platform.commerce_redeem_code, platform.commerce_code_batch_approval, platform.commerce_code_secret_export, platform.commerce_audit_entry TO ${identifier}`,
       );
@@ -476,6 +482,8 @@ const ADMIN_TABLES = [
   "platform.admin_command_decision",
   "platform.admin_approval",
   "platform.admin_approval_decision",
+  "platform.admin_authority_bootstrap",
+  "platform.admin_post_effect_review",
 ].join(", ");
 
 const IDENTITY_TABLES = [
@@ -712,6 +720,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            AND has_table_privilege(runtime_role.rolname, 'platform.commerce_audit_entry', 'SELECT,INSERT')
          WHEN runtime_role.rolname = $3 THEN
            has_table_privilege(runtime_role.rolname, 'platform.outbox_event', 'SELECT,UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.command_receipt', 'UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.inbox_delivery', 'INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.commerce_redemption', 'SELECT')
            AND has_table_privilege(runtime_role.rolname, 'platform.commerce_fulfillment_transaction', 'SELECT')
            AND has_table_privilege(runtime_role.rolname, 'platform.credit_budget_operation_receipt', 'SELECT')
@@ -735,6 +745,10 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            AND has_any_column_privilege(runtime_role.rolname, 'platform.authorization_site_release', 'UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.authorization_product_binding', 'SELECT,INSERT')
            AND has_any_column_privilege(runtime_role.rolname, 'platform.authorization_product_binding', 'UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.authorization_session_access_grant', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.admin_operator_authority', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.admin_approval', 'SELECT,UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.admin_post_effect_review', 'SELECT,UPDATE')
          WHEN runtime_role.rolname = $2 THEN
            has_table_privilege(runtime_role.rolname, 'platform.authorization_stream_state', 'SELECT')
            AND has_table_privilege(runtime_role.rolname, 'platform.authorization_event_log', 'SELECT')
@@ -766,6 +780,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            AND has_table_privilege(runtime_role.rolname, 'platform.admin_command_decision', 'SELECT,INSERT')
            AND has_table_privilege(runtime_role.rolname, 'platform.admin_approval', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.admin_approval_decision', 'SELECT,INSERT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.admin_post_effect_review', 'SELECT,INSERT,UPDATE')
          END AS "hasRequiredPlatformWrites"
          ,has_function_privilege(runtime_role.rolname, 'platform.import_model_inventory(uuid,text,text,jsonb,jsonb,text)', 'EXECUTE')
            AS "canExecuteModelInventoryImport"
@@ -858,7 +873,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                'site','site_project_binding','site_release','site_deployment_binding',
                'site_activation_attempt','site_deployment_observation','site_traffic_stop_attempt',
                'site_traffic_stop_observation','site_effect_approval',
-               'admin_operator_authority','admin_command_decision','admin_approval','admin_approval_decision'
+               'admin_operator_authority','admin_command_decision','admin_approval','admin_approval_decision',
+               'admin_authority_bootstrap','admin_post_effect_review'
                ]) AND (
                  (candidate.relname LIKE 'model\\_%' ESCAPE '\\' AND (
                    has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
@@ -913,7 +929,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                'site','site_project_binding','site_release','site_deployment_binding',
                'site_activation_attempt','site_deployment_observation','site_traffic_stop_attempt',
                'site_traffic_stop_observation','site_effect_approval',
-               'admin_operator_authority','admin_command_decision','admin_approval','admin_approval_decision'
+               'admin_operator_authority','admin_command_decision','admin_approval','admin_approval_decision',
+               'admin_authority_bootstrap','admin_post_effect_review'
                ]) AND (
                  (runtime_role.rolname = $2 AND (
                    has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
@@ -982,7 +999,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                      'commerce_code_secret_export','commerce_audit_entry',
                      'site','site_project_binding','site_release','site_activation_attempt',
                      'site_traffic_stop_attempt','site_effect_approval',
-                     'admin_command_decision','admin_approval','admin_approval_decision'
+                     'admin_command_decision','admin_approval','admin_approval_decision','admin_post_effect_review'
                    ]))
                  ))
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
@@ -1007,11 +1024,15 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                      'site_activation_attempt','site_traffic_stop_attempt','authorization_site',
                      'authorization_site_release','authorization_product_binding'
                    ]))
+                   OR (runtime_role.rolname = $3 AND candidate.relname = ANY(ARRAY[
+                     'command_receipt','outbox_event','inbox_delivery','admin_approval','admin_post_effect_review'
+                   ]))
                    OR (runtime_role.rolname = $4 AND candidate.relname = ANY(ARRAY[
                      'command_receipt','commerce_billing_account','commerce_billing_account_membership',
                      'commerce_code_batch','commerce_redemption_program_availability',
                      'site','site_project_binding','site_release','site_deployment_binding',
-                     'site_effect_approval','authorization_site','authorization_product_binding'
+                     'site_effect_approval','authorization_site','authorization_product_binding',
+                     'admin_approval','admin_post_effect_review'
                    ]))
                    OR (runtime_role.rolname = $4 AND candidate.relname = 'admin_approval')
                  ))
@@ -1055,7 +1076,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                      'commerce_code_secret_export','commerce_audit_entry',
                      'site','site_project_binding','site_release','site_activation_attempt',
                      'site_traffic_stop_attempt','site_effect_approval',
-                     'admin_command_decision','admin_approval','admin_approval_decision'
+                     'admin_command_decision','admin_approval','admin_approval_decision','admin_post_effect_review'
                    ]))
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
@@ -1080,11 +1101,15 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                      'site_activation_attempt','site_traffic_stop_attempt','authorization_site',
                      'authorization_site_release','authorization_product_binding'
                    ]))
+                   OR (runtime_role.rolname = $3 AND candidate.relname = ANY(ARRAY[
+                     'command_receipt','outbox_event','inbox_delivery','admin_approval','admin_post_effect_review'
+                   ]))
                    OR (runtime_role.rolname = $4 AND candidate.relname = ANY(ARRAY[
                      'command_receipt','commerce_billing_account','commerce_billing_account_membership',
                      'commerce_code_batch','commerce_redemption_program_availability',
                      'site','site_project_binding','site_release','site_deployment_binding',
-                     'site_effect_approval','authorization_site','authorization_product_binding'
+                     'site_effect_approval','authorization_site','authorization_product_binding',
+                     'admin_approval','admin_post_effect_review'
                    ]))
                    OR (runtime_role.rolname = $4 AND candidate.relname = 'admin_approval')
                  ))

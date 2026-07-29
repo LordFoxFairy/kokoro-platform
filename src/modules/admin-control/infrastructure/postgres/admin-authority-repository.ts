@@ -82,6 +82,26 @@ export class PostgresAdminAuthorityRepository implements
     if (changed !== 1) throw new Error("ADMIN_APPROVAL_COMMAND_CONFLICT");
   }
 
+  async createPostEffectReview(
+    transaction: PlatformTransaction,
+    input: Parameters<AdminAuthorityRepositoryPort["createPostEffectReview"]>[1],
+  ): Promise<void> {
+    const changed = await resolvePlatformTransaction(transaction).execute(
+      `INSERT INTO platform.admin_post_effect_review
+       (review_ref,command_id,request_digest,operation,maker_ref,maker_generation,
+        maker_authorization_epoch,target_site_ref,environment,region,break_glass_ticket_ref,
+        outcome,outcome_digest,expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14)
+       ON CONFLICT (command_id) DO NOTHING`,
+      [input.reviewRef, input.commandId, input.requestDigest, input.operation,
+        input.admission.operatorRef, input.admission.operatorGeneration,
+        input.admission.authorizationEpoch, input.admission.siteRef, input.admission.environment,
+        input.admission.region, input.breakGlassTicketRef, JSON.stringify(input.outcome),
+        input.outcomeDigest, input.expiresAt],
+    );
+    if (changed !== 1) throw new Error("ADMIN_POST_EFFECT_REVIEW_CONFLICT");
+  }
+
   async lockApproval(
     transaction: PlatformTransaction,
     approvalRef: string,
@@ -94,7 +114,11 @@ export class PostgresAdminAuthorityRepository implements
               target_site_ref AS "targetSiteRef", environment, region,
               effect_class AS "effectClass", approval_policy AS "approvalPolicy",
               operator_reason AS "operatorReason", admitted_at AS "admittedAt",
-              expires_at AS "expiresAt", state, revision
+              expires_at AS "expiresAt", state, revision,
+              checker_ref AS "checkerRef", checker_generation AS "checkerGeneration",
+              checker_authorization_epoch AS "checkerAuthorizationEpoch",
+              checker_decision AS "checkerDecision", checker_reason AS "checkerReason",
+              decided_at AS "decidedAt"
        FROM platform.admin_approval
        WHERE approval_ref=$1::uuid
        FOR UPDATE`,
@@ -111,6 +135,7 @@ export class PostgresAdminAuthorityRepository implements
       requestDigest: row.requestDigest,
       payload: row.payload,
       payloadDigest: row.payloadDigest,
+      checker: checker(row),
       state: approvalState(row.state),
       revision: BigInt(row.revision),
       expiresAt: instant(row.expiresAt),
@@ -144,6 +169,28 @@ export class PostgresAdminAuthorityRepository implements
       [input.state, input.checker.checkerRef, input.checker.checkerGeneration,
         input.checker.checkerAuthorizationEpoch, input.checker.decision, input.checker.reason,
         JSON.stringify(input.result), input.resultDigest, input.checker.admittedAt,
+        input.approvalRef, input.expectedRevision],
+    );
+    return changed === 1;
+  }
+
+  async completeExecution(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      approvalRef: string;
+      expectedRevision: bigint;
+      state: "executed" | "effect_rejected" | "stale_authority";
+      result: JsonValue;
+      resultDigest: string;
+      code: string | null;
+    }>,
+  ): Promise<boolean> {
+    const changed = await resolvePlatformTransaction(transaction).execute(
+      `UPDATE platform.admin_approval
+       SET state=$1, revision=revision+1, result=$2::jsonb, result_digest=$3,
+           terminal_reason=$4, updated_at=now()
+       WHERE approval_ref=$5::uuid AND state='execution_queued' AND revision=$6`,
+      [input.state, JSON.stringify(input.result), input.resultDigest, input.code,
         input.approvalRef, input.expectedRevision],
     );
     return changed === 1;
@@ -200,6 +247,12 @@ interface ApprovalRow extends Record<string, unknown> {
   expiresAt: Date | string;
   state: string;
   revision: bigint | string;
+  checkerRef: string | null;
+  checkerGeneration: bigint | string | null;
+  checkerAuthorizationEpoch: bigint | string | null;
+  checkerDecision: string | null;
+  checkerReason: string | null;
+  decidedAt: Date | string | null;
 }
 
 function state(value: string): AdminOperatorAuthority["state"] {
@@ -208,7 +261,8 @@ function state(value: string): AdminOperatorAuthority["state"] {
 }
 
 function approvalState(value: string): AdminApprovalRecord["state"] {
-  if (!["pending", "executed", "rejected", "effect_rejected", "expired"].includes(value)) {
+  if (!["pending", "execution_queued", "executed", "rejected", "effect_rejected", "expired",
+    "stale_authority"].includes(value)) {
     throw new Error("ADMIN_APPROVAL_ROW_INVALID");
   }
   return value as AdminApprovalRecord["state"];
@@ -222,4 +276,30 @@ function instant(value: Date | string): string {
   const result = value instanceof Date ? value : new Date(value);
   if (!Number.isFinite(result.getTime())) throw new Error("ADMIN_TIME_INVALID");
   return result.toISOString();
+}
+
+function checker(row: ApprovalRow): import("../../domain/admin-approval.js").AdminApprovalAdmission | null {
+  if (row.checkerRef === null) return null;
+  if (
+    row.checkerGeneration === null || row.checkerAuthorizationEpoch === null ||
+    (row.checkerDecision !== "approve" && row.checkerDecision !== "reject") ||
+    row.checkerReason === null || row.decidedAt === null
+  ) throw new Error("ADMIN_APPROVAL_ROW_INVALID");
+  return Object.freeze({
+    approvalRef: row.approvalRef,
+    commandId: row.commandId,
+    ownerOperation: row.operation,
+    checkerRef: row.checkerRef,
+    checkerGeneration: BigInt(row.checkerGeneration),
+    checkerAuthorizationEpoch: BigInt(row.checkerAuthorizationEpoch),
+    makerRef: row.makerRef,
+    makerGeneration: BigInt(row.makerGeneration),
+    makerAuthorizationEpoch: BigInt(row.makerAuthorizationEpoch),
+    siteRef: row.targetSiteRef,
+    environment: row.environment,
+    region: row.region,
+    decision: row.checkerDecision,
+    reason: row.checkerReason,
+    admittedAt: instant(row.decidedAt),
+  });
 }

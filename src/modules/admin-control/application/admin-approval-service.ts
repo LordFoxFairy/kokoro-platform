@@ -55,7 +55,7 @@ export interface AdminApprovalRepositoryPort extends Pick<
 }
 
 export type AdminApprovalSubmissionResult = Readonly<{
-  disposition: "executed" | "rejected" | "effect_rejected" | "denied";
+  disposition: "execution_queued" | "rejected" | "denied";
   commandId: string;
   approvalRef: string;
   code?: string;
@@ -168,28 +168,14 @@ export class AdminApprovalService {
           return Object.freeze({ disposition: "rejected", commandId: input.commandId,
             approvalRef: input.approvalRef });
         }
-        const outcome = await handler.execute(transaction, {
-          admission: approval.admission,
-          approval: admission,
-          payload: approval.payload,
-          requestDigest: approval.requestDigest,
-        });
-        if (outcome.disposition === "rejected") {
-          const result = json({ disposition: "effect_rejected", commandId: input.commandId,
-            approvalRef: input.approvalRef, code: outcome.code });
-          await this.transition(transaction, approval, admission, "effect_rejected", result);
-          await this.complete(transaction, identity, "failed", result);
-          await this.event(transaction, input, admission, "admin.approval.effect-rejected", result);
-          return Object.freeze({ disposition: "effect_rejected", commandId: input.commandId,
-            approvalRef: input.approvalRef, code: outcome.code });
-        }
-        const result = json({ disposition: "executed", commandId: input.commandId,
-          approvalRef: input.approvalRef, result: outcome.result });
-        await this.transition(transaction, approval, admission, "executed", result);
+        const result = json({ disposition: "execution_queued", commandId: input.commandId,
+          approvalRef: input.approvalRef });
+        await this.transition(transaction, approval, admission, "execution_queued", result);
         await this.complete(transaction, identity, "succeeded", result);
-        await this.event(transaction, input, admission, "admin.approval.executed", result);
-        return Object.freeze({ disposition: "executed", commandId: input.commandId,
-          approvalRef: input.approvalRef, result: outcome.result });
+        await this.event(transaction, input, admission, "admin.approval.execution.requested", result,
+          "admin-execution");
+        return Object.freeze({ disposition: "execution_queued", commandId: input.commandId,
+          approvalRef: input.approvalRef });
       },
     );
   }
@@ -258,6 +244,7 @@ export class AdminApprovalService {
     admission: AdminApprovalAdmission,
     eventType: string,
     outcome: JsonValue,
+    owner = "admin-control",
   ): Promise<void> {
     const payload = json({
       approvalRef: admission.approvalRef, originatingCommandId: admission.commandId,
@@ -266,11 +253,12 @@ export class AdminApprovalService {
       checkerAuthorizationEpoch: admission.checkerAuthorizationEpoch.toString(),
       makerRef: admission.makerRef, makerGeneration: admission.makerGeneration.toString(),
       makerAuthorizationEpoch: admission.makerAuthorizationEpoch.toString(),
+      ownerOperation: admission.ownerOperation,
       siteRef: admission.siteRef, environment: admission.environment, region: admission.region,
       decision: admission.decision, outcome,
     });
     const event: OutboxEvent = {
-      eventId: this.dependencies.reference(), owner: "admin-control", eventType,
+      eventId: this.dependencies.reference(), owner, eventType,
       aggregateId: input.approvalRef, payload, payloadDigest: digestAdminValue(payload),
       correlationId: input.context.correlationId, causationId: input.context.requestId,
     };
@@ -289,7 +277,7 @@ function restore(receipt: CommandReceipt): AdminApprovalSubmissionResult {
   }
   const value = result as Record<string, JsonValue>;
   if (
-    !["executed", "rejected", "effect_rejected", "denied"].includes(String(value.disposition)) ||
+    !["execution_queued", "rejected", "denied"].includes(String(value.disposition)) ||
     typeof value.commandId !== "string" || typeof value.approvalRef !== "string"
   ) throw new Error("ADMIN_APPROVAL_RECEIPT_INVALID");
   return Object.freeze(value) as AdminApprovalSubmissionResult;
