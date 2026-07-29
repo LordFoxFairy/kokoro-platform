@@ -3,6 +3,11 @@ dist/
 coverage/
 generated/
 **/generated/
+!src/interfaces/http/generated/
+!src/interfaces/http/generated/platform-public/
+!src/interfaces/http/generated/platform-public/**
+!src/interfaces/connect/generated/
+!src/interfaces/connect/generated/**
 !kokoro-platform-admin/src/generated/
 kokoro-platform-admin/src/generated/*
 !kokoro-platform-admin/src/generated/contracts/
