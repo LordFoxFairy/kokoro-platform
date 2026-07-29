@@ -69,6 +69,7 @@ function ports(events: string[] = []): PlatformAdmissionOwnerPorts {
     },
     session: {
       resolve: vi.fn(async () => {
+        expect(transactionActive).toBe(false);
         events.push("session");
         return {
           kind: "resolved" as const,
@@ -79,7 +80,11 @@ function ports(events: string[] = []): PlatformAdmissionOwnerPorts {
           },
         };
       }),
-      verifyFinalizeReceipts: vi.fn(async () => ({ kind: "verified" as const })),
+      verifyFinalizeReceipts: vi.fn(async () => {
+        expect(transactionActive).toBe(false);
+        events.push("session.finalize-rpc");
+        return { kind: "verified" as const };
+      }),
     },
     site: { resolve: vi.fn(async () => {
       events.push("site");
@@ -266,8 +271,43 @@ describe("Platform Admission owner authority", () => {
       segmentVersion: 1n,
     });
     expect(events).toEqual([
-      "tx.begin", "session", "site", "model", "capability", "assets",
+      "session", "tx.begin", "site", "model", "capability", "assets",
       "budget.reserve", "lifecycle.prepare", "tx.end",
+    ]);
+  });
+
+  it("verifies Session finalize receipts outside the DB transaction before the local CAS", async () => {
+    const events: string[] = [];
+    const dependencies = ports(events);
+    vi.mocked(dependencies.budget.commitRoot).mockImplementation(async () => {
+      events.push("budget.commit");
+    });
+    vi.mocked(dependencies.lifecycle.commit).mockImplementation(async (_transaction, record) => {
+      events.push("lifecycle.commit");
+      return { ...record, state: "committed" as const, segmentVersion: record.segmentVersion + 1n };
+    });
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies, clock: () => now });
+
+    const decision = await authority.finalizeRunAuthorization({
+      caller,
+      siteId: "site-1",
+      commandId: "command-finalize",
+      requestDigest: "e".repeat(64),
+      effect: create(FinalizeRunAuthorizationEffectSchema, {
+        manifestRef: "manifest-1",
+        manifestDigest: "a".repeat(64),
+        authorizationSegmentRef: "segment-1",
+        expectedSegmentVersion: 1n,
+        launchId: "launch-1",
+        sessionIntentReceiptRef: "intent-receipt-1",
+      }),
+    });
+
+    expect(decision.kind).toBe("committed");
+    expect(events).toEqual([
+      "tx.begin", "lifecycle.read", "tx.end",
+      "session.finalize-rpc",
+      "tx.begin", "lifecycle.lock", "budget.commit", "lifecycle.commit", "tx.end",
     ]);
   });
 
@@ -301,7 +341,7 @@ describe("Platform Admission owner authority", () => {
 
   it("replays an already committed finalize CAS instead of rejecting its advanced version", async () => {
     const dependencies = ports();
-    vi.mocked(dependencies.lifecycle.lock).mockResolvedValue({
+    const committedRecord = {
       siteId: "site-1",
       manifestRef: "manifest-1",
       manifestDigest: "a".repeat(64),
@@ -313,7 +353,9 @@ describe("Platform Admission owner authority", () => {
       segmentVersion: 2n,
       state: "committed",
       expiresAt: "2026-07-29T12:04:00.000Z",
-    });
+    } as const;
+    vi.mocked(dependencies.lifecycle.read).mockResolvedValue(committedRecord);
+    vi.mocked(dependencies.lifecycle.lock).mockResolvedValue(committedRecord);
     const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies, clock: () => now });
 
     const decision = await authority.finalizeRunAuthorization({

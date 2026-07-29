@@ -50,7 +50,6 @@ export interface AdmissionOwnerUnitOfWork {
 
 export interface AdmissionSessionOwnerPort {
   resolve(
-    transaction: PlatformTransaction,
     input: Readonly<{
       caller: AdmissionAuthorityCommand["caller"];
       siteId: string;
@@ -62,13 +61,13 @@ export interface AdmissionSessionOwnerPort {
       triggerMessageId: string;
       triggerMessageContent: string;
     }>,
+    signal: AbortSignal,
   ): Promise<AdmissionOwnerResolution<Readonly<{
     namespace: string;
     threadId: string;
     sessionExecutionBindingRef: string;
   }>>>;
   verifyFinalizeReceipts(
-    transaction: PlatformTransaction,
     input: Readonly<{
       siteId: string;
       sessionId: string;
@@ -76,6 +75,7 @@ export interface AdmissionSessionOwnerPort {
       sessionIntentReceiptRef: string;
       prerequisiteReceiptRefs: readonly string[];
     }>,
+    signal: AbortSignal,
   ): Promise<Readonly<{ kind: "verified" }> | Denied | Pending>;
 }
 
@@ -288,22 +288,22 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
     this.#clock = input.clock ?? (() => new Date());
   }
 
-  prepareRun(
+  async prepareRun(
     command: Parameters<AdmissionOwnerAuthority["prepareRun"]>[0],
   ): Promise<PrepareRunOwnerDecision> {
+    const session = await this.#ports.session.resolve({
+      caller: command.caller,
+      siteId: command.siteId,
+      sessionAccessGrant: command.effect.sessionAccessGrant,
+      projectRef: command.effect.projectRef,
+      sessionId: command.effect.sessionId,
+      launchId: command.effect.launchId,
+      runId: command.effect.proposedRunId,
+      triggerMessageId: command.effect.triggerMessageId,
+      triggerMessageContent: command.effect.triggerMessageContent,
+    }, AbortSignal.timeout(5_000));
+    if (session.kind !== "resolved") return session;
     return this.#ports.unitOfWork.execute(command, async (transaction) => {
-      const session = await this.#ports.session.resolve(transaction, {
-        caller: command.caller,
-        siteId: command.siteId,
-        sessionAccessGrant: command.effect.sessionAccessGrant,
-        projectRef: command.effect.projectRef,
-        sessionId: command.effect.sessionId,
-        launchId: command.effect.launchId,
-        runId: command.effect.proposedRunId,
-        triggerMessageId: command.effect.triggerMessageId,
-        triggerMessageContent: command.effect.triggerMessageContent,
-      });
-      if (session.kind !== "resolved") return session;
       const site = await this.#ports.site.resolve(transaction, {
         siteId: command.siteId,
         projectRef: command.effect.projectRef,
@@ -433,19 +433,32 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
     });
   }
 
-  finalizeRunAuthorization(
+  async finalizeRunAuthorization(
     command: Parameters<AdmissionOwnerAuthority["finalizeRunAuthorization"]>[0],
   ): Promise<FinalizeRunOwnerDecision> {
+    const observed = await this.#ports.unitOfWork.execute(command, (transaction) =>
+      this.#ports.lifecycle.read(transaction, lifecycleLookup(command)));
+    if (observed === null) return denied("ADMISSION_AUTHORIZATION_NOT_FOUND");
+    assertLifecycleIdentity(observed, command.siteId, command.effect);
+    const replay = replayFinalized(observed, command.effect.expectedSegmentVersion, this.#date());
+    if (replay !== null) return replay;
+    assertExpectedSegmentVersion(observed, command.effect.expectedSegmentVersion);
+    if (observed.state !== "reserved") return denied("ADMISSION_AUTHORIZATION_NOT_FINALIZABLE");
+    const verified = await this.#ports.session.verifyFinalizeReceipts({
+      siteId: command.siteId,
+      sessionId: observed.sessionId,
+      launchId: observed.launchId,
+      sessionIntentReceiptRef: command.effect.sessionIntentReceiptRef,
+      prerequisiteReceiptRefs: command.effect.prerequisiteReceiptRefs,
+    }, AbortSignal.timeout(5_000));
+    if (verified.kind !== "verified") return verified;
     return this.#ports.unitOfWork.execute(command, async (transaction) => {
       const record = await this.#ports.lifecycle.lock(transaction, lifecycleLookup(command));
       if (record === null) return denied("ADMISSION_AUTHORIZATION_NOT_FOUND");
       assertLifecycleIdentity(record, command.siteId, command.effect);
-      if (record.state === "committed" && record.segmentVersion === command.effect.expectedSegmentVersion + 1n) {
-        return committed(record, this.#date());
-      }
-      if (record.state === "expired" && record.segmentVersion === command.effect.expectedSegmentVersion + 1n) {
-        return { kind: "expired", expired: { expiredAt: timestampFromDate(this.#date()) } };
-      }
+      const racedReplay = replayFinalized(record, command.effect.expectedSegmentVersion, this.#date());
+      if (racedReplay !== null) return racedReplay;
+      assertSameAuthorization(record, observed);
       assertExpectedSegmentVersion(record, command.effect.expectedSegmentVersion);
       if (record.state !== "reserved") return denied("ADMISSION_AUTHORIZATION_NOT_FINALIZABLE");
       if (Date.parse(record.expiresAt) <= this.#now()) {
@@ -458,14 +471,6 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         await this.#ports.lifecycle.expire(transaction, record);
         return { kind: "expired", expired: { expiredAt: timestampFromDate(this.#date()) } };
       }
-      const verified = await this.#ports.session.verifyFinalizeReceipts(transaction, {
-        siteId: command.siteId,
-        sessionId: record.sessionId,
-        launchId: record.launchId,
-        sessionIntentReceiptRef: command.effect.sessionIntentReceiptRef,
-        prerequisiteReceiptRefs: command.effect.prerequisiteReceiptRefs,
-      });
-      if (verified.kind !== "verified") return verified;
       await this.#ports.budget.commitRoot(transaction, {
         siteId: command.siteId,
         rootHoldRef: record.rootHoldRef,
@@ -760,6 +765,19 @@ function denied(code: string): Denied {
 
 function notReleasable(code: string): ReleaseRunOwnerDecision {
   return { kind: "not_releasable", notReleasable: { code } };
+}
+
+function replayFinalized(
+  record: AdmissionAuthorizationRecord,
+  expectedSegmentVersion: bigint,
+  at: Date,
+): FinalizeRunOwnerDecision | null {
+  if (record.segmentVersion !== expectedSegmentVersion + 1n) return null;
+  if (record.state === "committed") return committed(record, at);
+  if (record.state === "expired") {
+    return { kind: "expired", expired: { expiredAt: timestampFromDate(at) } };
+  }
+  return null;
 }
 
 function committed(record: AdmissionAuthorizationRecord, at: Date): FinalizeRunOwnerDecision {
