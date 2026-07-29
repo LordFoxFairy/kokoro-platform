@@ -1,4 +1,4 @@
-export type UploadIntentState =
+export type UploadSessionState =
   | "awaiting_capability"
   | "uploading"
   | "completing"
@@ -20,8 +20,10 @@ export interface AssetPolicySnapshot {
 
 export interface AssetUploadIntent {
   readonly intentRef: string;
-  readonly sessionRef: string;
   readonly siteRef: string;
+  readonly workloadIdentityId: string;
+  readonly siteReleaseRef: string;
+  readonly bindingEpoch: bigint;
   readonly subjectRef: string;
   readonly subjectGeneration: bigint;
   readonly projectRef: string;
@@ -31,18 +33,41 @@ export interface AssetUploadIntent {
   readonly expectedSize: bigint;
   readonly expectedChecksumSha256: string;
   readonly policyRevisionRef: string;
+  readonly state: "admitted" | "aborted" | "rejected";
+  readonly expectedVersion: bigint;
+  readonly expiresAt: string;
+}
+
+export interface AssetUploadSession {
+  readonly sessionRef: string;
+  readonly intentRef: string;
+  readonly siteRef: string;
+  readonly subjectRef: string;
+  readonly subjectGeneration: bigint;
+  readonly projectRef: string;
+  readonly purpose: string;
+  readonly quotaRevisionRef: string;
+  readonly storageTenantRef: string;
   readonly storageRegion: string;
   readonly quarantineObjectRef: string;
   readonly protocolRevision: "s3-multipart-v1";
-  readonly state: UploadIntentState;
+  readonly capabilityAudience: string;
+  readonly minimumPartBytes: bigint;
+  readonly maximumPartBytes: bigint;
+  readonly capabilityLifetimeSeconds: number;
+  readonly capabilityEpoch: bigint;
+  readonly capabilityExpiresAt: string | null;
+  readonly state: UploadSessionState;
   readonly expectedVersion: bigint;
   readonly expiresAt: string;
 }
 
 export function createUploadIntent(input: Readonly<{
   intentRef: string;
-  sessionRef: string;
   siteRef: string;
+  workloadIdentityId: string;
+  siteReleaseRef: string;
+  bindingEpoch: bigint;
   subjectRef: string;
   subjectGeneration: bigint;
   projectRef: string;
@@ -51,13 +76,14 @@ export function createUploadIntent(input: Readonly<{
   clientMediaType: string;
   expectedSize: bigint;
   expectedChecksumSha256: string;
-  quarantineObjectRef: string;
   policy: AssetPolicySnapshot;
   now: string;
 }>): AssetUploadIntent {
   identifier(input.intentRef, "ASSET_UPLOAD_INTENT_REF_INVALID");
-  identifier(input.sessionRef, "ASSET_UPLOAD_SESSION_REF_INVALID");
   identifier(input.siteRef, "ASSET_SITE_REF_INVALID");
+  identifier(input.workloadIdentityId, "ASSET_WORKLOAD_IDENTITY_INVALID");
+  identifier(input.siteReleaseRef, "ASSET_SITE_RELEASE_INVALID");
+  if (input.bindingEpoch < 1n) throw new Error("ASSET_BINDING_EPOCH_INVALID");
   identifier(input.subjectRef, "ASSET_SUBJECT_REF_INVALID");
   identifier(input.projectRef, "ASSET_PROJECT_REF_INVALID");
   bounded(input.purpose, 1, 128, "ASSET_PURPOSE_INVALID");
@@ -74,14 +100,15 @@ export function createUploadIntent(input: Readonly<{
   if (Date.parse(input.policy.expiresAt) <= Date.parse(input.now)) throw new Error("ASSET_POLICY_EXPIRED");
   identifier(input.policy.policyRevisionRef, "ASSET_POLICY_REVISION_INVALID");
   bounded(input.policy.storageRegion, 1, 128, "ASSET_STORAGE_REGION_INVALID");
-  bounded(input.quarantineObjectRef, 16, 256, "ASSET_QUARANTINE_OBJECT_REF_INVALID");
   if (input.policy.maximumInflightBytes < input.policy.maximumFileBytes) {
     throw new Error("ASSET_POLICY_QUOTA_INVALID");
   }
   return Object.freeze({
     intentRef: input.intentRef,
-    sessionRef: input.sessionRef,
     siteRef: input.siteRef,
+    workloadIdentityId: input.workloadIdentityId,
+    siteReleaseRef: input.siteReleaseRef,
+    bindingEpoch: input.bindingEpoch,
     subjectRef: input.subjectRef,
     subjectGeneration: input.subjectGeneration,
     projectRef: input.projectRef,
@@ -91,28 +118,93 @@ export function createUploadIntent(input: Readonly<{
     expectedSize: input.expectedSize,
     expectedChecksumSha256: input.expectedChecksumSha256,
     policyRevisionRef: input.policy.policyRevisionRef,
-    storageRegion: input.policy.storageRegion,
-    quarantineObjectRef: input.quarantineObjectRef,
-    protocolRevision: "s3-multipart-v1",
-    state: "awaiting_capability",
+    state: "admitted",
     expectedVersion: 1n,
     expiresAt: input.policy.expiresAt,
   });
 }
 
-export function markUploadCapabilityIssued(value: AssetUploadIntent): AssetUploadIntent {
-  verifyUploadIntent(value);
-  if (value.state !== "awaiting_capability" && value.state !== "uploading") {
+export function createUploadSession(input: Readonly<{
+  sessionRef: string;
+  intent: AssetUploadIntent;
+  quotaRevisionRef: string;
+  storageTenantRef: string;
+  storageRegion: string;
+  quarantineObjectRef: string;
+  capabilityAudience: string;
+  minimumPartBytes: bigint;
+  maximumPartBytes: bigint;
+  capabilityLifetimeSeconds: number;
+}>): AssetUploadSession {
+  verifyUploadIntent(input.intent);
+  if (input.intent.state !== "admitted") throw new Error("ASSET_UPLOAD_INTENT_NOT_ADMITTED");
+  identifier(input.sessionRef, "ASSET_UPLOAD_SESSION_REF_INVALID");
+  identifier(input.quotaRevisionRef, "ASSET_QUOTA_REVISION_INVALID");
+  identifier(input.storageTenantRef, "ASSET_STORAGE_TENANT_INVALID");
+  bounded(input.storageRegion, 1, 128, "ASSET_STORAGE_REGION_INVALID");
+  bounded(input.quarantineObjectRef, 16, 256, "ASSET_QUARANTINE_OBJECT_REF_INVALID");
+  bounded(input.capabilityAudience, 3, 256, "ASSET_CAPABILITY_AUDIENCE_INVALID");
+  if (
+    input.minimumPartBytes < 1n || input.maximumPartBytes < input.minimumPartBytes ||
+    !Number.isInteger(input.capabilityLifetimeSeconds) || input.capabilityLifetimeSeconds < 30 ||
+    input.capabilityLifetimeSeconds > 900
+  ) throw new Error("ASSET_UPLOAD_PROTOCOL_POLICY_INVALID");
+  return Object.freeze({
+    sessionRef: input.sessionRef,
+    intentRef: input.intent.intentRef,
+    siteRef: input.intent.siteRef,
+    subjectRef: input.intent.subjectRef,
+    subjectGeneration: input.intent.subjectGeneration,
+    projectRef: input.intent.projectRef,
+    purpose: input.intent.purpose,
+    quotaRevisionRef: input.quotaRevisionRef,
+    storageTenantRef: input.storageTenantRef,
+    storageRegion: input.storageRegion,
+    quarantineObjectRef: input.quarantineObjectRef,
+    protocolRevision: "s3-multipart-v1",
+    capabilityAudience: input.capabilityAudience,
+    minimumPartBytes: input.minimumPartBytes,
+    maximumPartBytes: input.maximumPartBytes,
+    capabilityLifetimeSeconds: input.capabilityLifetimeSeconds,
+    capabilityEpoch: 0n,
+    capabilityExpiresAt: null,
+    state: "awaiting_capability",
+    expectedVersion: 1n,
+    expiresAt: input.intent.expiresAt,
+  });
+}
+
+export function markUploadCapabilityIssued(
+  value: AssetUploadSession,
+  expectedVersion: bigint,
+  capabilityEpoch: bigint,
+  capabilityExpiresAt: string,
+): AssetUploadSession {
+  verifyUploadSession(value);
+  if (
+    (value.state !== "awaiting_capability" && value.state !== "uploading") ||
+    value.expectedVersion !== expectedVersion || capabilityEpoch !== value.capabilityEpoch + 1n
+  ) {
     throw new Error("ASSET_UPLOAD_CAPABILITY_STATE_INVALID");
   }
-  return Object.freeze({ ...value, state: "uploading", expectedVersion: increment(value.expectedVersion) });
+  instant(capabilityExpiresAt, "ASSET_UPLOAD_CAPABILITY_EXPIRY_INVALID");
+  if (Date.parse(capabilityExpiresAt) > Date.parse(value.expiresAt)) {
+    throw new Error("ASSET_UPLOAD_CAPABILITY_OUTLIVES_SESSION");
+  }
+  return Object.freeze({
+    ...value,
+    capabilityEpoch,
+    capabilityExpiresAt,
+    state: "uploading",
+    expectedVersion: increment(value.expectedVersion),
+  });
 }
 
 export function beginUploadCompletion(
-  value: AssetUploadIntent,
+  value: AssetUploadSession,
   expectedVersion: bigint,
-): AssetUploadIntent {
-  verifyUploadIntent(value);
+): AssetUploadSession {
+  verifyUploadSession(value);
   if (value.state !== "uploading" || value.expectedVersion !== expectedVersion) {
     throw new Error("ASSET_UPLOAD_COMPLETION_CONFLICT");
   }
@@ -121,8 +213,10 @@ export function beginUploadCompletion(
 
 export function verifyUploadIntent(value: AssetUploadIntent): AssetUploadIntent {
   identifier(value.intentRef, "ASSET_UPLOAD_INTENT_REF_INVALID");
-  identifier(value.sessionRef, "ASSET_UPLOAD_SESSION_REF_INVALID");
   identifier(value.siteRef, "ASSET_SITE_REF_INVALID");
+  identifier(value.workloadIdentityId, "ASSET_WORKLOAD_IDENTITY_INVALID");
+  identifier(value.siteReleaseRef, "ASSET_SITE_RELEASE_INVALID");
+  if (value.bindingEpoch < 1n) throw new Error("ASSET_BINDING_EPOCH_INVALID");
   identifier(value.subjectRef, "ASSET_SUBJECT_REF_INVALID");
   identifier(value.projectRef, "ASSET_PROJECT_REF_INVALID");
   bounded(value.purpose, 1, 128, "ASSET_PURPOSE_INVALID");
@@ -133,12 +227,34 @@ export function verifyUploadIntent(value: AssetUploadIntent): AssetUploadIntent 
   }
   if (!/^[0-9a-f]{64}$/u.test(value.expectedChecksumSha256)) throw new Error("ASSET_CHECKSUM_INVALID");
   identifier(value.policyRevisionRef, "ASSET_POLICY_REVISION_INVALID");
+  instant(value.expiresAt, "ASSET_UPLOAD_EXPIRY_INVALID");
+  if (!["admitted", "aborted", "rejected"].includes(value.state)) throw new Error("ASSET_UPLOAD_INTENT_STATE_INVALID");
+  return Object.freeze({ ...value });
+}
+
+export function verifyUploadSession(value: AssetUploadSession): AssetUploadSession {
+  identifier(value.sessionRef, "ASSET_UPLOAD_SESSION_REF_INVALID");
+  identifier(value.intentRef, "ASSET_UPLOAD_INTENT_REF_INVALID");
+  identifier(value.siteRef, "ASSET_SITE_REF_INVALID");
+  identifier(value.subjectRef, "ASSET_SUBJECT_REF_INVALID");
+  identifier(value.projectRef, "ASSET_PROJECT_REF_INVALID");
+  identifier(value.quotaRevisionRef, "ASSET_QUOTA_REVISION_INVALID");
+  identifier(value.storageTenantRef, "ASSET_STORAGE_TENANT_INVALID");
+  bounded(value.purpose, 1, 128, "ASSET_PURPOSE_INVALID");
   bounded(value.storageRegion, 1, 128, "ASSET_STORAGE_REGION_INVALID");
   bounded(value.quarantineObjectRef, 16, 256, "ASSET_QUARANTINE_OBJECT_REF_INVALID");
+  bounded(value.capabilityAudience, 3, 256, "ASSET_CAPABILITY_AUDIENCE_INVALID");
+  if (
+    value.subjectGeneration < 1n || value.expectedVersion < 1n || value.capabilityEpoch < 0n ||
+    value.minimumPartBytes < 1n || value.maximumPartBytes < value.minimumPartBytes ||
+    !Number.isInteger(value.capabilityLifetimeSeconds) || value.capabilityLifetimeSeconds < 30 ||
+    value.capabilityLifetimeSeconds > 900
+  ) throw new Error("ASSET_UPLOAD_SESSION_VALUE_INVALID");
   instant(value.expiresAt, "ASSET_UPLOAD_EXPIRY_INVALID");
-  if (!new Set<UploadIntentState>(["awaiting_capability", "uploading", "completing",
+  if (value.capabilityExpiresAt !== null) instant(value.capabilityExpiresAt, "ASSET_UPLOAD_CAPABILITY_EXPIRY_INVALID");
+  if (!new Set<UploadSessionState>(["awaiting_capability", "uploading", "completing",
     "reconciling_upload", "validating", "aborting", "aborted", "rejected"]).has(value.state)) {
-    throw new Error("ASSET_UPLOAD_STATE_INVALID");
+    throw new Error("ASSET_UPLOAD_SESSION_STATE_INVALID");
   }
   return Object.freeze({ ...value });
 }
