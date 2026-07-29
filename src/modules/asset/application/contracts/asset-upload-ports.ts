@@ -88,6 +88,31 @@ export interface AssetUploadCapability {
   readonly maximumPartBytes: bigint;
 }
 
+export interface AssetUploadCapabilityClaims {
+  readonly version: 1;
+  readonly audience: string;
+  readonly storageTenantRef: string;
+  readonly storageRegion: string;
+  readonly siteRef: string;
+  readonly workloadIdentityId: string;
+  readonly siteReleaseRef: string;
+  readonly bindingEpoch: string;
+  readonly subjectRef: string;
+  readonly subjectGeneration: string;
+  readonly projectRef: string;
+  readonly purpose: string;
+  readonly intentRef: string;
+  readonly sessionRef: string;
+  readonly quarantineObjectRef: string;
+  readonly expectedSize: string;
+  readonly expectedChecksumSha256: string;
+  readonly capabilityEpoch: string;
+  readonly expiresAt: string;
+  readonly minimumPartBytes: string;
+  readonly maximumPartBytes: string;
+  readonly allowedOrigins: readonly string[];
+}
+
 export interface AssetUploadCapabilityIssuerPort {
   /**
    * Issues an opaque, initially inactive credential. The upload data plane MUST

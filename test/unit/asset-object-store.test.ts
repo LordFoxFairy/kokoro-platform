@@ -1,5 +1,11 @@
+import { Readable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
-import { DeleteObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import {
+  CompleteMultipartUploadCommand,
+  DeleteObjectCommand,
+  HeadObjectCommand,
+  UploadPartCommand,
+} from "@aws-sdk/client-s3";
 import { S3AssetObjectStore } from
   "../../src/modules/asset/infrastructure/s3/asset-object-store.js";
 
@@ -81,3 +87,84 @@ describe("S3AssetObjectStore exact cleanup", () => {
     });
   });
 });
+
+describe("S3AssetObjectStore multipart data plane", () => {
+  it("completes with the exact provider etag and per-part SHA-256", async () => {
+    const send = vi.fn().mockResolvedValue({});
+    const store = new S3AssetObjectStore([route], () => ({ send } as never));
+
+    await store.complete({
+      storageTenantRef: route.storageTenantRef,
+      storageRegion: route.storageRegion,
+      objectRef: "quarantine/opaque_0123456789",
+      providerUploadId: "provider_upload_01",
+      parts: [{
+        partNumber: 1,
+        providerEtag: "provider-etag-01",
+        checksumSha256: "a".repeat(64),
+      }],
+    });
+
+    const command = send.mock.calls[0]?.[0] as CompleteMultipartUploadCommand;
+    expect(command).toBeInstanceOf(CompleteMultipartUploadCommand);
+    expect(command.input.MultipartUpload?.Parts).toEqual([{
+      PartNumber: 1,
+      ETag: "provider-etag-01",
+      ChecksumSHA256: Buffer.from("a".repeat(64), "hex").toString("base64"),
+    }]);
+  });
+
+  it("propagates source stream failure into the provider body and tears the pipeline down", async () => {
+    const send = vi.fn(async (command: UploadPartCommand) => {
+      const body = command.input.Body as unknown as AsyncIterable<Uint8Array>;
+      for await (const _chunk of body) {
+        // Consume like the AWS request handler; the source failure must reject this iterator.
+      }
+      return { ETag: "provider-etag-01" };
+    });
+    const store = new S3AssetObjectStore([route], () => ({ send } as never));
+    const body = new Readable({
+      read() {
+        this.push(Buffer.from("hello"));
+        this.destroy(new Error("source_failed"));
+      },
+    });
+
+    await expect(Promise.race([
+      store.putPart({
+        storageTenantRef: route.storageTenantRef,
+        storageRegion: route.storageRegion,
+        objectRef: "quarantine/opaque_0123456789",
+        providerUploadId: "provider_upload_01",
+        partNumber: 1,
+        declaredSize: 5n,
+        checksumSha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+        body,
+      }),
+      rejectAfter(100, "source_failure_not_propagated"),
+    ])).rejects.toThrow("source_failed");
+  });
+
+  it("classifies a completed object larger than the admitted bound as deterministic integrity rejection", async () => {
+    const send = vi.fn().mockResolvedValue({
+      VersionId: "provider_version_01",
+      ContentLength: 10_001,
+      ETag: "provider-etag-01",
+    });
+    const store = new S3AssetObjectStore([route], () => ({ send } as never));
+
+    await expect(store.observeCompleted({
+      storageTenantRef: route.storageTenantRef,
+      storageRegion: route.storageRegion,
+      objectRef: "quarantine/opaque_0123456789",
+      expectedSize: 1234n,
+      expectedChecksumSha256: "a".repeat(64),
+    })).rejects.toThrow("ASSET_MULTIPART_OBJECT_MISMATCH");
+  });
+});
+
+function rejectAfter(milliseconds: number, message: string): Promise<never> {
+  return new Promise((_resolve, reject) => {
+    setTimeout(() => reject(new Error(message)), milliseconds).unref();
+  });
+}

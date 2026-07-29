@@ -1,10 +1,16 @@
 import { createHash } from "node:crypto";
+import { Transform } from "node:stream";
 import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
   CopyObjectCommand,
+  CreateMultipartUploadCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListMultipartUploadsCommand,
   S3Client,
+  UploadPartCommand,
   type GetObjectOutput,
   type HeadObjectOutput,
 } from "@aws-sdk/client-s3";
@@ -12,6 +18,8 @@ import type { AssetQuarantineObjectStorePort } from "../../application/contracts
 import type { AssetTrustedObjectStorePort } from "../../application/contracts/asset-promotion-worker-ports.js";
 import type { AssetObjectCleanupStorePort } from
   "../../application/contracts/asset-cleanup-worker-ports.js";
+import type { AssetMultipartStorePort } from
+  "../../application/contracts/asset-multipart-ports.js";
 
 export interface AssetS3StorageRoute {
   readonly storageTenantRef: string;
@@ -32,7 +40,8 @@ type ResolvedRoute = Readonly<{
 }>;
 
 export class S3AssetObjectStore implements
-  AssetQuarantineObjectStorePort, AssetTrustedObjectStorePort, AssetObjectCleanupStorePort {
+  AssetQuarantineObjectStorePort, AssetTrustedObjectStorePort, AssetObjectCleanupStorePort,
+  AssetMultipartStorePort {
   private readonly routes = new Map<string, ResolvedRoute>();
 
   constructor(
@@ -65,6 +74,176 @@ export class S3AssetObjectStore implements
       size,
       checksumSha256: providerChecksum(head),
       observedAt: new Date().toISOString() });
+  }
+
+  async initiate(input: Parameters<AssetMultipartStorePort["initiate"]>[0]): Promise<string> {
+    const route = this.resolve(input.storageTenantRef, input.storageRegion);
+    validateObjectRef(input.objectRef);
+    const output = await route.client.send(new CreateMultipartUploadCommand({
+      Bucket: route.configuration.bucket,
+      Key: input.objectRef,
+      ChecksumAlgorithm: "SHA256",
+      Metadata: { "kokoro-upload-ref": input.uploadRef },
+    }));
+    if (output.UploadId === undefined || output.UploadId.length < 1 || output.UploadId.length > 2_048) {
+      throw new Error("ASSET_MULTIPART_PROVIDER_ID_INVALID");
+    }
+    return output.UploadId;
+  }
+
+  async recoverInitiation(
+    input: Parameters<AssetMultipartStorePort["recoverInitiation"]>[0],
+  ): Promise<string | null> {
+    const route = this.resolve(input.storageTenantRef, input.storageRegion);
+    validateObjectRef(input.objectRef);
+    const output = await route.client.send(new ListMultipartUploadsCommand({
+      Bucket: route.configuration.bucket,
+      Prefix: input.objectRef,
+      MaxUploads: 2,
+    }));
+    const matches = (output.Uploads ?? []).filter((upload) =>
+      upload.Key === input.objectRef && upload.UploadId !== undefined && upload.UploadId.length > 0);
+    if (matches.length > 1 || output.IsTruncated === true) {
+      throw new Error("ASSET_MULTIPART_INITIATION_AMBIGUOUS");
+    }
+    return matches[0]?.UploadId ?? null;
+  }
+
+  async putPart(input: Parameters<AssetMultipartStorePort["putPart"]>[0]): Promise<string> {
+    const route = this.resolve(input.storageTenantRef, input.storageRegion);
+    validateObjectRef(input.objectRef);
+    digest(input.checksumSha256);
+    enforceMaximum(input.declaredSize, route.configuration.maximumObjectBytes);
+    if (input.declaredSize > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new Error("ASSET_MULTIPART_PART_SIZE_INVALID");
+    }
+    const hash = createHash("sha256");
+    let observedBytes = 0n;
+    const meter = new Transform({
+      transform(chunk: Buffer | Uint8Array, _encoding, callback) {
+        const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        observedBytes += BigInt(bytes.byteLength);
+        if (observedBytes > input.declaredSize) {
+          callback(new Error("ASSET_MULTIPART_PART_LENGTH_MISMATCH"));
+          return;
+        }
+        hash.update(bytes);
+        callback(null, bytes);
+      },
+    });
+    let sourceFailure: Error | null = null;
+    const forwardSourceFailure = (error: Error) => {
+      sourceFailure = error;
+      meter.destroy(error);
+    };
+    input.body.once("error", forwardSourceFailure);
+    input.body.pipe(meter);
+    try {
+      const output = await route.client.send(new UploadPartCommand({
+        Bucket: route.configuration.bucket,
+        Key: input.objectRef,
+        UploadId: input.providerUploadId,
+        PartNumber: input.partNumber,
+        Body: meter,
+        ContentLength: Number(input.declaredSize),
+        ChecksumSHA256: Buffer.from(input.checksumSha256, "hex").toString("base64"),
+      }));
+      if (sourceFailure !== null) throw sourceFailure;
+      if (observedBytes !== input.declaredSize || hash.digest("hex") !== input.checksumSha256) {
+        throw new Error("ASSET_MULTIPART_PART_CHECKSUM_MISMATCH");
+      }
+      if (output.ETag === undefined || output.ETag.length < 1 || output.ETag.length > 512) {
+        throw new Error("ASSET_MULTIPART_PROVIDER_ETAG_INVALID");
+      }
+      return output.ETag;
+    } catch (error) {
+      input.body.destroy();
+      meter.destroy();
+      throw error;
+    } finally {
+      input.body.off("error", forwardSourceFailure);
+      input.body.unpipe(meter);
+      if (!input.body.readableEnded) input.body.destroy();
+      if (!meter.destroyed) meter.destroy();
+    }
+  }
+
+  async complete(input: Parameters<AssetMultipartStorePort["complete"]>[0]): Promise<void> {
+    const route = this.resolve(input.storageTenantRef, input.storageRegion);
+    validateObjectRef(input.objectRef);
+    if (input.parts.length < 1 || input.parts.length > 10_000 ||
+        input.parts.some((part, index) => part.partNumber !== index + 1 ||
+          part.providerEtag.length < 1 || part.providerEtag.length > 512 ||
+          !/^[a-f0-9]{64}$/u.test(part.checksumSha256))) {
+      throw new Error("ASSET_MULTIPART_PARTS_INVALID");
+    }
+    await route.client.send(new CompleteMultipartUploadCommand({
+      Bucket: route.configuration.bucket,
+      Key: input.objectRef,
+      UploadId: input.providerUploadId,
+      MultipartUpload: {
+        Parts: input.parts.map((part) => ({
+          PartNumber: part.partNumber,
+          ETag: part.providerEtag,
+          ChecksumSHA256: Buffer.from(part.checksumSha256, "hex").toString("base64"),
+        })),
+      },
+    }));
+  }
+
+  async abort(input: Parameters<AssetMultipartStorePort["abort"]>[0]) {
+    const route = this.resolve(input.storageTenantRef, input.storageRegion);
+    validateObjectRef(input.objectRef);
+    try {
+      await route.client.send(new AbortMultipartUploadCommand({
+        Bucket: route.configuration.bucket,
+        Key: input.objectRef,
+        UploadId: input.providerUploadId,
+      }));
+      return "aborted" as const;
+    } catch (error) {
+      if (noSuchUpload(error)) return "already_absent" as const;
+      throw error;
+    }
+  }
+
+  async observeCompleted(input: Parameters<AssetMultipartStorePort["observeCompleted"]>[0]) {
+    const route = this.resolve(input.storageTenantRef, input.storageRegion);
+    const head = await this.head(route, input.objectRef);
+    if (head === null) return "absent" as const;
+    const versionRef = immutableVersion(head);
+    let observedSize: bigint;
+    try {
+      observedSize = objectSize(head, route.configuration.maximumObjectBytes);
+    } catch (error) {
+      if (isDeterministicSizeFailure(error)) {
+        throw new Error("ASSET_MULTIPART_OBJECT_MISMATCH");
+      }
+      throw error;
+    }
+    if (observedSize !== input.expectedSize) {
+      throw new Error("ASSET_MULTIPART_OBJECT_MISMATCH");
+    }
+    // Multipart ETags and provider composite checksums are deliberately ignored. The completed
+    // quarantine version is streamed in full to prove the flat object SHA-256.
+    let checksumSha256: string;
+    try {
+      checksumSha256 = await this.readChecksum(
+        route,
+        input.objectRef,
+        versionRef,
+        input.expectedSize,
+      );
+    } catch (error) {
+      if (isDeterministicSizeFailure(error)) {
+        throw new Error("ASSET_MULTIPART_OBJECT_MISMATCH");
+      }
+      throw error;
+    }
+    if (checksumSha256 !== input.expectedChecksumSha256) {
+      throw new Error("ASSET_MULTIPART_OBJECT_MISMATCH");
+    }
+    return "exact" as const;
   }
 
   async computeSha256(input: Readonly<{
@@ -345,4 +524,18 @@ function notFound(error: unknown): boolean {
   return candidate.name === "NotFound" || candidate.name === "NoSuchKey" ||
     candidate.name === "NoSuchVersion" ||
     candidate.$metadata?.httpStatusCode === 404;
+}
+
+function noSuchUpload(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const candidate = error as { name?: unknown; Code?: unknown; code?: unknown };
+  return candidate.name === "NoSuchUpload" || candidate.Code === "NoSuchUpload" ||
+    candidate.code === "NoSuchUpload";
+}
+
+function isDeterministicSizeFailure(error: unknown): boolean {
+  return error instanceof Error && [
+    "ASSET_OBJECT_SIZE_INVALID",
+    "ASSET_OBJECT_READ_LIMIT_EXCEEDED",
+  ].includes(error.message);
 }

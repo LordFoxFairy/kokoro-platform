@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import type {
   AssetUploadCapability,
+  AssetUploadCapabilityClaims,
   AssetUploadCapabilityIssuerPort,
 } from "../../application/contracts/asset-upload-ports.js";
 import type { AssetUploadEndpointResolver } from "../config/asset-upload-policy-registry.js";
@@ -11,30 +12,8 @@ export interface AssetUploadCapabilityKeyRing {
   readonly keys: readonly Readonly<{ keyRevision: string; key: Uint8Array }>[];
 }
 
-export interface AssetUploadCapabilityClaims {
-  readonly version: 1;
-  readonly audience: string;
-  readonly storageTenantRef: string;
-  readonly storageRegion: string;
-  readonly siteRef: string;
-  readonly workloadIdentityId: string;
-  readonly siteReleaseRef: string;
-  readonly bindingEpoch: string;
-  readonly subjectRef: string;
-  readonly subjectGeneration: string;
-  readonly projectRef: string;
-  readonly purpose: string;
-  readonly intentRef: string;
-  readonly sessionRef: string;
-  readonly quarantineObjectRef: string;
-  readonly expectedSize: string;
-  readonly expectedChecksumSha256: string;
-  readonly capabilityEpoch: string;
-  readonly expiresAt: string;
-  readonly minimumPartBytes: string;
-  readonly maximumPartBytes: string;
-  readonly allowedOrigins: readonly string[];
-}
+export type { AssetUploadCapabilityClaims } from
+  "../../application/contracts/asset-upload-ports.js";
 
 export class SealedAssetUploadCapabilityIssuer implements AssetUploadCapabilityIssuerPort {
   readonly #keys: Map<string, Buffer>;

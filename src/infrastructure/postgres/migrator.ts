@@ -352,10 +352,10 @@ async function grantFoundationPrivileges(
         `GRANT UPDATE ON TABLE platform.commerce_command, platform.commerce_subscription, platform.commerce_redeem_code, platform.commerce_redemption, platform.commerce_redemption_preview, platform.credit_account, platform.credit_hold, platform.credit_execution_budget_root, platform.credit_authorization_segment, platform.commerce_fulfillment_transaction TO ${identifier}`,
       );
       await client.query(
-        `GRANT INSERT ON TABLE platform.asset_upload_intent, platform.asset_upload_session, platform.asset_quota_account, platform.asset_quota_reservation TO ${identifier}`,
+        `GRANT INSERT ON TABLE platform.asset_upload_intent, platform.asset_upload_session, platform.asset_quota_account, platform.asset_quota_reservation, platform.asset_multipart_upload, platform.asset_multipart_part TO ${identifier}`,
       );
       await client.query(
-        `GRANT UPDATE ON TABLE platform.asset_upload_intent, platform.asset_upload_session, platform.asset_quota_account, platform.asset_quota_reservation TO ${identifier}`,
+        `GRANT UPDATE ON TABLE platform.asset_upload_intent, platform.asset_upload_session, platform.asset_quota_account, platform.asset_quota_reservation, platform.asset_multipart_upload, platform.asset_multipart_part TO ${identifier}`,
       );
       await client.query(
         `GRANT EXECUTE ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID), platform.resolve_product_model_option_catalog(TEXT, TEXT) TO ${identifier}`,
@@ -578,6 +578,8 @@ const ASSET_RELATIONS = [
   "asset_upload_session",
   "asset_quota_account",
   "asset_quota_reservation",
+  "asset_multipart_upload",
+  "asset_multipart_part",
   "asset_blob_candidate",
   "asset_cleanup_group",
   "asset_object_cleanup",
@@ -597,6 +599,8 @@ const ASSET_API_MUTABLE_RELATIONS = [
   "asset_upload_session",
   "asset_quota_account",
   "asset_quota_reservation",
+  "asset_multipart_upload",
+  "asset_multipart_part",
 ] as const;
 const ASSET_API_OWNER_READ_RELATIONS = [
   "asset_blob_candidate",
@@ -610,9 +614,12 @@ const ASSET_API_RELATIONS = [
   ...ASSET_API_MUTABLE_RELATIONS,
   ...ASSET_API_OWNER_READ_RELATIONS,
 ] as const;
-const ASSET_WORKER_INSERT_RELATIONS = ASSET_RELATIONS.slice(4);
+const ASSET_WORKER_INSERT_RELATIONS = ASSET_RELATIONS.slice(6);
 const ASSET_WORKER_UPDATE_RELATIONS = [
-  ...ASSET_API_MUTABLE_RELATIONS,
+  "asset_upload_intent",
+  "asset_upload_session",
+  "asset_quota_account",
+  "asset_quota_reservation",
   "asset_blob_candidate",
   "asset_cleanup_group",
   "asset_object_cleanup",

@@ -1893,6 +1893,60 @@ model AssetUploadSession {
   @@schema("platform")
 }
 
+model AssetMultipartUpload {
+  uploadRef                    String    @id @map("upload_ref")
+  siteRef                      String    @map("site_ref")
+  intentRef                    String    @map("intent_ref")
+  sessionRef                   String    @map("session_ref")
+  clientUploadId               String    @map("client_upload_id")
+  providerUploadId             String?   @map("provider_upload_id")
+  capabilityEpoch              BigInt    @map("capability_epoch")
+  state                        String
+  outcomeOperation             String?   @map("outcome_operation")
+  expectedVersion              BigInt    @map("expected_version")
+  initiationIdempotencyKey     String    @map("initiation_idempotency_key")
+  initiationRequestDigest      String    @map("initiation_request_digest") @db.Char(64)
+  initiationReceiptRef         String    @unique @map("initiation_receipt_ref")
+  completionIdempotencyKey     String?   @map("completion_idempotency_key")
+  completionRequestDigest      String?   @map("completion_request_digest") @db.Char(64)
+  completionReceiptRef         String?   @unique @map("completion_receipt_ref")
+  abortIdempotencyKey          String?   @map("abort_idempotency_key")
+  abortRequestDigest           String?   @map("abort_request_digest") @db.Char(64)
+  abortReceiptRef              String?   @unique @map("abort_receipt_ref")
+  createdAt                    DateTime  @map("created_at") @db.Timestamptz(6)
+  updatedAt                    DateTime  @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([siteRef, uploadRef])
+  @@unique([siteRef, sessionRef])
+  @@unique([siteRef, sessionRef, clientUploadId])
+  @@index([siteRef, state, updatedAt])
+  @@map("asset_multipart_upload")
+  @@schema("platform")
+}
+
+model AssetMultipartPart {
+  siteRef        String   @map("site_ref")
+  uploadRef      String   @map("upload_ref")
+  partNumber     Int      @map("part_number")
+  partReceipt    String   @unique @map("part_receipt")
+  providerEtag   String?  @map("provider_etag")
+  size           BigInt
+  checksumSha256 String   @map("checksum_sha256") @db.Char(64)
+  idempotencyKey String   @map("idempotency_key")
+  requestDigest  String   @map("request_digest") @db.Char(64)
+  state          String
+  expectedVersion BigInt  @map("expected_version")
+  effectToken    String?  @map("effect_token")
+  effectLeaseExpiresAt DateTime? @map("effect_lease_expires_at") @db.Timestamptz(6)
+  createdAt      DateTime @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @map("updated_at") @db.Timestamptz(6)
+
+  @@id([siteRef, uploadRef, partNumber])
+  @@unique([siteRef, uploadRef, idempotencyKey])
+  @@map("asset_multipart_part")
+  @@schema("platform")
+}
+
 model AssetQuotaAccount {
   siteRef               String   @map("site_ref")
   subjectRef            String   @map("subject_ref")

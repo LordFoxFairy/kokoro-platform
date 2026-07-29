@@ -98,6 +98,10 @@ export interface PlatformTransactionalDatabaseClient
     }>,
     work: (transaction: PlatformTransaction) => Promise<Result>,
   ): Promise<Result>;
+  assetDataPlaneTransaction<Result>(
+    fence: AssetDataPlaneTransactionFence,
+    work: (transaction: PlatformTransaction) => Promise<Result>,
+  ): Promise<Result>;
   adminExecutionTransaction<Result>(
     fence: AdminExecutionTransactionFence,
     work: (transaction: PlatformTransaction) => Promise<Result>,
@@ -116,6 +120,24 @@ export interface AdminExecutionTransactionFence {
   readonly checkerGeneration: bigint;
   readonly checkerAuthorizationEpoch: bigint;
 }
+
+export interface AssetDataPlaneTransactionFence {
+  readonly operation: AssetDataPlaneOperation;
+  readonly siteRef: string;
+  readonly subjectRef: string;
+  readonly subjectGeneration: string;
+  readonly projectRef: string;
+  readonly purpose: string;
+  readonly capabilityEpoch: string;
+  readonly expiresAt: string;
+}
+
+export type AssetDataPlaneOperation =
+  | "asset.multipart.initiate"
+  | "asset.multipart.put-part"
+  | "asset.multipart.complete"
+  | "asset.multipart.abort"
+  | "asset.multipart.status";
 
 export type PlatformInternalOperation =
   | "admission.command"
@@ -381,6 +403,41 @@ export function createPlatformDatabaseClient(
         timeout: config.transaction.timeoutMs,
       });
     },
+    assetDataPlaneTransaction: async <Result>(
+      fence: AssetDataPlaneTransactionFence,
+      work: (transaction: PlatformTransaction) => Promise<Result>,
+    ) => {
+      if (config.role !== "api") throw new Error("ASSET_DATA_PLANE_ROLE_FORBIDDEN");
+      assertAssetDataPlaneFence(fence);
+      return prisma.$transaction(async (databaseTransaction) => {
+        await databaseTransaction.$queryRawUnsafe(
+          `SELECT set_config('app.operation',$1,true),set_config('app.site_id',$2,true),
+                  set_config('app.subject_id',$3,true),set_config('app.subject_generation',$4,true),
+                  set_config('app.project_id',$5,true),set_config('app.purpose',$6,true),
+                  set_config('app.policy_epoch',$7,true),
+                  set_config('app.workload_kind','site_product',true),
+                  set_config('app.actor_kind','user',true),
+                  set_config('app.scopes','["asset:upload"]',true)`,
+          fence.operation, fence.siteRef, fence.subjectRef, fence.subjectGeneration,
+          fence.projectRef, fence.purpose, fence.capabilityEpoch,
+        );
+        const lease = issuePlatformTransaction({
+          query: (statement, values = []) =>
+            databaseTransaction.$queryRawUnsafe(statement, ...values),
+          execute: (statement, values = []) =>
+            databaseTransaction.$executeRawUnsafe(statement, ...values),
+        });
+        try {
+          return await work(lease.transaction);
+        } finally {
+          revokePlatformTransaction(lease);
+        }
+      }, {
+        isolationLevel: config.transaction.isolationLevel,
+        maxWait: config.transaction.maxWaitMs,
+        timeout: config.transaction.timeoutMs,
+      });
+    },
     adminExecutionTransaction: async <Result>(
       fence: AdminExecutionTransactionFence,
       work: (transaction: PlatformTransaction) => Promise<Result>,
@@ -491,6 +548,24 @@ export function createPlatformDatabaseClient(
   };
 }
 
+function assertAssetDataPlaneFence(value: AssetDataPlaneTransactionFence): void {
+  const operations = new Set<AssetDataPlaneOperation>([
+    "asset.multipart.initiate", "asset.multipart.put-part", "asset.multipart.complete",
+    "asset.multipart.abort", "asset.multipart.status",
+  ]);
+  if (!operations.has(value.operation) ||
+      !/^[1-9][0-9]{0,19}$/u.test(value.subjectGeneration) ||
+      !/^[1-9][0-9]{0,19}$/u.test(value.capabilityEpoch) ||
+      !Number.isFinite(Date.parse(value.expiresAt)) || Date.now() >= Date.parse(value.expiresAt)) {
+    throw new Error("ASSET_DATA_PLANE_FENCE_INVALID");
+  }
+  for (const field of [value.siteRef, value.subjectRef, value.projectRef, value.purpose]) {
+    if (field.length < 1 || field.length > 256 || hasControlCharacter(field)) {
+      throw new Error("ASSET_DATA_PLANE_FENCE_INVALID");
+    }
+  }
+}
+
 function assertAdminExecutionFence(fence: AdminExecutionTransactionFence): void {
   for (const value of [fence.operation, fence.environment, fence.region, fence.makerRef,
     fence.checkerRef]) {
@@ -563,20 +638,23 @@ interface RuntimeIdentity {
 
 const ASSET_RELATIONS = [
   "asset_upload_intent", "asset_upload_session", "asset_quota_account",
-  "asset_quota_reservation", "asset_blob_candidate", "asset_cleanup_group",
+  "asset_quota_reservation", "asset_multipart_upload", "asset_multipart_part",
+  "asset_blob_candidate", "asset_cleanup_group",
   "asset_object_cleanup", "asset_object_cleanup_receipt", "asset_upload_rejection",
   "asset_scan_evaluation", "asset_promotion_intent", "asset_blob", "asset_resource",
   "asset_version", "asset_reference", "asset_eligibility_projection", "asset_promotion_receipt",
 ] as const;
 const ASSET_API_RELATIONS = [
   "asset_upload_intent", "asset_upload_session", "asset_quota_account",
-  "asset_quota_reservation", "asset_resource", "asset_version", "asset_reference",
+  "asset_quota_reservation", "asset_multipart_upload", "asset_multipart_part",
+  "asset_resource", "asset_version", "asset_reference",
   "asset_eligibility_projection",
 ] as const;
-const ASSET_API_MUTABLE_RELATIONS = ASSET_API_RELATIONS.slice(0, 4);
-const ASSET_WORKER_INSERT_RELATIONS = ASSET_RELATIONS.slice(4);
+const ASSET_API_MUTABLE_RELATIONS = ASSET_API_RELATIONS.slice(0, 6);
+const ASSET_WORKER_INSERT_RELATIONS = ASSET_RELATIONS.slice(6);
 const ASSET_WORKER_UPDATE_RELATIONS = [
-  ...ASSET_API_MUTABLE_RELATIONS, "asset_blob_candidate", "asset_cleanup_group",
+  "asset_upload_intent", "asset_upload_session", "asset_quota_account",
+  "asset_quota_reservation", "asset_blob_candidate", "asset_cleanup_group",
   "asset_object_cleanup", "asset_promotion_intent",
 ] as const;
 const ADMISSION_RELATIONS = [
@@ -739,6 +817,8 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_table_privilege(current_user, 'platform.asset_upload_session', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.asset_quota_account', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.asset_quota_reservation', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.asset_multipart_upload', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.asset_multipart_part', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.asset_resource', 'SELECT')
            AND has_table_privilege(current_user, 'platform.asset_version', 'SELECT')
            AND has_table_privilege(current_user, 'platform.asset_reference', 'SELECT')
