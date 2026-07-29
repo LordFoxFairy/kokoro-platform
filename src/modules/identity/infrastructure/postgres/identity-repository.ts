@@ -292,19 +292,39 @@ export class PostgresIdentityRepository implements IdentityRepository {
     input: Parameters<IdentityRepository["bindReceiptRecoveryCapability"]>[1],
   ): Promise<void> {
     const sql = resolvePlatformTransaction(transaction);
+    const authority = await sql.query<Record<string, unknown>>(
+      `SELECT 1
+       FROM platform.authorization_site site
+       JOIN platform.authorization_site_release release
+         ON release.site_ref=site.site_ref AND release.release_ref=$2 AND release.state='active'
+       JOIN platform.authorization_product_binding binding
+         ON binding.site_ref=site.site_ref AND binding.release_ref=release.release_ref
+           AND binding.binding_ref=$3 AND binding.workload_identity_id=$4
+           AND binding.binding_epoch=$5::bigint AND binding.state='active'
+       WHERE site.site_ref=$1 AND site.state='active'
+       FOR SHARE OF site,release,binding`,
+      [input.siteRef, input.siteReleaseRef, input.siteProjectBindingRef,
+        input.workloadIdentityId, input.bindingEpoch],
+    );
+    if (authority.length !== 1) throw new Error("IDENTITY_RECEIPT_RECOVERY_AUTHORITY_MISMATCH");
     await sql.execute(
       `INSERT INTO platform.identity_receipt_recovery_capability
-       (command_id,site_ref,workload_identity_id,purpose,transaction_ref,capability_digest,expires_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7::timestamptz)
+       (command_id,site_ref,site_release_ref,site_project_binding_ref,workload_identity_id,binding_epoch,
+        purpose,transaction_ref,capability_digest,expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6::bigint,$7,$8,$9,$10::timestamptz)
        ON CONFLICT (command_id) DO NOTHING`,
-      [input.commandId, input.siteRef, input.workloadIdentityId, input.purpose,
+      [input.commandId, input.siteRef, input.siteReleaseRef, input.siteProjectBindingRef,
+        input.workloadIdentityId, input.bindingEpoch, input.purpose,
         input.transactionRef, input.capabilityDigest, input.expiresAt],
     );
     const rows = await sql.query<{
-      siteRef: string; workloadIdentityId: string; purpose: string; transactionRef: string | null;
+      siteRef: string; siteReleaseRef: string; siteProjectBindingRef: string;
+      workloadIdentityId: string; bindingEpoch: bigint; purpose: string; transactionRef: string | null;
       capabilityDigest: string; state: string; expiresAt: string | Date;
     }>(
-      `SELECT site_ref AS "siteRef",workload_identity_id AS "workloadIdentityId",purpose,
+      `SELECT site_ref AS "siteRef",site_release_ref AS "siteReleaseRef",
+              site_project_binding_ref AS "siteProjectBindingRef",
+              workload_identity_id AS "workloadIdentityId",binding_epoch AS "bindingEpoch",purpose,
               transaction_ref AS "transactionRef",capability_digest AS "capabilityDigest",state,
               expires_at AS "expiresAt"
        FROM platform.identity_receipt_recovery_capability WHERE command_id=$1 FOR UPDATE`,
@@ -313,7 +333,10 @@ export class PostgresIdentityRepository implements IdentityRepository {
     const found = rows[0];
     if (
       found === undefined || found.siteRef !== input.siteRef ||
-      found.workloadIdentityId !== input.workloadIdentityId || found.purpose !== input.purpose ||
+      found.siteReleaseRef !== input.siteReleaseRef ||
+      found.siteProjectBindingRef !== input.siteProjectBindingRef ||
+      found.workloadIdentityId !== input.workloadIdentityId ||
+      found.bindingEpoch.toString() !== input.bindingEpoch || found.purpose !== input.purpose ||
       found.transactionRef !== input.transactionRef ||
       !constantTimeDigestEqual(found.capabilityDigest, input.capabilityDigest) ||
       found.state !== "active" || Date.parse(instant(found.expiresAt)) <= Date.parse(input.now)
@@ -721,7 +744,10 @@ export class PostgresIdentityRepository implements IdentityRepository {
               claim.session_ref AS "sessionRef",claim.request_digest AS "claimRequestDigest",
               receipt.request_digest AS "receiptRequestDigest",receipt.caller_identity AS "callerIdentity",
               receipt.operation,receipt.state AS "receiptState",
-              recovery.site_ref AS "recoverySiteRef",recovery.workload_identity_id AS "recoveryWorkloadIdentityId",
+              recovery.site_ref AS "recoverySiteRef",recovery.site_release_ref AS "recoverySiteReleaseRef",
+              recovery.site_project_binding_ref AS "recoverySiteProjectBindingRef",
+              recovery.workload_identity_id AS "recoveryWorkloadIdentityId",
+              recovery.binding_epoch AS "recoveryBindingEpoch",
               recovery.purpose AS "recoveryPurpose",recovery.transaction_ref AS "recoveryTransactionRef",
               recovery.capability_digest AS "capabilityDigest",recovery.state AS "recoveryState",
               recovery.expires_at AS "recoveryExpiresAt",
@@ -733,6 +759,20 @@ export class PostgresIdentityRepository implements IdentityRepository {
        FROM platform.identity_session_delivery_claim claim
        JOIN platform.identity_receipt_recovery_capability recovery
          ON recovery.command_id=claim.command_id
+       JOIN platform.authorization_site site
+         ON site.site_ref=recovery.site_ref AND site.site_ref=$2 AND site.state='active'
+       JOIN platform.authorization_site_release release
+         ON release.site_ref=recovery.site_ref AND release.release_ref=recovery.site_release_ref
+           AND release.release_ref=$3 AND release.state='active'
+       JOIN platform.authorization_product_binding product_binding
+         ON product_binding.site_ref=recovery.site_ref
+           AND product_binding.release_ref=recovery.site_release_ref
+           AND product_binding.binding_ref=recovery.site_project_binding_ref
+           AND product_binding.binding_ref=$4
+           AND product_binding.workload_identity_id=recovery.workload_identity_id
+           AND product_binding.workload_identity_id=$5
+           AND product_binding.binding_epoch=recovery.binding_epoch
+           AND product_binding.binding_epoch=$6::bigint AND product_binding.state='active'
        JOIN platform.command_receipt receipt ON receipt.command_id=claim.command_id
        JOIN platform.authorization_identity_session identity_session
          ON identity_session.session_ref=claim.session_ref
@@ -742,13 +782,18 @@ export class PostgresIdentityRepository implements IdentityRepository {
          ON family.site_ref=claim.site_ref AND family.session_ref=claim.session_ref
        WHERE claim.command_id=$1 AND claim.site_ref=$2 AND claim.state='first_claim_consumed'
          AND family.state='active'
-       FOR UPDATE OF claim,recovery,receipt,identity_session,family`,
-      [input.priorCommandId, input.siteRef],
+       FOR UPDATE OF claim,recovery,receipt,identity_session,family
+       FOR SHARE OF site,release,product_binding`,
+      [input.priorCommandId, input.siteRef, input.siteReleaseRef, input.siteProjectBindingRef,
+        input.workloadIdentityId, input.bindingEpoch],
     );
     const found = rows[0];
     if (
       found === undefined || found.recoverySiteRef !== input.siteRef ||
+      found.recoverySiteReleaseRef !== input.siteReleaseRef ||
+      found.recoverySiteProjectBindingRef !== input.siteProjectBindingRef ||
       found.recoveryWorkloadIdentityId !== input.workloadIdentityId ||
+      found.recoveryBindingEpoch.toString() !== input.bindingEpoch ||
       found.recoveryPurpose !== input.purpose || found.recoveryTransactionRef !== input.transactionRef ||
       found.recoveryState !== "active" || Date.parse(instant(found.recoveryExpiresAt)) <= Date.parse(input.now) ||
       found.callerIdentity !== input.workloadIdentityId || found.operation !== input.purpose ||
@@ -930,7 +975,10 @@ export class PostgresIdentityRepository implements IdentityRepository {
       `SELECT claim.subject_ref AS "subjectRef",claim.session_ref AS "sessionRef",
               claim.request_digest AS "claimRequestDigest",receipt.request_digest AS "receiptRequestDigest",
               receipt.caller_identity AS "callerIdentity",receipt.operation,receipt.state AS "receiptState",
-              recovery.site_ref AS "recoverySiteRef",recovery.workload_identity_id AS "recoveryWorkloadIdentityId",
+              recovery.site_ref AS "recoverySiteRef",recovery.site_release_ref AS "recoverySiteReleaseRef",
+              recovery.site_project_binding_ref AS "recoverySiteProjectBindingRef",
+              recovery.workload_identity_id AS "recoveryWorkloadIdentityId",
+              recovery.binding_epoch AS "recoveryBindingEpoch",
               recovery.purpose AS "recoveryPurpose",recovery.transaction_ref AS "recoveryTransactionRef",
               recovery.capability_digest AS "capabilityDigest",recovery.state AS "recoveryState",
               recovery.expires_at AS "recoveryExpiresAt",family.family_ref AS "familyRef",
@@ -938,6 +986,20 @@ export class PostgresIdentityRepository implements IdentityRepository {
               identity_session.state AS "sessionState"
        FROM platform.identity_session_delivery_claim claim
        JOIN platform.identity_receipt_recovery_capability recovery ON recovery.command_id=claim.command_id
+       JOIN platform.authorization_site site
+         ON site.site_ref=recovery.site_ref AND site.site_ref=$2 AND site.state='active'
+       JOIN platform.authorization_site_release release
+         ON release.site_ref=recovery.site_ref AND release.release_ref=recovery.site_release_ref
+           AND release.release_ref=$3 AND release.state='active'
+       JOIN platform.authorization_product_binding product_binding
+         ON product_binding.site_ref=recovery.site_ref
+           AND product_binding.release_ref=recovery.site_release_ref
+           AND product_binding.binding_ref=recovery.site_project_binding_ref
+           AND product_binding.binding_ref=$4
+           AND product_binding.workload_identity_id=recovery.workload_identity_id
+           AND product_binding.workload_identity_id=$5
+           AND product_binding.binding_epoch=recovery.binding_epoch
+           AND product_binding.binding_epoch=$6::bigint AND product_binding.state='active'
        JOIN platform.command_receipt receipt ON receipt.command_id=claim.command_id
        JOIN platform.authorization_identity_session identity_session
          ON identity_session.site_ref=claim.site_ref AND identity_session.session_ref=claim.session_ref
@@ -948,13 +1010,18 @@ export class PostgresIdentityRepository implements IdentityRepository {
          ON credential.site_ref=family.site_ref AND credential.family_ref=family.family_ref
            AND credential.generation=family.current_generation AND credential.state='active'
        WHERE claim.command_id=$1 AND claim.site_ref=$2 AND claim.state='first_claim_consumed'
-       FOR UPDATE OF claim,recovery,receipt,identity_session,family,credential`,
-      [input.priorCommandId, input.siteRef],
+       FOR UPDATE OF claim,recovery,receipt,identity_session,family,credential
+       FOR SHARE OF site,release,product_binding`,
+      [input.priorCommandId, input.siteRef, input.siteReleaseRef, input.siteProjectBindingRef,
+        input.workloadIdentityId, input.bindingEpoch],
     );
     const found = rows[0];
     if (
       found === undefined || found.recoverySiteRef !== input.siteRef ||
+      found.recoverySiteReleaseRef !== input.siteReleaseRef ||
+      found.recoverySiteProjectBindingRef !== input.siteProjectBindingRef ||
       found.recoveryWorkloadIdentityId !== input.workloadIdentityId ||
+      found.recoveryBindingEpoch.toString() !== input.bindingEpoch ||
       found.recoveryPurpose !== input.purpose || found.recoveryTransactionRef !== null ||
       found.recoveryState !== "active" || Date.parse(instant(found.recoveryExpiresAt)) <= Date.parse(input.now) ||
       found.callerIdentity !== input.workloadIdentityId || found.operation !== input.purpose ||
@@ -1177,7 +1244,8 @@ interface RefreshCredentialRow extends Record<string, unknown> {
 interface RefreshDeliveryRecoveryRow extends Record<string, unknown> {
   subjectRef: string; sessionRef: string; claimRequestDigest: string; receiptRequestDigest: string;
   callerIdentity: string; operation: string; receiptState: string;
-  recoverySiteRef: string; recoveryWorkloadIdentityId: string; recoveryPurpose: string;
+  recoverySiteRef: string; recoverySiteReleaseRef: string; recoverySiteProjectBindingRef: string;
+  recoveryWorkloadIdentityId: string; recoveryBindingEpoch: bigint; recoveryPurpose: string;
   recoveryTransactionRef: string | null; capabilityDigest: string; recoveryState: string;
   recoveryExpiresAt: string | Date; familyRef: string; currentGeneration: bigint | number;
   absoluteExpiresAt: string | Date; sessionState: string;
@@ -1187,7 +1255,8 @@ interface SessionDeliveryRecoveryRow extends Record<string, unknown> {
   accountRef: string; subjectRef: string; sessionRef: string;
   claimRequestDigest: string; receiptRequestDigest: string;
   callerIdentity: string; operation: string; receiptState: string;
-  recoverySiteRef: string; recoveryWorkloadIdentityId: string; recoveryPurpose: string;
+  recoverySiteRef: string; recoverySiteReleaseRef: string; recoverySiteProjectBindingRef: string;
+  recoveryWorkloadIdentityId: string; recoveryBindingEpoch: bigint; recoveryPurpose: string;
   recoveryTransactionRef: string | null; capabilityDigest: string; recoveryState: string;
   recoveryExpiresAt: string | Date; sessionEpoch: bigint; credentialEpoch: bigint;
   sessionExpiresAt: string | Date; sessionState: string; authenticationMethods: unknown;

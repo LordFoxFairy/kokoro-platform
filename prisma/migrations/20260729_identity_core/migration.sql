@@ -291,7 +291,9 @@ CREATE TABLE platform.identity_reauthentication_challenge (
   initiating_command_id TEXT NOT NULL UNIQUE REFERENCES platform.command_receipt(command_id),
   consuming_command_id TEXT UNIQUE REFERENCES platform.command_receipt(command_id),
   site_release_ref TEXT NOT NULL,
+  site_project_binding_ref TEXT NOT NULL,
   workload_identity_id TEXT NOT NULL,
+  binding_epoch BIGINT NOT NULL CHECK(binding_epoch > 0),
   account_ref TEXT NOT NULL,
   subject_ref TEXT NOT NULL,
   session_ref TEXT NOT NULL,
@@ -406,7 +408,9 @@ CREATE TABLE platform.identity_reauthentication_proof (
   issuing_command_id TEXT NOT NULL UNIQUE REFERENCES platform.command_receipt(command_id),
   site_ref TEXT NOT NULL,
   site_release_ref TEXT NOT NULL,
+  site_project_binding_ref TEXT NOT NULL,
   workload_identity_id TEXT NOT NULL,
+  binding_epoch BIGINT NOT NULL CHECK(binding_epoch > 0),
   account_ref TEXT NOT NULL,
   subject_ref TEXT NOT NULL,
   session_ref TEXT NOT NULL,
@@ -679,7 +683,10 @@ CREATE TABLE platform.identity_personal_bootstrap (
 CREATE TABLE platform.identity_receipt_recovery_capability (
   command_id TEXT PRIMARY KEY REFERENCES platform.command_receipt(command_id),
   site_ref TEXT NOT NULL REFERENCES platform.authorization_site(site_ref),
+  site_release_ref TEXT NOT NULL,
+  site_project_binding_ref TEXT NOT NULL,
   workload_identity_id TEXT NOT NULL,
+  binding_epoch BIGINT NOT NULL CHECK(binding_epoch > 0),
   purpose TEXT NOT NULL CHECK(length(purpose) BETWEEN 1 AND 128),
   transaction_ref TEXT,
   capability_digest CHAR(64) NOT NULL CHECK(capability_digest ~ '^[0-9a-f]{64}$'),
@@ -687,8 +694,8 @@ CREATE TABLE platform.identity_receipt_recovery_capability (
   expires_at TIMESTAMPTZ NOT NULL,
   consumed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  FOREIGN KEY(workload_identity_id,site_ref)
-    REFERENCES platform.authorization_product_binding(workload_identity_id,site_ref),
+  FOREIGN KEY(workload_identity_id,site_ref,site_release_ref)
+    REFERENCES platform.authorization_product_binding(workload_identity_id,site_ref,release_ref),
   CHECK((state='consumed') = (consumed_at IS NOT NULL))
 );
 CREATE INDEX identity_receipt_recovery_expiry_idx

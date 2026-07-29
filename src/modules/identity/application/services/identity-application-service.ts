@@ -360,11 +360,14 @@ export class IdentityApplicationService {
               recoveryResult.value = await this.dependencies.repository.consumeIdentitySessionDeliveryRecovery(transaction, {
                 priorCommandId: input.priorCommandId, newCommandId: input.commandId,
                 siteRef: input.workload.siteRef,
-                workloadIdentityId: input.workload.workloadIdentityId, purpose: "createIdentitySession",
+                siteReleaseRef: input.workload.siteReleaseRef,
+                siteProjectBindingRef: input.workload.siteProjectBindingRef,
+                workloadIdentityId: input.workload.workloadIdentityId,
+                bindingEpoch: input.workload.bindingEpoch, purpose: "createIdentitySession",
                 transactionRef: null,
-                capabilityDigest: this.dependencies.auditDigest({
-                  purpose: "createIdentitySession", capability: input.receiptRecoveryCapability,
-                }),
+                capabilityDigest: this.recoveryDigest(
+                  "createIdentitySession", input.receiptRecoveryCapability, input.workload,
+                ),
                 now, retainUntil,
               });
               if (recoveryResult.value === null) throw new IdentityApplicationError("AUTHENTICATION_FAILED");
@@ -548,11 +551,13 @@ export class IdentityApplicationService {
             async () => {
               recoveryResult.value = await this.dependencies.repository.consumeIdentitySessionDeliveryRecovery(transaction, {
                 priorCommandId: input.priorCommandId, newCommandId: input.commandId,
-                siteRef: input.workload.siteRef, workloadIdentityId: input.workload.workloadIdentityId,
+                siteRef: input.workload.siteRef, siteReleaseRef: input.workload.siteReleaseRef,
+                siteProjectBindingRef: input.workload.siteProjectBindingRef,
+                workloadIdentityId: input.workload.workloadIdentityId, bindingEpoch: input.workload.bindingEpoch,
                 purpose: "completeSessionMfa", transactionRef: input.transactionRef,
-                capabilityDigest: this.dependencies.auditDigest({
-                  purpose: "completeSessionMfa", capability: input.receiptRecoveryCapability,
-                }),
+                capabilityDigest: this.recoveryDigest(
+                  "completeSessionMfa", input.receiptRecoveryCapability, input.workload,
+                ),
                 now, retainUntil,
               });
               if (recoveryResult.value === null) throw new IdentityApplicationError("AUTHENTICATION_FAILED");
@@ -645,11 +650,13 @@ export class IdentityApplicationService {
             async () => {
               recoveryResult.value = await this.dependencies.repository.supersedeIdentityRefreshDelivery(transaction, {
                 priorCommandId: input.priorCommandId, newCommandId: input.commandId, requestDigest,
-                siteRef: input.workload.siteRef, workloadIdentityId: input.workload.workloadIdentityId,
+                siteRef: input.workload.siteRef, siteReleaseRef: input.workload.siteReleaseRef,
+                siteProjectBindingRef: input.workload.siteProjectBindingRef,
+                workloadIdentityId: input.workload.workloadIdentityId, bindingEpoch: input.workload.bindingEpoch,
                 purpose: "refreshIdentitySession",
-                capabilityDigest: this.dependencies.auditDigest({
-                  purpose: "refreshIdentitySession", capability: input.receiptRecoveryCapability,
-                }),
+                capabilityDigest: this.recoveryDigest(
+                  "refreshIdentitySession", input.receiptRecoveryCapability, input.workload,
+                ),
                 sessionCredentialDigest: sessionCredential.digest,
                 refreshCredentialDigest: refreshCredential.digest, now,
                 sessionExpiresAt: proposedSessionExpiresAt,
@@ -833,9 +840,29 @@ export class IdentityApplicationService {
     const now = this.now();
     await this.dependencies.repository.bindReceiptRecoveryCapability(transaction, {
       commandId: input.commandId, siteRef: input.workload.siteRef,
-      workloadIdentityId: input.workload.workloadIdentityId, purpose, transactionRef,
-      capabilityDigest: this.dependencies.auditDigest({ purpose, capability: input.receiptRecoveryCapability }),
+      siteReleaseRef: input.workload.siteReleaseRef,
+      siteProjectBindingRef: input.workload.siteProjectBindingRef,
+      workloadIdentityId: input.workload.workloadIdentityId,
+      bindingEpoch: input.workload.bindingEpoch, purpose, transactionRef,
+      capabilityDigest: this.recoveryDigest(purpose, input.receiptRecoveryCapability, input.workload),
       expiresAt: plus(now, 24 * 60 * 60_000), now,
+    });
+  }
+
+  private recoveryDigest(
+    purpose: string,
+    capability: string,
+    authority: Pick<ProductWorkloadIdentity,
+      "siteRef" | "siteReleaseRef" | "siteProjectBindingRef" | "workloadIdentityId" | "bindingEpoch">,
+  ): string {
+    return this.dependencies.auditDigest({
+      purpose,
+      capability,
+      siteRef: authority.siteRef,
+      siteReleaseRef: authority.siteReleaseRef,
+      siteProjectBindingRef: authority.siteProjectBindingRef,
+      workloadIdentityId: authority.workloadIdentityId,
+      bindingEpoch: authority.bindingEpoch,
     });
   }
 

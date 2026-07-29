@@ -165,7 +165,9 @@ export class IdentitySecurityManagementService {
             expectedAuthStrengthPolicyRevision: material.authStrengthPolicyRevision,
             priorCommandId: input.priorCommandId, newCommandId: input.commandId, requestDigest,
             workloadIdentityId: input.workload.workloadIdentityId,
-            capabilityDigest: this.recoveryDigest("reauthenticateIdentitySession", input.receiptRecoveryCapability),
+            capabilityDigest: this.recoveryDigest(
+              "reauthenticateIdentitySession", input.receiptRecoveryCapability, binding,
+            ),
             proofDigest: issued.digest, now, expiresAt,
           });
           if (recovered !== null) {
@@ -366,6 +368,7 @@ export class IdentitySecurityManagementService {
             capabilityDigest: this.recoveryDigest(
               "beginTotpEnrollment",
               input.receiptRecoveryCapability,
+              binding,
             ),
             transactionRef,
             authenticatorRef,
@@ -374,6 +377,9 @@ export class IdentitySecurityManagementService {
             expiresAt,
           });
         } else {
+          if (reauthenticationProofDigest === null) {
+            throw new Error("IDENTITY_REAUTHENTICATION_PROOF_DIGEST_INVARIANT");
+          }
           await this.bindRecovery(transaction, input, "beginTotpEnrollment", transactionRef, now);
           accepted = await this.dependencies.repository.beginTotpEnrollment(transaction, {
             binding,
@@ -381,6 +387,12 @@ export class IdentitySecurityManagementService {
             expectedAccountSecurityEpoch: material.accountSecurityEpoch,
             commandId: input.commandId,
             requestDigest,
+            proof: {
+              proofDigest: reauthenticationProofDigest,
+              workloadIdentityId: input.workload.workloadIdentityId,
+              expectedAuthStrengthPolicyRevision: material.authStrengthPolicyRevision,
+              target: sensitiveTarget("beginTotpEnrollment"),
+            },
             transactionRef,
             authenticatorRef,
             envelope,
@@ -395,21 +407,6 @@ export class IdentitySecurityManagementService {
             supersede ? "AUTHENTICATION_FAILED" : "AUTH_TRANSACTION_INVALID",
           );
           return Object.freeze({ kind: "rejected" as const });
-        }
-        if (!supersede) {
-          if (reauthenticationProofDigest === null) {
-            throw new Error("IDENTITY_REAUTHENTICATION_PROOF_DIGEST_INVARIANT");
-          }
-          const proofConsumed = await this.dependencies.repository.consumeReauthenticationProof(transaction, {
-            binding, accountRef: material.accountRef, commandId: input.commandId, now,
-            proof: {
-              proofDigest: reauthenticationProofDigest,
-              workloadIdentityId: input.workload.workloadIdentityId,
-              expectedAuthStrengthPolicyRevision: material.authStrengthPolicyRevision,
-              target: sensitiveTarget("beginTotpEnrollment"),
-            },
-          });
-          if (!proofConsumed) throw new IdentityApplicationError("AUTHENTICATION_FAILED");
         }
         await this.securityEvent(transaction, input, {
           eventType: supersede
@@ -708,8 +705,9 @@ export class IdentitySecurityManagementService {
             newCommandId: input.commandId, requestDigest,
             expectedAuthStrengthPolicyRevision: material.authStrengthPolicyRevision,
             workloadIdentityId: input.workload.workloadIdentityId,
-            capabilityDigest: this.recoveryDigest("regenerateRecoveryCodes",
-              input.receiptRecoveryCapability),
+            capabilityDigest: this.recoveryDigest(
+              "regenerateRecoveryCodes", input.receiptRecoveryCapability, binding,
+            ),
             setRef, recoveryCodeDigests, now,
           });
         } else {
@@ -813,9 +811,22 @@ export class IdentitySecurityManagementService {
     return value;
   }
 
-  private recoveryDigest(purpose: string, capability: string): string {
+  private recoveryDigest(
+    purpose: string,
+    capability: string,
+    authority: Pick<IdentitySecuritySessionBinding,
+      "siteRef" | "siteReleaseRef" | "siteProjectBindingRef" | "workloadIdentityId" | "bindingEpoch">,
+  ): string {
     assertRecoveryCapability(capability);
-    return this.dependencies.auditDigest({ purpose, capability });
+    return this.dependencies.auditDigest({
+      purpose,
+      capability,
+      siteRef: authority.siteRef,
+      siteReleaseRef: authority.siteReleaseRef,
+      siteProjectBindingRef: authority.siteProjectBindingRef,
+      workloadIdentityId: authority.workloadIdentityId,
+      bindingEpoch: authority.bindingEpoch,
+    });
   }
 
   private async bindRecovery(
@@ -832,10 +843,13 @@ export class IdentitySecurityManagementService {
     await this.dependencies.receiptRecovery.bindReceiptRecoveryCapability(transaction, {
       commandId: input.commandId,
       siteRef: input.workload.siteRef,
+      siteReleaseRef: input.workload.siteReleaseRef,
+      siteProjectBindingRef: input.workload.siteProjectBindingRef,
       workloadIdentityId: input.workload.workloadIdentityId,
+      bindingEpoch: input.workload.bindingEpoch,
       purpose,
       transactionRef,
-      capabilityDigest: this.recoveryDigest(purpose, input.receiptRecoveryCapability),
+      capabilityDigest: this.recoveryDigest(purpose, input.receiptRecoveryCapability, input.workload),
       expiresAt: plus(now, 24 * 60 * 60_000),
       now,
     });

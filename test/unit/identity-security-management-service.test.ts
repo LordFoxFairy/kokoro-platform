@@ -69,7 +69,7 @@ describe("Identity security management application service", () => {
         return true;
       },
       async consumeReauthenticationProof() {
-        return true;
+        throw new Error("proof consumption must stay inside the enrollment mutation");
       },
       async appendSecurityEvent() {},
     } as unknown as IdentitySecurityManagementRepository;
@@ -126,6 +126,10 @@ describe("Identity security management application service", () => {
       transactionRef: "enrollment-transaction-1",
       authenticatorRef: "authenticator-1",
       envelope: { algorithm: "A256GCM", keyRevision: "key-1", ciphertext: "sealed" },
+      proof: {
+        proofDigest: "e".repeat(64),
+        target: { operationId: "beginTotpEnrollment", resourceKind: "identity_account" },
+      },
     });
     expect(JSON.stringify(receiptResult)).not.toContain("JBSWY3DPEHPK3PXP");
     expect(JSON.stringify(receiptResult)).not.toContain("otpauth://");
@@ -496,6 +500,54 @@ describe("Identity security management application service", () => {
       code: "123456",
       reauthenticationProof: "reauth-proof",
     })).rejects.toMatchObject({ code: "AUTHENTICATION_FAILED" });
+  });
+
+  it("allows exactly one concurrent proof consumer to mutate TOTP state", async () => {
+    let consumed = false;
+    let mutations = 0;
+    const repository = {
+      async loadActiveTotpMaterial() {
+        return activeTotpMaterial();
+      },
+      async disableTotp() {
+        await Promise.resolve();
+        if (consumed) throw new IdentitySecurityAtomicRejection();
+        consumed = true;
+        mutations += 1;
+        return { accountRef: "account-1", accountSecurityEpoch: "8" };
+      },
+      async appendSecurityEvent() {},
+    } as unknown as IdentitySecurityManagementRepository;
+    const service = createService({
+      repository,
+      receipts: pendingReceipts(),
+      references: ["018f4444-4444-7444-8444-444444444444"],
+      totpVerifier: {
+        async verify() {
+          return { valid: true as const, timeStep: 101 };
+        },
+      },
+    });
+    const request = {
+      workload,
+      context,
+      session: session as never,
+      commandId,
+      idempotencyKey: "concurrent-proof-consume",
+      code: "123456",
+      reauthenticationProof: "reauth-proof",
+    };
+
+    const outcomes = await Promise.allSettled([
+      service.disableTotp(request),
+      service.disableTotp(request),
+    ]);
+
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+    const rejected = outcomes.filter((outcome) => outcome.status === "rejected");
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]).toMatchObject({ reason: { code: "AUTHENTICATION_FAILED" } });
+    expect(mutations).toBe(1);
   });
 
   it("delivers regenerated recovery codes once and binds the replacement to its proof", async () => {

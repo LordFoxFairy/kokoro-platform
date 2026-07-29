@@ -113,7 +113,8 @@ export interface IdentityRepository {
     namespaceIntentRef: string; namespaceEventId: string;
   }>): Promise<SubjectCurrentFact>;
   bindReceiptRecoveryCapability(transaction: PlatformTransaction, input: Readonly<{
-    commandId: string; siteRef: string; workloadIdentityId: string; purpose: string;
+    commandId: string; siteRef: string; siteReleaseRef: string; siteProjectBindingRef: string;
+    workloadIdentityId: string; bindingEpoch: string; purpose: string;
     transactionRef: string | null; capabilityDigest: string; expiresAt: string; now: string;
   }>): Promise<void>;
   findAccountPassword(transaction: PlatformTransaction, input: Readonly<{
@@ -153,7 +154,8 @@ export interface IdentityRepository {
     authenticationMethods: readonly ("password" | "totp" | "recovery_code")[];
   }>): Promise<IdentitySessionCurrentFact>;
   consumeIdentitySessionDeliveryRecovery(transaction: PlatformTransaction, input: Readonly<{
-    priorCommandId: string; newCommandId: string; siteRef: string; workloadIdentityId: string;
+    priorCommandId: string; newCommandId: string; siteRef: string; siteReleaseRef: string;
+    siteProjectBindingRef: string; workloadIdentityId: string; bindingEpoch: string;
     purpose: "createIdentitySession" | "completeSessionMfa"; transactionRef: string | null;
     capabilityDigest: string; now: string; retainUntil: string;
   }>): Promise<SupersededIdentitySessionOwner | null>;
@@ -172,7 +174,8 @@ export interface IdentityRepository {
   }>): Promise<IdentitySessionCurrentFact>;
   supersedeIdentityRefreshDelivery(transaction: PlatformTransaction, input: Readonly<{
     priorCommandId: string; newCommandId: string; requestDigest: string; siteRef: string;
-    workloadIdentityId: string; purpose: "refreshIdentitySession"; capabilityDigest: string;
+    siteReleaseRef: string; siteProjectBindingRef: string; workloadIdentityId: string;
+    bindingEpoch: string; purpose: "refreshIdentitySession"; capabilityDigest: string;
     sessionCredentialDigest: string; refreshCredentialDigest: string; now: string;
     sessionExpiresAt: string; retainUntil: string;
   }>): Promise<Readonly<{

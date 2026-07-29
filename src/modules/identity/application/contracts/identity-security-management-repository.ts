@@ -231,6 +231,7 @@ export interface IdentitySecurityManagementRepository {
       expectedAccountSecurityEpoch: string;
       commandId: string;
       requestDigest: string;
+      proof: IdentityReauthenticationProofBinding;
       transactionRef: string;
       authenticatorRef: string;
       envelope: IdentityTotpSecretEnvelope;

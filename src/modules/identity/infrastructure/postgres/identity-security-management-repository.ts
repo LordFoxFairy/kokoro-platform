@@ -116,19 +116,21 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
     if (pending.length > 0) return false;
     const inserted = await sql.execute(
       `INSERT INTO platform.identity_reauthentication_challenge
-       (site_ref,transaction_ref,initiating_command_id,site_release_ref,workload_identity_id,
+       (site_ref,transaction_ref,initiating_command_id,site_release_ref,site_project_binding_ref,
+        workload_identity_id,binding_epoch,
         account_ref,subject_ref,session_ref,audience,operation_id,resource_kind,resource_ref,
         account_security_epoch,subject_generation,session_epoch,credential_epoch,password_credential_epoch,
         auth_strength_policy_revision,authenticator_ref,recovery_set_ref,state,attempt_count,max_attempts,
         expires_at,created_at,updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$6,$12::bigint,$13::bigint,$14::bigint,
+       VALUES ($1,$2,$3,$4,$22,$5,$23::bigint,$6,$7,$8,$9,$10,$11,$6,$12::bigint,$13::bigint,$14::bigint,
                $15::bigint,$16::bigint,$17,$18,$19,'pending',0,5,$20::timestamptz,$21::timestamptz,$21::timestamptz)`,
       [input.binding.siteRef, input.transactionRef, input.commandId, input.binding.siteReleaseRef,
         input.workloadIdentityId, input.accountRef, input.binding.subjectRef, input.binding.sessionRef,
         input.target.audience, input.target.operationId, input.target.resourceKind,
         owner.accountSecurityEpoch.toString(), input.binding.subjectGeneration, input.binding.sessionEpoch,
         input.binding.credentialEpoch, input.passwordCredentialEpoch, input.authStrengthPolicyRevision,
-        input.authenticatorRef, input.recoverySetRef, input.expiresAt, input.now],
+        input.authenticatorRef, input.recoverySetRef, input.expiresAt, input.now,
+        input.binding.siteProjectBindingRef, input.binding.bindingEpoch],
     );
     if (inserted !== 1) throw new Error("IDENTITY_REAUTHENTICATION_CHALLENGE_CREATE_FAILED");
     await resetReauthenticationRate(sql, input.binding.siteRef, input.accountRef, input.now);
@@ -248,12 +250,18 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
         owner.authStrengthPolicyRevision !== input.expectedAuthStrengthPolicyRevision) return null;
     const priorRows = await sql.query<ReauthenticationRecoveryRow>(
       `SELECT proof.proof_digest AS "proofDigest",proof.state AS "proofState",proof.expires_at AS "proofExpiresAt",
+              proof.site_release_ref AS "proofSiteReleaseRef",
+              proof.site_project_binding_ref AS "proofSiteProjectBindingRef",
+              proof.workload_identity_id AS "proofWorkloadIdentityId",proof.binding_epoch AS "proofBindingEpoch",
               proof.audience,proof.operation_id AS "operationId",proof.resource_kind AS "resourceKind",
               proof.auth_strength_policy_revision AS "authStrengthPolicyRevision",
               claim.state AS "claimState",claim.request_digest AS "claimRequestDigest",
               receipt.request_digest AS "receiptRequestDigest",receipt.operation,receipt.state AS "receiptState",
               receipt.caller_identity AS "callerIdentity",recovery.site_ref AS "recoverySiteRef",
-              recovery.workload_identity_id AS "recoveryWorkloadIdentityId",recovery.purpose AS "recoveryPurpose",
+              recovery.site_release_ref AS "recoverySiteReleaseRef",
+              recovery.site_project_binding_ref AS "recoverySiteProjectBindingRef",
+              recovery.workload_identity_id AS "recoveryWorkloadIdentityId",
+              recovery.binding_epoch AS "recoveryBindingEpoch",recovery.purpose AS "recoveryPurpose",
               recovery.capability_digest AS "capabilityDigest",recovery.state AS "recoveryState",
               recovery.expires_at AS "recoveryExpiresAt"
        FROM platform.identity_reauthentication_proof proof
@@ -268,8 +276,12 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
     if (prior === undefined || prior.proofState !== "active" || prior.claimState !== "first_claim_consumed" ||
         Date.parse(instant(prior.proofExpiresAt)) <= Date.parse(input.now) || prior.receiptState !== "succeeded" ||
         prior.operation !== "reauthenticateIdentitySession" || prior.callerIdentity !== input.workloadIdentityId ||
-        prior.claimRequestDigest !== prior.receiptRequestDigest || prior.recoverySiteRef !== input.binding.siteRef ||
-        prior.recoveryWorkloadIdentityId !== input.workloadIdentityId ||
+        prior.claimRequestDigest !== prior.receiptRequestDigest ||
+        prior.proofSiteReleaseRef !== input.binding.siteReleaseRef ||
+        prior.proofSiteProjectBindingRef !== input.binding.siteProjectBindingRef ||
+        prior.proofWorkloadIdentityId !== input.workloadIdentityId ||
+        prior.proofBindingEpoch.toString() !== input.binding.bindingEpoch ||
+        !recoveryAuthorityMatches(prior, input.binding, input.workloadIdentityId) ||
         prior.recoveryPurpose !== "reauthenticateIdentitySession" || prior.recoveryState !== "active" ||
         Date.parse(instant(prior.recoveryExpiresAt)) <= Date.parse(input.now) ||
         !digestEqual(prior.capabilityDigest, input.capabilityDigest) || prior.audience !== "platform-public" ||
@@ -308,7 +320,14 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
     transaction: PlatformTransaction,
     input: Parameters<IdentitySecurityManagementRepository["consumeReauthenticationProof"]>[1],
   ): Promise<boolean> {
-    return consumeReauthenticationProof(resolvePlatformTransaction(transaction), input);
+    const sql = resolvePlatformTransaction(transaction);
+    await lockAccount(sql, input.binding.siteRef, input.accountRef);
+    const owner = await lockSecurityOwner(sql, input.binding, input.now);
+    if (owner === null || owner.accountRef !== input.accountRef) return false;
+    if (!await lockReauthenticationProof(sql, {
+      binding: input.binding, accountRef: input.accountRef, proof: input.proof, now: input.now,
+    })) return false;
+    return consumeReauthenticationProof(sql, input);
   }
   async loadSecurityOwnerMaterial(
     transaction: PlatformTransaction,
@@ -352,6 +371,9 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
     await lockAccount(sql, input.binding.siteRef, input.accountRef);
     const owner = await lockSecurityOwner(sql, input.binding, input.now);
     if (!expectedOwner(owner, input.accountRef, input.expectedAccountSecurityEpoch)) return false;
+    if (!await lockReauthenticationProof(sql, {
+      binding: input.binding, accountRef: input.accountRef, proof: input.proof, now: input.now,
+    })) return false;
     await expireTotpEnrollments(sql, input.binding.siteRef, input.accountRef, input.now);
     if (
       (await activeTotpExists(sql, input.binding.siteRef, input.accountRef)) ||
@@ -359,6 +381,10 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
     )
       return false;
     await insertTotpEnrollment(sql, input);
+    if (!await consumeReauthenticationProof(sql, {
+      binding: input.binding, accountRef: input.accountRef, commandId: input.commandId,
+      proof: input.proof, now: input.now,
+    })) throw new IdentitySecurityAtomicRejection();
     return true;
   }
 
@@ -382,7 +408,10 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
               enrollment.expires_at AS "enrollmentExpiresAt",claim.request_digest AS "claimRequestDigest",
               claim.state AS "claimState",receipt.request_digest AS "receiptRequestDigest",
               receipt.operation,receipt.state AS "receiptState",receipt.caller_identity AS "callerIdentity",
-              recovery.site_ref AS "recoverySiteRef",recovery.workload_identity_id AS "recoveryWorkloadIdentityId",
+              recovery.site_ref AS "recoverySiteRef",recovery.site_release_ref AS "recoverySiteReleaseRef",
+              recovery.site_project_binding_ref AS "recoverySiteProjectBindingRef",
+              recovery.workload_identity_id AS "recoveryWorkloadIdentityId",
+              recovery.binding_epoch AS "recoveryBindingEpoch",
               recovery.purpose AS "recoveryPurpose",recovery.transaction_ref AS "recoveryTransactionRef",
               recovery.capability_digest AS "capabilityDigest",recovery.state AS "recoveryState",
               recovery.expires_at AS "recoveryExpiresAt"
@@ -406,8 +435,7 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
       prior.operation !== "beginTotpEnrollment" ||
       prior.callerIdentity !== input.workloadIdentityId ||
       prior.claimRequestDigest !== prior.receiptRequestDigest ||
-      prior.recoverySiteRef !== input.binding.siteRef ||
-      prior.recoveryWorkloadIdentityId !== input.workloadIdentityId ||
+      !recoveryAuthorityMatches(prior, input.binding, input.workloadIdentityId) ||
       prior.recoveryPurpose !== "beginTotpEnrollment" ||
       prior.recoveryTransactionRef !== input.priorTransactionRef ||
       prior.recoveryState !== "active" ||
@@ -722,7 +750,10 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
       `SELECT claim.set_ref AS "setRef",claim.state AS "claimState",claim.request_digest AS "claimRequestDigest",
               receipt.request_digest AS "receiptRequestDigest",receipt.operation,receipt.state AS "receiptState",
               receipt.caller_identity AS "callerIdentity",recovery.site_ref AS "recoverySiteRef",
-              recovery.workload_identity_id AS "recoveryWorkloadIdentityId",recovery.purpose AS "recoveryPurpose",
+              recovery.site_release_ref AS "recoverySiteReleaseRef",
+              recovery.site_project_binding_ref AS "recoverySiteProjectBindingRef",
+              recovery.workload_identity_id AS "recoveryWorkloadIdentityId",
+              recovery.binding_epoch AS "recoveryBindingEpoch",recovery.purpose AS "recoveryPurpose",
               recovery.transaction_ref AS "recoveryTransactionRef",recovery.capability_digest AS "capabilityDigest",
               recovery.state AS "recoveryState",recovery.expires_at AS "recoveryExpiresAt",
               code_set.state AS "setState"
@@ -740,8 +771,7 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
     if (prior === undefined || prior.claimState !== "first_claim_consumed" || prior.setState !== "active" ||
         prior.receiptState !== "succeeded" || prior.operation !== "regenerateRecoveryCodes" ||
         prior.callerIdentity !== input.workloadIdentityId || prior.claimRequestDigest !== prior.receiptRequestDigest ||
-        prior.recoverySiteRef !== input.binding.siteRef ||
-        prior.recoveryWorkloadIdentityId !== input.workloadIdentityId ||
+        !recoveryAuthorityMatches(prior, input.binding, input.workloadIdentityId) ||
         prior.recoveryPurpose !== "regenerateRecoveryCodes" || prior.recoveryTransactionRef !== prior.setRef ||
         prior.recoveryState !== "active" || Date.parse(instant(prior.recoveryExpiresAt)) <= Date.parse(input.now) ||
         !digestEqual(prior.capabilityDigest, input.capabilityDigest)) return null;
@@ -878,6 +908,7 @@ const reauthenticationOwnerSelect = `SELECT account.site_ref AS "siteRef",
 
 const reauthenticationChallengeSelect = `SELECT challenge.site_ref AS "siteRef",
   challenge.transaction_ref AS "transactionRef",challenge.site_release_ref AS "siteReleaseRef",
+  challenge.site_project_binding_ref AS "siteProjectBindingRef",challenge.binding_epoch AS "bindingEpoch",
   challenge.workload_identity_id AS "workloadIdentityId",challenge.account_ref AS "accountRef",
   challenge.subject_ref AS "subjectRef",challenge.session_ref AS "sessionRef",
   challenge.audience,challenge.operation_id AS "operationId",challenge.resource_kind AS "resourceKind",
@@ -920,6 +951,8 @@ const reauthenticationChallengeSelect = `SELECT challenge.site_ref AS "siteRef",
       AND product_binding.site_ref=challenge.site_ref
       AND product_binding.release_ref=challenge.site_release_ref
       AND product_binding.binding_epoch=$6::bigint AND product_binding.state='active'
+      AND challenge.site_project_binding_ref=product_binding.binding_ref
+      AND challenge.binding_epoch=product_binding.binding_epoch
   JOIN platform.identity_totp_authenticator authenticator
     ON authenticator.site_ref=challenge.site_ref AND authenticator.authenticator_ref=challenge.authenticator_ref
       AND authenticator.account_ref=challenge.account_ref AND authenticator.subject_ref=challenge.subject_ref
@@ -976,6 +1009,8 @@ function challengeMatches(
 ): boolean {
   const methods = authenticationMethods(row.authenticationMethods);
   return row.siteRef === input.binding.siteRef && row.siteReleaseRef === input.binding.siteReleaseRef &&
+    row.siteProjectBindingRef === input.binding.siteProjectBindingRef &&
+    row.bindingEpoch.toString() === input.binding.bindingEpoch &&
     input.workloadIdentityId === input.binding.workloadIdentityId &&
     row.workloadIdentityId === input.binding.workloadIdentityId && row.subjectRef === input.binding.subjectRef &&
     row.sessionRef === input.binding.sessionRef && row.audience === input.target.audience &&
@@ -1113,16 +1148,18 @@ async function insertReauthenticationProof(
   if (commandId === undefined) throw new Error("IDENTITY_REAUTHENTICATION_COMMAND_REQUIRED");
   const proof = await sql.execute(
     `INSERT INTO platform.identity_reauthentication_proof
-     (proof_digest,issuing_command_id,site_ref,site_release_ref,workload_identity_id,account_ref,subject_ref,
+     (proof_digest,issuing_command_id,site_ref,site_release_ref,site_project_binding_ref,
+      workload_identity_id,binding_epoch,account_ref,subject_ref,
       session_ref,audience,operation_id,resource_kind,resource_ref,account_security_epoch,subject_generation,
       session_epoch,credential_epoch,auth_strength_policy_revision,state,issued_at,expires_at,created_at,updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$6,$12::bigint,$13::bigint,$14::bigint,$15::bigint,
+     VALUES ($1,$2,$3,$4,$19,$5,$20::bigint,$6,$7,$8,$9,$10,$11,$6,$12::bigint,$13::bigint,$14::bigint,$15::bigint,
              $16,'active',$17::timestamptz,$18::timestamptz,$17::timestamptz,$17::timestamptz)`,
     [input.proofDigest, commandId, input.binding.siteRef, input.binding.siteReleaseRef,
       input.workloadIdentityId, input.accountRef, input.binding.subjectRef, input.binding.sessionRef,
       input.target.audience, input.target.operationId, input.target.resourceKind,
       owner.accountSecurityEpoch.toString(), input.binding.subjectGeneration, input.binding.sessionEpoch,
-      input.binding.credentialEpoch, input.authStrengthPolicyRevision, input.now, input.expiresAt],
+      input.binding.credentialEpoch, input.authStrengthPolicyRevision, input.now, input.expiresAt,
+      input.binding.siteProjectBindingRef, input.binding.bindingEpoch],
   );
   const claim = await sql.execute(
     `INSERT INTO platform.identity_reauthentication_delivery_claim
@@ -1162,6 +1199,8 @@ async function consumeReauthenticationProof(
        AND binding.binding_ref=$17 AND binding.workload_identity_id=$18
        AND binding.workload_identity_id=proof.workload_identity_id
        AND binding.site_ref=proof.site_ref AND binding.release_ref=proof.site_release_ref
+       AND proof.site_project_binding_ref=binding.binding_ref
+       AND proof.binding_epoch=binding.binding_epoch
        AND binding.binding_epoch=$19::bigint AND binding.state='active'`,
     [input.proof.proofDigest, input.binding.siteRef, input.binding.siteReleaseRef,
       input.proof.workloadIdentityId, input.accountRef, input.binding.subjectRef, input.binding.sessionRef,
@@ -1192,6 +1231,8 @@ async function lockReauthenticationProof(
      JOIN platform.authorization_product_binding binding
        ON binding.workload_identity_id=proof.workload_identity_id
          AND binding.site_ref=proof.site_ref AND binding.release_ref=proof.site_release_ref
+         AND proof.site_project_binding_ref=binding.binding_ref
+         AND proof.binding_epoch=binding.binding_epoch
      JOIN platform.identity_account account
        ON account.site_ref=proof.site_ref AND account.account_ref=proof.account_ref
      WHERE proof.proof_digest=$1 AND proof.site_ref=$2 AND proof.site_release_ref=$3
@@ -1282,6 +1323,19 @@ function bindingMatches(owner: SecurityOwnerRow, binding: IdentitySecuritySessio
     methods.length === binding.authenticationMethods.length &&
     methods.every((method, index) => method === binding.authenticationMethods[index])
   );
+}
+
+function recoveryAuthorityMatches(
+  recovery: FrozenRecoveryAuthorityRow,
+  binding: IdentitySecuritySessionBinding,
+  workloadIdentityId: string,
+): boolean {
+  return recovery.recoverySiteRef === binding.siteRef &&
+    recovery.recoverySiteReleaseRef === binding.siteReleaseRef &&
+    recovery.recoverySiteProjectBindingRef === binding.siteProjectBindingRef &&
+    recovery.recoveryWorkloadIdentityId === workloadIdentityId &&
+    workloadIdentityId === binding.workloadIdentityId &&
+    recovery.recoveryBindingEpoch.toString() === binding.bindingEpoch;
 }
 
 function securityAuthorityValues(
@@ -1670,7 +1724,9 @@ interface ReauthenticationChallengeRow extends Record<string, unknown> {
   siteRef: string;
   transactionRef: string;
   siteReleaseRef: string;
+  siteProjectBindingRef: string;
   workloadIdentityId: string;
+  bindingEpoch: bigint;
   accountRef: string;
   subjectRef: string;
   sessionRef: string;
@@ -1707,10 +1763,22 @@ interface ReauthenticationChallengeRow extends Record<string, unknown> {
   currentRecoverySetRef: string | null;
 }
 
-interface ReauthenticationRecoveryRow extends Record<string, unknown> {
+interface FrozenRecoveryAuthorityRow extends Record<string, unknown> {
+  recoverySiteRef: string;
+  recoverySiteReleaseRef: string;
+  recoverySiteProjectBindingRef: string;
+  recoveryWorkloadIdentityId: string;
+  recoveryBindingEpoch: bigint;
+}
+
+interface ReauthenticationRecoveryRow extends FrozenRecoveryAuthorityRow {
   proofDigest: string;
   proofState: string;
   proofExpiresAt: string | Date;
+  proofSiteReleaseRef: string;
+  proofSiteProjectBindingRef: string;
+  proofWorkloadIdentityId: string;
+  proofBindingEpoch: bigint;
   audience: string;
   operationId: string;
   resourceKind: string;
@@ -1721,15 +1789,13 @@ interface ReauthenticationRecoveryRow extends Record<string, unknown> {
   operation: string;
   receiptState: string;
   callerIdentity: string;
-  recoverySiteRef: string;
-  recoveryWorkloadIdentityId: string;
   recoveryPurpose: string;
   capabilityDigest: string;
   recoveryState: string;
   recoveryExpiresAt: string | Date;
 }
 
-interface RecoveryCodeRecoveryRow extends Record<string, unknown> {
+interface RecoveryCodeRecoveryRow extends FrozenRecoveryAuthorityRow {
   setRef: string;
   setState: string;
   claimState: string;
@@ -1738,8 +1804,6 @@ interface RecoveryCodeRecoveryRow extends Record<string, unknown> {
   operation: string;
   receiptState: string;
   callerIdentity: string;
-  recoverySiteRef: string;
-  recoveryWorkloadIdentityId: string;
   recoveryPurpose: string;
   recoveryTransactionRef: string | null;
   capabilityDigest: string;
@@ -1777,7 +1841,7 @@ interface TotpEnrollmentLockRow extends Record<string, unknown> {
   lastAcceptedTimeStep: bigint | null;
 }
 
-interface EnrollmentRecoveryRow extends Record<string, unknown> {
+interface EnrollmentRecoveryRow extends FrozenRecoveryAuthorityRow {
   authenticatorRef: string;
   enrollmentState: string;
   enrollmentExpiresAt: string | Date;
@@ -1787,8 +1851,6 @@ interface EnrollmentRecoveryRow extends Record<string, unknown> {
   operation: string;
   receiptState: string;
   callerIdentity: string;
-  recoverySiteRef: string;
-  recoveryWorkloadIdentityId: string;
   recoveryPurpose: string;
   recoveryTransactionRef: string | null;
   capabilityDigest: string;

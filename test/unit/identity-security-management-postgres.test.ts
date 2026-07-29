@@ -136,7 +136,10 @@ describe("Postgres Identity security-management SiteRelease authority", () => {
               receiptState: "succeeded",
               callerIdentity: "workload-1",
               recoverySiteRef: "site-1",
+              recoverySiteReleaseRef: "release-1",
+              recoverySiteProjectBindingRef: "binding-1",
               recoveryWorkloadIdentityId: "workload-1",
+              recoveryBindingEpoch: 1n,
               recoveryPurpose: "beginTotpEnrollment",
               recoveryTransactionRef: "old-enrollment",
               capabilityDigest: "b".repeat(64),
@@ -184,6 +187,98 @@ describe("Postgres Identity security-management SiteRelease authority", () => {
 
       expect(accepted).toBe(true);
       expect(transfers).toEqual([["1".repeat(32), "2".repeat(32), "new-enrollment"]]);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("rejects an epoch-1 enrollment recovery capability after caller and authority rotate to epoch 2", async () => {
+    let mutations = 0;
+    const lease = issuePlatformTransaction({
+      async query(statement) {
+        if (statement.includes("pg_advisory_xact_lock")) return [];
+        if (statement.includes("FROM platform.identity_account account")) {
+          return [ownerRow("Acme AI", 2n)] as never;
+        }
+        if (statement.includes("FROM platform.identity_totp_authenticator") &&
+            statement.includes("state='active'")) return [];
+        if (statement.includes("FROM platform.identity_totp_enrollment_transaction enrollment")) {
+          return [{
+            authenticatorRef: "old-authenticator", enrollmentState: "pending",
+            enrollmentExpiresAt: "2026-07-29T00:09:00.000Z",
+            claimRequestDigest: "a".repeat(64), claimState: "first_claim_consumed",
+            receiptRequestDigest: "a".repeat(64), operation: "beginTotpEnrollment",
+            receiptState: "succeeded", callerIdentity: "workload-1",
+            recoverySiteRef: "site-1", recoverySiteReleaseRef: "release-1",
+            recoverySiteProjectBindingRef: "binding-1", recoveryWorkloadIdentityId: "workload-1",
+            recoveryBindingEpoch: 1n, recoveryPurpose: "beginTotpEnrollment",
+            recoveryTransactionRef: "old-enrollment", capabilityDigest: "b".repeat(64),
+            recoveryState: "active", recoveryExpiresAt: "2026-07-30T00:00:00.000Z",
+          }] as never;
+        }
+        return [];
+      },
+      async execute() {
+        mutations += 1;
+        return 1;
+      },
+    });
+    try {
+      await expect(new PostgresIdentitySecurityManagementRepository().supersedeTotpEnrollment(
+        lease.transaction,
+        {
+          binding: binding("2"), accountRef: "account-1", expectedAccountSecurityEpoch: "7",
+          expectedAuthStrengthPolicyRevision: "default-v1",
+          priorCommandId: "1".repeat(32), priorTransactionRef: "old-enrollment",
+          newCommandId: "2".repeat(32), requestDigest: "c".repeat(64),
+          workloadIdentityId: "workload-1", capabilityDigest: "b".repeat(64),
+          transactionRef: "new-enrollment", authenticatorRef: "new-authenticator",
+          envelope: { algorithm: "A256GCM", keyRevision: "key-1", nonce: "nonce",
+            ciphertext: "sealed", authenticationTag: "tag" },
+          now: "2026-07-29T00:00:00.000Z", expiresAt: "2026-07-29T00:10:00.000Z",
+        },
+      )).resolves.toBe(false);
+      expect(mutations).toBe(0);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("rejects a stale proof before starting a new TOTP enrollment mutation", async () => {
+    let mutations = 0;
+    const lease = issuePlatformTransaction({
+      async query(statement) {
+        if (statement.includes("pg_advisory_xact_lock")) return [];
+        if (statement.includes("FROM platform.identity_account account")) {
+          return [ownerRow("Acme AI", 2n)] as never;
+        }
+        if (statement.includes("FROM platform.identity_reauthentication_proof proof")) return [];
+        throw new Error(`unexpected query before proof validation: ${statement}`);
+      },
+      async execute() {
+        mutations += 1;
+        return 1;
+      },
+    });
+    try {
+      await expect(new PostgresIdentitySecurityManagementRepository().beginTotpEnrollment(
+        lease.transaction,
+        {
+          binding: binding("2"), accountRef: "account-1", expectedAccountSecurityEpoch: "7",
+          commandId: "1".repeat(32), requestDigest: "a".repeat(64),
+          proof: {
+            proofDigest: "b".repeat(64), workloadIdentityId: "workload-1",
+            expectedAuthStrengthPolicyRevision: "default-v1",
+            target: { audience: "platform-public", operationId: "beginTotpEnrollment",
+              resourceKind: "identity_account" },
+          },
+          transactionRef: "enrollment-1", authenticatorRef: "authenticator-1",
+          envelope: { algorithm: "A256GCM", keyRevision: "key-1", nonce: "nonce",
+            ciphertext: "sealed", authenticationTag: "tag" },
+          now: "2026-07-29T00:00:00.000Z", expiresAt: "2026-07-29T00:10:00.000Z",
+        },
+      )).resolves.toBe(false);
+      expect(mutations).toBe(0);
     } finally {
       revokePlatformTransaction(lease);
     }
@@ -294,7 +389,9 @@ describe("Postgres Identity security-management SiteRelease authority", () => {
             claimRequestDigest: "a".repeat(64), claimState: "first_claim_consumed",
             receiptRequestDigest: "a".repeat(64), operation: "beginTotpEnrollment",
             receiptState: "succeeded", callerIdentity: "workload-1",
-            recoverySiteRef: "site-1", recoveryWorkloadIdentityId: "workload-1",
+            recoverySiteRef: "site-1", recoverySiteReleaseRef: "release-1",
+            recoverySiteProjectBindingRef: "binding-1", recoveryWorkloadIdentityId: "workload-1",
+            recoveryBindingEpoch: 1n,
             recoveryPurpose: "beginTotpEnrollment", recoveryTransactionRef: "old-enrollment",
             capabilityDigest: "b".repeat(64), recoveryState: "active",
             recoveryExpiresAt: "2026-07-30T00:00:00.000Z",
@@ -340,7 +437,9 @@ describe("Postgres Identity security-management SiteRelease authority", () => {
             claimRequestDigest: "a".repeat(64), receiptRequestDigest: "a".repeat(64),
             operation: "regenerateRecoveryCodes", receiptState: "succeeded",
             callerIdentity: "workload-1", recoverySiteRef: "site-1",
+            recoverySiteReleaseRef: "release-1", recoverySiteProjectBindingRef: "binding-1",
             recoveryWorkloadIdentityId: "workload-1",
+            recoveryBindingEpoch: 1n,
             recoveryPurpose: "regenerateRecoveryCodes", recoveryTransactionRef: "old-set",
             capabilityDigest: "b".repeat(64), recoveryState: "active",
             recoveryExpiresAt: "2026-07-30T00:00:00.000Z", setState: "active",
@@ -377,7 +476,14 @@ describe("Postgres Identity security-management SiteRelease authority", () => {
     let statement = "";
     let values: readonly unknown[] = [];
     const lease = issuePlatformTransaction({
-      async query() {
+      async query(sql) {
+        if (sql.includes("pg_advisory_xact_lock")) return [];
+        if (sql.includes("FROM platform.identity_account account")) {
+          return [ownerRow("Acme AI")] as never;
+        }
+        if (sql.includes("FROM platform.identity_reauthentication_proof proof")) {
+          return [{}] as never;
+        }
         return [];
       },
       async execute(sql, parameters = []) {
@@ -424,6 +530,8 @@ describe("Postgres Identity security-management SiteRelease authority", () => {
       expect(statement).toContain("binding.binding_ref=$17");
       expect(statement).toContain("binding.workload_identity_id=$18");
       expect(statement).toContain("binding.binding_epoch=$19::bigint");
+      expect(statement).toContain("proof.site_project_binding_ref=binding.binding_ref");
+      expect(statement).toContain("proof.binding_epoch=binding.binding_epoch");
       expect(statement).toContain("proof.state='active' AND proof.expires_at>$14::timestamptz");
       expect(values).toEqual([
         "a".repeat(64), "site-1", "release-1", "workload-1", "account-1",
@@ -455,7 +563,11 @@ describe("Postgres Identity security-management SiteRelease authority", () => {
             claimRequestDigest: "b".repeat(64), receiptRequestDigest: "b".repeat(64),
             operation: "reauthenticateIdentitySession", receiptState: "succeeded",
             callerIdentity: "workload-1", recoverySiteRef: "site-1",
+            proofSiteReleaseRef: "release-1", proofSiteProjectBindingRef: "binding-1",
+            proofWorkloadIdentityId: "workload-1", proofBindingEpoch: 1n,
+            recoverySiteReleaseRef: "release-1", recoverySiteProjectBindingRef: "binding-1",
             recoveryWorkloadIdentityId: "workload-1",
+            recoveryBindingEpoch: 1n,
             recoveryPurpose: "reauthenticateIdentitySession", capabilityDigest: "c".repeat(64),
             recoveryState: "active", recoveryExpiresAt: "2026-07-30T00:00:00.000Z",
           }] as never;
@@ -486,6 +598,131 @@ describe("Postgres Identity security-management SiteRelease authority", () => {
         authStrengthPolicyRevision: "default-v1",
       });
       expect(transfers).toEqual([[priorCommandId, newCommandId]]);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("rejects an epoch-1 proof recovery capability after caller and authority rotate to epoch 2", async () => {
+    let mutations = 0;
+    const lease = issuePlatformTransaction({
+      async query(statement) {
+        if (statement.includes("pg_advisory_xact_lock")) return [];
+        if (statement.includes("FROM platform.identity_account account")) {
+          return [ownerRow("Acme AI", 2n)] as never;
+        }
+        if (statement.includes("FROM platform.identity_reauthentication_proof proof")) {
+          return [{
+            proofDigest: "a".repeat(64), proofState: "active",
+            proofExpiresAt: "2026-07-29T00:05:00.000Z", audience: "platform-public",
+            operationId: "regenerateRecoveryCodes", resourceKind: "identity_account",
+            authStrengthPolicyRevision: "default-v1", claimState: "first_claim_consumed",
+            claimRequestDigest: "b".repeat(64), receiptRequestDigest: "b".repeat(64),
+            operation: "reauthenticateIdentitySession", receiptState: "succeeded",
+            callerIdentity: "workload-1", proofSiteReleaseRef: "release-1",
+            proofSiteProjectBindingRef: "binding-1", proofWorkloadIdentityId: "workload-1",
+            proofBindingEpoch: 1n, recoverySiteRef: "site-1",
+            recoverySiteReleaseRef: "release-1", recoverySiteProjectBindingRef: "binding-1",
+            recoveryWorkloadIdentityId: "workload-1", recoveryBindingEpoch: 1n,
+            recoveryPurpose: "reauthenticateIdentitySession", capabilityDigest: "c".repeat(64),
+            recoveryState: "active", recoveryExpiresAt: "2026-07-30T00:00:00.000Z",
+          }] as never;
+        }
+        return [];
+      },
+      async execute() {
+        mutations += 1;
+        return 1;
+      },
+    });
+    try {
+      await expect(new PostgresIdentitySecurityManagementRepository().supersedeReauthenticationProof(
+        lease.transaction,
+        {
+          binding: binding("2"), accountRef: "account-1", expectedAccountSecurityEpoch: "7",
+          expectedAuthStrengthPolicyRevision: "default-v1", priorCommandId: "1".repeat(32),
+          newCommandId: "2".repeat(32), requestDigest: "d".repeat(64),
+          workloadIdentityId: "workload-1", capabilityDigest: "c".repeat(64),
+          proofDigest: "e".repeat(64), now: "2026-07-29T00:00:00.000Z",
+          expiresAt: "2026-07-29T00:05:00.000Z",
+        },
+      )).resolves.toBeNull();
+      expect(mutations).toBe(0);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("rejects an epoch-1 recovery-code capability after caller and authority rotate to epoch 2", async () => {
+    let mutations = 0;
+    const lease = issuePlatformTransaction({
+      async query(statement) {
+        if (statement.includes("pg_advisory_xact_lock")) return [];
+        if (statement.includes("FROM platform.identity_account account")) {
+          return [ownerRow("Acme AI", 2n)] as never;
+        }
+        if (statement.includes("FROM platform.identity_recovery_code_delivery_claim claim")) {
+          return [{
+            setRef: "old-set", setState: "active", claimState: "first_claim_consumed",
+            claimRequestDigest: "a".repeat(64), receiptRequestDigest: "a".repeat(64),
+            operation: "regenerateRecoveryCodes", receiptState: "succeeded",
+            callerIdentity: "workload-1", recoverySiteRef: "site-1",
+            recoverySiteReleaseRef: "release-1", recoverySiteProjectBindingRef: "binding-1",
+            recoveryWorkloadIdentityId: "workload-1", recoveryBindingEpoch: 1n,
+            recoveryPurpose: "regenerateRecoveryCodes", recoveryTransactionRef: "old-set",
+            capabilityDigest: "b".repeat(64), recoveryState: "active",
+            recoveryExpiresAt: "2026-07-30T00:00:00.000Z",
+          }] as never;
+        }
+        return [];
+      },
+      async execute() {
+        mutations += 1;
+        return 1;
+      },
+    });
+    try {
+      await expect(new PostgresIdentitySecurityManagementRepository().supersedeRecoveryCodes(
+        lease.transaction,
+        {
+          binding: binding("2"), accountRef: "account-1", priorCommandId: "1".repeat(32),
+          newCommandId: "2".repeat(32), expectedAuthStrengthPolicyRevision: "default-v1",
+          requestDigest: "c".repeat(64), workloadIdentityId: "workload-1",
+          capabilityDigest: "b".repeat(64), setRef: "new-set",
+          recoveryCodeDigests: [{ codeDigest: "d".repeat(64) }],
+          now: "2026-07-29T00:00:00.000Z",
+        },
+      )).resolves.toBeNull();
+      expect(mutations).toBe(0);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("requires a challenge to carry the binding revision that issued it", async () => {
+    let statement = "";
+    const lease = issuePlatformTransaction({
+      async query(sql) {
+        statement = sql;
+        return [];
+      },
+      async execute() {
+        return 0;
+      },
+    });
+    try {
+      await new PostgresIdentitySecurityManagementRepository().loadReauthenticationChallengeMaterial(
+        lease.transaction,
+        {
+          binding: binding("2"), workloadIdentityId: "workload-1",
+          transactionRef: "challenge-1",
+          target: { audience: "platform-public", operationId: "disableTotp",
+            resourceKind: "identity_account" },
+          now: "2026-07-29T00:00:00.000Z",
+        },
+      );
+      expect(statement).toContain("challenge.site_project_binding_ref=product_binding.binding_ref");
+      expect(statement).toContain("challenge.binding_epoch=product_binding.binding_epoch");
     } finally {
       revokePlatformTransaction(lease);
     }
@@ -545,13 +782,13 @@ describe("Postgres Identity security-management SiteRelease authority", () => {
   });
 });
 
-function binding() {
+function binding(bindingEpoch = "1") {
   return {
     siteRef: "site-1",
     siteReleaseRef: "release-1",
     siteProjectBindingRef: "binding-1",
     workloadIdentityId: "workload-1",
-    bindingEpoch: "1",
+    bindingEpoch,
     subjectRef: "subject-1",
     sessionRef: "session-1",
     subjectGeneration: "3",
@@ -562,7 +799,7 @@ function binding() {
   };
 }
 
-function ownerRow(identityIssuerLabel: string) {
+function ownerRow(identityIssuerLabel: string, bindingEpoch = 1n) {
   return {
     siteRef: "site-1",
     siteState: "active",
@@ -570,7 +807,7 @@ function ownerRow(identityIssuerLabel: string) {
     releaseState: "active",
     siteProjectBindingRef: "binding-1",
     workloadIdentityId: "workload-1",
-    bindingEpoch: 1n,
+    bindingEpoch,
     bindingState: "active",
     accountRef: "account-1",
     subjectRef: "subject-1",
