@@ -38,6 +38,7 @@ describe("Wave 2A Commerce authority schema", () => {
     expect(migration).toContain("safe_fingerprint TEXT NOT NULL");
     expect(migration).not.toMatch(/(?:raw|plaintext)_code/iu);
     expect(migration).toContain("FOREIGN KEY(fulfillment_program_revision_ref,site_ref)");
+    expect(migration).toContain("FOREIGN KEY(product_version_ref,site_ref,fulfillment_program_revision_ref)");
     expect(migration).toContain("FOREIGN KEY(credit_program_revision_ref,site_ref)");
     expect(migration).toContain("UNIQUE(site_ref,output_plan_digest)");
   });

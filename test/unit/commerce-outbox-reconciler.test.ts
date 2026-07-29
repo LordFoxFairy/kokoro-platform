@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { createCommerceOutboxReconciliationCycle, type CommerceOutboxProjection, type OutboxDeliveryTransport } from
+import { createCommerceOutboxReconciliationCycle, HmacHttpOutboxDeliveryTransport, type CommerceOutboxProjection, type OutboxDeliveryTransport } from
   "../../src/modules/commerce/infrastructure/postgres/commerce-outbox-reconciler.js";
 import { commerceCanonicalJson } from "../../src/modules/commerce/domain/canonical-json.js";
 import { issuePlatformTransaction, revokePlatformTransaction } from
@@ -47,6 +47,25 @@ describe("Commerce outbox reconciler", () => {
       eventId: "00000000-0000-7000-8000-000000000501", leaseToken: "lease-1",
       errorCode: "OUTBOX_DELIVERY_FAILED", retryAt: "2026-07-29T01:00:01.000Z", maxAttempts: 3,
     }]);
+  });
+
+  it("accepts only a consumer-authenticated HTTP acknowledgement", async () => {
+    const secret = Buffer.alloc(32, 7); const value = event();
+    const transport = new HmacHttpOutboxDeliveryTransport({
+      endpoint: "https://consumer.internal/events", keyId: "delivery-key-1", secretBase64: secret.toString("base64"),
+      fetch: async (_input, init) => {
+        expect(init?.method).toBe("POST");
+        expect(new Headers(init?.headers).get("x-kokoro-delivery-signature")).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+        const acknowledgement = { eventId: value.eventId, deliveryId: "consumer-delivery-1", acknowledgedAt: "2026-07-29T01:00:01.000Z" };
+        return new Response(JSON.stringify({ ...acknowledgement, acknowledgementMac: createHmac("sha256", secret)
+          .update(commerceCanonicalJson({ ...acknowledgement, payloadDigest: value.payloadDigest })).digest("base64url") }), {
+          status: 200, headers: { "content-type": "application/json" },
+        });
+      },
+    });
+    await expect(transport.publish(value, new AbortController().signal)).resolves.toEqual({
+      deliveryId: "consumer-delivery-1", acknowledgedAt: "2026-07-29T01:00:01.000Z",
+    });
   });
 });
 

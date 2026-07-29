@@ -253,6 +253,7 @@ CREATE TABLE platform.commerce_catalog_product_version (
   UNIQUE(site_ref,product_ref,revision),
   UNIQUE(site_ref,revision_digest),
   UNIQUE(product_version_ref,site_ref),
+  UNIQUE(product_version_ref,site_ref,fulfillment_program_revision_ref),
   FOREIGN KEY(site_ref,product_ref) REFERENCES platform.commerce_catalog_product(site_ref,product_ref),
   FOREIGN KEY(plan_version_ref,site_ref) REFERENCES platform.commerce_catalog_plan_version(plan_version_ref,site_ref),
   FOREIGN KEY(fulfillment_program_revision_ref,site_ref)
@@ -275,6 +276,8 @@ CREATE TABLE platform.commerce_redemption_program_revision (
   UNIQUE(redemption_program_revision_ref,site_ref),
   FOREIGN KEY(product_version_ref,site_ref)
     REFERENCES platform.commerce_catalog_product_version(product_version_ref,site_ref),
+  FOREIGN KEY(product_version_ref,site_ref,fulfillment_program_revision_ref)
+    REFERENCES platform.commerce_catalog_product_version(product_version_ref,site_ref,fulfillment_program_revision_ref),
   FOREIGN KEY(fulfillment_program_revision_ref,site_ref)
     REFERENCES platform.commerce_fulfillment_program_revision(fulfillment_program_revision_ref,site_ref)
 );

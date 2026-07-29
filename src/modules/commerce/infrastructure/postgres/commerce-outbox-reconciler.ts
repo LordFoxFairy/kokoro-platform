@@ -88,14 +88,16 @@ export class HmacHttpOutboxDeliveryTransport implements OutboxDeliveryTransport 
   readonly #keyId: string;
   readonly #secret: Buffer;
   readonly #timeoutMs: number;
+  readonly #fetch: typeof fetch;
 
-  constructor(input: Readonly<{ endpoint: string; keyId: string; secretBase64: string; timeoutMs?: number }>) {
+  constructor(input: Readonly<{ endpoint: string; keyId: string; secretBase64: string; timeoutMs?: number; fetch?: typeof fetch }>) {
     this.#endpoint = new URL(input.endpoint);
     if (this.#endpoint.protocol !== "https:") throw new Error("OUTBOX_DELIVERY_HTTPS_REQUIRED");
     if (!bounded(input.keyId, 128)) throw new Error("OUTBOX_DELIVERY_KEY_ID_INVALID");
     this.#secret = Buffer.from(input.secretBase64, "base64");
     if (this.#secret.byteLength < 32) throw new Error("OUTBOX_DELIVERY_SECRET_INVALID");
     this.#keyId = input.keyId;
+    this.#fetch = input.fetch ?? fetch;
     this.#timeoutMs = input.timeoutMs ?? 10_000;
     if (!Number.isInteger(this.#timeoutMs) || this.#timeoutMs < 100 || this.#timeoutMs > 60_000) {
       throw new Error("OUTBOX_DELIVERY_TIMEOUT_INVALID");
@@ -108,7 +110,7 @@ export class HmacHttpOutboxDeliveryTransport implements OutboxDeliveryTransport 
       aggregateId: event.aggregateId, payload: event.payload, payloadDigest: event.payloadDigest,
       correlationId: event.correlationId, causationId: event.causationId,
     });
-    const response = await fetch(this.#endpoint, {
+    const response = await this.#fetch(this.#endpoint, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -120,7 +122,7 @@ export class HmacHttpOutboxDeliveryTransport implements OutboxDeliveryTransport 
       signal: AbortSignal.any([signal, AbortSignal.timeout(this.#timeoutMs)]),
     });
     if (!response.ok) throw new Error(`OUTBOX_DELIVERY_HTTP_${response.status}`);
-    const value: unknown = await response.json();
+    const value: unknown = await boundedJson(response, 16 * 1024);
     if (!isRecord(value) || value.eventId !== event.eventId || !bounded(value.deliveryId, 128) ||
       typeof value.acknowledgedAt !== "string" || !Number.isFinite(Date.parse(value.acknowledgedAt)) ||
       typeof value.acknowledgementMac !== "string") throw new Error("OUTBOX_DELIVERY_ACK_INVALID");
@@ -231,6 +233,26 @@ function instant(value: Date | string): string {
   const parsed = value instanceof Date ? value : new Date(value);
   if (!Number.isFinite(parsed.getTime())) throw new Error("COMMERCE_OUTBOX_TIMESTAMP_INVALID");
   return parsed.toISOString();
+}
+async function boundedJson(response: Response, maximumBytes: number): Promise<unknown> {
+  const declared = response.headers.get("content-length");
+  if (declared !== null && (!/^[0-9]+$/u.test(declared) || Number(declared) > maximumBytes)) {
+    throw new Error("OUTBOX_DELIVERY_ACK_TOO_LARGE");
+  }
+  if (response.body === null) throw new Error("OUTBOX_DELIVERY_ACK_INVALID");
+  const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;
+  try {
+    for (;;) {
+      const part = await reader.read();
+      if (part.done) break;
+      size += part.value.byteLength;
+      if (size > maximumBytes) throw new Error("OUTBOX_DELIVERY_ACK_TOO_LARGE");
+      chunks.push(part.value);
+    }
+  } finally { reader.releaseLock(); }
+  const bytes = new Uint8Array(size); let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
 }
 async function bindSite(transaction: PlatformTransaction, siteId: string): Promise<void> {
   const rows = await resolvePlatformTransaction(transaction).query<Record<string, unknown> & { siteId: string }>(

@@ -92,6 +92,7 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
     await exactlyOne(sql.execute(
       `UPDATE platform.commerce_code_batch batch SET state='active',activated_at=$3::timestamptz
        WHERE batch.batch_ref=$1::uuid AND batch.site_ref=$2 AND batch.state='draft'
+         AND (batch.ends_at IS NULL OR batch.ends_at>$3::timestamptz)
          AND EXISTS (SELECT 1 FROM platform.commerce_code_batch_approval approval
            WHERE approval.batch_ref=batch.batch_ref AND approval.site_ref=batch.site_ref)`,
       [input.batchRef, input.siteId, occurredAt],
