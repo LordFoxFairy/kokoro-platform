@@ -405,7 +405,7 @@ export async function loadIdentityTotpSecretProtector(path: string) {
   });
 }
 
-async function readBoundedPrivateSecret(path: string, maximumBytes: number): Promise<string> {
+export async function readBoundedPrivateSecret(path: string, maximumBytes: number): Promise<string> {
   return readBoundedPrivateFile(path, maximumBytes, "IDENTITY_TOTP_KEY_RING_PERMISSIONS_INVALID");
 }
 
