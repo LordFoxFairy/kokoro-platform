@@ -189,6 +189,29 @@ model AdminApprovalDecision {
   @@schema("platform")
 }
 
+model AdmissionCommand {
+  siteId          String    @map("site_id")
+  operation       String
+  commandId       String    @map("command_id")
+  environment     String
+  region          String
+  callerIdentity  String    @map("caller_identity")
+  idempotencyKey  String    @map("idempotency_key")
+  requestDigest   String    @map("request_digest") @db.Char(64)
+  state           String    @default("processing")
+  leaseToken      String?   @map("lease_token") @db.Uuid
+  leaseExpiresAt  DateTime? @map("lease_expires_at") @db.Timestamptz(6)
+  responsePayload Bytes?    @map("response_payload")
+  responseDigest  String?   @map("response_digest") @db.Char(64)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@id([siteId, operation, commandId])
+  @@unique([environment, callerIdentity, siteId, operation, idempotencyKey])
+  @@map("admission_command")
+  @@schema("platform")
+}
+
 model OutboxEvent {
   eventId        String    @id @map("event_id") @db.Uuid
   owner          String

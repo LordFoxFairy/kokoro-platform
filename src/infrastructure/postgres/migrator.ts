@@ -285,18 +285,15 @@ async function grantFoundationPrivileges(
       `REVOKE ALL ON FUNCTION platform.bootstrap_admin_authorities(JSONB, CHAR(64)), platform.apply_admin_authority_change(UUID, JSONB) FROM ${identifier}`,
     );
     if (role === apiRole) {
-      await client.query(
-        `GRANT SELECT ON TABLE ${KERNEL_TABLES}, ${AUTHORIZATION_TABLES}, ${IDENTITY_TABLES}, ${COMMERCE_TABLES} TO ${identifier}`,
-      );
+      await client.query(`GRANT SELECT ON TABLE ${KERNEL_TABLES}, ${ADMISSION_TABLES}, ${AUTHORIZATION_TABLES}, ${IDENTITY_TABLES}, ${COMMERCE_TABLES} TO ${identifier}`);
       await client.query(
         `GRANT INSERT ON TABLE platform.command_receipt, platform.outbox_event, platform.inbox_delivery, platform.model_selection_decision, platform.authorization_product_context, platform.authorization_session_access_grant TO ${identifier}`,
       );
       await client.query(
         `GRANT UPDATE ON TABLE platform.command_receipt, platform.inbox_delivery, platform.authorization_product_context, platform.authorization_session_access_grant TO ${identifier}`,
       );
-      await client.query(
-        `GRANT SELECT, UPDATE ON TABLE platform.authorization_stream_state TO ${identifier}`,
-      );
+      await client.query(`GRANT INSERT, UPDATE ON TABLE ${ADMISSION_TABLES} TO ${identifier}`);
+      await client.query(`GRANT SELECT, UPDATE ON TABLE platform.authorization_stream_state TO ${identifier}`);
       await client.query(`GRANT INSERT ON TABLE platform.authorization_event_log TO ${identifier}`);
       await client.query(
         `GRANT UPDATE(event_sequence) ON TABLE platform.authorization_site TO ${identifier}`,
@@ -400,6 +397,8 @@ const KERNEL_TABLES = [
   "platform.outbox_event",
   "platform.inbox_delivery",
 ].join(", ");
+
+const ADMISSION_TABLES = "platform.admission_command";
 
 const AUTHORIZATION_TABLES = [
   "platform.authorization_site",
@@ -551,6 +550,7 @@ const PLATFORM_RUNTIME_TABLES = [
   "platform.command_receipt",
   "platform.outbox_event",
   "platform.inbox_delivery",
+  ADMISSION_TABLES,
   "platform.model_inventory_import",
   "platform.model_inventory_activation",
   "platform.model_inventory_pointer",

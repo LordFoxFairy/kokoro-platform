@@ -101,6 +101,7 @@ export interface AdminExecutionTransactionFence {
 }
 
 export type PlatformInternalOperation =
+  | "admission.command"
   | "authorization.feed.read"
   | "authorization.snapshot.create"
   | "authorization.retention"
@@ -268,8 +269,9 @@ export function createPlatformDatabaseClient(
       operation: PlatformInternalOperation,
       work: (transaction: PlatformTransaction) => Promise<Result>,
     ) => {
-      const allowed =
-        config.role === "worker"
+      const allowed = config.role === "api"
+        ? operation === "admission.command"
+        : config.role === "worker"
           ? operation === "authorization.retention" ||
             operation === "commerce.outbox.reconcile" ||
             operation === "site.runtime.consume" ||
@@ -286,7 +288,11 @@ export function createPlatformDatabaseClient(
             `SELECT set_config('app.operation',$1,true),
                   set_config('app.workload_kind',$2,true)`,
             operation,
-            config.role === "worker" ? "platform_worker" : "platform_authorization",
+            config.role === "worker"
+              ? "platform_worker"
+              : config.role === "api"
+                ? "platform_api"
+                : "platform_authorization",
           );
           const lease = issuePlatformTransaction({
             query: (statement, values = []) =>

@@ -10,6 +10,7 @@ export const MAX_GA_RUN_REQUEST_DRAFT_TTL_MS = 5 * 60 * 1_000;
 // Leaves 256 KiB inside the 1 MiB encrypted-envelope budget for AEAD/HPKE and framing overhead.
 export const MAX_GA_RUN_REQUEST_PLAINTEXT_BYTES = 768 * 1024;
 const MAX_GA_RUN_REQUEST_CIPHERTEXT_BYTES = 1024 * 1024;
+export const GA_RUN_REQUEST_ENCRYPTION_ALGORITHM = "HPKE-v1";
 
 /** Platform-resolved facts. This boundary does not derive identity, policy, budget, or capabilities. */
 export type VerifiedGaRunRequestOwnerFacts = Omit<RunRequest, "execution_context">;
@@ -24,7 +25,7 @@ export const sealedGaRunRequestDraftSchema = z
           value.byteLength >= 32 && value.byteLength <= MAX_GA_RUN_REQUEST_CIPHERTEXT_BYTES,
       ),
     encryptionAlgorithm: boundedTrimmedString(64),
-    keyRevisionRef: boundedTrimmedString(256),
+    keyRevisionRef: boundedTrimmedString(128),
     audience: boundedTrimmedString(128),
     expiresAt: z.string().refine(isCanonicalInstant),
     plaintextSha256: z.string().regex(/^[0-9a-f]{64}$/u),
@@ -101,6 +102,7 @@ export class GaRunRequestDraftFactory {
     const expiresAt = Date.parse(parsed.data.expiresAt);
     if (
       parsed.data.audience !== this.#expectedAudience ||
+      parsed.data.encryptionAlgorithm !== GA_RUN_REQUEST_ENCRYPTION_ALGORITHM ||
       parsed.data.plaintextSha256 !== plaintextSha256 ||
       expiresAt <= this.#now() ||
       expiresAt > Date.parse(maximumExpiresAt)

@@ -206,9 +206,14 @@ describe("Admission execution-context boundary", () => {
       (input: GaRunRequestDraftSealInput) => validSealed(input, { encryptionAlgorithm: "" }),
     ],
     [
+      "unsupported algorithm",
+      (input: GaRunRequestDraftSealInput) =>
+        validSealed(input, { encryptionAlgorithm: "AES-256-GCM" }),
+    ],
+    [
       "oversized key reference",
       (input: GaRunRequestDraftSealInput) =>
-        validSealed(input, { keyRevisionRef: "k".repeat(257) }),
+        validSealed(input, { keyRevisionRef: "k".repeat(129) }),
     ],
     [
       "unknown output field",
