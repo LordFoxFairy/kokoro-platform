@@ -86,7 +86,8 @@ export interface PlatformTransactionalDatabaseClient
 export type PlatformInternalOperation =
   | "authorization.feed.read"
   | "authorization.snapshot.create"
-  | "authorization.retention";
+  | "authorization.retention"
+  | "commerce.outbox.reconcile";
 
 export function loadPlatformDatabaseConfig(
   role: PlatformProcessRole,
@@ -248,7 +249,7 @@ export function createPlatformDatabaseClient(
     ) => {
       const allowed =
         config.role === "worker"
-          ? operation === "authorization.retention"
+          ? operation === "authorization.retention" || operation === "commerce.outbox.reconcile"
           : config.role === "authorization" &&
             (operation === "authorization.feed.read" ||
               operation === "authorization.snapshot.create");

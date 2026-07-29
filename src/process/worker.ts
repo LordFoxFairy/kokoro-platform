@@ -7,6 +7,8 @@ import {
 } from "../infrastructure/postgres/client.js";
 import type { PlatformProcessState } from "./api.js";
 import { createAuthorizationRetentionCycle } from "../modules/authorization/infrastructure/postgres/authorization-retention.js";
+import { createCommerceOutboxReconciliationCycle } from
+  "../modules/commerce/infrastructure/postgres/commerce-outbox-reconciler.js";
 
 export interface PlatformWorkerProcessStatus {
   readonly state: PlatformProcessState;
@@ -214,12 +216,20 @@ function isMainModule(): boolean {
 export async function runPlatformWorkerMain(): Promise<void> {
   const database = createPlatformDatabaseClient(loadPlatformDatabaseConfig("worker"));
   const retentionDays = Number.parseInt(process.env.PLATFORM_AUTHORIZATION_EVENT_RETENTION_DAYS ?? "7", 10);
+  const authorizationRetention = createAuthorizationRetentionCycle({
+    database,
+    retentionMs: retentionDays * 24 * 60 * 60_000,
+  });
+  const commerceOutbox = createCommerceOutboxReconciliationCycle({
+    database,
+    workerId: process.env.PLATFORM_WORKER_ID ?? `platform-worker-${process.pid}`,
+  });
   const worker = createPlatformWorkerProcess({
     database,
-    runOneCycle: createAuthorizationRetentionCycle({
-      database,
-      retentionMs: retentionDays * 24 * 60 * 60_000,
-    }),
+    runOneCycle: async (context) => {
+      await commerceOutbox(context);
+      await authorizationRetention(context);
+    },
     onCycleError: (error) => console.error("Platform Worker cycle failed", error),
   });
   const shutdown = () => {
