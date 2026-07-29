@@ -173,7 +173,9 @@ function verifyAuthority(value: AdminOperatorAuthority): void {
   if (value.operatorGeneration < 1n || value.authorizationEpoch < 1n) throw new Error("ADMIN_OPERATOR_EPOCH_INVALID");
   if (value.permissions.length < 1 || value.environments.length < 1 || value.regions.length < 1 ||
       new Set(value.permissions).size !== value.permissions.length ||
-      new Set(value.siteScopes).size !== value.siteScopes.length) throw new Error("ADMIN_OPERATOR_AUTHORITY_INVALID");
+      new Set(value.siteScopes).size !== value.siteScopes.length ||
+      new Set(value.environments).size !== value.environments.length ||
+      new Set(value.regions).size !== value.regions.length) throw new Error("ADMIN_OPERATOR_AUTHORITY_INVALID");
   value.permissions.forEach(permission);
   instant(value.expiresAt, "ADMIN_OPERATOR_EXPIRY_INVALID");
   if (value.breakGlassExpiresAt !== null) instant(value.breakGlassExpiresAt, "ADMIN_BREAK_GLASS_EXPIRY_INVALID");

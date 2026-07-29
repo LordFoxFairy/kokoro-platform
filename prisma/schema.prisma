@@ -130,6 +130,8 @@ model AdminApprovalDecision {
   approvalRef        String   @map("approval_ref")
   executionCommandId String   @map("execution_command_id")
   checkerRef         String   @map("checker_ref")
+  checkerGeneration  BigInt   @map("checker_generation")
+  checkerAuthorizationEpoch BigInt? @map("checker_authorization_epoch")
   targetSiteRef      String?  @map("target_site_ref")
   environment        String
   region             String

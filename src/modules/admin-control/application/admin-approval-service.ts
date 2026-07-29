@@ -41,6 +41,8 @@ export interface AdminApprovalRepositoryPort extends Pick<
       approvalRef: string;
       executionCommandId: string;
       checkerRef: string;
+      checkerGeneration: bigint;
+      checkerAuthorizationEpoch: bigint | null;
       targetSiteRef: string | null;
       environment: string;
       region: string;
@@ -156,7 +158,7 @@ export class AdminApprovalService {
         } catch (error) {
           return this.denied(transaction, input, identity, requestDigest, safeCode(error));
         }
-        await this.audit(transaction, input, requestDigest, true, "ALLOW");
+        await this.audit(transaction, input, requestDigest, true, "ALLOW", admission);
         if (input.decision === "reject") {
           const result = json({ disposition: "rejected", commandId: input.commandId,
             approvalRef: input.approvalRef });
@@ -213,10 +215,13 @@ export class AdminApprovalService {
     requestDigest: string,
     allowed: boolean,
     reasonCode: string,
+    admission?: AdminApprovalAdmission,
   ): Promise<void> {
     return this.dependencies.repository.recordApprovalDecision(transaction, {
       decisionRef: this.dependencies.reference(), approvalRef: input.approvalRef,
       executionCommandId: input.commandId, checkerRef: input.context.actor.subjectId,
+      checkerGeneration: epoch(input.context.actor.subjectGeneration),
+      checkerAuthorizationEpoch: admission?.checkerAuthorizationEpoch ?? null,
       targetSiteRef: input.context.target.siteId, environment: input.context.environment,
       region: input.context.region, allowed, reasonCode, requestDigest, occurredAt: this.now(),
     });

@@ -155,12 +155,14 @@ export class PostgresAdminAuthorityRepository implements
   ): Promise<void> {
     await resolvePlatformTransaction(transaction).execute(
        `INSERT INTO platform.admin_approval_decision
-       (decision_ref,approval_ref,execution_command_id,checker_ref,target_site_ref,
-        environment,region,allowed,reason_code,request_digest,occurred_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+       (decision_ref,approval_ref,execution_command_id,checker_ref,checker_generation,
+        checker_authorization_epoch,target_site_ref,environment,region,allowed,reason_code,
+        request_digest,occurred_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
       [input.decisionRef, input.approvalRef, input.executionCommandId, input.checkerRef,
-        input.targetSiteRef, input.environment, input.region, input.allowed, input.reasonCode,
-        input.requestDigest, input.occurredAt],
+        input.checkerGeneration, input.checkerAuthorizationEpoch, input.targetSiteRef,
+        input.environment, input.region, input.allowed, input.reasonCode, input.requestDigest,
+        input.occurredAt],
     );
   }
 }

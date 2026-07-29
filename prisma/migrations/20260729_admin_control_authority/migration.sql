@@ -105,6 +105,8 @@ CREATE TABLE platform.admin_approval_decision (
   approval_ref TEXT NOT NULL,
   execution_command_id TEXT NOT NULL,
   checker_ref TEXT NOT NULL,
+  checker_generation BIGINT NOT NULL CHECK (checker_generation > 0),
+  checker_authorization_epoch BIGINT CHECK (checker_authorization_epoch > 0),
   target_site_ref TEXT,
   environment TEXT NOT NULL,
   region TEXT NOT NULL,
@@ -112,7 +114,8 @@ CREATE TABLE platform.admin_approval_decision (
   reason_code TEXT NOT NULL,
   request_digest CHAR(64) NOT NULL CHECK (request_digest ~ '^[a-f0-9]{64}$'),
   occurred_at TIMESTAMPTZ NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK ((allowed AND checker_authorization_epoch IS NOT NULL) OR NOT allowed)
 );
 CREATE INDEX admin_approval_decision_ref_time_idx
   ON platform.admin_approval_decision(approval_ref,occurred_at);
