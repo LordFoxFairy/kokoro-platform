@@ -154,6 +154,23 @@ test("platform CI is lock-driven and separates local from integration gates", as
   assert.match(workflow, /minio:/u);
 });
 
+test("fresh CI generates the root Prisma client before TypeScript consumes it", async () => {
+  const workflow = await readFile(resolve(root, ".github/workflows/ci.yml"), "utf8");
+  const { jobs } = parseWorkflow(workflow);
+  const gates = requireJob(jobs, "gates");
+  const generateIndexes = gates.steps.flatMap((step, index) =>
+    step !== null && typeof step === "object" && step.run === "pnpm db:generate"
+      ? [index]
+      : [],
+  );
+  const typecheckIndex = gates.steps.findIndex(
+    (step) => step !== null && typeof step === "object" && step.name === "typecheck",
+  );
+
+  assert.deepEqual(generateIndexes, [5], "gates must generate exactly once after install");
+  assert.ok(typecheckIndex > generateIndexes[0], "typecheck must run after Prisma generation");
+});
+
 test("the production audit contract rejects skipped, swallowed, and misplaced gates", async () => {
   const workflow = await readFile(resolve(root, ".github/workflows/ci.yml"), "utf8");
   const auditBlock = "      - name: production dependency audit\n        run: pnpm audit --prod\n";
