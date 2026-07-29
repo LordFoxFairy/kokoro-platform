@@ -7,6 +7,7 @@ import type {
 } from "../../domain/allocation.js";
 import type {
   CreditAuthorityConflictCode,
+  CreditConsumptionScope,
   ReservedRunBudget,
   SegmentMutationResult,
 } from "./run-budget-authority.js";
@@ -55,6 +56,7 @@ export type RootBudgetReservationRecord = Readonly<{
   authorizationBudgetRef: string;
   ratingPolicyRevisionRef: string;
   executionManifestRef: string;
+  consumptionScope: CreditConsumptionScope;
   businessOperationKey: string;
   requestDigest: string;
   rootCeiling: bigint;
@@ -88,6 +90,7 @@ export type StoredSegmentAllocation = Readonly<{
   budgetAllocationRef: string;
   authorizationSegmentRef: string;
   executionManifestRef: string;
+  consumptionScope: CreditConsumptionScope;
   expiresAt: string;
   allocation: BudgetAllocationRevision;
   segment: AuthorizationSegmentState;
@@ -106,6 +109,7 @@ export interface CreditAuthorityRepository {
     unit: string;
     liabilityMerchantAccountId: string;
     effectiveAt: string;
+    consumptionScope: CreditConsumptionScope;
   }>): Promise<readonly GrantAvailability[]>;
 
   createRootBudgetReservation(

@@ -39,6 +39,7 @@ describe("PostgresCreditAuthorityRepository", () => {
       expect(sql.writeSql()).toContain("INSERT INTO platform.credit_journal_transaction");
       expect(sql.writeSql()).toContain("INSERT INTO platform.credit_journal_entry");
       expect(sql.writeSql()).toContain("INSERT INTO platform.credit_execution_budget_root");
+      expect(sql.writeSql()).toContain("surface_ref,capability_key,agent_ref");
       expect(sql.writeSql()).toContain("INSERT INTO platform.credit_authorization_segment");
       expect(sql.writeSql()).toContain("INSERT INTO platform.outbox_event");
       expect(sql.writeSql()).toContain("INSERT INTO platform.credit_budget_operation_receipt");
@@ -69,9 +70,17 @@ describe("PostgresCreditAuthorityRepository", () => {
         siteId: "site-1", billingAccountId: "billing-1",
         creditAccountId: "00000000-0000-7000-8000-000000000001", unit: "credit_micros",
         liabilityMerchantAccountId: "merchant-1", effectiveAt: NOW,
+        consumptionScope: { surfaceRef: "general.chat", capabilityKey: "general.chat.message", agentRef: null },
       });
       expect(result).toMatchObject([{ availableAmount: 60n }]);
       expect(sql.readSql()).toMatch(/pg_advisory_xact_lock[\s\S]+FROM platform.credit_account[\s\S]+FOR UPDATE[\s\S]+FROM platform.credit_grant[\s\S]+available_amount/u);
+      expect(sql.readSql()).toContain("platform.valid_credit_scope_policy(grant_fact.scope_policy)");
+      expect(sql.readSql()).toContain("grant_fact.scope_policy->'surfaceRefs' ? $5");
+      expect(sql.readSql()).toContain("grant_fact.scope_policy->'capabilityKeys' ? $6");
+      expect(sql.reads.at(-1)?.values).toEqual([
+        "site-1", "00000000-0000-7000-8000-000000000001", "credit_micros", NOW,
+        "general.chat", "general.chat.message", null,
+      ]);
       expect(sql.reads[0]?.values).toEqual(["credit-account|site-1|billing-1|credit_micros|merchant-1"]);
     } finally {
       revokePlatformTransaction(lease);
@@ -204,6 +213,7 @@ function reservation(): RootBudgetReservationRecord {
     liabilityMerchantAccountId: "merchant-1", executionRootId: "run-1",
     authorizationBudgetRef: "policy-1", ratingPolicyRevisionRef: "rating-1",
     executionManifestRef: "manifest-1", businessOperationKey: "reserve:run-1",
+    consumptionScope: { surfaceRef: "general.chat", capabilityKey: "general.chat.message", agentRef: null },
     requestDigest: "a".repeat(64), rootCeiling: 60n, segmentMaximum: 25n,
     expiresAt: "2026-07-29T00:05:00.000Z", occurredAt: NOW,
     creditHoldRef: "00000000-0000-7000-8000-000000000201",
@@ -239,6 +249,7 @@ function storedSegment(state: "committed" | "released" | "reconciliation_require
     budgetAllocationRef: "00000000-0000-7000-8000-000000000203",
     authorizationSegmentRef: "00000000-0000-7000-8000-000000000205",
     executionManifestRef: "manifest-1", expiresAt: "2026-07-29T00:05:00.000Z",
+    consumptionScope: { surfaceRef: "general.chat", capabilityKey: "general.chat.message", agentRef: null },
     allocation: { revision: committed ? 2n : 1n, allocationEpoch: 1n, creditCeiling: 60n,
       unassignedStock: committed ? 35n : 60n, activeChildReservedStock: 0n,
       committedStock: committed ? 25n : 0n, capturedCumulative: 0n,

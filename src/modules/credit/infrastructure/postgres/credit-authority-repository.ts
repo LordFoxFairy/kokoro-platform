@@ -46,6 +46,9 @@ type SegmentRow = Record<string, unknown> & {
   budgetAllocationRef: string;
   authorizationSegmentRef: string;
   executionManifestRef: string;
+  surfaceRef: string;
+  capabilityKey: string;
+  agentRef: string | null;
   expiresAt: Date | string;
   revision: bigint | string;
   allocationEpoch: bigint | string;
@@ -136,11 +139,18 @@ export class PostgresCreditAuthorityRepository implements CreditAuthorityReposit
        WHERE grant_fact.site_ref=$1 AND grant_fact.credit_account_ref=$2::uuid AND grant_fact.unit=$3
          AND grant_fact.effective_at<=$4::timestamptz
          AND (grant_fact.expires_at IS NULL OR grant_fact.expires_at>$4::timestamptz)
+         AND platform.valid_credit_scope_policy(grant_fact.scope_policy)
+         AND grant_fact.scope_policy->'surfaceRefs' ? $5
+         AND grant_fact.scope_policy->'capabilityKeys' ? $6
+         AND (($7::text IS NULL AND grant_fact.scope_policy->>'allowUnattributedAgent'='true')
+           OR ($7::text IS NOT NULL AND grant_fact.scope_policy->'agentRefs' ? $7))
          AND balance.available_amount>0
        ORDER BY grant_fact.expires_at ASC NULLS LAST,grant_fact.burn_priority ASC,
                 grant_fact.issued_at ASC,grant_fact.credit_grant_id ASC
        FOR UPDATE OF grant_fact`,
-      [input.siteId, input.creditAccountId, input.unit, input.effectiveAt],
+      [input.siteId, input.creditAccountId, input.unit, input.effectiveAt,
+        input.consumptionScope.surfaceRef, input.consumptionScope.capabilityKey,
+        input.consumptionScope.agentRef],
     );
     return Object.freeze(rows.map((row) => Object.freeze({
       creditGrantId: row.creditGrantId,
@@ -204,13 +214,14 @@ export class PostgresCreditAuthorityRepository implements CreditAuthorityReposit
       `INSERT INTO platform.credit_execution_budget_root
        (execution_budget_root_ref,site_ref,execution_root_ref,billing_account_ref,credit_account_ref,unit,
         liability_merchant_account_ref,credit_hold_ref,root_allocation_ref,authorization_budget_ref,
-        rating_policy_revision_ref,reserved_ceiling,state,created_at,updated_at)
-       VALUES ($1::uuid,$2,$3,$4,$5::uuid,$6,$7,$8::uuid,$9::uuid,$10,$11,$12::numeric,'open',
-               $13::timestamptz,$13::timestamptz)`,
+        rating_policy_revision_ref,surface_ref,capability_key,agent_ref,reserved_ceiling,state,created_at,updated_at)
+       VALUES ($1::uuid,$2,$3,$4,$5::uuid,$6,$7,$8::uuid,$9::uuid,$10,$11,$12,$13,$14,$15::numeric,'open',
+               $16::timestamptz,$16::timestamptz)`,
       [record.executionBudgetRootRef, record.siteId, record.executionRootId, record.billingAccountId,
         record.creditAccountId, record.unit, record.liabilityMerchantAccountId, record.creditHoldRef,
         record.rootAllocationRef, record.authorizationBudgetRef, record.ratingPolicyRevisionRef,
-        record.rootCeiling.toString(), record.occurredAt],
+        record.consumptionScope.surfaceRef, record.consumptionScope.capabilityKey,
+        record.consumptionScope.agentRef, record.rootCeiling.toString(), record.occurredAt],
     ), "CREDIT_BUDGET_ROOT_PERSIST_FAILED");
     await exactlyOne(sql.execute(
       `INSERT INTO platform.credit_budget_allocation
@@ -432,6 +443,7 @@ const SEGMENT_LOCK_SQL = `SELECT segment.site_ref AS "siteId",segment.billing_ac
        segment.budget_allocation_ref AS "budgetAllocationRef",
        segment.authorization_segment_ref AS "authorizationSegmentRef",
        segment.execution_manifest_ref AS "executionManifestRef",segment.expires_at AS "expiresAt",revision.revision,
+       root.surface_ref AS "surfaceRef",root.capability_key AS "capabilityKey",root.agent_ref AS "agentRef",
        revision.allocation_epoch AS "allocationEpoch",revision.credit_ceiling::text AS "creditCeiling",
        revision.unassigned_stock::text AS "unassignedStock",
        revision.active_child_reserved_stock::text AS "activeChildReservedStock",
@@ -503,6 +515,11 @@ function mapSegment(row: SegmentRow): StoredSegmentAllocation {
     budgetAllocationRef: row.budgetAllocationRef,
     authorizationSegmentRef: row.authorizationSegmentRef,
     executionManifestRef: row.executionManifestRef,
+    consumptionScope: Object.freeze({
+      surfaceRef: row.surfaceRef,
+      capabilityKey: row.capabilityKey,
+      agentRef: row.agentRef,
+    }),
     expiresAt: instant(row.expiresAt),
     allocation: Object.freeze({
       revision: BigInt(row.revision), allocationEpoch: BigInt(row.allocationEpoch),

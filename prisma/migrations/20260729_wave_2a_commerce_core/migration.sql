@@ -99,6 +99,55 @@ CREATE TABLE platform.commerce_catalog_plan_version (
   CHECK((term_action='none' AND term_seconds IS NULL) OR (term_action<>'none' AND term_seconds IS NOT NULL))
 );
 
+CREATE FUNCTION platform.valid_credit_scope_policy(policy JSONB) RETURNS BOOLEAN
+LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE STRICT SET search_path=pg_catalog,platform AS $$
+DECLARE
+  item JSONB;
+BEGIN
+  IF jsonb_typeof(policy) IS DISTINCT FROM 'object'
+     OR policy - ARRAY['version','surfaceRefs','capabilityKeys','agentRefs','allowUnattributedAgent']::TEXT[]
+          IS DISTINCT FROM '{}'::JSONB
+     OR policy->'version' IS DISTINCT FROM '1'::JSONB
+     OR jsonb_typeof(policy->'surfaceRefs') IS DISTINCT FROM 'array'
+     OR jsonb_typeof(policy->'capabilityKeys') IS DISTINCT FROM 'array'
+     OR jsonb_typeof(policy->'agentRefs') IS DISTINCT FROM 'array'
+     OR jsonb_typeof(policy->'allowUnattributedAgent') IS DISTINCT FROM 'boolean'
+     OR jsonb_array_length(policy->'surfaceRefs') NOT BETWEEN 1 AND 256
+     OR jsonb_array_length(policy->'capabilityKeys') NOT BETWEEN 1 AND 256
+     OR jsonb_array_length(policy->'agentRefs') > 256 THEN
+    RETURN FALSE;
+  END IF;
+  FOR item IN
+    SELECT value FROM jsonb_array_elements(
+      (policy->'surfaceRefs') || (policy->'capabilityKeys') || (policy->'agentRefs')
+    )
+  LOOP
+    IF jsonb_typeof(item) IS DISTINCT FROM 'string'
+       OR length(item #>> '{}') NOT BETWEEN 1 AND 256 THEN
+      RETURN FALSE;
+    END IF;
+  END LOOP;
+  IF EXISTS (
+    SELECT 1 FROM jsonb_array_elements_text(policy->'surfaceRefs') value
+    WHERE value !~ '^[a-z0-9][a-z0-9._:-]{0,255}$'
+  ) OR EXISTS (
+    SELECT 1 FROM jsonb_array_elements_text(policy->'capabilityKeys') value
+    WHERE value !~ '^[a-z0-9][a-z0-9._:-]{0,255}$'
+  ) OR EXISTS (
+    SELECT 1 FROM jsonb_array_elements_text(policy->'agentRefs') value
+    WHERE value !~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$'
+  ) OR EXISTS (
+    SELECT 1 FROM jsonb_array_elements_text(policy->'surfaceRefs') value GROUP BY value HAVING count(*)>1
+  ) OR EXISTS (
+    SELECT 1 FROM jsonb_array_elements_text(policy->'capabilityKeys') value GROUP BY value HAVING count(*)>1
+  ) OR EXISTS (
+    SELECT 1 FROM jsonb_array_elements_text(policy->'agentRefs') value GROUP BY value HAVING count(*)>1
+  ) THEN
+    RETURN FALSE;
+  END IF;
+  RETURN TRUE;
+END $$;
+
 CREATE TABLE platform.commerce_credit_program_revision (
   credit_program_revision_ref TEXT PRIMARY KEY CHECK(length(credit_program_revision_ref) BETWEEN 1 AND 256),
   site_ref TEXT NOT NULL REFERENCES platform.authorization_site(site_ref),
@@ -108,7 +157,7 @@ CREATE TABLE platform.commerce_credit_program_revision (
   unit TEXT NOT NULL CHECK(length(unit) BETWEEN 1 AND 64),
   amount NUMERIC(38,0) NOT NULL CHECK(amount > 0),
   burn_priority INTEGER NOT NULL DEFAULT 1000,
-  scope_policy JSONB NOT NULL CHECK(jsonb_typeof(scope_policy)='object'),
+  scope_policy JSONB NOT NULL CHECK(platform.valid_credit_scope_policy(scope_policy)),
   liability_merchant_account_ref TEXT NOT NULL CHECK(length(liability_merchant_account_ref) BETWEEN 1 AND 256),
   window_kind TEXT NOT NULL CHECK(window_kind IN ('none','daily','period')),
   calendar_zone TEXT CHECK(calendar_zone IS NULL OR length(calendar_zone) BETWEEN 1 AND 64),
@@ -535,7 +584,7 @@ CREATE TABLE platform.credit_grant (
   liability_merchant_account_ref TEXT NOT NULL CHECK(length(liability_merchant_account_ref) BETWEEN 1 AND 256),
   original_amount NUMERIC(38,0) NOT NULL CHECK(original_amount > 0),
   burn_priority INTEGER NOT NULL,
-  scope_policy JSONB NOT NULL CHECK(jsonb_typeof(scope_policy)='object'),
+  scope_policy JSONB NOT NULL CHECK(platform.valid_credit_scope_policy(scope_policy)),
   effective_at TIMESTAMPTZ NOT NULL,
   expires_at TIMESTAMPTZ,
   issued_at TIMESTAMPTZ NOT NULL,
@@ -718,6 +767,9 @@ CREATE TABLE platform.credit_execution_budget_root (
   root_allocation_ref UUID NOT NULL,
   authorization_budget_ref TEXT NOT NULL CHECK(length(authorization_budget_ref) BETWEEN 1 AND 256),
   rating_policy_revision_ref TEXT NOT NULL CHECK(length(rating_policy_revision_ref) BETWEEN 1 AND 256),
+  surface_ref TEXT NOT NULL CHECK(length(surface_ref) BETWEEN 1 AND 256),
+  capability_key TEXT NOT NULL CHECK(length(capability_key) BETWEEN 1 AND 256),
+  agent_ref TEXT CHECK(agent_ref IS NULL OR length(agent_ref) BETWEEN 1 AND 256),
   reserved_ceiling NUMERIC(38,0) NOT NULL CHECK(reserved_ceiling > 0),
   state TEXT NOT NULL CHECK(state IN ('open','closing','settled','reconciliation_required')),
   aggregate_version BIGINT NOT NULL DEFAULT 1 CHECK(aggregate_version > 0),
@@ -1939,12 +1991,12 @@ BEGIN
   IF ROW(OLD.execution_budget_root_ref,OLD.site_ref,OLD.execution_root_ref,OLD.billing_account_ref,
          OLD.credit_account_ref,OLD.unit,OLD.liability_merchant_account_ref,OLD.credit_hold_ref,
          OLD.root_allocation_ref,OLD.authorization_budget_ref,OLD.rating_policy_revision_ref,
-         OLD.reserved_ceiling,OLD.created_at)
+         OLD.surface_ref,OLD.capability_key,OLD.agent_ref,OLD.reserved_ceiling,OLD.created_at)
      IS DISTINCT FROM
      ROW(NEW.execution_budget_root_ref,NEW.site_ref,NEW.execution_root_ref,NEW.billing_account_ref,
          NEW.credit_account_ref,NEW.unit,NEW.liability_merchant_account_ref,NEW.credit_hold_ref,
          NEW.root_allocation_ref,NEW.authorization_budget_ref,NEW.rating_policy_revision_ref,
-         NEW.reserved_ceiling,NEW.created_at)
+         NEW.surface_ref,NEW.capability_key,NEW.agent_ref,NEW.reserved_ceiling,NEW.created_at)
      OR NEW.aggregate_version<>OLD.aggregate_version+1 THEN
     RAISE EXCEPTION 'CREDIT_EXECUTION_BUDGET_ROOT_CAS_FAILED' USING ERRCODE='40001';
   END IF;
@@ -2209,6 +2261,7 @@ REVOKE ALL ON
   platform.commerce_command_outbox,
   platform.commerce_audit_entry
 FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.valid_credit_scope_policy(JSONB) FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.reject_commerce_immutable_mutation() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.assert_commerce_output_plan_contiguous() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.guard_commerce_command_update() FROM PUBLIC;

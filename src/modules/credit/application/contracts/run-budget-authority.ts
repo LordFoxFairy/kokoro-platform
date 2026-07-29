@@ -27,6 +27,12 @@ export type CreditAuthorityOutcome<T> =
   | Readonly<{ kind: "insufficient_credit" }>
   | Readonly<{ kind: "reconciliation_required"; value: SegmentMutationResult }>;
 
+export type CreditConsumptionScope = Readonly<{
+  surfaceRef: string;
+  capabilityKey: string;
+  agentRef: string | null;
+}>;
+
 export interface RunBudgetAuthority {
   reserveRootBudget(transaction: PlatformTransaction, input: Readonly<{
     siteId: string;
@@ -38,6 +44,7 @@ export interface RunBudgetAuthority {
     authorizationBudgetRef: string;
     ratingPolicyRevisionRef: string;
     executionManifestRef: string;
+    consumptionScope: CreditConsumptionScope;
     businessOperationKey: string;
     requestDigest: string;
     rootCeiling: bigint;

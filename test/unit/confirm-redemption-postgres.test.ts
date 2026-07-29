@@ -478,7 +478,10 @@ function creditOutput() {
     outputLineId: "credits", outputKind: "credit_grant" as const, ordinal: 0, cardinality: 1,
     planVersionRef: null, creditProgramRevisionRef: "credit-v1", bucketClass: "period" as const,
     unit: "credit", amount: "100", creditExpiresAfterSeconds: 86400n,
-    liabilityMerchantAccountId: "merchant-1", burnPriority: 100, scopePolicy: { surfaces: ["chat"] },
+    liabilityMerchantAccountId: "merchant-1", burnPriority: 100, scopePolicy: {
+      version: 1, surfaceRefs: ["general.chat"], capabilityKeys: ["general.chat.message"],
+      agentRefs: [], allowUnattributedAgent: true,
+    },
     entitlementTemplateRevisionRef: null, capabilityKey: null, safeLabel: null,
     entitlementExpiresAfterSeconds: null,
   };

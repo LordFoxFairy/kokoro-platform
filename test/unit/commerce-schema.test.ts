@@ -85,6 +85,17 @@ describe("Wave 2A Commerce authority schema", () => {
     expect(migration).not.toMatch(/available_delta|held_delta|consumed_delta/iu);
   });
 
+  it("fails closed on malformed Grant scope policy and binds the admitted scope to the budget root", () => {
+    expect(migration).toContain("CREATE FUNCTION platform.valid_credit_scope_policy");
+    expect(migration).toContain("surfaceRefs");
+    expect(migration).toContain("capabilityKeys");
+    expect(migration).toContain("allowUnattributedAgent");
+    expect(migration).toContain("scope_policy JSONB NOT NULL CHECK(platform.valid_credit_scope_policy(scope_policy))");
+    expect(compactMigration).toContain("surface_ref TEXT NOT NULL");
+    expect(compactMigration).toContain("capability_key TEXT NOT NULL");
+    expect(compactMigration).toContain("agent_ref TEXT CHECK");
+  });
+
   it("binds each Hold allocation and Journal entry to one exact Site Account and unit", () => {
     expect(compactMigration).toContain(
       "FOREIGN KEY(credit_account_ref,site_ref,billing_account_ref,unit,liability_merchant_account_ref) REFERENCES platform.credit_account",

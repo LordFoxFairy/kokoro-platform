@@ -57,6 +57,7 @@ export class CreditService implements RunBudgetAuthority {
       unit: input.unit,
       liabilityMerchantAccountId: input.liabilityMerchantAccountId,
       effectiveAt: occurredAt,
+      consumptionScope: input.consumptionScope,
     });
     let allocations;
     try {
@@ -202,6 +203,7 @@ export class CreditService implements RunBudgetAuthority {
 }
 
 function validateReservation(input: Parameters<RunBudgetAuthority["reserveRootBudget"]>[1]): void {
+  validateConsumptionScope(input.consumptionScope);
   [input.siteId, input.billingAccountId, input.creditAccountId, input.unit,
     input.liabilityMerchantAccountId, input.executionRootId, input.authorizationBudgetRef,
     input.ratingPolicyRevisionRef, input.executionManifestRef, input.businessOperationKey]
@@ -211,6 +213,15 @@ function validateReservation(input: Parameters<RunBudgetAuthority["reserveRootBu
     throw new Error("CREDIT_RESERVATION_AMOUNT_INVALID");
   }
   instant(input.expiresAt);
+}
+
+function validateConsumptionScope(scope: Parameters<RunBudgetAuthority["reserveRootBudget"]>[1]["consumptionScope"]): void {
+  const key = /^[a-z0-9][a-z0-9._:-]{0,255}$/u;
+  const reference = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/u;
+  if (!key.test(scope.surfaceRef) || !key.test(scope.capabilityKey) ||
+    (scope.agentRef !== null && !reference.test(scope.agentRef))) {
+    throw new Error("CREDIT_CONSUMPTION_SCOPE_INVALID");
+  }
 }
 
 function validateSegmentCommand(input: SegmentCommand): void {

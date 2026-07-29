@@ -26,6 +26,9 @@ describe("CreditService", () => {
       ]);
       expect(repository.reservation?.rootCeiling).toBe(60n);
       expect(repository.reservation?.segmentMaximum).toBe(25n);
+      expect(repository.grantLockInput?.consumptionScope).toEqual({
+        surfaceRef: "general.chat", capabilityKey: "general.chat.message", agentRef: null,
+      });
     } finally {
       revokePlatformTransaction(lease);
     }
@@ -214,6 +217,21 @@ describe("CreditService", () => {
     }
   });
 
+  it("fails closed on an incomplete or malformed consumption scope before locking grants", async () => {
+    const repository = new RecordingCreditRepository();
+    const lease = transactionLease();
+    try {
+      await expect(creditService(repository).reserveRootBudget(lease.transaction, {
+        ...reserveInput(), consumptionScope: {
+          surfaceRef: "general.chat", capabilityKey: "general.chat.message", agentRef: "",
+        },
+      })).resolves.toEqual({ kind: "invalid_state", code: "CREDIT_CONSUMPTION_SCOPE_INVALID" });
+      expect(repository.grantLockCount).toBe(0);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
   it("rejects Finalize at or after Segment expiry", async () => {
     const repository = new RecordingCreditRepository();
     repository.loaded = { ...storedSegment(), expiresAt: "2026-07-29T00:00:00.000Z" };
@@ -236,9 +254,17 @@ class RecordingCreditRepository implements CreditAuthorityRepository {
   operation: Awaited<ReturnType<CreditAuthorityRepository["findOperationReceipt"]>> = { kind: "none" };
   grantLockCount = 0;
   segmentLockCount = 0;
+  grantLockInput: Parameters<CreditAuthorityRepository["lockGrantAvailability"]>[1] | null = null;
 
   async findOperationReceipt(): Promise<typeof this.operation> { return this.operation; }
-  async lockGrantAvailability(): Promise<typeof this.grants> { this.grantLockCount += 1; return this.grants; }
+  async lockGrantAvailability(
+    _transaction: Parameters<CreditAuthorityRepository["lockGrantAvailability"]>[0],
+    input: Parameters<CreditAuthorityRepository["lockGrantAvailability"]>[1],
+  ): Promise<typeof this.grants> {
+    this.grantLockCount += 1;
+    this.grantLockInput = input;
+    return this.grants;
+  }
   async createRootBudgetReservation(_transaction: never, record: RootBudgetReservationRecord) {
     this.reservation = record;
     return { kind: "accepted" as const, value: { executionBudgetRootRef: record.executionBudgetRootRef, creditHoldRef: record.creditHoldRef,
@@ -284,6 +310,7 @@ function reserveInput() {
     unit: "credit_micros", liabilityMerchantAccountId: "merchant-1", executionRootId: "run-1",
     authorizationBudgetRef: "budget-policy-1", ratingPolicyRevisionRef: "rating-1",
     executionManifestRef: "manifest-1", businessOperationKey: "prepare:launch-1", requestDigest: "a".repeat(64),
+    consumptionScope: { surfaceRef: "general.chat", capabilityKey: "general.chat.message", agentRef: null },
     rootCeiling: 60n, segmentMaximum: 25n, expiresAt: "2026-07-29T00:05:00.000Z",
   } as const;
 }
@@ -303,6 +330,7 @@ function storedSegment(state: "reserved" | "committed" = "reserved"): StoredSegm
     creditHoldRef: "hold-1", creditHoldState: "open", creditHoldFenceEpoch: 1n,
     budgetAllocationRef: "allocation-1", authorizationSegmentRef: "segment-1",
     executionManifestRef: "manifest-1", expiresAt: "2026-07-29T00:05:00.000Z",
+    consumptionScope: { surfaceRef: "general.chat", capabilityKey: "general.chat.message", agentRef: null },
     allocation: { revision: committed ? 2n : 1n, allocationEpoch: 1n, creditCeiling: 100n,
       unassignedStock: committed ? 75n : 100n, activeChildReservedStock: 0n,
       committedStock: committed ? 25n : 0n, capturedCumulative: 0n,

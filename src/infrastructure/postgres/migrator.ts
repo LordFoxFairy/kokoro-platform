@@ -279,7 +279,7 @@ async function grantFoundationPrivileges(
     );
     await client.query(`REVOKE ALL ON TABLE ${PLATFORM_RUNTIME_TABLES} FROM ${identifier}`);
     await client.query(
-      `REVOKE ALL ON FUNCTION platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT), platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID), platform.report_model_provider_availability(UUID, TEXT, TEXT, TEXT, BIGINT, TEXT, TIMESTAMPTZ, TEXT), platform.load_model_option_inventory(TEXT), platform.load_model_option_revisions(TEXT[]), platform.materialize_legacy_model_options(UUID, TEXT, TEXT, TEXT, TEXT, JSONB, JSONB, TEXT), platform.publish_site_release_model_catalog(UUID, JSONB, TEXT), platform.resolve_product_model_option_catalog(TEXT, TEXT) FROM ${identifier}`,
+      `REVOKE ALL ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT), platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID), platform.report_model_provider_availability(UUID, TEXT, TEXT, TEXT, BIGINT, TEXT, TIMESTAMPTZ, TEXT), platform.load_model_option_inventory(TEXT), platform.load_model_option_revisions(TEXT[]), platform.materialize_legacy_model_options(UUID, TEXT, TEXT, TEXT, TEXT, JSONB, JSONB, TEXT), platform.publish_site_release_model_catalog(UUID, JSONB, TEXT), platform.resolve_product_model_option_catalog(TEXT, TEXT) FROM ${identifier}`,
     );
     if (role === apiRole) {
       await client.query(
@@ -311,7 +311,7 @@ async function grantFoundationPrivileges(
         `GRANT UPDATE ON TABLE platform.commerce_command, platform.commerce_subscription, platform.commerce_redeem_code, platform.commerce_redemption, platform.commerce_redemption_preview, platform.credit_account, platform.credit_hold, platform.credit_execution_budget_root, platform.credit_authorization_segment, platform.commerce_fulfillment_transaction TO ${identifier}`,
       );
       await client.query(
-        `GRANT EXECUTE ON FUNCTION platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID), platform.resolve_product_model_option_catalog(TEXT, TEXT) TO ${identifier}`,
+        `GRANT EXECUTE ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID), platform.resolve_product_model_option_catalog(TEXT, TEXT) TO ${identifier}`,
       );
     } else if (role === authorizationRole) {
       await client.query(
@@ -348,6 +348,9 @@ async function grantFoundationPrivileges(
       );
       await client.query(
         `GRANT EXECUTE ON FUNCTION platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT), platform.load_model_option_inventory(TEXT), platform.load_model_option_revisions(TEXT[]), platform.materialize_legacy_model_options(UUID, TEXT, TEXT, TEXT, TEXT, JSONB, JSONB, TEXT), platform.publish_site_release_model_catalog(UUID, JSONB, TEXT) TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT EXECUTE ON FUNCTION platform.valid_credit_scope_policy(JSONB) TO ${identifier}`,
       );
     }
   }
@@ -541,6 +544,7 @@ async function assertPostMigrationAuthority(
         row.canExecuteModelCandidatesProjection !== (row.roleName === apiRole) ||
         row.canExecuteModelDecisionProjection !== (row.roleName === apiRole) ||
         row.canExecuteModelAvailabilityReport !== (row.roleName === workerRole) ||
+        row.canExecuteCreditScopePolicy !== (row.roleName === apiRole || row.roleName === adminRole) ||
         row.hasRequiredModelOptionFunctions !== true ||
         row.canSelectModelCatalogTable !== false ||
         row.canReadModelSensitiveColumn !== false ||
@@ -675,6 +679,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            AS "canExecuteModelDecisionProjection"
          ,has_function_privilege(runtime_role.rolname, 'platform.report_model_provider_availability(uuid,text,text,text,bigint,text,timestamptz,text)', 'EXECUTE')
            AS "canExecuteModelAvailabilityReport"
+         ,has_function_privilege(runtime_role.rolname, 'platform.valid_credit_scope_policy(jsonb)', 'EXECUTE')
+           AS "canExecuteCreditScopePolicy"
          ,CASE WHEN runtime_role.rolname=$1 THEN
             has_function_privilege(runtime_role.rolname,'platform.resolve_product_model_option_catalog(text,text)','EXECUTE')
           WHEN runtime_role.rolname=$4 THEN
