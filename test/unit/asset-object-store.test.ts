@@ -93,7 +93,7 @@ describe("S3AssetObjectStore exact cleanup", () => {
 });
 
 describe("S3AssetObjectStore multipart data plane", () => {
-  it("classifies an ambiguous create transport result separately from deterministic provider rejection", async () => {
+  it("classifies ambiguous create transport separately from definitely rejected HTTP evidence", async () => {
     const ambiguous = new S3AssetObjectStore([route], () => ({
       send: vi.fn().mockRejectedValue(new Error("socket_timeout")),
     } as never));
@@ -106,7 +106,10 @@ describe("S3AssetObjectStore multipart data plane", () => {
     })).rejects.toBeInstanceOf(AssetMultipartProviderOutcomeUnknownError);
 
     const rejected = new S3AssetObjectStore([route], () => ({
-      send: vi.fn().mockResolvedValue({ UploadId: "" }),
+      send: vi.fn().mockRejectedValue(Object.assign(new Error("access denied"), {
+        name: "AccessDenied",
+        $metadata: { httpStatusCode: 403 },
+      })),
     } as never));
     await expect(rejected.initiate({
       storageTenantRef: route.storageTenantRef,
@@ -115,6 +118,30 @@ describe("S3AssetObjectStore multipart data plane", () => {
       uploadRef: "multipart_upload_01",
       signal: new AbortController().signal,
     })).rejects.toBeInstanceOf(AssetMultipartProviderRejectedError);
+  });
+
+  it("keeps malformed success and retryable HTTP responses unknown because create was submitted", async () => {
+    for (const response of [
+      { kind: "resolved", value: { UploadId: "" } },
+      { kind: "rejected", value: Object.assign(new Error("request timeout"), {
+        name: "RequestTimeout", $metadata: { httpStatusCode: 408 },
+      }) },
+      { kind: "rejected", value: Object.assign(new Error("provider unavailable"), {
+        name: "ServiceUnavailable", $metadata: { httpStatusCode: 503 },
+      }) },
+    ] as const) {
+      const send = response.kind === "resolved"
+        ? vi.fn().mockResolvedValue(response.value)
+        : vi.fn().mockRejectedValue(response.value);
+      const store = new S3AssetObjectStore([route], () => ({ send } as never));
+      await expect(store.initiate({
+        storageTenantRef: route.storageTenantRef,
+        storageRegion: route.storageRegion,
+        objectRef: "quarantine/opaque_0123456789",
+        uploadRef: "multipart_upload_01",
+        signal: new AbortController().signal,
+      })).rejects.toBeInstanceOf(AssetMultipartProviderOutcomeUnknownError);
+    }
   });
 
   it("passes the effect deadline to S3 and tears down the body when it expires", async () => {

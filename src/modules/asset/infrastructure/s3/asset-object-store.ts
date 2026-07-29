@@ -92,12 +92,21 @@ export class S3AssetObjectStore implements
         Metadata: { "kokoro-upload-ref": input.uploadRef },
       }), { abortSignal: input.signal });
     } catch (error) {
+      if (definitelyRejectedProviderWrite(error)) {
+        throw new AssetMultipartProviderRejectedError(
+          "ASSET_MULTIPART_INITIATION_REJECTED", { cause: error },
+        );
+      }
       throw new AssetMultipartProviderOutcomeUnknownError("ASSET_MULTIPART_INITIATION_OUTCOME_UNKNOWN", {
         cause: error,
       });
     }
     if (output.UploadId === undefined || output.UploadId.length < 1 || output.UploadId.length > 2_048) {
-      throw new AssetMultipartProviderRejectedError("ASSET_MULTIPART_PROVIDER_ID_INVALID");
+      // A malformed 2xx response still proves submission, not rejection. Reconciliation may
+      // discover the upload later; a second Create must never be issued from this outcome.
+      throw new AssetMultipartProviderOutcomeUnknownError(
+        "ASSET_MULTIPART_PROVIDER_ID_UNOBSERVED",
+      );
     }
     return output.UploadId;
   }
@@ -585,6 +594,29 @@ function noSuchUpload(error: unknown): boolean {
   const candidate = error as { name?: unknown; Code?: unknown; code?: unknown };
   return candidate.name === "NoSuchUpload" || candidate.Code === "NoSuchUpload" ||
     candidate.code === "NoSuchUpload";
+}
+
+function definitelyRejectedProviderWrite(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const candidate = error as {
+    name?: unknown;
+    Code?: unknown;
+    code?: unknown;
+    $metadata?: { httpStatusCode?: unknown };
+  };
+  const name = [candidate.name, candidate.Code, candidate.code]
+    .find((value): value is string => typeof value === "string");
+  if (name !== undefined && new Set([
+    "AccessDenied",
+    "InvalidAccessKeyId",
+    "InvalidBucketName",
+    "InvalidRequest",
+    "NoSuchBucket",
+    "SignatureDoesNotMatch",
+  ]).has(name)) return true;
+  const status = candidate.$metadata?.httpStatusCode;
+  return typeof status === "number" && Number.isInteger(status) &&
+    status >= 400 && status < 500 && ![408, 425, 429].includes(status);
 }
 
 function isDeterministicSizeFailure(error: unknown): boolean {

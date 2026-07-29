@@ -133,6 +133,40 @@ describe("AssetMultipartService", () => {
     expect(repository.releaseInitiation).not.toHaveBeenCalled();
   });
 
+  it("never submits CreateMultipartUpload while reconciling an unknown prior submission", async () => {
+    const unknownOwned = initiationSnapshot("owned_effect_token_01", "outcome_unknown");
+    const unknownReleased = initiationSnapshot(null, "outcome_unknown");
+    const repository = {
+      claimInitiation: vi.fn().mockResolvedValue(unknownOwned),
+      releaseInitiation: vi.fn().mockResolvedValue(unknownReleased),
+      recordInitiated: vi.fn(),
+      recordInitiationUnknown: vi.fn(),
+    } as unknown as AssetMultipartRepositoryPort;
+    const store = {
+      recoverInitiation: vi.fn().mockResolvedValue(null),
+      initiate: vi.fn(),
+    } as unknown as AssetMultipartStorePort;
+    const service = new AssetMultipartService({
+      unitOfWork: unitOfWork(), repository, store,
+      reference: references([
+        "owned_effect_token_01", "multipart_upload_01", "initiation_receipt_01",
+      ]),
+      clock: () => new Date("2026-07-29T12:01:00.000Z"),
+    });
+
+    await expect(service.initiate({
+      claims,
+      clientUploadId: "client_upload_0001",
+      idempotencyKey: "initiation-key-0001",
+    })).resolves.toMatchObject({
+      upload: { state: "outcome_unknown", initiationEffectToken: null },
+    });
+    expect(store.recoverInitiation).toHaveBeenCalledOnce();
+    expect(store.initiate).not.toHaveBeenCalled();
+    expect(repository.releaseInitiation).toHaveBeenCalledOnce();
+    expect(repository.recordInitiationUnknown).not.toHaveBeenCalled();
+  });
+
   it("durably rejects a completed object with deterministic integrity mismatch", async () => {
     const uploading = snapshot("uploading", 1n);
     const completing = snapshot("completing", 2n);

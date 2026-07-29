@@ -69,10 +69,25 @@ export class AssetMultipartService {
       const recovered = await this.dependencies.store.recoverInitiation({
         ...route(input.claims), signal,
       });
+      if (recovered === null && upload.state === "outcome_unknown" &&
+          upload.outcomeOperation === "initiate") {
+        // List absence is not proof that a timed-out CreateMultipartUpload was never accepted.
+        // Releasing only this reconciliation lease preserves the unknown durable state and makes
+        // duplicate provider submissions impossible.
+        return this.dependencies.unitOfWork.execute(
+          input.claims,
+          "asset.multipart.initiate",
+          (transaction) => this.dependencies.repository.releaseInitiation(transaction, {
+            claims: input.claims,
+            uploadRef: upload.uploadRef,
+            expectedVersion: upload.expectedVersion,
+            effectToken,
+            now: this.now(),
+          }),
+        );
+      }
       const providerUploadId = recovered ?? await this.dependencies.store.initiate({
-        ...route(input.claims),
-        uploadRef: upload.uploadRef,
-        signal,
+        ...route(input.claims), uploadRef: upload.uploadRef, signal,
       });
       snapshot = await this.dependencies.unitOfWork.execute(
         input.claims,
