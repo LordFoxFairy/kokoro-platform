@@ -122,6 +122,58 @@ CREATE TABLE platform.asset_quota_reservation (
 CREATE INDEX asset_quota_reservation_owner_idx
   ON platform.asset_quota_reservation(site_ref,subject_ref,purpose,state,expires_at);
 
+CREATE TABLE platform.asset_blob_candidate (
+  candidate_ref TEXT PRIMARY KEY,
+  site_ref TEXT NOT NULL,
+  subject_ref TEXT NOT NULL,
+  subject_generation BIGINT NOT NULL CHECK (subject_generation > 0),
+  project_ref TEXT NOT NULL,
+  purpose TEXT NOT NULL CHECK (length(purpose) BETWEEN 1 AND 128),
+  intent_ref TEXT NOT NULL UNIQUE,
+  session_ref TEXT NOT NULL UNIQUE,
+  storage_tenant_ref TEXT NOT NULL,
+  storage_region TEXT NOT NULL,
+  quarantine_object_ref TEXT NOT NULL,
+  provider_version_ref TEXT NOT NULL,
+  provider_etag_digest CHAR(64) NOT NULL CHECK (provider_etag_digest ~ '^[a-f0-9]{64}$'),
+  observed_size BIGINT NOT NULL CHECK (observed_size > 0),
+  checksum_sha256 CHAR(64) NOT NULL CHECK (checksum_sha256 ~ '^[a-f0-9]{64}$'),
+  client_media_type TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('checksum_verified','scanning','clean','rejected')),
+  expected_version BIGINT NOT NULL CHECK (expected_version > 0),
+  completion_requested_at TIMESTAMPTZ NOT NULL,
+  observed_at TIMESTAMPTZ NOT NULL,
+  scan_event_id UUID NOT NULL UNIQUE REFERENCES platform.outbox_event(event_id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  FOREIGN KEY(site_ref,intent_ref)
+    REFERENCES platform.asset_upload_intent(site_ref,intent_ref),
+  FOREIGN KEY(site_ref,session_ref)
+    REFERENCES platform.asset_upload_session(site_ref,session_ref),
+  FOREIGN KEY(subject_ref,site_ref)
+    REFERENCES platform.authorization_subject(subject_ref,site_ref),
+  FOREIGN KEY(project_ref,site_ref)
+    REFERENCES platform.authorization_project(project_ref,site_ref),
+  UNIQUE(storage_tenant_ref,storage_region,quarantine_object_ref,provider_version_ref),
+  CHECK (observed_at >= completion_requested_at)
+);
+CREATE INDEX asset_blob_candidate_scan_idx
+  ON platform.asset_blob_candidate(site_ref,state,observed_at);
+
+CREATE TABLE platform.asset_upload_rejection (
+  rejection_ref UUID PRIMARY KEY,
+  site_ref TEXT NOT NULL,
+  intent_ref TEXT NOT NULL UNIQUE,
+  session_ref TEXT NOT NULL UNIQUE,
+  reason_code TEXT NOT NULL CHECK (length(reason_code) BETWEEN 1 AND 128),
+  cleanup_event_id UUID NOT NULL UNIQUE REFERENCES platform.outbox_event(event_id),
+  rejected_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  FOREIGN KEY(site_ref,intent_ref)
+    REFERENCES platform.asset_upload_intent(site_ref,intent_ref),
+  FOREIGN KEY(site_ref,session_ref)
+    REFERENCES platform.asset_upload_session(site_ref,session_ref)
+);
+
 CREATE FUNCTION platform.guard_asset_upload_intent_update() RETURNS TRIGGER
 LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
 BEGIN
@@ -142,6 +194,12 @@ BEGIN
     RAISE EXCEPTION 'ASSET_UPLOAD_INTENT_TRANSITION_INVALID' USING ERRCODE='23514';
   END IF;
   RETURN NEW;
+END $$;
+
+CREATE FUNCTION platform.reject_asset_immutable_mutation() RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
+BEGIN
+  RAISE EXCEPTION 'ASSET_IMMUTABLE_FACT' USING ERRCODE='23000';
 END $$;
 
 CREATE FUNCTION platform.guard_asset_upload_session_update() RETURNS TRIGGER
@@ -199,6 +257,10 @@ ALTER TABLE platform.asset_quota_account ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform.asset_quota_account FORCE ROW LEVEL SECURITY;
 ALTER TABLE platform.asset_quota_reservation ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform.asset_quota_reservation FORCE ROW LEVEL SECURITY;
+ALTER TABLE platform.asset_blob_candidate ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.asset_blob_candidate FORCE ROW LEVEL SECURITY;
+ALTER TABLE platform.asset_upload_rejection ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.asset_upload_rejection FORCE ROW LEVEL SECURITY;
 CREATE POLICY asset_upload_intent_site_scope ON platform.asset_upload_intent
   USING(site_ref=NULLIF(current_setting('app.site_id',true),'')
     AND (subject_ref=NULLIF(current_setting('app.subject_id',true),'')
@@ -251,6 +313,28 @@ CREATE POLICY asset_quota_reservation_site_scope ON platform.asset_quota_reserva
         AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker')
       OR (current_setting('app.workload_kind',true)='admin_workload'
         AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:admin')));
+CREATE POLICY asset_blob_candidate_worker_scope ON platform.asset_blob_candidate
+  USING(site_ref=NULLIF(current_setting('app.site_id',true),'')
+    AND ((current_setting('app.workload_kind',true)='platform_worker'
+      AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker')
+    OR (current_setting('app.workload_kind',true)='admin_workload'
+      AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:admin')))
+  WITH CHECK(site_ref=NULLIF(current_setting('app.site_id',true),'')
+    AND ((current_setting('app.workload_kind',true)='platform_worker'
+      AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker')
+    OR (current_setting('app.workload_kind',true)='admin_workload'
+      AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:admin')));
+CREATE POLICY asset_upload_rejection_worker_scope ON platform.asset_upload_rejection
+  USING(site_ref=NULLIF(current_setting('app.site_id',true),'')
+    AND ((current_setting('app.workload_kind',true)='platform_worker'
+      AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker')
+    OR (current_setting('app.workload_kind',true)='admin_workload'
+      AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:admin')))
+  WITH CHECK(site_ref=NULLIF(current_setting('app.site_id',true),'')
+    AND ((current_setting('app.workload_kind',true)='platform_worker'
+      AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:worker')
+    OR (current_setting('app.workload_kind',true)='admin_workload'
+      AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:admin')));
 
 CREATE TRIGGER asset_upload_intent_update_guard
   BEFORE UPDATE ON platform.asset_upload_intent
@@ -258,12 +342,18 @@ CREATE TRIGGER asset_upload_intent_update_guard
 CREATE TRIGGER asset_upload_session_update_guard
   BEFORE UPDATE ON platform.asset_upload_session
   FOR EACH ROW EXECUTE FUNCTION platform.guard_asset_upload_session_update();
+CREATE TRIGGER asset_upload_rejection_immutable
+  BEFORE UPDATE OR DELETE ON platform.asset_upload_rejection
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_asset_immutable_mutation();
 
 REVOKE ALL ON
   platform.asset_upload_intent,
   platform.asset_upload_session,
   platform.asset_quota_account,
-  platform.asset_quota_reservation
+  platform.asset_quota_reservation,
+  platform.asset_blob_candidate,
+  platform.asset_upload_rejection
 FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.guard_asset_upload_intent_update() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.guard_asset_upload_session_update() FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.reject_asset_immutable_mutation() FROM PUBLIC;

@@ -1,7 +1,10 @@
 import { assertDigest } from "../../../../shared/outbox-inbox/receipt.js";
+import type { OutboxEvent } from "../../../../shared/outbox-inbox/outbox.js";
 import { resolvePlatformTransaction, type PlatformSqlTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
 import type { AssetUploadRepositoryPort, ClaimUploadIntentResult } from "../../application/contracts/asset-upload-ports.js";
 import type { AssetUploadCompletionRepositoryPort } from "../../application/contracts/asset-upload-completion-ports.js";
+import type { AssetCompletionWorkerRepositoryPort } from
+  "../../application/contracts/asset-completion-worker-ports.js";
 import {
   verifyUploadIntent,
   verifyUploadSession,
@@ -9,7 +12,8 @@ import {
   type AssetUploadSession,
 } from "../../domain/upload-intent.js";
 
-export class PostgresAssetUploadRepository implements AssetUploadRepositoryPort, AssetUploadCompletionRepositoryPort {
+export class PostgresAssetUploadRepository implements AssetUploadRepositoryPort,
+  AssetUploadCompletionRepositoryPort, AssetCompletionWorkerRepositoryPort {
   async claimUploadIntent(
     transaction: Parameters<AssetUploadRepositoryPort["claimUploadIntent"]>[0],
     input: Parameters<AssetUploadRepositoryPort["claimUploadIntent"]>[1],
@@ -147,6 +151,139 @@ export class PostgresAssetUploadRepository implements AssetUploadRepositoryPort,
     if (!session) throw new Error("ASSET_UPLOAD_COMPLETION_CONFLICT");
     return hydrateSession(session);
   }
+
+  async loadCompletionWork(
+    transaction: Parameters<AssetCompletionWorkerRepositoryPort["loadCompletionWork"]>[0],
+    input: Parameters<AssetCompletionWorkerRepositoryPort["loadCompletionWork"]>[1],
+  ): ReturnType<AssetCompletionWorkerRepositoryPort["loadCompletionWork"]> {
+    const pair = await loadByIntent(resolvePlatformTransaction(transaction), input.siteRef, input.intentRef);
+    if (pair === null || pair.session.sessionRef !== input.sessionRef) {
+      return Object.freeze({ disposition: "superseded" });
+    }
+    if (["completed", "aborted", "rejected"].includes(pair.session.state)) {
+      return Object.freeze({ disposition: "terminal" });
+    }
+    if (
+      pair.session.expectedVersion !== input.expectedVersion ||
+      (pair.session.state !== "completing" && pair.session.state !== "reconciling_upload")
+    ) return Object.freeze({ disposition: "superseded" });
+    return Object.freeze({ disposition: "work", intent: pair.intent, session: pair.session });
+  }
+
+  async commitCandidate(
+    transaction: Parameters<AssetCompletionWorkerRepositoryPort["commitCandidate"]>[0],
+    input: Parameters<AssetCompletionWorkerRepositoryPort["commitCandidate"]>[1],
+  ): ReturnType<AssetCompletionWorkerRepositoryPort["commitCandidate"]> {
+    const sql = resolvePlatformTransaction(transaction);
+    const changed = await sql.execute(
+      `UPDATE platform.asset_upload_session
+       SET state='validating',expected_version=expected_version+1,updated_at=now()
+       WHERE site_ref=$1 AND intent_ref=$2 AND session_ref=$3
+         AND expected_version=$4::bigint AND state IN ('completing','reconciling_upload')`,
+      [input.candidate.siteRef, input.candidate.intentRef, input.candidate.sessionRef,
+        input.expectedSessionVersion],
+    );
+    if (changed !== 1) return "superseded";
+    await enqueue(sql, input.scanEvent);
+    const inserted = await sql.execute(
+      `INSERT INTO platform.asset_blob_candidate
+       (candidate_ref,site_ref,subject_ref,subject_generation,project_ref,purpose,intent_ref,
+        session_ref,storage_tenant_ref,storage_region,quarantine_object_ref,provider_version_ref,
+        provider_etag_digest,observed_size,checksum_sha256,client_media_type,state,
+        expected_version,completion_requested_at,observed_at,scan_event_id)
+       VALUES ($1,$2,$3,$4::bigint,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::bigint,$15,$16,
+         $17,$18::bigint,$19::timestamptz,$20::timestamptz,$21::uuid)`,
+      [input.candidate.candidateRef, input.candidate.siteRef, input.candidate.subjectRef,
+        input.candidate.subjectGeneration, input.candidate.projectRef, input.candidate.purpose,
+        input.candidate.intentRef, input.candidate.sessionRef, input.candidate.storageTenantRef,
+        input.candidate.storageRegion, input.candidate.quarantineObjectRef,
+        input.candidate.providerVersionRef, input.candidate.providerEtagDigest,
+        input.candidate.observedSize, input.candidate.checksumSha256,
+        input.candidate.clientMediaType, input.candidate.state, input.candidate.expectedVersion,
+        input.candidate.completionRequestedAt, input.candidate.observedAt, input.scanEvent.eventId],
+    );
+    if (inserted !== 1) throw new Error("ASSET_BLOB_CANDIDATE_NOT_PERSISTED");
+    return "committed";
+  }
+
+  async rejectCompletion(
+    transaction: Parameters<AssetCompletionWorkerRepositoryPort["rejectCompletion"]>[0],
+    input: Parameters<AssetCompletionWorkerRepositoryPort["rejectCompletion"]>[1],
+  ): ReturnType<AssetCompletionWorkerRepositoryPort["rejectCompletion"]> {
+    const sql = resolvePlatformTransaction(transaction);
+    const pair = await loadByIntent(sql, input.siteRef, input.intentRef);
+    if (pair === null || pair.session.sessionRef !== input.sessionRef) return "superseded";
+    if (pair.session.state === "rejected") return "replay";
+    if (
+      pair.session.expectedVersion !== input.expectedSessionVersion ||
+      (pair.session.state !== "completing" && pair.session.state !== "reconciling_upload")
+    ) return "superseded";
+    const reservations = await sql.query<{
+      subjectRef: string; purpose: string; reservedBytes: bigint; state: string;
+    }>(
+      `SELECT subject_ref AS "subjectRef",purpose,reserved_bytes AS "reservedBytes",state
+       FROM platform.asset_quota_reservation
+       WHERE site_ref=$1 AND intent_ref=$2 AND session_ref=$3
+       FOR UPDATE`,
+      [input.siteRef, input.intentRef, input.sessionRef],
+    );
+    const reservation = reservations[0];
+    if (!reservation || reservation.state !== "reserved") {
+      throw new Error("ASSET_QUOTA_RESERVATION_INVALID");
+    }
+    const sessionChanged = await sql.execute(
+      `UPDATE platform.asset_upload_session
+       SET state='rejected',expected_version=expected_version+1,updated_at=now()
+       WHERE site_ref=$1 AND intent_ref=$2 AND session_ref=$3
+         AND expected_version=$4::bigint AND state IN ('completing','reconciling_upload')`,
+      [input.siteRef, input.intentRef, input.sessionRef, input.expectedSessionVersion],
+    );
+    if (sessionChanged !== 1) return "superseded";
+    const intentChanged = await sql.execute(
+      `UPDATE platform.asset_upload_intent
+       SET state='rejected',expected_version=expected_version+1,updated_at=now()
+       WHERE site_ref=$1 AND intent_ref=$2 AND state='admitted'`,
+      [input.siteRef, input.intentRef],
+    );
+    if (intentChanged !== 1) throw new Error("ASSET_UPLOAD_INTENT_REJECTION_CONFLICT");
+    const quotaChanged = await sql.execute(
+      `UPDATE platform.asset_quota_account
+       SET reserved_inflight_bytes=reserved_inflight_bytes-$4::bigint,
+           expected_version=expected_version+1,updated_at=now()
+       WHERE site_ref=$1 AND subject_ref=$2 AND purpose=$3
+         AND reserved_inflight_bytes >= $4::bigint`,
+      [input.siteRef, reservation.subjectRef, reservation.purpose, reservation.reservedBytes],
+    );
+    if (quotaChanged !== 1) throw new Error("ASSET_QUOTA_RELEASE_CONFLICT");
+    const reservationChanged = await sql.execute(
+      `UPDATE platform.asset_quota_reservation
+       SET state='released',release_evidence_ref=$4,updated_at=now()
+       WHERE site_ref=$1 AND intent_ref=$2 AND session_ref=$3 AND state='reserved'`,
+      [input.siteRef, input.intentRef, input.sessionRef, input.cleanupEvent.eventId],
+    );
+    if (reservationChanged !== 1) throw new Error("ASSET_QUOTA_RELEASE_CONFLICT");
+    await enqueue(sql, input.cleanupEvent);
+    await sql.execute(
+      `INSERT INTO platform.asset_upload_rejection
+       (rejection_ref,site_ref,intent_ref,session_ref,reason_code,cleanup_event_id)
+       VALUES ($1::uuid,$2,$3,$4,$5,$1::uuid)`,
+      [input.cleanupEvent.eventId, input.siteRef, input.intentRef, input.sessionRef,
+        input.reasonCode],
+    );
+    return "rejected";
+  }
+}
+
+async function enqueue(sql: PlatformSqlTransaction, event: OutboxEvent): Promise<void> {
+  assertDigest(event.payloadDigest);
+  const changed = await sql.execute(
+    `INSERT INTO platform.outbox_event
+     (event_id,owner,event_type,aggregate_id,payload,payload_digest,correlation_id,causation_id)
+     VALUES ($1::uuid,$2,$3,$4,$5::jsonb,$6,$7,$8)`,
+    [event.eventId, event.owner, event.eventType, event.aggregateId, JSON.stringify(event.payload),
+      event.payloadDigest, event.correlationId, event.causationId],
+  );
+  if (changed !== 1) throw new Error("ASSET_OUTBOX_EVENT_NOT_PERSISTED");
 }
 
 async function lockCurrentAuthority(
