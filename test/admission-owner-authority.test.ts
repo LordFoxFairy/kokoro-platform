@@ -78,11 +78,7 @@ function ports(events: string[] = []): PlatformAdmissionOwnerPorts {
         events.push("session");
         return {
           kind: "resolved" as const,
-          value: {
-            namespace: "opaque-namespace",
-            threadId: "session-1",
-            sessionExecutionBindingRef: "binding-1",
-          },
+          value: { threadId: "session-1" },
         };
       }),
       verifyFinalizeReceipts: vi.fn(async () => {
@@ -96,6 +92,13 @@ function ports(events: string[] = []): PlatformAdmissionOwnerPorts {
       return {
         kind: "resolved" as const,
         value: { subjectRef: "subject-1", subjectGeneration: 1n },
+      };
+    }) },
+    executionBinding: { resolve: vi.fn(async () => {
+      events.push("execution-binding");
+      return {
+        kind: "resolved" as const,
+        value: { namespace: "opaque-namespace", sessionExecutionBindingRef: "binding-1" },
       };
     }) },
     site: { resolve: vi.fn(async () => {
@@ -248,6 +251,7 @@ describe("Platform Admission owner authority", () => {
       site: _site,
       model: _model,
       sessionGrant: _sessionGrant,
+      executionBinding: _executionBinding,
       ...ownerPorts
     } = dependencies;
     const authority = createPlatformAdmissionOwnerAuthority({
@@ -282,7 +286,7 @@ describe("Platform Admission owner authority", () => {
       ownerPorts: ownerPorts as unknown as Omit<
         PlatformAdmissionOwnerPorts,
         "unitOfWork" | "lifecycle" | "site" | "model" | "runtimePolicy" | "capability" |
-        "assets" | "budget" | "sessionGrant"
+        "assets" | "budget" | "sessionGrant" | "executionBinding"
       >,
       clock: () => now,
     })).toThrowError("PLATFORM_ADMISSION_OWNER_PORTS_REQUIRED");
@@ -349,7 +353,7 @@ describe("Platform Admission owner authority", () => {
     });
     expect(events).toEqual([
       "session", "tx.begin", "site", "session-grant", "runtime-policy", "model", "capability",
-      "assets", "budget.reserve", "lifecycle.prepare", "tx.end",
+      "assets", "execution-binding", "budget.reserve", "lifecycle.prepare", "tx.end",
     ]);
   });
 

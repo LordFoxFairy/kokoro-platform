@@ -63,9 +63,7 @@ export interface AdmissionSessionOwnerPort {
     }>,
     signal: AbortSignal,
   ): Promise<AdmissionOwnerResolution<Readonly<{
-    namespace: string;
     threadId: string;
-    sessionExecutionBindingRef: string;
   }>>>;
   verifyFinalizeReceipts(
     input: Readonly<{
@@ -77,6 +75,23 @@ export interface AdmissionSessionOwnerPort {
     }>,
     signal: AbortSignal,
   ): Promise<Readonly<{ kind: "verified" }> | Denied | Pending>;
+}
+
+export interface AdmissionExecutionBindingOwnerPort {
+  resolve(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      siteId: string;
+      projectRef: string;
+      sessionId: string;
+      threadId: string;
+      capabilitySnapshotRef: string;
+      configurationRevisionId: string;
+    }>,
+  ): Promise<AdmissionOwnerResolution<Readonly<{
+    namespace: string;
+    sessionExecutionBindingRef: string;
+  }>>>;
 }
 
 export interface AdmissionSessionGrantOwnerPort {
@@ -326,6 +341,7 @@ export interface PlatformAdmissionOwnerPorts {
   readonly unitOfWork: AdmissionOwnerUnitOfWork;
   readonly session: AdmissionSessionOwnerPort;
   readonly sessionGrant: AdmissionSessionGrantOwnerPort;
+  readonly executionBinding: AdmissionExecutionBindingOwnerPort;
   readonly site: AdmissionSiteOwnerPort;
   readonly runtimePolicy: AdmissionRuntimePolicyOwnerPort;
   readonly model: AdmissionModelOwnerPort;
@@ -413,6 +429,15 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         attachments: command.effect.attachmentRefs,
       });
       if (assets.kind !== "resolved") return assets;
+      const executionBinding = await this.#ports.executionBinding.resolve(transaction, {
+        siteId: command.siteId,
+        projectRef: command.effect.projectRef,
+        sessionId: command.effect.sessionId,
+        threadId: session.value.threadId,
+        capabilitySnapshotRef: capability.value.capabilitySnapshotRef,
+        configurationRevisionId: site.value.configurationRevisionId,
+      });
+      if (executionBinding.kind !== "resolved") return executionBinding;
       const ownerFacts: VerifiedGaRunRequestOwnerFacts = {
         kind: "run.request",
         run_id: command.effect.proposedRunId,
@@ -438,12 +463,12 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
           permissions: { ...runtimePolicy.value.permissions },
         },
         context: {
-          namespace: session.value.namespace,
+          namespace: executionBinding.value.namespace,
           session_id: command.effect.sessionId,
         },
       };
       const manifestDigest = digestManifest(command.siteId, command.effect, ownerFacts, {
-        sessionExecutionBindingRef: session.value.sessionExecutionBindingRef,
+        sessionExecutionBindingRef: executionBinding.value.sessionExecutionBindingRef,
         capabilitySnapshotRef: capability.value.capabilitySnapshotRef,
         configurationRevisionId: site.value.configurationRevisionId,
       });
@@ -473,7 +498,7 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         manifestRef,
         manifestDigest,
         maximumExpiresAt,
-        sessionExecutionBindingRef: session.value.sessionExecutionBindingRef,
+        sessionExecutionBindingRef: executionBinding.value.sessionExecutionBindingRef,
         capabilitySnapshotRef: capability.value.capabilitySnapshotRef,
         configurationRevisionId: site.value.configurationRevisionId,
         executionBudgetRootRef: budget.value.executionBudgetRootRef,
@@ -496,7 +521,7 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
       const prepared = {
         manifestRef: record.manifestRef,
         manifestDigest: record.manifestDigest,
-        sessionExecutionBindingRef: session.value.sessionExecutionBindingRef,
+        sessionExecutionBindingRef: executionBinding.value.sessionExecutionBindingRef,
         capabilitySnapshotRef: capability.value.capabilitySnapshotRef,
         configurationRevisionId: site.value.configurationRevisionId,
         executionBudgetRootRef: budget.value.executionBudgetRootRef,
@@ -751,6 +776,7 @@ export function assertPlatformAdmissionOwnerPorts(
     typeof candidate.session?.resolve !== "function" ||
     typeof candidate.session.verifyFinalizeReceipts !== "function" ||
     typeof candidate.sessionGrant?.resolve !== "function" ||
+    typeof candidate.executionBinding?.resolve !== "function" ||
     typeof candidate.site?.resolve !== "function" ||
     typeof candidate.runtimePolicy?.resolve !== "function" ||
     typeof candidate.model?.resolve !== "function" ||

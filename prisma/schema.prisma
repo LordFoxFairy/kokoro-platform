@@ -255,7 +255,6 @@ model AdmissionSessionExecutionBinding {
 
   @@id([siteId, sessionId])
   @@unique([bindingRef, siteId])
-  @@unique([siteId, namespace])
   @@map("admission_session_execution_binding")
   @@schema("platform")
 }

@@ -32,14 +32,6 @@ class LifecycleSql implements PlatformSqlTransaction {
 
   async execute(statement: string, values: readonly unknown[] = []): Promise<number> {
     this.writeValues.push([...values]);
-    if (statement.startsWith("INSERT INTO platform.admission_session_execution_binding")) {
-      this.binding = {
-        siteId: values[0], sessionId: values[1], bindingRef: values[2], namespace: values[3],
-        threadId: values[4], capabilitySnapshotRef: values[5], configurationRevisionId: values[6],
-        bindingDigest: values[7],
-      };
-      return 1;
-    }
     if (statement.startsWith("INSERT INTO platform.admission_execution_manifest")) {
       this.manifest = {
         siteId: values[0], manifestRef: values[1], manifestDigest: values[2], sessionId: values[3],
@@ -82,7 +74,7 @@ const prepareInput: Parameters<AdmissionLifecycleOwnerPort["prepare"]>[1] = {
   manifestRef: `execution-manifest:sha256:${"c".repeat(64)}`,
   manifestDigest: "c".repeat(64),
   maximumExpiresAt: "2026-07-29T12:05:00.000Z",
-  sessionExecutionBindingRef: "binding-1",
+  sessionExecutionBindingRef: `session-execution-binding:sha256:${"d".repeat(64)}`,
   capabilitySnapshotRef: "capability-1",
   configurationRevisionId: "release-1",
   executionBudgetRootRef: "budget-1",
@@ -110,8 +102,9 @@ const prepareInput: Parameters<AdmissionLifecycleOwnerPort["prepare"]>[1] = {
 };
 
 describe("Postgres Admission lifecycle owner", () => {
-  it("persists an idempotent binding and manifest without prompt or opaque lineage plaintext", async () => {
+  it("consumes the exact owner binding and persists a manifest without prompt or lineage plaintext", async () => {
     const sql = new LifecycleSql();
+    sql.binding = bindingRow();
     const lease = issuePlatformTransaction(sql);
     try {
       const lifecycle = new PostgresAdmissionLifecycleOwner();
@@ -134,6 +127,7 @@ describe("Postgres Admission lifecycle owner", () => {
 
   it("fences lifecycle projection transitions by exact state and segment version", async () => {
     const sql = new LifecycleSql();
+    sql.binding = bindingRow();
     const lease = issuePlatformTransaction(sql);
     try {
       const lifecycle = new PostgresAdmissionLifecycleOwner();
@@ -149,3 +143,13 @@ describe("Postgres Admission lifecycle owner", () => {
     }
   });
 });
+
+function bindingRow(): Record<string, unknown> {
+  return {
+    siteId: "site-1", sessionId: "session-1",
+    bindingRef: prepareInput.sessionExecutionBindingRef,
+    namespace: "opaque-namespace", threadId: "thread-1",
+    capabilitySnapshotRef: "capability-1", configurationRevisionId: "release-1",
+    bindingDigest: "d".repeat(64),
+  };
+}

@@ -30,6 +30,9 @@ describe("Admission lifecycle schema", () => {
     expect(composition).toContain("assets: new PostgresAdmissionAssetOwner()");
     expect(composition).toContain("budget: new PostgresAdmissionBudgetOwner()");
     expect(composition).toContain("sessionGrant: new PostgresAdmissionSessionGrantOwner()");
+    expect(composition).toContain("executionBinding: new PostgresAdmissionExecutionBindingOwner()");
+    expect(schema).not.toContain("@@unique([siteId, namespace])");
+    expect(migration).not.toContain("UNIQUE(site_id,namespace)");
     expect(migrator).toContain("platform.site, platform.site_release TO ${identifier}");
   });
 });

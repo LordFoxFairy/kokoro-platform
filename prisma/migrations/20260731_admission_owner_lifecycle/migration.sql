@@ -14,7 +14,6 @@ CREATE TABLE platform.admission_session_execution_binding (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY(site_id,session_id),
   UNIQUE(binding_ref,site_id),
-  UNIQUE(site_id,namespace),
   FOREIGN KEY(site_id) REFERENCES platform.site(site_ref),
   FOREIGN KEY(configuration_revision_id,site_id)
     REFERENCES platform.site_release(release_ref,site_ref)

@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type {
   AdmissionAuthorizationRecord,
   AdmissionAuthorizationState,
@@ -43,25 +42,7 @@ export class PostgresAdmissionLifecycleOwner implements AdmissionLifecycleOwnerP
     input: Parameters<AdmissionLifecycleOwnerPort["prepare"]>[1],
   ): Promise<AdmissionAuthorizationRecord> {
     const sql = resolvePlatformTransaction(transaction);
-    const bindingDigest = digest(canonicalJson({
-      siteId: input.siteId,
-      sessionId: input.effect.sessionId,
-      bindingRef: input.sessionExecutionBindingRef,
-      namespace: input.ownerFacts.context.namespace,
-      threadId: input.ownerFacts.thread_id,
-      capabilitySnapshotRef: input.capabilitySnapshotRef,
-      configurationRevisionId: input.configurationRevisionId,
-    }));
-    await sql.execute(
-      `INSERT INTO platform.admission_session_execution_binding
-       (site_id,session_id,binding_ref,namespace,thread_id,capability_snapshot_ref,
-        configuration_revision_id,binding_digest)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-       ON CONFLICT (site_id,session_id) DO NOTHING`,
-      [input.siteId, input.effect.sessionId, input.sessionExecutionBindingRef,
-        input.ownerFacts.context.namespace, input.ownerFacts.thread_id,
-        input.capabilitySnapshotRef, input.configurationRevisionId, bindingDigest],
-    );
+    const bindingDigest = bindingDigestFromRef(input.sessionExecutionBindingRef);
     const bindings = await sql.query<AdmissionBindingRow>(
       `${SELECT_BINDING}
        WHERE site_id=$1 AND session_id=$2 FOR UPDATE`,
@@ -249,17 +230,19 @@ function sameIdentity(left: AdmissionAuthorizationRecord, right: AdmissionAuthor
     left.expiresAt === right.expiresAt;
 }
 
-function digest(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
-}
-
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   return `{${Object.entries(value as Record<string, unknown>)
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
     .map(([key, child]) => `${JSON.stringify(key)}:${canonicalJson(child)}`)
     .join(",")}}`;
+}
+
+function bindingDigestFromRef(value: string): string {
+  const match = /^session-execution-binding:sha256:([0-9a-f]{64})$/u.exec(value);
+  if (match?.[1] === undefined) throw new Error("ADMISSION_SESSION_BINDING_CONFLICT");
+  return match[1];
 }
 
 function reference(value: string): string {
