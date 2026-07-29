@@ -7,6 +7,8 @@ import {
 import { z } from "zod";
 
 export const MAX_GA_RUN_REQUEST_DRAFT_TTL_MS = 5 * 60 * 1_000;
+// Leaves 256 KiB inside the 1 MiB encrypted-envelope budget for AEAD/HPKE and framing overhead.
+export const MAX_GA_RUN_REQUEST_PLAINTEXT_BYTES = 768 * 1024;
 const MAX_GA_RUN_REQUEST_CIPHERTEXT_BYTES = 1024 * 1024;
 
 /** Platform-resolved facts. This boundary does not derive identity, policy, budget, or capabilities. */
@@ -76,17 +78,24 @@ export class GaRunRequestDraftFactory {
       execution_context: input.executionContext,
     });
     const plaintext = encodeCanonicalRequest(request);
+    if (plaintext.byteLength > MAX_GA_RUN_REQUEST_PLAINTEXT_BYTES) {
+      throw new Error("ADMISSION_GA_DRAFT_PLAINTEXT_TOO_LARGE");
+    }
     const plaintextSha256 = createHash("sha256").update(plaintext).digest("hex");
     const startedAt = this.#now();
     const maximumExpiresAt = new Date(startedAt + MAX_GA_RUN_REQUEST_DRAFT_TTL_MS).toISOString();
+    const sealerPlaintext = new Uint8Array(plaintext);
     const untrusted = await this.#sealer.seal(
       Object.freeze({
-        plaintext: new Uint8Array(plaintext),
+        plaintext: sealerPlaintext,
         plaintextSha256,
         audience: this.#expectedAudience,
         maximumExpiresAt,
       }),
     );
+    if (createHash("sha256").update(sealerPlaintext).digest("hex") !== plaintextSha256) {
+      throw new Error("ADMISSION_GA_DRAFT_PLAINTEXT_MUTATED");
+    }
     const parsed = sealedGaRunRequestDraftSchema.safeParse(untrusted);
     if (!parsed.success) throw new Error("ADMISSION_GA_DRAFT_SEALED_MATERIAL_INVALID");
     const expiresAt = Date.parse(parsed.data.expiresAt);

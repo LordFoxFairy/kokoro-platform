@@ -141,6 +141,32 @@ describe("Admission execution-context boundary", () => {
     expect(seal).not.toHaveBeenCalled();
   });
 
+  it("rejects an oversized canonical plaintext before invoking the sealer", async () => {
+    const seal = vi.fn<GaRunRequestDraftSealer["seal"]>();
+
+    await expect(
+      factory(seal).create({
+        ownerFacts: {
+          ...ownerFacts,
+          input: { ...ownerFacts.input, content: "x".repeat(768 * 1024) },
+        },
+        executionContext: { mode: "root" },
+      }),
+    ).rejects.toThrow("ADMISSION_GA_DRAFT_PLAINTEXT_TOO_LARGE");
+    expect(seal).not.toHaveBeenCalled();
+  });
+
+  it("rejects a sealer that mutates the exact plaintext bytes it received", async () => {
+    const seal: GaRunRequestDraftSealer["seal"] = async (input) => {
+      input.plaintext[0] = input.plaintext[0]! ^ 0xff;
+      return validSealed(input);
+    };
+
+    await expect(
+      factory(seal).create({ ownerFacts, executionContext: { mode: "root" } }),
+    ).rejects.toThrow("ADMISSION_GA_DRAFT_PLAINTEXT_MUTATED");
+  });
+
   it.each([
     [
       "short ciphertext",
