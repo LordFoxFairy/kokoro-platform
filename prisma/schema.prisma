@@ -212,6 +212,60 @@ model AdmissionCommand {
   @@schema("platform")
 }
 
+model AdmissionSessionExecutionBinding {
+  siteId                  String   @map("site_id")
+  sessionId               String   @map("session_id")
+  bindingRef              String   @map("binding_ref")
+  namespace               String
+  threadId                String   @map("thread_id")
+  capabilitySnapshotRef   String   @map("capability_snapshot_ref")
+  configurationRevisionId String   @map("configuration_revision_id")
+  bindingDigest           String   @map("binding_digest") @db.Char(64)
+  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@id([siteId, sessionId])
+  @@unique([bindingRef, siteId])
+  @@unique([siteId, namespace])
+  @@map("admission_session_execution_binding")
+  @@schema("platform")
+}
+
+model AdmissionExecutionManifest {
+  siteId                    String   @map("site_id")
+  manifestRef               String   @map("manifest_ref")
+  manifestDigest            String   @map("manifest_digest") @db.Char(64)
+  sessionId                 String   @map("session_id")
+  launchId                  String   @map("launch_id")
+  runId                     String   @map("run_id")
+  commandId                 String   @map("command_id")
+  requestDigest             String   @map("request_digest") @db.Char(64)
+  triggerMessageId          String   @map("trigger_message_id")
+  bindingRef                String   @map("binding_ref")
+  modelOptionRevisionRef    String   @map("model_option_revision_ref")
+  resolvedRuntime           Json     @map("resolved_runtime")
+  executionBudgetRootRef    String   @map("execution_budget_root_ref") @db.Uuid
+  rootHoldRef               String   @map("root_hold_ref") @db.Uuid
+  authorizationSegmentRef   String   @map("authorization_segment_ref") @db.Uuid
+  segmentVersion            BigInt   @map("segment_version")
+  expiresAt                 DateTime @map("expires_at") @db.Timestamptz(6)
+  maximumExpiresAt          DateTime @map("maximum_expires_at") @db.Timestamptz(6)
+  capabilitySnapshotRef     String   @map("capability_snapshot_ref")
+  configurationRevisionId   String   @map("configuration_revision_id")
+  attachmentRefs            Json     @map("attachment_refs")
+  state                     String
+  resolutionRef             String?  @map("resolution_ref")
+  createdAt                 DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@id([siteId, manifestRef])
+  @@unique([siteId, launchId])
+  @@unique([siteId, runId])
+  @@unique([siteId, authorizationSegmentRef])
+  @@index([state, updatedAt, siteId])
+  @@map("admission_execution_manifest")
+  @@schema("platform")
+}
+
 model OutboxEvent {
   eventId        String    @id @map("event_id") @db.Uuid
   owner          String

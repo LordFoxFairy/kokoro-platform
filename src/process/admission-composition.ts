@@ -4,6 +4,7 @@ import type { Http2ServerRequest, Http2ServerResponse } from "node:http2";
 import { TLSSocket } from "node:tls";
 import { connectNodeAdapter } from "@connectrpc/connect-node";
 import type { PlatformTransactionalDatabaseClient } from "../infrastructure/postgres/client.js";
+import { resolvePlatformTransaction } from "../shared/unit-of-work/platform-transaction.js";
 import { AdmissionService } from "../interfaces/connect/generated/kokoro/platform/admission/v1/admission_pb.js";
 import { AdmissionApplicationService } from "../modules/admission/application/admission-service.js";
 import type { AdmissionCaller, AdmissionOwnerAuthority } from "../modules/admission/application/admission-ports.js";
@@ -18,6 +19,7 @@ import {
 } from "../modules/admission/application/ga-run-request-draft-factory.js";
 import { HpkeGaRunRequestDraftSealer } from "../modules/admission/infrastructure/hpke/ga-run-request-draft-sealer.js";
 import { PostgresAdmissionCommandJournal } from "../modules/admission/infrastructure/postgres/admission-command-journal.js";
+import { PostgresAdmissionLifecycleOwner } from "../modules/admission/infrastructure/postgres/admission-lifecycle-owner.js";
 import { createAdmissionConnectService } from "../modules/admission/interfaces/connect/admission-service.js";
 import { readBoundedSecret } from "./platform-public-composition.js";
 
@@ -90,7 +92,10 @@ export interface AdmissionProductionComposition {
   createServer(listener: AdmissionRequestListener): Http2SecureServer;
 }
 
-export type AdmissionProductionOwnerPorts = Omit<PlatformAdmissionOwnerPorts, "unitOfWork">;
+export type AdmissionProductionOwnerPorts = Omit<
+  PlatformAdmissionOwnerPorts,
+  "unitOfWork" | "lifecycle"
+>;
 
 /**
  * Production owns the Admission orchestration and transaction boundary. Runtime
@@ -104,8 +109,19 @@ export function createPlatformAdmissionOwnerAuthority(input: Readonly<{
 }>): PlatformAdmissionOwnerAuthority {
   const ports: PlatformAdmissionOwnerPorts = {
     ...input.ownerPorts,
+    lifecycle: new PostgresAdmissionLifecycleOwner(),
     unitOfWork: {
-      execute: (_command, work) => input.database.internalTransaction("admission.command", work),
+      execute: (command, work) => input.database.internalTransaction(
+        "admission.command",
+        async (transaction) => {
+          await resolvePlatformTransaction(transaction).query(
+            `SELECT set_config('app.site_id',$1,true),
+                    set_config('app.caller_identity',$2,true)`,
+            [command.siteId, command.caller.identity],
+          );
+          return work(transaction);
+        },
+      ),
     },
   };
   assertPlatformAdmissionOwnerPorts(ports);

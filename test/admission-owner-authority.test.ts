@@ -1,6 +1,7 @@
 import { create } from "@bufbuild/protobuf";
 import { describe, expect, it, vi } from "vitest";
 import {
+  AdmissionRetryClass,
   ClientRunIntentSchema,
   FinalizeRunAuthorizationEffectSchema,
   OpaqueExecutionContextIntentSchema,
@@ -12,6 +13,10 @@ import {
   type PlatformAdmissionOwnerPorts,
 } from "../src/modules/admission/application/platform-admission-owner-authority.js";
 import { createPlatformAdmissionOwnerAuthority } from "../src/process/admission-composition.js";
+import {
+  issuePlatformTransaction,
+  revokePlatformTransaction,
+} from "../src/shared/unit-of-work/platform-transaction.js";
 import type { PlatformTransaction } from "../src/shared/unit-of-work/index.js";
 
 const now = new Date("2026-07-29T12:00:00.000Z");
@@ -206,9 +211,23 @@ function ports(events: string[] = []): PlatformAdmissionOwnerPorts {
 describe("Platform Admission owner authority", () => {
   it("lets production construct the authority only from exact owner ports and the Platform UoW", async () => {
     const dependencies = ports();
-    const internalTransaction = vi.fn(async (_operation, work) =>
-      work(Object.freeze({}) as PlatformTransaction));
-    const { unitOfWork: _unitOfWork, ...ownerPorts } = dependencies;
+    vi.mocked(dependencies.budget.reserveRoot).mockResolvedValue({
+      kind: "denied",
+      denial: { code: "TEST_BUDGET_DENIED", retryClass: AdmissionRetryClass.NEVER },
+    });
+    const scoped: unknown[][] = [];
+    const sql = {
+      query: vi.fn(async (_statement: string, values: readonly unknown[] = []) => {
+        scoped.push([...values]);
+        return [];
+      }),
+      execute: vi.fn(async () => 0),
+    };
+    const internalTransaction = vi.fn(async (_operation, work) => {
+      const lease = issuePlatformTransaction(sql);
+      try { return await work(lease.transaction); } finally { revokePlatformTransaction(lease); }
+    });
+    const { unitOfWork: _unitOfWork, lifecycle: _lifecycle, ...ownerPorts } = dependencies;
     const authority = createPlatformAdmissionOwnerAuthority({
       database: { internalTransaction },
       ownerPorts,
@@ -224,15 +243,24 @@ describe("Platform Admission owner authority", () => {
     });
 
     expect(internalTransaction).toHaveBeenCalledWith("admission.command", expect.any(Function));
+    expect(scoped).toContainEqual(["site-1", "spiffe://kokoro/session"]);
   });
 
   it("fails production startup when any required owner adapter is absent", () => {
     const dependencies = ports();
-    const { unitOfWork: _unitOfWork, model: _model, ...ownerPorts } = dependencies;
+    const {
+      unitOfWork: _unitOfWork,
+      lifecycle: _lifecycle,
+      model: _model,
+      ...ownerPorts
+    } = dependencies;
 
     expect(() => createPlatformAdmissionOwnerAuthority({
       database: { internalTransaction: vi.fn() },
-      ownerPorts: ownerPorts as unknown as Omit<PlatformAdmissionOwnerPorts, "unitOfWork">,
+      ownerPorts: ownerPorts as unknown as Omit<
+        PlatformAdmissionOwnerPorts,
+        "unitOfWork" | "lifecycle"
+      >,
       clock: () => now,
     })).toThrowError("PLATFORM_ADMISSION_OWNER_PORTS_REQUIRED");
   });

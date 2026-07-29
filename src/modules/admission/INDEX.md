@@ -11,7 +11,7 @@ This module owns the Platform-side construction boundary for the sealed General 
 
 Platform treats `parent_anchor` and `parent_digest` as opaque values. It validates their contract syntax and binds them into the sealed request, but never resolves Agent checkpoints or chooses continuation lineage. Production constructs `PlatformAdmissionOwnerAuthority` itself from exact Session, Site, Model, Capability, Asset, Budget, lifecycle, dispatch-evidence, and execution-evidence owner ports; deployment cannot inject an alternate authority. Session wire input cannot assert any owner fact.
 
-Prepare resolves every local owner and reserves the root Hold plus authorization segment in one Platform transaction. Finalize locks and commits the exact segment. Release reads the candidate, verifies immutable no-dispatch evidence outside the database transaction, then re-locks and releases Hold plus segment atomically. Reconcile likewise performs remote observations outside local transactions and applies only an exact locked owner transition. Owner adapters must make every mutation idempotent by stable manifest/segment/launch identity because a command lease can be recovered after an ambiguous process failure.
+Prepare resolves Session owner facts over a bounded remote port before opening the Platform transaction, then resolves local owners and reserves the root Hold plus authorization segment atomically. Finalize reads the candidate, verifies Session receipts outside the database transaction, then re-locks and commits the exact segment. Release and reconcile likewise perform remote observations outside local transactions and apply only an exact locked owner transition. Owner adapters must make every mutation idempotent by stable manifest/segment/launch identity because a command lease can be recovered after an ambiguous process failure.
 
 The Connect mapper is the only protobuf-to-domain translation for this intent. Safe admission snapshots, logs, metrics, browser responses, and public receipts must not expose either opaque field.
 
@@ -24,4 +24,6 @@ Production loads a strict bounded public-key ring, requires one active exact-aud
 Site, Session, run, expiry and plaintext digest into authenticated data. The private key exists only in Session; there is no
 plaintext or development fallback.
 
-Production activation requires concrete owner adapters and durable lifecycle storage; startup fails closed when any owner is absent. There is no placeholder owner implementation, browser-header authentication, or dual path.
+The PostgreSQL lifecycle owner durably freezes the Session binding and execution manifest, mirrors the Credit-owned segment CAS in the same transaction, and never persists trigger-message content or opaque execution-lineage plaintext. Production constructs this adapter itself; deployment cannot replace it.
+
+Production activation still requires Root-generated Session owner and GA execution-evidence contracts plus concrete Site runtime-policy, Capability, AssetGrant, and Credit budget-policy adapters. Startup must fail closed until those owner facts exist. There is no placeholder owner implementation, browser-header authentication, default Site/runtime policy, or dual path.

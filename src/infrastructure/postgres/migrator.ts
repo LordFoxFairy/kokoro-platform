@@ -412,7 +412,11 @@ const KERNEL_TABLES = [
   "platform.inbox_delivery",
 ].join(", ");
 
-const ADMISSION_TABLES = "platform.admission_command";
+const ADMISSION_TABLES = [
+  "platform.admission_command",
+  "platform.admission_session_execution_binding",
+  "platform.admission_execution_manifest",
+].join(", ");
 
 const AUTHORIZATION_TABLES = [
   "platform.authorization_site",
