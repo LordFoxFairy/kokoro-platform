@@ -1,8 +1,11 @@
-import type { PlatformTransactionalDatabaseClient } from
-  "../../../infrastructure/postgres/client.js";
 import type { PlatformTransaction } from "../../../shared/unit-of-work/index.js";
-import { PostgresAdminAuthorityRepository } from
-  "../infrastructure/postgres/admin-authority-repository.js";
+
+interface AdminTerminalizerDatabasePort {
+  internalTransaction<Result>(
+    operation: "admin.terminalize",
+    work: (transaction: PlatformTransaction) => Promise<Result>,
+  ): Promise<Result>;
+}
 
 export interface AdminTerminalizerRepositoryPort {
   terminalizeApprovals(transaction: PlatformTransaction, now: string): Promise<number>;
@@ -10,18 +13,17 @@ export interface AdminTerminalizerRepositoryPort {
 }
 
 export function createAdminTerminalizerCycle(input: Readonly<{
-  database: Pick<PlatformTransactionalDatabaseClient, "internalTransaction">;
-  repository?: AdminTerminalizerRepositoryPort;
+  database: AdminTerminalizerDatabasePort;
+  repository: AdminTerminalizerRepositoryPort;
   clock?: () => Date;
 }>): (context: Readonly<{ signal: AbortSignal }>) => Promise<void> {
-  const repository = input.repository ?? new PostgresAdminAuthorityRepository();
   const clock = input.clock ?? (() => new Date());
   return async ({ signal }) => {
     signal.throwIfAborted();
     const now = clock().toISOString();
     await input.database.internalTransaction("admin.terminalize", async (transaction) => {
-      await repository.terminalizeApprovals(transaction, now);
-      await repository.terminalizePostEffectReviews(transaction, now);
+      await input.repository.terminalizeApprovals(transaction, now);
+      await input.repository.terminalizePostEffectReviews(transaction, now);
     });
   };
 }

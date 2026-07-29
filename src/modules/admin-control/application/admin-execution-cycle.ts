@@ -1,7 +1,3 @@
-import type {
-  AdminExecutionTransactionFence,
-  PlatformTransactionalDatabaseClient,
-} from "../../../infrastructure/postgres/client.js";
 import {
   OutboxRepository,
   type ClaimedOutboxEvent,
@@ -9,6 +5,30 @@ import {
 import type { JsonValue } from "../../../shared/outbox-inbox/receipt.js";
 import type { PlatformTransaction } from "../../../shared/unit-of-work/index.js";
 import { digestAdminValue } from "./admin-digest.js";
+
+interface AdminExecutionTransactionFence {
+  readonly operation: string;
+  readonly siteRef: string | null;
+  readonly environment: string;
+  readonly region: string;
+  readonly makerRef: string;
+  readonly makerGeneration: bigint;
+  readonly makerAuthorizationEpoch: bigint;
+  readonly checkerRef: string;
+  readonly checkerGeneration: bigint;
+  readonly checkerAuthorizationEpoch: bigint;
+}
+
+interface AdminExecutionCycleDatabasePort {
+  internalTransaction<Result>(
+    operation: "admin.execution.claim" | "admin.execution.retry",
+    work: (transaction: PlatformTransaction) => Promise<Result>,
+  ): Promise<Result>;
+  adminExecutionTransaction<Result>(
+    fence: AdminExecutionTransactionFence,
+    work: (transaction: PlatformTransaction) => Promise<Result>,
+  ): Promise<Result>;
+}
 
 interface AdminExecutionCycleOutboxPort {
   claim(
@@ -22,8 +42,7 @@ interface AdminExecutionCycleOutboxPort {
 }
 
 export function createAdminExecutionCycle(input: Readonly<{
-  database: Pick<PlatformTransactionalDatabaseClient,
-    "internalTransaction" | "adminExecutionTransaction">;
+  database: AdminExecutionCycleDatabasePort;
   executor: Readonly<{
     executeClaim(transaction: PlatformTransaction, event: ClaimedOutboxEvent): Promise<void>;
   }>;
@@ -125,7 +144,14 @@ function safeCode(error: unknown): string {
 }
 
 function bounded(value: string): void {
-  if (value.length < 1 || value.length > 128 || /[\u0000-\u001f\u007f]/u.test(value)) {
+  if (value.length < 1 || value.length > 128 || hasControlCharacter(value)) {
     throw new Error("ADMIN_EXECUTION_ENVELOPE_INVALID");
   }
+}
+
+function hasControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    const point = character.codePointAt(0) ?? 0;
+    return point < 32 || point === 127;
+  });
 }

@@ -14,6 +14,8 @@ import { createAdminTerminalizerCycle } from
   "../modules/admin-control/application/admin-terminalizer.js";
 import { createAdminWorkerExecutionCycle } from
   "../modules/admin-control/infrastructure/postgres/admin-worker-composition.js";
+import { PostgresAdminAuthorityRepository } from
+  "../modules/admin-control/infrastructure/postgres/admin-authority-repository.js";
 
 export interface PlatformWorkerProcessStatus {
   readonly state: PlatformProcessState;
@@ -236,7 +238,10 @@ export async function runPlatformWorkerMain(): Promise<void> {
     workerId: process.env.PLATFORM_WORKER_ID ?? `platform-worker-${process.pid}`,
   });
   const siteRuntime = await createSiteRuntimeWorkerProductionComposition({ database });
-  const terminalizeAdmin = createAdminTerminalizerCycle({ database });
+  const terminalizeAdmin = createAdminTerminalizerCycle({
+    database,
+    repository: new PostgresAdminAuthorityRepository(),
+  });
   const executeAdmin = createAdminWorkerExecutionCycle({
     database,
     workerId: process.env.PLATFORM_WORKER_ID ?? `platform-worker-${process.pid}`,

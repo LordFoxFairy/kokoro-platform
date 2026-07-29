@@ -420,12 +420,12 @@ export function createPlatformDatabaseClient(
 function assertAdminExecutionFence(fence: AdminExecutionTransactionFence): void {
   for (const value of [fence.operation, fence.environment, fence.region, fence.makerRef,
     fence.checkerRef]) {
-    if (value.length < 1 || value.length > 128 || /[\u0000-\u001f\u007f]/u.test(value)) {
+    if (value.length < 1 || value.length > 128 || hasControlCharacter(value)) {
       throw new Error("ADMIN_EXECUTION_FENCE_INVALID");
     }
   }
   if (fence.siteRef !== null && (fence.siteRef.length < 1 || fence.siteRef.length > 128 ||
-    /[\u0000-\u001f\u007f]/u.test(fence.siteRef))) {
+    hasControlCharacter(fence.siteRef))) {
     throw new Error("ADMIN_EXECUTION_FENCE_INVALID");
   }
   if (fence.makerRef === fence.checkerRef || fence.makerGeneration < 1n ||
@@ -433,6 +433,13 @@ function assertAdminExecutionFence(fence: AdminExecutionTransactionFence): void 
     fence.checkerAuthorizationEpoch < 1n) {
     throw new Error("ADMIN_EXECUTION_FENCE_INVALID");
   }
+}
+
+function hasControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    const point = character.codePointAt(0) ?? 0;
+    return point < 32 || point === 127;
+  });
 }
 
 interface RuntimeIdentity {

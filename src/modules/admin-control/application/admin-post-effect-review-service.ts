@@ -138,7 +138,10 @@ function epoch(value: string): bigint {
 }
 
 function bounded(value: string, code: string): void {
-  if (value.length < 8 || value.length > 128 || /[\u0000-\u001f\u007f]/u.test(value)) {
+  if (value.length < 8 || value.length > 128 || [...value].some((character) => {
+    const point = character.codePointAt(0) ?? 0;
+    return point < 32 || point === 127;
+  })) {
     throw new Error(code);
   }
 }
