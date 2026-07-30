@@ -43,13 +43,13 @@ policies are a different concurrency domain: each `(Site, product)` has its own 
 may inherit defaults; a replacement assignment must pin an exact catalog digest. One Site change never republishes the catalog or
 invalidates another Site's expected revision.
 
-Import, activation, and Site-policy services begin a durable command receipt before mutation and commit the stable outcome plus a
-`model-control` outbox event in the same caller-owned UoW. The request digest binds deployment/caller epoch, actor identity and
-generation, operation effect, and—for imports—the catalog digest, source/fence reference, and complete provider-availability
-snapshot. Reusing a command ID with changed facts conflicts before mutation. Replay-only flags are excluded from durable outcomes,
-so exact retries reconcile the original receipt. Gateway config/cache/projectors consume `model.inventory.activated.v1`; import and
-Site policy expose `model.inventory.materialized.v1` and `model.site-policy.changed.v1`. Dispatch remains a post-commit worker concern,
-and the public `ModelControlCommandJournal` port keeps later API/Admin composition independent of PostgreSQL adapters.
+Import, activation, Site-policy, ModelOption materialization and SiteRelease publication begin a durable command receipt before
+mutation and commit its stable outcome in the same caller-owned UoW. The immutable owner tables are the business facts; ModelControl
+does not duplicate those local facts into an outbox without a defined remote consumer. The request digest binds deployment/caller
+epoch, actor identity and generation, operation effect, and—for imports—the catalog digest, source/fence reference, and complete
+provider-availability snapshot. Reusing a command ID with changed facts conflicts before mutation. Replay-only flags are excluded
+from durable outcomes, so exact retries reconcile the original receipt. The public `ModelControlCommandJournal` port keeps API/Admin
+composition independent of PostgreSQL adapters without manufacturing a second event authority.
 
 Catalog materialization, activation and Site policy changes are narrow `SECURITY DEFINER` control-plane boundaries. Only the dedicated
 `PLATFORM_DATABASE_ADMIN_ROLE` can execute them; API and Worker roles have neither raw administration DML nor function execute.

@@ -7,7 +7,6 @@ import { digestAdminValue } from "./admin-digest.js";
 import type {
   AdminAuthorityRepositoryPort,
   AdminLocalCommandRegistry,
-  AdminOutboxPort,
   AdminReceiptPort,
   AdminUnitOfWorkPort,
 } from "./admin-command-service.js";
@@ -62,13 +61,22 @@ export type AdminApprovalSubmissionResult = Readonly<{
   result?: JsonValue;
 }>;
 
+export type AdminExecutionQueueEntry = OutboxEvent & Readonly<{
+  owner: "admin-execution";
+  eventType: "admin.approval.execution.requested";
+}>;
+
+export interface AdminExecutionQueuePort {
+  enqueue(transaction: PlatformTransaction, event: AdminExecutionQueueEntry): Promise<void>;
+}
+
 export class AdminApprovalService {
   constructor(private readonly dependencies: Readonly<{
     unitOfWork: AdminUnitOfWorkPort;
     registry: AdminLocalCommandRegistry;
     repository: AdminApprovalRepositoryPort;
     receipts: AdminReceiptPort;
-    outbox: AdminOutboxPort;
+    executionQueue: AdminExecutionQueuePort;
     clock?: () => Date;
     reference: () => string;
   }>) {}
@@ -156,7 +164,6 @@ export class AdminApprovalService {
             approvalRef: input.approvalRef });
           await this.transition(transaction, approval, admission, "rejected", result);
           await this.complete(transaction, identity, "succeeded", result);
-          await this.event(transaction, input, admission, "admin.approval.rejected", result);
           return Object.freeze({ disposition: "rejected", commandId: input.commandId,
             approvalRef: input.approvalRef });
         }
@@ -164,8 +171,7 @@ export class AdminApprovalService {
           approvalRef: input.approvalRef });
         await this.transition(transaction, approval, admission, "execution_queued", result);
         await this.complete(transaction, identity, "succeeded", result);
-        await this.event(transaction, input, admission, "admin.approval.execution.requested", result,
-          "admin-execution");
+        await this.enqueueExecution(transaction, input, admission, result);
         return Object.freeze({ disposition: "execution_queued", commandId: input.commandId,
           approvalRef: input.approvalRef });
       },
@@ -230,13 +236,11 @@ export class AdminApprovalService {
     });
   }
 
-  private event(
+  private enqueueExecution(
     transaction: PlatformTransaction,
     input: Readonly<{ context: VerifiedRequestSecurityContext; commandId: string; approvalRef: string }>,
     admission: AdminApprovalAdmission,
-    eventType: string,
     outcome: JsonValue,
-    owner = "admin-control",
   ): Promise<void> {
     const payload = json({
       approvalRef: admission.approvalRef, originatingCommandId: admission.commandId,
@@ -249,12 +253,13 @@ export class AdminApprovalService {
       siteRef: admission.siteRef, environment: admission.environment, region: admission.region,
       decision: admission.decision, outcome,
     });
-    const event: OutboxEvent = {
-      eventId: this.dependencies.reference(), owner, eventType,
+    const event: AdminExecutionQueueEntry = {
+      eventId: this.dependencies.reference(), owner: "admin-execution",
+      eventType: "admin.approval.execution.requested",
       aggregateId: input.approvalRef, payload, payloadDigest: digestAdminValue(payload),
       correlationId: input.context.correlationId, causationId: input.context.requestId,
     };
-    return this.dependencies.outbox.enqueue(transaction, event);
+    return this.dependencies.executionQueue.enqueue(transaction, event);
   }
 
   private now(): string {

@@ -23,7 +23,7 @@ CREATE TABLE platform.command_receipt (
 
 CREATE TABLE platform.outbox_event (
   event_id UUID PRIMARY KEY,
-  owner TEXT NOT NULL,
+  owner TEXT NOT NULL CHECK (owner IN ('identity','commerce','credit','site','asset','admin-execution')),
   event_type TEXT NOT NULL,
   aggregate_id TEXT NOT NULL,
   payload JSONB NOT NULL,

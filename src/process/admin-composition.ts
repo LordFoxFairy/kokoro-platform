@@ -220,7 +220,6 @@ export async function createAdminProductionComposition(input: Readonly<{
     registry,
     repository: authorityRepository,
     receipts,
-    outbox,
     reference: randomUUID,
     ...(input.clock === undefined ? {} : { clock: input.clock }),
   });
@@ -229,7 +228,7 @@ export async function createAdminProductionComposition(input: Readonly<{
     registry,
     repository: authorityRepository,
     receipts,
-    outbox,
+    executionQueue: outbox,
     reference: randomUUID,
     ...(input.clock === undefined ? {} : { clock: input.clock }),
   });

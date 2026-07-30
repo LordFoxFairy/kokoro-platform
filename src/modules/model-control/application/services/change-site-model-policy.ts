@@ -61,7 +61,7 @@ export class ChangeSiteModelPolicyService implements SiteModelPolicyAdministrati
           expectedRevision: input.expectedRevision,
           policy,
         });
-        await this.journal.succeed(transaction, command, receipt, context);
+        await this.journal.succeed(transaction, command, receipt);
         return receipt;
       },
     );

@@ -25,12 +25,13 @@ describe("PostgresUsageSettlementRepository", () => {
     } finally { revokePlatformTransaction(lease); }
   });
 
-  it("persists canonical evidence, receipt and outbox in the supplied transaction", async () => {
+  it("persists canonical evidence and its authoritative receipt without an orphan outbox", async () => {
     const sql = new RecordingSql();
     const lease = issuePlatformTransaction(sql);
     try {
       await repository().persistAttemptUsage(lease.transaction, evidenceRecord());
-      expect(sql.writeSql()).toMatch(/credit_attempt_usage_evidence[\s\S]+outbox_event[\s\S]+credit_usage_command_receipt/u);
+      expect(sql.writeSql()).toMatch(/credit_attempt_usage_evidence[\s\S]+credit_usage_command_receipt/u);
+      expect(sql.writeSql()).not.toContain("platform.outbox_event");
       expect(sql.writeSql()).not.toMatch(/UPDATE platform\.credit_attempt_usage_evidence|DELETE FROM/u);
     } finally { revokePlatformTransaction(lease); }
   });
@@ -94,7 +95,6 @@ describe("PostgresUsageSettlementRepository", () => {
         code: "CREDIT_USAGE_UNAVAILABLE",
         observedAt: NOW,
         receiptRef: settled.receiptRef,
-        outboxEventRef: settled.outboxEventRef,
       };
 
       await repository().persistReconciliationRequired(lease.transaction, record);
@@ -141,7 +141,6 @@ function evidenceRecord() {
     evidenceRef: "00000000-0000-7000-8000-000000000301", businessOperationKey: "usage:1",
     requestDigest: "a".repeat(64), evidenceDigest: "b".repeat(64), observedAt: NOW,
     receiptRef: "00000000-0000-7000-8000-000000000302",
-    outboxEventRef: "00000000-0000-7000-8000-000000000303",
     priorAttemptState: "effect_committed" as const, priorFenceEpoch: 1n, nextFenceEpoch: 2n,
     provisionalCustomerAmount: 14n,
     evidence: { producerKind: "model_gateway" as const, producerContext: "gateway:one", producerGeneration: 1n,
@@ -174,7 +173,6 @@ function attemptIntentRecord() {
     state: "effect_committed" as const, fenceEpoch: 1n, ownerEvidenceRef: null,
     committedAt: NOW, observedAt: NOW,
     receiptRef: "00000000-0000-7000-8000-000000000302",
-    outboxEventRef: "00000000-0000-7000-8000-000000000303",
   };
 }
 
@@ -227,7 +225,6 @@ function settlementRecord(): UsageSettlementRecord {
     policyRatedAmount: 14n, customerAmount: 14n, platformExposureAmount: 0n, settledAt: NOW,
     journalTransactionRef: "00000000-0000-7000-8000-000000000700",
     receiptRef: "00000000-0000-7000-8000-000000000701",
-    outboxEventRef: "00000000-0000-7000-8000-000000000702",
   };
 }
 

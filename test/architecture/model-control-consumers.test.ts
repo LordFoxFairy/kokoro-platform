@@ -163,7 +163,7 @@ describe("ModelControl consumer boundary", () => {
     expect(manifest).toContain("model-option:publish-site-release");
   });
 
-  it("journals every ModelControl command and exposes activation through a durable owner outbox", async () => {
+  it("journals every ModelControl command without duplicating local facts into an orphan outbox", async () => {
     const [importService, activationService, policyService, journal, migrator] = await Promise.all([
       readFile(
         resolve("src/modules/model-control/application/services/import-model-control.ts"),
@@ -187,14 +187,12 @@ describe("ModelControl consumer boundary", () => {
     ]);
     for (const service of [importService, activationService, policyService]) {
       expect(service).toContain("this.journal.begin(transaction, command)");
-      expect(service).toContain("this.journal.succeed(transaction, command, receipt, context)");
+      expect(service).toContain("this.journal.succeed(transaction, command, receipt)");
     }
-    expect(journal).toContain("owner: event.owner");
-    expect(journal).toContain("eventType: event.eventType");
+    expect(journal).not.toContain("OutboxRepository");
+    expect(journal).not.toContain("modelControlEventFor");
     expect(journal).toContain('state: "succeeded"');
-    expect(migrator).toContain(
-      "GRANT INSERT ON TABLE platform.command_receipt, platform.outbox_event",
-    );
+    expect(migrator).toContain("GRANT INSERT ON TABLE platform.command_receipt");
     expect(migrator).toContain("GRANT UPDATE ON TABLE platform.command_receipt");
   });
 

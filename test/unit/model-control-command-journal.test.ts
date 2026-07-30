@@ -6,7 +6,6 @@ import {
 } from "../../src/shared/unit-of-work/platform-transaction.js";
 import {
   createModelControlCommand,
-  modelControlEventFor,
 } from "../../src/modules/model-control/application/model-control-command.js";
 
 const security = {
@@ -19,7 +18,7 @@ const security = {
   actorSubjectGeneration: "3",
 };
 
-describe("ModelControl command identity and outbox", () => {
+describe("ModelControl command identity and receipt journal", () => {
   it("preserves the Connect-verified canonical request digest without re-hashing the effect", () => {
     const verifiedRequestDigest = "f".repeat(64);
     const base = createModelControlCommand({
@@ -88,30 +87,7 @@ describe("ModelControl command identity and outbox", () => {
     })).toThrow("MODEL_CONTROL_COMMAND_ID_INVALID");
   });
 
-  it("builds a stable consumer event without replay-only fields", () => {
-    const command = createModelControlCommand({
-      commandId: "00000000-0000-4000-8000-000000000002",
-      requestDigest: "b".repeat(64),
-      operation: "model.inventory.activate",
-      security,
-      effect: { targetDigest: "b".repeat(64), expectedPointerRevision: "7" },
-    });
-    const receipt = {
-      activationId: command.commandId,
-      importId: "00000000-0000-4000-8000-000000000003",
-      targetDigest: "b".repeat(64),
-      expectedRevision: "7",
-      activatedRevision: "8",
-      replayed: false,
-    };
-    const first = modelControlEventFor(command, receipt);
-    const replay = modelControlEventFor(command, { ...receipt, replayed: true });
-    expect(replay).toEqual(first);
-    expect(first.eventType).toBe("model.inventory.activated.v1");
-    expect(first.payload).not.toHaveProperty("receipt.replayed");
-  });
-
-  it("records receipt and first outbox event through the caller-owned transaction", async () => {
+  it("records only the immutable command receipt through the caller-owned transaction", async () => {
     const calls: { kind: string; transaction: unknown; value: unknown }[] = [];
     const receipts = {
       begin: async (transaction: unknown, value: unknown) => {
@@ -123,12 +99,7 @@ describe("ModelControl command identity and outbox", () => {
         return value as never;
       },
     };
-    const outbox = {
-      enqueue: async (transaction: unknown, value: unknown) => {
-        calls.push({ kind: "outbox", transaction, value });
-      },
-    };
-    const journal = new PostgresModelControlCommandJournal(receipts, outbox);
+    const journal = new PostgresModelControlCommandJournal(receipts);
     const lease = issuePlatformTransaction({ query: async () => [], execute: async () => 0 });
     try {
       const command = createModelControlCommand({
@@ -150,18 +121,11 @@ describe("ModelControl command identity and outbox", () => {
           activatedRevision: "3",
           replayed: false,
         },
-        { requestId: "req-1", correlationId: "corr-1" },
       );
-      expect(calls.map(({ kind }) => kind).sort()).toEqual(["begin", "outbox", "outcome"]);
+      expect(calls.map(({ kind }) => kind).sort()).toEqual(["begin", "outcome"]);
       expect(calls.every(({ transaction }) => transaction === lease.transaction)).toBe(true);
       expect(calls.find(({ kind }) => kind === "begin")?.value).toMatchObject({
         idempotencyKey: command.commandId,
-      });
-      expect(calls.find(({ kind }) => kind === "outbox")?.value).toMatchObject({
-        owner: "model-control",
-        eventType: "model.inventory.activated.v1",
-        correlationId: "corr-1",
-        causationId: "req-1",
       });
       expect(calls.find(({ kind }) => kind === "outcome")?.value).toMatchObject({
         state: "succeeded",

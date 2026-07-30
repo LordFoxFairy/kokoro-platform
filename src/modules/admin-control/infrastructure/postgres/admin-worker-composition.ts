@@ -53,7 +53,7 @@ export function createAdminWorkerExecutionRuntime(input: Readonly<{
       await input.database.internalTransaction("admin.execution.retry", (transaction) =>
         outbox.releaseOwnedLeases(transaction, {
           workerId: input.workerId,
-          owners: ["admin-execution"],
+          consumer: "admin-worker",
         }));
     },
   });

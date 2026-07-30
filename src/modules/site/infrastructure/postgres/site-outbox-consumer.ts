@@ -104,7 +104,7 @@ export function createPostgresSiteRuntimeEventQueue(
     claim: () => database.internalTransaction("site.runtime.consume", (transaction) => outbox.claim(transaction, {
       workerId: options.workerId,
       leaseToken: randomUUID(),
-      owners: ["site"],
+      consumer: "site-worker",
       limit: claimLimit,
       leaseSeconds,
     })),

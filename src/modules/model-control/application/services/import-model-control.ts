@@ -64,7 +64,7 @@ export class ImportModelControlService implements ModelInventoryImportAdministra
           inventory,
           providerAvailability,
         });
-        await this.journal.succeed(transaction, command, receipt, context);
+        await this.journal.succeed(transaction, command, receipt);
         return receipt;
       },
     );

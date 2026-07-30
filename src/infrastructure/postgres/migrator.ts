@@ -404,7 +404,6 @@ async function grantModelGatewayPrivileges(
     `GRANT UPDATE(fence_epoch,state,owner_evidence_ref,provisional_customer_amount,updated_at) ` +
       `ON TABLE platform.credit_usage_attempt_intent TO ${gateway}`,
   );
-  await client.query(`GRANT INSERT ON TABLE platform.outbox_event TO ${gateway}`);
   await client.query(
     `GRANT INSERT ON TABLE platform.model_gateway_execution_authorization TO ${admission}`,
   );
@@ -584,7 +583,8 @@ const MODEL_GATEWAY_POST_AUTHORITY_SQL = `
       AND has_table_privilege($1,'platform.credit_budget_allocation_revision','SELECT')
       AND has_table_privilege($1,'platform.credit_execution_budget_root','SELECT')
       AND has_table_privilege($1,'platform.credit_hold','SELECT')
-      AND has_table_privilege($1,'platform.outbox_event','INSERT') AS "modelGatewayAuthorityOk",
+      AND NOT has_table_privilege($1,'platform.outbox_event','SELECT')
+      AND NOT has_table_privilege($1,'platform.outbox_event','INSERT') AS "modelGatewayAuthorityOk",
     has_table_privilege($1,'platform.model_gateway_execution_authorization','SELECT')
       AS "canReadAuthorizationProjection"
   /* modelGatewayAuthority */`;

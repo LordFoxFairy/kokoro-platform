@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { VerifiedRequestSecurityContext } from "../../src/shared/security-context/index.js";
 import type { PlatformTransaction } from "../../src/shared/unit-of-work/index.js";
 import type { CommandIdentity, CommandReceipt, JsonValue } from "../../src/shared/outbox-inbox/receipt.js";
-import type { OutboxEvent } from "../../src/shared/outbox-inbox/outbox.js";
 import {
   AdminCommandService,
   AdminLocalCommandRegistry,
@@ -41,8 +40,7 @@ describe("Admin command application service", () => {
     expect(harness.approvals[0]).toMatchObject({ commandId, payload: { siteRef: "site_01" } });
     expect(harness.receipt?.state).toBe("succeeded");
     expect(harness.receipt?.requestDigest).toBe(requestDigest);
-    expect(harness.events).toMatchObject([{ owner: "admin-control",
-      eventType: "admin.command.approval.requested" }]);
+    expect(harness.receipt?.result).toMatchObject({ disposition: "pending_approval" });
   });
 
   it("executes a normal Platform mutation through its local owner port in the same transaction", async () => {
@@ -58,10 +56,8 @@ describe("Admin command application service", () => {
       result: { journalRef: "journal_01" } });
     expect(harness.executions).toBe(1);
     expect(harness.handlerTransaction).toBe(transaction);
-    expect(harness.events[0]?.payload).toMatchObject({
-      operation: "credit.adjust", operatorGeneration: "3", authorizationEpoch: "9",
-      requestDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
-      outcome: { disposition: "succeeded", commandId },
+    expect(harness.receipt?.result).toMatchObject({
+      disposition: "succeeded", commandId, result: { journalRef: "journal_01" },
     });
   });
 
@@ -105,7 +101,6 @@ describe("Admin command application service", () => {
     expect(harness.decisions).toMatchObject([{ allowed: false, reasonCode: "ADMIN_PERMISSION_DENIED",
       effectClass: "dangerous", authorizationEpoch: 9n }]);
     expect(harness.receipt?.state).toBe("failed");
-    expect(harness.events).toEqual([]);
   });
 
   it("audits an idempotency digest conflict without overwriting the first command receipt", async () => {
@@ -151,7 +146,6 @@ function createHarness(input: Readonly<{
   const decisions: AdminDecisionRecord[] = [];
   const approvals: unknown[] = [];
   const reviews: unknown[] = [];
-  const events: OutboxEvent[] = [];
   let receipt: CommandReceipt | null = null;
   let executions = 0;
   let authorityLoads = 0;
@@ -189,12 +183,11 @@ function createHarness(input: Readonly<{
         return receipt;
       },
     },
-    outbox: { async enqueue(_transaction, event) { events.push(event); } },
     clock: () => new Date("2026-07-28T13:00:00.000Z"),
     reference: () => `reference_${++reference}`,
   });
   return {
-    service, decisions, approvals, reviews, events,
+    service, decisions, approvals, reviews,
     get receipt() { return receipt; },
     get executions() { return executions; },
     get authorityLoads() { return authorityLoads; },

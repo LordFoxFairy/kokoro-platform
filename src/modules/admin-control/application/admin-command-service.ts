@@ -1,6 +1,5 @@
 import { assertDigest, type JsonValue, type CommandIdentity, type CommandReceipt } from
   "../../../shared/outbox-inbox/receipt.js";
-import type { OutboxEvent } from "../../../shared/outbox-inbox/outbox.js";
 import type { VerifiedRequestSecurityContext } from "../../../shared/security-context/index.js";
 import type { PlatformTransaction } from "../../../shared/unit-of-work/index.js";
 import { digestAdminValue } from "./admin-digest.js";
@@ -27,10 +26,6 @@ export interface AdminReceiptPort {
     identity: CommandIdentity,
     outcome: Readonly<{ state: "succeeded" | "failed" | "outcome_unknown"; result: JsonValue | null; resultDigest: string }>,
   ): Promise<CommandReceipt>;
-}
-
-export interface AdminOutboxPort {
-  enqueue(transaction: PlatformTransaction, event: OutboxEvent): Promise<void>;
 }
 
 export interface AdminAuthorityRepositoryPort {
@@ -137,7 +132,6 @@ export class AdminCommandService {
     registry: AdminLocalCommandRegistry;
     repository: AdminAuthorityRepositoryPort;
     receipts: AdminReceiptPort;
-    outbox: AdminOutboxPort;
     clock?: () => Date;
     approvalTtlMs?: number;
     reference: () => string;
@@ -218,7 +212,6 @@ export class AdminCommandService {
           });
           const result = json({ disposition: "pending_approval", approvalRef, commandId: input.commandId });
           await this.success(transaction, identity, result);
-          await this.event(transaction, input, admission, requestDigest, "admin.command.approval.requested", result);
           return Object.freeze({ disposition: "pending_approval", approvalRef, commandId: input.commandId });
         }
         const outcome = await handler.execute(transaction, { admission, payload: input.payload, requestDigest });
@@ -227,7 +220,6 @@ export class AdminCommandService {
           await this.dependencies.receipts.recordOutcome(transaction, identity, {
             state: "failed", result, resultDigest: digestAdminValue(result),
           });
-          await this.event(transaction, input, admission, requestDigest, "admin.command.rejected", result);
           return Object.freeze({ disposition: "rejected", commandId: input.commandId, code: outcome.code });
         }
         const reviewRef = admission.approvalPolicy === "post_effect_review"
@@ -247,8 +239,6 @@ export class AdminCommandService {
         const result = json({ disposition, commandId: input.commandId, result: outcome.result,
           ...(reviewRef === null ? {} : { reviewRef }) });
         await this.success(transaction, identity, result);
-        await this.event(transaction, input, admission, requestDigest,
-          disposition === "review_required" ? "admin.command.break-glass.executed" : "admin.command.succeeded", result);
         return reviewRef === null
           ? Object.freeze({ disposition: "succeeded" as const, commandId: input.commandId,
             result: outcome.result })
@@ -290,36 +280,6 @@ export class AdminCommandService {
     await this.dependencies.receipts.recordOutcome(transaction, identity, {
       state: "succeeded", result, resultDigest: digestAdminValue(result),
     });
-  }
-
-  private event(
-    transaction: PlatformTransaction,
-    input: Readonly<{ commandId: string; context: VerifiedRequestSecurityContext }>,
-    admission: AdminCommandAdmission,
-    requestDigest: string,
-    eventType: string,
-    payload: JsonValue,
-  ): Promise<void> {
-    const eventPayload = json({
-      commandId: input.commandId,
-      operation: admission.commandId,
-      operatorRef: admission.operatorRef,
-      operatorGeneration: admission.operatorGeneration.toString(),
-      authorizationEpoch: admission.authorizationEpoch.toString(),
-      targetSiteRef: admission.siteRef,
-      environment: admission.environment,
-      region: admission.region,
-      effectClass: admission.effectClass,
-      approvalPolicy: admission.approvalPolicy,
-      requestDigest,
-      outcome: payload,
-    });
-    const event: OutboxEvent = {
-      eventId: this.dependencies.reference(), owner: "admin-control", eventType,
-      aggregateId: input.commandId, payload: eventPayload, payloadDigest: digestAdminValue(eventPayload),
-      correlationId: input.context.correlationId, causationId: input.context.requestId,
-    };
-    return this.dependencies.outbox.enqueue(transaction, event);
   }
 
   private now(): string {

@@ -20,7 +20,7 @@ describe("Commerce outbox reconciler", () => {
 
     await cycle({ signal: new AbortController().signal });
 
-    expect(outbox.claimInput).toMatchObject({ owners: ["commerce", "credit"], workerId: "worker-1", leaseToken: "lease-1" });
+    expect(outbox.claimInput).toMatchObject({ consumer: "commerce-worker", workerId: "worker-1", leaseToken: "lease-1" });
     expect(projection.events).toHaveLength(2);
     expect(transport.events).toHaveLength(2);
     expect(outbox.completed).toEqual([

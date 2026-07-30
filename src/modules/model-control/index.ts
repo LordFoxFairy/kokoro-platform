@@ -27,7 +27,6 @@ export type {
 export type {
   ModelControlCommand,
   ModelControlCommandInput,
-  ModelControlCommittedEvent,
 } from "./application/model-control-command.js";
 export type {
   CanonicalModelInventory,

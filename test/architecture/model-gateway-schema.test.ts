@@ -28,4 +28,20 @@ describe("Model Gateway owned schema", () => {
     expect(migration).toContain("reject_model_gateway_owned_delete");
     expect(migration).toContain("REVOKE ALL ON FUNCTION platform.resolve_model_gateway_authorization(TEXT,TEXT) FROM PUBLIC");
   });
+
+  it("uses its owned outbox without generic Platform outbox authority", async () => {
+    const [migrator, database] = await Promise.all([
+      readFile(resolve("src/infrastructure/postgres/migrator.ts"), "utf8"),
+      readFile(resolve(
+        "src/modules/model-gateway/infrastructure/postgres/model-gateway-database.ts",
+      ), "utf8"),
+    ]);
+
+    expect(migrator).toContain("GRANT SELECT,INSERT ON TABLE platform.model_gateway_outbox TO ${gateway}");
+    expect(migrator).not.toContain("GRANT INSERT ON TABLE platform.outbox_event TO ${gateway}");
+    expect(migrator).toContain("NOT has_table_privilege($1,'platform.outbox_event','SELECT')");
+    expect(migrator).toContain("NOT has_table_privilege($1,'platform.outbox_event','INSERT')");
+    expect(database).toContain("NOT has_table_privilege(current_user,'platform.outbox_event','SELECT')");
+    expect(database).toContain("NOT has_table_privilege(current_user,'platform.outbox_event','INSERT')");
+  });
 });

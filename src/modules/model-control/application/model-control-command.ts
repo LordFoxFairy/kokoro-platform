@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type {
   ModelInventoryActivationReceipt,
   ModelInventoryImportReceipt,
@@ -119,27 +118,6 @@ export type ModelControlCommandReceipt =
   | ModelOptionMaterializationReceipt
   | SiteReleaseModelCatalogPublishReceipt;
 
-export interface ModelControlCommittedEvent {
-  readonly eventId: string;
-  readonly owner: "model-control";
-  readonly eventType:
-    | "model.inventory.materialized.v1"
-    | "model.inventory.activated.v1"
-    | "model.site-policy.changed.v1"
-    | "model.option-revisions.materialized.v1"
-    | "model.site-release-catalog.published.v1";
-  readonly aggregateId: string;
-  readonly payload: {
-    readonly schemaVersion: 1;
-    readonly eventType: ModelControlCommittedEvent["eventType"];
-    readonly commandId: string;
-    readonly requestDigest: string;
-    readonly receipt: Omit<ModelControlCommandReceipt, "replayed">;
-  };
-  readonly payloadDigest: string;
-  readonly receipt: Omit<ModelControlCommandReceipt, "replayed">;
-}
-
 export function createModelControlCommand<const Input extends ModelControlCommandInput>(
   input: Input,
 ): ModelControlCommand<Input> {
@@ -177,63 +155,6 @@ export function createModelControlCommand<const Input extends ModelControlComman
   });
 }
 
-export function modelControlEventFor(
-  command: ModelControlCommand,
-  receipt: ModelControlCommandReceipt,
-): ModelControlCommittedEvent {
-  const { replayed: _replayed, ...stableReceipt } = receipt;
-  let eventType: ModelControlCommittedEvent["eventType"];
-  let aggregateId: string;
-  if (command.operation === "model.inventory.import") {
-    eventType = "model.inventory.materialized.v1";
-    aggregateId = (stableReceipt as Omit<ModelInventoryImportReceipt, "replayed">).digest;
-  } else if (command.operation === "model.inventory.activate") {
-    eventType = "model.inventory.activated.v1";
-    aggregateId = (stableReceipt as Omit<ModelInventoryActivationReceipt, "replayed">).targetDigest;
-  } else if (command.operation === "model.site-policy.change") {
-    eventType = "model.site-policy.changed.v1";
-    const effect = command.input.effect as Extract<
-      ModelControlCommandInput,
-      { operation: "model.site-policy.change" }
-    >["effect"];
-    aggregateId = `${effect.siteId}:${effect.product}`;
-  } else if (command.operation === "model.option.materialize") {
-    eventType = "model.option-revisions.materialized.v1";
-    aggregateId = (
-      stableReceipt as Omit<ModelOptionMaterializationReceipt, "replayed">
-    ).materializationDigest;
-  } else {
-    eventType = "model.site-release-catalog.published.v1";
-    aggregateId = (
-      stableReceipt as Omit<SiteReleaseModelCatalogPublishReceipt, "replayed">
-    ).modelOptionCatalogRef;
-  }
-  const payload = deepFreeze({
-    schemaVersion: 1 as const,
-    eventType,
-    commandId: command.commandId,
-    requestDigest: command.requestDigest,
-    receipt: stableReceipt,
-  });
-  return deepFreeze({
-    eventId: deterministicUuid(`${eventType}:${command.commandId}:${command.requestDigest}`),
-    owner: "model-control" as const,
-    eventType,
-    aggregateId,
-    payload,
-    payloadDigest: sha256(stableJson(payload)),
-    receipt: stableReceipt,
-  });
-}
-
-function deterministicUuid(value: string): string {
-  const bytes = Buffer.from(sha256(value).slice(0, 32), "hex");
-  bytes[6] = (bytes[6]! & 0x0f) | 0x50;
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
-  const hex = bytes.toString("hex");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
 export function assertModelControlCommandId(value: string, code: string): void {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(value))
     throw new Error(code);
@@ -255,19 +176,6 @@ function containsControl(value: string): boolean {
     const codePoint = character.codePointAt(0)!;
     return codePoint < 32 || codePoint === 127;
   });
-}
-
-function sha256(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
-}
-
-function stableJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  return `{${Object.entries(value as Record<string, unknown>)
-    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-    .map(([key, child]) => `${JSON.stringify(key)}:${stableJson(child)}`)
-    .join(",")}}`;
 }
 
 function deepFreeze<T>(value: T): T {

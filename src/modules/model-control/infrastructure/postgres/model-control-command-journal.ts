@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { OutboxRepository } from "../../../../shared/outbox-inbox/outbox.js";
 import {
   CommandReceiptRepository,
   type CommandIdentity,
@@ -7,17 +6,15 @@ import {
 } from "../../../../shared/outbox-inbox/receipt.js";
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
 import type { ModelControlCommandJournal } from "../../application/contracts/model-control-command-journal.js";
-import {
-  modelControlEventFor,
-  type ModelControlCommand,
-  type ModelControlCommandReceipt,
+import type {
+  ModelControlCommand,
+  ModelControlCommandReceipt,
 } from "../../application/model-control-command.js";
 
 export class PostgresModelControlCommandJournal implements ModelControlCommandJournal {
   constructor(
     private readonly receipts: Pick<CommandReceiptRepository, "begin" | "recordOutcome"> =
       new CommandReceiptRepository(),
-    private readonly outbox: Pick<OutboxRepository, "enqueue"> = new OutboxRepository(),
   ) {}
 
   async begin(transaction: PlatformTransaction, command: ModelControlCommand): Promise<void> {
@@ -28,9 +25,8 @@ export class PostgresModelControlCommandJournal implements ModelControlCommandJo
     transaction: PlatformTransaction,
     command: ModelControlCommand,
     receipt: ModelControlCommandReceipt,
-    trace: { readonly requestId: string; readonly correlationId: string },
   ): Promise<void> {
-    const event = modelControlEventFor(command, receipt);
+    const { replayed: _replayed, ...stableReceipt } = receipt;
     const result = jsonValue({
       schemaVersion: 1,
       commandId: command.commandId,
@@ -39,20 +35,8 @@ export class PostgresModelControlCommandJournal implements ModelControlCommandJo
       siteId: "siteId" in command.input.effect
         ? command.input.effect.siteId
         : null,
-      outcome: event.receipt,
+      outcome: stableReceipt,
     });
-    if (!receipt.replayed) {
-      await this.outbox.enqueue(transaction, {
-        eventId: event.eventId,
-        owner: event.owner,
-        eventType: event.eventType,
-        aggregateId: event.aggregateId,
-        payload: jsonValue(event.payload),
-        payloadDigest: event.payloadDigest,
-        correlationId: trace.correlationId,
-        causationId: trace.requestId,
-      });
-    }
     await this.receipts.recordOutcome(transaction, identity(command), {
       state: "succeeded",
       result,

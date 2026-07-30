@@ -46,7 +46,7 @@ describe("Admin execution worker cycle", () => {
     await cycle({ signal: new AbortController().signal });
 
     expect(calls[0]).toBe("admin.execution.claim");
-    expect(calls[1]).toMatchObject({ owners: ["admin-execution"], workerId: "admin-worker-01" });
+    expect(calls[1]).toMatchObject({ consumer: "admin-worker", workerId: "admin-worker-01" });
     expect(calls[2]).toEqual({ operation: "site.suspend", siteRef: "site_01",
       environment: "production", region: "us-east-1", makerRef: "maker_01",
       makerGeneration: 2n, makerAuthorizationEpoch: 8n, checkerRef: "checker_01",

@@ -483,7 +483,8 @@ const RUNTIME_IDENTITY_SQL = `
       AND has_table_privilege(current_user,'platform.credit_budget_allocation_revision','SELECT')
       AND has_table_privilege(current_user,'platform.credit_execution_budget_root','SELECT')
       AND has_table_privilege(current_user,'platform.credit_hold','SELECT')
-      AND has_table_privilege(current_user,'platform.outbox_event','INSERT') AS "hasRequiredGatewayWrites"
+      AND NOT has_table_privilege(current_user,'platform.outbox_event','SELECT')
+      AND NOT has_table_privilege(current_user,'platform.outbox_event','INSERT') AS "hasRequiredGatewayWrites"
   FROM pg_roles runtime,pg_database database_row
   JOIN pg_roles owner ON owner.oid=database_row.datdba
   WHERE runtime.rolname=current_user AND database_row.datname=current_database() AND runtime.rolname=$2`;

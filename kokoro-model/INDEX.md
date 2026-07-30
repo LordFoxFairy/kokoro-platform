@@ -20,7 +20,7 @@ Model does not execute Agent graphs, own provider proxy attempts, settle credit,
 Session's model catalog client calls this product/runtime module. The Admin gateway calls Platform ModelControl instead and must never call this package directly. Persistence is private to its Prisma schema; runtime invocation belongs to Model Gateway.
 
 ## Data ownership and events
-This package owns model/provider metadata, policy records, migrations, and model-control events.
+This package owns model/provider metadata, policy records, migrations, and immutable model-control facts.
 
 ## Runtime and security
 `DATABASE_URL_MODEL` is this package's private Prisma datasource; `KOKORO_MODEL_PORT` (4221) binds the service. Inbound runtime calls are authenticated by the per-caller registry (`KOKORO_INTERNAL_SECRET_<CALLER>`). Provider credentials are referenced indirectly and never returned through product model lists. `/model-bindings/resolve` and `/model-labels` each take `siteId` as a **required query parameter** and apply the same Site visibility projection. The `x-kokoro-site-id` header is only cross-checked; a contradiction is rejected with `400 model.site_mismatch`. Calls to former provider-account/binding/label ensure, delete, restore routes and `/admin/models/*` receive `404`; possessing a Session or Admin credential does not restore that retired authority.

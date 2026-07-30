@@ -7,6 +7,39 @@ import type {
 import { issuePlatformTransaction, revokePlatformTransaction } from "../../src/shared/unit-of-work/platform-transaction.js";
 
 describe("UsageSettlementService", () => {
+  it("accepts Media usage and rejects retired execution-mechanism producer identities", async () => {
+    const mediaRepository = new RecordingUsageRepository();
+    const legacyRepository = new RecordingUsageRepository();
+    const lease = transactionLease();
+    const input = {
+      siteId: "site-1", authorizationSegmentRef: "segment-1", executionManifestRef: "manifest-1",
+      producerKind: "media" as const, producerContext: "media:us-east-1",
+      producerGeneration: 1n, attemptRef: "attempt-1", logicalEffectRef: "effect-1",
+      maximumDimensions: [
+        { dimensionKey: "input_tokens", sourceUnit: "token", quantity: 1_000n },
+        { dimensionKey: "output_tokens", sourceUnit: "token", quantity: 1_000n },
+      ],
+      businessOperationKey: "prepare-media-attempt:1", requestDigest: "6".repeat(64),
+    };
+    try {
+      await expect(usageService(mediaRepository).prepareAttempt(lease.transaction, input))
+        .resolves.toMatchObject({ kind: "accepted" });
+      await expect(usageService(legacyRepository).prepareAttempt(lease.transaction, {
+        ...input,
+        producerKind: "job_runtime" as never,
+        businessOperationKey: "prepare-retired-attempt:1",
+      })).resolves.toEqual({ kind: "invalid_state", code: "CREDIT_USAGE_PRODUCER_KIND_INVALID" });
+      await expect(usageService(legacyRepository).prepareAttempt(lease.transaction, {
+        ...input,
+        producerKind: "media_runtime" as never,
+        businessOperationKey: "prepare-retired-runtime-attempt:1",
+      })).resolves.toEqual({ kind: "invalid_state", code: "CREDIT_USAGE_PRODUCER_KIND_INVALID" });
+      expect(legacyRepository.savedAttemptIntent).toBeNull();
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
   it("owns the Attempt before Provider I/O and preserves an unknown outcome", async () => {
     const repository = new RecordingUsageRepository();
     const lease = transactionLease();

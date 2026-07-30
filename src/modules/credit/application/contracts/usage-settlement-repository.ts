@@ -11,8 +11,7 @@ export type UsageReferenceKind =
   | "usage-settlement"
   | "usage-variance"
   | "usage-journal"
-  | "usage-receipt"
-  | "usage-outbox";
+  | "usage-receipt";
 
 export type UsageCommandIdentity = Readonly<{
   siteId: string;
@@ -140,7 +139,6 @@ export type UsageSettlementRecord = Readonly<{
   journalTransactionRef?: string;
   varianceRef?: string;
   receiptRef: string;
-  outboxEventRef: string;
 }>;
 
 export type UsageReconciliationRecord = Readonly<{
@@ -156,7 +154,6 @@ export type UsageReconciliationRecord = Readonly<{
   code: "CREDIT_USAGE_UNAVAILABLE" | "CREDIT_USAGE_REQUIRED_DIMENSION_MISSING";
   observedAt: string;
   receiptRef: string;
-  outboxEventRef: string;
 }>;
 
 export interface UsageSettlementRepository {
@@ -173,7 +170,6 @@ export interface UsageSettlementRepository {
     identity: UsageCommandIdentity;
     receipt: UsageAttemptReceipt;
     receiptRef: string;
-    outboxEventRef: string;
     committedAt: string;
   }>): Promise<UsageWriteOutcome<UsageAttemptReceipt>>;
   lockAttemptIntent(transaction: PlatformTransaction, input: Readonly<{
@@ -184,7 +180,6 @@ export interface UsageSettlementRepository {
     identity: UsageCommandIdentity;
     receipt: UsageAttemptReceipt;
     receiptRef: string;
-    outboxEventRef: string;
     observedAt: string;
   }>): Promise<UsageWriteOutcome<UsageAttemptReceipt>>;
   lockLatestAttemptEvidence(transaction: PlatformTransaction, input: Readonly<{
@@ -204,7 +199,6 @@ export interface UsageSettlementRepository {
       nextFenceEpoch: bigint;
       provisionalCustomerAmount: bigint | null;
       receiptRef: string;
-      outboxEventRef: string;
     }>,
   ): Promise<UsageWriteOutcome<UsageEvidenceReceipt>>;
   loadClosureEvidence(transaction: PlatformTransaction, input: Readonly<{

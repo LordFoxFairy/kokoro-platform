@@ -25,11 +25,15 @@ describe("Credit usage settlement authority schema", () => {
     expect(sql).toContain("UNIQUE(site_ref,producer_kind,producer_context,producer_generation,attempt_ref,revision)");
     expect(sql).toContain("CREDIT_USAGE_ATTEMPT_IDENTITY_IMMUTABLE");
     expect(sql).toContain("CREDIT_USAGE_ATTEMPT_TRANSITION_INVALID");
+    expect(sql).toContain("'model_gateway','capability_runtime','media'");
+    expect(sql).not.toContain("job_runtime");
+    expect(sql).not.toContain("media_runtime");
     expect(sql).toContain("attempt_authorization_ref");
     expect(sql).toContain("correction_of_evidence_ref");
     expect(sql).toContain("correction_of_closure_ref");
     expect(sql).toContain("prior_settlement_ref");
     expect(sql).toContain("CREDIT_USAGE_FACT_IMMUTABLE");
+    expect(sql).not.toContain("outbox_event_ref");
   });
 
   it("keeps customer capture bounded and every correction source-linked", async () => {

@@ -62,8 +62,8 @@ Keep domain/application independent of transport and persistence. Add deployable
 
 General Admission is the only constructor of sealed GA execution material and the owner of Site/model/capability/asset/credit
 admission decisions. Model Gateway owns resumable chat provider effects, encrypted frame journals, Credit evidence and LiteLLM
-adaptation; Agent consumes only the opaque authorization and verifies the frame digest chain. Image, music and video generation
-must use dedicated product/generation routes instead of expanding the chat corpus. Payment provider connectors may remain disabled
+adaptation; Agent consumes only the opaque authorization and verifies the frame digest chain. Image, music, video and audio execution
+must use dedicated Media product routes instead of expanding the chat corpus. Payment provider connectors may remain disabled
 per Site; card redemption reaches the same Commerce fulfillment and Credit grant path as a successful purchase.
 The API health port is probe-only and must never be added to a Service or Ingress; ordinary HTTP
 probes cannot authenticate to the mTLS public listener.

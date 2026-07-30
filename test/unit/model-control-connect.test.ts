@@ -268,9 +268,7 @@ describe("ModelControl Connect provider", () => {
         return receipt;
       },
     };
-    const journal = new PostgresModelControlCommandJournal(receiptRepository, {
-      enqueue: async () => undefined,
-    });
+    const journal = new PostgresModelControlCommandJournal(receiptRepository);
     const unitOfWork = inMemoryUnitOfWork();
     let activeInventory: Parameters<ModelControlRepository["importInventory"]>[1]["inventory"] | null = null;
     let optionRevisions: Parameters<ModelOptionCatalogRepository["loadOptionRevisions"]>[1] extends never

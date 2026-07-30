@@ -190,7 +190,7 @@ export function createPostgresAssetEffectEventQueue(
     claim: () => database.internalTransaction("asset.outbox.consume", (lease) => outbox.claim(lease, {
       workerId: options.workerId,
       leaseToken: randomUUID(),
-      owners: ["asset"],
+      consumer: "asset-worker",
       eventTypes: ASSET_EFFECT_EVENT_TYPES,
       limit: claimLimit,
       leaseSeconds,

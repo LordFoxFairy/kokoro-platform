@@ -70,7 +70,7 @@ export function createAdminExecutionCycle(input: Readonly<{
       outbox.claim(transaction, {
         workerId: input.workerId,
         leaseToken,
-        owners: ["admin-execution"],
+        consumer: "admin-worker",
         limit,
         leaseSeconds,
       }));

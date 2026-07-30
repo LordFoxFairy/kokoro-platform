@@ -53,7 +53,7 @@ export class ActivateModelInventoryService implements ModelInventoryActivationAd
           targetDigest: input.targetDigest,
           expectedPointerRevision: input.expectedPointerRevision,
         });
-        await this.journal.succeed(transaction, command, receipt, context);
+        await this.journal.succeed(transaction, command, receipt);
         return receipt;
       },
     );

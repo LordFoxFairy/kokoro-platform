@@ -1,10 +1,23 @@
 import type { PlatformTransaction } from "../unit-of-work/platform-transaction.js";
 import { resolvePlatformTransaction } from "../unit-of-work/platform-transaction.js";
 import { assertDigest, type JsonValue } from "./receipt.js";
+import {
+  assertOutboxOwner,
+  outboxOwnersForConsumer,
+  type OutboxConsumer,
+  type OutboxOwner,
+} from "./outbox-owner-registry.js";
+
+export {
+  OUTBOX_OWNER_CONSUMER_REGISTRY,
+  outboxOwnersForConsumer,
+  type OutboxConsumer,
+  type OutboxOwner,
+} from "./outbox-owner-registry.js";
 
 export interface OutboxEvent {
   readonly eventId: string;
-  readonly owner: string;
+  readonly owner: OutboxOwner;
   readonly eventType: string;
   readonly aggregateId: string;
   readonly payload: JsonValue;
@@ -25,6 +38,7 @@ export interface OutboxDeliveryAcknowledgement {
 
 export class OutboxRepository {
   async enqueue(transaction: PlatformTransaction, event: OutboxEvent): Promise<void> {
+    assertOutboxOwner(event.owner);
     assertDigest(event.payloadDigest);
     const sql = resolvePlatformTransaction(transaction);
     const existing = await sql.query<{ payloadDigest: string }>(
@@ -53,15 +67,14 @@ export class OutboxRepository {
   async claim(
     transaction: PlatformTransaction,
     input: { readonly workerId: string; readonly leaseToken: string;
-      readonly owners: readonly string[]; readonly eventTypes?: readonly string[];
+      readonly consumer: OutboxConsumer; readonly eventTypes?: readonly string[];
       readonly limit: number; readonly leaseSeconds: number },
   ): Promise<readonly ClaimedOutboxEvent[]> {
     if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 100) throw new Error("OUTBOX_CLAIM_LIMIT_INVALID");
     if (!Number.isInteger(input.leaseSeconds) || input.leaseSeconds < 1 || input.leaseSeconds > 300) throw new Error("OUTBOX_LEASE_SECONDS_INVALID");
     assertBoundedIdentifier(input.workerId, "OUTBOX_WORKER_ID_INVALID");
     assertBoundedIdentifier(input.leaseToken, "OUTBOX_LEASE_TOKEN_INVALID");
-    if (input.owners.length === 0 || input.owners.length > 32) throw new Error("OUTBOX_OWNER_ALLOWLIST_INVALID");
-    input.owners.forEach((owner) => assertBoundedIdentifier(owner, "OUTBOX_OWNER_ALLOWLIST_INVALID"));
+    const owners = outboxOwnersForConsumer(input.consumer);
     if (input.eventTypes !== undefined) {
       if (input.eventTypes.length === 0 || input.eventTypes.length > 64 ||
           new Set(input.eventTypes).size !== input.eventTypes.length) {
@@ -90,7 +103,7 @@ export class OutboxRepository {
                  event.aggregate_id AS "aggregateId", event.payload, event.payload_digest AS "payloadDigest",
                  event.correlation_id AS "correlationId", event.causation_id AS "causationId",
                  event.lease_token AS "leaseToken", event.attempt`,
-      [input.limit, input.workerId, input.leaseToken, input.leaseSeconds, input.owners,
+      [input.limit, input.workerId, input.leaseToken, input.leaseSeconds, owners,
         ...(input.eventTypes === undefined ? [] : [input.eventTypes])],
     );
   }
@@ -162,20 +175,16 @@ export class OutboxRepository {
 
   async releaseOwnedLeases(
     transaction: PlatformTransaction,
-    input: Readonly<{ workerId: string; owners: readonly string[] }>,
+    input: Readonly<{ workerId: string; consumer: OutboxConsumer }>,
   ): Promise<number> {
     assertBoundedIdentifier(input.workerId, "OUTBOX_WORKER_ID_INVALID");
-    if (input.owners.length < 1 || input.owners.length > 32) {
-      throw new Error("OUTBOX_OWNER_ALLOWLIST_INVALID");
-    }
-    input.owners.forEach((owner) =>
-      assertBoundedIdentifier(owner, "OUTBOX_OWNER_ALLOWLIST_INVALID"));
+    const owners = outboxOwnersForConsumer(input.consumer);
     return resolvePlatformTransaction(transaction).execute(
       `UPDATE platform.outbox_event
        SET state='pending',available_at=now(),lease_owner=NULL,lease_token=NULL,
            lease_expires_at=NULL,updated_at=now(),last_error_code='WORKER_SHUTDOWN'
        WHERE state='leased' AND lease_owner=$1 AND owner=ANY($2::text[])`,
-      [input.workerId, input.owners],
+      [input.workerId, owners],
     );
   }
 }

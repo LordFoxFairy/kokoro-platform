@@ -7,7 +7,12 @@ import {
   settleAuthorizationSegment,
 } from "../domain/allocation.js";
 import { planHoldCapture, planSettlementCorrection } from "../domain/settlement.js";
-import { rateAttemptUsage, rateMaximumUsage, rateSegmentUsage } from "../domain/usage-rating.js";
+import {
+  assertUsageProducerKind,
+  rateAttemptUsage,
+  rateMaximumUsage,
+  rateSegmentUsage,
+} from "../domain/usage-rating.js";
 import type { UsageDimension } from "../domain/usage-rating.js";
 import type {
   StoredAttemptUsageEvidence,
@@ -56,6 +61,7 @@ export class UsageSettlementService {
       [input.siteId, input.authorizationSegmentRef, input.executionManifestRef, input.producerContext,
         input.attemptRef, input.logicalEffectRef, input.businessOperationKey].forEach(reference);
       digestValue(input.requestDigest);
+      assertUsageProducerKind(input.producerKind);
       if (input.producerGeneration <= 0n) {
         throw new Error("CREDIT_USAGE_ATTEMPT_INTENT_INVALID");
       }
@@ -102,7 +108,6 @@ export class UsageSettlementService {
       maximumDimensionsDigest: digestCanonical(input.maximumDimensions), maximumAmount: maximum.value.maximumAmount,
       provisionalCustomerAmount: null, state: "effect_committed", fenceEpoch: 1n, ownerEvidenceRef: null,
       committedAt: now.toISOString(), receiptRef: this.#reference("usage-receipt", now.getTime()),
-      outboxEventRef: this.#reference("usage-outbox", now.getTime()),
     }));
   }
 
@@ -154,7 +159,6 @@ export class UsageSettlementService {
       ...intent, identity, receipt, state: "outcome_unknown", fenceEpoch: receipt.fenceEpoch,
       ownerEvidenceRef: input.ownerEvidenceRef, observedAt: now.toISOString(),
       receiptRef: this.#reference("usage-receipt", now.getTime()),
-      outboxEventRef: this.#reference("usage-outbox", now.getTime()),
     }));
   }
 
@@ -233,7 +237,6 @@ export class UsageSettlementService {
       evidenceDigest: digestCanonical(input.evidence),
       observedAt,
       receiptRef: this.#reference("usage-receipt", Date.parse(observedAt)),
-      outboxEventRef: this.#reference("usage-outbox", Date.parse(observedAt)),
     });
     return this.dependencies.repository.persistAttemptUsage(transaction, record);
   }
@@ -323,7 +326,6 @@ export class UsageSettlementService {
         evidenceSet, code: rating.code, observedAt,
         ...(segment === undefined ? {} : { segment }),
         receiptRef: this.#reference("usage-receipt", now.getTime()),
-        outboxEventRef: this.#reference("usage-outbox", now.getTime()),
       }));
     }
     const delta = rating.customerAmount - (priorSettlement?.customerAmount ?? 0n);
@@ -390,7 +392,6 @@ export class UsageSettlementService {
         varianceRef: this.#reference("usage-variance", now.getTime()),
       }),
       receiptRef: this.#reference("usage-receipt", now.getTime()),
-      outboxEventRef: this.#reference("usage-outbox", now.getTime()),
     }));
   }
 }

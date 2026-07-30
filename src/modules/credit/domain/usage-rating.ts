@@ -1,4 +1,16 @@
-export type UsageProducerKind = "model_gateway" | "capability_runtime" | "job_runtime";
+export const USAGE_PRODUCER_KINDS = [
+  "model_gateway",
+  "capability_runtime",
+  "media",
+] as const;
+
+export type UsageProducerKind = (typeof USAGE_PRODUCER_KINDS)[number];
+
+export function assertUsageProducerKind(value: string): asserts value is UsageProducerKind {
+  if (!(USAGE_PRODUCER_KINDS as readonly string[]).includes(value)) {
+    throw new Error("CREDIT_USAGE_PRODUCER_KIND_INVALID");
+  }
+}
 export type UsageAttemptOutcome =
   | "succeeded"
   | "failed_before_effect"
@@ -314,6 +326,7 @@ function validatePolicy(policy: RatingPolicyRevision): void {
 }
 
 function validateEvidenceIdentity(evidence: AttemptUsageEvidence): void {
+  assertUsageProducerKind(evidence.producerKind);
   [evidence.producerContext, evidence.attemptRef, evidence.logicalEffectRef,
     evidence.authorizationSegmentRef, evidence.executionManifestRef]
     .forEach((value) => validateKey(value, "CREDIT_USAGE_REFERENCE_INVALID"));

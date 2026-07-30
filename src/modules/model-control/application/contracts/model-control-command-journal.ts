@@ -5,9 +5,10 @@ import type {
 } from "../model-control-command.js";
 
 /**
- * Composable local effect port. Implementations must persist command identity,
- * mutation outcome, and the event in the supplied Platform transaction; they
- * never dispatch to Gateway/cache/projectors before commit.
+ * Composable local command journal. Implementations persist command identity
+ * and mutation outcome in the supplied Platform transaction. The immutable
+ * owner tables remain the business facts; this journal does not duplicate them
+ * into an outbox without a defined remote consumer.
  */
 export interface ModelControlCommandJournal {
   begin(
@@ -18,6 +19,5 @@ export interface ModelControlCommandJournal {
     transaction: PlatformTransaction,
     command: ModelControlCommand,
     receipt: ModelControlCommandReceipt,
-    trace: { readonly requestId: string; readonly correlationId: string },
   ): Promise<void>;
 }

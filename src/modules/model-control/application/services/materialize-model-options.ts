@@ -68,7 +68,7 @@ export class MaterializeModelOptionsService implements ModelOptionMaterializatio
           materialization,
         });
         assertMaterializationReceipt(receipt, input.materializationId, materialization);
-        await this.journal.succeed(transaction, command, receipt, context);
+        await this.journal.succeed(transaction, command, receipt);
         return receipt;
       },
     );

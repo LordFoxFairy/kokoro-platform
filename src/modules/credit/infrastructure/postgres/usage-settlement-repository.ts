@@ -167,8 +167,8 @@ export class PostgresUsageSettlementRepository implements UsageSettlementReposit
         record.ownerEvidenceRef,
         record.committedAt],
     ), "CREDIT_USAGE_ATTEMPT_INTENT_PERSIST_FAILED");
-    await writeEvidence(sql, record.identity, record.receipt, record.receiptRef, record.outboxEventRef,
-      record.attemptAuthorizationRef, record.committedAt, "accepted");
+    await writeReceipt(sql, record.identity, record.receipt, record.receiptRef,
+      record.committedAt, "accepted");
     return { kind: "accepted" as const, value: record.receipt };
   }
 
@@ -200,8 +200,8 @@ export class PostgresUsageSettlementRepository implements UsageSettlementReposit
         record.state === "outcome_unknown" ? "effect_committed" : record.state,
         (record.fenceEpoch - 1n).toString()],
     ), "CREDIT_USAGE_ATTEMPT_FENCE_CAS_LOST");
-    await writeEvidence(sql, record.identity, record.receipt, record.receiptRef, record.outboxEventRef,
-      record.attemptAuthorizationRef, record.observedAt, "accepted");
+    await writeReceipt(sql, record.identity, record.receipt, record.receiptRef,
+      record.observedAt, "accepted");
     return { kind: "accepted" as const, value: record.receipt };
   }
 
@@ -258,8 +258,8 @@ export class PostgresUsageSettlementRepository implements UsageSettlementReposit
       evidenceRef: record.evidenceRef,
       revision: record.evidence.revision,
     });
-    await writeEvidence(sql, record.identity, value, record.receiptRef, record.outboxEventRef,
-      record.evidence.authorizationSegmentRef, record.observedAt, "accepted");
+    await writeReceipt(sql, record.identity, value, record.receiptRef,
+      record.observedAt, "accepted");
     return { kind: "accepted" as const, value };
   }
 
@@ -446,8 +446,8 @@ export class PostgresUsageSettlementRepository implements UsageSettlementReposit
         record.receipt.settlementRef, record.policyRatedAmount.toString(), record.customerAmount.toString(),
         record.platformExposureAmount.toString()],
     ), "CREDIT_USAGE_VARIANCE_PERSIST_FAILED");
-    await writeEvidence(sql, record.identity, record.receipt, record.receiptRef, record.outboxEventRef,
-      record.context.authorizationSegmentRef, record.settledAt, "accepted");
+    await writeReceipt(sql, record.identity, record.receipt, record.receiptRef,
+      record.settledAt, "accepted");
     return { kind: "accepted" as const, value: record.receipt };
   }
 
@@ -482,8 +482,8 @@ export class PostgresUsageSettlementRepository implements UsageSettlementReposit
         record.observedAt],
     ), "CREDIT_USAGE_RECONCILIATION_PERSIST_FAILED");
     const value = Object.freeze({ authorizationSegmentRef: record.context.authorizationSegmentRef, code: record.code });
-    await writeEvidence(sql, record.identity, value, record.receiptRef, record.outboxEventRef,
-      record.context.authorizationSegmentRef, record.observedAt, "reconciliation_required");
+    await writeReceipt(sql, record.identity, value, record.receiptRef,
+      record.observedAt, "reconciliation_required");
     return { kind: "reconciliation_required" as const, value };
   }
 }
@@ -646,34 +646,23 @@ async function insertJournal(
   ), "CREDIT_USAGE_HOLD_CAPTURE_CAS_LOST");
 }
 
-async function writeEvidence(
+async function writeReceipt(
   sql: ReturnType<typeof resolvePlatformTransaction>,
   identity: UsageCommandIdentity,
   value: UsageAttemptReceipt | UsageEvidenceReceipt | UsageSettlementReceipt |
     Readonly<{ authorizationSegmentRef: string; code: string }>,
   receiptRef: string,
-  outboxEventRef: string,
-  aggregateId: string,
   completedAt: string,
   outcomeKind: "accepted" | "reconciliation_required",
 ): Promise<void> {
   const result = canonical(value);
-  const payload = canonical({ operationKind: identity.operationKind, siteId: identity.siteId,
-    result: JSON.parse(result) as unknown });
-  await one(sql.execute(
-    `INSERT INTO platform.outbox_event
-     (event_id,owner,event_type,aggregate_id,payload,payload_digest,correlation_id,causation_id)
-     VALUES ($1::uuid,'credit-usage-rating',$2,$3,$4::jsonb,$5,$6,NULL)`,
-    [outboxEventRef, `credit.${identity.operationKind}.v1`, aggregateId, payload, digest(payload),
-      identity.businessOperationKey],
-  ), "CREDIT_USAGE_OUTBOX_PERSIST_FAILED");
   await one(sql.execute(
     `INSERT INTO platform.credit_usage_command_receipt
      (receipt_ref,site_ref,operation_kind,business_operation_key,request_digest,outcome_kind,result,
-      result_digest,outbox_event_ref,completed_at)
-     VALUES ($1::uuid,$2,$3,$4,$5,$6,$7::jsonb,$8,$9::uuid,$10::timestamptz)`,
+      result_digest,completed_at)
+     VALUES ($1::uuid,$2,$3,$4,$5,$6,$7::jsonb,$8,$9::timestamptz)`,
     [receiptRef, identity.siteId, identity.operationKind, identity.businessOperationKey,
-      identity.requestDigest, outcomeKind, result, digest(result), outboxEventRef, completedAt],
+      identity.requestDigest, outcomeKind, result, digest(result), completedAt],
   ), "CREDIT_USAGE_RECEIPT_PERSIST_FAILED");
 }
 
@@ -696,7 +685,7 @@ function mapAttemptIntent(row: AttemptIntentRow): StoredUsageAttemptIntent {
     budgetAllocationRef: row.budgetAllocationRef, authorizationSegmentRef: row.authorizationSegmentRef,
     creditHoldRef: row.creditHoldRef, creditAccountId: row.creditAccountId, unit: row.unit,
     executionManifestRef: row.executionManifestRef, attemptAuthorizationRef: row.attemptAuthorizationRef,
-    producerKind: enumValue(row.producerKind, ["model_gateway", "capability_runtime", "job_runtime"] as const),
+    producerKind: enumValue(row.producerKind, ["model_gateway", "capability_runtime", "media"] as const),
     producerContext: row.producerContext, producerGeneration: BigInt(row.producerGeneration),
     attemptRef: row.attemptRef, logicalEffectRef: row.logicalEffectRef,
     maximumDimensions: parseUsageDimensions(row.maximumDimensions),
@@ -728,7 +717,7 @@ function parseRatingPolicy(value: unknown): RatingPolicyRevision {
 function parseEvidence(value: unknown): AttemptUsageEvidence {
   if (!isObject(value)) throw new Error("CREDIT_USAGE_EVIDENCE_CORRUPT");
   const base = {
-    producerKind: enumValue(value.producerKind, ["model_gateway", "capability_runtime", "job_runtime"] as const),
+    producerKind: enumValue(value.producerKind, ["model_gateway", "capability_runtime", "media"] as const),
     producerContext: stringValue(value.producerContext), producerGeneration: BigInt(stringValue(value.producerGeneration)),
     attemptRef: stringValue(value.attemptRef), logicalEffectRef: stringValue(value.logicalEffectRef),
     authorizationSegmentRef: stringValue(value.authorizationSegmentRef),

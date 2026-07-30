@@ -16,7 +16,7 @@ describe("outbox retry bounds", () => {
       await new OutboxRepository().claim(lease.transaction, {
         workerId: "asset-worker-01",
         leaseToken: "lease-01",
-        owners: ["asset"],
+        consumer: "asset-worker",
         eventTypes: ["asset.scan.requested", "asset.object.cleanup.requested"],
         limit: 10,
         leaseSeconds: 30,
@@ -36,6 +36,35 @@ describe("outbox retry bounds", () => {
     try {
       await expect(new OutboxRepository().retryOrDeadLetter(lease.transaction, { eventId: "event", leaseToken: "lease", errorCode: "", retryAt: "invalid", maxAttempts: 0 })).rejects.toThrow("OUTBOX_RETRY_INPUT_INVALID");
     } finally { revokePlatformTransaction(lease); }
+  });
+
+  it("rejects an unregistered producer owner before touching persistence", async () => {
+    const lease = issuePlatformTransaction({
+      query: async () => { throw new Error("SQL_MUST_NOT_RUN"); },
+      execute: async () => { throw new Error("SQL_MUST_NOT_RUN"); },
+    });
+    try {
+      await expect(new OutboxRepository().enqueue(lease.transaction, {
+        ...event(), owner: "orphan-owner" as never,
+      })).rejects.toThrow("OUTBOX_OWNER_UNREGISTERED");
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("rejects an unregistered consumer before touching persistence", async () => {
+    const lease = issuePlatformTransaction({
+      query: async () => { throw new Error("SQL_MUST_NOT_RUN"); },
+      execute: async () => { throw new Error("SQL_MUST_NOT_RUN"); },
+    });
+    try {
+      await expect(new OutboxRepository().claim(lease.transaction, {
+        workerId: "orphan-worker-01", leaseToken: "lease-01",
+        consumer: "orphan-worker" as never, limit: 10, leaseSeconds: 30,
+      })).rejects.toThrow("OUTBOX_CONSUMER_UNREGISTERED");
+    } finally {
+      revokePlatformTransaction(lease);
+    }
   });
 
   it("rejects an event-id replay when any immutable envelope field differs", async () => {
@@ -125,7 +154,7 @@ describe("outbox retry bounds", () => {
     try {
       await expect(new OutboxRepository().releaseOwnedLeases(lease.transaction, {
         workerId: "admin-worker-01",
-        owners: ["admin-execution"],
+        consumer: "admin-worker",
       })).resolves.toBe(2);
       expect(statements[0]).toMatchObject({
         statement: expect.stringContaining("lease_owner=$1"),

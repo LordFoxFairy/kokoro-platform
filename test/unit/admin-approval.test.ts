@@ -90,7 +90,7 @@ describe("Admin maker/checker approval", () => {
     expect(harness.handlerInput).toBeUndefined();
     expect(harness.transitions).toMatchObject([{ approvalRef: "approval_01",
       expectedRevision: 1n, state: "execution_queued" }]);
-    expect(harness.events).toMatchObject([{ owner: "admin-execution",
+    expect(harness.executionRequests).toMatchObject([{ owner: "admin-execution",
       eventType: "admin.approval.execution.requested",
       payload: { ownerOperation: "site.suspend", approvalRef: "approval_01" } }]);
     expect(harness.receipt?.state).toBe("succeeded");
@@ -105,6 +105,7 @@ describe("Admin maker/checker approval", () => {
     });
     expect(harness.executions).toBe(0);
     expect(harness.transitions).toMatchObject([{ state: "rejected" }]);
+    expect(harness.executionRequests).toEqual([]);
   });
 
   it("fails closed before authority or effect when the frozen payload was tampered", async () => {
@@ -129,7 +130,7 @@ function serviceHarness(input: Readonly<{
 }>) {
   const selectedApproval = input.approval ?? approval;
   const transitions: unknown[] = [];
-  const events: unknown[] = [];
+  const executionRequests: unknown[] = [];
   let executions = 0;
   let authorityLoads = 0;
   let handlerTransaction: PlatformTransaction | null = null;
@@ -166,12 +167,12 @@ function serviceHarness(input: Readonly<{
         return receipt;
       },
     },
-    outbox: { async enqueue(_transaction, event) { events.push(event); } },
+    executionQueue: { async enqueue(_transaction, event) { executionRequests.push(event); } },
     clock: () => new Date("2026-07-28T13:00:00.000Z"),
     reference: () => `reference_${++reference}`,
   });
   return {
-    service, transitions, events,
+    service, transitions, executionRequests,
     get executions() { return executions; },
     get authorityLoads() { return authorityLoads; },
     get handlerTransaction() { return handlerTransaction; },

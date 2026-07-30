@@ -76,7 +76,7 @@ export class PublishSiteReleaseModelCatalogService
           catalog,
         });
         assertPublishReceipt(receipt, input.publicationId, catalog);
-        await this.journal.succeed(transaction, command, receipt, context);
+        await this.journal.succeed(transaction, command, receipt);
         return receipt;
       },
     );

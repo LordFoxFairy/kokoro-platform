@@ -3,6 +3,12 @@
 Credit owns Grant, append-only Journal, Hold/allocation and Usage/Rating authority. It does not expose mutable balance
 adjustment APIs through its Admin read plane.
 
+Usage attempts accept only the explicit producer identities `model_gateway`, `capability_runtime`, and `media`. `media` is a
+metering producer identity for the Media product domain, not a new runtime service; there is no generic Job or Generation domain. Usage
+evidence, rating snapshots, settlements, journals and command receipts are already authoritative local facts, so they are not
+duplicated into an unconsumed usage-rating outbox. The separate owner=`credit` budget-operation outbox remains intact because it is
+consumed by Commerce.
+
 `interfaces/connect/admin-credit-service.ts` is the dedicated typed operator provider. Every request resolves an exact Site
 through the shared Admin control plane and every database read uses `adminSiteQueryTransaction`, which sets the same exact Site
 for PostgreSQL RLS. Pagination tokens are HMAC-authenticated and bind the verified operator generation, security,

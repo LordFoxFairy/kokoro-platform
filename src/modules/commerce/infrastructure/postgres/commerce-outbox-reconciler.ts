@@ -162,7 +162,7 @@ export function createCommerceOutboxReconciliationCycle(input: Readonly<{
     signal.throwIfAborted();
     const events = await input.database.internalTransaction("commerce.outbox.reconcile", (transaction) =>
       outbox.claim(transaction, {
-        workerId: input.workerId, leaseToken: leaseToken(), owners: ["commerce", "credit"],
+        workerId: input.workerId, leaseToken: leaseToken(), consumer: "commerce-worker",
         limit: batchSize, leaseSeconds,
       }));
     for (const event of events) {
