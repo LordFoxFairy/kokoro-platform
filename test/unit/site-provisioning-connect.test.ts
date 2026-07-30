@@ -24,6 +24,8 @@ import {
 import { createSiteProvisioningConnectService } from
   "../../src/modules/site/interfaces/connect/site-provisioning-service.js";
 import type { VerifiedRequestSecurityContext } from "../../src/shared/security-context/index.js";
+import { CommandReceiptConflictError } from
+  "../../src/shared/outbox-inbox/receipt.js";
 
 describe("SiteProvisioning Connect provider", () => {
   it("returns a typed conflict for command-id drift on the same idempotency key", async () => {
@@ -55,7 +57,7 @@ describe("SiteProvisioning Connect provider", () => {
     context.command!.requestDigest = registerSiteRequestDigest(context, "site:alpha", effect, axes);
     const service = createSiteProvisioningConnectService({
       owner: {
-        registerSite: vi.fn(async () => { throw new Error("COMMAND_IDENTITY_CONFLICT"); }),
+        registerSite: vi.fn(async () => { throw new CommandReceiptConflictError("identity"); }),
         publishRelease: vi.fn(async () => { throw new Error("unexpected"); }),
       },
       resolver: { resolveSiteProvisioningCommand: vi.fn(async () => ({
@@ -71,6 +73,7 @@ describe("SiteProvisioning Connect provider", () => {
     expect(ConnectError.from(error).code).toBe(Code.AlreadyExists);
     expect(ConnectError.from(error).rawMessage).toBe("command identity conflict");
   });
+
 });
 
 const authenticatedAt = timestampFromDate(new Date("2026-07-30T11:50:00.000Z"));

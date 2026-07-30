@@ -20,6 +20,17 @@ export interface CommandReceipt extends CommandIdentity {
   readonly resultDigest: string | null;
 }
 
+export type CommandReceiptConflictKind = "identity" | "digest" | "result";
+
+export class CommandReceiptConflictError extends Error {
+  readonly name = "CommandReceiptConflictError";
+
+  constructor(readonly kind: CommandReceiptConflictKind) {
+    super(kind === "identity" ? "COMMAND_IDENTITY_CONFLICT"
+      : kind === "digest" ? "COMMAND_DIGEST_CONFLICT" : "COMMAND_OUTCOME_CONFLICT");
+  }
+}
+
 export class CommandReceiptRepository {
   async begin(transaction: PlatformTransaction, identity: CommandIdentity): Promise<CommandReceipt> {
     assertDigest(identity.requestDigest);
@@ -34,8 +45,8 @@ export class CommandReceiptRepository {
         identity.operation, identity.idempotencyKey, identity.requestDigest],
     );
     const receipt = await this.#find(sql, identity);
-    if (receipt.commandId !== commandId) throw new Error("COMMAND_IDENTITY_CONFLICT");
-    if (receipt.requestDigest !== identity.requestDigest) throw new Error("COMMAND_DIGEST_CONFLICT");
+    if (receipt.commandId !== commandId) throw new CommandReceiptConflictError("identity");
+    if (receipt.requestDigest !== identity.requestDigest) throw new CommandReceiptConflictError("digest");
     return receipt;
   }
 
@@ -48,12 +59,12 @@ export class CommandReceiptRepository {
     const sql = resolvePlatformTransaction(transaction);
     const receipt = await this.#find(sql, identity);
     if (receipt.commandId !== canonicalCommandId(identity.commandId)) {
-      throw new Error("COMMAND_IDENTITY_CONFLICT");
+      throw new CommandReceiptConflictError("identity");
     }
-    if (receipt.requestDigest !== identity.requestDigest) throw new Error("COMMAND_DIGEST_CONFLICT");
+    if (receipt.requestDigest !== identity.requestDigest) throw new CommandReceiptConflictError("digest");
     if (receipt.state !== "pending" && receipt.state !== "outcome_unknown") {
       if (receipt.state === outcome.state && receipt.resultDigest === outcome.resultDigest) return receipt;
-      throw new Error("COMMAND_OUTCOME_CONFLICT");
+      throw new CommandReceiptConflictError("result");
     }
     await sql.execute(
       `UPDATE platform.command_receipt SET state=$1, result=$2::jsonb, result_digest=$3, updated_at=now()

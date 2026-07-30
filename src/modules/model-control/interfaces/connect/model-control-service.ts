@@ -1,6 +1,6 @@
 import { create } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
-import { Code, ConnectError, type HandlerContext, type ServiceImpl } from "@connectrpc/connect";
+import { type HandlerContext, type ServiceImpl } from "@connectrpc/connect";
 import {
   CommandDigestAlgorithmV2,
   CommandIdentityV2Schema,
@@ -57,6 +57,8 @@ import type { ModelOptionDraft as DomainModelOptionDraft } from
 import type { ProviderOperationalAvailability } from
   "../../domain/provider-availability.js";
 import type { SiteModelPolicy } from "../../domain/site-model-policy.js";
+import { withCommandReceiptConflictMapping } from
+  "../../../../interfaces/connect/command-receipt-conflict.js";
 
 export type ModelControlConnectService = ServiceImpl<typeof ModelControlService>;
 
@@ -111,7 +113,7 @@ export function createModelControlConnectService(input: Readonly<{
       });
       const identity = commandIdentity(context);
       requireDigest(identity.requestDigest, importInventoryRequestDigest(context, effect, verified.axes));
-      const receipt = await commandEffect(() => input.owners.importInventory.import({
+      const receipt = await withCommandReceiptConflictMapping(() => input.owners.importInventory.import({
         importId: identity.commandId,
         idempotencyKey: identity.idempotencyKey,
         inventory: inventoryDocument(inventory),
@@ -147,7 +149,7 @@ export function createModelControlConnectService(input: Readonly<{
       const identity = commandIdentity(context);
       requireDigest(identity.requestDigest,
         activateInventoryRequestDigest(context, effect, verified.axes));
-      const receipt = await commandEffect(() => input.owners.activateInventory.activate({
+      const receipt = await withCommandReceiptConflictMapping(() => input.owners.activateInventory.activate({
         activationId: identity.commandId,
         idempotencyKey: identity.idempotencyKey,
         targetDigest: effect.targetDigest,
@@ -177,7 +179,7 @@ export function createModelControlConnectService(input: Readonly<{
       const identity = commandIdentity(context);
       requireDigest(identity.requestDigest,
         changeSitePolicyRequestDigest(context, request.siteId, effect, verified.axes));
-      const receipt = await commandEffect(() => input.owners.changeSitePolicy.change({
+      const receipt = await withCommandReceiptConflictMapping(() => input.owners.changeSitePolicy.change({
         changeId: identity.commandId,
         idempotencyKey: identity.idempotencyKey,
         expectedRevision: effect.expectedRevision.toString(),
@@ -207,7 +209,7 @@ export function createModelControlConnectService(input: Readonly<{
       const identity = commandIdentity(context);
       requireDigest(identity.requestDigest,
         materializeModelOptionsRequestDigest(context, effect, verified.axes));
-      const receipt = await commandEffect(() => input.owners.materializeModelOptions.materialize({
+      const receipt = await withCommandReceiptConflictMapping(() => input.owners.materializeModelOptions.materialize({
         materializationId: identity.commandId,
         idempotencyKey: identity.idempotencyKey,
         inventoryDigest: effect.inventoryDigest,
@@ -238,7 +240,7 @@ export function createModelControlConnectService(input: Readonly<{
       const identity = commandIdentity(context);
       requireDigest(identity.requestDigest,
         publishSiteReleaseCatalogRequestDigest(context, request.siteId, effect, verified.axes));
-      const receipt = await commandEffect(() => input.owners.publishSiteReleaseCatalog.publish({
+      const receipt = await withCommandReceiptConflictMapping(() => input.owners.publishSiteReleaseCatalog.publish({
         publicationId: identity.commandId,
         idempotencyKey: identity.idempotencyKey,
         siteId: request.siteId,
@@ -263,20 +265,6 @@ export function createModelControlConnectService(input: Readonly<{
       };
     },
   };
-}
-
-async function commandEffect<Result>(effect: () => Promise<Result>): Promise<Result> {
-  try {
-    return await effect();
-  } catch (error) {
-    if (error instanceof Error && error.message === "COMMAND_IDENTITY_CONFLICT") {
-      throw new ConnectError("command identity conflict", Code.AlreadyExists);
-    }
-    if (error instanceof Error && error.message === "COMMAND_DIGEST_CONFLICT") {
-      throw new ConnectError("command digest conflict", Code.AlreadyExists);
-    }
-    throw error;
-  }
 }
 
 function inventoryDocument(inventory: CanonicalModelInventory): DomainModelInventory {
