@@ -42,26 +42,36 @@ export function createHubConnectProcess(input: Readonly<{
   let timer: ReturnType<typeof setTimeout> | undefined;
   let activeTick: Promise<unknown> | undefined;
   let shutdownPromise: Promise<void> | undefined;
+  let forceDestroying = false;
+  let sessionActionUnconfirmed = false;
 
   const trackSession = (raw: ServerHttp2Session) => {
     const session = raw as ConnectSession;
-    if (draining) {
-      try { session.close(); } catch { session.destroy(); }
-      return;
+    if (!sessions.has(session)) {
+      sessions.add(session);
+      const closed = () => {
+        sessions.delete(session);
+        try { session.off("close", closed); } catch { sessionActionUnconfirmed = true; }
+      };
+      try {
+        session.once("close", closed);
+      } catch {
+        sessionActionUnconfirmed = true;
+      }
     }
-    sessions.add(session);
-    const closed = () => {
-      session.off("close", closed);
-      sessions.delete(session);
-    };
-    session.once("close", closed);
+    if (!draining) return;
+    const outcome = closeSession(session);
+    if (forceDestroying && outcome === "close_requested" && sessions.has(session)) {
+      destroySession(session);
+    }
   };
   input.server.on("session", trackSession as (...arguments_: unknown[]) => void);
 
-  const fatal = (error: Error) => {
+  const fatal = (error: unknown) => {
     if (draining) return;
+    const stopping = shutdown();
     try { input.onFatal?.(error); } catch { /* fatal hooks cannot own cleanup */ }
-    void shutdown().catch(() => undefined);
+    void stopping.catch(() => undefined);
   };
 
   const schedule = () => {
@@ -69,7 +79,7 @@ export function createHubConnectProcess(input: Readonly<{
     timer = setTimeout(() => {
       activeTick = input.worker.tick(controller.signal)
         .catch((error: unknown) => {
-          if (!controller.signal.aborted) input.onFatal?.(error);
+          if (!controller.signal.aborted) fatal(error);
         })
         .finally(() => {
           activeTick = undefined;
@@ -105,7 +115,7 @@ export function createHubConnectProcess(input: Readonly<{
     controller.abort(new Error("HUB_SHUTDOWN"));
     if (timer !== undefined) clearTimeout(timer);
     for (const session of sessions) {
-      try { session.close(); } catch { session.destroy(); }
+      closeSession(session);
     }
 
     const services = Promise.allSettled([
@@ -116,8 +126,9 @@ export function createHubConnectProcess(input: Readonly<{
     const gracefulMs = Math.max(1, Math.floor(shutdownDeadlineMs * 0.6));
     const gracefulOutcomes = await beforeDeadline(services, gracefulMs);
     if (gracefulOutcomes === null) {
+      forceDestroying = true;
       for (const session of sessions) {
-        try { session.destroy(new Error("HUB_CONNECT_SHUTDOWN_DEADLINE")); } catch { /* bounded */ }
+        destroySession(session, new Error("HUB_CONNECT_SHUTDOWN_DEADLINE"));
       }
     }
     const mongo = settle(Promise.resolve().then(input.closeMongo));
@@ -126,13 +137,36 @@ export function createHubConnectProcess(input: Readonly<{
     const remainingMs = Math.max(1, shutdownDeadlineMs - (Date.now() - shutdownStartedAt));
     const outcomes = await beforeDeadline(completion, remainingMs);
 
-    if (outcomes === null || outcomes.some((outcome) => outcome.status === "rejected")) {
+    if (
+      sessionActionUnconfirmed ||
+      outcomes === null ||
+      outcomes.some((outcome) => outcome.status === "rejected")
+    ) {
       throw new Error("HUB_CONNECT_SHUTDOWN_UNCONFIRMED");
     }
     input.server.off("session", trackSession as (...arguments_: unknown[]) => void);
     input.server.off("error", fatal as (...arguments_: unknown[]) => void);
     input.healthServer.off("error", fatal as (...arguments_: unknown[]) => void);
   };
+
+  function closeSession(session: ConnectSession): "close_requested" | "destroyed" | "failed" {
+    try {
+      session.close();
+      return "close_requested";
+    } catch {
+      return destroySession(session) ? "destroyed" : "failed";
+    }
+  }
+
+  function destroySession(session: ConnectSession, error?: Error): boolean {
+    try {
+      session.destroy(error);
+      return true;
+    } catch {
+      sessionActionUnconfirmed = true;
+      return false;
+    }
+  }
 
   return Object.freeze({ start, shutdown, isDraining: () => draining });
 }
