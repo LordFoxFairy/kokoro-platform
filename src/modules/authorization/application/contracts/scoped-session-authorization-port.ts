@@ -20,6 +20,16 @@ export type ScopedAuthorizationReservation = Readonly<{
   aggregateSequence: bigint;
 }>;
 
+export type SiteCurrentFact = Readonly<{
+  siteRef: string;
+  state: "active" | "suspended" | "decommissioning" | "decommissioned";
+  siteSecurityEpoch: string;
+  policyEpoch: string;
+  revocationEpoch: string;
+  updatedAt: string;
+  retainUntil: string;
+}>;
+
 export type SubjectCurrentFact = Readonly<{
   siteRef: string;
   subjectRef: string;
@@ -29,6 +39,32 @@ export type SubjectCurrentFact = Readonly<{
   updatedAt: string;
   retainUntil: string;
 }>;
+
+export type ProjectMembershipCurrentFact = Readonly<{
+  siteRef: string;
+  subjectRef: string;
+  projectRef: string;
+  state: "active" | "revoked" | "removed";
+  membershipEpoch: string;
+  authorizationEpoch: string;
+  updatedAt: string;
+  retainUntil: string;
+}>;
+
+export interface ScopedSiteAuthorizationMutationPort {
+  reserveSiteMutation(
+    transaction: PlatformTransaction,
+    input: Readonly<{ siteRef: string }>,
+  ): Promise<ScopedAuthorizationReservation>;
+  publishSiteCurrent(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      reservation: ScopedAuthorizationReservation;
+      current: SiteCurrentFact;
+      correlationId: string;
+    }>,
+  ): Promise<void>;
+}
 
 export interface ScopedSubjectAuthorizationMutationPort {
   reserveSubjectMutation(
@@ -66,4 +102,26 @@ export interface ScopedSessionAuthorizationMutationPort {
       correlationId: string;
     }>,
   ): Promise<void>;
+}
+
+export interface ScopedProjectMembershipAuthorizationMutationPort {
+  reserveProjectMembershipMutation(
+    transaction: PlatformTransaction,
+    input: Readonly<{ siteRef: string }>,
+  ): Promise<ScopedAuthorizationReservation>;
+  publishProjectMembershipCurrent(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      reservation: ScopedAuthorizationReservation;
+      current: ProjectMembershipCurrentFact;
+      correlationId: string;
+    }>,
+  ): Promise<void>;
+}
+
+export interface ScopedAuthorizationBatchReservationPort {
+  reserveOwnerMutations(
+    transaction: PlatformTransaction,
+    input: Readonly<{ siteRef: string; count: number }>,
+  ): Promise<readonly ScopedAuthorizationReservation[]>;
 }

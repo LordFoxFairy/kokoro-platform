@@ -20,7 +20,7 @@ deployables:
     inboundContracts: []
     declaredInboundContracts: [platform-public-http]
     outboundContracts: []
-    secretClasses: [platform-api-database, workload-verification, identity-totp-encryption-keyring, identity-reauthentication-digest-key]
+    secretClasses: [platform-api-database, workload-verification, identity-totp-encryption-keyring, identity-reauthentication-digest-key, authorization-event-signing-keyring]
     audience: platform-api
     scalingKey: http-concurrency
     readiness: /health/ready
@@ -81,7 +81,7 @@ deployables:
     activationAuthorized: false
     runtimeTraffic: false
     outboundContracts: []
-    secretClasses: [platform-worker-database]
+    secretClasses: [platform-worker-database, authorization-event-signing-keyring]
     audience: platform-worker
     scalingKey: queue-lag
     readiness: process-state
@@ -139,6 +139,7 @@ deployables:
       [
         platform-authorization-database,
         authorization-verification-keys,
+        authorization-feed-cursor-key,
         mtls-server,
         mtls-peer-registry,
       ]
@@ -177,6 +178,7 @@ deployables:
         oidc-transaction-encryption-key,
         admin-session-jose-key-ring,
         admin-page-cursor-key,
+        authorization-event-signing-keyring,
       ]
     audience: platform-admin
     scalingKey: admin-command-concurrency

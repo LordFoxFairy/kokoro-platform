@@ -3,13 +3,13 @@ import type { Http2ServerRequest, Http2ServerResponse } from "node:http2";
 import { TLSSocket } from "node:tls";
 import { connectNodeAdapter } from "@connectrpc/connect-node";
 import type { PlatformTransactionalDatabaseClient } from "../infrastructure/postgres/client.js";
-import { createSessionAuthorizationFeedService } from "../interfaces/connect/session-authorization.js";
-import { SessionAuthorizationService } from "../interfaces/connect/generated-authorization/kokoro/platform/authorization/v1/session_authorization_pb.js";
+import { createScopedSessionAuthorizationFeedService } from "../interfaces/connect/scoped-session-authorization.js";
+import { ScopedSessionAuthorizationService } from "../interfaces/connect/generated-authorization-v2/kokoro/platform/authorization/v2/scoped_session_authorization_pb.js";
 import {
   createSessionAuthorizationVerificationKeySet,
   type AuthorizationPublicVerificationKeyConfig,
 } from "../modules/authorization/infrastructure/jose/session-authorization-verification-key-set.js";
-import { PostgresAuthorizationFeedRepository } from "../modules/authorization/infrastructure/postgres/authorization-feed-repository.js";
+import { PostgresScopedAuthorizationFeedRepository } from "../modules/authorization/infrastructure/postgres/scoped-authorization-feed-repository.js";
 import { readBoundedPrivateFile, readBoundedRegularFile } from "./secret-files.js";
 
 export type SessionAuthorizationRequestListener = (
@@ -19,6 +19,7 @@ export type SessionAuthorizationRequestListener = (
 
 export interface SessionAuthorizationProductionComposition {
   readonly handler: SessionAuthorizationRequestListener;
+  checkReadiness(): Promise<void>;
   createServer(listener: SessionAuthorizationRequestListener): Http2SecureServer;
 }
 
@@ -37,22 +38,25 @@ export async function createSessionAuthorizationProductionComposition(input: Rea
       "session_access_grant",
     ),
     loadTls(environment),
-    loadPeers(required(environment, "PLATFORM_AUTHORIZATION_MTLS_PEERS_FILE")),
+    loadPeers(
+      required(environment, "PLATFORM_AUTHORIZATION_MTLS_PEERS_FILE"),
+      requiredSessionSpiffeId(environment),
+    ),
     loadCursorSecret(required(environment, "PLATFORM_AUTHORIZATION_CURSOR_SECRET_FILE")),
   ]);
   const verificationKeySet = await createSessionAuthorizationVerificationKeySet([
     ...eventKeys,
     ...grantKeys,
   ]);
-  const repository = new PostgresAuthorizationFeedRepository();
-  const service = createSessionAuthorizationFeedService({
+  const repository = new PostgresScopedAuthorizationFeedRepository();
+  const service = createScopedSessionAuthorizationFeedService({
     database: input.database,
     repository,
     verificationKeySet,
     cursorSecret,
   });
   const connect = connectNodeAdapter({
-    routes: (router) => router.service(SessionAuthorizationService, service),
+    routes: (router) => router.service(ScopedSessionAuthorizationService, service),
     connect: true,
     grpc: false,
     grpcWeb: false,
@@ -80,13 +84,17 @@ export async function createSessionAuthorizationProductionComposition(input: Rea
   };
   return Object.freeze({
     handler,
+    checkReadiness: () => input.database.internalTransaction(
+      "authorization.feed.read",
+      (transaction) => repository.assertReady(transaction),
+    ),
     createServer: (listener: SessionAuthorizationRequestListener) => createSecureServer(tls, listener),
   });
 }
 
 type Peer = Readonly<{ fingerprint256: string; sanUri: string }>;
 
-async function loadPeers(path: string): Promise<readonly Peer[]> {
+async function loadPeers(path: string, expectedSessionSpiffeId: string): Promise<readonly Peer[]> {
   const parsed = JSON.parse(await readAuthorizationFile(path, 256 * 1024)) as unknown;
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("PLATFORM_AUTHORIZATION_MTLS_PEERS_INVALID");
@@ -110,8 +118,21 @@ async function loadPeers(path: string): Promise<readonly Peer[]> {
     identities.add(`${peer.fingerprint256}\0${peer.sanUri}`);
     return Object.freeze({ fingerprint256: peer.fingerprint256, sanUri: peer.sanUri });
   });
-  if (peers.length < 1 || peers.length > 32) throw new Error("PLATFORM_AUTHORIZATION_MTLS_PEERS_INVALID");
+  // Multiple fingerprints permit certificate rotation, but every certificate must assert the
+  // one Session workload identity. No other Platform or browser workload can enter this boundary.
+  if (peers.length < 1 || peers.length > 4 ||
+      peers.some((peer) => peer.sanUri !== expectedSessionSpiffeId)) {
+    throw new Error("PLATFORM_AUTHORIZATION_MTLS_PEERS_INVALID");
+  }
   return Object.freeze(peers);
+}
+
+function requiredSessionSpiffeId(environment: Readonly<Record<string, string | undefined>>): string {
+  const value = required(environment, "PLATFORM_AUTHORIZATION_SESSION_SPIFFE_ID");
+  if (!/^spiffe:\/\/[a-z0-9.-]+\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+$/u.test(value)) {
+    throw new Error("PLATFORM_AUTHORIZATION_SESSION_SPIFFE_ID_INVALID");
+  }
+  return value;
 }
 
 function authorizedPeer(request: Http2ServerRequest, peers: readonly Peer[]): boolean {

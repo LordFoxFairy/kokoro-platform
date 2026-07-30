@@ -1,4 +1,8 @@
-import type { IdentitySessionCurrentFact, SubjectCurrentFact } from "../../../authorization/application/contracts/scoped-session-authorization-port.js";
+import type {
+  IdentitySessionCurrentFact,
+  ProjectMembershipCurrentFact,
+  SubjectCurrentFact,
+} from "../../../authorization/application/contracts/scoped-session-authorization-port.js";
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
 import type { IdentityTotpSecretEnvelope } from "./identity-security-ports.js";
 
@@ -39,6 +43,11 @@ export type SupersededIdentitySessionOwner = Readonly<{
   subjectRef: string;
   authenticationMethods: readonly ("password" | "totp" | "recovery_code")[];
   revoked: IdentitySessionCurrentFact;
+}>;
+
+export type PersonalBootstrapAuthorizationFacts = Readonly<{
+  subject: SubjectCurrentFact;
+  membership: ProjectMembershipCurrentFact;
 }>;
 
 export type IdentityAuthenticationMaterial = Readonly<{
@@ -111,7 +120,7 @@ export interface IdentityRepository {
     now: string; displayName: string; workspaceRef: string; billingAccountRef: string;
     projectRef: string; executionSpaceRef: string; executionNamespace: string;
     namespaceIntentRef: string; namespaceEventId: string;
-  }>): Promise<SubjectCurrentFact>;
+  }>): Promise<PersonalBootstrapAuthorizationFacts>;
   bindReceiptRecoveryCapability(transaction: PlatformTransaction, input: Readonly<{
     commandId: string; siteRef: string; siteReleaseRef: string; siteProjectBindingRef: string;
     workloadIdentityId: string; bindingEpoch: string; purpose: string;

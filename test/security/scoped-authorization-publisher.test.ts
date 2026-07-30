@@ -88,4 +88,85 @@ describe("v2 scoped authorization publisher", () => {
     expect(payload.event.value.identitySessionRef).toBe("session-1");
     expect(payload.event.value.identitySessionEpoch).toBe(2n);
   });
+
+  it("publishes SiteCurrent, ProjectMembershipCurrent and GrantDelivered on the same stream", async () => {
+    const payloads: Uint8Array[] = [];
+    const repository = {
+      async reserveSiteMutation() {
+        return { siteRef: "site-1", streamSequence: 12n, aggregateSequence: 6n };
+      },
+      async reserveProjectMembershipMutation() {
+        return { siteRef: "site-1", streamSequence: 13n, aggregateSequence: 7n };
+      },
+      async reserveGrantDelivery() {
+        return { siteRef: "site-1", streamSequence: 14n, aggregateSequence: 8n };
+      },
+      async appendSiteCurrent(_transaction: unknown, event: { signingPayload: Uint8Array }) {
+        payloads.push(event.signingPayload);
+      },
+      async appendProjectMembershipCurrent(_transaction: unknown, event: { signingPayload: Uint8Array }) {
+        payloads.push(event.signingPayload);
+      },
+      async appendGrantDelivered(_transaction: unknown, event: { signingPayload: Uint8Array }) {
+        payloads.push(event.signingPayload);
+      },
+    } as unknown as PostgresScopedAuthorizationFeedRepository;
+    const publisher = new SignedScopedSessionAuthorizationPublisher(repository, {
+      keyRevision: "key-1",
+      async sign() { return new Uint8Array(64).fill(1); },
+    }, () => "018f1111-1111-7111-8111-111111111111");
+    const transaction = issuePlatformTransaction({
+      async query() { return []; }, async execute() { return 0; },
+    }).transaction;
+
+    const siteReservation = await publisher.reserveSiteMutation(transaction, { siteRef: "site-1" });
+    await publisher.publishSiteCurrent(transaction, {
+      reservation: siteReservation,
+      current: {
+        siteRef: "site-1", state: "active", siteSecurityEpoch: "2", policyEpoch: "3",
+        revocationEpoch: "4", updatedAt: "2026-07-29T00:00:00.000Z",
+        retainUntil: "2026-07-29T00:05:00.000Z",
+      },
+      correlationId: "correlation-1",
+    });
+    const membershipReservation = await publisher.reserveProjectMembershipMutation(
+      transaction,
+      { siteRef: "site-1" },
+    );
+    await publisher.publishProjectMembershipCurrent(transaction, {
+      reservation: membershipReservation,
+      current: {
+        siteRef: "site-1", subjectRef: "subject-1", projectRef: "project-1", state: "active",
+        membershipEpoch: "5", authorizationEpoch: "6", updatedAt: "2026-07-29T00:00:01.000Z",
+        retainUntil: "2026-07-29T00:05:01.000Z",
+      },
+      correlationId: "correlation-1",
+    });
+    await publisher.publishGrantDelivered(transaction, {
+      claims: {
+        grantRef: "grant-1",
+        binding: {
+          productContextRef: "context-1", siteProjectBindingRef: "binding-1",
+          deploymentRef: "deployment-1", siteRef: "site-1", siteReleaseRef: "release-1",
+          webArtifactDigest: "a".repeat(64), runtimeEnvironment: "production", region: "us-east-1",
+          sessionContractRevision: "v3", projectRef: "project-1", subjectRef: "subject-1",
+          subjectGeneration: "2", identitySessionRef: "session-1", issuer: "issuer-1",
+          keyRevision: "grant-key-1", notBefore: "2026-07-29T00:00:00.000Z",
+          siteSecurityEpoch: "2", identitySessionEpoch: "3", membershipEpoch: "5",
+          authorizationEpoch: "6", restrictionEpoch: "7", credentialEpoch: "8",
+          policyEpoch: "3", revocationEpoch: "4", resource: { kind: "project" },
+          issuedAt: "2026-07-29T00:00:01.000Z", expiresAt: "2026-07-29T00:05:01.000Z",
+        },
+        authorization: { purpose: "read", audience: "session.read" },
+      },
+      claimsDigest: "b".repeat(64),
+      changedAt: "2026-07-29T00:00:01.000Z",
+      correlationId: "correlation-1",
+    });
+
+    expect(payloads.map((bytes) => fromBinary(AuthorizationEventSigningPayloadSchema, bytes).event.case))
+      .toEqual(["siteCurrentChanged", "projectMembershipCurrentChanged", "grantDelivered"]);
+    expect(payloads.map((bytes) => fromBinary(AuthorizationEventSigningPayloadSchema, bytes).streamSequence))
+      .toEqual([12n, 13n, 14n]);
+  });
 });

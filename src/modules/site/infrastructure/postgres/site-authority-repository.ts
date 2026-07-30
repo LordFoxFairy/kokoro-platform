@@ -490,6 +490,7 @@ export class PostgresSiteAuthorityRepository implements
     }
     const completed = await sql.execute(
       `UPDATE platform.site SET state=$2,active_release_ref=$3,
+         revocation_epoch=revocation_epoch+CASE WHEN $2='decommissioned' THEN 1 ELSE 0 END,
          tombstoned_at=CASE WHEN $2='decommissioned' THEN $4::timestamptz ELSE NULL END,updated_at=now()
        WHERE site_ref=$1 AND state=$5 AND runtime_binding_epoch=$6`,
       [value.siteRef, site.state, site.activeReleaseRef, observation.observedAt,
@@ -497,7 +498,9 @@ export class PostgresSiteAuthorityRepository implements
     );
     if (completed !== 1) throw new Error("SITE_TRAFFIC_STOP_COMPLETION_CONFLICT");
     const authorizationCompleted = await sql.execute(
-      `UPDATE platform.authorization_site SET state=$2,updated_at=now()
+      `UPDATE platform.authorization_site SET state=$2,
+         revocation_epoch=revocation_epoch+CASE WHEN $2='decommissioned' THEN 1 ELSE 0 END,
+         updated_at=now()
        WHERE site_ref=$1 AND state=$3`,
       [value.siteRef, value.action === "suspend" ? "suspended" : "decommissioned",
         value.action === "suspend" ? "suspended" : "decommissioning"],

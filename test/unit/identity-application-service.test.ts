@@ -6,7 +6,7 @@ import {
   type IdentityOutboxPort,
 } from "../../src/modules/identity/application/services/identity-application-service.js";
 import { IdentitySessionAuthorizationMutation } from "../../src/modules/identity/application/services/identity-session-authorization-mutation.js";
-import { SubjectAuthorizationMutation } from "../../src/modules/identity/application/services/subject-authorization-mutation.js";
+import { PersonalBootstrapAuthorizationMutation } from "../../src/modules/identity/application/services/personal-bootstrap-authorization-mutation.js";
 import type { IdentityRepository } from "../../src/modules/identity/application/contracts/identity-repository.js";
 import type { CommandReceipt } from "../../src/shared/outbox-inbox/receipt.js";
 import type {
@@ -310,9 +310,16 @@ describe("Identity launch application service", () => {
       async activateVerification(_transaction: unknown, input: NonNullable<typeof activation>) {
         activation = input;
         return {
-          siteRef: input.siteRef, subjectRef: "subject-pending", state: "active" as const,
-          subjectGeneration: "1", restrictionEpoch: "1", updatedAt: input.now,
-          retainUntil: "2026-07-29T00:05:00.000Z",
+          subject: {
+            siteRef: input.siteRef, subjectRef: "subject-pending", state: "active" as const,
+            subjectGeneration: "1", restrictionEpoch: "1", updatedAt: input.now,
+            retainUntil: "2026-07-29T00:05:00.000Z",
+          },
+          membership: {
+            siteRef: input.siteRef, subjectRef: "subject-pending", projectRef: input.projectRef,
+            state: "active" as const, membershipEpoch: "1", authorizationEpoch: "1",
+            updatedAt: input.now, retainUntil: "2026-07-29T00:05:00.000Z",
+          },
         };
       },
       async createIdentitySession() { sessionCreated = true; throw new Error("must not create session"); },
@@ -528,9 +535,13 @@ function createService(input: Readonly<{
     async reserveIdentitySessionMutation() { return { siteRef: "site-1", streamSequence: 1n, aggregateSequence: 1n }; },
     async publishIdentitySessionCurrent() {},
   };
-  const subjectPort = {
-    async reserveSubjectMutation() { return { siteRef: "site-1", streamSequence: 1n, aggregateSequence: 1n }; },
+  const personalBootstrapPort = {
+    async reserveOwnerMutations() { return [
+      { siteRef: "site-1", streamSequence: 1n, aggregateSequence: 1n },
+      { siteRef: "site-1", streamSequence: 2n, aggregateSequence: 2n },
+    ]; },
     async publishSubjectCurrent() {},
+    async publishProjectMembershipCurrent() {},
   };
   return new IdentityApplicationService({
     unitOfWork: { async execute(_fence, work) { return work(transaction); } },
@@ -565,7 +576,7 @@ function createService(input: Readonly<{
       seal() { return { algorithm: "A256GCM", keyRevision: "key-1", nonce: "nonce", ciphertext: "sealed", authenticationTag: "tag" }; },
     },
     sessionAuthorization: new IdentitySessionAuthorizationMutation(sessionPort),
-    subjectAuthorization: new SubjectAuthorizationMutation(subjectPort),
+    personalBootstrapAuthorization: new PersonalBootstrapAuthorizationMutation(personalBootstrapPort),
     clock: () => new Date("2026-07-29T00:00:00.000Z"),
     reference: () => {
       const value = input.references.shift();

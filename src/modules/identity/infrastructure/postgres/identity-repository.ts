@@ -3,9 +3,10 @@ import type {
   AccountPasswordRecord,
   IdentityRepository,
   IdentitySessionSafeFact,
+  PersonalBootstrapAuthorizationFacts,
   VerificationRecord,
 } from "../../application/contracts/identity-repository.js";
-import type { IdentitySessionCurrentFact, SubjectCurrentFact } from "../../../authorization/application/contracts/scoped-session-authorization-port.js";
+import type { IdentitySessionCurrentFact } from "../../../authorization/application/contracts/scoped-session-authorization-port.js";
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
 import {
   resolvePlatformTransaction,
@@ -175,7 +176,7 @@ export class PostgresIdentityRepository implements IdentityRepository {
   async activateVerification(
     transaction: PlatformTransaction,
     input: Parameters<IdentityRepository["activateVerification"]>[1],
-  ): Promise<SubjectCurrentFact> {
+  ): Promise<PersonalBootstrapAuthorizationFacts> {
     const sql = resolvePlatformTransaction(transaction);
     const verificationRows = await sql.query<{ accountRef: string; subjectRef: string }>(
       `SELECT verification.account_ref AS "accountRef",verification.subject_ref AS "subjectRef"
@@ -280,10 +281,17 @@ export class PostgresIdentityRepository implements IdentityRepository {
       [input.siteRef, input.transactionRef, input.now],
     );
     if (changed !== 1) throw new Error("IDENTITY_VERIFICATION_STALE");
+    const retainUntil = new Date(Date.parse(input.now) + 300_000).toISOString();
     return Object.freeze({
-      siteRef: input.siteRef, subjectRef: input.subjectRef, state: "active",
-      subjectGeneration: "1", restrictionEpoch: "1", updatedAt: input.now,
-      retainUntil: new Date(Date.parse(input.now) + 300_000).toISOString(),
+      subject: Object.freeze({
+        siteRef: input.siteRef, subjectRef: input.subjectRef, state: "active" as const,
+        subjectGeneration: "1", restrictionEpoch: "1", updatedAt: input.now, retainUntil,
+      }),
+      membership: Object.freeze({
+        siteRef: input.siteRef, subjectRef: input.subjectRef, projectRef: input.projectRef,
+        state: "active" as const, membershipEpoch: "1", authorizationEpoch: "1",
+        updatedAt: input.now, retainUntil,
+      }),
     });
   }
 

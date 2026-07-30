@@ -30,11 +30,14 @@ import type {
 import { siteProviderOperationKey } from "../../application/services/site-runtime-dispatcher.js";
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
 import type { PlatformTransactionalDatabaseClient } from "../../../../infrastructure/postgres/client.js";
+import { SiteCurrentAuthorizationMutation } from
+  "../../application/services/site-current-authorization-mutation.js";
 
 export class PostgresSiteRuntimeStateStore implements SiteRuntimeStateStore {
   constructor(
     private readonly transactions: SiteRuntimeTransactionRunner,
     private readonly repository: SiteRuntimeRepository,
+    private readonly authorization: SiteCurrentAuthorizationMutation,
     private readonly now: () => string = () => new Date().toISOString(),
   ) {}
 
@@ -135,12 +138,24 @@ export class PostgresSiteRuntimeStateStore implements SiteRuntimeStateStore {
         payloadDigest: observation.payloadDigest,
       } as const;
       const result = observeSiteTrafficStop(attempt, evidence);
-      await this.repository.recordTrafficStopObservation(
-        transaction,
-        { ...evidence, attemptRef },
-        result.attempt,
-        result.site,
-      );
+      if (result.attempt.state === "succeeded") {
+        await this.authorization.execute(transaction, {
+          siteRef: attempt.siteRef,
+          correlationId: `site-runtime:${attempt.attemptRef}`,
+        }, () => this.repository.recordTrafficStopObservation(
+          transaction,
+          { ...evidence, attemptRef },
+          result.attempt,
+          result.site,
+        ));
+      } else {
+        await this.repository.recordTrafficStopObservation(
+          transaction,
+          { ...evidence, attemptRef },
+          result.attempt,
+          result.site,
+        );
+      }
       return result.attempt.state === "succeeded"
         ? complete()
         : this.trafficStep(transaction, result.attempt, "observe_site_traffic");
@@ -178,22 +193,29 @@ export class PostgresSiteRuntimeStateStore implements SiteRuntimeStateStore {
     transaction: PlatformTransaction,
     attempt: ActivationAttempt,
   ): Promise<SiteRuntimeStep> {
-    const [site, candidate] = await Promise.all([
-      this.repository.loadSiteForUpdate(transaction, attempt.siteRef),
-      this.repository.loadReleaseForUpdate(transaction, attempt.siteRef, attempt.candidateReleaseRef),
-    ]);
-    if (site === null || candidate === null) throw new Error("SITE_ACTIVATION_TARGET_NOT_FOUND");
-    const result = activateObservedRelease({
-      site,
-      candidate,
-      attempt,
-      currentActiveReleaseRef: site.activeReleaseRef,
-      committedAt: this.now(),
+    let result: ReturnType<typeof activateObservedRelease> | undefined;
+    await this.authorization.execute(transaction, {
+      siteRef: attempt.siteRef,
+      correlationId: `site-runtime:${attempt.attemptRef}`,
+    }, async () => {
+      const [site, candidate] = await Promise.all([
+        this.repository.loadSiteForUpdate(transaction, attempt.siteRef),
+        this.repository.loadReleaseForUpdate(transaction, attempt.siteRef, attempt.candidateReleaseRef),
+      ]);
+      if (site === null || candidate === null) throw new Error("SITE_ACTIVATION_TARGET_NOT_FOUND");
+      result = activateObservedRelease({
+        site,
+        candidate,
+        attempt,
+        currentActiveReleaseRef: site.activeReleaseRef,
+        committedAt: this.now(),
+      });
+      await this.repository.commitActivation(transaction, {
+        ...result,
+        expectedActiveReleaseRef: attempt.expectedActiveReleaseRef,
+      });
     });
-    await this.repository.commitActivation(transaction, {
-      ...result,
-      expectedActiveReleaseRef: attempt.expectedActiveReleaseRef,
-    });
+    if (result === undefined) throw new Error("SITE_ACTIVATION_MUTATION_INCOMPLETE");
     return result.attempt.state === "succeeded"
       ? complete()
       : this.activationDrain(transaction, result.attempt);

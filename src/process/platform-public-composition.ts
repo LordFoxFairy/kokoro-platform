@@ -13,8 +13,6 @@ import {
   type SessionAccessSigningKeyConfig,
 } from "../modules/authorization/infrastructure/jose/session-access-grant-signer.js";
 import { PostgresSessionAuthorizationRepository } from "../modules/authorization/infrastructure/postgres/session-authorization-repository.js";
-import { PostgresAuthorizationFeedRepository } from "../modules/authorization/infrastructure/postgres/authorization-feed-repository.js";
-import { SignedSessionAuthorizationPublisher } from "../modules/authorization/infrastructure/postgres/signed-session-authorization-publisher.js";
 import { createSessionAuthorizationEventSigner } from "../modules/authorization/infrastructure/jose/session-authorization-event-signer.js";
 import type {
   AuthorizationEventKeyRingConfig,
@@ -37,7 +35,7 @@ import {
 } from "../modules/identity/interfaces/http/identity-public-operations.js";
 import { IdentityApplicationService } from "../modules/identity/application/services/identity-application-service.js";
 import { IdentitySessionAuthorizationMutation } from "../modules/identity/application/services/identity-session-authorization-mutation.js";
-import { SubjectAuthorizationMutation } from "../modules/identity/application/services/subject-authorization-mutation.js";
+import { PersonalBootstrapAuthorizationMutation } from "../modules/identity/application/services/personal-bootstrap-authorization-mutation.js";
 import { PostgresIdentityRepository } from "../modules/identity/infrastructure/postgres/identity-repository.js";
 import { createIdentityPasswordHasher } from "../modules/identity/infrastructure/crypto/identity-password-hasher.js";
 import { createOpaqueCredentialCodec } from "../modules/identity/infrastructure/crypto/opaque-credential.js";
@@ -115,10 +113,6 @@ export async function createPlatformPublicProductionComposition(
   const unitOfWork = new PlatformUnitOfWork(input.database);
   const repository = new PostgresSessionAuthorizationRepository();
   const modelOptions = input.modelOptions ?? new PostgresProductModelOptionCatalogReader();
-  const publisher = new SignedSessionAuthorizationPublisher(
-    new PostgresAuthorizationFeedRepository(),
-    eventSigner,
-  );
   const [
     passwordHasher,
     verificationCredentials,
@@ -163,7 +157,7 @@ export async function createPlatformPublicProductionComposition(
     dummyTotpSecret: generateSecret(),
     auditDigest,
     deliverySealer,
-    subjectAuthorization: new SubjectAuthorizationMutation(scopedPublisher),
+    personalBootstrapAuthorization: new PersonalBootstrapAuthorizationMutation(scopedPublisher),
     sessionAuthorization: new IdentitySessionAuthorizationMutation(scopedPublisher),
     reference: randomUUID,
   });
@@ -191,7 +185,7 @@ export async function createPlatformPublicProductionComposition(
       unitOfWork,
       repository,
       signer,
-      publisher,
+      scopedPublisher,
     ),
   });
   const identityOperations = createIdentityPublicOperations(identity, identitySecurityManagement);

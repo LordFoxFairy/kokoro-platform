@@ -11,6 +11,10 @@ import {
 } from "../modules/site/infrastructure/postgres/site-runtime-state-store.js";
 import { loadSiteProviderRegistry } from "../modules/site/infrastructure/rpc/site-provider-registry-config.js";
 import type { PlatformWorkerCycleContext } from "./worker.js";
+import { createSessionAuthorizationEventSigner } from
+  "../modules/authorization/infrastructure/jose/session-authorization-event-signer.js";
+import { loadAuthorizationEventKeyRing } from "./platform-public-composition.js";
+import { createSiteAuthorizationMutation } from "./site-admin-composition.js";
 
 export interface SiteRuntimeWorkerProductionComposition {
   runOneCycle(context: PlatformWorkerCycleContext): Promise<void>;
@@ -25,11 +29,16 @@ export async function createSiteRuntimeWorkerProductionComposition(input: Readon
   const environment = input.environment ?? process.env;
   const registryPath = required(environment, "PLATFORM_SITE_PROVIDER_REGISTRY_FILE");
   const workerId = required(environment, "PLATFORM_SITE_WORKER_ID");
-  const providers = await loadSiteProviderRegistry(registryPath);
+  const [providers, eventKeyRing] = await Promise.all([
+    loadSiteProviderRegistry(registryPath),
+    loadAuthorizationEventKeyRing(required(environment, "PLATFORM_AUTHORIZATION_EVENT_KEY_RING_FILE")),
+  ]);
+  const eventSigner = await createSessionAuthorizationEventSigner(eventKeyRing);
   const repository = new PostgresSiteAuthorityRepository();
   const store = new PostgresSiteRuntimeStateStore(
     createPostgresSiteRuntimeTransactionRunner(input.database),
     repository,
+    createSiteAuthorizationMutation(eventSigner),
   );
   const dispatcher = new SiteRuntimeDispatcher(store, providers);
   const claimLimit = optionalInteger(environment, "PLATFORM_SITE_OUTBOX_CLAIM_LIMIT");

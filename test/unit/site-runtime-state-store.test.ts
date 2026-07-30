@@ -53,7 +53,7 @@ describe("PostgresSiteRuntimeStateStore", () => {
       updateTrafficStop: async () => { throw new Error("unexpected"); },
       recordTrafficStopObservation: async () => { throw new Error("unexpected"); },
     };
-    const store = new PostgresSiteRuntimeStateStore(runner(), repository);
+    const store = new PostgresSiteRuntimeStateStore(runner(), repository, authorization());
     const next = await store.acceptPromotion("activation_02", {
       status: "ready", deploymentRef: "deployment_02",
       observedAt: "2026-07-30T10:01:00.000Z", payloadDigest: "d".repeat(64),
@@ -82,7 +82,7 @@ describe("PostgresSiteRuntimeStateStore", () => {
         current = value; completed.push(`${value.state}:${site.state}`);
       },
     };
-    const store = new PostgresSiteRuntimeStateStore(runner(), repository);
+    const store = new PostgresSiteRuntimeStateStore(runner(), repository, authorization());
     await expect(store.acceptTrafficStop("traffic_stop_01", {
       status: "rejected", observedAt: "2026-07-30T10:01:00.000Z", payloadDigest: "e".repeat(64),
     })).resolves.toMatchObject({ kind: "observe_site_traffic" });
@@ -99,6 +99,13 @@ function runner() {
     const lease = issuePlatformTransaction({ query: async () => [], execute: async () => 1 });
     try { return await work(lease.transaction); } finally { revokePlatformTransaction(lease); }
   } };
+}
+
+function authorization() {
+  return { async execute(_transaction: unknown, _input: unknown, mutate: () => Promise<void>) {
+    await mutate();
+    return {};
+  } } as never;
 }
 
 const activeSite: SiteAggregate = { siteRef: "site_01", state: "active", activeReleaseRef: "release_01",

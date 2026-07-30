@@ -4,7 +4,7 @@ import { PlatformUnitOfWork } from "../../../../shared/unit-of-work/unit-of-work
 import { signedCredentialDigest } from "../contracts/authorization-digest.js";
 import type {
   SessionAccessGrantSigner,
-  SessionAuthorizationPublisher,
+  SessionGrantDeliveryPublisher,
   SessionAuthorizationRepository,
 } from "../contracts/session-authorization-ports.js";
 import {
@@ -22,7 +22,7 @@ export class IssueSessionAccessGrantService {
     private readonly unitOfWork: PlatformUnitOfWork,
     private readonly repository: SessionAuthorizationRepository,
     private readonly signer: SessionAccessGrantSigner,
-    private readonly publisher: SessionAuthorizationPublisher,
+    private readonly publisher: SessionGrantDeliveryPublisher,
     private readonly clock: () => Date = () => new Date(),
     private readonly grantRef: () => string = randomUUID,
   ) {}

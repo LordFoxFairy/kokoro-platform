@@ -56,6 +56,9 @@ import { createSiteLifecycleConnectService } from
   "../modules/site/interfaces/connect/site-lifecycle-service.js";
 import { readBoundedPrivateFile, readBoundedRegularFile } from "./secret-files.js";
 import { createPlatformSiteAdminComposition } from "./site-admin-composition.js";
+import { createSessionAuthorizationEventSigner } from
+  "../modules/authorization/infrastructure/jose/session-authorization-event-signer.js";
+import { loadAuthorizationEventKeyRing } from "./platform-public-composition.js";
 
 export type AdminRequestListener = (
   request: Http2ServerRequest,
@@ -84,7 +87,7 @@ export async function createAdminProductionComposition(input: Readonly<{
   clock?: () => Date;
 }>): Promise<AdminProductionComposition> {
   const environment = input.environment ?? process.env;
-  const [tls, peers, oidcClients, transactionKey, cursorKey, keyRing] = await Promise.all([
+  const [tls, peers, oidcClients, transactionKey, cursorKey, keyRing, authorizationEventKeyRing] = await Promise.all([
     loadTls(environment),
     loadPeers(required(environment, "PLATFORM_ADMIN_MTLS_PEERS_FILE")),
     loadOidcClients(required(environment, "PLATFORM_ADMIN_OIDC_CLIENTS_FILE")),
@@ -93,6 +96,7 @@ export async function createAdminProductionComposition(input: Readonly<{
     loadSecretKey(required(environment, "PLATFORM_ADMIN_CURSOR_KEY_FILE"),
       "PLATFORM_ADMIN_CURSOR_KEY_INVALID"),
     loadJoseKeyRing(required(environment, "PLATFORM_ADMIN_JOSE_KEY_RING_FILE")),
+    loadAuthorizationEventKeyRing(required(environment, "PLATFORM_AUTHORIZATION_EVENT_KEY_RING_FILE")),
   ]);
   assertPeerRegistrations(peers, oidcClients);
   const provider = await createOpenIdClientAdminProvider({
@@ -101,6 +105,9 @@ export async function createAdminProductionComposition(input: Readonly<{
       clientSecret: client.clientSecret,
     })),
   });
+  const authorizationEventSigner = await createSessionAuthorizationEventSigner(
+    authorizationEventKeyRing,
+  );
   const protector = new AesGcmAdminOidcTransactionProtector(transactionKey);
   const delivery = await AdminSessionDeliverySealer.create({
     issuer: keyRing.issuer,
@@ -182,7 +189,7 @@ export async function createAdminProductionComposition(input: Readonly<{
     resolver,
   });
   const siteLifecycleService = createSiteLifecycleConnectService({
-    owner: createPlatformSiteAdminComposition(input.database).site,
+    owner: createPlatformSiteAdminComposition(input.database, authorizationEventSigner).site,
     resolver,
   });
   const connect = connectNodeAdapter({

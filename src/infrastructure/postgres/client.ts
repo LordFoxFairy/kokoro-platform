@@ -978,8 +978,9 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_table_privilege(current_user, 'platform.authorization_project_membership', 'SELECT,INSERT')
            AND has_table_privilege(current_user, 'platform.authorization_product_context', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.authorization_session_access_grant', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.authorization_stream_state', 'SELECT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.authorization_event_log', 'INSERT')
+           AND has_table_privilege(current_user, 'platform.authorization_scoped_stream_state', 'SELECT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.authorization_scoped_site_cursor', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.authorization_scoped_event_log', 'INSERT')
            AND has_table_privilege(current_user, 'platform.identity_account', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.identity_verification_transaction', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.identity_auth_transaction', 'SELECT,INSERT,UPDATE')
@@ -1121,12 +1122,20 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_table_privilege(current_user, 'platform.asset_reference', 'SELECT,INSERT')
            AND has_table_privilege(current_user, 'platform.asset_eligibility_projection', 'SELECT,INSERT')
            AND has_table_privilege(current_user, 'platform.asset_promotion_receipt', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.authorization_scoped_stream_state', 'SELECT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.authorization_scoped_site_cursor', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.authorization_scoped_event_log', 'SELECT,INSERT,DELETE')
+           AND has_table_privilege(current_user, 'platform.authorization_scoped_snapshot', 'SELECT,DELETE')
          WHEN $2 = 'authorization' THEN
-           has_table_privilege(current_user, 'platform.authorization_stream_state', 'SELECT')
-           AND has_table_privilege(current_user, 'platform.authorization_event_log', 'SELECT')
-           AND has_table_privilege(current_user, 'platform.authorization_snapshot', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.authorization_snapshot_record', 'SELECT,INSERT')
+           has_table_privilege(current_user, 'platform.authorization_scoped_stream_state', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.authorization_scoped_site_cursor', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.authorization_scoped_event_log', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.authorization_scoped_snapshot', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.authorization_scoped_snapshot_record', 'SELECT,INSERT')
            AND has_table_privilege(current_user, 'platform.authorization_site', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.authorization_subject', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.authorization_identity_session', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.authorization_project_membership', 'SELECT')
            AND has_table_privilege(current_user, 'platform.authorization_session_access_grant', 'SELECT')
          ELSE has_table_privilege(current_user, 'platform.command_receipt', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.outbox_event', 'SELECT,INSERT')
@@ -1150,6 +1159,9 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_any_column_privilege(current_user, 'platform.site_effect_approval', 'UPDATE')
            AND has_any_column_privilege(current_user, 'platform.authorization_site', 'UPDATE')
            AND has_any_column_privilege(current_user, 'platform.authorization_product_binding', 'UPDATE')
+           AND has_table_privilege(current_user, 'platform.authorization_scoped_stream_state', 'SELECT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.authorization_scoped_site_cursor', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.authorization_scoped_event_log', 'INSERT')
            AND has_table_privilege(current_user, 'platform.admin_operator_authority', 'SELECT')
            AND has_table_privilege(current_user, 'platform.admin_operator_site_scope', 'SELECT')
            AND has_table_privilege(current_user, 'platform.admin_operator_global_scope_grant', 'SELECT')
@@ -1240,8 +1252,8 @@ const RUNTIME_IDENTITY_SQL = `
                  'authorization_site','authorization_site_release','authorization_product_binding',
                  'authorization_subject','authorization_identity_session','authorization_project',
                  'authorization_project_membership','authorization_product_context',
-                 'authorization_session_access_grant','authorization_stream_state','authorization_event_log',
-                 'authorization_snapshot','authorization_snapshot_record','model_option_materialization','model_option_revision',
+                 'authorization_session_access_grant','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_scoped_event_log',
+                 'authorization_scoped_snapshot','authorization_scoped_snapshot_record','model_option_materialization','model_option_revision',
                  'model_option_materialized_revision','model_option_role_binding',
                'model_option_materialization_quarantine','site_release_model_catalog_publication',
                'site_release_model_catalog_surface','site_release_model_catalog_option'
@@ -1295,8 +1307,8 @@ const RUNTIME_IDENTITY_SQL = `
                  'authorization_site','authorization_site_release','authorization_product_binding',
                  'authorization_subject','authorization_identity_session','authorization_project',
                  'authorization_project_membership','authorization_product_context',
-                 'authorization_session_access_grant','authorization_stream_state','authorization_event_log',
-                 'authorization_snapshot','authorization_snapshot_record','model_option_materialization','model_option_revision',
+                 'authorization_session_access_grant','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_scoped_event_log',
+                 'authorization_scoped_snapshot','authorization_scoped_snapshot_record','model_option_materialization','model_option_revision',
                  'model_option_materialized_revision','model_option_role_binding',
                'model_option_materialization_quarantine','site_release_model_catalog_publication',
                'site_release_model_catalog_surface','site_release_model_catalog_option'
@@ -1345,8 +1357,9 @@ const RUNTIME_IDENTITY_SQL = `
                    has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
                    OR has_any_column_privilege(runtime_role.rolname,candidate.oid,'SELECT')
                  ) AND candidate.relname <> ALL(ARRAY[
-                   'platform_foundation','authorization_stream_state','authorization_event_log',
-                   'authorization_snapshot','authorization_snapshot_record','authorization_site',
+                   'platform_foundation','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_scoped_event_log',
+                   'authorization_scoped_snapshot','authorization_scoped_snapshot_record','authorization_site',
+                   'authorization_subject','authorization_identity_session','authorization_project_membership',
                    'authorization_session_access_grant'
                  ]))
                  OR
@@ -1379,14 +1392,14 @@ const RUNTIME_IDENTITY_SQL = `
                  (has_table_privilege(runtime_role.rolname, candidate.oid,
                    'DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN') AND NOT (
                    $2 = 'worker' AND candidate.relname = ANY(ARRAY[
-                     'authorization_event_log','authorization_snapshot'
+                     'authorization_scoped_event_log','authorization_scoped_snapshot'
                    ])
                  ))
                  OR has_any_column_privilege(runtime_role.rolname, candidate.oid, 'REFERENCES')
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'INSERT') AND NOT (
                    ($2 = 'api' AND candidate.relname = ANY(ARRAY[
                      'command_receipt','outbox_event','inbox_delivery','model_selection_decision',
-                     'authorization_product_context','authorization_session_access_grant','authorization_event_log',
+                     'authorization_product_context','authorization_session_access_grant','authorization_scoped_site_cursor','authorization_scoped_event_log',
                      'authorization_subject','authorization_identity_session','authorization_project','authorization_project_membership',
                      'identity_account','identity_password_credential','identity_login_identifier',
                      'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
@@ -1412,18 +1425,18 @@ const RUNTIME_IDENTITY_SQL = `
                    ]))
                    OR ($2 = 'admission' AND
                      candidate.relname=ANY(ARRAY[${ADMISSION_INSERT_RELATIONS_SQL}]))
-                   OR ($2 = 'authorization' AND candidate.relname = ANY(ARRAY['authorization_snapshot','authorization_snapshot_record']))
+                   OR ($2 = 'authorization' AND candidate.relname = ANY(ARRAY['authorization_scoped_snapshot','authorization_scoped_snapshot_record']))
                    OR ($2 = 'api' AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
                    OR ($2 = 'worker' AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_INSERT_RELATIONS_SQL}]))
                    OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
                      'site_deployment_binding','site_deployment_observation',
-                     'site_traffic_stop_observation','authorization_site',
+                     'site_traffic_stop_observation','authorization_scoped_site_cursor','authorization_scoped_event_log','authorization_site',
                      'authorization_site_release','authorization_product_binding'
                    ]))
                    OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY[
                      'command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership',
                      'site','site_project_binding','site_release','site_activation_attempt',
-                     'site_traffic_stop_attempt','site_effect_approval',
+                     'site_traffic_stop_attempt','site_effect_approval','authorization_scoped_site_cursor','authorization_scoped_event_log',
                      'admin_command_decision','admin_approval','admin_approval_decision',
                      'admin_post_effect_review','admin_oidc_transaction',
                      'admin_operator_session','admin_step_up_transaction'
@@ -1432,7 +1445,7 @@ const RUNTIME_IDENTITY_SQL = `
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
                    ($2 = 'api' AND candidate.relname = ANY(ARRAY[
                      'command_receipt','inbox_delivery','authorization_identity_session','authorization_product_context',
-                     'authorization_session_access_grant','authorization_stream_state','authorization_site',
+                     'authorization_session_access_grant','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_site',
                      'identity_account','identity_password_credential','identity_login_identifier',
                      'identity_verification_transaction','identity_verification_delivery',
                      'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
@@ -1450,7 +1463,7 @@ const RUNTIME_IDENTITY_SQL = `
                      candidate.relname=ANY(ARRAY[${ADMISSION_UPDATE_RELATIONS_SQL}]))
                    OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
                      'outbox_event','site','site_release','site_deployment_binding',
-                     'site_activation_attempt','site_traffic_stop_attempt','authorization_site',
+                     'site_activation_attempt','site_traffic_stop_attempt','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_site',
                      'authorization_site_release','authorization_product_binding'
                    ]))
                    OR ($2 = 'api' AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
@@ -1462,7 +1475,7 @@ const RUNTIME_IDENTITY_SQL = `
                    OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY[
                      'command_receipt','commerce_billing_account','commerce_billing_account_membership',
                      'site','site_project_binding','site_release','site_deployment_binding',
-                     'site_effect_approval','authorization_site','authorization_product_binding',
+                     'site_effect_approval','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_site','authorization_product_binding',
                      'admin_approval','admin_post_effect_review','admin_oidc_transaction',
                      'admin_operator_session','admin_step_up_transaction'
                    ]))
@@ -1471,7 +1484,7 @@ const RUNTIME_IDENTITY_SQL = `
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'INSERT') AND NOT (
                    ($2 = 'api' AND candidate.relname = ANY(ARRAY[
                      'command_receipt','outbox_event','inbox_delivery','model_selection_decision',
-                     'authorization_product_context','authorization_session_access_grant','authorization_event_log',
+                     'authorization_product_context','authorization_session_access_grant','authorization_scoped_site_cursor','authorization_scoped_event_log',
                      'authorization_subject','authorization_identity_session','authorization_project','authorization_project_membership',
                      'identity_account','identity_password_credential','identity_login_identifier',
                      'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
@@ -1497,18 +1510,18 @@ const RUNTIME_IDENTITY_SQL = `
                    ]))
                    OR ($2 = 'admission' AND
                      candidate.relname=ANY(ARRAY[${ADMISSION_INSERT_RELATIONS_SQL}]))
-                   OR ($2 = 'authorization' AND candidate.relname = ANY(ARRAY['authorization_snapshot','authorization_snapshot_record']))
+                   OR ($2 = 'authorization' AND candidate.relname = ANY(ARRAY['authorization_scoped_snapshot','authorization_scoped_snapshot_record']))
                    OR ($2 = 'api' AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
                    OR ($2 = 'worker' AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_INSERT_RELATIONS_SQL}]))
                    OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
                      'site_deployment_binding','site_deployment_observation',
-                     'site_traffic_stop_observation','authorization_site',
+                     'site_traffic_stop_observation','authorization_scoped_site_cursor','authorization_scoped_event_log','authorization_site',
                      'authorization_site_release','authorization_product_binding'
                    ]))
                    OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY[
                      'command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership',
                      'site','site_project_binding','site_release','site_activation_attempt',
-                     'site_traffic_stop_attempt','site_effect_approval',
+                     'site_traffic_stop_attempt','site_effect_approval','authorization_scoped_site_cursor','authorization_scoped_event_log',
                      'admin_command_decision','admin_approval','admin_approval_decision',
                      'admin_post_effect_review'
                    ]))
@@ -1516,7 +1529,7 @@ const RUNTIME_IDENTITY_SQL = `
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
                    ($2 = 'api' AND candidate.relname = ANY(ARRAY[
                      'command_receipt','inbox_delivery','authorization_identity_session','authorization_product_context',
-                     'authorization_session_access_grant','authorization_stream_state','authorization_site',
+                     'authorization_session_access_grant','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_site',
                      'identity_account','identity_password_credential','identity_login_identifier',
                      'identity_verification_transaction','identity_verification_delivery',
                      'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
@@ -1534,7 +1547,7 @@ const RUNTIME_IDENTITY_SQL = `
                      candidate.relname=ANY(ARRAY[${ADMISSION_UPDATE_RELATIONS_SQL}]))
                    OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
                      'outbox_event','site','site_release','site_deployment_binding',
-                     'site_activation_attempt','site_traffic_stop_attempt','authorization_site',
+                     'site_activation_attempt','site_traffic_stop_attempt','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_site',
                      'authorization_site_release','authorization_product_binding'
                    ]))
                    OR ($2 = 'api' AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
@@ -1546,7 +1559,7 @@ const RUNTIME_IDENTITY_SQL = `
                    OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY[
                      'command_receipt','commerce_billing_account','commerce_billing_account_membership',
                      'site','site_project_binding','site_release','site_deployment_binding',
-                     'site_effect_approval','authorization_site','authorization_product_binding',
+                     'site_effect_approval','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_site','authorization_product_binding',
                      'admin_approval','admin_post_effect_review'
                    ]))
                    OR ($2 = 'admin' AND candidate.relname = 'admin_approval')

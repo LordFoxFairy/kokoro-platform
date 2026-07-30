@@ -1138,6 +1138,29 @@ model AuthorizationScopedEventLog {
   @@schema("platform")
 }
 
+model AuthorizationScopedSnapshot {
+  snapshotRef    String   @id @map("snapshot_ref") @db.Uuid
+  highWatermark  BigInt   @map("high_watermark")
+  keySetRevision String   @map("key_set_revision") @db.Char(64)
+  frozenAt       DateTime @map("frozen_at") @db.Timestamptz(6)
+  expiresAt      DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([expiresAt])
+  @@map("authorization_scoped_snapshot")
+  @@schema("platform")
+}
+
+model AuthorizationScopedSnapshotRecord {
+  snapshotRef   String @map("snapshot_ref") @db.Uuid
+  ordinal       BigInt
+  recordPayload Bytes  @map("record_payload")
+
+  @@id([snapshotRef, ordinal])
+  @@map("authorization_scoped_snapshot_record")
+  @@schema("platform")
+}
+
 model AuthorizationEventLog {
   streamSequence     BigInt   @id @map("stream_sequence")
   eventId            String   @unique @map("event_id") @db.Uuid

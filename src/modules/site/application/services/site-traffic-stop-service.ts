@@ -13,21 +13,28 @@ import {
   type SiteEffectApprovalAuthority,
 } from "../contracts/site-effect-approval.js";
 import { createSiteAuthorityCommand } from "../site-command.js";
+import { SiteCurrentAuthorizationMutation } from "./site-current-authorization-mutation.js";
 
 type CommandInput = Readonly<{ commandId: string; idempotencyKey: string }>;
 
 export class SiteTrafficStopService {
   readonly #now: () => string;
   readonly #approvalAuthority: SiteEffectApprovalAuthority;
+  readonly #authorization: SiteCurrentAuthorizationMutation;
 
   constructor(
     private readonly unitOfWork: PlatformUnitOfWork,
     private readonly repository: SiteTrafficStopRepository,
     private readonly journal: SiteAuthorityJournal,
-    options: Readonly<{ now?: () => string; approvalAuthority?: SiteEffectApprovalAuthority }> = {},
+    options: Readonly<{
+      now?: () => string;
+      approvalAuthority?: SiteEffectApprovalAuthority;
+      authorization?: SiteCurrentAuthorizationMutation;
+    }> = {},
   ) {
     this.#now = options.now ?? (() => new Date().toISOString());
     this.#approvalAuthority = options.approvalAuthority ?? denyApprovalAuthority;
+    this.#authorization = options.authorization ?? denyAuthorizationMutation;
   }
 
   requestTrafficStop(
@@ -58,17 +65,24 @@ export class SiteTrafficStopService {
         operation: `site.traffic-stop.${input.action}`,
         effectDigest: siteTrafficStopEffectDigest(input),
       }, context);
-      const site = await this.repository.loadSiteForUpdate(transaction, input.siteRef);
-      const environment = deploymentEnvironment(context);
-      const deployment = await this.repository.loadActiveDeploymentForUpdate(
-        transaction, input.siteRef, environment, context.region,
-      );
-      if (site === null || deployment === null) throw new Error("SITE_TRAFFIC_STOP_TARGET_NOT_FOUND");
-      const result = beginSiteTrafficStop({
-        attemptRef: input.attemptRef, action: input.action, site, deployment,
-        providerNamespace: deployment.providerNamespace, requestedAt: this.#now(),
+      let result: ReturnType<typeof beginSiteTrafficStop> | undefined;
+      await this.#authorization.execute(transaction, {
+        siteRef: input.siteRef,
+        correlationId: context.correlationId,
+      }, async () => {
+        const site = await this.repository.loadSiteForUpdate(transaction, input.siteRef);
+        const environment = deploymentEnvironment(context);
+        const deployment = await this.repository.loadActiveDeploymentForUpdate(
+          transaction, input.siteRef, environment, context.region,
+        );
+        if (site === null || deployment === null) throw new Error("SITE_TRAFFIC_STOP_TARGET_NOT_FOUND");
+        result = beginSiteTrafficStop({
+          attemptRef: input.attemptRef, action: input.action, site, deployment,
+          providerNamespace: deployment.providerNamespace, requestedAt: this.#now(),
+        });
+        await this.repository.beginTrafficStop(transaction, result.site, result.attempt);
       });
-      await this.repository.beginTrafficStop(transaction, result.site, result.attempt);
+      if (result === undefined) throw new Error("SITE_TRAFFIC_STOP_MUTATION_INCOMPLETE");
       const receipt = Object.freeze({ attemptRef: result.attempt.attemptRef,
         state: result.attempt.state, replayed: false });
       await this.journal.succeed(transaction, command, receipt, context);
@@ -156,6 +170,10 @@ export class SiteTrafficStopService {
 const denyApprovalAuthority: SiteEffectApprovalAuthority = Object.freeze({
   consume: async () => { throw new Error("SITE_EFFECT_APPROVAL_AUTHORITY_REQUIRED"); },
 });
+
+const denyAuthorizationMutation = Object.freeze({
+  execute: async (): Promise<never> => { throw new Error("SITE_AUTHORIZATION_MUTATION_REQUIRED"); },
+}) as unknown as SiteCurrentAuthorizationMutation;
 
 function admin(context: VerifiedRequestSecurityContext, siteRef: string): void {
   if (context.trustedCaller.kind !== "admin_workload" || context.actor.kind !== "operator") {

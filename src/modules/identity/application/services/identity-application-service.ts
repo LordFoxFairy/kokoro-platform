@@ -16,7 +16,7 @@ import type {
 } from "../contracts/identity-security-ports.js";
 import { normalizeIdentityEmail } from "../../domain/identity-email.js";
 import { IdentitySessionAuthorizationMutation } from "./identity-session-authorization-mutation.js";
-import { SubjectAuthorizationMutation } from "./subject-authorization-mutation.js";
+import { PersonalBootstrapAuthorizationMutation } from "./personal-bootstrap-authorization-mutation.js";
 import { digestIdentityRecoveryCode } from "./identity-recovery-code-digest.js";
 
 export interface IdentityUnitOfWorkPort {
@@ -69,7 +69,7 @@ export class IdentityApplicationService {
     dummyTotpSecret: string;
     auditDigest: IdentityAuditDigesterPort;
     deliverySealer: VerificationEnvelopeSealerPort;
-    subjectAuthorization: SubjectAuthorizationMutation;
+    personalBootstrapAuthorization: PersonalBootstrapAuthorizationMutation;
     sessionAuthorization: IdentitySessionAuthorizationMutation;
     clock?: () => Date;
     reference?: () => string;
@@ -259,7 +259,7 @@ export class IdentityApplicationService {
         const executionNamespace = this.reference();
         const namespaceIntentRef = this.reference();
         const namespaceEventId = this.reference();
-        await this.dependencies.subjectAuthorization.execute(
+        await this.dependencies.personalBootstrapAuthorization.execute(
           transaction,
           { siteRef: input.workload.siteRef, correlationId: input.context.correlationId },
           async () => {

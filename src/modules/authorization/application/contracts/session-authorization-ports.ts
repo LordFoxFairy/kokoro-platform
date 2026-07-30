@@ -100,7 +100,7 @@ export interface SessionAccessGrantSigner {
   jwks(): Readonly<{ keys: readonly Readonly<Record<string, unknown>>[] }>;
 }
 
-export interface SessionAuthorizationPublisher {
+export interface SessionGrantDeliveryPublisher {
   publishGrantDelivered(
     transaction: PlatformTransaction,
     input: Readonly<{
@@ -110,6 +110,10 @@ export interface SessionAuthorizationPublisher {
       correlationId: string;
     }>,
   ): Promise<void>;
+}
+
+/** @deprecated Fresh production uses owner-scoped SiteCurrent publication. */
+export interface SessionAuthorizationPublisher extends SessionGrantDeliveryPublisher {
   bumpAndPublishRevocationEpochChanged(
     transaction: PlatformTransaction,
     input: Readonly<{

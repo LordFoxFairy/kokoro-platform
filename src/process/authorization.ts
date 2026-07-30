@@ -15,6 +15,7 @@ export async function runPlatformAuthorizationMain(): Promise<void> {
     databaseConnected = true;
     await database.checkHealth();
     const composition = await createSessionAuthorizationProductionComposition({ database });
+    await composition.checkReadiness();
     let draining = false;
     let shutdownPromise: Promise<void> | undefined;
     const sessions = new Set<ServerHttp2Session>();
@@ -33,7 +34,7 @@ export async function runPlatformAuthorizationMain(): Promise<void> {
           response.end(JSON.stringify({ status: "not_ready" }));
           return;
         }
-        void database.checkHealth().then(
+        void Promise.all([database.checkHealth(), composition.checkReadiness()]).then(
           () => {
             if (response.destroyed) return;
             response.statusCode = 200;

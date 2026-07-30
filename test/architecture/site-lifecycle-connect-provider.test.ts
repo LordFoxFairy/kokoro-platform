@@ -9,7 +9,7 @@ describe("Site lifecycle production provider", () => {
       readFile(resolve("src/process/admin-composition.ts"), "utf8"),
     ]);
     expect(admin).not.toMatch(/createPlatformSiteAdminComposition\(database\);/u);
-    expect(composition).toContain("createPlatformSiteAdminComposition(input.database)");
+    expect(composition).toContain("createPlatformSiteAdminComposition(input.database, authorizationEventSigner)");
     expect(composition).toContain("router.service(SiteLifecycleService");
     expect(composition).not.toMatch(/fetch\(|http:\/\/|https:\/\//u);
   });
