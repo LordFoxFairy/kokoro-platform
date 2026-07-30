@@ -41,8 +41,19 @@ describe("Admin session protected delivery", () => {
       sessionExpiresAt: "2026-07-29T15:15:00.000Z",
       deliveryExpiresAt: "2026-07-29T15:02:00.000Z",
       transaction: transaction(),
-      operatorRef: "operator:1",
-      operatorGeneration: 2n,
+      operator: {
+        operatorRef: "operator:1",
+        operatorGeneration: 2n,
+        operatorSecurityEpoch: 4n,
+        restrictionEpoch: 6n,
+        policyEpoch: 8n,
+        permissions: ["admin.operator.self.read", "commerce.code-batch.read"],
+        expiresAt: "2026-07-30T15:00:00.000Z",
+        siteScopes: [{ siteRef: "site:1", environment: "production", region: "us-east-1",
+          scopeEpoch: 3n, expiresAt: "2026-07-30T15:00:00.000Z" }],
+        globalScopes: [],
+        breakGlassScopes: [],
+      },
       claims: {
         issuer: "https://issuer.example.test",
         subject: "oidc-subject:1",
@@ -88,6 +99,19 @@ describe("Admin session protected delivery", () => {
       operator_session_ref: "operator-session:1",
       opaque_session_credential: "opaque-session-credential",
       session_expires_at: "2026-07-29T15:15:00.000Z",
+      operator_security_epoch: "4",
+      session_epoch: "1",
+      restriction_epoch: "6",
+      policy_epoch: "8",
+      step_up_at: null,
+      operator_attestation_ref: "admin-session:operator-session:1:1",
+      operator_attestation_digest: expect.stringMatching(/^[0-9a-f]{64}$/u),
+      authority: {
+        permissions: ["admin.operator.self.read", "commerce.code-batch.read"],
+        site_scopes: [{ site_id: "site:1", scope_epoch: "3" }],
+        global_scopes: [],
+        break_glass_scopes: [],
+      },
     });
   });
 

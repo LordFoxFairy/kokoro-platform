@@ -1,6 +1,7 @@
 import {
   createCipheriv,
   createDecipheriv,
+  createHash,
   createPrivateKey,
   createPublicKey,
   randomBytes,
@@ -13,6 +14,7 @@ import {
 } from "jose";
 import type {
   AdminOidcProviderClaims,
+  AdminOidcOperatorAuthority,
   AdminOidcTransaction,
 } from "../../application/services/admin-oidc-service.js";
 
@@ -124,8 +126,7 @@ export class AdminSessionDeliverySealer {
     sessionExpiresAt: string;
     deliveryExpiresAt: string;
     transaction: AdminOidcTransaction;
-    operatorRef: string;
-    operatorGeneration: bigint;
+    operator: AdminOidcOperatorAuthority;
     claims: AdminOidcProviderClaims;
   }>): Promise<string> {
     const signingKey = this.input.signingKeys.get(input.transaction.signingKeyRevision);
@@ -144,6 +145,13 @@ export class AdminSessionDeliverySealer {
       !Number.isFinite(expiresAt) || expiresAt <= issuedAt || expiresAt - issuedAt > 5 * 60 ||
       Date.parse(input.sessionExpiresAt) <= Date.parse(input.deliveryExpiresAt)
     ) throw new Error("ADMIN_DELIVERY_EXPIRY_INVALID");
+    const sessionEpoch = 1n;
+    const attestation = operatorAttestation({
+      sessionRef: input.sessionRef,
+      sessionEpoch,
+      operator: input.operator,
+      transaction: input.transaction,
+    });
     const signed = await new SignJWT({
       workload_identity_ref: input.transaction.axes.workloadIdentityRef,
       environment: input.transaction.axes.environment,
@@ -151,14 +159,22 @@ export class AdminSessionDeliverySealer {
       managed_device_ref: input.transaction.axes.managedDeviceRef,
       transaction_ref: input.transaction.transactionRef,
       exchange_request_digest: input.transaction.exchangeRequestDigest,
-      operator_ref: input.operatorRef,
-      operator_generation: input.operatorGeneration.toString(),
+      operator_ref: input.operator.operatorRef,
+      operator_generation: input.operator.operatorGeneration.toString(),
       operator_session_ref: input.sessionRef,
       opaque_session_credential: input.opaqueCredential,
       session_expires_at: input.sessionExpiresAt,
+      operator_security_epoch: input.operator.operatorSecurityEpoch.toString(),
+      session_epoch: sessionEpoch.toString(),
+      restriction_epoch: input.operator.restrictionEpoch.toString(),
+      policy_epoch: input.operator.policyEpoch.toString(),
       assurance_level: input.claims.assuranceLevel,
       factor_classes: [...input.claims.factorClasses],
       authenticated_at: input.claims.authenticationTime,
+      step_up_at: null,
+      operator_attestation_ref: attestation.ref,
+      operator_attestation_digest: attestation.digest,
+      authority: authorityClaims(input.operator),
     })
       .setProtectedHeader({
         alg: "ES256",
@@ -182,6 +198,62 @@ export class AdminSessionDeliverySealer {
       })
       .encrypt(deliveryKey);
   }
+}
+
+function authorityClaims(operator: AdminOidcOperatorAuthority): Readonly<Record<string, unknown>> {
+  return Object.freeze({
+    permissions: [...operator.permissions],
+    expires_at: operator.expiresAt,
+    site_scopes: operator.siteScopes.map((scope) => ({
+      site_id: scope.siteRef,
+      environment: scope.environment,
+      region: scope.region,
+      scope_epoch: scope.scopeEpoch.toString(),
+      expires_at: scope.expiresAt,
+    })),
+    global_scopes: operator.globalScopes.map((scope) => ({
+      grant_id: scope.grantRef,
+      environment: scope.environment,
+      region: scope.region,
+      scope_epoch: scope.scopeEpoch.toString(),
+      expires_at: scope.expiresAt,
+    })),
+    break_glass_scopes: operator.breakGlassScopes.map((scope) => ({
+      grant_id: scope.grantRef,
+      incident_id: scope.incidentRef,
+      environment: scope.environment,
+      region: scope.region,
+      authorized_operation: scope.authorizedOperation,
+      resource_refs: [...scope.resourceRefs],
+      field_allowlist: [...scope.fieldAllowlist],
+      scope_epoch: scope.scopeEpoch.toString(),
+      expires_at: scope.expiresAt,
+    })),
+  });
+}
+
+function operatorAttestation(input: Readonly<{
+  sessionRef: string;
+  sessionEpoch: bigint;
+  operator: AdminOidcOperatorAuthority;
+  transaction: AdminOidcTransaction;
+}>): Readonly<{ ref: string; digest: string }> {
+  const ref = `admin-session:${input.sessionRef}:${input.sessionEpoch.toString()}`;
+  const digest = createHash("sha256").update("kokoro.admin-operator-attestation.v1")
+    .update("\0").update(JSON.stringify({
+      ref,
+      operatorRef: input.operator.operatorRef,
+      operatorGeneration: input.operator.operatorGeneration.toString(),
+      operatorSecurityEpoch: input.operator.operatorSecurityEpoch.toString(),
+      restrictionEpoch: input.operator.restrictionEpoch.toString(),
+      policyEpoch: input.operator.policyEpoch.toString(),
+      workloadIdentityRef: input.transaction.axes.workloadIdentityRef,
+      environment: input.transaction.axes.environment,
+      region: input.transaction.axes.region,
+      managedDeviceRef: input.transaction.axes.managedDeviceRef,
+      audience: input.transaction.axes.audience,
+    })).digest("hex");
+  return Object.freeze({ ref, digest });
 }
 
 function canonicalBase64Url(value: string, exactBytes?: number): Buffer {

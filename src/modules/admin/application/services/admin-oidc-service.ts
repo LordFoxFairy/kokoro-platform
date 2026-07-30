@@ -104,6 +104,41 @@ export interface AdminOidcProviderClaims {
   readonly managedDeviceRef: string;
 }
 
+export interface AdminOidcOperatorAuthority {
+  readonly operatorRef: string;
+  readonly operatorGeneration: bigint;
+  readonly operatorSecurityEpoch: bigint;
+  readonly restrictionEpoch: bigint;
+  readonly policyEpoch: bigint;
+  readonly permissions: readonly string[];
+  readonly expiresAt: string;
+  readonly siteScopes: readonly Readonly<{
+    siteRef: string;
+    environment: string;
+    region: string;
+    scopeEpoch: bigint;
+    expiresAt: string;
+  }>[];
+  readonly globalScopes: readonly Readonly<{
+    grantRef: string;
+    environment: string;
+    region: string;
+    scopeEpoch: bigint;
+    expiresAt: string;
+  }>[];
+  readonly breakGlassScopes: readonly Readonly<{
+    grantRef: string;
+    incidentRef: string;
+    environment: string;
+    region: string;
+    authorizedOperation: string;
+    resourceRefs: readonly string[];
+    fieldAllowlist: readonly string[];
+    scopeEpoch: bigint;
+    expiresAt: string;
+  }>[];
+}
+
 export interface AdminOidcDelivery {
   readonly operatorSessionRef: string;
   readonly deliveryEnvelope: string;
@@ -141,13 +176,8 @@ export class AdminOidcService {
     protector: Readonly<{ seal(value: string): string; open(value: string): string }>;
     recoveryDigester(value: Uint8Array): string;
     operator: Readonly<{
-      resolve(claims: AdminOidcProviderClaims, axes: AdminWorkloadAxes): Promise<Readonly<{
-        operatorRef: string;
-        operatorGeneration: bigint;
-        operatorSecurityEpoch: bigint;
-        restrictionEpoch: bigint;
-        policyEpoch: bigint;
-      }> | null>;
+      resolve(claims: AdminOidcProviderClaims, axes: AdminWorkloadAxes):
+        Promise<AdminOidcOperatorAuthority | null>;
     }>;
     delivery: Readonly<{
       seal(input: Readonly<{
@@ -156,8 +186,7 @@ export class AdminOidcService {
         sessionExpiresAt: string;
         deliveryExpiresAt: string;
         transaction: AdminOidcTransaction;
-        operatorRef: string;
-        operatorGeneration: bigint;
+        operator: AdminOidcOperatorAuthority;
         claims: AdminOidcProviderClaims;
       }>): Promise<string>;
     }>;
@@ -326,8 +355,7 @@ export class AdminOidcService {
       sessionExpiresAt,
       deliveryExpiresAt,
       transaction: claimed,
-      operatorRef: operator.operatorRef,
-      operatorGeneration: operator.operatorGeneration,
+      operator,
       claims,
     });
     const committed = await this.dependencies.store.commitExchange(input.transactionRef, {

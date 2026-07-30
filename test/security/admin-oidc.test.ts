@@ -259,6 +259,12 @@ function oidcHarness(input: Readonly<{ redeemError?: Error }> = {}) {
         operatorSecurityEpoch: 4n,
         restrictionEpoch: 6n,
         policyEpoch: 8n,
+        permissions: ["admin.operator.self.read"],
+        expiresAt: "2026-07-30T15:00:00.000Z",
+        siteScopes: [{ siteRef: "site:1", environment: "production", region: "us-east-1",
+          scopeEpoch: 3n, expiresAt: "2026-07-30T15:00:00.000Z" }],
+        globalScopes: [],
+        breakGlassScopes: [],
       }),
     },
     delivery: {
