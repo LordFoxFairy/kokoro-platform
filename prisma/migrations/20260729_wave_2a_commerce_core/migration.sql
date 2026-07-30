@@ -363,7 +363,7 @@ CREATE TABLE platform.commerce_code_batch (
   code_lookup_key_revision TEXT NOT NULL CHECK(code_lookup_key_revision ~ '^[A-Za-z0-9_-]{1,64}$'),
   batch_selector CHAR(10) NOT NULL CHECK(batch_selector ~ '^[0-9A-HJKMNP-TV-Z]{10}$'),
   created_by_subject_ref TEXT NOT NULL CHECK(length(created_by_subject_ref) BETWEEN 1 AND 256),
-  state TEXT NOT NULL CHECK(state IN ('draft','active','paused','retired')),
+  state TEXT NOT NULL CHECK(state IN ('draft','active','suspended','abandoned','revoked')),
   starts_at TIMESTAMPTZ,
   ends_at TIMESTAMPTZ,
   inventory_count INTEGER NOT NULL CHECK(inventory_count >= 0),
@@ -375,7 +375,8 @@ CREATE TABLE platform.commerce_code_batch (
   FOREIGN KEY(redemption_program_revision_ref,site_ref)
     REFERENCES platform.commerce_redemption_program_revision(redemption_program_revision_ref,site_ref),
   CHECK(ends_at IS NULL OR starts_at IS NULL OR ends_at > starts_at),
-  CHECK((state='draft' AND activated_at IS NULL) OR (state<>'draft' AND activated_at IS NOT NULL))
+  CHECK((state IN ('draft','abandoned') AND activated_at IS NULL)
+    OR (state IN ('active','suspended','revoked') AND activated_at IS NOT NULL))
 );
 CREATE INDEX commerce_code_batch_program_idx
   ON platform.commerce_code_batch(site_ref,redemption_program_revision_ref,state);

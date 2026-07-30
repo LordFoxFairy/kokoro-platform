@@ -713,6 +713,8 @@ function assertAdminIdentityFence(fence: AdminIdentityTransactionFence): void {
 function assertAdminQueryPermit(permit: AdminQueryPermit): void {
   if (!new Set<AdminQueryPermit["operation"]>([
     "admin.site.read", "admin.site.list", "admin.user.read", "admin.audit.read",
+    "admin.operator.self.read", "admin.operator.read", "admin.operator.list", "admin.approval.list",
+    "commerce.offer.read", "commerce.redemption-program.read", "commerce.code-batch.read",
   ]).has(permit.operation)) throw new Error("ADMIN_QUERY_PERMIT_INVALID");
   for (const value of [permit.operatorRef, permit.environment, permit.region]) {
     if (value.length < 1 || value.length > 128 || hasControlCharacter(value)) {

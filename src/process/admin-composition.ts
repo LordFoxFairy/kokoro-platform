@@ -13,6 +13,8 @@ import { AdminCommandService as AdminCommandDescriptor } from
   "../interfaces/connect/generated-admin-v2/kokoro/platform/admin/v2/admin_command_pb.js";
 import { SiteLifecycleService } from
   "../interfaces/connect/generated-site-lifecycle/kokoro/platform/site/v1/site_lifecycle_pb.js";
+import { AdminCommerceService } from
+  "../interfaces/connect/generated-admin-commerce/kokoro/platform/commerce/v1/admin_commerce_pb.js";
 import { PlatformUnitOfWork } from "../shared/unit-of-work/index.js";
 import { CommandReceiptRepository } from "../shared/outbox-inbox/receipt.js";
 import { OutboxRepository } from "../shared/outbox-inbox/outbox.js";
@@ -54,11 +56,16 @@ import { createAdminQueryConnectService } from
   "../modules/admin/interfaces/connect/admin-query-service.js";
 import { createSiteLifecycleConnectService } from
   "../modules/site/interfaces/connect/site-lifecycle-service.js";
+import { createAdminCommerceConnectService } from
+  "../modules/commerce/interfaces/connect/admin-commerce-service.js";
+import { PostgresCommerceAdministrationReader } from
+  "../modules/commerce/infrastructure/postgres/commerce-administration-reader.js";
 import { readBoundedPrivateFile, readBoundedRegularFile } from "./secret-files.js";
 import { createPlatformSiteAdminComposition } from "./site-admin-composition.js";
 import { createSessionAuthorizationEventSigner } from
   "../modules/authorization/infrastructure/jose/session-authorization-event-signer.js";
 import { loadAuthorizationEventKeyRing } from "./platform-public-composition.js";
+import { createCommerceAdministrationComposition } from "./commerce-admin-composition.js";
 
 export type AdminRequestListener = (
   request: Http2ServerRequest,
@@ -154,10 +161,19 @@ export async function createAdminProductionComposition(input: Readonly<{
     ...(input.clock === undefined ? {} : { clock: input.clock }),
   });
   const identityService = createAdminIdentityConnectService({ oidc, sessions, resolver });
+  const cursors = new HmacAdminPageCursorCodec(cursorKey);
   const queryService = createAdminQueryConnectService({
     resolver,
     reader: new PostgresAdminQueryReader(input.database),
-    cursors: new HmacAdminPageCursorCodec(cursorKey),
+    cursors,
+  });
+  const commerceOwner = await createCommerceAdministrationComposition({
+    database: input.database, environment,
+  });
+  const commerceService = createAdminCommerceConnectService({
+    resolver, owner: commerceOwner.commerce,
+    reader: new PostgresCommerceAdministrationReader(input.database), cursors,
+    ...(input.clock === undefined ? {} : { clock: input.clock }),
   });
   const unitOfWork = new PlatformUnitOfWork(input.database);
   const authorityRepository = new PostgresAdminAuthorityRepository();
@@ -198,13 +214,15 @@ export async function createAdminProductionComposition(input: Readonly<{
       router.service(AdminQueryService, queryService);
       router.service(AdminCommandDescriptor, commandService);
       router.service(SiteLifecycleService, siteLifecycleService);
+      router.service(AdminCommerceService, commerceService);
     },
     connect: true,
     grpc: false,
     grpcWeb: false,
     acceptCompression: [],
     readMaxBytes: 64 * 1024,
-    writeMaxBytes: 64 * 1024,
+    // IssueCodeBatch is the only secret-bearing response and is capped at 1,000 codes.
+    writeMaxBytes: 256 * 1024,
     maxTimeoutMs: 10_000,
   });
   const handler: AdminRequestListener = (request, response) => {

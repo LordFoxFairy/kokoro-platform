@@ -42,6 +42,16 @@ export interface VerifiedAdminPeer {
   readonly bindingEpoch: bigint;
 }
 
+export type CommerceAdminCommandOperation =
+  | "commerce.offer.publish"
+  | "commerce.redemption-program.publish"
+  | "commerce.code-batch.issue"
+  | "commerce.code-batch.approve"
+  | "commerce.code-batch.activate"
+  | "commerce.code-batch.abandon"
+  | "commerce.code-batch.suspend"
+  | "commerce.code-batch.revoke";
+
 export class AdminControlPlaneResolver implements
   AdminIdentityTransportResolver, VerifiedAdminOperatorContextResolver, AdminQueryResolver {
   constructor(private readonly dependencies: Readonly<{
@@ -164,6 +174,33 @@ export class AdminControlPlaneResolver implements
       context: await this.context(
         authenticated.session, request.operation, request.siteRef, scopeLabels(requested),
         claimed.command?.commandId ?? "", request.allowedOperations,
+      ),
+    });
+  }
+
+  async resolveCommerceCommand(
+    claimed: AuthenticatedOperatorCommandContext,
+    transport: HandlerContext,
+    request: Readonly<{
+      operation: CommerceAdminCommandOperation;
+      siteRef: string;
+      resourceRefs: readonly string[];
+    }>,
+  ): Promise<Readonly<{
+    context: VerifiedRequestSecurityContext;
+    axes: VerifiedAuthenticatedAdminAxes;
+  }>> {
+    const authenticated = await this.authenticate(claimed, transport);
+    const requested = scopeFromWire(claimed.scope);
+    this.authorizeScope(
+      authenticated, requested, request.operation, request.operation, request.siteRef,
+      [request.siteRef, ...request.resourceRefs], [], true,
+    );
+    return Object.freeze({
+      axes: axes(authenticated.session),
+      context: await this.context(
+        authenticated.session, request.operation, request.siteRef, scopeLabels(requested),
+        claimed.command?.commandId ?? "", [request.operation],
       ),
     });
   }

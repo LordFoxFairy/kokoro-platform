@@ -5,6 +5,10 @@ import type { HandlerContext, ServiceImpl } from "@connectrpc/connect";
 import {
   AdminQueryService as AdminQueryServiceDescriptor,
   AuditRecordSchema,
+  EffectiveSiteScopeSchema,
+  OperatorState,
+  OperatorSummarySchema,
+  PendingApprovalSummarySchema,
   SiteSummarySchema,
   UserSummarySchema,
 } from "../../../../interfaces/connect/generated-admin-query-v2/kokoro/platform/admin/v2/admin_query_pb.js";
@@ -27,7 +31,9 @@ export interface AdminQueryPermit {
   readonly operatorRef: string;
   readonly environment: string;
   readonly region: string;
-  readonly operation: "admin.site.read" | "admin.site.list" | "admin.user.read" | "admin.audit.read";
+  readonly operation: "admin.site.read" | "admin.site.list" | "admin.user.read" | "admin.audit.read" |
+    "admin.operator.self.read" | "admin.operator.read" | "admin.operator.list" | "admin.approval.list" |
+    "commerce.offer.read" | "commerce.redemption-program.read" | "commerce.code-batch.read";
   readonly scope: AdminQueryScope;
 }
 
@@ -67,6 +73,39 @@ export interface AdminQueryReader {
     actionCode: string;
     occurredAt: string;
   }>[] >;
+  getOperator(permit: AdminQueryPermit, operatorRef: string): Promise<AdminOperatorRecord | null>;
+  listOperators(permit: AdminQueryPermit, page: Readonly<{
+    afterOperatorRef: string | null; limit: number;
+  }>): Promise<readonly AdminOperatorRecord[]>;
+  listPendingApprovals(permit: AdminQueryPermit, input: Readonly<{
+    siteRef: string | null; before: Readonly<{ admittedAt: string; approvalRef: string }> | null;
+    limit: number;
+  }>): Promise<readonly AdminPendingApprovalRecord[]>;
+}
+
+export interface AdminOperatorRecord {
+  readonly operatorRef: string;
+  readonly operatorGeneration: bigint;
+  readonly state: "active" | "suspended" | "revoked";
+  readonly effectivePermissions: readonly string[];
+  readonly effectiveSiteScopes: readonly Readonly<{
+    siteId: string; environment: string; region: string; scopeEpoch: bigint; expiresAt: string;
+  }>[];
+  readonly operatorSecurityEpoch: bigint;
+  readonly authorizationEpoch: bigint;
+  readonly expiresAt: string;
+}
+
+export interface AdminPendingApprovalRecord {
+  readonly approvalRef: string;
+  readonly operation: string;
+  readonly makerRef: string;
+  readonly targetSiteRef: string | null;
+  readonly environment: string;
+  readonly region: string;
+  readonly operatorReason: string;
+  readonly admittedAt: string;
+  readonly expiresAt: string;
 }
 
 export interface AdminPageCursorCodec {
@@ -167,7 +206,88 @@ export function createAdminQueryConnectService(input: Readonly<{
           : {}),
       };
     },
+
+    async getCurrentOperator(request, transport) {
+      const context = required(request.context);
+      const permit = await input.resolver.resolve(context, transport, {
+        operation: "admin.operator.self.read", siteRef: null,
+        resourceRefs: [context.actorRef], fieldRefs: operatorFields,
+      });
+      const operator = await input.reader.getOperator(permit, permit.operatorRef);
+      if (operator === null) throw new Error("ADMIN_OPERATOR_NOT_FOUND");
+      return { operator: operatorMessage(operator) };
+    },
+
+    async getOperator(request, transport) {
+      const context = required(request.context);
+      const permit = await input.resolver.resolve(context, transport, {
+        operation: "admin.operator.read", siteRef: null,
+        resourceRefs: [request.operatorRef], fieldRefs: operatorFields,
+      });
+      const operator = await input.reader.getOperator(permit, request.operatorRef);
+      if (operator === null) throw new Error("ADMIN_OPERATOR_NOT_FOUND");
+      return { operator: operatorMessage(operator) };
+    },
+
+    async listOperators(request, transport) {
+      const context = required(request.context); const limit = pageSize(request.pageSize);
+      const cursor = request.pageToken === undefined ? null : input.cursors.decode(request.pageToken);
+      if (cursor !== null) requireCursor(cursor, ["after", "binding", "kind"], "operators");
+      const permit = await input.resolver.resolve(context, transport, {
+        operation: "admin.operator.list", siteRef: null, resourceRefs: [], fieldRefs: operatorFields,
+      });
+      const binding = permitBinding(permit);
+      if (cursor !== null && cursor.binding !== binding) throw new Error("ADMIN_PAGE_TOKEN_INVALID");
+      const rows = await input.reader.listOperators(permit, {
+        afterOperatorRef: cursor?.after ?? null, limit: limit + 1,
+      });
+      const visible = rows.slice(0, limit); const last = visible.at(-1);
+      return { operators: visible.map(operatorMessage), ...(rows.length > limit && last !== undefined
+        ? { nextPageToken: input.cursors.encode({ kind: "operators", after: last.operatorRef, binding }) }
+        : {}) };
+    },
+
+    async listPendingApprovals(request, transport) {
+      const context = required(request.context); const limit = pageSize(request.pageSize);
+      const cursor = request.pageToken === undefined ? null : input.cursors.decode(request.pageToken);
+      if (cursor !== null) requireCursor(cursor, ["at", "binding", "kind", "ref"], "approvals");
+      const permit = await input.resolver.resolve(context, transport, {
+        operation: "admin.approval.list", siteRef: request.siteId ?? null,
+        resourceRefs: request.siteId === undefined ? [] : [request.siteId],
+        fieldRefs: ["approval_ref", "operation", "maker_ref", "target_site_ref", "operator_reason", "admitted_at", "expires_at"],
+      });
+      const binding = scopedBinding(permit, request.siteId ?? "*");
+      if (cursor !== null && cursor.binding !== binding) throw new Error("ADMIN_PAGE_TOKEN_INVALID");
+      const rows = await input.reader.listPendingApprovals(permit, {
+        siteRef: request.siteId ?? null,
+        before: cursor === null ? null : { admittedAt: cursor.at!, approvalRef: cursor.ref! },
+        limit: limit + 1,
+      });
+      const visible = rows.slice(0, limit); const last = visible.at(-1);
+      return { approvals: visible.map((approval) => create(PendingApprovalSummarySchema, {
+        approvalRef: approval.approvalRef, operation: approval.operation, makerRef: approval.makerRef,
+        environment: approval.environment, region: approval.region, operatorReason: approval.operatorReason,
+        ...(approval.targetSiteRef === null ? {} : { targetSiteRef: approval.targetSiteRef }),
+        admittedAt: timestampFromDate(new Date(approval.admittedAt)),
+        expiresAt: timestampFromDate(new Date(approval.expiresAt)),
+      })), ...(rows.length > limit && last !== undefined ? { nextPageToken: input.cursors.encode({
+        kind: "approvals", at: last.admittedAt, ref: last.approvalRef, binding,
+      }) } : {}) };
+    },
   };
+}
+
+const operatorFields = ["operator_ref", "operator_generation", "state", "permissions", "site_scopes",
+  "operator_security_epoch", "authorization_epoch", "expires_at"] as const;
+
+function operatorMessage(operator: AdminOperatorRecord) {
+  const states = { active: OperatorState.ACTIVE, suspended: OperatorState.SUSPENDED,
+    revoked: OperatorState.REVOKED } as const;
+  return create(OperatorSummarySchema, { ...operator, state: states[operator.state],
+    effectivePermissions: [...operator.effectivePermissions],
+    effectiveSiteScopes: operator.effectiveSiteScopes.map((scope) => create(EffectiveSiteScopeSchema, {
+      ...scope, expiresAt: timestampFromDate(new Date(scope.expiresAt)),
+    })), expiresAt: timestampFromDate(new Date(operator.expiresAt)) });
 }
 
 function requireCursor(
@@ -180,7 +300,7 @@ function requireCursor(
   }
 }
 
-function permitBinding(permit: AdminQueryPermit): string {
+export function permitBinding(permit: AdminQueryPermit): string {
   const scope = permit.scope.kind === "site"
     ? { kind: permit.scope.kind, siteRefs: [...permit.scope.siteRefs].sort() }
     : permit.scope.kind === "global"
@@ -201,7 +321,12 @@ function permitBinding(permit: AdminQueryPermit): string {
     })).digest("hex");
 }
 
+export function scopedBinding(permit: AdminQueryPermit, scopeRef: string): string {
+  return createHash("sha256").update(permitBinding(permit)).update("\0").update(scopeRef).digest("hex");
+}
+
 function pageSize(value: number): number {
+  if (value === 0) return 50;
   if (!Number.isInteger(value) || value < 1 || value > 200) {
     throw new Error("ADMIN_PAGE_SIZE_INVALID");
   }

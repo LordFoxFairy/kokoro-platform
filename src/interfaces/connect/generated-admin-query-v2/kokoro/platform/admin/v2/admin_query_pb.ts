@@ -2,8 +2,8 @@
 // @generated from file kokoro/platform/admin/v2/admin_query.proto (package kokoro.platform.admin.v2, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
-import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
+import type { GenEnum, GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
+import { enumDesc, fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import { file_buf_validate_validate } from "../../../../buf/validate/validate_pb.js";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
@@ -15,7 +15,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file kokoro/platform/admin/v2/admin_query.proto.
  */
 export const file_kokoro_platform_admin_v2_admin_query: GenFile = /*@__PURE__*/
-  fileDesc("Ciprb2tvcm8vcGxhdGZvcm0vYWRtaW4vdjIvYWRtaW5fcXVlcnkucHJvdG8SGGtva29yby5wbGF0Zm9ybS5hZG1pbi52MiJeCgtTaXRlU3VtbWFyeRIcCghzaXRlX3JlZhgBIAEoCUIKukgHcgUQARiAARIZCgZzdGF0dXMYAiABKAlCCbpIBnIEEAEYQBIWCg5zZWN1cml0eV9lcG9jaBgDIAEoBCJeCgtVc2VyU3VtbWFyeRIcCgh1c2VyX3JlZhgBIAEoCUIKukgHcgUQARiAARIZCgZzdGF0dXMYAiABKAlCCbpIBnIEEAEYQBIWCg5zZWN1cml0eV9lcG9jaBgDIAEoBCKGAQoLQXVkaXRSZWNvcmQSHQoJYXVkaXRfcmVmGAEgASgJQgq6SAdyBRABGIABEh8KC2FjdGlvbl9jb2RlGAIgASgJQgq6SAdyBRABGIABEjcKC29jY3VycmVkX2F0GAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEIGukgDyAEBIoMBCg5HZXRTaXRlUmVxdWVzdBJUCgdjb250ZXh0GAEgASgLMjsua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkF1dGhlbnRpY2F0ZWRPcGVyYXRvclF1ZXJ5Q29udGV4dEIGukgDyAEBEhsKB3NpdGVfaWQYAiABKAlCCrpIB3IFEAEYgAEiTgoPR2V0U2l0ZVJlc3BvbnNlEjsKBHNpdGUYASABKAsyJS5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuU2l0ZVN1bW1hcnlCBrpIA8gBASK5AQoQTGlzdFNpdGVzUmVxdWVzdBJUCgdjb250ZXh0GAEgASgLMjsua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkF1dGhlbnRpY2F0ZWRPcGVyYXRvclF1ZXJ5Q29udGV4dEIGukgDyAEBEiMKCnBhZ2VfdG9rZW4YAiABKAlCCrpIB3IFEAEYgAJIAIgBARIbCglwYWdlX3NpemUYAyABKA1CCLpIBSoDGMgBQg0KC19wYWdlX3Rva2VuIpIBChFMaXN0U2l0ZXNSZXNwb25zZRI/CgVzaXRlcxgBIAMoCzIlLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5TaXRlU3VtbWFyeUIJukgGkgEDEMgBEigKD25leHRfcGFnZV90b2tlbhgCIAEoCUIKukgHcgUQARiAAkgAiAEBQhIKEF9uZXh0X3BhZ2VfdG9rZW4iqwEKGEdldFVzZXJXaXRoaW5TaXRlUmVxdWVzdBJUCgdjb250ZXh0GAEgASgLMjsua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkF1dGhlbnRpY2F0ZWRPcGVyYXRvclF1ZXJ5Q29udGV4dEIGukgDyAEBEhsKB3NpdGVfaWQYAiABKAlCCrpIB3IFEAEYgAESHAoIdXNlcl9yZWYYAyABKAlCCrpIB3IFEAEYgAEiWAoZR2V0VXNlcldpdGhpblNpdGVSZXNwb25zZRI7CgR1c2VyGAEgASgLMiUua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLlVzZXJTdW1tYXJ5Qga6SAPIAQEiwwEKGkdldEF1ZGl0V2l0aGluU2NvcGVSZXF1ZXN0ElQKB2NvbnRleHQYASABKAsyOy5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuQXV0aGVudGljYXRlZE9wZXJhdG9yUXVlcnlDb250ZXh0Qga6SAPIAQESIwoKcGFnZV90b2tlbhgCIAEoCUIKukgHcgUQARiAAkgAiAEBEhsKCXBhZ2Vfc2l6ZRgDIAEoDUIIukgFKgMYyAFCDQoLX3BhZ2VfdG9rZW4ingEKG0dldEF1ZGl0V2l0aGluU2NvcGVSZXNwb25zZRJBCgdyZWNvcmRzGAEgAygLMiUua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkF1ZGl0UmVjb3JkQgm6SAaSAQMQyAESKAoPbmV4dF9wYWdlX3Rva2VuGAIgASgJQgq6SAdyBRABGIACSACIAQFCEgoQX25leHRfcGFnZV90b2tlbjLkAwoRQWRtaW5RdWVyeVNlcnZpY2USYAoHR2V0U2l0ZRIoLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5HZXRTaXRlUmVxdWVzdBopLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5HZXRTaXRlUmVzcG9uc2UiABJmCglMaXN0U2l0ZXMSKi5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuTGlzdFNpdGVzUmVxdWVzdBorLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5MaXN0U2l0ZXNSZXNwb25zZSIAEn4KEUdldFVzZXJXaXRoaW5TaXRlEjIua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkdldFVzZXJXaXRoaW5TaXRlUmVxdWVzdBozLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5HZXRVc2VyV2l0aGluU2l0ZVJlc3BvbnNlIgAShAEKE0dldEF1ZGl0V2l0aGluU2NvcGUSNC5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuR2V0QXVkaXRXaXRoaW5TY29wZVJlcXVlc3QaNS5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuR2V0QXVkaXRXaXRoaW5TY29wZVJlc3BvbnNlIgBiBnByb3RvMw", [file_buf_validate_validate, file_google_protobuf_timestamp, file_kokoro_platform_admin_v2_admin_shared]);
+  fileDesc("Ciprb2tvcm8vcGxhdGZvcm0vYWRtaW4vdjIvYWRtaW5fcXVlcnkucHJvdG8SGGtva29yby5wbGF0Zm9ybS5hZG1pbi52MiJeCgtTaXRlU3VtbWFyeRIcCghzaXRlX3JlZhgBIAEoCUIKukgHcgUQARiAARIZCgZzdGF0dXMYAiABKAlCCbpIBnIEEAEYQBIWCg5zZWN1cml0eV9lcG9jaBgDIAEoBCJeCgtVc2VyU3VtbWFyeRIcCgh1c2VyX3JlZhgBIAEoCUIKukgHcgUQARiAARIZCgZzdGF0dXMYAiABKAlCCbpIBnIEEAEYQBIWCg5zZWN1cml0eV9lcG9jaBgDIAEoBCKGAQoLQXVkaXRSZWNvcmQSHQoJYXVkaXRfcmVmGAEgASgJQgq6SAdyBRABGIABEh8KC2FjdGlvbl9jb2RlGAIgASgJQgq6SAdyBRABGIABEjcKC29jY3VycmVkX2F0GAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEIGukgDyAEBIoMBCg5HZXRTaXRlUmVxdWVzdBJUCgdjb250ZXh0GAEgASgLMjsua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkF1dGhlbnRpY2F0ZWRPcGVyYXRvclF1ZXJ5Q29udGV4dEIGukgDyAEBEhsKB3NpdGVfaWQYAiABKAlCCrpIB3IFEAEYgAEiTgoPR2V0U2l0ZVJlc3BvbnNlEjsKBHNpdGUYASABKAsyJS5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuU2l0ZVN1bW1hcnlCBrpIA8gBASK5AQoQTGlzdFNpdGVzUmVxdWVzdBJUCgdjb250ZXh0GAEgASgLMjsua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkF1dGhlbnRpY2F0ZWRPcGVyYXRvclF1ZXJ5Q29udGV4dEIGukgDyAEBEiMKCnBhZ2VfdG9rZW4YAiABKAlCCrpIB3IFEAEYgAJIAIgBARIbCglwYWdlX3NpemUYAyABKA1CCLpIBSoDGMgBQg0KC19wYWdlX3Rva2VuIpIBChFMaXN0U2l0ZXNSZXNwb25zZRI/CgVzaXRlcxgBIAMoCzIlLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5TaXRlU3VtbWFyeUIJukgGkgEDEMgBEigKD25leHRfcGFnZV90b2tlbhgCIAEoCUIKukgHcgUQARiAAkgAiAEBQhIKEF9uZXh0X3BhZ2VfdG9rZW4iqwEKGEdldFVzZXJXaXRoaW5TaXRlUmVxdWVzdBJUCgdjb250ZXh0GAEgASgLMjsua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkF1dGhlbnRpY2F0ZWRPcGVyYXRvclF1ZXJ5Q29udGV4dEIGukgDyAEBEhsKB3NpdGVfaWQYAiABKAlCCrpIB3IFEAEYgAESHAoIdXNlcl9yZWYYAyABKAlCCrpIB3IFEAEYgAEiWAoZR2V0VXNlcldpdGhpblNpdGVSZXNwb25zZRI7CgR1c2VyGAEgASgLMiUua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLlVzZXJTdW1tYXJ5Qga6SAPIAQEiwwEKGkdldEF1ZGl0V2l0aGluU2NvcGVSZXF1ZXN0ElQKB2NvbnRleHQYASABKAsyOy5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuQXV0aGVudGljYXRlZE9wZXJhdG9yUXVlcnlDb250ZXh0Qga6SAPIAQESIwoKcGFnZV90b2tlbhgCIAEoCUIKukgHcgUQARiAAkgAiAEBEhsKCXBhZ2Vfc2l6ZRgDIAEoDUIIukgFKgMYyAFCDQoLX3BhZ2VfdG9rZW4ingEKG0dldEF1ZGl0V2l0aGluU2NvcGVSZXNwb25zZRJBCgdyZWNvcmRzGAEgAygLMiUua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkF1ZGl0UmVjb3JkQgm6SAaSAQMQyAESKAoPbmV4dF9wYWdlX3Rva2VuGAIgASgJQgq6SAdyBRABGIACSACIAQFCEgoQX25leHRfcGFnZV90b2tlbiLCAQoSRWZmZWN0aXZlU2l0ZVNjb3BlEhsKB3NpdGVfaWQYASABKAlCCrpIB3IFEAEYgAESHgoLZW52aXJvbm1lbnQYAiABKAlCCbpIBnIEEAEYQBIZCgZyZWdpb24YAyABKAlCCbpIBnIEEAEYQBIcCgtzY29wZV9lcG9jaBgEIAEoBEIHukgEMgIgABI2CgpleHBpcmVzX2F0GAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEIGukgDyAEBIrADCg9PcGVyYXRvclN1bW1hcnkSIAoMb3BlcmF0b3JfcmVmGAEgASgJQgq6SAdyBRABGIABEiQKE29wZXJhdG9yX2dlbmVyYXRpb24YAiABKARCB7pIBDICIAASQgoFc3RhdGUYAyABKA4yJy5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuT3BlcmF0b3JTdGF0ZUIKukgHggEEEAEgABIxChVlZmZlY3RpdmVfcGVybWlzc2lvbnMYBCADKAlCErpID5IBDBCAAiIHcgUQARiAARJWChVlZmZlY3RpdmVfc2l0ZV9zY29wZXMYBSADKAsyLC5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuRWZmZWN0aXZlU2l0ZVNjb3BlQgm6SAaSAQMQ6AcSKAoXb3BlcmF0b3Jfc2VjdXJpdHlfZXBvY2gYBiABKARCB7pIBDICIAASJAoTYXV0aG9yaXphdGlvbl9lcG9jaBgHIAEoBEIHukgEMgIgABI2CgpleHBpcmVzX2F0GAggASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEIGukgDyAEBIoUDChZQZW5kaW5nQXBwcm92YWxTdW1tYXJ5Eh4KDGFwcHJvdmFsX3JlZhgBIAEoCUIIukgFcgOwAQESHQoJb3BlcmF0aW9uGAIgASgJQgq6SAdyBRABGIABEh0KCW1ha2VyX3JlZhgDIAEoCUIKukgHcgUQARiAARIoCg90YXJnZXRfc2l0ZV9yZWYYBCABKAlCCrpIB3IFEAEYgAFIAIgBARIeCgtlbnZpcm9ubWVudBgFIAEoCUIJukgGcgQQARhAEhkKBnJlZ2lvbhgGIAEoCUIJukgGcgQQARhAEiMKD29wZXJhdG9yX3JlYXNvbhgHIAEoCUIKukgHcgUQARjoBxI3CgthZG1pdHRlZF9hdBgIIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBCBrpIA8gBARI2CgpleHBpcmVzX2F0GAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEIGukgDyAEBQhIKEF90YXJnZXRfc2l0ZV9yZWYicQoZR2V0Q3VycmVudE9wZXJhdG9yUmVxdWVzdBJUCgdjb250ZXh0GAEgASgLMjsua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkF1dGhlbnRpY2F0ZWRPcGVyYXRvclF1ZXJ5Q29udGV4dEIGukgDyAEBImEKGkdldEN1cnJlbnRPcGVyYXRvclJlc3BvbnNlEkMKCG9wZXJhdG9yGAEgASgLMikua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLk9wZXJhdG9yU3VtbWFyeUIGukgDyAEBIowBChJHZXRPcGVyYXRvclJlcXVlc3QSVAoHY29udGV4dBgBIAEoCzI7Lmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5BdXRoZW50aWNhdGVkT3BlcmF0b3JRdWVyeUNvbnRleHRCBrpIA8gBARIgCgxvcGVyYXRvcl9yZWYYAiABKAlCCrpIB3IFEAEYgAEiWgoTR2V0T3BlcmF0b3JSZXNwb25zZRJDCghvcGVyYXRvchgBIAEoCzIpLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5PcGVyYXRvclN1bW1hcnlCBrpIA8gBASK9AQoUTGlzdE9wZXJhdG9yc1JlcXVlc3QSVAoHY29udGV4dBgBIAEoCzI7Lmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5BdXRoZW50aWNhdGVkT3BlcmF0b3JRdWVyeUNvbnRleHRCBrpIA8gBARIjCgpwYWdlX3Rva2VuGAIgASgJQgq6SAdyBRABGIACSACIAQESGwoJcGFnZV9zaXplGAMgASgNQgi6SAUqAxjIAUINCgtfcGFnZV90b2tlbiKeAQoVTGlzdE9wZXJhdG9yc1Jlc3BvbnNlEkcKCW9wZXJhdG9ycxgBIAMoCzIpLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5PcGVyYXRvclN1bW1hcnlCCbpIBpIBAxDIARIoCg9uZXh0X3BhZ2VfdG9rZW4YAiABKAlCCrpIB3IFEAEYgAJIAIgBAUISChBfbmV4dF9wYWdlX3Rva2VuIvIBChtMaXN0UGVuZGluZ0FwcHJvdmFsc1JlcXVlc3QSVAoHY29udGV4dBgBIAEoCzI7Lmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5BdXRoZW50aWNhdGVkT3BlcmF0b3JRdWVyeUNvbnRleHRCBrpIA8gBARIgCgdzaXRlX2lkGAIgASgJQgq6SAdyBRABGIABSACIAQESIwoKcGFnZV90b2tlbhgDIAEoCUIKukgHcgUQARiAAkgBiAEBEhsKCXBhZ2Vfc2l6ZRgEIAEoDUIIukgFKgMYyAFCCgoIX3NpdGVfaWRCDQoLX3BhZ2VfdG9rZW4irAEKHExpc3RQZW5kaW5nQXBwcm92YWxzUmVzcG9uc2USTgoJYXBwcm92YWxzGAEgAygLMjAua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLlBlbmRpbmdBcHByb3ZhbFN1bW1hcnlCCbpIBpIBAxDIARIoCg9uZXh0X3BhZ2VfdG9rZW4YAiABKAlCCrpIB3IFEAEYgAJIAIgBAUISChBfbmV4dF9wYWdlX3Rva2VuKoQBCg1PcGVyYXRvclN0YXRlEh4KGk9QRVJBVE9SX1NUQVRFX1VOU1BFQ0lGSUVEEAASGQoVT1BFUkFUT1JfU1RBVEVfQUNUSVZFEAESHAoYT1BFUkFUT1JfU1RBVEVfU1VTUEVOREVEEAISGgoWT1BFUkFUT1JfU1RBVEVfUkVWT0tFRBADMtQHChFBZG1pblF1ZXJ5U2VydmljZRJgCgdHZXRTaXRlEigua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkdldFNpdGVSZXF1ZXN0Gikua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkdldFNpdGVSZXNwb25zZSIAEmYKCUxpc3RTaXRlcxIqLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5MaXN0U2l0ZXNSZXF1ZXN0Gisua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkxpc3RTaXRlc1Jlc3BvbnNlIgASfgoRR2V0VXNlcldpdGhpblNpdGUSMi5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuR2V0VXNlcldpdGhpblNpdGVSZXF1ZXN0GjMua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkdldFVzZXJXaXRoaW5TaXRlUmVzcG9uc2UiABKEAQoTR2V0QXVkaXRXaXRoaW5TY29wZRI0Lmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5HZXRBdWRpdFdpdGhpblNjb3BlUmVxdWVzdBo1Lmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5HZXRBdWRpdFdpdGhpblNjb3BlUmVzcG9uc2UiABKBAQoSR2V0Q3VycmVudE9wZXJhdG9yEjMua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkdldEN1cnJlbnRPcGVyYXRvclJlcXVlc3QaNC5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuR2V0Q3VycmVudE9wZXJhdG9yUmVzcG9uc2UiABJsCgtHZXRPcGVyYXRvchIsLmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5HZXRPcGVyYXRvclJlcXVlc3QaLS5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuR2V0T3BlcmF0b3JSZXNwb25zZSIAEnIKDUxpc3RPcGVyYXRvcnMSLi5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuTGlzdE9wZXJhdG9yc1JlcXVlc3QaLy5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuTGlzdE9wZXJhdG9yc1Jlc3BvbnNlIgAShwEKFExpc3RQZW5kaW5nQXBwcm92YWxzEjUua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkxpc3RQZW5kaW5nQXBwcm92YWxzUmVxdWVzdBo2Lmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5MaXN0UGVuZGluZ0FwcHJvdmFsc1Jlc3BvbnNlIgBiBnByb3RvMw", [file_buf_validate_validate, file_google_protobuf_timestamp, file_kokoro_platform_admin_v2_admin_shared]);
 
 /**
  * @generated from message kokoro.platform.admin.v2.SiteSummary
@@ -280,6 +280,359 @@ export const GetAuditWithinScopeResponseSchema: GenMessage<GetAuditWithinScopeRe
   messageDesc(file_kokoro_platform_admin_v2_admin_query, 10);
 
 /**
+ * @generated from message kokoro.platform.admin.v2.EffectiveSiteScope
+ */
+export type EffectiveSiteScope = Message<"kokoro.platform.admin.v2.EffectiveSiteScope"> & {
+  /**
+   * @generated from field: string site_id = 1;
+   */
+  siteId: string;
+
+  /**
+   * @generated from field: string environment = 2;
+   */
+  environment: string;
+
+  /**
+   * @generated from field: string region = 3;
+   */
+  region: string;
+
+  /**
+   * @generated from field: uint64 scope_epoch = 4;
+   */
+  scopeEpoch: bigint;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp expires_at = 5;
+   */
+  expiresAt?: Timestamp | undefined;
+};
+
+/**
+ * Describes the message kokoro.platform.admin.v2.EffectiveSiteScope.
+ * Use `create(EffectiveSiteScopeSchema)` to create a new message.
+ */
+export const EffectiveSiteScopeSchema: GenMessage<EffectiveSiteScope> = /*@__PURE__*/
+  messageDesc(file_kokoro_platform_admin_v2_admin_query, 11);
+
+/**
+ * @generated from message kokoro.platform.admin.v2.OperatorSummary
+ */
+export type OperatorSummary = Message<"kokoro.platform.admin.v2.OperatorSummary"> & {
+  /**
+   * @generated from field: string operator_ref = 1;
+   */
+  operatorRef: string;
+
+  /**
+   * @generated from field: uint64 operator_generation = 2;
+   */
+  operatorGeneration: bigint;
+
+  /**
+   * @generated from field: kokoro.platform.admin.v2.OperatorState state = 3;
+   */
+  state: OperatorState;
+
+  /**
+   * @generated from field: repeated string effective_permissions = 4;
+   */
+  effectivePermissions: string[];
+
+  /**
+   * @generated from field: repeated kokoro.platform.admin.v2.EffectiveSiteScope effective_site_scopes = 5;
+   */
+  effectiveSiteScopes: EffectiveSiteScope[];
+
+  /**
+   * @generated from field: uint64 operator_security_epoch = 6;
+   */
+  operatorSecurityEpoch: bigint;
+
+  /**
+   * @generated from field: uint64 authorization_epoch = 7;
+   */
+  authorizationEpoch: bigint;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp expires_at = 8;
+   */
+  expiresAt?: Timestamp | undefined;
+};
+
+/**
+ * Describes the message kokoro.platform.admin.v2.OperatorSummary.
+ * Use `create(OperatorSummarySchema)` to create a new message.
+ */
+export const OperatorSummarySchema: GenMessage<OperatorSummary> = /*@__PURE__*/
+  messageDesc(file_kokoro_platform_admin_v2_admin_query, 12);
+
+/**
+ * @generated from message kokoro.platform.admin.v2.PendingApprovalSummary
+ */
+export type PendingApprovalSummary = Message<"kokoro.platform.admin.v2.PendingApprovalSummary"> & {
+  /**
+   * @generated from field: string approval_ref = 1;
+   */
+  approvalRef: string;
+
+  /**
+   * @generated from field: string operation = 2;
+   */
+  operation: string;
+
+  /**
+   * @generated from field: string maker_ref = 3;
+   */
+  makerRef: string;
+
+  /**
+   * @generated from field: optional string target_site_ref = 4;
+   */
+  targetSiteRef?: string | undefined;
+
+  /**
+   * @generated from field: string environment = 5;
+   */
+  environment: string;
+
+  /**
+   * @generated from field: string region = 6;
+   */
+  region: string;
+
+  /**
+   * @generated from field: string operator_reason = 7;
+   */
+  operatorReason: string;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp admitted_at = 8;
+   */
+  admittedAt?: Timestamp | undefined;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp expires_at = 9;
+   */
+  expiresAt?: Timestamp | undefined;
+};
+
+/**
+ * Describes the message kokoro.platform.admin.v2.PendingApprovalSummary.
+ * Use `create(PendingApprovalSummarySchema)` to create a new message.
+ */
+export const PendingApprovalSummarySchema: GenMessage<PendingApprovalSummary> = /*@__PURE__*/
+  messageDesc(file_kokoro_platform_admin_v2_admin_query, 13);
+
+/**
+ * @generated from message kokoro.platform.admin.v2.GetCurrentOperatorRequest
+ */
+export type GetCurrentOperatorRequest = Message<"kokoro.platform.admin.v2.GetCurrentOperatorRequest"> & {
+  /**
+   * @generated from field: kokoro.platform.admin.v2.AuthenticatedOperatorQueryContext context = 1;
+   */
+  context?: AuthenticatedOperatorQueryContext | undefined;
+};
+
+/**
+ * Describes the message kokoro.platform.admin.v2.GetCurrentOperatorRequest.
+ * Use `create(GetCurrentOperatorRequestSchema)` to create a new message.
+ */
+export const GetCurrentOperatorRequestSchema: GenMessage<GetCurrentOperatorRequest> = /*@__PURE__*/
+  messageDesc(file_kokoro_platform_admin_v2_admin_query, 14);
+
+/**
+ * @generated from message kokoro.platform.admin.v2.GetCurrentOperatorResponse
+ */
+export type GetCurrentOperatorResponse = Message<"kokoro.platform.admin.v2.GetCurrentOperatorResponse"> & {
+  /**
+   * @generated from field: kokoro.platform.admin.v2.OperatorSummary operator = 1;
+   */
+  operator?: OperatorSummary | undefined;
+};
+
+/**
+ * Describes the message kokoro.platform.admin.v2.GetCurrentOperatorResponse.
+ * Use `create(GetCurrentOperatorResponseSchema)` to create a new message.
+ */
+export const GetCurrentOperatorResponseSchema: GenMessage<GetCurrentOperatorResponse> = /*@__PURE__*/
+  messageDesc(file_kokoro_platform_admin_v2_admin_query, 15);
+
+/**
+ * @generated from message kokoro.platform.admin.v2.GetOperatorRequest
+ */
+export type GetOperatorRequest = Message<"kokoro.platform.admin.v2.GetOperatorRequest"> & {
+  /**
+   * @generated from field: kokoro.platform.admin.v2.AuthenticatedOperatorQueryContext context = 1;
+   */
+  context?: AuthenticatedOperatorQueryContext | undefined;
+
+  /**
+   * @generated from field: string operator_ref = 2;
+   */
+  operatorRef: string;
+};
+
+/**
+ * Describes the message kokoro.platform.admin.v2.GetOperatorRequest.
+ * Use `create(GetOperatorRequestSchema)` to create a new message.
+ */
+export const GetOperatorRequestSchema: GenMessage<GetOperatorRequest> = /*@__PURE__*/
+  messageDesc(file_kokoro_platform_admin_v2_admin_query, 16);
+
+/**
+ * @generated from message kokoro.platform.admin.v2.GetOperatorResponse
+ */
+export type GetOperatorResponse = Message<"kokoro.platform.admin.v2.GetOperatorResponse"> & {
+  /**
+   * @generated from field: kokoro.platform.admin.v2.OperatorSummary operator = 1;
+   */
+  operator?: OperatorSummary | undefined;
+};
+
+/**
+ * Describes the message kokoro.platform.admin.v2.GetOperatorResponse.
+ * Use `create(GetOperatorResponseSchema)` to create a new message.
+ */
+export const GetOperatorResponseSchema: GenMessage<GetOperatorResponse> = /*@__PURE__*/
+  messageDesc(file_kokoro_platform_admin_v2_admin_query, 17);
+
+/**
+ * @generated from message kokoro.platform.admin.v2.ListOperatorsRequest
+ */
+export type ListOperatorsRequest = Message<"kokoro.platform.admin.v2.ListOperatorsRequest"> & {
+  /**
+   * @generated from field: kokoro.platform.admin.v2.AuthenticatedOperatorQueryContext context = 1;
+   */
+  context?: AuthenticatedOperatorQueryContext | undefined;
+
+  /**
+   * @generated from field: optional string page_token = 2;
+   */
+  pageToken?: string | undefined;
+
+  /**
+   * @generated from field: uint32 page_size = 3;
+   */
+  pageSize: number;
+};
+
+/**
+ * Describes the message kokoro.platform.admin.v2.ListOperatorsRequest.
+ * Use `create(ListOperatorsRequestSchema)` to create a new message.
+ */
+export const ListOperatorsRequestSchema: GenMessage<ListOperatorsRequest> = /*@__PURE__*/
+  messageDesc(file_kokoro_platform_admin_v2_admin_query, 18);
+
+/**
+ * @generated from message kokoro.platform.admin.v2.ListOperatorsResponse
+ */
+export type ListOperatorsResponse = Message<"kokoro.platform.admin.v2.ListOperatorsResponse"> & {
+  /**
+   * @generated from field: repeated kokoro.platform.admin.v2.OperatorSummary operators = 1;
+   */
+  operators: OperatorSummary[];
+
+  /**
+   * @generated from field: optional string next_page_token = 2;
+   */
+  nextPageToken?: string | undefined;
+};
+
+/**
+ * Describes the message kokoro.platform.admin.v2.ListOperatorsResponse.
+ * Use `create(ListOperatorsResponseSchema)` to create a new message.
+ */
+export const ListOperatorsResponseSchema: GenMessage<ListOperatorsResponse> = /*@__PURE__*/
+  messageDesc(file_kokoro_platform_admin_v2_admin_query, 19);
+
+/**
+ * @generated from message kokoro.platform.admin.v2.ListPendingApprovalsRequest
+ */
+export type ListPendingApprovalsRequest = Message<"kokoro.platform.admin.v2.ListPendingApprovalsRequest"> & {
+  /**
+   * @generated from field: kokoro.platform.admin.v2.AuthenticatedOperatorQueryContext context = 1;
+   */
+  context?: AuthenticatedOperatorQueryContext | undefined;
+
+  /**
+   * @generated from field: optional string site_id = 2;
+   */
+  siteId?: string | undefined;
+
+  /**
+   * @generated from field: optional string page_token = 3;
+   */
+  pageToken?: string | undefined;
+
+  /**
+   * @generated from field: uint32 page_size = 4;
+   */
+  pageSize: number;
+};
+
+/**
+ * Describes the message kokoro.platform.admin.v2.ListPendingApprovalsRequest.
+ * Use `create(ListPendingApprovalsRequestSchema)` to create a new message.
+ */
+export const ListPendingApprovalsRequestSchema: GenMessage<ListPendingApprovalsRequest> = /*@__PURE__*/
+  messageDesc(file_kokoro_platform_admin_v2_admin_query, 20);
+
+/**
+ * @generated from message kokoro.platform.admin.v2.ListPendingApprovalsResponse
+ */
+export type ListPendingApprovalsResponse = Message<"kokoro.platform.admin.v2.ListPendingApprovalsResponse"> & {
+  /**
+   * @generated from field: repeated kokoro.platform.admin.v2.PendingApprovalSummary approvals = 1;
+   */
+  approvals: PendingApprovalSummary[];
+
+  /**
+   * @generated from field: optional string next_page_token = 2;
+   */
+  nextPageToken?: string | undefined;
+};
+
+/**
+ * Describes the message kokoro.platform.admin.v2.ListPendingApprovalsResponse.
+ * Use `create(ListPendingApprovalsResponseSchema)` to create a new message.
+ */
+export const ListPendingApprovalsResponseSchema: GenMessage<ListPendingApprovalsResponse> = /*@__PURE__*/
+  messageDesc(file_kokoro_platform_admin_v2_admin_query, 21);
+
+/**
+ * @generated from enum kokoro.platform.admin.v2.OperatorState
+ */
+export enum OperatorState {
+  /**
+   * @generated from enum value: OPERATOR_STATE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: OPERATOR_STATE_ACTIVE = 1;
+   */
+  ACTIVE = 1,
+
+  /**
+   * @generated from enum value: OPERATOR_STATE_SUSPENDED = 2;
+   */
+  SUSPENDED = 2,
+
+  /**
+   * @generated from enum value: OPERATOR_STATE_REVOKED = 3;
+   */
+  REVOKED = 3,
+}
+
+/**
+ * Describes the enum kokoro.platform.admin.v2.OperatorState.
+ */
+export const OperatorStateSchema: GenEnum<OperatorState> = /*@__PURE__*/
+  enumDesc(file_kokoro_platform_admin_v2_admin_query, 0);
+
+/**
  * AdminQueryService is the read-only privileged control-plane surface.
  *
  * @generated from service kokoro.platform.admin.v2.AdminQueryService
@@ -316,6 +669,38 @@ export const AdminQueryService: GenService<{
     methodKind: "unary";
     input: typeof GetAuditWithinScopeRequestSchema;
     output: typeof GetAuditWithinScopeResponseSchema;
+  },
+  /**
+   * @generated from rpc kokoro.platform.admin.v2.AdminQueryService.GetCurrentOperator
+   */
+  getCurrentOperator: {
+    methodKind: "unary";
+    input: typeof GetCurrentOperatorRequestSchema;
+    output: typeof GetCurrentOperatorResponseSchema;
+  },
+  /**
+   * @generated from rpc kokoro.platform.admin.v2.AdminQueryService.GetOperator
+   */
+  getOperator: {
+    methodKind: "unary";
+    input: typeof GetOperatorRequestSchema;
+    output: typeof GetOperatorResponseSchema;
+  },
+  /**
+   * @generated from rpc kokoro.platform.admin.v2.AdminQueryService.ListOperators
+   */
+  listOperators: {
+    methodKind: "unary";
+    input: typeof ListOperatorsRequestSchema;
+    output: typeof ListOperatorsResponseSchema;
+  },
+  /**
+   * @generated from rpc kokoro.platform.admin.v2.AdminQueryService.ListPendingApprovals
+   */
+  listPendingApprovals: {
+    methodKind: "unary";
+    input: typeof ListPendingApprovalsRequestSchema;
+    output: typeof ListPendingApprovalsResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_kokoro_platform_admin_v2_admin_query, 0);

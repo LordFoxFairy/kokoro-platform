@@ -25,6 +25,9 @@ describe("Admin query pagination", () => {
     const reader = {
       getSite: vi.fn(),
       getUser: vi.fn(),
+      getOperator: vi.fn(),
+      listOperators: vi.fn(),
+      listPendingApprovals: vi.fn(),
       listAudit: vi.fn(),
       listSites: vi.fn(async () => [
         { siteRef: "site:1", status: "active", securityEpoch: 1n },

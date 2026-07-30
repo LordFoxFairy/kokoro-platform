@@ -9,10 +9,40 @@ export type CommerceAdminActor = Readonly<{
 }>;
 
 export interface CommerceAdministrationRepository {
+  publishOffer(transaction: PlatformTransaction, input: CommerceAdminActor & Readonly<{
+    productRef: string;
+    productKind: "free" | "credit_pack" | "subscription" | "bundle";
+    productVersionRef: string;
+    productRevision: string;
+    safeLabel: string;
+    planVersion: Readonly<{
+      planRef: string;
+      planVersionRef: string;
+      revision: string;
+      safeLabel: string;
+      termAction: "none" | "new_subscription" | "extend_from_max" | "reject_if_active";
+      termSeconds: string | null;
+      stackingScope: string;
+      revisionDigest: string;
+    }> | null;
+    fulfillmentProgramRevisionRef: string;
+    fulfillmentProgramRef: string;
+    fulfillmentProgramRevision: string;
+    outputPlanDigest: string;
+    outputs: readonly Readonly<{
+      outputLineId: string;
+      ordinal: number;
+      cardinality: number;
+      outputKind: "subscription_term" | "entitlement_grant" | "credit_grant";
+      targetRevisionRef: string;
+    }>[];
+    legalTermRefs: readonly string[];
+    offerDigest: string;
+  }>): Promise<Readonly<{ kind: "committed" | "replayed"; occurredAt: string }>>;
   publishProgram(transaction: PlatformTransaction, input: CommerceAdminActor & Readonly<{
     redemptionProgramRevisionRef: string; programRef: string; revision: string; productVersionRef: string;
     fulfillmentProgramRevisionRef: string; programDigest: string; maxRedemptionsPerAccount: number;
-  }>): Promise<"committed" | "replayed">;
+  }>): Promise<Readonly<{ kind: "committed" | "replayed"; occurredAt: string }>>;
   issueBatch(transaction: PlatformTransaction, input: CommerceAdminActor & Readonly<{
     batchRef: string; batchSelector: string; redemptionProgramRevisionRef: string; keyRevision: string;
     startsAt: string | null; endsAt: string | null; exportDigest: string;
@@ -23,5 +53,14 @@ export interface CommerceAdministrationRepository {
   }>): Promise<"committed" | "replayed">;
   activateBatch(transaction: PlatformTransaction, input: CommerceAdminActor & Readonly<{
     batchRef: string;
+  }>): Promise<"committed" | "replayed">;
+  abandonBatch(transaction: PlatformTransaction, input: CommerceAdminActor & Readonly<{
+    batchRef: string; reasonDigest: string;
+  }>): Promise<"committed" | "replayed">;
+  suspendBatch(transaction: PlatformTransaction, input: CommerceAdminActor & Readonly<{
+    batchRef: string; reasonDigest: string;
+  }>): Promise<"committed" | "replayed">;
+  revokeBatch(transaction: PlatformTransaction, input: CommerceAdminActor & Readonly<{
+    batchRef: string; reasonDigest: string;
   }>): Promise<"committed" | "replayed">;
 }

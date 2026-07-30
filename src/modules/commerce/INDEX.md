@@ -41,4 +41,18 @@ Platform through HTTP/RPC and never exposes a Prisma client to application code.
 - Fulfilled-redemption outbox events are reconciled by the Platform worker against the durable Redemption and fulfillment projection
   before delivery is completed, with bounded retry and dead-letter handling.
 
+## Admin control plane
+
+- `AdminCommerceService` is a closed typed Connect surface mounted only on the Admin mTLS listener. Admin authenticates the
+  operator, verifies exact Site scope/permission/fresh step-up and the canonical protobuf command digest; Commerce remains the
+  application/repository owner and never accepts a generic route or action proxy.
+- `PublishOffer` freezes Product, optional PlanVersion, ordered FulfillmentProgram outputs, ProductVersion and legal references in
+  one transaction. Output ordinals are contiguous, line ids are unique, and product/plan/output shape is checked before persistence.
+- Code batches follow `draft -> active -> suspended -> revoked`, with `draft -> abandoned` as recovery when the one-time secret
+  delivery is lost. Approval is a separate maker-checker fact; activation requires it. Abandon/revoke void unused inventory.
+- Raw codes are capped at 1,000, returned only by the first committed Issue response, and never written to storage, receipts, audit,
+  errors or query DTOs. An exact command replay returns `delivery_unavailable`; batch queries expose only count and safe export
+  receipt metadata. The Admin listener does not log payloads and its telemetry redactor recognizes the secret response field.
+- List queries use HMAC-authenticated cursors bound to operator/deployment/permission scope, Site and a first-page watermark.
+
 All module ports accept only the opaque `PlatformTransaction`; no sibling module may introduce a second transaction or self-RPC.

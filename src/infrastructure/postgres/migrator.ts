@@ -666,10 +666,10 @@ async function grantFoundationPrivileges(
         `GRANT UPDATE ON TABLE platform.admin_approval, platform.admin_post_effect_review, platform.admin_oidc_transaction, platform.admin_operator_session, platform.admin_step_up_transaction TO ${identifier}`,
       );
       await client.query(
-        `GRANT INSERT ON TABLE platform.commerce_command, platform.commerce_redemption_program_revision, platform.commerce_redemption_program_availability, platform.commerce_code_batch, platform.commerce_redeem_code, platform.commerce_code_batch_approval, platform.commerce_code_secret_export, platform.commerce_audit_entry TO ${identifier}`,
+        `GRANT INSERT ON TABLE platform.commerce_command, platform.commerce_catalog_product, platform.commerce_catalog_plan, platform.commerce_catalog_plan_version, platform.commerce_fulfillment_program_revision, platform.commerce_fulfillment_program_output, platform.commerce_catalog_product_version, platform.commerce_redemption_program_revision, platform.commerce_redemption_program_availability, platform.commerce_code_batch, platform.commerce_redeem_code, platform.commerce_code_batch_approval, platform.commerce_code_secret_export, platform.commerce_audit_entry TO ${identifier}`,
       );
       await client.query(
-        `GRANT UPDATE ON TABLE platform.commerce_code_batch, platform.commerce_redemption_program_availability TO ${identifier}`,
+        `GRANT UPDATE ON TABLE platform.commerce_catalog_product, platform.commerce_catalog_plan, platform.commerce_code_batch, platform.commerce_redemption_program_availability TO ${identifier}`,
       );
       await client.query(
         `GRANT EXECUTE ON FUNCTION platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT), platform.load_model_option_inventory(TEXT), platform.load_model_option_revisions(TEXT[]), platform.materialize_model_options(UUID, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT), platform.publish_site_release_model_catalog(UUID, JSONB, TEXT) TO ${identifier}`,
@@ -1648,7 +1648,9 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                    ]))
                    OR (runtime_role.rolname = $4 AND candidate.relname = ANY(ARRAY[
                      'command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership',
-                     'commerce_command','commerce_redemption_program_revision','commerce_redemption_program_availability',
+                     'commerce_command','commerce_catalog_product','commerce_catalog_plan','commerce_catalog_plan_version',
+                     'commerce_fulfillment_program_revision','commerce_fulfillment_program_output','commerce_catalog_product_version',
+                     'commerce_redemption_program_revision','commerce_redemption_program_availability',
                      'commerce_code_batch','commerce_redeem_code','commerce_code_batch_approval',
                      'commerce_code_secret_export','commerce_audit_entry',
                      'site','site_project_binding','site_release','site_activation_attempt',
@@ -1687,7 +1689,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                    ]))
                    OR (runtime_role.rolname = $4 AND candidate.relname = ANY(ARRAY[
                      'command_receipt','commerce_billing_account','commerce_billing_account_membership',
-                     'commerce_code_batch','commerce_redemption_program_availability',
+                     'commerce_catalog_product','commerce_catalog_plan','commerce_code_batch','commerce_redemption_program_availability',
                      'site','site_project_binding','site_release','site_deployment_binding',
                      'site_effect_approval','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_site','authorization_product_binding',
                      'admin_approval','admin_post_effect_review'
@@ -1733,7 +1735,9 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                    ]))
                    OR (runtime_role.rolname = $4 AND candidate.relname = ANY(ARRAY[
                      'command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership',
-                     'commerce_command','commerce_redemption_program_revision','commerce_redemption_program_availability',
+                     'commerce_command','commerce_catalog_product','commerce_catalog_plan','commerce_catalog_plan_version',
+                     'commerce_fulfillment_program_revision','commerce_fulfillment_program_output','commerce_catalog_product_version',
+                     'commerce_redemption_program_revision','commerce_redemption_program_availability',
                      'commerce_code_batch','commerce_redeem_code','commerce_code_batch_approval',
                      'commerce_code_secret_export','commerce_audit_entry',
                      'site','site_project_binding','site_release','site_activation_attempt',
@@ -1772,7 +1776,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                    ]))
                    OR (runtime_role.rolname = $4 AND candidate.relname = ANY(ARRAY[
                      'command_receipt','commerce_billing_account','commerce_billing_account_membership',
-                     'commerce_code_batch','commerce_redemption_program_availability',
+                     'commerce_catalog_product','commerce_catalog_plan','commerce_code_batch','commerce_redemption_program_availability',
                      'site','site_project_binding','site_release','site_deployment_binding',
                      'site_effect_approval','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_site','authorization_product_binding',
                      'admin_approval','admin_post_effect_review'

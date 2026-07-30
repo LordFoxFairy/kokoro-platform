@@ -6,6 +6,37 @@ import type { VerifiedRequestSecurityContext } from "../../src/shared/security-c
 import { PostgresCommerceAdministrationRepository } from "../../src/modules/commerce/infrastructure/postgres/commerce-administration-repository.js";
 
 describe("CommerceAdministrationService", () => {
+  it("publishes the complete immutable offer graph through one Commerce owner transaction", async () => {
+    const lease = issuePlatformTransaction({ query: async () => [], execute: async () => 0 });
+    const persisted: Parameters<CommerceAdministrationRepository["publishOffer"]>[1][] = [];
+    const service = new CommerceAdministrationService({
+      unitOfWork: { execute: async (_fence, work) => work(lease.transaction) },
+      repository: repositoryStub({ publishOffer: async (_transaction, input) => {
+        persisted.push(input);
+        return { kind: "committed", occurredAt: "2026-07-29T01:00:00.000Z" };
+      } }),
+      codes: { issueCode: () => { throw new Error("MUST_NOT_ISSUE"); } },
+    });
+    try {
+      await expect(service.publishOffer({
+        context: context("operator-maker", "commerce.offer.publish"), siteId: "site-1",
+        commandId: "00000000-0000-7000-8000-000000000210", idempotencyKey: "offer-1",
+        productRef: "credits", productKind: "credit_pack", productVersionRef: "credits-v1",
+        productRevision: "1", safeLabel: "1,000 credits", planVersion: null,
+        fulfillmentProgramRevisionRef: "credits-fulfillment-v1", fulfillmentProgramRef: "credits-fulfillment",
+        fulfillmentProgramRevision: "1", legalTermRefs: ["terms-v1"],
+        outputs: [
+          { outputLineId: "credits", ordinal: 0, cardinality: 1, outputKind: "credit_grant",
+            targetRevisionRef: "credits-program-v1" },
+          { outputLineId: "bonus", ordinal: 1, cardinality: 1, outputKind: "entitlement_grant",
+            targetRevisionRef: "bonus-template-v1" },
+        ],
+      })).resolves.toMatchObject({ kind: "committed", productVersionRef: "credits-v1" });
+      expect(persisted[0]?.outputs.map((output) => output.outputLineId)).toEqual(["credits", "bonus"]);
+      expect(persisted[0]?.offerDigest).toMatch(/^[a-f0-9]{64}$/u);
+    } finally { revokePlatformTransaction(lease); }
+  });
+
   it("exports raw card secrets only on the first committed issuance response", async () => {
     const lease = issuePlatformTransaction({ query: async () => [], execute: async () => 0 });
     let invocation = 0; let persisted: Parameters<CommerceAdministrationRepository["issueBatch"]>[1] | null = null;
@@ -31,6 +62,7 @@ describe("CommerceAdministrationService", () => {
       expect(JSON.stringify(persisted)).not.toContain("KC1-");
       await expect(service.issueBatch(input)).resolves.toEqual({
         kind: "delivery_unavailable", batchRef: input.batchRef, codeCount: 2,
+        exportedAt: "2026-07-29T01:00:00.000Z",
       });
     } finally { revokePlatformTransaction(lease); }
   });
@@ -66,12 +98,32 @@ describe("CommerceAdministrationService", () => {
       })).rejects.toThrow("COMMERCE_BATCH_MAKER_CHECKER_REQUIRED");
     } finally { revokePlatformTransaction(lease); }
   });
+
+  it.each([
+    ["abandonBatch", "commerce.code-batch.abandon"],
+    ["suspendBatch", "commerce.code-batch.suspend"],
+    ["revokeBatch", "commerce.code-batch.revoke"],
+  ] as const)("owns the %s lifecycle transition behind an exact operation", async (method, operation) => {
+    const lease = issuePlatformTransaction({ query: async () => [], execute: async () => 0 });
+    const service = new CommerceAdministrationService({
+      unitOfWork: { execute: async (_fence, work) => work(lease.transaction) }, repository: repositoryStub(),
+      codes: { issueCode: () => { throw new Error("MUST_NOT_ISSUE"); } },
+    });
+    try {
+      await expect(service[method]({ context: context("operator-1", operation), siteId: "site-1",
+        commandId: "00000000-0000-7000-8000-000000000211", idempotencyKey: `${method}-1`,
+        batchRef: "00000000-0000-7000-8000-000000000111", reason: "operator requested",
+      })).resolves.toMatchObject({ kind: "committed" });
+    } finally { revokePlatformTransaction(lease); }
+  });
 });
 
 function repositoryStub(overrides: Partial<CommerceAdministrationRepository> = {}): CommerceAdministrationRepository {
   return {
-    publishProgram: async () => "committed", issueBatch: async () => ({ kind: "committed", occurredAt: "2026-07-29T01:00:00.000Z" }),
-    approveBatch: async () => "committed", activateBatch: async () => "committed", ...overrides,
+    publishOffer: async () => ({ kind: "committed", occurredAt: "2026-07-29T01:00:00.000Z" }),
+    publishProgram: async () => ({ kind: "committed", occurredAt: "2026-07-29T01:00:00.000Z" }), issueBatch: async () => ({ kind: "committed", occurredAt: "2026-07-29T01:00:00.000Z" }),
+    approveBatch: async () => "committed", activateBatch: async () => "committed",
+    abandonBatch: async () => "committed", suspendBatch: async () => "committed", revokeBatch: async () => "committed", ...overrides,
   };
 }
 function context(subjectId: string, purpose: string): VerifiedRequestSecurityContext {

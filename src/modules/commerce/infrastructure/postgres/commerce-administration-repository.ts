@@ -7,8 +7,88 @@ import type { CommerceAdministrationRepository, CommerceAdminActor } from "../..
 export class PostgresCommerceAdministrationRepository implements CommerceAdministrationRepository {
   constructor(private readonly receipts = new CommandReceiptRepository()) {}
 
+  async publishOffer(transaction: Parameters<CommerceAdministrationRepository["publishOffer"]>[0], input: Parameters<CommerceAdministrationRepository["publishOffer"]>[1]) {
+    if (await replayed(this.receipts, transaction, input.command)) {
+      return { kind: "replayed" as const, occurredAt: await databaseNow(transaction) };
+    }
+    const sql = resolvePlatformTransaction(transaction); const occurredAt = await databaseNow(transaction);
+    await command(sql, input, occurredAt);
+    await exactlyOne(sql.execute(
+      `INSERT INTO platform.commerce_catalog_product(site_ref,product_ref,kind,state,created_at,updated_at)
+       VALUES ($1,$2,$3,'active',$4::timestamptz,$4::timestamptz)
+       ON CONFLICT (site_ref,product_ref) DO UPDATE SET updated_at=EXCLUDED.updated_at
+       WHERE commerce_catalog_product.kind=EXCLUDED.kind AND commerce_catalog_product.state='active'`,
+      [input.siteId, input.productRef, input.productKind, occurredAt],
+    ), "COMMERCE_PRODUCT_KIND_CONFLICT");
+    if (input.planVersion !== null) {
+      await exactlyOne(sql.execute(
+        `INSERT INTO platform.commerce_catalog_plan(site_ref,plan_ref,state,created_at,updated_at)
+         VALUES ($1,$2,'active',$3::timestamptz,$3::timestamptz)
+         ON CONFLICT (site_ref,plan_ref) DO UPDATE SET updated_at=EXCLUDED.updated_at
+         WHERE commerce_catalog_plan.state='active'`,
+        [input.siteId, input.planVersion.planRef, occurredAt],
+      ), "COMMERCE_PLAN_NOT_ACTIVE");
+      await exactlyOne(sql.execute(
+        `INSERT INTO platform.commerce_catalog_plan_version
+         (plan_version_ref,site_ref,plan_ref,revision,safe_label,term_action,term_seconds,
+          stacking_scope,revision_digest,published_at)
+         VALUES ($1,$2,$3,$4::bigint,$5,$6,$7::bigint,$8,$9,$10::timestamptz)`,
+        [input.planVersion.planVersionRef, input.siteId, input.planVersion.planRef,
+          input.planVersion.revision, input.planVersion.safeLabel, input.planVersion.termAction,
+          input.planVersion.termSeconds, input.planVersion.stackingScope,
+          input.planVersion.revisionDigest, occurredAt],
+      ), "COMMERCE_PLAN_VERSION_PERSIST_FAILED");
+    }
+    await exactlyOne(sql.execute(
+      `INSERT INTO platform.commerce_fulfillment_program_revision
+       (fulfillment_program_revision_ref,site_ref,program_ref,revision,output_plan_digest,published_at)
+       VALUES ($1,$2,$3,$4::bigint,$5,$6::timestamptz)`,
+      [input.fulfillmentProgramRevisionRef, input.siteId, input.fulfillmentProgramRef,
+        input.fulfillmentProgramRevision, input.outputPlanDigest, occurredAt],
+    ), "COMMERCE_FULFILLMENT_PROGRAM_PERSIST_FAILED");
+    await exactlyCount(sql.execute(
+      `INSERT INTO platform.commerce_fulfillment_program_output
+       (fulfillment_program_revision_ref,site_ref,output_line_id,ordinal,cardinality,output_kind,
+        plan_version_ref,entitlement_template_revision_ref,credit_program_revision_ref)
+       SELECT $1,$2,value.output_line_id,value.ordinal,value.cardinality,value.output_kind,
+         CASE WHEN value.output_kind='subscription_term' THEN value.target_revision_ref END,
+         CASE WHEN value.output_kind='entitlement_grant' THEN value.target_revision_ref END,
+         CASE WHEN value.output_kind='credit_grant' THEN value.target_revision_ref END
+       FROM jsonb_to_recordset($3::jsonb) AS value(
+         output_line_id TEXT,ordinal INTEGER,cardinality INTEGER,output_kind TEXT,target_revision_ref TEXT
+       )`,
+      [input.fulfillmentProgramRevisionRef, input.siteId, JSON.stringify(input.outputs.map((output) => ({
+        output_line_id: output.outputLineId, ordinal: output.ordinal, cardinality: output.cardinality,
+        output_kind: output.outputKind, target_revision_ref: output.targetRevisionRef,
+      })))],
+    ), input.outputs.length, "COMMERCE_FULFILLMENT_OUTPUTS_PERSIST_FAILED");
+    await exactlyOne(sql.execute(
+      `INSERT INTO platform.commerce_catalog_product_version
+       (product_version_ref,site_ref,product_ref,revision,safe_label,plan_version_ref,
+        fulfillment_program_revision_ref,legal_term_refs,revision_digest,published_at)
+       VALUES ($1,$2,$3,$4::bigint,$5,$6,$7,$8::text[],$9,$10::timestamptz)`,
+      [input.productVersionRef, input.siteId, input.productRef, input.productRevision, input.safeLabel,
+        input.planVersion?.planVersionRef ?? null, input.fulfillmentProgramRevisionRef,
+        input.legalTermRefs, input.offerDigest, occurredAt],
+    ), "COMMERCE_PRODUCT_VERSION_PERSIST_FAILED");
+    await audit(sql, input, "commerce.offer.published", input.offerDigest, occurredAt);
+    await complete(this.receipts, transaction, input.command, {
+      productVersionRef: input.productVersionRef, publishedAt: occurredAt,
+    });
+    return Object.freeze({ kind: "committed" as const, occurredAt });
+  }
+
   async publishProgram(transaction: Parameters<CommerceAdministrationRepository["publishProgram"]>[0], input: Parameters<CommerceAdministrationRepository["publishProgram"]>[1]) {
-    if (await replayed(this.receipts, transaction, input.command)) return "replayed" as const;
+    if (await replayed(this.receipts, transaction, input.command)) {
+      const rows = await resolvePlatformTransaction(transaction).query<Record<string, unknown> & { publishedAt: Date | string }>(
+        `SELECT published_at AS "publishedAt" FROM platform.commerce_redemption_program_revision
+         WHERE redemption_program_revision_ref=$1 AND site_ref=$2 LIMIT 1`,
+        [input.redemptionProgramRevisionRef, input.siteId],
+      );
+      const publishedAt = rows[0]?.publishedAt;
+      if (publishedAt === undefined) throw new Error("COMMERCE_PROGRAM_RECEIPT_MISSING");
+      return { kind: "replayed" as const, occurredAt: new Date(publishedAt).toISOString() };
+    }
     const sql = resolvePlatformTransaction(transaction); const occurredAt = await databaseNow(transaction);
     await command(sql, input, occurredAt);
     await exactlyOne(sql.execute(
@@ -30,11 +110,20 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
     await complete(this.receipts, transaction, input.command, {
       redemptionProgramRevisionRef: input.redemptionProgramRevisionRef, publishedAt: occurredAt,
     });
-    return "committed" as const;
+    return { kind: "committed" as const, occurredAt };
   }
 
   async issueBatch(transaction: Parameters<CommerceAdministrationRepository["issueBatch"]>[0], input: Parameters<CommerceAdministrationRepository["issueBatch"]>[1]) {
-    if (await replayed(this.receipts, transaction, input.command)) return { kind: "replayed" as const, occurredAt: await databaseNow(transaction) };
+    if (await replayed(this.receipts, transaction, input.command)) {
+      const rows = await resolvePlatformTransaction(transaction).query<Record<string, unknown> & { exportedAt: Date | string }>(
+        `SELECT exported_at AS "exportedAt" FROM platform.commerce_code_secret_export
+         WHERE batch_ref=$1::uuid AND site_ref=$2 AND export_command_id=$3 LIMIT 1`,
+        [input.batchRef, input.siteId, input.command.commandId],
+      );
+      const exportedAt = rows[0]?.exportedAt;
+      if (exportedAt === undefined) throw new Error("COMMERCE_CODE_EXPORT_RECEIPT_MISSING");
+      return { kind: "replayed" as const, occurredAt: new Date(exportedAt).toISOString() };
+    }
     const sql = resolvePlatformTransaction(transaction); const occurredAt = await databaseNow(transaction);
     await command(sql, input, occurredAt);
     await exactlyOne(sql.execute(
@@ -100,6 +189,47 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
     const resultDigest = digest({ version: 1, batchRef: input.batchRef, activatedAt: occurredAt });
     await audit(sql, input, "commerce.code_batch.activated", resultDigest, occurredAt);
     await complete(this.receipts, transaction, input.command, { batchRef: input.batchRef, activatedAt: occurredAt });
+    return "committed" as const;
+  }
+
+  async abandonBatch(transaction: Parameters<CommerceAdministrationRepository["abandonBatch"]>[0], input: Parameters<CommerceAdministrationRepository["abandonBatch"]>[1]) {
+    return this.transitionBatch(transaction, input, ["draft"], "abandoned", true);
+  }
+
+  async suspendBatch(transaction: Parameters<CommerceAdministrationRepository["suspendBatch"]>[0], input: Parameters<CommerceAdministrationRepository["suspendBatch"]>[1]) {
+    return this.transitionBatch(transaction, input, ["active"], "suspended", false);
+  }
+
+  async revokeBatch(transaction: Parameters<CommerceAdministrationRepository["revokeBatch"]>[0], input: Parameters<CommerceAdministrationRepository["revokeBatch"]>[1]) {
+    return this.transitionBatch(transaction, input, ["active", "suspended"], "revoked", true);
+  }
+
+  private async transitionBatch(
+    transaction: Parameters<CommerceAdministrationRepository["abandonBatch"]>[0],
+    input: Parameters<CommerceAdministrationRepository["abandonBatch"]>[1],
+    fromStates: readonly string[],
+    toState: "abandoned" | "suspended" | "revoked",
+    voidInventory: boolean,
+  ) {
+    if (await replayed(this.receipts, transaction, input.command)) return "replayed" as const;
+    const sql = resolvePlatformTransaction(transaction); const occurredAt = await databaseNow(transaction);
+    await command(sql, input, occurredAt);
+    await exactlyOne(sql.execute(
+      `UPDATE platform.commerce_code_batch SET state=$3
+       WHERE batch_ref=$1::uuid AND site_ref=$2 AND state=ANY($4::text[])`,
+      [input.batchRef, input.siteId, toState, fromStates],
+    ), "COMMERCE_BATCH_TRANSITION_REJECTED");
+    if (voidInventory) {
+      await sql.execute(
+        `UPDATE platform.commerce_redeem_code SET state='void',voided_at=$3::timestamptz
+         WHERE batch_ref=$1::uuid AND site_ref=$2 AND state='available'`,
+        [input.batchRef, input.siteId, occurredAt],
+      );
+    }
+    await audit(sql, input, `commerce.code_batch.${toState}`, input.reasonDigest, occurredAt);
+    await complete(this.receipts, transaction, input.command, {
+      batchRef: input.batchRef, state: toState, changedAt: occurredAt,
+    });
     return "committed" as const;
   }
 }
