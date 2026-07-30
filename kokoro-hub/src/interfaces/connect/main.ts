@@ -1,5 +1,4 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { lstat, open } from "node:fs/promises";
 import type { SecureServerOptions } from "node:http2";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -27,6 +26,10 @@ import {
 } from "./capability-catalog-services.js";
 import { createHubConnectRuntime, type HubConnectCaller } from "./hub-connect-runtime.js";
 import { createHubConnectHealthServer } from "./hub-connect-health.js";
+import { createHubConnectProcess, type HubConnectProcess } from "./hub-connect-process.js";
+import { readBoundedHubConnectFile } from "./hub-connect-secure-file.js";
+
+export { readBoundedHubConnectFile } from "./hub-connect-secure-file.js";
 
 export const HUB_CONNECT_PRODUCTION_REQUIRED_ENVIRONMENT = Object.freeze([
   "KOKORO_HUB_CONNECT_PORT",
@@ -37,6 +40,7 @@ export const HUB_CONNECT_PRODUCTION_REQUIRED_ENVIRONMENT = Object.freeze([
   "KOKORO_WORKSPACE_S3_ACCESS_KEY",
   "KOKORO_WORKSPACE_S3_SECRET_KEY",
   "KOKORO_HUB_SECRET_MASTER_KEY",
+  "KOKORO_HUB_CONNECT_TRUST_ROOT",
   "KOKORO_HUB_CONNECT_TLS_KEY_FILE",
   "KOKORO_HUB_CONNECT_TLS_CERT_FILE",
   "KOKORO_HUB_CONNECT_TLS_CLIENT_CA_FILE",
@@ -59,8 +63,15 @@ export interface HubConnectStartupConfig {
   readonly mongoDatabase: string;
   readonly platformIdentity: string;
   readonly agentIdentity: string;
+  readonly trustRoot: string;
   readonly peersFile: string;
   readonly signingKeyFile: string;
+}
+
+interface HubConnectMongoClient {
+  connect(): Promise<unknown>;
+  close(): Promise<unknown>;
+  db(name: string): unknown;
 }
 
 export function loadHubConnectStartupConfig(
@@ -89,6 +100,7 @@ export function loadHubConnectStartupConfig(
     mongoDatabase: required(environment, "KOKORO_HUB_MONGO_DB"),
     platformIdentity,
     agentIdentity,
+    trustRoot: required(environment, "KOKORO_HUB_CONNECT_TRUST_ROOT"),
     peersFile: required(environment, "KOKORO_HUB_CONNECT_MTLS_PEERS_FILE"),
     signingKeyFile: required(environment, "KOKORO_HUB_CAPABILITY_SIGNING_KEY_FILE"),
   });
@@ -96,6 +108,9 @@ export function loadHubConnectStartupConfig(
 
 export async function runHubConnectMain(
   environment: Readonly<Record<string, string | undefined>> = process.env,
+  dependencies: Readonly<{
+    createMongoClient?: (url: string) => HubConnectMongoClient;
+  }> = {},
 ): Promise<void> {
   const config = loadHubConnectStartupConfig(environment);
   const hubEnv = loadHubEnv({ ...environment });
@@ -114,10 +129,10 @@ export async function runHubConnectMain(
       : null,
   );
   const [tls, peers, signingKey, projectionTls] = await Promise.all([
-    loadTls(environment),
-    loadPeers(config.peersFile),
-    readBoundedHubConnectFile(config.signingKeyFile, 64 * 1024, true),
-    loadProjectionTls(environment),
+    loadTls(environment, config.trustRoot),
+    loadPeers(config.peersFile, config.trustRoot),
+    readBoundedHubConnectFile(config.signingKeyFile, config.trustRoot, 64 * 1024, true),
+    loadProjectionTls(environment, config.trustRoot),
   ]);
   if (
     !peers.some(({ identity }) => identity === config.platformIdentity) ||
@@ -126,153 +141,140 @@ export async function runHubConnectMain(
     throw new Error("HUB_CONNECT_REQUIRED_CALLER_NOT_REGISTERED");
   }
 
-  const mongo = createMongoClient(config.mongoUrl);
-  await mongo.connect();
-  const collections = hubCollections(mongo.db(config.mongoDatabase));
-  const repository = new MongoCapabilityPublicationRepository(collections);
-  const publication = new CapabilityCatalogPublicationService({
-    repository,
-    authority: new MongoCapabilityCatalogAuthority(collections),
-    signer: createEd25519CapabilityCatalogSigner({
-      signingKeyRef: required(environment, "KOKORO_HUB_CAPABILITY_SIGNING_KEY_REF"),
-      privateKeyPem: signingKey,
-    }),
-  });
-  const secrets = new McpSecretService(
-    new MongoMcpSecretRepository(collections),
-    new AesGcmSecretCipher(secretKeyring),
-  );
-  const assembly = new ExecutionAssemblyService({
-    publications: repository,
-    skills: new MongoSkillRepository(collections),
-    mcp: new McpHubService(new MongoMcpServerRepository(collections)),
-    secrets,
-    packages,
-  });
-  const callers = new AsyncLocalStorage<HubConnectCaller>();
-  let draining = false;
-  const caller = {
-    resolve: () => {
-      const current = callers.getStore();
-      if (current === undefined) throw new Error("HUB_CONNECT_CALLER_CONTEXT_REQUIRED");
-      return current;
-    },
+  const mongo = (dependencies.createMongoClient ?? createMongoClient)(config.mongoUrl);
+  let mongoClose: Promise<void> | undefined;
+  const closeMongo = () => {
+    mongoClose ??= mongo.close().then(() => undefined);
+    return mongoClose;
   };
-  const runtime = createHubConnectRuntime({
-    tls,
-    peers,
-    callers,
-    catalog: createHubCatalogConnectService({
-      publication,
-      caller,
-      platformCallerIdentity: config.platformIdentity,
-    }),
-    runtime: createHubRuntimeConnectService({
-      assembly,
-      caller,
-      agentCallerIdentity: config.agentIdentity,
-    }),
-    ready,
-    isDraining: () => draining,
-  });
-  const worker = new CapabilityProjectionWorker({
-    repository,
-    client: createPlatformCapabilityProjectionClient({
-      baseUrl: required(environment, "KOKORO_HUB_PLATFORM_PROJECTION_BASE_URL"),
-      serverName: required(environment, "KOKORO_HUB_PLATFORM_PROJECTION_SERVER_NAME"),
-      ...projectionTls,
-    }),
-  });
-  const workerController = new AbortController();
-  let workerTimer: ReturnType<typeof setTimeout> | undefined;
-  let activeTick: Promise<unknown> | undefined;
-  const schedule = () => {
-    if (workerController.signal.aborted) return;
-    workerTimer = setTimeout(() => {
-      activeTick = worker
-        .tick(workerController.signal)
-        .catch(() => undefined)
-        .finally(() => {
-          activeTick = undefined;
-          schedule();
-        });
-    }, 250);
-    workerTimer.unref();
-  };
-  const server = runtime.createServer();
-  const healthServer = createHubConnectHealthServer({ ready, isDraining: () => draining });
-  let stopping = false;
-  const shutdown = async () => {
-    if (stopping) return;
-    stopping = true;
-    draining = true;
-    workerController.abort(new Error("HUB_SHUTDOWN"));
-    if (workerTimer !== undefined) clearTimeout(workerTimer);
-    await new Promise<void>((finish) => server.close(() => finish())).catch(() => undefined);
-    await activeTick?.catch(() => undefined);
-    await mongo.close();
-    await new Promise<void>((finish) => healthServer.close(() => finish())).catch(() => undefined);
-  };
-  const signalShutdown = () => {
-    void shutdown().catch((error: unknown) => {
-      process.exitCode = 1;
-      console.error("kokoro-hub Connect failed to drain", error);
-    });
-  };
-  process.once("SIGINT", signalShutdown);
-  process.once("SIGTERM", signalShutdown);
+  let lifecycle: HubConnectProcess | undefined;
+  let signalShutdown: (() => void) | undefined;
   try {
-    await listen(server, config.port);
-    await listen(healthServer, config.healthPort);
-    schedule();
+    await mongo.connect();
+    const collections = hubCollections(
+      mongo.db(config.mongoDatabase) as Parameters<typeof hubCollections>[0],
+    );
+    const repository = new MongoCapabilityPublicationRepository(collections);
+    const publication = new CapabilityCatalogPublicationService({
+      repository,
+      authority: new MongoCapabilityCatalogAuthority(collections),
+      signer: createEd25519CapabilityCatalogSigner({
+        signingKeyRef: required(environment, "KOKORO_HUB_CAPABILITY_SIGNING_KEY_REF"),
+        privateKeyPem: signingKey,
+      }),
+    });
+    const secrets = new McpSecretService(
+      new MongoMcpSecretRepository(collections),
+      new AesGcmSecretCipher(secretKeyring),
+    );
+    const assembly = new ExecutionAssemblyService({
+      publications: repository,
+      skills: new MongoSkillRepository(collections),
+      mcp: new McpHubService(new MongoMcpServerRepository(collections)),
+      secrets,
+      packages,
+    });
+    const callers = new AsyncLocalStorage<HubConnectCaller>();
+    const caller = {
+      resolve: () => {
+        const current = callers.getStore();
+        if (current === undefined) throw new Error("HUB_CONNECT_CALLER_CONTEXT_REQUIRED");
+        return current;
+      },
+    };
+    const runtime = createHubConnectRuntime({
+      tls,
+      peers,
+      callers,
+      catalog: createHubCatalogConnectService({
+        publication,
+        caller,
+        platformCallerIdentity: config.platformIdentity,
+      }),
+      runtime: createHubRuntimeConnectService({
+        assembly,
+        caller,
+        agentCallerIdentity: config.agentIdentity,
+      }),
+      ready,
+      isDraining: () => lifecycle?.isDraining() ?? false,
+    });
+    const worker = new CapabilityProjectionWorker({
+      repository,
+      client: createPlatformCapabilityProjectionClient({
+        baseUrl: required(environment, "KOKORO_HUB_PLATFORM_PROJECTION_BASE_URL"),
+        serverName: required(environment, "KOKORO_HUB_PLATFORM_PROJECTION_SERVER_NAME"),
+        ...projectionTls,
+      }),
+    });
+    const server = runtime.createServer();
+    const healthServer = createHubConnectHealthServer({
+      ready,
+      isDraining: () => lifecycle?.isDraining() ?? false,
+    });
+    lifecycle = createHubConnectProcess({
+      server,
+      healthServer,
+      worker,
+      closeMongo,
+      port: config.port,
+      healthPort: config.healthPort,
+      onFatal: (error) => {
+        process.exitCode = 1;
+        console.error("kokoro-hub Connect runtime failure", error);
+      },
+    });
+    signalShutdown = () => {
+      if (signalShutdown !== undefined) {
+        process.off("SIGINT", signalShutdown);
+        process.off("SIGTERM", signalShutdown);
+      }
+      void lifecycle?.shutdown().catch((error: unknown) => {
+        process.exitCode = 1;
+        console.error("kokoro-hub Connect failed to drain", error);
+      });
+    };
+    process.once("SIGINT", signalShutdown);
+    process.once("SIGTERM", signalShutdown);
+    await lifecycle.start();
   } catch (error) {
-    process.off("SIGINT", signalShutdown);
-    process.off("SIGTERM", signalShutdown);
-    await shutdown();
+    if (signalShutdown !== undefined) {
+      process.off("SIGINT", signalShutdown);
+      process.off("SIGTERM", signalShutdown);
+    }
+    if (lifecycle === undefined) await closeMongo().catch(() => undefined);
+    else await lifecycle.shutdown().catch(() => undefined);
     throw error;
   }
   console.log(`kokoro-hub Connect listening on ${config.port}; health on ${config.healthPort}`);
 
   async function ready(): Promise<boolean> {
-    await mongo.db(config.mongoDatabase).command({ ping: 1 });
+    await (mongo.db(config.mongoDatabase) as Parameters<typeof hubCollections>[0])
+      .command({ ping: 1 });
     return true;
   }
 }
 
-function listen(
-  server: Readonly<{
-    once(event: "error", listener: (error: Error) => void): unknown;
-    off(event: "error", listener: (error: Error) => void): unknown;
-    listen(port: number, host: string, listener: () => void): unknown;
-  }>,
-  port: number,
-): Promise<void> {
-  return new Promise((resolveListen, reject) => {
-    const failed = (error: Error) => reject(error);
-    server.once("error", failed);
-    server.listen(port, "0.0.0.0", () => {
-      server.off("error", failed);
-      resolveListen();
-    });
-  });
-}
-
 async function loadTls(
   environment: Readonly<Record<string, string | undefined>>,
+  trustRoot: string,
 ): Promise<SecureServerOptions> {
   const [key, cert, ca] = await Promise.all([
     readBoundedHubConnectFile(
       required(environment, "KOKORO_HUB_CONNECT_TLS_KEY_FILE"),
+      trustRoot,
       64 * 1024,
       true,
     ),
     readBoundedHubConnectFile(
       required(environment, "KOKORO_HUB_CONNECT_TLS_CERT_FILE"),
+      trustRoot,
       64 * 1024,
       false,
     ),
     readBoundedHubConnectFile(
       required(environment, "KOKORO_HUB_CONNECT_TLS_CLIENT_CA_FILE"),
+      trustRoot,
       256 * 1024,
       false,
     ),
@@ -295,20 +297,26 @@ async function loadTls(
   });
 }
 
-async function loadProjectionTls(environment: Readonly<Record<string, string | undefined>>) {
+async function loadProjectionTls(
+  environment: Readonly<Record<string, string | undefined>>,
+  trustRoot: string,
+) {
   const [privateKeyPem, certificatePem, certificateAuthorityPem] = await Promise.all([
     readBoundedHubConnectFile(
       required(environment, "KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_KEY_FILE"),
+      trustRoot,
       64 * 1024,
       true,
     ),
     readBoundedHubConnectFile(
       required(environment, "KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_CERT_FILE"),
+      trustRoot,
       64 * 1024,
       false,
     ),
     readBoundedHubConnectFile(
       required(environment, "KOKORO_HUB_PLATFORM_PROJECTION_SERVER_CA_FILE"),
+      trustRoot,
       256 * 1024,
       false,
     ),
@@ -316,10 +324,10 @@ async function loadProjectionTls(environment: Readonly<Record<string, string | u
   return { privateKeyPem, certificatePem, certificateAuthorityPem };
 }
 
-async function loadPeers(path: string) {
+async function loadPeers(path: string, trustRoot: string) {
   let value: unknown;
   try {
-    value = JSON.parse(await readBoundedHubConnectFile(path, 256 * 1024, false));
+    value = JSON.parse(await readBoundedHubConnectFile(path, trustRoot, 256 * 1024, false));
   } catch {
     throw new Error("HUB_CONNECT_PEERS_INVALID");
   }
@@ -357,37 +365,6 @@ async function loadPeers(path: string) {
       });
     }),
   );
-}
-
-export async function readBoundedHubConnectFile(
-  path: string,
-  maximumBytes: number,
-  privateFile: boolean,
-): Promise<string> {
-  const before = await lstat(path);
-  if (before.isSymbolicLink()) throw new Error("HUB_CONNECT_TRUST_FILE_INVALID");
-  const handle = await open(path, "r");
-  try {
-    const metadata = await handle.stat();
-    if (
-      !metadata.isFile() ||
-      metadata.dev !== before.dev ||
-      metadata.ino !== before.ino ||
-      metadata.size < 1 ||
-      metadata.size > maximumBytes ||
-      // Kubernetes Secret volumes use a dedicated fsGroup. Group-read is safe for that
-      // single workload group; group write/execute and all world access remain forbidden.
-      (privateFile && (metadata.mode & 0o037) !== 0)
-    )
-      throw new Error("HUB_CONNECT_TRUST_FILE_INVALID");
-    const value = await handle.readFile();
-    if (value.byteLength !== metadata.size || value.byteLength > maximumBytes) {
-      throw new Error("HUB_CONNECT_TRUST_FILE_INVALID");
-    }
-    return value.toString("utf8");
-  } finally {
-    await handle.close();
-  }
 }
 
 function required(environment: Readonly<Record<string, string | undefined>>, name: string): string {

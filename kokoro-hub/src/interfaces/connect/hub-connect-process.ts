@@ -1,0 +1,200 @@
+import type { ServerHttp2Session } from "node:http2";
+
+interface EventServer {
+  once(event: "error", listener: (error: Error) => void): unknown;
+  on(event: string, listener: (...arguments_: unknown[]) => void): unknown;
+  off(event: string, listener: (...arguments_: unknown[]) => void): unknown;
+  listen(port: number, host: string, listener: () => void): unknown;
+  close(listener: (error?: Error) => void): unknown;
+}
+
+interface ConnectSession {
+  once(event: "close", listener: () => void): unknown;
+  off(event: "close", listener: () => void): unknown;
+  close(): unknown;
+  destroy(error?: Error): unknown;
+}
+
+export interface HubConnectProcess {
+  start(): Promise<void>;
+  shutdown(): Promise<void>;
+  isDraining(): boolean;
+}
+
+export function createHubConnectProcess(input: Readonly<{
+  server: EventServer;
+  healthServer: EventServer;
+  worker: Readonly<{ tick(signal: AbortSignal): Promise<unknown> }>;
+  closeMongo: () => Promise<unknown>;
+  port: number;
+  healthPort: number;
+  host?: string;
+  pollIntervalMs?: number;
+  shutdownDeadlineMs?: number;
+  onFatal?: (error: unknown) => void;
+}>): HubConnectProcess {
+  const pollIntervalMs = boundedMilliseconds(input.pollIntervalMs ?? 250, 1, 60_000);
+  const shutdownDeadlineMs = boundedMilliseconds(input.shutdownDeadlineMs ?? 10_000, 10, 60_000);
+  const controller = new AbortController();
+  const sessions = new Set<ConnectSession>();
+  let draining = false;
+  let started = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let activeTick: Promise<unknown> | undefined;
+  let shutdownPromise: Promise<void> | undefined;
+
+  const trackSession = (raw: ServerHttp2Session) => {
+    const session = raw as ConnectSession;
+    if (draining) {
+      try { session.close(); } catch { session.destroy(); }
+      return;
+    }
+    sessions.add(session);
+    const closed = () => {
+      session.off("close", closed);
+      sessions.delete(session);
+    };
+    session.once("close", closed);
+  };
+  input.server.on("session", trackSession as (...arguments_: unknown[]) => void);
+
+  const fatal = (error: Error) => {
+    if (draining) return;
+    try { input.onFatal?.(error); } catch { /* fatal hooks cannot own cleanup */ }
+    void shutdown().catch(() => undefined);
+  };
+
+  const schedule = () => {
+    if (controller.signal.aborted || draining) return;
+    timer = setTimeout(() => {
+      activeTick = input.worker.tick(controller.signal)
+        .catch((error: unknown) => {
+          if (!controller.signal.aborted) input.onFatal?.(error);
+        })
+        .finally(() => {
+          activeTick = undefined;
+          schedule();
+        });
+    }, pollIntervalMs);
+    timer.unref();
+  };
+
+  const start = async () => {
+    if (started || draining) throw new Error("HUB_CONNECT_PROCESS_STATE_INVALID");
+    try {
+      await listen(input.server, input.port, input.host ?? "0.0.0.0");
+      await listen(input.healthServer, input.healthPort, input.host ?? "0.0.0.0");
+      started = true;
+      input.server.on("error", fatal as (...arguments_: unknown[]) => void);
+      input.healthServer.on("error", fatal as (...arguments_: unknown[]) => void);
+      schedule();
+    } catch (error) {
+      await shutdown().catch(() => undefined);
+      throw error;
+    }
+  };
+
+  const shutdown = (): Promise<void> => {
+    shutdownPromise ??= performShutdown();
+    return shutdownPromise;
+  };
+
+  const performShutdown = async (): Promise<void> => {
+    const shutdownStartedAt = Date.now();
+    draining = true;
+    controller.abort(new Error("HUB_SHUTDOWN"));
+    if (timer !== undefined) clearTimeout(timer);
+    for (const session of sessions) {
+      try { session.close(); } catch { session.destroy(); }
+    }
+
+    const services = Promise.allSettled([
+      closeServer(input.server),
+      closeServer(input.healthServer),
+      activeTick ?? Promise.resolve(),
+    ]);
+    const gracefulMs = Math.max(1, Math.floor(shutdownDeadlineMs * 0.6));
+    const gracefulOutcomes = await beforeDeadline(services, gracefulMs);
+    if (gracefulOutcomes === null) {
+      for (const session of sessions) {
+        try { session.destroy(new Error("HUB_CONNECT_SHUTDOWN_DEADLINE")); } catch { /* bounded */ }
+      }
+    }
+    const mongo = settle(Promise.resolve().then(input.closeMongo));
+    const completion = Promise.all([services, mongo]).then(([serviceOutcomes, mongoOutcome]) =>
+      [...serviceOutcomes, mongoOutcome]);
+    const remainingMs = Math.max(1, shutdownDeadlineMs - (Date.now() - shutdownStartedAt));
+    const outcomes = await beforeDeadline(completion, remainingMs);
+
+    if (outcomes === null || outcomes.some((outcome) => outcome.status === "rejected")) {
+      throw new Error("HUB_CONNECT_SHUTDOWN_UNCONFIRMED");
+    }
+    input.server.off("session", trackSession as (...arguments_: unknown[]) => void);
+    input.server.off("error", fatal as (...arguments_: unknown[]) => void);
+    input.healthServer.off("error", fatal as (...arguments_: unknown[]) => void);
+  };
+
+  return Object.freeze({ start, shutdown, isDraining: () => draining });
+}
+
+function listen(server: EventServer, port: number, host: string): Promise<void> {
+  return new Promise((resolveListen, reject) => {
+    const failed = (error: Error) => {
+      server.off("error", failed as (...arguments_: unknown[]) => void);
+      reject(error);
+    };
+    server.once("error", failed);
+    try {
+      server.listen(port, host, () => {
+        server.off("error", failed as (...arguments_: unknown[]) => void);
+        resolveListen();
+      });
+    } catch (error) {
+      server.off("error", failed as (...arguments_: unknown[]) => void);
+      reject(error);
+    }
+  });
+}
+
+function closeServer(server: EventServer): Promise<void> {
+  return new Promise((resolveClose, reject) => {
+    try {
+      server.close((error?: Error) => {
+        if (error === undefined || errorCode(error) === "ERR_SERVER_NOT_RUNNING") resolveClose();
+        else reject(error);
+      });
+    } catch (error) {
+      if (errorCode(error) === "ERR_SERVER_NOT_RUNNING") resolveClose();
+      else reject(error);
+    }
+  });
+}
+
+function beforeDeadline<T>(promise: Promise<T>, milliseconds: number): Promise<T | null> {
+  return new Promise((resolveWait) => {
+    const timer = setTimeout(() => resolveWait(null), Math.max(1, milliseconds));
+    void promise.then((value) => {
+      clearTimeout(timer);
+      resolveWait(value);
+    });
+  });
+}
+
+function settle<T>(promise: Promise<T>): Promise<PromiseSettledResult<T>> {
+  return promise.then(
+    (value) => ({ status: "fulfilled", value }),
+    (reason: unknown) => ({ status: "rejected", reason }),
+  );
+}
+
+function boundedMilliseconds(value: number, minimum: number, maximum: number): number {
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new Error("HUB_CONNECT_PROCESS_CONFIG_INVALID");
+  }
+  return value;
+}
+
+function errorCode(error: unknown): string | undefined {
+  return error !== null && typeof error === "object" && "code" in error &&
+    typeof error.code === "string" ? error.code : undefined;
+}

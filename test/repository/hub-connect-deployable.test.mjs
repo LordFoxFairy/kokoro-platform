@@ -16,6 +16,7 @@ const requiredRuntimeEnvironment = Object.freeze([
   "KOKORO_WORKSPACE_S3_ACCESS_KEY",
   "KOKORO_WORKSPACE_S3_SECRET_KEY",
   "KOKORO_HUB_SECRET_MASTER_KEY",
+  "KOKORO_HUB_CONNECT_TRUST_ROOT",
   "KOKORO_HUB_CONNECT_TLS_KEY_FILE",
   "KOKORO_HUB_CONNECT_TLS_CERT_FILE",
   "KOKORO_HUB_CONNECT_TLS_CLIENT_CA_FILE",
@@ -155,6 +156,7 @@ test("Kubernetes publishes only Hub Connect traffic and probes dependency-aware 
     "KOKORO_HUB_CONNECT_PORT",
     "KOKORO_HUB_CONNECT_HEALTH_PORT",
     "KOKORO_WORKSPACE_CONFIG",
+    "KOKORO_HUB_CONNECT_TRUST_ROOT",
     "KOKORO_HUB_CONNECT_TLS_KEY_FILE",
     "KOKORO_HUB_CONNECT_TLS_CERT_FILE",
     "KOKORO_HUB_CONNECT_TLS_CLIENT_CA_FILE",
@@ -175,7 +177,7 @@ test("Kubernetes publishes only Hub Connect traffic and probes dependency-aware 
     ),
   );
   const secretVolume = pod.volumes.find((entry) => entry.name === "hub-connect-mtls");
-  assert.equal(secretVolume.secret.defaultMode, 288);
+  assert.equal(secretVolume.secret.defaultMode, 256);
   assert.ok(
     container.volumeMounts.some(
       (entry) => entry.name === "hub-storage-config" && entry.readOnly === true,

@@ -1,5 +1,5 @@
 import { once } from "node:events";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -21,6 +21,7 @@ const productionEnvironment = Object.freeze({
   KOKORO_WORKSPACE_S3_ACCESS_KEY: "example-access-key",
   KOKORO_WORKSPACE_S3_SECRET_KEY: "example-secret-key",
   KOKORO_HUB_SECRET_MASTER_KEY: "example-key",
+  KOKORO_HUB_CONNECT_TRUST_ROOT: "/run/secrets",
   KOKORO_HUB_CONNECT_TLS_KEY_FILE: "/run/secrets/server.key",
   KOKORO_HUB_CONNECT_TLS_CERT_FILE: "/run/secrets/server.crt",
   KOKORO_HUB_CONNECT_TLS_CLIENT_CA_FILE: "/run/secrets/client-ca.crt",
@@ -61,12 +62,48 @@ describe("Hub Connect deployment preflight", () => {
 });
 
 describe("Hub Connect mounted secret files", () => {
+  it("follows the bounded Kubernetes AtomicWriter chain inside the trust root", async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), "hub-connect-secret-"));
+    const revision = resolve(directory, "..2026_07_30_00_00_00.000000000");
+    try {
+      await mkdir(revision);
+      await writeFile(resolve(revision, "server.key"), "atomic-private-material", { mode: 0o400 });
+      await symlink("..2026_07_30_00_00_00.000000000", resolve(directory, "..data"));
+      await symlink("..data/server.key", resolve(directory, "server.key"));
+
+      await expect(
+        readBoundedHubConnectFile(resolve(directory, "server.key"), directory, 1024, true),
+      ).resolves.toBe("atomic-private-material");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an AtomicWriter-compatible chain that escapes the trust root", async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), "hub-connect-secret-"));
+    const outside = await mkdtemp(resolve(tmpdir(), "hub-connect-outside-"));
+    try {
+      await writeFile(resolve(outside, "server.key"), "escaped-private-material", { mode: 0o400 });
+      await symlink(outside, resolve(directory, "..data"));
+      await symlink("..data/server.key", resolve(directory, "server.key"));
+
+      await expect(
+        readBoundedHubConnectFile(resolve(directory, "server.key"), directory, 1024, true),
+      ).rejects.toThrowError("HUB_CONNECT_TRUST_FILE_INVALID");
+    } finally {
+      await Promise.all([
+        rm(directory, { recursive: true, force: true }),
+        rm(outside, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
   it("accepts dedicated workload-group read-only mounts", async () => {
     const directory = await mkdtemp(resolve(tmpdir(), "hub-connect-secret-"));
     const path = resolve(directory, "server.key");
     try {
       await writeFile(path, "example-private-material", { mode: 0o440 });
-      await expect(readBoundedHubConnectFile(path, 1024, true)).resolves.toBe(
+      await expect(readBoundedHubConnectFile(path, directory, 1024, true)).resolves.toBe(
         "example-private-material",
       );
     } finally {
@@ -80,7 +117,7 @@ describe("Hub Connect mounted secret files", () => {
     try {
       await writeFile(path, "example-private-material", { mode: 0o600 });
       await chmod(path, mode);
-      await expect(readBoundedHubConnectFile(path, 1024, true)).rejects.toThrowError(
+      await expect(readBoundedHubConnectFile(path, directory, 1024, true)).rejects.toThrowError(
         "HUB_CONNECT_TRUST_FILE_INVALID",
       );
     } finally {
