@@ -37,6 +37,7 @@ export interface AdminQueryPermit {
     "commerce.offer.read" | "commerce.redemption-program.read" | "commerce.code-batch.read" |
     "credit.summary.read" | "credit.account.read" | "credit.grant.read" | "credit.hold.read" |
     "credit.journal.read" | "credit.rated-usage.read";
+  readonly authorityBindingDigest: string;
   readonly scope: AdminQueryScope;
 }
 
@@ -304,6 +305,9 @@ function requireCursor(
 }
 
 export function permitBinding(permit: AdminQueryPermit): string {
+  if (!/^[a-f0-9]{64}$/u.test(permit.authorityBindingDigest)) {
+    throw new Error("ADMIN_QUERY_PERMIT_INVALID");
+  }
   const scope = permit.scope.kind === "site"
     ? { kind: permit.scope.kind, siteRefs: [...permit.scope.siteRefs].sort() }
     : permit.scope.kind === "global"
@@ -320,6 +324,7 @@ export function permitBinding(permit: AdminQueryPermit): string {
       environment: permit.environment,
       region: permit.region,
       operation: permit.operation,
+      authorityBindingDigest: permit.authorityBindingDigest,
       scope,
     })).digest("hex");
 }

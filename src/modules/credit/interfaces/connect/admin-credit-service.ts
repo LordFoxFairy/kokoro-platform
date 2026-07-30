@@ -10,6 +10,7 @@ import {
   CreditBucketClass,
   CreditGrantSourceType,
   CreditGrantSummarySchema,
+  CreditHoldAllocationSummarySchema,
   CreditHoldResolutionKind,
   CreditHoldState,
   CreditHoldSummarySchema,
@@ -19,6 +20,8 @@ import {
   CreditJournalOperationKind,
   CreditJournalTransactionSummarySchema,
   CreditReadFreshness,
+  CreditUsageSourceDirection,
+  RatedUsageSourceAllocationSummarySchema,
   RatedUsageSummarySchema,
   SiteCreditSummarySchema,
 } from "../../../../interfaces/connect/generated-admin-credit/kokoro/platform/credit/v1/admin_credit_pb.js";
@@ -29,11 +32,14 @@ import { scopedBinding, type AdminPageCursorCodec, type AdminQueryPermit,
 import type {
   AdminCreditAccountRecord,
   AdminCreditGrantRecord,
+  AdminCreditHoldAllocationRecord,
   AdminCreditHoldRecord,
   AdminCreditJournalEntryRecord,
   AdminCreditJournalTransactionRecord,
   AdminCreditReader,
   AdminRatedUsageRecord,
+  AdminRatedUsageSourceAllocationRecord,
+  AdminCreditMembershipPageResult,
   CreditBalanceRecord,
 } from "../../application/contracts/admin-credit-reader.js";
 
@@ -43,9 +49,7 @@ export function createAdminCreditConnectService(input: Readonly<{
   resolver: AdminQueryResolver;
   reader: AdminCreditReader;
   cursors: AdminPageCursorCodec;
-  clock?: () => Date;
 }>): AdminCreditConnectService {
-  const now = input.clock ?? (() => new Date());
   return {
     async getSiteCreditSummary(request, transport) {
       const context = required(request.context); const permit = await resolve(input.resolver,
@@ -56,19 +60,19 @@ export function createAdminCreditConnectService(input: Readonly<{
         activeCreditAccountCount: summary.activeCreditAccountCount, openHoldCount: summary.openHoldCount,
         reconciliationRequiredHoldCount: summary.reconciliationRequiredHoldCount,
         balances: summary.balances.map(balanceMessage),
-        freshness: CreditReadFreshness.AUTHORITATIVE_TRANSACTION_SNAPSHOT,
+        freshness: CreditReadFreshness.AUTHORITATIVE_DATABASE_OBSERVATION,
         asOf: timestamp(summary.asOf) }) };
     },
 
     async listCreditAccounts(request, transport) {
       const page = await pageInput(input, required(request.context), transport, "credit.account.read",
         request.siteId, "credit-accounts", { billingAccountRef: request.billingAccountRef ?? null },
-        request.pageToken, request.pageSize, accountFields, now);
-      const rows = await input.reader.listCreditAccounts(page.permit, { siteId: request.siteId,
+        request.pageToken, request.pageSize, accountFields);
+      const result = await input.reader.listCreditAccounts(page.permit, { siteId: request.siteId,
         billingAccountRef: request.billingAccountRef ?? null, afterRef: page.after,
-        watermark: page.watermark, limit: page.limit + 1 });
-      return listResult(rows, page, input.cursors, (row) => row.creditAccountRef, accountMessage,
-        "accounts", true);
+        membershipWatermark: page.membershipWatermark, limit: page.limit + 1 });
+      return listResult(result, page, input.cursors, (row) => row.creditAccountRef, accountMessage,
+        "accounts");
     },
 
     async getCreditAccount(request, transport) {
@@ -81,95 +85,142 @@ export function createAdminCreditConnectService(input: Readonly<{
     },
 
     async listCreditGrants(request, transport) {
+      const source = sourceFilter(request.sourceType, request.sourceRef);
       const filters = { creditAccountRef: request.creditAccountRef ?? null,
-        sourceRef: request.sourceRef ?? null, executionRootRef: request.executionRootRef ?? null };
+        creditGrantId: request.creditGrantId ?? null, ...source,
+        executionRootRef: request.executionRootRef ?? null };
       const page = await pageInput(input, required(request.context), transport, "credit.grant.read",
-        request.siteId, "credit-grants", filters, request.pageToken, request.pageSize, grantFields, now);
-      const rows = await input.reader.listCreditGrants(page.permit, { siteId: request.siteId, ...filters,
-        afterRef: page.after, watermark: page.watermark, limit: page.limit + 1 });
-      return listResult(rows, page, input.cursors, (row) => row.creditGrantId, grantMessage,
-        "grants", true);
+        request.siteId, "credit-grants", filters, request.pageToken, request.pageSize, grantFields);
+      const result = await input.reader.listCreditGrants(page.permit, { siteId: request.siteId, ...filters,
+        afterRef: page.after, membershipWatermark: page.membershipWatermark, limit: page.limit + 1 });
+      return listResult(result, page, input.cursors, (row) => row.creditGrantId, grantMessage,
+        "grants");
     },
 
     async listCreditHolds(request, transport) {
+      const source = sourceFilter(request.sourceType, request.sourceRef);
       const filters = { creditAccountRef: request.creditAccountRef ?? null,
-        sourceRef: request.sourceRef ?? null, executionRootRef: request.executionRootRef ?? null };
+        creditGrantId: request.creditGrantId ?? null, ...source,
+        executionRootRef: request.executionRootRef ?? null };
       const page = await pageInput(input, required(request.context), transport, "credit.hold.read",
-        request.siteId, "credit-holds", filters, request.pageToken, request.pageSize, holdFields, now);
-      const rows = await input.reader.listCreditHolds(page.permit, { siteId: request.siteId, ...filters,
-        afterRef: page.after, watermark: page.watermark, limit: page.limit + 1 });
-      return listResult(rows, page, input.cursors, (row) => row.creditHoldRef, holdMessage,
-        "holds", true);
+        request.siteId, "credit-holds", filters, request.pageToken, request.pageSize, holdFields);
+      const result = await input.reader.listCreditHolds(page.permit, { siteId: request.siteId, ...filters,
+        afterRef: page.after, membershipWatermark: page.membershipWatermark, limit: page.limit + 1 });
+      return listResult(result, page, input.cursors, (row) => row.creditHoldRef, holdMessage,
+        "holds");
+    },
+
+    async listCreditHoldAllocations(request, transport) {
+      const trace = holdAllocationTrace(request.trace);
+      const page = await pageInput(input, required(request.context), transport, "credit.hold.read",
+        request.siteId, "credit-hold-allocations", trace, request.pageToken, request.pageSize,
+        holdAllocationFields);
+      const after = allocationAfter(page.after, "ADMIN_CREDIT_PAGE_TOKEN_INVALID");
+      const result = await input.reader.listCreditHoldAllocations(page.permit, { siteId: request.siteId,
+        ...trace, afterHoldRef: after?.ref ?? null, afterAllocationOrdinal: after?.ordinal ?? null,
+        membershipWatermark: page.membershipWatermark, limit: page.limit + 1 });
+      return listResult(result, page, input.cursors,
+        (row) => `${row.creditHoldRef}:${String(row.allocationOrdinal)}`, holdAllocationMessage,
+        "allocations");
     },
 
     async listCreditJournalTransactions(request, transport) {
+      const source = sourceFilter(request.sourceType, request.sourceRef);
       const filters = { creditAccountRef: request.creditAccountRef ?? null,
         creditGrantId: request.creditGrantId ?? null, creditHoldRef: request.creditHoldRef ?? null,
-        sourceRef: request.sourceRef ?? null, executionRootRef: request.executionRootRef ?? null };
+        ...source, executionRootRef: request.executionRootRef ?? null };
       const page = await pageInput(input, required(request.context), transport, "credit.journal.read",
         request.siteId, "credit-journal-transactions", filters, request.pageToken, request.pageSize,
-        journalTransactionFields, now);
-      const rows = await input.reader.listCreditJournalTransactions(page.permit, {
+        journalTransactionFields);
+      const result = await input.reader.listCreditJournalTransactions(page.permit, {
         siteId: request.siteId, ...filters, afterRef: page.after,
-        watermark: page.watermark, limit: page.limit + 1,
+        membershipWatermark: page.membershipWatermark, limit: page.limit + 1,
       });
-      return listResult(rows, page, input.cursors, (row) => row.journalTransactionRef,
-        journalTransactionMessage, "transactions", true);
+      return listResult(result, page, input.cursors, (row) => row.journalTransactionRef,
+        journalTransactionMessage, "transactions");
     },
 
     async listCreditJournalEntries(request, transport) {
       const context = required(request.context); const filters = {
         journalTransactionRef: request.journalTransactionRef };
       const page = await pageInput(input, context, transport, "credit.journal.read", request.siteId,
-        "credit-journal-entries", filters, request.pageToken, request.pageSize, journalEntryFields, now);
+        "credit-journal-entries", filters, request.pageToken, request.pageSize, journalEntryFields);
       const afterOrdinal = page.after === null ? null : boundedOrdinal(page.after);
-      const rows = await input.reader.listCreditJournalEntries(page.permit, { siteId: request.siteId,
-        journalTransactionRef: request.journalTransactionRef, afterOrdinal, limit: page.limit + 1 });
-      return listResult(rows, page, input.cursors, (row) => String(row.entryOrdinal),
-        journalEntryMessage, "entries", false);
+      const result = await input.reader.listCreditJournalEntries(page.permit, { siteId: request.siteId,
+        journalTransactionRef: request.journalTransactionRef, afterOrdinal,
+        membershipWatermark: page.membershipWatermark, limit: page.limit + 1 });
+      return listResult(result, page, input.cursors, (row) => String(row.entryOrdinal),
+        journalEntryMessage, "entries");
     },
 
     async listRatedUsage(request, transport) {
+      const source = sourceFilter(request.sourceType, request.sourceRef);
       const filters = { creditAccountRef: request.creditAccountRef ?? null,
-        creditHoldRef: request.creditHoldRef ?? null, sourceRef: request.sourceRef ?? null,
+        creditGrantId: request.creditGrantId ?? null, creditHoldRef: request.creditHoldRef ?? null, ...source,
         executionRootRef: request.executionRootRef ?? null, attemptRef: request.attemptRef ?? null };
       const page = await pageInput(input, required(request.context), transport, "credit.rated-usage.read",
         request.siteId, "credit-rated-usage", filters, request.pageToken, request.pageSize,
-        ratedUsageFields, now);
-      const rows = await input.reader.listRatedUsage(page.permit, { siteId: request.siteId, ...filters,
-        afterRef: page.after, watermark: page.watermark, limit: page.limit + 1 });
-      return listResult(rows, page, input.cursors, (row) => row.ratedUsageRef, ratedUsageMessage,
-        "ratedUsage", true);
+        ratedUsageFields);
+      const result = await input.reader.listRatedUsage(page.permit, { siteId: request.siteId, ...filters,
+        afterRef: page.after, membershipWatermark: page.membershipWatermark, limit: page.limit + 1 });
+      return listResult(result, page, input.cursors, (row) => row.ratedUsageRef, ratedUsageMessage,
+        "ratedUsage");
+    },
+
+    async listRatedUsageSourceAllocations(request, transport) {
+      const trace = ratedUsageAllocationTrace(request.trace);
+      const page = await pageInput(input, required(request.context), transport, "credit.rated-usage.read",
+        request.siteId, "credit-rated-usage-source-allocations", trace, request.pageToken,
+        request.pageSize, ratedUsageAllocationFields);
+      const after = allocationAfter(page.after, "ADMIN_CREDIT_PAGE_TOKEN_INVALID");
+      const result = await input.reader.listRatedUsageSourceAllocations(page.permit, { siteId: request.siteId,
+        ...trace, afterRatedUsageRef: after?.ref ?? null, afterSourceOrdinal: after?.ordinal ?? null,
+        membershipWatermark: page.membershipWatermark, limit: page.limit + 1 });
+      return listResult(result, page, input.cursors,
+        (row) => `${row.ratedUsageRef}:${String(row.sourceOrdinal)}`, ratedUsageSourceAllocationMessage,
+        "allocations");
     },
   };
 }
 
 type CreditReadOperation = Extract<AdminQueryPermit["operation"], `credit.${string}`>;
 interface ResolvedPage { readonly permit: AdminQueryPermit; readonly after: string | null;
-  readonly watermark: string; readonly binding: string; readonly kind: string; readonly limit: number }
+  readonly membershipWatermark: string | null; readonly binding: string; readonly kind: string;
+  readonly limit: number }
 
 async function pageInput(input: Readonly<{ resolver: AdminQueryResolver; cursors: AdminPageCursorCodec }>,
   context: AuthenticatedOperatorQueryContext, transport: HandlerContext, operation: CreditReadOperation,
   siteId: string, kind: string, filters: Readonly<Record<string, string | null>>,
-  token: string | undefined, requestedSize: number, fields: readonly string[], now: () => Date): Promise<ResolvedPage> {
+  token: string | undefined, requestedSize: number, fields: readonly string[]): Promise<ResolvedPage> {
   const limit = pageSize(requestedSize); const cursor = token === undefined ? null : input.cursors.decode(token);
-  if (cursor !== null) requireCursor(cursor, ["after", "at", "binding", "kind"], kind);
+  if (cursor !== null) requireCursor(cursor, ["after", "binding", "kind", "membership"], kind);
   const resourceRefs = [siteId, ...Object.values(filters).filter((value): value is string => value !== null)];
   const permit = await resolve(input.resolver, context, transport, operation, siteId, resourceRefs, fields);
   const binding = filterBinding(scopedBinding(permit, siteId), kind, filters);
   if (cursor !== null && cursor.binding !== binding) throw new Error("ADMIN_CREDIT_PAGE_TOKEN_INVALID");
-  const watermark = cursor?.at ?? now().toISOString();
-  if (!Number.isFinite(Date.parse(watermark))) throw new Error("ADMIN_CREDIT_PAGE_TOKEN_INVALID");
-  return Object.freeze({ permit, after: cursor?.after ?? null, watermark, binding, kind, limit });
+  const membershipWatermark = cursor?.membership ?? null;
+  if (membershipWatermark !== null && !Number.isFinite(Date.parse(membershipWatermark))) {
+    throw new Error("ADMIN_CREDIT_PAGE_TOKEN_INVALID");
+  }
+  return Object.freeze({ permit, after: cursor?.after ?? null, membershipWatermark,
+    binding, kind, limit });
 }
 
-function listResult<Row, Message>(rows: readonly Row[], page: ResolvedPage,
+function listResult<Row, Message>(result: AdminCreditMembershipPageResult<Row>, page: ResolvedPage,
   cursors: AdminPageCursorCodec, reference: (row: Row) => string, message: (row: Row) => Message,
-  field: string, includeAsOf: boolean): Record<string, unknown> {
-  const visible = rows.slice(0, page.limit); const last = visible.at(-1);
-  return { [field]: visible.map(message), ...(includeAsOf ? { asOf: timestamp(page.watermark) } : {}),
-    ...(rows.length > page.limit && last !== undefined ? { nextPageToken: cursors.encode({
-      kind: page.kind, after: reference(last), at: page.watermark, binding: page.binding,
+  field: string): Record<string, unknown> {
+  const membershipWatermark = canonicalTime(result.membershipWatermark);
+  const observedAt = canonicalTime(result.observedAt);
+  if ((page.membershipWatermark === null && membershipWatermark !== observedAt)
+    || (page.membershipWatermark !== null
+      && canonicalTime(page.membershipWatermark) !== membershipWatermark)) {
+    throw new Error("ADMIN_CREDIT_MEMBERSHIP_WATERMARK_MISMATCH");
+  }
+  const visible = result.items.slice(0, page.limit); const last = visible.at(-1);
+  return { [field]: visible.map(message), membershipWatermark: timestamp(membershipWatermark),
+    observedAt: timestamp(observedAt),
+    ...(result.items.length > page.limit && last !== undefined ? { nextPageToken: cursors.encode({
+      kind: page.kind, after: reference(last), membership: membershipWatermark, binding: page.binding,
     }) } : {}) };
 }
 
@@ -179,7 +230,7 @@ function accountMessage(row: AdminCreditAccountRecord) {
     aggregateVersion: row.aggregateVersion, balance: balanceMessage(row.balance), grantCount: row.grantCount,
     openHoldCount: row.openHoldCount, reconciliationRequiredHoldCount: row.reconciliationRequiredHoldCount,
     createdAt: timestamp(row.createdAt), updatedAt: timestamp(row.updatedAt),
-    freshness: CreditReadFreshness.AUTHORITATIVE_TRANSACTION_SNAPSHOT, asOf: timestamp(row.asOf) });
+    freshness: CreditReadFreshness.AUTHORITATIVE_DATABASE_OBSERVATION, asOf: timestamp(row.asOf) });
 }
 function balanceMessage(row: CreditBalanceRecord) { return create(CreditBalanceSummarySchema, row); }
 function grantMessage(row: AdminCreditGrantRecord) {
@@ -205,6 +256,14 @@ function holdMessage(row: AdminCreditHoldRecord) {
     ...(row.releasedAt === null ? {} : { releasedAt: timestamp(row.releasedAt) }),
     createdAt: timestamp(row.createdAt), updatedAt: timestamp(row.updatedAt),
     grantCount: row.grantCount, sourceCount: row.sourceCount });
+}
+function holdAllocationMessage(row: AdminCreditHoldAllocationRecord) {
+  return create(CreditHoldAllocationSummarySchema, { siteId: row.siteId,
+    creditHoldRef: row.creditHoldRef, creditGrantId: row.creditGrantId,
+    creditAccountRef: row.creditAccountRef, unit: row.unit,
+    reserveJournalTransactionRef: row.reserveJournalTransactionRef,
+    allocatedAmount: row.allocatedAmount, allocationOrdinal: row.allocationOrdinal,
+    createdAt: timestamp(row.createdAt) });
 }
 function journalTransactionMessage(row: AdminCreditJournalTransactionRecord) {
   return create(CreditJournalTransactionSummarySchema, { siteId: row.siteId,
@@ -234,6 +293,12 @@ function ratedUsageMessage(row: AdminRatedUsageRecord) {
     customerAmount: row.customerAmount, platformExposureAmount: row.platformExposureAmount,
     lineItemCount: row.lineItemCount, ratedUsageDigest: row.ratedUsageDigest,
     sourceCount: row.sourceCount, createdAt: timestamp(row.createdAt) });
+}
+function ratedUsageSourceAllocationMessage(row: AdminRatedUsageSourceAllocationRecord) {
+  return create(RatedUsageSourceAllocationSummarySchema, { siteId: row.siteId,
+    ratedUsageRef: row.ratedUsageRef, settlementRef: row.settlementRef,
+    creditGrantId: row.creditGrantId, direction: usageSourceDirection(row.direction),
+    amount: row.amount, allocationOrdinal: row.allocationOrdinal });
 }
 
 function accountState(value: AdminCreditAccountRecord["state"]): CreditAccountState { return {
@@ -270,6 +335,60 @@ function journalAccount(value: AdminCreditJournalEntryRecord["accountType"]): Cr
   customer_consumed: CreditJournalAccountType.CUSTOMER_CONSUMED, expired: CreditJournalAccountType.EXPIRED,
   revoked: CreditJournalAccountType.REVOKED, adjustment: CreditJournalAccountType.ADJUSTMENT,
   recovery_exposure: CreditJournalAccountType.RECOVERY_EXPOSURE }[value]; }
+function usageSourceDirection(value: AdminRatedUsageSourceAllocationRecord["direction"]): CreditUsageSourceDirection {
+  return { capture: CreditUsageSourceDirection.CAPTURE, increase: CreditUsageSourceDirection.INCREASE,
+    decrease: CreditUsageSourceDirection.DECREASE }[value];
+}
+
+function sourceFilter(sourceType: CreditGrantSourceType | undefined, sourceRef: string | undefined): Readonly<{
+  sourceType: AdminCreditGrantRecord["sourceType"] | null; sourceRef: string | null;
+}> {
+  if ((sourceType === undefined) !== (sourceRef === undefined)) {
+    throw new Error("ADMIN_CREDIT_SOURCE_FILTER_INCOMPLETE");
+  }
+  if (sourceType === undefined) return Object.freeze({ sourceType: null, sourceRef: null });
+  return Object.freeze({ sourceType: grantSourceFromWire(sourceType), sourceRef: sourceRef! });
+}
+
+function grantSourceFromWire(value: CreditGrantSourceType): AdminCreditGrantRecord["sourceType"] {
+  if (value === CreditGrantSourceType.REDEMPTION) return "redemption";
+  if (value === CreditGrantSourceType.PAYMENT) return "payment";
+  if (value === CreditGrantSourceType.ADMIN_GRANT) return "admin_grant";
+  if (value === CreditGrantSourceType.PROGRAM_WINDOW) return "program_window";
+  throw new Error("ADMIN_CREDIT_SOURCE_TYPE_INVALID");
+}
+
+function holdAllocationTrace(trace: Readonly<{
+  case?: "creditHoldRef" | "creditGrantId" | undefined; value?: string | undefined;
+}>): Readonly<{ creditHoldRef: string | null; creditGrantId: string | null }> {
+  if (trace.case === "creditHoldRef" && trace.value !== undefined) {
+    return Object.freeze({ creditHoldRef: trace.value, creditGrantId: null });
+  }
+  if (trace.case === "creditGrantId" && trace.value !== undefined) {
+    return Object.freeze({ creditHoldRef: null, creditGrantId: trace.value });
+  }
+  throw new Error("ADMIN_CREDIT_ALLOCATION_TRACE_REQUIRED");
+}
+
+function ratedUsageAllocationTrace(trace: Readonly<{
+  case?: "ratedUsageRef" | "settlementRef" | undefined; value?: string | undefined;
+}>): Readonly<{ ratedUsageRef: string | null; settlementRef: string | null }> {
+  if (trace.case === "ratedUsageRef" && trace.value !== undefined) {
+    return Object.freeze({ ratedUsageRef: trace.value, settlementRef: null });
+  }
+  if (trace.case === "settlementRef" && trace.value !== undefined) {
+    return Object.freeze({ ratedUsageRef: null, settlementRef: trace.value });
+  }
+  throw new Error("ADMIN_CREDIT_RATED_USAGE_ALLOCATION_TRACE_REQUIRED");
+}
+
+function allocationAfter(value: string | null, code: string): Readonly<{ ref: string; ordinal: number }> | null {
+  if (value === null) return null;
+  const match = /^([0-9a-f-]{36}):([0-9]{1,10})$/u.exec(value);
+  if (match === null) throw new Error(code);
+  const ordinal = boundedOrdinal(match[2]!);
+  return Object.freeze({ ref: match[1]!, ordinal });
+}
 
 function resolve(resolver: AdminQueryResolver, context: AuthenticatedOperatorQueryContext,
   transport: HandlerContext, operation: CreditReadOperation, siteRef: string,
@@ -294,6 +413,8 @@ function boundedOrdinal(value: string): number { if (!/^[0-9]{1,10}$/u.test(valu
   if (!Number.isSafeInteger(result) || result < 0) throw new Error("ADMIN_CREDIT_PAGE_TOKEN_INVALID"); return result; }
 function timestamp(value: string) { const date = new Date(value); if (!Number.isFinite(date.getTime()))
   throw new Error("ADMIN_CREDIT_TIME_INVALID"); return timestampFromDate(date); }
+function canonicalTime(value: string): string { const date = new Date(value); if (!Number.isFinite(date.getTime()))
+  throw new Error("ADMIN_CREDIT_TIME_INVALID"); return date.toISOString(); }
 function required<Value>(value: Value | undefined): Value {
   if (value === undefined) throw new Error("ADMIN_CREDIT_QUERY_CONTEXT_REQUIRED"); return value;
 }
@@ -301,7 +422,9 @@ function required<Value>(value: Value | undefined): Value {
 const summaryFields = ["site_ref", "credit_account_count", "hold_count", "balance", "as_of"];
 const accountFields = ["credit_account_ref", "billing_account_ref", "unit", "state", "balance", "as_of"];
 const grantFields = ["credit_grant_id", "credit_account_ref", "source_type", "source_ref", "amount", "issued_at"];
-const holdFields = ["credit_hold_ref", "credit_account_ref", "execution_root_ref", "amount", "state", "updated_at"];
+const holdFields = ["credit_hold_ref", "credit_grant_id", "credit_account_ref", "execution_root_ref", "amount", "state", "updated_at"];
+const holdAllocationFields = ["credit_hold_ref", "credit_grant_id", "allocated_amount", "allocation_ordinal"];
 const journalTransactionFields = ["journal_transaction_ref", "credit_account_ref", "operation_kind", "occurred_at"];
 const journalEntryFields = ["journal_transaction_ref", "entry_ordinal", "credit_grant_id", "credit_hold_ref", "source_ref"];
-const ratedUsageFields = ["rated_usage_ref", "authorization_segment_ref", "attempt_ref", "amount", "created_at"];
+const ratedUsageFields = ["rated_usage_ref", "credit_grant_id", "authorization_segment_ref", "attempt_ref", "amount", "created_at"];
+const ratedUsageAllocationFields = ["rated_usage_ref", "settlement_ref", "credit_grant_id", "direction", "amount", "allocation_ordinal"];

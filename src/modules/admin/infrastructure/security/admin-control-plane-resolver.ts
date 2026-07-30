@@ -21,7 +21,9 @@ import type { VerifiedAdminOperatorContextResolver } from
   "../../../admin-control/interfaces/connect/admin-command-service.js";
 import {
   authorizeAdminOperation,
+  type AdminOperatorAuthority,
   type AuthenticatedAdminSession,
+  type AuthorizedAdminScope,
   type RequestedAdminScope,
 } from "../../domain/admin-authorization.js";
 import type { PostgresAdminSessionAuthenticator } from
@@ -331,24 +333,26 @@ export class AdminControlPlaneResolver implements
   ): Promise<AdminQueryPermit> {
     const authenticated = await this.authenticate(claimed, transport);
     const requested = scopeFromWire(claimed.scope);
+    const authorizedScopes: AuthorizedAdminScope[] = [];
     if (requested.kind === "site" && request.siteRef === null) {
       for (const siteRef of requested.siteRefs) {
-        this.authorizeScope(
+        authorizedScopes.push(this.authorizeScope(
           authenticated, requested, request.operation, permissionFor(request.operation),
           siteRef, [siteRef], request.fieldRefs, false,
-        );
+        ));
       }
     } else {
-      this.authorizeScope(
+      authorizedScopes.push(this.authorizeScope(
         authenticated, requested, request.operation, permissionFor(request.operation),
         request.siteRef, request.resourceRefs, request.fieldRefs, false,
-      );
+      ));
     }
     return Object.freeze({
       operatorRef: authenticated.session.operatorRef,
       environment: authenticated.session.environment,
       region: authenticated.session.region,
       operation: request.operation,
+      authorityBindingDigest: queryAuthorityBindingDigest(authenticated.authority, authorizedScopes),
       scope: queryScope(requested),
     });
   }
@@ -389,8 +393,8 @@ export class AdminControlPlaneResolver implements
     fieldRefs: readonly string[],
     mutation: boolean,
     authorityTargetOperatorRef?: string,
-  ): void {
-    authorizeAdminOperation({
+  ): AuthorizedAdminScope {
+    return authorizeAdminOperation({
       session: authenticated.session,
       authority: authenticated.authority,
       operation,
@@ -482,6 +486,23 @@ export class AdminControlPlaneResolver implements
   private now(): Date {
     return (this.dependencies.clock ?? (() => new Date()))();
   }
+}
+
+function queryAuthorityBindingDigest(
+  authority: AdminOperatorAuthority,
+  authorizedScopes: readonly AuthorizedAdminScope[],
+): string {
+  const scopes = authorizedScopes.map((scope) => scope.kind === "site"
+    ? { kind: scope.kind, ref: scope.siteRef, scopeEpoch: scope.scopeEpoch.toString() }
+    : { kind: scope.kind, ref: scope.grantRef, scopeEpoch: scope.scopeEpoch.toString() })
+    .sort((left, right) => `${left.kind}\0${left.ref}`.localeCompare(`${right.kind}\0${right.ref}`));
+  return createHash("sha256").update("kokoro.admin-query-authority-binding.v1").update("\0")
+    .update(JSON.stringify({
+      operatorGeneration: authority.operatorGeneration.toString(),
+      operatorSecurityEpoch: authority.operatorSecurityEpoch.toString(),
+      authorizationEpoch: authority.authorizationEpoch.toString(),
+      scopes,
+    })).digest("hex");
 }
 
 function bearerCredential(transport: HandlerContext): string {

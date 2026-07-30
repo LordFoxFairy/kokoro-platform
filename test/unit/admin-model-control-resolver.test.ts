@@ -9,6 +9,7 @@ import {
 } from
   "../../src/interfaces/connect/generated-model-control/kokoro/common/v2/command_envelope_pb.js";
 import {
+  AuthenticatedOperatorQueryContextSchema,
   AuthenticatedOperatorCommandContextSchema,
   GlobalScopeSchema,
   OperatorScopeSchema,
@@ -17,6 +18,8 @@ import {
 } from
   "../../src/interfaces/connect/generated-model-control/kokoro/platform/admin/v2/admin_shared_pb.js";
 import type { AuthenticatedAdminSession } from
+  "../../src/modules/admin/domain/admin-authorization.js";
+import type { AdminOperatorAuthority } from
   "../../src/modules/admin/domain/admin-authorization.js";
 import {
   AdminControlPlaneResolver,
@@ -89,6 +92,41 @@ describe("Admin ModelControl resolver", () => {
       },
     )).rejects.toThrow("MODEL_CONTROL_SCOPE_KIND_INVALID");
   });
+
+  it("derives query cursor authority binding only from verified generation and authority epochs", async () => {
+    const resolveWith = (facts: Readonly<{ session: AuthenticatedAdminSession;
+      authority: AdminOperatorAuthority }>, claimedSiteEpoch = 999n) => new AdminControlPlaneResolver({
+      peer: () => peer,
+      authenticator: { authenticate: vi.fn(async () => facts) } as never,
+      clock: () => new Date(now),
+    }).resolve(queryContext(claimedSiteEpoch, facts.session), transport, { operation: "credit.grant.read",
+      siteRef: "site:alpha", resourceRefs: ["site:alpha"], fieldRefs: [] });
+
+    const first = await resolveWith(authenticated);
+    const untrustedClaimChanged = await resolveWith(authenticated, 1000n);
+    const nextGenerationSession = Object.freeze({ ...session, operatorGeneration: 3n });
+    const generationChanged = await resolveWith(Object.freeze({
+      session: nextGenerationSession,
+      authority: Object.freeze({ ...authenticated.authority, operatorGeneration: 3n }),
+    }));
+    const nextSecuritySession = Object.freeze({ ...session, operatorSecurityEpoch: 4n });
+    const securityChanged = await resolveWith(Object.freeze({
+      session: nextSecuritySession,
+      authority: Object.freeze({ ...authenticated.authority, operatorSecurityEpoch: 4n }),
+    }));
+    const authorizationChanged = await resolveWith(Object.freeze({ ...authenticated,
+      authority: Object.freeze({ ...authenticated.authority, authorizationEpoch: 12n }) }));
+    const scopeChanged = await resolveWith(Object.freeze({ ...authenticated,
+      authority: Object.freeze({ ...authenticated.authority,
+        siteScopes: Object.freeze([{ ...authenticated.authority.siteScopes[0]!, scopeEpoch: 8n }]) }) }));
+
+    expect(first.authorityBindingDigest).toMatch(/^[a-f0-9]{64}$/u);
+    expect(untrustedClaimChanged.authorityBindingDigest).toBe(first.authorityBindingDigest);
+    expect(generationChanged.authorityBindingDigest).not.toBe(first.authorityBindingDigest);
+    expect(securityChanged.authorityBindingDigest).not.toBe(first.authorityBindingDigest);
+    expect(authorizationChanged.authorityBindingDigest).not.toBe(first.authorityBindingDigest);
+    expect(scopeChanged.authorityBindingDigest).not.toBe(first.authorityBindingDigest);
+  });
 });
 
 const now = "2026-07-29T12:00:00.000Z";
@@ -117,6 +155,7 @@ const authenticated = Object.freeze({
     operatorRef: session.operatorRef,
     operatorGeneration: session.operatorGeneration,
     operatorSecurityEpoch: session.operatorSecurityEpoch,
+    authorizationEpoch: 11n,
     state: "active" as const,
     permissions: Object.freeze([
       "model.inventory.import",
@@ -124,6 +163,7 @@ const authenticated = Object.freeze({
       "model.site-policy.change",
       "model.option.materialize",
       "model.site-release-catalog.publish",
+      "credit.grant.read",
     ]),
     expiresAt: "2026-07-29T13:00:00.000Z",
     siteScopes: Object.freeze([{
@@ -155,8 +195,8 @@ const transport = {
   requestHeader: new Headers({ authorization: `Bearer ${"x".repeat(32)}` }),
 } as HandlerContext;
 
-function commandContext(scope: "global" | "site") {
-  const attestation = operatorAttestation(session);
+function commandContext(scope: "global" | "site", activeSession = session) {
+  const attestation = operatorAttestation(activeSession);
   return create(AuthenticatedOperatorCommandContextSchema, {
     command: create(CommandIdentityV2Schema, {
       commandId: "018f1212-1212-7212-8212-121212121212",
@@ -164,37 +204,64 @@ function commandContext(scope: "global" | "site") {
       digestAlgorithm: CommandDigestAlgorithmV2.SHA256_COMMAND_ENVELOPE,
       requestDigest: "a".repeat(64),
     }),
-    actorRef: session.operatorRef,
-    operatorGeneration: session.operatorGeneration,
-    operatorSessionRef: session.sessionRef,
-    environment: session.environment,
-    region: session.region,
-    managedDeviceRef: session.managedDeviceRef,
+    actorRef: activeSession.operatorRef,
+    operatorGeneration: activeSession.operatorGeneration,
+    operatorSessionRef: activeSession.sessionRef,
+    environment: activeSession.environment,
+    region: activeSession.region,
+    managedDeviceRef: activeSession.managedDeviceRef,
     assuranceLevel: OperatorAssuranceLevel.PHISHING_RESISTANT,
-    factorClasses: [...session.factorClasses],
-    authenticatedAt: timestampFromDate(new Date(session.authenticatedAt)),
-    stepUpAt: timestampFromDate(new Date(session.stepUpAt!)),
+    factorClasses: [...activeSession.factorClasses],
+    authenticatedAt: timestampFromDate(new Date(activeSession.authenticatedAt)),
+    stepUpAt: timestampFromDate(new Date(activeSession.stepUpAt!)),
     operatorAttestationRef: attestation.ref,
     operatorAttestationDigest: attestation.digest,
     securityEpochs: create(SecurityEpochsSchema, {
-      operatorSecurityEpoch: session.operatorSecurityEpoch,
-      sessionEpoch: session.sessionEpoch,
-      restrictionEpoch: session.restrictionEpoch,
-      policyEpoch: session.policyEpoch,
+      operatorSecurityEpoch: activeSession.operatorSecurityEpoch,
+      sessionEpoch: activeSession.sessionEpoch,
+      restrictionEpoch: activeSession.restrictionEpoch,
+      policyEpoch: activeSession.policyEpoch,
       ...(scope === "site" ? { siteSecurityEpoch: 7n } : {}),
     }),
     scope: create(OperatorScopeSchema, {
       kind: scope === "site"
         ? { case: "site", value: create(SiteScopeSchema, {
             siteIds: ["site:alpha"],
-            environment: session.environment,
-            region: session.region,
+            environment: activeSession.environment,
+            region: activeSession.region,
           }) }
         : { case: "global", value: create(GlobalScopeSchema, {
             grantId: "grant:global",
-            environment: session.environment,
-            region: session.region,
+            environment: activeSession.environment,
+            region: activeSession.region,
           }) },
+    }),
+  });
+}
+
+function queryContext(siteSecurityEpoch: bigint, activeSession = session) {
+  const command = commandContext("site", activeSession);
+  return create(AuthenticatedOperatorQueryContextSchema, {
+    requestId: "request-001",
+    actorRef: command.actorRef,
+    operatorGeneration: command.operatorGeneration,
+    operatorSessionRef: command.operatorSessionRef,
+    environment: command.environment,
+    region: command.region,
+    managedDeviceRef: command.managedDeviceRef,
+    assuranceLevel: command.assuranceLevel,
+    factorClasses: [...command.factorClasses],
+    authenticatedAt: command.authenticatedAt,
+    stepUpAt: command.stepUpAt,
+    operatorAttestationRef: command.operatorAttestationRef,
+    operatorAttestationDigest: command.operatorAttestationDigest,
+    scope: command.scope,
+    securityEpochs: create(SecurityEpochsSchema, {
+      operatorSecurityEpoch: activeSession.operatorSecurityEpoch,
+      sessionEpoch: activeSession.sessionEpoch,
+      restrictionEpoch: activeSession.restrictionEpoch,
+      policyEpoch: activeSession.policyEpoch,
+      siteSecurityEpoch,
     }),
   });
 }
