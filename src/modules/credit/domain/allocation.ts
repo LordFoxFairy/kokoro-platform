@@ -129,6 +129,83 @@ export function reconcileUnknownAuthorizationSegment(
   });
 }
 
+export function markAuthorizationSegmentRatingPending(
+  segment: AuthorizationSegmentState,
+  closureRef: string,
+): AuthorizationSegmentState {
+  if (segment.state !== "committed") throw new Error("CREDIT_SEGMENT_NOT_RATABLE");
+  text(closureRef, "CREDIT_USAGE_CLOSURE_REFERENCE_INVALID");
+  return Object.freeze({
+    ...segment,
+    state: "rating_pending" as const,
+    aggregateVersion: segment.aggregateVersion + 1n,
+    fenceEpoch: segment.fenceEpoch + 1n,
+  });
+}
+
+export function settleAuthorizationSegment(input: Readonly<{
+  allocation: BudgetAllocationRevision;
+  segment: AuthorizationSegmentState;
+  ratedAmount: bigint;
+  settlementRef: string;
+  settledAt: string;
+}>): Readonly<{ allocation: BudgetAllocationRevision; segment: AuthorizationSegmentState }> {
+  const { allocation, segment } = input;
+  assertConserved(allocation);
+  if (segment.state !== "rating_pending" && segment.state !== "reconciliation_required") {
+    throw new Error("CREDIT_SEGMENT_NOT_SETTLEABLE");
+  }
+  if (segment.allocationEpoch !== allocation.allocationEpoch) {
+    throw new Error("CREDIT_SEGMENT_ALLOCATION_EPOCH_STALE");
+  }
+  if (input.ratedAmount < 0n || input.ratedAmount > segment.maximumAmount) {
+    throw new Error("CREDIT_SETTLEMENT_AMOUNT_EXCEEDS_SEGMENT");
+  }
+  if (segment.maximumAmount > allocation.committedStock) {
+    throw new Error("CREDIT_SETTLEMENT_COMMITTED_STOCK_INVALID");
+  }
+  const nextAllocation = Object.freeze({
+    ...allocation,
+    revision: allocation.revision + 1n,
+    unassignedStock: allocation.unassignedStock + segment.maximumAmount - input.ratedAmount,
+    committedStock: allocation.committedStock - segment.maximumAmount,
+    capturedCumulative: allocation.capturedCumulative + input.ratedAmount,
+  });
+  const nextSegment = Object.freeze({
+    ...segment,
+    state: "settled" as const,
+    resolutionKind: segment.state === "reconciliation_required" ? "reconciled" as const : "rated" as const,
+    resolutionRef: text(input.settlementRef, "CREDIT_SETTLEMENT_REFERENCE_INVALID"),
+    aggregateVersion: segment.aggregateVersion + 1n,
+    fenceEpoch: segment.fenceEpoch + 1n,
+    settledAt: instant(input.settledAt),
+  });
+  assertConserved(nextAllocation);
+  return Object.freeze({ allocation: nextAllocation, segment: nextSegment });
+}
+
+export function correctSettledAuthorizationSegmentAllocation(
+  allocation: BudgetAllocationRevision,
+  customerAmountDelta: bigint,
+): BudgetAllocationRevision {
+  assertConserved(allocation);
+  if (allocation.state !== "active" && allocation.state !== "reconciliation_required") {
+    throw new Error("CREDIT_SETTLEMENT_CORRECTION_ALLOCATION_NOT_OPEN");
+  }
+  if (customerAmountDelta > allocation.unassignedStock ||
+      -customerAmountDelta > allocation.capturedCumulative) {
+    throw new Error("CREDIT_SETTLEMENT_CORRECTION_CAPACITY_INVALID");
+  }
+  const next = Object.freeze({
+    ...allocation,
+    revision: allocation.revision + 1n,
+    unassignedStock: allocation.unassignedStock - customerAmountDelta,
+    capturedCumulative: allocation.capturedCumulative + customerAmountDelta,
+  });
+  assertConserved(next);
+  return next;
+}
+
 export function assertConserved(revision: BudgetAllocationRevision): void {
   const terms = [
     revision.creditCeiling,
