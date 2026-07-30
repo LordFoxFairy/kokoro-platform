@@ -149,11 +149,24 @@ export class PostgresAdminQueryReader implements AdminQueryReader {
       throw new Error("ADMIN_OPERATOR_SELF_SCOPE_DENIED");
     }
     return this.host.adminQueryTransaction(permit, async (ownerTransaction) => {
+      const values: unknown[] = [operatorRef, permit.environment, permit.region];
+      let scope = "TRUE";
+      if (permit.operation !== "admin.operator.self.read" && permit.scope.kind === "site") {
+        scope = `EXISTS (SELECT 1 FROM platform.admin_operator_site_scope visible_scope
+          WHERE visible_scope.operator_ref=authority.operator_ref
+            AND visible_scope.operator_generation=authority.operator_generation
+            AND visible_scope.site_ref=ANY($4::text[]) AND visible_scope.state='active'
+            AND visible_scope.expires_at>clock_timestamp())`;
+        values.push([...permit.scope.siteRefs]);
+      } else if (permit.operation !== "admin.operator.self.read" && permit.scope.kind === "breakglass") {
+        scope = "authority.operator_ref=ANY($4::text[])";
+        values.push([...permit.scope.resourceRefs]);
+      }
       const rows = await resolvePlatformTransaction(ownerTransaction).query<OperatorRow>(
         `${operatorProjection()}
-         WHERE authority.operator_ref=$1
+         WHERE authority.operator_ref=$1 AND ${scope}
          ORDER BY authority.operator_generation DESC LIMIT 1`,
-        [operatorRef, permit.environment, permit.region],
+        values,
       );
       return rows[0] === undefined ? null : operator(rows[0]);
     });
@@ -164,14 +177,27 @@ export class PostgresAdminQueryReader implements AdminQueryReader {
     page: Readonly<{ afterOperatorRef: string | null; limit: number }>,
   ) {
     return this.host.adminQueryTransaction(permit, async (ownerTransaction) => {
+      const values: unknown[] = [page.afterOperatorRef ?? "", permit.environment, permit.region, page.limit];
+      let scope = "TRUE";
+      if (permit.scope.kind === "site") {
+        scope = `EXISTS (SELECT 1 FROM platform.admin_operator_site_scope visible_scope
+          WHERE visible_scope.operator_ref=admin_operator_authority.operator_ref
+            AND visible_scope.operator_generation=admin_operator_authority.operator_generation
+            AND visible_scope.site_ref=ANY($5::text[]) AND visible_scope.state='active'
+            AND visible_scope.expires_at>clock_timestamp())`;
+        values.push([...permit.scope.siteRefs]);
+      } else if (permit.scope.kind === "breakglass") {
+        scope = "operator_ref=ANY($5::text[])";
+        values.push([...permit.scope.resourceRefs]);
+      }
       const rows = await resolvePlatformTransaction(ownerTransaction).query<OperatorRow>(
         `WITH latest AS (
            SELECT DISTINCT ON (operator_ref) * FROM platform.admin_operator_authority
-           WHERE operator_ref>$1 ORDER BY operator_ref,operator_generation DESC
+           WHERE operator_ref>$1 AND ${scope} ORDER BY operator_ref,operator_generation DESC
          )
          ${operatorProjection("latest")}
          ORDER BY authority.operator_ref ASC LIMIT $4`,
-        [page.afterOperatorRef ?? "", permit.environment, permit.region, page.limit],
+        values,
       );
       return Object.freeze(rows.map(operator));
     });
