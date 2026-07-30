@@ -17,7 +17,11 @@ finalize the Site as suspended or decommissioned. Ambiguous effects remain recon
 provider observation of stopped traffic is success. Resume is the sole direct lifecycle command.
 
 The domain layer is transport- and database-independent. Application, PostgreSQL and Admin/worker
-adapters must preserve these transitions in one owner transaction with receipt, audit and outbox.
+adapters preserve authority transitions and command receipts in one owner transaction. Only
+`site.activation.begin.v1` and `site.traffic-stop.request.v1` cross that transaction through
+`SiteEffectQueuePort`, because they trigger real provider effects. Registration, release publication,
+observations, commits, drain completion and resume are already authoritative local facts and never become
+generic outbox events. The Site worker claims the exact two-type allowlist and dead-letters any unknown type.
 
 Fresh Site creation and immutable SiteRelease publication are exposed only by the typed
 `SiteProvisioningService` on the Admin mTLS listener. Registration requires a Platform-global grant because

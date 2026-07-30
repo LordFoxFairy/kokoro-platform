@@ -17,6 +17,14 @@ type CommerceFulfillmentEvent = Readonly<{
   redeemedAt: string;
 }>;
 
+export const COMMERCE_OUTBOX_EVENT_TYPES = Object.freeze([
+  "commerce.redemption.fulfilled.v1",
+  "credit.reserve_root.v1",
+  "credit.finalize_segment.v1",
+  "credit.release_segment.v1",
+  "credit.reconcile_segment.v1",
+] as const);
+
 export interface CommerceOutboxProjection {
   assertDeliverable(transaction: PlatformTransaction, event: ClaimedOutboxEvent): Promise<void>;
 }
@@ -163,6 +171,7 @@ export function createCommerceOutboxReconciliationCycle(input: Readonly<{
     const events = await input.database.internalTransaction("commerce.outbox.reconcile", (transaction) =>
       outbox.claim(transaction, {
         workerId: input.workerId, leaseToken: leaseToken(), consumer: "commerce-worker",
+        eventTypes: COMMERCE_OUTBOX_EVENT_TYPES,
         limit: batchSize, leaseSeconds,
       }));
     for (const event of events) {

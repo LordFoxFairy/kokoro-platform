@@ -1,4 +1,3 @@
-import type { OutboxEvent } from "../../../../shared/outbox-inbox/outbox.js";
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
 import type { AssetPromotionIntent, TrustedBlobObservation } from "../../domain/promotion-intent.js";
 import type { AssetCleanupGroupPlan } from "./asset-cleanup-worker-ports.js";
@@ -31,7 +30,6 @@ export interface AssetPromotionWorkerRepositoryPort {
       referenceRef: string;
       eligibilityRef: string;
       cleanupPlan: AssetCleanupGroupPlan;
-      readyEvent: OutboxEvent;
       completedAt: string;
     }>,
   ): Promise<"committed" | "superseded">;

@@ -42,6 +42,19 @@ CREATE TABLE platform.outbox_event (
   consumer_acknowledged_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (
+    (owner='identity' AND event_type IN (
+      'identity.verification.delivery.requested','identity.namespace.allocation.requested'
+    ))
+    OR (owner='commerce' AND event_type IN ('commerce.redemption.fulfilled.v1'))
+    OR (owner='credit' AND event_type IN (
+      'credit.reserve_root.v1','credit.finalize_segment.v1',
+      'credit.release_segment.v1','credit.reconcile_segment.v1'
+    ))
+    OR (owner='site' AND event_type IN ('site.activation.begin.v1','site.traffic-stop.request.v1'))
+    OR (owner='asset' AND event_type IN ('asset.upload.completion.requested','asset.scan.requested','asset.blob.promotion.requested','asset.object.cleanup.requested'))
+    OR (owner='admin-execution' AND event_type IN ('admin.approval.execution.requested'))
+  ),
   CHECK ((state = 'leased') = (lease_owner IS NOT NULL AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL)),
   CHECK ((state = 'delivered') = (consumer_delivery_id IS NOT NULL AND consumer_acknowledged_at IS NOT NULL))
 );

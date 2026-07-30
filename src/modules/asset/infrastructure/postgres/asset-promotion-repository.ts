@@ -1,5 +1,3 @@
-import { assertDigest } from "../../../../shared/outbox-inbox/receipt.js";
-import type { OutboxEvent } from "../../../../shared/outbox-inbox/outbox.js";
 import { resolvePlatformTransaction, type PlatformSqlTransaction } from
   "../../../../shared/unit-of-work/platform-transaction.js";
 import type { AssetPromotionWorkerRepositoryPort } from
@@ -288,7 +286,6 @@ async function insertReadyFacts(
     sourceRef: value.promotionRef,
     reasonCode: "ASSET_PROMOTED_QUARANTINE_CLEANUP",
   }, input.cleanupPlan);
-  await enqueue(sql, input.readyEvent);
 }
 
 function assertSuccessfulPromotionCleanupPlan(
@@ -360,15 +357,6 @@ async function lockCurrentPromotionAuthority(
     [value.siteRef, value.intentRef, value.subjectRef, value.subjectGeneration, value.projectRef],
   );
   if (!rows[0]?.allowed) throw new Error("ASSET_PROMOTION_AUTHORITY_STALE");
-}
-
-async function enqueue(sql: PlatformSqlTransaction, event: OutboxEvent): Promise<void> {
-  assertDigest(event.payloadDigest);
-  await exactlyOne(sql, `INSERT INTO platform.outbox_event
-    (event_id,owner,event_type,aggregate_id,payload,payload_digest,correlation_id,causation_id)
-    VALUES ($1::uuid,$2,$3,$4,$5::jsonb,$6,$7,$8)`,
-  [event.eventId, event.owner, event.eventType, event.aggregateId, JSON.stringify(event.payload),
-    event.payloadDigest, event.correlationId, event.causationId], "ASSET_OUTBOX_EVENT_NOT_PERSISTED");
 }
 
 async function exactlyOne(

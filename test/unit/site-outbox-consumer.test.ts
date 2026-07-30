@@ -4,6 +4,8 @@ import {
   SiteRuntimePendingError,
 } from "../../src/modules/site/application/services/site-runtime-dispatcher.js";
 import {
+  createPostgresSiteRuntimeEventQueue,
+  SITE_EFFECT_EVENT_TYPES,
   SiteOutboxConsumer,
   type SiteRuntimeEventQueue,
 } from "../../src/modules/site/infrastructure/postgres/site-outbox-consumer.js";
@@ -43,6 +45,40 @@ describe("SiteOutboxConsumer", () => {
     });
     await consumer.runOneCycle({ signal: new AbortController().signal });
     expect(calls).toContain("retry:event_01:lease_01:SITE_OUTBOX_PAYLOAD_INVALID:null:12");
+  });
+
+  it("dead-letters an unknown Site event instead of silently acknowledging it", async () => {
+    const calls: string[] = [];
+    const queue = fakeQueue(outbox("site.register.v1", {
+      attemptRef: "site_01", state: "registered",
+    }), calls);
+    const consumer = new SiteOutboxConsumer(queue, {
+      runActivation: async () => { throw new Error("unexpected"); },
+      runTrafficStop: async () => { throw new Error("unexpected"); },
+    });
+    await consumer.runOneCycle({ signal: new AbortController().signal });
+    expect(calls).toContain("retry:event_01:lease_01:SITE_OUTBOX_EVENT_UNSUPPORTED:null:12");
+    expect(calls).not.toContain("ack:event_01:lease_01");
+  });
+
+  it("claims only the two Site provider-effect event types", async () => {
+    let claimInput: unknown;
+    const transaction = Object.freeze({});
+    const queue = createPostgresSiteRuntimeEventQueue({
+      internalTransaction: async (_operation: string, work: (value: unknown) => Promise<unknown>) =>
+        work(transaction),
+    } as never, { workerId: "site-worker-01" }, {
+      claim: async (_current: unknown, input: unknown) => { claimInput = input; return []; },
+    } as never);
+    await queue.claim();
+    expect(claimInput).toMatchObject({
+      consumer: "site-worker",
+      eventTypes: SITE_EFFECT_EVENT_TYPES,
+    });
+    expect(SITE_EFFECT_EVENT_TYPES).toEqual([
+      "site.activation.begin.v1",
+      "site.traffic-stop.request.v1",
+    ]);
   });
 });
 

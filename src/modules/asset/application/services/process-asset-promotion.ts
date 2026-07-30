@@ -109,10 +109,6 @@ export class ProcessAssetPromotionService {
     const receiptRef = this.reference();
     const referenceRef = this.reference();
     const eligibilityRef = this.reference();
-    const readyEvent = eventEnvelope(input, "asset.version.ready", promotion.assetVersionRef,
-      json({ kind: "asset_version_ready_v1", siteRef: promotion.siteRef,
-        assetRef: promotion.assetRef, assetVersionRef: promotion.assetVersionRef,
-        eligibilityRef }), this.reference());
     const cleanupGroupRef = this.reference();
     const cleanupRef = this.reference();
     const cleanupEvent = cleanupEventEnvelope(input, cleanupRef, this.reference());
@@ -134,7 +130,6 @@ export class ProcessAssetPromotionService {
             cleanupEvent,
           })]),
         }),
-        readyEvent,
         completedAt: this.now(),
       }));
     return finalized === "superseded"

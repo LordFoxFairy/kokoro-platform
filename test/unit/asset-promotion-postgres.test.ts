@@ -59,10 +59,6 @@ describe("PostgresAssetPromotionRepository", () => {
         receiptRef: "promotion_receipt_01", referenceRef: "asset_reference_01",
         eligibilityRef: "asset_eligibility_01",
         cleanupPlan: promotionCleanupPlan,
-        readyEvent: { eventId: "0198577b-4a7c-7abc-8abc-0123456789ab", owner: "asset",
-          eventType: "asset.version.ready", aggregateId: "asset_version_01",
-          payload: { kind: "asset_version_ready_v1" }, payloadDigest: "e".repeat(64),
-          correlationId: "correlation_01", causationId: "promotion_event_01" },
         completedAt: "2026-07-28T12:02:06.000Z",
       })).resolves.toBe("committed");
       const required = [
@@ -83,6 +79,8 @@ describe("PostgresAssetPromotionRepository", () => {
       for (const fragment of required) {
         expect(statements.some((value) => value.includes(fragment)), fragment).toBe(true);
       }
+      expect(statements.filter((value) => value.includes("INSERT INTO platform.outbox_event")))
+        .toHaveLength(1);
       expect(statements.at(-1)).toContain("asset_promotion_intent");
       expect(statements.at(-1)).toContain("state='completed'");
     } finally {

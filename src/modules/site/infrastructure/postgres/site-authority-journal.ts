@@ -3,6 +3,8 @@ import type {
   SiteAuthorityCommand,
   SiteAuthorityJournal,
   SiteAuthorityReceipt,
+  SiteEffectEventType,
+  SiteEffectQueuePort,
 } from "../../application/contracts/site-authority-ports.js";
 import { OutboxRepository } from "../../../../shared/outbox-inbox/outbox.js";
 import {
@@ -16,7 +18,7 @@ export class PostgresSiteAuthorityJournal implements SiteAuthorityJournal {
   constructor(
     private readonly receipts: Pick<CommandReceiptRepository, "begin" | "recordOutcome"> =
       new CommandReceiptRepository(),
-    private readonly outbox: Pick<OutboxRepository, "enqueue"> = new OutboxRepository(),
+    private readonly effectQueue: SiteEffectQueuePort = new OutboxRepository(),
   ) {}
 
   async begin(
@@ -36,11 +38,12 @@ export class PostgresSiteAuthorityJournal implements SiteAuthorityJournal {
   ): Promise<void> {
     const payload = jsonValue({ ...receipt, replayed: undefined });
     const payloadDigest = digest(payload);
-    if (!receipt.replayed) {
-      await this.outbox.enqueue(transaction, {
+    const eventType = siteEffectEventType(command.operation);
+    if (!receipt.replayed && eventType !== null) {
+      await this.effectQueue.enqueue(transaction, {
         eventId: eventId(command.commandId),
         owner: "site",
-        eventType: `${command.operation}.v1`,
+        eventType,
         aggregateId: command.siteRef,
         payload,
         payloadDigest,
@@ -54,6 +57,12 @@ export class PostgresSiteAuthorityJournal implements SiteAuthorityJournal {
       resultDigest: payloadDigest,
     });
   }
+}
+
+function siteEffectEventType(operation: string): SiteEffectEventType | null {
+  if (operation === "site.activation.begin") return "site.activation.begin.v1";
+  if (operation === "site.traffic-stop.request") return "site.traffic-stop.request.v1";
+  return null;
 }
 
 function identity(command: SiteAuthorityCommand): CommandIdentity {

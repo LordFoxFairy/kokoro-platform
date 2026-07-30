@@ -306,6 +306,44 @@ describe("Postgres Site authority", () => {
       expect(calls.every(({ transaction }) => transaction === lease.transaction)).toBe(true);
       expect(calls[1]?.value).toMatchObject({ owner: "site", eventType: "site.activation.begin.v1",
         aggregateId: "site_01", correlationId: "correlation-01", causationId: "request-01" });
+      calls.length = 0;
+      await journal.succeed(lease.transaction, {
+        ...command,
+        commandId: "01983f57-8cf1-7000-8000-000000000003",
+        idempotencyKey: "traffic-stop-command-01",
+        operation: "site.traffic-stop.request",
+      }, { attemptRef: "traffic_stop_01", state: "requested", replayed: false }, {
+        requestId: "request-03", correlationId: "correlation-03",
+      } as never);
+      expect(calls.map(({ kind }) => kind)).toEqual(["outbox", "outcome"]);
+      expect(calls[0]?.value).toMatchObject({ owner: "site",
+        eventType: "site.traffic-stop.request.v1", aggregateId: "site_01" });
+    } finally { revokePlatformTransaction(lease); }
+  });
+
+  it("records local Site facts without manufacturing provider-effect events", async () => {
+    const calls: string[] = [];
+    const journal = new PostgresSiteAuthorityJournal({
+      begin: async (_transaction, value) => ({ ...value, state: "pending", result: null,
+        resultDigest: null }),
+      recordOutcome: async (_transaction, _identity, value) => {
+        calls.push("outcome");
+        return value as never;
+      },
+    }, {
+      enqueue: async () => { calls.push("outbox"); },
+    });
+    const lease = issuePlatformTransaction({ query: async () => [], execute: async () => 0 });
+    try {
+      await journal.succeed(lease.transaction, {
+        commandId: "01983f57-8cf1-7000-8000-000000000002",
+        idempotencyKey: "site-register-command-01", operation: "site.register",
+        siteRef: "site_01", callerIdentity: "admin-01", environment: "production",
+        region: "us-east-1", requestDigest: "e".repeat(64),
+      }, { siteRef: "site_01", state: "registered", replayed: false }, {
+        requestId: "request-02", correlationId: "correlation-02",
+      } as never);
+      expect(calls).toEqual(["outcome"]);
     } finally { revokePlatformTransaction(lease); }
   });
 });

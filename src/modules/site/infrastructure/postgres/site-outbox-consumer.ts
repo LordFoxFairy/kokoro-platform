@@ -9,6 +9,11 @@ import {
   SiteRuntimePendingError,
   type SiteRuntimeDispatcher,
 } from "../../application/services/site-runtime-dispatcher.js";
+import { SITE_EFFECT_EVENT_TYPES } from
+  "../../application/contracts/site-authority-ports.js";
+
+export { SITE_EFFECT_EVENT_TYPES } from
+  "../../application/contracts/site-authority-ports.js";
 
 export interface SiteRuntimeEventQueue {
   claim(): Promise<readonly ClaimedOutboxEvent[]>;
@@ -82,8 +87,9 @@ export class SiteOutboxConsumer {
     }
     if (event.eventType === "site.traffic-stop.request.v1") {
       await this.dispatcher.runTrafficStop(attemptRef(event.payload), signal);
+      return;
     }
-    // All other Site events are durable facts for downstream consumers, not provider effects.
+    throw new Error("SITE_OUTBOX_EVENT_UNSUPPORTED");
   }
 
   private retryAt(attempt: number): string {
@@ -105,6 +111,7 @@ export function createPostgresSiteRuntimeEventQueue(
       workerId: options.workerId,
       leaseToken: randomUUID(),
       consumer: "site-worker",
+      eventTypes: SITE_EFFECT_EVENT_TYPES,
       limit: claimLimit,
       leaseSeconds,
     })),

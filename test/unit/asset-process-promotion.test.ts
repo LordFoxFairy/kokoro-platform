@@ -36,7 +36,6 @@ describe("ProcessAssetPromotionService", () => {
     expect(harness.finalizePromotion).toHaveBeenCalledWith(transaction, expect.objectContaining({
       expectedPromotionVersion: 1n,
       observation: expect.objectContaining({ providerVersionRef: "trusted_version_01" }),
-      readyEvent: expect.objectContaining({ eventType: "asset.version.ready" }),
       receiptRef: "promotion_receipt_01",
       referenceRef: "asset_reference_01",
       eligibilityRef: "asset_eligibility_01",
@@ -110,7 +109,7 @@ function fixture(input: Readonly<{
   const references = input.observation === "mismatch"
     ? ["cleanup_group_01", "cleanup_trusted_01", "trusted_cleanup_event_01",
       "cleanup_quarantine_01", "quarantine_cleanup_event_01", "rejection_01"]
-    : ["promotion_receipt_01", "asset_reference_01", "asset_eligibility_01", "ready_event_01",
+    : ["promotion_receipt_01", "asset_reference_01", "asset_eligibility_01",
       "cleanup_group_01", "cleanup_quarantine_01", "quarantine_cleanup_event_01"];
   const service = new ProcessAssetPromotionService({
     unitOfWork: { execute: async (_scope, work) => work(transaction) },

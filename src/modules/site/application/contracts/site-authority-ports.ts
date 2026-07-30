@@ -1,4 +1,5 @@
 import type { VerifiedRequestSecurityContext } from "../../../../shared/security-context/index.js";
+import type { OutboxEvent } from "../../../../shared/outbox-inbox/outbox.js";
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
 import type {
   ActivationAttempt,
@@ -91,4 +92,20 @@ export interface SiteAuthorityJournal {
     receipt: SiteAuthorityReceipt,
     context: VerifiedRequestSecurityContext,
   ): Promise<void>;
+}
+
+export const SITE_EFFECT_EVENT_TYPES = Object.freeze([
+  "site.activation.begin.v1",
+  "site.traffic-stop.request.v1",
+] as const);
+
+export type SiteEffectEventType = (typeof SITE_EFFECT_EVENT_TYPES)[number];
+
+export type SiteEffectQueueEntry = OutboxEvent & Readonly<{
+  owner: "site";
+  eventType: SiteEffectEventType;
+}>;
+
+export interface SiteEffectQueuePort {
+  enqueue(transaction: PlatformTransaction, event: SiteEffectQueueEntry): Promise<void>;
 }

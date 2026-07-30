@@ -6,6 +6,10 @@ import type { JsonValue } from "../../../shared/outbox-inbox/receipt.js";
 import type { PlatformTransaction } from "../../../shared/unit-of-work/index.js";
 import { digestAdminValue } from "./admin-digest.js";
 
+export const ADMIN_EXECUTION_EVENT_TYPES = Object.freeze([
+  "admin.approval.execution.requested",
+] as const);
+
 interface AdminExecutionTransactionFence {
   readonly operation: string;
   readonly siteRef: string | null;
@@ -71,6 +75,7 @@ export function createAdminExecutionCycle(input: Readonly<{
         workerId: input.workerId,
         leaseToken,
         consumer: "admin-worker",
+        eventTypes: ADMIN_EXECUTION_EVENT_TYPES,
         limit,
         leaseSeconds,
       }));

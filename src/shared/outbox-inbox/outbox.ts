@@ -2,16 +2,22 @@ import type { PlatformTransaction } from "../unit-of-work/platform-transaction.j
 import { resolvePlatformTransaction } from "../unit-of-work/platform-transaction.js";
 import { assertDigest, type JsonValue } from "./receipt.js";
 import {
-  assertOutboxOwner,
+  assertOutboxConsumerEventTypes,
+  assertOutboxEventRoute,
   outboxOwnersForConsumer,
   type OutboxConsumer,
+  type OutboxEventType,
   type OutboxOwner,
 } from "./outbox-owner-registry.js";
 
 export {
   OUTBOX_OWNER_CONSUMER_REGISTRY,
+  OUTBOX_ROUTE_CATALOG,
+  assertOutboxEventRoute,
+  outboxEventTypesForConsumer,
   outboxOwnersForConsumer,
   type OutboxConsumer,
+  type OutboxEventType,
   type OutboxOwner,
 } from "./outbox-owner-registry.js";
 
@@ -38,7 +44,7 @@ export interface OutboxDeliveryAcknowledgement {
 
 export class OutboxRepository {
   async enqueue(transaction: PlatformTransaction, event: OutboxEvent): Promise<void> {
-    assertOutboxOwner(event.owner);
+    assertOutboxEventRoute(event.owner, event.eventType);
     assertDigest(event.payloadDigest);
     const sql = resolvePlatformTransaction(transaction);
     const existing = await sql.query<{ payloadDigest: string }>(
@@ -67,7 +73,7 @@ export class OutboxRepository {
   async claim(
     transaction: PlatformTransaction,
     input: { readonly workerId: string; readonly leaseToken: string;
-      readonly consumer: OutboxConsumer; readonly eventTypes?: readonly string[];
+      readonly consumer: OutboxConsumer; readonly eventTypes: readonly OutboxEventType[];
       readonly limit: number; readonly leaseSeconds: number },
   ): Promise<readonly ClaimedOutboxEvent[]> {
     if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 100) throw new Error("OUTBOX_CLAIM_LIMIT_INVALID");
@@ -75,18 +81,9 @@ export class OutboxRepository {
     assertBoundedIdentifier(input.workerId, "OUTBOX_WORKER_ID_INVALID");
     assertBoundedIdentifier(input.leaseToken, "OUTBOX_LEASE_TOKEN_INVALID");
     const owners = outboxOwnersForConsumer(input.consumer);
-    if (input.eventTypes !== undefined) {
-      if (input.eventTypes.length === 0 || input.eventTypes.length > 64 ||
-          new Set(input.eventTypes).size !== input.eventTypes.length) {
-        throw new Error("OUTBOX_EVENT_TYPE_ALLOWLIST_INVALID");
-      }
-      input.eventTypes.forEach((eventType) =>
-        assertBoundedIdentifier(eventType, "OUTBOX_EVENT_TYPE_ALLOWLIST_INVALID"));
-    }
+    assertOutboxConsumerEventTypes(input.consumer, input.eventTypes);
     const sql = resolvePlatformTransaction(transaction);
-    const eventTypeFilter = input.eventTypes === undefined
-      ? ""
-      : " AND event_type = ANY($6::text[])";
+    const eventTypeFilter = " AND event_type = ANY($6::text[])";
     return sql.query<ClaimedOutboxEvent & Record<string, unknown>>(
       `WITH candidates AS (
          SELECT event_id FROM platform.outbox_event
@@ -103,8 +100,7 @@ export class OutboxRepository {
                  event.aggregate_id AS "aggregateId", event.payload, event.payload_digest AS "payloadDigest",
                  event.correlation_id AS "correlationId", event.causation_id AS "causationId",
                  event.lease_token AS "leaseToken", event.attempt`,
-      [input.limit, input.workerId, input.leaseToken, input.leaseSeconds, owners,
-        ...(input.eventTypes === undefined ? [] : [input.eventTypes])],
+      [input.limit, input.workerId, input.leaseToken, input.leaseSeconds, owners, input.eventTypes],
     );
   }
 
