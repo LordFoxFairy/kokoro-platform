@@ -1,5 +1,11 @@
 export interface ProcessDeploymentContract {
-  readonly id: "platform-worker" | "platform-identity-worker";
+  readonly id:
+    | "platform-commerce-worker"
+    | "platform-site-worker"
+    | "platform-asset-worker"
+    | "platform-admin-worker"
+    | "platform-identity-worker"
+    | "platform-authorization-maintenance";
   readonly environment: Readonly<{
     required: readonly string[];
     optional: readonly string[];
@@ -8,56 +14,93 @@ export interface ProcessDeploymentContract {
   readonly secretClasses: readonly string[];
 }
 
-export const PLATFORM_WORKER_DEPLOYMENT_CONTRACT = contract({
-  id: "platform-worker",
+const DATABASE_ENVIRONMENT = Object.freeze([
+  "DATABASE_URL_PLATFORM",
+  "PLATFORM_DATABASE_CREDENTIAL_CLASS",
+  "PLATFORM_DATABASE_EXPECTED_DATABASE",
+  "PLATFORM_DATABASE_MIGRATOR_ROLE",
+] as const);
+
+export const PLATFORM_COMMERCE_WORKER_DEPLOYMENT_CONTRACT = contract({
+  id: "platform-commerce-worker",
   environment: {
     required: [
-      "DATABASE_URL_PLATFORM",
-      "PLATFORM_DATABASE_CREDENTIAL_CLASS",
-      "PLATFORM_DATABASE_EXPECTED_DATABASE",
-      "PLATFORM_DATABASE_MIGRATOR_ROLE",
-      "PLATFORM_DATABASE_WORKER_ROLE",
+      ...DATABASE_ENVIRONMENT,
+      "PLATFORM_DATABASE_COMMERCE_WORKER_ROLE",
       "PLATFORM_WORKER_ID",
       "PLATFORM_OUTBOX_DELIVERY_ENDPOINT",
       "PLATFORM_OUTBOX_DELIVERY_KEY_ID",
-      "PLATFORM_OUTBOX_DELIVERY_SECRET_BASE64",
-      "PLATFORM_SITE_PROVIDER_REGISTRY_FILE",
-      "PLATFORM_AUTHORIZATION_EVENT_KEY_RING_FILE",
+      "PLATFORM_COMMERCE_WORKER_SECRET_TRUST_ROOT",
+      "PLATFORM_COMMERCE_OUTBOX_DELIVERY_SECRET_FILE",
     ],
-    optional: [
-      "PLATFORM_AUTHORIZATION_EVENT_RETENTION_DAYS",
-      "PLATFORM_OUTBOX_DELIVERY_TIMEOUT_MS",
-      "PLATFORM_SITE_OUTBOX_CLAIM_LIMIT",
-      "PLATFORM_SITE_OUTBOX_LEASE_SECONDS",
-      "PLATFORM_ASSET_WORKER_ENABLED",
-      "PLATFORM_ENVIRONMENT",
-      "PLATFORM_REGION",
-      "PLATFORM_ASSET_OUTBOX_CLAIM_LIMIT",
-      "PLATFORM_ASSET_OUTBOX_LEASE_SECONDS",
-      "PLATFORM_WORKER_HEALTH_PORT",
-    ],
+    optional: ["PLATFORM_OUTBOX_DELIVERY_TIMEOUT_MS", "PLATFORM_WORKER_HEALTH_PORT"],
   },
-  outboundContracts: [
-    "commerce-credit-outbox-delivery-https",
-    "site-deployment-provider-https",
-  ],
+  outboundContracts: ["commerce-credit-outbox-delivery-https"],
   secretClasses: [
-    "platform-worker-database",
-    "authorization-event-signing-keyring",
+    "platform-commerce-worker-database",
     "commerce-credit-outbox-delivery-hmac-key",
+  ],
+});
+
+export const PLATFORM_SITE_WORKER_DEPLOYMENT_CONTRACT = contract({
+  id: "platform-site-worker",
+  environment: {
+    required: [...DATABASE_ENVIRONMENT, "PLATFORM_DATABASE_SITE_WORKER_ROLE", "PLATFORM_WORKER_ID",
+      "PLATFORM_SITE_PROVIDER_REGISTRY_FILE", "PLATFORM_AUTHORIZATION_EVENT_KEY_RING_FILE"],
+    optional: ["PLATFORM_SITE_OUTBOX_CLAIM_LIMIT", "PLATFORM_SITE_OUTBOX_LEASE_SECONDS",
+      "PLATFORM_WORKER_HEALTH_PORT"],
+  },
+  outboundContracts: ["site-deployment-provider-https"],
+  secretClasses: [
+    "platform-site-worker-database",
+    "authorization-event-signing-keyring",
     "site-provider-registry",
     "site-provider-bearer-tokens",
   ],
+});
+
+export const PLATFORM_ASSET_WORKER_DEPLOYMENT_CONTRACT = contract({
+  id: "platform-asset-worker",
+  environment: {
+    required: [...DATABASE_ENVIRONMENT, "PLATFORM_DATABASE_ASSET_WORKER_ROLE", "PLATFORM_WORKER_ID",
+      "PLATFORM_ENVIRONMENT", "PLATFORM_REGION", "PLATFORM_ASSET_WORKER_SECRET_TRUST_ROOT",
+      "PLATFORM_ASSET_STORAGE_ROUTE_FILE", "PLATFORM_ASSET_INSPECTION_POLICY_REGISTRY_FILE",
+      "PLATFORM_ASSET_SCANNER_ENDPOINT", "PLATFORM_ASSET_SCANNER_AUDIENCE",
+      "PLATFORM_ASSET_SCANNER_TOKEN_FILE", "PLATFORM_ASSET_SCANNER_TLS_CA_FILE",
+      "PLATFORM_ASSET_SCANNER_TLS_CERT_FILE", "PLATFORM_ASSET_SCANNER_TLS_KEY_FILE"],
+    optional: ["PLATFORM_ASSET_SCANNER_TIMEOUT_MS", "PLATFORM_ASSET_OUTBOX_CLAIM_LIMIT",
+      "PLATFORM_ASSET_OUTBOX_LEASE_SECONDS", "PLATFORM_WORKER_HEALTH_PORT"],
+  },
+  outboundContracts: ["asset-security-scanner-mtls", "s3-object-api"],
+  secretClasses: ["platform-asset-worker-database", "asset-storage-route-registry",
+    "asset-scanner-bearer-token", "asset-scanner-mtls-client"],
+});
+
+export const PLATFORM_ADMIN_WORKER_DEPLOYMENT_CONTRACT = contract({
+  id: "platform-admin-worker",
+  environment: {
+    required: [...DATABASE_ENVIRONMENT, "PLATFORM_DATABASE_ADMIN_WORKER_ROLE", "PLATFORM_WORKER_ID"],
+    optional: ["PLATFORM_WORKER_HEALTH_PORT"],
+  },
+  outboundContracts: [],
+  secretClasses: ["platform-admin-worker-database"],
+});
+
+export const PLATFORM_AUTHORIZATION_MAINTENANCE_DEPLOYMENT_CONTRACT = contract({
+  id: "platform-authorization-maintenance",
+  environment: {
+    required: [...DATABASE_ENVIRONMENT, "PLATFORM_DATABASE_AUTHORIZATION_MAINTENANCE_ROLE"],
+    optional: ["PLATFORM_AUTHORIZATION_EVENT_RETENTION_DAYS"],
+  },
+  outboundContracts: [],
+  secretClasses: ["platform-authorization-maintenance-database"],
 });
 
 export const PLATFORM_IDENTITY_WORKER_DEPLOYMENT_CONTRACT = contract({
   id: "platform-identity-worker",
   environment: {
     required: [
-      "DATABASE_URL_PLATFORM",
-      "PLATFORM_DATABASE_CREDENTIAL_CLASS",
-      "PLATFORM_DATABASE_EXPECTED_DATABASE",
-      "PLATFORM_DATABASE_MIGRATOR_ROLE",
+      ...DATABASE_ENVIRONMENT,
       "PLATFORM_DATABASE_IDENTITY_WORKER_ROLE",
       "PLATFORM_WORKER_ID",
       "PLATFORM_IDENTITY_AUDIT_DIGEST_KEY_FILE",

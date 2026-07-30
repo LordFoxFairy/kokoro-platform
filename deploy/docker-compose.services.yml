@@ -19,8 +19,12 @@ services:
       PLATFORM_DATABASE_AUTHORIZATION_ROLE: ${PLATFORM_DATABASE_AUTHORIZATION_ROLE:-platform_authorization}
       PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE: ${PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE:-platform_asset_data_plane}
       PLATFORM_DATABASE_MODEL_GATEWAY_ROLE: ${PLATFORM_DATABASE_MODEL_GATEWAY_ROLE:-platform_model_gateway}
-      PLATFORM_DATABASE_WORKER_ROLE: ${PLATFORM_DATABASE_WORKER_ROLE:-platform_worker}
+      PLATFORM_DATABASE_COMMERCE_WORKER_ROLE: ${PLATFORM_DATABASE_COMMERCE_WORKER_ROLE:-platform_commerce_worker}
+      PLATFORM_DATABASE_SITE_WORKER_ROLE: ${PLATFORM_DATABASE_SITE_WORKER_ROLE:-platform_site_worker}
+      PLATFORM_DATABASE_ASSET_WORKER_ROLE: ${PLATFORM_DATABASE_ASSET_WORKER_ROLE:-platform_asset_worker}
+      PLATFORM_DATABASE_ADMIN_WORKER_ROLE: ${PLATFORM_DATABASE_ADMIN_WORKER_ROLE:-platform_admin_worker}
       PLATFORM_DATABASE_IDENTITY_WORKER_ROLE: ${PLATFORM_DATABASE_IDENTITY_WORKER_ROLE:-platform_identity_worker}
+      PLATFORM_DATABASE_AUTHORIZATION_MAINTENANCE_ROLE: ${PLATFORM_DATABASE_AUTHORIZATION_MAINTENANCE_ROLE:-platform_authorization_maintenance}
       PLATFORM_DATABASE_ADMIN_ROLE: ${PLATFORM_DATABASE_ADMIN_ROLE:-platform_admin}
 
   platform-api:
@@ -115,21 +119,42 @@ services:
       PLATFORM_DATABASE_MIGRATOR_ROLE: ${PLATFORM_DATABASE_MIGRATOR_ROLE:-platform_migrator}
       PLATFORM_DATABASE_MODEL_GATEWAY_ROLE: ${PLATFORM_DATABASE_MODEL_GATEWAY_ROLE:-platform_model_gateway}
 
-  platform-worker:
+  platform-commerce-worker:
     <<: *platform-service
     environment:
-      KOKORO_SERVICE_PACKAGE: platform-worker
-      PLATFORM_DATABASE_CREDENTIAL_CLASS: worker
-      DATABASE_URL_PLATFORM: ${DATABASE_URL_PLATFORM_WORKER:?required}
+      KOKORO_SERVICE_PACKAGE: platform-commerce-worker
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: commerce-worker
+      DATABASE_URL_PLATFORM: ${DATABASE_URL_PLATFORM_COMMERCE_WORKER:?required}
       PLATFORM_DATABASE_EXPECTED_DATABASE: ${PLATFORM_DATABASE_EXPECTED_DATABASE:-kokoro_platform}
       PLATFORM_DATABASE_MIGRATOR_ROLE: ${PLATFORM_DATABASE_MIGRATOR_ROLE:-platform_migrator}
-      PLATFORM_DATABASE_WORKER_ROLE: ${PLATFORM_DATABASE_WORKER_ROLE:-platform_worker}
-      PLATFORM_WORKER_ID: ${PLATFORM_WORKER_ID:?required}
-      PLATFORM_WORKER_HEALTH_PORT: ${PLATFORM_WORKER_HEALTH_PORT:-4190}
+      PLATFORM_DATABASE_COMMERCE_WORKER_ROLE: ${PLATFORM_DATABASE_COMMERCE_WORKER_ROLE:-platform_commerce_worker}
+      PLATFORM_WORKER_ID: ${PLATFORM_COMMERCE_WORKER_ID:?required}
+      PLATFORM_WORKER_HEALTH_PORT: ${PLATFORM_COMMERCE_WORKER_HEALTH_PORT:-4190}
       PLATFORM_OUTBOX_DELIVERY_ENDPOINT: ${PLATFORM_OUTBOX_DELIVERY_ENDPOINT:?required}
       PLATFORM_OUTBOX_DELIVERY_KEY_ID: ${PLATFORM_OUTBOX_DELIVERY_KEY_ID:?required}
-      PLATFORM_OUTBOX_DELIVERY_SECRET_BASE64: ${PLATFORM_OUTBOX_DELIVERY_SECRET_BASE64:?required}
+      PLATFORM_COMMERCE_WORKER_SECRET_TRUST_ROOT: /run/secrets/kokoro/commerce-worker
+      PLATFORM_COMMERCE_OUTBOX_DELIVERY_SECRET_FILE: /run/secrets/kokoro/commerce-worker/delivery-hmac.key
       PLATFORM_OUTBOX_DELIVERY_TIMEOUT_MS: ${PLATFORM_OUTBOX_DELIVERY_TIMEOUT_MS:-10000}
+    volumes:
+      - ${PLATFORM_COMMERCE_OUTBOX_DELIVERY_SECRET_FILE:?required}:/run/secrets/kokoro/commerce-worker/delivery-hmac.key:ro
+    healthcheck:
+      test: ["CMD", "node", "--input-type=module", "--eval", "fetch(`http://127.0.0.1:$${process.env.PLATFORM_WORKER_HEALTH_PORT}/health/ready`).then(response=>{if(!response.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  platform-site-worker:
+    <<: *platform-service
+    environment:
+      KOKORO_SERVICE_PACKAGE: platform-site-worker
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: site-worker
+      DATABASE_URL_PLATFORM: ${DATABASE_URL_PLATFORM_SITE_WORKER:?required}
+      PLATFORM_DATABASE_EXPECTED_DATABASE: ${PLATFORM_DATABASE_EXPECTED_DATABASE:-kokoro_platform}
+      PLATFORM_DATABASE_MIGRATOR_ROLE: ${PLATFORM_DATABASE_MIGRATOR_ROLE:-platform_migrator}
+      PLATFORM_DATABASE_SITE_WORKER_ROLE: ${PLATFORM_DATABASE_SITE_WORKER_ROLE:-platform_site_worker}
+      PLATFORM_WORKER_ID: ${PLATFORM_SITE_WORKER_ID:?required}
+      PLATFORM_WORKER_HEALTH_PORT: ${PLATFORM_SITE_WORKER_HEALTH_PORT:-4190}
       PLATFORM_SITE_PROVIDER_REGISTRY_FILE: /run/config/kokoro/site/provider-registry.json
       PLATFORM_AUTHORIZATION_EVENT_KEY_RING_FILE: /run/secrets/kokoro/authorization/event-key-ring.json
     volumes:
@@ -142,6 +167,67 @@ services:
       timeout: 3s
       retries: 3
       start_period: 10s
+
+  platform-asset-worker:
+    <<: *platform-service
+    environment:
+      KOKORO_SERVICE_PACKAGE: platform-asset-worker
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: asset-worker
+      DATABASE_URL_PLATFORM: ${DATABASE_URL_PLATFORM_ASSET_WORKER:?required}
+      PLATFORM_DATABASE_EXPECTED_DATABASE: ${PLATFORM_DATABASE_EXPECTED_DATABASE:-kokoro_platform}
+      PLATFORM_DATABASE_MIGRATOR_ROLE: ${PLATFORM_DATABASE_MIGRATOR_ROLE:-platform_migrator}
+      PLATFORM_DATABASE_ASSET_WORKER_ROLE: ${PLATFORM_DATABASE_ASSET_WORKER_ROLE:-platform_asset_worker}
+      PLATFORM_WORKER_ID: ${PLATFORM_ASSET_WORKER_ID:?required}
+      PLATFORM_WORKER_HEALTH_PORT: ${PLATFORM_ASSET_WORKER_HEALTH_PORT:-4190}
+      PLATFORM_ENVIRONMENT: ${PLATFORM_ENVIRONMENT:-production}
+      PLATFORM_REGION: ${PLATFORM_REGION:?required}
+      PLATFORM_ASSET_WORKER_SECRET_TRUST_ROOT: /run/secrets/kokoro/asset-worker
+      PLATFORM_ASSET_STORAGE_ROUTE_FILE: /run/secrets/kokoro/asset-worker/storage-routes.json
+      PLATFORM_ASSET_INSPECTION_POLICY_REGISTRY_FILE: /run/secrets/kokoro/asset-worker/inspection-policies.json
+      PLATFORM_ASSET_SCANNER_ENDPOINT: ${PLATFORM_ASSET_SCANNER_ENDPOINT:?required}
+      PLATFORM_ASSET_SCANNER_AUDIENCE: ${PLATFORM_ASSET_SCANNER_AUDIENCE:?required}
+      PLATFORM_ASSET_SCANNER_TOKEN_FILE: /run/secrets/kokoro/asset-worker/scanner-token
+      PLATFORM_ASSET_SCANNER_TLS_CA_FILE: /run/secrets/kokoro/asset-worker/scanner-ca.crt
+      PLATFORM_ASSET_SCANNER_TLS_CERT_FILE: /run/secrets/kokoro/asset-worker/scanner-client.crt
+      PLATFORM_ASSET_SCANNER_TLS_KEY_FILE: /run/secrets/kokoro/asset-worker/scanner-client.key
+    volumes:
+      - ${PLATFORM_ASSET_WORKER_SECRET_DIRECTORY:?required}:/run/secrets/kokoro/asset-worker:ro
+    healthcheck:
+      test: ["CMD", "node", "--input-type=module", "--eval", "fetch(`http://127.0.0.1:$${process.env.PLATFORM_WORKER_HEALTH_PORT}/health/ready`).then(response=>{if(!response.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  platform-admin-worker:
+    <<: *platform-service
+    environment:
+      KOKORO_SERVICE_PACKAGE: platform-admin-worker
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: admin-worker
+      DATABASE_URL_PLATFORM: ${DATABASE_URL_PLATFORM_ADMIN_WORKER:?required}
+      PLATFORM_DATABASE_EXPECTED_DATABASE: ${PLATFORM_DATABASE_EXPECTED_DATABASE:-kokoro_platform}
+      PLATFORM_DATABASE_MIGRATOR_ROLE: ${PLATFORM_DATABASE_MIGRATOR_ROLE:-platform_migrator}
+      PLATFORM_DATABASE_ADMIN_WORKER_ROLE: ${PLATFORM_DATABASE_ADMIN_WORKER_ROLE:-platform_admin_worker}
+      PLATFORM_WORKER_ID: ${PLATFORM_ADMIN_WORKER_ID:?required}
+      PLATFORM_WORKER_HEALTH_PORT: ${PLATFORM_ADMIN_WORKER_HEALTH_PORT:-4190}
+    healthcheck:
+      test: ["CMD", "node", "--input-type=module", "--eval", "fetch(`http://127.0.0.1:$${process.env.PLATFORM_WORKER_HEALTH_PORT}/health/ready`).then(response=>{if(!response.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  platform-authorization-maintenance:
+    <<: *platform-service
+    restart: "no"
+    environment:
+      KOKORO_SERVICE_PACKAGE: platform-authorization-maintenance
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: authorization-maintenance
+      DATABASE_URL_PLATFORM: ${DATABASE_URL_PLATFORM_AUTHORIZATION_MAINTENANCE:?required}
+      PLATFORM_DATABASE_EXPECTED_DATABASE: ${PLATFORM_DATABASE_EXPECTED_DATABASE:-kokoro_platform}
+      PLATFORM_DATABASE_MIGRATOR_ROLE: ${PLATFORM_DATABASE_MIGRATOR_ROLE:-platform_migrator}
+      PLATFORM_DATABASE_AUTHORIZATION_MAINTENANCE_ROLE: ${PLATFORM_DATABASE_AUTHORIZATION_MAINTENANCE_ROLE:-platform_authorization_maintenance}
+      PLATFORM_AUTHORIZATION_EVENT_RETENTION_DAYS: ${PLATFORM_AUTHORIZATION_EVENT_RETENTION_DAYS:-7}
 
   platform-identity-worker:
     <<: *platform-service

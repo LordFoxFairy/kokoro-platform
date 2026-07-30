@@ -110,17 +110,17 @@ deployables:
     runbookOwner: platform
     releaseOwner: platform
 
-  - id: platform-worker
+  - id: platform-commerce-worker
     command: node --conditions=kokoro-runtime deploy/docker/runtime-entrypoint.mjs
-    selectorEnvironment: KOKORO_SERVICE_PACKAGE=platform-worker
-    processRole: worker
+    selectorEnvironment: KOKORO_SERVICE_PACKAGE=platform-commerce-worker
+    processRole: commerce-worker
     database:
       environmentVariable: DATABASE_URL_PLATFORM
-      expectedUserEnvironmentVariable: PLATFORM_DATABASE_WORKER_ROLE
+      expectedUserEnvironmentVariable: PLATFORM_DATABASE_COMMERCE_WORKER_ROLE
       migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
       expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
-      credentialClass: platform-worker
-      permissions: bounded-transactional-worker
+      credentialClass: commerce-worker
+      permissions: commerce-outbox-consumer-only
       ddl: forbidden
     inboundContracts: []
     activationAuthorized: false
@@ -128,22 +128,142 @@ deployables:
     requiredEnvironment:
       [DATABASE_URL_PLATFORM, PLATFORM_DATABASE_CREDENTIAL_CLASS,
        PLATFORM_DATABASE_EXPECTED_DATABASE, PLATFORM_DATABASE_MIGRATOR_ROLE,
-       PLATFORM_DATABASE_WORKER_ROLE, PLATFORM_WORKER_ID,
+       PLATFORM_DATABASE_COMMERCE_WORKER_ROLE, PLATFORM_WORKER_ID,
        PLATFORM_OUTBOX_DELIVERY_ENDPOINT, PLATFORM_OUTBOX_DELIVERY_KEY_ID,
-       PLATFORM_OUTBOX_DELIVERY_SECRET_BASE64, PLATFORM_SITE_PROVIDER_REGISTRY_FILE,
-       PLATFORM_AUTHORIZATION_EVENT_KEY_RING_FILE]
-    outboundContracts:
-      [commerce-credit-outbox-delivery-https, site-deployment-provider-https]
-    secretClasses:
-      [platform-worker-database, authorization-event-signing-keyring,
-       commerce-credit-outbox-delivery-hmac-key, site-provider-registry,
-       site-provider-bearer-tokens]
-    audience: platform-worker
-    scalingKey: queue-lag
+       PLATFORM_COMMERCE_WORKER_SECRET_TRUST_ROOT,
+       PLATFORM_COMMERCE_OUTBOX_DELIVERY_SECRET_FILE]
+    outboundContracts: [commerce-credit-outbox-delivery-https]
+    secretClasses: [platform-commerce-worker-database, commerce-credit-outbox-delivery-hmac-key]
+    audience: platform-commerce-worker
+    scalingKey: commerce-outbox-lag
     readiness: process-state
-    drain: stop-claim-then-return-lease
-    sloOwner: platform
-    runbookOwner: platform
+    drain: stop-commerce-claim-then-return-lease
+    sloOwner: platform-commerce
+    runbookOwner: platform-commerce
+    releaseOwner: platform
+
+  - id: platform-site-worker
+    command: node --conditions=kokoro-runtime deploy/docker/runtime-entrypoint.mjs
+    selectorEnvironment: KOKORO_SERVICE_PACKAGE=platform-site-worker
+    processRole: site-worker
+    database:
+      environmentVariable: DATABASE_URL_PLATFORM
+      expectedUserEnvironmentVariable: PLATFORM_DATABASE_SITE_WORKER_ROLE
+      migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
+      expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
+      credentialClass: site-worker
+      permissions: site-runtime-consumer-only
+      ddl: forbidden
+    inboundContracts: []
+    activationAuthorized: false
+    runtimeTraffic: false
+    requiredEnvironment:
+      [DATABASE_URL_PLATFORM, PLATFORM_DATABASE_CREDENTIAL_CLASS,
+       PLATFORM_DATABASE_EXPECTED_DATABASE, PLATFORM_DATABASE_MIGRATOR_ROLE,
+       PLATFORM_DATABASE_SITE_WORKER_ROLE, PLATFORM_WORKER_ID,
+       PLATFORM_SITE_PROVIDER_REGISTRY_FILE, PLATFORM_AUTHORIZATION_EVENT_KEY_RING_FILE]
+    outboundContracts: [site-deployment-provider-https]
+    secretClasses: [platform-site-worker-database, authorization-event-signing-keyring,
+      site-provider-registry, site-provider-bearer-tokens]
+    audience: platform-site-worker
+    scalingKey: site-runtime-outbox-lag
+    readiness: process-state
+    drain: stop-site-claim-then-return-lease
+    sloOwner: platform-site
+    runbookOwner: platform-site
+    releaseOwner: platform
+
+  - id: platform-asset-worker
+    command: node --conditions=kokoro-runtime deploy/docker/runtime-entrypoint.mjs
+    selectorEnvironment: KOKORO_SERVICE_PACKAGE=platform-asset-worker
+    processRole: asset-worker
+    database:
+      environmentVariable: DATABASE_URL_PLATFORM
+      expectedUserEnvironmentVariable: PLATFORM_DATABASE_ASSET_WORKER_ROLE
+      migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
+      expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
+      credentialClass: asset-worker
+      permissions: asset-effect-consumer-only
+      ddl: forbidden
+    inboundContracts: []
+    activationAuthorized: false
+    runtimeTraffic: false
+    requiredEnvironment:
+      [DATABASE_URL_PLATFORM, PLATFORM_DATABASE_CREDENTIAL_CLASS,
+       PLATFORM_DATABASE_EXPECTED_DATABASE, PLATFORM_DATABASE_MIGRATOR_ROLE,
+       PLATFORM_DATABASE_ASSET_WORKER_ROLE, PLATFORM_WORKER_ID, PLATFORM_ENVIRONMENT,
+       PLATFORM_REGION, PLATFORM_ASSET_WORKER_SECRET_TRUST_ROOT,
+       PLATFORM_ASSET_STORAGE_ROUTE_FILE, PLATFORM_ASSET_INSPECTION_POLICY_REGISTRY_FILE,
+       PLATFORM_ASSET_SCANNER_ENDPOINT, PLATFORM_ASSET_SCANNER_AUDIENCE,
+       PLATFORM_ASSET_SCANNER_TOKEN_FILE, PLATFORM_ASSET_SCANNER_TLS_CA_FILE,
+       PLATFORM_ASSET_SCANNER_TLS_CERT_FILE, PLATFORM_ASSET_SCANNER_TLS_KEY_FILE]
+    outboundContracts: [asset-security-scanner-mtls, s3-object-api]
+    secretClasses: [platform-asset-worker-database, asset-storage-route-registry,
+      asset-scanner-bearer-token, asset-scanner-mtls-client]
+    audience: platform-asset-worker
+    scalingKey: asset-outbox-lag
+    readiness: process-state
+    drain: stop-asset-claim-then-return-lease
+    sloOwner: platform-asset
+    runbookOwner: platform-asset
+    releaseOwner: platform
+
+  - id: platform-admin-worker
+    command: node --conditions=kokoro-runtime deploy/docker/runtime-entrypoint.mjs
+    selectorEnvironment: KOKORO_SERVICE_PACKAGE=platform-admin-worker
+    processRole: admin-worker
+    database:
+      environmentVariable: DATABASE_URL_PLATFORM
+      expectedUserEnvironmentVariable: PLATFORM_DATABASE_ADMIN_WORKER_ROLE
+      migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
+      expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
+      credentialClass: admin-worker
+      permissions: admin-execution-consumer-only
+      ddl: forbidden
+    inboundContracts: []
+    activationAuthorized: false
+    runtimeTraffic: false
+    requiredEnvironment:
+      [DATABASE_URL_PLATFORM, PLATFORM_DATABASE_CREDENTIAL_CLASS,
+       PLATFORM_DATABASE_EXPECTED_DATABASE, PLATFORM_DATABASE_MIGRATOR_ROLE,
+       PLATFORM_DATABASE_ADMIN_WORKER_ROLE, PLATFORM_WORKER_ID]
+    outboundContracts: []
+    secretClasses: [platform-admin-worker-database]
+    audience: platform-admin-worker
+    scalingKey: admin-execution-lag
+    readiness: process-state
+    drain: stop-admin-claim-then-return-lease
+    sloOwner: platform-admin
+    runbookOwner: platform-admin
+    releaseOwner: platform
+
+  - id: platform-authorization-maintenance
+    command: node --conditions=kokoro-runtime deploy/docker/runtime-entrypoint.mjs
+    selectorEnvironment: KOKORO_SERVICE_PACKAGE=platform-authorization-maintenance
+    processRole: authorization-maintenance
+    database:
+      environmentVariable: DATABASE_URL_PLATFORM
+      expectedUserEnvironmentVariable: PLATFORM_DATABASE_AUTHORIZATION_MAINTENANCE_ROLE
+      migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
+      expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
+      credentialClass: authorization-maintenance
+      permissions: authorization-retention-only
+      ddl: forbidden
+    inboundContracts: []
+    activationAuthorized: false
+    runtimeTraffic: false
+    requiredEnvironment:
+      [DATABASE_URL_PLATFORM, PLATFORM_DATABASE_CREDENTIAL_CLASS,
+       PLATFORM_DATABASE_EXPECTED_DATABASE, PLATFORM_DATABASE_MIGRATOR_ROLE,
+       PLATFORM_DATABASE_AUTHORIZATION_MAINTENANCE_ROLE]
+    outboundContracts: []
+    secretClasses: [platform-authorization-maintenance-database]
+    audience: platform-authorization-maintenance
+    scalingKey: cron-schedule
+    readiness: run-to-completion
+    drain: abort-transaction
+    sloOwner: platform-authorization
+    runbookOwner: platform-authorization
     releaseOwner: platform
 
   - id: platform-identity-worker
@@ -344,8 +464,12 @@ deployables:
       expectedUserEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
       apiRoleEnvironmentVariable: PLATFORM_DATABASE_API_ROLE
       admissionRoleEnvironmentVariable: PLATFORM_DATABASE_ADMISSION_ROLE
-      workerRoleEnvironmentVariable: PLATFORM_DATABASE_WORKER_ROLE
+      commerceWorkerRoleEnvironmentVariable: PLATFORM_DATABASE_COMMERCE_WORKER_ROLE
+      siteWorkerRoleEnvironmentVariable: PLATFORM_DATABASE_SITE_WORKER_ROLE
+      assetWorkerRoleEnvironmentVariable: PLATFORM_DATABASE_ASSET_WORKER_ROLE
+      adminWorkerRoleEnvironmentVariable: PLATFORM_DATABASE_ADMIN_WORKER_ROLE
       identityWorkerRoleEnvironmentVariable: PLATFORM_DATABASE_IDENTITY_WORKER_ROLE
+      authorizationMaintenanceRoleEnvironmentVariable: PLATFORM_DATABASE_AUTHORIZATION_MAINTENANCE_ROLE
       authorizationRoleEnvironmentVariable: PLATFORM_DATABASE_AUTHORIZATION_ROLE
       assetDataPlaneRoleEnvironmentVariable: PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE
       adminRoleEnvironmentVariable: PLATFORM_DATABASE_ADMIN_ROLE

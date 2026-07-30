@@ -7,31 +7,11 @@ import {
 import type { PlatformTransaction } from "../../src/shared/unit-of-work/index.js";
 
 describe("Asset worker production composition", () => {
-  it("is an explicit no-op when the Site deployment has not enabled Asset", async () => {
-    const composition = await createAssetWorkerProductionComposition({
-      database: {} as never,
-      workerId: "platform-worker-01",
-      environment: {},
-    });
-    await expect(composition.runOneCycle({ signal: new AbortController().signal }))
-      .resolves.toBeUndefined();
-    expect(composition.enabled).toBe(false);
-  });
-
-  it("fails fast when Asset is enabled without a real scanner adapter", async () => {
-    await expect(createAssetWorkerProductionComposition({
-      database: {} as never,
-      workerId: "platform-worker-01",
-      environment: { PLATFORM_ASSET_WORKER_ENABLED: "true" },
-    })).rejects.toThrow("PLATFORM_ASSET_SCANNER_ADAPTER_REQUIRED");
-  });
-
-  it("builds all four cycles only from explicitly supplied production adapters", async () => {
+  it("builds all four cycles without an enable flag only from explicitly supplied production adapters", async () => {
     const composition = await createAssetWorkerProductionComposition({
       database: {} as never,
       workerId: "platform-worker-01",
       environment: {
-        PLATFORM_ASSET_WORKER_ENABLED: "true",
         PLATFORM_ENVIRONMENT: "production",
         PLATFORM_REGION: "us-east-1",
       },
@@ -41,7 +21,8 @@ describe("Asset worker production composition", () => {
         objectStore: {} as never,
       },
     });
-    expect(composition.enabled).toBe(true);
+    expect(composition).not.toHaveProperty("enabled");
+    expect(composition.runOneCycle).toEqual(expect.any(Function));
   });
 
   it("binds every domain mutation to the exact Asset Site scope", async () => {
@@ -64,11 +45,10 @@ describe("Asset worker production composition", () => {
     }, expect.any(Function));
   });
 
-  it("is wired into the shared worker cycle and drain lifecycle", async () => {
-    const source = await readFile(new URL("../../src/process/worker.ts", import.meta.url), "utf8");
-    expect(source).toContain("createAssetWorkerProductionComposition");
-    expect(source).toContain("assetRuntime.runOneCycle");
-    expect(source).toContain("assetRuntime.stopClaiming()");
-    expect(source).toContain("assetRuntime.returnLeases(reason)");
+  it("is wired into the independent Asset worker cycle and drain lifecycle", async () => {
+    const source = await readFile(new URL("../../src/process/asset-worker.ts", import.meta.url), "utf8");
+    expect(source).toContain("loadAssetWorkerProductionAdapters(environment)");
+    expect(source).toContain("runtime: assetRuntime");
+    expect(source).toContain("hostPlatformWorkerProcess");
   });
 });

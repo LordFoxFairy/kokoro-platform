@@ -76,8 +76,9 @@ test("runtime entrypoint exposes only PostgreSQL Platform processes and Hub", as
   const entrypoint = await readFile(resolve(root, "deploy/docker/runtime-entrypoint.mjs"), "utf8");
   for (const role of [
     "platform-api", "platform-admission", "platform-admin", "platform-asset-data-plane",
-    "platform-authorization", "platform-model-gateway", "platform-worker",
-    "platform-identity-worker", "platform-migrator",
+    "platform-authorization", "platform-model-gateway", "platform-commerce-worker",
+    "platform-site-worker", "platform-asset-worker", "platform-admin-worker",
+    "platform-identity-worker", "platform-authorization-maintenance", "platform-migrator",
     "@kokoro/hub",
     "platform-hub-connect",
   ]) assert.match(entrypoint, new RegExp(`"${role}"`, "u"));

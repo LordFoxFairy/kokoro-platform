@@ -1,5 +1,10 @@
 type ActiveProcessRoute = Readonly<{
-  module: "src/process/worker.ts" | "src/process/identity-worker.ts";
+  module:
+    | "src/process/identity-worker.ts"
+    | "src/process/commerce-worker.ts"
+    | "src/process/site-worker.ts"
+    | "src/process/asset-worker.ts"
+    | "src/process/admin-worker.ts";
   symbol: string;
 }>;
 
@@ -10,26 +15,26 @@ export const OUTBOX_ROUTE_CATALOG = Object.freeze({
   ] as const, "runPlatformIdentityWorkerMain", "src/process/identity-worker.ts"),
   commerce: activeRoute("commerce-worker", [
     "commerce.redemption.fulfilled.v1",
-  ] as const, "createCommerceOutboxReconciliationCycle"),
+  ] as const, "createCommerceOutboxReconciliationCycle", "src/process/commerce-worker.ts"),
   credit: activeRoute("commerce-worker", [
     "credit.reserve_root.v1",
     "credit.finalize_segment.v1",
     "credit.release_segment.v1",
     "credit.reconcile_segment.v1",
-  ] as const, "createCommerceOutboxReconciliationCycle"),
+  ] as const, "createCommerceOutboxReconciliationCycle", "src/process/commerce-worker.ts"),
   site: activeRoute("site-worker", [
     "site.activation.begin.v1",
     "site.traffic-stop.request.v1",
-  ] as const, "createSiteRuntimeWorkerProductionComposition"),
+  ] as const, "createSiteRuntimeWorkerProductionComposition", "src/process/site-worker.ts"),
   asset: activeRoute("asset-worker", [
     "asset.upload.completion.requested",
     "asset.scan.requested",
     "asset.blob.promotion.requested",
     "asset.object.cleanup.requested",
-  ] as const, "createAssetWorkerProductionComposition"),
+  ] as const, "createAssetWorkerProductionComposition", "src/process/asset-worker.ts"),
   "admin-execution": activeRoute("admin-worker", [
     "admin.approval.execution.requested",
-  ] as const, "createAdminWorkerExecutionRuntime"),
+  ] as const, "createAdminWorkerExecutionRuntime", "src/process/admin-worker.ts"),
 } as const);
 
 export type OutboxOwner = keyof typeof OUTBOX_ROUTE_CATALOG;
@@ -89,7 +94,7 @@ function activeRoute<Consumer extends OutboxConsumerLiteral, EventTypes extends 
   consumer: Consumer,
   eventTypes: EventTypes,
   symbol: string,
-  module: ActiveProcessRoute["module"] = "src/process/worker.ts",
+  module: ActiveProcessRoute["module"],
 ): Readonly<{
   consumer: Consumer;
   closure: "active";

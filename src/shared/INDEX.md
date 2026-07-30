@@ -25,6 +25,9 @@ The shared HMAC HTTPS transport provides bounded signed requests, signed acknowl
 owner modules wrap it in typed ports and retain ownership of payload validation and durable outcome projection. A successful HTTP
 response whose acknowledgement stream resets or times out is an outcome-unknown retry, while a complete invalid acknowledgement
 is a permanent protocol failure.
+Long-running consumers use the shared single-flight lease heartbeat: one immediate renewal, at most one bounded renewal in flight,
+and a non-blocking stop. Owner runtimes keep it active through their fenced durable complete/retry transition and isolate one claimed
+batch from concurrent cycle calls.
 
 `security-context/` separates structural parsing from trust. An interface/infrastructure verifier validates caller cryptographic
 attestation against trusted issuer/key material and issues a runtime-tracked `VerifiedRequestSecurityContext`; application code

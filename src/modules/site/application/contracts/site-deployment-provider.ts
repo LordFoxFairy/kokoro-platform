@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 export interface SitePromotionCommand {
   readonly operationKey: string;
   readonly siteRef: string;
@@ -8,13 +10,35 @@ export interface SitePromotionCommand {
   readonly certificationDigest: string;
   readonly environment: "development" | "preview" | "production";
   readonly region: string;
+  readonly audience: string;
+  readonly sessionContractRevision: string;
 }
 
 export interface SitePromotionObservation {
   readonly status: "ready" | "pending" | "unknown" | "rejected";
   readonly deploymentRef: string | null;
   readonly observedAt: string;
+  readonly operationKey: string;
+  readonly siteRef: string;
+  readonly providerProjectRef: string;
+  readonly releaseRef: string;
+  readonly webArtifactDigest: string;
+  readonly releaseManifestDigest: string;
+  readonly certificationDigest: string;
+  readonly environment: SitePromotionCommand["environment"];
+  readonly region: string;
+  readonly audience: string;
+  readonly sessionContractRevision: string;
+  readonly commandDigest: string;
   readonly payloadDigest: string;
+}
+
+export function sitePromotionCommandDigest(command: SitePromotionCommand): string {
+  return commandDigest("kokoro-site-provider-promotion-command-v1", [
+    command.operationKey, command.siteRef, command.providerProjectRef, command.releaseRef,
+    command.webArtifactDigest, command.releaseManifestDigest, command.certificationDigest,
+    command.environment, command.region, command.audience, command.sessionContractRevision,
+  ]);
 }
 
 export interface SiteTrafficStopCommand {
@@ -29,7 +53,21 @@ export interface SiteTrafficStopCommand {
 export interface SiteTrafficStopProviderObservation {
   readonly status: "stopped" | "serving" | "unknown" | "rejected";
   readonly observedAt: string;
+  readonly operationKey: string;
+  readonly siteRef: string;
+  readonly providerProjectRef: string;
+  readonly deploymentRef: string;
+  readonly environment: SiteTrafficStopCommand["environment"];
+  readonly region: string;
+  readonly commandDigest: string;
   readonly payloadDigest: string;
+}
+
+export function siteTrafficStopCommandDigest(command: SiteTrafficStopCommand): string {
+  return commandDigest("kokoro-site-provider-traffic-stop-command-v1", [
+    command.operationKey, command.siteRef, command.providerProjectRef, command.deploymentRef,
+    command.environment, command.region,
+  ]);
 }
 
 /** Provider effects are idempotent by operationKey; observations must be provider-authored facts. */
@@ -73,4 +111,15 @@ export class SiteDeploymentProviderRegistry {
     if (provider === undefined) throw new Error(`SITE_PROVIDER_NOT_CONFIGURED:${namespace}`);
     return provider;
   }
+}
+
+function commandDigest(domain: string, fields: readonly string[]): string {
+  if (fields.some((field) => typeof field !== "string" || field.length === 0)) {
+    throw new Error("SITE_PROVIDER_COMMAND_INVALID");
+  }
+  return createHash("sha256")
+    .update(domain, "utf8")
+    .update("\0", "utf8")
+    .update(JSON.stringify(fields), "utf8")
+    .digest("hex");
 }

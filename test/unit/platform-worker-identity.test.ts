@@ -27,7 +27,10 @@ describe("Platform worker instance identity", () => {
     expect(kubernetes).toMatch(
       /name: PLATFORM_WORKER_ID[\s\S]+fieldRef: \{ fieldPath: metadata\.uid \}/u,
     );
-    expect(compose).toContain("PLATFORM_WORKER_ID: ${PLATFORM_WORKER_ID:?required}");
+    for (const variable of ["PLATFORM_COMMERCE_WORKER_ID", "PLATFORM_SITE_WORKER_ID",
+      "PLATFORM_ASSET_WORKER_ID", "PLATFORM_ADMIN_WORKER_ID", "PLATFORM_IDENTITY_WORKER_ID"]) {
+      expect(compose).toContain(`PLATFORM_WORKER_ID: \${${variable}:?required}`);
+    }
     expect(worker).not.toContain("platform-worker-${process.pid}");
   });
 });

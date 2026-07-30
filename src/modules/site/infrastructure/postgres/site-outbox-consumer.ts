@@ -11,61 +11,126 @@ import {
 } from "../../application/services/site-runtime-dispatcher.js";
 import { SITE_EFFECT_EVENT_TYPES } from
   "../../application/contracts/site-authority-ports.js";
+import { SingleFlightLeaseHeartbeat } from
+  "../../../../shared/outbox-inbox/lease-heartbeat.js";
 
 export { SITE_EFFECT_EVENT_TYPES } from
   "../../application/contracts/site-authority-ports.js";
 
 export interface SiteRuntimeEventQueue {
   claim(): Promise<readonly ClaimedOutboxEvent[]>;
+  renew(eventId: string, leaseToken: string): Promise<void>;
   ack(eventId: string, leaseToken: string): Promise<void>;
   retry(input: Readonly<{ eventId: string; leaseToken: string; errorCode: string;
     retryAt: string | null; maxAttempts: number }>): Promise<void>;
-  release(eventId: string, leaseToken: string, reason: string): Promise<void>;
+  releaseOwned(reason: "shutdown" | "shutdown-deadline" | "stop-claim-failed"): Promise<void>;
 }
 
+type ActiveSiteLease = Readonly<{
+  heartbeat: SingleFlightLeaseHeartbeat;
+}>;
+
 export class SiteOutboxConsumer {
-  readonly #active = new Map<string, ClaimedOutboxEvent>();
+  readonly #active = new Map<string, ActiveSiteLease>();
   readonly #now: () => string;
   readonly #baseRetryMs: number;
   readonly #maxRetryMs: number;
   readonly #maxAttempts: number;
+  readonly #leaseHeartbeatMs: number;
+  readonly #leaseRenewalTimeoutMs: number;
   #claiming = true;
+  #cycle: Promise<void> | undefined;
 
   constructor(
     private readonly queue: SiteRuntimeEventQueue,
     private readonly dispatcher: Pick<SiteRuntimeDispatcher, "runActivation" | "runTrafficStop">,
     options: Readonly<{ now?: () => string; baseRetryMs?: number; maxRetryMs?: number;
-      maxAttempts?: number }> = {},
+      maxAttempts?: number; leaseHeartbeatMs?: number; leaseRenewalTimeoutMs?: number }> = {},
   ) {
     this.#now = options.now ?? (() => new Date().toISOString());
     this.#baseRetryMs = boundedInteger(options.baseRetryMs ?? 1_000, 100, 60_000, "SITE_RETRY_BASE_INVALID");
     this.#maxRetryMs = boundedInteger(options.maxRetryMs ?? 60_000, this.#baseRetryMs, 900_000,
       "SITE_RETRY_MAX_INVALID");
     this.#maxAttempts = boundedInteger(options.maxAttempts ?? 12, 1, 100, "SITE_RETRY_ATTEMPTS_INVALID");
+    this.#leaseHeartbeatMs = boundedInteger(options.leaseHeartbeatMs ?? 10_000, 1, 100_000,
+      "SITE_LEASE_HEARTBEAT_INVALID");
+    this.#leaseRenewalTimeoutMs = boundedInteger(
+      options.leaseRenewalTimeoutMs ?? Math.min(this.#leaseHeartbeatMs, 5_000),
+      1,
+      100_000,
+      "SITE_LEASE_RENEWAL_TIMEOUT_INVALID",
+    );
   }
 
-  async runOneCycle(context: Readonly<{ signal: AbortSignal }>): Promise<void> {
+  runOneCycle(context: Readonly<{ signal: AbortSignal }>): Promise<void> {
+    if (this.#cycle !== undefined) return this.#cycle;
+    const cycle = this.runClaimedBatch(context).finally(() => {
+      if (this.#cycle === cycle) this.#cycle = undefined;
+    });
+    this.#cycle = cycle;
+    return cycle;
+  }
+
+  private async runClaimedBatch(context: Readonly<{ signal: AbortSignal }>): Promise<void> {
     if (!this.#claiming) return;
     context.signal.throwIfAborted();
     const events = await this.queue.claim();
     for (const event of events) {
-      context.signal.throwIfAborted();
-      this.#active.set(event.eventId, event);
-      try {
-        await this.dispatch(event, context.signal);
-        await this.queue.ack(event.eventId, event.leaseToken);
-      } catch (error) {
-        const failure = classify(error);
-        await this.queue.retry({
-          eventId: event.eventId,
-          leaseToken: event.leaseToken,
-          errorCode: failure.code,
-          retryAt: failure.permanent ? null : this.retryAt(event.attempt),
-          maxAttempts: this.#maxAttempts,
-        });
-      } finally {
-        this.#active.delete(event.eventId);
+      const heartbeat = new SingleFlightLeaseHeartbeat(
+        () => this.queue.renew(event.eventId, event.leaseToken),
+        {
+          intervalMs: this.#leaseHeartbeatMs,
+          renewalTimeoutMs: this.#leaseRenewalTimeoutMs,
+          timeoutCode: "SITE_OUTBOX_LEASE_RENEWAL_TIMEOUT",
+        },
+      );
+      this.#active.set(event.eventId, { heartbeat });
+      heartbeat.start();
+    }
+    const leaseFailures: unknown[] = [];
+    try {
+      for (const event of events) {
+        const active = this.#active.get(event.eventId);
+        if (active === undefined) continue;
+        context.signal.throwIfAborted();
+        try {
+          await active.heartbeat.assertOwned();
+          await this.dispatch(event, AbortSignal.any([context.signal, active.heartbeat.signal]));
+          await active.heartbeat.assertOwned();
+          context.signal.throwIfAborted();
+          await this.queue.ack(event.eventId, event.leaseToken);
+        } catch (error) {
+          if (context.signal.aborted) throw error;
+          if (active.heartbeat.lost) {
+            leaseFailures.push(active.heartbeat.failure);
+            continue;
+          }
+          if (isLeaseLost(error)) {
+            leaseFailures.push(error);
+            continue;
+          }
+          const failure = classify(error);
+          await active.heartbeat.assertOwned();
+          await this.queue.retry({
+            eventId: event.eventId,
+            leaseToken: event.leaseToken,
+            errorCode: failure.code,
+            retryAt: failure.permanent ? null : this.retryAt(event.attempt),
+            maxAttempts: this.#maxAttempts,
+          });
+        } finally {
+          await active.heartbeat.stop();
+          this.#active.delete(event.eventId);
+        }
       }
+    } catch (error) {
+      await this.stopActiveHeartbeats();
+      this.#active.clear();
+      throw error;
+    }
+    if (leaseFailures.length === 1) throw leaseFailures[0];
+    if (leaseFailures.length > 1) {
+      throw new AggregateError(leaseFailures, "SITE_OUTBOX_LEASE_RENEWAL_FAILED");
     }
   }
 
@@ -75,8 +140,13 @@ export class SiteOutboxConsumer {
   }
 
   async returnLeases(reason: "shutdown" | "shutdown-deadline" | "stop-claim-failed"): Promise<void> {
-    const events = [...this.#active.values()];
-    await Promise.all(events.map((event) => this.queue.release(event.eventId, event.leaseToken, reason)));
+    await this.stopActiveHeartbeats();
+    await this.queue.releaseOwned(reason);
+    this.#active.clear();
+  }
+
+  private async stopActiveHeartbeats(): Promise<void> {
+    await Promise.all([...this.#active.values()].map(({ heartbeat }) => heartbeat.stop()));
   }
 
   private async dispatch(event: ClaimedOutboxEvent, signal: AbortSignal): Promise<void> {
@@ -115,16 +185,36 @@ export function createPostgresSiteRuntimeEventQueue(
       limit: claimLimit,
       leaseSeconds,
     })),
-    ack: (eventId, leaseToken) => database.internalTransaction("site.runtime.consume",
-      (transaction) => outbox.complete(transaction, {
-        eventId, leaseToken, deliveryId: `site-runtime:${eventId}`,
-        acknowledgedAt: new Date().toISOString(),
+    renew: (eventId, leaseToken) => database.internalTransaction("site.runtime.consume",
+      (transaction) => outbox.renewLease(transaction, {
+        eventId, leaseToken, workerId: options.workerId, owner: "site", leaseSeconds,
       })),
+    ack: (eventId, leaseToken) => database.internalTransaction("site.runtime.consume",
+      async (transaction) => {
+        await outbox.renewLease(transaction, {
+          eventId, leaseToken, workerId: options.workerId, owner: "site", leaseSeconds,
+        });
+        await outbox.complete(transaction, {
+          eventId, leaseToken, deliveryId: `site-runtime:${eventId}`,
+          acknowledgedAt: new Date().toISOString(),
+        });
+      }),
     retry: (input) => database.internalTransaction("site.runtime.consume",
-      (transaction) => outbox.retryOrDeadLetter(transaction, input)),
-    release: (eventId, leaseToken, reason) => database.internalTransaction("site.runtime.consume",
-      (transaction) => outbox.release(transaction, { eventId, leaseToken, errorCode: `SITE_${reason
-        .toUpperCase().replaceAll("-", "_")}` })),
+      async (transaction) => {
+        await outbox.renewLease(transaction, {
+          eventId: input.eventId, leaseToken: input.leaseToken,
+          workerId: options.workerId, owner: "site", leaseSeconds,
+        });
+        await outbox.retryOrDeadLetter(transaction, input);
+      }),
+    releaseOwned: (_reason) => database.internalTransaction("site.runtime.consume",
+      async (transaction) => {
+        await outbox.releaseOwnedLeases(transaction, {
+          workerId: options.workerId,
+          consumer: "site-worker",
+          eventTypes: SITE_EFFECT_EVENT_TYPES,
+        });
+      }),
   };
   return Object.freeze(queue);
 }
@@ -151,6 +241,10 @@ function classify(error: unknown): Readonly<{ code: string; permanent: boolean }
     ? error.message : "SITE_RUNTIME_UNEXPECTED";
   return { code: code.slice(0, 128), permanent:
     code.startsWith("SITE_OUTBOX_") || code.startsWith("SITE_PROVIDER_NOT_CONFIGURED:") };
+}
+
+function isLeaseLost(error: unknown): boolean {
+  return error instanceof Error && error.message === "OUTBOX_LEASE_LOST";
 }
 
 function boundedInteger(value: number, minimum: number, maximum: number, code: string): number {

@@ -14,8 +14,12 @@ accepts a module path.
 | `platform-authorization` | PostgreSQL authorization role | session authorization feed |
 | `platform-asset-data-plane` | PostgreSQL asset-data-plane role | capability-scoped multipart provider effects |
 | `platform-model-gateway` | PostgreSQL model-gateway role | authorized provider invocation |
-| `platform-worker` | PostgreSQL worker role | Commerce/Credit, Site and shared operational reconciliation |
+| `platform-commerce-worker` | PostgreSQL Commerce worker role | Commerce/Credit fulfillment outbox delivery |
+| `platform-site-worker` | PostgreSQL Site worker role | Site provider promotion, observation and traffic drain |
+| `platform-asset-worker` | PostgreSQL Asset worker role | upload completion, scanning, promotion and exact cleanup |
+| `platform-admin-worker` | PostgreSQL Admin worker role | privileged command execution and terminalization |
 | `platform-identity-worker` | PostgreSQL Identity worker role | Identity-only outbox delivery and local namespace allocation |
+| `platform-authorization-maintenance` | PostgreSQL Authorization maintenance role | scheduled retention with advisory-lock exclusion |
 | `platform-admin` | PostgreSQL Admin role | typed privileged control plane |
 | `@kokoro/hub` | Mongo/S3 | skill/MCP HTTP management surface |
 | `platform-hub-connect` | Mongo/S3 | private catalog publication and Agent runtime resolution |
@@ -100,9 +104,11 @@ capabilities and no privilege escalation. Service `platform-api` publishes only 
 4100; health port 4101 is declared on the container solely for kubelet startup/liveness/readiness
 probes and is absent from the Service.
 
-Both worker Deployments expose only an internal health port. Startup/liveness read `/health/live`;
+All polling worker Deployments expose only an internal health port. Startup/liveness read `/health/live`;
 readiness reads `/health/ready`, which turns unavailable before claims are drained. Their 30-second
 Pod grace period exceeds the bounded 10-second worker shutdown budget.
+Authorization maintenance is a run-to-completion CronJob with `concurrencyPolicy: Forbid`, a bounded
+active deadline and a PostgreSQL advisory lock; it never runs inside a polling worker.
 
 ## Multi-Pod rules
 
@@ -110,9 +116,8 @@ Pod grace period exceeds the bounded 10-second worker shutdown budget.
 - migrations are a singleton release step, never an application startup side effect;
 - shutdown stops admission/claims before returning leases and closing database pools;
 - mTLS/Connect services use distinct workload identities and bounded request sizes;
-- production credentials are process-specific; `platform-identity-worker` is independently least-privileged, while the remaining
-  aggregate worker truthfully declares its current Commerce/Credit, Site and shared operational authority until those families are
-  extracted behind their own deployable boundaries;
+- production credentials are process-specific; Commerce, Site, Asset, Admin, Identity and Authorization
+  maintenance never share a runtime database role, secret mount or worker lifecycle;
 - rollbacks select a prior verified image digest and compatible PostgreSQL schema, never a retired
   MySQL service.
 

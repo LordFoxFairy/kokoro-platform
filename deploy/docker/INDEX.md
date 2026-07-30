@@ -34,8 +34,9 @@ The same commit/lock inputs must produce a traceable artifact; release rollback 
 Keep service build logic here and dependency installation lock-driven. Do not copy sibling worktrees or `.env` files.
 
 ## Current gotchas
-The final image contains only root PostgreSQL Platform processes, the independent Hub HTTP/Connect
-entries, and Platform Kit. Retired
+The final image contains only root PostgreSQL Platform processes, independently selected Commerce,
+Site, Asset, Admin and Identity workers, the one-shot Authorization maintenance process, the
+independent Hub HTTP/Connect entries, and Platform Kit. Retired
 per-domain packages are excluded from the workspace and Docker context. Hub self-service membership
 is intentionally fail-closed until its PostgreSQL Platform owner adapter is mounted. CI currently
 builds but does not yet publish, sign, or attach SBOM/provenance to the image.

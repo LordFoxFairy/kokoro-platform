@@ -32,6 +32,14 @@ import { PostgresAssetScanRepository } from
   "../modules/asset/infrastructure/postgres/asset-scan-repository.js";
 import { PostgresAssetUploadRepository } from
   "../modules/asset/infrastructure/postgres/asset-upload-repository.js";
+import { parseAssetInspectionPolicyRegistry } from
+  "../modules/asset/infrastructure/config/asset-inspection-policy-registry.js";
+import { HttpsAssetSecurityScanner } from
+  "../modules/asset/infrastructure/http/asset-security-scanner.js";
+import { S3AssetObjectStore } from
+  "../modules/asset/infrastructure/s3/asset-object-store.js";
+import { parseAssetStorageRouteRegistry } from "./asset-data-plane-composition.js";
+import { createBoundedFileReaderWithinTrustRoot } from "./secret-files.js";
 import type { PlatformWorkerCycleContext } from "./worker.js";
 import type { PlatformTransaction } from "../shared/unit-of-work/platform-transaction.js";
 
@@ -39,13 +47,12 @@ type AssetObjectStore = AssetQuarantineObjectStorePort & AssetTrustedObjectStore
   AssetObjectCleanupStorePort;
 
 export interface AssetWorkerProductionAdapters {
-  readonly scanner?: AssetSecurityScannerPort;
-  readonly policyResolver?: AssetInspectionPolicyResolverPort;
-  readonly objectStore?: AssetObjectStore;
+  readonly scanner: AssetSecurityScannerPort;
+  readonly policyResolver: AssetInspectionPolicyResolverPort;
+  readonly objectStore: AssetObjectStore;
 }
 
 export interface AssetWorkerProductionComposition {
-  readonly enabled: boolean;
   runOneCycle(context: PlatformWorkerCycleContext): Promise<void>;
   stopClaiming(): Promise<void>;
   returnLeases(reason: "shutdown" | "shutdown-deadline" | "stop-claim-failed"): Promise<void>;
@@ -54,23 +61,11 @@ export interface AssetWorkerProductionComposition {
 export async function createAssetWorkerProductionComposition(input: Readonly<{
   database: PlatformTransactionalDatabaseClient;
   workerId: string;
-  environment?: Readonly<Record<string, string | undefined>>;
-  adapters?: AssetWorkerProductionAdapters;
+  environment: Readonly<Record<string, string | undefined>>;
+  adapters: AssetWorkerProductionAdapters;
 }>): Promise<AssetWorkerProductionComposition> {
-  const environment = input.environment ?? process.env;
-  const enabled = optionalBoolean(environment, "PLATFORM_ASSET_WORKER_ENABLED") ?? false;
-  if (!enabled) return DISABLED_ASSET_WORKER;
-
-  // Asset inspection is a security boundary. There is deliberately no permissive,
-  // in-process or test-double fallback in the production composition.
-  const scanner = input.adapters?.scanner;
-  if (scanner === undefined) throw new Error("PLATFORM_ASSET_SCANNER_ADAPTER_REQUIRED");
-  const policyResolver = input.adapters?.policyResolver;
-  if (policyResolver === undefined) {
-    throw new Error("PLATFORM_ASSET_INSPECTION_POLICY_ADAPTER_REQUIRED");
-  }
-  const objectStore = input.adapters?.objectStore;
-  if (objectStore === undefined) throw new Error("PLATFORM_ASSET_OBJECT_STORE_ADAPTER_REQUIRED");
+  const environment = input.environment;
+  const { scanner, policyResolver, objectStore } = input.adapters;
 
   const executionEnvironment = required(environment, "PLATFORM_ENVIRONMENT");
   const region = required(environment, "PLATFORM_REGION");
@@ -115,12 +110,54 @@ export async function createAssetWorkerProductionComposition(input: Readonly<{
     { leaseHeartbeatMs: Math.max(100, Math.floor(effectiveLeaseSeconds * 1_000 / 3)) },
   );
   const composition: AssetWorkerProductionComposition = {
-    enabled: true,
     runOneCycle: (context) => consumer.runOneCycle(context),
     stopClaiming: () => consumer.stopClaiming(),
     returnLeases: (reason) => consumer.returnLeases(reason),
   };
   return Object.freeze(composition);
+}
+
+export async function loadAssetWorkerProductionAdapters(
+  environment: Readonly<Record<string, string | undefined>>,
+): Promise<AssetWorkerProductionAdapters> {
+  const reader = await createBoundedFileReaderWithinTrustRoot(
+    required(environment, "PLATFORM_ASSET_WORKER_SECRET_TRUST_ROOT"),
+    "PLATFORM_ASSET_WORKER_SECRET_TRUST_ROOT_INVALID",
+  );
+  const [routesText, policiesText, token, ca, cert, key] = await Promise.all([
+    reader.readPrivate(required(environment, "PLATFORM_ASSET_STORAGE_ROUTE_FILE"), 512 * 1024,
+      "PLATFORM_ASSET_STORAGE_ROUTE_FILE_INVALID"),
+    reader.readRegular(required(environment, "PLATFORM_ASSET_INSPECTION_POLICY_REGISTRY_FILE"), 2 * 1024 * 1024,
+      "PLATFORM_ASSET_INSPECTION_POLICY_REGISTRY_FILE_INVALID"),
+    reader.readPrivate(required(environment, "PLATFORM_ASSET_SCANNER_TOKEN_FILE"), 4_096,
+      "PLATFORM_ASSET_SCANNER_TOKEN_FILE_INVALID"),
+    reader.readRegular(required(environment, "PLATFORM_ASSET_SCANNER_TLS_CA_FILE"), 256 * 1024,
+      "PLATFORM_ASSET_SCANNER_TLS_CA_FILE_INVALID"),
+    reader.readRegular(required(environment, "PLATFORM_ASSET_SCANNER_TLS_CERT_FILE"), 256 * 1024,
+      "PLATFORM_ASSET_SCANNER_TLS_CERT_FILE_INVALID"),
+    reader.readPrivate(required(environment, "PLATFORM_ASSET_SCANNER_TLS_KEY_FILE"), 64 * 1024,
+      "PLATFORM_ASSET_SCANNER_TLS_KEY_FILE_INVALID"),
+  ]);
+  let routesValue: unknown;
+  let policiesValue: unknown;
+  try {
+    routesValue = JSON.parse(routesText) as unknown;
+    policiesValue = JSON.parse(policiesText) as unknown;
+  } catch (error) {
+    throw new Error("PLATFORM_ASSET_WORKER_REGISTRY_JSON_INVALID", { cause: error });
+  }
+  return Object.freeze({
+    objectStore: new S3AssetObjectStore(parseAssetStorageRouteRegistry(routesValue)),
+    policyResolver: parseAssetInspectionPolicyRegistry(policiesValue),
+    scanner: new HttpsAssetSecurityScanner({
+      endpoint: required(environment, "PLATFORM_ASSET_SCANNER_ENDPOINT"),
+      audience: required(environment, "PLATFORM_ASSET_SCANNER_AUDIENCE"),
+      bearerToken: token,
+      timeoutMs: boundedEnvironmentInteger(environment.PLATFORM_ASSET_SCANNER_TIMEOUT_MS ?? "10000",
+        100, 60_000, "PLATFORM_ASSET_SCANNER_TIMEOUT_MS_INVALID"),
+      tls: { ca, cert, key },
+    }),
+  });
 }
 
 export function createAssetWorkerUnitOfWork(
@@ -149,28 +186,10 @@ export function createAssetWorkerUnitOfWork(
   return Object.freeze(unitOfWork);
 }
 
-const DISABLED_ASSET_WORKER: AssetWorkerProductionComposition = Object.freeze({
-  enabled: false,
-  runOneCycle: async () => undefined,
-  stopClaiming: async () => undefined,
-  returnLeases: async () => undefined,
-});
-
 function required(environment: Readonly<Record<string, string | undefined>>, name: string): string {
   const value = environment[name];
   if (value === undefined || value.length === 0) throw new Error(`${name}_REQUIRED`);
   return value;
-}
-
-function optionalBoolean(
-  environment: Readonly<Record<string, string | undefined>>,
-  name: string,
-): boolean | undefined {
-  const value = environment[name];
-  if (value === undefined) return undefined;
-  if (value === "true") return true;
-  if (value === "false") return false;
-  throw new Error(`${name}_INVALID`);
 }
 
 function optionalInteger(
@@ -181,6 +200,18 @@ function optionalInteger(
   if (value === undefined) return undefined;
   if (!/^[1-9][0-9]*$/u.test(value)) throw new Error(`${name}_INVALID`);
   return Number(value);
+}
+
+function boundedEnvironmentInteger(
+  value: string,
+  minimum: number,
+  maximum: number,
+  code: string,
+): number {
+  if (!/^[0-9]+$/u.test(value)) throw new Error(code);
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) throw new Error(code);
+  return parsed;
 }
 
 function scopedIdentifier(value: string, code: string): string {

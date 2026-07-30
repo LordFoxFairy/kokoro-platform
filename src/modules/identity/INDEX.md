@@ -32,7 +32,7 @@ does not call the Platform deployment over HTTP or RPC.
 ## Runtime authority
 
 `platform-identity-worker` is an independent process in the Platform artifact. It has its own replica lifecycle, stable worker id,
-database credential class and exact Identity-only grants; the aggregate `platform-worker` has no Identity composition, secrets,
+database credential class and exact Identity-only grants; no other dedicated worker has Identity composition, secrets,
 outbound endpoint, claim loop or projection authority. Startup and post-migration authority checks positively prove the standalone
 worker's allowlist and prove that verification digest/email columns are unreadable. Delivery endpoint, HMAC secret file,
 audit-digest key file and their immutable trust root are mandatory production configuration; startup fails before claiming work

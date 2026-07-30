@@ -42,8 +42,6 @@ const localIdentitySecurityEventTypes = [
   "identity.totp.enrollment_superseded",
 ] as const;
 
-const workerProcess = "src/process/worker.ts";
-
 const outboxBackedEffectTables = [
   "asset_blob_candidate",
   "asset_object_cleanup",
@@ -71,21 +69,21 @@ describe("Platform outbox producer to consumer closure", () => {
         process: { module: "src/process/identity-worker.ts", symbol: "runPlatformIdentityWorkerMain" } },
       commerce: { consumer: "commerce-worker", closure: "active",
         eventTypes: ["commerce.redemption.fulfilled.v1"],
-        process: { module: workerProcess, symbol: "createCommerceOutboxReconciliationCycle" } },
+        process: { module: "src/process/commerce-worker.ts", symbol: "createCommerceOutboxReconciliationCycle" } },
       credit: { consumer: "commerce-worker", closure: "active", eventTypes: [
         "credit.reserve_root.v1", "credit.finalize_segment.v1",
         "credit.release_segment.v1", "credit.reconcile_segment.v1",
-      ], process: { module: workerProcess, symbol: "createCommerceOutboxReconciliationCycle" } },
+      ], process: { module: "src/process/commerce-worker.ts", symbol: "createCommerceOutboxReconciliationCycle" } },
       site: { consumer: "site-worker", closure: "active", eventTypes: [
         "site.activation.begin.v1", "site.traffic-stop.request.v1",
-      ], process: { module: workerProcess, symbol: "createSiteRuntimeWorkerProductionComposition" } },
+      ], process: { module: "src/process/site-worker.ts", symbol: "createSiteRuntimeWorkerProductionComposition" } },
       asset: { consumer: "asset-worker", closure: "active", eventTypes: [
         "asset.upload.completion.requested", "asset.scan.requested",
         "asset.blob.promotion.requested", "asset.object.cleanup.requested",
-      ], process: { module: workerProcess, symbol: "createAssetWorkerProductionComposition" } },
+      ], process: { module: "src/process/asset-worker.ts", symbol: "createAssetWorkerProductionComposition" } },
       "admin-execution": { consumer: "admin-worker", closure: "active",
         eventTypes: ["admin.approval.execution.requested"],
-        process: { module: workerProcess, symbol: "createAdminWorkerExecutionRuntime" } },
+        process: { module: "src/process/admin-worker.ts", symbol: "createAdminWorkerExecutionRuntime" } },
     });
     for (const route of Object.values(OUTBOX_ROUTE_CATALOG)) {
       if (route.closure !== "active") continue;

@@ -2,8 +2,12 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { parse, parseAllDocuments } from "yaml";
 import {
+  PLATFORM_ADMIN_WORKER_DEPLOYMENT_CONTRACT,
+  PLATFORM_ASSET_WORKER_DEPLOYMENT_CONTRACT,
+  PLATFORM_AUTHORIZATION_MAINTENANCE_DEPLOYMENT_CONTRACT,
+  PLATFORM_COMMERCE_WORKER_DEPLOYMENT_CONTRACT,
   PLATFORM_IDENTITY_WORKER_DEPLOYMENT_CONTRACT,
-  PLATFORM_WORKER_DEPLOYMENT_CONTRACT,
+  PLATFORM_SITE_WORKER_DEPLOYMENT_CONTRACT,
   resolveProcessDeploymentEnvironment,
   type ProcessDeploymentContract,
 } from "../../src/process/worker-deployment-contract.js";
@@ -47,17 +51,11 @@ describe("Platform worker deployment parity", () => {
         .then((value) => parse(value) as ComposeManifest),
     ]);
 
-    for (const contract of [
-      PLATFORM_WORKER_DEPLOYMENT_CONTRACT,
-      PLATFORM_IDENTITY_WORKER_DEPLOYMENT_CONTRACT,
-    ]) assertParity(contract, deployables, compose);
+    for (const contract of WORKER_CONTRACTS) assertParity(contract, deployables, compose);
   });
 
   it("fails closed when any declared required environment value is absent", () => {
-    for (const contract of [
-      PLATFORM_WORKER_DEPLOYMENT_CONTRACT,
-      PLATFORM_IDENTITY_WORKER_DEPLOYMENT_CONTRACT,
-    ]) {
+    for (const contract of WORKER_CONTRACTS) {
       const complete = Object.fromEntries(
         contract.environment.required.map((name) => [name, `configured-${name}`]),
       );
@@ -71,8 +69,8 @@ describe("Platform worker deployment parity", () => {
     }
   });
 
-  it("runs Identity in an independent image selector and never in the legacy aggregate worker", async () => {
-    const [entrypoint, aggregateWorker, identityWorker, dockerfile, kubernetes] = await Promise.all([
+  it("runs every owner worker independently and leaves worker.ts as lifecycle-only", async () => {
+    const [entrypoint, lifecycleKernel, identityWorker, dockerfile, kubernetes] = await Promise.all([
       readFile("deploy/docker/runtime-entrypoint.mjs", "utf8"),
       readFile("src/process/worker.ts", "utf8"),
       readFile("src/process/identity-worker.ts", "utf8"),
@@ -83,12 +81,17 @@ describe("Platform worker deployment parity", () => {
     expect(entrypoint).toContain("identity-worker.js");
     expect(dockerfile).toContain("COPY --chown=node:node --from=build /app/dist ./dist");
     expect(identityWorker).toContain("createIdentityOutboxWorkerProductionComposition");
-    expect(aggregateWorker).not.toContain("createIdentityOutboxWorkerProductionComposition");
-    expect(aggregateWorker).not.toContain("identityOutbox");
+    expect(lifecycleKernel).not.toContain("ProductionComposition");
+    expect(lifecycleKernel).not.toContain("runPlatformWorkerMain");
+    for (const name of ["platform-commerce-worker", "platform-site-worker", "platform-asset-worker",
+      "platform-admin-worker", "platform-identity-worker", "platform-authorization-maintenance"]) {
+      expect(entrypoint).toContain(`"${name}"`);
+    }
     const resources = parseAllDocuments(kubernetes)
       .map((document) => document.toJSON() as KubernetesResource)
       .flatMap((resource) => resource.kind === "List" ? resource.items ?? [] : [resource]);
-    for (const name of ["platform-worker", "platform-identity-worker"]) {
+    for (const name of ["platform-commerce-worker", "platform-site-worker", "platform-asset-worker",
+      "platform-admin-worker", "platform-identity-worker"]) {
       const deployment = resources.find((resource) =>
         resource.kind === "Deployment" && resource.metadata?.name === name);
       expect(deployment, name).toBeDefined();
@@ -107,10 +110,7 @@ describe("Platform worker deployment parity", () => {
       readFile("deploy/k8s/platform-services.example.yaml", "utf8"),
     ]);
     const compose = parse(composeSource) as ComposeManifest;
-    for (const contract of [
-      PLATFORM_WORKER_DEPLOYMENT_CONTRACT,
-      PLATFORM_IDENTITY_WORKER_DEPLOYMENT_CONTRACT,
-    ]) {
+    for (const contract of POLLING_WORKER_CONTRACTS) {
       const service = compose.services[contract.id];
       expect(service?.healthcheck?.test?.join(" ")).toContain("/health/ready");
       const environmentNames = Object.keys(service?.environment ?? {});
@@ -133,6 +133,19 @@ describe("Platform worker deployment parity", () => {
     expect(identityDeployment).toContain("identity-delivery-hmac-key");
   });
 });
+
+const POLLING_WORKER_CONTRACTS = Object.freeze([
+  PLATFORM_COMMERCE_WORKER_DEPLOYMENT_CONTRACT,
+  PLATFORM_SITE_WORKER_DEPLOYMENT_CONTRACT,
+  PLATFORM_ASSET_WORKER_DEPLOYMENT_CONTRACT,
+  PLATFORM_ADMIN_WORKER_DEPLOYMENT_CONTRACT,
+  PLATFORM_IDENTITY_WORKER_DEPLOYMENT_CONTRACT,
+] as const);
+
+const WORKER_CONTRACTS = Object.freeze([
+  ...POLLING_WORKER_CONTRACTS,
+  PLATFORM_AUTHORIZATION_MAINTENANCE_DEPLOYMENT_CONTRACT,
+] as const);
 
 function assertParity(
   contract: ProcessDeploymentContract,

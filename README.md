@@ -13,8 +13,13 @@ The production artifact has one closed runtime set:
 - `platform-authorization`
 - `platform-asset-data-plane`
 - `platform-model-gateway`
-- `platform-worker`
+- `platform-commerce-worker`
+- `platform-site-worker`
+- `platform-asset-worker`
+- `platform-admin-worker`
+- `platform-identity-worker`
 - `platform-admin`
+- `platform-authorization-maintenance`
 - `platform-migrator`
 - `@kokoro/hub`
 - `platform-hub-connect`

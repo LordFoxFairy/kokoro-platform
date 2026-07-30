@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import {
   SiteProviderEffectError,
+  sitePromotionCommandDigest,
+  siteTrafficStopCommandDigest,
   type SiteDeploymentProvider,
   type SitePromotionCommand,
   type SitePromotionObservation,
@@ -10,6 +12,7 @@ import {
 } from "../../application/contracts/site-deployment-provider.js";
 
 export { SiteProviderEffectError };
+export { sitePromotionCommandDigest, siteTrafficStopCommandDigest };
 
 type Fetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
@@ -68,19 +71,55 @@ export class SiteProviderRpcAdapter implements SiteDeploymentProvider {
   ): Promise<SitePromotionObservation> {
     const response = await this.call(method, command, signal);
     const value = record(response.value);
-    exact(value, ["status", "deploymentRef", "observedAt"]);
+    exact(value, ["status", "deploymentRef", "observedAt", "operationKey", "siteRef",
+      "providerProjectRef", "releaseRef", "webArtifactDigest", "releaseManifestDigest",
+      "certificationDigest", "environment", "region", "audience", "sessionContractRevision",
+      "commandDigest"]);
     if (!includes(["ready", "pending", "unknown", "rejected"] as const, value.status) ||
         (value.deploymentRef !== null && typeof value.deploymentRef !== "string") ||
-        typeof value.observedAt !== "string" || !Number.isFinite(Date.parse(value.observedAt))) {
+        typeof value.observedAt !== "string" || !Number.isFinite(Date.parse(value.observedAt)) ||
+        typeof value.operationKey !== "string" || typeof value.siteRef !== "string" ||
+        typeof value.providerProjectRef !== "string" || typeof value.releaseRef !== "string" ||
+        typeof value.webArtifactDigest !== "string" || typeof value.releaseManifestDigest !== "string" ||
+        typeof value.certificationDigest !== "string" ||
+        !includes(["development", "preview", "production"] as const, value.environment) ||
+        typeof value.region !== "string" || typeof value.audience !== "string" ||
+        typeof value.sessionContractRevision !== "string" || typeof value.commandDigest !== "string" ||
+        !digest(value.webArtifactDigest) || !digest(value.releaseManifestDigest) ||
+        !digest(value.certificationDigest) || !digest(value.commandDigest)) {
       throw new SiteProviderEffectError("unknown", "PROVIDER_RPC_RESPONSE_INVALID");
     }
     if ((value.status === "ready" || value.status === "pending") && value.deploymentRef === null) {
       throw new SiteProviderEffectError("unknown", "PROVIDER_RPC_RESPONSE_INVALID");
     }
+    const commandDigest = sitePromotionCommandDigest(command);
+    if (
+      value.operationKey !== command.operationKey || value.siteRef !== command.siteRef ||
+      value.providerProjectRef !== command.providerProjectRef || value.releaseRef !== command.releaseRef ||
+      value.webArtifactDigest !== command.webArtifactDigest ||
+      value.releaseManifestDigest !== command.releaseManifestDigest ||
+      value.certificationDigest !== command.certificationDigest ||
+      value.environment !== command.environment || value.region !== command.region ||
+      value.audience !== command.audience ||
+      value.sessionContractRevision !== command.sessionContractRevision ||
+      value.commandDigest !== commandDigest
+    ) throw new SiteProviderEffectError("unknown", "PROVIDER_RPC_RESPONSE_BINDING_MISMATCH");
     return Object.freeze({
       status: value.status,
       deploymentRef: value.deploymentRef,
       observedAt: value.observedAt,
+      operationKey: value.operationKey,
+      siteRef: value.siteRef,
+      providerProjectRef: value.providerProjectRef,
+      releaseRef: value.releaseRef,
+      webArtifactDigest: value.webArtifactDigest,
+      releaseManifestDigest: value.releaseManifestDigest,
+      certificationDigest: value.certificationDigest,
+      environment: value.environment,
+      region: value.region,
+      audience: value.audience,
+      sessionContractRevision: value.sessionContractRevision,
+      commandDigest: value.commandDigest,
       payloadDigest: response.payloadDigest,
     });
   }
@@ -92,14 +131,34 @@ export class SiteProviderRpcAdapter implements SiteDeploymentProvider {
   ): Promise<SiteTrafficStopProviderObservation> {
     const response = await this.call(method, command, signal);
     const value = record(response.value);
-    exact(value, ["status", "observedAt"]);
+    exact(value, ["status", "observedAt", "operationKey", "siteRef", "providerProjectRef",
+      "deploymentRef", "environment", "region", "commandDigest"]);
     if (!includes(["stopped", "serving", "unknown", "rejected"] as const, value.status) ||
-        typeof value.observedAt !== "string" || !Number.isFinite(Date.parse(value.observedAt))) {
+        typeof value.observedAt !== "string" || !Number.isFinite(Date.parse(value.observedAt)) ||
+        typeof value.operationKey !== "string" || typeof value.siteRef !== "string" ||
+        typeof value.providerProjectRef !== "string" || typeof value.deploymentRef !== "string" ||
+        !includes(["development", "preview", "production"] as const, value.environment) ||
+        typeof value.region !== "string" || typeof value.commandDigest !== "string" ||
+        !digest(value.commandDigest)) {
       throw new SiteProviderEffectError("unknown", "PROVIDER_RPC_RESPONSE_INVALID");
     }
+    const commandDigest = siteTrafficStopCommandDigest(command);
+    if (
+      value.operationKey !== command.operationKey || value.siteRef !== command.siteRef ||
+      value.providerProjectRef !== command.providerProjectRef ||
+      value.deploymentRef !== command.deploymentRef || value.environment !== command.environment ||
+      value.region !== command.region || value.commandDigest !== commandDigest
+    ) throw new SiteProviderEffectError("unknown", "PROVIDER_RPC_RESPONSE_BINDING_MISMATCH");
     return Object.freeze({
       status: value.status,
       observedAt: value.observedAt,
+      operationKey: value.operationKey,
+      siteRef: value.siteRef,
+      providerProjectRef: value.providerProjectRef,
+      deploymentRef: value.deploymentRef,
+      environment: value.environment,
+      region: value.region,
+      commandDigest: value.commandDigest,
       payloadDigest: response.payloadDigest,
     });
   }
@@ -203,3 +262,4 @@ function exact(value: Record<string, unknown>, keys: readonly string[]): void {
 function includes<const Values extends readonly string[]>(values: Values, value: unknown): value is Values[number] {
   return typeof value === "string" && values.includes(value);
 }
+function digest(value: string): boolean { return /^[a-f0-9]{64}$/u.test(value); }

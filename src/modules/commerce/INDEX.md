@@ -39,7 +39,11 @@ Platform through HTTP/RPC and never exposes a Prisma client to application code.
   Credit programs fail closed in redemption until calendar-window acquisition is a real owner workflow; relative-expiry grants are
   not used as an approximation.
 - Fulfilled-redemption outbox events are reconciled by the Platform worker against the durable Redemption and fulfillment projection
-  before delivery is completed, with bounded retry and dead-letter handling.
+  before delivery is completed, with bounded retry and dead-letter handling. The callable runtime immediately confirms and starts a
+  one-third-window heartbeat for every lease in the complete claimed batch, including items queued behind a slow delivery. Ownership
+  is rechecked after projection and before transport dispatch. Process abort never consumes retry budget; renewal loss aborts an
+  in-flight transport and forbids dispatch, completion or retry. Its stop-claiming and exact worker/`commerce-worker`/event-allowlist
+  lease-return phases are part of the production worker shutdown lifecycle.
 
 ## Admin control plane
 

@@ -10,6 +10,8 @@ import {
   PostgresSiteRuntimeStateStore,
 } from "../../src/modules/site/infrastructure/postgres/site-runtime-state-store.js";
 import type { SiteRuntimeRepository } from "../../src/modules/site/application/contracts/site-runtime-state.js";
+import { sitePromotionCommandDigest, siteTrafficStopCommandDigest } from
+  "../../src/modules/site/application/contracts/site-deployment-provider.js";
 import type { ActivationAttempt, SiteAggregate, SiteRelease } from "../../src/modules/site/domain/site-lifecycle.js";
 import type { SiteTrafficStopAttempt } from "../../src/modules/site/domain/site-traffic-stop.js";
 
@@ -57,6 +59,12 @@ describe("PostgresSiteRuntimeStateStore", () => {
     const next = await store.acceptPromotion("activation_02", {
       status: "ready", deploymentRef: "deployment_02",
       observedAt: "2026-07-30T10:01:00.000Z", payloadDigest: "d".repeat(64),
+      operationKey: "site-promote-operation", siteRef: "site_01",
+      providerProjectRef: "project_01", releaseRef: "release_02",
+      webArtifactDigest: "a".repeat(64), releaseManifestDigest: "b".repeat(64),
+      certificationDigest: "c".repeat(64), environment: "production",
+      region: "us-east-1", audience: "site-product", sessionContractRevision: "browser-v3",
+      commandDigest: sitePromotionCommandDigest(promotionCommand),
     });
     expect(calls).toEqual([`observation:${"d".repeat(64)}`, "attempt:pointer_committing", "commit:draining"]);
     expect(next).toMatchObject({ kind: "stop_activation_drain", providerNamespace: "vercel",
@@ -83,16 +91,77 @@ describe("PostgresSiteRuntimeStateStore", () => {
       },
     };
     const store = new PostgresSiteRuntimeStateStore(runner(), repository, authorization());
+    const trafficCommand = trafficStopCommand();
     await expect(store.acceptTrafficStop("traffic_stop_01", {
       status: "rejected", observedAt: "2026-07-30T10:01:00.000Z", payloadDigest: "e".repeat(64),
+      ...trafficStopEvidence(trafficCommand),
     })).resolves.toMatchObject({ kind: "observe_site_traffic" });
     expect(current).toMatchObject({ state: "failed", failureCode: "PROVIDER_REJECTED" });
     await expect(store.acceptTrafficStop("traffic_stop_01", {
       status: "stopped", observedAt: "2026-07-30T10:02:00.000Z", payloadDigest: "f".repeat(64),
+      ...trafficStopEvidence(trafficCommand),
     })).resolves.toEqual({ kind: "complete" });
     expect(completed).toEqual(["succeeded:suspended"]);
   });
+
+  it("rejects promotion evidence whose audience is not bound to the attempted release", async () => {
+    let writes = 0;
+    const repository = activationRepository(() => { writes += 1; });
+    const store = new PostgresSiteRuntimeStateStore(runner(), repository, authorization());
+
+    await expect(store.acceptPromotion("activation_02", {
+      status: "ready", deploymentRef: "deployment_02",
+      observedAt: "2026-07-30T10:01:00.000Z", payloadDigest: "d".repeat(64),
+      ...promotionCommand,
+      audience: "wrong-audience",
+      commandDigest: sitePromotionCommandDigest(promotionCommand),
+    })).rejects.toThrow("SITE_PROVIDER_OBSERVATION_BINDING_MISMATCH");
+    expect(writes).toBe(0);
+  });
+
+  it("rejects traffic-stop evidence for a different deployment before persisting it", async () => {
+    let writes = 0;
+    const current = trafficStop("stop_requested");
+    const repository: SiteRuntimeRepository = {
+      ...activationRepository(() => { writes += 1; }),
+      loadTrafficStopForUpdate: async () => current,
+      updateTrafficStop: async () => { writes += 1; },
+      recordTrafficStopObservation: async () => { writes += 1; },
+    };
+    const store = new PostgresSiteRuntimeStateStore(runner(), repository, authorization());
+    const command = trafficStopCommand();
+
+    await expect(store.acceptTrafficStop("traffic_stop_01", {
+      status: "stopped", observedAt: "2026-07-30T10:02:00.000Z", payloadDigest: "f".repeat(64),
+      ...trafficStopEvidence(command), deploymentRef: "deployment_wrong",
+    })).rejects.toThrow("SITE_PROVIDER_OBSERVATION_BINDING_MISMATCH");
+    expect(writes).toBe(0);
+  });
 });
+
+const promotionCommand = Object.freeze({
+  operationKey: "site-promote-operation",
+  siteRef: "site_01",
+  providerProjectRef: "project_01",
+  releaseRef: "release_02",
+  webArtifactDigest: "a".repeat(64),
+  releaseManifestDigest: "b".repeat(64),
+  certificationDigest: "c".repeat(64),
+  environment: "production" as const,
+  region: "us-east-1",
+  audience: "site-product",
+  sessionContractRevision: "browser-v3",
+});
+
+function trafficStopCommand() {
+  return { operationKey: "site-traffic-operation", siteRef: "site_01",
+    providerProjectRef: "project_01", deploymentRef: "deployment_01",
+    environment: "production", region: "us-east-1" } as const;
+}
+
+function trafficStopEvidence(command: ReturnType<typeof trafficStopCommand>) {
+  return { ...command, commandDigest: siteTrafficStopCommandDigest(command) } as const;
+}
 
 function runner() {
   return { async execute<Result>(work: (transaction: PlatformTransaction) => Promise<Result>) {
@@ -106,6 +175,23 @@ function authorization() {
     await mutate();
     return {};
   } } as never;
+}
+
+function activationRepository(onWrite: () => void): SiteRuntimeRepository {
+  return {
+    loadActivationForUpdate: async () => activation("promote_requested"),
+    updateActivation: async () => { onWrite(); },
+    loadRuntimeProjectBindingForUpdate: async () => providerBinding,
+    recordObservationAndCandidateDeployment: async () => { onWrite(); },
+    loadSiteForUpdate: async () => activeSite,
+    loadReleaseForUpdate: async () => readyRelease,
+    commitActivation: async () => { onWrite(); },
+    loadDrainingRuntimeDeploymentForUpdate: async () => null,
+    recordDrainObservationAndComplete: async () => { onWrite(); },
+    loadTrafficStopForUpdate: async () => null,
+    updateTrafficStop: async () => { onWrite(); },
+    recordTrafficStopObservation: async () => { onWrite(); },
+  };
 }
 
 const activeSite: SiteAggregate = { siteRef: "site_01", state: "active", activeReleaseRef: "release_01",

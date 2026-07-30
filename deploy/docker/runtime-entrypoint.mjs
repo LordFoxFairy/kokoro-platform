@@ -13,10 +13,29 @@ const serviceEntries = Object.freeze({
   "platform-asset-data-plane": { module: "../../dist/src/process/asset-data-plane.js", start: "runAssetDataPlaneMain" },
   "platform-model-gateway": { module: "../../dist/src/process/model-gateway.js", start: "runPlatformModelGatewayMain" },
   "platform-admin": { module: "../../dist/src/process/admin.js", start: "runPlatformAdminMain" },
-  "platform-worker": { module: "../../dist/src/process/worker.js", start: "runPlatformWorkerMain" },
+  "platform-commerce-worker": {
+    module: "../../dist/src/process/commerce-worker.js",
+    start: "runPlatformCommerceWorkerMain",
+  },
+  "platform-site-worker": {
+    module: "../../dist/src/process/site-worker.js",
+    start: "runPlatformSiteWorkerMain",
+  },
+  "platform-asset-worker": {
+    module: "../../dist/src/process/asset-worker.js",
+    start: "runPlatformAssetWorkerMain",
+  },
+  "platform-admin-worker": {
+    module: "../../dist/src/process/admin-worker.js",
+    start: "runPlatformAdminWorkerMain",
+  },
   "platform-identity-worker": {
     module: "../../dist/src/process/identity-worker.js",
     start: "runPlatformIdentityWorkerMain",
+  },
+  "platform-authorization-maintenance": {
+    module: "../../dist/src/process/authorization-maintenance.js",
+    start: "runPlatformAuthorizationMaintenanceMain",
   },
   "platform-migrator": {
     module: "../../dist/src/infrastructure/postgres/migrator.js",

@@ -743,7 +743,7 @@ describe("independent deployable roles", () => {
   it("publishes executable image selectors and distinct database roles", async () => {
     const manifest = await readFile(resolve("deployables.yaml"), "utf8");
     const entrypoint = await readFile(resolve("deploy/docker/runtime-entrypoint.mjs"), "utf8");
-    for (const role of ["platform-api", "platform-admission", "platform-authorization", "platform-asset-data-plane", "platform-model-gateway", "platform-worker", "platform-identity-worker", "platform-admin", "platform-hub-connect", "platform-migrator"]) {
+    for (const role of ["platform-api", "platform-admission", "platform-authorization", "platform-asset-data-plane", "platform-model-gateway", "platform-commerce-worker", "platform-site-worker", "platform-asset-worker", "platform-admin-worker", "platform-identity-worker", "platform-authorization-maintenance", "platform-admin", "platform-hub-connect", "platform-migrator"]) {
       expect(manifest).toContain(`KOKORO_SERVICE_PACKAGE=${role}`);
       expect(entrypoint).toContain(`"${role}"`);
     }
@@ -753,7 +753,8 @@ describe("independent deployable roles", () => {
     expect(manifest).toContain(
       "declaredInboundContracts: [platform-admission-connect, platform-asset-eligibility-connect]",
     );
-    expect(manifest).toContain("credentialClass: platform-worker");
+    for (const role of ["commerce-worker", "site-worker", "asset-worker", "admin-worker",
+      "authorization-maintenance"]) expect(manifest).toContain(`credentialClass: ${role}`);
     expect(manifest).toContain("credentialClass: platform-identity-worker");
     expect(manifest).toContain(
       "expectedUserEnvironmentVariable: PLATFORM_DATABASE_IDENTITY_WORKER_ROLE",

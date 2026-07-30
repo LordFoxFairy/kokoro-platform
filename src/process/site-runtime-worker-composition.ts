@@ -30,6 +30,8 @@ export async function createSiteRuntimeWorkerProductionComposition(input: Readon
   const environment = input.environment ?? process.env;
   const registryPath = required(environment, "PLATFORM_SITE_PROVIDER_REGISTRY_FILE");
   const workerId = scopedIdentifier(input.workerId, "PLATFORM_SITE_WORKER_ID_INVALID");
+  const claimLimit = optionalBoundedInteger(environment, "PLATFORM_SITE_OUTBOX_CLAIM_LIMIT", 1, 100);
+  const leaseSeconds = optionalBoundedInteger(environment, "PLATFORM_SITE_OUTBOX_LEASE_SECONDS", 1, 300) ?? 30;
   const [providers, eventKeyRing] = await Promise.all([
     loadSiteProviderRegistry(registryPath),
     loadAuthorizationEventKeyRing(required(environment, "PLATFORM_AUTHORIZATION_EVENT_KEY_RING_FILE")),
@@ -42,14 +44,14 @@ export async function createSiteRuntimeWorkerProductionComposition(input: Readon
     createSiteAuthorizationMutation(eventSigner),
   );
   const dispatcher = new SiteRuntimeDispatcher(store, providers);
-  const claimLimit = optionalInteger(environment, "PLATFORM_SITE_OUTBOX_CLAIM_LIMIT");
-  const leaseSeconds = optionalInteger(environment, "PLATFORM_SITE_OUTBOX_LEASE_SECONDS");
   const queue = createPostgresSiteRuntimeEventQueue(input.database, {
     workerId,
     ...(claimLimit === undefined ? {} : { claimLimit }),
-    ...(leaseSeconds === undefined ? {} : { leaseSeconds }),
+    leaseSeconds,
   });
-  const consumer = new SiteOutboxConsumer(queue, dispatcher);
+  const consumer = new SiteOutboxConsumer(queue, dispatcher, {
+    leaseHeartbeatMs: Math.max(1, Math.floor((leaseSeconds * 1_000) / 3)),
+  });
   const composition: SiteRuntimeWorkerProductionComposition = {
     runOneCycle: (context) => consumer.runOneCycle(context),
     stopClaiming: () => consumer.stopClaiming(),
@@ -68,12 +70,18 @@ function required(environment: Readonly<Record<string, string | undefined>>, nam
   if (value === undefined || value.length === 0) throw new Error(`${name}_REQUIRED`);
   return value;
 }
-function optionalInteger(
+function optionalBoundedInteger(
   environment: Readonly<Record<string, string | undefined>>,
   name: string,
+  minimum: number,
+  maximum: number,
 ): number | undefined {
   const value = environment[name];
   if (value === undefined) return undefined;
-  if (!/^(?:0|[1-9][0-9]*)$/u.test(value)) throw new Error(`${name}_INVALID`);
-  return Number(value);
+  if (!/^[1-9][0-9]*$/u.test(value)) throw new Error(`${name}_INVALID`);
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`${name}_INVALID`);
+  }
+  return parsed;
 }

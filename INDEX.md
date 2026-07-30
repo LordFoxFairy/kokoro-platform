@@ -53,9 +53,10 @@ private tables are never cross-service APIs.
 ## Idempotency, failure, and recovery
 
 Effect commands use durable receipts, stable idempotency keys, transactional writes, and reconciliation after ambiguous timeouts.
-The Platform worker consumes owner-filtered outbox effects for local reconciliation. Identity verification delivery uses signed,
-idempotent HTTPS and Identity namespace allocation commits as a local projection; neither path creates a parallel job subsystem or
-self-calls Platform RPC.
+Commerce, Site, Asset, Admin and Identity workers consume only their owner-filtered effects with independent credentials,
+health and drain lifecycles. Authorization retention is a one-shot scheduled maintenance process guarded by a PostgreSQL
+advisory lock. Identity verification delivery uses signed, idempotent HTTPS and Identity namespace allocation commits as a
+local projection; none of these paths self-call Platform RPC.
 
 ## Extension rules and forbidden dependencies
 

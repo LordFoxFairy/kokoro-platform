@@ -10,6 +10,8 @@ import {
 } from "../../../../shared/outbox-inbox/hmac-http-delivery.js";
 import { resolvePlatformTransaction, type PlatformTransaction } from
   "../../../../shared/unit-of-work/platform-transaction.js";
+import { SingleFlightLeaseHeartbeat } from
+  "../../../../shared/outbox-inbox/lease-heartbeat.js";
 
 type CommerceFulfillmentEvent = Readonly<{
   version: 1;
@@ -101,29 +103,58 @@ export class PostgresCommerceOutboxProjection implements CommerceOutboxProjectio
   }
 }
 
+export interface CommerceOutboxReconciliationRuntime {
+  (context: Readonly<{ signal: AbortSignal }>): Promise<void>;
+  runOneCycle(context: Readonly<{ signal: AbortSignal }>): Promise<void>;
+  stopClaiming(): Promise<void>;
+  returnLeases(reason: "shutdown" | "shutdown-deadline" | "stop-claim-failed" | "WORKER_SHUTDOWN"): Promise<void>;
+}
+
+type ActiveCommerceLease = Readonly<{
+  heartbeat: SingleFlightLeaseHeartbeat;
+}>;
+
 export function createCommerceOutboxReconciliationCycle(input: Readonly<{
   database: Pick<PlatformTransactionalDatabaseClient, "internalTransaction">;
   transport: OutboxDeliveryTransport;
-  outbox?: Pick<OutboxRepository, "claim" | "complete" | "retryOrDeadLetter">;
+  outbox?: Pick<OutboxRepository,
+    "claim" | "complete" | "retryOrDeadLetter" | "renewLease" | "releaseOwnedLeases">;
   projection?: CommerceOutboxProjection;
   workerId: string;
   batchSize?: number;
   leaseSeconds?: number;
   maxAttempts?: number;
+  leaseHeartbeatMs?: number;
+  leaseRenewalTimeoutMs?: number;
   clock?: () => Date;
   leaseToken?: () => string;
-}>): (context: Readonly<{ signal: AbortSignal }>) => Promise<void> {
+}>): CommerceOutboxReconciliationRuntime {
   const outbox = input.outbox ?? new OutboxRepository();
   const projection = input.projection ?? new PostgresCommerceOutboxProjection();
   const batchSize = input.batchSize ?? 25;
   const leaseSeconds = input.leaseSeconds ?? 30;
   const maxAttempts = input.maxAttempts ?? 10;
+  const leaseHeartbeatMs = input.leaseHeartbeatMs ?? Math.max(1, Math.floor((leaseSeconds * 1_000) / 3));
+  const leaseRenewalTimeoutMs = input.leaseRenewalTimeoutMs ?? Math.min(leaseHeartbeatMs, 5_000);
   const clock = input.clock ?? (() => new Date());
   const leaseToken = input.leaseToken ?? randomUUID;
   if (!Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 100) {
     throw new Error("OUTBOX_MAX_ATTEMPTS_INVALID");
   }
-  return async ({ signal }) => {
+  if (!Number.isInteger(leaseHeartbeatMs) || leaseHeartbeatMs < 1 || leaseHeartbeatMs > 100_000) {
+    throw new Error("OUTBOX_LEASE_HEARTBEAT_INVALID");
+  }
+  if (!Number.isInteger(leaseRenewalTimeoutMs) || leaseRenewalTimeoutMs < 1 || leaseRenewalTimeoutMs > 100_000) {
+    throw new Error("OUTBOX_LEASE_RENEWAL_TIMEOUT_INVALID");
+  }
+  const active = new Map<string, ActiveCommerceLease>();
+  let claiming = true;
+  let cyclePromise: Promise<void> | undefined;
+  const stopActiveHeartbeats = async (): Promise<void> => {
+    await Promise.all([...active.values()].map(({ heartbeat }) => heartbeat.stop()));
+  };
+  const runClaimedBatch = async ({ signal }: Readonly<{ signal: AbortSignal }>): Promise<void> => {
+    if (!claiming) return;
     signal.throwIfAborted();
     const events = await input.database.internalTransaction("commerce.outbox.reconcile", (transaction) =>
       outbox.claim(transaction, {
@@ -132,28 +163,113 @@ export function createCommerceOutboxReconciliationCycle(input: Readonly<{
         limit: batchSize, leaseSeconds,
       }));
     for (const event of events) {
-      signal.throwIfAborted();
-      try {
-        await input.database.internalTransaction("commerce.outbox.reconcile", (transaction) =>
-          projection.assertDeliverable(transaction, event));
-        const acknowledgement = await input.transport.publish(event, signal);
-        await input.database.internalTransaction("commerce.outbox.reconcile", (transaction) =>
-          outbox.complete(transaction, { eventId: event.eventId, leaseToken: event.leaseToken, ...acknowledgement }));
-      } catch (error) {
-        // A process drain is not a failed delivery attempt. Leave the claimed row untouched so
-        // its existing lease can expire and a replacement worker can reconcile the same effect
-        // without consuming retry budget or manufacturing dead-letter evidence.
-        if (signal.aborted) throw error;
-        const terminal = event.attempt >= maxAttempts;
-        await input.database.internalTransaction("commerce.outbox.reconcile", (transaction) =>
-          outbox.retryOrDeadLetter(transaction, {
-            eventId: event.eventId, leaseToken: event.leaseToken, errorCode: "OUTBOX_DELIVERY_FAILED",
-            retryAt: terminal ? null : new Date(clock().getTime() + retryDelayMs(event.attempt)).toISOString(),
-            maxAttempts,
-          }));
+      const heartbeat = new SingleFlightLeaseHeartbeat(
+        () => input.database.internalTransaction("commerce.outbox.reconcile", (transaction) =>
+          outbox.renewLease(transaction, {
+            eventId: event.eventId, leaseToken: event.leaseToken, workerId: input.workerId,
+            owner: event.owner, leaseSeconds,
+          })),
+        {
+          intervalMs: leaseHeartbeatMs,
+          renewalTimeoutMs: leaseRenewalTimeoutMs,
+          timeoutCode: "COMMERCE_OUTBOX_LEASE_RENEWAL_TIMEOUT",
+        },
+      );
+      active.set(event.eventId, { heartbeat });
+      heartbeat.start();
+    }
+    const leaseFailures: unknown[] = [];
+    try {
+      for (const event of events) {
+        const current = active.get(event.eventId);
+        if (current === undefined) continue;
+        signal.throwIfAborted();
+        try {
+          await current.heartbeat.assertOwned();
+          await input.database.internalTransaction("commerce.outbox.reconcile", (transaction) =>
+            projection.assertDeliverable(transaction, event));
+          await current.heartbeat.assertOwned();
+          const acknowledgement = await input.transport.publish(
+            event,
+            AbortSignal.any([signal, current.heartbeat.signal]),
+          );
+          await current.heartbeat.assertOwned();
+          signal.throwIfAborted();
+          await input.database.internalTransaction("commerce.outbox.reconcile", async (transaction) => {
+            await outbox.renewLease(transaction, {
+              eventId: event.eventId, leaseToken: event.leaseToken, workerId: input.workerId,
+              owner: event.owner, leaseSeconds,
+            });
+            await outbox.complete(transaction, {
+              eventId: event.eventId, leaseToken: event.leaseToken, ...acknowledgement,
+            });
+          });
+        } catch (error) {
+          // A process drain is not a failed delivery attempt. Leave the claimed row untouched so
+          // shutdown can return it without consuming retry budget or manufacturing dead-letter evidence.
+          if (signal.aborted) throw error;
+          if (current.heartbeat.lost) {
+            leaseFailures.push(current.heartbeat.failure);
+            continue;
+          }
+          if (isLeaseLost(error)) {
+            leaseFailures.push(error);
+            continue;
+          }
+          const terminal = event.attempt >= maxAttempts;
+          await current.heartbeat.assertOwned();
+          await input.database.internalTransaction("commerce.outbox.reconcile", async (transaction) => {
+            await outbox.renewLease(transaction, {
+              eventId: event.eventId, leaseToken: event.leaseToken, workerId: input.workerId,
+              owner: event.owner, leaseSeconds,
+            });
+            await outbox.retryOrDeadLetter(transaction, {
+              eventId: event.eventId, leaseToken: event.leaseToken, errorCode: "OUTBOX_DELIVERY_FAILED",
+              retryAt: terminal ? null : new Date(clock().getTime() + retryDelayMs(event.attempt)).toISOString(),
+              maxAttempts,
+            });
+          });
+        } finally {
+          await current.heartbeat.stop();
+          active.delete(event.eventId);
+        }
       }
+    } catch (error) {
+      await stopActiveHeartbeats();
+      active.clear();
+      throw error;
+    }
+    if (leaseFailures.length === 1) throw leaseFailures[0];
+    if (leaseFailures.length > 1) {
+      throw new AggregateError(leaseFailures, "COMMERCE_OUTBOX_LEASE_RENEWAL_FAILED");
     }
   };
+  const runOneCycle = (context: Readonly<{ signal: AbortSignal }>): Promise<void> => {
+    if (cyclePromise !== undefined) return cyclePromise;
+    const cycle = runClaimedBatch(context).finally(() => {
+      if (cyclePromise === cycle) cyclePromise = undefined;
+    });
+    cyclePromise = cycle;
+    return cycle;
+  };
+  const runtime = Object.assign(
+    (context: Readonly<{ signal: AbortSignal }>) => runOneCycle(context),
+    {
+      runOneCycle,
+      stopClaiming: async () => { claiming = false; },
+      returnLeases: async (_reason: "shutdown" | "shutdown-deadline" | "stop-claim-failed" | "WORKER_SHUTDOWN") => {
+        await stopActiveHeartbeats();
+        await input.database.internalTransaction("commerce.outbox.reconcile", (transaction) =>
+          outbox.releaseOwnedLeases(transaction, {
+            workerId: input.workerId,
+            consumer: "commerce-worker",
+            eventTypes: COMMERCE_OUTBOX_EVENT_TYPES,
+          }));
+        active.clear();
+      },
+    },
+  );
+  return runtime;
 }
 
 function fulfillmentEvent(event: ClaimedOutboxEvent): CommerceFulfillmentEvent {
@@ -193,6 +309,9 @@ function retryDelayMs(attempt: number): number { return Math.min(60_000, 1_000 *
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function sameKeys(value: Record<string, unknown>, keys: readonly string[]): boolean { return Object.keys(value).sort().join("\0") === [...keys].sort().join("\0"); }
 function text(value: unknown): value is string { return typeof value === "string" && value.length >= 1 && value.length <= 256; }
+function isLeaseLost(error: unknown): boolean {
+  return error instanceof Error && error.message === "OUTBOX_LEASE_LOST";
+}
 function instant(value: Date | string): string {
   const parsed = value instanceof Date ? value : new Date(value);
   if (!Number.isFinite(parsed.getTime())) throw new Error("COMMERCE_OUTBOX_TIMESTAMP_INVALID");

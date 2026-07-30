@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   SiteDeploymentProviderRegistry,
   SiteProviderEffectError,
+  sitePromotionCommandDigest,
+  siteTrafficStopCommandDigest,
   type SiteDeploymentProvider,
 } from "../../src/modules/site/application/contracts/site-deployment-provider.js";
 import type {
@@ -68,7 +70,8 @@ function promotionStep(
     operationKey: "promotion-op", siteRef: "site_01", providerProjectRef: "project_01",
     releaseRef: "release_02", webArtifactDigest: "1".repeat(64),
     releaseManifestDigest: "2".repeat(64), certificationDigest: "3".repeat(64),
-    environment: "production", region: "us-east-1",
+    environment: "production", region: "us-east-1", audience: "site-product",
+    sessionContractRevision: "browser-v3",
   } };
 }
 function drainStep(): SiteRuntimeStep {
@@ -95,14 +98,34 @@ function fakeProvider(calls: string[]): SiteDeploymentProvider {
     namespace: "vercel",
     promote: async (command) => { calls.push(`promote:${command.operationKey}`); return {
       status: "ready", deploymentRef: "deployment_02", observedAt: "2026-07-29T13:01:00Z",
-      payloadDigest: "a".repeat(64),
+      ...promotionEvidence(command), payloadDigest: "a".repeat(64),
     }; },
     observePromotion: async () => { throw new Error("unexpected"); },
     stopTraffic: async (command) => { calls.push(`stop:${command.operationKey}`); return {
-      status: "stopped", observedAt: "2026-07-29T13:02:00Z", payloadDigest: "b".repeat(64),
+      status: "stopped", observedAt: "2026-07-29T13:02:00Z",
+      ...trafficEvidence(command), payloadDigest: "b".repeat(64),
     }; },
     observeTrafficStop: async (command) => { calls.push(`observe-stop:${command.operationKey}`); return {
-      status: "stopped", observedAt: "2026-07-29T13:02:00Z", payloadDigest: "b".repeat(64),
+      status: "stopped", observedAt: "2026-07-29T13:02:00Z",
+      ...trafficEvidence(command), payloadDigest: "b".repeat(64),
     }; },
   };
+}
+
+function promotionEvidence(command: Parameters<SiteDeploymentProvider["promote"]>[0]) {
+  return { operationKey: command.operationKey, siteRef: command.siteRef,
+    providerProjectRef: command.providerProjectRef, releaseRef: command.releaseRef,
+    webArtifactDigest: command.webArtifactDigest,
+    releaseManifestDigest: command.releaseManifestDigest,
+    certificationDigest: command.certificationDigest, environment: command.environment,
+    region: command.region, audience: command.audience,
+    sessionContractRevision: command.sessionContractRevision,
+    commandDigest: sitePromotionCommandDigest(command) } as const;
+}
+
+function trafficEvidence(command: Parameters<SiteDeploymentProvider["stopTraffic"]>[0]) {
+  return { operationKey: command.operationKey, siteRef: command.siteRef,
+    providerProjectRef: command.providerProjectRef, deploymentRef: command.deploymentRef,
+    environment: command.environment, region: command.region,
+    commandDigest: siteTrafficStopCommandDigest(command) } as const;
 }

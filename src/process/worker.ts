@@ -1,30 +1,5 @@
-import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-import {
-  createPlatformDatabaseClient,
-  loadPlatformDatabaseConfig,
-  type PlatformDatabaseClient,
-} from "../infrastructure/postgres/client.js";
+import type { PlatformDatabaseClient } from "../infrastructure/postgres/client.js";
 import type { PlatformProcessState } from "./api.js";
-import { createAuthorizationRetentionCycle } from "../modules/authorization/infrastructure/postgres/authorization-retention.js";
-import { createCommerceOutboxReconciliationCycle, HmacHttpOutboxDeliveryTransport } from
-  "../modules/commerce/infrastructure/postgres/commerce-outbox-reconciler.js";
-import { createSiteRuntimeWorkerProductionComposition } from "./site-runtime-worker-composition.js";
-import { createAssetWorkerProductionComposition } from "./asset-worker-composition.js";
-import {
-  PLATFORM_WORKER_DEPLOYMENT_CONTRACT,
-  resolveProcessDeploymentEnvironment,
-} from "./worker-deployment-contract.js";
-import { createAdminTerminalizerCycle } from
-  "../modules/admin-control/application/admin-terminalizer.js";
-import { createAdminWorkerExecutionRuntime } from
-  "../modules/admin-control/infrastructure/postgres/admin-worker-composition.js";
-import { PostgresAdminAuthorityRepository } from
-  "../modules/admin-control/infrastructure/postgres/admin-authority-repository.js";
-import {
-  createPlatformWorkerHealthServer,
-  loadPlatformWorkerHealthPort,
-} from "./worker-health-server.js";
 
 export interface PlatformWorkerProcessStatus {
   readonly state: PlatformProcessState;
@@ -240,96 +215,6 @@ function remaining(deadlineAt: number): number {
   return Math.max(0, deadlineAt - Date.now());
 }
 
-function isMainModule(): boolean {
-  const entry = process.argv[1];
-  return entry !== undefined && pathToFileURL(resolve(entry)).href === import.meta.url;
-}
-
-export async function runPlatformWorkerMain(): Promise<void> {
-  const environment = resolveProcessDeploymentEnvironment(
-    PLATFORM_WORKER_DEPLOYMENT_CONTRACT,
-    process.env,
-  );
-  const database = createPlatformDatabaseClient(loadPlatformDatabaseConfig("worker", environment));
-  const workerId = loadPlatformWorkerId(environment);
-  const retentionDays = Number.parseInt(
-    environment.PLATFORM_AUTHORIZATION_EVENT_RETENTION_DAYS ?? "7",
-    10,
-  );
-  const authorizationRetention = createAuthorizationRetentionCycle({
-    database,
-    retentionMs: retentionDays * 24 * 60 * 60_000,
-  });
-  const commerceOutbox = createCommerceOutboxReconciliationCycle({
-    database,
-    transport: new HmacHttpOutboxDeliveryTransport({
-      endpoint: requireEnvironment(environment, "PLATFORM_OUTBOX_DELIVERY_ENDPOINT"),
-      keyId: requireEnvironment(environment, "PLATFORM_OUTBOX_DELIVERY_KEY_ID"),
-      secretBase64: requireEnvironment(environment, "PLATFORM_OUTBOX_DELIVERY_SECRET_BASE64"),
-      timeoutMs: Number.parseInt(environment.PLATFORM_OUTBOX_DELIVERY_TIMEOUT_MS ?? "10000", 10),
-    }),
-    workerId,
-  });
-  const siteRuntime = await createSiteRuntimeWorkerProductionComposition({
-    database, workerId, environment,
-  });
-  const assetRuntime = await createAssetWorkerProductionComposition({
-    database, workerId, environment,
-  });
-  const terminalizeAdmin = createAdminTerminalizerCycle({
-    database,
-    repository: new PostgresAdminAuthorityRepository(),
-  });
-  const adminExecution = createAdminWorkerExecutionRuntime({
-    database,
-    workerId,
-  });
-  const worker = createPlatformWorkerProcess({
-    database,
-    runOneCycle: (context) => runPlatformWorkerActivities(context,
-      [authorizationRetention, commerceOutbox,
-        (context) => siteRuntime.runOneCycle(context),
-        (context) => assetRuntime.runOneCycle(context),
-        terminalizeAdmin,
-        adminExecution.runOneCycle]),
-    stopClaiming: async () => {
-      await Promise.all([
-        siteRuntime.stopClaiming(),
-        assetRuntime.stopClaiming(),
-        adminExecution.stopClaiming(),
-      ]);
-    },
-    returnLease: async (reason) => {
-      await Promise.all([
-        siteRuntime.returnLease(reason),
-        assetRuntime.returnLeases(reason),
-        adminExecution.returnLeases(reason),
-      ]);
-    },
-    onCycleError: (error) => console.error("Platform Worker cycle failed", error),
-  });
-  const health = createPlatformWorkerHealthServer({
-    status: worker.status,
-    port: loadPlatformWorkerHealthPort(environment),
-  });
-  await worker.start();
-  try {
-    await health.start();
-  } catch (error) {
-    await worker.shutdown();
-    throw error;
-  }
-  const shutdown = () => {
-    void shutdownPlatformWorkerRuntime(worker, health).catch((error: unknown) => {
-      process.exitCode = 1;
-      console.error("Platform Worker failed to drain", error);
-    });
-  };
-  process.once("SIGINT", shutdown);
-  process.once("SIGTERM", shutdown);
-  console.log("Platform Worker ready");
-}
-
 export async function shutdownPlatformWorkerRuntime(
   worker: PlatformWorkerProcess,
   health: Readonly<{ close(): Promise<void> }>,
@@ -357,20 +242,4 @@ export function loadPlatformWorkerId(
     throw new Error("PLATFORM_WORKER_ID_INVALID");
   }
   return value;
-}
-
-function requireEnvironment(
-  environment: Readonly<Record<string, string | undefined>>,
-  name: string,
-): string {
-  const value = environment[name];
-  if (value === undefined || value.length === 0) throw new Error(`${name}_REQUIRED`);
-  return value;
-}
-
-if (isMainModule()) {
-  runPlatformWorkerMain().catch((error: unknown) => {
-    process.exitCode = 1;
-    console.error("Platform Worker failed to start", error);
-  });
 }

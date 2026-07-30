@@ -22,6 +22,15 @@ adapters preserve authority transitions and command receipts in one owner transa
 `SiteEffectQueuePort`, because they trigger real provider effects. Registration, release publication,
 observations, commits, drain completion and resume are already authoritative local facts and never become
 generic outbox events. The Site worker claims the exact two-type allowlist and dead-letters any unknown type.
+It starts an immediate ownership-confirming renewal and a one-third-window heartbeat for every lease in the
+claimed batch before dispatching the first provider effect. Queued effects therefore keep their leases while
+earlier effects run; a lost lease is rejected before provider dispatch, and renewal loss aborts any in-flight
+provider call. Abort and lease loss never consume retry budget or acknowledge the effect. Shutdown stops new
+claims before releasing leases through the exact worker, `site-worker` consumer and two-event-type allowlist.
+Promotion responses echo the exact operation, Site/project, Release, artifact/manifest/certification digests,
+environment and region plus a canonical command digest. The RPC adapter verifies that provider-authored binding
+before the state store may persist an observation; state-store code never manufactures Release evidence from the
+local attempt.
 
 Fresh Site creation and immutable SiteRelease publication are exposed only by the typed
 `SiteProvisioningService` on the Admin mTLS listener. Registration requires a Platform-global grant because

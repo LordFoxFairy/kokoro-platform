@@ -21,6 +21,8 @@ import type {
   SiteTrafficStopCommand,
   SiteTrafficStopProviderObservation,
 } from "../../application/contracts/site-deployment-provider.js";
+import { sitePromotionCommandDigest, siteTrafficStopCommandDigest } from
+  "../../application/contracts/site-deployment-provider.js";
 import type {
   SiteRuntimeRepository,
   SiteRuntimeStateStore,
@@ -60,6 +62,9 @@ export class PostgresSiteRuntimeStateStore implements SiteRuntimeStateStore {
     return this.transactions.execute(async (transaction) => {
       const attempt = await this.activation(transaction, attemptRef);
       if (attempt.state === "succeeded") return complete();
+      const expected = await this.promotion(transaction, attempt,
+        attempt.state === "promote_requested" ? "promote" : "observe_promotion");
+      assertPromotionObservation(expected.command, observation);
       if (observation.status === "unknown" || observation.status === "rejected") {
         const next = recordActivationEffectFailure(
           attempt,
@@ -93,6 +98,7 @@ export class PostgresSiteRuntimeStateStore implements SiteRuntimeStateStore {
       if (attempt.state === "succeeded") return complete();
       const drain = await this.activationDrain(transaction, attempt);
       if (drain.kind !== "stop_activation_drain") throw new Error("SITE_DRAIN_STATE_INVALID");
+      assertTrafficStopObservation(drain.command, observation);
       if (observation.status !== "stopped") return drain;
       const evidence = drainEvidence(attempt, drain.command, drain.webArtifactDigest, observation);
       const next = completeActivationDrain(attempt, evidence);
@@ -124,6 +130,9 @@ export class PostgresSiteRuntimeStateStore implements SiteRuntimeStateStore {
     return this.transactions.execute(async (transaction) => {
       const attempt = await this.trafficStop(transaction, attemptRef);
       if (attempt.state === "succeeded") return complete();
+      const expected = await this.trafficStep(transaction, attempt,
+        attempt.state === "stop_requested" ? "stop_site_traffic" : "observe_site_traffic");
+      assertTrafficStopObservation(expected.command, observation);
       if (observation.status === "rejected") {
         const next = recordSiteTrafficStopEffectFailure(attempt, "failed", "PROVIDER_REJECTED");
         await this.repository.updateTrafficStop(transaction, next);
@@ -131,8 +140,8 @@ export class PostgresSiteRuntimeStateStore implements SiteRuntimeStateStore {
       }
       const evidence = {
         observationRef: observationRef("traffic-stop", attemptRef, observation.payloadDigest),
-        providerOperationKey: requiredOperationKey(attempt.providerOperationKey),
-        deploymentRef: attempt.deploymentRef,
+        providerOperationKey: observation.operationKey,
+        deploymentRef: observation.deploymentRef,
         status: observation.status,
         observedAt: observation.observedAt,
         payloadDigest: observation.payloadDigest,
@@ -248,7 +257,7 @@ export class PostgresSiteRuntimeStateStore implements SiteRuntimeStateStore {
     transaction: PlatformTransaction,
     attempt: ActivationAttempt,
     kind: "promote" | "observe_promotion",
-  ): Promise<SiteRuntimeStep> {
+  ): Promise<Extract<SiteRuntimeStep, { kind: "promote" | "observe_promotion" }>> {
     const binding = await this.repository.loadRuntimeProjectBindingForUpdate(transaction, {
       bindingRef: attempt.siteProjectBindingRef,
       siteRef: attempt.siteRef,
@@ -267,6 +276,8 @@ export class PostgresSiteRuntimeStateStore implements SiteRuntimeStateStore {
       certificationDigest: attempt.candidateCertificationDigest,
       environment: attempt.environment,
       region: attempt.region,
+      audience: attempt.audience,
+      sessionContractRevision: attempt.sessionContractRevision,
     };
     return { kind, providerNamespace: binding.providerNamespace, command };
   }
@@ -275,7 +286,7 @@ export class PostgresSiteRuntimeStateStore implements SiteRuntimeStateStore {
     transaction: PlatformTransaction,
     attempt: SiteTrafficStopAttempt,
     kind: "stop_site_traffic" | "observe_site_traffic",
-  ): Promise<SiteRuntimeStep> {
+  ): Promise<Extract<SiteRuntimeStep, { kind: "stop_site_traffic" | "observe_site_traffic" }>> {
     const binding = await this.repository.loadRuntimeProjectBindingForUpdate(transaction, {
       bindingRef: attempt.bindingRef,
       siteRef: attempt.siteRef,
@@ -325,15 +336,46 @@ function promotionEvidence(
   return {
     observationRef: observationRef("promotion", attempt.attemptRef, observation.payloadDigest),
     attemptRef: attempt.attemptRef,
-    providerOperationKey: requiredOperationKey(attempt.providerOperationKey),
+    providerOperationKey: observation.operationKey,
     deploymentRef: requiredDeployment(observation.deploymentRef),
-    releaseRef: attempt.candidateReleaseRef,
-    webArtifactDigest: attempt.candidateWebArtifactDigest,
+    releaseRef: observation.releaseRef,
+    webArtifactDigest: observation.webArtifactDigest,
     healthy: observation.status === "ready",
     trafficReady: observation.status === "ready",
     observedAt: observation.observedAt,
     payloadDigest: observation.payloadDigest,
   };
+}
+
+function assertPromotionObservation(
+  command: SitePromotionCommand,
+  observation: SitePromotionObservation,
+): void {
+  if (
+    observation.operationKey !== command.operationKey || observation.siteRef !== command.siteRef ||
+    observation.providerProjectRef !== command.providerProjectRef ||
+    observation.releaseRef !== command.releaseRef ||
+    observation.webArtifactDigest !== command.webArtifactDigest ||
+    observation.releaseManifestDigest !== command.releaseManifestDigest ||
+    observation.certificationDigest !== command.certificationDigest ||
+    observation.environment !== command.environment || observation.region !== command.region ||
+    observation.audience !== command.audience ||
+    observation.sessionContractRevision !== command.sessionContractRevision ||
+    observation.commandDigest !== sitePromotionCommandDigest(command)
+  ) throw new Error("SITE_PROVIDER_OBSERVATION_BINDING_MISMATCH");
+}
+
+function assertTrafficStopObservation(
+  command: SiteTrafficStopCommand,
+  observation: SiteTrafficStopProviderObservation,
+): void {
+  if (
+    observation.operationKey !== command.operationKey || observation.siteRef !== command.siteRef ||
+    observation.providerProjectRef !== command.providerProjectRef ||
+    observation.deploymentRef !== command.deploymentRef ||
+    observation.environment !== command.environment || observation.region !== command.region ||
+    observation.commandDigest !== siteTrafficStopCommandDigest(command)
+  ) throw new Error("SITE_PROVIDER_OBSERVATION_BINDING_MISMATCH");
 }
 
 function drainEvidence(

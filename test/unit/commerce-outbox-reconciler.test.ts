@@ -1,5 +1,6 @@
 import { createHash, createHmac } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { readFile } from "node:fs/promises";
+import { describe, expect, it, vi } from "vitest";
 import { createCommerceOutboxReconciliationCycle, HmacHttpOutboxDeliveryTransport, type CommerceOutboxProjection, type OutboxDeliveryTransport } from
   "../../src/modules/commerce/infrastructure/postgres/commerce-outbox-reconciler.js";
 import { commerceCanonicalJson } from "../../src/modules/commerce/domain/canonical-json.js";
@@ -72,6 +73,263 @@ describe("Commerce outbox reconciler", () => {
 
     expect(outbox.completed).toEqual([]);
     expect(outbox.retried).toEqual([]);
+  });
+
+  it("renews active leases, stops claiming, and releases only Commerce-owned work on shutdown", async () => {
+    vi.useFakeTimers();
+    try {
+      const outbox = new RecordingOutbox([event()]);
+      const controller = new AbortController();
+      const transport: OutboxDeliveryTransport = {
+        publish: async (_event, signal) => new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+      };
+      const runtime = createCommerceOutboxReconciliationCycle({
+        database: database(), outbox, projection: new RecordingProjection(), transport,
+        workerId: "worker-1", leaseToken: () => "lease-1", leaseSeconds: 3,
+        leaseHeartbeatMs: 1_000,
+      });
+
+      const cycle = runtime.runOneCycle({ signal: controller.signal });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(outbox.renewed).toEqual([
+        { eventId: event().eventId, leaseToken: "lease-1",
+          workerId: "worker-1", owner: "commerce", leaseSeconds: 3 },
+        { eventId: event().eventId, leaseToken: "lease-1",
+          workerId: "worker-1", owner: "commerce", leaseSeconds: 3 },
+      ]);
+
+      await runtime.stopClaiming();
+      controller.abort(new DOMException("draining", "AbortError"));
+      await expect(cycle).rejects.toMatchObject({ name: "AbortError" });
+      await runtime.returnLeases("WORKER_SHUTDOWN");
+
+      expect(outbox.retried).toEqual([]);
+      expect(outbox.releasedOwned).toEqual([{
+        workerId: "worker-1", consumer: "commerce-worker", eventTypes: [
+          "commerce.redemption.fulfilled.v1", "credit.reserve_root.v1",
+          "credit.finalize_segment.v1", "credit.release_segment.v1",
+          "credit.reconcile_segment.v1",
+        ],
+      }]);
+      await runtime.runOneCycle({ signal: new AbortController().signal });
+      expect(outbox.claimCount).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries a detached AbortError because only the parent signal represents drain", async () => {
+    const outbox = new RecordingOutbox([event()]);
+    const runtime = createCommerceOutboxReconciliationCycle({
+      database: database(), outbox, projection: new RecordingProjection(),
+      transport: { publish: async () => { throw new DOMException("cancelled", "AbortError"); } },
+      workerId: "worker-1", leaseToken: () => "lease-1",
+    });
+
+    await expect(runtime({ signal: new AbortController().signal })).resolves.toBeUndefined();
+    expect(outbox.retried).toEqual([expect.objectContaining({
+      eventId: event().eventId,
+      errorCode: "OUTBOX_DELIVERY_FAILED",
+    })]);
+  });
+
+  it("coalesces concurrent cycles without claiming a second batch", async () => {
+    const outbox = new RecordingOutbox([event()]);
+    let finish!: () => void;
+    const runtime = createCommerceOutboxReconciliationCycle({
+      database: database(), outbox, projection: new RecordingProjection(),
+      transport: { publish: async () => {
+        await new Promise<void>((resolve) => { finish = resolve; });
+        return { deliveryId: "delivery-1", acknowledgedAt: "2026-07-29T01:00:01.000Z" };
+      } },
+      workerId: "worker-1", leaseToken: () => "lease-1",
+    });
+
+    const first = runtime.runOneCycle({ signal: new AbortController().signal });
+    await vi.waitFor(() => expect(outbox.renewed).toHaveLength(1));
+    const second = runtime.runOneCycle({ signal: new AbortController().signal });
+    expect(outbox.claimCount).toBe(1);
+    finish();
+    await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined]);
+    expect(outbox.claimCount).toBe(1);
+  });
+
+  it("keeps renewing until the fenced completion commits", async () => {
+    vi.useFakeTimers();
+    try {
+      const outbox = new RecordingOutbox([event()]);
+      let finishComplete!: () => void;
+      outbox.complete = async (_transaction, input) => {
+        outbox.completeStarted.push(input);
+        await new Promise<void>((resolve) => { finishComplete = resolve; });
+        outbox.completed.push(input);
+      };
+      const runtime = createCommerceOutboxReconciliationCycle({
+        database: database(), outbox, projection: new RecordingProjection(),
+        transport: new RecordingTransport(() => 0), workerId: "worker-1",
+        leaseToken: () => "lease-1", leaseHeartbeatMs: 100,
+      });
+
+      const cycle = runtime.runOneCycle({ signal: new AbortController().signal });
+      await vi.waitFor(() => expect(outbox.completeStarted).toHaveLength(1));
+      const renewalsBefore = outbox.renewed.length;
+      await vi.advanceTimersByTimeAsync(100);
+      expect(outbox.renewed.length).toBeGreaterThan(renewalsBefore);
+      finishComplete();
+      await cycle;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("bounds a hung renewal without queueing overlapping renewals", async () => {
+    vi.useFakeTimers();
+    try {
+      const outbox = new RecordingOutbox([event()]);
+      let renewals = 0;
+      outbox.renewLease = async () => {
+        renewals += 1;
+        return new Promise<void>(() => undefined);
+      };
+      const runtime = createCommerceOutboxReconciliationCycle({
+        database: database(), outbox, projection: new RecordingProjection(),
+        transport: new RecordingTransport(() => 0), workerId: "worker-1",
+        leaseToken: () => "lease-1", leaseHeartbeatMs: 100, leaseRenewalTimeoutMs: 50,
+      });
+
+      const cycle = runtime.runOneCycle({ signal: new AbortController().signal });
+      const failure = expect(cycle).rejects.toThrow("COMMERCE_OUTBOX_LEASE_RENEWAL_TIMEOUT");
+      await vi.advanceTimersByTimeAsync(1_000);
+      await failure;
+      expect(renewals).toBe(1);
+      expect(outbox.completed).toEqual([]);
+      await expect(runtime.returnLeases("shutdown")).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("aborts the active transport immediately when lease renewal fails", async () => {
+    vi.useFakeTimers();
+    try {
+      const outbox = new RecordingOutbox([event()]);
+      let renewals = 0;
+      outbox.renewLease = async (_transaction, input) => {
+        outbox.renewed.push(input);
+        if (++renewals === 2) throw new Error("OUTBOX_LEASE_LOST");
+      };
+      let transportAbortReason: unknown;
+      const runtime = createCommerceOutboxReconciliationCycle({
+        database: database(), outbox, projection: new RecordingProjection(),
+        transport: { publish: async (_event, signal) => new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => {
+            transportAbortReason = signal.reason;
+            reject(signal.reason);
+          }, { once: true });
+        }) },
+        workerId: "worker-1", leaseToken: () => "lease-1", leaseSeconds: 3,
+        leaseHeartbeatMs: 1_000,
+      });
+      const cycle = runtime.runOneCycle({ signal: new AbortController().signal });
+      const cycleExpectation = expect(cycle).rejects.toThrow("OUTBOX_LEASE_LOST");
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await cycleExpectation;
+
+      expect(transportAbortReason).toMatchObject({ message: "OUTBOX_LEASE_LOST" });
+      expect(outbox.completed).toEqual([]);
+      expect(outbox.retried).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps every claimed lease alive while the first delivery is still running", async () => {
+    vi.useFakeTimers();
+    try {
+      const second = { ...event(), eventId: "00000000-0000-7000-8000-000000000503" };
+      const outbox = new RecordingOutbox([event(), second]);
+      let secondRenewals = 0;
+      outbox.renewLease = async (_transaction, input) => {
+        outbox.renewed.push(input);
+        if (input.eventId === second.eventId && ++secondRenewals === 2) {
+          throw new Error("OUTBOX_LEASE_LOST");
+        }
+      };
+      let finishFirst!: () => void;
+      const published: string[] = [];
+      const runtime = createCommerceOutboxReconciliationCycle({
+        database: database(), outbox, projection: new RecordingProjection(),
+        transport: { publish: async (value) => {
+          published.push(value.eventId);
+          if (value.eventId === event().eventId) {
+            await new Promise<void>((resolve) => { finishFirst = resolve; });
+          }
+          return { deliveryId: `delivery-${value.eventId}`, acknowledgedAt: "2026-07-29T01:00:01.000Z" };
+        } },
+        workerId: "worker-1", leaseToken: () => "lease-1", leaseSeconds: 3,
+        leaseHeartbeatMs: 1_000,
+      });
+
+      const cycle = runtime.runOneCycle({ signal: new AbortController().signal });
+      const cycleExpectation = expect(cycle).rejects.toThrow("OUTBOX_LEASE_LOST");
+      await vi.advanceTimersByTimeAsync(1_000);
+      finishFirst();
+      await cycleExpectation;
+
+      expect(outbox.renewed.some((renewal) => renewal.eventId === second.eventId)).toBe(true);
+      expect(published).toEqual([event().eventId]);
+      expect(outbox.completed.map((completion) => completion.eventId)).toEqual([event().eventId]);
+      expect(outbox.retried).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not invoke the transport when ownership is lost during projection", async () => {
+    vi.useFakeTimers();
+    try {
+      const outbox = new RecordingOutbox([event()]);
+      let renewals = 0;
+      outbox.renewLease = async (_transaction, input) => {
+        outbox.renewed.push(input);
+        if (++renewals === 2) throw new Error("OUTBOX_LEASE_LOST");
+      };
+      let finishProjection!: () => void;
+      const published: string[] = [];
+      const runtime = createCommerceOutboxReconciliationCycle({
+        database: database(), outbox,
+        projection: { assertDeliverable: async () => new Promise<void>((resolve) => {
+          finishProjection = resolve;
+        }) },
+        transport: { publish: async (value) => {
+          published.push(value.eventId);
+          return { deliveryId: "delivery-1", acknowledgedAt: "2026-07-29T01:00:01.000Z" };
+        } },
+        workerId: "worker-1", leaseToken: () => "lease-1", leaseSeconds: 3,
+        leaseHeartbeatMs: 1_000,
+      });
+
+      const cycle = runtime.runOneCycle({ signal: new AbortController().signal });
+      const cycleExpectation = expect(cycle).rejects.toThrow("OUTBOX_LEASE_LOST");
+      await vi.advanceTimersByTimeAsync(1_000);
+      finishProjection();
+      await cycleExpectation;
+
+      expect(published).toEqual([]);
+      expect(outbox.completed).toEqual([]);
+      expect(outbox.retried).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("registers Commerce claiming and lease return in the production worker lifecycle", async () => {
+    const source = await readFile(new URL("../../src/process/commerce-worker.ts", import.meta.url), "utf8");
+    expect(source).toContain("stopClaiming: commerce.stopClaiming");
+    expect(source).toContain("returnLeases: commerce.returnLeases");
   });
 
   it("still records a delivery timeout when the process itself is not draining", async () => {
@@ -154,10 +412,15 @@ describe("Commerce outbox reconciler", () => {
   });
 });
 
-class RecordingOutbox implements Pick<OutboxRepository, "claim" | "complete" | "retryOrDeadLetter"> {
+class RecordingOutbox implements Pick<OutboxRepository,
+  "claim" | "complete" | "retryOrDeadLetter" | "renewLease" | "releaseOwnedLeases"> {
   claimInput: Parameters<OutboxRepository["claim"]>[1] | null = null;
+  claimCount = 0;
   completed: Array<Parameters<OutboxRepository["complete"]>[1]> = [];
+  completeStarted: Array<Parameters<OutboxRepository["complete"]>[1]> = [];
   retried: Array<Parameters<OutboxRepository["retryOrDeadLetter"]>[1]> = [];
+  renewed: Array<Parameters<OutboxRepository["renewLease"]>[1]> = [];
+  releasedOwned: Array<Parameters<OutboxRepository["releaseOwnedLeases"]>[1]> = [];
 
   constructor(private readonly events: readonly ClaimedOutboxEvent[]) {}
 
@@ -165,8 +428,24 @@ class RecordingOutbox implements Pick<OutboxRepository, "claim" | "complete" | "
     _transaction: Parameters<OutboxRepository["claim"]>[0],
     input: Parameters<OutboxRepository["claim"]>[1],
   ) {
+    this.claimCount += 1;
     this.claimInput = input;
     return this.events;
+  }
+
+  async renewLease(
+    _transaction: Parameters<OutboxRepository["renewLease"]>[0],
+    input: Parameters<OutboxRepository["renewLease"]>[1],
+  ) {
+    this.renewed.push(input);
+  }
+
+  async releaseOwnedLeases(
+    _transaction: Parameters<OutboxRepository["releaseOwnedLeases"]>[0],
+    input: Parameters<OutboxRepository["releaseOwnedLeases"]>[1],
+  ) {
+    this.releasedOwned.push(input);
+    return this.events.length;
   }
 
   async complete(
