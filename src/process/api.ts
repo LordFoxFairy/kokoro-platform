@@ -7,6 +7,7 @@ import {
   type PlatformDatabaseClient,
 } from "../infrastructure/postgres/client.js";
 import type { PlatformPublicHttpHandler } from "../interfaces/http/platform-public.js";
+import { loadPlatformApiRuntimePorts } from "./platform-api-runtime-contract.js";
 import { createPlatformPublicProductionComposition } from "./platform-public-composition.js";
 
 export type PlatformProcessState = "stopped" | "starting" | "running" | "draining" | "failed";
@@ -176,7 +177,6 @@ export function createPlatformApiProcess(options: {
         response.end(JSON.stringify({ error: "not_found" }));
       });
       server = serverFactory(async (request, response) => {
-        if (await handleHealth(request, response)) return;
         if (state !== "draining" && options.publicHttp !== undefined) {
           try {
             if (await options.publicHttp.handle(request, response)) return;
@@ -308,8 +308,7 @@ export async function runPlatformApiMain(): Promise<void> {
     serverFactory: publicComposition.createServer,
     secure: publicComposition.secure,
   });
-  const port = Number.parseInt(process.env.PLATFORM_API_PORT ?? "4100", 10);
-  const healthPort = Number.parseInt(process.env.PLATFORM_API_HEALTH_PORT ?? "4101", 10);
+  const ports = loadPlatformApiRuntimePorts();
   const shutdown = () => {
     void api.shutdown().catch((error: unknown) => {
       process.exitCode = 1;
@@ -319,8 +318,8 @@ export async function runPlatformApiMain(): Promise<void> {
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
   const address = await api.start(
-    { host: "0.0.0.0", port },
-    { host: "0.0.0.0", port: healthPort },
+    { host: "0.0.0.0", port: ports.public },
+    { host: "0.0.0.0", port: ports.health },
   );
   console.log(`Platform API listening at ${address}; health at ${api.healthAddress()}`);
 }

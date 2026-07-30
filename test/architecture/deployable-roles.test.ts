@@ -517,6 +517,45 @@ describe("independent deployable roles", () => {
     expect(calls).toEqual(["connect", "health", "health", "disconnect"]);
   });
 
+  it("serves probes only on the dedicated health listener", async () => {
+    const publicRequests: string[] = [];
+    let healthChecks = 0;
+    const process = createPlatformApiProcess({
+      database: {
+        connect: async () => undefined,
+        disconnect: async () => undefined,
+        checkHealth: async () => { healthChecks += 1; },
+      },
+      publicHttp: {
+        handle: async (request) => {
+          publicRequests.push(request.url ?? "");
+          return false;
+        },
+      },
+    });
+    const publicAddress = await process.start(
+      { host: "127.0.0.1", port: 0 },
+      { host: "127.0.0.1", port: 0 },
+    );
+    const healthAddress = process.healthAddress();
+
+    try {
+      expect(await fetch(`${publicAddress}/health/live`).then((response) => response.status))
+        .toBe(404);
+      expect(await fetch(`${publicAddress}/health/ready`).then((response) => response.status))
+        .toBe(404);
+      expect(publicRequests).toEqual(["/health/live", "/health/ready"]);
+      expect(healthChecks).toBe(1);
+      expect(await fetch(`${healthAddress}/health/live`).then((response) => response.status))
+        .toBe(200);
+      expect(await fetch(`${healthAddress}/health/ready`).then((response) => response.status))
+        .toBe(200);
+      expect(healthChecks).toBe(2);
+    } finally {
+      await process.shutdown();
+    }
+  });
+
   it("lets API readiness recover after a transient database failure", async () => {
     let databaseAvailable = true;
     const database: PlatformDatabaseClient = {

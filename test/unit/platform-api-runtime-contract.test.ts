@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { PLATFORM_API_RUNTIME_CONTRACT } from "../../src/process/platform-api-runtime-contract.js";
+import {
+  PLATFORM_API_RUNTIME_CONTRACT,
+  createPlatformApiRuntimeFileReader,
+  loadPlatformApiRuntimePorts,
+} from "../../src/process/platform-api-runtime-contract.js";
 
 const EXPECTED_FILE_ENVIRONMENT = Object.freeze([
   "PLATFORM_PRODUCT_WORKLOAD_REGISTRY_FILE",
@@ -36,5 +40,36 @@ describe("Platform API runtime contract", () => {
       .toBe(EXPECTED_FILE_ENVIRONMENT.length);
     expect(PLATFORM_API_RUNTIME_CONTRACT.files.filter(({ privateMaterial }) => privateMaterial))
       .toHaveLength(13);
+  });
+
+  it("loads strict public and health ports from the runtime contract", () => {
+    expect(loadPlatformApiRuntimePorts({})).toEqual({ public: 4100, health: 4101 });
+    expect(loadPlatformApiRuntimePorts({
+      PLATFORM_API_PORT: "5100",
+      PLATFORM_API_HEALTH_PORT: "5101",
+    }))
+      .toEqual({ public: 5100, health: 5101 });
+    for (const invalid of ["0", "01", "4100junk", " 4100", "65536"]) {
+      expect(() => loadPlatformApiRuntimePorts({ PLATFORM_API_PORT: invalid }))
+        .toThrowError("PLATFORM_API_PORT_INVALID");
+      expect(() => loadPlatformApiRuntimePorts({ PLATFORM_API_HEALTH_PORT: invalid }))
+        .toThrowError("PLATFORM_API_HEALTH_PORT_INVALID");
+    }
+  });
+
+  it("uses each file contract privateMaterial classification to select the reader", async () => {
+    const calls: string[] = [];
+    const reader = createPlatformApiRuntimeFileReader({
+      readPrivate: async (path) => { calls.push(`private:${path}`); return "private"; },
+      readRegular: async (path) => { calls.push(`regular:${path}`); return "regular"; },
+    });
+
+    await expect(reader.read(
+      "PLATFORM_PUBLIC_TLS_KEY_FILE", "/trust/server.key", 1024, "TLS_KEY_INVALID",
+    )).resolves.toBe("private");
+    await expect(reader.read(
+      "PLATFORM_PUBLIC_TLS_CERT_FILE", "/trust/server.crt", 1024, "TLS_CERT_INVALID",
+    )).resolves.toBe("regular");
+    expect(calls).toEqual(["private:/trust/server.key", "regular:/trust/server.crt"]);
   });
 });

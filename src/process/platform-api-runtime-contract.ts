@@ -41,6 +41,52 @@ export const PLATFORM_API_RUNTIME_CONTRACT = Object.freeze({
   ]),
 });
 
+export interface PlatformApiBoundedFileReader {
+  readPrivate(path: string, maximumBytes: number, invalidCode: string): Promise<string>;
+  readRegular(path: string, maximumBytes: number, invalidCode: string): Promise<string>;
+}
+
+export interface PlatformApiRuntimeFileReader {
+  read(
+    environment: PlatformApiFileEnvironment,
+    path: string,
+    maximumBytes: number,
+    invalidCode: string,
+  ): Promise<string>;
+}
+
+const FILE_CONTRACT_BY_ENVIRONMENT = new Map(
+  PLATFORM_API_RUNTIME_CONTRACT.files.map((entry) => [entry.environment, entry] as const),
+);
+
+export function createPlatformApiRuntimeFileReader(
+  reader: PlatformApiBoundedFileReader,
+): PlatformApiRuntimeFileReader {
+  return Object.freeze({
+    read(
+      environment: PlatformApiFileEnvironment,
+      path: string,
+      maximumBytes: number,
+      invalidCode: string,
+    ) {
+      const contract = FILE_CONTRACT_BY_ENVIRONMENT.get(environment);
+      if (contract === undefined) throw new Error("PLATFORM_API_FILE_CONTRACT_INVALID");
+      return contract.privateMaterial
+        ? reader.readPrivate(path, maximumBytes, invalidCode)
+        : reader.readRegular(path, maximumBytes, invalidCode);
+    },
+  });
+}
+
+export function loadPlatformApiRuntimePorts(
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): Readonly<{ public: number; health: number }> {
+  return Object.freeze({
+    public: runtimePort(PLATFORM_API_RUNTIME_CONTRACT.ports.public, environment),
+    health: runtimePort(PLATFORM_API_RUNTIME_CONTRACT.ports.health, environment),
+  });
+}
+
 function file<
   const Environment extends string,
   const Filename extends string,
@@ -57,3 +103,16 @@ function file<
 
 export type PlatformApiFileEnvironment =
   typeof PLATFORM_API_RUNTIME_CONTRACT.files[number]["environment"];
+
+function runtimePort(
+  contract: Readonly<{ environment: string; default: number }>,
+  environment: Readonly<Record<string, string | undefined>>,
+): number {
+  const raw = environment[contract.environment] ?? String(contract.default);
+  if (!/^[1-9][0-9]{0,4}$/u.test(raw)) throw new Error(`${contract.environment}_INVALID`);
+  const port = Number(raw);
+  if (!Number.isSafeInteger(port) || port > 65_535) {
+    throw new Error(`${contract.environment}_INVALID`);
+  }
+  return port;
+}

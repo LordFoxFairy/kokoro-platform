@@ -83,18 +83,17 @@ import {
 } from "../modules/asset/interfaces/http/asset-public-operations.js";
 import {
   PLATFORM_API_RUNTIME_CONTRACT,
+  createPlatformApiRuntimeFileReader,
   type PlatformApiFileEnvironment,
+  type PlatformApiRuntimeFileReader,
 } from "./platform-api-runtime-contract.js";
 import {
   createBoundedFileReaderWithinTrustRoot,
   readBoundedPrivateFile,
   readBoundedRegularFile,
-  type TrustedRootBoundedFileReader,
 } from "./secret-files.js";
 
-type PlatformApiFileReader = TrustedRootBoundedFileReader;
-
-const DEFAULT_FILE_READER: PlatformApiFileReader = Object.freeze({
+const DEFAULT_FILE_READER: PlatformApiRuntimeFileReader = createPlatformApiRuntimeFileReader({
   readPrivate: readBoundedPrivateFile,
   readRegular: readBoundedRegularFile,
 });
@@ -114,9 +113,11 @@ export async function createPlatformPublicProductionComposition(
 ): Promise<PlatformPublicProductionComposition> {
   const environment = input.environment ?? process.env;
   const files = requiredPlatformApiFiles(environment);
-  const fileReader = await createBoundedFileReaderWithinTrustRoot(
-    required(environment, PLATFORM_API_RUNTIME_CONTRACT.trustRootEnvironment),
-    "PLATFORM_API_FILE_TRUST_ROOT_INVALID",
+  const fileReader = createPlatformApiRuntimeFileReader(
+    await createBoundedFileReaderWithinTrustRoot(
+      required(environment, PLATFORM_API_RUNTIME_CONTRACT.trustRootEnvironment),
+      "PLATFORM_API_FILE_TRUST_ROOT_INVALID",
+    ),
   );
   const [workloads, keyRing, eventKeyRing, tls, redemptionSecrets, assetPolicies, assetCapabilityKeys] = await Promise.all([
     loadProductWorkloadRegistry(files.PLATFORM_PRODUCT_WORKLOAD_REGISTRY_FILE, fileReader),
@@ -150,12 +151,25 @@ export async function createPlatformPublicProductionComposition(
       fileReader,
     ),
     loadOpaqueCredentialCodec(
+      "PLATFORM_IDENTITY_VERIFICATION_DIGEST_KEY_FILE",
       files.PLATFORM_IDENTITY_VERIFICATION_DIGEST_KEY_FILE,
       fileReader,
     ),
-    loadOpaqueCredentialCodec(files.PLATFORM_IDENTITY_SESSION_DIGEST_KEY_FILE, fileReader),
-    loadOpaqueCredentialCodec(files.PLATFORM_IDENTITY_REFRESH_DIGEST_KEY_FILE, fileReader),
-    loadOpaqueCredentialCodec(files.PLATFORM_IDENTITY_REAUTH_DIGEST_KEY_FILE, fileReader),
+    loadOpaqueCredentialCodec(
+      "PLATFORM_IDENTITY_SESSION_DIGEST_KEY_FILE",
+      files.PLATFORM_IDENTITY_SESSION_DIGEST_KEY_FILE,
+      fileReader,
+    ),
+    loadOpaqueCredentialCodec(
+      "PLATFORM_IDENTITY_REFRESH_DIGEST_KEY_FILE",
+      files.PLATFORM_IDENTITY_REFRESH_DIGEST_KEY_FILE,
+      fileReader,
+    ),
+    loadOpaqueCredentialCodec(
+      "PLATFORM_IDENTITY_REAUTH_DIGEST_KEY_FILE",
+      files.PLATFORM_IDENTITY_REAUTH_DIGEST_KEY_FILE,
+      fileReader,
+    ),
     loadIdentityAuditDigester(files.PLATFORM_IDENTITY_AUDIT_DIGEST_KEY_FILE, fileReader),
     loadVerificationDeliverySealer(files.PLATFORM_IDENTITY_DELIVERY_KEY_FILE, fileReader),
     loadIdentityTotpSecretProtector(files.PLATFORM_IDENTITY_TOTP_KEY_RING_FILE, fileReader),
@@ -278,10 +292,11 @@ export async function createPlatformPublicProductionComposition(
 
 async function loadAssetUploadPolicies(
   path: string,
-  fileReader: PlatformApiFileReader = DEFAULT_FILE_READER,
+  fileReader: PlatformApiRuntimeFileReader = DEFAULT_FILE_READER,
 ) {
   return parseAssetUploadPolicyRegistry(
-    JSON.parse(await fileReader.readRegular(
+    JSON.parse(await fileReader.read(
+      "PLATFORM_ASSET_UPLOAD_POLICY_REGISTRY_FILE",
       path,
       2 * 1024 * 1024,
       "ASSET_UPLOAD_POLICY_REGISTRY_FILE_INVALID",
@@ -291,9 +306,10 @@ async function loadAssetUploadPolicies(
 
 async function loadProductWorkloadRegistry(
   path: string,
-  fileReader: PlatformApiFileReader = DEFAULT_FILE_READER,
+  fileReader: PlatformApiRuntimeFileReader = DEFAULT_FILE_READER,
 ): Promise<ProductWorkloadRegistry> {
-  const raw = await fileReader.readRegular(
+  const raw = await fileReader.read(
+    "PLATFORM_PRODUCT_WORKLOAD_REGISTRY_FILE",
     path,
     1024 * 1024,
     "PRODUCT_WORKLOAD_REGISTRY_FILE_INVALID",
@@ -303,10 +319,11 @@ async function loadProductWorkloadRegistry(
 
 async function loadAssetUploadCapabilityKeys(
   path: string,
-  fileReader: PlatformApiFileReader = DEFAULT_FILE_READER,
+  fileReader: PlatformApiRuntimeFileReader = DEFAULT_FILE_READER,
 ) {
   return parseAssetUploadCapabilityKeyRing(
-    JSON.parse(await fileReader.readPrivate(
+    JSON.parse(await fileReader.read(
+      "PLATFORM_ASSET_UPLOAD_CAPABILITY_KEY_RING_FILE",
       path,
       64 * 1024,
       "ASSET_CAPABILITY_KEY_RING_FILE_INVALID",
@@ -316,9 +333,10 @@ async function loadAssetUploadCapabilityKeys(
 
 export async function loadRedemptionSecretCodec(
   path: string,
-  fileReader: PlatformApiFileReader = DEFAULT_FILE_READER,
+  fileReader: PlatformApiRuntimeFileReader = DEFAULT_FILE_READER,
 ) {
-  const root = record(JSON.parse(await fileReader.readPrivate(
+  const root = record(JSON.parse(await fileReader.read(
+    "PLATFORM_COMMERCE_REDEMPTION_KEY_RING_FILE",
     path,
     64 * 1024,
     "REDEMPTION_KEY_RING_FILE_INVALID",
@@ -356,10 +374,11 @@ function exactCommerce(value: Record<string, unknown>, names: readonly string[])
 
 async function loadIdentityPasswordHasher(
   path: string,
-  fileReader: PlatformApiFileReader = DEFAULT_FILE_READER,
+  fileReader: PlatformApiRuntimeFileReader = DEFAULT_FILE_READER,
 ) {
   const root = record(
-    JSON.parse(await fileReader.readPrivate(
+    JSON.parse(await fileReader.read(
+      "PLATFORM_IDENTITY_PASSWORD_PEPPER_RING_FILE",
       path,
       64 * 1024,
       "IDENTITY_PASSWORD_PEPPER_RING_FILE_INVALID",
@@ -404,10 +423,12 @@ async function loadIdentityPasswordHasher(
 }
 
 async function loadOpaqueCredentialCodec(
+  environment: PlatformApiFileEnvironment,
   path: string,
-  fileReader: PlatformApiFileReader = DEFAULT_FILE_READER,
+  fileReader: PlatformApiRuntimeFileReader = DEFAULT_FILE_READER,
 ) {
-  return createOpaqueCredentialCodec(secretBytes((await fileReader.readPrivate(
+  return createOpaqueCredentialCodec(secretBytes((await fileReader.read(
+    environment,
     path,
     256,
     "IDENTITY_SESSION_CREDENTIAL_KEY_FILE_INVALID",
@@ -416,9 +437,10 @@ async function loadOpaqueCredentialCodec(
 
 async function loadIdentityAuditDigester(
   path: string,
-  fileReader: PlatformApiFileReader = DEFAULT_FILE_READER,
+  fileReader: PlatformApiRuntimeFileReader = DEFAULT_FILE_READER,
 ) {
-  return createIdentityAuditDigester(secretBytes((await fileReader.readPrivate(
+  return createIdentityAuditDigester(secretBytes((await fileReader.read(
+    "PLATFORM_IDENTITY_AUDIT_DIGEST_KEY_FILE",
     path,
     256,
     "IDENTITY_AUDIT_KEY_FILE_INVALID",
@@ -427,10 +449,11 @@ async function loadIdentityAuditDigester(
 
 async function loadVerificationDeliverySealer(
   path: string,
-  fileReader: PlatformApiFileReader = DEFAULT_FILE_READER,
+  fileReader: PlatformApiRuntimeFileReader = DEFAULT_FILE_READER,
 ) {
   const root = record(
-    JSON.parse(await fileReader.readPrivate(
+    JSON.parse(await fileReader.read(
+      "PLATFORM_IDENTITY_DELIVERY_KEY_FILE",
       path,
       4096,
       "IDENTITY_DELIVERY_KEY_FILE_INVALID",
@@ -453,10 +476,11 @@ async function loadVerificationDeliverySealer(
 
 export async function loadIdentityTotpSecretProtector(
   path: string,
-  fileReader: PlatformApiFileReader = DEFAULT_FILE_READER,
+  fileReader: PlatformApiRuntimeFileReader = DEFAULT_FILE_READER,
 ) {
   const root = record(
-    JSON.parse(await fileReader.readPrivate(
+    JSON.parse(await fileReader.read(
+      "PLATFORM_IDENTITY_TOTP_KEY_RING_FILE",
       path,
       64 * 1024,
       "IDENTITY_TOTP_KEY_RING_PERMISSIONS_INVALID",
@@ -507,20 +531,23 @@ function exactIdentity(value: Record<string, unknown>, names: readonly string[])
 
 async function loadTls(
   environment: Readonly<Record<PlatformApiFileEnvironment, string>>,
-  fileReader: PlatformApiFileReader = DEFAULT_FILE_READER,
+  fileReader: PlatformApiRuntimeFileReader = DEFAULT_FILE_READER,
 ): Promise<ServerOptions> {
   const [key, cert, ca] = await Promise.all([
-    fileReader.readPrivate(
+    fileReader.read(
+      "PLATFORM_PUBLIC_TLS_KEY_FILE",
       environment.PLATFORM_PUBLIC_TLS_KEY_FILE,
       64 * 1024,
       "PLATFORM_PUBLIC_TLS_KEY_FILE_INVALID",
     ),
-    fileReader.readRegular(
+    fileReader.read(
+      "PLATFORM_PUBLIC_TLS_CERT_FILE",
       environment.PLATFORM_PUBLIC_TLS_CERT_FILE,
       64 * 1024,
       "PLATFORM_PUBLIC_TLS_TRUST_FILE_INVALID",
     ),
-    fileReader.readRegular(
+    fileReader.read(
+      "PLATFORM_PUBLIC_TLS_CLIENT_CA_FILE",
       environment.PLATFORM_PUBLIC_TLS_CLIENT_CA_FILE,
       256 * 1024,
       "PLATFORM_PUBLIC_TLS_TRUST_FILE_INVALID",
@@ -546,9 +573,10 @@ async function loadTls(
 
 export async function loadSessionAccessKeyRing(
   path: string,
-  fileReader: PlatformApiFileReader = DEFAULT_FILE_READER,
+  fileReader: PlatformApiRuntimeFileReader = DEFAULT_FILE_READER,
 ): Promise<SessionAccessKeyRingConfig> {
-  const parsed = JSON.parse(await fileReader.readPrivate(
+  const parsed = JSON.parse(await fileReader.read(
+    "PLATFORM_SESSION_ACCESS_KEY_RING_FILE",
     path,
     512 * 1024,
     "SESSION_ACCESS_KEY_RING_FILE_INVALID",
@@ -597,9 +625,10 @@ export async function loadSessionAccessKeyRing(
 
 export async function loadAuthorizationEventKeyRing(
   path: string,
-  fileReader: PlatformApiFileReader = DEFAULT_FILE_READER,
+  fileReader: PlatformApiRuntimeFileReader = DEFAULT_FILE_READER,
 ): Promise<AuthorizationEventKeyRingConfig> {
-  const parsed = JSON.parse(await fileReader.readPrivate(
+  const parsed = JSON.parse(await fileReader.read(
+    "PLATFORM_AUTHORIZATION_EVENT_KEY_RING_FILE",
     path,
     512 * 1024,
     "AUTHORIZATION_EVENT_KEY_RING_FILE_INVALID",
