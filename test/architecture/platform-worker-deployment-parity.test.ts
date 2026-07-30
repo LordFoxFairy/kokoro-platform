@@ -20,6 +20,7 @@ interface DeploymentManifest {
 interface ComposeManifest {
   readonly services: Readonly<Record<string, Readonly<{
     environment: Readonly<Record<string, unknown>>;
+    healthcheck?: Readonly<{ test?: readonly string[] }>;
   }>>>;
 }
 
@@ -98,6 +99,38 @@ describe("Platform worker deployment parity", () => {
       expect(container?.livenessProbe?.httpGet?.path).toBe("/health/live");
       expect(container?.readinessProbe?.httpGet?.path).toBe("/health/ready");
     }
+  });
+
+  it("gives each worker an exact environment and a Compose readiness healthcheck", async () => {
+    const [composeSource, kubernetes] = await Promise.all([
+      readFile("deploy/docker-compose.services.yml", "utf8"),
+      readFile("deploy/k8s/platform-services.example.yaml", "utf8"),
+    ]);
+    const compose = parse(composeSource) as ComposeManifest;
+    for (const contract of [
+      PLATFORM_WORKER_DEPLOYMENT_CONTRACT,
+      PLATFORM_IDENTITY_WORKER_DEPLOYMENT_CONTRACT,
+    ]) {
+      const service = compose.services[contract.id];
+      expect(service?.healthcheck?.test?.join(" ")).toContain("/health/ready");
+      const environmentNames = Object.keys(service?.environment ?? {});
+      const requiredEnvironment = new Set<string>(contract.environment.required);
+      const optionalEnvironment = new Set<string>(contract.environment.optional);
+      expect(contract.environment.required.filter((name) => !environmentNames.includes(name)))
+        .toEqual([]);
+      expect(environmentNames.filter((name) =>
+        name !== "KOKORO_SERVICE_PACKAGE" &&
+        !requiredEnvironment.has(name) &&
+        !optionalEnvironment.has(name))).toEqual([]);
+    }
+    const identityDeployment = kubernetes.slice(
+      kubernetes.indexOf("metadata: { name: platform-identity-worker }"),
+      kubernetes.indexOf("metadata: { name: platform-admin }"),
+    );
+    expect(identityDeployment).not.toContain("envFrom:");
+    expect(identityDeployment).toContain("platform-identity-worker-database");
+    expect(identityDeployment).toContain("identity-audit-digest-key");
+    expect(identityDeployment).toContain("identity-delivery-hmac-key");
   });
 });
 

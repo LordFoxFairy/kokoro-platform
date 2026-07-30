@@ -24,6 +24,8 @@ terminal results are encrypted immutable frames with a canonical sequence/digest
 evidence, the encrypted terminal response, a local immutable usage fact and terminal outbox in one Platform transaction. Response
 AAD binds key revision, Site, invocation and request digest. The Gateway role cannot read the authorization projection directly and
 receives only exact invocation/frame/usage/outbox and prepare/finalize Credit privileges.
+The shared outbox enables PostgreSQL RLS: the Gateway can insert only owner `credit-usage-rating`, cannot read or update generic
+outbox rows, and fails startup unless the exact role-bound insert policy is active.
 
 Dispatch is a durable queued-to-owner-fenced state machine with leases, heartbeats, bounded active/queued capacity and a recovery
 scanner. Stream readers tail committed frames through one process-level PostgreSQL `LISTEN` connection; transactional `NOTIFY`

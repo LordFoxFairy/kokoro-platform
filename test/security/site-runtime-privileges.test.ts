@@ -44,10 +44,18 @@ describe("Site runtime privileges", () => {
   it("fails process startup and post-migration verification when Site grants drift", () => {
     for (const source of [migrator, client]) {
       expect(source).toContain("'platform.site_traffic_stop_attempt', 'SELECT'");
-      expect(source).toContain("'platform.site_traffic_stop_observation', 'SELECT,INSERT'");
-      expect(source).toContain("'platform.site_effect_approval', 'SELECT,INSERT'");
-      expect(source).toContain("'platform.authorization_product_binding', 'SELECT,INSERT'");
-      expect(source).toContain("'platform.authorization_site_release', 'SELECT,INSERT'");
+      for (const relation of [
+        "site_traffic_stop_observation",
+        "site_effect_approval",
+        "authorization_product_binding",
+        "authorization_site_release",
+      ]) {
+        expect(source).toMatch(new RegExp(
+          `has_table_privilege\\([^\\n]*'platform\\.${relation}', 'SELECT'\\)` +
+            `[\\s\\S]{0,160}has_table_privilege\\([^\\n]*'platform\\.${relation}', 'INSERT'\\)`,
+          "u",
+        ));
+      }
       expect(source).toContain("candidate.relname<>'site_effect_approval'");
     }
   });

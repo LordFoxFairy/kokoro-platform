@@ -8,7 +8,7 @@ import { HmacIdentityVerificationDeliveryAdapter } from
   "../modules/identity/infrastructure/http/hmac-identity-verification-delivery.js";
 import { createPostgresIdentityEffectEventQueue } from
   "../modules/identity/infrastructure/postgres/identity-outbox-consumer.js";
-import { readBoundedPrivateFileWithinTrustRoot } from "./secret-files.js";
+import { createBoundedFileReaderWithinTrustRoot } from "./secret-files.js";
 
 export interface IdentityOutboxWorkerProductionComposition {
   runOneCycle(context: Readonly<{ signal: AbortSignal }>): Promise<void>;
@@ -29,16 +29,18 @@ export async function createIdentityOutboxWorkerProductionComposition(input: Rea
   const keyId = required(environment, "PLATFORM_IDENTITY_DELIVERY_HMAC_KEY_ID");
   const hmacSecretPath = required(environment, "PLATFORM_IDENTITY_DELIVERY_HMAC_SECRET_FILE");
   const secretTrustRoot = required(environment, "PLATFORM_IDENTITY_SECRET_TRUST_ROOT");
+  const secretReader = await createBoundedFileReaderWithinTrustRoot(
+    secretTrustRoot,
+    "IDENTITY_SECRET_TRUST_ROOT_INVALID",
+  );
   const [auditKeyValue, hmacSecretBase64] = await Promise.all([
-    readBoundedPrivateFileWithinTrustRoot(
+    secretReader.readPrivate(
       auditKeyPath,
-      secretTrustRoot,
       256,
       "IDENTITY_AUDIT_KEY_FILE_INVALID",
     ),
-    readBoundedPrivateFileWithinTrustRoot(
+    secretReader.readPrivate(
       hmacSecretPath,
-      secretTrustRoot,
       512,
       "IDENTITY_DELIVERY_HMAC_SECRET_FILE_INVALID",
     ),

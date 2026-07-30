@@ -36,5 +36,8 @@ database credential class and exact Identity-only grants; the aggregate `platfor
 outbound endpoint, claim loop or projection authority. Startup and post-migration authority checks positively prove the standalone
 worker's allowlist and prove that verification digest/email columns are unreadable. Delivery endpoint, HMAC secret file,
 audit-digest key file and their immutable trust root are mandatory production configuration; startup fails before claiming work
-when any is missing or unsafe. Kubernetes AtomicWriter symlinks may resolve only inside that root, and the final group-readable file
-is opened no-follow and checked through one stable descriptor.
+when any is missing or unsafe. PostgreSQL RLS binds the shared outbox's `identity` owner to the exact Identity worker role; the
+aggregate worker cannot read or mutate those rows, and neither worker can rewrite `owner`. Runtime startup verifies the active RLS
+policy inventory as well as column-scoped grants. Kubernetes AtomicWriter symlinks may resolve only inside one stable, non-symlink
+trust-root inode, and the final group-readable file is opened no-follow and checked against the same path snapshot through one
+stable descriptor.

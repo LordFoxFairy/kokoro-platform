@@ -142,6 +142,14 @@ export async function runPlatformMigrations(
     await grantModelGatewayPrivileges(lockClient, modelGatewayRole, admissionRole);
     await grantAssetDataPlanePrivileges(lockClient, assetDataPlaneRole);
     await grantIdentityWorkerPrivileges(lockClient, identityWorkerRole);
+    await configureOutboxOwnerPolicies(lockClient, {
+      api: apiRole,
+      admission: admissionRole,
+      worker: workerRole,
+      identityWorker: identityWorkerRole,
+      admin: adminRole,
+      modelGateway: modelGatewayRole,
+    });
     await assertPostMigrationAuthority(
       lockClient,
       config.expectedDatabaseUser,
@@ -605,6 +613,81 @@ async function assertIdentityWorkerAuthority(
   ) throw new Error("PLATFORM_IDENTITY_WORKER_POST_AUTHORITY_INVALID");
 }
 
+type OutboxPolicyRole = "api" | "admission" | "worker" | "identityWorker" |
+  "admin" | "modelGateway";
+type OutboxPolicyCommand = "SELECT" | "INSERT" | "UPDATE";
+
+interface OutboxOwnerPolicy {
+  readonly name: string;
+  readonly role: OutboxPolicyRole;
+  readonly command: OutboxPolicyCommand;
+  readonly owners: readonly string[];
+}
+
+/**
+ * The outbox is shared storage, not shared authority. Policies bind a fixed
+ * owner allowlist to the authenticated PostgreSQL role (`TO role`); they never
+ * trust request/session GUCs. UPDATE remains column-scoped in grants, so a
+ * consumer cannot rewrite `owner` to move a row between allowed namespaces.
+ */
+const OUTBOX_OWNER_POLICIES: readonly OutboxOwnerPolicy[] = Object.freeze([
+  { name: "outbox_api_select", role: "api", command: "SELECT",
+    owners: ["identity", "commerce", "asset"] },
+  { name: "outbox_api_insert", role: "api", command: "INSERT",
+    owners: ["identity", "commerce", "asset"] },
+  { name: "outbox_admission_insert", role: "admission", command: "INSERT",
+    owners: ["credit"] },
+  { name: "outbox_worker_select", role: "worker", command: "SELECT",
+    owners: ["commerce", "credit", "site", "asset", "admin-execution"] },
+  { name: "outbox_worker_insert", role: "worker", command: "INSERT",
+    owners: ["commerce", "credit", "site", "asset", "admin-execution"] },
+  { name: "outbox_worker_update", role: "worker", command: "UPDATE",
+    owners: ["commerce", "credit", "site", "asset", "admin-execution"] },
+  { name: "outbox_identity_worker_select", role: "identityWorker", command: "SELECT",
+    owners: ["identity"] },
+  { name: "outbox_identity_worker_update", role: "identityWorker", command: "UPDATE",
+    owners: ["identity"] },
+  { name: "outbox_admin_select", role: "admin", command: "SELECT",
+    owners: ["admin-control", "admin-execution", "commerce", "site", "model-control"] },
+  { name: "outbox_admin_insert", role: "admin", command: "INSERT",
+    owners: ["admin-control", "admin-execution", "commerce", "site", "model-control"] },
+  { name: "outbox_model_gateway_insert", role: "modelGateway", command: "INSERT",
+    owners: ["credit-usage-rating"] },
+]);
+
+async function configureOutboxOwnerPolicies(
+  client: MigrationLockClient,
+  roles: Readonly<Record<OutboxPolicyRole, string>>,
+): Promise<void> {
+  await client.query("ALTER TABLE platform.outbox_event ENABLE ROW LEVEL SECURITY");
+  for (const policy of OUTBOX_OWNER_POLICIES) {
+    await client.query(`DROP POLICY IF EXISTS ${policy.name} ON platform.outbox_event`);
+    const ownerFence = `owner=ANY(ARRAY[${sqlLiterals(policy.owners)}]::text[])`;
+    const predicate = policy.command === "INSERT"
+      ? `WITH CHECK (${ownerFence})`
+      : policy.command === "UPDATE"
+        ? `USING (${ownerFence}) WITH CHECK (${ownerFence})`
+        : `USING (${ownerFence})`;
+    await client.query(
+      `CREATE POLICY ${policy.name} ON platform.outbox_event FOR ${policy.command} ` +
+        `TO ${quoteRoleIdentifier(roles[policy.role])} ${predicate}`,
+    );
+  }
+  const result = await client.query(
+    `SELECT policyname,cmd,roles::text[] AS roles FROM pg_policies ` +
+      `WHERE schemaname='platform' AND tablename='outbox_event' ORDER BY policyname`,
+  );
+  const policies = result.rows ?? [];
+  if (
+    policies.length !== OUTBOX_OWNER_POLICIES.length ||
+    OUTBOX_OWNER_POLICIES.some((expected) => {
+      const actual = policies.find((candidate) => candidate.policyname === expected.name);
+      return actual?.cmd !== expected.command || !Array.isArray(actual.roles) ||
+        actual.roles.length !== 1 || actual.roles[0] !== roles[expected.role];
+    })
+  ) throw new Error("PLATFORM_OUTBOX_OWNER_POLICIES_INVALID");
+}
+
 const MODEL_GATEWAY_ROLE_PREFLIGHT_SQL = `
   SELECT runtime_role.rolname AS "roleName",runtime_role.rolsuper AS "isSuperuser",
     runtime_role.rolcreatedb AS "canCreateDatabase",runtime_role.rolcreaterole AS "canCreateRole",
@@ -742,6 +825,8 @@ const IDENTITY_WORKER_POST_AUTHORITY_SQL = `
       AND NOT has_schema_privilege($1,'platform','CREATE')
       AND has_table_privilege($1,'platform.platform_foundation','SELECT')
       AND has_table_privilege($1,'platform.outbox_event','SELECT')
+      AND NOT has_table_privilege($1,'platform.outbox_event','UPDATE')
+      AND NOT has_column_privilege($1,'platform.outbox_event','owner','UPDATE')
       AND has_column_privilege($1,'platform.outbox_event','state','UPDATE')
       AND has_column_privilege($1,'platform.outbox_event','lease_owner','UPDATE')
       AND has_column_privilege($1,'platform.outbox_event','lease_token','UPDATE')
@@ -969,7 +1054,12 @@ async function grantFoundationPrivileges(
         `GRANT INSERT ON TABLE platform.site_deployment_binding, platform.site_deployment_observation, platform.site_traffic_stop_observation, platform.authorization_site, platform.authorization_site_release, platform.authorization_product_binding TO ${identifier}`,
       );
       await client.query(
-        `GRANT UPDATE ON TABLE platform.command_receipt, platform.outbox_event, platform.inbox_delivery TO ${identifier}`,
+        `GRANT UPDATE ON TABLE platform.command_receipt, platform.inbox_delivery TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT UPDATE(state,available_at,last_error_code,lease_owner,lease_token,` +
+          `lease_expires_at,attempt,delivered_at,consumer_delivery_id,` +
+          `consumer_acknowledged_at,updated_at) ON TABLE platform.outbox_event TO ${identifier}`,
       );
       await client.query(
         `GRANT UPDATE(state,active_release_ref,policy_epoch,revocation_epoch,tombstoned_at,updated_at) ON TABLE platform.site TO ${identifier}`,
@@ -1753,7 +1843,20 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            AND has_table_privilege(runtime_role.rolname, 'platform.asset_version', 'SELECT')
            AND has_table_privilege(runtime_role.rolname, 'platform.asset_eligibility_projection', 'SELECT')
          WHEN runtime_role.rolname = $3 THEN
-           (has_table_privilege(runtime_role.rolname, 'platform.outbox_event', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.outbox_event', 'UPDATE'))
+           has_table_privilege(runtime_role.rolname, 'platform.outbox_event', 'SELECT')
+           AND NOT has_table_privilege(runtime_role.rolname, 'platform.outbox_event', 'UPDATE')
+           AND NOT has_column_privilege(runtime_role.rolname, 'platform.outbox_event', 'owner', 'UPDATE')
+           AND has_column_privilege(runtime_role.rolname, 'platform.outbox_event', 'state', 'UPDATE')
+           AND has_column_privilege(runtime_role.rolname, 'platform.outbox_event', 'available_at', 'UPDATE')
+           AND has_column_privilege(runtime_role.rolname, 'platform.outbox_event', 'last_error_code', 'UPDATE')
+           AND has_column_privilege(runtime_role.rolname, 'platform.outbox_event', 'lease_owner', 'UPDATE')
+           AND has_column_privilege(runtime_role.rolname, 'platform.outbox_event', 'lease_token', 'UPDATE')
+           AND has_column_privilege(runtime_role.rolname, 'platform.outbox_event', 'lease_expires_at', 'UPDATE')
+           AND has_column_privilege(runtime_role.rolname, 'platform.outbox_event', 'attempt', 'UPDATE')
+           AND has_column_privilege(runtime_role.rolname, 'platform.outbox_event', 'delivered_at', 'UPDATE')
+           AND has_column_privilege(runtime_role.rolname, 'platform.outbox_event', 'consumer_delivery_id', 'UPDATE')
+           AND has_column_privilege(runtime_role.rolname, 'platform.outbox_event', 'consumer_acknowledged_at', 'UPDATE')
+           AND has_column_privilege(runtime_role.rolname, 'platform.outbox_event', 'updated_at', 'UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.command_receipt', 'UPDATE')
            AND (has_table_privilege(runtime_role.rolname, 'platform.inbox_delivery', 'INSERT') AND has_table_privilege(runtime_role.rolname, 'platform.inbox_delivery', 'UPDATE'))
            AND has_table_privilege(runtime_role.rolname, 'platform.commerce_redemption', 'SELECT')

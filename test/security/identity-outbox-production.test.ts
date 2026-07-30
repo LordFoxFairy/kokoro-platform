@@ -14,7 +14,11 @@ describe("Identity outbox production authority", () => {
   });
 
   it("gives the independent Identity worker only its projection reads and outcome updates", async () => {
-    const migrator = await readFile("src/infrastructure/postgres/migrator.ts", "utf8");
+    const [migrator, client, ownerFence] = await Promise.all([
+      readFile("src/infrastructure/postgres/migrator.ts", "utf8"),
+      readFile("src/infrastructure/postgres/client.ts", "utf8"),
+      readFile("prisma/migrations/20260804_outbox_owner_fencing/migration.sql", "utf8"),
+    ]);
     expect(migrator).toContain("PLATFORM_DATABASE_IDENTITY_WORKER_ROLE");
     expect(migrator).toContain("grantIdentityWorkerPrivileges");
     expect(migrator).toContain("IDENTITY_WORKER_POST_AUTHORITY_SQL");
@@ -43,6 +47,25 @@ describe("Identity outbox production authority", () => {
       "NOT has_column_privilege($1,'platform.identity_verification_transaction','secret_digest','SELECT')",
     );
     expect(migrator).toContain("hasUnexpectedIdentityPrivilege");
+    expect(migrator).toContain("configureOutboxOwnerPolicies");
+    expect(migrator).toContain("outbox_identity_worker_select");
+    expect(migrator).toContain("outbox_identity_worker_update");
+    expect(migrator).toMatch(/identityWorker[\s\S]+owners:\s*\["identity"\]/u);
+    expect(migrator).toMatch(
+      /worker[\s\S]+owners:\s*\["commerce",\s*"credit",\s*"site",\s*"asset",\s*"admin-execution"\]/u,
+    );
+    expect(migrator).not.toMatch(
+      /GRANT UPDATE ON TABLE platform\.command_receipt, platform\.outbox_event/u,
+    );
+    expect(client).not.toMatch(
+      /config\.role === "identity-worker"[\s\S]{0,400}has_table_privilege\(current_user, 'platform\.outbox_event', 'UPDATE'\)/u,
+    );
+    expect(client).toContain('outbox.relrowsecurity AS "outboxRlsEnabled"');
+    expect(client).toContain('AS "outboxPolicyNames"');
+    expect(client).toContain('"identity-worker": [\n    "outbox_identity_worker_select"');
+    expect(client).toContain("identity.outboxPolicyNames");
+    expect(ownerFence).toContain("ALTER TABLE platform.outbox_event ENABLE ROW LEVEL SECURITY");
+    expect(ownerFence).not.toMatch(/current_setting|set_config|app\./u);
   });
 
   it("isolates exact Identity claims and lease return in its own process", async () => {

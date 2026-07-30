@@ -1,8 +1,10 @@
 import { constants as fileSystemConstants } from "node:fs";
-import { open, realpath } from "node:fs/promises";
-import { isAbsolute, relative, sep } from "node:path";
+import { lstat, open, readlink, realpath } from "node:fs/promises";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 const MAXIMUM_SUPPORTED_BYTES = 16 * 1024 * 1024;
+const MAXIMUM_SYMLINK_HOPS = 8;
+const MAXIMUM_RESOLVED_SEGMENTS = 64;
 
 export interface BoundedFileMetadata {
   readonly dev: bigint;
@@ -34,10 +36,6 @@ export interface TrustedRootBoundedFileReader {
   readPrivate(path: string, maximumBytes: number, invalidCode: string): Promise<string>;
 }
 
-export interface BoundedTrustRootFileSystem extends BoundedFileSystem {
-  realpath(path: string): Promise<string>;
-}
-
 const NODE_FILE_SYSTEM: BoundedFileSystem = Object.freeze({
   open: async (path: string, flags: number) => {
     const handle = await open(path, flags);
@@ -52,11 +50,6 @@ const NODE_FILE_SYSTEM: BoundedFileSystem = Object.freeze({
       close: () => handle.close(),
     });
   },
-});
-
-const NODE_TRUST_ROOT_FILE_SYSTEM: BoundedTrustRootFileSystem = Object.freeze({
-  ...NODE_FILE_SYSTEM,
-  realpath,
 });
 
 /**
@@ -83,94 +76,54 @@ export function readBoundedPrivateFile(
 }
 
 /**
- * Safely follows a Kubernetes AtomicWriter logical symlink only when both the
- * logical name and its resolved regular file stay inside one immutable trust
- * root. The resolved final file is still opened with O_NOFOLLOW and verified
- * through the same descriptor before and after bounded I/O.
- */
-export async function readBoundedPrivateFileWithinTrustRoot(
-  path: string,
-  trustRoot: string,
-  maximumBytes: number,
-  invalidCode: string,
-  fileSystem: BoundedTrustRootFileSystem = NODE_TRUST_ROOT_FILE_SYSTEM,
-): Promise<string> {
-  try {
-    if (
-      !isAbsolute(path) || !isAbsolute(trustRoot) || path.includes("\0") ||
-      trustRoot.includes("\0") || !containedBy(path, trustRoot)
-    ) throw new Error(invalidCode);
-    const [resolvedRootBefore, resolvedPathBefore] = await Promise.all([
-      fileSystem.realpath(trustRoot),
-      fileSystem.realpath(path),
-    ]);
-    if (
-      !isAbsolute(resolvedRootBefore) || !isAbsolute(resolvedPathBefore) ||
-      !containedBy(resolvedPathBefore, resolvedRootBefore) ||
-      resolvedPathBefore === resolvedRootBefore
-    ) throw new Error(invalidCode);
-    const value = await readFile(
-      resolvedPathBefore,
-      maximumBytes,
-      invalidCode,
-      "trusted-private",
-      fileSystem,
-    );
-    const [resolvedRootAfter, resolvedPathAfter] = await Promise.all([
-      fileSystem.realpath(trustRoot),
-      fileSystem.realpath(path),
-    ]);
-    if (
-      resolvedRootAfter !== resolvedRootBefore || resolvedPathAfter !== resolvedPathBefore ||
-      !containedBy(resolvedPathAfter, resolvedRootAfter)
-    ) throw new Error(invalidCode);
-    return value;
-  } catch {
-    throw new Error(invalidCode);
-  }
-}
-
-/**
- * Resolves Kubernetes AtomicWriter links inside one explicit read-only trust
- * root, then reads the resolved file through a stable O_NOFOLLOW descriptor.
- * Private files may be owner-readable or fsGroup-readable, but never writable
- * by group/world or readable by world.
+ * Creates one closure over a stable, non-symlink trust-root inode. Each read
+ * resolves bounded Kubernetes AtomicWriter links one segment at a time, then
+ * proves the final path and opened O_NOFOLLOW descriptor are the same inode.
  */
 export async function createBoundedFileReaderWithinTrustRoot(
   trustRoot: string,
   invalidCode: string,
+  fileSystem: BoundedFileSystem = NODE_FILE_SYSTEM,
 ): Promise<TrustedRootBoundedFileReader> {
   if (!isAbsolute(trustRoot) || trustRoot.includes("\0") || !safeCode(invalidCode)) {
     throw new Error(invalidCode);
   }
-  let resolvedRoot: string;
   try {
-    resolvedRoot = await realpath(trustRoot);
+    const rootPath = resolve(trustRoot);
+    const rootMetadata = await lstat(rootPath, { bigint: true });
+    if (
+      !rootMetadata.isDirectory() || rootMetadata.isSymbolicLink()
+    ) throw new Error(invalidCode);
+    const canonicalRoot = await realpath(rootPath);
+    const [rootAfterRealpath, canonicalRootMetadata] = await Promise.all([
+      lstat(rootPath, { bigint: true }),
+      lstat(canonicalRoot, { bigint: true }),
+    ]);
+    if (
+      !rootAfterRealpath.isDirectory() || rootAfterRealpath.isSymbolicLink() ||
+      !canonicalRootMetadata.isDirectory() || canonicalRootMetadata.isSymbolicLink() ||
+      !sameIdentity(rootMetadata, rootAfterRealpath) ||
+      !sameIdentity(rootMetadata, canonicalRootMetadata)
+    ) throw new Error(invalidCode);
+    const state = Object.freeze({ rootPath, canonicalRoot, rootMetadata, fileSystem });
+    return Object.freeze({
+      readRegular: (path: string, maximumBytes: number, fileInvalidCode: string) =>
+        readTrustedFile(state, path, maximumBytes, fileInvalidCode, false),
+      readPrivate: (path: string, maximumBytes: number, fileInvalidCode: string) =>
+        readTrustedFile(state, path, maximumBytes, fileInvalidCode, true),
+    });
   } catch {
     throw new Error(invalidCode);
   }
-  return Object.freeze({
-    readRegular: async (path: string, maximumBytes: number, fileInvalidCode: string) =>
-      readTrustedFile(
-        resolvedRoot,
-        path,
-        maximumBytes,
-        fileInvalidCode,
-        false,
-      ),
-    readPrivate: async (path: string, maximumBytes: number, fileInvalidCode: string) =>
-      readTrustedFile(
-        resolvedRoot,
-        path,
-        maximumBytes,
-        fileInvalidCode,
-        true,
-      ),
-  });
 }
 
 async function readTrustedFile(
-  resolvedRoot: string,
+  trustRoot: Readonly<{
+    rootPath: string;
+    canonicalRoot: string;
+    rootMetadata: Readonly<{ dev: bigint; ino: bigint }>;
+    fileSystem: BoundedFileSystem;
+  }>,
   path: string,
   maximumBytes: number,
   invalidCode: string,
@@ -178,22 +131,136 @@ async function readTrustedFile(
 ): Promise<string> {
   try {
     if (!isAbsolute(path) || path.includes("\0")) throw new Error(invalidCode);
-    const resolvedPath = await realpath(path);
-    const relativePath = relative(resolvedRoot, resolvedPath);
-    if (
-      relativePath.length === 0 || relativePath === ".." ||
-      relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)
-    ) throw new Error(invalidCode);
-    return await readFile(
-      resolvedPath,
+    await assertTrustRootStable(trustRoot, invalidCode);
+    const requestedPath = resolve(path);
+    if (!contained(trustRoot.rootPath, requestedPath) || requestedPath === trustRoot.rootPath) {
+      throw new Error(invalidCode);
+    }
+    const finalPath = await resolveInsideTrustRoot({
+      canonicalRoot: trustRoot.canonicalRoot,
+      segments: splitRelative(relative(trustRoot.rootPath, requestedPath), invalidCode),
+      invalidCode,
+    });
+    const before = await lstat(finalPath, { bigint: true });
+    if (!before.isFile() || before.isSymbolicLink()) throw new Error(invalidCode);
+    const validatingFileSystem: BoundedFileSystem = Object.freeze({
+      open: async (openedPath: string, flags: number) => {
+        if (openedPath !== finalPath) throw new Error(invalidCode);
+        const handle = await trustRoot.fileSystem.open(openedPath, flags);
+        return Object.freeze({
+          stat: async () => {
+            const [opened, atPath] = await Promise.all([
+              handle.stat(),
+              lstat(finalPath, { bigint: true }),
+            ]);
+            if (
+              !atPath.isFile() || atPath.isSymbolicLink() ||
+              !sameSnapshot(before, opened) || !sameSnapshot(opened, atPath)
+            ) throw new Error(invalidCode);
+            return opened;
+          },
+          read: (buffer: Buffer, offset: number, length: number, position: number) =>
+            handle.read(buffer, offset, length, position),
+          close: () => handle.close(),
+        });
+      },
+    });
+    const value = await readFile(
+      finalPath,
       maximumBytes,
       invalidCode,
       privateMaterial ? "trusted-private" : false,
-      NODE_FILE_SYSTEM,
+      validatingFileSystem,
     );
+    await assertTrustRootStable(trustRoot, invalidCode);
+    return value;
   } catch {
     throw new Error(invalidCode);
   }
+}
+
+async function assertTrustRootStable(
+  trustRoot: Readonly<{
+    rootPath: string;
+    canonicalRoot: string;
+    rootMetadata: Readonly<{ dev: bigint; ino: bigint }>;
+  }>,
+  invalidCode: string,
+): Promise<void> {
+  const [rootPathMetadata, canonicalRootMetadata] = await Promise.all([
+    lstat(trustRoot.rootPath, { bigint: true }),
+    lstat(trustRoot.canonicalRoot, { bigint: true }),
+  ]);
+  if (
+    !rootPathMetadata.isDirectory() || rootPathMetadata.isSymbolicLink() ||
+    !canonicalRootMetadata.isDirectory() || canonicalRootMetadata.isSymbolicLink() ||
+    !sameIdentity(trustRoot.rootMetadata, rootPathMetadata) ||
+    !sameIdentity(trustRoot.rootMetadata, canonicalRootMetadata)
+  ) throw new Error(invalidCode);
+}
+
+async function resolveInsideTrustRoot(input: Readonly<{
+  canonicalRoot: string;
+  segments: string[];
+  invalidCode: string;
+}>): Promise<string> {
+  let current = input.canonicalRoot;
+  let pending = [...input.segments];
+  let symlinkHops = 0;
+  let resolvedSegments = 0;
+  while (pending.length > 0) {
+    if (++resolvedSegments > MAXIMUM_RESOLVED_SEGMENTS) throw new Error(input.invalidCode);
+    const [segment, ...remaining] = pending;
+    if (segment === undefined || segment === "" || segment === "." || segment === "..") {
+      throw new Error(input.invalidCode);
+    }
+    const candidate = resolve(current, segment);
+    if (!contained(input.canonicalRoot, candidate)) throw new Error(input.invalidCode);
+    const metadata = await lstat(candidate);
+    if (!metadata.isSymbolicLink()) {
+      current = candidate;
+      pending = remaining;
+      continue;
+    }
+    if (++symlinkHops > MAXIMUM_SYMLINK_HOPS) throw new Error(input.invalidCode);
+    const expanded = resolve(dirname(candidate), await readlink(candidate));
+    if (!contained(input.canonicalRoot, expanded)) throw new Error(input.invalidCode);
+    pending = [
+      ...splitRelative(relative(input.canonicalRoot, expanded), input.invalidCode),
+      ...remaining,
+    ];
+    current = input.canonicalRoot;
+  }
+  return current;
+}
+
+function splitRelative(value: string, invalidCode: string): string[] {
+  if (value === "" || isAbsolute(value)) throw new Error(invalidCode);
+  return value.split(sep);
+}
+
+function contained(root: string, candidate: string): boolean {
+  const path = relative(root, candidate);
+  return path === "" || (!path.startsWith(`..${sep}`) && path !== ".." && !isAbsolute(path));
+}
+
+function sameIdentity(
+  left: Readonly<{ dev: bigint; ino: bigint }>,
+  right: Readonly<{ dev: bigint; ino: bigint }>,
+): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function sameSnapshot(
+  left: Readonly<{
+    dev: bigint; ino: bigint; size: bigint; mode: bigint; mtimeNs: bigint; ctimeNs: bigint;
+  }>,
+  right: Readonly<{
+    dev: bigint; ino: bigint; size: bigint; mode: bigint; mtimeNs: bigint; ctimeNs: bigint;
+  }>,
+): boolean {
+  return sameIdentity(left, right) && left.size === right.size && left.mode === right.mode &&
+    left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs;
 }
 
 async function readFile(
@@ -267,23 +334,19 @@ function assertMetadata(
   ) throw new Error(invalidCode);
 }
 
-function safeMode(mode: bigint, privateMaterial: boolean | "trusted-private"): boolean {
+function safeMode(
+  mode: bigint,
+  privateMaterial: boolean | "trusted-private",
+): boolean {
   const permissions = mode & 0o777n;
   if (privateMaterial === "trusted-private") {
-    return (
-      (permissions & 0o400n) !== 0n &&
-      (permissions & 0o007n) === 0n &&
-      (permissions & 0o022n) === 0n
-    );
+    return permissions === 0o400n || permissions === 0o600n ||
+      permissions === 0o440n || permissions === 0o640n;
   }
-  if (privateMaterial) return permissions === 0o400n || permissions === 0o600n;
+  if (privateMaterial) {
+    return permissions === 0o400n || permissions === 0o600n;
+  }
   return (permissions & 0o400n) !== 0n && (permissions & 0o022n) === 0n;
-}
-
-function containedBy(path: string, root: string): boolean {
-  const suffix = relative(root, path);
-  return suffix === "" || suffix !== ".." && !suffix.startsWith(`..${sep}`) &&
-    !isAbsolute(suffix);
 }
 
 function safeCode(value: string): boolean {

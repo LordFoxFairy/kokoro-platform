@@ -880,6 +880,8 @@ interface RuntimeIdentity {
   hasAnyMembership: boolean;
   ownsPlatformRelation: boolean;
   ownsPlatformFunction: boolean;
+  outboxRlsEnabled: boolean;
+  outboxPolicyNames: readonly string[];
   hasRequiredPlatformWrites: boolean;
   hasIdentityOutboxConsumerAuthority: boolean;
   hasUnexpectedIdentityWorkerPrivilege: boolean;
@@ -1087,6 +1089,14 @@ const RUNTIME_IDENTITY_SQL = `
            WHERE owned_function.pronamespace = platform_schema.oid
              AND owned_function.proowner = runtime_role.oid
          ) AS "ownsPlatformFunction",
+         outbox.relrowsecurity AS "outboxRlsEnabled",
+         ARRAY(
+           SELECT policy.policyname
+           FROM pg_policies policy
+           WHERE policy.schemaname='platform' AND policy.tablename='outbox_event'
+             AND current_user=ANY(policy.roles)
+           ORDER BY policy.policyname
+         ) AS "outboxPolicyNames",
          CASE WHEN $2 = 'api' THEN
            (has_table_privilege(current_user, 'platform.command_receipt', 'INSERT') AND has_table_privilege(current_user, 'platform.command_receipt', 'UPDATE'))
            AND has_table_privilege(current_user, 'platform.outbox_event', 'INSERT')
@@ -1262,9 +1272,34 @@ const RUNTIME_IDENTITY_SQL = `
              'EXECUTE')
          WHEN $2 = 'identity-worker' THEN
            has_table_privilege(current_user, 'platform.outbox_event', 'SELECT')
-           AND has_table_privilege(current_user, 'platform.outbox_event', 'UPDATE')
+           AND NOT has_table_privilege(current_user, 'platform.outbox_event', 'UPDATE')
+           AND NOT has_column_privilege(current_user, 'platform.outbox_event', 'owner', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.outbox_event', 'state', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.outbox_event', 'available_at', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.outbox_event', 'last_error_code', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.outbox_event', 'lease_owner', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.outbox_event', 'lease_token', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.outbox_event', 'lease_expires_at', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.outbox_event', 'attempt', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.outbox_event', 'delivered_at', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.outbox_event', 'consumer_delivery_id', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.outbox_event', 'consumer_acknowledged_at', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.outbox_event', 'updated_at', 'UPDATE')
          WHEN $2 = 'worker' THEN
-           (has_table_privilege(current_user, 'platform.outbox_event', 'SELECT') AND has_table_privilege(current_user, 'platform.outbox_event', 'UPDATE'))
+           has_table_privilege(current_user, 'platform.outbox_event', 'SELECT')
+           AND NOT has_table_privilege(current_user, 'platform.outbox_event', 'UPDATE')
+           AND NOT has_column_privilege(current_user, 'platform.outbox_event', 'owner', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.outbox_event', 'state', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.outbox_event', 'available_at', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.outbox_event', 'last_error_code', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.outbox_event', 'lease_owner', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.outbox_event', 'lease_token', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.outbox_event', 'lease_expires_at', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.outbox_event', 'attempt', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.outbox_event', 'delivered_at', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.outbox_event', 'consumer_delivery_id', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.outbox_event', 'consumer_acknowledged_at', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.outbox_event', 'updated_at', 'UPDATE')
            AND has_table_privilege(current_user, 'platform.site', 'SELECT')
            AND has_any_column_privilege(current_user, 'platform.site', 'UPDATE')
            AND has_table_privilege(current_user, 'platform.site_project_binding', 'SELECT')
@@ -2029,8 +2064,23 @@ const RUNTIME_IDENTITY_SQL = `
   LEFT JOIN pg_class foundation ON foundation.relnamespace = platform_schema.oid
                                 AND foundation.relname = 'platform_foundation'
   LEFT JOIN pg_roles foundation_owner ON foundation_owner.oid = foundation.relowner
+  LEFT JOIN pg_class outbox ON outbox.relnamespace = platform_schema.oid
+                           AND outbox.relname = 'outbox_event'
   WHERE database_row.datname = current_database()
 `;
+
+const OUTBOX_POLICY_NAMES_BY_RUNTIME_ROLE = Object.freeze({
+  api: ["outbox_api_insert", "outbox_api_select"],
+  admission: ["outbox_admission_insert"],
+  authorization: [],
+  "asset-data-plane": [],
+  worker: ["outbox_worker_insert", "outbox_worker_select", "outbox_worker_update"],
+  "identity-worker": [
+    "outbox_identity_worker_select",
+    "outbox_identity_worker_update",
+  ],
+  admin: ["outbox_admin_insert", "outbox_admin_select"],
+} as const satisfies Record<Exclude<PlatformProcessRole, "migrator">, readonly string[]>);
 
 function validRuntimeIdentity(
   identity: RuntimeIdentity | undefined,
@@ -2059,6 +2109,7 @@ function validRuntimeIdentity(
     !identity.hasAnyMembership &&
     !identity.ownsPlatformRelation &&
     !identity.ownsPlatformFunction &&
+    hasExpectedOutboxPolicies(identity, config.role) &&
     identity.hasRequiredPlatformWrites &&
     identity.hasIdentityOutboxConsumerAuthority === (config.role === "identity-worker") &&
     !identity.hasUnexpectedIdentityWorkerPrivilege &&
@@ -2081,6 +2132,17 @@ function validRuntimeIdentity(
     identity.unexpectedPlatformRelations.length === 0 &&
     identity.unexpectedPlatformFunctions.length === 0,
   );
+}
+
+function hasExpectedOutboxPolicies(
+  identity: RuntimeIdentity,
+  role: PlatformProcessRole,
+): boolean {
+  if (role === "migrator" || !identity.outboxRlsEnabled ||
+      !Array.isArray(identity.outboxPolicyNames)) return false;
+  const expected = OUTBOX_POLICY_NAMES_BY_RUNTIME_ROLE[role];
+  return identity.outboxPolicyNames.length === expected.length &&
+    expected.every((name, index) => identity.outboxPolicyNames[index] === name);
 }
 
 function requireIdentifier(value: string | undefined, name: string): string {

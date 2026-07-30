@@ -402,6 +402,8 @@ interface RuntimeIdentity extends Record<string, unknown> {
   canMutateFoundation: boolean;
   canExecuteAuthorizationResolver: boolean;
   canExecuteDispatchScanner: boolean;
+  outboxRlsEnabled: boolean;
+  outboxPolicyNames: readonly string[];
   hasRequiredGatewayWrites: boolean;
 }
 
@@ -417,6 +419,9 @@ function validIdentity(
     row.canCreateDatabaseObject === false && row.canUseSchema === true && row.canCreateSchema === false &&
     row.canReadFoundation === true && row.canMutateFoundation === false &&
     row.canExecuteAuthorizationResolver === true && row.canExecuteDispatchScanner === true &&
+    row.outboxRlsEnabled === true && Array.isArray(row.outboxPolicyNames) &&
+    row.outboxPolicyNames.length === 1 &&
+    row.outboxPolicyNames[0] === "outbox_model_gateway_insert" &&
     row.hasRequiredGatewayWrites === true;
 }
 
@@ -448,6 +453,18 @@ const RUNTIME_IDENTITY_SQL = `
     has_table_privilege(current_user,'platform.platform_foundation','INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') AS "canMutateFoundation",
     has_function_privilege(current_user,'platform.resolve_model_gateway_authorization(TEXT,TEXT)','EXECUTE') AS "canExecuteAuthorizationResolver",
     has_function_privilege(current_user,'platform.list_model_gateway_dispatch_candidates(INTEGER)','EXECUTE') AS "canExecuteDispatchScanner",
+    (SELECT outbox.relrowsecurity
+       FROM pg_class outbox
+       JOIN pg_namespace outbox_schema ON outbox_schema.oid=outbox.relnamespace
+      WHERE outbox_schema.nspname='platform' AND outbox.relname='outbox_event')
+      AS "outboxRlsEnabled",
+    ARRAY(
+      SELECT policy.policyname
+        FROM pg_policies policy
+       WHERE policy.schemaname='platform' AND policy.tablename='outbox_event'
+         AND current_user=ANY(policy.roles)
+       ORDER BY policy.policyname
+    ) AS "outboxPolicyNames",
     (has_table_privilege(current_user, 'platform.model_gateway_invocation', 'SELECT') AND has_table_privilege(current_user, 'platform.model_gateway_invocation', 'INSERT'))
       AND has_column_privilege(current_user,'platform.model_gateway_invocation','state','UPDATE')
       AND has_column_privilege(current_user,'platform.model_gateway_invocation','response_envelope','UPDATE')

@@ -24,6 +24,46 @@ class Client {
 }
 
 describe("Postgres Model Gateway database", () => {
+  it("fails startup unless the exact credit usage outbox policy is active", async () => {
+    const database = new PostgresModelGatewayDatabase({
+      pool: {
+        query: async () => ({
+          rows: [{
+            currentUser: "platform_model_gateway",
+            currentDatabase: "kokoro_platform",
+            serverMajor: 18,
+            databaseOwner: "platform_migrator",
+            isSuperuser: false,
+            canCreateDatabase: false,
+            canCreateRole: false,
+            canReplicate: false,
+            canBypassRls: false,
+            inheritsPrivileges: false,
+            hasAnyMembership: false,
+            isMigratorMember: false,
+            canCreateDatabaseObject: false,
+            canUseSchema: true,
+            canCreateSchema: false,
+            canReadFoundation: true,
+            canMutateFoundation: false,
+            canExecuteAuthorizationResolver: true,
+            canExecuteDispatchScanner: true,
+            hasRequiredGatewayWrites: true,
+            outboxRlsEnabled: false,
+            outboxPolicyNames: [],
+          }],
+          rowCount: 1,
+        }),
+        connect: async () => { throw new Error("LISTENER_MUST_NOT_CONNECT"); },
+        end: async () => undefined,
+      },
+      expectedDatabaseUser: "platform_model_gateway",
+      expectedDatabaseName: "kokoro_platform",
+      migratorDatabaseUser: "platform_migrator",
+    });
+    await expect(database.connect()).rejects.toThrowError("MODEL_GATEWAY_DATABASE_ROLE_INVALID");
+  });
+
   it("resolves one opaque authorization before setting site-scoped workload context", async () => {
     const client = new Client();
     const database = new PostgresModelGatewayDatabase({

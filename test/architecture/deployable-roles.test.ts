@@ -254,6 +254,10 @@ describe("Platform migrator", () => {
             ],
           };
         }
+        if (sql.includes("FROM pg_policies")) {
+          events.push("verify-outbox-policies");
+          return { rows: outboxPolicyRows() };
+        }
         if (/^(?:REVOKE|GRANT|ALTER DEFAULT PRIVILEGES)/u.test(sql)) {
           events.push("grant");
           grants.push(sql);
@@ -381,7 +385,8 @@ describe("Platform migrator", () => {
     expect(authoritySql).toMatch(
       /runtime_role\.rolname=\$3 AND \([\s\S]+grant_row\.table_name LIKE 'identity\\_%'/u,
     );
-    expect(events.slice(-6)).toEqual([
+    expect(events.slice(-7)).toEqual([
+      "verify-outbox-policies",
       "verify-authority",
       "verify-model-gateway",
       "verify-asset-data-plane",
@@ -472,6 +477,7 @@ describe("Platform migrator", () => {
             ],
           };
         }
+        if (sql.includes("FROM pg_policies")) return { rows: outboxPolicyRows() };
         if (sql.includes("hasUnexpectedPlatformPrivilege")) {
           return {
             rows: [
@@ -535,6 +541,7 @@ describe("Platform migrator", () => {
               safeRole("platform_admin"),
             ] };
           }
+          if (sql.includes("FROM pg_policies")) return { rows: outboxPolicyRows() };
           if (sql.includes("hasUnexpectedPlatformPrivilege")) {
             return { rows: [
               authority("platform_api"), authority("platform_admission"),
@@ -805,6 +812,22 @@ function authority(roleName: string): Record<string, unknown> {
     canReadModelSensitiveColumn: false,
     hasUnexpectedPlatformPrivilege: false,
   };
+}
+
+function outboxPolicyRows(): readonly Record<string, unknown>[] {
+  return [
+    ["outbox_admin_insert", "INSERT", "platform_admin"],
+    ["outbox_admin_select", "SELECT", "platform_admin"],
+    ["outbox_admission_insert", "INSERT", "platform_admission"],
+    ["outbox_api_insert", "INSERT", "platform_api"],
+    ["outbox_api_select", "SELECT", "platform_api"],
+    ["outbox_identity_worker_select", "SELECT", "platform_identity_worker"],
+    ["outbox_identity_worker_update", "UPDATE", "platform_identity_worker"],
+    ["outbox_model_gateway_insert", "INSERT", "platform_model_gateway"],
+    ["outbox_worker_insert", "INSERT", "platform_worker"],
+    ["outbox_worker_select", "SELECT", "platform_worker"],
+    ["outbox_worker_update", "UPDATE", "platform_worker"],
+  ].map(([policyname, cmd, role]) => ({ policyname, cmd, roles: [role] }));
 }
 
 function safeMigratorAuthority(): Record<string, unknown> {

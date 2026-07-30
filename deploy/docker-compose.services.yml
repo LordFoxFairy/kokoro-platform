@@ -4,35 +4,34 @@ x-platform-service: &platform-service
     dockerfile: deploy/docker/Dockerfile
   restart: unless-stopped
 
-x-platform-database: &platform-database
-  PLATFORM_DATABASE_EXPECTED_DATABASE: ${PLATFORM_DATABASE_EXPECTED_DATABASE:-kokoro_platform}
-  PLATFORM_DATABASE_MIGRATOR_ROLE: ${PLATFORM_DATABASE_MIGRATOR_ROLE:-platform_migrator}
-  PLATFORM_DATABASE_API_ROLE: ${PLATFORM_DATABASE_API_ROLE:-platform_api}
-  PLATFORM_DATABASE_ADMISSION_ROLE: ${PLATFORM_DATABASE_ADMISSION_ROLE:-platform_admission}
-  PLATFORM_DATABASE_AUTHORIZATION_ROLE: ${PLATFORM_DATABASE_AUTHORIZATION_ROLE:-platform_authorization}
-  PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE: ${PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE:-platform_asset_data_plane}
-  PLATFORM_DATABASE_MODEL_GATEWAY_ROLE: ${PLATFORM_DATABASE_MODEL_GATEWAY_ROLE:-platform_model_gateway}
-  PLATFORM_DATABASE_WORKER_ROLE: ${PLATFORM_DATABASE_WORKER_ROLE:-platform_worker}
-  PLATFORM_DATABASE_IDENTITY_WORKER_ROLE: ${PLATFORM_DATABASE_IDENTITY_WORKER_ROLE:-platform_identity_worker}
-  PLATFORM_DATABASE_ADMIN_ROLE: ${PLATFORM_DATABASE_ADMIN_ROLE:-platform_admin}
-
 services:
   platform-migrator:
     <<: *platform-service
     restart: "no"
     environment:
-      <<: *platform-database
       KOKORO_SERVICE_PACKAGE: platform-migrator
       PLATFORM_DATABASE_CREDENTIAL_CLASS: migrator
       DATABASE_URL_PLATFORM: ${DATABASE_URL_PLATFORM_MIGRATOR:?required}
+      PLATFORM_DATABASE_EXPECTED_DATABASE: ${PLATFORM_DATABASE_EXPECTED_DATABASE:-kokoro_platform}
+      PLATFORM_DATABASE_MIGRATOR_ROLE: ${PLATFORM_DATABASE_MIGRATOR_ROLE:-platform_migrator}
+      PLATFORM_DATABASE_API_ROLE: ${PLATFORM_DATABASE_API_ROLE:-platform_api}
+      PLATFORM_DATABASE_ADMISSION_ROLE: ${PLATFORM_DATABASE_ADMISSION_ROLE:-platform_admission}
+      PLATFORM_DATABASE_AUTHORIZATION_ROLE: ${PLATFORM_DATABASE_AUTHORIZATION_ROLE:-platform_authorization}
+      PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE: ${PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE:-platform_asset_data_plane}
+      PLATFORM_DATABASE_MODEL_GATEWAY_ROLE: ${PLATFORM_DATABASE_MODEL_GATEWAY_ROLE:-platform_model_gateway}
+      PLATFORM_DATABASE_WORKER_ROLE: ${PLATFORM_DATABASE_WORKER_ROLE:-platform_worker}
+      PLATFORM_DATABASE_IDENTITY_WORKER_ROLE: ${PLATFORM_DATABASE_IDENTITY_WORKER_ROLE:-platform_identity_worker}
+      PLATFORM_DATABASE_ADMIN_ROLE: ${PLATFORM_DATABASE_ADMIN_ROLE:-platform_admin}
 
   platform-api:
     <<: *platform-service
     environment:
-      <<: *platform-database
       KOKORO_SERVICE_PACKAGE: platform-api
       PLATFORM_DATABASE_CREDENTIAL_CLASS: api
       DATABASE_URL_PLATFORM: ${DATABASE_URL_PLATFORM_API:?required}
+      PLATFORM_DATABASE_EXPECTED_DATABASE: ${PLATFORM_DATABASE_EXPECTED_DATABASE:-kokoro_platform}
+      PLATFORM_DATABASE_MIGRATOR_ROLE: ${PLATFORM_DATABASE_MIGRATOR_ROLE:-platform_migrator}
+      PLATFORM_DATABASE_API_ROLE: ${PLATFORM_DATABASE_API_ROLE:-platform_api}
       PLATFORM_API_PORT: 4100
       PLATFORM_API_HEALTH_PORT: 4101
       PLATFORM_API_FILE_TRUST_ROOT: /run/secrets/platform-api
@@ -89,34 +88,42 @@ services:
   platform-admission:
     <<: *platform-service
     environment:
-      <<: *platform-database
       KOKORO_SERVICE_PACKAGE: platform-admission
       PLATFORM_DATABASE_CREDENTIAL_CLASS: admission
       DATABASE_URL_PLATFORM: ${DATABASE_URL_PLATFORM_ADMISSION:?required}
+      PLATFORM_DATABASE_EXPECTED_DATABASE: ${PLATFORM_DATABASE_EXPECTED_DATABASE:-kokoro_platform}
+      PLATFORM_DATABASE_MIGRATOR_ROLE: ${PLATFORM_DATABASE_MIGRATOR_ROLE:-platform_migrator}
+      PLATFORM_DATABASE_ADMISSION_ROLE: ${PLATFORM_DATABASE_ADMISSION_ROLE:-platform_admission}
 
   platform-authorization:
     <<: *platform-service
     environment:
-      <<: *platform-database
       KOKORO_SERVICE_PACKAGE: platform-authorization
       PLATFORM_DATABASE_CREDENTIAL_CLASS: authorization
       DATABASE_URL_PLATFORM: ${DATABASE_URL_PLATFORM_AUTHORIZATION:?required}
+      PLATFORM_DATABASE_EXPECTED_DATABASE: ${PLATFORM_DATABASE_EXPECTED_DATABASE:-kokoro_platform}
+      PLATFORM_DATABASE_MIGRATOR_ROLE: ${PLATFORM_DATABASE_MIGRATOR_ROLE:-platform_migrator}
+      PLATFORM_DATABASE_AUTHORIZATION_ROLE: ${PLATFORM_DATABASE_AUTHORIZATION_ROLE:-platform_authorization}
 
   platform-model-gateway:
     <<: *platform-service
     environment:
-      <<: *platform-database
       KOKORO_SERVICE_PACKAGE: platform-model-gateway
       PLATFORM_DATABASE_CREDENTIAL_CLASS: model-gateway
       DATABASE_URL_PLATFORM: ${DATABASE_URL_PLATFORM_MODEL_GATEWAY:?required}
+      PLATFORM_DATABASE_EXPECTED_DATABASE: ${PLATFORM_DATABASE_EXPECTED_DATABASE:-kokoro_platform}
+      PLATFORM_DATABASE_MIGRATOR_ROLE: ${PLATFORM_DATABASE_MIGRATOR_ROLE:-platform_migrator}
+      PLATFORM_DATABASE_MODEL_GATEWAY_ROLE: ${PLATFORM_DATABASE_MODEL_GATEWAY_ROLE:-platform_model_gateway}
 
   platform-worker:
     <<: *platform-service
     environment:
-      <<: *platform-database
       KOKORO_SERVICE_PACKAGE: platform-worker
       PLATFORM_DATABASE_CREDENTIAL_CLASS: worker
       DATABASE_URL_PLATFORM: ${DATABASE_URL_PLATFORM_WORKER:?required}
+      PLATFORM_DATABASE_EXPECTED_DATABASE: ${PLATFORM_DATABASE_EXPECTED_DATABASE:-kokoro_platform}
+      PLATFORM_DATABASE_MIGRATOR_ROLE: ${PLATFORM_DATABASE_MIGRATOR_ROLE:-platform_migrator}
+      PLATFORM_DATABASE_WORKER_ROLE: ${PLATFORM_DATABASE_WORKER_ROLE:-platform_worker}
       PLATFORM_WORKER_ID: ${PLATFORM_WORKER_ID:?required}
       PLATFORM_WORKER_HEALTH_PORT: ${PLATFORM_WORKER_HEALTH_PORT:-4190}
       PLATFORM_OUTBOX_DELIVERY_ENDPOINT: ${PLATFORM_OUTBOX_DELIVERY_ENDPOINT:?required}
@@ -129,14 +136,22 @@ services:
       - ${PLATFORM_SITE_PROVIDER_REGISTRY_FILE:?required}:/run/config/kokoro/site/provider-registry.json:ro
       - ${PLATFORM_SITE_PROVIDER_SECRETS_DIRECTORY:?required}:/run/secrets/kokoro/site/providers:ro
       - ${PLATFORM_AUTHORIZATION_EVENT_KEY_RING_FILE:?required}:/run/secrets/kokoro/authorization/event-key-ring.json:ro
+    healthcheck:
+      test: ["CMD", "node", "--input-type=module", "--eval", "fetch(`http://127.0.0.1:$${process.env.PLATFORM_WORKER_HEALTH_PORT}/health/ready`).then(response=>{if(!response.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
 
   platform-identity-worker:
     <<: *platform-service
     environment:
-      <<: *platform-database
       KOKORO_SERVICE_PACKAGE: platform-identity-worker
       PLATFORM_DATABASE_CREDENTIAL_CLASS: identity-worker
       DATABASE_URL_PLATFORM: ${DATABASE_URL_PLATFORM_IDENTITY_WORKER:?required}
+      PLATFORM_DATABASE_EXPECTED_DATABASE: ${PLATFORM_DATABASE_EXPECTED_DATABASE:-kokoro_platform}
+      PLATFORM_DATABASE_MIGRATOR_ROLE: ${PLATFORM_DATABASE_MIGRATOR_ROLE:-platform_migrator}
+      PLATFORM_DATABASE_IDENTITY_WORKER_ROLE: ${PLATFORM_DATABASE_IDENTITY_WORKER_ROLE:-platform_identity_worker}
       PLATFORM_WORKER_ID: ${PLATFORM_IDENTITY_WORKER_ID:?required}
       PLATFORM_WORKER_HEALTH_PORT: ${PLATFORM_IDENTITY_WORKER_HEALTH_PORT:-4190}
       PLATFORM_IDENTITY_AUDIT_DIGEST_KEY_FILE: /run/secrets/kokoro/identity/audit-digest.key
@@ -148,22 +163,32 @@ services:
     volumes:
       - ${PLATFORM_IDENTITY_AUDIT_DIGEST_KEY_FILE:?required}:/run/secrets/kokoro/identity/audit-digest.key:ro
       - ${PLATFORM_IDENTITY_DELIVERY_HMAC_SECRET_FILE:?required}:/run/secrets/kokoro/identity/delivery-hmac.key:ro
+    healthcheck:
+      test: ["CMD", "node", "--input-type=module", "--eval", "fetch(`http://127.0.0.1:$${process.env.PLATFORM_WORKER_HEALTH_PORT}/health/ready`).then(response=>{if(!response.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
 
   platform-admin:
     <<: *platform-service
     environment:
-      <<: *platform-database
       KOKORO_SERVICE_PACKAGE: platform-admin
       PLATFORM_DATABASE_CREDENTIAL_CLASS: admin
       DATABASE_URL_PLATFORM: ${DATABASE_URL_PLATFORM_ADMIN:?required}
+      PLATFORM_DATABASE_EXPECTED_DATABASE: ${PLATFORM_DATABASE_EXPECTED_DATABASE:-kokoro_platform}
+      PLATFORM_DATABASE_MIGRATOR_ROLE: ${PLATFORM_DATABASE_MIGRATOR_ROLE:-platform_migrator}
+      PLATFORM_DATABASE_ADMIN_ROLE: ${PLATFORM_DATABASE_ADMIN_ROLE:-platform_admin}
 
   platform-asset-data-plane:
     <<: *platform-service
     environment:
-      <<: *platform-database
       KOKORO_SERVICE_PACKAGE: platform-asset-data-plane
       PLATFORM_DATABASE_CREDENTIAL_CLASS: asset-data-plane
       DATABASE_URL_PLATFORM: ${DATABASE_URL_PLATFORM_ASSET_DATA_PLANE:?required}
+      PLATFORM_DATABASE_EXPECTED_DATABASE: ${PLATFORM_DATABASE_EXPECTED_DATABASE:-kokoro_platform}
+      PLATFORM_DATABASE_MIGRATOR_ROLE: ${PLATFORM_DATABASE_MIGRATOR_ROLE:-platform_migrator}
+      PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE: ${PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE:-platform_asset_data_plane}
 
   kokoro-hub:
     <<: *platform-service

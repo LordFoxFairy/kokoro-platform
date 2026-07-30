@@ -43,6 +43,12 @@ test("Platform CI gates both PostgreSQL authority and Hub integration", async ()
   assert.doesNotMatch(source, /mysql|DATABASE_URL_(?:SITE|USER|MODEL|CREDIT|PAYMENT|ADMIN)/iu);
   assert.match(source, /mongo:7/u);
   assert.match(source, /minio\/minio/u);
+  const packageManifest = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
+  assert.match(packageManifest.scripts.test, /test:identity/u);
+  assert.match(packageManifest.scripts.test, /test:security/u);
+  assert.match(packageManifest.scripts["test:identity"], /test\/unit\/identity-\*\.test\.ts/u);
+  assert.match(packageManifest.scripts["test:identity"], /test\/unit\/secret-files\.test\.ts/u);
+  assert.match(packageManifest.scripts["test:security"], /test\/security\/\*\.test\.ts/u);
 });
 
 test("PostgreSQL CI provisions isolated non-superuser roles", async () => {

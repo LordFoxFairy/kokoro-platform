@@ -1,4 +1,5 @@
 import { Client } from "pg";
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   createPlatformDatabaseClient,
@@ -6,6 +7,10 @@ import {
   type PlatformDatabaseClient,
 } from "../../src/infrastructure/postgres/client.js";
 import { runPlatformMigrations } from "../../src/infrastructure/postgres/migrator.js";
+import {
+  createPostgresModelGatewayDatabase,
+  loadModelGatewayDatabaseConfig,
+} from "../../src/modules/model-gateway/infrastructure/postgres/model-gateway-database.js";
 
 const migratorDatabaseUrl = requireLeasedDatabaseUrl(
   process.env.DATABASE_URL_PLATFORM_MIGRATOR_TEST,
@@ -13,6 +18,15 @@ const migratorDatabaseUrl = requireLeasedDatabaseUrl(
 const apiDatabaseUrl = requireLeasedDatabaseUrl(process.env.DATABASE_URL_PLATFORM_API_TEST);
 const identityWorkerDatabaseUrl = requireLeasedDatabaseUrl(
   process.env.DATABASE_URL_PLATFORM_IDENTITY_WORKER_TEST,
+);
+const workerDatabaseUrl = requireLeasedDatabaseUrl(
+  process.env.DATABASE_URL_PLATFORM_WORKER_TEST,
+);
+const adminDatabaseUrl = requireLeasedDatabaseUrl(
+  process.env.DATABASE_URL_PLATFORM_ADMIN_TEST,
+);
+const modelGatewayDatabaseUrl = requireLeasedDatabaseUrl(
+  process.env.DATABASE_URL_PLATFORM_MODEL_GATEWAY_TEST,
 );
 const migratorUser = decodeURIComponent(new URL(migratorDatabaseUrl).username);
 const apiUser = decodeURIComponent(new URL(apiDatabaseUrl).username);
@@ -26,6 +40,7 @@ const modelGatewayUser = requireRole(process.env.PLATFORM_DATABASE_MODEL_GATEWAY
 const databaseName = decodeURIComponent(new URL(migratorDatabaseUrl).pathname.slice(1));
 let database: PlatformDatabaseClient;
 let identityWorkerDatabase: PlatformDatabaseClient;
+let modelGatewayDatabase: ReturnType<typeof createPostgresModelGatewayDatabase>;
 
 describe("Platform PostgreSQL foundation", () => {
   beforeAll(async () => {
@@ -66,11 +81,23 @@ describe("Platform PostgreSQL foundation", () => {
       }),
     );
     await identityWorkerDatabase.connect();
+    modelGatewayDatabase = createPostgresModelGatewayDatabase(
+      loadModelGatewayDatabaseConfig({
+        DATABASE_URL_PLATFORM: modelGatewayDatabaseUrl,
+        PLATFORM_DATABASE_CREDENTIAL_CLASS: "model-gateway",
+        PLATFORM_DATABASE_MODEL_GATEWAY_ROLE: modelGatewayUser,
+        PLATFORM_DATABASE_MIGRATOR_ROLE: migratorUser,
+        PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
+      }),
+    );
+    await modelGatewayDatabase.connect();
+    await modelGatewayDatabase.checkHealth();
   }, 60_000);
 
   afterAll(async () => {
     await database?.disconnect();
     await identityWorkerDatabase?.disconnect();
+    await modelGatewayDatabase?.disconnect();
   });
 
   it("creates exactly one Platform-owned schema and foundation marker", async () => {
@@ -248,6 +275,92 @@ describe("Platform PostgreSQL foundation", () => {
     } finally {
       await direct.query("ROLLBACK");
       await direct.end();
+    }
+  });
+
+  it("fences shared outbox reads and updates by authenticated worker role and owner", async () => {
+    const migrator = new Client({ connectionString: migratorDatabaseUrl });
+    const api = new Client({ connectionString: apiDatabaseUrl });
+    const admin = new Client({ connectionString: adminDatabaseUrl });
+    const modelGateway = new Client({ connectionString: modelGatewayDatabaseUrl });
+    const identity = new Client({ connectionString: identityWorkerDatabaseUrl });
+    const worker = new Client({ connectionString: workerDatabaseUrl });
+    const identityEvent = randomUUID();
+    const commerceEvent = randomUUID();
+    const adminEvent = randomUUID();
+    const siteEvent = randomUUID();
+    const usageEvent = randomUUID();
+    const forbiddenEvent = randomUUID();
+    try {
+      await Promise.all([
+        migrator.connect(), api.connect(), admin.connect(), modelGateway.connect(),
+        identity.connect(), worker.connect(),
+      ]);
+      await migrator.query(
+        `INSERT INTO platform.outbox_event
+         (event_id,owner,event_type,aggregate_id,payload,payload_digest,correlation_id)
+         VALUES ($1,'commerce','commerce.test','commerce-test','{}'::jsonb,$2,'test')`,
+        [commerceEvent, "0".repeat(64)],
+      );
+      await api.query(
+        `INSERT INTO platform.outbox_event
+         (event_id,owner,event_type,aggregate_id,payload,payload_digest,correlation_id)
+         VALUES ($1,'identity','identity.test','identity-test','{}'::jsonb,$2,'test')`,
+        [identityEvent, "0".repeat(64)],
+      );
+      await admin.query(
+        `INSERT INTO platform.outbox_event
+         (event_id,owner,event_type,aggregate_id,payload,payload_digest,correlation_id)
+         VALUES ($1,'admin-control','admin.test','admin-test','{}'::jsonb,$2,'test')`,
+        [adminEvent, "0".repeat(64)],
+      );
+      await worker.query(
+        `INSERT INTO platform.outbox_event
+         (event_id,owner,event_type,aggregate_id,payload,payload_digest,correlation_id)
+         VALUES ($1,'site','site.test','site-test','{}'::jsonb,$2,'test')`,
+        [siteEvent, "0".repeat(64)],
+      );
+      await modelGateway.query(
+        `INSERT INTO platform.outbox_event
+         (event_id,owner,event_type,aggregate_id,payload,payload_digest,correlation_id)
+         VALUES ($1,'credit-usage-rating','credit.test','credit-test','{}'::jsonb,$2,'test')`,
+        [usageEvent, "0".repeat(64)],
+      );
+
+      await expect(identity.query(
+        "SELECT owner FROM platform.outbox_event WHERE event_id=ANY($1::uuid[]) ORDER BY owner",
+        [[identityEvent, commerceEvent, adminEvent, siteEvent, usageEvent]],
+      )).resolves.toMatchObject({ rows: [{ owner: "identity" }] });
+      await expect(worker.query(
+        "SELECT owner FROM platform.outbox_event WHERE event_id=ANY($1::uuid[]) ORDER BY owner",
+        [[identityEvent, commerceEvent, adminEvent, siteEvent, usageEvent]],
+      )).resolves.toMatchObject({ rows: [{ owner: "commerce" }, { owner: "site" }] });
+      await expect(identity.query(
+        "UPDATE platform.outbox_event SET state='dead_letter' WHERE event_id=$1",
+        [commerceEvent],
+      )).resolves.toMatchObject({ rowCount: 0 });
+      await expect(worker.query(
+        "UPDATE platform.outbox_event SET state='dead_letter' WHERE event_id=$1",
+        [identityEvent],
+      )).resolves.toMatchObject({ rowCount: 0 });
+      await expect(identity.query(
+        "UPDATE platform.outbox_event SET owner='commerce' WHERE event_id=$1",
+        [identityEvent],
+      )).rejects.toMatchObject({ code: "42501" });
+      await expect(modelGateway.query(
+        `INSERT INTO platform.outbox_event
+         (event_id,owner,event_type,aggregate_id,payload,payload_digest,correlation_id)
+         VALUES ($1,'identity','identity.test','identity-forbidden','{}'::jsonb,$2,'test')`,
+        [forbiddenEvent, "0".repeat(64)],
+      )).rejects.toMatchObject({ code: "42501" });
+    } finally {
+      await migrator.query(
+        "DELETE FROM platform.outbox_event WHERE event_id=ANY($1::uuid[])",
+        [[identityEvent, commerceEvent, adminEvent, siteEvent, usageEvent, forbiddenEvent]],
+      ).catch(() => undefined);
+      await Promise.allSettled([
+        migrator.end(), api.end(), admin.end(), modelGateway.end(), identity.end(), worker.end(),
+      ]);
     }
   });
 });

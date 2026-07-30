@@ -23,7 +23,7 @@ jobs:
         run: pnpm lint
       - name: typecheck
         run: pnpm typecheck
-      - name: unit tests
+      - name: unit, Identity, and security tests
         run: pnpm test
 
   hub-integration:
@@ -84,7 +84,10 @@ jobs:
       DATABASE_URL_PLATFORM: postgresql://platform_migrator:platform-migrator-ci@127.0.0.1:5432/kokoro_test_platform
       DATABASE_URL_PLATFORM_MIGRATOR_TEST: postgresql://platform_migrator:platform-migrator-ci@127.0.0.1:5432/kokoro_test_platform
       DATABASE_URL_PLATFORM_API_TEST: postgresql://platform_api:platform-api-ci@127.0.0.1:5432/kokoro_test_platform
+      DATABASE_URL_PLATFORM_WORKER_TEST: postgresql://platform_worker:platform-worker-ci@127.0.0.1:5432/kokoro_test_platform
       DATABASE_URL_PLATFORM_IDENTITY_WORKER_TEST: postgresql://platform_identity_worker:platform-identity-worker-ci@127.0.0.1:5432/kokoro_test_platform
+      DATABASE_URL_PLATFORM_ADMIN_TEST: postgresql://platform_admin:platform-admin-ci@127.0.0.1:5432/kokoro_test_platform
+      DATABASE_URL_PLATFORM_MODEL_GATEWAY_TEST: postgresql://platform_model_gateway:platform-model-gateway-ci@127.0.0.1:5432/kokoro_test_platform
       PLATFORM_DATABASE_CREDENTIAL_CLASS: migrator
       PLATFORM_DATABASE_EXPECTED_DATABASE: kokoro_test_platform
       PLATFORM_DATABASE_MIGRATOR_ROLE: platform_migrator

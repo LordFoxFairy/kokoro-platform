@@ -3,65 +3,77 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  createBoundedFileReaderWithinTrustRoot,
   readBoundedPrivateFile,
   readBoundedRegularFile,
-  createBoundedFileReaderWithinTrustRoot,
   type BoundedFileSystem,
 } from "../../src/process/secret-files.js";
-import * as secretFileModule from "../../src/process/secret-files.js";
-
-type TrustRootReader = (
-  path: string,
-  trustRoot: string,
-  maximumBytes: number,
-  invalidCode: string,
-  fileSystem?: BoundedFileSystem & Readonly<{ realpath(path: string): Promise<string> }>,
-) => Promise<string>;
 
 describe("bounded secret files", () => {
-  it("reads Kubernetes AtomicWriter links with fsGroup 0440 through a trusted root", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "kokoro-projected-secret-"));
-    const revision = join(directory, "..2026_07_30_00_00_00.000000000");
-    await mkdir(revision, { mode: 0o755 });
-    await writeFile(join(revision, "session-access.json"), "private-key-ring", { mode: 0o440 });
-    await symlink("..2026_07_30_00_00_00.000000000", join(directory, "..data"));
-    await symlink("..data/session-access.json", join(directory, "session-access.json"));
+  it.each([0o450, 0o540, 0o700, 0o441])(
+    "rejects executable or world-accessible trusted private mode %s",
+    async (mode) => {
+      const directory = await mkdtemp(join(tmpdir(), "kokoro-projected-secret-"));
+      const path = join(directory, "private.key");
+      try {
+        await writeFile(path, "private", { mode: 0o400 });
+        await chmod(path, mode);
+        const reader = await createBoundedFileReaderWithinTrustRoot(
+          directory,
+          "TEST_TRUST_ROOT_INVALID",
+        );
+        await expect(reader.readPrivate(path, 64, "TEST_PRIVATE_INVALID"))
+          .rejects.toThrowError("TEST_PRIVATE_INVALID");
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
 
-    const reader = await createBoundedFileReaderWithinTrustRoot(
-      directory,
-      "TEST_TRUST_ROOT_INVALID",
-    );
-    await expect(reader.readPrivate(
-      join(directory, "session-access.json"),
-      64,
-      "TEST_PRIVATE_INVALID",
-    )).resolves.toBe("private-key-ring");
-  });
+  it("rejects a symlink trust root and a same-path descriptor identity swap", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "kokoro-trust-parent-"));
+    const directory = join(parent, "actual");
+    const rootLink = join(parent, "linked");
+    const path = join(directory, "private.key");
+    try {
+      await mkdir(directory);
+      await writeFile(path, "private", { mode: 0o400 });
+      await symlink(directory, rootLink);
 
-  it("rejects projected links outside the root and group-writable private material", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "kokoro-projected-secret-"));
-    const outside = await mkdtemp(join(tmpdir(), "kokoro-outside-secret-"));
-    const outsideFile = join(outside, "escaped.key");
-    const writableFile = join(directory, "writable.key");
-    await writeFile(outsideFile, "escaped", { mode: 0o440 });
-    await writeFile(writableFile, "writable", { mode: 0o660 });
-    await chmod(writableFile, 0o660);
-    await symlink(outsideFile, join(directory, "escaped.key"));
+      await expect(createBoundedFileReaderWithinTrustRoot(
+        rootLink,
+        "TEST_TRUST_ROOT_INVALID",
+      )).rejects.toThrowError("TEST_TRUST_ROOT_INVALID");
 
-    const reader = await createBoundedFileReaderWithinTrustRoot(
-      directory,
-      "TEST_TRUST_ROOT_INVALID",
-    );
-    await expect(reader.readPrivate(
-      join(directory, "escaped.key"),
-      64,
-      "TEST_PRIVATE_INVALID",
-    )).rejects.toThrowError("TEST_PRIVATE_INVALID");
-    await expect(reader.readPrivate(
-      writableFile,
-      64,
-      "TEST_PRIVATE_INVALID",
-    )).rejects.toThrowError("TEST_PRIVATE_INVALID");
+      const swappedFileSystem: BoundedFileSystem = {
+        async open() {
+          return {
+            async stat() {
+              return {
+                dev: 99n,
+                ino: 100n,
+                mode: 0o100400n,
+                size: 7n,
+                ctimeNs: 1n,
+                mtimeNs: 1n,
+                isFile: () => true,
+              };
+            },
+            async read() { return { bytesRead: 0 }; },
+            async close() {},
+          };
+        },
+      };
+      const reader = await createBoundedFileReaderWithinTrustRoot(
+        directory,
+        "TEST_TRUST_ROOT_INVALID",
+        swappedFileSystem,
+      );
+      await expect(reader.readPrivate(path, 64, "TEST_PRIVATE_INVALID"))
+        .rejects.toThrowError("TEST_PRIVATE_INVALID");
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
   });
 
   it("reads only an absolute, regular, non-symlink file within the byte cap", async () => {
@@ -175,11 +187,6 @@ describe("bounded secret files", () => {
   });
 
   it("safely reads a group-readable Kubernetes AtomicWriter secret inside its trust root", async () => {
-    const readFromTrustRoot = (secretFileModule as unknown as {
-      readBoundedPrivateFileWithinTrustRoot?: TrustRootReader;
-    }).readBoundedPrivateFileWithinTrustRoot;
-    expect(readFromTrustRoot).toBeTypeOf("function");
-    if (readFromTrustRoot === undefined) return;
     const root = await mkdtemp(join(tmpdir(), "kokoro-atomic-secret-"));
     try {
       const revision = join(root, "..2026_07_30_04_00_00.000000001");
@@ -188,8 +195,12 @@ describe("bounded secret files", () => {
       await symlink("..2026_07_30_04_00_00.000000001", join(root, "..data"));
       await symlink("..data/delivery-hmac.key", join(root, "delivery-hmac.key"));
 
-      await expect(readFromTrustRoot(
-        join(root, "delivery-hmac.key"), root, 64, "TEST_PRIVATE_INVALID",
+      const reader = await createBoundedFileReaderWithinTrustRoot(
+        root,
+        "TEST_TRUST_ROOT_INVALID",
+      );
+      await expect(reader.readPrivate(
+        join(root, "delivery-hmac.key"), 64, "TEST_PRIVATE_INVALID",
       )).resolves.toBe("private-value");
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -197,18 +208,17 @@ describe("bounded secret files", () => {
   });
 
   it("rejects AtomicWriter links that resolve outside the configured trust root", async () => {
-    const readFromTrustRoot = (secretFileModule as unknown as {
-      readBoundedPrivateFileWithinTrustRoot?: TrustRootReader;
-    }).readBoundedPrivateFileWithinTrustRoot;
-    expect(readFromTrustRoot).toBeTypeOf("function");
-    if (readFromTrustRoot === undefined) return;
     const root = await mkdtemp(join(tmpdir(), "kokoro-atomic-escape-"));
     const outside = await mkdtemp(join(tmpdir(), "kokoro-atomic-outside-"));
     try {
       await writeFile(join(outside, "key"), "escaped", { mode: 0o440 });
       await symlink(join(outside, "key"), join(root, "key"));
-      await expect(readFromTrustRoot(
-        join(root, "key"), root, 64, "TEST_PRIVATE_INVALID",
+      const reader = await createBoundedFileReaderWithinTrustRoot(
+        root,
+        "TEST_TRUST_ROOT_INVALID",
+      );
+      await expect(reader.readPrivate(
+        join(root, "key"), 64, "TEST_PRIVATE_INVALID",
       )).rejects.toThrow("TEST_PRIVATE_INVALID");
     } finally {
       await Promise.all([
@@ -218,43 +228,4 @@ describe("bounded secret files", () => {
     }
   });
 
-  it("rejects an AtomicWriter target swapped between resolution and descriptor verification", async () => {
-    const readFromTrustRoot = (secretFileModule as unknown as {
-      readBoundedPrivateFileWithinTrustRoot?: TrustRootReader;
-    }).readBoundedPrivateFileWithinTrustRoot;
-    expect(readFromTrustRoot).toBeTypeOf("function");
-    if (readFromTrustRoot === undefined) return;
-    const bytes = Buffer.from("private-value");
-    let logicalResolutions = 0;
-    const fileSystem = {
-      async realpath(path: string) {
-        if (path === "/run/secrets/identity") return path;
-        logicalResolutions += 1;
-        return logicalResolutions === 1
-          ? "/run/secrets/identity/..revision/key"
-          : "/tmp/escaped-key";
-      },
-      async open() {
-        return {
-          async stat() {
-            return {
-              dev: 1n, ino: 2n, mode: 0o100440n, size: BigInt(bytes.byteLength),
-              ctimeNs: 1n, mtimeNs: 1n, isFile: () => true,
-            };
-          },
-          async read(buffer: Buffer, offset: number, length: number, position: number) {
-            if (position >= bytes.byteLength) return { bytesRead: 0 };
-            const count = Math.min(length, bytes.byteLength - position);
-            bytes.copy(buffer, offset, position, position + count);
-            return { bytesRead: count };
-          },
-          async close() {},
-        };
-      },
-    };
-    await expect(readFromTrustRoot(
-      "/run/secrets/identity/key", "/run/secrets/identity", 64,
-      "TEST_PRIVATE_INVALID", fileSystem,
-    )).rejects.toThrow("TEST_PRIVATE_INVALID");
-  });
 });

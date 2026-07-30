@@ -211,19 +211,26 @@ items:
           containers:
             - name: platform-worker
               image: ghcr.io/lordfoxfairy/kokoro-platform:RELEASE_DIGEST
-              envFrom:
-                - configMapRef: { name: platform-runtime }
-                - secretRef: { name: platform-worker-secrets }
               env:
                 - { name: KOKORO_SERVICE_PACKAGE, value: platform-worker }
                 - { name: PLATFORM_DATABASE_CREDENTIAL_CLASS, value: worker }
                 - { name: PLATFORM_WORKER_HEALTH_PORT, value: "4190" }
+                - name: DATABASE_URL_PLATFORM
+                  valueFrom: { secretKeyRef: { name: platform-worker-database, key: DATABASE_URL_PLATFORM } }
+                - name: PLATFORM_DATABASE_EXPECTED_DATABASE
+                  valueFrom: { configMapKeyRef: { name: platform-runtime, key: PLATFORM_DATABASE_EXPECTED_DATABASE } }
+                - name: PLATFORM_DATABASE_MIGRATOR_ROLE
+                  valueFrom: { configMapKeyRef: { name: platform-runtime, key: PLATFORM_DATABASE_MIGRATOR_ROLE } }
+                - name: PLATFORM_DATABASE_WORKER_ROLE
+                  valueFrom: { configMapKeyRef: { name: platform-runtime, key: PLATFORM_DATABASE_WORKER_ROLE } }
                 - name: PLATFORM_WORKER_ID
                   valueFrom: { fieldRef: { fieldPath: metadata.uid } }
                 - name: PLATFORM_OUTBOX_DELIVERY_ENDPOINT
                   valueFrom: { configMapKeyRef: { name: platform-runtime, key: PLATFORM_OUTBOX_DELIVERY_ENDPOINT } }
                 - name: PLATFORM_OUTBOX_DELIVERY_KEY_ID
                   valueFrom: { configMapKeyRef: { name: platform-runtime, key: PLATFORM_OUTBOX_DELIVERY_KEY_ID } }
+                - name: PLATFORM_OUTBOX_DELIVERY_SECRET_BASE64
+                  valueFrom: { secretKeyRef: { name: commerce-credit-outbox-delivery-hmac-key, key: secret-base64 } }
                 - { name: PLATFORM_SITE_PROVIDER_REGISTRY_FILE, value: /var/run/config/kokoro/site/provider-registry.json }
                 - { name: PLATFORM_AUTHORIZATION_EVENT_KEY_RING_FILE, value: /var/run/secrets/kokoro/authorization/event-key-ring.json }
               ports:
@@ -275,13 +282,18 @@ items:
           containers:
             - name: platform-identity-worker
               image: ghcr.io/lordfoxfairy/kokoro-platform:RELEASE_DIGEST
-              envFrom:
-                - configMapRef: { name: platform-runtime }
-                - secretRef: { name: platform-identity-worker-secrets }
               env:
                 - { name: KOKORO_SERVICE_PACKAGE, value: platform-identity-worker }
                 - { name: PLATFORM_DATABASE_CREDENTIAL_CLASS, value: identity-worker }
                 - { name: PLATFORM_WORKER_HEALTH_PORT, value: "4190" }
+                - name: DATABASE_URL_PLATFORM
+                  valueFrom: { secretKeyRef: { name: platform-identity-worker-database, key: DATABASE_URL_PLATFORM } }
+                - name: PLATFORM_DATABASE_EXPECTED_DATABASE
+                  valueFrom: { configMapKeyRef: { name: platform-runtime, key: PLATFORM_DATABASE_EXPECTED_DATABASE } }
+                - name: PLATFORM_DATABASE_MIGRATOR_ROLE
+                  valueFrom: { configMapKeyRef: { name: platform-runtime, key: PLATFORM_DATABASE_MIGRATOR_ROLE } }
+                - name: PLATFORM_DATABASE_IDENTITY_WORKER_ROLE
+                  valueFrom: { configMapKeyRef: { name: platform-runtime, key: PLATFORM_DATABASE_IDENTITY_WORKER_ROLE } }
                 - name: PLATFORM_WORKER_ID
                   valueFrom: { fieldRef: { fieldPath: metadata.uid } }
                 - { name: PLATFORM_IDENTITY_AUDIT_DIGEST_KEY_FILE, value: /var/run/secrets/kokoro/identity/audit-digest.key }
@@ -309,9 +321,15 @@ items:
                 - { name: platform-identity-worker-secrets, mountPath: /var/run/secrets/kokoro/identity, readOnly: true }
           volumes:
             - name: platform-identity-worker-secrets
-              secret:
-                secretName: platform-identity-worker-secrets
+              projected:
                 defaultMode: 0440
+                sources:
+                  - secret:
+                      name: identity-audit-digest-key
+                      items: [{ key: key, path: audit-digest.key }]
+                  - secret:
+                      name: identity-delivery-hmac-key
+                      items: [{ key: key, path: delivery-hmac.key }]
 
   - apiVersion: apps/v1
     kind: Deployment

@@ -102,7 +102,7 @@ test("worker deployment safely resolves Kubernetes AtomicWriter identity secrets
     readFile(resolve(root, "src/process/secret-files.ts"), "utf8"),
     readFile(resolve(root, "deploy/k8s/platform-services.example.yaml"), "utf8"),
   ]);
-  assert.match(reader, /readBoundedPrivateFileWithinTrustRoot/u);
+  assert.match(reader, /createBoundedFileReaderWithinTrustRoot/u);
   assert.match(reader, /realpath/u);
   assert.match(reader, /O_NOFOLLOW/u);
   assert.match(kubernetes, /fieldPath: metadata\.uid/u);
