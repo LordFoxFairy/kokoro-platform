@@ -18,3 +18,10 @@ provider observation of stopped traffic is success. Resume is the sole direct li
 
 The domain layer is transport- and database-independent. Application, PostgreSQL and Admin/worker
 adapters must preserve these transitions in one owner transaction with receipt, audit and outbox.
+
+Fresh Site creation and immutable SiteRelease publication are exposed only by the typed
+`SiteProvisioningService` on the Admin mTLS listener. Registration requires a Platform-global grant because
+the Site scope does not exist yet; every later release command requires the exact Site scope. Both are
+phishing-resistant step-up mutations. Release certification is a detached Ed25519 attestation from the
+configured `PLATFORM_SITE_RELEASE_CERTIFICATION_KEYS_FILE`; Platform persists only the bound digest and never
+accepts an operator assertion as certification.

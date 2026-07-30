@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { VerifiedRequestSecurityContext } from "../../../../shared/security-context/index.js";
 import type { PlatformUnitOfWork } from "../../../../shared/unit-of-work/index.js";
 import type {
@@ -75,11 +76,24 @@ export class SitePublicationService {
   }
 
   async publishRelease(
-    input: CommandInput & Omit<PublishedSiteRelease, "state">,
+    input: CommandInput & Omit<PublishedSiteRelease, "state"> & Readonly<{
+      certificationProof: Readonly<{
+        signingKeyRef: string;
+        issuedAt: string;
+        expiresAt: string;
+        signature: Uint8Array;
+      }>;
+    }>,
     context: VerifiedRequestSecurityContext,
   ): Promise<SiteAuthorityReceipt> {
     admin(context, input.siteRef);
-    const release = publishCertifiedSiteRelease(input);
+    const {
+      certificationProof,
+      commandId: _commandId,
+      idempotencyKey: _idempotencyKey,
+      ...releaseInput
+    } = input;
+    const release = publishCertifiedSiteRelease(releaseInput);
     const certification = await this.certification.verify({
       siteRef: release.siteRef,
       releaseRef: release.releaseRef,
@@ -87,6 +101,7 @@ export class SitePublicationService {
       releaseManifestDigest: release.releaseManifestDigest,
       certificationDigest: release.certificationDigest,
       launchProfileRef: release.launchProfileRef,
+      proof: certificationProof,
     });
     const now = this.#now();
     if (!Number.isFinite(Date.parse(certification.expiresAt)) ||
@@ -108,6 +123,12 @@ export class SitePublicationService {
       identityAuthStrengthPolicyRevision: release.identityAuthStrengthPolicyRevision,
       enabledSurfaceIds: release.enabledSurfaceIds,
       localePolicy: release.localePolicy,
+      certificationProof: {
+        signingKeyRef: certificationProof.signingKeyRef,
+        issuedAt: certificationProof.issuedAt,
+        expiresAt: certificationProof.expiresAt,
+        signatureDigest: createProofDigest(certificationProof.signature),
+      },
     });
     return this.unitOfWork.execute({ context, operation: command.operation }, async (transaction) => {
       const disposition = await this.journal.begin(transaction, command);
@@ -135,6 +156,10 @@ export class SitePublicationService {
       return receipt;
     });
   }
+}
+
+function createProofDigest(signature: Uint8Array): string {
+  return createHash("sha256").update(signature).digest("hex");
 }
 
 function admin(context: VerifiedRequestSecurityContext, siteRef: string): void {

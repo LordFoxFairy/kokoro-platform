@@ -52,6 +52,8 @@ export type CommerceAdminCommandOperation =
   | "commerce.code-batch.suspend"
   | "commerce.code-batch.revoke";
 
+export type SiteProvisioningAdminOperation = "site.register" | "site.release.publish";
+
 export class AdminControlPlaneResolver implements
   AdminIdentityTransportResolver, VerifiedAdminOperatorContextResolver, AdminQueryResolver {
   constructor(private readonly dependencies: Readonly<{
@@ -174,6 +176,47 @@ export class AdminControlPlaneResolver implements
       context: await this.context(
         authenticated.session, request.operation, request.siteRef, scopeLabels(requested),
         claimed.command?.commandId ?? "", request.allowedOperations,
+      ),
+    });
+  }
+
+  async resolveSiteProvisioningCommand(
+    claimed: AuthenticatedOperatorCommandContext,
+    transport: HandlerContext,
+    request: Readonly<{
+      operation: SiteProvisioningAdminOperation;
+      siteRef: string;
+      resourceRefs: readonly string[];
+      scope: "global" | "site";
+    }>,
+  ): Promise<Readonly<{
+    context: VerifiedRequestSecurityContext;
+    axes: VerifiedAuthenticatedAdminAxes;
+  }>> {
+    const authenticated = await this.authenticate(claimed, transport);
+    const requested = scopeFromWire(claimed.scope);
+    if (requested.kind !== request.scope) {
+      throw new Error("SITE_PROVISIONING_SCOPE_KIND_INVALID");
+    }
+    this.authorizeScope(
+      authenticated,
+      requested,
+      request.operation,
+      request.operation,
+      request.scope === "site" ? request.siteRef : null,
+      [request.siteRef, ...request.resourceRefs],
+      [],
+      true,
+    );
+    return Object.freeze({
+      axes: axes(authenticated.session),
+      context: await this.context(
+        authenticated.session,
+        request.operation,
+        request.siteRef,
+        scopeLabels(requested),
+        claimed.command?.commandId ?? "",
+        [request.operation],
       ),
     });
   }

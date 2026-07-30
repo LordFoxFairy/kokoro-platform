@@ -15,6 +15,8 @@ import { SiteLifecycleService } from
   "../interfaces/connect/generated-site-lifecycle/kokoro/platform/site/v1/site_lifecycle_pb.js";
 import { AdminCommerceService } from
   "../interfaces/connect/generated-admin-commerce/kokoro/platform/commerce/v1/admin_commerce_pb.js";
+import { SiteProvisioningService } from
+  "../interfaces/connect/generated-site-provisioning/kokoro/platform/site/v1/site_provisioning_pb.js";
 import { PlatformUnitOfWork } from "../shared/unit-of-work/index.js";
 import { CommandReceiptRepository } from "../shared/outbox-inbox/receipt.js";
 import { OutboxRepository } from "../shared/outbox-inbox/outbox.js";
@@ -56,6 +58,8 @@ import { createAdminQueryConnectService } from
   "../modules/admin/interfaces/connect/admin-query-service.js";
 import { createSiteLifecycleConnectService } from
   "../modules/site/interfaces/connect/site-lifecycle-service.js";
+import { createSiteProvisioningConnectService } from
+  "../modules/site/interfaces/connect/site-provisioning-service.js";
 import { createAdminCommerceConnectService } from
   "../modules/commerce/interfaces/connect/admin-commerce-service.js";
 import { PostgresCommerceAdministrationReader } from
@@ -66,6 +70,15 @@ import { createSessionAuthorizationEventSigner } from
   "../modules/authorization/infrastructure/jose/session-authorization-event-signer.js";
 import { loadAuthorizationEventKeyRing } from "./platform-public-composition.js";
 import { createCommerceAdministrationComposition } from "./commerce-admin-composition.js";
+import { createPlatformSiteProvisioningComposition } from
+  "./site-provisioning-admin-composition.js";
+import {
+  Ed25519SiteReleaseCertificationAuthority,
+  parseSiteReleaseCertificationKeys,
+} from
+  "../modules/site/infrastructure/crypto/site-release-certification-authority.js";
+import { PostgresControlCommandReceiptTimestampReader } from
+  "../modules/admin/infrastructure/postgres/control-command-receipt-reader.js";
 
 export type AdminRequestListener = (
   request: Http2ServerRequest,
@@ -94,7 +107,8 @@ export async function createAdminProductionComposition(input: Readonly<{
   clock?: () => Date;
 }>): Promise<AdminProductionComposition> {
   const environment = input.environment ?? process.env;
-  const [tls, peers, oidcClients, transactionKey, cursorKey, keyRing, authorizationEventKeyRing] = await Promise.all([
+  const [tls, peers, oidcClients, transactionKey, cursorKey, keyRing,
+    authorizationEventKeyRing, siteCertificationKeys] = await Promise.all([
     loadTls(environment),
     loadPeers(required(environment, "PLATFORM_ADMIN_MTLS_PEERS_FILE")),
     loadOidcClients(required(environment, "PLATFORM_ADMIN_OIDC_CLIENTS_FILE")),
@@ -104,6 +118,9 @@ export async function createAdminProductionComposition(input: Readonly<{
       "PLATFORM_ADMIN_CURSOR_KEY_INVALID"),
     loadJoseKeyRing(required(environment, "PLATFORM_ADMIN_JOSE_KEY_RING_FILE")),
     loadAuthorizationEventKeyRing(required(environment, "PLATFORM_AUTHORIZATION_EVENT_KEY_RING_FILE")),
+    loadSiteCertificationKeys(
+      required(environment, "PLATFORM_SITE_RELEASE_CERTIFICATION_KEYS_FILE"),
+    ),
   ]);
   assertPeerRegistrations(peers, oidcClients);
   const provider = await createOpenIdClientAdminProvider({
@@ -208,12 +225,23 @@ export async function createAdminProductionComposition(input: Readonly<{
     owner: createPlatformSiteAdminComposition(input.database, authorizationEventSigner).site,
     resolver,
   });
+  const siteProvisioning = createPlatformSiteProvisioningComposition(
+    input.database,
+    new Ed25519SiteReleaseCertificationAuthority(siteCertificationKeys),
+    input.clock === undefined ? {} : { now: () => input.clock!().toISOString() },
+  );
+  const siteProvisioningService = createSiteProvisioningConnectService({
+    owner: siteProvisioning.publication,
+    resolver,
+    receipts: new PostgresControlCommandReceiptTimestampReader(unitOfWork),
+  });
   const connect = connectNodeAdapter({
     routes: (router) => {
       router.service(AdminIdentityService, identityService);
       router.service(AdminQueryService, queryService);
       router.service(AdminCommandDescriptor, commandService);
       router.service(SiteLifecycleService, siteLifecycleService);
+      router.service(SiteProvisioningService, siteProvisioningService);
       router.service(AdminCommerceService, commerceService);
     },
     connect: true,
@@ -249,6 +277,10 @@ export async function createAdminProductionComposition(input: Readonly<{
     handler,
     createServer: (listener: AdminRequestListener) => createSecureServer(tls, listener),
   });
+}
+
+async function loadSiteCertificationKeys(path: string) {
+  return parseSiteReleaseCertificationKeys(JSON.parse(await readTrustFile(path, 256 * 1024)));
 }
 
 function oidcSecrets(): Readonly<{ verifier: string; challenge: string; nonce: string }> {
