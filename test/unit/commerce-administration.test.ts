@@ -252,6 +252,7 @@ describe("CommerceAdministrationService", () => {
           resultDigest: recorded ? digestResult({ creditProgramRevisionRef: "credits-program-v1",
             revisionDigest: "b".repeat(64), publishedAt: "2026-07-30T01:00:00.000Z" }) : null,
           state: recorded ? "succeeded" : "pending", recordedAt: "2026-07-30T01:00:01.000Z" }] as never;
+        if (statement.includes("commerce_catalog_epoch_authority")) return [{ catalogEpoch: "42" }] as never;
         return [{ occurredAt: new Date("2026-07-30T01:00:00.000Z") }] as never;
       },
       execute: async (statement) => { statements.push(statement);
@@ -272,6 +273,10 @@ describe("CommerceAdministrationService", () => {
         publishedAt: "2026-07-30T01:00:00.000Z" } });
       expect(statements.some((statement) => statement.includes(
         "INSERT INTO platform.commerce_credit_program_revision"))).toBe(true);
+      expect(statements.some((statement) => statement.includes(
+        "UPDATE platform.commerce_catalog_epoch_authority"))).toBe(true);
+      expect(statements.some((statement) => statement.includes(
+        "catalog_epoch,published_at"))).toBe(true);
       expect(statements.some((statement) => statement.includes("INSERT INTO platform.commerce_audit_entry"))).toBe(true);
       expect(statements.some((statement) => statement.includes("UPDATE platform.command_receipt"))).toBe(true);
     } finally { revokePlatformTransaction(lease); }

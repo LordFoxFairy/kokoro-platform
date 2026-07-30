@@ -61,6 +61,14 @@ ALTER TABLE platform.identity_personal_bootstrap
   FOREIGN KEY(billing_account_ref,site_ref)
   REFERENCES platform.commerce_billing_account(billing_account_ref,site_ref);
 
+CREATE TABLE platform.commerce_catalog_epoch_authority (
+  singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK(singleton),
+  current_epoch BIGINT NOT NULL CHECK(current_epoch >= 0),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+INSERT INTO platform.commerce_catalog_epoch_authority(singleton,current_epoch)
+VALUES (TRUE,0);
+
 CREATE TABLE platform.commerce_catalog_product (
   site_ref TEXT NOT NULL REFERENCES platform.authorization_site(site_ref),
   product_ref TEXT NOT NULL CHECK(length(product_ref) BETWEEN 1 AND 256),
@@ -92,6 +100,7 @@ CREATE TABLE platform.commerce_catalog_plan_version (
   term_seconds BIGINT CHECK(term_seconds IS NULL OR term_seconds > 0),
   stacking_scope TEXT NOT NULL CHECK(length(stacking_scope) BETWEEN 1 AND 128),
   revision_digest CHAR(64) NOT NULL CHECK(revision_digest ~ '^[a-f0-9]{64}$'),
+  catalog_epoch BIGINT NOT NULL CHECK(catalog_epoch > 0),
   published_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(site_ref,plan_ref,revision),
@@ -168,6 +177,7 @@ CREATE TABLE platform.commerce_credit_program_revision (
   window_anchor TEXT CHECK(window_anchor IS NULL OR length(window_anchor) BETWEEN 1 AND 128),
   expires_after_seconds BIGINT CHECK(expires_after_seconds IS NULL OR expires_after_seconds > 0),
   revision_digest CHAR(64) NOT NULL CHECK(revision_digest ~ '^[a-f0-9]{64}$'),
+  catalog_epoch BIGINT NOT NULL CHECK(catalog_epoch > 0),
   published_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(site_ref,program_ref,revision),
@@ -185,6 +195,8 @@ CREATE TABLE platform.commerce_credit_program_revision (
       AND expires_after_seconds IS NOT NULL)
   )
 );
+CREATE INDEX commerce_credit_program_catalog_page_idx
+  ON platform.commerce_credit_program_revision(site_ref,credit_program_revision_ref,catalog_epoch);
 
 CREATE TABLE platform.commerce_entitlement_template_revision (
   entitlement_template_revision_ref TEXT PRIMARY KEY CHECK(length(entitlement_template_revision_ref) BETWEEN 1 AND 256),
@@ -197,12 +209,15 @@ CREATE TABLE platform.commerce_entitlement_template_revision (
     AND safe_label !~ '[[:cntrl:]]' AND safe_label !~ U&'[\202A-\202E\2066-\2069]'),
   expires_after_seconds BIGINT CHECK(expires_after_seconds IS NULL OR expires_after_seconds > 0),
   revision_digest CHAR(64) NOT NULL CHECK(revision_digest ~ '^[a-f0-9]{64}$'),
+  catalog_epoch BIGINT NOT NULL CHECK(catalog_epoch > 0),
   published_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(site_ref,template_ref,revision),
   UNIQUE(site_ref,revision_digest),
   UNIQUE(entitlement_template_revision_ref,site_ref)
 );
+CREATE INDEX commerce_entitlement_template_catalog_page_idx
+  ON platform.commerce_entitlement_template_revision(site_ref,entitlement_template_revision_ref,catalog_epoch);
 
 CREATE TABLE platform.commerce_fulfillment_program_revision (
   fulfillment_program_revision_ref TEXT PRIMARY KEY CHECK(length(fulfillment_program_revision_ref) BETWEEN 1 AND 256),
@@ -210,6 +225,7 @@ CREATE TABLE platform.commerce_fulfillment_program_revision (
   program_ref TEXT NOT NULL CHECK(length(program_ref) BETWEEN 1 AND 256),
   revision BIGINT NOT NULL CHECK(revision > 0),
   output_plan_digest CHAR(64) NOT NULL CHECK(output_plan_digest ~ '^[a-f0-9]{64}$'),
+  catalog_epoch BIGINT NOT NULL CHECK(catalog_epoch > 0),
   published_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(site_ref,program_ref,revision),
@@ -259,6 +275,7 @@ CREATE TABLE platform.commerce_catalog_product_version (
   fulfillment_program_revision_ref TEXT NOT NULL,
   legal_term_refs TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[] CHECK(cardinality(legal_term_refs) <= 16),
   revision_digest CHAR(64) NOT NULL CHECK(revision_digest ~ '^[a-f0-9]{64}$'),
+  catalog_epoch BIGINT NOT NULL CHECK(catalog_epoch > 0),
   published_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(site_ref,product_ref,revision),
@@ -270,6 +287,8 @@ CREATE TABLE platform.commerce_catalog_product_version (
   FOREIGN KEY(fulfillment_program_revision_ref,site_ref)
     REFERENCES platform.commerce_fulfillment_program_revision(fulfillment_program_revision_ref,site_ref)
 );
+CREATE INDEX commerce_product_version_catalog_page_idx
+  ON platform.commerce_catalog_product_version(site_ref,product_version_ref,catalog_epoch);
 
 CREATE TABLE platform.commerce_redemption_program_revision (
   redemption_program_revision_ref TEXT PRIMARY KEY CHECK(length(redemption_program_revision_ref) BETWEEN 1 AND 256),
@@ -280,6 +299,7 @@ CREATE TABLE platform.commerce_redemption_program_revision (
   fulfillment_program_revision_ref TEXT NOT NULL,
   program_digest CHAR(64) NOT NULL CHECK(program_digest ~ '^[a-f0-9]{64}$'),
   max_redemptions_per_account INTEGER NOT NULL DEFAULT 1 CHECK(max_redemptions_per_account BETWEEN 1 AND 10000),
+  catalog_epoch BIGINT NOT NULL CHECK(catalog_epoch > 0),
   published_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(site_ref,program_ref,revision),
@@ -292,6 +312,8 @@ CREATE TABLE platform.commerce_redemption_program_revision (
   FOREIGN KEY(fulfillment_program_revision_ref,site_ref)
     REFERENCES platform.commerce_fulfillment_program_revision(fulfillment_program_revision_ref,site_ref)
 );
+CREATE INDEX commerce_redemption_program_catalog_page_idx
+  ON platform.commerce_redemption_program_revision(site_ref,redemption_program_revision_ref,catalog_epoch);
 
 CREATE TABLE platform.commerce_redemption_program_availability (
   site_ref TEXT NOT NULL,
@@ -378,6 +400,7 @@ CREATE TABLE platform.commerce_code_batch (
   starts_at TIMESTAMPTZ,
   ends_at TIMESTAMPTZ,
   inventory_count INTEGER NOT NULL CHECK(inventory_count >= 0),
+  catalog_epoch BIGINT NOT NULL CHECK(catalog_epoch > 0),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   activated_at TIMESTAMPTZ,
   UNIQUE(batch_ref,site_ref),
@@ -389,6 +412,8 @@ CREATE TABLE platform.commerce_code_batch (
   CHECK((state IN ('draft','abandoned') AND activated_at IS NULL)
     OR (state IN ('active','suspended','revoked') AND activated_at IS NOT NULL))
 );
+CREATE INDEX commerce_code_batch_catalog_page_idx
+  ON platform.commerce_code_batch(site_ref,batch_ref,catalog_epoch);
 CREATE INDEX commerce_code_batch_program_idx
   ON platform.commerce_code_batch(site_ref,redemption_program_revision_ref,state);
 
@@ -2276,6 +2301,7 @@ CREATE CONSTRAINT TRIGGER credit_authorization_segment_capacity
 
 REVOKE ALL ON
   platform.commerce_command,
+  platform.commerce_catalog_epoch_authority,
   platform.commerce_billing_account,
   platform.commerce_billing_account_membership,
   platform.commerce_catalog_product,

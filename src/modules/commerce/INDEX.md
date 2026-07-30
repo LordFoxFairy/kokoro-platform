@@ -60,6 +60,8 @@ Platform through HTTP/RPC and never exposes a Prisma client to application code.
   errors or query DTOs. An exact command replay returns `delivery_unavailable`; batch queries expose only count and safe export
   receipt metadata. Code generation itself occurs only after a new receipt has been claimed, so replay cannot mint replacement
   secrets. The Admin listener does not log payloads and its telemetry redactor recognizes the secret response field.
-- List queries use HMAC-authenticated cursors bound to operator/deployment/permission scope, Site and a first-page watermark.
+- List queries use HMAC-authenticated cursors bound to operator/deployment/permission scope and Site. A singleton PostgreSQL
+  authority serializes low-frequency catalog publication and assigns its epoch in the writer transaction; page one captures only
+  the committed epoch, later pages keep that epoch, and every response reports a separate database-clock `observedAt`.
 
 All module ports accept only the opaque `PlatformTransaction`; no sibling module may introduce a second transaction or self-RPC.

@@ -7,19 +7,20 @@ import { issuePlatformTransaction, revokePlatformTransaction } from
   "../../src/shared/unit-of-work/platform-transaction.js";
 
 describe("PostgresCommerceAdministrationReader", () => {
-  it("captures the first-page watermark from the database transaction authority", async () => {
+  it("observes a committed catalog epoch and an independent database clock", async () => {
     const statements: string[] = [];
     const lease = issuePlatformTransaction({ execute: async () => 0, query: async (statement) => {
       statements.push(statement);
-      return [{ watermark: new Date("2026-07-30T02:00:00.000Z") }] as never;
+      return [{ watermark: "41", observedAt: new Date("2026-07-30T02:00:00.000Z") }] as never;
     } });
     const reader = new PostgresCommerceAdministrationReader({
       adminQueryTransaction: async (_permit, work) => work(lease.transaction),
     });
     try {
-      await expect(reader.captureWatermark(permit("commerce.credit-program.read")))
-        .resolves.toBe("2026-07-30T02:00:00.000Z");
-      expect(statements).toEqual([expect.stringContaining("transaction_timestamp()")]);
+      await expect(reader.observeCatalog(permit("commerce.credit-program.read")))
+        .resolves.toEqual({ watermark: "41", observedAt: "2026-07-30T02:00:00.000Z" });
+      expect(statements).toEqual([expect.stringContaining("commerce_catalog_epoch_authority")]);
+      expect(statements[0]).toContain("clock_timestamp()");
     } finally { revokePlatformTransaction(lease); }
   });
 
@@ -65,12 +66,47 @@ describe("PostgresCommerceAdministrationReader", () => {
     });
     try {
       await expect(reader.listEntitlementTemplateRevisions(permit("commerce.entitlement-template.read"), {
-        siteId: "site-1", afterRef: null, watermark: "2026-07-30T02:00:00.000Z", limit: 10,
+        siteId: "site-1", afterRef: null, watermark: "41", limit: 10,
       })).resolves.toMatchObject([{ entitlementTemplateRevisionRef: "premium-v1",
         expiresAfterSeconds: 3600n }]);
-      expect(statements[0]).toContain("revision.published_at<=$3::timestamptz");
+      expect(statements[0]).toContain("revision.catalog_epoch<=$3::bigint");
     } finally { revokePlatformTransaction(lease); }
   });
+
+  it("does not phantom a writer that allocated the next epoch but committed after page one", async () => {
+    const writerEpoch = 42n; let writerCommitted = false; const statements: string[] = [];
+    const lease = issuePlatformTransaction({ execute: async () => 0, query: async (statement, parameters) => {
+      statements.push(statement);
+      if (statement.includes("commerce_catalog_epoch_authority")) {
+        return [{ watermark: "41", observedAt: "2026-07-30T02:00:00.000Z" }] as never;
+      }
+      const watermark = BigInt(String(parameters?.[2]));
+      return writerCommitted && writerEpoch <= watermark ? [{ entitlementTemplateRevisionRef: "late-v1" }] as never : [];
+    } });
+    const reader = new PostgresCommerceAdministrationReader({
+      adminQueryTransaction: async (_permit, work) => work(lease.transaction),
+    });
+    try {
+      const firstPage = await reader.observeCatalog(permit("commerce.entitlement-template.read"));
+      writerCommitted = true;
+      await expect(reader.listEntitlementTemplateRevisions(permit("commerce.entitlement-template.read"), {
+        siteId: "site-1", afterRef: null, watermark: firstPage.watermark, limit: 10,
+      })).resolves.toEqual([]);
+      expect(firstPage.watermark).toBe("41");
+      expect(statements[1]).toContain("revision.catalog_epoch<=$3::bigint");
+    } finally { revokePlatformTransaction(lease); }
+  });
+
+  it.each(["-1", "01", "9223372036854775808", "2026-07-30T02:00:00.000Z"])(
+    "rejects a non-canonical catalog watermark (%s)", (watermark) => {
+      const reader = new PostgresCommerceAdministrationReader({ adminQueryTransaction: async () => {
+        throw new Error("MUST_NOT_OPEN_TRANSACTION");
+      } });
+      expect(() => reader.listOffers(permit("commerce.offer.read"), {
+        siteId: "site-1", afterRef: null, watermark, limit: 10,
+      })).toThrow("COMMERCE_ADMIN_PAGE_INVALID");
+    },
+  );
 });
 
 function permit(operation: string): AdminQueryPermit {
