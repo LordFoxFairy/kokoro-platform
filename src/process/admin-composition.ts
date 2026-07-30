@@ -286,9 +286,10 @@ export async function createAdminProductionComposition(input: Readonly<{
     grpc: false,
     grpcWeb: false,
     acceptCompression: [],
-    readMaxBytes: 64 * 1024,
-    // IssueCodeBatch is the only secret-bearing response and is capped at 1,000 codes.
-    writeMaxBytes: 256 * 1024,
+    // Canonical ModelControl imports are deliberately bounded but can exceed small admin payloads.
+    readMaxBytes: 16 * 1024 * 1024,
+    // Read projections remain bounded independently from command request payloads.
+    writeMaxBytes: 8 * 1024 * 1024,
     maxTimeoutMs: 10_000,
   });
   const handler: AdminRequestListener = (request, response) => {

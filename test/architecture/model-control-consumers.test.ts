@@ -36,6 +36,12 @@ describe("ModelControl consumer boundary", () => {
     expect(provider).not.toMatch(/fetch\(|http:\/\/|https:\/\//u);
   });
 
+  it("keeps the Admin unary transport large enough for canonical inventory imports", async () => {
+    const composition = await readFile(resolve("src/process/admin-composition.ts"), "utf8");
+    expect(composition).toContain("readMaxBytes: 16 * 1024 * 1024");
+    expect(composition).toContain("writeMaxBytes: 8 * 1024 * 1024");
+  });
+
   it("materializes and activates catalogs through separate immutable commands", async () => {
     const migration = await readFile(
       resolve("prisma/migrations/0003_model_control/migration.sql"),
