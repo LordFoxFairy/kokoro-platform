@@ -55,6 +55,11 @@ export class PostgresAdminOperatorResolver {
         const operatorRef = text(row.operatorRef);
         const operatorGeneration = positive(row.operatorGeneration);
         const now = new Date().toISOString();
+        await sql.query(
+          `SELECT set_config('app.subject_id',$1,true),
+                  set_config('app.subject_generation',$2,true)`,
+          [operatorRef, operatorGeneration.toString()],
+        );
         const [siteScopes, globalScopes, breakGlassScopes] = await Promise.all([
           sql.query<SiteScopeRow>(
             `SELECT site_ref AS "siteRef",environment,region,scope_epoch AS "scopeEpoch",
