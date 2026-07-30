@@ -47,6 +47,7 @@ export interface AdminOperatorAuthority {
   readonly operatorRef: string;
   readonly operatorGeneration: bigint;
   readonly operatorSecurityEpoch: bigint;
+  readonly authorizationEpoch: bigint;
   readonly state: "active" | "suspended" | "revoked";
   readonly permissions: readonly string[];
   readonly expiresAt: string;
@@ -224,7 +225,8 @@ function verifySession(session: AuthenticatedAdminSession, now: number): void {
 function verifyAuthority(authority: AdminOperatorAuthority, now: number): void {
   const expiresAt = Date.parse(authority.expiresAt);
   if (
-    authority.state !== "active" || !Number.isFinite(expiresAt) || expiresAt <= now ||
+    authority.state !== "active" || authority.authorizationEpoch < 1n ||
+    !Number.isFinite(expiresAt) || expiresAt <= now ||
     authority.permissions.length < 1 || new Set(authority.permissions).size !== authority.permissions.length
   ) throw new Error("ADMIN_OPERATOR_AUTHORITY_INVALID");
 }

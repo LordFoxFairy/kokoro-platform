@@ -44,6 +44,7 @@ interface AuthorityRow extends Record<string, unknown> {
   operatorRef: unknown;
   operatorGeneration: unknown;
   operatorSecurityEpoch: unknown;
+  authorizationEpoch: unknown;
   state: unknown;
   permissions: unknown;
   expiresAt: unknown;
@@ -107,7 +108,8 @@ export class PostgresAdminSessionAuthenticator {
       const [authorities, siteScopes, globalScopes, breakGlassScopes] = await Promise.all([
         sql.query<AuthorityRow>(
           `SELECT operator_ref AS "operatorRef",operator_generation AS "operatorGeneration",
-                  operator_security_epoch AS "operatorSecurityEpoch",state,permissions,
+                  operator_security_epoch AS "operatorSecurityEpoch",
+                  authorization_epoch AS "authorizationEpoch",state,permissions,
                   expires_at AS "expiresAt"
            FROM platform.admin_operator_authority
            WHERE operator_ref=$1 AND operator_generation=$2 LIMIT 1`,
@@ -148,6 +150,7 @@ export class PostgresAdminSessionAuthenticator {
           operatorRef: text(authority.operatorRef),
           operatorGeneration: positive(authority.operatorGeneration),
           operatorSecurityEpoch: positive(authority.operatorSecurityEpoch),
+          authorizationEpoch: positive(authority.authorizationEpoch),
           state: authorityState(authority.state),
           permissions: strings(authority.permissions),
           expiresAt: instant(authority.expiresAt),

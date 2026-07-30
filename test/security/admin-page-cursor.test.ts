@@ -58,6 +58,7 @@ function permit(siteRefs: readonly string[]): AdminQueryPermit {
     environment: "production",
     region: "us-east-1",
     operation: "admin.site.list",
+    authorityBindingDigest: "a".repeat(64),
     scope: Object.freeze({ kind: "site", siteRefs: Object.freeze([...siteRefs]) }),
   });
 }
