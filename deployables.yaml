@@ -93,6 +93,36 @@ deployables:
     runbookOwner: platform
     releaseOwner: platform
 
+  - id: platform-model-gateway
+    command: node --conditions=kokoro-runtime deploy/docker/runtime-entrypoint.mjs
+    selectorEnvironment: KOKORO_SERVICE_PACKAGE=platform-model-gateway
+    processRole: model-gateway
+    database:
+      environmentVariable: DATABASE_URL_PLATFORM
+      authorityMode: transition-candidate
+      expectedUserEnvironmentVariable: PLATFORM_DATABASE_MODEL_GATEWAY_ROLE
+      migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
+      expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
+      credentialClass: platform-model-gateway
+      permissions: opaque-authorization-attempt-producer-only
+      ddl: forbidden
+    activationAuthorized: false
+    runtimeTraffic: false
+    inboundContracts: []
+    declaredInboundContracts:
+      [platform-model-gateway-https, platform-model-gateway-reconciliation-https]
+    outboundContracts: [litellm-openai-chat-completions]
+    secretClasses:
+      [platform-model-gateway-database, mtls-server, mtls-peer-registry,
+       model-gateway-response-keyring, litellm-api-key]
+    audience: platform-model-gateway
+    scalingKey: provider-request-concurrency
+    readiness: /health/ready
+    drain: https-graceful-then-abort
+    sloOwner: platform
+    runbookOwner: platform
+    releaseOwner: platform
+
   - id: platform-authorization
     command: node --conditions=kokoro-runtime deploy/docker/runtime-entrypoint.mjs
     selectorEnvironment: KOKORO_SERVICE_PACKAGE=platform-authorization
@@ -166,6 +196,7 @@ deployables:
       workerRoleEnvironmentVariable: PLATFORM_DATABASE_WORKER_ROLE
       authorizationRoleEnvironmentVariable: PLATFORM_DATABASE_AUTHORIZATION_ROLE
       adminRoleEnvironmentVariable: PLATFORM_DATABASE_ADMIN_ROLE
+      modelGatewayRoleEnvironmentVariable: PLATFORM_DATABASE_MODEL_GATEWAY_ROLE
       expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
       credentialClass: platform-migrator
       permissions: migration-ddl

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { create } from "@bufbuild/protobuf";
 import { describe, expect, it } from "vitest";
 import {
@@ -16,7 +17,9 @@ import {
 class LifecycleSql implements PlatformSqlTransaction {
   binding?: Record<string, unknown>;
   manifest?: Record<string, unknown>;
+  projectionState: "active" | "revoked" | "expired" = "active";
   readonly writeValues: unknown[][] = [];
+  readonly writeStatements: string[] = [];
 
   async query<Row extends Record<string, unknown>>(
     statement: string,
@@ -31,6 +34,7 @@ class LifecycleSql implements PlatformSqlTransaction {
   }
 
   async execute(statement: string, values: readonly unknown[] = []): Promise<number> {
+    this.writeStatements.push(statement);
     this.writeValues.push([...values]);
     if (statement.startsWith("INSERT INTO platform.admission_execution_manifest")) {
       this.manifest = {
@@ -39,6 +43,14 @@ class LifecycleSql implements PlatformSqlTransaction {
         authorizationSegmentRef: values[14], segmentVersion: values[15], state: "reserved",
         expiresAt: values[16],
       };
+      return 1;
+    }
+    if (statement.startsWith("INSERT INTO platform.model_gateway_execution_authorization")) {
+      return 1;
+    }
+    if (statement.startsWith("UPDATE platform.model_gateway_execution_authorization")) {
+      if (!(["active", "revoked"] as const).includes(this.projectionState as "active" | "revoked")) return 0;
+      this.projectionState = values[0] as "revoked" | "expired";
       return 1;
     }
     if (statement.startsWith("UPDATE platform.admission_execution_manifest")) {
@@ -120,6 +132,20 @@ describe("Postgres Admission lifecycle owner", () => {
         typeof value === "bigint" ? value.toString() : value);
       expect(persisted).not.toContain("private prompt must not be persisted");
       expect(persisted).not.toContain("private-parent-anchor");
+      const projectionIndex = sql.writeStatements.findIndex((statement) =>
+        statement.startsWith("INSERT INTO platform.model_gateway_execution_authorization"));
+      expect(projectionIndex).toBeGreaterThan(-1);
+      expect(sql.writeValues[projectionIndex]).toEqual([
+        `model-authorization:sha256:${createHash("sha256").update(
+          `kokoro.model-gateway.authorization.v1\0${prepareInput.manifestDigest}`,
+        ).digest("hex")}`,
+        "site-1",
+        prepareInput.manifestRef,
+        "segment-1",
+        "claude-code",
+        "litellm",
+        prepareInput.expiresAt,
+      ]);
     } finally {
       revokePlatformTransaction(lease);
     }
@@ -138,6 +164,20 @@ describe("Postgres Admission lifecycle owner", () => {
       await expect(lifecycle.commit(lease.transaction, prepared)).rejects.toThrow(
         "ADMISSION_LIFECYCLE_CAS_LOST",
       );
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("expires the Gateway authorization atomically when the Admission manifest expires", async () => {
+    const sql = new LifecycleSql();
+    sql.binding = bindingRow();
+    const lease = issuePlatformTransaction(sql);
+    try {
+      const lifecycle = new PostgresAdmissionLifecycleOwner();
+      const prepared = await lifecycle.prepare(lease.transaction, prepareInput);
+      await lifecycle.expire(lease.transaction, prepared);
+      expect(sql.projectionState).toBe("expired");
     } finally {
       revokePlatformTransaction(lease);
     }

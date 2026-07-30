@@ -63,6 +63,10 @@ export async function runPlatformMigrations(
     environment.PLATFORM_DATABASE_ADMIN_ROLE,
     "PLATFORM_DATABASE_ADMIN_ROLE",
   );
+  const modelGatewayRole = requireRole(
+    environment.PLATFORM_DATABASE_MODEL_GATEWAY_ROLE,
+    "PLATFORM_DATABASE_MODEL_GATEWAY_ROLE",
+  );
   assertDistinctRoles(
     config.expectedDatabaseUser,
     apiRole,
@@ -70,6 +74,7 @@ export async function runPlatformMigrations(
     authorizationRole,
     workerRole,
     adminRole,
+    modelGatewayRole,
   );
 
   const lockClient = (options.createLockClient ?? defaultLockClient)(config.url);
@@ -89,6 +94,7 @@ export async function runPlatformMigrations(
       workerRole,
       adminRole,
     });
+    await assertModelGatewayRolePreflight(lockClient, modelGatewayRole, config.expectedDatabaseUser);
     await lockClient.query("SELECT pg_advisory_lock(hashtext($1))", [MIGRATION_ADVISORY_LOCK]);
     locked = true;
 
@@ -113,6 +119,7 @@ export async function runPlatformMigrations(
       workerRole,
       adminRole,
     );
+    await grantModelGatewayPrivileges(lockClient, modelGatewayRole, admissionRole);
     await assertPostMigrationAuthority(
       lockClient,
       config.expectedDatabaseUser,
@@ -122,6 +129,7 @@ export async function runPlatformMigrations(
       workerRole,
       adminRole,
     );
+    await assertModelGatewayAuthority(lockClient, modelGatewayRole);
   } finally {
     try {
       if (locked) {
@@ -269,6 +277,159 @@ function safeRuntimeRole(role: Readonly<Record<string, unknown>>): boolean {
     role.isPeerMember === false
   );
 }
+
+async function assertModelGatewayRolePreflight(
+  client: MigrationLockClient,
+  modelGatewayRole: string,
+  migratorRole: string,
+): Promise<void> {
+  const result = await client.query(MODEL_GATEWAY_ROLE_PREFLIGHT_SQL, [
+    modelGatewayRole,
+    migratorRole,
+  ]);
+  const row = result.rows?.[0];
+  if (result.rows?.length !== 1 || !safeRuntimeRole(row ?? {})) {
+    throw new Error("PLATFORM_MODEL_GATEWAY_ROLE_PREFLIGHT_FAILED");
+  }
+}
+
+async function grantModelGatewayPrivileges(
+  client: MigrationLockClient,
+  modelGatewayRole: string,
+  admissionRole: string,
+): Promise<void> {
+  const gateway = quoteRoleIdentifier(modelGatewayRole);
+  const admission = quoteRoleIdentifier(admissionRole);
+  await client.query(`REVOKE ALL ON SCHEMA platform FROM ${gateway}`);
+  await client.query(`REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA platform FROM ${gateway}`);
+  await client.query(`REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA platform FROM ${gateway}`);
+  await client.query(`REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA platform FROM ${gateway}`);
+  await client.query(`GRANT USAGE ON SCHEMA platform TO ${gateway}`);
+  await client.query(`GRANT SELECT ON TABLE platform.platform_foundation TO ${gateway}`);
+  await client.query(
+    `REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ` +
+      `ON TABLE platform.platform_foundation FROM ${gateway}`,
+  );
+  await client.query(
+    `ALTER DEFAULT PRIVILEGES IN SCHEMA platform REVOKE ALL ON TABLES FROM ${gateway}`,
+  );
+  await client.query(
+    `ALTER DEFAULT PRIVILEGES IN SCHEMA platform REVOKE ALL ON SEQUENCES FROM ${gateway}`,
+  );
+  await client.query(
+    `ALTER DEFAULT PRIVILEGES IN SCHEMA platform REVOKE ALL ON FUNCTIONS FROM ${gateway}`,
+  );
+  await client.query(
+    `REVOKE ALL ON TABLE platform.model_gateway_execution_authorization FROM ${gateway}`,
+  );
+  await client.query(
+    `GRANT EXECUTE ON FUNCTION platform.resolve_model_gateway_authorization(TEXT,TEXT) TO ${gateway}`,
+  );
+  await client.query(
+    `GRANT SELECT,INSERT ON TABLE platform.model_gateway_invocation TO ${gateway}`,
+  );
+  await client.query(
+    `GRANT UPDATE(state,response_envelope,evidence_ref,source_digest,owner_evidence_ref,fence_epoch,updated_at) ` +
+      `ON TABLE platform.model_gateway_invocation TO ${gateway}`,
+  );
+  await client.query(
+    `GRANT SELECT,INSERT ON TABLE platform.model_gateway_attempt_usage_fact TO ${gateway}`,
+  );
+  await client.query(
+    `GRANT SELECT,INSERT ON TABLE platform.model_gateway_outbox TO ${gateway}`,
+  );
+  await client.query(
+    `GRANT SELECT ON TABLE platform.credit_rating_policy_revision, platform.credit_rating_snapshot, ` +
+      `platform.credit_authorization_segment, platform.credit_budget_allocation, ` +
+      `platform.credit_budget_allocation_revision, platform.credit_execution_budget_root, ` +
+      `platform.credit_hold TO ${gateway}`,
+  );
+  await client.query(
+    `GRANT SELECT,INSERT ON TABLE platform.credit_usage_command_receipt, ` +
+      `platform.credit_attempt_usage_evidence TO ${gateway}`,
+  );
+  await client.query(
+    `GRANT SELECT,INSERT ON TABLE platform.credit_usage_attempt_intent TO ${gateway}`,
+  );
+  await client.query(
+    `GRANT UPDATE(fence_epoch,state,owner_evidence_ref,provisional_customer_amount,updated_at) ` +
+      `ON TABLE platform.credit_usage_attempt_intent TO ${gateway}`,
+  );
+  await client.query(`GRANT INSERT ON TABLE platform.outbox_event TO ${gateway}`);
+  await client.query(
+    `GRANT INSERT ON TABLE platform.model_gateway_execution_authorization TO ${admission}`,
+  );
+  await client.query(
+    `GRANT SELECT(authorization_handle,state), UPDATE(state,updated_at) ` +
+      `ON TABLE platform.model_gateway_execution_authorization TO ${admission}`,
+  );
+}
+
+async function assertModelGatewayAuthority(
+  client: MigrationLockClient,
+  modelGatewayRole: string,
+): Promise<void> {
+  const result = await client.query(MODEL_GATEWAY_POST_AUTHORITY_SQL, [modelGatewayRole]);
+  const row = result.rows?.[0];
+  if (result.rows?.length !== 1 || row?.modelGatewayAuthorityOk !== true ||
+      row?.canReadAuthorizationProjection !== false) {
+    throw new Error("PLATFORM_MODEL_GATEWAY_POST_AUTHORITY_INVALID");
+  }
+}
+
+const MODEL_GATEWAY_ROLE_PREFLIGHT_SQL = `
+  SELECT runtime_role.rolname AS "roleName",runtime_role.rolsuper AS "isSuperuser",
+    runtime_role.rolcreatedb AS "canCreateDatabase",runtime_role.rolcreaterole AS "canCreateRole",
+    runtime_role.rolreplication AS "canReplicate",runtime_role.rolbypassrls AS "canBypassRls",
+    runtime_role.rolinherit AS "inheritsPrivileges",
+    EXISTS (SELECT 1 FROM pg_auth_members membership WHERE membership.member=runtime_role.oid)
+      AS "hasAnyMembership",
+    pg_has_role(runtime_role.rolname,$2,'MEMBER') AS "isMigratorMember",
+    EXISTS (SELECT 1 FROM pg_auth_members membership WHERE membership.roleid=runtime_role.oid)
+      AS "isPeerMember",
+    EXISTS (SELECT 1 FROM information_schema.role_table_grants grant_row
+      WHERE grant_row.grantee=runtime_role.rolname AND grant_row.table_schema='platform')
+      AS "hasAnyPlatformTablePrivilege",
+    has_schema_privilege(runtime_role.rolname,'platform','USAGE') AS "canUsePlatformSchema",
+    has_schema_privilege(runtime_role.rolname,'platform','CREATE') AS "canCreatePlatformSchema"
+  FROM pg_roles runtime_role WHERE runtime_role.rolname=$1 /* modelGatewayRolePreflight */`;
+
+const MODEL_GATEWAY_POST_AUTHORITY_SQL = `
+  SELECT
+    has_schema_privilege($1,'platform','USAGE')
+      AND NOT has_schema_privilege($1,'platform','CREATE')
+      AND has_table_privilege($1,'platform.platform_foundation','SELECT')
+      AND NOT has_table_privilege($1,'platform.platform_foundation','INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+      AND has_function_privilege($1,'platform.resolve_model_gateway_authorization(TEXT,TEXT)','EXECUTE')
+      AND has_table_privilege($1,'platform.model_gateway_invocation','SELECT,INSERT')
+      AND has_column_privilege($1,'platform.model_gateway_invocation','state','UPDATE')
+      AND has_column_privilege($1,'platform.model_gateway_invocation','response_envelope','UPDATE')
+      AND has_column_privilege($1,'platform.model_gateway_invocation','evidence_ref','UPDATE')
+      AND has_column_privilege($1,'platform.model_gateway_invocation','source_digest','UPDATE')
+      AND has_column_privilege($1,'platform.model_gateway_invocation','owner_evidence_ref','UPDATE')
+      AND has_column_privilege($1,'platform.model_gateway_invocation','fence_epoch','UPDATE')
+      AND has_column_privilege($1,'platform.model_gateway_invocation','updated_at','UPDATE')
+      AND has_table_privilege($1,'platform.model_gateway_attempt_usage_fact','SELECT,INSERT')
+      AND has_table_privilege($1,'platform.model_gateway_outbox','SELECT,INSERT')
+      AND has_table_privilege($1,'platform.credit_usage_command_receipt','SELECT,INSERT')
+      AND has_table_privilege($1,'platform.credit_usage_attempt_intent','SELECT,INSERT')
+      AND has_column_privilege($1,'platform.credit_usage_attempt_intent','fence_epoch','UPDATE')
+      AND has_column_privilege($1,'platform.credit_usage_attempt_intent','state','UPDATE')
+      AND has_column_privilege($1,'platform.credit_usage_attempt_intent','owner_evidence_ref','UPDATE')
+      AND has_column_privilege($1,'platform.credit_usage_attempt_intent','provisional_customer_amount','UPDATE')
+      AND has_column_privilege($1,'platform.credit_usage_attempt_intent','updated_at','UPDATE')
+      AND has_table_privilege($1,'platform.credit_attempt_usage_evidence','SELECT,INSERT')
+      AND has_table_privilege($1,'platform.credit_rating_policy_revision','SELECT')
+      AND has_table_privilege($1,'platform.credit_rating_snapshot','SELECT')
+      AND has_table_privilege($1,'platform.credit_authorization_segment','SELECT')
+      AND has_table_privilege($1,'platform.credit_budget_allocation','SELECT')
+      AND has_table_privilege($1,'platform.credit_budget_allocation_revision','SELECT')
+      AND has_table_privilege($1,'platform.credit_execution_budget_root','SELECT')
+      AND has_table_privilege($1,'platform.credit_hold','SELECT')
+      AND has_table_privilege($1,'platform.outbox_event','INSERT') AS "modelGatewayAuthorityOk",
+    has_table_privilege($1,'platform.model_gateway_execution_authorization','SELECT')
+      AS "canReadAuthorizationProjection"
+  /* modelGatewayAuthority */`;
 
 async function grantFoundationPrivileges(
   client: MigrationLockClient,
@@ -1616,6 +1777,7 @@ function assertDistinctRoles(
   authorizationRole: string,
   workerRole: string,
   adminRole: string,
+  modelGatewayRole: string,
 ): void {
   if (
     new Set([
@@ -1625,7 +1787,8 @@ function assertDistinctRoles(
       authorizationRole,
       workerRole,
       adminRole,
-    ]).size !== 6
+      modelGatewayRole,
+    ]).size !== 7
   ) {
     throw new Error("PLATFORM_DATABASE_ROLES_MUST_BE_DISTINCT");
   }

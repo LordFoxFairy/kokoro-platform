@@ -29,10 +29,10 @@ Real keys are environment/secret-manager supplied. Example files contain fake va
 Health and smoke checks are repeatable. Gateway retry/fallback policy must use stable logical-call identity and prevent double charging.
 
 ## Extension rules and forbidden dependencies
-Keep deployment adapter configuration here until the Model Gateway wave assigns final ownership; do not embed business policy in YAML.
+Keep deployment adapter configuration here; Model Gateway owns invocation and business integration, and no business policy belongs in LiteLLM YAML.
 
 ## Current gotchas
-This is not yet the final Model Gateway control plane or a complete provider certification.
+The Platform Model Gateway consumes this adapter for bounded non-streaming text chat only. Streaming, tools, reasoning and generation modalities remain uncertified.
 
 ## Verification
 Run the health/smoke scripts only against an explicitly provisioned test endpoint, plus Root model-gateway compatibility tests.

@@ -30,6 +30,7 @@
     "start:admin": "node dist/src/process/admin.js",
     "start:authorization": "node dist/src/process/authorization.js",
     "start:asset-data-plane": "node dist/src/process/asset-data-plane.js",
+    "start:model-gateway": "node dist/src/process/model-gateway.js",
     "start:worker": "node dist/src/process/worker.js",
     "test:repository": "node --test test/repository/*.test.mjs",
     "test:platform": "vitest run test/*.test.ts test/architecture/*.test.ts",

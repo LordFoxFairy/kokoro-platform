@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   AdmissionAuthorizationRecord,
   AdmissionAuthorizationState,
@@ -82,6 +83,20 @@ export class PostgresAdmissionLifecycleOwner implements AdmissionLifecycleOwnerP
           assetGrantRef: item.assetGrantRef,
         })))],
     );
+    const gatewayAuthorizationHandle = modelAuthorizationHandle(input.manifestDigest);
+    const projected = await sql.execute(
+      `INSERT INTO platform.model_gateway_execution_authorization
+       (authorization_handle,site_ref,execution_manifest_ref,authorization_segment_ref,
+        gateway_model,adapter_kind,expires_at,state)
+       VALUES ($1,$2,$3,$4,$5,$6,$7::timestamptz,'active')
+       ON CONFLICT (authorization_handle) DO NOTHING`,
+      [gatewayAuthorizationHandle, input.siteId, input.manifestRef, input.authorizationSegmentRef,
+        input.ownerFacts.runtime.model.name, input.ownerFacts.runtime.model.provider,
+        input.expiresAt],
+    );
+    if (projected !== 1) {
+      throw new Error("ADMISSION_MODEL_GATEWAY_AUTHORIZATION_CONFLICT");
+    }
     const record = await findManifest(transaction, {
       siteId: input.siteId,
       manifestRef: input.manifestRef,
@@ -167,6 +182,22 @@ async function transition(
       prior.segmentVersion.toString()],
   );
   if (changed !== 1) throw new Error("ADMISSION_LIFECYCLE_CAS_LOST");
+  const gatewayState = state === "committed"
+    ? null
+    : state === "expired"
+      ? "expired"
+      : "revoked";
+  if (gatewayState !== null) {
+    const authorizationChanged = await sql.execute(
+      `UPDATE platform.model_gateway_execution_authorization
+       SET state=$1,updated_at=now()
+       WHERE authorization_handle=$2 AND state IN ('active','revoked')`,
+      [gatewayState, modelAuthorizationHandle(prior.manifestDigest)],
+    );
+    if (authorizationChanged !== 1) {
+      throw new Error("ADMISSION_MODEL_GATEWAY_AUTHORIZATION_CAS_LOST");
+    }
+  }
   const next = await findManifest(transaction, prior, true);
   if (
     next === null || next.state !== state || next.segmentVersion !== prior.segmentVersion + 1n ||
@@ -243,6 +274,12 @@ function bindingDigestFromRef(value: string): string {
   const match = /^session-execution-binding:sha256:([0-9a-f]{64})$/u.exec(value);
   if (match?.[1] === undefined) throw new Error("ADMISSION_SESSION_BINDING_CONFLICT");
   return match[1];
+}
+
+function modelAuthorizationHandle(manifestDigest: string): string {
+  return `model-authorization:sha256:${createHash("sha256")
+    .update(`kokoro.model-gateway.authorization.v1\0${manifestDigest}`)
+    .digest("hex")}`;
 }
 
 function reference(value: string): string {

@@ -50,7 +50,7 @@ Keep domain/application independent of transport and persistence. Add deployable
 
 ## Current gotchas
 
-General Admission now has a transition-candidate application/Connect provider, exact-response PostgreSQL receipt journal, mTLS caller boundary, strict opaque execution-context mapping, and sealed GA request construction. Runtime traffic remains disabled until deployment supplies real owner-orchestration and production sealer adapters. Redeem fulfillment and Model Gateway production contracts also remain later waves.
+General Admission now has a transition-candidate application/Connect provider, exact-response PostgreSQL receipt journal, mTLS caller boundary, strict opaque execution-context mapping, and sealed GA request construction. Model Gateway now has an independent mTLS production process, opaque Admission authorization, durable attempt/usage ownership, encrypted response replay and a narrow LiteLLM chat adapter. Runtime traffic remains disabled until the Root contract carries the authorization handle and Session/Agent replace their direct model path; streaming, tools, reasoning and generation modalities still require certification.
 
 ## Verification
 
