@@ -32,6 +32,58 @@ services:
       KOKORO_SERVICE_PACKAGE: platform-api
       PLATFORM_DATABASE_CREDENTIAL_CLASS: api
       DATABASE_URL_PLATFORM: ${DATABASE_URL_PLATFORM_API:?required}
+      PLATFORM_API_PORT: 4100
+      PLATFORM_API_HEALTH_PORT: 4101
+      PLATFORM_API_FILE_TRUST_ROOT: /run/secrets/platform-api
+      PLATFORM_PRODUCT_WORKLOAD_REGISTRY_FILE: /run/secrets/platform-api/product-workloads.json
+      PLATFORM_SESSION_ACCESS_KEY_RING_FILE: /run/secrets/platform-api/session-access-keys.json
+      PLATFORM_AUTHORIZATION_EVENT_KEY_RING_FILE: /run/secrets/platform-api/authorization-event-keys.json
+      PLATFORM_PUBLIC_TLS_KEY_FILE: /run/secrets/platform-api/public-tls.key
+      PLATFORM_PUBLIC_TLS_CERT_FILE: /run/secrets/platform-api/public-tls.crt
+      PLATFORM_PUBLIC_TLS_CLIENT_CA_FILE: /run/secrets/platform-api/public-client-ca.crt
+      PLATFORM_COMMERCE_REDEMPTION_KEY_RING_FILE: /run/secrets/platform-api/commerce-redemption-keys.json
+      PLATFORM_ASSET_UPLOAD_POLICY_REGISTRY_FILE: /run/secrets/platform-api/asset-upload-policies.json
+      PLATFORM_ASSET_UPLOAD_CAPABILITY_KEY_RING_FILE: /run/secrets/platform-api/asset-upload-capability-keys.json
+      PLATFORM_IDENTITY_PASSWORD_PEPPER_RING_FILE: /run/secrets/platform-api/identity-password-peppers.json
+      PLATFORM_IDENTITY_VERIFICATION_DIGEST_KEY_FILE: /run/secrets/platform-api/identity-verification-digest.key
+      PLATFORM_IDENTITY_SESSION_DIGEST_KEY_FILE: /run/secrets/platform-api/identity-session-digest.key
+      PLATFORM_IDENTITY_REFRESH_DIGEST_KEY_FILE: /run/secrets/platform-api/identity-refresh-digest.key
+      PLATFORM_IDENTITY_REAUTH_DIGEST_KEY_FILE: /run/secrets/platform-api/identity-reauth-digest.key
+      PLATFORM_IDENTITY_AUDIT_DIGEST_KEY_FILE: /run/secrets/platform-api/identity-audit-digest.key
+      PLATFORM_IDENTITY_DELIVERY_KEY_FILE: /run/secrets/platform-api/identity-delivery.key
+      PLATFORM_IDENTITY_TOTP_KEY_RING_FILE: /run/secrets/platform-api/identity-totp-keys.json
+    ports:
+      - "4100:4100"
+    volumes:
+      - { type: bind, source: "${PLATFORM_PRODUCT_WORKLOAD_REGISTRY_FILE:?required}", target: /run/secrets/platform-api/product-workloads.json, read_only: true }
+      - { type: bind, source: "${PLATFORM_SESSION_ACCESS_KEY_RING_FILE:?required}", target: /run/secrets/platform-api/session-access-keys.json, read_only: true }
+      - { type: bind, source: "${PLATFORM_AUTHORIZATION_EVENT_KEY_RING_FILE:?required}", target: /run/secrets/platform-api/authorization-event-keys.json, read_only: true }
+      - { type: bind, source: "${PLATFORM_PUBLIC_TLS_KEY_FILE:?required}", target: /run/secrets/platform-api/public-tls.key, read_only: true }
+      - { type: bind, source: "${PLATFORM_PUBLIC_TLS_CERT_FILE:?required}", target: /run/secrets/platform-api/public-tls.crt, read_only: true }
+      - { type: bind, source: "${PLATFORM_PUBLIC_TLS_CLIENT_CA_FILE:?required}", target: /run/secrets/platform-api/public-client-ca.crt, read_only: true }
+      - { type: bind, source: "${PLATFORM_COMMERCE_REDEMPTION_KEY_RING_FILE:?required}", target: /run/secrets/platform-api/commerce-redemption-keys.json, read_only: true }
+      - { type: bind, source: "${PLATFORM_ASSET_UPLOAD_POLICY_REGISTRY_FILE:?required}", target: /run/secrets/platform-api/asset-upload-policies.json, read_only: true }
+      - { type: bind, source: "${PLATFORM_ASSET_UPLOAD_CAPABILITY_KEY_RING_FILE:?required}", target: /run/secrets/platform-api/asset-upload-capability-keys.json, read_only: true }
+      - { type: bind, source: "${PLATFORM_IDENTITY_PASSWORD_PEPPER_RING_FILE:?required}", target: /run/secrets/platform-api/identity-password-peppers.json, read_only: true }
+      - { type: bind, source: "${PLATFORM_IDENTITY_VERIFICATION_DIGEST_KEY_FILE:?required}", target: /run/secrets/platform-api/identity-verification-digest.key, read_only: true }
+      - { type: bind, source: "${PLATFORM_IDENTITY_SESSION_DIGEST_KEY_FILE:?required}", target: /run/secrets/platform-api/identity-session-digest.key, read_only: true }
+      - { type: bind, source: "${PLATFORM_IDENTITY_REFRESH_DIGEST_KEY_FILE:?required}", target: /run/secrets/platform-api/identity-refresh-digest.key, read_only: true }
+      - { type: bind, source: "${PLATFORM_IDENTITY_REAUTH_DIGEST_KEY_FILE:?required}", target: /run/secrets/platform-api/identity-reauth-digest.key, read_only: true }
+      - { type: bind, source: "${PLATFORM_IDENTITY_AUDIT_DIGEST_KEY_FILE:?required}", target: /run/secrets/platform-api/identity-audit-digest.key, read_only: true }
+      - { type: bind, source: "${PLATFORM_IDENTITY_DELIVERY_KEY_FILE:?required}", target: /run/secrets/platform-api/identity-delivery.key, read_only: true }
+      - { type: bind, source: "${PLATFORM_IDENTITY_TOTP_KEY_RING_FILE:?required}", target: /run/secrets/platform-api/identity-totp-keys.json, read_only: true }
+    healthcheck:
+      test:
+        ["CMD", "node", "-e", "fetch('http://127.0.0.1:4101/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    user: "${PLATFORM_RUNTIME_UID:-1000}:${PLATFORM_RUNTIME_GID:-1000}"
+    read_only: true
+    tmpfs:
+      - /tmp
+    stop_grace_period: 30s
 
   platform-admission:
     <<: *platform-service

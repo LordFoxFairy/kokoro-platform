@@ -20,7 +20,52 @@ deployables:
     inboundContracts: []
     declaredInboundContracts: [platform-public-http]
     outboundContracts: []
-    secretClasses: [platform-api-database, workload-verification, identity-totp-encryption-keyring, identity-reauthentication-digest-key, authorization-event-signing-keyring]
+    secretClasses:
+      - platform-api-database
+      - product-workload-registry
+      - session-access-signing-keyring
+      - authorization-event-signing-keyring
+      - mtls-server
+      - mtls-client-ca
+      - commerce-redemption-keyring
+      - asset-upload-policy-registry
+      - asset-upload-capability-keyring
+      - identity-password-pepper-keyring
+      - identity-verification-digest-key
+      - identity-session-digest-key
+      - identity-refresh-digest-key
+      - identity-reauthentication-digest-key
+      - identity-audit-digest-key
+      - identity-delivery-encryption-key
+      - identity-totp-encryption-keyring
+    ports:
+      - { name: public, containerPort: 4100, protocol: https, exposure: service, mtls: true }
+      - { name: health, containerPort: 4101, protocol: http, exposure: pod-only, mtls: false }
+    fileContract:
+      trustRootEnvironment: PLATFORM_API_FILE_TRUST_ROOT
+      mountPath: /run/secrets/platform-api
+      defaultMode: "0440"
+      requiredEnvironment:
+        - PLATFORM_PRODUCT_WORKLOAD_REGISTRY_FILE
+        - PLATFORM_SESSION_ACCESS_KEY_RING_FILE
+        - PLATFORM_AUTHORIZATION_EVENT_KEY_RING_FILE
+        - PLATFORM_PUBLIC_TLS_KEY_FILE
+        - PLATFORM_PUBLIC_TLS_CERT_FILE
+        - PLATFORM_PUBLIC_TLS_CLIENT_CA_FILE
+        - PLATFORM_COMMERCE_REDEMPTION_KEY_RING_FILE
+        - PLATFORM_ASSET_UPLOAD_POLICY_REGISTRY_FILE
+        - PLATFORM_ASSET_UPLOAD_CAPABILITY_KEY_RING_FILE
+        - PLATFORM_IDENTITY_PASSWORD_PEPPER_RING_FILE
+        - PLATFORM_IDENTITY_VERIFICATION_DIGEST_KEY_FILE
+        - PLATFORM_IDENTITY_SESSION_DIGEST_KEY_FILE
+        - PLATFORM_IDENTITY_REFRESH_DIGEST_KEY_FILE
+        - PLATFORM_IDENTITY_REAUTH_DIGEST_KEY_FILE
+        - PLATFORM_IDENTITY_AUDIT_DIGEST_KEY_FILE
+        - PLATFORM_IDENTITY_DELIVERY_KEY_FILE
+        - PLATFORM_IDENTITY_TOTP_KEY_RING_FILE
+    probes:
+      liveness: { path: /health/live, port: health, scheme: HTTP }
+      readiness: { path: /health/ready, port: health, scheme: HTTP }
     audience: platform-api
     scalingKey: http-concurrency
     readiness: /health/ready

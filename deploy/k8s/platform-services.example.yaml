@@ -20,24 +20,120 @@ items:
                 - { name: KOKORO_SERVICE_PACKAGE, value: platform-migrator }
                 - { name: PLATFORM_DATABASE_CREDENTIAL_CLASS, value: migrator }
 
+  - apiVersion: v1
+    kind: ServiceAccount
+    metadata: { name: platform-api }
+    automountServiceAccountToken: false
+
   - apiVersion: apps/v1
     kind: Deployment
     metadata: { name: platform-api }
     spec:
       replicas: 2
       selector: { matchLabels: { app: platform-api } }
+      strategy:
+        type: RollingUpdate
+        rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
       template:
         metadata: { labels: { app: platform-api } }
         spec:
+          serviceAccountName: platform-api
+          automountServiceAccountToken: false
+          terminationGracePeriodSeconds: 30
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            fsGroupChangePolicy: OnRootMismatch
+            seccompProfile: { type: RuntimeDefault }
           containers:
             - name: platform-api
               image: ghcr.io/lordfoxfairy/kokoro-platform:RELEASE_DIGEST
+              imagePullPolicy: IfNotPresent
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
               envFrom:
                 - configMapRef: { name: platform-runtime }
                 - secretRef: { name: platform-api-secrets }
               env:
                 - { name: KOKORO_SERVICE_PACKAGE, value: platform-api }
                 - { name: PLATFORM_DATABASE_CREDENTIAL_CLASS, value: api }
+                - { name: PLATFORM_API_PORT, value: "4100" }
+                - { name: PLATFORM_API_HEALTH_PORT, value: "4101" }
+                - { name: PLATFORM_API_FILE_TRUST_ROOT, value: /run/secrets/platform-api }
+                - { name: PLATFORM_PRODUCT_WORKLOAD_REGISTRY_FILE, value: /run/secrets/platform-api/product-workloads.json }
+                - { name: PLATFORM_SESSION_ACCESS_KEY_RING_FILE, value: /run/secrets/platform-api/session-access-keys.json }
+                - { name: PLATFORM_AUTHORIZATION_EVENT_KEY_RING_FILE, value: /run/secrets/platform-api/authorization-event-keys.json }
+                - { name: PLATFORM_PUBLIC_TLS_KEY_FILE, value: /run/secrets/platform-api/public-tls.key }
+                - { name: PLATFORM_PUBLIC_TLS_CERT_FILE, value: /run/secrets/platform-api/public-tls.crt }
+                - { name: PLATFORM_PUBLIC_TLS_CLIENT_CA_FILE, value: /run/secrets/platform-api/public-client-ca.crt }
+                - { name: PLATFORM_COMMERCE_REDEMPTION_KEY_RING_FILE, value: /run/secrets/platform-api/commerce-redemption-keys.json }
+                - { name: PLATFORM_ASSET_UPLOAD_POLICY_REGISTRY_FILE, value: /run/secrets/platform-api/asset-upload-policies.json }
+                - { name: PLATFORM_ASSET_UPLOAD_CAPABILITY_KEY_RING_FILE, value: /run/secrets/platform-api/asset-upload-capability-keys.json }
+                - { name: PLATFORM_IDENTITY_PASSWORD_PEPPER_RING_FILE, value: /run/secrets/platform-api/identity-password-peppers.json }
+                - { name: PLATFORM_IDENTITY_VERIFICATION_DIGEST_KEY_FILE, value: /run/secrets/platform-api/identity-verification-digest.key }
+                - { name: PLATFORM_IDENTITY_SESSION_DIGEST_KEY_FILE, value: /run/secrets/platform-api/identity-session-digest.key }
+                - { name: PLATFORM_IDENTITY_REFRESH_DIGEST_KEY_FILE, value: /run/secrets/platform-api/identity-refresh-digest.key }
+                - { name: PLATFORM_IDENTITY_REAUTH_DIGEST_KEY_FILE, value: /run/secrets/platform-api/identity-reauth-digest.key }
+                - { name: PLATFORM_IDENTITY_AUDIT_DIGEST_KEY_FILE, value: /run/secrets/platform-api/identity-audit-digest.key }
+                - { name: PLATFORM_IDENTITY_DELIVERY_KEY_FILE, value: /run/secrets/platform-api/identity-delivery.key }
+                - { name: PLATFORM_IDENTITY_TOTP_KEY_RING_FILE, value: /run/secrets/platform-api/identity-totp-keys.json }
+              ports:
+                - { name: public, containerPort: 4100 }
+                - { name: health, containerPort: 4101 }
+              startupProbe:
+                httpGet: { path: /health/live, port: health, scheme: HTTP }
+                failureThreshold: 30
+                periodSeconds: 2
+              livenessProbe:
+                httpGet: { path: /health/live, port: health, scheme: HTTP }
+                periodSeconds: 10
+                timeoutSeconds: 2
+                failureThreshold: 3
+              readinessProbe:
+                httpGet: { path: /health/ready, port: health, scheme: HTTP }
+                periodSeconds: 5
+                timeoutSeconds: 2
+                failureThreshold: 2
+              resources:
+                requests: { cpu: 100m, memory: 256Mi }
+                limits: { cpu: "2", memory: 1Gi }
+              volumeMounts:
+                - { name: platform-api-files, mountPath: /run/secrets/platform-api, readOnly: true }
+          volumes:
+            - name: platform-api-files
+              secret:
+                secretName: platform-api-files
+                defaultMode: 288
+                items:
+                  - { key: product-workloads.json, path: product-workloads.json }
+                  - { key: session-access-keys.json, path: session-access-keys.json }
+                  - { key: authorization-event-keys.json, path: authorization-event-keys.json }
+                  - { key: public-tls.key, path: public-tls.key }
+                  - { key: public-tls.crt, path: public-tls.crt }
+                  - { key: public-client-ca.crt, path: public-client-ca.crt }
+                  - { key: commerce-redemption-keys.json, path: commerce-redemption-keys.json }
+                  - { key: asset-upload-policies.json, path: asset-upload-policies.json }
+                  - { key: asset-upload-capability-keys.json, path: asset-upload-capability-keys.json }
+                  - { key: identity-password-peppers.json, path: identity-password-peppers.json }
+                  - { key: identity-verification-digest.key, path: identity-verification-digest.key }
+                  - { key: identity-session-digest.key, path: identity-session-digest.key }
+                  - { key: identity-refresh-digest.key, path: identity-refresh-digest.key }
+                  - { key: identity-reauth-digest.key, path: identity-reauth-digest.key }
+                  - { key: identity-audit-digest.key, path: identity-audit-digest.key }
+                  - { key: identity-delivery.key, path: identity-delivery.key }
+                  - { key: identity-totp-keys.json, path: identity-totp-keys.json }
+
+  - apiVersion: v1
+    kind: Service
+    metadata: { name: platform-api }
+    spec:
+      selector: { app: platform-api }
+      ports:
+        - { name: public, port: 4100, targetPort: public }
 
   - apiVersion: apps/v1
     kind: Deployment
