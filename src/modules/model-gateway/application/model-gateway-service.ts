@@ -239,6 +239,15 @@ export interface ModelGatewayStreamingRepository {
   ): Promise<readonly ModelGatewayStreamFrame[]>;
 }
 
+export interface ModelGatewayFrameWaiter {
+  waitForFrame(
+    invocationRef: string,
+    afterSequence: bigint,
+    signal: AbortSignal,
+    maximumWaitMs: number,
+  ): Promise<void>;
+}
+
 export type ModelGatewayUsageOwnerPort = Pick<
   UsageSettlementService,
   "prepareAttempt" | "finalizeAttempt" | "markAttemptOutcomeUnknown"
@@ -295,6 +304,7 @@ export class ModelGatewayService {
     providerHardTimeoutMs?: number;
     maximumActive?: number;
     maximumQueued?: number;
+    frameWaiter?: ModelGatewayFrameWaiter;
   }>) {
     this.#clock = dependencies.clock ?? (() => new Date());
     this.#reference = dependencies.reference ?? (() => randomUUID());
@@ -439,7 +449,6 @@ export class ModelGatewayService {
     }
 
     let cursor = input.afterSequence;
-    let tailBackoffMs = 25;
     while (true) {
       if (input.signal.aborted) return;
       const frames = await this.dependencies.unitOfWork.execute({
@@ -456,10 +465,16 @@ export class ModelGatewayService {
         if (terminalPayload(frame.payload)) return;
       }
       if (frames.length === 0) {
-        await abortableDelay(tailBackoffMs, input.signal);
-        tailBackoffMs = Math.min(tailBackoffMs * 2, 500);
-      } else {
-        tailBackoffMs = 25;
+        if (this.dependencies.frameWaiter === undefined) {
+          await abortableDelay(500, input.signal);
+        } else {
+          await this.dependencies.frameWaiter.waitForFrame(
+            record.invocationRef,
+            cursor,
+            input.signal,
+            2_000,
+          );
+        }
       }
     }
   }

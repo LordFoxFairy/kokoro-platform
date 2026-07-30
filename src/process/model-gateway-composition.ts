@@ -94,6 +94,7 @@ export async function createModelGatewayProductionComposition(input: Readonly<{
       environment.PLATFORM_MODEL_GATEWAY_MAXIMUM_QUEUED ?? "256", 1, 100_000,
       "PLATFORM_MODEL_GATEWAY_MAXIMUM_QUEUED_INVALID",
     ),
+    frameWaiter: input.database,
   });
   const callers = new AsyncLocalStorage<Peer>();
   const service = createModelGatewayConnectService({

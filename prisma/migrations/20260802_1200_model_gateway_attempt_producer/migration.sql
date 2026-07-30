@@ -172,6 +172,27 @@ CREATE INDEX model_gateway_outbox_publish_idx
   ON platform.model_gateway_outbox(created_at,site_ref,event_ref)
   WHERE published_at IS NULL;
 
+-- Transactional wake-up for resumable stream tails. PostgreSQL delivers the
+-- notification only after the frame transaction commits; readers still
+-- perform a bounded rescan, so notifications are a latency/connection-pool
+-- optimization rather than a correctness dependency.
+CREATE FUNCTION platform.notify_model_gateway_frame() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, platform
+AS $$
+BEGIN
+  PERFORM pg_notify(
+    'kokoro_model_gateway_frame',
+    NEW.invocation_ref::text || ':' || NEW.sequence::text
+  );
+  RETURN NULL;
+END
+$$;
+REVOKE ALL ON FUNCTION platform.notify_model_gateway_frame() FROM PUBLIC;
+CREATE TRIGGER model_gateway_frame_notify
+AFTER INSERT ON platform.model_gateway_frame
+FOR EACH ROW EXECUTE FUNCTION platform.notify_model_gateway_frame();
+
 CREATE FUNCTION platform.resolve_model_gateway_authorization(requested_handle TEXT, requested_operation TEXT)
 RETURNS TABLE (
   authorization_handle TEXT,

@@ -1,5 +1,6 @@
 import { Pool } from "pg";
 import type {
+  ModelGatewayFrameWaiter,
   ModelGatewayUnitOfWork,
   ModelInvocationAuthorization,
 } from "../../application/model-gateway-service.js";
@@ -17,7 +18,13 @@ interface ModelGatewayPoolClient {
     text: string,
     values?: readonly unknown[],
   ): Promise<QueryResult>;
-  release(): void;
+  on?(event: "notification", listener: (message: Readonly<{
+    channel: string;
+    payload?: string;
+  }>) => void): this;
+  on?(event: "error", listener: (error: Error) => void): this;
+  on?(event: "end", listener: () => void): this;
+  release(destroy?: boolean): void;
 }
 interface ModelGatewayPool {
   connect(): Promise<ModelGatewayPoolClient>;
@@ -47,7 +54,16 @@ interface AuthorizationRow extends Record<string, unknown> {
   expiresAt: Date | string;
 }
 
-export class PostgresModelGatewayDatabase implements ModelGatewayUnitOfWork {
+export class PostgresModelGatewayDatabase implements ModelGatewayUnitOfWork, ModelGatewayFrameWaiter {
+  readonly #frameWaiters = new Map<string, Set<Readonly<{
+    afterSequence: bigint;
+    wake: () => void;
+  }>>>();
+  readonly #latestFrameSequences = new Map<string, bigint>();
+  #frameListener: ModelGatewayPoolClient | null = null;
+  #frameListenerHealthy = false;
+  #frameWaiterCount = 0;
+
   constructor(private readonly dependencies: Readonly<{
     pool: ModelGatewayPool;
     expectedDatabaseUser: string;
@@ -66,9 +82,19 @@ export class PostgresModelGatewayDatabase implements ModelGatewayUnitOfWork {
     if (result.rows.length !== 1 || !validIdentity(result.rows[0] as RuntimeIdentity | undefined, this.dependencies)) {
       throw new Error("MODEL_GATEWAY_DATABASE_ROLE_INVALID");
     }
+    await this.#connectFrameListener();
   }
 
-  disconnect(): Promise<void> { return this.dependencies.pool.end(); }
+  async disconnect(): Promise<void> {
+    const listener = this.#frameListener;
+    this.#frameListener = null;
+    this.#disableFrameNotifications();
+    if (listener !== null) {
+      await listener.query(`UNLISTEN ${FRAME_NOTIFICATION_CHANNEL}`).catch(() => undefined);
+      listener.release();
+    }
+    await this.dependencies.pool.end();
+  }
 
   async checkHealth(): Promise<void> {
     if (this.dependencies.pool.query === undefined) {
@@ -77,6 +103,53 @@ export class PostgresModelGatewayDatabase implements ModelGatewayUnitOfWork {
     await this.dependencies.pool.query(
       `SELECT "schemaVersion" FROM platform.platform_foundation WHERE singleton=TRUE`,
     );
+    if (!this.#frameListenerHealthy) {
+      throw new Error("MODEL_GATEWAY_FRAME_LISTENER_UNAVAILABLE");
+    }
+  }
+
+  async waitForFrame(
+    invocationRef: string,
+    afterSequence: bigint,
+    signal: AbortSignal,
+    maximumWaitMs: number,
+  ): Promise<void> {
+    if (!UUID.test(invocationRef) || afterSequence < 0n ||
+        !Number.isInteger(maximumWaitMs) || maximumWaitMs < 10 || maximumWaitMs > 10_000) {
+      throw new Error("MODEL_GATEWAY_FRAME_WAIT_INVALID");
+    }
+    if (signal.aborted || (this.#latestFrameSequences.get(invocationRef) ?? 0n) > afterSequence) return;
+
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      let registered = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        signal.removeEventListener("abort", finish);
+        if (registered) {
+          const invocationWaiters = this.#frameWaiters.get(invocationRef);
+          invocationWaiters?.delete(waiter);
+          this.#frameWaiterCount -= 1;
+          if (invocationWaiters?.size === 0) this.#frameWaiters.delete(invocationRef);
+        }
+        resolve();
+      };
+      const waiter = Object.freeze({ afterSequence, wake: finish });
+      const timer = setTimeout(finish, maximumWaitMs);
+      timer.unref();
+      signal.addEventListener("abort", finish, { once: true });
+
+      if (this.#frameListenerHealthy && this.#frameWaiterCount < MAXIMUM_FRAME_WAITERS) {
+        const invocationWaiters = this.#frameWaiters.get(invocationRef) ?? new Set();
+        invocationWaiters.add(waiter);
+        this.#frameWaiters.set(invocationRef, invocationWaiters);
+        this.#frameWaiterCount += 1;
+        registered = true;
+      }
+      if ((this.#latestFrameSequences.get(invocationRef) ?? 0n) > afterSequence) finish();
+    });
   }
 
   async scanDispatchCandidates(limit: number): Promise<readonly Readonly<{
@@ -167,7 +240,62 @@ export class PostgresModelGatewayDatabase implements ModelGatewayUnitOfWork {
       client.release();
     }
   }
+
+  async #connectFrameListener(): Promise<void> {
+    if (this.#frameListener !== null) return;
+    const listener = await this.dependencies.pool.connect();
+    if (listener.on === undefined) {
+      listener.release(true);
+      throw new Error("MODEL_GATEWAY_FRAME_LISTENER_INVALID");
+    }
+    listener.on("notification", (message) => this.#recordFrameNotification(message));
+    listener.on("error", () => this.#disableFrameNotifications());
+    listener.on("end", () => this.#disableFrameNotifications());
+    try {
+      await listener.query(`LISTEN ${FRAME_NOTIFICATION_CHANNEL}`);
+    } catch (error) {
+      listener.release(true);
+      throw error;
+    }
+    this.#frameListener = listener;
+    this.#frameListenerHealthy = true;
+  }
+
+  #recordFrameNotification(message: Readonly<{ channel: string; payload?: string }>): void {
+    if (message.channel !== FRAME_NOTIFICATION_CHANNEL || message.payload === undefined) return;
+    const match = FRAME_NOTIFICATION_PAYLOAD.exec(message.payload);
+    if (match === null) return;
+    const invocationRef = match[1];
+    const sequenceText = match[2];
+    if (invocationRef === undefined || sequenceText === undefined) return;
+    const sequence = BigInt(sequenceText);
+    const previous = this.#latestFrameSequences.get(invocationRef) ?? 0n;
+    if (sequence <= previous) return;
+    if (!this.#latestFrameSequences.has(invocationRef) &&
+        this.#latestFrameSequences.size >= MAXIMUM_TRACKED_INVOCATIONS) {
+      const oldest = this.#latestFrameSequences.keys().next().value as string | undefined;
+      if (oldest !== undefined) this.#latestFrameSequences.delete(oldest);
+    }
+    this.#latestFrameSequences.delete(invocationRef);
+    this.#latestFrameSequences.set(invocationRef, sequence);
+    for (const waiter of [...(this.#frameWaiters.get(invocationRef) ?? [])]) {
+      if (sequence > waiter.afterSequence) waiter.wake();
+    }
+  }
+
+  #disableFrameNotifications(): void {
+    this.#frameListenerHealthy = false;
+    for (const waiters of this.#frameWaiters.values()) {
+      for (const waiter of [...waiters]) waiter.wake();
+    }
+  }
 }
+
+const FRAME_NOTIFICATION_CHANNEL = "kokoro_model_gateway_frame";
+const FRAME_NOTIFICATION_PAYLOAD = /^([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}):([1-9][0-9]{0,18})$/u;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const MAXIMUM_FRAME_WAITERS = 4_096;
+const MAXIMUM_TRACKED_INVOCATIONS = 8_192;
 
 export function loadModelGatewayDatabaseConfig(
   environment: Readonly<Record<string, string | undefined>> = process.env,
