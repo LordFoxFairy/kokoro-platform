@@ -43,12 +43,27 @@ describe("Identity outbox production authority", () => {
   });
 
   it("checks sequence privileges only against real sequences", async () => {
-    const migrator = await readFile("src/infrastructure/postgres/migrator.ts", "utf8");
-    expect(migrator).not.toMatch(
+    const [migrator, client] = await Promise.all([
+      readFile("src/infrastructure/postgres/migrator.ts", "utf8"),
+      readFile("src/infrastructure/postgres/client.ts", "utf8"),
+    ]);
+    for (const authority of [migrator, client]) expect(authority).not.toMatch(
       /relkind\s*=\s*'S'\s+AND\s+has_sequence_privilege\([^)]*\.oid/gu,
     );
     expect(migrator).toContain("CASE WHEN sequence_row.relkind='S' THEN");
     expect(migrator).toContain("CASE WHEN candidate.relkind = 'S' THEN");
+    expect(client).toContain("CASE WHEN sequence_row.relkind='S' THEN");
+    expect(client).toContain("CASE WHEN candidate.relkind = 'S' THEN");
+  });
+
+  it("allows the Identity worker's exact column updates in both privilege audits", async () => {
+    const client = await readFile("src/infrastructure/postgres/client.ts", "utf8");
+    const exactIdentityUpdateAllowlist =
+      /\$2 = 'identity-worker' AND candidate\.relname = ANY\(ARRAY\[\s*'outbox_event','identity_verification_delivery','identity_execution_space',\s*'identity_namespace_allocation_intent'\s*\]\)/gu;
+    expect([...client.matchAll(exactIdentityUpdateAllowlist)]).toHaveLength(2);
+    expect(client).not.toMatch(
+      /\$2 = 'worker' AND candidate\.relname = ANY\(ARRAY\[[^\]]*identity_verification_delivery/gu,
+    );
   });
 
   it("persists bounded namespace failure evidence without storing verification credentials", async () => {

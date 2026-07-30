@@ -1530,8 +1530,10 @@ const RUNTIME_IDENTITY_SQL = `
            OR EXISTS (
              SELECT 1 FROM pg_class sequence_row
              JOIN pg_namespace namespace_row ON namespace_row.oid=sequence_row.relnamespace
-             WHERE namespace_row.nspname='platform' AND sequence_row.relkind='S'
-               AND has_sequence_privilege(current_user,sequence_row.oid,'USAGE,SELECT,UPDATE')
+             WHERE namespace_row.nspname='platform'
+               AND CASE WHEN sequence_row.relkind='S' THEN
+                 has_sequence_privilege(current_user,sequence_row.oid,'USAGE,SELECT,UPDATE')
+               ELSE FALSE END
            )
          WHEN $2='worker' THEN
            EXISTS (
@@ -1624,9 +1626,11 @@ const RUNTIME_IDENTITY_SQL = `
            SELECT candidate.relname::text FROM pg_class candidate
            WHERE candidate.relnamespace = platform_schema.oid
              AND (
-               (candidate.relkind = 'S' AND has_sequence_privilege(
-                 runtime_role.rolname, candidate.oid, 'USAGE,SELECT,UPDATE'
-               ))
+               (CASE WHEN candidate.relkind = 'S' THEN
+                 has_sequence_privilege(
+                   runtime_role.rolname, candidate.oid, 'USAGE,SELECT,UPDATE'
+                 )
+               ELSE FALSE END)
                OR (candidate.relkind <> 'S' AND candidate.relname <> ALL(ARRAY[
                  'platform_foundation','command_receipt','outbox_event','inbox_delivery',
                  'model_inventory_import','model_inventory_activation','model_inventory_pointer','model_provider_snapshot',
@@ -1981,8 +1985,10 @@ const RUNTIME_IDENTITY_SQL = `
                    OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
                      'outbox_event','site','site_release','site_deployment_binding',
                      'site_activation_attempt','site_traffic_stop_attempt','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_site',
-                     'authorization_site_release','authorization_product_binding',
-                     'identity_verification_delivery','identity_execution_space',
+                     'authorization_site_release','authorization_product_binding'
+                   ]))
+                   OR ($2 = 'identity-worker' AND candidate.relname = ANY(ARRAY[
+                     'outbox_event','identity_verification_delivery','identity_execution_space',
                      'identity_namespace_allocation_intent'
                    ]))
                    OR ($2 = 'api' AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
