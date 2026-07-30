@@ -44,22 +44,196 @@ model CommandReceipt {
 }
 
 model AdminOperatorAuthority {
-  operatorRef         String    @map("operator_ref")
-  operatorGeneration  BigInt    @map("operator_generation")
-  state               String
-  permissions         String[]
-  siteScopes          String[]  @map("site_scopes")
-  environments        String[]
-  regions             String[]
-  authorizationEpoch  BigInt    @map("authorization_epoch")
-  expiresAt           DateTime  @map("expires_at") @db.Timestamptz(6)
-  breakGlassExpiresAt DateTime? @map("break_glass_expires_at") @db.Timestamptz(6)
-  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt           DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  operatorRef           String   @map("operator_ref")
+  operatorGeneration    BigInt   @map("operator_generation")
+  state                 String
+  permissions           String[]
+  operatorSecurityEpoch BigInt   @map("operator_security_epoch")
+  authorizationEpoch    BigInt   @map("authorization_epoch")
+  expiresAt             DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@id([operatorRef, operatorGeneration])
   @@index([state, expiresAt])
   @@map("admin_operator_authority")
+  @@schema("platform")
+}
+
+model AdminOperatorSiteScope {
+  operatorRef        String   @map("operator_ref")
+  operatorGeneration BigInt   @map("operator_generation")
+  siteRef            String   @map("site_ref")
+  environment        String
+  region             String
+  scopeEpoch         BigInt   @map("scope_epoch")
+  state              String
+  expiresAt          DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@id([operatorRef, operatorGeneration, siteRef, environment, region])
+  @@index([siteRef, environment, region, state, expiresAt])
+  @@map("admin_operator_site_scope")
+  @@schema("platform")
+}
+
+model AdminOperatorGlobalScopeGrant {
+  grantRef           String   @id @map("grant_ref") @db.Uuid
+  operatorRef        String   @map("operator_ref")
+  operatorGeneration BigInt   @map("operator_generation")
+  environment        String
+  region             String
+  scopeEpoch         BigInt   @map("scope_epoch")
+  state              String
+  expiresAt          DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([operatorRef, operatorGeneration, environment, region, state, expiresAt])
+  @@map("admin_operator_global_scope_grant")
+  @@schema("platform")
+}
+
+model AdminBreakGlassGrant {
+  grantRef            String   @id @map("grant_ref") @db.Uuid
+  operatorRef         String   @map("operator_ref")
+  operatorGeneration  BigInt   @map("operator_generation")
+  incidentRef         String   @map("incident_ref")
+  environment         String
+  region              String
+  authorizedOperation String   @map("authorized_operation")
+  resourceRefs        String[] @map("resource_refs")
+  fieldAllowlist      String[] @map("field_allowlist")
+  scopeEpoch          BigInt   @map("scope_epoch")
+  state               String
+  approvedByRefs      String[] @map("approved_by_refs")
+  expiresAt           DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([operatorRef, operatorGeneration, environment, region, state, expiresAt])
+  @@map("admin_breakglass_grant")
+  @@schema("platform")
+}
+
+model AdminOperatorIdentity {
+  identityRef        String   @id @map("identity_ref") @db.Uuid
+  issuer             String
+  subject            String
+  operatorRef        String   @map("operator_ref")
+  operatorGeneration BigInt   @map("operator_generation")
+  state              String
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([issuer, subject])
+  @@index([operatorRef, operatorGeneration, state])
+  @@map("admin_operator_identity")
+  @@schema("platform")
+}
+
+model AdminOidcTransaction {
+  transactionRef          String    @id @map("transaction_ref") @db.Uuid
+  state                   String
+  beginCommandId          String    @unique @map("begin_command_id")
+  beginIdempotencyKey     String    @map("begin_idempotency_key")
+  beginRequestDigest      String    @map("begin_request_digest") @db.Char(64)
+  workloadIdentityRef     String    @map("workload_identity_ref")
+  environment             String
+  region                  String
+  managedDeviceRef        String    @map("managed_device_ref")
+  audience                String
+  returnIntentRef         String    @map("return_intent_ref")
+  issuer                  String
+  clientId                String    @map("client_id")
+  oidcAudience            String    @map("oidc_audience")
+  exactCallbackUri        String    @map("exact_callback_uri")
+  pkceVerifierCiphertext  String    @map("pkce_verifier_ciphertext")
+  pkceChallenge           String    @map("pkce_challenge")
+  nonceCiphertext         String    @map("nonce_ciphertext")
+  stateDigest             String    @map("state_digest") @db.Char(64)
+  recoveryDigest          String    @unique @map("recovery_digest") @db.Char(64)
+  signingKeyRevision      String    @map("signing_key_revision")
+  deliveryKeyRevision     String    @map("delivery_key_revision")
+  exchangeCommandId       String?   @unique @map("exchange_command_id")
+  exchangeIdempotencyKey  String?   @map("exchange_idempotency_key")
+  exchangeRequestDigest   String?   @map("exchange_request_digest") @db.Char(64)
+  operatorSessionRef      String?   @unique @map("operator_session_ref") @db.Uuid
+  sessionExpiresAt        DateTime? @map("session_expires_at") @db.Timestamptz(6)
+  deliveryEnvelope        String?   @map("delivery_envelope")
+  exchangeReceipt         Json?     @map("exchange_receipt")
+  expiresAt               DateTime  @map("expires_at") @db.Timestamptz(6)
+  recoveryExpiresAt       DateTime  @map("recovery_expires_at") @db.Timestamptz(6)
+  deliveryExpiresAt       DateTime? @map("delivery_expires_at") @db.Timestamptz(6)
+  claimedAt               DateTime? @map("claimed_at") @db.Timestamptz(6)
+  committedAt             DateTime? @map("committed_at") @db.Timestamptz(6)
+  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([workloadIdentityRef, environment, region, beginIdempotencyKey])
+  @@index([state, expiresAt])
+  @@map("admin_oidc_transaction")
+  @@schema("platform")
+}
+
+model AdminOperatorSession {
+  operatorSessionRef    String    @id @map("operator_session_ref") @db.Uuid
+  credentialDigest     String    @unique @map("credential_digest") @db.Char(64)
+  operatorRef          String    @map("operator_ref")
+  operatorGeneration   BigInt    @map("operator_generation")
+  workloadIdentityRef  String    @map("workload_identity_ref")
+  environment          String
+  region               String
+  managedDeviceRef     String    @map("managed_device_ref")
+  audience             String
+  operatorSecurityEpoch BigInt   @map("operator_security_epoch")
+  sessionEpoch         BigInt    @map("session_epoch")
+  restrictionEpoch     BigInt    @map("restriction_epoch")
+  policyEpoch          BigInt    @map("policy_epoch")
+  assuranceLevel       String    @map("assurance_level")
+  factorClasses        String[]  @map("factor_classes")
+  state                String
+  authenticatedAt      DateTime  @map("authenticated_at") @db.Timestamptz(6)
+  stepUpAt             DateTime? @map("step_up_at") @db.Timestamptz(6)
+  expiresAt            DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt            DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([operatorRef, operatorGeneration, state, expiresAt])
+  @@index([workloadIdentityRef, environment, region, state, expiresAt])
+  @@map("admin_operator_session")
+  @@schema("platform")
+}
+
+model AdminStepUpTransaction {
+  transactionRef         String    @id @map("transaction_ref") @db.Uuid
+  state                  String
+  beginCommandId         String    @unique @map("begin_command_id")
+  beginIdempotencyKey    String    @map("begin_idempotency_key")
+  beginRequestDigest     String    @map("begin_request_digest") @db.Char(64)
+  completeCommandId      String?   @unique @map("complete_command_id")
+  completeIdempotencyKey String?   @map("complete_idempotency_key")
+  completeRequestDigest  String?   @map("complete_request_digest") @db.Char(64)
+  operatorSessionRef     String    @map("operator_session_ref") @db.Uuid
+  operatorRef            String    @map("operator_ref")
+  operatorGeneration     BigInt    @map("operator_generation")
+  requestedOperation     String    @map("requested_operation")
+  resourceRefs           String[]  @map("resource_refs")
+  callbackRef            String    @map("callback_ref")
+  issuer                 String
+  clientId               String    @map("client_id")
+  oidcAudience           String    @map("oidc_audience")
+  exactCallbackUri       String    @map("exact_callback_uri")
+  pkceVerifierCiphertext String    @map("pkce_verifier_ciphertext")
+  nonceCiphertext        String    @map("nonce_ciphertext")
+  completeReceipt        Json?     @map("complete_receipt")
+  expiresAt              DateTime  @map("expires_at") @db.Timestamptz(6)
+  claimedAt              DateTime? @map("claimed_at") @db.Timestamptz(6)
+  completedAt            DateTime? @map("completed_at") @db.Timestamptz(6)
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([operatorSessionRef, state, expiresAt])
+  @@map("admin_step_up_transaction")
   @@schema("platform")
 }
 

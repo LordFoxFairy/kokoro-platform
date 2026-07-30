@@ -68,6 +68,8 @@ export function createAdminCommandConnectService(input: Readonly<{
     async submitCommand(request, transport) {
       const claimed = required(request.context, "ADMIN_COMMAND_CONTEXT_REQUIRED");
       const effect = required(request.effect, "ADMIN_COMMAND_EFFECT_REQUIRED");
+      const change = required(effect.change, "ADMIN_AUTHORITY_CHANGE_REQUIRED");
+      if (change.operatorRef === claimed.actorRef) throw new Error("ADMIN_SELF_ESCALATION_DENIED");
       const identity = commandIdentity(claimed);
       const verified = await input.resolver.resolveCommand(
         claimed,
@@ -85,7 +87,7 @@ export function createAdminCommandConnectService(input: Readonly<{
         targetSiteRef: null,
         reason: effect.reason,
         breakGlassTicketRef: null,
-        payload: authorityPayload(required(effect.change, "ADMIN_AUTHORITY_CHANGE_REQUIRED")),
+        payload: authorityPayload(change),
       });
       const receipt = await input.receipts.read(verified.context, {
         commandId: identity.commandId,
@@ -182,6 +184,7 @@ function authorityPayload(change: ChangeOperatorAuthority): JsonValue {
   }
   if (change.permissions.length === 0 || change.siteIds.length === 0 ||
       change.environments.length === 0 || change.regions.length === 0 ||
+      change.siteIds.includes("*") || change.breakGlassExpiresAt !== undefined ||
       change.expiresAt === undefined ||
       (action === "replace" && change.expectedAuthorizationEpoch === undefined) ||
       (action === "provision" && change.expectedAuthorizationEpoch !== undefined)) {
@@ -197,9 +200,6 @@ function authorityPayload(change: ChangeOperatorAuthority): JsonValue {
     environments: [...change.environments],
     regions: [...change.regions],
     expiresAt: timestampDate(change.expiresAt).toISOString(),
-    breakGlassExpiresAt: change.breakGlassExpiresAt === undefined
-      ? null
-      : timestampDate(change.breakGlassExpiresAt).toISOString(),
   });
 }
 

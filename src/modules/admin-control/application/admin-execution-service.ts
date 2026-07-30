@@ -198,8 +198,8 @@ function authoritiesCurrent(
 
 function scoped(authority: AdminOperatorAuthority, siteRef: string | null): boolean {
   return siteRef === null
-    ? authority.siteScopes.includes("*")
-    : authority.siteScopes.includes("*") || authority.siteScopes.includes(siteRef);
+    ? authority.globalScopes.length > 0
+    : authority.siteScopes.includes(siteRef);
 }
 
 function permits(grants: readonly string[], required: string): boolean {

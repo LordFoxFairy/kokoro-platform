@@ -549,7 +549,7 @@ async function grantFoundationPrivileges(
       );
     } else if (role === workerRole) {
       await client.query(
-        `GRANT SELECT ON TABLE ${KERNEL_TABLES}, ${SITE_RECONCILIATION_TABLES}, platform.authorization_site, platform.authorization_site_release, platform.authorization_product_binding, platform.authorization_event_log, platform.authorization_snapshot, platform.authorization_product_context, platform.authorization_session_access_grant, platform.commerce_redemption, platform.commerce_fulfillment_transaction, platform.credit_budget_operation_receipt, platform.credit_authorization_segment, platform.admin_operator_authority, platform.admin_approval, platform.admin_post_effect_review TO ${identifier}`,
+        `GRANT SELECT ON TABLE ${KERNEL_TABLES}, ${SITE_RECONCILIATION_TABLES}, platform.authorization_site, platform.authorization_site_release, platform.authorization_product_binding, platform.authorization_event_log, platform.authorization_snapshot, platform.authorization_product_context, platform.authorization_session_access_grant, platform.commerce_redemption, platform.commerce_fulfillment_transaction, platform.credit_budget_operation_receipt, platform.credit_authorization_segment, platform.admin_operator_authority, platform.admin_operator_site_scope, platform.admin_operator_global_scope_grant, platform.admin_breakglass_grant, platform.admin_approval, platform.admin_post_effect_review TO ${identifier}`,
       );
       await client.query(`GRANT INSERT ON TABLE platform.inbox_delivery TO ${identifier}`);
       await client.query(
@@ -643,10 +643,10 @@ async function grantFoundationPrivileges(
       await client.query(`GRANT SELECT ON TABLE ${ADMIN_TABLES} TO ${identifier}`);
       await client.query(`GRANT SELECT ON TABLE ${ASSET_TABLES} TO ${identifier}`);
       await client.query(
-        `GRANT INSERT ON TABLE platform.admin_command_decision, platform.admin_approval, platform.admin_approval_decision, platform.admin_post_effect_review TO ${identifier}`,
+        `GRANT INSERT ON TABLE platform.admin_command_decision, platform.admin_approval, platform.admin_approval_decision, platform.admin_post_effect_review, platform.admin_oidc_transaction, platform.admin_operator_session, platform.admin_step_up_transaction TO ${identifier}`,
       );
       await client.query(
-        `GRANT UPDATE ON TABLE platform.admin_approval, platform.admin_post_effect_review TO ${identifier}`,
+        `GRANT UPDATE ON TABLE platform.admin_approval, platform.admin_post_effect_review, platform.admin_oidc_transaction, platform.admin_operator_session, platform.admin_step_up_transaction TO ${identifier}`,
       );
       await client.query(
         `GRANT INSERT ON TABLE platform.commerce_command, platform.commerce_redemption_program_revision, platform.commerce_redemption_program_availability, platform.commerce_code_batch, platform.commerce_redeem_code, platform.commerce_code_batch_approval, platform.commerce_code_secret_export, platform.commerce_audit_entry TO ${identifier}`,
@@ -911,6 +911,13 @@ const SITE_RECONCILIATION_TABLES = [
 
 const ADMIN_TABLES = [
   "platform.admin_operator_authority",
+  "platform.admin_operator_site_scope",
+  "platform.admin_operator_global_scope_grant",
+  "platform.admin_breakglass_grant",
+  "platform.admin_operator_identity",
+  "platform.admin_oidc_transaction",
+  "platform.admin_operator_session",
+  "platform.admin_step_up_transaction",
   "platform.admin_command_decision",
   "platform.admin_approval",
   "platform.admin_approval_decision",
@@ -1295,6 +1302,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
          ELSE has_table_privilege(runtime_role.rolname, 'platform.command_receipt', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.outbox_event', 'SELECT,INSERT')
            AND has_table_privilege(runtime_role.rolname, 'platform.authorization_site', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.authorization_subject', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.authorization_product_binding', 'SELECT')
            AND has_table_privilege(runtime_role.rolname, 'platform.commerce_billing_account', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.commerce_billing_account_membership', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.site', 'SELECT,INSERT')
@@ -1313,6 +1322,13 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            AND has_any_column_privilege(runtime_role.rolname, 'platform.authorization_site', 'UPDATE')
            AND has_any_column_privilege(runtime_role.rolname, 'platform.authorization_product_binding', 'UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.admin_operator_authority', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.admin_operator_site_scope', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.admin_operator_global_scope_grant', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.admin_breakglass_grant', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.admin_operator_identity', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.admin_oidc_transaction', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.admin_operator_session', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.admin_step_up_transaction', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.admin_command_decision', 'SELECT,INSERT')
            AND has_table_privilege(runtime_role.rolname, 'platform.admin_approval', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.admin_approval_decision', 'SELECT,INSERT')
@@ -1430,8 +1446,10 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                'site','site_project_binding','site_release','site_deployment_binding',
                'site_activation_attempt','site_deployment_observation','site_traffic_stop_attempt',
                'site_traffic_stop_observation','site_effect_approval',
-               'admin_operator_authority','admin_command_decision','admin_approval','admin_approval_decision',
-               'admin_authority_bootstrap','admin_post_effect_review',
+               'admin_operator_authority','admin_operator_site_scope','admin_operator_global_scope_grant',
+               'admin_breakglass_grant','admin_operator_identity','admin_oidc_transaction',
+               'admin_operator_session','admin_step_up_transaction','admin_command_decision','admin_approval',
+               'admin_approval_decision','admin_authority_bootstrap','admin_post_effect_review',
                ${ADMISSION_RELATIONS_SQL},
                ${ASSET_RELATIONS_SQL}
                ]) AND (
@@ -1488,8 +1506,10 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                'site','site_project_binding','site_release','site_deployment_binding',
                'site_activation_attempt','site_deployment_observation','site_traffic_stop_attempt',
                'site_traffic_stop_observation','site_effect_approval',
-               'admin_operator_authority','admin_command_decision','admin_approval','admin_approval_decision',
-               'admin_authority_bootstrap','admin_post_effect_review',
+               'admin_operator_authority','admin_operator_site_scope','admin_operator_global_scope_grant',
+               'admin_breakglass_grant','admin_operator_identity','admin_oidc_transaction',
+               'admin_operator_session','admin_step_up_transaction','admin_command_decision','admin_approval',
+               'admin_approval_decision','admin_authority_bootstrap','admin_post_effect_review',
                ${ADMISSION_RELATIONS_SQL},
                ${ASSET_RELATIONS_SQL}
                ]) AND (

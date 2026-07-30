@@ -23,12 +23,43 @@ export class PostgresAdminAuthorityRepository implements
     input: Readonly<{ operatorRef: string; operatorGeneration: bigint }>,
   ): Promise<AdminOperatorAuthority | null> {
     const rows = await resolvePlatformTransaction(transaction).query<OperatorRow>(
-      `SELECT operator_ref AS "operatorRef", operator_generation AS "operatorGeneration",
-              state, permissions, site_scopes AS "siteScopes", environments, regions,
-              authorization_epoch AS "authorizationEpoch", expires_at AS "expiresAt",
-              break_glass_expires_at AS "breakGlassExpiresAt"
-       FROM platform.admin_operator_authority
-       WHERE operator_ref=$1 AND operator_generation=$2
+      `SELECT authority.operator_ref AS "operatorRef",
+              authority.operator_generation AS "operatorGeneration",
+              authority.state,authority.permissions,
+              ARRAY(SELECT DISTINCT site_scope.site_ref
+                    FROM platform.admin_operator_site_scope site_scope
+                    WHERE site_scope.operator_ref=authority.operator_ref
+                      AND site_scope.operator_generation=authority.operator_generation
+                      AND site_scope.state='active' AND site_scope.expires_at>now()) AS "siteScopes",
+              ARRAY(SELECT grant_ref::text
+                    FROM platform.admin_operator_global_scope_grant global_scope
+                    WHERE global_scope.operator_ref=authority.operator_ref
+                      AND global_scope.operator_generation=authority.operator_generation
+                      AND global_scope.state='active' AND global_scope.expires_at>now()) AS "globalScopes",
+              ARRAY(SELECT DISTINCT deployment.environment FROM (
+                SELECT environment FROM platform.admin_operator_site_scope
+                 WHERE operator_ref=authority.operator_ref AND operator_generation=authority.operator_generation
+                   AND state='active' AND expires_at>now()
+                UNION SELECT environment FROM platform.admin_operator_global_scope_grant
+                 WHERE operator_ref=authority.operator_ref AND operator_generation=authority.operator_generation
+                   AND state='active' AND expires_at>now()
+              ) deployment) AS environments,
+              ARRAY(SELECT DISTINCT deployment.region FROM (
+                SELECT region FROM platform.admin_operator_site_scope
+                 WHERE operator_ref=authority.operator_ref AND operator_generation=authority.operator_generation
+                   AND state='active' AND expires_at>now()
+                UNION SELECT region FROM platform.admin_operator_global_scope_grant
+                 WHERE operator_ref=authority.operator_ref AND operator_generation=authority.operator_generation
+                   AND state='active' AND expires_at>now()
+              ) deployment) AS regions,
+              authority.authorization_epoch AS "authorizationEpoch",
+              authority.expires_at AS "expiresAt",
+              (SELECT max(expires_at) FROM platform.admin_breakglass_grant breakglass
+               WHERE breakglass.operator_ref=authority.operator_ref
+                 AND breakglass.operator_generation=authority.operator_generation
+                 AND breakglass.state='active' AND breakglass.expires_at>now()) AS "breakGlassExpiresAt"
+       FROM platform.admin_operator_authority authority
+       WHERE authority.operator_ref=$1 AND authority.operator_generation=$2
        FOR UPDATE`,
       [input.operatorRef, input.operatorGeneration],
     );
@@ -40,6 +71,7 @@ export class PostgresAdminAuthorityRepository implements
       state: state(row.state),
       permissions: strings(row.permissions),
       siteScopes: strings(row.siteScopes),
+      globalScopes: strings(row.globalScopes),
       environments: strings(row.environments),
       regions: strings(row.regions),
       authorizationEpoch: BigInt(row.authorizationEpoch),
@@ -330,6 +362,7 @@ interface OperatorRow extends Record<string, unknown> {
   state: string;
   permissions: readonly string[];
   siteScopes: readonly string[];
+  globalScopes: readonly string[];
   environments: readonly string[];
   regions: readonly string[];
   authorizationEpoch: bigint | string;

@@ -132,8 +132,9 @@ function permits(values: readonly string[], required: string): boolean {
 }
 
 function scoped(authority: AdminOperatorAuthority, siteRef: string | null): boolean {
-  return authority.siteScopes.includes("*") ||
-    (siteRef !== null && authority.siteScopes.includes(siteRef));
+  return siteRef === null
+    ? authority.globalScopes.length > 0
+    : authority.siteScopes.includes(siteRef);
 }
 
 function epoch(value: string): bigint {

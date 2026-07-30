@@ -167,18 +167,28 @@ deployables:
       migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
       expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
       credentialClass: platform-admin
-      permissions: signed-control-plane-functions-only
+      permissions: typed-admin-control-plane-transactions
       ddl: forbidden
     inboundContracts: []
     declaredInboundContracts: [platform-admin-connect]
     activationAuthorized: false
     runtimeTraffic: false
     outboundContracts: []
-    secretClasses: [platform-admin-database, workload-verification]
+    secretClasses:
+      [
+        platform-admin-database,
+        mtls-server,
+        mtls-peer-registry,
+        oidc-client-registry,
+        oidc-client-secret,
+        oidc-transaction-encryption-key,
+        admin-session-jose-key-ring,
+        admin-page-cursor-key,
+      ]
     audience: platform-admin
     scalingKey: admin-command-concurrency
     readiness: /health/ready
-    drain: http-graceful
+    drain: http2-graceful
     sloOwner: platform
     runbookOwner: platform
     releaseOwner: platform

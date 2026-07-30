@@ -61,6 +61,7 @@
     "@prisma/adapter-pg": "7.9.1",
     "@prisma/client": "7.9.1",
     "jose": "6.2.4",
+    "openid-client": "6.8.4",
     "otplib": "13.4.1",
     "pg": "8.22.0",
     "prisma": "7.9.1",

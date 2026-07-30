@@ -19,6 +19,7 @@ export interface AdminOperatorAuthority {
   readonly state: "active" | "suspended" | "revoked";
   readonly permissions: readonly string[];
   readonly siteScopes: readonly string[];
+  readonly globalScopes: readonly string[];
   readonly environments: readonly string[];
   readonly regions: readonly string[];
   readonly authorizationEpoch: bigint;
@@ -156,13 +157,13 @@ function scope(
   targetSiteRef: string | null,
 ): string | null {
   if (definition.scopeKind === "global") {
-    if (targetSiteRef !== null || context.target.siteId !== null || !authority.siteScopes.includes("*")) {
+    if (targetSiteRef !== null || context.target.siteId !== null || authority.globalScopes.length < 1) {
       throw new Error("ADMIN_GLOBAL_SCOPE_DENIED");
     }
     return null;
   }
   if (targetSiteRef === null || context.target.siteId !== targetSiteRef ||
-      (!authority.siteScopes.includes("*") && !authority.siteScopes.includes(targetSiteRef))) {
+      !authority.siteScopes.includes(targetSiteRef)) {
     throw new Error("ADMIN_SITE_SCOPE_DENIED");
   }
   return targetSiteRef;
@@ -174,6 +175,7 @@ function verifyAuthority(value: AdminOperatorAuthority): void {
   if (value.permissions.length < 1 || value.environments.length < 1 || value.regions.length < 1 ||
       new Set(value.permissions).size !== value.permissions.length ||
       new Set(value.siteScopes).size !== value.siteScopes.length ||
+      new Set(value.globalScopes).size !== value.globalScopes.length ||
       new Set(value.environments).size !== value.environments.length ||
       new Set(value.regions).size !== value.regions.length) throw new Error("ADMIN_OPERATOR_AUTHORITY_INVALID");
   value.permissions.forEach(permission);

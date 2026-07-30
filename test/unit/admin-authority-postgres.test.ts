@@ -16,6 +16,7 @@ describe("PostgresAdminAuthorityRepository", () => {
         statements.push(statement);
         return [{ operatorRef: "operator_01", operatorGeneration: 3n, state: "active",
           permissions: ["site.lifecycle.suspend"], siteScopes: ["site_01"],
+          globalScopes: ["018f1515-1515-7515-8515-151515151515"],
           environments: ["production"], regions: ["us-east-1"], authorizationEpoch: 9n,
           expiresAt: new Date("2026-07-28T14:00:00.000Z"), breakGlassExpiresAt: null }] as never;
       },

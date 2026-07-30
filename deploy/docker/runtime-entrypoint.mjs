@@ -8,7 +8,6 @@ const serviceEntries = Object.freeze({
   "@kokoro/credit": { module: "../../kokoro-credit/dist/interfaces/http/main.js" },
   "@kokoro/payment": { module: "../../kokoro-payment/dist/interfaces/http/main.js" },
   "@kokoro/hub": { module: "../../kokoro-hub/dist/interfaces/http/main.js" },
-  "@kokoro/platform-admin": { module: "../../kokoro-platform-admin/dist/main.js" },
   "platform-api": { module: "../../dist/src/process/api.js", start: "runPlatformApiMain" },
   "platform-admission": { module: "../../dist/src/process/admission.js", start: "runPlatformAdmissionMain" },
   "platform-authorization": { module: "../../dist/src/process/authorization.js", start: "runPlatformAuthorizationMain" },

@@ -138,8 +138,8 @@ function current(authority: AdminOperatorAuthority, now: string): void {
 }
 
 function scoped(authority: AdminOperatorAuthority, siteRef: string | null): boolean {
-  if (siteRef === null) return authority.siteScopes.includes("*");
-  return authority.siteScopes.includes("*") || authority.siteScopes.includes(siteRef);
+  if (siteRef === null) return authority.globalScopes.length > 0;
+  return authority.siteScopes.includes(siteRef);
 }
 
 function permits(grants: readonly string[], required: string): boolean {

@@ -36,11 +36,29 @@ describe("Admin authority offline bootstrap", () => {
 });
 
 function authority(operatorRef: string) {
+  const maker = operatorRef === "maker";
   return {
     operatorRef, operatorGeneration: "1",
     permissions: ["admin.approval.execute", "admin.authority.manage"],
-    siteScopes: ["*"], environments: ["production"], regions: ["us-east-1"],
-    authorizationEpoch: "1", expiresAt: "2027-07-29T00:00:00.000Z",
-    breakGlassExpiresAt: null,
+    operatorSecurityEpoch: "1", authorizationEpoch: "1",
+    expiresAt: "2027-07-29T00:00:00.000Z",
+    siteScopes: [{
+      siteRef: maker ? "site:maker" : "site:checker",
+      environment: "production", region: "us-east-1", scopeEpoch: "1",
+      expiresAt: "2027-07-29T00:00:00.000Z",
+    }],
+    globalScopes: [{
+      grantRef: maker
+        ? "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        : "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      environment: "production", region: "us-east-1", scopeEpoch: "1",
+      expiresAt: "2027-07-29T00:00:00.000Z",
+    }],
+    identities: [{
+      identityRef: maker
+        ? "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+        : "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      issuer: "https://issuer.example.test", subject: `subject:${operatorRef}`,
+    }],
   };
 }

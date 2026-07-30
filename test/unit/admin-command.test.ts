@@ -20,7 +20,7 @@ const context = Object.freeze({
 }) as unknown as VerifiedRequestSecurityContext;
 const authority = Object.freeze({
   operatorRef: "operator_01", operatorGeneration: 3n, state: "active" as const,
-  permissions: ["site.lifecycle.*"], siteScopes: ["site_01"], environments: ["production"],
+  permissions: ["site.lifecycle.*"], siteScopes: ["site_01"], globalScopes: ["grant_global_01"], environments: ["production"],
   regions: ["us-east-1"], authorizationEpoch: 9n, expiresAt: "2026-07-28T14:00:00.000Z",
   breakGlassExpiresAt: null,
 });

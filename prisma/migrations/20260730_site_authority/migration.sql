@@ -331,6 +331,14 @@ ALTER TABLE platform.site FORCE ROW LEVEL SECURITY;
 CREATE POLICY site_scope ON platform.site
   USING(site_ref=NULLIF(current_setting('app.site_id',true),'') OR current_setting('app.workload_kind',true)='platform_worker')
   WITH CHECK(site_ref=NULLIF(current_setting('app.site_id',true),'') OR current_setting('app.workload_kind',true)='platform_worker');
+CREATE POLICY site_admin_read_scope ON platform.site FOR SELECT USING(
+  current_setting('app.workload_kind',true)='platform_admin'
+  AND current_setting('app.actor_kind',true)='operator'
+  AND (
+    current_setting('app.admin_scope_kind',true)='global'
+    OR current_setting('app.admin_site_refs',true)::JSONB ? site_ref
+  )
+);
 
 ALTER TABLE platform.site_project_binding ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform.site_project_binding FORCE ROW LEVEL SECURITY;
@@ -349,6 +357,17 @@ ALTER TABLE platform.site_deployment_binding FORCE ROW LEVEL SECURITY;
 CREATE POLICY site_deployment_binding_scope ON platform.site_deployment_binding
   USING(site_ref=NULLIF(current_setting('app.site_id',true),'') OR current_setting('app.workload_kind',true)='platform_worker')
   WITH CHECK(site_ref=NULLIF(current_setting('app.site_id',true),'') OR current_setting('app.workload_kind',true)='platform_worker');
+CREATE POLICY site_deployment_binding_admin_read_scope
+  ON platform.site_deployment_binding FOR SELECT USING(
+    current_setting('app.workload_kind',true)='platform_admin'
+    AND current_setting('app.actor_kind',true)='operator'
+    AND environment=current_setting('app.environment',true)
+    AND region=current_setting('app.region',true)
+    AND (
+      current_setting('app.admin_scope_kind',true)='global'
+      OR current_setting('app.admin_site_refs',true)::JSONB ? site_ref
+    )
+  );
 
 ALTER TABLE platform.site_activation_attempt ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform.site_activation_attempt FORCE ROW LEVEL SECURITY;

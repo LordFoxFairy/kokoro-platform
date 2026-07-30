@@ -29,13 +29,13 @@ const definition = defineAdminCommand({
 });
 const maker: AdminOperatorAuthority = Object.freeze({
   operatorRef: "maker_01", operatorGeneration: 2n, state: "active",
-  permissions: ["site.lifecycle.suspend"], siteScopes: ["site_01"],
+  permissions: ["site.lifecycle.suspend"], siteScopes: ["site_01"], globalScopes: ["grant_global_01"],
   environments: ["production"], regions: ["us-east-1"], authorizationEpoch: 8n,
   expiresAt: "2026-07-28T14:00:00.000Z", breakGlassExpiresAt: null,
 });
 const checker: AdminOperatorAuthority = Object.freeze({
   operatorRef: "checker_01", operatorGeneration: 4n, state: "active",
-  permissions: ["admin.approval.execute", "site.lifecycle.suspend"], siteScopes: ["site_01"],
+  permissions: ["admin.approval.execute", "site.lifecycle.suspend"], siteScopes: ["site_01"], globalScopes: ["grant_global_01"],
   environments: ["production"], regions: ["us-east-1"], authorizationEpoch: 11n,
   expiresAt: "2026-07-28T14:00:00.000Z", breakGlassExpiresAt: null,
 });

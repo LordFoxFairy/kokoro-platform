@@ -17,7 +17,7 @@ const review = Object.freeze({
 const reviewer = Object.freeze({
   operatorRef: "reviewer_01", operatorGeneration: 4n, state: "active" as const,
   permissions: ["admin.break-glass.review", "site.lifecycle.emergency-revoke"],
-  siteScopes: ["site_01"], environments: ["production"], regions: ["us-east-1"],
+  siteScopes: ["site_01"], globalScopes: ["grant_global_01"], environments: ["production"], regions: ["us-east-1"],
   authorizationEpoch: 11n, expiresAt: "2026-07-30T12:00:00.000Z",
   breakGlassExpiresAt: null,
 });

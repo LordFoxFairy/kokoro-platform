@@ -86,11 +86,10 @@ describe("Admin command v2 Connect provider", () => {
         operatorGeneration: "4",
         expectedAuthorizationEpoch: "7",
         permissions: ["admin.approval.execute", "admin.authority.manage"],
-        siteScopes: ["*"],
+        siteScopes: ["site:alpha"],
         environments: ["production"],
         regions: ["us-east-1"],
         expiresAt: "2027-07-29T12:00:00.000Z",
-        breakGlassExpiresAt: null,
       },
     }));
   });
@@ -220,7 +219,7 @@ function authorityEffect() {
       operatorGeneration: 4n,
       expectedAuthorizationEpoch: 7n,
       permissions: ["admin.approval.execute", "admin.authority.manage"],
-      siteIds: ["*"],
+      siteIds: ["site:alpha"],
       environments: ["production"],
       regions: ["us-east-1"],
       expiresAt: timestampFromDate(new Date("2027-07-29T12:00:00.000Z")),

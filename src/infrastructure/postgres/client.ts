@@ -10,6 +10,10 @@ import type { PlatformTransactionHost } from "../../shared/unit-of-work/unit-of-
 import { assertVerifiedRequestSecurityContext } from "../../shared/security-context/request-security-context.js";
 import type { SessionAuthenticationPort } from "../../modules/authorization/application/contracts/session-authorization-ports.js";
 import type { AuthenticatedUserSession } from "../../modules/authorization/domain/session-access-grant.js";
+import type { AdminQueryPermit } from
+  "../../modules/admin/interfaces/connect/admin-query-service.js";
+import type { AdminWorkloadAxes } from
+  "../../modules/admin/application/services/admin-oidc-service.js";
 
 export type PlatformProcessRole =
   | "api" | "admission" | "authorization" | "worker" | "admin" | "migrator";
@@ -106,6 +110,30 @@ export interface PlatformTransactionalDatabaseClient
     fence: AdminExecutionTransactionFence,
     work: (transaction: PlatformTransaction) => Promise<Result>,
   ): Promise<Result>;
+  adminIdentityTransaction<Result>(
+    fence: AdminIdentityTransactionFence,
+    work: (transaction: PlatformTransaction) => Promise<Result>,
+  ): Promise<Result>;
+  adminQueryTransaction<Result>(
+    permit: AdminQueryPermit,
+    work: (transaction: PlatformTransaction) => Promise<Result>,
+  ): Promise<Result>;
+  adminAuthenticationTransaction<Result>(
+    fence: Readonly<AdminWorkloadAxes & { credentialDigest: string }>,
+    work: (transaction: PlatformTransaction) => Promise<Result>,
+  ): Promise<Result>;
+}
+
+export interface AdminIdentityTransactionFence {
+  readonly operation:
+    | "admin.identity.begin"
+    | "admin.identity.exchange"
+    | "admin.identity.delivery.read";
+  readonly workloadIdentityRef: string;
+  readonly environment: string;
+  readonly region: string;
+  readonly managedDeviceRef: string;
+  readonly audience: string;
 }
 
 export interface AdminExecutionTransactionFence {
@@ -493,6 +521,127 @@ export function createPlatformDatabaseClient(
         },
       );
     },
+    adminIdentityTransaction: async <Result>(
+      fence: AdminIdentityTransactionFence,
+      work: (transaction: PlatformTransaction) => Promise<Result>,
+    ) => {
+      if (config.role !== "admin") throw new Error("ADMIN_IDENTITY_ROLE_FORBIDDEN");
+      assertAdminIdentityFence(fence);
+      return prisma.$transaction(
+        async (databaseTransaction) => {
+          await databaseTransaction.$queryRawUnsafe(
+            `SELECT set_config('app.operation',$1,true),
+                    set_config('app.workload_identity_ref',$2,true),
+                    set_config('app.environment',$3,true),
+                    set_config('app.region',$4,true),
+                    set_config('app.managed_device_ref',$5,true),
+                    set_config('app.audience',$6,true),
+                    set_config('app.workload_kind','platform_admin',true),
+                    set_config('app.actor_kind','workload',true),
+                    set_config('app.site_id','',true),
+                    set_config('app.subject_id','',true),
+                    set_config('app.scopes','[]',true)`,
+            fence.operation,
+            fence.workloadIdentityRef,
+            fence.environment,
+            fence.region,
+            fence.managedDeviceRef,
+            fence.audience,
+          );
+          const lease = issuePlatformTransaction({
+            query: (statement, values = []) =>
+              databaseTransaction.$queryRawUnsafe(statement, ...values),
+            execute: (statement, values = []) =>
+              databaseTransaction.$executeRawUnsafe(statement, ...values),
+          });
+          try {
+            return await work(lease.transaction);
+          } finally {
+            revokePlatformTransaction(lease);
+          }
+        },
+        {
+          isolationLevel: config.transaction.isolationLevel,
+          maxWait: config.transaction.maxWaitMs,
+          timeout: config.transaction.timeoutMs,
+        },
+      );
+    },
+    adminQueryTransaction: async <Result>(
+      permit: AdminQueryPermit,
+      work: (transaction: PlatformTransaction) => Promise<Result>,
+    ) => {
+      if (config.role !== "admin") throw new Error("ADMIN_QUERY_ROLE_FORBIDDEN");
+      assertAdminQueryPermit(permit);
+      const siteRefs = permit.scope.kind === "site"
+        ? permit.scope.siteRefs
+        : permit.scope.kind === "breakglass" ? permit.scope.resourceRefs : [];
+      return prisma.$transaction(async (databaseTransaction) => {
+        await databaseTransaction.$queryRawUnsafe(
+          `SELECT set_config('app.operation',$1,true),set_config('app.environment',$2,true),
+                  set_config('app.region',$3,true),set_config('app.workload_kind','platform_admin',true),
+                  set_config('app.actor_kind','operator',true),set_config('app.subject_id',$4,true),
+                  set_config('app.admin_scope_kind',$5,true),
+                  set_config('app.admin_site_refs',$6,true),set_config('app.site_id','',true),
+                  set_config('app.scopes',$7,true)`,
+          permit.operation, permit.environment, permit.region, permit.operatorRef,
+          permit.scope.kind, JSON.stringify(siteRefs), JSON.stringify([`admin:${permit.operation}`]),
+        );
+        const lease = issuePlatformTransaction({
+          query: (statement, values = []) =>
+            databaseTransaction.$queryRawUnsafe(statement, ...values),
+          execute: (statement, values = []) =>
+            databaseTransaction.$executeRawUnsafe(statement, ...values),
+        });
+        try {
+          return await work(lease.transaction);
+        } finally {
+          revokePlatformTransaction(lease);
+        }
+      }, {
+        isolationLevel: config.transaction.isolationLevel,
+        maxWait: config.transaction.maxWaitMs,
+        timeout: config.transaction.timeoutMs,
+      });
+    },
+    adminAuthenticationTransaction: async <Result>(
+      fence: Readonly<AdminWorkloadAxes & { credentialDigest: string }>,
+      work: (transaction: PlatformTransaction) => Promise<Result>,
+    ) => {
+      if (config.role !== "admin") throw new Error("ADMIN_AUTHENTICATION_ROLE_FORBIDDEN");
+      assertAdminIdentityFence({ operation: "admin.identity.delivery.read", ...fence });
+      if (!/^[a-f0-9]{64}$/u.test(fence.credentialDigest)) {
+        throw new Error("ADMIN_AUTHENTICATION_FENCE_INVALID");
+      }
+      return prisma.$transaction(async (databaseTransaction) => {
+        await databaseTransaction.$queryRawUnsafe(
+          `SELECT set_config('app.operation','admin.session.authenticate',true),
+                  set_config('app.workload_identity_ref',$1,true),
+                  set_config('app.environment',$2,true),set_config('app.region',$3,true),
+                  set_config('app.managed_device_ref',$4,true),set_config('app.audience',$5,true),
+                  set_config('app.workload_kind','platform_admin',true),
+                  set_config('app.actor_kind','operator',true),set_config('app.subject_id','',true),
+                  set_config('app.site_id','',true),set_config('app.scopes','[]',true)`,
+          fence.workloadIdentityRef, fence.environment, fence.region,
+          fence.managedDeviceRef, fence.audience,
+        );
+        const lease = issuePlatformTransaction({
+          query: (statement, values = []) =>
+            databaseTransaction.$queryRawUnsafe(statement, ...values),
+          execute: (statement, values = []) =>
+            databaseTransaction.$executeRawUnsafe(statement, ...values),
+        });
+        try {
+          return await work(lease.transaction);
+        } finally {
+          revokePlatformTransaction(lease);
+        }
+      }, {
+        isolationLevel: config.transaction.isolationLevel,
+        maxWait: config.transaction.maxWaitMs,
+        timeout: config.transaction.timeoutMs,
+      });
+    },
     transaction: async <Result>(
       fence: Parameters<PlatformTransactionHost["transaction"]>[0],
       work: Parameters<PlatformTransactionHost["transaction"]>[1],
@@ -549,6 +698,40 @@ export function createPlatformDatabaseClient(
         },
       ),
   };
+}
+
+function assertAdminIdentityFence(fence: AdminIdentityTransactionFence): void {
+  const operations = new Set<AdminIdentityTransactionFence["operation"]>([
+    "admin.identity.begin", "admin.identity.exchange", "admin.identity.delivery.read",
+  ]);
+  if (!operations.has(fence.operation) || !fence.workloadIdentityRef.startsWith("spiffe://")) {
+    throw new Error("ADMIN_IDENTITY_FENCE_INVALID");
+  }
+  for (const value of [fence.workloadIdentityRef, fence.environment, fence.region,
+    fence.managedDeviceRef, fence.audience]) {
+    if (value.length < 1 || value.length > 256 || hasControlCharacter(value)) {
+      throw new Error("ADMIN_IDENTITY_FENCE_INVALID");
+    }
+  }
+}
+
+function assertAdminQueryPermit(permit: AdminQueryPermit): void {
+  if (!new Set<AdminQueryPermit["operation"]>([
+    "admin.site.read", "admin.site.list", "admin.user.read", "admin.audit.read",
+  ]).has(permit.operation)) throw new Error("ADMIN_QUERY_PERMIT_INVALID");
+  for (const value of [permit.operatorRef, permit.environment, permit.region]) {
+    if (value.length < 1 || value.length > 128 || hasControlCharacter(value)) {
+      throw new Error("ADMIN_QUERY_PERMIT_INVALID");
+    }
+  }
+  if (permit.scope.kind === "site" && (permit.scope.siteRefs.length < 1 ||
+      permit.scope.siteRefs.length > 100 || permit.scope.siteRefs.some((value) =>
+        value === "*" || value.length < 1 || value.length > 128 || hasControlCharacter(value)))) {
+    throw new Error("ADMIN_QUERY_PERMIT_INVALID");
+  }
+  if (permit.scope.kind === "breakglass" && permit.scope.resourceRefs.length < 1) {
+    throw new Error("ADMIN_QUERY_PERMIT_INVALID");
+  }
 }
 
 function assertAssetDataPlaneFence(value: AssetDataPlaneTransactionFence): void {
@@ -948,6 +1131,8 @@ const RUNTIME_IDENTITY_SQL = `
          ELSE has_table_privilege(current_user, 'platform.command_receipt', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.outbox_event', 'SELECT,INSERT')
            AND has_table_privilege(current_user, 'platform.authorization_site', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.authorization_subject', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.authorization_product_binding', 'SELECT')
            AND has_table_privilege(current_user, 'platform.commerce_billing_account', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.commerce_billing_account_membership', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.site', 'SELECT,INSERT')
@@ -966,6 +1151,13 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_any_column_privilege(current_user, 'platform.authorization_site', 'UPDATE')
            AND has_any_column_privilege(current_user, 'platform.authorization_product_binding', 'UPDATE')
            AND has_table_privilege(current_user, 'platform.admin_operator_authority', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.admin_operator_site_scope', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.admin_operator_global_scope_grant', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.admin_breakglass_grant', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.admin_operator_identity', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.admin_oidc_transaction', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.admin_operator_session', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.admin_step_up_transaction', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.admin_command_decision', 'SELECT,INSERT')
            AND has_table_privilege(current_user, 'platform.admin_approval', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.admin_approval_decision', 'SELECT,INSERT')
@@ -1082,7 +1274,9 @@ const RUNTIME_IDENTITY_SQL = `
                'site','site_project_binding','site_release','site_deployment_binding',
                'site_activation_attempt','site_deployment_observation','site_traffic_stop_attempt',
                'site_traffic_stop_observation','site_effect_approval',
-               'admin_operator_authority','admin_command_decision','admin_approval','admin_approval_decision',
+               'admin_operator_authority','admin_operator_site_scope','admin_operator_global_scope_grant',
+               'admin_breakglass_grant','admin_operator_identity','admin_oidc_transaction',
+               'admin_operator_session','admin_step_up_transaction','admin_command_decision','admin_approval','admin_approval_decision',
                'admin_authority_bootstrap','admin_post_effect_review',
                ${ADMISSION_RELATIONS_SQL},
                ${ASSET_RELATIONS_SQL}
@@ -1135,7 +1329,9 @@ const RUNTIME_IDENTITY_SQL = `
                'site','site_project_binding','site_release','site_deployment_binding',
                'site_activation_attempt','site_deployment_observation','site_traffic_stop_attempt',
                'site_traffic_stop_observation','site_effect_approval',
-               'admin_operator_authority','admin_command_decision','admin_approval','admin_approval_decision',
+               'admin_operator_authority','admin_operator_site_scope','admin_operator_global_scope_grant',
+               'admin_breakglass_grant','admin_operator_identity','admin_oidc_transaction',
+               'admin_operator_session','admin_step_up_transaction','admin_command_decision','admin_approval','admin_approval_decision',
                'admin_authority_bootstrap','admin_post_effect_review',
                ${ADMISSION_RELATIONS_SQL},
                ${ASSET_RELATIONS_SQL}
@@ -1229,7 +1425,8 @@ const RUNTIME_IDENTITY_SQL = `
                      'site','site_project_binding','site_release','site_activation_attempt',
                      'site_traffic_stop_attempt','site_effect_approval',
                      'admin_command_decision','admin_approval','admin_approval_decision',
-                     'admin_post_effect_review'
+                     'admin_post_effect_review','admin_oidc_transaction',
+                     'admin_operator_session','admin_step_up_transaction'
                    ]))
                  ))
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
@@ -1266,7 +1463,8 @@ const RUNTIME_IDENTITY_SQL = `
                      'command_receipt','commerce_billing_account','commerce_billing_account_membership',
                      'site','site_project_binding','site_release','site_deployment_binding',
                      'site_effect_approval','authorization_site','authorization_product_binding',
-                     'admin_approval','admin_post_effect_review'
+                     'admin_approval','admin_post_effect_review','admin_oidc_transaction',
+                     'admin_operator_session','admin_step_up_transaction'
                    ]))
                    OR ($2 = 'admin' AND candidate.relname = 'admin_approval')
                  ))
