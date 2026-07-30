@@ -37,6 +37,7 @@ describe("SitePublicationService", () => {
       identityIssuerLabel: "Image Studio", identityAuthStrengthPolicyRevision: "auth_policy_01",
       enabledSurfaceIds: ["account", "chat"],
       localePolicy: { defaultLocale: "en-US", allowedLocales: ["en-US"] },
+      certificationProof: certificationProof(),
     }, await context("site.release.publish"));
 
     expect(receipt).toEqual({ siteRef: "site_01", state: "ready", replayed: false });
@@ -67,7 +68,13 @@ function releaseInput() {
     identityIssuerLabel: "Image Studio", identityAuthStrengthPolicyRevision: "auth_policy_01",
     enabledSurfaceIds: ["account", "chat"],
     localePolicy: { defaultLocale: "en-US", allowedLocales: ["en-US"] },
+    certificationProof: certificationProof(),
   } as const;
+}
+
+function certificationProof() {
+  return { signingKeyRef: "release-key-01", issuedAt: "2026-07-28T11:00:00.000Z",
+    expiresAt: "2026-07-29T12:00:00.000Z", signature: new Uint8Array(64) } as const;
 }
 
 function baseRepository(): SiteAuthorityRepository & SitePublicationRepository {

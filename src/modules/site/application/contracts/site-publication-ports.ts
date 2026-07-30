@@ -22,5 +22,11 @@ export interface SiteReleaseCertificationAuthority {
     releaseManifestDigest: string;
     certificationDigest: string;
     launchProfileRef: string;
+    proof: Readonly<{
+      signingKeyRef: string;
+      issuedAt: string;
+      expiresAt: string;
+      signature: Uint8Array;
+    }>;
   }>): Promise<Readonly<{ status: "passed"; expiresAt: string }>>;
 }
