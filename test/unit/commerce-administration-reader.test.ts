@@ -7,6 +7,22 @@ import { issuePlatformTransaction, revokePlatformTransaction } from
   "../../src/shared/unit-of-work/platform-transaction.js";
 
 describe("PostgresCommerceAdministrationReader", () => {
+  it("captures the first-page watermark from the database transaction authority", async () => {
+    const statements: string[] = [];
+    const lease = issuePlatformTransaction({ execute: async () => 0, query: async (statement) => {
+      statements.push(statement);
+      return [{ watermark: new Date("2026-07-30T02:00:00.000Z") }] as never;
+    } });
+    const reader = new PostgresCommerceAdministrationReader({
+      adminQueryTransaction: async (_permit, work) => work(lease.transaction),
+    });
+    try {
+      await expect(reader.captureWatermark(permit("commerce.credit-program.read")))
+        .resolves.toBe("2026-07-30T02:00:00.000Z");
+      expect(statements).toEqual([expect.stringContaining("transaction_timestamp()")]);
+    } finally { revokePlatformTransaction(lease); }
+  });
+
   it("reads the complete typed CreditProgram revision only within the permitted Site", async () => {
     const statements: string[] = [];
     const lease = issuePlatformTransaction({ execute: async () => 0, query: async (statement) => {
@@ -16,7 +32,8 @@ describe("PostgresCommerceAdministrationReader", () => {
         burnPriority: 1000, scopePolicy: { version: 1, surfaceRefs: ["chat"],
           capabilityKeys: ["model.chat"], agentRefs: [], allowUnattributedAgent: true },
         liabilityMerchantAccountRef: "merchant:main", windowKind: "none", calendarZone: null,
-        windowAnchor: null, expiresAfterSeconds: null, revisionDigest: "a".repeat(64),
+        windowAnchor: null, rolloverPolicy: "none", expiresAfterSeconds: null,
+        revisionDigest: "a".repeat(64),
         publishedAt: new Date("2026-07-30T01:00:00.000Z") }] as never;
     } });
     const reader = new PostgresCommerceAdministrationReader({

@@ -15,6 +15,8 @@ describe("Admin query pagination", () => {
     const token = codec.encode({ kind: "sites", after: "site:1", binding: "a".repeat(64) });
 
     expect(codec.decode(token)).toEqual({ kind: "sites", after: "site:1", binding: "a".repeat(64) });
+    expect(() => codec.encode(Object.fromEntries("abcdefgh".split("").map((key) =>
+      [key, "x".repeat(256)])))).toThrow("ADMIN_PAGE_TOKEN_INVALID");
     const suffix = token.endsWith("A") ? "B" : "A";
     expect(() => codec.decode(`${token.slice(0, -1)}${suffix}`))
       .toThrow("ADMIN_PAGE_TOKEN_INVALID");

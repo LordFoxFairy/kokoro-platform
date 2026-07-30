@@ -85,7 +85,9 @@ CREATE TABLE platform.commerce_catalog_plan_version (
   site_ref TEXT NOT NULL,
   plan_ref TEXT NOT NULL,
   revision BIGINT NOT NULL CHECK(revision > 0),
-  safe_label TEXT NOT NULL CHECK(length(safe_label) BETWEEN 1 AND 160),
+  safe_label TEXT NOT NULL CHECK(length(safe_label) BETWEEN 1 AND 160
+    AND safe_label=btrim(safe_label) AND safe_label IS NFC NORMALIZED
+    AND safe_label !~ '[[:cntrl:]]' AND safe_label !~ U&'[\202A-\202E\2066-\2069]'),
   term_action TEXT NOT NULL CHECK(term_action IN ('none','new_subscription','extend_from_max','reject_if_active')),
   term_seconds BIGINT CHECK(term_seconds IS NULL OR term_seconds > 0),
   stacking_scope TEXT NOT NULL CHECK(length(stacking_scope) BETWEEN 1 AND 128),
@@ -160,7 +162,9 @@ CREATE TABLE platform.commerce_credit_program_revision (
   scope_policy JSONB NOT NULL CHECK(platform.valid_credit_scope_policy(scope_policy)),
   liability_merchant_account_ref TEXT NOT NULL CHECK(length(liability_merchant_account_ref) BETWEEN 1 AND 256),
   window_kind TEXT NOT NULL CHECK(window_kind IN ('none','daily','period')),
-  calendar_zone TEXT CHECK(calendar_zone IS NULL OR length(calendar_zone) BETWEEN 1 AND 64),
+  rollover_policy TEXT NOT NULL CHECK(rollover_policy='none'),
+  calendar_zone TEXT CHECK(calendar_zone IS NULL OR (length(calendar_zone) BETWEEN 1 AND 64
+    AND calendar_zone ~ '^(UTC|[A-Za-z][A-Za-z0-9._+-]*(/[A-Za-z][A-Za-z0-9._+-]*)+)$')),
   window_anchor TEXT CHECK(window_anchor IS NULL OR length(window_anchor) BETWEEN 1 AND 128),
   expires_after_seconds BIGINT CHECK(expires_after_seconds IS NULL OR expires_after_seconds > 0),
   revision_digest CHAR(64) NOT NULL CHECK(revision_digest ~ '^[a-f0-9]{64}$'),
@@ -173,9 +177,12 @@ CREATE TABLE platform.commerce_credit_program_revision (
     (ux_bucket_class='permanent' AND window_kind='none'
       AND calendar_zone IS NULL AND window_anchor IS NULL AND expires_after_seconds IS NULL)
     OR (ux_bucket_class='daily' AND window_kind='daily'
-      AND calendar_zone IS NOT NULL AND window_anchor IS NOT NULL AND expires_after_seconds IS NOT NULL)
+      AND calendar_zone IS NOT NULL
+      AND window_anchor ~ '^daily@([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$'
+      AND expires_after_seconds IS NOT NULL)
     OR (ux_bucket_class='period' AND window_kind='period'
-      AND calendar_zone IS NOT NULL AND window_anchor IS NOT NULL AND expires_after_seconds IS NOT NULL)
+      AND calendar_zone IS NOT NULL AND window_anchor='subscription-term-start'
+      AND expires_after_seconds IS NOT NULL)
   )
 );
 
@@ -185,7 +192,9 @@ CREATE TABLE platform.commerce_entitlement_template_revision (
   template_ref TEXT NOT NULL CHECK(length(template_ref) BETWEEN 1 AND 256),
   revision BIGINT NOT NULL CHECK(revision > 0),
   capability_key TEXT NOT NULL CHECK(capability_key ~ '^[a-z0-9][a-z0-9._:-]{0,127}$'),
-  safe_label TEXT NOT NULL CHECK(length(safe_label) BETWEEN 1 AND 160),
+  safe_label TEXT NOT NULL CHECK(length(safe_label) BETWEEN 1 AND 160
+    AND safe_label=btrim(safe_label) AND safe_label IS NFC NORMALIZED
+    AND safe_label !~ '[[:cntrl:]]' AND safe_label !~ U&'[\202A-\202E\2066-\2069]'),
   expires_after_seconds BIGINT CHECK(expires_after_seconds IS NULL OR expires_after_seconds > 0),
   revision_digest CHAR(64) NOT NULL CHECK(revision_digest ~ '^[a-f0-9]{64}$'),
   published_at TIMESTAMPTZ NOT NULL,
@@ -243,7 +252,9 @@ CREATE TABLE platform.commerce_catalog_product_version (
   site_ref TEXT NOT NULL,
   product_ref TEXT NOT NULL,
   revision BIGINT NOT NULL CHECK(revision > 0),
-  safe_label TEXT NOT NULL CHECK(length(safe_label) BETWEEN 1 AND 160),
+  safe_label TEXT NOT NULL CHECK(length(safe_label) BETWEEN 1 AND 160
+    AND safe_label=btrim(safe_label) AND safe_label IS NFC NORMALIZED
+    AND safe_label !~ '[[:cntrl:]]' AND safe_label !~ U&'[\202A-\202E\2066-\2069]'),
   plan_version_ref TEXT,
   fulfillment_program_revision_ref TEXT NOT NULL,
   legal_term_refs TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[] CHECK(cardinality(legal_term_refs) <= 16),
@@ -547,7 +558,9 @@ CREATE TABLE platform.commerce_entitlement_grant (
   billing_account_ref TEXT NOT NULL,
   entitlement_template_revision_ref TEXT NOT NULL,
   capability_key TEXT NOT NULL CHECK(capability_key ~ '^[a-z0-9][a-z0-9._:-]{0,127}$'),
-  safe_label TEXT NOT NULL CHECK(length(safe_label) BETWEEN 1 AND 160),
+  safe_label TEXT NOT NULL CHECK(length(safe_label) BETWEEN 1 AND 160
+    AND safe_label=btrim(safe_label) AND safe_label IS NFC NORMALIZED
+    AND safe_label !~ '[[:cntrl:]]' AND safe_label !~ U&'[\202A-\202E\2066-\2069]'),
   source_type TEXT NOT NULL CHECK(source_type IN ('redemption','payment','admin_grant','program_window')),
   source_ref TEXT NOT NULL CHECK(length(source_ref) BETWEEN 1 AND 256),
   effective_at TIMESTAMPTZ NOT NULL,

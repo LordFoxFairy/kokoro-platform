@@ -26,11 +26,14 @@ export interface CommerceAdministrationRepository {
     }>;
     liabilityMerchantAccountRef: string;
     windowKind: "none" | "daily" | "period";
+    rolloverPolicy: "none";
     calendarZone: string | null;
     windowAnchor: string | null;
     expiresAfterSeconds: string | null;
     revisionDigest: string;
-  }>): Promise<Readonly<{ kind: "committed" | "replayed"; occurredAt: string }>>;
+  }>): Promise<Readonly<{ kind: "committed" | "replayed"; command: CommandIdentity; result: Readonly<{
+    creditProgramRevisionRef: string; revisionDigest: string; publishedAt: string;
+  }> }>>;
   publishEntitlementTemplateRevision(transaction: PlatformTransaction, input: CommerceAdminActor & Readonly<{
     entitlementTemplateRevisionRef: string;
     templateRef: string;
@@ -39,7 +42,9 @@ export interface CommerceAdministrationRepository {
     safeLabel: string;
     expiresAfterSeconds: string | null;
     revisionDigest: string;
-  }>): Promise<Readonly<{ kind: "committed" | "replayed"; occurredAt: string }>>;
+  }>): Promise<Readonly<{ kind: "committed" | "replayed"; command: CommandIdentity; result: Readonly<{
+    entitlementTemplateRevisionRef: string; revisionDigest: string; publishedAt: string;
+  }> }>>;
   publishOffer(transaction: PlatformTransaction, input: CommerceAdminActor & Readonly<{
     productRef: string;
     productKind: "free" | "credit_pack" | "subscription" | "bundle";

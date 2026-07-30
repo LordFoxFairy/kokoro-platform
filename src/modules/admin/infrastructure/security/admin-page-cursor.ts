@@ -13,7 +13,9 @@ export class HmacAdminPageCursorCodec implements AdminPageCursorCodec {
   encode(value: Readonly<Record<string, string>>): string {
     const canonical = canonicalPayload(value);
     const encoded = Buffer.from(canonical, "utf8").toString("base64url");
-    return `${encoded}.${this.signature(encoded)}`;
+    const token = `${encoded}.${this.signature(encoded)}`;
+    if (token.length > 1024) throw new Error("ADMIN_PAGE_TOKEN_INVALID");
+    return token;
   }
 
   decode(value: string): Readonly<Record<string, string>> {
