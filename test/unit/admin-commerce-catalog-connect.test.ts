@@ -15,7 +15,9 @@ import {
 } from "../../src/interfaces/connect/generated-admin-commerce/kokoro/platform/admin/v2/admin_shared_pb.js";
 import {
   CreditBucketClass,
+  CreditRolloverPolicy,
   CreditScopePolicySchema,
+  PermanentCreditWindowPolicySchema,
   PublishCreditProgramRevisionEffectSchema,
   PublishCreditProgramRevisionRequestSchema,
   PublishEntitlementTemplateRevisionEffectSchema,
@@ -28,6 +30,8 @@ import {
 } from "../../src/interfaces/connect/generated-admin-commerce/command-envelope-digest.js";
 import { createAdminCommerceConnectService } from
   "../../src/modules/commerce/interfaces/connect/admin-commerce-service.js";
+import { HmacAdminPageCursorCodec } from
+  "../../src/modules/admin/infrastructure/security/admin-page-cursor.js";
 import type { VerifiedRequestSecurityContext } from "../../src/shared/security-context/index.js";
 
 const transport = {} as HandlerContext;
@@ -44,9 +48,14 @@ const axes: VerifiedAuthenticatedAdminAxes = Object.freeze({
 
 describe("AdminCommerce catalog primitive Connect provider", () => {
   it("authorizes and publishes a CreditProgram using the exact typed digest and Site scope", async () => {
-    const publish = vi.fn(async () => ({ kind: "committed" as const,
+    const persistedCommandId = "018f1212-1212-7212-8212-121212121211";
+    const publish = vi.fn(async (input: { requestDigest: string }) => ({ kind: "committed" as const,
       creditProgramRevisionRef: "credits-v1", revisionDigest: "b".repeat(64),
-      publishedAt: "2026-07-30T01:00:00.000Z" }));
+      publishedAt: "2026-07-30T01:00:00.000Z", command: {
+        commandId: persistedCommandId, idempotencyKey: "catalog-key-0001",
+        requestDigest: input.requestDigest, environment: "production", region: "us-east-1",
+        callerIdentity: "admin-1:operator:7", operation: "commerce.credit-program.publish",
+      } }));
     const resolveCommerceCommand = vi.fn(async () => ({ context: internalContext(
       "commerce.credit-program.publish"), axes }));
     const service = harness({ publishCreditProgramRevision: publish, resolveCommerceCommand });
@@ -58,6 +67,9 @@ describe("AdminCommerce catalog primitive Connect provider", () => {
         surfaceRefs: ["studio", "chat"], capabilityKeys: ["model.chat"], agentRefs: [],
         allowUnattributedAgent: true,
       }), liabilityMerchantAccountRef: "merchant:main",
+      windowPolicy: { case: "permanentWindow", value: create(PermanentCreditWindowPolicySchema, {
+        rolloverPolicy: CreditRolloverPolicy.NONE,
+      }) },
     });
     context.command!.requestDigest = publishCreditProgramRevisionRequestDigest(context, "site-1", effect, axes);
 
@@ -66,7 +78,7 @@ describe("AdminCommerce catalog primitive Connect provider", () => {
     }), transport)).resolves.toMatchObject({ creditProgramRevision: {
       siteId: "site-1", creditProgramRevisionRef: "credits-v1", amount: "1000",
       uxBucketClass: CreditBucketClass.PERMANENT, revisionDigest: "b".repeat(64),
-    } });
+    }, receipt: { identity: { commandId: persistedCommandId } } });
     expect(resolveCommerceCommand).toHaveBeenCalledWith(context, transport, {
       operation: "commerce.credit-program.publish", siteRef: "site-1",
       resourceRefs: ["credits-v1", "credits"],
@@ -85,9 +97,13 @@ describe("AdminCommerce catalog primitive Connect provider", () => {
   });
 
   it("publishes an EntitlementTemplate through its independent permission", async () => {
-    const publish = vi.fn(async () => ({ kind: "committed" as const,
+    const publish = vi.fn(async (input: { requestDigest: string }) => ({ kind: "committed" as const,
       entitlementTemplateRevisionRef: "premium-v1", revisionDigest: "c".repeat(64),
-      publishedAt: "2026-07-30T01:00:00.000Z" }));
+      publishedAt: "2026-07-30T01:00:00.000Z", command: {
+        commandId: "018f1212-1212-7212-8212-121212121212", idempotencyKey: "catalog-key-0001",
+        requestDigest: input.requestDigest, environment: "production", region: "us-east-1",
+        callerIdentity: "admin-1:operator:7", operation: "commerce.entitlement-template.publish",
+      } }));
     const resolveCommerceCommand = vi.fn(async () => ({ context: internalContext(
       "commerce.entitlement-template.publish"), axes }));
     const service = harness({ publishEntitlementTemplateRevision: publish, resolveCommerceCommand });
@@ -109,6 +125,33 @@ describe("AdminCommerce catalog primitive Connect provider", () => {
       operation: "commerce.entitlement-template.publish", siteRef: "site-1",
       resourceRefs: ["premium-v1", "premium"],
     });
+  });
+
+  it("uses a database-issued watermark and round-trips the full signed cursor", async () => {
+    const captureWatermark = vi.fn(async () => "2026-07-30T02:00:00.000Z");
+    const listCreditProgramRevisions = vi.fn(async () => []);
+    const cursors = new HmacAdminPageCursorCodec(Buffer.alloc(32, 7));
+    const service = createAdminCommerceConnectService({
+      resolver: { resolve: async () => ({ operatorRef: "operator:7", environment: "production",
+        region: "us-east-1", operation: "commerce.credit-program.read",
+        scope: { kind: "site", siteRefs: ["site-1"] } }) } as never,
+      owner: {} as never,
+      reader: { captureWatermark, listCreditProgramRevisions } as never,
+      cursors,
+      clock: () => new Date("2099-01-01T00:00:00.000Z"),
+    });
+    await expect(service.listCreditProgramRevisions({ context: {},
+      siteId: "site-1", pageSize: 200 } as never, transport))
+      .resolves.toEqual({ creditProgramRevisions: [] });
+    expect(captureWatermark).toHaveBeenCalledOnce();
+    expect(listCreditProgramRevisions).toHaveBeenCalledWith(expect.anything(), {
+      siteId: "site-1", afterRef: null, watermark: "2026-07-30T02:00:00.000Z", limit: 201,
+    });
+    const token = cursors.encode({ kind: "credit-program-revisions", after: "x".repeat(256),
+      watermark: "2026-07-30T02:00:00.000Z", binding: "b".repeat(64) });
+    expect(token.length).toBeLessThanOrEqual(1024);
+    expect(cursors.decode(token)).toEqual({ kind: "credit-program-revisions", after: "x".repeat(256),
+      watermark: "2026-07-30T02:00:00.000Z", binding: "b".repeat(64) });
   });
 });
 

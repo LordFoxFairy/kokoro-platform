@@ -33,7 +33,7 @@ export type CreditProgramRevisionRecord = Readonly<{
   uxBucketClass: "daily" | "period" | "permanent"; unit: string; amount: string;
   burnPriority: number; scopePolicy: Readonly<{ version: 1; surfaceRefs: readonly string[];
     capabilityKeys: readonly string[]; agentRefs: readonly string[]; allowUnattributedAgent: boolean }>;
-  liabilityMerchantAccountRef: string; windowKind: "none" | "daily" | "period";
+  liabilityMerchantAccountRef: string; windowKind: "none" | "daily" | "period"; rolloverPolicy: "none";
   calendarZone: string | null; windowAnchor: string | null; expiresAfterSeconds: bigint | null;
   revisionDigest: string; publishedAt: string;
 }>;
@@ -45,6 +45,7 @@ export type EntitlementTemplateRevisionRecord = Readonly<{
 }>;
 
 export interface CommerceAdministrationReader {
+  captureWatermark(permit: AdminQueryPermit): Promise<string>;
   getCreditProgramRevision(permit: AdminQueryPermit, siteId: string,
     revisionRef: string): Promise<CreditProgramRevisionRecord | null>;
   listCreditProgramRevisions(permit: AdminQueryPermit,
@@ -83,7 +84,8 @@ interface BatchRow extends Record<string, unknown> {
 interface CreditProgramRow extends Record<string, unknown> {
   siteId: string; creditProgramRevisionRef: string; programRef: string; revision: bigint | string;
   uxBucketClass: string; unit: string; amount: string; burnPriority: number; scopePolicy: unknown;
-  liabilityMerchantAccountRef: string; windowKind: string; calendarZone: string | null;
+  liabilityMerchantAccountRef: string; windowKind: string; rolloverPolicy: string;
+  calendarZone: string | null;
   windowAnchor: string | null; expiresAfterSeconds: bigint | string | null;
   revisionDigest: string; publishedAt: Date | string;
 }
@@ -95,6 +97,17 @@ interface EntitlementTemplateRow extends Record<string, unknown> {
 
 export class PostgresCommerceAdministrationReader implements CommerceAdministrationReader {
   constructor(private readonly host: AdminQueryTransactionHost) {}
+
+  captureWatermark(permit: AdminQueryPermit) {
+    return this.host.adminQueryTransaction(permit, async (ownerTransaction) => {
+      const rows = await resolvePlatformTransaction(ownerTransaction).query<Record<string, unknown> & {
+        watermark: Date | string;
+      }>(`SELECT transaction_timestamp() AS watermark`);
+      const value = rows[0]?.watermark; const timestamp = new Date(value ?? Number.NaN);
+      if (!Number.isFinite(timestamp.getTime())) throw new Error("COMMERCE_ADMIN_WATERMARK_UNAVAILABLE");
+      return timestamp.toISOString();
+    });
+  }
 
   getCreditProgramRevision(permit: AdminQueryPermit, siteId: string, revisionRef: string) {
     requireSite(permit, siteId);
@@ -223,7 +236,8 @@ function creditProgramProjection(): string {
     revision.ux_bucket_class AS "uxBucketClass",revision.unit,revision.amount::text AS amount,
     revision.burn_priority AS "burnPriority",revision.scope_policy AS "scopePolicy",
     revision.liability_merchant_account_ref AS "liabilityMerchantAccountRef",
-    revision.window_kind AS "windowKind",revision.calendar_zone AS "calendarZone",
+    revision.window_kind AS "windowKind",revision.rollover_policy AS "rolloverPolicy",
+    revision.calendar_zone AS "calendarZone",
     revision.window_anchor AS "windowAnchor",revision.expires_after_seconds::text AS "expiresAfterSeconds",
     revision.revision_digest AS "revisionDigest",revision.published_at AS "publishedAt"
     FROM platform.commerce_credit_program_revision revision`;
@@ -290,6 +304,7 @@ function creditProgram(row: CreditProgramRow): CreditProgramRevisionRecord {
   const buckets = ["daily", "period", "permanent"] as const;
   const windows = ["none", "daily", "period"] as const;
   if (!buckets.includes(row.uxBucketClass as never) || !windows.includes(row.windowKind as never) ||
+      row.rolloverPolicy !== "none" ||
       !/^[1-9][0-9]{0,37}$/u.test(row.amount) || !Number.isInteger(row.burnPriority)) {
     throw new Error("COMMERCE_ADMIN_ROW_CORRUPT");
   }
@@ -298,13 +313,18 @@ function creditProgram(row: CreditProgramRow): CreditProgramRevisionRecord {
   if ((row.uxBucketClass === "permanent" && (row.windowKind !== "none" || calendarZone !== null ||
       windowAnchor !== null || expiresAfterSeconds !== null)) ||
       (row.uxBucketClass !== "permanent" && (row.windowKind !== row.uxBucketClass || calendarZone === null ||
-        windowAnchor === null || expiresAfterSeconds === null))) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT");
+        !canonicalIanaZone(calendarZone) || expiresAfterSeconds === null ||
+        (row.uxBucketClass === "daily" && !/^daily@(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$/u.test(windowAnchor ?? "")) ||
+        (row.uxBucketClass === "period" && windowAnchor !== "subscription-term-start")))) {
+    throw new Error("COMMERCE_ADMIN_ROW_CORRUPT");
+  }
   return Object.freeze({ siteId: text(row.siteId), creditProgramRevisionRef: text(row.creditProgramRevisionRef),
     programRef: text(row.programRef), revision: positive(row.revision),
     uxBucketClass: row.uxBucketClass as typeof buckets[number], unit: text(row.unit), amount: row.amount,
     burnPriority: row.burnPriority, scopePolicy: scopePolicy(row.scopePolicy),
     liabilityMerchantAccountRef: text(row.liabilityMerchantAccountRef),
-    windowKind: row.windowKind as typeof windows[number], calendarZone, windowAnchor, expiresAfterSeconds,
+    windowKind: row.windowKind as typeof windows[number], rolloverPolicy: "none", calendarZone,
+    windowAnchor, expiresAfterSeconds,
     revisionDigest: digestText(row.revisionDigest), publishedAt: instant(row.publishedAt) });
 }
 function entitlementTemplate(row: EntitlementTemplateRow): EntitlementTemplateRevisionRecord {
@@ -313,7 +333,7 @@ function entitlementTemplate(row: EntitlementTemplateRow): EntitlementTemplateRe
   }
   return Object.freeze({ siteId: text(row.siteId),
     entitlementTemplateRevisionRef: text(row.entitlementTemplateRevisionRef), templateRef: text(row.templateRef),
-    revision: positive(row.revision), capabilityKey: row.capabilityKey, safeLabel: text(row.safeLabel),
+    revision: positive(row.revision), capabilityKey: row.capabilityKey, safeLabel: safeLabel(row.safeLabel),
     expiresAfterSeconds: nullablePositive(row.expiresAfterSeconds),
     revisionDigest: digestText(row.revisionDigest), publishedAt: instant(row.publishedAt) });
 }
@@ -329,7 +349,7 @@ function offer(row: OfferRow): CommerceOfferRecord {
   });
   return Object.freeze({ siteId: text(row.siteId), productRef: text(row.productRef),
     productKind: row.productKind as typeof kinds[number], productVersionRef: text(row.productVersionRef),
-    revision: positive(row.revision), safeLabel: text(row.safeLabel),
+    revision: positive(row.revision), safeLabel: safeLabel(row.safeLabel),
     planVersionRef: nullableText(row.planVersionRef),
     fulfillmentProgramRevisionRef: text(row.fulfillmentProgramRevisionRef), outputs: Object.freeze(outputs),
     legalTermRefs: stringArray(row.legalTermRefs), publishedAt: instant(row.publishedAt) });
@@ -367,7 +387,7 @@ function jsonArray(value: unknown): readonly unknown[] {
 function text(value: unknown): string { if (typeof value !== "string" || value.length < 1) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT"); return value; }
 function nullableText(value: unknown): string | null { return value === null ? null : text(value); }
 function integer(value: unknown): number { if (typeof value !== "number" || !Number.isInteger(value) || value < 0) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT"); return value; }
-function positive(value: unknown): bigint { const result = typeof value === "bigint" ? value : typeof value === "string" ? BigInt(value) : 0n; if (result < 1n) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT"); return result; }
+function positive(value: unknown): bigint { const result = typeof value === "bigint" ? value : typeof value === "string" ? BigInt(value) : 0n; if (result < 1n || result > 9_223_372_036_854_775_807n) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT"); return result; }
 function nullablePositive(value: unknown): bigint | null { return value === null ? null : positive(value); }
 function instant(value: unknown): string { const result = value instanceof Date ? value : typeof value === "string" ? new Date(value) : null; if (result === null || !Number.isFinite(result.getTime())) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT"); return result.toISOString(); }
 function nullableInstant(value: unknown): string | null { return value === null ? null : instant(value); }
@@ -375,6 +395,17 @@ function stringArray(value: unknown): readonly string[] { if (!Array.isArray(val
 function digestText(value: unknown): string {
   if (typeof value !== "string" || !/^[a-f0-9]{64}$/u.test(value)) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT");
   return value;
+}
+function safeLabel(value: unknown): string {
+  const label = text(value);
+  if ([...label].length > 160 || label.normalize("NFC") !== label || label.trim() !== label ||
+      /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(label)) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT");
+  return label;
+}
+function canonicalIanaZone(value: string): boolean {
+  if (!/^(?:UTC|[A-Za-z][A-Za-z0-9._+-]*(?:\/[A-Za-z][A-Za-z0-9._+-]*)+)$/u.test(value)) return false;
+  try { new Intl.DateTimeFormat("en-US", { timeZone: value }); return true; }
+  catch { return false; }
 }
 function scopePolicy(value: unknown): CreditProgramRevisionRecord["scopePolicy"] {
   const item = record(typeof value === "string" ? JSON.parse(value) as unknown : value);

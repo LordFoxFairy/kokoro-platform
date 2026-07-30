@@ -10,14 +10,17 @@ import {
   CodeDeliveryState,
   CodeExportReceiptSchema,
   CreditBucketClass,
+  CreditRolloverPolicy,
   CreditProgramRevisionSummarySchema,
   CreditScopePolicySchema,
   EntitlementTemplateRevisionSummarySchema,
   FulfillmentOutputDraftSchema,
   FulfillmentOutputKind,
   OfferSummarySchema,
+  PermanentCreditWindowPolicySchema,
   PlanTermAction,
   ProductKind,
+  RecurringCreditWindowPolicySchema,
   RedemptionProgramSummarySchema,
   type CodeBatchActionEffect,
   type FulfillmentOutputDraft,
@@ -79,25 +82,22 @@ export function createAdminCommerceConnectService(input: Readonly<{
       const scopePolicy = required(effect.scopePolicy, "COMMERCE_CREDIT_SCOPE_POLICY_REQUIRED");
       const canonicalScopePolicy = scopePolicyFromWire(scopePolicy);
       const uxBucketClass = bucketFromWire(effect.uxBucketClass);
+      const window = creditWindowFromWire(effect, uxBucketClass);
       const result = await input.owner.publishCreditProgramRevision({ context: verified.context, ...identity(context),
         requestDigest: context.command!.requestDigest, siteId: request.siteId,
         creditProgramRevisionRef: effect.creditProgramRevisionRef, programRef: effect.programRef,
         revision: effect.revision.toString(), uxBucketClass,
         unit: effect.unit, amount: effect.amount, burnPriority: effect.burnPriority,
         scopePolicy: canonicalScopePolicy,
-        liabilityMerchantAccountRef: effect.liabilityMerchantAccountRef,
-        calendarZone: effect.calendarZone ?? null, windowAnchor: effect.windowAnchor ?? null,
-        expiresAfterSeconds: effect.expiresAfterSeconds?.toString() ?? null });
-      return { receipt: receipt(context, "commerce.credit-program.publish", result.publishedAt),
+        liabilityMerchantAccountRef: effect.liabilityMerchantAccountRef, ...window });
+      return { receipt: receipt(context, result.command.operation, result.publishedAt, result.command),
         creditProgramRevision: creditProgramMessage({ siteId: request.siteId,
-          creditProgramRevisionRef: effect.creditProgramRevisionRef, programRef: effect.programRef,
+          creditProgramRevisionRef: result.creditProgramRevisionRef, programRef: effect.programRef,
           revision: effect.revision, uxBucketClass,
           unit: effect.unit, amount: effect.amount, burnPriority: effect.burnPriority,
           scopePolicy: { version: 1, ...canonicalScopePolicy },
-          liabilityMerchantAccountRef: effect.liabilityMerchantAccountRef,
-          windowKind: uxBucketClass === "permanent" ? "none" : uxBucketClass,
-          calendarZone: effect.calendarZone ?? null, windowAnchor: effect.windowAnchor ?? null,
-          expiresAfterSeconds: effect.expiresAfterSeconds ?? null,
+          liabilityMerchantAccountRef: effect.liabilityMerchantAccountRef, ...window,
+          expiresAfterSeconds: window.expiresAfterSeconds === null ? null : BigInt(window.expiresAfterSeconds),
           revisionDigest: result.revisionDigest, publishedAt: result.publishedAt }) };
     },
 
@@ -136,9 +136,9 @@ export function createAdminCommerceConnectService(input: Readonly<{
         templateRef: effect.templateRef, revision: effect.revision.toString(),
         capabilityKey: effect.capabilityKey, safeLabel: effect.safeLabel,
         expiresAfterSeconds: effect.expiresAfterSeconds?.toString() ?? null });
-      return { receipt: receipt(context, "commerce.entitlement-template.publish", result.publishedAt),
+      return { receipt: receipt(context, result.command.operation, result.publishedAt, result.command),
         entitlementTemplateRevision: entitlementTemplateMessage({ siteId: request.siteId,
-          entitlementTemplateRevisionRef: effect.entitlementTemplateRevisionRef,
+          entitlementTemplateRevisionRef: result.entitlementTemplateRevisionRef,
           templateRef: effect.templateRef, revision: effect.revision,
           capabilityKey: effect.capabilityKey, safeLabel: effect.safeLabel,
           expiresAfterSeconds: effect.expiresAfterSeconds ?? null,
@@ -341,8 +341,13 @@ function identity(context: AuthenticatedOperatorCommandContext) {
   const value = required(context.command, "COMMERCE_COMMAND_IDENTITY_REQUIRED");
   return { commandId: value.commandId, idempotencyKey: value.idempotencyKey };
 }
-function receipt(context: AuthenticatedOperatorCommandContext, operation: string, recordedAt: string) {
-  return create(CommandReceiptV2Schema, { identity: context.command, operation,
+function receipt(context: AuthenticatedOperatorCommandContext, operation: string, recordedAt: string,
+  persisted?: Readonly<{ commandId: string; idempotencyKey: string; requestDigest: string }>) {
+  const claimed = required(context.command, "COMMERCE_COMMAND_IDENTITY_REQUIRED");
+  return create(CommandReceiptV2Schema, { identity: persisted === undefined ? claimed : {
+    ...claimed, commandId: persisted.commandId, idempotencyKey: persisted.idempotencyKey,
+    requestDigest: persisted.requestDigest,
+  }, operation,
     state: CommandReceiptStateV2.COMMITTED, recordedAt: timestampFromDate(new Date(recordedAt)) });
 }
 
@@ -351,15 +356,15 @@ type ResolvedPage = Readonly<{ permit: AdminQueryPermit; limit: number; after: s
 async function pageInput(input: Parameters<typeof createAdminCommerceConnectService>[0],
   context: AuthenticatedOperatorQueryContext, transport: HandlerContext,
   operation: AdminQueryPermit["operation"], siteId: string, token: string | undefined,
-  requestedSize: number, kind: string, now: () => Date): Promise<ResolvedPage> {
+  requestedSize: number, kind: string, _now?: () => Date): Promise<ResolvedPage> {
   const limit = pageSize(requestedSize); const cursor = token === undefined ? null : input.cursors.decode(token);
   if (cursor !== null && (cursor.kind !== kind || Object.keys(cursor).sort().join(",") !==
       "after,binding,kind,watermark")) throw new Error("ADMIN_PAGE_TOKEN_INVALID");
   const permit = await query(input.resolver, context, transport, operation, siteId, [siteId]);
   const binding = scopedBinding(permit, siteId);
   if (cursor !== null && cursor.binding !== binding) throw new Error("ADMIN_PAGE_TOKEN_INVALID");
-  return Object.freeze({ permit, limit, after: cursor?.after ?? null,
-    watermark: cursor?.watermark ?? now().toISOString(), binding });
+  const watermark = cursor?.watermark ?? await input.reader.captureWatermark(permit);
+  return Object.freeze({ permit, limit, after: cursor?.after ?? null, watermark, binding });
 }
 function pageResult<Row, Message>(rows: readonly Row[], page: ResolvedPage, cursors: AdminPageCursorCodec,
   kind: string, reference: (row: Row) => string, map: (row: Row) => Message, field: string) {
@@ -378,9 +383,14 @@ function creditProgramMessage(row: CreditProgramRevisionRecord) {
       capabilityKeys: [...row.scopePolicy.capabilityKeys], agentRefs: [...row.scopePolicy.agentRefs],
       allowUnattributedAgent: row.scopePolicy.allowUnattributedAgent }),
     liabilityMerchantAccountRef: row.liabilityMerchantAccountRef,
-    ...(row.calendarZone === null ? {} : { calendarZone: row.calendarZone }),
-    ...(row.windowAnchor === null ? {} : { windowAnchor: row.windowAnchor }),
-    ...(row.expiresAfterSeconds === null ? {} : { expiresAfterSeconds: row.expiresAfterSeconds }),
+    windowPolicy: row.windowKind === "none" ? { case: "permanentWindow", value: create(
+      PermanentCreditWindowPolicySchema, { rolloverPolicy: CreditRolloverPolicy.NONE },
+    ) } : { case: "recurringWindow", value: create(RecurringCreditWindowPolicySchema, {
+      calendarZone: row.calendarZone!,
+      anchor: row.windowKind === "daily" ? { case: "dailyLocalTime",
+        value: row.windowAnchor!.slice("daily@".length) } : { case: "subscriptionTermStart", value: true },
+      expiresAfterSeconds: row.expiresAfterSeconds!, rolloverPolicy: CreditRolloverPolicy.NONE,
+    }) },
     revisionDigest: row.revisionDigest, publishedAt: timestampFromDate(new Date(row.publishedAt)) });
 }
 function entitlementTemplateMessage(row: EntitlementTemplateRevisionRecord) {
@@ -448,6 +458,26 @@ function scopePolicyFromWire(value: NonNullable<PublishCreditProgramRevisionEffe
     capabilityKeys: Object.freeze([...value.capabilityKeys].sort()),
     agentRefs: Object.freeze([...value.agentRefs].sort()),
     allowUnattributedAgent: value.allowUnattributedAgent });
+}
+function creditWindowFromWire(effect: PublishCreditProgramRevisionEffect,
+  bucket: CreditProgramRevisionRecord["uxBucketClass"]) {
+  const policy = effect.windowPolicy;
+  if (bucket === "permanent") {
+    if (policy.case !== "permanentWindow" || policy.value.rolloverPolicy !== CreditRolloverPolicy.NONE) {
+      throw new Error("COMMERCE_CREDIT_WINDOW_INVALID");
+    }
+    return Object.freeze({ windowKind: "none" as const, rolloverPolicy: "none" as const,
+      calendarZone: null, windowAnchor: null, expiresAfterSeconds: null });
+  }
+  if (policy.case !== "recurringWindow" || policy.value.rolloverPolicy !== CreditRolloverPolicy.NONE ||
+      (bucket === "daily" && policy.value.anchor.case !== "dailyLocalTime") ||
+      (bucket === "period" && (policy.value.anchor.case !== "subscriptionTermStart" ||
+        policy.value.anchor.value !== true))) throw new Error("COMMERCE_CREDIT_WINDOW_INVALID");
+  const anchor = policy.value.anchor;
+  return Object.freeze({ windowKind: bucket, rolloverPolicy: "none" as const,
+    calendarZone: policy.value.calendarZone,
+    windowAnchor: anchor.case === "dailyLocalTime" ? `daily@${anchor.value}` : "subscription-term-start",
+    expiresAfterSeconds: policy.value.expiresAfterSeconds.toString() });
 }
 function productKindToWire(value: CommerceOfferRecord["productKind"]): ProductKind {
   return { free: ProductKind.FREE, credit_pack: ProductKind.CREDIT_PACK,

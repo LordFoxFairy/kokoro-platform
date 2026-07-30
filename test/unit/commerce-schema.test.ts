@@ -172,6 +172,12 @@ describe("Wave 2A Commerce authority schema", () => {
     expect(migration).toContain("ux_bucket_class='daily' AND window_kind='daily'");
     expect(migration).toContain("ux_bucket_class='period' AND window_kind='period'");
     expect(migration).toContain("ux_bucket_class='permanent' AND window_kind='none'");
+    expect(migration).toContain("rollover_policy TEXT NOT NULL CHECK(rollover_policy='none')");
+    expect(migration).toContain("window_anchor ~ '^daily@");
+    expect(migration).toContain("window_anchor='subscription-term-start'");
+    expect(migration).toContain("calendar_zone ~ '^(UTC|");
+    expect(migration).toContain("safe_label IS NFC NORMALIZED");
+    expect(migration).toContain("safe_label !~ '[[:cntrl:]]'");
     expect(migration).not.toContain("bucket_spend_order");
   });
 

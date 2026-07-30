@@ -21,11 +21,13 @@ export class CommerceAdministrationService {
     uxBucketClass: "daily" | "period" | "permanent"; unit: string; amount: string;
     burnPriority: number; scopePolicy: Readonly<{ surfaceRefs: readonly string[];
       capabilityKeys: readonly string[]; agentRefs: readonly string[]; allowUnattributedAgent: boolean }>;
-    liabilityMerchantAccountRef: string; calendarZone: string | null; windowAnchor: string | null;
+    liabilityMerchantAccountRef: string; rolloverPolicy: "none";
+    calendarZone: string | null; windowAnchor: string | null;
     expiresAfterSeconds: string | null;
   }>) {
     const actor = adminActor(input.context, input.siteId, "commerce.credit-program.publish");
-    const window = creditWindow(input.uxBucketClass, input.calendarZone, input.windowAnchor,
+    const window = creditWindow(input.uxBucketClass, input.rolloverPolicy,
+      input.calendarZone, input.windowAnchor,
       input.expiresAfterSeconds);
     const payload = Object.freeze({
       siteId: boundedSite(input.siteId), creditProgramRevisionRef: bounded(input.creditProgramRevisionRef),
@@ -42,8 +44,9 @@ export class CommerceAdministrationService {
         ...actor, command, ...payload, revisionDigest,
       }),
     );
-    return Object.freeze({ kind: result.kind, creditProgramRevisionRef: payload.creditProgramRevisionRef,
-      revisionDigest, publishedAt: result.occurredAt });
+    return Object.freeze({ kind: result.kind, command: result.command,
+      creditProgramRevisionRef: result.result.creditProgramRevisionRef,
+      revisionDigest: result.result.revisionDigest, publishedAt: result.result.publishedAt });
   }
 
   async publishEntitlementTemplateRevision(input: CommandInput & Readonly<{
@@ -66,9 +69,9 @@ export class CommerceAdministrationService {
         ...actor, command, ...payload, revisionDigest,
       }),
     );
-    return Object.freeze({ kind: result.kind,
-      entitlementTemplateRevisionRef: payload.entitlementTemplateRevisionRef,
-      revisionDigest, publishedAt: result.occurredAt });
+    return Object.freeze({ kind: result.kind, command: result.command,
+      entitlementTemplateRevisionRef: result.result.entitlementTemplateRevisionRef,
+      revisionDigest: result.result.revisionDigest, publishedAt: result.result.publishedAt });
   }
 
   async publishOffer(input: CommandInput & Readonly<{
@@ -228,7 +231,12 @@ function commandIdentity(input: CommandInput, subjectId: string, operation: stri
 }
 function digest(value: Parameters<typeof commerceCanonicalJson>[0]): string { return createHash("sha256").update(commerceCanonicalJson(value)).digest("hex"); }
 function bounded(value: string): string { if (value.length < 1 || value.length > 256) throw new Error("COMMERCE_ADMIN_INPUT_INVALID"); return value; }
-function boundedLabel(value: string): string { if (value.length < 1 || value.length > 160) throw new Error("COMMERCE_ADMIN_LABEL_INVALID"); return value; }
+function boundedLabel(value: string): string {
+  const codePoints = [...value].length;
+  if (codePoints < 1 || codePoints > 160 || value.normalize("NFC") !== value || value.trim() !== value ||
+      /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(value)) throw new Error("COMMERCE_ADMIN_LABEL_INVALID");
+  return value;
+}
 function boundedReason(value: string): string { if (value.length < 1 || value.length > 1000) throw new Error("COMMERCE_ADMIN_REASON_INVALID"); return value; }
 function uuid(value: string): string { if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(value)) throw new Error("COMMERCE_ADMIN_UUID_INVALID"); return value; }
 function positiveInteger(value: string): string {
@@ -277,22 +285,33 @@ function policyRefs(values: readonly string[], required: boolean, pattern: RegEx
   }
   return Object.freeze([...values].sort());
 }
-function creditWindow(bucket: "daily" | "period" | "permanent", calendarZone: string | null,
+function creditWindow(bucket: "daily" | "period" | "permanent", rolloverPolicy: "none",
+  calendarZone: string | null,
   windowAnchor: string | null, expiresAfterSeconds: string | null) {
+  if (rolloverPolicy !== "none") throw new Error("COMMERCE_CREDIT_WINDOW_INVALID");
   if (bucket === "permanent") {
     if (calendarZone !== null || windowAnchor !== null || expiresAfterSeconds !== null) {
       throw new Error("COMMERCE_CREDIT_WINDOW_INVALID");
     }
-    return Object.freeze({ windowKind: "none" as const, calendarZone: null, windowAnchor: null,
-      expiresAfterSeconds: null });
+    return Object.freeze({ windowKind: "none" as const, rolloverPolicy, calendarZone: null,
+      windowAnchor: null, expiresAfterSeconds: null });
   }
-  if (calendarZone === null || calendarZone.length < 1 || calendarZone.length > 64 ||
-      windowAnchor === null || windowAnchor.length < 1 || windowAnchor.length > 128 ||
-      expiresAfterSeconds === null) throw new Error("COMMERCE_CREDIT_WINDOW_INVALID");
+  if (calendarZone === null || !canonicalIanaZone(calendarZone) || windowAnchor === null ||
+      (bucket === "daily" && !/^daily@(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$/u.test(windowAnchor)) ||
+      (bucket === "period" && windowAnchor !== "subscription-term-start") || expiresAfterSeconds === null) {
+    throw new Error("COMMERCE_CREDIT_WINDOW_INVALID");
+  }
   let expiry: string;
   try { expiry = positiveInteger(expiresAfterSeconds); }
   catch { throw new Error("COMMERCE_CREDIT_WINDOW_INVALID"); }
-  return Object.freeze({ windowKind: bucket, calendarZone, windowAnchor, expiresAfterSeconds: expiry });
+  return Object.freeze({ windowKind: bucket, rolloverPolicy, calendarZone, windowAnchor,
+    expiresAfterSeconds: expiry });
+}
+function canonicalIanaZone(value: string): boolean {
+  if (value.length < 1 || value.length > 64 ||
+      !/^(?:UTC|[A-Za-z][A-Za-z0-9._+-]*(?:\/[A-Za-z][A-Za-z0-9._+-]*)+)$/u.test(value)) return false;
+  try { new Intl.DateTimeFormat("en-US", { timeZone: value }); return true; }
+  catch { return false; }
 }
 function capabilityKey(value: string): string {
   if (!/^[a-z0-9][a-z0-9._:-]{0,127}$/u.test(value)) {
