@@ -30,7 +30,12 @@ Agent never reads Hub Mongo or package storage directly.
 ## Runtime and security
 Uploads require validation, content addressing, bounded size/path rules, trusted operator context, and secret-free metadata.
 `createHubServer` receives the parsed env-ref allowlist and URL resolver policy explicitly; the real HTTP assembly derives them from validated env. Missing admission configuration fails closed rather than letting fake/test assembly bypass the same contract.
-The HTTP server exposes only self-service and admin routes. Runtime assembly is available only on the dedicated ConnectRPC listener with exact Agent SPIFFE authorization. A single skill artifact is capped at 32 MiB; one assembly is capped at 64 MiB compressed and 128 MiB unpacked.
+The HTTP server exposes only self-service and admin routes. `KOKORO_SERVICE_PACKAGE=platform-hub-connect`
+starts a separate production process for the private ConnectRPC listener; it is never co-hosted with
+the HTTP server. Exact Platform and Agent SPIFFE identities are pinned independently, and Agent can
+invoke only the existing `HubRuntimeService`. Connect traffic uses 4252; a separate dependency-aware
+probe listener uses 4253 and is not service-discovered. A single skill artifact is capped at 32 MiB;
+one assembly is capped at 64 MiB compressed and 128 MiB unpacked.
 
 All official Hub Admin namespace resources (skill catalog, skill revision uploads, skill curation, and MCP servers) are explicitly platform-global (`siteScopeField: null`). The Admin gateway therefore exposes them only to operators with wildcard Site scope; no finite Site scope is treated as an implicit namespace filter.
 

@@ -23,7 +23,7 @@ Platform CI and release automation build the image after local gates and integra
 The image owns no data; runtime modules own schemas/migrations and external stores own durable bytes.
 
 ## Runtime and security
-The multi-stage build installs full dependencies only in the build stage, compiles each runnable package, installs production dependencies in an isolated stage, and assembles a non-root runtime image without source or test trees. A build-time verifier rejects development toolchains such as TypeScript, tsx, Vitest, Vite, and ESLint from the final image. The fixed runtime entrypoint maps `KOKORO_SERVICE_PACKAGE` only to known compiled service entries; it does not evaluate arbitrary module paths.
+The multi-stage build installs full dependencies only in the build stage, compiles each runnable package, installs production dependencies in an isolated stage, and assembles a non-root runtime image without source or test trees. A build-time verifier rejects development toolchains such as TypeScript, tsx, Vitest, Vite, and ESLint from the final image. The fixed runtime entrypoint maps `KOKORO_SERVICE_PACKAGE` only to known compiled service entries; it does not evaluate arbitrary module paths. `@kokoro/hub` and `platform-hub-connect` select distinct compiled Hub HTTP and Connect mains from the same artifact.
 
 ## Idempotency, failure, and recovery
 The same commit/lock inputs must produce a traceable artifact; release rollback selects a previous verified digest.
@@ -32,7 +32,8 @@ The same commit/lock inputs must produce a traceable artifact; release rollback 
 Keep service build logic here and dependency installation lock-driven. Do not copy sibling worktrees or `.env` files.
 
 ## Current gotchas
-The final image contains only root PostgreSQL Platform processes, Hub, and Platform Kit. Retired
+The final image contains only root PostgreSQL Platform processes, the independent Hub HTTP/Connect
+entries, and Platform Kit. Retired
 per-domain packages are excluded from the workspace and Docker context. Hub self-service membership
 is intentionally fail-closed until its PostgreSQL Platform owner adapter is mounted. CI currently
 builds but does not yet publish, sign, or attach SBOM/provenance to the image.

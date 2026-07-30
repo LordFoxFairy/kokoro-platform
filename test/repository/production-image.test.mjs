@@ -31,6 +31,7 @@ const required = Object.freeze([
   "node_modules/prisma/build/index.js",
   "kokoro-platform-kit/dist/index.js",
   "kokoro-hub/dist/interfaces/http/main.js",
+  "kokoro-hub/dist/interfaces/connect/main.js",
 ]);
 
 async function writeImageLayout(imageRoot) {
@@ -71,6 +72,7 @@ test("runtime entrypoint exposes only PostgreSQL Platform processes and Hub", as
     "platform-api", "platform-admission", "platform-admin", "platform-asset-data-plane",
     "platform-authorization", "platform-model-gateway", "platform-worker", "platform-migrator",
     "@kokoro/hub",
+    "platform-hub-connect",
   ]) assert.match(entrypoint, new RegExp(`"${role}"`, "u"));
   for (const legacy of ["@kokoro/site", "@kokoro/user", "@kokoro/model", "@kokoro/credit",
     "@kokoro/payment"]) assert.doesNotMatch(entrypoint, new RegExp(legacy, "u"));

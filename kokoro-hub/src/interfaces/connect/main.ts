@@ -3,8 +3,7 @@ import { lstat, open } from "node:fs/promises";
 import type { SecureServerOptions } from "node:http2";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { CapabilityCatalogPublicationService } from
-  "../../application/capability-catalog-publication-service.js";
+import { CapabilityCatalogPublicationService } from "../../application/capability-catalog-publication-service.js";
 import { CapabilityProjectionWorker } from "../../application/capability-projection-worker.js";
 import { ExecutionAssemblyService } from "../../application/execution-assembly-service.js";
 import { McpHubService } from "../../application/mcp-hub-service.js";
@@ -14,12 +13,9 @@ import { loadSecretKeyring } from "../../config/secret-keyring.js";
 import { loadHubEnv } from "../../config/env.js";
 import { loadHubStoreLocation } from "../../config/storage.js";
 import { AesGcmSecretCipher } from "../../infrastructure/crypto/aes-gcm-secret-cipher.js";
-import { createPlatformCapabilityProjectionClient } from
-  "../../infrastructure/connect/platform-capability-projection-client.js";
-import { MongoCapabilityCatalogAuthority } from
-  "../../infrastructure/mongo/mongo-capability-catalog-authority.js";
-import { MongoCapabilityPublicationRepository } from
-  "../../infrastructure/mongo/mongo-capability-publication-repository.js";
+import { createPlatformCapabilityProjectionClient } from "../../infrastructure/connect/platform-capability-projection-client.js";
+import { MongoCapabilityCatalogAuthority } from "../../infrastructure/mongo/mongo-capability-catalog-authority.js";
+import { MongoCapabilityPublicationRepository } from "../../infrastructure/mongo/mongo-capability-publication-repository.js";
 import { createMongoClient, hubCollections } from "../../infrastructure/mongo/mongo-client.js";
 import { MongoMcpSecretRepository } from "../../infrastructure/mongo/mongo-mcp-secret-repository.js";
 import { MongoMcpServerRepository } from "../../infrastructure/mongo/mongo-mcp-server-repository.js";
@@ -30,35 +26,109 @@ import {
   createHubRuntimeConnectService,
 } from "./capability-catalog-services.js";
 import { createHubConnectRuntime, type HubConnectCaller } from "./hub-connect-runtime.js";
+import { createHubConnectHealthServer } from "./hub-connect-health.js";
+
+export const HUB_CONNECT_PRODUCTION_REQUIRED_ENVIRONMENT = Object.freeze([
+  "KOKORO_HUB_CONNECT_PORT",
+  "KOKORO_HUB_CONNECT_HEALTH_PORT",
+  "KOKORO_HUB_MONGO_URL",
+  "KOKORO_HUB_MONGO_DB",
+  "KOKORO_WORKSPACE_CONFIG",
+  "KOKORO_WORKSPACE_S3_ACCESS_KEY",
+  "KOKORO_WORKSPACE_S3_SECRET_KEY",
+  "KOKORO_HUB_SECRET_MASTER_KEY",
+  "KOKORO_HUB_CONNECT_TLS_KEY_FILE",
+  "KOKORO_HUB_CONNECT_TLS_CERT_FILE",
+  "KOKORO_HUB_CONNECT_TLS_CLIENT_CA_FILE",
+  "KOKORO_HUB_CONNECT_MTLS_PEERS_FILE",
+  "KOKORO_HUB_CATALOG_PLATFORM_CALLER_SAN_URI",
+  "KOKORO_HUB_RUNTIME_AGENT_CALLER_SAN_URI",
+  "KOKORO_HUB_CAPABILITY_SIGNING_KEY_REF",
+  "KOKORO_HUB_CAPABILITY_SIGNING_KEY_FILE",
+  "KOKORO_HUB_PLATFORM_PROJECTION_BASE_URL",
+  "KOKORO_HUB_PLATFORM_PROJECTION_SERVER_NAME",
+  "KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_KEY_FILE",
+  "KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_CERT_FILE",
+  "KOKORO_HUB_PLATFORM_PROJECTION_SERVER_CA_FILE",
+] as const);
+
+export interface HubConnectStartupConfig {
+  readonly port: number;
+  readonly healthPort: number;
+  readonly mongoUrl: string;
+  readonly mongoDatabase: string;
+  readonly platformIdentity: string;
+  readonly agentIdentity: string;
+  readonly peersFile: string;
+  readonly signingKeyFile: string;
+}
+
+export function loadHubConnectStartupConfig(
+  environment: Readonly<Record<string, string | undefined>>,
+): HubConnectStartupConfig {
+  if (environment.NODE_ENV === "production") {
+    for (const name of HUB_CONNECT_PRODUCTION_REQUIRED_ENVIRONMENT) required(environment, name);
+  }
+  const port = boundedPort(
+    environment.KOKORO_HUB_CONNECT_PORT ?? "4252",
+    "KOKORO_HUB_CONNECT_PORT",
+  );
+  const healthPort = boundedPort(
+    environment.KOKORO_HUB_CONNECT_HEALTH_PORT ?? "4253",
+    "KOKORO_HUB_CONNECT_HEALTH_PORT",
+  );
+  if (port === healthPort) throw new Error("HUB_CONNECT_PORTS_NOT_DISTINCT");
+  const platformIdentity = required(environment, "KOKORO_HUB_CATALOG_PLATFORM_CALLER_SAN_URI");
+  const agentIdentity = required(environment, "KOKORO_HUB_RUNTIME_AGENT_CALLER_SAN_URI");
+  if (platformIdentity === agentIdentity)
+    throw new Error("HUB_CONNECT_CALLER_IDENTITIES_NOT_DISTINCT");
+  return Object.freeze({
+    port,
+    healthPort,
+    mongoUrl: required(environment, "KOKORO_HUB_MONGO_URL"),
+    mongoDatabase: required(environment, "KOKORO_HUB_MONGO_DB"),
+    platformIdentity,
+    agentIdentity,
+    peersFile: required(environment, "KOKORO_HUB_CONNECT_MTLS_PEERS_FILE"),
+    signingKeyFile: required(environment, "KOKORO_HUB_CAPABILITY_SIGNING_KEY_FILE"),
+  });
+}
 
 export async function runHubConnectMain(
   environment: Readonly<Record<string, string | undefined>> = process.env,
 ): Promise<void> {
-  const port = boundedPort(environment.KOKORO_HUB_CONNECT_PORT ?? "4252");
-  const mongoUrl = required(environment, "KOKORO_HUB_MONGO_URL");
-  const mongoDatabase = required(environment, "KOKORO_HUB_MONGO_DB");
-  const platformIdentity = required(environment, "KOKORO_HUB_CATALOG_PLATFORM_CALLER_SAN_URI");
-  const agentIdentity = required(environment, "KOKORO_HUB_RUNTIME_AGENT_CALLER_SAN_URI");
-  if (platformIdentity === agentIdentity) throw new Error("HUB_CONNECT_CALLER_IDENTITIES_NOT_DISTINCT");
-  const [tls, peers, signingKey, projectionTls] = await Promise.all([
-    loadTls(environment),
-    loadPeers(required(environment, "KOKORO_HUB_CONNECT_MTLS_PEERS_FILE")),
-    readBounded(required(environment, "KOKORO_HUB_CAPABILITY_SIGNING_KEY_FILE"), 64 * 1024, true),
-    loadProjectionTls(environment),
-  ]);
-  if (!peers.some(({ identity }) => identity === platformIdentity) ||
-      !peers.some(({ identity }) => identity === agentIdentity)) {
-    throw new Error("HUB_CONNECT_REQUIRED_CALLER_NOT_REGISTERED");
-  }
+  const config = loadHubConnectStartupConfig(environment);
   const hubEnv = loadHubEnv({ ...environment });
   const secretKeyring = loadSecretKeyring(hubEnv);
   if (secretKeyring === null) throw new Error("HUB_CONNECT_SECRET_KEYRING_REQUIRED");
   const hubStoreLocation = loadHubStoreLocation(hubEnv.KOKORO_WORKSPACE_CONFIG);
   if (hubStoreLocation === null) throw new Error("HUB_CONNECT_PACKAGE_STORE_REQUIRED");
+  const packages = makePackageStore(
+    hubStoreLocation,
+    hubEnv.KOKORO_WORKSPACE_S3_ACCESS_KEY !== undefined &&
+      hubEnv.KOKORO_WORKSPACE_S3_SECRET_KEY !== undefined
+      ? {
+          accessKeyId: hubEnv.KOKORO_WORKSPACE_S3_ACCESS_KEY,
+          secretAccessKey: hubEnv.KOKORO_WORKSPACE_S3_SECRET_KEY,
+        }
+      : null,
+  );
+  const [tls, peers, signingKey, projectionTls] = await Promise.all([
+    loadTls(environment),
+    loadPeers(config.peersFile),
+    readBoundedHubConnectFile(config.signingKeyFile, 64 * 1024, true),
+    loadProjectionTls(environment),
+  ]);
+  if (
+    !peers.some(({ identity }) => identity === config.platformIdentity) ||
+    !peers.some(({ identity }) => identity === config.agentIdentity)
+  ) {
+    throw new Error("HUB_CONNECT_REQUIRED_CALLER_NOT_REGISTERED");
+  }
 
-  const mongo = createMongoClient(mongoUrl);
+  const mongo = createMongoClient(config.mongoUrl);
   await mongo.connect();
-  const collections = hubCollections(mongo.db(mongoDatabase));
+  const collections = hubCollections(mongo.db(config.mongoDatabase));
   const repository = new MongoCapabilityPublicationRepository(collections);
   const publication = new CapabilityCatalogPublicationService({
     repository,
@@ -72,16 +142,6 @@ export async function runHubConnectMain(
     new MongoMcpSecretRepository(collections),
     new AesGcmSecretCipher(secretKeyring),
   );
-  const packages = makePackageStore(
-    hubStoreLocation,
-    hubEnv.KOKORO_WORKSPACE_S3_ACCESS_KEY !== undefined &&
-      hubEnv.KOKORO_WORKSPACE_S3_SECRET_KEY !== undefined
-      ? {
-          accessKeyId: hubEnv.KOKORO_WORKSPACE_S3_ACCESS_KEY,
-          secretAccessKey: hubEnv.KOKORO_WORKSPACE_S3_SECRET_KEY,
-        }
-      : null,
-  );
   const assembly = new ExecutionAssemblyService({
     publications: repository,
     skills: new MongoSkillRepository(collections),
@@ -91,21 +151,28 @@ export async function runHubConnectMain(
   });
   const callers = new AsyncLocalStorage<HubConnectCaller>();
   let draining = false;
-  const caller = { resolve: () => {
-    const current = callers.getStore();
-    if (current === undefined) throw new Error("HUB_CONNECT_CALLER_CONTEXT_REQUIRED");
-    return current;
-  } };
+  const caller = {
+    resolve: () => {
+      const current = callers.getStore();
+      if (current === undefined) throw new Error("HUB_CONNECT_CALLER_CONTEXT_REQUIRED");
+      return current;
+    },
+  };
   const runtime = createHubConnectRuntime({
     tls,
     peers,
     callers,
-    catalog: createHubCatalogConnectService({ publication, caller, platformCallerIdentity: platformIdentity }),
-    runtime: createHubRuntimeConnectService({ assembly, caller, agentCallerIdentity: agentIdentity }),
-    ready: async () => {
-      await mongo.db(mongoDatabase).command({ ping: 1 });
-      return true;
-    },
+    catalog: createHubCatalogConnectService({
+      publication,
+      caller,
+      platformCallerIdentity: config.platformIdentity,
+    }),
+    runtime: createHubRuntimeConnectService({
+      assembly,
+      caller,
+      agentCallerIdentity: config.agentIdentity,
+    }),
+    ready,
     isDraining: () => draining,
   });
   const worker = new CapabilityProjectionWorker({
@@ -122,16 +189,18 @@ export async function runHubConnectMain(
   const schedule = () => {
     if (workerController.signal.aborted) return;
     workerTimer = setTimeout(() => {
-      activeTick = worker.tick(workerController.signal).catch(() => undefined).finally(() => {
-        activeTick = undefined;
-        schedule();
-      });
+      activeTick = worker
+        .tick(workerController.signal)
+        .catch(() => undefined)
+        .finally(() => {
+          activeTick = undefined;
+          schedule();
+        });
     }, 250);
     workerTimer.unref();
   };
-  schedule();
-
   const server = runtime.createServer();
+  const healthServer = createHubConnectHealthServer({ ready, isDraining: () => draining });
   let stopping = false;
   const shutdown = async () => {
     if (stopping) return;
@@ -142,74 +211,175 @@ export async function runHubConnectMain(
     await new Promise<void>((finish) => server.close(() => finish())).catch(() => undefined);
     await activeTick?.catch(() => undefined);
     await mongo.close();
+    await new Promise<void>((finish) => healthServer.close(() => finish())).catch(() => undefined);
   };
-  process.once("SIGINT", () => { void shutdown(); });
-  process.once("SIGTERM", () => { void shutdown(); });
-  await new Promise<void>((ready, failed) => {
-    server.once("error", failed);
-    server.listen(port, "0.0.0.0", () => { server.off("error", failed); ready(); });
-  });
-  console.log(`kokoro-hub Connect listening on ${port}`);
+  const signalShutdown = () => {
+    void shutdown().catch((error: unknown) => {
+      process.exitCode = 1;
+      console.error("kokoro-hub Connect failed to drain", error);
+    });
+  };
+  process.once("SIGINT", signalShutdown);
+  process.once("SIGTERM", signalShutdown);
+  try {
+    await listen(server, config.port);
+    await listen(healthServer, config.healthPort);
+    schedule();
+  } catch (error) {
+    process.off("SIGINT", signalShutdown);
+    process.off("SIGTERM", signalShutdown);
+    await shutdown();
+    throw error;
+  }
+  console.log(`kokoro-hub Connect listening on ${config.port}; health on ${config.healthPort}`);
+
+  async function ready(): Promise<boolean> {
+    await mongo.db(config.mongoDatabase).command({ ping: 1 });
+    return true;
+  }
 }
 
-async function loadTls(environment: Readonly<Record<string, string | undefined>>): Promise<SecureServerOptions> {
+function listen(
+  server: Readonly<{
+    once(event: "error", listener: (error: Error) => void): unknown;
+    off(event: "error", listener: (error: Error) => void): unknown;
+    listen(port: number, host: string, listener: () => void): unknown;
+  }>,
+  port: number,
+): Promise<void> {
+  return new Promise((resolveListen, reject) => {
+    const failed = (error: Error) => reject(error);
+    server.once("error", failed);
+    server.listen(port, "0.0.0.0", () => {
+      server.off("error", failed);
+      resolveListen();
+    });
+  });
+}
+
+async function loadTls(
+  environment: Readonly<Record<string, string | undefined>>,
+): Promise<SecureServerOptions> {
   const [key, cert, ca] = await Promise.all([
-    readBounded(required(environment, "KOKORO_HUB_CONNECT_TLS_KEY_FILE"), 64 * 1024, true),
-    readBounded(required(environment, "KOKORO_HUB_CONNECT_TLS_CERT_FILE"), 64 * 1024, false),
-    readBounded(required(environment, "KOKORO_HUB_CONNECT_TLS_CLIENT_CA_FILE"), 256 * 1024, false),
+    readBoundedHubConnectFile(
+      required(environment, "KOKORO_HUB_CONNECT_TLS_KEY_FILE"),
+      64 * 1024,
+      true,
+    ),
+    readBoundedHubConnectFile(
+      required(environment, "KOKORO_HUB_CONNECT_TLS_CERT_FILE"),
+      64 * 1024,
+      false,
+    ),
+    readBoundedHubConnectFile(
+      required(environment, "KOKORO_HUB_CONNECT_TLS_CLIENT_CA_FILE"),
+      256 * 1024,
+      false,
+    ),
   ]);
-  if (!key.includes("PRIVATE KEY") || !cert.includes("BEGIN CERTIFICATE") || !ca.includes("BEGIN CERTIFICATE")) {
+  if (
+    !key.includes("PRIVATE KEY") ||
+    !cert.includes("BEGIN CERTIFICATE") ||
+    !ca.includes("BEGIN CERTIFICATE")
+  ) {
     throw new Error("HUB_CONNECT_TLS_MATERIAL_INVALID");
   }
-  return Object.freeze({ key, cert, ca, requestCert: true, rejectUnauthorized: true,
-    allowHTTP1: false, minVersion: "TLSv1.3" });
+  return Object.freeze({
+    key,
+    cert,
+    ca,
+    requestCert: true,
+    rejectUnauthorized: true,
+    allowHTTP1: false,
+    minVersion: "TLSv1.3",
+  });
 }
 
 async function loadProjectionTls(environment: Readonly<Record<string, string | undefined>>) {
   const [privateKeyPem, certificatePem, certificateAuthorityPem] = await Promise.all([
-    readBounded(required(environment, "KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_KEY_FILE"), 64 * 1024, true),
-    readBounded(required(environment, "KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_CERT_FILE"), 64 * 1024, false),
-    readBounded(required(environment, "KOKORO_HUB_PLATFORM_PROJECTION_SERVER_CA_FILE"), 256 * 1024, false),
+    readBoundedHubConnectFile(
+      required(environment, "KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_KEY_FILE"),
+      64 * 1024,
+      true,
+    ),
+    readBoundedHubConnectFile(
+      required(environment, "KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_CERT_FILE"),
+      64 * 1024,
+      false,
+    ),
+    readBoundedHubConnectFile(
+      required(environment, "KOKORO_HUB_PLATFORM_PROJECTION_SERVER_CA_FILE"),
+      256 * 1024,
+      false,
+    ),
   ]);
   return { privateKeyPem, certificatePem, certificateAuthorityPem };
 }
 
 async function loadPeers(path: string) {
   let value: unknown;
-  try { value = JSON.parse(await readBounded(path, 256 * 1024, false)); } catch {
+  try {
+    value = JSON.parse(await readBoundedHubConnectFile(path, 256 * 1024, false));
+  } catch {
     throw new Error("HUB_CONNECT_PEERS_INVALID");
   }
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("HUB_CONNECT_PEERS_INVALID");
   }
   const root = value as Record<string, unknown>;
-  if (root.version !== 1 || !Array.isArray(root.peers) ||
-      Object.keys(root).sort().join(",") !== "peers,version") throw new Error("HUB_CONNECT_PEERS_INVALID");
+  if (
+    root.version !== 1 ||
+    !Array.isArray(root.peers) ||
+    Object.keys(root).sort().join(",") !== "peers,version"
+  )
+    throw new Error("HUB_CONNECT_PEERS_INVALID");
   const identities = new Set<string>();
-  return Object.freeze(root.peers.map((raw) => {
-    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-      throw new Error("HUB_CONNECT_PEERS_INVALID");
-    }
-    const peer = raw as Record<string, unknown>;
-    if (Object.keys(peer).sort().join(",") !== "fingerprint256,sanUri" ||
+  return Object.freeze(
+    root.peers.map((raw) => {
+      if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+        throw new Error("HUB_CONNECT_PEERS_INVALID");
+      }
+      const peer = raw as Record<string, unknown>;
+      if (
+        Object.keys(peer).sort().join(",") !== "fingerprint256,sanUri" ||
         typeof peer.fingerprint256 !== "string" ||
         !/^(?:[0-9A-F]{2}:){31}[0-9A-F]{2}$/u.test(peer.fingerprint256) ||
-        typeof peer.sanUri !== "string" || !peer.sanUri.startsWith("spiffe://") ||
-        identities.has(peer.sanUri)) throw new Error("HUB_CONNECT_PEERS_INVALID");
-    identities.add(peer.sanUri);
-    return Object.freeze({ identity: peer.sanUri, sanUri: peer.sanUri, fingerprint256: peer.fingerprint256 });
-  }));
+        typeof peer.sanUri !== "string" ||
+        !peer.sanUri.startsWith("spiffe://") ||
+        identities.has(peer.sanUri)
+      )
+        throw new Error("HUB_CONNECT_PEERS_INVALID");
+      identities.add(peer.sanUri);
+      return Object.freeze({
+        identity: peer.sanUri,
+        sanUri: peer.sanUri,
+        fingerprint256: peer.fingerprint256,
+      });
+    }),
+  );
 }
 
-async function readBounded(path: string, maximumBytes: number, privateFile: boolean): Promise<string> {
+export async function readBoundedHubConnectFile(
+  path: string,
+  maximumBytes: number,
+  privateFile: boolean,
+): Promise<string> {
   const before = await lstat(path);
   if (before.isSymbolicLink()) throw new Error("HUB_CONNECT_TRUST_FILE_INVALID");
   const handle = await open(path, "r");
   try {
     const metadata = await handle.stat();
-    if (!metadata.isFile() || metadata.dev !== before.dev || metadata.ino !== before.ino ||
-        metadata.size < 1 || metadata.size > maximumBytes ||
-        (privateFile && (metadata.mode & 0o077) !== 0)) throw new Error("HUB_CONNECT_TRUST_FILE_INVALID");
+    if (
+      !metadata.isFile() ||
+      metadata.dev !== before.dev ||
+      metadata.ino !== before.ino ||
+      metadata.size < 1 ||
+      metadata.size > maximumBytes ||
+      // Kubernetes Secret volumes use a dedicated fsGroup. Group-read is safe for that
+      // single workload group; group write/execute and all world access remain forbidden.
+      (privateFile && (metadata.mode & 0o037) !== 0)
+    )
+      throw new Error("HUB_CONNECT_TRUST_FILE_INVALID");
     const value = await handle.readFile();
     if (value.byteLength !== metadata.size || value.byteLength > maximumBytes) {
       throw new Error("HUB_CONNECT_TRUST_FILE_INVALID");
@@ -225,10 +395,10 @@ function required(environment: Readonly<Record<string, string | undefined>>, nam
   if (!value) throw new Error(`${name}_REQUIRED`);
   return value;
 }
-function boundedPort(value: string): number {
-  if (!/^[1-9][0-9]{0,4}$/u.test(value)) throw new Error("KOKORO_HUB_CONNECT_PORT_INVALID");
+function boundedPort(value: string, name: string): number {
+  if (!/^[1-9][0-9]{0,4}$/u.test(value)) throw new Error(`${name}_INVALID`);
   const parsed = Number(value);
-  if (parsed > 65_535) throw new Error("KOKORO_HUB_CONNECT_PORT_INVALID");
+  if (parsed > 65_535) throw new Error(`${name}_INVALID`);
   return parsed;
 }
 function isMain(): boolean {

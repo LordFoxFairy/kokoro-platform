@@ -11,7 +11,7 @@ owners:
 
 The root Prisma 7/PostgreSQL implementation is the only Platform business authority. Site, identity, authorization, policy,
 model control, credit/usage, commerce redemption, assets, Admission and privileged Admin all live in this source tree and share
-one migration authority. API, worker, Admission, Authorization, Asset Data Plane, Model Gateway, Admin and Migrator remain
+one migration authority. API, worker, Admission, Authorization, Asset Data Plane, Model Gateway, Admin, Migrator, Hub HTTP and Hub Connect remain
 independently selectable processes with exact database credential classes. PostgreSQL RLS, security-definer projections and
 process-specific grants enforce the internal boundaries; there is no MySQL authority mode, dual write or legacy cutover path.
 
@@ -29,7 +29,8 @@ Ordinary Site product traffic uses the bounded public HTTP/JSON BFF contract. Pr
 Protobuf/Connect contracts: Admin Identity/Auth/Query/Commerce, Session Admission and Asset Eligibility, Hub capability
 publication/runtime, and Agent Model Gateway. Same-Platform bounded contexts never self-RPC; application ports and one scoped
 transaction coordinate local owners. Root `src/index.ts` exposes only the Platform composition surface, and
-`deploy/docker/Dockerfile` builds the closed runtime artifact.
+`deploy/docker/Dockerfile` builds the closed runtime artifact. `platform-hub-connect` selects the private Hub
+Connect entrypoint independently from the `@kokoro/hub` HTTP process.
 
 ## Callers and dependencies
 

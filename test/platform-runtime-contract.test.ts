@@ -29,6 +29,7 @@ describe("Platform runtime contract ownership", () => {
       "platform-worker",
       "platform-migrator",
       "@kokoro/hub",
+      "platform-hub-connect",
     ]) expect(entrypoint).toContain(`"${selector}"`);
     expect(entrypoint).not.toMatch(/@kokoro\/(?:site|user|model|credit|payment|platform-admin)/u);
   });

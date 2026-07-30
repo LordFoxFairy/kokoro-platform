@@ -17,10 +17,13 @@ The production artifact has one closed runtime set:
 - `platform-admin`
 - `platform-migrator`
 - `@kokoro/hub`
+- `platform-hub-connect`
 
-`kokoro-platform-kit` is the only shared runtime library workspace. `kokoro-hub` remains an
-independently selectable process with Mongo/S3 ownership. LiteLLM is an external provider gateway,
-not a package or process shipped in this image.
+`kokoro-platform-kit` is the only shared runtime library workspace. Hub reuses the same artifact but
+has two independent processes: `@kokoro/hub` is the HTTP management surface and
+`platform-hub-connect` is the private mTLS catalog/runtime service. They share Mongo/S3 ownership but
+never share a process or listener. LiteLLM is an external provider gateway, not a package or process
+shipped in this image.
 
 The directories `kokoro-site`, `kokoro-user`, `kokoro-model`, `kokoro-credit`, `kokoro-payment`,
 and `kokoro-platform-admin` are retired source archives. They are deliberately absent from the
