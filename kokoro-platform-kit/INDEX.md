@@ -24,6 +24,7 @@ Only `src/index.ts` re-exports are supported. It spans six subtrees:
 - `rpc/` — Connect interceptors and workload auth; specifics in [`src/rpc/INDEX.md`](src/rpc/INDEX.md).
 
 `callService` is the supported outbound cross-service entry point for business modules; the Admin gateway is the one caller that issues raw `fetch` instead. `caller` is required, so every `callService` request carries `x-kokoro-service`, and `registerRouteAccess` answers 401 when that header is absent. There is no shared-secret fallback path, and `INTERNAL_SECRET_HEADER` is owned by `http/route-access.ts`.
+Only routes registered with Fastify enter the access matrix: a registered route without an explicit declaration uses the configured default level (`runtime-internal` by default), while a genuinely unmatched request remains Fastify's 404.
 
 ## Callers and dependencies
 Platform business modules may depend on Kit; Kit must not depend back on those modules.

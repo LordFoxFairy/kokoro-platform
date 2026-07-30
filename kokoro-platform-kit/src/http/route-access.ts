@@ -178,6 +178,9 @@ export function registerRouteAccess(app: FastifyInstance, config: RouteAccessCon
   const warn = config.warn ?? ((message: string) => console.warn(message));
 
   app.addHook("onRequest", async (request, reply) => {
+    if (request.routeOptions.url === undefined) {
+      return;
+    }
     const path = request.url.split("?", 1)[0] ?? request.url;
     const level = resolveLevel(state.routes, path, state.defaultLevel);
 

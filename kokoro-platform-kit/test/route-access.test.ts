@@ -47,6 +47,12 @@ const SECRETS = {
 } as const;
 
 describe("registerRouteAccess — 访问等级解析", () => {
+  it("真正未匹配的路由保留 Fastify 404，不套用默认访问等级", async () => {
+    const instance = buildApp({ secrets: SECRETS });
+    const res = await instance.inject({ method: "GET", url: "/does-not-exist" });
+    expect(res.statusCode).toBe(404);
+  });
+
   it("public 路由无需凭据即放行（即使已配置 secret）", async () => {
     const instance = buildApp({ secrets: SECRETS });
     const res = await instance.inject({ method: "GET", url: "/healthz" });
@@ -61,6 +67,13 @@ describe("registerRouteAccess — 访问等级解析", () => {
       headers: { [SERVICE_CALLER_HEADER]: "session", [INTERNAL_SECRET_HEADER]: SECRETS.session },
     });
     expect(res.statusCode).toBe(200);
+  });
+
+  it("已注册但未声明的路由仍按默认 runtime-internal 拒绝匿名请求", async () => {
+    const instance = buildApp({ secrets: SECRETS });
+    const res = await instance.inject({ method: "GET", url: "/credit/usage/hold" });
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({ error: { code: "internal.unauthorized" } });
   });
 
   it("最长前缀命中：/auth/magic-links/consume 归 web-bff 而非 /auth/sessions", async () => {
