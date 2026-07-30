@@ -36,7 +36,9 @@ export interface AdminQueryPermit {
     "commerce.credit-program.read" | "commerce.entitlement-template.read" |
     "commerce.offer.read" | "commerce.redemption-program.read" | "commerce.code-batch.read" |
     "credit.summary.read" | "credit.account.read" | "credit.grant.read" | "credit.hold.read" |
-    "credit.journal.read" | "credit.rated-usage.read";
+    "credit.journal.read" | "credit.rated-usage.read" |
+    "model.inventory.read" | "model.option.read" | "model.site-policy.read" |
+    "model.site-release-catalog.read";
   readonly authorityBindingDigest: string;
   readonly scope: AdminQueryScope;
 }

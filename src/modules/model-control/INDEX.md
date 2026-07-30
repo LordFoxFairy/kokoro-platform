@@ -54,10 +54,12 @@ Catalog materialization, activation and Site policy changes are narrow `SECURITY
 Signed context still requires an admin workload acting as an operator or management workload. Reusing an import/change ID with a
 different digest fails closed.
 
-The migrator is the only identity allowed to read raw catalog, policy, receipt, provider account, `secret_ref`, or canonical-payload
-tables. API resolves candidates, decision replays, and exact SiteRelease ModelOption projections through scoped owner functions
-only. Admin can execute the inventory/Site-policy commands plus narrow ModelOption inventory-read, revision-read, and publication
-functions; it still has no raw ModelOption table access. Worker has one separate
+The migrator is the only identity allowed to read provider `secret_ref` or inventory canonical payloads. API resolves candidates,
+decision replays, and exact SiteRelease ModelOption projections through scoped owner functions only. Admin additionally has a
+typed read plane over inventory revisions and active pointer, safe provider/model/binding/route projections, ModelOptions, exact-Site
+policies, and exact-Site release catalogs. Its database role receives only the columns used by those projections; provider secret
+references are reduced to a presence boolean. Every list uses an owner-authoritative database watermark, bounded keyset pagination,
+and an HMAC cursor bound to the operator's authority digest, scope, Site, and filters. Worker has one separate
 provider-availability report command: it atomically compare-and-swaps the provider epoch and writes an immutable idempotency receipt.
 Provider status/health is therefore a mutable operational fact, never a catalog-release mutation.
 

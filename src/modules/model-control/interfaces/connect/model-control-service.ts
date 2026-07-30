@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import { create } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
-import { type HandlerContext, type ServiceImpl } from "@connectrpc/connect";
+import { Code, ConnectError, type HandlerContext, type ServiceImpl } from "@connectrpc/connect";
 import {
   CommandDigestAlgorithmV2,
   CommandIdentityV2Schema,
@@ -8,10 +9,22 @@ import {
   CommandReceiptV2Schema,
 } from
   "../../../../interfaces/connect/generated-model-control/kokoro/common/v2/command_envelope_pb.js";
-import type { AuthenticatedOperatorCommandContext } from
+import type {
+  AuthenticatedOperatorCommandContext,
+  AuthenticatedOperatorQueryContext,
+} from
   "../../../../interfaces/connect/generated-model-control/kokoro/platform/admin/v2/admin_shared_pb.js";
 import {
+  AdminModelBindingSchema,
+  AdminModelDefinitionSchema,
+  AdminModelInventoryRevisionSchema,
+  AdminModelOptionSchema,
+  AdminModelProductRouteSchema,
+  AdminModelProviderSchema,
+  AdminSiteModelPolicySchema,
+  AdminSiteReleaseCatalogSchema,
   ModelControlService,
+  ModelAdminPageInfoSchema,
   ModelOptionLifecycle,
   ModelProduct,
   ModelRouteRole,
@@ -59,6 +72,24 @@ import type { ProviderOperationalAvailability } from
 import type { SiteModelPolicy } from "../../domain/site-model-policy.js";
 import { withCommandReceiptConflictMapping } from
   "../../../../interfaces/connect/command-receipt-conflict.js";
+import {
+  permitBinding,
+  scopedBinding,
+  type AdminPageCursorCodec,
+  type AdminQueryPermit,
+  type AdminQueryResolver,
+} from "../../../admin/interfaces/connect/admin-query-service.js";
+import type {
+  AdminModelBinding as ReadModelBinding,
+  AdminModelDefinition as ReadModelDefinition,
+  AdminModelInventoryRevision as ReadInventoryRevision,
+  AdminModelOption as ReadModelOption,
+  AdminModelProductRoute as ReadProductRoute,
+  AdminModelProvider as ReadModelProvider,
+  AdminSiteModelPolicy as ReadSiteModelPolicy,
+  AdminSiteReleaseCatalog as ReadSiteReleaseCatalog,
+  PostgresModelControlAdminReader,
+} from "../../infrastructure/postgres/model-control-admin-reader.js";
 
 export type ModelControlConnectService = ServiceImpl<typeof ModelControlService>;
 
@@ -95,10 +126,147 @@ export function createModelControlConnectService(input: Readonly<{
     materializeModelOptions: Pick<ModelOptionMaterializationAdministration, "materialize">;
     publishSiteReleaseCatalog: Pick<SiteReleaseModelCatalogAdministration, "publish">;
   }>;
-  resolver: ModelControlAdminResolver;
+  resolver: ModelControlAdminResolver & AdminQueryResolver;
   receipts: ControlCommandReceiptTimestampReader;
+  reader: Pick<PostgresModelControlAdminReader,
+    "listInventoryRevisions" | "getInventoryRevision" | "listInventoryProviders" |
+    "listInventoryModels" | "listInventoryBindings" | "listInventoryProductRoutes" |
+    "listModelOptions" | "listSiteModelPolicies" | "listSiteReleaseCatalogs">;
+  cursors: AdminPageCursorCodec;
 }>): ModelControlConnectService {
   return {
+    async listInventoryRevisions(request, transport) {
+      const permit = await resolveRead(input.resolver, required(request.context,
+        "MODEL_CONTROL_QUERY_CONTEXT_REQUIRED"), transport, "model.inventory.read", null, [],
+      inventoryFields);
+      const page = resolvePage(input.cursors, request.page, permit, "model-inventories", null, {});
+      const result = await input.reader.listInventoryRevisions(permit, {
+        before: page.cursor === null ? null : {
+          importedAt: cursorInstant(page.cursor, "at"),
+          inventoryDigest: cursorDigest(page.cursor, "digest"),
+        }, limit: page.limit + 1, asOf: page.asOf,
+      });
+      const visible = result.items.slice(0, page.limit); const last = visible.at(-1);
+      return { revisions: visible.map(inventoryRevisionMessage), page: pageInfo(input.cursors,
+        result.asOf, page, last === undefined ? null : {
+          at: last.importedAt, digest: last.inventoryDigest,
+        }, result.items.length > page.limit) };
+    },
+
+    async getInventoryRevision(request, transport) {
+      const context = required(request.context, "MODEL_CONTROL_QUERY_CONTEXT_REQUIRED");
+      const permit = await resolveRead(input.resolver, context, transport, "model.inventory.read",
+        null, [request.inventoryDigest], inventoryFields);
+      const result = await input.reader.getInventoryRevision(permit, request.inventoryDigest);
+      if (result.item === null) throw new ConnectError("model inventory revision not found", Code.NotFound);
+      return { revision: inventoryRevisionMessage(result.item), asOf: timestamp(result.asOf) };
+    },
+
+    async listInventoryProviders(request, transport) {
+      const permit = await inventoryPermit(input.resolver, request.context, transport,
+        request.inventoryDigest, providerFields);
+      const page = resolvePage(input.cursors, request.page, permit, "model-providers", null,
+        { inventoryDigest: request.inventoryDigest });
+      const result = await input.reader.listInventoryProviders(permit, request.inventoryDigest, {
+        afterProviderKey: page.cursor?.after ?? null, limit: page.limit + 1, asOf: page.asOf,
+      });
+      return keyPage(input.cursors, result, page, (item) => item.providerKey,
+        (item) => providerMessage(item), "providers");
+    },
+
+    async listInventoryModels(request, transport) {
+      const permit = await inventoryPermit(input.resolver, request.context, transport,
+        request.inventoryDigest, modelFields);
+      const page = resolvePage(input.cursors, request.page, permit, "model-definitions", null,
+        { inventoryDigest: request.inventoryDigest });
+      const result = await input.reader.listInventoryModels(permit, request.inventoryDigest, {
+        afterModelKey: page.cursor?.after ?? null, limit: page.limit + 1, asOf: page.asOf,
+      });
+      return keyPage(input.cursors, result, page, (item) => item.modelKey,
+        (item) => modelMessage(item), "models");
+    },
+
+    async listInventoryBindings(request, transport) {
+      const permit = await inventoryPermit(input.resolver, request.context, transport,
+        request.inventoryDigest, bindingFields);
+      const page = resolvePage(input.cursors, request.page, permit, "model-bindings", null,
+        { inventoryDigest: request.inventoryDigest });
+      const result = await input.reader.listInventoryBindings(permit, request.inventoryDigest, {
+        afterBindingKey: page.cursor?.after ?? null, limit: page.limit + 1, asOf: page.asOf,
+      });
+      return keyPage(input.cursors, result, page, (item) => item.bindingKey,
+        (item) => bindingMessage(item), "bindings");
+    },
+
+    async listInventoryProductRoutes(request, transport) {
+      const permit = await inventoryPermit(input.resolver, request.context, transport,
+        request.inventoryDigest, routeFields);
+      const page = resolvePage(input.cursors, request.page, permit, "model-routes", null,
+        { inventoryDigest: request.inventoryDigest });
+      const cursor = page.cursor;
+      const result = await input.reader.listInventoryProductRoutes(permit, request.inventoryDigest, {
+        after: cursor === null ? null : { product: cursor.product!, role: cursor.role!,
+          position: cursorInteger(cursor, "position"), modelKey: cursor.model! },
+        limit: page.limit + 1, asOf: page.asOf,
+      });
+      const visible = result.items.slice(0, page.limit); const last = visible.at(-1);
+      return { routes: visible.map(routeMessage), page: pageInfo(input.cursors, result.asOf, page,
+        last === undefined ? null : { product: last.product, role: last.role,
+          position: String(last.position), model: last.modelKey }, result.items.length > page.limit) };
+    },
+
+    async listModelOptions(request, transport) {
+      const context = required(request.context, "MODEL_CONTROL_QUERY_CONTEXT_REQUIRED");
+      const inventoryDigest = request.inventoryDigest ?? null;
+      const surface = request.surface === undefined ? null : productId(request.surface);
+      const resources = inventoryDigest === null ? [] : [inventoryDigest];
+      const permit = await resolveRead(input.resolver, context, transport, "model.option.read", null,
+        resources, optionFields);
+      const page = resolvePage(input.cursors, request.page, permit, "model-options", null,
+        { inventoryDigest, surface });
+      const result = await input.reader.listModelOptions(permit, { inventoryDigest, surface }, {
+        before: page.cursor === null ? null : { createdAt: cursorInstant(page.cursor, "at"),
+          revisionRef: page.cursor.revision! }, limit: page.limit + 1, asOf: page.asOf,
+      });
+      const visible = result.items.slice(0, page.limit); const last = visible.at(-1);
+      return { options: visible.map(optionMessage), page: pageInfo(input.cursors, result.asOf, page,
+        last === undefined ? null : { at: last.createdAt, revision: last.revisionRef },
+        result.items.length > page.limit) };
+    },
+
+    async listSiteModelPolicies(request, transport) {
+      const context = required(request.context, "MODEL_CONTROL_QUERY_CONTEXT_REQUIRED");
+      const permit = await resolveRead(input.resolver, context, transport, "model.site-policy.read",
+        request.siteId, [request.siteId], policyFields);
+      const page = resolvePage(input.cursors, request.page, permit, "site-model-policies",
+        request.siteId, {});
+      const result = await input.reader.listSiteModelPolicies(permit, request.siteId, {
+        before: page.cursor === null ? null : { changedAt: cursorInstant(page.cursor, "at"),
+          product: page.cursor.product!, revision: page.cursor.revision! },
+        limit: page.limit + 1, asOf: page.asOf,
+      });
+      const visible = result.items.slice(0, page.limit); const last = visible.at(-1);
+      return { policies: visible.map(policyMessage), page: pageInfo(input.cursors, result.asOf, page,
+        last === undefined ? null : { at: last.changedAt, product: last.product,
+          revision: last.revision }, result.items.length > page.limit) };
+    },
+
+    async listSiteReleaseCatalogs(request, transport) {
+      const context = required(request.context, "MODEL_CONTROL_QUERY_CONTEXT_REQUIRED");
+      const permit = await resolveRead(input.resolver, context, transport,
+        "model.site-release-catalog.read", request.siteId, [request.siteId], catalogFields);
+      const page = resolvePage(input.cursors, request.page, permit, "site-release-model-catalogs",
+        request.siteId, {});
+      const result = await input.reader.listSiteReleaseCatalogs(permit, request.siteId, {
+        before: page.cursor === null ? null : { publishedAt: cursorInstant(page.cursor, "at"),
+          modelOptionCatalogRef: page.cursor.catalog! }, limit: page.limit + 1, asOf: page.asOf,
+      });
+      const visible = result.items.slice(0, page.limit); const last = visible.at(-1);
+      return { catalogs: visible.map(catalogMessage), page: pageInfo(input.cursors, result.asOf, page,
+        last === undefined ? null : { at: last.publishedAt, catalog: last.modelOptionCatalogRef },
+        result.items.length > page.limit) };
+    },
+
     async importInventory(request, transport) {
       const context = required(request.context, "MODEL_CONTROL_CONTEXT_REQUIRED");
       const effect = required(request.effect, "MODEL_INVENTORY_IMPORT_EFFECT_REQUIRED");
@@ -266,6 +434,191 @@ export function createModelControlConnectService(input: Readonly<{
     },
   };
 }
+
+interface ResolvedModelPage {
+  readonly limit: number;
+  readonly cursor: Readonly<Record<string, string>> | null;
+  readonly binding: string;
+  readonly kind: string;
+  readonly asOf: string | null;
+}
+
+async function resolveRead(resolver: AdminQueryResolver, context: AuthenticatedOperatorQueryContext,
+  transport: HandlerContext, operation: AdminQueryPermit["operation"], siteRef: string | null,
+  resourceRefs: readonly string[], fieldRefs: readonly string[]): Promise<AdminQueryPermit> {
+  return resolver.resolve(context, transport, { operation, siteRef, resourceRefs, fieldRefs });
+}
+
+function inventoryPermit(resolver: AdminQueryResolver,
+  context: AuthenticatedOperatorQueryContext | undefined, transport: HandlerContext,
+  inventoryDigest: string, fields: readonly string[]): Promise<AdminQueryPermit> {
+  return resolveRead(resolver, required(context, "MODEL_CONTROL_QUERY_CONTEXT_REQUIRED"), transport,
+    "model.inventory.read", null, [inventoryDigest], fields);
+}
+
+function resolvePage(cursors: AdminPageCursorCodec,
+  requested: Readonly<{ pageSize: number; pageToken?: string | undefined }> | undefined,
+  permit: AdminQueryPermit, kind: string, siteRef: string | null,
+  filters: Readonly<Record<string, string | null>>): ResolvedModelPage {
+  const limit = requested === undefined ? 50 : pageSize(requested.pageSize);
+  const cursor = requested?.pageToken === undefined ? null : cursors.decode(requested.pageToken);
+  if (cursor !== null) requireModelCursor(cursor, kind);
+  const base = siteRef === null ? permitBinding(permit) : scopedBinding(permit, siteRef);
+  const binding = modelFilterBinding(base, kind, filters);
+  if (cursor !== null && cursor.binding !== binding) throw pageTokenError();
+  return Object.freeze({ limit, cursor, binding, kind, asOf: cursor?.watermark ?? null });
+}
+
+function requireModelCursor(cursor: Readonly<Record<string, string>>, kind: string): void {
+  const keys: Readonly<Record<string, readonly string[]>> = Object.freeze({
+    "model-inventories": ["at", "binding", "digest", "kind", "watermark"],
+    "model-providers": ["after", "binding", "kind", "watermark"],
+    "model-definitions": ["after", "binding", "kind", "watermark"],
+    "model-bindings": ["after", "binding", "kind", "watermark"],
+    "model-routes": ["binding", "kind", "model", "position", "product", "role", "watermark"],
+    "model-options": ["at", "binding", "kind", "revision", "watermark"],
+    "site-model-policies": ["at", "binding", "kind", "product", "revision", "watermark"],
+    "site-release-model-catalogs": ["at", "binding", "catalog", "kind", "watermark"],
+  });
+  const expected = keys[kind];
+  if (expected === undefined || cursor.kind !== kind ||
+      Object.keys(cursor).sort().join(",") !== [...expected].sort().join(",")) throw pageTokenError();
+  cursorInstant(cursor, "watermark");
+}
+
+function modelFilterBinding(base: string, kind: string,
+  filters: Readonly<Record<string, string | null>>): string {
+  const entries = Object.entries(filters).sort(([left], [right]) => left.localeCompare(right));
+  return createHash("sha256").update("kokoro.model-admin-page.v1").update("\0").update(base)
+    .update("\0").update(kind).update("\0").update(JSON.stringify(Object.fromEntries(entries)))
+    .digest("hex");
+}
+
+function pageInfo(cursors: AdminPageCursorCodec, asOf: string, page: ResolvedModelPage,
+  key: Readonly<Record<string, string>> | null, hasMore: boolean) {
+  return create(ModelAdminPageInfoSchema, { asOf: timestamp(asOf),
+    ...(hasMore && key !== null ? { nextPageToken: cursors.encode({ kind: page.kind,
+      binding: page.binding, watermark: asOf, ...key }) } : {}) });
+}
+
+function keyPage<Item, Message, Field extends string>(cursors: AdminPageCursorCodec,
+  result: Readonly<{ items: readonly Item[]; asOf: string }>, page: ResolvedModelPage,
+  reference: (item: Item) => string, message: (item: Item) => Message, field: Field):
+  { [Key in Field]: Message[] } & { page: ReturnType<typeof pageInfo> } {
+  const visible = result.items.slice(0, page.limit); const last = visible.at(-1);
+  return { [field]: visible.map(message), page: pageInfo(cursors, result.asOf, page,
+    last === undefined ? null : { after: reference(last) }, result.items.length > page.limit) } as
+    { [Key in Field]: Message[] } & { page: ReturnType<typeof pageInfo> };
+}
+
+function pageSize(value: number): number {
+  if (!Number.isInteger(value) || value < 1 || value > 200) throw new Error("MODEL_ADMIN_PAGE_SIZE_INVALID");
+  return value;
+}
+function pageTokenError(): Error { return new Error("MODEL_ADMIN_PAGE_TOKEN_INVALID"); }
+function cursorInstant(cursor: Readonly<Record<string, string>>, field: string): string {
+  const value = cursor[field];
+  if (value === undefined || !Number.isFinite(Date.parse(value))) throw pageTokenError();
+  return new Date(value).toISOString();
+}
+function cursorDigest(cursor: Readonly<Record<string, string>>, field: string): string {
+  const value = cursor[field];
+  if (value === undefined || !/^[a-f0-9]{64}$/u.test(value)) throw pageTokenError();
+  return value;
+}
+function cursorInteger(cursor: Readonly<Record<string, string>>, field: string): number {
+  const value = cursor[field]; const parsed = value === undefined ? Number.NaN : Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 10_000) throw pageTokenError();
+  return parsed;
+}
+
+function inventoryRevisionMessage(row: ReadInventoryRevision) {
+  return create(AdminModelInventoryRevisionSchema, { inventoryDigest: row.inventoryDigest,
+    sourceReference: row.sourceReference, counts: row.counts, importedAt: timestamp(row.importedAt),
+    active: row.active, ...(row.activePointerRevision === null ? {}
+      : { activePointerRevision: BigInt(row.activePointerRevision) }) });
+}
+function providerMessage(row: ReadModelProvider) { return create(AdminModelProviderSchema, {
+  providerKey: row.providerKey, provider: row.provider, accountKey: row.accountKey,
+  adapterKind: wireAdapterKind(row.adapterKind), priority: row.priority,
+  secretReferencePresent: row.secretReferencePresent, status: wireProviderStatus(row.status),
+  health: wireProviderHealth(row.health), availabilityEpoch: BigInt(row.availabilityEpoch),
+  ...(row.observedAt === null ? {} : { observedAt: timestamp(row.observedAt) }),
+}); }
+function modelMessage(row: ReadModelDefinition) { return create(AdminModelDefinitionSchema, {
+  modelKey: row.modelKey, displayName: row.displayName, enabled: row.enabled,
+  inputModalities: [...row.inputModalities], outputModalities: [...row.outputModalities],
+  capabilities: [...row.capabilities], ...(row.contextWindow === null ? {} : { contextWindow: row.contextWindow }),
+}); }
+function bindingMessage(row: ReadModelBinding) { return create(AdminModelBindingSchema, row); }
+function routeMessage(row: ReadProductRoute) { return create(AdminModelProductRouteSchema, {
+  ...row, product: modelProduct(row.product), role: modelRouteRole(row.role),
+  requiredCapabilities: [...row.requiredCapabilities],
+}); }
+function optionMessage(row: ReadModelOption) { return create(AdminModelOptionSchema, {
+  ...row, surface: modelProduct(row.surface), lifecycle: optionLifecycle(row.lifecycle),
+  inputModalities: [...row.inputModalities], outputModalities: [...row.outputModalities],
+  supportedEfforts: [...row.supportedEfforts], badges: [...row.badges], createdAt: timestamp(row.createdAt),
+  ...(row.description === null ? { description: undefined } : { description: row.description }),
+  ...(row.tier === null ? { tier: undefined } : { tier: row.tier }),
+}); }
+function policyMessage(row: ReadSiteModelPolicy) { return create(AdminSiteModelPolicySchema, {
+  ...row, product: modelProduct(row.product), revision: BigInt(row.revision),
+  catalogMode: row.catalogMode === "follow_active" ? SiteModelCatalogMode.FOLLOW_ACTIVE
+    : SiteModelCatalogMode.PINNED,
+  assignmentMode: row.assignmentMode === "inherit" ? SiteModelAssignmentMode.INHERIT
+    : SiteModelAssignmentMode.REPLACE,
+  changedAt: timestamp(row.changedAt),
+  ...(row.catalogDigest === null ? { catalogDigest: undefined } : { catalogDigest: row.catalogDigest }),
+}); }
+function catalogMessage(row: ReadSiteReleaseCatalog) { return create(AdminSiteReleaseCatalogSchema, {
+  ...row, publishedAt: timestamp(row.publishedAt),
+}); }
+function timestamp(value: string) { const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) throw new Error("MODEL_ADMIN_TIME_INVALID");
+  return timestampFromDate(date); }
+function modelProduct(value: ReadProductRoute["product"]): ModelProduct { return {
+  chat: ModelProduct.CHAT, music: ModelProduct.MUSIC, image: ModelProduct.IMAGE, video: ModelProduct.VIDEO,
+}[value]; }
+function productId(value: ModelProduct): ReadProductRoute["product"] {
+  const result = { [ModelProduct.CHAT]: "chat", [ModelProduct.MUSIC]: "music",
+    [ModelProduct.IMAGE]: "image", [ModelProduct.VIDEO]: "video" } as const;
+  const product = result[value as keyof typeof result];
+  if (product === undefined) throw new Error("MODEL_ADMIN_PRODUCT_INVALID"); return product;
+}
+function modelRouteRole(value: ReadProductRoute["role"]): ModelRouteRole {
+  return value === "main" ? ModelRouteRole.MAIN : ModelRouteRole.GENERATION;
+}
+function wireAdapterKind(value: ReadModelProvider["adapterKind"]): ProviderAdapterKind {
+  return value === "litellm" ? ProviderAdapterKind.LITELLM : ProviderAdapterKind.DIRECT;
+}
+function wireProviderStatus(value: ReadModelProvider["status"]): ProviderOperationalStatus {
+  return value === "active" ? ProviderOperationalStatus.ACTIVE : ProviderOperationalStatus.DISABLED;
+}
+function wireProviderHealth(value: ReadModelProvider["health"]): ProviderHealth { return {
+  unknown: ProviderHealth.UNKNOWN, healthy: ProviderHealth.HEALTHY,
+  degraded: ProviderHealth.DEGRADED, down: ProviderHealth.DOWN,
+}[value]; }
+function optionLifecycle(value: ReadModelOption["lifecycle"]): ModelOptionLifecycle {
+  return value === "active" ? ModelOptionLifecycle.ACTIVE : ModelOptionLifecycle.DISABLED;
+}
+
+const inventoryFields = ["inventory_digest", "source_reference", "counts", "imported_at",
+  "active", "active_pointer_revision"] as const;
+const providerFields = ["provider_key", "provider", "account_key", "adapter_kind", "priority",
+  "secret_reference_present", "status", "health", "availability_epoch", "observed_at"] as const;
+const modelFields = ["model_key", "display_name", "input_modalities", "output_modalities",
+  "capabilities", "context_window", "enabled"] as const;
+const bindingFields = ["binding_key", "model_key", "provider_key", "upstream_model",
+  "gateway_model_name", "priority", "enabled"] as const;
+const routeFields = ["product", "role", "model_key", "position", "required_capabilities"] as const;
+const optionFields = ["revision_ref", "inventory_digest", "option_key", "surface", "label",
+  "description", "tier", "lifecycle", "input_modalities", "output_modalities", "supported_efforts",
+  "badges", "created_at"] as const;
+const policyFields = ["site_id", "product", "revision", "policy_digest", "enabled", "catalog_mode",
+  "catalog_digest", "assignment_mode", "assignment_count", "current", "changed_at"] as const;
+const catalogFields = ["site_id", "site_release_ref", "model_option_catalog_ref", "catalog_digest",
+  "inventory_digest", "surface_count", "published_at"] as const;
 
 function inventoryDocument(inventory: CanonicalModelInventory): DomainModelInventory {
   return {

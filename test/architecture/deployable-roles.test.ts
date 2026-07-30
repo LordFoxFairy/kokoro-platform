@@ -599,7 +599,7 @@ function authority(roleName: string): Record<string, unknown> {
       roleName === "platform_admin",
     canExecuteAdminAuthorityChange: roleName === "platform_worker",
     hasRequiredModelOptionFunctions: true,
-    canSelectModelCatalogTable: false,
+    canSelectModelCatalogTable: roleName === "platform_admin",
     canReadModelSensitiveColumn: false,
     hasUnexpectedPlatformPrivilege: false,
   };

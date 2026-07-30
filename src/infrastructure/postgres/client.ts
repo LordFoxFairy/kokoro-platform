@@ -769,6 +769,8 @@ function assertAdminQueryPermit(permit: AdminQueryPermit): void {
     "commerce.offer.read", "commerce.redemption-program.read", "commerce.code-batch.read",
     "credit.summary.read", "credit.account.read", "credit.grant.read", "credit.hold.read",
     "credit.journal.read", "credit.rated-usage.read",
+    "model.inventory.read", "model.option.read", "model.site-policy.read",
+    "model.site-release-catalog.read",
   ]).has(permit.operation)) throw new Error("ADMIN_QUERY_PERMIT_INVALID");
   for (const value of [permit.operatorRef, permit.environment, permit.region]) {
     if (value.length < 1 || value.length > 128 || hasControlCharacter(value)) {
@@ -1380,7 +1382,30 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_function_privilege(current_user,'platform.materialize_model_options(uuid,text,text,text,text,jsonb,text)','EXECUTE')
            AND has_function_privilege(current_user,'platform.publish_site_release_model_catalog(uuid,jsonb,text)','EXECUTE')
          ELSE TRUE END AS "hasRequiredModelOptionFunctions",
-         EXISTS (
+         CASE WHEN $2='admin' THEN
+           has_column_privilege(current_user,'platform.model_inventory_import','import_id','SELECT')
+           AND has_column_privilege(current_user,'platform.model_inventory_import','source_digest','SELECT')
+           AND has_column_privilege(current_user,'platform.model_inventory_import','source_reference','SELECT')
+           AND has_column_privilege(current_user,'platform.model_inventory_import','counts','SELECT')
+           AND has_column_privilege(current_user,'platform.model_inventory_import','imported_at','SELECT')
+           AND has_column_privilege(current_user,'platform.model_provider_snapshot','import_id','SELECT')
+           AND has_column_privilege(current_user,'platform.model_provider_snapshot','provider_key','SELECT')
+           AND has_column_privilege(current_user,'platform.model_provider_snapshot','provider','SELECT')
+           AND has_column_privilege(current_user,'platform.model_provider_snapshot','account_key','SELECT')
+           AND has_column_privilege(current_user,'platform.model_provider_snapshot','adapter_kind','SELECT')
+           AND has_column_privilege(current_user,'platform.model_provider_snapshot','priority','SELECT')
+           AND has_table_privilege(current_user,'platform.model_inventory_pointer','SELECT')
+           AND has_table_privilege(current_user,'platform.model_definition_snapshot','SELECT')
+           AND has_table_privilege(current_user,'platform.model_provider_binding_snapshot','SELECT')
+           AND has_table_privilege(current_user,'platform.model_product_route_snapshot','SELECT')
+           AND has_table_privilege(current_user,'platform.model_provider_availability','SELECT')
+           AND has_table_privilege(current_user,'platform.model_option_revision','SELECT')
+           AND has_table_privilege(current_user,'platform.model_site_policy_revision','SELECT')
+           AND has_table_privilege(current_user,'platform.model_site_assignment_revision','SELECT')
+           AND has_table_privilege(current_user,'platform.model_site_policy_pointer','SELECT')
+           AND has_table_privilege(current_user,'platform.site_release_model_catalog_publication','SELECT')
+           AND has_table_privilege(current_user,'platform.site_release_model_catalog_surface','SELECT')
+         ELSE EXISTS (
            SELECT 1 FROM pg_class model_relation
            WHERE model_relation.relnamespace=platform_schema.oid
              AND model_relation.relname=ANY(ARRAY[
@@ -1394,9 +1419,9 @@ const RUNTIME_IDENTITY_SQL = `
                'site_release_model_catalog_option'
              ])
              AND has_table_privilege(current_user,model_relation.oid,'SELECT')
-         ) AS "canSelectModelCatalogTable",
-         (has_any_column_privilege(current_user,'platform.model_inventory_import','SELECT')
-           OR has_any_column_privilege(current_user,'platform.model_provider_snapshot','SELECT'))
+         ) END AS "canSelectModelCatalogTable",
+         (has_column_privilege(current_user,'platform.model_inventory_import','canonical_payload','SELECT')
+           OR has_column_privilege(current_user,'platform.model_provider_snapshot','secret_ref','SELECT'))
            AS "canReadModelSensitiveColumn",
          ARRAY(
            SELECT candidate.relname::text FROM pg_class candidate
@@ -1874,7 +1899,7 @@ function validRuntimeIdentity(
       (config.role === "api" || config.role === "admission" || config.role === "admin") &&
     identity.canExecuteAdminAuthorityChange === (config.role === "worker") &&
     identity.hasRequiredModelOptionFunctions &&
-    !identity.canSelectModelCatalogTable &&
+    identity.canSelectModelCatalogTable === (config.role === "admin") &&
     !identity.canReadModelSensitiveColumn &&
     identity.unexpectedPlatformRelations.length === 0 &&
     identity.unexpectedPlatformFunctions.length === 0,
