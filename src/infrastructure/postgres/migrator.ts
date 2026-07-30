@@ -679,12 +679,14 @@ async function configureOutboxOwnerPolicies(
         ? `USING (${ownerFence}) WITH CHECK (${ownerFence})`
         : `USING (${ownerFence})`;
     await client.query(
-      `CREATE POLICY ${policy.name} ON platform.outbox_event FOR ${policy.command} ` +
+      `CREATE POLICY ${policy.name} ON platform.outbox_event AS PERMISSIVE ` +
+        `FOR ${policy.command} ` +
         `TO ${quoteRoleIdentifier(roles[policy.role])} ${predicate}`,
     );
   }
   const result = await client.query(
     `SELECT policy.polname AS "policyName",policy.polcmd::text AS command,
+       policy.polpermissive AS "permissive",
        ARRAY(SELECT role_oid::text FROM unnest(policy.polroles) role_oid)::text[] AS "roleOids",
        ARRAY(
          SELECT CASE WHEN role_oid=0 THEN 'PUBLIC' ELSE role_row.rolname END
@@ -717,7 +719,8 @@ async function configureOutboxOwnerPolicies(
         : expected.command === "INSERT"
           ? "a"
           : "w";
-      return actual?.command !== expectedCommand || !Array.isArray(actual.roles) ||
+      return actual?.command !== expectedCommand || actual?.permissive !== true ||
+        !Array.isArray(actual.roles) ||
         actual.roles.length !== 1 || actual.roles[0] !== expectedRole ||
         !Array.isArray(actual.roleOids) || actual.roleOids.length !== 1 ||
         actual.roleOids[0] === "0" ||
@@ -730,6 +733,7 @@ async function configureOutboxOwnerPolicies(
   const authority = policies.map((policy) => ({
     policy_name: policy.policyName,
     command: policy.command,
+    permissive: policy.permissive,
     role_oid: Array.isArray(policy.roleOids) ? policy.roleOids[0] : null,
     using_expression: policy.usingExpression ?? null,
     with_check_expression: policy.withCheckExpression ?? null,

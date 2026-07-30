@@ -146,8 +146,8 @@ CREATE TRIGGER asset_multipart_part_update_guard
 
 -- Asset Data Plane never receives direct read access to the shared outbox.
 -- This exact SECURITY DEFINER command fixes owner/type, binds the event to the
--- transaction's capability-derived Site/session facts, and treats an event-id
--- collision as a conflict without requiring an outbox SELECT/UPDATE policy.
+-- transaction's capability-derived Site/session facts, and preserves replay
+-- safety without exposing unrelated event payloads.
 CREATE FUNCTION platform.enqueue_asset_upload_completion_event(
   requested_event_id UUID,
   requested_aggregate_id TEXT,
@@ -194,7 +194,15 @@ BEGIN
   VALUES
     (requested_event_id,'asset','asset.upload.completion.requested',requested_aggregate_id,
      requested_payload,requested_payload_digest,requested_correlation_id,requested_causation_id)
-  ON CONFLICT (event_id) DO NOTHING;
+  ON CONFLICT (event_id) DO UPDATE
+    SET event_id=outbox_event.event_id
+    WHERE outbox_event.owner='asset'
+      AND outbox_event.event_type='asset.upload.completion.requested'
+      AND outbox_event.aggregate_id=requested_aggregate_id
+      AND outbox_event.payload=requested_payload
+      AND outbox_event.payload_digest=requested_payload_digest
+      AND outbox_event.correlation_id=requested_correlation_id
+      AND outbox_event.causation_id=requested_causation_id;
   GET DIAGNOSTICS affected_rows=ROW_COUNT;
   IF affected_rows<>1 THEN
     RAISE EXCEPTION 'ASSET_COMPLETION_OUTBOX_EVENT_CONFLICT' USING ERRCODE='23505';

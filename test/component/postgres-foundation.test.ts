@@ -315,11 +315,14 @@ describe("Platform PostgreSQL foundation", () => {
         force_row_level_security: boolean;
         policy_count: string;
         public_policy_count: string;
+        restrictive_policy_count: string;
       }>(`
         SELECT relation.relrowsecurity AS row_level_security,
                relation.relforcerowsecurity AS force_row_level_security,
                count(policy.oid)::text AS policy_count,
-               count(policy.oid) FILTER (WHERE 0=ANY(policy.polroles))::text AS public_policy_count
+               count(policy.oid) FILTER (WHERE 0=ANY(policy.polroles))::text AS public_policy_count,
+               count(policy.oid) FILTER (WHERE NOT policy.polpermissive)::text
+                 AS restrictive_policy_count
           FROM pg_class relation
           JOIN pg_namespace namespace ON namespace.oid=relation.relnamespace
           LEFT JOIN pg_policy policy ON policy.polrelid=relation.oid
@@ -330,6 +333,7 @@ describe("Platform PostgreSQL foundation", () => {
         force_row_level_security: true,
         policy_count: "11",
         public_policy_count: "0",
+        restrictive_policy_count: "0",
       }] });
       await expect(migrator.query<{
         function_owner: string;
@@ -543,11 +547,46 @@ describe("Platform PostgreSQL foundation", () => {
       }
       await restorePolicy(migrator, "outbox_admin_insert", adminUser,
         "WITH CHECK", ["admin-execution", "commerce", "site"]);
+
+      await replaceSelectPolicy(
+        migrator,
+        "outbox_identity_worker_select",
+        identityWorkerUser,
+        ["identity"],
+        "RESTRICTIVE",
+      );
+      const restrictiveIdentity = createPlatformDatabaseClient(
+        loadPlatformDatabaseConfig("identity-worker", {
+          DATABASE_URL_PLATFORM: identityWorkerDatabaseUrl,
+          PLATFORM_DATABASE_CREDENTIAL_CLASS: "identity-worker",
+          PLATFORM_DATABASE_IDENTITY_WORKER_ROLE: identityWorkerUser,
+          PLATFORM_DATABASE_MIGRATOR_ROLE: migratorUser,
+          PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
+        }),
+      );
+      try {
+        await expect(restrictiveIdentity.connect())
+          .rejects.toThrowError("PLATFORM_RUNTIME_DATABASE_ROLE_INVALID");
+      } finally {
+        await restrictiveIdentity.disconnect();
+      }
+      await replaceSelectPolicy(
+        migrator,
+        "outbox_identity_worker_select",
+        identityWorkerUser,
+        ["identity"],
+        "PERMISSIVE",
+      );
     } finally {
       await migrator.query("DROP POLICY IF EXISTS outbox_public_probe ON platform.outbox_event")
         .catch(() => undefined);
-      await restorePolicy(migrator, "outbox_identity_worker_select", identityWorkerUser,
-        "USING", ["identity"]).catch(() => undefined);
+      await replaceSelectPolicy(
+        migrator,
+        "outbox_identity_worker_select",
+        identityWorkerUser,
+        ["identity"],
+        "PERMISSIVE",
+      ).catch(() => undefined);
       await restorePolicy(migrator, "outbox_admin_insert", adminUser,
         "WITH CHECK", ["admin-execution", "commerce", "site"]).catch(() => undefined);
       await migrator.end();
@@ -565,6 +604,26 @@ function requireLeasedDatabaseUrl(value: string | undefined): string {
     throw new Error("DATABASE_URL_PLATFORM_TEST_MUST_BE_LEASED");
   }
   return value;
+}
+
+async function replaceSelectPolicy(
+  client: Client,
+  policyName: string,
+  roleName: string,
+  owners: readonly string[],
+  mode: "PERMISSIVE" | "RESTRICTIVE",
+): Promise<void> {
+  if (!/^[a-z_][a-z0-9_]{0,62}$/u.test(policyName) ||
+      !/^[a-z_][a-z0-9_]{0,62}$/u.test(roleName) || owners.length < 1) {
+    throw new Error("COMPONENT_POLICY_REPLACEMENT_INVALID");
+  }
+  const ownerLiterals = owners.map(sqlLiteral).join(",");
+  await client.query(`DROP POLICY IF EXISTS ${policyName} ON platform.outbox_event`);
+  await client.query(
+    `CREATE POLICY ${policyName} ON platform.outbox_event AS ${mode} FOR SELECT ` +
+      `TO ${roleName} USING (current_user=${sqlLiteral(roleName)} AND ` +
+      `owner=ANY(ARRAY[${ownerLiterals}]::text[]))`,
+  );
 }
 
 function requireRole(value: string | undefined): string {

@@ -3,6 +3,13 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("ModelControl consumer boundary", () => {
+  it("does not manufacture activation effects until a real remote consumer exists", async () => {
+    const index = await readFile(resolve("src/modules/model-control/INDEX.md"), "utf8");
+    expect(index).toContain("does not duplicate those local facts into an outbox");
+    expect(index).not.toContain("`model-control` outbox event");
+    expect(index).not.toContain("model.inventory.activated.v1");
+  });
+
   it("has no new local self-RPC consumer", async () => {
     const files = await Promise.all(
       [

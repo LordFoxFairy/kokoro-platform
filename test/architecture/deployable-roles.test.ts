@@ -855,6 +855,7 @@ function outboxPolicyRows(): readonly Record<string, unknown>[] {
     return {
       policyName,
       command,
+      permissive: true,
       roleOids: [String(index + 10)],
       roles: [role],
       usingExpression: command === "a" ? null : expression,

@@ -16,6 +16,7 @@ export const OUTBOX_POLICY_RUNTIME_ASSERTION_SQL = `(
     SELECT 1
     FROM (
       SELECT policy.polname AS policy_name,policy.polcmd::text AS command,
+        policy.polpermissive AS permissive,
         cardinality(policy.polroles) AS role_count,
         CASE WHEN cardinality(policy.polroles)=1 THEN policy.polroles[1]::text END AS role_oid,
         pg_get_expr(policy.polqual,policy.polrelid,false) AS using_expression,
@@ -23,10 +24,14 @@ export const OUTBOX_POLICY_RUNTIME_ASSERTION_SQL = `(
       FROM pg_policy policy WHERE policy.polrelid=outbox.oid
     ) actual
     FULL OUTER JOIN jsonb_to_recordset(foundation_marker."outboxPolicyAuthority") AS expected(
-      policy_name TEXT,command TEXT,role_oid TEXT,using_expression TEXT,with_check_expression TEXT
+      policy_name TEXT,command TEXT,permissive BOOLEAN,role_oid TEXT,
+      using_expression TEXT,with_check_expression TEXT
     ) USING (policy_name)
     WHERE actual.policy_name IS NULL OR expected.policy_name IS NULL
       OR actual.command IS DISTINCT FROM expected.command
+      OR actual.permissive IS DISTINCT FROM TRUE
+      OR expected.permissive IS DISTINCT FROM TRUE
+      OR actual.permissive IS DISTINCT FROM expected.permissive
       OR actual.role_count IS DISTINCT FROM 1
       OR actual.role_oid IS NULL OR actual.role_oid='0'
       OR actual.role_oid IS DISTINCT FROM expected.role_oid

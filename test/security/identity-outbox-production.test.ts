@@ -2,6 +2,46 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 describe("Identity outbox production authority", () => {
+  it("preserves the applied multipart migration and upgrades collision handling forward", async () => {
+    const [historicalMigration, forwardMigration] = await Promise.all([
+      readFile(
+        "prisma/migrations/20260729_zz_asset_multipart_data_plane/migration.sql",
+        "utf8",
+      ),
+      readFile(
+        "prisma/migrations/20260805_asset_completion_collision_authority/migration.sql",
+        "utf8",
+      ),
+    ]);
+    expect(historicalMigration).toContain("ON CONFLICT (event_id) DO UPDATE");
+    expect(historicalMigration).not.toContain("ON CONFLICT (event_id) DO NOTHING");
+    expect(forwardMigration).toContain(
+      "CREATE OR REPLACE FUNCTION platform.enqueue_asset_upload_completion_event(",
+    );
+    expect(forwardMigration).toContain("ON CONFLICT (event_id) DO NOTHING");
+    expect(forwardMigration).not.toMatch(/ON CONFLICT[\s\S]+DO UPDATE/u);
+    expect(forwardMigration).toContain(
+      "RAISE EXCEPTION 'ASSET_COMPLETION_OUTBOX_EVENT_CONFLICT' USING ERRCODE='23505'",
+    );
+  });
+
+  it("binds policy permissiveness into the migrator catalog and every runtime audit", async () => {
+    const [migrator, runtimeAuthority] = await Promise.all([
+      readFile("src/infrastructure/postgres/migrator.ts", "utf8"),
+      readFile("src/infrastructure/postgres/outbox-policy-authority.ts", "utf8"),
+    ]);
+    expect(migrator).toContain('policy.polpermissive AS "permissive"');
+    expect(migrator).toContain("actual?.permissive !== true");
+    expect(migrator).toContain("permissive: policy.permissive");
+    expect(runtimeAuthority).toContain("policy.polpermissive AS permissive");
+    expect(runtimeAuthority).toContain("permissive BOOLEAN");
+    expect(runtimeAuthority).toContain("actual.permissive IS DISTINCT FROM TRUE");
+    expect(runtimeAuthority).toContain("expected.permissive IS DISTINCT FROM TRUE");
+    expect(runtimeAuthority).toContain(
+      "actual.permissive IS DISTINCT FROM expected.permissive",
+    );
+  });
+
   it("persists bounded namespace failure evidence without storing verification credentials", async () => {
     const migration = await readFile(
       "prisma/migrations/20260804_identity_outbox_consumer/migration.sql",
@@ -19,8 +59,8 @@ describe("Identity outbox production authority", () => {
       readFile("src/infrastructure/postgres/client.ts", "utf8"),
       readFile("prisma/migrations/20260804_outbox_owner_fencing/migration.sql", "utf8"),
     ]);
-    const assetDataPlaneMigration = await readFile(
-      "prisma/migrations/20260729_zz_asset_multipart_data_plane/migration.sql",
+    const assetCompletionAuthority = await readFile(
+      "prisma/migrations/20260805_asset_completion_collision_authority/migration.sql",
       "utf8",
     );
     expect(migrator).toContain("PLATFORM_DATABASE_IDENTITY_WORKER_ROLE");
@@ -82,8 +122,8 @@ describe("Identity outbox production authority", () => {
     expect(ownerFence).toContain("ALTER TABLE platform.outbox_event FORCE ROW LEVEL SECURITY");
     expect(ownerFence).not.toMatch(/current_setting|set_config|app\./u);
     expect(ownerFence).toContain("owner bypass are not part of this boundary");
-    const assetCompletionFunction = assetDataPlaneMigration.match(
-      /CREATE FUNCTION platform\.enqueue_asset_upload_completion_event[\s\S]+?REVOKE ALL ON FUNCTION/u,
+    const assetCompletionFunction = assetCompletionAuthority.match(
+      /CREATE OR REPLACE FUNCTION platform\.enqueue_asset_upload_completion_event[\s\S]+?REVOKE ALL ON FUNCTION/u,
     )?.[0] ?? "";
     expect(assetCompletionFunction).toContain("SECURITY DEFINER");
     expect(assetCompletionFunction).toContain("SET search_path=pg_catalog,platform");
