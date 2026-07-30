@@ -20,6 +20,7 @@ const required = Object.freeze([
   "dist/src/process/api.js",
   "dist/src/process/admission.js",
   "dist/src/process/admin.js",
+  "dist/src/process/admin-authority-bootstrap.js",
   "dist/src/process/asset-data-plane.js",
   "dist/src/process/authorization.js",
   "dist/src/process/model-gateway.js",
@@ -74,6 +75,17 @@ test("runtime entrypoint exposes only PostgreSQL Platform processes and Hub", as
   for (const legacy of ["@kokoro/site", "@kokoro/user", "@kokoro/model", "@kokoro/credit",
     "@kokoro/payment"]) assert.doesNotMatch(entrypoint, new RegExp(legacy, "u"));
   assert.match(entrypoint, /\?\? "platform-api"/u);
+});
+
+test("production image carries the sealed one-time Admin authority bootstrap", async () => {
+  const [dockerfile, runtime] = await Promise.all([
+    readFile(resolve(root, "deploy/docker/Dockerfile"), "utf8"),
+    readFile(resolve(root, "src/process/admin-authority-bootstrap.ts"), "utf8"),
+  ]);
+  assert.match(dockerfile, /pnpm build:runtime/u);
+  assert.match(runtime, /bootstrap_admin_authorities/u);
+  assert.match(runtime, /O_NOFOLLOW/u);
+  assert.match(runtime, /loadPlatformDatabaseConfig\("migrator", environment\)/u);
 });
 
 test("production image verifier accepts the closed fresh layout", async (context) => {

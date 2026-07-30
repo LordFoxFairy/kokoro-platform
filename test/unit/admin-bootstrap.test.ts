@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadBootstrapDocument } from
-  "../../scripts/admin-control/bootstrap-authority.mjs";
+  "../../src/process/admin-authority-bootstrap.js";
 
 const directories: string[] = [];
 
