@@ -90,3 +90,9 @@ test("legacy source directories are excluded from Docker build context", async (
     "kokoro-credit", "kokoro-payment",
   ]) assert.match(dockerignore, new RegExp(`^${directory}$`, "mu"));
 });
+
+test("runtime contract mirrors remain in the clean Docker build context", async () => {
+  const dockerignore = await readFile(resolve(root, ".dockerignore"), "utf8");
+  assert.doesNotMatch(dockerignore, /^(?:\*\*\/)?generated$/mu);
+  assert.match(dockerignore, /^src\/generated$/mu);
+});

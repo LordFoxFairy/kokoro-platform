@@ -3,8 +3,7 @@
 .env.local
 node_modules
 **/node_modules
-generated
-**/generated
+src/generated
 kokoro-platform-admin
 kokoro-site
 kokoro-user
