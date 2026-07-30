@@ -177,7 +177,6 @@ export interface ModelInventoryImportAdministration {
       readonly importId: string;
       readonly inventory: CanonicalModelInventory;
       readonly providerAvailability?: readonly ProviderOperationalAvailability[];
-      readonly migrationArtifactDigest?: string | null;
     },
     context: VerifiedRequestSecurityContext,
   ): Promise<ModelInventoryImportReceipt>;

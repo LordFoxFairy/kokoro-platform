@@ -31,11 +31,11 @@ export class ChangeSiteModelPolicyService implements SiteModelPolicyAdministrati
     if (context.actor.kind !== "operator" && context.actor.kind !== "workload")
       throw new Error("MODEL_SITE_POLICY_MANAGEMENT_PRINCIPAL_REQUIRED");
     const policy = canonicalizeSiteModelPolicy(input.policy);
-    const crossSiteMigration =
+    const crossSiteAdministration =
       context.target.siteId === null &&
-      context.target.purpose === "model_control_migration" &&
-      context.target.scopes.includes("model:site-policy:migrate");
-    if (context.target.siteId !== policy.document.siteId && !crossSiteMigration)
+      context.target.purpose === "model_control_administration" &&
+      context.target.scopes.includes("model:site-policy:manage-all");
+    if (context.target.siteId !== policy.document.siteId && !crossSiteAdministration)
       throw new Error("MODEL_SITE_SCOPE_MISMATCH");
     const command = createModelControlCommand({
       commandId: input.changeId,

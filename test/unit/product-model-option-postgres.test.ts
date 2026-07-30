@@ -45,11 +45,10 @@ describe("Postgres Product ModelOption repository", () => {
     const calls: { statement: string; values: readonly unknown[] }[] = [];
     const receipt = {
       materializationId: "00000000-0000-4000-8000-000000000021",
-      artifactDigest: "a".repeat(64),
+      sourceDigest: "a".repeat(64),
       inventoryDigest: fixture.inventory.digest,
       materializationDigest: "b".repeat(64),
       optionRevisionRefs: [fixture.option.modelOptionRevisionRef],
-      quarantineCount: 0,
       replayed: false,
     } as const;
     const lease = issuePlatformTransaction({
@@ -61,22 +60,21 @@ describe("Postgres Product ModelOption repository", () => {
     });
     try {
       await expect(
-        new PostgresProductModelOptionRepository().materializeLegacyOptions(lease.transaction, {
+        new PostgresProductModelOptionRepository().materializeOptions(lease.transaction, {
           materializationId: receipt.materializationId,
           materializedBy: "operator-a",
           materialization: {
             schemaVersion: 1,
-            compilerVersion: "model-option-compiler.v1",
-            artifactDigest: receipt.artifactDigest,
+            compilerVersion: "model-option-compiler.v2",
+            sourceDigest: receipt.sourceDigest,
             inventoryDigest: receipt.inventoryDigest,
             materializationDigest: receipt.materializationDigest,
             optionRevisions: [fixture.option],
-            quarantine: [],
           },
         }),
       ).resolves.toEqual(receipt);
       expect(calls).toHaveLength(1);
-      expect(calls[0]?.statement).toContain("platform.materialize_legacy_model_options");
+      expect(calls[0]?.statement).toContain("platform.materialize_model_options");
       expect(JSON.stringify(calls)).not.toMatch(/secret:\/\/provider-a/u);
     } finally {
       revokePlatformTransaction(lease);
@@ -88,28 +86,26 @@ describe("Postgres Product ModelOption repository", () => {
     const lease = issuePlatformTransaction({
       query: async <Row extends Record<string, unknown>>() => [{
         materializationId: "00000000-0000-4000-8000-000000000023",
-        artifactDigest: "c".repeat(64),
+        sourceDigest: "c".repeat(64),
         inventoryDigest: fixture.inventory.digest,
         materializationDigest: "b".repeat(64),
         optionRevisionRefs: [fixture.option.modelOptionRevisionRef],
-        quarantineCount: 0,
         replayed: false,
       }] as unknown as readonly Row[],
       execute: async () => 0,
     });
     try {
       await expect(
-        new PostgresProductModelOptionRepository().materializeLegacyOptions(lease.transaction, {
+        new PostgresProductModelOptionRepository().materializeOptions(lease.transaction, {
           materializationId: "00000000-0000-4000-8000-000000000023",
           materializedBy: "operator-a",
           materialization: {
             schemaVersion: 1,
-            compilerVersion: "model-option-compiler.v1",
-            artifactDigest: "a".repeat(64),
+            compilerVersion: "model-option-compiler.v2",
+            sourceDigest: "a".repeat(64),
             inventoryDigest: fixture.inventory.digest,
             materializationDigest: "b".repeat(64),
             optionRevisions: [fixture.option],
-            quarantine: [],
           },
         }),
       ).rejects.toThrow("MODEL_OPTION_MATERIALIZATION_RECEIPT_INVALID");
@@ -339,11 +335,7 @@ function catalogFixture() {
   });
   const option = compileModelOptionRevision({
     inventory,
-    option: {
-      legacyLabelId: "legacy-chat", key: "chat.standard", product: "chat",
-      displayName: "Standard", description: null, tier: "standard",
-      defaultModelKey: "chat-primary", candidateModelKeys: ["chat-primary"], enabled: true,
-    },
+    draft: chatDraft(),
   });
   const release = createSiteReleaseModelCatalogRevision({
     siteId: "site-a", siteReleaseRef: "release-a", inventoryDigest: inventory.digest,
@@ -362,10 +354,19 @@ function repositoryDouble(
 ): ModelOptionCatalogRepository {
   return {
     loadInventory: async () => null,
-    materializeLegacyOptions: async () => { throw new Error("unused"); },
+    materializeOptions: async () => { throw new Error("unused"); },
     loadOptionRevisions: async () => [],
     publishSiteReleaseCatalog: async () => { throw new Error("unused"); },
     loadProductCatalogSnapshot: async () => null,
     ...overrides,
+  };
+}
+
+function chatDraft() {
+  const selection = { primaryModelKey: "chat-primary", fallbackModelKeys: [] } as const;
+  return {
+    schemaVersion: 1 as const, optionKey: "chat.standard", surface: "chat" as const,
+    label: "Standard", description: null, tier: "standard", lifecycle: "active" as const,
+    composition: { orchestration: selection, generation: selection },
   };
 }

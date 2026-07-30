@@ -21,7 +21,7 @@ import {
 
 const inventory: CanonicalModelInventory = {
   schemaVersion: 1,
-  source: { kind: "legacy-kokoro-model", reference: "snapshot-1" },
+  source: { kind: "platform-native", reference: "snapshot-1" },
   providers: [
     {
       key: "provider-b",

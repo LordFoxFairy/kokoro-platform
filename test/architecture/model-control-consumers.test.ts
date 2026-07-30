@@ -90,7 +90,7 @@ describe("ModelControl consumer boundary", () => {
     expect(adminGrant).toContain("platform.put_model_site_policy");
     expect(adminGrant).toContain("platform.load_model_option_inventory");
     expect(adminGrant).toContain("platform.load_model_option_revisions");
-    expect(adminGrant).toContain("platform.materialize_legacy_model_options");
+    expect(adminGrant).toContain("platform.materialize_model_options");
     expect(adminGrant).toContain("platform.publish_site_release_model_catalog");
   });
 
@@ -103,7 +103,6 @@ describe("ModelControl consumer boundary", () => {
       "model_option_materialization",
       "model_option_revision",
       "model_option_role_binding",
-      "model_option_materialization_quarantine",
       "site_release_model_catalog_publication",
       "site_release_model_catalog_surface",
       "site_release_model_catalog_option",
@@ -133,7 +132,7 @@ describe("ModelControl consumer boundary", () => {
     expect(publicComposition).toContain("new PostgresProductModelOptionCatalogReader()");
     expect(adminComposition).toContain("new PublishSiteReleaseModelCatalogService");
     expect(adminComposition).toContain("new PostgresModelControlCommandJournal()");
-    expect(manifest).not.toContain("model-option:materialize-legacy");
+    expect(manifest).not.toContain("model-control:import-bundle");
     expect(manifest).toContain("model-option:publish-site-release");
   });
 
@@ -189,7 +188,7 @@ describe("ModelControl consumer boundary", () => {
     expect(migratorWorkerGrant(repository, migration)).toBe(true);
   });
 
-  it("permits one signed migration workload to replay deterministic policies for every Site", async () => {
+  it("permits an explicitly scoped operator workload to administer policies for every Site", async () => {
     const [migration, service, packageManifest] = await Promise.all([
       readFile(resolve("prisma/migrations/0003_model_control/migration.sql"), "utf8"),
       readFile(
@@ -198,10 +197,10 @@ describe("ModelControl consumer boundary", () => {
       ),
       readFile(resolve("package.json"), "utf8"),
     ]);
-    expect(service).toContain("model_control_migration");
-    expect(service).toContain("model:site-policy:migrate");
+    expect(service).toContain("model_control_administration");
+    expect(service).toContain("model:site-policy:manage-all");
     expect(migration).toContain("set_config('app.site_id',site_key,true)");
-    expect(packageManifest).toContain("model-control:import-bundle");
+    expect(packageManifest).toContain("model-control:import-canonical");
   });
 
   it("keeps SQL import schemas closed and validates only published products", async () => {

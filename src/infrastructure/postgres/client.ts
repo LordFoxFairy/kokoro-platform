@@ -1215,7 +1215,7 @@ const RUNTIME_IDENTITY_SQL = `
          WHEN $2='admin' THEN
            has_function_privilege(current_user,'platform.load_model_option_inventory(text)','EXECUTE')
            AND has_function_privilege(current_user,'platform.load_model_option_revisions(text[])','EXECUTE')
-           AND has_function_privilege(current_user,'platform.materialize_legacy_model_options(uuid,text,text,text,text,jsonb,jsonb,text)','EXECUTE')
+           AND has_function_privilege(current_user,'platform.materialize_model_options(uuid,text,text,text,text,jsonb,text)','EXECUTE')
            AND has_function_privilege(current_user,'platform.publish_site_release_model_catalog(uuid,jsonb,text)','EXECUTE')
          ELSE TRUE END AS "hasRequiredModelOptionFunctions",
          EXISTS (
@@ -1227,7 +1227,7 @@ const RUNTIME_IDENTITY_SQL = `
                'model_provider_availability','model_definition_availability','model_provider_availability_report','model_site_policy_revision',
                'model_site_assignment_revision','model_site_policy_pointer','model_selection_decision',
                'model_option_materialization','model_option_revision','model_option_materialized_revision',
-               'model_option_role_binding','model_option_materialization_quarantine',
+               'model_option_role_binding',
                'site_release_model_catalog_publication','site_release_model_catalog_surface',
                'site_release_model_catalog_option'
              ])
@@ -1255,7 +1255,7 @@ const RUNTIME_IDENTITY_SQL = `
                  'authorization_session_access_grant','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_scoped_event_log',
                  'authorization_scoped_snapshot','authorization_scoped_snapshot_record','model_option_materialization','model_option_revision',
                  'model_option_materialized_revision','model_option_role_binding',
-               'model_option_materialization_quarantine','site_release_model_catalog_publication',
+               'site_release_model_catalog_publication',
                'site_release_model_catalog_surface','site_release_model_catalog_option'
                ,'identity_account','identity_password_credential','identity_login_identifier',
                'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
@@ -1310,7 +1310,7 @@ const RUNTIME_IDENTITY_SQL = `
                  'authorization_session_access_grant','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_scoped_event_log',
                  'authorization_scoped_snapshot','authorization_scoped_snapshot_record','model_option_materialization','model_option_revision',
                  'model_option_materialized_revision','model_option_role_binding',
-               'model_option_materialization_quarantine','site_release_model_catalog_publication',
+               'site_release_model_catalog_publication',
                'site_release_model_catalog_surface','site_release_model_catalog_option'
                ,'identity_account','identity_password_credential','identity_login_identifier',
                'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
@@ -1583,7 +1583,7 @@ const RUNTIME_IDENTITY_SQL = `
                  to_regprocedure('platform.put_model_site_policy(uuid,text,text,text,bigint)'),
                  to_regprocedure('platform.load_model_option_inventory(text)'),
                  to_regprocedure('platform.load_model_option_revisions(text[])'),
-                 to_regprocedure('platform.materialize_legacy_model_options(uuid,text,text,text,text,jsonb,jsonb,text)'),
+                 to_regprocedure('platform.materialize_model_options(uuid,text,text,text,text,jsonb,text)'),
                  to_regprocedure('platform.publish_site_release_model_catalog(uuid,jsonb,text)'),
                  to_regprocedure('platform.valid_credit_scope_policy(jsonb)')
                ]))

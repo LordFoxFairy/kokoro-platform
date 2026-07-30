@@ -460,7 +460,7 @@ async function grantFoundationPrivileges(
     );
     await client.query(`REVOKE ALL ON TABLE ${PLATFORM_RUNTIME_TABLES} FROM ${identifier}`);
     await client.query(
-      `REVOKE ALL ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT), platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID), platform.report_model_provider_availability(UUID, TEXT, TEXT, TEXT, BIGINT, TEXT, TIMESTAMPTZ, TEXT), platform.load_model_option_inventory(TEXT), platform.load_model_option_revisions(TEXT[]), platform.materialize_legacy_model_options(UUID, TEXT, TEXT, TEXT, TEXT, JSONB, JSONB, TEXT), platform.publish_site_release_model_catalog(UUID, JSONB, TEXT), platform.resolve_product_model_option_catalog(TEXT, TEXT), platform.resolve_admission_model_owner(TEXT, TEXT, TEXT) FROM ${identifier}`,
+      `REVOKE ALL ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT), platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID), platform.report_model_provider_availability(UUID, TEXT, TEXT, TEXT, BIGINT, TEXT, TIMESTAMPTZ, TEXT), platform.load_model_option_inventory(TEXT), platform.load_model_option_revisions(TEXT[]), platform.materialize_model_options(UUID, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT), platform.publish_site_release_model_catalog(UUID, JSONB, TEXT), platform.resolve_product_model_option_catalog(TEXT, TEXT), platform.resolve_admission_model_owner(TEXT, TEXT, TEXT) FROM ${identifier}`,
     );
     await client.query(
       `REVOKE ALL ON FUNCTION platform.bootstrap_admin_authorities(JSONB, CHAR(64)), platform.apply_admin_authority_change(UUID, JSONB) FROM ${identifier}`,
@@ -672,7 +672,7 @@ async function grantFoundationPrivileges(
         `GRANT UPDATE ON TABLE platform.commerce_code_batch, platform.commerce_redemption_program_availability TO ${identifier}`,
       );
       await client.query(
-        `GRANT EXECUTE ON FUNCTION platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT), platform.load_model_option_inventory(TEXT), platform.load_model_option_revisions(TEXT[]), platform.materialize_legacy_model_options(UUID, TEXT, TEXT, TEXT, TEXT, JSONB, JSONB, TEXT), platform.publish_site_release_model_catalog(UUID, JSONB, TEXT) TO ${identifier}`,
+        `GRANT EXECUTE ON FUNCTION platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT), platform.load_model_option_inventory(TEXT), platform.load_model_option_revisions(TEXT[]), platform.materialize_model_options(UUID, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT), platform.publish_site_release_model_catalog(UUID, JSONB, TEXT) TO ${identifier}`,
       );
       await client.query(
         `GRANT EXECUTE ON FUNCTION platform.valid_credit_scope_policy(JSONB) TO ${identifier}`,
@@ -1026,7 +1026,6 @@ const PLATFORM_RUNTIME_TABLES = [
   "platform.model_option_revision",
   "platform.model_option_materialized_revision",
   "platform.model_option_role_binding",
-  "platform.model_option_materialization_quarantine",
   "platform.site_release_model_catalog_publication",
   "platform.site_release_model_catalog_surface",
   "platform.site_release_model_catalog_option",
@@ -1413,7 +1412,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
           WHEN runtime_role.rolname=$4 THEN
             has_function_privilege(runtime_role.rolname,'platform.load_model_option_inventory(text)','EXECUTE')
             AND has_function_privilege(runtime_role.rolname,'platform.load_model_option_revisions(text[])','EXECUTE')
-            AND has_function_privilege(runtime_role.rolname,'platform.materialize_legacy_model_options(uuid,text,text,text,text,jsonb,jsonb,text)','EXECUTE')
+            AND has_function_privilege(runtime_role.rolname,'platform.materialize_model_options(uuid,text,text,text,text,jsonb,text)','EXECUTE')
             AND has_function_privilege(runtime_role.rolname,'platform.publish_site_release_model_catalog(uuid,jsonb,text)','EXECUTE')
           ELSE TRUE END AS "hasRequiredModelOptionFunctions"
          ,EXISTS (
@@ -1425,7 +1424,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                'model_provider_availability','model_definition_availability','model_provider_availability_report','model_site_policy_revision',
                'model_site_assignment_revision','model_site_policy_pointer','model_selection_decision',
                'model_option_materialization','model_option_revision','model_option_materialized_revision',
-               'model_option_role_binding','model_option_materialization_quarantine',
+               'model_option_role_binding',
                'site_release_model_catalog_publication','site_release_model_catalog_surface',
                'site_release_model_catalog_option'
              ])
@@ -1454,7 +1453,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                'authorization_session_access_grant','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_scoped_event_log',
                'authorization_scoped_snapshot','authorization_scoped_snapshot_record','model_option_materialization','model_option_revision',
                'model_option_materialized_revision','model_option_role_binding',
-               'model_option_materialization_quarantine','site_release_model_catalog_publication',
+               'site_release_model_catalog_publication',
                'site_release_model_catalog_surface','site_release_model_catalog_option'
                ,'identity_account','identity_password_credential','identity_login_identifier',
                'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
@@ -1514,7 +1513,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                  'authorization_session_access_grant','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_scoped_event_log',
                  'authorization_scoped_snapshot','authorization_scoped_snapshot_record','model_option_materialization','model_option_revision',
                  'model_option_materialized_revision','model_option_role_binding',
-               'model_option_materialization_quarantine','site_release_model_catalog_publication',
+               'site_release_model_catalog_publication',
                'site_release_model_catalog_surface','site_release_model_catalog_option'
                ,'identity_account','identity_password_credential','identity_login_identifier',
                'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
@@ -1799,7 +1798,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                  to_regprocedure('platform.put_model_site_policy(uuid,text,text,text,bigint)'),
                  to_regprocedure('platform.load_model_option_inventory(text)'),
                  to_regprocedure('platform.load_model_option_revisions(text[])'),
-                 to_regprocedure('platform.materialize_legacy_model_options(uuid,text,text,text,text,jsonb,jsonb,text)'),
+                 to_regprocedure('platform.materialize_model_options(uuid,text,text,text,text,jsonb,text)'),
                  to_regprocedure('platform.publish_site_release_model_catalog(uuid,jsonb,text)'),
                  to_regprocedure('platform.valid_credit_scope_policy(jsonb)')
                ]))

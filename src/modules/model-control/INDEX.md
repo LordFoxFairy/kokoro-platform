@@ -14,7 +14,11 @@ port and an opaque UoW; no separate per-domain Model service participates. The P
 Provider execution and secrets remain behind the remote Model Gateway: selection returns only a safe gateway route. `direct` and
 `litellm` describe adapters internal to Model Gateway and never authorize Platform or a product to execute against a provider.
 
-Catalog releases contain only definitions/providers/bindings/default product routes. Materialization is content-addressed and
+The global inventory contains definitions, provider bindings and the structurally allowed route pool. Product-facing choices are
+native `ModelOptionDraft` records layered above that inventory: Chat selects one ordered assistant route, while Music/Image/Video
+select an ordered chat-orchestration route and an independent ordered generation route. A SiteRelease publishes only the allowed
+immutable option revisions and default for each enabled surface; no product duplicates provider or model definitions.
+Materialization is content-addressed and
 immutable: importing an already known digest returns the original materialization receipt and never changes runtime traffic.
 All external catalog, availability, bundle, Site-policy, catalog-reference and assignment objects use recursively closed schemas;
 canonical JSON is rebuilt only from allowed fields in both TypeScript and the SQL import boundary. Unknown fields never enter an
@@ -56,7 +60,7 @@ binding priority, provider priority and binding key. It records the full candida
 decision digest. The policy-input digest is recomputed locally from Site/product/role/capabilities, never trusted from a caller, and
 no resolution performs remote I/O in the UoW.
 
-Fresh deployments author canonical Platform-native inventories and immutable SiteRelease option revisions directly. There is no
+Fresh deployments author canonical Platform-native inventories and materialize native option drafts into immutable revisions. There is no
 legacy database exporter, rollback authority, or migration CLI in the production path. Publication remains relational
 (`publication -> surface -> allowed/default revision`) and cannot cross Site, release, catalog, or inventory boundaries.
 ProductContext reads that publication inside the authorization transaction; missing operational model/provider/binding facts make

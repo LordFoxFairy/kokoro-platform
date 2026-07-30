@@ -27,15 +27,14 @@ describe("ModelControl command identity and outbox", () => {
       security,
       effect: {
         inventoryDigest: "a".repeat(64),
-        modelOptionMigrationDigest: "b".repeat(64),
-        source: { kind: "legacy-kokoro-model", reference: "legacy#snapshot=one" },
+        source: { kind: "platform-native", reference: "catalog#revision=one" },
         providerAvailability: [
           {
             providerKey: "provider-a",
             status: "active",
             health: "healthy",
             epoch: "0",
-            observationRef: "legacy:provider-a",
+            observationRef: "health:provider-a",
             observedAt: "2026-07-28T12:00:00.000Z",
           },
         ],
@@ -56,7 +55,7 @@ describe("ModelControl command identity and outbox", () => {
         ...base.input,
         effect: {
           ...base.input.effect,
-          modelOptionMigrationDigest: "c".repeat(64),
+          inventoryDigest: "c".repeat(64),
         },
       }).requestDigest,
     ).not.toBe(base.requestDigest);
@@ -71,7 +70,7 @@ describe("ModelControl command identity and outbox", () => {
         ...base.input,
         effect: {
           ...base.input.effect,
-          source: { kind: "legacy-kokoro-model", reference: "legacy#snapshot=two" },
+          source: { kind: "platform-native", reference: "catalog#revision=two" },
         },
       }).requestDigest,
     ).not.toBe(base.requestDigest);

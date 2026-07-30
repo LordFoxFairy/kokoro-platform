@@ -4,16 +4,15 @@ SET idle_in_transaction_session_timeout = '30s';
 
 CREATE TABLE platform.model_option_materialization (
   materialization_id UUID PRIMARY KEY,
-  artifact_digest CHAR(64) NOT NULL CHECK (artifact_digest ~ '^[a-f0-9]{64}$'),
+  source_digest CHAR(64) NOT NULL CHECK (source_digest ~ '^[a-f0-9]{64}$'),
   inventory_import_id UUID NOT NULL,
   inventory_digest CHAR(64) NOT NULL CHECK (inventory_digest ~ '^[a-f0-9]{64}$'),
   materialization_digest CHAR(64) NOT NULL UNIQUE CHECK (materialization_digest ~ '^[a-f0-9]{64}$'),
-  compiler_version TEXT NOT NULL CHECK (compiler_version='model-option-compiler.v1'),
-  option_revision_count INTEGER NOT NULL CHECK (option_revision_count >= 0),
-  quarantine_count INTEGER NOT NULL CHECK (quarantine_count >= 0),
+  compiler_version TEXT NOT NULL CHECK (compiler_version='model-option-compiler.v2'),
+  option_revision_count INTEGER NOT NULL CHECK (option_revision_count BETWEEN 1 AND 256),
   materialized_by TEXT NOT NULL,
   materialized_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(materialization_id,artifact_digest,inventory_digest,materialization_digest),
+  UNIQUE(materialization_id,source_digest,inventory_digest,materialization_digest),
   FOREIGN KEY(inventory_import_id,inventory_digest)
     REFERENCES platform.model_inventory_import(import_id,source_digest)
 );
@@ -69,21 +68,6 @@ CREATE TABLE platform.model_option_role_binding (
   UNIQUE(revision_ref,composition_slot,model_key),
   FOREIGN KEY(inventory_import_id,model_key)
     REFERENCES platform.model_definition_snapshot(import_id,model_key)
-);
-
-CREATE TABLE platform.model_option_materialization_quarantine (
-  materialization_id UUID NOT NULL REFERENCES platform.model_option_materialization(materialization_id),
-  position INTEGER NOT NULL CHECK (position BETWEEN 0 AND 100000),
-  safe_source_ref TEXT NOT NULL,
-  source_artifact_digest CHAR(64) NOT NULL CHECK (source_artifact_digest ~ '^[a-f0-9]{64}$'),
-  option_key_digest CHAR(64) NOT NULL CHECK (option_key_digest ~ '^[a-f0-9]{64}$'),
-  reason_code TEXT NOT NULL CHECK (reason_code IN (
-    'LEGACY_INVALID_LABEL_FACT','LEGACY_DUPLICATE_LABEL_KEY','LEGACY_LABEL_WITHOUT_MODELS',
-    'LEGACY_DEFAULT_BINDING_UNKNOWN','LEGACY_ORPHAN_BINDING_LABEL','LEGACY_ORPHAN_POLICY_LABEL',
-    'MODEL_OPTION_GENERATION_ROUTE_REQUIRED','MODEL_OPTION_ORCHESTRATION_ROLE_REQUIRED',
-    'MODEL_OPTION_DEFAULT_MODEL_UNAVAILABLE','MODEL_OPTION_FACT_INVALID'
-  )),
-  PRIMARY KEY(materialization_id,position)
 );
 
 ALTER TABLE platform.authorization_site_release
@@ -150,9 +134,6 @@ CREATE TRIGGER model_option_materialized_revision_immutable
 CREATE TRIGGER model_option_role_binding_immutable
   BEFORE UPDATE OR DELETE ON platform.model_option_role_binding
   FOR EACH ROW EXECUTE FUNCTION platform.reject_immutable_model_control_update();
-CREATE TRIGGER model_option_quarantine_immutable
-  BEFORE UPDATE OR DELETE ON platform.model_option_materialization_quarantine
-  FOR EACH ROW EXECUTE FUNCTION platform.reject_immutable_model_control_update();
 CREATE TRIGGER site_release_model_catalog_publication_immutable
   BEFORE UPDATE OR DELETE ON platform.site_release_model_catalog_publication
   FOR EACH ROW EXECUTE FUNCTION platform.reject_immutable_model_control_update();
@@ -217,7 +198,7 @@ CREATE FUNCTION platform.load_model_option_inventory(p_inventory_digest TEXT)
 RETURNS TABLE(result_canonical_payload JSONB)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog,platform AS $$
 BEGIN
-  IF current_setting('app.operation',true) IS DISTINCT FROM 'model.option.migration.materialize'
+  IF current_setting('app.operation',true) IS DISTINCT FROM 'model.option.materialize'
      OR current_setting('app.workload_kind',true) IS DISTINCT FROM 'admin_workload'
      OR COALESCE(current_setting('app.actor_kind',true),'') NOT IN ('operator','workload') THEN
     RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='MODEL_OPTION_INVENTORY_CONTEXT_REQUIRED';
@@ -245,40 +226,36 @@ BEGIN
     ORDER BY requested.position;
 END $$;
 
-CREATE FUNCTION platform.materialize_legacy_model_options(
-  p_materialization_id UUID,p_artifact_digest TEXT,p_inventory_digest TEXT,
+CREATE FUNCTION platform.materialize_model_options(
+  p_materialization_id UUID,p_source_digest TEXT,p_inventory_digest TEXT,
   p_materialization_digest TEXT,p_compiler_version TEXT,p_option_revisions JSONB,
-  p_quarantine JSONB,p_materialized_by TEXT
+  p_materialized_by TEXT
 ) RETURNS TABLE(
-  result_materialization_id UUID,result_artifact_digest TEXT,result_inventory_digest TEXT,
-  result_materialization_digest TEXT,result_option_revision_refs TEXT[],
-  result_quarantine_count INTEGER,replayed BOOLEAN
+  result_materialization_id UUID,result_source_digest TEXT,result_inventory_digest TEXT,
+  result_materialization_digest TEXT,result_option_revision_refs TEXT[],replayed BOOLEAN
 )
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$
 DECLARE
   existing platform.model_option_materialization%ROWTYPE;
   inventory_id UUID;
   option_payload JSONB;
-  quarantine_payload JSONB;
   role_payload JSONB;
   role_slot TEXT;
   option_ref TEXT;
   option_position INTEGER:=0;
-  quarantine_position INTEGER:=0;
   candidate_model TEXT;
   candidate_position INTEGER;
 BEGIN
-  IF current_setting('app.operation',true) IS DISTINCT FROM 'model.option.migration.materialize'
+  IF current_setting('app.operation',true) IS DISTINCT FROM 'model.option.materialize'
      OR current_setting('app.workload_kind',true) IS DISTINCT FROM 'admin_workload'
      OR COALESCE(current_setting('app.actor_kind',true),'') NOT IN ('operator','workload')
      OR p_materialized_by IS DISTINCT FROM current_setting('app.subject_id',true) THEN
     RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='MODEL_OPTION_MATERIALIZATION_CONTEXT_REQUIRED';
   END IF;
-  IF p_artifact_digest !~ '^[a-f0-9]{64}$' OR p_inventory_digest !~ '^[a-f0-9]{64}$'
-     OR p_materialization_digest !~ '^[a-f0-9]{64}$' OR p_compiler_version<>'model-option-compiler.v1'
+  IF p_source_digest !~ '^[a-f0-9]{64}$' OR p_inventory_digest !~ '^[a-f0-9]{64}$'
+     OR p_materialization_digest !~ '^[a-f0-9]{64}$' OR p_compiler_version<>'model-option-compiler.v2'
      OR jsonb_typeof(p_option_revisions) IS DISTINCT FROM 'array'
-     OR jsonb_typeof(p_quarantine) IS DISTINCT FROM 'array'
-     OR jsonb_array_length(p_option_revisions)>256 OR jsonb_array_length(p_quarantine)>100000 THEN
+     OR jsonb_array_length(p_option_revisions) NOT BETWEEN 1 AND 256 THEN
     RAISE EXCEPTION USING ERRCODE='22023',MESSAGE='MODEL_OPTION_MATERIALIZATION_INVALID';
   END IF;
   SELECT import_id INTO inventory_id FROM platform.model_inventory_import
@@ -288,17 +265,15 @@ BEGIN
   SELECT materialization.* INTO existing FROM platform.model_option_materialization materialization
     WHERE materialization.materialization_id=p_materialization_id;
   IF FOUND THEN
-    IF existing.artifact_digest<>p_artifact_digest OR existing.inventory_digest<>p_inventory_digest
+    IF existing.source_digest<>p_source_digest OR existing.inventory_digest<>p_inventory_digest
        OR existing.materialization_digest<>p_materialization_digest OR existing.compiler_version<>p_compiler_version
-       OR existing.option_revision_count<>jsonb_array_length(p_option_revisions)
-       OR existing.quarantine_count<>jsonb_array_length(p_quarantine) THEN
+       OR existing.option_revision_count<>jsonb_array_length(p_option_revisions) THEN
       RAISE EXCEPTION USING ERRCODE='23505',MESSAGE='MODEL_OPTION_MATERIALIZATION_ID_CONFLICT';
     END IF;
-    RETURN QUERY SELECT existing.materialization_id,existing.artifact_digest::TEXT,
+    RETURN QUERY SELECT existing.materialization_id,existing.source_digest::TEXT,
       existing.inventory_digest::TEXT,existing.materialization_digest::TEXT,
       ARRAY(SELECT link.revision_ref FROM platform.model_option_materialized_revision link
-        WHERE link.materialization_id=existing.materialization_id ORDER BY link.position),
-      existing.quarantine_count,TRUE;
+        WHERE link.materialization_id=existing.materialization_id ORDER BY link.position),TRUE;
     RETURN;
   END IF;
   IF EXISTS(SELECT 1 FROM platform.model_option_materialization
@@ -306,12 +281,11 @@ BEGIN
     RAISE EXCEPTION USING ERRCODE='23505',MESSAGE='MODEL_OPTION_MATERIALIZATION_DIGEST_CONFLICT';
   END IF;
   INSERT INTO platform.model_option_materialization(
-    materialization_id,artifact_digest,inventory_import_id,inventory_digest,
-    materialization_digest,compiler_version,option_revision_count,quarantine_count,materialized_by
+    materialization_id,source_digest,inventory_import_id,inventory_digest,
+    materialization_digest,compiler_version,option_revision_count,materialized_by
   ) VALUES(
-    p_materialization_id,p_artifact_digest,inventory_id,p_inventory_digest,
-    p_materialization_digest,p_compiler_version,jsonb_array_length(p_option_revisions),
-    jsonb_array_length(p_quarantine),p_materialized_by
+    p_materialization_id,p_source_digest,inventory_id,p_inventory_digest,
+    p_materialization_digest,p_compiler_version,jsonb_array_length(p_option_revisions),p_materialized_by
   );
   FOR option_payload IN SELECT value FROM jsonb_array_elements(p_option_revisions) LOOP
     IF jsonb_typeof(option_payload) IS DISTINCT FROM 'object'
@@ -370,27 +344,11 @@ BEGIN
       VALUES(p_materialization_id,option_position,option_ref);
     option_position:=option_position+1;
   END LOOP;
-  FOR quarantine_payload IN SELECT value FROM jsonb_array_elements(p_quarantine) LOOP
-    IF jsonb_typeof(quarantine_payload) IS DISTINCT FROM 'object'
-       OR NOT (quarantine_payload ?& ARRAY['safeSourceRef','sourceArtifactDigest','optionKeyDigest','reasonCode'])
-       OR quarantine_payload-ARRAY['safeSourceRef','sourceArtifactDigest','optionKeyDigest','reasonCode']::TEXT[]<>'{}'::JSONB
-       OR quarantine_payload->>'sourceArtifactDigest'<>p_artifact_digest THEN
-      RAISE EXCEPTION USING ERRCODE='22023',MESSAGE='MODEL_OPTION_QUARANTINE_INVALID';
-    END IF;
-    INSERT INTO platform.model_option_materialization_quarantine(
-      materialization_id,position,safe_source_ref,source_artifact_digest,option_key_digest,reason_code
-    ) VALUES(
-      p_materialization_id,quarantine_position,quarantine_payload->>'safeSourceRef',
-      quarantine_payload->>'sourceArtifactDigest',quarantine_payload->>'optionKeyDigest',
-      quarantine_payload->>'reasonCode'
-    );
-    quarantine_position:=quarantine_position+1;
-  END LOOP;
-  RETURN QUERY SELECT p_materialization_id,p_artifact_digest,p_inventory_digest,
+  RETURN QUERY SELECT p_materialization_id,p_source_digest,p_inventory_digest,
     p_materialization_digest,ARRAY(SELECT link.revision_ref
       FROM platform.model_option_materialized_revision link
       WHERE link.materialization_id=p_materialization_id ORDER BY link.position),
-    quarantine_position,FALSE;
+    FALSE;
 END $$;
 
 CREATE FUNCTION platform.site_release_model_catalog_payload(p_publication_id UUID) RETURNS JSONB
@@ -579,13 +537,12 @@ END $$;
 
 REVOKE ALL ON platform.model_option_materialization,platform.model_option_revision,
   platform.model_option_materialized_revision,platform.model_option_role_binding,
-  platform.model_option_materialization_quarantine,
   platform.site_release_model_catalog_publication,platform.site_release_model_catalog_surface,
   platform.site_release_model_catalog_option FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.model_option_revision_payload(TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.site_release_model_catalog_payload(UUID) FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.load_model_option_inventory(TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.load_model_option_revisions(TEXT[]) FROM PUBLIC;
-REVOKE ALL ON FUNCTION platform.materialize_legacy_model_options(UUID,TEXT,TEXT,TEXT,TEXT,JSONB,JSONB,TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.materialize_model_options(UUID,TEXT,TEXT,TEXT,TEXT,JSONB,TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.publish_site_release_model_catalog(UUID,JSONB,TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.resolve_product_model_option_catalog(TEXT,TEXT) FROM PUBLIC;

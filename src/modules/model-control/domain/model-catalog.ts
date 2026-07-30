@@ -41,7 +41,7 @@ export interface CanonicalProductRoute {
 export interface CanonicalModelInventory {
   readonly schemaVersion: 1;
   readonly source: {
-    readonly kind: "legacy-kokoro-model" | "platform-native";
+    readonly kind: "platform-native";
     readonly reference: string;
   };
   readonly providers: readonly CanonicalProvider[];
@@ -397,9 +397,8 @@ function adapterKind(value: string): ProviderAdapterKind {
   return value;
 }
 function parseSourceKind(value: unknown): CanonicalModelInventory["source"]["kind"] {
-  if (value !== "legacy-kokoro-model" && value !== "platform-native")
-    throw new Error("MODEL_INVENTORY_SOURCE_INVALID");
-  return value;
+  if (value !== "platform-native") throw new Error("MODEL_INVENTORY_SOURCE_INVALID");
+  return "platform-native";
 }
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === "object") {

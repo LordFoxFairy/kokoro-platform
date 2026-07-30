@@ -757,17 +757,16 @@ model ModelSelectionDecision {
 
 model ModelOptionMaterialization {
   materializationId     String   @id @map("materialization_id") @db.Uuid
-  artifactDigest        String   @map("artifact_digest") @db.Char(64)
+  sourceDigest          String   @map("source_digest") @db.Char(64)
   inventoryImportId     String   @map("inventory_import_id") @db.Uuid
   inventoryDigest       String   @map("inventory_digest") @db.Char(64)
   materializationDigest String   @unique @map("materialization_digest") @db.Char(64)
   compilerVersion       String   @map("compiler_version")
   optionRevisionCount   Int      @map("option_revision_count")
-  quarantineCount       Int      @map("quarantine_count")
   materializedBy        String   @map("materialized_by")
   materializedAt        DateTime @default(now()) @map("materialized_at") @db.Timestamptz(6)
 
-  @@unique([materializationId, artifactDigest, inventoryDigest, materializationDigest])
+  @@unique([materializationId, sourceDigest, inventoryDigest, materializationDigest])
   @@map("model_option_materialization")
   @@schema("platform")
 }
@@ -820,19 +819,6 @@ model ModelOptionRoleBinding {
   @@id([revisionRef, compositionSlot, position])
   @@unique([revisionRef, compositionSlot, modelKey])
   @@map("model_option_role_binding")
-  @@schema("platform")
-}
-
-model ModelOptionMaterializationQuarantine {
-  materializationId    String @map("materialization_id") @db.Uuid
-  position             Int
-  safeSourceRef        String @map("safe_source_ref")
-  sourceArtifactDigest String @map("source_artifact_digest") @db.Char(64)
-  optionKeyDigest      String @map("option_key_digest") @db.Char(64)
-  reasonCode           String @map("reason_code")
-
-  @@id([materializationId, position])
-  @@map("model_option_materialization_quarantine")
   @@schema("platform")
 }
 

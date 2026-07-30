@@ -6,20 +6,19 @@ import type {
   ProviderAdapterKind,
 } from "../../domain/model-catalog.js";
 import type {
+  ModelOptionDraft,
   ModelOptionRevision,
   ProductModelOptionCatalogProjection,
   SiteReleaseModelCatalogRevision,
 } from "../../domain/product-model-option.js";
-import type { LegacyModelOptionMigrationArtifact } from "../../migration/legacy-model-option-artifact.js";
-import type { LegacyModelOptionMaterialization } from "../../migration/legacy-model-option-materializer.js";
+import type { MaterializedModelOptions } from "../../domain/model-option-materialization.js";
 
 export interface ModelOptionMaterializationReceipt {
   readonly materializationId: string;
-  readonly artifactDigest: string;
+  readonly sourceDigest: string;
   readonly inventoryDigest: string;
   readonly materializationDigest: string;
   readonly optionRevisionRefs: readonly string[];
-  readonly quarantineCount: number;
   readonly replayed: boolean;
 }
 
@@ -74,12 +73,12 @@ export interface ModelOptionCatalogRepository {
     transaction: PlatformTransaction,
     inventoryDigest: string,
   ): Promise<CanonicalizedModelInventory | null>;
-  materializeLegacyOptions(
+  materializeOptions(
     transaction: PlatformTransaction,
     input: {
       readonly materializationId: string;
       readonly materializedBy: string;
-      readonly materialization: LegacyModelOptionMaterialization;
+      readonly materialization: MaterializedModelOptions;
     },
   ): Promise<ModelOptionMaterializationReceipt>;
   loadOptionRevisions(
@@ -105,7 +104,7 @@ export interface ModelOptionMaterializationAdministration {
     input: {
       readonly materializationId: string;
       readonly inventoryDigest: string;
-      readonly artifact: LegacyModelOptionMigrationArtifact;
+      readonly options: readonly ModelOptionDraft[];
     },
     context: VerifiedRequestSecurityContext,
   ): Promise<ModelOptionMaterializationReceipt>;

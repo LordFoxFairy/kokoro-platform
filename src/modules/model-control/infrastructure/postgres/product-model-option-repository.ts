@@ -37,28 +37,26 @@ export class PostgresProductModelOptionRepository
     return inventory;
   }
 
-  async materializeLegacyOptions(
-    transaction: Parameters<ModelOptionCatalogRepository["materializeLegacyOptions"]>[0],
-    input: Parameters<ModelOptionCatalogRepository["materializeLegacyOptions"]>[1],
+  async materializeOptions(
+    transaction: Parameters<ModelOptionCatalogRepository["materializeOptions"]>[0],
+    input: Parameters<ModelOptionCatalogRepository["materializeOptions"]>[1],
   ): Promise<ModelOptionMaterializationReceipt> {
     const rows = await resolvePlatformTransaction(transaction).query<MaterializationRow>(
       `SELECT result_materialization_id AS "materializationId",
-              result_artifact_digest AS "artifactDigest",
+              result_source_digest AS "sourceDigest",
               result_inventory_digest AS "inventoryDigest",
               result_materialization_digest AS "materializationDigest",
-              result_option_revision_refs AS "optionRevisionRefs",
-              result_quarantine_count AS "quarantineCount", replayed
-       FROM platform.materialize_legacy_model_options(
-         $1::uuid,$2::text,$3::text,$4::text,$5::text,$6::jsonb,$7::jsonb,$8::text
+              result_option_revision_refs AS "optionRevisionRefs", replayed
+       FROM platform.materialize_model_options(
+         $1::uuid,$2::text,$3::text,$4::text,$5::text,$6::jsonb,$7::text
        )`,
       [
         input.materializationId,
-        input.materialization.artifactDigest,
+        input.materialization.sourceDigest,
         input.materialization.inventoryDigest,
         input.materialization.materializationDigest,
         input.materialization.compilerVersion,
         JSON.stringify(input.materialization.optionRevisions),
-        JSON.stringify(input.materialization.quarantine),
         input.materializedBy,
       ],
     );
@@ -69,10 +67,9 @@ export class PostgresProductModelOptionRepository
     if (
       !receipt ||
       receipt.materializationId !== input.materializationId ||
-      receipt.artifactDigest !== input.materialization.artifactDigest ||
+      receipt.sourceDigest !== input.materialization.sourceDigest ||
       receipt.inventoryDigest !== input.materialization.inventoryDigest ||
       receipt.materializationDigest !== input.materialization.materializationDigest ||
-      receipt.quarantineCount !== input.materialization.quarantine.length ||
       typeof receipt.replayed !== "boolean" ||
       !sameStrings(receipt.optionRevisionRefs, expectedRefs)
     ) {

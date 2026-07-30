@@ -45,19 +45,19 @@ export type ModelControlCommandInput =
       readonly security: ModelControlCommandSecurityFacts;
       readonly effect: {
         readonly inventoryDigest: string;
-        readonly modelOptionMigrationDigest: string | null;
         readonly source: CanonicalModelInventory["source"];
         readonly providerAvailability: readonly ProviderOperationalAvailability[];
       };
     }
   | {
       readonly commandId: string;
-      readonly operation: "model.option.migration.materialize";
+      readonly operation: "model.option.materialize";
       readonly security: ModelControlCommandSecurityFacts;
       readonly effect: {
-        readonly artifactDigest: string;
+        readonly sourceDigest: string;
         readonly inventoryDigest: string;
-        readonly compilerVersion: "model-option-compiler.v1";
+        readonly materializationDigest: string;
+        readonly compilerVersion: "model-option-compiler.v2";
       };
     }
   | {
@@ -186,7 +186,7 @@ export function modelControlEventFor(
       { operation: "model.site-policy.change" }
     >["effect"];
     aggregateId = `${effect.siteId}:${effect.product}`;
-  } else if (command.operation === "model.option.migration.materialize") {
+  } else if (command.operation === "model.option.materialize") {
     eventType = "model.option-revisions.materialized.v1";
     aggregateId = (
       stableReceipt as Omit<ModelOptionMaterializationReceipt, "replayed">

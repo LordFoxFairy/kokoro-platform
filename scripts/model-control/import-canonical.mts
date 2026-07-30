@@ -62,7 +62,6 @@ try {
     {
       importId: argument("--import-id"),
       inventory,
-      migrationArtifactDigest: null,
     },
     context,
   );

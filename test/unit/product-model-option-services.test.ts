@@ -1,15 +1,11 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { MaterializeLegacyModelOptionsService } from "../../src/modules/model-control/application/services/materialize-legacy-model-options.js";
+import { MaterializeModelOptionsService } from "../../src/modules/model-control/application/services/materialize-model-options.js";
 import { PublishSiteReleaseModelCatalogService } from "../../src/modules/model-control/application/services/publish-site-release-model-catalog.js";
 import { ReadProductModelOptionCatalogsService } from "../../src/modules/model-control/application/services/read-product-model-option-catalogs.js";
-import type {
-  ModelOptionCatalogRepository,
-  ModelOptionMaterializationReceipt,
-} from "../../src/modules/model-control/application/contracts/product-model-option-ports.js";
+import type { ModelOptionCatalogRepository } from "../../src/modules/model-control/application/contracts/product-model-option-ports.js";
 import type { ModelControlCommandJournal } from "../../src/modules/model-control/application/contracts/model-control-command-journal.js";
 import { canonicalizeModelInventory } from "../../src/modules/model-control/domain/model-catalog.js";
 import { compileModelOptionRevision, createSiteReleaseModelCatalogRevision } from "../../src/modules/model-control/domain/product-model-option.js";
-import { createLegacyModelOptionMigrationArtifact } from "../../src/modules/model-control/migration/legacy-model-option-artifact.js";
 import {
   PlatformUnitOfWork,
   type PlatformTransaction,
@@ -25,7 +21,7 @@ describe("Product ModelOption application services", () => {
   let publishAdmin: VerifiedRequestSecurityContext;
   let product: VerifiedRequestSecurityContext;
   beforeAll(async () => {
-    admin = await context("admin_workload", null, ["model.option.migration.materialize"]);
+    admin = await context("admin_workload", null, ["model.option.materialize"]);
     publishAdmin = await context(
       "admin_workload",
       "site-a",
@@ -35,75 +31,47 @@ describe("Product ModelOption application services", () => {
     product = await context("site_product", "site-a", ["model.option-catalog.read"]);
   });
 
-  it("materializes legacy options, receipt, and outbox through one caller-owned transaction", async () => {
+  it("materializes native options, receipt, and outbox through one caller-owned transaction", async () => {
     const inventory = catalog();
-    const artifact = createLegacyModelOptionMigrationArtifact({
-      labels: [
-        {
-          legacyLabelId: "label-chat",
-          key: "chat.standard",
-          displayName: "Standard",
-          description: null,
-          featureKey: "chat",
-          tier: "standard",
-          defaultBindingId: "chat-primary",
-          status: "active",
-        },
-      ],
-      bindings: [
-        {
-          legacyBindingId: "chat-primary",
-          modelKey: "chat-primary",
-          labelKeys: ["chat.standard"],
-          priority: 0,
-        },
-      ],
-      referencedLabelKeys: [],
-    });
     const calls: { kind: string; transaction: PlatformTransaction }[] = [];
-    const receipt: ModelOptionMaterializationReceipt = {
-      materializationId: "00000000-0000-4000-8000-000000000011",
-      artifactDigest: artifact.artifactDigest,
-      inventoryDigest: inventory.digest,
-      materializationDigest: "b".repeat(64),
-      optionRevisionRefs: [],
-      quarantineCount: 0,
-      replayed: false,
-    };
+    const materializationId = "00000000-0000-4000-8000-000000000011";
     const repository = repositoryDouble({
       loadInventory: async (transaction) => {
         calls.push({ kind: "load", transaction });
         return inventory;
       },
-      materializeLegacyOptions: async (transaction, input) => {
+      materializeOptions: async (transaction, input) => {
         calls.push({ kind: "materialize", transaction });
         return {
-          ...receipt,
+          materializationId,
+          sourceDigest: input.materialization.sourceDigest,
+          inventoryDigest: input.materialization.inventoryDigest,
           materializationDigest: input.materialization.materializationDigest,
           optionRevisionRefs: input.materialization.optionRevisions.map(
             ({ modelOptionRevisionRef }) => modelOptionRevisionRef,
           ),
+          replayed: false,
         };
       },
     });
     const journal = journalDouble(calls);
-    const result = await new MaterializeLegacyModelOptionsService(
+    const result = await new MaterializeModelOptionsService(
       unitOfWork(),
       repository,
       journal,
     ).materialize(
       {
-        materializationId: receipt.materializationId,
+        materializationId,
         inventoryDigest: inventory.digest,
-        artifact,
+        options: [chatDraft()],
       },
       admin,
     );
 
     expect(result.optionRevisionRefs).toHaveLength(1);
     expect(calls.map(({ kind }) => kind)).toEqual([
-      "journal.begin",
       "load",
+      "journal.begin",
       "materialize",
       "journal.succeed",
     ]);
@@ -114,17 +82,7 @@ describe("Product ModelOption application services", () => {
     const inventory = catalog();
     const revision = compileModelOptionRevision({
       inventory,
-      option: {
-        legacyLabelId: "label-chat",
-        key: "chat.standard",
-        product: "chat",
-        displayName: "Standard",
-        description: null,
-        tier: "standard",
-        defaultModelKey: "chat-primary",
-        candidateModelKeys: ["chat-primary"],
-        enabled: true,
-      },
+      draft: chatDraft(),
     });
     const calls: { kind: string; transaction: PlatformTransaction }[] = [];
     const repository = repositoryDouble({
@@ -180,17 +138,7 @@ describe("Product ModelOption application services", () => {
     const inventory = catalog();
     const revision = compileModelOptionRevision({
       inventory,
-      option: {
-        legacyLabelId: "label-chat",
-        key: "chat.standard",
-        product: "chat",
-        displayName: "Standard",
-        description: null,
-        tier: "standard",
-        defaultModelKey: "chat-primary",
-        candidateModelKeys: ["chat-primary"],
-        enabled: true,
-      },
+      draft: chatDraft(),
     });
     const release = createSiteReleaseModelCatalogRevision({
       siteId: "site-a",
@@ -250,7 +198,7 @@ function repositoryDouble(
 ): ModelOptionCatalogRepository {
   return {
     loadInventory: async () => null,
-    materializeLegacyOptions: async () => {
+    materializeOptions: async () => {
       throw new Error("unused");
     },
     loadOptionRevisions: async () => [],
@@ -287,7 +235,7 @@ async function context(
   kind: "admin_workload" | "site_product",
   siteId: string | null,
   allowedOperations: string[],
-  purpose = kind === "admin_workload" ? "model_control_migration" : "product_context",
+  purpose = kind === "admin_workload" ? "model_control_administration" : "product_context",
 ) {
   const input = {
     requestId: `request-${kind}`,
@@ -301,6 +249,9 @@ async function context(
       audience: "platform",
       allowedOperations,
       bindingEpoch: "1",
+      ...(kind === "site_product"
+        ? { siteReleaseRef: "release-a", siteSecurityEpoch: "1" }
+        : {}),
       issuedAt: "2026-07-29T11:59:00.000Z",
       expiresAt: "2026-07-29T12:05:00.000Z",
     },
@@ -340,6 +291,9 @@ async function context(
         region: "us-east-1",
         allowedOperations,
         siteId,
+        ...(kind === "site_product"
+          ? { siteReleaseRef: "release-a", siteSecurityEpoch: "1" }
+          : {}),
         bindingEpoch: "1",
         issuedAt: "2026-07-29T11:59:00.000Z",
         expiresAt: "2026-07-29T12:05:00.000Z",
@@ -396,4 +350,18 @@ function catalog() {
       },
     ],
   });
+}
+
+function chatDraft() {
+  const selection = { primaryModelKey: "chat-primary", fallbackModelKeys: [] } as const;
+  return {
+    schemaVersion: 1 as const,
+    optionKey: "chat.standard",
+    surface: "chat" as const,
+    label: "Standard",
+    description: null,
+    tier: "standard",
+    lifecycle: "active" as const,
+    composition: { orchestration: selection, generation: selection },
+  };
 }

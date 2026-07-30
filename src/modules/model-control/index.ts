@@ -5,6 +5,7 @@ export { ChangeSiteModelPolicyService } from "./application/services/change-site
 export { ResolveModelPolicyService } from "./application/services/resolve-model-policy.js";
 export { PublishSiteReleaseModelCatalogService } from "./application/services/publish-site-release-model-catalog.js";
 export { ReadProductModelOptionCatalogsService } from "./application/services/read-product-model-option-catalogs.js";
+export { MaterializeModelOptionsService } from "./application/services/materialize-model-options.js";
 export type {
   ModelControlApplication,
   ModelInventoryActivationAdministration,
@@ -36,9 +37,12 @@ export type {
 export type { SiteModelPolicy } from "./domain/site-model-policy.js";
 export type { ProviderOperationalAvailability } from "./domain/provider-availability.js";
 export type {
+  ModelOptionDraft,
   ModelOptionRevision,
+  ModelOptionRoleSelection,
   ProductModelOptionCatalogProjection,
   PublishedModelOption,
   SiteReleaseModelCatalogRevision,
   SurfaceModelOptionCatalog,
 } from "./domain/product-model-option.js";
+export type { MaterializedModelOptions, ModelOptionDraftSet } from "./domain/model-option-materialization.js";

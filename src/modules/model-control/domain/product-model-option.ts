@@ -4,7 +4,6 @@ import {
   type CanonicalizedModelInventory,
   type ModelProduct,
 } from "./model-catalog.js";
-import type { LegacyModelOptionMigrationArtifact } from "../migration/legacy-model-option-artifact.js";
 
 export type ProductModelSurface = ModelProduct;
 export type ModelOptionRoleKey =
@@ -22,6 +21,30 @@ export interface ModelOptionRoleBinding {
   readonly fallbackModelKeys: readonly string[];
   readonly requiredCapabilities: readonly string[];
   readonly fallbackPolicy: "ordered_pre_effect_only";
+}
+
+export interface ModelOptionRoleSelection {
+  readonly primaryModelKey: string;
+  readonly fallbackModelKeys: readonly string[];
+}
+
+/**
+ * Platform-native product option. It references the one global model inventory and
+ * selects an ordered, pre-effect-only route for each product role. Provider facts,
+ * gateway aliases and secrets never enter this public administration shape.
+ */
+export interface ModelOptionDraft {
+  readonly schemaVersion: 1;
+  readonly optionKey: string;
+  readonly surface: ProductModelSurface;
+  readonly label: string;
+  readonly description: string | null;
+  readonly tier: string | null;
+  readonly lifecycle: "active" | "disabled";
+  readonly composition: {
+    readonly orchestration: ModelOptionRoleSelection;
+    readonly generation: ModelOptionRoleSelection;
+  };
 }
 
 export interface ModelOptionRevision {
@@ -89,22 +112,36 @@ export interface ProductModelOptionCatalogProjection {
   readonly modelOptionCatalogs: readonly SurfaceModelOptionCatalog[];
 }
 
-type LegacyOption = LegacyModelOptionMigrationArtifact["options"][number];
-
 export function compileModelOptionRevision(input: {
   readonly inventory: CanonicalizedModelInventory;
-  readonly option: LegacyOption;
+  readonly draft: ModelOptionDraft;
 }): ModelOptionRevision {
   digest(input.inventory.digest, "MODEL_OPTION_INVENTORY_DIGEST_INVALID");
-  const optionKey = publicOptionKey(input.option.key);
-  const surface = product(input.option.product);
-  const label = publicLabel(input.option.displayName);
+  const draft = verifyModelOptionDraft(input.draft);
+  const optionKey = draft.optionKey;
+  const surface = draft.surface;
+  const label = draft.label;
   const description =
-    input.option.description === null ? null : boundedText(input.option.description, 512);
-  const tier = input.option.tier === null ? null : publicToken(input.option.tier, 64);
-  const generation = compileGenerationBinding(input.inventory, input.option, surface);
-  const orchestration =
-    surface === "chat" ? generation : compileOrchestrationBinding(input.inventory, surface);
+    draft.description === null ? null : boundedText(draft.description, 512);
+  const tier = draft.tier === null ? null : publicToken(draft.tier, 64);
+  const generation = compileRoleBinding(
+    input.inventory,
+    surface,
+    surface === "chat" ? "main" : "generation",
+    surface === "chat" ? "chat" : `${surface}.generate`,
+    generationRole(surface),
+    draft.composition.generation,
+  );
+  const orchestration = surface === "chat"
+    ? generation
+    : compileRoleBinding(
+        input.inventory,
+        surface,
+        "main",
+        "chat",
+        `${surface}.assistant` as ModelOptionRoleKey,
+        draft.composition.orchestration,
+      );
   const generationContract = publicGenerationContract(input.inventory, generation);
   const payload = deepFreeze({
     schemaVersion: 1 as const,
@@ -114,7 +151,7 @@ export function compileModelOptionRevision(input: {
     label,
     description,
     tier,
-    lifecycle: input.option.enabled ? ("active" as const) : ("disabled" as const),
+    lifecycle: draft.lifecycle,
     inputModalities: generationContract.inputModalities,
     outputModalities: generationContract.outputModalities,
     supportedEfforts: generationContract.supportedEfforts,
@@ -127,6 +164,39 @@ export function compileModelOptionRevision(input: {
     modelOptionRevisionRef: `model-option:sha256:${revisionDigest}`,
     revisionDigest,
   });
+}
+
+export function verifyModelOptionDraft(input: unknown): ModelOptionDraft {
+  const value = strictRecord(
+    input,
+    ["schemaVersion", "optionKey", "surface", "label", "description", "tier", "lifecycle", "composition"],
+    "MODEL_OPTION_DRAFT_INVALID",
+  );
+  if (value.schemaVersion !== 1) throw new Error("MODEL_OPTION_DRAFT_INVALID");
+  const surface = product(value.surface);
+  const composition = strictRecord(
+    value.composition,
+    ["orchestration", "generation"],
+    "MODEL_OPTION_DRAFT_INVALID",
+  );
+  const draft = deepFreeze({
+    schemaVersion: 1 as const,
+    optionKey: publicOptionKey(value.optionKey),
+    surface,
+    label: publicLabel(value.label),
+    description: value.description === null ? null : boundedText(value.description, 512),
+    tier: value.tier === null ? null : publicToken(value.tier, 64),
+    lifecycle: lifecycle(value.lifecycle),
+    composition: {
+      orchestration: parseRoleSelection(composition.orchestration),
+      generation: parseRoleSelection(composition.generation),
+    },
+  });
+  if (
+    surface === "chat" &&
+    stableJson(draft.composition.orchestration) !== stableJson(draft.composition.generation)
+  ) throw new Error("MODEL_OPTION_CHAT_COMPOSITION_INVALID");
+  return draft;
 }
 
 export function createSiteReleaseModelCatalogRevision(input: {
@@ -416,42 +486,34 @@ export function verifySiteReleaseModelCatalogRevision(
   return deepFreeze({ ...payload, modelOptionCatalogRef, catalogDigest });
 }
 
-function compileGenerationBinding(
+function compileRoleBinding(
   inventory: CanonicalizedModelInventory,
-  option: LegacyOption,
   surface: ProductModelSurface,
+  role: "main" | "generation",
+  expectedCapability: string,
+  roleKey: ModelOptionRoleKey,
+  selection: ModelOptionRoleSelection,
 ): ModelOptionRoleBinding {
-  const role = surface === "chat" ? "main" : "generation";
-  const expectedCapability = surface === "chat" ? "chat" : `${surface}.generate`;
-  const allowed = new Set(option.candidateModelKeys.map(identifier));
-  const candidates = structurallyUsableRouteModels(inventory, surface, role, expectedCapability).filter(
-    (modelKey) => allowed.has(modelKey),
+  const available = new Set(
+    structurallyUsableRouteModels(inventory, surface, role, expectedCapability),
   );
-  if (candidates.length === 0) throw new Error("MODEL_OPTION_GENERATION_ROUTE_REQUIRED");
-  const requestedDefault = option.defaultModelKey === null ? null : identifier(option.defaultModelKey);
-  if (requestedDefault !== null && !candidates.includes(requestedDefault))
-    throw new Error("MODEL_OPTION_DEFAULT_MODEL_UNAVAILABLE");
-  const primaryModelKey = requestedDefault ?? candidates[0]!;
+  const primaryModelKey = identifier(selection.primaryModelKey);
+  const fallbackModelKeys = selection.fallbackModelKeys.map(identifier);
+  const selected = [primaryModelKey, ...fallbackModelKeys];
+  if (
+    selected.length > 16 ||
+    new Set(selected).size !== selected.length ||
+    selected.some((modelKey) => !available.has(modelKey))
+  ) {
+    throw new Error(role === "generation"
+      ? "MODEL_OPTION_GENERATION_ROUTE_REQUIRED"
+      : "MODEL_OPTION_ORCHESTRATION_ROLE_REQUIRED");
+  }
   return deepFreeze({
-    roleKey: generationRole(surface),
+    roleKey,
     primaryModelKey,
-    fallbackModelKeys: candidates.filter((modelKey) => modelKey !== primaryModelKey),
+    fallbackModelKeys,
     requiredCapabilities: [expectedCapability],
-    fallbackPolicy: "ordered_pre_effect_only" as const,
-  });
-}
-
-function compileOrchestrationBinding(
-  inventory: CanonicalizedModelInventory,
-  surface: Exclude<ProductModelSurface, "chat">,
-): ModelOptionRoleBinding {
-  const candidates = structurallyUsableRouteModels(inventory, surface, "main", "chat");
-  if (candidates.length === 0) throw new Error("MODEL_OPTION_ORCHESTRATION_ROLE_REQUIRED");
-  return deepFreeze({
-    roleKey: `${surface}.assistant` as ModelOptionRoleKey,
-    primaryModelKey: candidates[0]!,
-    fallbackModelKeys: candidates.slice(1),
-    requiredCapabilities: ["chat"],
     fallbackPolicy: "ordered_pre_effect_only" as const,
   });
 }
@@ -580,6 +642,22 @@ function parseRoleBinding(input: unknown): ModelOptionRoleBinding {
     requiredCapabilities: publicTokens(unknownArray(value.requiredCapabilities), true),
     fallbackPolicy: "ordered_pre_effect_only" as const,
   });
+}
+
+function parseRoleSelection(input: unknown): ModelOptionRoleSelection {
+  const value = strictRecord(
+    input,
+    ["primaryModelKey", "fallbackModelKeys"],
+    "MODEL_OPTION_ROLE_SELECTION_INVALID",
+  );
+  const primaryModelKey = identifier(value.primaryModelKey);
+  const fallbackModelKeys = unknownArray(value.fallbackModelKeys).map(identifier);
+  if (
+    fallbackModelKeys.length > 15 ||
+    new Set(fallbackModelKeys).size !== fallbackModelKeys.length ||
+    fallbackModelKeys.includes(primaryModelKey)
+  ) throw new Error("MODEL_OPTION_ROLE_SELECTION_INVALID");
+  return deepFreeze({ primaryModelKey, fallbackModelKeys });
 }
 
 function isRoleKey(value: string): value is ModelOptionRoleKey {

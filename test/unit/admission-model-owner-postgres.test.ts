@@ -159,10 +159,13 @@ function modelFixture() {
   });
   const option = compileModelOptionRevision({
     inventory,
-    option: {
-      legacyLabelId: "legacy-chat", key: "chat.standard", product: "chat",
-      displayName: "Standard", description: null, tier: "standard",
-      defaultModelKey: "chat-primary", candidateModelKeys: ["chat-primary", "chat-fallback"], enabled: true,
+    draft: {
+      schemaVersion: 1, optionKey: "chat.standard", surface: "chat", label: "Standard",
+      description: null, tier: "standard", lifecycle: "active",
+      composition: {
+        orchestration: { primaryModelKey: "chat-primary", fallbackModelKeys: ["chat-fallback"] },
+        generation: { primaryModelKey: "chat-primary", fallbackModelKeys: ["chat-fallback"] },
+      },
     },
   });
   const release = createSiteReleaseModelCatalogRevision({

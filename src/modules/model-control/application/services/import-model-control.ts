@@ -27,9 +27,6 @@ export class ImportModelControlService implements ModelInventoryImportAdministra
     )
       throw new Error("MODEL_IMPORT_ID_INVALID");
     const inventory = canonicalizeModelInventory(input.inventory);
-    const modelOptionMigrationDigest = input.migrationArtifactDigest ?? null;
-    if (modelOptionMigrationDigest !== null && !/^[a-f0-9]{64}$/u.test(modelOptionMigrationDigest))
-      throw new Error("MODEL_OPTION_MIGRATION_DIGEST_INVALID");
     const providerAvailability = canonicalizeProviderOperationalAvailability(
       input.providerAvailability ??
         inventory.document.providers.map((provider) => ({
@@ -52,7 +49,6 @@ export class ImportModelControlService implements ModelInventoryImportAdministra
       security: modelControlSecurityFacts(context),
       effect: {
         inventoryDigest: inventory.digest,
-        modelOptionMigrationDigest,
         source: inventory.document.source,
         providerAvailability,
       },

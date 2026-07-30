@@ -54,7 +54,7 @@ CREATE TABLE platform.model_inventory_import (
   import_id UUID PRIMARY KEY,
   source_digest CHAR(64) NOT NULL UNIQUE CHECK (source_digest ~ '^[a-f0-9]{64}$'),
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
-  source_kind TEXT NOT NULL CHECK (source_kind IN ('legacy-kokoro-model','platform-native')),
+  source_kind TEXT NOT NULL CHECK (source_kind='platform-native'),
   source_reference TEXT NOT NULL CHECK (platform.model_text_is_valid(source_reference)),
   canonical_payload JSONB NOT NULL,
   counts JSONB NOT NULL,
@@ -274,7 +274,7 @@ BEGIN
      OR NOT ((canonical_payload->'source') ?& ARRAY['kind','reference'])
      OR (canonical_payload->'source') - ARRAY['kind','reference']::TEXT[] <> '{}'::JSONB
      OR canonical_payload#>>'{source,kind}' IS NULL
-     OR canonical_payload#>>'{source,kind}' NOT IN ('legacy-kokoro-model','platform-native')
+     OR canonical_payload#>>'{source,kind}' IS DISTINCT FROM 'platform-native'
      OR NULLIF(canonical_payload#>>'{source,reference}', '') IS NULL
      OR jsonb_typeof(canonical_payload->'providers') IS DISTINCT FROM 'array'
      OR jsonb_typeof(canonical_payload->'models') IS DISTINCT FROM 'array'
@@ -619,8 +619,8 @@ BEGIN
   site_key:=policy->>'siteId'; product_key:=policy->>'product'; catalog_mode_value:=policy#>>'{catalog,mode}';
   catalog_digest_value:=policy#>>'{catalog,digest}'; assignment_mode_value:=policy->>'assignmentMode';
   cross_site_migration:=NULLIF(current_setting('app.site_id',true),'') IS NULL
-    AND current_setting('app.purpose',true)='model_control_migration'
-    AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'model:site-policy:migrate';
+    AND current_setting('app.purpose',true)='model_control_administration'
+    AND COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'model:site-policy:manage-all';
   IF jsonb_typeof(policy) IS DISTINCT FROM 'object'
      OR NOT (policy ?& ARRAY['schemaVersion','siteId','product','enabled','catalog','assignmentMode','assignments'])
      OR policy - ARRAY['schemaVersion','siteId','product','enabled','catalog','assignmentMode','assignments']::TEXT[] <> '{}'::JSONB
