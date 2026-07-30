@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type {
+  ModelGatewayJsonValue,
   ModelGatewayProviderOutcome,
   ModelGatewayProviderPort,
   ModelGatewayRequest,
@@ -53,8 +54,21 @@ export class LiteLlmChatAdapter implements ModelGatewayProviderPort {
     validateRequest(request);
     const providerBody = Object.freeze({
       model: request.model,
-      messages: request.messages.map((message) => Object.freeze({ ...message })),
+      messages: request.messages.map(providerMessage),
       max_completion_tokens: request.maxOutputTokens,
+      ...(request.tools.length === 0
+        ? {}
+        : {
+            tools: request.tools.map((tool) => Object.freeze({
+              type: "function",
+              function: Object.freeze({
+                name: tool.name,
+                description: tool.description,
+                parameters: tool.inputSchema,
+              }),
+            })),
+            tool_choice: providerToolChoice(request.toolChoice),
+          }),
       stream: false,
     });
     const body = new TextEncoder().encode(JSON.stringify(providerBody));
@@ -128,7 +142,8 @@ export class LiteLlmChatAdapter implements ModelGatewayProviderPort {
         kind: "failed",
         responseBody: safeResponseBody,
         usage: null,
-        sourceDigest: sha256(safeResponseBody),
+        responseDigest: sha256(safeResponseBody),
+        sourceDigest,
         occurredAt,
       });
     }
@@ -137,8 +152,9 @@ export class LiteLlmChatAdapter implements ModelGatewayProviderPort {
     if (parsed.kind === "invalid") return unknownOutcome("litellm-response", sourceDigest);
     return Object.freeze({
       kind: "succeeded",
-      responseBody,
+      responseBody: parsed.safeResponseBody,
       usage: parsed.usage,
+      responseDigest: sha256(parsed.safeResponseBody),
       sourceDigest,
       occurredAt,
     });
@@ -158,23 +174,47 @@ function validateRequest(request: ModelGatewayRequest): void {
     !safeName(request.model) ||
     !Number.isInteger(request.maxOutputTokens) || request.maxOutputTokens < 1 ||
     request.maxOutputTokens > MAX_OUTPUT_TOKENS ||
-    !Array.isArray(request.messages) || request.messages.length < 1 || request.messages.length > 512
+    !Array.isArray(request.messages) || request.messages.length < 1 || request.messages.length > 512 ||
+    !Array.isArray(request.tools) || request.tools.length > 128
   ) throw new Error("MODEL_GATEWAY_CHAT_REQUEST_INVALID");
   let contentBytes = 0;
   for (const message of request.messages) {
     if (
       message === null || typeof message !== "object" ||
-      !["system", "user", "assistant"].includes(message.role) ||
-      typeof message.content !== "string" || message.content.length < 1 ||
+      !["system", "user", "assistant", "tool"].includes(message.role) ||
+      typeof message.content !== "string" || !Array.isArray(message.toolCalls) ||
       hasControlCharacter(message.role)
     ) throw new Error("MODEL_GATEWAY_CHAT_REQUEST_INVALID");
     contentBytes += Buffer.byteLength(message.content, "utf8");
     if (contentBytes > MAX_REQUEST_BYTES) throw new Error("MODEL_GATEWAY_CHAT_REQUEST_TOO_LARGE");
+    validateMessageShape(message);
+    for (const call of message.toolCalls) validateToolCall(call);
+  }
+  const names = new Set<string>();
+  for (const tool of request.tools) {
+    if (!safeToolName(tool.name) || names.has(tool.name) ||
+        typeof tool.description !== "string" || Buffer.byteLength(tool.description, "utf8") > 65_536 ||
+        !jsonRecord(tool.inputSchema)) {
+      throw new Error("MODEL_GATEWAY_CHAT_REQUEST_INVALID");
+    }
+    canonicalJson(tool.inputSchema);
+    names.add(tool.name);
+  }
+  if (request.tools.length === 0 && request.toolChoice !== "none") {
+    throw new Error("MODEL_GATEWAY_CHAT_REQUEST_INVALID");
+  }
+  if (typeof request.toolChoice === "object" &&
+      (!safeToolName(request.toolChoice.name) || !names.has(request.toolChoice.name))) {
+    throw new Error("MODEL_GATEWAY_CHAT_REQUEST_INVALID");
   }
 }
 
 function parseResponse(body: Uint8Array):
-  | Readonly<{ kind: "valid"; usage: readonly ModelUsageDimension[] | null }>
+  | Readonly<{
+      kind: "valid";
+      usage: readonly ModelUsageDimension[] | null;
+      safeResponseBody: Uint8Array;
+    }>
   | Readonly<{ kind: "invalid" }> {
   let value: unknown;
   try {
@@ -182,22 +222,157 @@ function parseResponse(body: Uint8Array):
   } catch {
     return Object.freeze({ kind: "invalid" });
   }
-  if (!record(value) || typeof value.id !== "string" || value.id.length < 1 ||
-      !Array.isArray(value.choices) || value.choices.length < 1) {
+  if (!record(value) || !safeReference(value.id) ||
+      !Array.isArray(value.choices) || value.choices.length < 1 || !record(value.choices[0])) {
     return Object.freeze({ kind: "invalid" });
   }
-  if (value.usage === undefined) return Object.freeze({ kind: "valid", usage: null });
-  if (!record(value.usage)) return Object.freeze({ kind: "invalid" });
-  const input = safeInteger(value.usage.prompt_tokens);
-  const output = safeInteger(value.usage.completion_tokens);
-  if (input === null || output === null) return Object.freeze({ kind: "invalid" });
-  return Object.freeze({
-    kind: "valid",
-    usage: Object.freeze([
+  const first = value.choices[0];
+  if (!record(first.message) || first.message.role !== "assistant") {
+    return Object.freeze({ kind: "invalid" });
+  }
+  const content = first.message.content === null ? "" : first.message.content;
+  if (typeof content !== "string" || Buffer.byteLength(content, "utf8") > MAX_RESPONSE_BYTES) {
+    return Object.freeze({ kind: "invalid" });
+  }
+  const reasoning = first.message.reasoning_content;
+  if (reasoning !== undefined && reasoning !== null &&
+      (typeof reasoning !== "string" || Buffer.byteLength(reasoning, "utf8") > MAX_RESPONSE_BYTES)) {
+    return Object.freeze({ kind: "invalid" });
+  }
+  const toolCalls = parseToolCalls(first.message.tool_calls);
+  if (toolCalls === null || (content.length === 0 && toolCalls.length === 0)) {
+    return Object.freeze({ kind: "invalid" });
+  }
+  const finishReason = first.finish_reason;
+  if (finishReason !== undefined && finishReason !== null &&
+      (typeof finishReason !== "string" || finishReason.length < 1 || finishReason.length > 64)) {
+    return Object.freeze({ kind: "invalid" });
+  }
+  let usage: readonly ModelUsageDimension[] | null = null;
+  let safeUsage: Readonly<{ prompt_tokens: number; completion_tokens: number }> | undefined;
+  if (value.usage !== undefined) {
+    if (!record(value.usage)) return Object.freeze({ kind: "invalid" });
+    const input = safeInteger(value.usage.prompt_tokens);
+    const output = safeInteger(value.usage.completion_tokens);
+    if (input === null || output === null || input > BigInt(Number.MAX_SAFE_INTEGER) ||
+        output > BigInt(Number.MAX_SAFE_INTEGER)) return Object.freeze({ kind: "invalid" });
+    usage = Object.freeze([
       Object.freeze({ dimensionKey: "input_tokens", sourceUnit: "tokens", quantity: input }),
       Object.freeze({ dimensionKey: "output_tokens", sourceUnit: "tokens", quantity: output }),
-    ]),
+    ]);
+    safeUsage = Object.freeze({ prompt_tokens: Number(input), completion_tokens: Number(output) });
+  }
+  const safe = Object.freeze({
+    id: value.id,
+    choices: Object.freeze([Object.freeze({
+      index: 0,
+      message: Object.freeze({
+        role: "assistant",
+        content,
+        ...(reasoning === undefined || reasoning === null ? {} : { reasoning_content: reasoning }),
+        ...(toolCalls.length === 0 ? {} : { tool_calls: toolCalls }),
+      }),
+      ...(finishReason === undefined || finishReason === null ? {} : { finish_reason: finishReason }),
+    })]),
+    ...(safeUsage === undefined ? {} : { usage: safeUsage }),
   });
+  if (!jsonValue(safe)) return Object.freeze({ kind: "invalid" });
+  return Object.freeze({
+    kind: "valid",
+    usage,
+    safeResponseBody: new TextEncoder().encode(canonicalJson(safe)),
+  });
+}
+
+function providerMessage(message: ModelGatewayRequest["messages"][number]): Readonly<Record<string, unknown>> {
+  return Object.freeze({
+    role: message.role,
+    content: message.content,
+    ...(message.toolCalls.length === 0
+      ? {}
+      : { tool_calls: message.toolCalls.map((call) => Object.freeze({
+          id: call.id,
+          type: "function",
+          function: Object.freeze({ name: call.name, arguments: canonicalJson(call.arguments) }),
+        })) }),
+    ...(message.toolCallId === undefined ? {} : { tool_call_id: message.toolCallId }),
+    ...(message.name === undefined ? {} : { name: message.name }),
+  });
+}
+
+function providerToolChoice(value: ModelGatewayRequest["toolChoice"]): unknown {
+  return typeof value === "string" ? value : Object.freeze({
+    type: "function",
+    function: Object.freeze({ name: value.name }),
+  });
+}
+
+function validateMessageShape(message: ModelGatewayRequest["messages"][number]): void {
+  const hasToolCallId = message.toolCallId !== undefined;
+  if ((message.role === "tool") !== hasToolCallId ||
+      (hasToolCallId && !safeReference(message.toolCallId)) ||
+      (message.role !== "assistant" && message.toolCalls.length > 0) ||
+      (message.role === "assistant" && message.content.length === 0 && message.toolCalls.length === 0) ||
+      (message.role !== "assistant" && message.role !== "tool" && message.content.length === 0) ||
+      (message.name !== undefined && !safeToolName(message.name))) {
+    throw new Error("MODEL_GATEWAY_CHAT_REQUEST_INVALID");
+  }
+}
+
+function validateToolCall(call: ModelGatewayRequest["messages"][number]["toolCalls"][number]): void {
+  if (!safeReference(call.id) || !safeToolName(call.name) || !jsonRecord(call.arguments)) {
+    throw new Error("MODEL_GATEWAY_CHAT_REQUEST_INVALID");
+  }
+  canonicalJson(call.arguments);
+}
+
+function parseToolCalls(value: unknown): readonly ModelGatewayJsonValue[] | null {
+  if (value === undefined) return Object.freeze([]);
+  if (!Array.isArray(value) || value.length > 128) return null;
+  const seen = new Set<string>();
+  const calls: ModelGatewayJsonValue[] = [];
+  for (const raw of value) {
+    if (!record(raw) || raw.type !== "function" || !safeReference(raw.id) || seen.has(raw.id) ||
+        !record(raw.function) || !safeToolName(raw.function.name) ||
+        typeof raw.function.arguments !== "string" ||
+        Buffer.byteLength(raw.function.arguments, "utf8") > 1024 * 1024) return null;
+    let argumentsValue: unknown;
+    try { argumentsValue = JSON.parse(raw.function.arguments); } catch { return null; }
+    if (!jsonRecord(argumentsValue)) return null;
+    const argumentsJson = canonicalJson(argumentsValue);
+    calls.push(Object.freeze({
+      id: raw.id,
+      type: "function",
+      function: Object.freeze({ name: raw.function.name, arguments: argumentsJson }),
+    }));
+    seen.add(raw.id);
+  }
+  return Object.freeze(calls);
+}
+
+function canonicalJson(value: ModelGatewayJsonValue): string {
+  if (value === null || typeof value !== "object") {
+    if (typeof value === "number" && !Number.isFinite(value)) {
+      throw new Error("MODEL_GATEWAY_CHAT_REQUEST_INVALID");
+    }
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  return `{${Object.entries(value)
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+    .map(([key, child]) => `${JSON.stringify(key)}:${canonicalJson(child)}`).join(",")}}`;
+}
+
+function jsonRecord(value: unknown): value is Readonly<{ [key: string]: ModelGatewayJsonValue }> {
+  if (!record(value)) return false;
+  return Object.values(value).every(jsonValue);
+}
+
+function jsonValue(value: unknown): value is ModelGatewayJsonValue {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (Array.isArray(value)) return value.every(jsonValue);
+  return jsonRecord(value);
 }
 
 async function readBoundedBody(response: Response, maximumBytes: number): Promise<Uint8Array> {
@@ -267,6 +442,14 @@ function record(value: unknown): value is Record<string, unknown> {
 
 function safeName(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,255}$/u.test(value);
+}
+
+function safeToolName(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/u.test(value);
+}
+
+function safeReference(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/u.test(value);
 }
 
 function reference(value: string, code: string): void {

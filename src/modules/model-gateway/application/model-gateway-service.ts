@@ -8,11 +8,41 @@ export type ModelUsageDimension = Readonly<{
   quantity: bigint;
 }>;
 
+export type ModelGatewayJsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | readonly ModelGatewayJsonValue[]
+  | Readonly<{ [key: string]: ModelGatewayJsonValue }>;
+
+export type ModelGatewayToolCall = Readonly<{
+  id: string;
+  name: string;
+  arguments: Readonly<{ [key: string]: ModelGatewayJsonValue }>;
+}>;
+
+export type ModelGatewayMessage = Readonly<{
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+  toolCalls: readonly ModelGatewayToolCall[];
+  toolCallId?: string;
+  name?: string;
+}>;
+
+export type ModelGatewayToolDefinition = Readonly<{
+  name: string;
+  description: string;
+  inputSchema: Readonly<{ [key: string]: ModelGatewayJsonValue }>;
+}>;
+
 export type ModelGatewayRequest = Readonly<{
   protocol: "openai.chat.completions.v1";
   model: string;
-  messages: readonly Readonly<{ role: "system" | "user" | "assistant"; content: string }>[];
+  messages: readonly ModelGatewayMessage[];
   maxOutputTokens: number;
+  tools: readonly ModelGatewayToolDefinition[];
+  toolChoice: "auto" | "none" | "required" | Readonly<{ name: string }>;
 }>;
 
 export type ModelInvocationAuthorization = Readonly<{
@@ -29,6 +59,8 @@ export type ModelGatewayProviderOutcome =
       kind: "succeeded" | "failed";
       responseBody: Uint8Array;
       usage: readonly ModelUsageDimension[] | null;
+      responseDigest: string;
+      // Digest of the original bounded provider response, before safe projection.
       sourceDigest: string;
       occurredAt: string;
     }>
@@ -553,8 +585,9 @@ function validateTerminalProviderOutcome(
     throw new Error("MODEL_GATEWAY_PROVIDER_RESPONSE_INVALID");
   }
   digest(outcome.sourceDigest, "MODEL_GATEWAY_PROVIDER_SOURCE_DIGEST_INVALID");
-  if (createHash("sha256").update(outcome.responseBody).digest("hex") !== outcome.sourceDigest) {
-    throw new Error("MODEL_GATEWAY_PROVIDER_SOURCE_DIGEST_INVALID");
+  digest(outcome.responseDigest, "MODEL_GATEWAY_PROVIDER_RESPONSE_DIGEST_INVALID");
+  if (createHash("sha256").update(outcome.responseBody).digest("hex") !== outcome.responseDigest) {
+    throw new Error("MODEL_GATEWAY_PROVIDER_RESPONSE_DIGEST_INVALID");
   }
   if (!Number.isFinite(Date.parse(outcome.occurredAt))) {
     throw new Error("MODEL_GATEWAY_PROVIDER_OCCURRED_AT_INVALID");

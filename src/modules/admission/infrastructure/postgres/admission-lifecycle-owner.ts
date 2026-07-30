@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type {
   AdmissionAuthorizationRecord,
   AdmissionAuthorizationState,
@@ -83,7 +82,10 @@ export class PostgresAdmissionLifecycleOwner implements AdmissionLifecycleOwnerP
           assetGrantRef: item.assetGrantRef,
         })))],
     );
-    const gatewayAuthorizationHandle = modelAuthorizationHandle(input.manifestDigest);
+    const gatewayAuthorizationHandle = input.ownerFacts.runtime.model.authorization_handle;
+    if (!/^model-authorization:sha256:[0-9a-f]{64}$/u.test(gatewayAuthorizationHandle)) {
+      throw new Error("ADMISSION_MODEL_GATEWAY_AUTHORIZATION_INVALID");
+    }
     const projected = await sql.execute(
       `INSERT INTO platform.model_gateway_execution_authorization
        (authorization_handle,site_ref,execution_manifest_ref,authorization_segment_ref,
@@ -191,8 +193,8 @@ async function transition(
     const authorizationChanged = await sql.execute(
       `UPDATE platform.model_gateway_execution_authorization
        SET state=$1,updated_at=now()
-       WHERE authorization_handle=$2 AND state IN ('active','revoked')`,
-      [gatewayState, modelAuthorizationHandle(prior.manifestDigest)],
+       WHERE site_ref=$2 AND execution_manifest_ref=$3 AND state IN ('active','revoked')`,
+      [gatewayState, prior.siteId, prior.manifestRef],
     );
     if (authorizationChanged !== 1) {
       throw new Error("ADMISSION_MODEL_GATEWAY_AUTHORIZATION_CAS_LOST");
@@ -274,12 +276,6 @@ function bindingDigestFromRef(value: string): string {
   const match = /^session-execution-binding:sha256:([0-9a-f]{64})$/u.exec(value);
   if (match?.[1] === undefined) throw new Error("ADMISSION_SESSION_BINDING_CONFLICT");
   return match[1];
-}
-
-function modelAuthorizationHandle(manifestDigest: string): string {
-  return `model-authorization:sha256:${createHash("sha256")
-    .update(`kokoro.model-gateway.authorization.v1\0${manifestDigest}`)
-    .digest("hex")}`;
 }
 
 function reference(value: string): string {

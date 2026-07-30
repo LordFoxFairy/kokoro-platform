@@ -109,8 +109,7 @@ deployables:
     activationAuthorized: false
     runtimeTraffic: false
     inboundContracts: []
-    declaredInboundContracts:
-      [platform-model-gateway-https, platform-model-gateway-reconciliation-https]
+    declaredInboundContracts: [platform-model-gateway-connect-v1]
     outboundContracts: [litellm-openai-chat-completions]
     secretClasses:
       [platform-model-gateway-database, mtls-server, mtls-peer-registry,
@@ -118,7 +117,7 @@ deployables:
     audience: platform-model-gateway
     scalingKey: provider-request-concurrency
     readiness: /health/ready
-    drain: https-graceful-then-abort
+    drain: http2-graceful-then-abort
     sloOwner: platform
     runbookOwner: platform
     releaseOwner: platform

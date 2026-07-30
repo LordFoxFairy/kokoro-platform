@@ -469,6 +469,11 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
           model: {
             provider: model.value.provider,
             name: model.value.name,
+            authorization_handle: modelAuthorizationHandle({
+              siteId: command.siteId,
+              commandId: command.commandId,
+              requestDigest: command.requestDigest,
+            }),
             ...(model.value.effort === undefined ? {} : { effort: model.value.effort }),
             ...(model.value.thinking === undefined ? {} : { thinking: model.value.thinking }),
           },
@@ -819,6 +824,19 @@ export function assertPlatformAdmissionOwnerPorts(
     typeof candidate.dispatchEvidence?.get !== "function" ||
     typeof candidate.executionEvidence?.resolve !== "function"
   ) throw new Error("PLATFORM_ADMISSION_OWNER_PORTS_REQUIRED");
+}
+
+function modelAuthorizationHandle(input: Readonly<{
+  siteId: string;
+  commandId: string;
+  requestDigest: string;
+}>): string {
+  return `model-authorization:sha256:${createHash("sha256")
+    .update("kokoro.model-gateway.authorization.v1\0")
+    .update(input.siteId).update("\0")
+    .update(input.commandId).update("\0")
+    .update(input.requestDigest)
+    .digest("hex")}`;
 }
 
 function digestManifest(

@@ -15,6 +15,7 @@ export const modelConfigSchema = z
   .object({
     provider: z.string().min(1),
     name: z.string().min(1),
+    authorization_handle: z.string().min(1).max(256).refine((value) => value.trim() === value),
     effort: z.string().min(1).optional(),
     thinking: z.boolean().optional(),
   })

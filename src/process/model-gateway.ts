@@ -1,4 +1,4 @@
-import type { Server as HttpsServer } from "node:https";
+import type { Http2SecureServer } from "node:http2";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -35,7 +35,7 @@ export function createPlatformModelGatewayProcess(options: Readonly<{
   let state: PlatformModelGatewayProcessState = "stopped";
   let ready = false;
   let connected = false;
-  let server: HttpsServer | undefined;
+  let server: Http2SecureServer | undefined;
   let startPromise: Promise<string> | undefined;
   let shutdownPromise: Promise<void> | undefined;
 
@@ -66,7 +66,6 @@ export function createPlatformModelGatewayProcess(options: Readonly<{
           : await close(active, Math.min(remaining(deadlineAt), Math.max(1, Math.floor(deadlineMs * 0.8))));
         if (!stopped) {
           options.composition.abortInFlight("MODEL_GATEWAY_SHUTDOWN_DEADLINE");
-          active?.closeAllConnections();
           stopped = active === undefined ? true : await close(active, remaining(deadlineAt));
         }
         server = undefined;
@@ -114,7 +113,6 @@ export function createPlatformModelGatewayProcess(options: Readonly<{
       return `https://${address.host}:${bound.port}`;
     } catch (error) {
       ready = false;
-      server?.closeAllConnections();
       server = undefined;
       if (connected) await options.database.disconnect().catch(() => undefined);
       connected = false;
@@ -190,21 +188,20 @@ export async function runPlatformModelGatewayMain(
   }
 }
 
-function listen(server: HttpsServer, address: Readonly<{ host: string; port: number }>): Promise<void> {
+function listen(server: Http2SecureServer, address: Readonly<{ host: string; port: number }>): Promise<void> {
   return new Promise((resolveListen, reject) => {
     const failed = (error: Error) => reject(error);
     server.once("error", failed);
     server.listen(address.port, address.host, () => { server.off("error", failed); resolveListen(); });
   });
 }
-function close(server: HttpsServer, deadlineMs: number): Promise<boolean> {
+function close(server: Http2SecureServer, deadlineMs: number): Promise<boolean> {
   if (deadlineMs <= 0) return Promise.resolve(false);
   return new Promise((resolveClose) => {
     const timer = setTimeout(() => resolveClose(false), deadlineMs);
     timer.unref();
     try {
       server.close(() => { clearTimeout(timer); resolveClose(true); });
-      server.closeIdleConnections();
     } catch (error) {
       clearTimeout(timer);
       resolveClose((error as NodeJS.ErrnoException).code === "ERR_SERVER_NOT_RUNNING");
