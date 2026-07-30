@@ -34,7 +34,6 @@ export function createModelServer(options: CreateModelServerOptions = {}) {
   registerRouteAccess(app, { ...ra, requiredCallers: MODEL_REQUIRED_CALLERS });
   declareRouteAccess(app, { path: "/healthz", exact: true }, "public");
   declareRouteAccess(app, { path: "/metrics", exact: true }, "public");
-  declareRouteAccess(app, "/provider-accounts", "runtime-internal");
   declareRouteAccess(app, "/model-bindings", "runtime-internal");
   declareRouteAccess(app, "/model-labels", "runtime-internal");
   declareRouteAccess(app, { path: "/docs/json", exact: true }, "runtime-internal");

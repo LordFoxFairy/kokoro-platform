@@ -15,13 +15,13 @@ export const modelPlatformModule = {
     surfaces: ["http", "internal-api"],
     routes: [
       "GET /healthz",
-      "POST /provider-accounts/ensure",
-      "POST /model-bindings/ensure",
       "GET /model-bindings",
+      "GET /model-bindings/resolve",
+      "GET /model-labels",
     ],
     notes: [
-      "模型配置管理是后台管理核心，优先用 MySQL 保证唯一约束、审计和发布回滚。",
-      "LiteLLM 只作为大模型网关，模型可见性、标签、排序、兜底账号仍由本模块治理。",
+      "HTTP 仅暴露 Session 消费的只读运行时目录；生产写权威只属于 Platform ModelControl。",
+      "离线 builtin bootstrap 可直接调用 repository，不经过 Session 可达的 HTTP。",
     ],
   },
   service: {
