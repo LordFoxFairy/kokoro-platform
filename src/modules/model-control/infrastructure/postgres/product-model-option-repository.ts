@@ -103,7 +103,9 @@ export class PostgresProductModelOptionRepository
       `SELECT result_publication_id AS "publicationId", result_site_id AS "siteId",
               result_site_release_ref AS "siteReleaseRef",
               result_model_option_catalog_ref AS "modelOptionCatalogRef",
-              result_catalog_digest AS "catalogDigest", replayed
+              result_catalog_digest AS "catalogDigest",
+              to_char(result_published_at AT TIME ZONE 'UTC',
+                'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "publishedAt", replayed
        FROM platform.publish_site_release_model_catalog($1::uuid,$2::jsonb,$3::text)`,
       [input.publicationId, JSON.stringify(input.catalog), input.publishedBy],
     );
@@ -115,7 +117,9 @@ export class PostgresProductModelOptionRepository
       receipt.siteReleaseRef !== input.catalog.siteReleaseRef ||
       receipt.modelOptionCatalogRef !== input.catalog.modelOptionCatalogRef ||
       receipt.catalogDigest !== input.catalog.catalogDigest ||
-      typeof receipt.replayed !== "boolean"
+      typeof receipt.replayed !== "boolean" ||
+      !canonicalInstant(receipt.publishedAt) ||
+      (!receipt.replayed && receipt.publishedAt !== input.catalog.publishedAt)
     ) {
       throw new Error("MODEL_OPTION_SITE_RELEASE_RECEIPT_INVALID");
     }
@@ -170,6 +174,11 @@ export class PostgresProductModelOptionRepository
       ),
     });
   }
+}
+
+function canonicalInstant(value: string): boolean {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) && date.toISOString() === value;
 }
 
 /**

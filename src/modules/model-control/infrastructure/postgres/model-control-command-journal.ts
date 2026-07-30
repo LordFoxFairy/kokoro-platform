@@ -59,7 +59,7 @@ function identity(command: ModelControlCommand): CommandIdentity {
     region: command.input.security.region,
     callerIdentity: command.input.security.callerIdentity,
     operation: command.operation,
-    idempotencyKey: command.commandId,
+    idempotencyKey: command.input.idempotencyKey,
     requestDigest: command.requestDigest,
   };
 }

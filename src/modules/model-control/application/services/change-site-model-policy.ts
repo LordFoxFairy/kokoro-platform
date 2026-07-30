@@ -39,6 +39,7 @@ export class ChangeSiteModelPolicyService implements SiteModelPolicyAdministrati
       throw new Error("MODEL_SITE_SCOPE_MISMATCH");
     const command = createModelControlCommand({
       commandId: input.changeId,
+      idempotencyKey: input.idempotencyKey ?? input.changeId,
       operation: "model.site-policy.change",
       security: modelControlSecurityFacts(context),
       effect: {

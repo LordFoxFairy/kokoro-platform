@@ -56,6 +56,13 @@ export type CommerceAdminCommandOperation =
 
 export type SiteProvisioningAdminOperation = "site.register" | "site.release.publish";
 
+export type ModelControlAdminOperation =
+  | "model.inventory.import"
+  | "model.inventory.activate"
+  | "model.site-policy.change"
+  | "model.option.materialize"
+  | "model.site-release-catalog.publish";
+
 export class AdminControlPlaneResolver implements
   AdminIdentityTransportResolver, VerifiedAdminOperatorContextResolver, AdminQueryResolver {
   constructor(private readonly dependencies: Readonly<{
@@ -223,6 +230,53 @@ export class AdminControlPlaneResolver implements
     });
   }
 
+  async resolveModelControlCommand(
+    claimed: AuthenticatedOperatorCommandContext,
+    transport: HandlerContext,
+    request: Readonly<{
+      operation: ModelControlAdminOperation;
+      siteRef: string | null;
+      resourceRefs: readonly string[];
+      scope: "global" | "site";
+      purpose: string;
+      contextScopes: readonly string[];
+    }>,
+  ): Promise<Readonly<{
+    context: VerifiedRequestSecurityContext;
+    axes: VerifiedAuthenticatedAdminAxes;
+  }>> {
+    const authenticated = await this.authenticate(claimed, transport);
+    const requested = scopeFromWire(claimed.scope);
+    if (
+      requested.kind !== request.scope ||
+      (request.scope === "global" && request.siteRef !== null) ||
+      (request.scope === "site" && request.siteRef === null)
+    ) throw new Error("MODEL_CONTROL_SCOPE_KIND_INVALID");
+    this.authorizeScope(
+      authenticated,
+      requested,
+      request.operation,
+      request.operation,
+      request.siteRef,
+      request.resourceRefs,
+      [],
+      true,
+    );
+    return Object.freeze({
+      axes: axes(authenticated.session),
+      context: await this.context(
+        authenticated.session,
+        request.operation,
+        request.siteRef,
+        scopeLabels(requested),
+        claimed.command?.commandId ?? "",
+        [request.operation],
+        request.purpose,
+        request.contextScopes,
+      ),
+    });
+  }
+
   async resolveCommerceCommand(
     claimed: AuthenticatedOperatorCommandContext,
     transport: HandlerContext,
@@ -356,6 +410,8 @@ export class AdminControlPlaneResolver implements
     scopes: readonly string[],
     requestId: string,
     allowedOperations: readonly string[] = [operation],
+    purpose = operation,
+    targetScopes: readonly string[] = scopes,
   ): Promise<VerifiedRequestSecurityContext> {
     const peer = this.requirePeer();
     const now = this.now();
@@ -394,7 +450,13 @@ export class AdminControlPlaneResolver implements
         restrictionEpoch: session.restrictionEpoch.toString(),
       },
       delegatedGrant: null,
-      target: { siteId: siteRef, workspaceId: null, projectId: null, purpose: operation, scopes },
+      target: {
+        siteId: siteRef,
+        workspaceId: null,
+        projectId: null,
+        purpose,
+        scopes: targetScopes,
+      },
       audience: caller.audience, environment: caller.environment, region: caller.region,
       evidence: [{
         kind: "mtls-workload", evidenceId: peer.workloadIdentityRef, issuer: caller.issuer,

@@ -98,6 +98,7 @@ describe("Product ModelOption application services", () => {
           siteReleaseRef: input.catalog.siteReleaseRef,
           modelOptionCatalogRef: input.catalog.modelOptionCatalogRef,
           catalogDigest: input.catalog.catalogDigest,
+          publishedAt: input.catalog.publishedAt,
           replayed: false,
         };
       },
@@ -106,13 +107,13 @@ describe("Product ModelOption application services", () => {
       unitOfWork(),
       repository,
       journalDouble(calls),
+      { now: () => "2026-07-29T12:00:00.000Z" },
     ).publish(
       {
         publicationId: "00000000-0000-4000-8000-000000000012",
         siteId: "site-a",
         siteReleaseRef: "release-a",
         inventoryDigest: inventory.digest,
-        publishedAt: "2026-07-29T12:00:00.000Z",
         surfaces: [
           {
             surfaceId: "chat",
@@ -132,6 +133,42 @@ describe("Product ModelOption application services", () => {
       "journal.succeed",
     ]);
     expect(new Set(calls.map(({ transaction }) => transaction)).size).toBe(1);
+  });
+
+  it("accepts the original server timestamp when an exact publication command replays", async () => {
+    const inventory = catalog();
+    const revision = compileModelOptionRevision({ inventory, draft: chatDraft() });
+    const originalPublishedAt = "2026-07-29T12:00:00.000Z";
+    const repository = repositoryDouble({
+      loadOptionRevisions: async () => [revision],
+      publishSiteReleaseCatalog: async (_transaction, input) => ({
+        publicationId: input.publicationId,
+        siteId: input.catalog.siteId,
+        siteReleaseRef: input.catalog.siteReleaseRef,
+        modelOptionCatalogRef: input.catalog.modelOptionCatalogRef,
+        catalogDigest: input.catalog.catalogDigest,
+        publishedAt: originalPublishedAt,
+        replayed: true,
+      }),
+    });
+    const result = await new PublishSiteReleaseModelCatalogService(
+      unitOfWork(),
+      repository,
+      journalDouble([]),
+      { now: () => "2026-07-29T12:05:00.000Z" },
+    ).publish({
+      publicationId: "00000000-0000-4000-8000-000000000012",
+      siteId: "site-a",
+      siteReleaseRef: "release-a",
+      inventoryDigest: inventory.digest,
+      surfaces: [{
+        surfaceId: "chat",
+        allowedModelOptionRevisionRefs: [revision.modelOptionRevisionRef],
+        defaultModelOptionRevisionRef: revision.modelOptionRevisionRef,
+      }],
+    }, publishAdmin);
+
+    expect(result).toMatchObject({ replayed: true, publishedAt: originalPublishedAt });
   });
 
   it("returns a safe ProductContext projection and rejects cross-Site reads", async () => {

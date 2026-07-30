@@ -46,6 +46,7 @@ export class MaterializeModelOptionsService implements ModelOptionMaterializatio
         });
         const command = createModelControlCommand({
           commandId: input.materializationId,
+          idempotencyKey: input.idempotencyKey ?? input.materializationId,
           operation: "model.option.materialize",
           security: modelControlSecurityFacts(context),
           effect: {
