@@ -418,6 +418,26 @@ BEGIN
   END LOOP;
 END $$;
 
+-- Every usage/rating fact is site-owned. FORCE RLS also fences table owners;
+-- production workloads must set app.site_id inside the transaction before access.
+DO $$
+DECLARE relation_name TEXT;
+BEGIN
+  FOREACH relation_name IN ARRAY ARRAY[
+    'credit_rating_policy_revision','credit_rating_snapshot','credit_usage_attempt_intent',
+    'credit_attempt_usage_evidence','credit_usage_segment_closure','credit_usage_closure_evidence',
+    'credit_usage_settlement','credit_rated_usage','credit_usage_settlement_source',
+    'credit_usage_variance','credit_usage_reconciliation','credit_usage_command_receipt'
+  ] LOOP
+    EXECUTE format('ALTER TABLE platform.%I ENABLE ROW LEVEL SECURITY', relation_name);
+    EXECUTE format('ALTER TABLE platform.%I FORCE ROW LEVEL SECURITY', relation_name);
+    EXECUTE format(
+      'CREATE POLICY %I ON platform.%I USING(site_ref=NULLIF(current_setting(''app.site_id'',true),'''')) WITH CHECK(site_ref=NULLIF(current_setting(''app.site_id'',true),''''))',
+      relation_name||'_site_scope', relation_name
+    );
+  END LOOP;
+END $$;
+
 REVOKE ALL ON FUNCTION platform.reject_credit_usage_fact_mutation() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.guard_credit_usage_attempt_transition() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.assert_credit_usage_closure_complete() FROM PUBLIC;

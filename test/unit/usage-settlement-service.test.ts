@@ -126,7 +126,46 @@ describe("UsageSettlementService", () => {
       }))
         .resolves.toMatchObject({ kind: "reconciliation_required" });
       expect(repository.savedReconciliation?.code).toBe("CREDIT_USAGE_UNAVAILABLE");
+      expect(repository.savedReconciliation?.segment).toMatchObject({
+        state: "reconciliation_required",
+        resolutionKind: "outcome_unknown",
+      });
       expect(repository.savedSettlement).toBeNull();
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("resolves a reconciliation closure with a later exact evidence revision", async () => {
+    const repository = new RecordingUsageRepository();
+    repository.evidenceSet = [{
+      ...persistedEvidence(),
+      evidence: {
+        ...persistedEvidence().evidence,
+        evidenceKind: "unavailable",
+        unavailableReason: "provider_usage_missing",
+        dimensions: [],
+      },
+    }];
+    const lease = transactionLease();
+    try {
+      await expect(usageService(repository).settleUsageSegment(lease.transaction, {
+        ...settleCommand(), evidenceRefs: ["evidence-1"],
+      })).resolves.toMatchObject({ kind: "reconciliation_required" });
+
+      repository.evidenceSet = [persistedEvidence()];
+      await expect(usageService(repository).settleUsageSegment(lease.transaction, {
+        ...settleCommand(), closureRef: "closure-2", closureRevision: 2n,
+        correctionOfClosureRef: "closure-1", evidenceRefs: ["evidence-1"],
+        businessOperationKey: "settle:segment-1:2", requestDigest: "1".repeat(64),
+      })).resolves.toMatchObject({
+        kind: "accepted",
+        value: { closureRevision: 2n, state: "settled", customerAmount: 7n },
+      });
+      expect(repository.savedSettlement?.segment).toMatchObject({
+        state: "settled",
+        resolutionKind: "reconciled",
+      });
     } finally {
       revokePlatformTransaction(lease);
     }
@@ -149,6 +188,7 @@ describe("UsageSettlementService", () => {
       settlementRef: "settlement-1", closureRef: "closure-1", closureRevision: 1n,
       customerAmount: 20n, platformExposureAmount: 0n,
     };
+    repository.priorClosure = { closureRef: "closure-1", closureRevision: 1n };
     repository.holdAllocations = [
       { creditGrantId: "grant-a", ordinal: 0, allocatedAmount: 30n, netCustomerAmount: 20n },
       { creditGrantId: "grant-b", ordinal: 1, allocatedAmount: 70n, netCustomerAmount: 0n },
@@ -186,13 +226,17 @@ class RecordingUsageRepository {
   evidenceSet: ReturnType<typeof persistedEvidence>[] = [persistedEvidence()];
   priorSettlement: { settlementRef: string; closureRef: string; closureRevision: bigint;
     customerAmount: bigint; platformExposureAmount: bigint } | null = null;
+  priorClosure: { closureRef: string; closureRevision: bigint } | null = null;
   holdAllocations = [
     { creditGrantId: "grant-a", ordinal: 0, allocatedAmount: 30n, netCustomerAmount: 0n },
     { creditGrantId: "grant-b", ordinal: 1, allocatedAmount: 70n, netCustomerAmount: 0n },
   ];
   savedEvidence: ReturnType<typeof persistedEvidence> | null = null;
   savedSettlement: Record<string, unknown> | null = null;
-  savedReconciliation: { code: string } | null = null;
+  savedReconciliation: {
+    code: string;
+    segment?: StoredUsageSettlementContext["segment"];
+  } | null = null;
   receipt: { kind: "none" } = { kind: "none" };
   attemptIntent: Record<string, unknown> | null = attemptIntent();
   savedAttemptIntent: Record<string, unknown> | null = null;
@@ -222,13 +266,22 @@ class RecordingUsageRepository {
   async loadClosureEvidence() { return this.evidenceSet; }
   async loadOpenAttemptCount() { return this.openAttemptCount; }
   async loadPriorSettlement() { return this.priorSettlement; }
+  async loadPriorClosure() { return this.priorClosure; }
   async lockHoldAllocations() { return this.holdAllocations; }
   async persistSettlement(_transaction: unknown, record: Record<string, unknown>) {
     this.savedSettlement = record;
     return { kind: "accepted" as const, value: record.receipt };
   }
-  async persistReconciliationRequired(_transaction: unknown, record: { code: string }) {
+  async persistReconciliationRequired(_transaction: unknown, record: {
+    code: string;
+    closureRef: string;
+    closureRevision: bigint;
+    segment?: StoredUsageSettlementContext["segment"];
+  }) {
     this.savedReconciliation = record;
+    this.priorClosure = { closureRef: record.closureRef, closureRevision: record.closureRevision };
+    if (record.segment !== undefined) this.context = { ...this.context, segment: record.segment,
+      executionBudgetRootState: "reconciliation_required", creditHoldState: "reconciliation_required" };
     return { kind: "reconciliation_required" as const, value: { authorizationSegmentRef: "segment-1", code: record.code } };
   }
 }

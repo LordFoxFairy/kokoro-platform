@@ -41,4 +41,26 @@ describe("Credit usage settlement authority schema", () => {
     expect(sql).toContain("expected_evidence_count");
     expect(sql).toContain("assert_credit_usage_closure_complete");
   });
+
+  it("forces exact site isolation on every usage and rating relation", async () => {
+    const sql = await readFile(migrationUrl, "utf8");
+    const isolated = [
+      "credit_rating_policy_revision",
+      "credit_rating_snapshot",
+      "credit_usage_attempt_intent",
+      "credit_attempt_usage_evidence",
+      "credit_usage_segment_closure",
+      "credit_usage_closure_evidence",
+      "credit_usage_settlement",
+      "credit_rated_usage",
+      "credit_usage_settlement_source",
+      "credit_usage_variance",
+      "credit_usage_reconciliation",
+      "credit_usage_command_receipt",
+    ];
+    for (const relation of isolated) expect(sql).toContain(`'${relation}'`);
+    expect(sql).toContain("ENABLE ROW LEVEL SECURITY");
+    expect(sql).toContain("FORCE ROW LEVEL SECURITY");
+    expect(sql).toContain("site_ref=NULLIF(current_setting(''app.site_id'',true),'''')");
+  });
 });

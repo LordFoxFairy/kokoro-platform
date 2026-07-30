@@ -3,6 +3,7 @@ import type { PlatformTransaction } from "../../../shared/unit-of-work/index.js"
 import {
   correctSettledAuthorizationSegmentAllocation,
   markAuthorizationSegmentRatingPending,
+  reconcileUnknownAuthorizationSegment,
   settleAuthorizationSegment,
 } from "../domain/allocation.js";
 import { planHoldCapture, planSettlementCorrection } from "../domain/settlement.js";
@@ -14,6 +15,7 @@ import type {
   UsageAttemptReceipt,
   UsageEvidenceReceipt,
   UsageReferenceKind,
+  UsageReconciliationRecord,
   UsageSettlementReceipt,
   UsageSettlementRecord,
   UsageSettlementRepository,
@@ -275,9 +277,10 @@ export class UsageSettlementService {
     if (context.executionManifestRef !== input.executionManifestRef) {
       return { kind: "invalid_state", code: "CREDIT_USAGE_MANIFEST_MISMATCH" };
     }
-    const [evidenceSet, openAttemptCount, priorSettlement, holdAllocations] = await Promise.all([
+    const [evidenceSet, openAttemptCount, priorClosure, priorSettlement, holdAllocations] = await Promise.all([
       this.dependencies.repository.loadClosureEvidence(transaction, input),
       this.dependencies.repository.loadOpenAttemptCount(transaction, input),
+      this.dependencies.repository.loadPriorClosure(transaction, input),
       this.dependencies.repository.loadPriorSettlement(transaction, input),
       this.dependencies.repository.lockHoldAllocations(transaction, {
         siteId: input.siteId,
@@ -291,7 +294,7 @@ export class UsageSettlementService {
         evidenceSet.some((record) => usageScopeError(record, context) !== null)) {
       return { kind: "invalid_state", code: "CREDIT_USAGE_CLOSURE_EVIDENCE_MISMATCH" };
     }
-    if (!linearClosure(input, priorSettlement)) {
+    if (!linearClosure(input, priorClosure)) {
       return { kind: "invalid_state", code: "CREDIT_USAGE_CLOSURE_CHAIN_INVALID" };
     }
     const rating = rateSegmentUsage(context.ratingPolicy, evidenceSet.map((record) => record.evidence),
@@ -299,11 +302,26 @@ export class UsageSettlementService {
     const now = this.#clock();
     const observedAt = now.toISOString();
     if (rating.kind === "reconciliation_required") {
+      let segment: UsageReconciliationRecord["segment"];
+      if (priorSettlement === null) {
+        if (context.segment.state === "committed" || context.segment.state === "rating_pending") {
+          segment = reconcileUnknownAuthorizationSegment(
+            context.segment,
+            input.closureRef,
+            observedAt,
+          );
+        } else if (context.segment.state !== "reconciliation_required") {
+          return { kind: "invalid_state", code: "CREDIT_USAGE_SEGMENT_NOT_RECONCILABLE" };
+        }
+      } else if (context.segment.state !== "settled") {
+        return { kind: "invalid_state", code: "CREDIT_USAGE_CORRECTION_SEGMENT_NOT_SETTLED" };
+      }
       return this.dependencies.repository.persistReconciliationRequired(transaction, Object.freeze({
         identity, context, closureRef: input.closureRef, closureRevision: input.closureRevision,
         closureDigest: input.closureDigest, closedAt: input.closedAt,
         correctionOfClosureRef: input.correctionOfClosureRef,
         evidenceSet, code: rating.code, observedAt,
+        ...(segment === undefined ? {} : { segment }),
         receiptRef: this.#reference("usage-receipt", now.getTime()),
         outboxEventRef: this.#reference("usage-outbox", now.getTime()),
       }));

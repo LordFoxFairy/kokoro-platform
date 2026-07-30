@@ -319,6 +319,27 @@ export class PostgresUsageSettlementRepository implements UsageSettlementReposit
       customerAmount: BigInt(row.customerAmount), platformExposureAmount: BigInt(row.platformExposureAmount) });
   }
 
+  async loadPriorClosure(
+    transaction: PlatformTransaction,
+    input: Parameters<UsageSettlementRepository["loadPriorClosure"]>[1],
+  ) {
+    const rows = await resolvePlatformTransaction(transaction).query<{
+      closureRef: string;
+      closureRevision: string;
+    }>(
+      `SELECT closure_ref AS "closureRef",closure_revision AS "closureRevision"
+         FROM platform.credit_usage_segment_closure
+        WHERE site_ref=$1 AND authorization_segment_ref=$2::uuid
+        ORDER BY closure_revision DESC LIMIT 1`,
+      [input.siteId, input.authorizationSegmentRef],
+    );
+    const row = only(rows, "CREDIT_USAGE_CLOSURE_AMBIGUOUS");
+    return row === undefined ? null : Object.freeze({
+      closureRef: row.closureRef,
+      closureRevision: BigInt(row.closureRevision),
+    });
+  }
+
   async lockHoldAllocations(
     transaction: PlatformTransaction,
     input: Parameters<UsageSettlementRepository["lockHoldAllocations"]>[1],
@@ -432,6 +453,24 @@ export class PostgresUsageSettlementRepository implements UsageSettlementReposit
 
   async persistReconciliationRequired(transaction: PlatformTransaction, record: UsageReconciliationRecord) {
     const sql = resolvePlatformTransaction(transaction);
+    if (record.segment !== undefined) {
+      await updateSegment(sql, record.context, record.segment, record.observedAt);
+      if (record.context.executionBudgetRootState !== "reconciliation_required") await one(sql.execute(
+        `UPDATE platform.credit_execution_budget_root
+            SET state='reconciliation_required',aggregate_version=aggregate_version+1,updated_at=$3::timestamptz
+          WHERE execution_budget_root_ref=$1::uuid AND site_ref=$2 AND state=$4
+            AND aggregate_version=$5::bigint`,
+        [record.context.executionBudgetRootRef, record.context.siteId, record.observedAt,
+          record.context.executionBudgetRootState, record.context.executionBudgetRootVersion.toString()],
+      ), "CREDIT_USAGE_ROOT_RECONCILIATION_CAS_LOST");
+      if (record.context.creditHoldState !== "reconciliation_required") await one(sql.execute(
+        `UPDATE platform.credit_hold
+            SET state='reconciliation_required',fence_epoch=fence_epoch+1,updated_at=$3::timestamptz
+          WHERE credit_hold_ref=$1::uuid AND site_ref=$2 AND state=$4 AND fence_epoch=$5::bigint`,
+        [record.context.creditHoldRef, record.context.siteId, record.observedAt,
+          record.context.creditHoldState, record.context.creditHoldFenceEpoch.toString()],
+      ), "CREDIT_USAGE_HOLD_RECONCILIATION_CAS_LOST");
+    }
     await insertClosure(sql, record);
     const reconciliationRef = this.#reference("usage-settlement");
     await one(sql.execute(

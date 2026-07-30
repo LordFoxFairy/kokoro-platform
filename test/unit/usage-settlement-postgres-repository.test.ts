@@ -3,7 +3,7 @@ import { PostgresUsageSettlementRepository } from
   "../../src/modules/credit/infrastructure/postgres/usage-settlement-repository.js";
 import { issuePlatformTransaction, revokePlatformTransaction } from
   "../../src/shared/unit-of-work/platform-transaction.js";
-import type { UsageSettlementRecord } from
+import type { UsageReconciliationRecord, UsageSettlementRecord } from
   "../../src/modules/credit/application/contracts/usage-settlement-repository.js";
 
 describe("PostgresUsageSettlementRepository", () => {
@@ -67,6 +67,48 @@ describe("PostgresUsageSettlementRepository", () => {
       expect(sql.writeSql()).toContain("captured_amount=captured_amount+$1::numeric");
       expect(sql.writeSql()).not.toMatch(/UPDATE platform\.credit_(attempt_usage_evidence|usage_settlement|journal)/u);
     } finally { revokePlatformTransaction(lease); }
+  });
+
+  it("freezes Segment, Root and Hold when first closure needs reconciliation", async () => {
+    const sql = new RecordingSql();
+    const lease = issuePlatformTransaction(sql);
+    try {
+      const settled = settlementRecord();
+      const record: UsageReconciliationRecord = {
+        identity: settled.identity,
+        context: settled.context,
+        closureRef: settled.receipt.closureRef,
+        closureRevision: 1n,
+        closureDigest: settled.closureDigest,
+        closedAt: settled.closedAt,
+        correctionOfClosureRef: null,
+        evidenceSet: settled.evidenceSet,
+        segment: {
+          ...settled.context.segment,
+          state: "reconciliation_required",
+          resolutionKind: "outcome_unknown",
+          resolutionRef: settled.receipt.closureRef,
+          aggregateVersion: settled.context.segment.aggregateVersion + 1n,
+          fenceEpoch: settled.context.segment.fenceEpoch + 1n,
+        },
+        code: "CREDIT_USAGE_UNAVAILABLE",
+        observedAt: NOW,
+        receiptRef: settled.receiptRef,
+        outboxEventRef: settled.outboxEventRef,
+      };
+
+      await repository().persistReconciliationRequired(lease.transaction, record);
+
+      const statements = sql.writeSql();
+      expect(statements).toMatch(
+        /UPDATE platform\.credit_authorization_segment[\s\S]+UPDATE platform\.credit_execution_budget_root[\s\S]+UPDATE platform\.credit_hold/u,
+      );
+      expect(statements).toMatch(
+        /credit_usage_segment_closure[\s\S]+credit_usage_reconciliation[\s\S]+credit_usage_command_receipt/u,
+      );
+    } finally {
+      revokePlatformTransaction(lease);
+    }
   });
 });
 

@@ -81,6 +81,11 @@ export type PriorUsageSettlement = Readonly<{
   platformExposureAmount: bigint;
 }>;
 
+export type PriorUsageClosure = Readonly<{
+  closureRef: string;
+  closureRevision: bigint;
+}>;
+
 export type StoredUsageAttemptIntent = Readonly<{
   siteId: string;
   executionBudgetRootRef: string;
@@ -147,6 +152,7 @@ export type UsageReconciliationRecord = Readonly<{
   closedAt: string;
   correctionOfClosureRef: string | null;
   evidenceSet: readonly StoredAttemptUsageEvidence[];
+  segment?: StoredSegmentAllocation["segment"];
   code: "CREDIT_USAGE_UNAVAILABLE" | "CREDIT_USAGE_REQUIRED_DIMENSION_MISSING";
   observedAt: string;
   receiptRef: string;
@@ -214,6 +220,10 @@ export interface UsageSettlementRepository {
     siteId: string;
     authorizationSegmentRef: string;
   }>): Promise<PriorUsageSettlement | null>;
+  loadPriorClosure(transaction: PlatformTransaction, input: Readonly<{
+    siteId: string;
+    authorizationSegmentRef: string;
+  }>): Promise<PriorUsageClosure | null>;
   lockHoldAllocations(transaction: PlatformTransaction, input: Readonly<{
     siteId: string;
     creditHoldRef: string;
