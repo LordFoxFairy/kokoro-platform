@@ -649,7 +649,7 @@ async function grantFoundationPrivileges(
     );
     await client.query(`REVOKE ALL ON TABLE ${PLATFORM_RUNTIME_TABLES} FROM ${identifier}`);
     await client.query(
-      `REVOKE ALL ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT), platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID), platform.report_model_provider_availability(UUID, TEXT, TEXT, TEXT, BIGINT, TEXT, TIMESTAMPTZ, TEXT), platform.load_model_option_inventory(TEXT), platform.load_model_option_revisions(TEXT[]), platform.materialize_model_options(UUID, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT), platform.publish_site_release_model_catalog(UUID, JSONB, TEXT), platform.resolve_product_model_option_catalog(TEXT, TEXT), platform.resolve_admission_model_owner(TEXT, TEXT, TEXT) FROM ${identifier}`,
+      `REVOKE ALL ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.commerce_safe_label_is_valid(TEXT), platform.commerce_iana_zone_is_valid(TEXT), platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT), platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID), platform.report_model_provider_availability(UUID, TEXT, TEXT, TEXT, BIGINT, TEXT, TIMESTAMPTZ, TEXT), platform.load_model_option_inventory(TEXT), platform.load_model_option_revisions(TEXT[]), platform.materialize_model_options(UUID, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT), platform.publish_site_release_model_catalog(UUID, JSONB, TEXT), platform.resolve_product_model_option_catalog(TEXT, TEXT), platform.resolve_admission_model_owner(TEXT, TEXT, TEXT) FROM ${identifier}`,
     );
     await client.query(
       `REVOKE ALL ON FUNCTION platform.bootstrap_admin_authorities(JSONB, CHAR(64)), platform.apply_admin_authority_change(UUID, JSONB) FROM ${identifier}`,
@@ -708,7 +708,7 @@ async function grantFoundationPrivileges(
         `GRANT UPDATE ON TABLE platform.asset_upload_intent, platform.asset_upload_session, platform.asset_quota_account, platform.asset_quota_reservation TO ${identifier}`,
       );
       await client.query(
-        `GRANT EXECUTE ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID), platform.resolve_product_model_option_catalog(TEXT, TEXT) TO ${identifier}`,
+        `GRANT EXECUTE ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.commerce_safe_label_is_valid(TEXT), platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID), platform.resolve_product_model_option_catalog(TEXT, TEXT) TO ${identifier}`,
       );
     } else if (role === admissionRole) {
       await client.query(
@@ -855,7 +855,7 @@ async function grantFoundationPrivileges(
         `GRANT UPDATE ON TABLE platform.admin_approval, platform.admin_post_effect_review, platform.admin_oidc_transaction, platform.admin_operator_session, platform.admin_step_up_transaction TO ${identifier}`,
       );
       await client.query(
-        `GRANT INSERT ON TABLE platform.commerce_command, platform.commerce_catalog_product, platform.commerce_catalog_plan, platform.commerce_catalog_plan_version, platform.commerce_fulfillment_program_revision, platform.commerce_fulfillment_program_output, platform.commerce_catalog_product_version, platform.commerce_redemption_program_revision, platform.commerce_redemption_program_availability, platform.commerce_code_batch, platform.commerce_redeem_code, platform.commerce_code_batch_approval, platform.commerce_code_secret_export, platform.commerce_audit_entry TO ${identifier}`,
+        `GRANT INSERT ON TABLE platform.commerce_command, platform.commerce_catalog_product, platform.commerce_catalog_plan, platform.commerce_catalog_plan_version, platform.commerce_credit_program_revision, platform.commerce_entitlement_template_revision, platform.commerce_fulfillment_program_revision, platform.commerce_fulfillment_program_output, platform.commerce_catalog_product_version, platform.commerce_redemption_program_revision, platform.commerce_redemption_program_availability, platform.commerce_code_batch, platform.commerce_redeem_code, platform.commerce_code_batch_approval, platform.commerce_code_secret_export, platform.commerce_audit_entry TO ${identifier}`,
       );
       await client.query(
         `GRANT UPDATE ON TABLE platform.commerce_catalog_epoch_authority, platform.commerce_catalog_product, platform.commerce_catalog_plan, platform.commerce_code_batch, platform.commerce_redemption_program_availability TO ${identifier}`,
@@ -864,7 +864,7 @@ async function grantFoundationPrivileges(
         `GRANT EXECUTE ON FUNCTION platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT), platform.load_model_option_inventory(TEXT), platform.load_model_option_revisions(TEXT[]), platform.materialize_model_options(UUID, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT), platform.publish_site_release_model_catalog(UUID, JSONB, TEXT) TO ${identifier}`,
       );
       await client.query(
-        `GRANT EXECUTE ON FUNCTION platform.valid_credit_scope_policy(JSONB) TO ${identifier}`,
+        `GRANT EXECUTE ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.commerce_safe_label_is_valid(TEXT), platform.commerce_iana_zone_is_valid(TEXT) TO ${identifier}`,
       );
     }
   }
@@ -1299,6 +1299,9 @@ async function assertPostMigrationAuthority(
       row.canExecuteModelAvailabilityReport !== (row.roleName === workerRole) ||
       row.canExecuteCreditScopePolicy !==
         (row.roleName === apiRole || row.roleName === admissionRole || row.roleName === adminRole) ||
+      row.canExecuteCommerceSafeLabel !==
+        (row.roleName === apiRole || row.roleName === adminRole) ||
+      row.canExecuteCommerceIanaZone !== (row.roleName === adminRole) ||
       row.canExecuteAdminAuthorityChange !== (row.roleName === workerRole) ||
       row.hasRequiredModelOptionFunctions !== true ||
       row.canSelectModelCatalogTable !== false ||
@@ -1564,6 +1567,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            AND has_table_privilege(runtime_role.rolname, 'platform.authorization_product_binding', 'SELECT')
            AND (has_table_privilege(runtime_role.rolname, 'platform.commerce_billing_account', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.commerce_billing_account', 'INSERT') AND has_table_privilege(runtime_role.rolname, 'platform.commerce_billing_account', 'UPDATE'))
            AND (has_table_privilege(runtime_role.rolname, 'platform.commerce_billing_account_membership', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.commerce_billing_account_membership', 'INSERT') AND has_table_privilege(runtime_role.rolname, 'platform.commerce_billing_account_membership', 'UPDATE'))
+           AND (has_table_privilege(runtime_role.rolname, 'platform.commerce_credit_program_revision', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.commerce_credit_program_revision', 'INSERT'))
+           AND (has_table_privilege(runtime_role.rolname, 'platform.commerce_entitlement_template_revision', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.commerce_entitlement_template_revision', 'INSERT'))
            AND (has_table_privilege(runtime_role.rolname, 'platform.site', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.site', 'INSERT'))
            AND has_any_column_privilege(runtime_role.rolname, 'platform.site', 'UPDATE')
            AND (has_table_privilege(runtime_role.rolname, 'platform.site_project_binding', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.site_project_binding', 'INSERT'))
@@ -1626,6 +1631,10 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            AS "canExecuteModelAvailabilityReport"
          ,has_function_privilege(runtime_role.rolname, 'platform.valid_credit_scope_policy(jsonb)', 'EXECUTE')
            AS "canExecuteCreditScopePolicy"
+         ,has_function_privilege(runtime_role.rolname, 'platform.commerce_safe_label_is_valid(text)', 'EXECUTE')
+           AS "canExecuteCommerceSafeLabel"
+         ,has_function_privilege(runtime_role.rolname, 'platform.commerce_iana_zone_is_valid(text)', 'EXECUTE')
+           AS "canExecuteCommerceIanaZone"
          ,has_function_privilege(runtime_role.rolname, 'platform.apply_admin_authority_change(uuid,jsonb)', 'EXECUTE')
            AS "canExecuteAdminAuthorityChange"
          ,CASE WHEN runtime_role.rolname=$1 THEN
@@ -1880,6 +1889,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                    OR (runtime_role.rolname = $4 AND candidate.relname = ANY(ARRAY[
                      'command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership',
                      'commerce_command','commerce_catalog_product','commerce_catalog_plan','commerce_catalog_plan_version',
+                     'commerce_credit_program_revision','commerce_entitlement_template_revision',
                      'commerce_fulfillment_program_revision','commerce_fulfillment_program_output','commerce_catalog_product_version',
                      'commerce_redemption_program_revision','commerce_redemption_program_availability',
                      'commerce_code_batch','commerce_redeem_code','commerce_code_batch_approval',
@@ -1971,6 +1981,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                    OR (runtime_role.rolname = $4 AND candidate.relname = ANY(ARRAY[
                      'command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership',
                      'commerce_command','commerce_catalog_product','commerce_catalog_plan','commerce_catalog_plan_version',
+                     'commerce_credit_program_revision','commerce_entitlement_template_revision',
                      'commerce_fulfillment_program_revision','commerce_fulfillment_program_output','commerce_catalog_product_version',
                      'commerce_redemption_program_revision','commerce_redemption_program_availability',
                      'commerce_code_batch','commerce_redeem_code','commerce_code_batch_approval',
@@ -2042,13 +2053,16 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                  to_regprocedure('platform.load_model_option_revisions(text[])'),
                  to_regprocedure('platform.materialize_model_options(uuid,text,text,text,text,jsonb,text)'),
                  to_regprocedure('platform.publish_site_release_model_catalog(uuid,jsonb,text)'),
-                 to_regprocedure('platform.valid_credit_scope_policy(jsonb)')
+                 to_regprocedure('platform.valid_credit_scope_policy(jsonb)'),
+                 to_regprocedure('platform.commerce_safe_label_is_valid(text)'),
+                 to_regprocedure('platform.commerce_iana_zone_is_valid(text)')
                ]))
                OR (runtime_role.rolname = $1 AND candidate_function.oid = ANY(ARRAY[
                  to_regprocedure('platform.resolve_model_candidates(text,text,text)'),
                  to_regprocedure('platform.find_model_selection_decision(uuid)'),
                  to_regprocedure('platform.resolve_product_model_option_catalog(text,text)'),
-                 to_regprocedure('platform.valid_credit_scope_policy(jsonb)')
+                 to_regprocedure('platform.valid_credit_scope_policy(jsonb)'),
+                 to_regprocedure('platform.commerce_safe_label_is_valid(text)')
                ]))
                OR (runtime_role.rolname = $5 AND candidate_function.oid = ANY(ARRAY[
                  to_regprocedure('platform.resolve_admission_model_owner(text,text,text)'),

@@ -321,11 +321,11 @@ function creditProgram(row: CreditProgramRow): CreditProgramRevisionRecord {
     throw new Error("COMMERCE_ADMIN_ROW_CORRUPT");
   }
   const expiresAfterSeconds = nullablePositive(row.expiresAfterSeconds);
-  const calendarZone = nullableText(row.calendarZone); const windowAnchor = nullableText(row.windowAnchor);
+  const calendarZone = nullableCalendarZone(row.calendarZone); const windowAnchor = nullableText(row.windowAnchor);
   if ((row.uxBucketClass === "permanent" && (row.windowKind !== "none" || calendarZone !== null ||
       windowAnchor !== null || expiresAfterSeconds !== null)) ||
       (row.uxBucketClass !== "permanent" && (row.windowKind !== row.uxBucketClass || calendarZone === null ||
-        !canonicalIanaZone(calendarZone) || expiresAfterSeconds === null ||
+        expiresAfterSeconds === null ||
         (row.uxBucketClass === "daily" && !/^daily@(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$/u.test(windowAnchor ?? "")) ||
         (row.uxBucketClass === "period" && windowAnchor !== "subscription-term-start")))) {
     throw new Error("COMMERCE_ADMIN_ROW_CORRUPT");
@@ -398,6 +398,12 @@ function jsonArray(value: unknown): readonly unknown[] {
 }
 function text(value: unknown): string { if (typeof value !== "string" || value.length < 1) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT"); return value; }
 function nullableText(value: unknown): string | null { return value === null ? null : text(value); }
+function nullableCalendarZone(value: unknown): string | null {
+  if (value === null) return null;
+  const zone = text(value);
+  if (zone.length > 64) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT");
+  return zone;
+}
 function integer(value: unknown): number { if (typeof value !== "number" || !Number.isInteger(value) || value < 0) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT"); return value; }
 function positive(value: unknown): bigint { const result = typeof value === "bigint" ? value : typeof value === "string" ? BigInt(value) : 0n; if (result < 1n || result > 9_223_372_036_854_775_807n) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT"); return result; }
 function nullablePositive(value: unknown): bigint | null { return value === null ? null : positive(value); }
@@ -413,11 +419,6 @@ function safeLabel(value: unknown): string {
   if ([...label].length > 160 || label.normalize("NFC") !== label || label.trim() !== label ||
       /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(label)) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT");
   return label;
-}
-function canonicalIanaZone(value: string): boolean {
-  if (!/^(?:UTC|[A-Za-z][A-Za-z0-9._+-]*(?:\/[A-Za-z][A-Za-z0-9._+-]*)+)$/u.test(value)) return false;
-  try { new Intl.DateTimeFormat("en-US", { timeZone: value }); return true; }
-  catch { return false; }
 }
 function scopePolicy(value: unknown): CreditProgramRevisionRecord["scopePolicy"] {
   const item = record(typeof value === "string" ? JSON.parse(value) as unknown : value);

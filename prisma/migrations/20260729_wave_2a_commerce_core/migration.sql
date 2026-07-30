@@ -69,6 +69,52 @@ CREATE TABLE platform.commerce_catalog_epoch_authority (
 INSERT INTO platform.commerce_catalog_epoch_authority(singleton,current_epoch)
 VALUES (TRUE,0);
 
+-- Unicode 17.0 UnicodeData General_Category=Cf. PostgreSQL's POSIX regular
+-- expressions do not expose Unicode general categories, so this authority
+-- enumerates Cc/Cf/Zl/Zp and boundary Zs code points explicitly.
+CREATE FUNCTION platform.commerce_safe_label_is_valid(value TEXT) RETURNS BOOLEAN
+LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT SET search_path=pg_catalog AS $$
+  SELECT char_length(value) BETWEEN 1 AND 160
+    AND value IS NFC NORMALIZED
+    AND NOT EXISTS (
+      SELECT 1
+      FROM generate_series(1,char_length(value)) AS point(point_index)
+      CROSS JOIN LATERAL (
+        SELECT ascii(substr(value,point.point_index,1)) AS code_point
+      ) AS scalar
+      WHERE
+        scalar.code_point BETWEEN 0 AND 31
+        OR scalar.code_point BETWEEN 127 AND 159
+        OR scalar.code_point IN (173,1564,1757,1807,2274,6158,65279,69821,69837,917505)
+        OR scalar.code_point BETWEEN 1536 AND 1541
+        OR scalar.code_point BETWEEN 2192 AND 2193
+        OR scalar.code_point BETWEEN 8203 AND 8207
+        OR scalar.code_point BETWEEN 8232 AND 8238
+        OR scalar.code_point BETWEEN 8288 AND 8292
+        OR scalar.code_point BETWEEN 8294 AND 8303
+        OR scalar.code_point BETWEEN 65529 AND 65531
+        OR scalar.code_point BETWEEN 78896 AND 78911
+        OR scalar.code_point BETWEEN 113824 AND 113827
+        OR scalar.code_point BETWEEN 119155 AND 119162
+        OR scalar.code_point BETWEEN 917536 AND 917631
+        OR (
+          point.point_index IN (1,char_length(value))
+          AND (
+            scalar.code_point IN (32,160,5760,8239,8287,12288)
+            OR scalar.code_point BETWEEN 8192 AND 8202
+          )
+        )
+    )
+$$;
+
+CREATE FUNCTION platform.commerce_iana_zone_is_valid(zone TEXT) RETURNS BOOLEAN
+LANGUAGE sql STABLE PARALLEL RESTRICTED STRICT SET search_path=pg_catalog AS $$
+  SELECT char_length(zone) BETWEEN 1 AND 64
+    AND EXISTS (
+      SELECT 1 FROM pg_catalog.pg_timezone_names WHERE name=zone
+    )
+$$;
+
 CREATE TABLE platform.commerce_catalog_product (
   site_ref TEXT NOT NULL REFERENCES platform.authorization_site(site_ref),
   product_ref TEXT NOT NULL CHECK(length(product_ref) BETWEEN 1 AND 256),
@@ -93,9 +139,7 @@ CREATE TABLE platform.commerce_catalog_plan_version (
   site_ref TEXT NOT NULL,
   plan_ref TEXT NOT NULL,
   revision BIGINT NOT NULL CHECK(revision > 0),
-  safe_label TEXT NOT NULL CHECK(length(safe_label) BETWEEN 1 AND 160
-    AND safe_label=btrim(safe_label) AND safe_label IS NFC NORMALIZED
-    AND safe_label !~ '[[:cntrl:]]' AND safe_label !~ U&'[\202A-\202E\2066-\2069]'),
+  safe_label TEXT NOT NULL CHECK(platform.commerce_safe_label_is_valid(safe_label)),
   term_action TEXT NOT NULL CHECK(term_action IN ('none','new_subscription','extend_from_max','reject_if_active')),
   term_seconds BIGINT CHECK(term_seconds IS NULL OR term_seconds > 0),
   stacking_scope TEXT NOT NULL CHECK(length(stacking_scope) BETWEEN 1 AND 128),
@@ -172,8 +216,7 @@ CREATE TABLE platform.commerce_credit_program_revision (
   liability_merchant_account_ref TEXT NOT NULL CHECK(length(liability_merchant_account_ref) BETWEEN 1 AND 256),
   window_kind TEXT NOT NULL CHECK(window_kind IN ('none','daily','period')),
   rollover_policy TEXT NOT NULL CHECK(rollover_policy='none'),
-  calendar_zone TEXT CHECK(calendar_zone IS NULL OR (length(calendar_zone) BETWEEN 1 AND 64
-    AND calendar_zone ~ '^(UTC|[A-Za-z][A-Za-z0-9._+-]*(/[A-Za-z][A-Za-z0-9._+-]*)+)$')),
+  calendar_zone TEXT CHECK(calendar_zone IS NULL OR platform.commerce_iana_zone_is_valid(calendar_zone)),
   window_anchor TEXT CHECK(window_anchor IS NULL OR length(window_anchor) BETWEEN 1 AND 128),
   expires_after_seconds BIGINT CHECK(expires_after_seconds IS NULL OR expires_after_seconds > 0),
   revision_digest CHAR(64) NOT NULL CHECK(revision_digest ~ '^[a-f0-9]{64}$'),
@@ -204,9 +247,7 @@ CREATE TABLE platform.commerce_entitlement_template_revision (
   template_ref TEXT NOT NULL CHECK(length(template_ref) BETWEEN 1 AND 256),
   revision BIGINT NOT NULL CHECK(revision > 0),
   capability_key TEXT NOT NULL CHECK(capability_key ~ '^[a-z0-9][a-z0-9._:-]{0,127}$'),
-  safe_label TEXT NOT NULL CHECK(length(safe_label) BETWEEN 1 AND 160
-    AND safe_label=btrim(safe_label) AND safe_label IS NFC NORMALIZED
-    AND safe_label !~ '[[:cntrl:]]' AND safe_label !~ U&'[\202A-\202E\2066-\2069]'),
+  safe_label TEXT NOT NULL CHECK(platform.commerce_safe_label_is_valid(safe_label)),
   expires_after_seconds BIGINT CHECK(expires_after_seconds IS NULL OR expires_after_seconds > 0),
   revision_digest CHAR(64) NOT NULL CHECK(revision_digest ~ '^[a-f0-9]{64}$'),
   catalog_epoch BIGINT NOT NULL CHECK(catalog_epoch > 0),
@@ -268,9 +309,7 @@ CREATE TABLE platform.commerce_catalog_product_version (
   site_ref TEXT NOT NULL,
   product_ref TEXT NOT NULL,
   revision BIGINT NOT NULL CHECK(revision > 0),
-  safe_label TEXT NOT NULL CHECK(length(safe_label) BETWEEN 1 AND 160
-    AND safe_label=btrim(safe_label) AND safe_label IS NFC NORMALIZED
-    AND safe_label !~ '[[:cntrl:]]' AND safe_label !~ U&'[\202A-\202E\2066-\2069]'),
+  safe_label TEXT NOT NULL CHECK(platform.commerce_safe_label_is_valid(safe_label)),
   plan_version_ref TEXT,
   fulfillment_program_revision_ref TEXT NOT NULL,
   legal_term_refs TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[] CHECK(cardinality(legal_term_refs) <= 16),
@@ -583,9 +622,7 @@ CREATE TABLE platform.commerce_entitlement_grant (
   billing_account_ref TEXT NOT NULL,
   entitlement_template_revision_ref TEXT NOT NULL,
   capability_key TEXT NOT NULL CHECK(capability_key ~ '^[a-z0-9][a-z0-9._:-]{0,127}$'),
-  safe_label TEXT NOT NULL CHECK(length(safe_label) BETWEEN 1 AND 160
-    AND safe_label=btrim(safe_label) AND safe_label IS NFC NORMALIZED
-    AND safe_label !~ '[[:cntrl:]]' AND safe_label !~ U&'[\202A-\202E\2066-\2069]'),
+  safe_label TEXT NOT NULL CHECK(platform.commerce_safe_label_is_valid(safe_label)),
   source_type TEXT NOT NULL CHECK(source_type IN ('redemption','payment','admin_grant','program_window')),
   source_ref TEXT NOT NULL CHECK(length(source_ref) BETWEEN 1 AND 256),
   effective_at TIMESTAMPTZ NOT NULL,
@@ -2347,6 +2384,8 @@ REVOKE ALL ON
   platform.commerce_audit_entry
 FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.valid_credit_scope_policy(JSONB) FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.commerce_safe_label_is_valid(TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.commerce_iana_zone_is_valid(TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.reject_commerce_immutable_mutation() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.assert_commerce_output_plan_contiguous() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.guard_commerce_command_update() FROM PUBLIC;

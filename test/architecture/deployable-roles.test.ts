@@ -281,7 +281,13 @@ describe("Platform migrator", () => {
       "GRANT EXECUTE ON FUNCTION platform.enqueue_asset_upload_completion_event(UUID,TEXT,JSONB,CHAR(64),TEXT,TEXT) TO \"platform_asset_data_plane\"",
     );
     expect(grants).toContain(
-      "REVOKE ALL ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT), platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID), platform.report_model_provider_availability(UUID, TEXT, TEXT, TEXT, BIGINT, TEXT, TIMESTAMPTZ, TEXT), platform.load_model_option_inventory(TEXT), platform.load_model_option_revisions(TEXT[]), platform.materialize_model_options(UUID, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT), platform.publish_site_release_model_catalog(UUID, JSONB, TEXT), platform.resolve_product_model_option_catalog(TEXT, TEXT), platform.resolve_admission_model_owner(TEXT, TEXT, TEXT) FROM \"platform_api\"",
+      "REVOKE ALL ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.commerce_safe_label_is_valid(TEXT), platform.commerce_iana_zone_is_valid(TEXT), platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT), platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID), platform.report_model_provider_availability(UUID, TEXT, TEXT, TEXT, BIGINT, TEXT, TIMESTAMPTZ, TEXT), platform.load_model_option_inventory(TEXT), platform.load_model_option_revisions(TEXT[]), platform.materialize_model_options(UUID, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT), platform.publish_site_release_model_catalog(UUID, JSONB, TEXT), platform.resolve_product_model_option_catalog(TEXT, TEXT), platform.resolve_admission_model_owner(TEXT, TEXT, TEXT) FROM \"platform_api\"",
+    );
+    expect(grants).toContain(
+      "GRANT EXECUTE ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.commerce_safe_label_is_valid(TEXT), platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID), platform.resolve_product_model_option_catalog(TEXT, TEXT) TO \"platform_api\"",
+    );
+    expect(grants).toContain(
+      "GRANT EXECUTE ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.commerce_safe_label_is_valid(TEXT), platform.commerce_iana_zone_is_valid(TEXT) TO \"platform_admin\"",
     );
     expect(grants.some((sql) =>
       sql.startsWith("GRANT INSERT ON TABLE platform.admission_command") &&
@@ -597,6 +603,9 @@ function authority(roleName: string): Record<string, unknown> {
       roleName === "platform_api" ||
       roleName === "platform_admission" ||
       roleName === "platform_admin",
+    canExecuteCommerceSafeLabel:
+      roleName === "platform_api" || roleName === "platform_admin",
+    canExecuteCommerceIanaZone: roleName === "platform_admin",
     canExecuteAdminAuthorityChange: roleName === "platform_worker",
     hasRequiredModelOptionFunctions: true,
     canSelectModelCatalogTable: false,

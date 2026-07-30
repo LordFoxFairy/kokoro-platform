@@ -13,7 +13,9 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
   ) {
     const prior = await replayedReceipt(this.receipts, transaction, input.command);
     if (prior !== null) return adminOutcome("replayed", prior, creditProgramResult(prior));
-    const sql = resolvePlatformTransaction(transaction); const catalogEpoch = await allocateCatalogEpoch(sql);
+    const sql = resolvePlatformTransaction(transaction);
+    await assertDatabaseCalendarZone(sql, input.calendarZone);
+    const catalogEpoch = await allocateCatalogEpoch(sql);
     const occurredAt = await databaseNow(transaction);
     await command(sql, input, occurredAt);
     await exactlyOne(sql.execute(
@@ -331,6 +333,22 @@ async function allocateCatalogEpoch(sql: ReturnType<typeof resolvePlatformTransa
   if (rows.length !== 1 || value === undefined || !/^[1-9][0-9]*$/u.test(value.toString()) ||
       BigInt(value) > 9_223_372_036_854_775_807n) throw new Error("COMMERCE_CATALOG_EPOCH_UNAVAILABLE");
   return value.toString();
+}
+
+async function assertDatabaseCalendarZone(
+  sql: ReturnType<typeof resolvePlatformTransaction>,
+  calendarZone: string | null,
+): Promise<void> {
+  if (calendarZone === null) return;
+  const rows = await sql.query<{ valid: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM pg_catalog.pg_timezone_names WHERE name=$1
+     ) AS valid`,
+    [calendarZone],
+  );
+  if (rows.length !== 1 || rows[0]?.valid !== true) {
+    throw new Error("COMMERCE_CREDIT_CALENDAR_ZONE_INVALID");
+  }
 }
 async function databaseNow(transaction: Parameters<CommerceAdministrationRepository["publishProgram"]>[0]): Promise<string> {
   const rows = await resolvePlatformTransaction(transaction).query<Record<string, unknown> & { occurredAt: Date | string }>(
