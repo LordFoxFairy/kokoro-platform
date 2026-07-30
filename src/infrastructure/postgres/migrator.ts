@@ -843,6 +843,7 @@ async function grantFoundationPrivileges(
         `GRANT UPDATE(state,updated_at) ON TABLE platform.authorization_product_binding TO ${identifier}`,
       );
       await client.query(`GRANT SELECT ON TABLE ${COMMERCE_TABLES} TO ${identifier}`);
+      await client.query(`GRANT SELECT ON TABLE ${ADMIN_COMMERCE_TABLES} TO ${identifier}`);
       await client.query(
         `GRANT INSERT, UPDATE ON TABLE platform.commerce_billing_account, platform.commerce_billing_account_membership TO ${identifier}`,
       );
@@ -902,7 +903,6 @@ const AUTHORIZATION_TABLES = [
 
 const COMMERCE_TABLES = [
   "platform.commerce_command",
-  "platform.commerce_catalog_epoch_authority",
   "platform.commerce_billing_account",
   "platform.commerce_billing_account_membership",
   "platform.commerce_catalog_product",
@@ -947,6 +947,8 @@ const COMMERCE_TABLES = [
   "platform.commerce_command_outbox",
   "platform.commerce_audit_entry",
 ].join(", ");
+
+const ADMIN_COMMERCE_TABLES = "platform.commerce_catalog_epoch_authority";
 
 const ASSET_RELATIONS = [
   "asset_upload_intent",
@@ -1258,6 +1260,7 @@ const PLATFORM_RUNTIME_TABLES = [
   "platform.authorization_scoped_snapshot",
   "platform.authorization_scoped_snapshot_record",
   COMMERCE_TABLES,
+  ADMIN_COMMERCE_TABLES,
   ADMIN_TABLES,
   ASSET_TABLES,
 ].join(", ");
@@ -1302,6 +1305,8 @@ async function assertPostMigrationAuthority(
       row.canExecuteCommerceSafeLabel !==
         (row.roleName === apiRole || row.roleName === adminRole) ||
       row.canExecuteCommerceIanaZone !== (row.roleName === adminRole) ||
+      row.canReadCommerceCatalogEpoch !== (row.roleName === adminRole) ||
+      row.canUpdateCommerceCatalogEpoch !== (row.roleName === adminRole) ||
       row.canExecuteAdminAuthorityChange !== (row.roleName === workerRole) ||
       row.hasRequiredModelOptionFunctions !== true ||
       row.canSelectModelCatalogTable !== false ||
@@ -1635,6 +1640,10 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            AS "canExecuteCommerceSafeLabel"
          ,has_function_privilege(runtime_role.rolname, 'platform.commerce_iana_zone_is_valid(text)', 'EXECUTE')
            AS "canExecuteCommerceIanaZone"
+         ,has_table_privilege(runtime_role.rolname, 'platform.commerce_catalog_epoch_authority', 'SELECT')
+           AS "canReadCommerceCatalogEpoch"
+         ,has_table_privilege(runtime_role.rolname, 'platform.commerce_catalog_epoch_authority', 'UPDATE')
+           AS "canUpdateCommerceCatalogEpoch"
          ,has_function_privilege(runtime_role.rolname, 'platform.apply_admin_authority_change(uuid,jsonb)', 'EXECUTE')
            AS "canExecuteAdminAuthorityChange"
          ,CASE WHEN runtime_role.rolname=$1 THEN
@@ -1697,7 +1706,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                'identity_refresh_family','identity_refresh_credential','identity_session_delivery_claim',
                'identity_receipt_recovery_capability','identity_personal_workspace','identity_workspace_membership',
                'identity_execution_space','identity_namespace_allocation_intent','identity_personal_bootstrap'
-               ,'commerce_command','commerce_billing_account','commerce_billing_account_membership',
+               ,'commerce_command','commerce_catalog_epoch_authority','commerce_billing_account','commerce_billing_account_membership',
                'commerce_fulfillment_transaction','commerce_fulfillment_output_plan',
                'commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry',
                'commerce_catalog_product','commerce_catalog_plan','commerce_catalog_plan_version',
@@ -1760,7 +1769,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                'identity_refresh_family','identity_refresh_credential','identity_session_delivery_claim',
                'identity_receipt_recovery_capability','identity_personal_workspace','identity_workspace_membership',
                'identity_execution_space','identity_namespace_allocation_intent','identity_personal_bootstrap'
-               ,'commerce_command','commerce_billing_account','commerce_billing_account_membership',
+               ,'commerce_command','commerce_catalog_epoch_authority','commerce_billing_account','commerce_billing_account_membership',
                'commerce_fulfillment_transaction','commerce_fulfillment_output_plan',
                'commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry',
                'commerce_catalog_product','commerce_catalog_plan','commerce_catalog_plan_version',
@@ -1931,7 +1940,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                      'command_receipt','outbox_event','inbox_delivery','admin_approval','admin_post_effect_review'
                    ]))
                    OR (runtime_role.rolname = $4 AND candidate.relname = ANY(ARRAY[
-                     'command_receipt','commerce_billing_account','commerce_billing_account_membership',
+                     'command_receipt','commerce_catalog_epoch_authority','commerce_billing_account','commerce_billing_account_membership',
                      'commerce_catalog_product','commerce_catalog_plan','commerce_code_batch','commerce_redemption_program_availability',
                      'site','site_project_binding','site_release','site_deployment_binding',
                      'site_effect_approval','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_site','authorization_product_binding',
@@ -2023,7 +2032,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                      'command_receipt','outbox_event','inbox_delivery','admin_approval','admin_post_effect_review'
                    ]))
                    OR (runtime_role.rolname = $4 AND candidate.relname = ANY(ARRAY[
-                     'command_receipt','commerce_billing_account','commerce_billing_account_membership',
+                     'command_receipt','commerce_catalog_epoch_authority','commerce_billing_account','commerce_billing_account_membership',
                      'commerce_catalog_product','commerce_catalog_plan','commerce_code_batch','commerce_redemption_program_availability',
                      'site','site_project_binding','site_release','site_deployment_binding',
                      'site_effect_approval','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_site','authorization_product_binding',

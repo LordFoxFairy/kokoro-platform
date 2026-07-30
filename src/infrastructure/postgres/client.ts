@@ -820,6 +820,10 @@ interface RuntimeIdentity {
   canExecuteModelDecisionProjection: boolean;
   canExecuteModelAvailabilityReport: boolean;
   canExecuteCreditScopePolicy: boolean;
+  canExecuteCommerceSafeLabel: boolean;
+  canExecuteCommerceIanaZone: boolean;
+  canReadCommerceCatalogEpoch: boolean;
+  canUpdateCommerceCatalogEpoch: boolean;
   canExecuteAdminAuthorityChange: boolean;
   hasRequiredModelOptionFunctions: boolean;
   canSelectModelCatalogTable: boolean;
@@ -1314,6 +1318,14 @@ const RUNTIME_IDENTITY_SQL = `
            AS "canExecuteModelAvailabilityReport",
          has_function_privilege(current_user, 'platform.valid_credit_scope_policy(jsonb)', 'EXECUTE')
            AS "canExecuteCreditScopePolicy",
+         has_function_privilege(current_user, 'platform.commerce_safe_label_is_valid(text)', 'EXECUTE')
+           AS "canExecuteCommerceSafeLabel",
+         has_function_privilege(current_user, 'platform.commerce_iana_zone_is_valid(text)', 'EXECUTE')
+           AS "canExecuteCommerceIanaZone",
+         has_table_privilege(current_user, 'platform.commerce_catalog_epoch_authority', 'SELECT')
+           AS "canReadCommerceCatalogEpoch",
+         has_table_privilege(current_user, 'platform.commerce_catalog_epoch_authority', 'UPDATE')
+           AS "canUpdateCommerceCatalogEpoch",
          has_function_privilege(current_user, 'platform.apply_admin_authority_change(uuid,jsonb)', 'EXECUTE')
            AS "canExecuteAdminAuthorityChange",
          CASE WHEN $2='api' THEN
@@ -1375,7 +1387,7 @@ const RUNTIME_IDENTITY_SQL = `
                'identity_refresh_family','identity_refresh_credential','identity_session_delivery_claim',
                'identity_receipt_recovery_capability','identity_personal_workspace','identity_workspace_membership',
                'identity_execution_space','identity_namespace_allocation_intent','identity_personal_bootstrap'
-               ,'commerce_command','commerce_billing_account','commerce_billing_account_membership',
+               ,'commerce_command','commerce_catalog_epoch_authority','commerce_billing_account','commerce_billing_account_membership',
                'commerce_fulfillment_transaction','commerce_fulfillment_output_plan',
                'commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry',
                'commerce_catalog_product','commerce_catalog_plan','commerce_catalog_plan_version',
@@ -1433,7 +1445,7 @@ const RUNTIME_IDENTITY_SQL = `
                'identity_refresh_family','identity_refresh_credential','identity_session_delivery_claim',
                'identity_receipt_recovery_capability','identity_personal_workspace','identity_workspace_membership',
                'identity_execution_space','identity_namespace_allocation_intent','identity_personal_bootstrap'
-               ,'commerce_command','commerce_billing_account','commerce_billing_account_membership',
+               ,'commerce_command','commerce_catalog_epoch_authority','commerce_billing_account','commerce_billing_account_membership',
                'commerce_fulfillment_transaction','commerce_fulfillment_output_plan',
                'commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry',
                'commerce_catalog_product','commerce_catalog_plan','commerce_catalog_plan_version',
@@ -1614,7 +1626,7 @@ const RUNTIME_IDENTITY_SQL = `
                      'admin_post_effect_review'
                    ]))
                    OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY[
-                     'command_receipt','commerce_billing_account','commerce_billing_account_membership',
+                     'command_receipt','commerce_catalog_epoch_authority','commerce_billing_account','commerce_billing_account_membership',
                      'commerce_catalog_product','commerce_catalog_plan','commerce_code_batch',
                      'commerce_redemption_program_availability',
                      'site','site_project_binding','site_release','site_deployment_binding',
@@ -1712,7 +1724,7 @@ const RUNTIME_IDENTITY_SQL = `
                      'admin_post_effect_review'
                    ]))
                    OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY[
-                     'command_receipt','commerce_billing_account','commerce_billing_account_membership',
+                     'command_receipt','commerce_catalog_epoch_authority','commerce_billing_account','commerce_billing_account_membership',
                      'commerce_catalog_product','commerce_catalog_plan','commerce_code_batch',
                      'commerce_redemption_program_availability',
                      'site','site_project_binding','site_release','site_deployment_binding',
@@ -1744,13 +1756,16 @@ const RUNTIME_IDENTITY_SQL = `
                  to_regprocedure('platform.load_model_option_revisions(text[])'),
                  to_regprocedure('platform.materialize_model_options(uuid,text,text,text,text,jsonb,text)'),
                  to_regprocedure('platform.publish_site_release_model_catalog(uuid,jsonb,text)'),
-                 to_regprocedure('platform.valid_credit_scope_policy(jsonb)')
+                 to_regprocedure('platform.valid_credit_scope_policy(jsonb)'),
+                 to_regprocedure('platform.commerce_safe_label_is_valid(text)'),
+                 to_regprocedure('platform.commerce_iana_zone_is_valid(text)')
                ]))
                OR ($2 = 'api' AND candidate_function.oid = ANY(ARRAY[
                  to_regprocedure('platform.resolve_model_candidates(text,text,text)'),
                  to_regprocedure('platform.find_model_selection_decision(uuid)'),
                  to_regprocedure('platform.resolve_product_model_option_catalog(text,text)'),
-                 to_regprocedure('platform.valid_credit_scope_policy(jsonb)')
+                 to_regprocedure('platform.valid_credit_scope_policy(jsonb)'),
+                 to_regprocedure('platform.commerce_safe_label_is_valid(text)')
                ]))
                OR ($2 = 'admission' AND candidate_function.oid = ANY(ARRAY[
                  to_regprocedure('platform.resolve_admission_model_owner(text,text,text)'),
@@ -1818,6 +1833,10 @@ function validRuntimeIdentity(
     identity.canExecuteModelAvailabilityReport === (config.role === "worker") &&
     identity.canExecuteCreditScopePolicy ===
       (config.role === "api" || config.role === "admission" || config.role === "admin") &&
+    identity.canExecuteCommerceSafeLabel === (config.role === "api" || config.role === "admin") &&
+    identity.canExecuteCommerceIanaZone === (config.role === "admin") &&
+    identity.canReadCommerceCatalogEpoch === (config.role === "admin") &&
+    identity.canUpdateCommerceCatalogEpoch === (config.role === "admin") &&
     identity.canExecuteAdminAuthorityChange === (config.role === "worker") &&
     identity.hasRequiredModelOptionFunctions &&
     !identity.canSelectModelCatalogTable &&

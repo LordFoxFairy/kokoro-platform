@@ -289,6 +289,15 @@ describe("Platform migrator", () => {
     expect(grants).toContain(
       "GRANT EXECUTE ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.commerce_safe_label_is_valid(TEXT), platform.commerce_iana_zone_is_valid(TEXT) TO \"platform_admin\"",
     );
+    const apiGrants = grants.filter((sql) => sql.endsWith('TO "platform_api"'));
+    expect(apiGrants.some((sql) => sql.includes("platform.commerce_catalog_epoch_authority"))).toBe(false);
+    expect(grants).toContain(
+      "GRANT SELECT ON TABLE platform.commerce_catalog_epoch_authority TO \"platform_admin\"",
+    );
+    expect(grants.some((sql) =>
+      sql.startsWith("GRANT UPDATE ON TABLE platform.commerce_catalog_epoch_authority") &&
+      sql.endsWith('TO "platform_admin"'),
+    )).toBe(true);
     expect(grants.some((sql) =>
       sql.startsWith("GRANT INSERT ON TABLE platform.admission_command") &&
       sql.endsWith('TO "platform_admission"'),
@@ -313,6 +322,22 @@ describe("Platform migrator", () => {
     )?.[0];
     expect(admissionSelectFence).toContain("'authorization_session_access_grant'");
     expect(admissionSelectFence).toContain("'asset_eligibility_projection'");
+    const relationInventories = [
+      authoritySql.match(/candidate\.relname <> ALL\(ARRAY\[([\s\S]*?)\]\) AND/u)?.[1],
+      authoritySql.match(/candidate\.relname = ANY\(ARRAY\[([\s\S]*?)\]\) AND \(/u)?.[1],
+    ];
+    expect(relationInventories).not.toContain(undefined);
+    expect(relationInventories.every((inventory) =>
+      inventory?.includes("'commerce_catalog_epoch_authority'") === true,
+    )).toBe(true);
+    const adminRelationAllowlists = [...authoritySql.matchAll(
+      /runtime_role\.rolname = \$4 AND candidate\.relname = ANY\(ARRAY\[([\s\S]*?)\]\)\)/gu,
+    )].map((match) => match[1]);
+    expect(adminRelationAllowlists.filter((allowlist) =>
+      allowlist?.includes("'commerce_catalog_epoch_authority'") === true,
+    )).toHaveLength(2);
+    expect(authoritySql).toContain('AS "canReadCommerceCatalogEpoch"');
+    expect(authoritySql).toContain('AS "canUpdateCommerceCatalogEpoch"');
     expect(events.slice(-5)).toEqual([
       "verify-authority",
       "verify-model-gateway",
@@ -415,6 +440,57 @@ describe("Platform migrator", () => {
       }),
     ).rejects.toThrowError("PLATFORM_POST_MIGRATION_AUTHORITY_INVALID");
   });
+
+  it.each([
+    ["platform_api", "canReadCommerceCatalogEpoch", true],
+    ["platform_api", "canUpdateCommerceCatalogEpoch", true],
+    ["platform_admin", "canReadCommerceCatalogEpoch", false],
+    ["platform_admin", "canUpdateCommerceCatalogEpoch", false],
+  ] as const)("fails closed when %s has the wrong catalog epoch authority (%s)",
+    async (roleName, field, value) => {
+      const lockClient: MigrationLockClient = {
+        async connect() {},
+        async query(sql) {
+          if (sql.includes("modelGatewayRolePreflight")) {
+            return { rows: [{
+              ...safeRole("platform_model_gateway"),
+              hasAnyPlatformTablePrivilege: false,
+              canUsePlatformSchema: false,
+              canCreatePlatformSchema: false,
+            }] };
+          }
+          if (sql.includes("assetDataPlaneRolePreflight")) {
+            return { rows: [safeRole("platform_asset_data_plane")] };
+          }
+          if (sql.includes("server_version_num")) return { rows: [safeMigratorAuthority()] };
+          if (sql.includes("hasAnyMembership") || sql.includes("isMigratorMember")) {
+            return { rows: [
+              safeRole("platform_api"), safeRole("platform_admission"),
+              safeRole("platform_authorization"), safeRole("platform_worker"),
+              safeRole("platform_admin"),
+            ] };
+          }
+          if (sql.includes("hasUnexpectedPlatformPrivilege")) {
+            return { rows: [
+              authority("platform_api"), authority("platform_admission"),
+              authority("platform_authorization"), authority("platform_worker"),
+              authority("platform_admin"),
+            ].map((row) => row.roleName === roleName ? { ...row, [field]: value } : row) };
+          }
+          return {};
+        },
+        async end() {},
+      };
+
+      await expect(runPlatformMigrations({
+        environment: migratorEnvironment(),
+        createLockClient: () => lockClient,
+        execute: async () => 0,
+      })).rejects.toThrowError(new RegExp(
+        `PLATFORM_POST_MIGRATION_AUTHORITY_INVALID:.*${field}`,
+        "u",
+      ));
+    });
 });
 
 describe("independent deployable roles", () => {
@@ -606,6 +682,8 @@ function authority(roleName: string): Record<string, unknown> {
     canExecuteCommerceSafeLabel:
       roleName === "platform_api" || roleName === "platform_admin",
     canExecuteCommerceIanaZone: roleName === "platform_admin",
+    canReadCommerceCatalogEpoch: roleName === "platform_admin",
+    canUpdateCommerceCatalogEpoch: roleName === "platform_admin",
     canExecuteAdminAuthorityChange: roleName === "platform_worker",
     hasRequiredModelOptionFunctions: true,
     canSelectModelCatalogTable: false,
