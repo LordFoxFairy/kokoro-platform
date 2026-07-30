@@ -843,6 +843,7 @@ async function grantFoundationPrivileges(
         `GRANT UPDATE(state,updated_at) ON TABLE platform.authorization_product_binding TO ${identifier}`,
       );
       await client.query(`GRANT SELECT ON TABLE ${COMMERCE_TABLES} TO ${identifier}`);
+      await client.query(`GRANT SELECT ON TABLE ${CREDIT_ADMIN_READ_TABLES} TO ${identifier}`);
       await client.query(
         `GRANT INSERT, UPDATE ON TABLE platform.commerce_billing_account, platform.commerce_billing_account_membership TO ${identifier}`,
       );
@@ -945,6 +946,19 @@ const COMMERCE_TABLES = [
   "platform.commerce_fulfillment_actual_output",
   "platform.commerce_command_outbox",
   "platform.commerce_audit_entry",
+].join(", ");
+
+const CREDIT_ADMIN_READ_TABLES = [
+  "platform.credit_account",
+  "platform.credit_grant",
+  "platform.credit_hold",
+  "platform.credit_hold_allocation",
+  "platform.credit_journal_transaction",
+  "platform.credit_journal_entry",
+  "platform.credit_execution_budget_root",
+  "platform.credit_usage_settlement",
+  "platform.credit_rated_usage",
+  "platform.credit_usage_settlement_source",
 ].join(", ");
 
 const ASSET_RELATIONS = [

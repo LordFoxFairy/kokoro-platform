@@ -15,6 +15,8 @@ import { SiteLifecycleService } from
   "../interfaces/connect/generated-site-lifecycle/kokoro/platform/site/v1/site_lifecycle_pb.js";
 import { AdminCommerceService } from
   "../interfaces/connect/generated-admin-commerce/kokoro/platform/commerce/v1/admin_commerce_pb.js";
+import { AdminCreditService } from
+  "../interfaces/connect/generated-admin-credit/kokoro/platform/credit/v1/admin_credit_pb.js";
 import { SiteProvisioningService } from
   "../interfaces/connect/generated-site-provisioning/kokoro/platform/site/v1/site_provisioning_pb.js";
 import { PlatformUnitOfWork } from "../shared/unit-of-work/index.js";
@@ -64,6 +66,10 @@ import { createAdminCommerceConnectService } from
   "../modules/commerce/interfaces/connect/admin-commerce-service.js";
 import { PostgresCommerceAdministrationReader } from
   "../modules/commerce/infrastructure/postgres/commerce-administration-reader.js";
+import { createAdminCreditConnectService } from
+  "../modules/credit/interfaces/connect/admin-credit-service.js";
+import { PostgresAdminCreditReader } from
+  "../modules/credit/infrastructure/postgres/admin-credit-reader.js";
 import { readBoundedPrivateFile, readBoundedRegularFile } from "./secret-files.js";
 import { createPlatformSiteAdminComposition } from "./site-admin-composition.js";
 import { createSessionAuthorizationEventSigner } from
@@ -192,6 +198,10 @@ export async function createAdminProductionComposition(input: Readonly<{
     reader: new PostgresCommerceAdministrationReader(input.database), cursors,
     ...(input.clock === undefined ? {} : { clock: input.clock }),
   });
+  const creditService = createAdminCreditConnectService({
+    resolver, reader: new PostgresAdminCreditReader(input.database), cursors,
+    ...(input.clock === undefined ? {} : { clock: input.clock }),
+  });
   const unitOfWork = new PlatformUnitOfWork(input.database);
   const authorityRepository = new PostgresAdminAuthorityRepository();
   const receipts = new CommandReceiptRepository();
@@ -243,6 +253,7 @@ export async function createAdminProductionComposition(input: Readonly<{
       router.service(SiteLifecycleService, siteLifecycleService);
       router.service(SiteProvisioningService, siteProvisioningService);
       router.service(AdminCommerceService, commerceService);
+      router.service(AdminCreditService, creditService);
     },
     connect: true,
     grpc: false,

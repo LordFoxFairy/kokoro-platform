@@ -122,6 +122,11 @@ export interface PlatformTransactionalDatabaseClient
     permit: AdminQueryPermit,
     work: (transaction: PlatformTransaction) => Promise<Result>,
   ): Promise<Result>;
+  adminSiteQueryTransaction<Result>(
+    permit: AdminQueryPermit,
+    siteRef: string,
+    work: (transaction: PlatformTransaction) => Promise<Result>,
+  ): Promise<Result>;
   adminAuthenticationTransaction<Result>(
     fence: Readonly<AdminWorkloadAxes & { credentialDigest: string }>,
     work: (transaction: PlatformTransaction) => Promise<Result>,
@@ -606,6 +611,45 @@ export function createPlatformDatabaseClient(
         timeout: config.transaction.timeoutMs,
       });
     },
+    adminSiteQueryTransaction: async <Result>(
+      permit: AdminQueryPermit,
+      siteRef: string,
+      work: (transaction: PlatformTransaction) => Promise<Result>,
+    ) => {
+      if (config.role !== "admin") throw new Error("ADMIN_QUERY_ROLE_FORBIDDEN");
+      assertAdminQueryPermit(permit);
+      assertAdminSiteQueryPermit(permit, siteRef);
+      const siteRefs = permit.scope.kind === "site"
+        ? permit.scope.siteRefs
+        : permit.scope.kind === "breakglass" ? permit.scope.resourceRefs : [];
+      return prisma.$transaction(async (databaseTransaction) => {
+        await databaseTransaction.$queryRawUnsafe(
+          `SELECT set_config('app.operation',$1,true),set_config('app.environment',$2,true),
+                  set_config('app.region',$3,true),set_config('app.workload_kind','platform_admin',true),
+                  set_config('app.actor_kind','operator',true),set_config('app.subject_id',$4,true),
+                  set_config('app.admin_scope_kind',$5,true),set_config('app.admin_site_refs',$6,true),
+                  set_config('app.site_id',$7,true),set_config('app.scopes',$8,true)`,
+          permit.operation, permit.environment, permit.region, permit.operatorRef,
+          permit.scope.kind, JSON.stringify(siteRefs), siteRef,
+          JSON.stringify([`admin:${permit.operation}`]),
+        );
+        const lease = issuePlatformTransaction({
+          query: (statement, values = []) =>
+            databaseTransaction.$queryRawUnsafe(statement, ...values),
+          execute: (statement, values = []) =>
+            databaseTransaction.$executeRawUnsafe(statement, ...values),
+        });
+        try {
+          return await work(lease.transaction);
+        } finally {
+          revokePlatformTransaction(lease);
+        }
+      }, {
+        isolationLevel: config.transaction.isolationLevel,
+        maxWait: config.transaction.maxWaitMs,
+        timeout: config.transaction.timeoutMs,
+      });
+    },
     adminAuthenticationTransaction: async <Result>(
       fence: Readonly<AdminWorkloadAxes & { credentialDigest: string }>,
       work: (transaction: PlatformTransaction) => Promise<Result>,
@@ -723,6 +767,8 @@ function assertAdminQueryPermit(permit: AdminQueryPermit): void {
     "admin.operator.self.read", "admin.operator.read", "admin.operator.list", "admin.approval.list",
     "commerce.credit-program.read", "commerce.entitlement-template.read",
     "commerce.offer.read", "commerce.redemption-program.read", "commerce.code-batch.read",
+    "credit.summary.read", "credit.account.read", "credit.grant.read", "credit.hold.read",
+    "credit.journal.read", "credit.rated-usage.read",
   ]).has(permit.operation)) throw new Error("ADMIN_QUERY_PERMIT_INVALID");
   for (const value of [permit.operatorRef, permit.environment, permit.region]) {
     if (value.length < 1 || value.length > 128 || hasControlCharacter(value)) {
@@ -736,6 +782,14 @@ function assertAdminQueryPermit(permit: AdminQueryPermit): void {
   }
   if (permit.scope.kind === "breakglass" && permit.scope.resourceRefs.length < 1) {
     throw new Error("ADMIN_QUERY_PERMIT_INVALID");
+  }
+}
+
+function assertAdminSiteQueryPermit(permit: AdminQueryPermit, siteRef: string): void {
+  scopedIdentifier(siteRef, "ADMIN_QUERY_SITE_INVALID");
+  if ((permit.scope.kind === "site" && !permit.scope.siteRefs.includes(siteRef)) ||
+      (permit.scope.kind === "breakglass" && !permit.scope.resourceRefs.includes(siteRef))) {
+    throw new Error("ADMIN_QUERY_SITE_SCOPE_DENIED");
   }
 }
 
