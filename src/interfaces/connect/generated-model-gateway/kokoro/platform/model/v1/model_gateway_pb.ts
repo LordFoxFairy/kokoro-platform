@@ -11,7 +11,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file kokoro/platform/model/v1/model_gateway.proto.
  */
 export const file_kokoro_platform_model_v1_model_gateway: GenFile = /*@__PURE__*/
-  fileDesc("Cixrb2tvcm8vcGxhdGZvcm0vbW9kZWwvdjEvbW9kZWxfZ2F0ZXdheS5wcm90bxIYa29rb3JvLnBsYXRmb3JtLm1vZGVsLnYxIngKDU1vZGVsVG9vbENhbGwSFgoCaWQYASABKAlCCrpIB3IFEAEYgAISKgoEbmFtZRgCIAEoCUIcukgZchcQARiAATIQXltBLVphLXowLTlfLV0rJBIjCg5hcmd1bWVudHNfanNvbhgDIAEoDEILukgIegYQAhiAgEAiqwIKDE1vZGVsTWVzc2FnZRJECgRyb2xlGAEgASgOMioua29rb3JvLnBsYXRmb3JtLm1vZGVsLnYxLk1vZGVsTWVzc2FnZVJvbGVCCrpIB4IBBBABIAASGwoHY29udGVudBgCIAEoCUIKukgHcgUogICAARJGCgp0b29sX2NhbGxzGAMgAygLMicua29rb3JvLnBsYXRmb3JtLm1vZGVsLnYxLk1vZGVsVG9vbENhbGxCCbpIBpIBAxCAARIlCgx0b29sX2NhbGxfaWQYBCABKAlCCrpIB3IFEAEYgAJIAIgBARIvCgRuYW1lGAUgASgJQhy6SBlyFxABGIABMhBeW0EtWmEtejAtOV8tXSskSAGIAQFCDwoNX3Rvb2xfY2FsbF9pZEIHCgVfbmFtZSKJAQoTTW9kZWxUb29sRGVmaW5pdGlvbhIqCgRuYW1lGAEgASgJQhy6SBlyFxABGIABMhBeW0EtWmEtejAtOV8tXSskEh4KC2Rlc2NyaXB0aW9uGAIgASgJQgm6SAZyBCiAgAQSJgoRaW5wdXRfc2NoZW1hX2pzb24YAyABKAxCC7pICHoGEAIYgIBAIuIDChVDaGF0Q29tcGxldGlvblJlcXVlc3QSMwoIcHJvdG9jb2wYASABKAlCIbpIHnIcChpvcGVuYWkuY2hhdC5jb21wbGV0aW9ucy52MRI6CgVtb2RlbBgCIAEoCUIrukgociYQARiAAjIfXltBLVphLXowLTldW0EtWmEtejAtOS5fOi9ALV0qJBJFCghtZXNzYWdlcxgDIAMoCzImLmtva29yby5wbGF0Zm9ybS5tb2RlbC52MS5Nb2RlbE1lc3NhZ2VCC7pICJIBBQgBEIAEEiYKEW1heF9vdXRwdXRfdG9rZW5zGAQgASgNQgu6SAgqBhjAhD0oARJHCgV0b29scxgFIAMoCzItLmtva29yby5wbGF0Zm9ybS5tb2RlbC52MS5Nb2RlbFRvb2xEZWZpbml0aW9uQgm6SAaSAQMQgAESSgoLdG9vbF9jaG9pY2UYBiABKA4yKS5rb2tvcm8ucGxhdGZvcm0ubW9kZWwudjEuTW9kZWxUb29sQ2hvaWNlQgq6SAeCAQQQASAAEj0KEnJlcXVpcmVkX3Rvb2xfbmFtZRgHIAEoCUIcukgZchcQARiAATIQXltBLVphLXowLTlfLV0rJEgAiAEBQhUKE19yZXF1aXJlZF90b29sX25hbWUiygIKEkludm9rZU1vZGVsUmVxdWVzdBJXChptb2RlbF9hdXRob3JpemF0aW9uX2hhbmRsZRgBIAEoCUIzukgwci4yKV5tb2RlbC1hdXRob3JpemF0aW9uOnNoYTI1NjpbMC05YS1mXXs2NH0kmAFbEiQKEGxvZ2ljYWxfY2FsbF9yZWYYAiABKAlCCrpIB3IFEAEYgAISHwoLYXR0ZW1wdF9yZWYYAyABKAlCCrpIB3IFEAEYgAISJAoQcHJvZHVjZXJfY29udGV4dBgEIAEoCUIKukgHcgUQARiAAhIkChNwcm9kdWNlcl9nZW5lcmF0aW9uGAUgASgEQge6SAQyAigBEkgKB3JlcXVlc3QYBiABKAsyLy5rb2tvcm8ucGxhdGZvcm0ubW9kZWwudjEuQ2hhdENvbXBsZXRpb25SZXF1ZXN0Qga6SAPIAQEiOQoKTW9kZWxVc2FnZRIUCgxpbnB1dF90b2tlbnMYASABKAQSFQoNb3V0cHV0X3Rva2VucxgCIAEoBCLVAgoOTW9kZWxDb21wbGV0ZWQSHwoLcmVzcG9uc2VfaWQYASABKAlCCrpIB3IFEAEYgAISGwoHY29udGVudBgCIAEoCUIKukgHcgUogICABBJGCgp0b29sX2NhbGxzGAMgAygLMicua29rb3JvLnBsYXRmb3JtLm1vZGVsLnYxLk1vZGVsVG9vbENhbGxCCbpIBpIBAxCAARIqChFyZWFzb25pbmdfY29udGVudBgEIAEoCUIKukgHcgUogICABEgAiAEBEiUKDWZpbmlzaF9yZWFzb24YBSABKAlCCbpIBnIEEAEYQEgBiAEBEjgKBXVzYWdlGAYgASgLMiQua29rb3JvLnBsYXRmb3JtLm1vZGVsLnYxLk1vZGVsVXNhZ2VIAogBAUIUChJfcmVhc29uaW5nX2NvbnRlbnRCEAoOX2ZpbmlzaF9yZWFzb25CCAoGX3VzYWdlIjoKC01vZGVsRmFpbGVkEhgKBGNvZGUYASABKAlCCrpIB3IFEAEYgAESEQoJcmV0cnlhYmxlGAIgASgIIhUKE01vZGVsT3V0Y29tZVVua25vd24iwAIKE0ludm9rZU1vZGVsUmVzcG9uc2USIgoOaW52b2NhdGlvbl9yZWYYASABKAlCCrpIB3IFEAEYgAISHwoLYXR0ZW1wdF9yZWYYAiABKAlCCrpIB3IFEAEYgAISEAoIcmVwbGF5ZWQYAyABKAgSPQoJY29tcGxldGVkGAQgASgLMigua29rb3JvLnBsYXRmb3JtLm1vZGVsLnYxLk1vZGVsQ29tcGxldGVkSAASNwoGZmFpbGVkGAUgASgLMiUua29rb3JvLnBsYXRmb3JtLm1vZGVsLnYxLk1vZGVsRmFpbGVkSAASSAoPb3V0Y29tZV91bmtub3duGAYgASgLMi0ua29rb3JvLnBsYXRmb3JtLm1vZGVsLnYxLk1vZGVsT3V0Y29tZVVua25vd25IAEIQCgdvdXRjb21lEgW6SAIIASqxAQoQTW9kZWxNZXNzYWdlUm9sZRIiCh5NT0RFTF9NRVNTQUdFX1JPTEVfVU5TUEVDSUZJRUQQABIdChlNT0RFTF9NRVNTQUdFX1JPTEVfU1lTVEVNEAESGwoXTU9ERUxfTUVTU0FHRV9ST0xFX1VTRVIQAhIgChxNT0RFTF9NRVNTQUdFX1JPTEVfQVNTSVNUQU5UEAMSGwoXTU9ERUxfTUVTU0FHRV9ST0xFX1RPT0wQBCqMAQoPTW9kZWxUb29sQ2hvaWNlEiEKHU1PREVMX1RPT0xfQ0hPSUNFX1VOU1BFQ0lGSUVEEAASGgoWTU9ERUxfVE9PTF9DSE9JQ0VfQVVUTxABEhoKFk1PREVMX1RPT0xfQ0hPSUNFX05PTkUQAhIeChpNT0RFTF9UT09MX0NIT0lDRV9SRVFVSVJFRBADMoMBChNNb2RlbEdhdGV3YXlTZXJ2aWNlEmwKC0ludm9rZU1vZGVsEiwua29rb3JvLnBsYXRmb3JtLm1vZGVsLnYxLkludm9rZU1vZGVsUmVxdWVzdBotLmtva29yby5wbGF0Zm9ybS5tb2RlbC52MS5JbnZva2VNb2RlbFJlc3BvbnNlIgBiBnByb3RvMw", [file_buf_validate_validate]);
+  fileDesc("Cixrb2tvcm8vcGxhdGZvcm0vbW9kZWwvdjEvbW9kZWxfZ2F0ZXdheS5wcm90bxIYa29rb3JvLnBsYXRmb3JtLm1vZGVsLnYxIngKDU1vZGVsVG9vbENhbGwSFgoCaWQYASABKAlCCrpIB3IFEAEYgAISKgoEbmFtZRgCIAEoCUIcukgZchcQARiAATIQXltBLVphLXowLTlfLV0rJBIjCg5hcmd1bWVudHNfanNvbhgDIAEoDEILukgIegYQAhiAgEAiqwIKDE1vZGVsTWVzc2FnZRJECgRyb2xlGAEgASgOMioua29rb3JvLnBsYXRmb3JtLm1vZGVsLnYxLk1vZGVsTWVzc2FnZVJvbGVCCrpIB4IBBBABIAASGwoHY29udGVudBgCIAEoCUIKukgHcgUogICAARJGCgp0b29sX2NhbGxzGAMgAygLMicua29rb3JvLnBsYXRmb3JtLm1vZGVsLnYxLk1vZGVsVG9vbENhbGxCCbpIBpIBAxCAARIlCgx0b29sX2NhbGxfaWQYBCABKAlCCrpIB3IFEAEYgAJIAIgBARIvCgRuYW1lGAUgASgJQhy6SBlyFxABGIABMhBeW0EtWmEtejAtOV8tXSskSAGIAQFCDwoNX3Rvb2xfY2FsbF9pZEIHCgVfbmFtZSKJAQoTTW9kZWxUb29sRGVmaW5pdGlvbhIqCgRuYW1lGAEgASgJQhy6SBlyFxABGIABMhBeW0EtWmEtejAtOV8tXSskEh4KC2Rlc2NyaXB0aW9uGAIgASgJQgm6SAZyBCiAgAQSJgoRaW5wdXRfc2NoZW1hX2pzb24YAyABKAxCC7pICHoGEAIYgIBAIuIDChVDaGF0Q29tcGxldGlvblJlcXVlc3QSMwoIcHJvdG9jb2wYASABKAlCIbpIHnIcChpvcGVuYWkuY2hhdC5jb21wbGV0aW9ucy52MRI6CgVtb2RlbBgCIAEoCUIrukgociYQARiAAjIfXltBLVphLXowLTldW0EtWmEtejAtOS5fOi9ALV0qJBJFCghtZXNzYWdlcxgDIAMoCzImLmtva29yby5wbGF0Zm9ybS5tb2RlbC52MS5Nb2RlbE1lc3NhZ2VCC7pICJIBBQgBEIAEEiYKEW1heF9vdXRwdXRfdG9rZW5zGAQgASgNQgu6SAgqBhjAhD0oARJHCgV0b29scxgFIAMoCzItLmtva29yby5wbGF0Zm9ybS5tb2RlbC52MS5Nb2RlbFRvb2xEZWZpbml0aW9uQgm6SAaSAQMQgAESSgoLdG9vbF9jaG9pY2UYBiABKA4yKS5rb2tvcm8ucGxhdGZvcm0ubW9kZWwudjEuTW9kZWxUb29sQ2hvaWNlQgq6SAeCAQQQASAAEj0KEnJlcXVpcmVkX3Rvb2xfbmFtZRgHIAEoCUIcukgZchcQARiAATIQXltBLVphLXowLTlfLV0rJEgAiAEBQhUKE19yZXF1aXJlZF90b29sX25hbWUiygIKEkludm9rZU1vZGVsUmVxdWVzdBJXChptb2RlbF9hdXRob3JpemF0aW9uX2hhbmRsZRgBIAEoCUIzukgwci4yKV5tb2RlbC1hdXRob3JpemF0aW9uOnNoYTI1NjpbMC05YS1mXXs2NH0kmAFbEiQKEGxvZ2ljYWxfY2FsbF9yZWYYAiABKAlCCrpIB3IFEAEYgAISHwoLYXR0ZW1wdF9yZWYYAyABKAlCCrpIB3IFEAEYgAISJAoQcHJvZHVjZXJfY29udGV4dBgEIAEoCUIKukgHcgUQARiAAhIkChNwcm9kdWNlcl9nZW5lcmF0aW9uGAUgASgEQge6SAQyAigBEkgKB3JlcXVlc3QYBiABKAsyLy5rb2tvcm8ucGxhdGZvcm0ubW9kZWwudjEuQ2hhdENvbXBsZXRpb25SZXF1ZXN0Qga6SAPIAQEiOQoKTW9kZWxVc2FnZRIUCgxpbnB1dF90b2tlbnMYASABKAQSFQoNb3V0cHV0X3Rva2VucxgCIAEoBCLVAgoOTW9kZWxDb21wbGV0ZWQSHwoLcmVzcG9uc2VfaWQYASABKAlCCrpIB3IFEAEYgAISGwoHY29udGVudBgCIAEoCUIKukgHcgUogICABBJGCgp0b29sX2NhbGxzGAMgAygLMicua29rb3JvLnBsYXRmb3JtLm1vZGVsLnYxLk1vZGVsVG9vbENhbGxCCbpIBpIBAxCAARIqChFyZWFzb25pbmdfY29udGVudBgEIAEoCUIKukgHcgUogICABEgAiAEBEiUKDWZpbmlzaF9yZWFzb24YBSABKAlCCbpIBnIEEAEYQEgBiAEBEjgKBXVzYWdlGAYgASgLMiQua29rb3JvLnBsYXRmb3JtLm1vZGVsLnYxLk1vZGVsVXNhZ2VIAogBAUIUChJfcmVhc29uaW5nX2NvbnRlbnRCEAoOX2ZpbmlzaF9yZWFzb25CCAoGX3VzYWdlIjoKC01vZGVsRmFpbGVkEhgKBGNvZGUYASABKAlCCrpIB3IFEAEYgAESEQoJcmV0cnlhYmxlGAIgASgIIhUKE01vZGVsT3V0Y29tZVVua25vd24iwAIKE0ludm9rZU1vZGVsUmVzcG9uc2USIgoOaW52b2NhdGlvbl9yZWYYASABKAlCCrpIB3IFEAEYgAISHwoLYXR0ZW1wdF9yZWYYAiABKAlCCrpIB3IFEAEYgAISEAoIcmVwbGF5ZWQYAyABKAgSPQoJY29tcGxldGVkGAQgASgLMigua29rb3JvLnBsYXRmb3JtLm1vZGVsLnYxLk1vZGVsQ29tcGxldGVkSAASNwoGZmFpbGVkGAUgASgLMiUua29rb3JvLnBsYXRmb3JtLm1vZGVsLnYxLk1vZGVsRmFpbGVkSAASSAoPb3V0Y29tZV91bmtub3duGAYgASgLMi0ua29rb3JvLnBsYXRmb3JtLm1vZGVsLnYxLk1vZGVsT3V0Y29tZVVua25vd25IAEIQCgdvdXRjb21lEgW6SAIIASJ2ChJTdHJlYW1Nb2RlbFJlcXVlc3QSSAoKaW52b2NhdGlvbhgBIAEoCzIsLmtva29yby5wbGF0Zm9ybS5tb2RlbC52MS5JbnZva2VNb2RlbFJlcXVlc3RCBrpIA8gBARIWCg5hZnRlcl9zZXF1ZW5jZRgCIAEoBCIPCg1Nb2RlbEFjY2VwdGVkIjEKEU1vZGVsQ29udGVudERlbHRhEhwKB2NvbnRlbnQYASABKAlCC7pICHIGIAEogIABIjMKE01vZGVsUmVhc29uaW5nRGVsdGESHAoHY29udGVudBgBIAEoCUILukgIcgYgASiAgAEiuwEKEk1vZGVsVG9vbENhbGxEZWx0YRIbCgp0b29sX2luZGV4GAEgASgNQge6SAQqAhh/EhsKAmlkGAIgASgJQgq6SAdyBRABGIACSACIAQESLwoEbmFtZRgDIAEoCUIcukgZchcQARiAATIQXltBLVphLXowLTlfLV0rJEgBiAEBEioKF2FyZ3VtZW50c19qc29uX2ZyYWdtZW50GAQgASgMQgm6SAZ6BBiAgAFCBQoDX2lkQgcKBV9uYW1lIsgFChNTdHJlYW1Nb2RlbFJlc3BvbnNlEiIKDmludm9jYXRpb25fcmVmGAEgASgJQgq6SAdyBRABGIACEh8KC2F0dGVtcHRfcmVmGAIgASgJQgq6SAdyBRABGIACEhkKCHNlcXVlbmNlGAMgASgEQge6SAQyAigBEjcKFXByZXZpb3VzX2ZyYW1lX2RpZ2VzdBgEIAEoCUIYukgVchMyDl5bMC05YS1mXXs2NH0kmAFAEi4KDGZyYW1lX2RpZ2VzdBgFIAEoCUIYukgVchMyDl5bMC05YS1mXXs2NH0kmAFAEjsKCGFjY2VwdGVkGAYgASgLMicua29rb3JvLnBsYXRmb3JtLm1vZGVsLnYxLk1vZGVsQWNjZXB0ZWRIABJECg1jb250ZW50X2RlbHRhGAcgASgLMisua29rb3JvLnBsYXRmb3JtLm1vZGVsLnYxLk1vZGVsQ29udGVudERlbHRhSAASSAoPcmVhc29uaW5nX2RlbHRhGAggASgLMi0ua29rb3JvLnBsYXRmb3JtLm1vZGVsLnYxLk1vZGVsUmVhc29uaW5nRGVsdGFIABJHCg90b29sX2NhbGxfZGVsdGEYCSABKAsyLC5rb2tvcm8ucGxhdGZvcm0ubW9kZWwudjEuTW9kZWxUb29sQ2FsbERlbHRhSAASPQoJY29tcGxldGVkGAogASgLMigua29rb3JvLnBsYXRmb3JtLm1vZGVsLnYxLk1vZGVsQ29tcGxldGVkSAASNwoGZmFpbGVkGAsgASgLMiUua29rb3JvLnBsYXRmb3JtLm1vZGVsLnYxLk1vZGVsRmFpbGVkSAASSAoPb3V0Y29tZV91bmtub3duGAwgASgLMi0ua29rb3JvLnBsYXRmb3JtLm1vZGVsLnYxLk1vZGVsT3V0Y29tZVVua25vd25IAEIQCgdwYXlsb2FkEgW6SAIIASqxAQoQTW9kZWxNZXNzYWdlUm9sZRIiCh5NT0RFTF9NRVNTQUdFX1JPTEVfVU5TUEVDSUZJRUQQABIdChlNT0RFTF9NRVNTQUdFX1JPTEVfU1lTVEVNEAESGwoXTU9ERUxfTUVTU0FHRV9ST0xFX1VTRVIQAhIgChxNT0RFTF9NRVNTQUdFX1JPTEVfQVNTSVNUQU5UEAMSGwoXTU9ERUxfTUVTU0FHRV9ST0xFX1RPT0wQBCqMAQoPTW9kZWxUb29sQ2hvaWNlEiEKHU1PREVMX1RPT0xfQ0hPSUNFX1VOU1BFQ0lGSUVEEAASGgoWTU9ERUxfVE9PTF9DSE9JQ0VfQVVUTxABEhoKFk1PREVMX1RPT0xfQ0hPSUNFX05PTkUQAhIeChpNT0RFTF9UT09MX0NIT0lDRV9SRVFVSVJFRBADMvMBChNNb2RlbEdhdGV3YXlTZXJ2aWNlEmwKC0ludm9rZU1vZGVsEiwua29rb3JvLnBsYXRmb3JtLm1vZGVsLnYxLkludm9rZU1vZGVsUmVxdWVzdBotLmtva29yby5wbGF0Zm9ybS5tb2RlbC52MS5JbnZva2VNb2RlbFJlc3BvbnNlIgASbgoLU3RyZWFtTW9kZWwSLC5rb2tvcm8ucGxhdGZvcm0ubW9kZWwudjEuU3RyZWFtTW9kZWxSZXF1ZXN0Gi0ua29rb3JvLnBsYXRmb3JtLm1vZGVsLnYxLlN0cmVhbU1vZGVsUmVzcG9uc2UiADABYgZwcm90bzM", [file_buf_validate_validate]);
 
 /**
  * @generated from message kokoro.platform.model.v1.ModelToolCall
@@ -349,6 +349,205 @@ export const InvokeModelResponseSchema: GenMessage<InvokeModelResponse> = /*@__P
   messageDesc(file_kokoro_platform_model_v1_model_gateway, 9);
 
 /**
+ * A reconnect supplies the same logical invocation and the last durably consumed
+ * sequence. Zero starts from the persisted accepted frame; it never means a new
+ * provider dispatch.
+ *
+ * @generated from message kokoro.platform.model.v1.StreamModelRequest
+ */
+export type StreamModelRequest = Message<"kokoro.platform.model.v1.StreamModelRequest"> & {
+  /**
+   * @generated from field: kokoro.platform.model.v1.InvokeModelRequest invocation = 1;
+   */
+  invocation?: InvokeModelRequest | undefined;
+
+  /**
+   * @generated from field: uint64 after_sequence = 2;
+   */
+  afterSequence: bigint;
+};
+
+/**
+ * Describes the message kokoro.platform.model.v1.StreamModelRequest.
+ * Use `create(StreamModelRequestSchema)` to create a new message.
+ */
+export const StreamModelRequestSchema: GenMessage<StreamModelRequest> = /*@__PURE__*/
+  messageDesc(file_kokoro_platform_model_v1_model_gateway, 10);
+
+/**
+ * @generated from message kokoro.platform.model.v1.ModelAccepted
+ */
+export type ModelAccepted = Message<"kokoro.platform.model.v1.ModelAccepted"> & {
+};
+
+/**
+ * Describes the message kokoro.platform.model.v1.ModelAccepted.
+ * Use `create(ModelAcceptedSchema)` to create a new message.
+ */
+export const ModelAcceptedSchema: GenMessage<ModelAccepted> = /*@__PURE__*/
+  messageDesc(file_kokoro_platform_model_v1_model_gateway, 11);
+
+/**
+ * @generated from message kokoro.platform.model.v1.ModelContentDelta
+ */
+export type ModelContentDelta = Message<"kokoro.platform.model.v1.ModelContentDelta"> & {
+  /**
+   * @generated from field: string content = 1;
+   */
+  content: string;
+};
+
+/**
+ * Describes the message kokoro.platform.model.v1.ModelContentDelta.
+ * Use `create(ModelContentDeltaSchema)` to create a new message.
+ */
+export const ModelContentDeltaSchema: GenMessage<ModelContentDelta> = /*@__PURE__*/
+  messageDesc(file_kokoro_platform_model_v1_model_gateway, 12);
+
+/**
+ * @generated from message kokoro.platform.model.v1.ModelReasoningDelta
+ */
+export type ModelReasoningDelta = Message<"kokoro.platform.model.v1.ModelReasoningDelta"> & {
+  /**
+   * @generated from field: string content = 1;
+   */
+  content: string;
+};
+
+/**
+ * Describes the message kokoro.platform.model.v1.ModelReasoningDelta.
+ * Use `create(ModelReasoningDeltaSchema)` to create a new message.
+ */
+export const ModelReasoningDeltaSchema: GenMessage<ModelReasoningDelta> = /*@__PURE__*/
+  messageDesc(file_kokoro_platform_model_v1_model_gateway, 13);
+
+/**
+ * Tool-call identity is stable by tool_index. Providers may split id, name and
+ * UTF-8 JSON arguments across multiple frames; Platform validates the complete
+ * canonical object before the terminal frame is committed.
+ *
+ * @generated from message kokoro.platform.model.v1.ModelToolCallDelta
+ */
+export type ModelToolCallDelta = Message<"kokoro.platform.model.v1.ModelToolCallDelta"> & {
+  /**
+   * @generated from field: uint32 tool_index = 1;
+   */
+  toolIndex: number;
+
+  /**
+   * @generated from field: optional string id = 2;
+   */
+  id?: string | undefined;
+
+  /**
+   * @generated from field: optional string name = 3;
+   */
+  name?: string | undefined;
+
+  /**
+   * @generated from field: bytes arguments_json_fragment = 4;
+   */
+  argumentsJsonFragment: Uint8Array;
+};
+
+/**
+ * Describes the message kokoro.platform.model.v1.ModelToolCallDelta.
+ * Use `create(ModelToolCallDeltaSchema)` to create a new message.
+ */
+export const ModelToolCallDeltaSchema: GenMessage<ModelToolCallDelta> = /*@__PURE__*/
+  messageDesc(file_kokoro_platform_model_v1_model_gateway, 14);
+
+/**
+ * Sequence one is the single durable accepted frame. Frames are visible only
+ * after their encrypted journal row commits. The digest chain is integrity
+ * evidence and is never an authorization token. Producers and consumers MUST
+ * use the generated model-stream-frame-digest helper; no alternate JSON or
+ * protobuf serialization is a valid digest preimage.
+ *
+ * @generated from message kokoro.platform.model.v1.StreamModelResponse
+ */
+export type StreamModelResponse = Message<"kokoro.platform.model.v1.StreamModelResponse"> & {
+  /**
+   * @generated from field: string invocation_ref = 1;
+   */
+  invocationRef: string;
+
+  /**
+   * @generated from field: string attempt_ref = 2;
+   */
+  attemptRef: string;
+
+  /**
+   * @generated from field: uint64 sequence = 3;
+   */
+  sequence: bigint;
+
+  /**
+   * @generated from field: string previous_frame_digest = 4;
+   */
+  previousFrameDigest: string;
+
+  /**
+   * @generated from field: string frame_digest = 5;
+   */
+  frameDigest: string;
+
+  /**
+   * @generated from oneof kokoro.platform.model.v1.StreamModelResponse.payload
+   */
+  payload: {
+    /**
+     * @generated from field: kokoro.platform.model.v1.ModelAccepted accepted = 6;
+     */
+    value: ModelAccepted;
+    case: "accepted";
+  } | {
+    /**
+     * @generated from field: kokoro.platform.model.v1.ModelContentDelta content_delta = 7;
+     */
+    value: ModelContentDelta;
+    case: "contentDelta";
+  } | {
+    /**
+     * @generated from field: kokoro.platform.model.v1.ModelReasoningDelta reasoning_delta = 8;
+     */
+    value: ModelReasoningDelta;
+    case: "reasoningDelta";
+  } | {
+    /**
+     * @generated from field: kokoro.platform.model.v1.ModelToolCallDelta tool_call_delta = 9;
+     */
+    value: ModelToolCallDelta;
+    case: "toolCallDelta";
+  } | {
+    /**
+     * @generated from field: kokoro.platform.model.v1.ModelCompleted completed = 10;
+     */
+    value: ModelCompleted;
+    case: "completed";
+  } | {
+    /**
+     * @generated from field: kokoro.platform.model.v1.ModelFailed failed = 11;
+     */
+    value: ModelFailed;
+    case: "failed";
+  } | {
+    /**
+     * @generated from field: kokoro.platform.model.v1.ModelOutcomeUnknown outcome_unknown = 12;
+     */
+    value: ModelOutcomeUnknown;
+    case: "outcomeUnknown";
+  } | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message kokoro.platform.model.v1.StreamModelResponse.
+ * Use `create(StreamModelResponseSchema)` to create a new message.
+ */
+export const StreamModelResponseSchema: GenMessage<StreamModelResponse> = /*@__PURE__*/
+  messageDesc(file_kokoro_platform_model_v1_model_gateway, 15);
+
+/**
  * @generated from enum kokoro.platform.model.v1.ModelMessageRole
  */
 export enum ModelMessageRole {
@@ -429,6 +628,14 @@ export const ModelGatewayService: GenService<{
     methodKind: "unary";
     input: typeof InvokeModelRequestSchema;
     output: typeof InvokeModelResponseSchema;
+  },
+  /**
+   * @generated from rpc kokoro.platform.model.v1.ModelGatewayService.StreamModel
+   */
+  streamModel: {
+    methodKind: "server_streaming";
+    input: typeof StreamModelRequestSchema;
+    output: typeof StreamModelResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_kokoro_platform_model_v1_model_gateway, 0);

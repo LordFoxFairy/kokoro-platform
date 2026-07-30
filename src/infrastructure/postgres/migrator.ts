@@ -326,11 +326,33 @@ async function grantModelGatewayPrivileges(
     `GRANT EXECUTE ON FUNCTION platform.resolve_model_gateway_authorization(TEXT,TEXT) TO ${gateway}`,
   );
   await client.query(
+    `GRANT EXECUTE ON FUNCTION platform.list_model_gateway_dispatch_candidates(INTEGER) TO ${gateway}`,
+  );
+  await client.query(
+    `GRANT SELECT ON TABLE platform.model_gateway_capacity TO ${gateway}`,
+  );
+  await client.query(
+    `GRANT UPDATE(active_count,queued_count,updated_at) ` +
+      `ON TABLE platform.model_gateway_capacity TO ${gateway}`,
+  );
+  await client.query(
     `GRANT SELECT,INSERT ON TABLE platform.model_gateway_invocation TO ${gateway}`,
   );
   await client.query(
-    `GRANT UPDATE(state,response_envelope,evidence_ref,source_digest,owner_evidence_ref,fence_epoch,updated_at) ` +
+    `GRANT UPDATE(state,response_envelope,evidence_ref,source_digest,owner_evidence_ref,fence_epoch,` +
+      `dispatch_owner_ref,dispatch_fence,dispatch_lease_expires_at,last_frame_sequence,last_frame_digest,` +
+      `frame_count,total_frame_bytes,updated_at) ` +
       `ON TABLE platform.model_gateway_invocation TO ${gateway}`,
+  );
+  await client.query(
+    `GRANT SELECT,INSERT ON TABLE platform.model_gateway_frame TO ${gateway}`,
+  );
+  await client.query(
+    `GRANT INSERT ON TABLE platform.model_gateway_dispatch_queue TO ${gateway}`,
+  );
+  await client.query(
+    `GRANT UPDATE(state,dispatch_owner_ref,dispatch_lease_expires_at,updated_at) ` +
+      `ON TABLE platform.model_gateway_dispatch_queue TO ${gateway}`,
   );
   await client.query(
     `GRANT SELECT,INSERT ON TABLE platform.model_gateway_attempt_usage_fact TO ${gateway}`,
@@ -401,6 +423,11 @@ const MODEL_GATEWAY_POST_AUTHORITY_SQL = `
       AND has_table_privilege($1,'platform.platform_foundation','SELECT')
       AND NOT has_table_privilege($1,'platform.platform_foundation','INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
       AND has_function_privilege($1,'platform.resolve_model_gateway_authorization(TEXT,TEXT)','EXECUTE')
+      AND has_function_privilege($1,'platform.list_model_gateway_dispatch_candidates(INTEGER)','EXECUTE')
+      AND has_table_privilege($1,'platform.model_gateway_capacity','SELECT')
+      AND has_column_privilege($1,'platform.model_gateway_capacity','active_count','UPDATE')
+      AND has_column_privilege($1,'platform.model_gateway_capacity','queued_count','UPDATE')
+      AND has_column_privilege($1,'platform.model_gateway_capacity','updated_at','UPDATE')
       AND has_table_privilege($1,'platform.model_gateway_invocation','SELECT,INSERT')
       AND has_column_privilege($1,'platform.model_gateway_invocation','state','UPDATE')
       AND has_column_privilege($1,'platform.model_gateway_invocation','response_envelope','UPDATE')
@@ -408,7 +435,21 @@ const MODEL_GATEWAY_POST_AUTHORITY_SQL = `
       AND has_column_privilege($1,'platform.model_gateway_invocation','source_digest','UPDATE')
       AND has_column_privilege($1,'platform.model_gateway_invocation','owner_evidence_ref','UPDATE')
       AND has_column_privilege($1,'platform.model_gateway_invocation','fence_epoch','UPDATE')
+      AND has_column_privilege($1,'platform.model_gateway_invocation','dispatch_owner_ref','UPDATE')
+      AND has_column_privilege($1,'platform.model_gateway_invocation','dispatch_fence','UPDATE')
+      AND has_column_privilege($1,'platform.model_gateway_invocation','dispatch_lease_expires_at','UPDATE')
+      AND has_column_privilege($1,'platform.model_gateway_invocation','last_frame_sequence','UPDATE')
+      AND has_column_privilege($1,'platform.model_gateway_invocation','last_frame_digest','UPDATE')
+      AND has_column_privilege($1,'platform.model_gateway_invocation','frame_count','UPDATE')
+      AND has_column_privilege($1,'platform.model_gateway_invocation','total_frame_bytes','UPDATE')
       AND has_column_privilege($1,'platform.model_gateway_invocation','updated_at','UPDATE')
+      AND has_table_privilege($1,'platform.model_gateway_frame','SELECT,INSERT')
+      AND has_table_privilege($1,'platform.model_gateway_dispatch_queue','INSERT')
+      AND NOT has_table_privilege($1,'platform.model_gateway_dispatch_queue','SELECT')
+      AND has_column_privilege($1,'platform.model_gateway_dispatch_queue','state','UPDATE')
+      AND has_column_privilege($1,'platform.model_gateway_dispatch_queue','dispatch_owner_ref','UPDATE')
+      AND has_column_privilege($1,'platform.model_gateway_dispatch_queue','dispatch_lease_expires_at','UPDATE')
+      AND has_column_privilege($1,'platform.model_gateway_dispatch_queue','updated_at','UPDATE')
       AND has_table_privilege($1,'platform.model_gateway_attempt_usage_fact','SELECT,INSERT')
       AND has_table_privilege($1,'platform.model_gateway_outbox','SELECT,INSERT')
       AND has_table_privilege($1,'platform.credit_usage_command_receipt','SELECT,INSERT')

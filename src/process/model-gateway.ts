@@ -68,12 +68,16 @@ export function createPlatformModelGatewayProcess(options: Readonly<{
           options.composition.abortInFlight("MODEL_GATEWAY_SHUTDOWN_DEADLINE");
           stopped = active === undefined ? true : await close(active, remaining(deadlineAt));
         }
+        const effectsStopped = await settlesWithin(
+          options.composition.shutdownProviderEffects(Math.max(1, remaining(deadlineAt))),
+          remaining(deadlineAt),
+        );
         server = undefined;
         const disconnected = connected
           ? await settlesWithin(options.database.disconnect(), remaining(deadlineAt))
           : true;
         connected = false;
-        if (!stopped || !disconnected) {
+        if (!stopped || !effectsStopped || !disconnected) {
           state = "failed";
           throw new Error("PLATFORM_MODEL_GATEWAY_SHUTDOWN_UNCONFIRMED");
         }
@@ -86,7 +90,7 @@ export function createPlatformModelGatewayProcess(options: Readonly<{
       live: state === "running" || state === "draining",
       ready: state === "running" && ready,
       draining: state === "draining",
-      inFlight: options.composition.inFlightCount(),
+      inFlight: options.composition.inFlightCount() + options.composition.activeProviderEffectCount(),
     }),
   };
 
@@ -96,6 +100,7 @@ export function createPlatformModelGatewayProcess(options: Readonly<{
       connected = true;
       await options.database.checkHealth();
       if (state !== "starting") throw new Error("PLATFORM_MODEL_GATEWAY_START_ABORTED");
+      options.composition.startBackground();
       server = options.composition.createServer(listener(options.database, options.composition, () => state));
       server.on("error", (cause) => {
         if (state !== "running") return;
@@ -114,6 +119,7 @@ export function createPlatformModelGatewayProcess(options: Readonly<{
     } catch (error) {
       ready = false;
       server = undefined;
+      await options.composition.shutdownProviderEffects(5_000).catch(() => undefined);
       if (connected) await options.database.disconnect().catch(() => undefined);
       connected = false;
       if (state === "starting") state = "stopped";

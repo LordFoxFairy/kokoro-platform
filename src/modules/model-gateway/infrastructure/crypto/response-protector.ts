@@ -1,11 +1,14 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 
-const MAXIMUM_PLAINTEXT_BYTES = 8 * 1024 * 1024;
+const MAXIMUM_PLAINTEXT_BYTES = 12 * 1024 * 1024;
 
 export type ModelGatewayResponseBinding = Readonly<{
   siteId: string;
   invocationRef: string;
   requestDigest: string;
+  purpose?: "request" | "frame" | "response";
+  sequence?: bigint;
+  previousFrameDigest?: string;
 }>;
 
 export type ModelGatewayResponseEnvelope = Readonly<{
@@ -76,12 +79,16 @@ export function createModelGatewayResponseProtector(config: Readonly<{
 }
 
 function aad(keyRevision: string, binding: ModelGatewayResponseBinding): Buffer {
+  const purpose = binding.purpose ?? "response";
   return Buffer.from([
-    "kokoro.model-gateway.response.v1",
+    "kokoro.model-gateway.envelope.v2",
     keyRevision,
+    purpose,
     binding.siteId,
     binding.invocationRef,
     binding.requestDigest,
+    binding.sequence?.toString() ?? "",
+    binding.previousFrameDigest ?? "",
   ].join("\0"), "utf8");
 }
 
@@ -89,6 +96,16 @@ function assertBinding(binding: ModelGatewayResponseBinding): void {
   if (!/^[0-9a-f]{64}$/u.test(binding.requestDigest) ||
       [binding.siteId, binding.invocationRef].some((value) =>
         value.length < 1 || value.length > 256 || /[\0\r\n]/u.test(value))) {
+    throw new Error("MODEL_GATEWAY_RESPONSE_BINDING_INVALID");
+  }
+  const purpose = binding.purpose ?? "response";
+  if (purpose === "frame") {
+    if (binding.sequence === undefined || binding.sequence < 1n ||
+        binding.previousFrameDigest === undefined ||
+        !/^[0-9a-f]{64}$/u.test(binding.previousFrameDigest)) {
+      throw new Error("MODEL_GATEWAY_RESPONSE_BINDING_INVALID");
+    }
+  } else if (binding.sequence !== undefined || binding.previousFrameDigest !== undefined) {
     throw new Error("MODEL_GATEWAY_RESPONSE_BINDING_INVALID");
   }
 }

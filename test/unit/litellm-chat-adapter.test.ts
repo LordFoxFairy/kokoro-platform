@@ -6,11 +6,11 @@ import { LiteLlmChatAdapter } from
 describe("LiteLlmChatAdapter", () => {
   it("maps one bounded typed chat request and records provider-reported usage", async () => {
     const fetch = vi.fn<(input: string | URL | Request, init?: RequestInit) => Promise<Response>>(
-      async () => new Response(JSON.stringify({
-      id: "chatcmpl-1",
-      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "hello" } }],
-      usage: { prompt_tokens: 11, completion_tokens: 3, total_tokens: 14 },
-      }), { status: 200, headers: { "content-type": "application/json" } }),
+      async () => sse(
+        { id: "chatcmpl-1", choices: [{ index: 0, delta: { content: "hello" }, finish_reason: null }] },
+        { id: "chatcmpl-1", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
+        { id: "chatcmpl-1", choices: [], usage: { prompt_tokens: 11, completion_tokens: 3 } },
+      ),
     );
     const adapter = new LiteLlmChatAdapter({
       endpoint: "https://litellm.internal.example/v1",
@@ -21,10 +21,10 @@ describe("LiteLlmChatAdapter", () => {
     });
 
     const prepared = adapter.prepare(request());
-    const outcome = await prepared.invoke({
+    const outcome = await terminal(prepared.stream({
       signal: AbortSignal.timeout(5_000),
       providerOperationKey: "invocation-1",
-    });
+    }));
 
     expect(outcome).toMatchObject({
       kind: "succeeded",
@@ -45,7 +45,8 @@ describe("LiteLlmChatAdapter", () => {
     expect(JSON.parse(new TextDecoder().decode(init?.body as Uint8Array))).toMatchObject({
       model: "chat-primary",
       max_completion_tokens: 128,
-      stream: false,
+      stream: true,
+      stream_options: { include_usage: true },
     });
   });
 
@@ -61,26 +62,25 @@ describe("LiteLlmChatAdapter", () => {
       fetch: async () => new Response("not-json", { status: 200 }),
     });
 
-    await expect(timeout.prepare(request()).invoke({
+    await expect(terminal(timeout.prepare(request()).stream({
       signal: AbortSignal.timeout(5_000), providerOperationKey: "invocation-1",
-    })).resolves.toMatchObject({ kind: "outcome_unknown" });
-    await expect(malformed.prepare(request()).invoke({
+    }))).resolves.toMatchObject({ kind: "outcome_unknown" });
+    await expect(terminal(malformed.prepare(request()).stream({
       signal: AbortSignal.timeout(5_000), providerOperationKey: "invocation-1",
-    })).resolves.toMatchObject({ kind: "outcome_unknown" });
+    }))).resolves.toMatchObject({ kind: "outcome_unknown" });
   });
 
   it("preserves a valid terminal response with missing usage as unavailable, never zero", async () => {
     const adapter = new LiteLlmChatAdapter({
       endpoint: "https://litellm.internal.example/v1",
       apiKey: "example-key",
-      fetch: async () => new Response(JSON.stringify({
-        id: "chatcmpl-1",
-        choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "hello" } }],
-      }), { status: 200, headers: { "content-type": "application/json" } }),
+      fetch: async () => sse(
+        { id: "chatcmpl-1", choices: [{ index: 0, delta: { content: "hello" }, finish_reason: "stop" }] },
+      ),
     });
-    await expect(adapter.prepare(request()).invoke({
+    await expect(terminal(adapter.prepare(request()).stream({
       signal: AbortSignal.timeout(5_000), providerOperationKey: "invocation-1",
-    })).resolves.toMatchObject({ kind: "succeeded", usage: null });
+    }))).resolves.toMatchObject({ kind: "succeeded", usage: null });
   });
 
   it("turns a complete non-2xx response into terminal unavailable evidence without reflecting its body", async () => {
@@ -90,9 +90,9 @@ describe("LiteLlmChatAdapter", () => {
       fetch: async () => new Response("provider-secret-detail", { status: 429 }),
     });
 
-    const outcome = await adapter.prepare(request()).invoke({
+    const outcome = await terminal(adapter.prepare(request()).stream({
       signal: AbortSignal.timeout(5_000), providerOperationKey: "invocation-1",
-    });
+    }));
 
     expect(outcome).toMatchObject({ kind: "failed", usage: null });
     expect(new TextDecoder().decode(outcome.kind === "failed" ? outcome.responseBody : new Uint8Array()))
@@ -108,7 +108,7 @@ describe("LiteLlmChatAdapter", () => {
     }
   });
 
-  it("rejects unsafe endpoints, streaming, unbounded output, and control characters before effect", () => {
+  it("rejects unsafe endpoints, unbounded output, and control characters before effect", () => {
     expect(() => new LiteLlmChatAdapter({
       endpoint: "http://litellm.internal.example/v1",
       apiKey: "example-key",
@@ -127,6 +127,21 @@ describe("LiteLlmChatAdapter", () => {
     );
   });
 });
+
+function sse(...chunks: readonly unknown[]): Response {
+  const body = `${chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("")}data: [DONE]\n\n`;
+  return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+}
+
+async function terminal(source: AsyncIterable<{
+  kind: string;
+  outcome?: import("../../src/modules/model-gateway/application/model-gateway-service.js").ModelGatewayProviderOutcome;
+}>) {
+  for await (const event of source) if (event.kind === "terminal" && event.outcome !== undefined) {
+    return event.outcome;
+  }
+  throw new Error("terminal missing");
+}
 
 function request() {
   return {

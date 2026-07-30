@@ -33,7 +33,7 @@ describe("Model Gateway response protector", () => {
       currentKeyRevision: "revision-1",
       keys: [{ keyRevision: "revision-1", key: new Uint8Array(32) }],
     });
-    expect(() => protector.seal(new Uint8Array(8 * 1024 * 1024 + 1), binding))
+    expect(() => protector.seal(new Uint8Array(12 * 1024 * 1024 + 1), binding))
       .toThrowError("MODEL_GATEWAY_RESPONSE_PLAINTEXT_INVALID");
   });
 });

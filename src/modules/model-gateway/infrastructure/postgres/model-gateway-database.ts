@@ -79,6 +79,35 @@ export class PostgresModelGatewayDatabase implements ModelGatewayUnitOfWork {
     );
   }
 
+  async scanDispatchCandidates(limit: number): Promise<readonly Readonly<{
+    modelAuthorizationHandle: string;
+    logicalCallRef: string;
+  }>[]> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 128 || this.dependencies.pool.query === undefined) {
+      throw new Error("MODEL_GATEWAY_DISPATCH_SCAN_INVALID");
+    }
+    const result = await this.dependencies.pool.query(
+      `SELECT authorization_handle AS "modelAuthorizationHandle",
+              logical_call_ref AS "logicalCallRef"
+         FROM platform.list_model_gateway_dispatch_candidates($1)`,
+      [limit],
+    );
+    return Object.freeze(result.rows.map((row) => {
+      const candidate = row as Partial<{
+        modelAuthorizationHandle: string;
+        logicalCallRef: string;
+      }>;
+      if (typeof candidate.modelAuthorizationHandle !== "string" ||
+          typeof candidate.logicalCallRef !== "string") {
+        throw new Error("MODEL_GATEWAY_DISPATCH_SCAN_INVALID");
+      }
+      return Object.freeze({
+        modelAuthorizationHandle: candidate.modelAuthorizationHandle,
+        logicalCallRef: candidate.logicalCallRef,
+      });
+    }));
+  }
+
   async execute<Result>(
     scope: Parameters<ModelGatewayUnitOfWork["execute"]>[0],
     work: Parameters<ModelGatewayUnitOfWork["execute"]>[1],
@@ -201,7 +230,7 @@ export function createPostgresModelGatewayDatabase(
 function mapAuthorization(
   row: AuthorizationRow,
   expectedHandle: string,
-  operation: "prepare" | "finalize" | "unknown",
+  operation: "prepare" | "attach" | "claim" | "frame" | "finalize" | "unknown",
 ): ModelInvocationAuthorization {
   const expiresAt = row.expiresAt instanceof Date ? row.expiresAt.toISOString() : row.expiresAt;
   if (row.modelAuthorizationHandle !== expectedHandle || row.adapterKind !== "litellm" ||
@@ -244,6 +273,7 @@ interface RuntimeIdentity extends Record<string, unknown> {
   canReadFoundation: boolean;
   canMutateFoundation: boolean;
   canExecuteAuthorizationResolver: boolean;
+  canExecuteDispatchScanner: boolean;
   hasRequiredGatewayWrites: boolean;
 }
 
@@ -258,7 +288,8 @@ function validIdentity(
     row.inheritsPrivileges === false && row.hasAnyMembership === false && row.isMigratorMember === false &&
     row.canCreateDatabaseObject === false && row.canUseSchema === true && row.canCreateSchema === false &&
     row.canReadFoundation === true && row.canMutateFoundation === false &&
-    row.canExecuteAuthorizationResolver === true && row.hasRequiredGatewayWrites === true;
+    row.canExecuteAuthorizationResolver === true && row.canExecuteDispatchScanner === true &&
+    row.hasRequiredGatewayWrites === true;
 }
 
 function postgresUrl(value: string): URL {
@@ -288,6 +319,7 @@ const RUNTIME_IDENTITY_SQL = `
     has_table_privilege(current_user,'platform.platform_foundation','SELECT') AS "canReadFoundation",
     has_table_privilege(current_user,'platform.platform_foundation','INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') AS "canMutateFoundation",
     has_function_privilege(current_user,'platform.resolve_model_gateway_authorization(TEXT,TEXT)','EXECUTE') AS "canExecuteAuthorizationResolver",
+    has_function_privilege(current_user,'platform.list_model_gateway_dispatch_candidates(INTEGER)','EXECUTE') AS "canExecuteDispatchScanner",
     has_table_privilege(current_user,'platform.model_gateway_invocation','SELECT,INSERT')
       AND has_column_privilege(current_user,'platform.model_gateway_invocation','state','UPDATE')
       AND has_column_privilege(current_user,'platform.model_gateway_invocation','response_envelope','UPDATE')
@@ -298,6 +330,16 @@ const RUNTIME_IDENTITY_SQL = `
       AND has_column_privilege(current_user,'platform.model_gateway_invocation','updated_at','UPDATE')
       AND has_table_privilege(current_user,'platform.model_gateway_attempt_usage_fact','SELECT,INSERT')
       AND has_table_privilege(current_user,'platform.model_gateway_outbox','SELECT,INSERT')
+      AND has_table_privilege(current_user,'platform.model_gateway_frame','SELECT,INSERT')
+      AND has_table_privilege(current_user,'platform.model_gateway_dispatch_queue','INSERT')
+      AND NOT has_table_privilege(current_user,'platform.model_gateway_dispatch_queue','SELECT')
+      AND has_column_privilege(current_user,'platform.model_gateway_dispatch_queue','state','UPDATE')
+      AND has_column_privilege(current_user,'platform.model_gateway_dispatch_queue','dispatch_owner_ref','UPDATE')
+      AND has_column_privilege(current_user,'platform.model_gateway_dispatch_queue','dispatch_lease_expires_at','UPDATE')
+      AND has_column_privilege(current_user,'platform.model_gateway_dispatch_queue','updated_at','UPDATE')
+      AND has_table_privilege(current_user,'platform.model_gateway_capacity','SELECT')
+      AND has_column_privilege(current_user,'platform.model_gateway_capacity','active_count','UPDATE')
+      AND has_column_privilege(current_user,'platform.model_gateway_capacity','queued_count','UPDATE')
       AND has_table_privilege(current_user,'platform.credit_usage_command_receipt','SELECT,INSERT')
       AND has_table_privilege(current_user,'platform.credit_usage_attempt_intent','SELECT,INSERT')
       AND has_column_privilege(current_user,'platform.credit_usage_attempt_intent','fence_epoch','UPDATE')

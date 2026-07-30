@@ -20,7 +20,10 @@ describe("Model Gateway owned schema", () => {
     expect(migration).toContain("SECURITY DEFINER");
     expect(migration).toContain("FORCE ROW LEVEL SECURITY");
     expect(migration).toContain("guard_model_gateway_invocation_transition");
-    expect(migration).toContain("NEW.fence_epoch <> OLD.fence_epoch+1");
+    expect(migration).toContain("NEW.dispatch_fence<>OLD.dispatch_fence+1");
+    expect(migration).toContain("CREATE TABLE platform.model_gateway_frame");
+    expect(migration).toContain("CREATE TABLE platform.model_gateway_capacity");
+    expect(migration).toContain("list_model_gateway_dispatch_candidates");
     expect(migration).toContain("guard_model_gateway_authorization_transition");
     expect(migration).toContain("reject_model_gateway_owned_delete");
     expect(migration).toContain("REVOKE ALL ON FUNCTION platform.resolve_model_gateway_authorization(TEXT,TEXT) FROM PUBLIC");

@@ -3,20 +3,26 @@ import { Code, ConnectError, type HandlerContext, type ServiceImpl } from "@conn
 import { z } from "zod";
 import {
   InvokeModelResponseSchema,
+  ModelAcceptedSchema,
   ModelCompletedSchema,
+  ModelContentDeltaSchema,
   ModelFailedSchema,
   ModelGatewayService as ModelGatewayConnectDefinition,
   ModelMessageRole,
   ModelOutcomeUnknownSchema,
+  ModelReasoningDeltaSchema,
+  ModelToolCallDeltaSchema,
   ModelToolCallSchema,
   ModelToolChoice,
   ModelUsageSchema,
+  StreamModelResponseSchema,
   type InvokeModelRequest,
 } from "../../../../interfaces/connect/generated-model-gateway/kokoro/platform/model/v1/model_gateway_pb.js";
 import {
   ModelGatewayService,
   type ModelGatewayJsonValue,
   type ModelGatewayRequest,
+  type ModelGatewayStreamPayload,
 } from "../../application/model-gateway-service.js";
 
 export type ModelGatewayConnectService = ServiceImpl<typeof ModelGatewayConnectDefinition>;
@@ -26,7 +32,7 @@ export interface VerifiedModelGatewayCallerResolver {
 }
 
 export function createModelGatewayConnectService(input: Readonly<{
-  application: Pick<ModelGatewayService, "invoke">;
+  application: Pick<ModelGatewayService, "invoke" | "stream">;
   caller: VerifiedModelGatewayCallerResolver;
   agentCallerIdentity: string;
 }>): ModelGatewayConnectService {
@@ -100,7 +106,86 @@ export function createModelGatewayConnectService(input: Readonly<{
         },
       });
     }),
+    streamModel: async function* (request, context) {
+      try {
+        if (input.caller.resolve(context).identity !== input.agentCallerIdentity) {
+          throw new ConnectError("model gateway caller not authorized", Code.PermissionDenied);
+        }
+        if (request.invocation === undefined) {
+          throw new ConnectError("model request invalid", Code.InvalidArgument);
+        }
+        for await (const frame of input.application.stream({
+          modelAuthorizationHandle: request.invocation.modelAuthorizationHandle,
+          logicalCallRef: request.invocation.logicalCallRef,
+          attemptRef: request.invocation.attemptRef,
+          producerContext: request.invocation.producerContext,
+          producerGeneration: request.invocation.producerGeneration,
+          request: mapRequest(request.invocation),
+          afterSequence: request.afterSequence,
+          signal: context.signal,
+        })) {
+          yield create(StreamModelResponseSchema, {
+            invocationRef: frame.invocationRef,
+            attemptRef: frame.attemptRef,
+            sequence: frame.sequence,
+            previousFrameDigest: frame.previousFrameDigest,
+            frameDigest: frame.frameDigest,
+            payload: streamPayload(frame.payload),
+          });
+        }
+      } catch (error) {
+        throw connectError(error);
+      }
+    },
   };
+}
+
+function streamPayload(payload: ModelGatewayStreamPayload) {
+  if (payload.kind === "accepted") {
+    return { case: "accepted" as const, value: create(ModelAcceptedSchema) };
+  }
+  if (payload.kind === "content_delta") {
+    return { case: "contentDelta" as const, value: create(ModelContentDeltaSchema, { content: payload.content }) };
+  }
+  if (payload.kind === "reasoning_delta") {
+    return { case: "reasoningDelta" as const,
+      value: create(ModelReasoningDeltaSchema, { content: payload.content }) };
+  }
+  if (payload.kind === "tool_call_delta") {
+    return { case: "toolCallDelta" as const, value: create(ModelToolCallDeltaSchema, {
+      toolIndex: payload.toolIndex,
+      ...(payload.id === undefined ? {} : { id: payload.id }),
+      ...(payload.name === undefined ? {} : { name: payload.name }),
+      argumentsJsonFragment: payload.argumentsJsonFragment,
+    }) };
+  }
+  if (payload.kind === "outcome_unknown") {
+    return { case: "outcomeUnknown" as const, value: create(ModelOutcomeUnknownSchema) };
+  }
+  const safe = safeResponseSchema.parse(JSON.parse(
+    new TextDecoder("utf-8", { fatal: true }).decode(payload.responseBody),
+  ));
+  if (payload.kind === "failed") {
+    if (!("error" in safe)) throw new Error("MODEL_GATEWAY_SAFE_RESPONSE_KIND_INVALID");
+    return { case: "failed" as const, value: create(ModelFailedSchema, safe.error) };
+  }
+  if ("error" in safe) throw new Error("MODEL_GATEWAY_SAFE_RESPONSE_KIND_INVALID");
+  const choice = safe.choices[0];
+  return { case: "completed" as const, value: create(ModelCompletedSchema, {
+    responseId: safe.id,
+    content: choice.message.content,
+    toolCalls: choice.message.tool_calls?.map((call) => create(ModelToolCallSchema, {
+      id: call.id, name: call.function.name,
+      argumentsJson: new TextEncoder().encode(call.function.arguments),
+    })) ?? [],
+    ...(choice.message.reasoning_content === undefined ? {} : {
+      reasoningContent: choice.message.reasoning_content,
+    }),
+    ...(choice.finish_reason === undefined ? {} : { finishReason: choice.finish_reason }),
+    ...(safe.usage === undefined ? {} : { usage: create(ModelUsageSchema, {
+      inputTokens: BigInt(safe.usage.prompt_tokens), outputTokens: BigInt(safe.usage.completion_tokens),
+    }) }),
+  }) };
 }
 
 function mapRequest(input: InvokeModelRequest): ModelGatewayRequest {
@@ -224,17 +309,24 @@ async function safeInvoke<Result>(work: () => Promise<Result>): Promise<Result> 
   try {
     return await work();
   } catch (error) {
-    if (error instanceof ConnectError) throw error;
-    const code = error instanceof Error ? error.message : "";
-    if (code.includes("INVALID") || code.includes("TOO_LARGE")) {
-      throw new ConnectError("model request invalid", Code.InvalidArgument);
-    }
-    if (code.includes("CONFLICT") || code.includes("NOT_OPEN") || code.includes("FENCE")) {
-      throw new ConnectError("model invocation not executable", Code.FailedPrecondition);
-    }
-    if (code.includes("AUTHORIZATION") || code.includes("ROUTE_NOT_AUTHORIZED")) {
-      throw new ConnectError("model invocation not authorized", Code.PermissionDenied);
-    }
-    throw new ConnectError("model gateway unavailable", Code.Unavailable);
+    throw connectError(error);
   }
+}
+
+function connectError(error: unknown): ConnectError {
+  if (error instanceof ConnectError) return error;
+  const code = error instanceof Error ? error.message : "";
+  if (code.includes("RESOURCE_EXHAUSTED")) {
+    return new ConnectError("model gateway at capacity", Code.ResourceExhausted);
+  }
+  if (code.includes("INVALID") || code.includes("TOO_LARGE")) {
+    return new ConnectError("model request invalid", Code.InvalidArgument);
+  }
+  if (code.includes("CONFLICT") || code.includes("NOT_OPEN") || code.includes("FENCE")) {
+    return new ConnectError("model invocation not executable", Code.FailedPrecondition);
+  }
+  if (code.includes("AUTHORIZATION") || code.includes("ROUTE_NOT_AUTHORIZED")) {
+    return new ConnectError("model invocation not authorized", Code.PermissionDenied);
+  }
+  return new ConnectError("model gateway unavailable", Code.Unavailable);
 }

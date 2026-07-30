@@ -3,6 +3,7 @@ import type {
   ModelGatewayJsonValue,
   ModelGatewayProviderOutcome,
   ModelGatewayProviderPort,
+  ModelGatewayProviderStreamEvent,
   ModelGatewayRequest,
   ModelUsageDimension,
   PreparedModelProviderRequest,
@@ -69,7 +70,8 @@ export class LiteLlmChatAdapter implements ModelGatewayProviderPort {
             })),
             tool_choice: providerToolChoice(request.toolChoice),
           }),
-      stream: false,
+      stream: true,
+      stream_options: Object.freeze({ include_usage: true }),
     });
     const body = new TextEncoder().encode(JSON.stringify(providerBody));
     if (body.byteLength < 1 || body.byteLength > MAX_REQUEST_BYTES) {
@@ -93,15 +95,15 @@ export class LiteLlmChatAdapter implements ModelGatewayProviderPort {
       gatewayModel: request.model,
       requestDigest,
       maximumDimensions,
-      invoke: (input: Readonly<{ signal: AbortSignal; providerOperationKey: string }>) =>
-        this.#invoke(body, input),
+      stream: (input: Readonly<{ signal: AbortSignal; providerOperationKey: string }>) =>
+        this.#stream(body, input),
     });
   }
 
-  async #invoke(
+  async *#stream(
     body: Uint8Array,
     input: Readonly<{ signal: AbortSignal; providerOperationKey: string }>,
-  ): Promise<ModelGatewayProviderOutcome> {
+  ): AsyncIterable<ModelGatewayProviderStreamEvent> {
     reference(input.providerOperationKey, "MODEL_GATEWAY_PROVIDER_OPERATION_KEY_INVALID");
     const signal = AbortSignal.any([input.signal, AbortSignal.timeout(this.#timeoutMs)]);
     let response: Response;
@@ -111,7 +113,7 @@ export class LiteLlmChatAdapter implements ModelGatewayProviderPort {
         headers: {
           authorization: `Bearer ${this.#apiKey}`,
           "content-type": "application/json",
-          accept: "application/json",
+          accept: "text/event-stream",
           "idempotency-key": input.providerOperationKey,
         },
         body: Buffer.from(body),
@@ -119,18 +121,25 @@ export class LiteLlmChatAdapter implements ModelGatewayProviderPort {
         signal,
       });
     } catch (error) {
-      return unknownOutcome("litellm-transport", errorNameDigest(error));
+      yield Object.freeze({
+        kind: "terminal" as const,
+        outcome: unknownOutcome("litellm-transport", errorNameDigest(error)),
+      });
+      return;
     }
 
-    let responseBody: Uint8Array;
-    try {
-      responseBody = await readBoundedBody(response, MAX_RESPONSE_BYTES);
-    } catch {
-      return unknownOutcome("litellm-response", sha256(`${response.status}:body-unavailable`));
-    }
-    const sourceDigest = sha256(responseBody);
-    const occurredAt = this.#now();
     if (!response.ok) {
+      let responseBody: Uint8Array;
+      try {
+        responseBody = await readBoundedBody(response, MAX_RESPONSE_BYTES);
+      } catch {
+        yield Object.freeze({
+          kind: "terminal" as const,
+          outcome: unknownOutcome("litellm-response", sha256(`${response.status}:body-unavailable`)),
+        });
+        return;
+      }
+      const sourceDigest = sha256(responseBody);
       const safeResponseBody = new TextEncoder().encode(JSON.stringify({
         error: {
           code: "MODEL_PROVIDER_REJECTED",
@@ -138,26 +147,67 @@ export class LiteLlmChatAdapter implements ModelGatewayProviderPort {
             response.status >= 500,
         },
       }));
-      return Object.freeze({
-        kind: "failed",
-        responseBody: safeResponseBody,
-        usage: null,
-        responseDigest: sha256(safeResponseBody),
-        sourceDigest,
-        occurredAt,
+      yield Object.freeze({
+        kind: "terminal" as const,
+        outcome: Object.freeze({
+          kind: "failed" as const,
+          responseBody: safeResponseBody,
+          usage: null,
+          responseDigest: sha256(safeResponseBody),
+          sourceDigest,
+          occurredAt: this.#now(),
+        }),
+      });
+      return;
+    }
+    if (!(response.headers.get("content-type") ?? "").toLowerCase().startsWith("text/event-stream")) {
+      yield Object.freeze({
+        kind: "terminal" as const,
+        outcome: unknownOutcome("litellm-response", sha256("content-type-invalid")),
+      });
+      return;
+    }
+    const streamState = { hash: createHash("sha256"), totalBytes: 0 };
+    const aggregate = createStreamingAggregate();
+    try {
+      for await (const data of readBoundedSse(response, streamState)) {
+        if (data === "[DONE]") {
+          if (aggregate.done) throw new Error("MODEL_GATEWAY_LITELLM_SSE_MULTIPLE_TERMINALS");
+          aggregate.done = true;
+          continue;
+        }
+        if (aggregate.done) throw new Error("MODEL_GATEWAY_LITELLM_SSE_DATA_AFTER_TERMINAL");
+        const parsed = parseStreamChunk(data, aggregate);
+        for (const delta of parsed) yield delta;
+      }
+      const sourceDigest = streamState.hash.digest("hex");
+      const completed = completeStreamAggregate(aggregate);
+      if (!aggregate.done || completed === null) {
+        yield Object.freeze({
+          kind: "terminal" as const,
+          outcome: unknownOutcome("litellm-stream", sourceDigest),
+        });
+        return;
+      }
+      yield Object.freeze({
+        kind: "terminal" as const,
+        outcome: Object.freeze({
+          kind: "succeeded" as const,
+          responseBody: completed.safeResponseBody,
+          usage: completed.usage,
+          responseDigest: sha256(completed.safeResponseBody),
+          sourceDigest,
+          occurredAt: this.#now(),
+        }),
+      });
+    } catch (error) {
+      yield Object.freeze({
+        kind: "terminal" as const,
+        outcome: unknownOutcome("litellm-stream", sha256(
+          `${streamState.totalBytes}:${error instanceof Error ? error.name : typeof error}`,
+        )),
       });
     }
-
-    const parsed = parseResponse(responseBody);
-    if (parsed.kind === "invalid") return unknownOutcome("litellm-response", sourceDigest);
-    return Object.freeze({
-      kind: "succeeded",
-      responseBody: parsed.safeResponseBody,
-      usage: parsed.usage,
-      responseDigest: sha256(parsed.safeResponseBody),
-      sourceDigest,
-      occurredAt,
-    });
   }
 
   #now(): string {
@@ -209,79 +259,273 @@ function validateRequest(request: ModelGatewayRequest): void {
   }
 }
 
-function parseResponse(body: Uint8Array):
-  | Readonly<{
-      kind: "valid";
-      usage: readonly ModelUsageDimension[] | null;
-      safeResponseBody: Uint8Array;
-    }>
-  | Readonly<{ kind: "invalid" }> {
+type StreamingToolCall = {
+  id?: string;
+  name?: string;
+  arguments: string;
+};
+
+type StreamingAggregate = {
+  id?: string;
+  content: string;
+  reasoning: string;
+  finishReason?: string;
+  tools: Map<number, StreamingToolCall>;
+  usage: readonly ModelUsageDimension[] | null;
+  safeUsage?: Readonly<{ prompt_tokens: number; completion_tokens: number }>;
+  done: boolean;
+  totalOutputBytes: number;
+};
+
+function createStreamingAggregate(): StreamingAggregate {
+  return {
+    content: "",
+    reasoning: "",
+    tools: new Map(),
+    usage: null,
+    done: false,
+    totalOutputBytes: 0,
+  };
+}
+
+function parseStreamChunk(
+  data: string,
+  aggregate: StreamingAggregate,
+): readonly ModelGatewayProviderStreamEvent[] {
   let value: unknown;
-  try {
-    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
-  } catch {
-    return Object.freeze({ kind: "invalid" });
+  try { value = JSON.parse(data); } catch { throw new Error("MODEL_GATEWAY_LITELLM_SSE_JSON_INVALID"); }
+  if (!record(value)) throw new Error("MODEL_GATEWAY_LITELLM_SSE_CHUNK_INVALID");
+  if (value.id !== undefined) {
+    if (!safeReference(value.id) || (aggregate.id !== undefined && aggregate.id !== value.id)) {
+      throw new Error("MODEL_GATEWAY_LITELLM_SSE_CHUNK_INVALID");
+    }
+    aggregate.id = value.id;
   }
-  if (!record(value) || !safeReference(value.id) ||
-      !Array.isArray(value.choices) || value.choices.length < 1 || !record(value.choices[0])) {
-    return Object.freeze({ kind: "invalid" });
-  }
-  const first = value.choices[0];
-  if (!record(first.message) || first.message.role !== "assistant") {
-    return Object.freeze({ kind: "invalid" });
-  }
-  const content = first.message.content === null ? "" : first.message.content;
-  if (typeof content !== "string" || Buffer.byteLength(content, "utf8") > MAX_RESPONSE_BYTES) {
-    return Object.freeze({ kind: "invalid" });
-  }
-  const reasoning = first.message.reasoning_content;
-  if (reasoning !== undefined && reasoning !== null &&
-      (typeof reasoning !== "string" || Buffer.byteLength(reasoning, "utf8") > MAX_RESPONSE_BYTES)) {
-    return Object.freeze({ kind: "invalid" });
-  }
-  const toolCalls = parseToolCalls(first.message.tool_calls);
-  if (toolCalls === null || (content.length === 0 && toolCalls.length === 0)) {
-    return Object.freeze({ kind: "invalid" });
-  }
-  const finishReason = first.finish_reason;
-  if (finishReason !== undefined && finishReason !== null &&
-      (typeof finishReason !== "string" || finishReason.length < 1 || finishReason.length > 64)) {
-    return Object.freeze({ kind: "invalid" });
-  }
-  let usage: readonly ModelUsageDimension[] | null = null;
-  let safeUsage: Readonly<{ prompt_tokens: number; completion_tokens: number }> | undefined;
-  if (value.usage !== undefined) {
-    if (!record(value.usage)) return Object.freeze({ kind: "invalid" });
+  if (value.usage !== undefined && value.usage !== null) {
+    if (!record(value.usage)) throw new Error("MODEL_GATEWAY_LITELLM_SSE_USAGE_INVALID");
     const input = safeInteger(value.usage.prompt_tokens);
     const output = safeInteger(value.usage.completion_tokens);
     if (input === null || output === null || input > BigInt(Number.MAX_SAFE_INTEGER) ||
-        output > BigInt(Number.MAX_SAFE_INTEGER)) return Object.freeze({ kind: "invalid" });
-    usage = Object.freeze([
+        output > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new Error("MODEL_GATEWAY_LITELLM_SSE_USAGE_INVALID");
+    }
+    aggregate.usage = Object.freeze([
       Object.freeze({ dimensionKey: "input_tokens", sourceUnit: "tokens", quantity: input }),
       Object.freeze({ dimensionKey: "output_tokens", sourceUnit: "tokens", quantity: output }),
     ]);
-    safeUsage = Object.freeze({ prompt_tokens: Number(input), completion_tokens: Number(output) });
+    aggregate.safeUsage = Object.freeze({
+      prompt_tokens: Number(input), completion_tokens: Number(output),
+    });
+  }
+  if (!Array.isArray(value.choices) || value.choices.length > 1) {
+    throw new Error("MODEL_GATEWAY_LITELLM_SSE_CHOICES_INVALID");
+  }
+  if (value.choices.length === 0) return Object.freeze([]);
+  const choice = value.choices[0];
+  if (!record(choice) || choice.index !== 0 || !record(choice.delta)) {
+    throw new Error("MODEL_GATEWAY_LITELLM_SSE_CHOICE_INVALID");
+  }
+  const result: ModelGatewayProviderStreamEvent[] = [];
+  const content = choice.delta.content;
+  if (content !== undefined && content !== null) {
+    if (typeof content !== "string") throw new Error("MODEL_GATEWAY_LITELLM_SSE_CONTENT_INVALID");
+    aggregate.content += content;
+    aggregate.totalOutputBytes += Buffer.byteLength(content, "utf8");
+    if (aggregate.totalOutputBytes > MAX_RESPONSE_BYTES) {
+      throw new Error("MODEL_GATEWAY_LITELLM_SSE_RESPONSE_TOO_LARGE");
+    }
+    for (const part of splitUtf8(content, 16_384)) {
+      if (part.length > 0) result.push(Object.freeze({ kind: "content_delta", content: part }));
+    }
+  }
+  const reasoning = choice.delta.reasoning_content;
+  if (reasoning !== undefined && reasoning !== null) {
+    if (typeof reasoning !== "string") throw new Error("MODEL_GATEWAY_LITELLM_SSE_REASONING_INVALID");
+    aggregate.reasoning += reasoning;
+    aggregate.totalOutputBytes += Buffer.byteLength(reasoning, "utf8");
+    if (aggregate.totalOutputBytes > MAX_RESPONSE_BYTES) {
+      throw new Error("MODEL_GATEWAY_LITELLM_SSE_RESPONSE_TOO_LARGE");
+    }
+    for (const part of splitUtf8(reasoning, 16_384)) {
+      if (part.length > 0) result.push(Object.freeze({ kind: "reasoning_delta", content: part }));
+    }
+  }
+  const toolCalls = choice.delta.tool_calls;
+  if (toolCalls !== undefined) {
+    if (!Array.isArray(toolCalls) || toolCalls.length > 128) {
+      throw new Error("MODEL_GATEWAY_LITELLM_SSE_TOOL_INVALID");
+    }
+    for (const raw of toolCalls) {
+      if (!record(raw) || !Number.isInteger(raw.index) || (raw.index as number) < 0 ||
+          (raw.index as number) > 127) throw new Error("MODEL_GATEWAY_LITELLM_SSE_TOOL_INVALID");
+      const index = raw.index as number;
+      const current = aggregate.tools.get(index) ?? { arguments: "" };
+      if (raw.id !== undefined) {
+        const rawId = raw.id;
+        if (!safeReference(rawId) || (current.id !== undefined && current.id !== rawId)) {
+          throw new Error("MODEL_GATEWAY_LITELLM_SSE_TOOL_INVALID");
+        }
+        current.id = rawId;
+      }
+      let name: string | undefined;
+      let argumentsFragment = "";
+      if (raw.function !== undefined) {
+        if (!record(raw.function)) throw new Error("MODEL_GATEWAY_LITELLM_SSE_TOOL_INVALID");
+        if (raw.function.name !== undefined) {
+          if (!safeToolName(raw.function.name) ||
+              (current.name !== undefined && current.name !== raw.function.name)) {
+            throw new Error("MODEL_GATEWAY_LITELLM_SSE_TOOL_INVALID");
+          }
+          current.name = raw.function.name;
+          name = raw.function.name;
+        }
+        if (raw.function.arguments !== undefined) {
+          if (typeof raw.function.arguments !== "string") {
+            throw new Error("MODEL_GATEWAY_LITELLM_SSE_TOOL_INVALID");
+          }
+          argumentsFragment = raw.function.arguments;
+          current.arguments += argumentsFragment;
+          aggregate.totalOutputBytes += Buffer.byteLength(argumentsFragment, "utf8");
+          if (aggregate.totalOutputBytes > MAX_RESPONSE_BYTES) {
+            throw new Error("MODEL_GATEWAY_LITELLM_SSE_RESPONSE_TOO_LARGE");
+          }
+          if (Buffer.byteLength(current.arguments, "utf8") > 1024 * 1024) {
+            throw new Error("MODEL_GATEWAY_LITELLM_SSE_TOOL_TOO_LARGE");
+          }
+        }
+      }
+      aggregate.tools.set(index, current);
+      const parts = splitUtf8(argumentsFragment, 16_384);
+      if (parts.length === 0) parts.push("");
+      parts.forEach((part, partIndex) => result.push(Object.freeze({
+        kind: "tool_call_delta" as const,
+        toolIndex: index,
+        ...(partIndex === 0 && current.id !== undefined ? { id: current.id } : {}),
+        ...(partIndex === 0 && name !== undefined ? { name } : {}),
+        argumentsJsonFragment: new TextEncoder().encode(part),
+      })));
+    }
+  }
+  if (choice.finish_reason !== undefined && choice.finish_reason !== null) {
+    if (typeof choice.finish_reason !== "string" || choice.finish_reason.length < 1 ||
+        choice.finish_reason.length > 64) throw new Error("MODEL_GATEWAY_LITELLM_SSE_FINISH_INVALID");
+    aggregate.finishReason = choice.finish_reason;
+  }
+  return Object.freeze(result);
+}
+
+function completeStreamAggregate(aggregate: StreamingAggregate): Readonly<{
+  usage: readonly ModelUsageDimension[] | null;
+  safeResponseBody: Uint8Array;
+}> | null {
+  if (aggregate.id === undefined || (aggregate.content.length === 0 && aggregate.tools.size === 0)) return null;
+  const toolCalls: ModelGatewayJsonValue[] = [];
+  for (const [index, tool] of [...aggregate.tools].sort(([left], [right]) => left - right)) {
+    if (index !== toolCalls.length || tool.id === undefined || tool.name === undefined) return null;
+    let parsed: unknown;
+    try { parsed = JSON.parse(tool.arguments); } catch { return null; }
+    if (!jsonRecord(parsed)) return null;
+    toolCalls.push(Object.freeze({
+      id: tool.id,
+      type: "function",
+      function: Object.freeze({ name: tool.name, arguments: canonicalJson(parsed) }),
+    }));
   }
   const safe = Object.freeze({
-    id: value.id,
+    id: aggregate.id,
     choices: Object.freeze([Object.freeze({
       index: 0,
       message: Object.freeze({
         role: "assistant",
-        content,
-        ...(reasoning === undefined || reasoning === null ? {} : { reasoning_content: reasoning }),
-        ...(toolCalls.length === 0 ? {} : { tool_calls: toolCalls }),
+        content: aggregate.content,
+        ...(aggregate.reasoning.length === 0 ? {} : { reasoning_content: aggregate.reasoning }),
+        ...(toolCalls.length === 0 ? {} : { tool_calls: Object.freeze(toolCalls) }),
       }),
-      ...(finishReason === undefined || finishReason === null ? {} : { finish_reason: finishReason }),
+      ...(aggregate.finishReason === undefined ? {} : { finish_reason: aggregate.finishReason }),
     })]),
-    ...(safeUsage === undefined ? {} : { usage: safeUsage }),
+    ...(aggregate.safeUsage === undefined ? {} : { usage: aggregate.safeUsage }),
   });
-  if (!jsonValue(safe)) return Object.freeze({ kind: "invalid" });
+  if (!jsonValue(safe)) return null;
   return Object.freeze({
-    kind: "valid",
-    usage,
+    usage: aggregate.usage,
     safeResponseBody: new TextEncoder().encode(canonicalJson(safe)),
   });
+}
+
+async function* readBoundedSse(
+  response: Response,
+  state: { hash: ReturnType<typeof createHash>; totalBytes: number },
+): AsyncIterable<string> {
+  if (response.body === null) throw new Error("MODEL_GATEWAY_LITELLM_SSE_EMPTY");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let buffered = "";
+  let dataLines: string[] = [];
+  try {
+    while (true) {
+      const item = await reader.read();
+      if (item.done) break;
+      state.totalBytes += item.value.byteLength;
+      if (state.totalBytes > 16 * 1024 * 1024) throw new Error("MODEL_GATEWAY_LITELLM_SSE_TOO_LARGE");
+      state.hash.update(item.value);
+      buffered += decoder.decode(item.value, { stream: true });
+      if (Buffer.byteLength(buffered, "utf8") > 1024 * 1024) {
+        throw new Error("MODEL_GATEWAY_LITELLM_SSE_EVENT_TOO_LARGE");
+      }
+      while (true) {
+        const newline = buffered.indexOf("\n");
+        if (newline < 0) break;
+        let line = buffered.slice(0, newline);
+        buffered = buffered.slice(newline + 1);
+        if (line.endsWith("\r")) line = line.slice(0, -1);
+        if (line.length === 0) {
+          if (dataLines.length > 0) {
+            const data = dataLines.join("\n");
+            dataLines = [];
+            yield data;
+          }
+        } else if (line.startsWith("data:")) {
+          const data = line.slice(5);
+          dataLines.push(data.startsWith(" ") ? data.slice(1) : data);
+        } else if (!line.startsWith(":")) {
+          const field = line.split(":", 1)[0];
+          if (field !== "event" && field !== "id" && field !== "retry") {
+            throw new Error("MODEL_GATEWAY_LITELLM_SSE_FIELD_INVALID");
+          }
+        }
+      }
+    }
+    buffered += decoder.decode();
+    if (buffered.length > 0) {
+      const line = buffered.endsWith("\r") ? buffered.slice(0, -1) : buffered;
+      if (line.startsWith("data:")) {
+        const data = line.slice(5);
+        dataLines.push(data.startsWith(" ") ? data.slice(1) : data);
+      } else if (line.length > 0) throw new Error("MODEL_GATEWAY_LITELLM_SSE_TRUNCATED");
+    }
+    if (dataLines.length > 0) yield dataLines.join("\n");
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function splitUtf8(value: string, maximumBytes: number): string[] {
+  if (value.length === 0) return [];
+  const result: string[] = [];
+  let current = "";
+  let currentBytes = 0;
+  for (const character of value) {
+    const bytes = Buffer.byteLength(character, "utf8");
+    if (currentBytes + bytes > maximumBytes) {
+      result.push(current);
+      current = "";
+      currentBytes = 0;
+    }
+    current += character;
+    currentBytes += bytes;
+  }
+  if (current.length > 0) result.push(current);
+  return result;
 }
 
 function providerMessage(message: ModelGatewayRequest["messages"][number]): Readonly<Record<string, unknown>> {
@@ -324,30 +568,6 @@ function validateToolCall(call: ModelGatewayRequest["messages"][number]["toolCal
     throw new Error("MODEL_GATEWAY_CHAT_REQUEST_INVALID");
   }
   canonicalJson(call.arguments);
-}
-
-function parseToolCalls(value: unknown): readonly ModelGatewayJsonValue[] | null {
-  if (value === undefined) return Object.freeze([]);
-  if (!Array.isArray(value) || value.length > 128) return null;
-  const seen = new Set<string>();
-  const calls: ModelGatewayJsonValue[] = [];
-  for (const raw of value) {
-    if (!record(raw) || raw.type !== "function" || !safeReference(raw.id) || seen.has(raw.id) ||
-        !record(raw.function) || !safeToolName(raw.function.name) ||
-        typeof raw.function.arguments !== "string" ||
-        Buffer.byteLength(raw.function.arguments, "utf8") > 1024 * 1024) return null;
-    let argumentsValue: unknown;
-    try { argumentsValue = JSON.parse(raw.function.arguments); } catch { return null; }
-    if (!jsonRecord(argumentsValue)) return null;
-    const argumentsJson = canonicalJson(argumentsValue);
-    calls.push(Object.freeze({
-      id: raw.id,
-      type: "function",
-      function: Object.freeze({ name: raw.function.name, arguments: argumentsJson }),
-    }));
-    seen.add(raw.id);
-  }
-  return Object.freeze(calls);
 }
 
 function canonicalJson(value: ModelGatewayJsonValue): string {

@@ -28,7 +28,10 @@ export type ModelGatewayRequestListener = (
 export interface ModelGatewayProductionComposition {
   readonly handler: ModelGatewayRequestListener;
   createServer(listener: ModelGatewayRequestListener): Http2SecureServer;
+  startBackground(): void;
   abortInFlight(reason: string): void;
+  shutdownProviderEffects(deadlineMs: number): Promise<void>;
+  activeProviderEffectCount(): number;
   inFlightCount(): number;
 }
 
@@ -78,9 +81,19 @@ export async function createModelGatewayProductionComposition(input: Readonly<{
   const application = new ModelGatewayService({
     unitOfWork: input.database,
     repository,
+    streamingRepository: repository,
     provider,
     usageOwner,
     dispatchRecoveryAfterMs: Math.max(60_000, providerTimeoutMs * 2),
+    providerHardTimeoutMs: Math.max(60_000, providerTimeoutMs),
+    maximumActive: boundedInteger(
+      environment.PLATFORM_MODEL_GATEWAY_MAXIMUM_ACTIVE ?? "64", 1, 10_000,
+      "PLATFORM_MODEL_GATEWAY_MAXIMUM_ACTIVE_INVALID",
+    ),
+    maximumQueued: boundedInteger(
+      environment.PLATFORM_MODEL_GATEWAY_MAXIMUM_QUEUED ?? "256", 1, 100_000,
+      "PLATFORM_MODEL_GATEWAY_MAXIMUM_QUEUED_INVALID",
+    ),
   });
   const callers = new AsyncLocalStorage<Peer>();
   const service = createModelGatewayConnectService({
@@ -129,9 +142,12 @@ export async function createModelGatewayProductionComposition(input: Readonly<{
   return Object.freeze({
     handler,
     createServer: (listener: ModelGatewayRequestListener) => createSecureServer(tls, listener),
+    startBackground: () => application.start(),
     abortInFlight: (reason: string) => {
       for (const response of inFlight) response.destroy(new Error(reason));
     },
+    shutdownProviderEffects: (deadlineMs: number) => application.shutdown(deadlineMs),
+    activeProviderEffectCount: () => application.activeDispatchCount(),
     inFlightCount: () => inFlight.size,
   });
 }
