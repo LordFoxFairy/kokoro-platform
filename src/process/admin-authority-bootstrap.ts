@@ -3,17 +3,80 @@ import { lstat, open } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "pg";
+import { z } from "zod";
 import { loadPlatformDatabaseConfig } from "../infrastructure/postgres/client.js";
 import { digestAdminValue } from
   "../modules/admin-control/application/admin-digest.js";
 
-interface BootstrapDocument {
-  readonly version: 1;
-  readonly authorities: readonly Readonly<Record<string, unknown>>[];
-}
+const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/u);
+const uuid = z.string().regex(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u);
+const epoch = z.string().regex(/^[1-9][0-9]*$/u).refine((value) =>
+  BigInt(value) <= 9_223_372_036_854_775_807n);
+const permission = z.string().max(128).regex(/^[a-z][a-z0-9.-]*(?:\.\*)?$/u);
+const instant = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u)
+  .refine((value) => Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value)
+  .refine((value) => Date.parse(value) > Date.now());
+const boundedText = z.string().min(1).max(256).refine((value) => value === value.normalize("NFC") &&
+  ![...value].some((character) => {
+    const point = character.codePointAt(0) ?? 0;
+    return point < 32 || point === 127 || (point >= 0x202a && point <= 0x202e) ||
+      (point >= 0x2066 && point <= 0x2069);
+  }));
+const environmentOrRegion = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{1,63}$/u);
+const siteScope = z.object({
+  siteRef: identifier.refine((value) => value !== "*"),
+  environment: environmentOrRegion,
+  region: environmentOrRegion,
+  scopeEpoch: epoch,
+  expiresAt: instant,
+}).strict();
+const globalScope = z.object({
+  grantRef: uuid,
+  environment: environmentOrRegion,
+  region: environmentOrRegion,
+  scopeEpoch: epoch,
+  expiresAt: instant,
+}).strict();
+const identity = z.object({
+  identityRef: uuid,
+  issuer: z.string().min(8).max(512).refine(validIssuer),
+  subject: boundedText,
+}).strict();
+const authority = z.object({
+  operatorRef: identifier,
+  operatorGeneration: epoch,
+  permissions: z.array(permission).min(2).max(256).refine(unique)
+    .refine((values) => values.includes("admin.approval.execute") &&
+      values.includes("admin.authority.manage")),
+  operatorSecurityEpoch: epoch,
+  authorizationEpoch: epoch,
+  expiresAt: instant,
+  siteScopes: z.array(siteScope).max(256).refine((values) => uniqueBy(values, (value) =>
+    `${value.siteRef}\0${value.environment}\0${value.region}`)),
+  globalScopes: z.array(globalScope).min(1).max(256).refine((values) => uniqueBy(values,
+    (value) => value.grantRef)),
+  identities: z.array(identity).min(1).max(256).refine((values) =>
+    uniqueBy(values, (value) => value.identityRef) && uniqueBy(values, (value) =>
+      `${value.issuer}\0${value.subject}`)),
+}).strict();
+const bootstrapDocument = z.object({
+  version: z.literal(1),
+  authorities: z.array(authority).min(2).max(16),
+}).strict().superRefine((value, context) => {
+  const uniqueAuthorities = uniqueBy(value.authorities, (item) => item.operatorRef);
+  const scopes = value.authorities.flatMap((item) => item.globalScopes);
+  const identities = value.authorities.flatMap((item) => item.identities);
+  if (!uniqueAuthorities || !uniqueBy(scopes, (item) => item.grantRef) ||
+      !uniqueBy(identities, (item) => item.identityRef) ||
+      !uniqueBy(identities, (item) => `${item.issuer}\0${item.subject}`)) {
+    context.addIssue({ code: "custom", message: "duplicate bootstrap authority fact" });
+  }
+});
+
+type BootstrapDocument = z.infer<typeof bootstrapDocument>;
 
 export async function loadBootstrapDocument(path: string): Promise<Readonly<{
-  authorities: BootstrapDocument["authorities"];
+  authorities: Readonly<BootstrapDocument["authorities"]>;
   configurationDigest: string;
 }>> {
   if (!isAbsolute(path)) throw new Error("ADMIN_BOOTSTRAP_FILE_MUST_BE_ABSOLUTE");
@@ -34,23 +97,48 @@ export async function loadBootstrapDocument(path: string): Promise<Readonly<{
   } finally {
     await handle.close();
   }
-  const parsed = JSON.parse(raw) as unknown;
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
     throw new Error("ADMIN_BOOTSTRAP_DOCUMENT_INVALID");
   }
-  const root = parsed as Record<string, unknown>;
-  if (Object.keys(root).sort().join(",") !== "authorities,version" || root.version !== 1 ||
-      !Array.isArray(root.authorities) || root.authorities.length < 2 ||
-      root.authorities.length > 16 || root.authorities.some((value) =>
-        value === null || typeof value !== "object" || Array.isArray(value))) {
+  const result = bootstrapDocument.safeParse(parsed);
+  if (!result.success) {
     throw new Error("ADMIN_BOOTSTRAP_DOCUMENT_INVALID");
   }
-  const authorities = Object.freeze(root.authorities.map((value) =>
-    Object.freeze({ ...(value as Record<string, unknown>) })));
+  const authorities = deepFreeze(result.data.authorities);
   return Object.freeze({
     authorities,
     configurationDigest: digestAdminValue(authorities as never),
   });
+}
+
+function unique(values: readonly string[]): boolean {
+  return new Set(values).size === values.length;
+}
+
+function uniqueBy<Value>(values: readonly Value[], key: (value: Value) => string): boolean {
+  return new Set(values.map(key)).size === values.length;
+}
+
+function validIssuer(value: string): boolean {
+  if (value.trim() !== value) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.username === "" && url.password === "" &&
+      url.search === "" && url.hash === "";
+  } catch {
+    return false;
+  }
+}
+
+function deepFreeze<Value>(value: Value): Readonly<Value> {
+  if (value !== null && typeof value === "object") {
+    for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
+    Object.freeze(value);
+  }
+  return value;
 }
 
 export async function runAdminAuthorityBootstrap(

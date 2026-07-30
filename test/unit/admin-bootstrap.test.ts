@@ -33,6 +33,44 @@ describe("Admin authority offline bootstrap", () => {
     await chmod(path, 0o640);
     await expect(loadBootstrapDocument(path)).rejects.toThrow("ADMIN_BOOTSTRAP_FILE_UNSAFE");
   });
+
+  it.each([
+    ["unknown authority field", { unexpected: true }],
+    ["invalid permission", { permissions: ["admin.approval.execute", "admin.authority.manage", "bad\npermission"] }],
+    ["invalid nested Site scope", { siteScopes: [{ ...authority("maker").siteScopes[0], siteRef: "*" }] }],
+    ["invalid global grant", { globalScopes: [{ ...authority("maker").globalScopes[0], grantRef: "not-a-uuid" }] }],
+    ["invalid identity issuer", { identities: [{ ...authority("maker").identities[0], issuer: "http://issuer.example.test" }] }],
+  ])("rejects %s before opening the database", async (_label, change) => {
+    const directory = await mkdtemp(join(tmpdir(), "kokoro-admin-bootstrap-"));
+    directories.push(directory);
+    const path = join(directory, "bootstrap.json");
+    await writeFile(path, JSON.stringify({
+      version: 1,
+      authorities: [{ ...authority("maker"), ...change }, authority("checker")],
+    }));
+    await chmod(path, 0o600);
+
+    await expect(loadBootstrapDocument(path)).rejects.toThrow("ADMIN_BOOTSTRAP_DOCUMENT_INVALID");
+  });
+
+  it("rejects duplicate identities and grant references across governors", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "kokoro-admin-bootstrap-"));
+    directories.push(directory);
+    const path = join(directory, "bootstrap.json");
+    const maker = authority("maker");
+    const checker = authority("checker");
+    await writeFile(path, JSON.stringify({
+      version: 1,
+      authorities: [maker, {
+        ...checker,
+        globalScopes: maker.globalScopes,
+        identities: maker.identities,
+      }],
+    }));
+    await chmod(path, 0o600);
+
+    await expect(loadBootstrapDocument(path)).rejects.toThrow("ADMIN_BOOTSTRAP_DOCUMENT_INVALID");
+  });
 });
 
 function authority(operatorRef: string) {
