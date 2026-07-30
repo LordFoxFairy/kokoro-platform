@@ -38,6 +38,7 @@ export function createHubConnectProcess(input: Readonly<{
   const controller = new AbortController();
   const sessions = new Set<ConnectSession>();
   const sessionDrainWaiters = new Set<() => void>();
+  const sessionCloseListeners = new Map<ConnectSession, () => void>();
   let draining = false;
   let started = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -52,12 +53,14 @@ export function createHubConnectProcess(input: Readonly<{
       sessions.add(session);
       const closed = () => {
         sessions.delete(session);
+        sessionCloseListeners.delete(session);
         try { session.off("close", closed); } catch { sessionActionUnconfirmed = true; }
         if (sessions.size === 0) {
-          for (const resolveDrained of sessionDrainWaiters) resolveDrained();
+          for (const resolveDrained of [...sessionDrainWaiters]) resolveDrained();
           sessionDrainWaiters.clear();
         }
       };
+      sessionCloseListeners.set(session, closed);
       try {
         session.once("close", closed);
       } catch {
@@ -116,44 +119,54 @@ export function createHubConnectProcess(input: Readonly<{
 
   const performShutdown = async (): Promise<void> => {
     const shutdownStartedAt = Date.now();
-    draining = true;
-    controller.abort(new Error("HUB_SHUTDOWN"));
-    if (timer !== undefined) clearTimeout(timer);
-    for (const session of sessions) {
-      closeSession(session);
-    }
-
-    const services = Promise.allSettled([
-      closeServer(input.server),
-      closeServer(input.healthServer),
-      activeTick ?? Promise.resolve(),
-    ]);
-    const gracefulMs = Math.max(1, Math.floor(shutdownDeadlineMs * 0.6));
-    const gracefulOutcomes = await beforeDeadline(services, gracefulMs);
-    if (gracefulOutcomes === null || sessions.size > 0) {
-      forceDestroying = true;
+    let sessionDrainWaiter: ReturnType<typeof waitForSessionsToDrain> | undefined;
+    let shutdownUnconfirmed = true;
+    try {
+      draining = true;
+      controller.abort(new Error("HUB_SHUTDOWN"));
+      if (timer !== undefined) clearTimeout(timer);
       for (const session of sessions) {
-        destroySession(session, new Error("HUB_CONNECT_SHUTDOWN_DEADLINE"));
+        closeSession(session);
       }
-    }
-    const mongo = settle(Promise.resolve().then(input.closeMongo));
-    const completion = Promise.all([services, mongo, waitForSessionsToDrain()])
-      .then(([serviceOutcomes, mongoOutcome]) =>
-      [...serviceOutcomes, mongoOutcome]);
-    const remainingMs = Math.max(1, shutdownDeadlineMs - (Date.now() - shutdownStartedAt));
-    const outcomes = await beforeDeadline(completion, remainingMs);
 
-    if (
-      sessionActionUnconfirmed ||
-      sessions.size > 0 ||
-      outcomes === null ||
-      outcomes.some((outcome) => outcome.status === "rejected")
-    ) {
-      throw new Error("HUB_CONNECT_SHUTDOWN_UNCONFIRMED");
+      const services = Promise.allSettled([
+        closeServer(input.server),
+        closeServer(input.healthServer),
+        activeTick ?? Promise.resolve(),
+      ]);
+      const gracefulMs = Math.max(1, Math.floor(shutdownDeadlineMs * 0.6));
+      const gracefulOutcomes = await beforeDeadline(services, gracefulMs);
+      if (gracefulOutcomes === null || sessions.size > 0) {
+        forceDestroying = true;
+        for (const session of sessions) {
+          destroySession(session, new Error("HUB_CONNECT_SHUTDOWN_DEADLINE"));
+        }
+      }
+      const mongo = settle(Promise.resolve().then(input.closeMongo));
+      sessionDrainWaiter = waitForSessionsToDrain();
+      const completion = Promise.all([services, mongo, sessionDrainWaiter.promise])
+        .then(([serviceOutcomes, mongoOutcome]) =>
+        [...serviceOutcomes, mongoOutcome]);
+      const remainingMs = Math.max(1, shutdownDeadlineMs - (Date.now() - shutdownStartedAt));
+      const outcomes = await beforeDeadline(completion, remainingMs);
+
+      shutdownUnconfirmed = sessionActionUnconfirmed || sessions.size > 0 || outcomes === null ||
+        outcomes.some((outcome) => outcome.status === "rejected");
+    } finally {
+      const sessionStateUnconfirmedBeforeCleanup = sessionActionUnconfirmed || sessions.size > 0;
+      sessionDrainWaiter?.cancel();
+      removeListener(input.server, "session", trackSession as (...arguments_: unknown[]) => void);
+      removeListener(input.server, "error", fatal as (...arguments_: unknown[]) => void);
+      removeListener(input.healthServer, "error", fatal as (...arguments_: unknown[]) => void);
+      for (const [session, closed] of sessionCloseListeners) {
+        try { session.off("close", closed); } catch { sessionActionUnconfirmed = true; }
+      }
+      sessionCloseListeners.clear();
+      sessionDrainWaiters.clear();
+      sessions.clear();
+      shutdownUnconfirmed ||= sessionStateUnconfirmedBeforeCleanup || sessionActionUnconfirmed;
     }
-    input.server.off("session", trackSession as (...arguments_: unknown[]) => void);
-    input.server.off("error", fatal as (...arguments_: unknown[]) => void);
-    input.healthServer.off("error", fatal as (...arguments_: unknown[]) => void);
+    if (shutdownUnconfirmed) throw new Error("HUB_CONNECT_SHUTDOWN_UNCONFIRMED");
   };
 
   function closeSession(session: ConnectSession): "close_requested" | "destroyed" | "failed" {
@@ -175,9 +188,21 @@ export function createHubConnectProcess(input: Readonly<{
     }
   }
 
-  function waitForSessionsToDrain(): Promise<void> {
-    if (sessions.size === 0) return Promise.resolve();
-    return new Promise((resolveDrained) => sessionDrainWaiters.add(resolveDrained));
+  function waitForSessionsToDrain(): Readonly<{ promise: Promise<void>; cancel: () => void }> {
+    if (sessions.size === 0) return { promise: Promise.resolve(), cancel: () => undefined };
+    let finish = () => undefined;
+    const promise = new Promise<void>((resolveDrained) => {
+      finish = () => {
+        if (sessionDrainWaiters.delete(finish)) resolveDrained();
+      };
+      sessionDrainWaiters.add(finish);
+    });
+    return { promise, cancel: finish };
+  }
+
+  function removeListener(server: EventServer, event: string,
+    listener: (...arguments_: unknown[]) => void): void {
+    try { server.off(event, listener); } catch { sessionActionUnconfirmed = true; }
   }
 
   return Object.freeze({ start, shutdown, isDraining: () => draining });

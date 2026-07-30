@@ -93,6 +93,7 @@ describe("Hub Connect process lifecycle", () => {
   it("continues the full cleanup stack when both session close and destroy throw", async () => {
     const server = new FakeServer();
     const healthServer = new FakeServer();
+    const listenerBaseline = listenerCounts(server, healthServer);
     const closeMongo = vi.fn().mockResolvedValue(undefined);
     const session = new FakeSession(false, { closeThrows: true, destroyThrows: true });
     const process = createHubConnectProcess({
@@ -114,6 +115,43 @@ describe("Hub Connect process lifecycle", () => {
     expect(server.close).toHaveBeenCalledOnce();
     expect(healthServer.close).toHaveBeenCalledOnce();
     expect(closeMongo).toHaveBeenCalledOnce();
+    expect(session.listenerCount("close")).toBe(0);
+    expect(listenerCounts(server, healthServer)).toEqual(listenerBaseline);
+
+    const lateSession = new FakeSession(false);
+    server.emit("session", lateSession);
+    expect(lateSession.close).not.toHaveBeenCalled();
+    expect(lateSession.destroy).not.toHaveBeenCalled();
+  });
+
+  it("removes every waiter and listener when destroy never confirms session close", async () => {
+    const server = new FakeServer();
+    const healthServer = new FakeServer();
+    const listenerBaseline = listenerCounts(server, healthServer);
+    const session = new FakeSession(false, { destroyEmitsClose: false });
+    const process = createHubConnectProcess({
+      server,
+      healthServer,
+      worker: { tick: vi.fn().mockResolvedValue("idle") },
+      closeMongo: vi.fn().mockResolvedValue(undefined),
+      port: 4252,
+      healthPort: 4253,
+      shutdownDeadlineMs: 25,
+    });
+    await process.start();
+    server.emit("session", session);
+
+    await expect(process.shutdown()).rejects.toThrowError("HUB_CONNECT_SHUTDOWN_UNCONFIRMED");
+
+    expect(session.close).toHaveBeenCalledOnce();
+    expect(session.destroy).toHaveBeenCalledOnce();
+    expect(session.listenerCount("close")).toBe(0);
+    expect(listenerCounts(server, healthServer)).toEqual(listenerBaseline);
+
+    const lateSession = new FakeSession(false);
+    server.emit("session", lateSession);
+    expect(lateSession.close).not.toHaveBeenCalled();
+    expect(lateSession.destroy).not.toHaveBeenCalled();
   });
 
   it("marks readiness draining and sends GOAWAY before closing dependencies", async () => {
@@ -202,7 +240,7 @@ class FakeSession extends EventEmitter {
   });
   readonly destroy = vi.fn(() => {
     if (this.behavior.destroyThrows) throw new Error("session destroy failed");
-    this.emit("close");
+    if (this.behavior.destroyEmitsClose !== false) this.emit("close");
   });
 
   constructor(
@@ -210,6 +248,7 @@ class FakeSession extends EventEmitter {
     private readonly behavior: Readonly<{
       closeThrows?: boolean;
       destroyThrows?: boolean;
+      destroyEmitsClose?: boolean;
     }> = {},
   ) {
     super();
@@ -236,4 +275,12 @@ class FakeServer extends EventEmitter {
   }> = {}) {
     super();
   }
+}
+
+function listenerCounts(server: FakeServer, healthServer: FakeServer) {
+  return {
+    serverSession: server.listenerCount("session"),
+    serverError: server.listenerCount("error"),
+    healthError: healthServer.listenerCount("error"),
+  };
 }
