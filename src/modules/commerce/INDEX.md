@@ -11,7 +11,8 @@ Platform through HTTP/RPC and never exposes a Prisma client to application code.
   fence at the BillingAccount node in the shared lock DAG.
 - Fulfillment transaction, frozen expected output lines, actual output occurrences, generic outbox links, and append-only audit entries
   commit in one `PlatformUnitOfWork`.
-- `FulfillmentService` is the only issuance orchestrator. Redemption and future Payment settlement are acquisition adapters: they
+- `FulfillmentService` plus the source-neutral `PostgresFulfillmentIssuer` are the only issuance authority. Redemption and Payment
+  settlement are acquisition adapters: they
   submit a Site-scoped source identity plus immutable product/plan/offering/program/output-plan/acquisition snapshots. The service
   derives the sole SHA-256 idempotency fence from Site + source type + source ref + purpose + cycle and replays the stored receipt
   without issuing SubscriptionTerms, EntitlementGrants, or CreditGrants again. Payment sources additionally require a frozen pricing
