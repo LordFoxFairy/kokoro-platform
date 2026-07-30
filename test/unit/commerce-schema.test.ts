@@ -64,6 +64,21 @@ describe("Wave 2A Commerce authority schema", () => {
     expect(migration).toContain("commerce_code_secret_export_immutable");
   });
 
+  it("serializes catalog publication through one monotonic committed epoch authority", () => {
+    expect(migration).toContain("CREATE TABLE platform.commerce_catalog_epoch_authority (");
+    expect(migration).toContain("current_epoch BIGINT NOT NULL CHECK(current_epoch >= 0)");
+    expect(migration).toContain("CHECK(singleton)");
+    const epochColumns = migration.match(/catalog_epoch BIGINT NOT NULL CHECK\(catalog_epoch > 0\)/gu) ?? [];
+    expect(epochColumns).toHaveLength(7);
+    expect(migration).toContain("INSERT INTO platform.commerce_catalog_epoch_authority(singleton,current_epoch)");
+    for (const index of ["commerce_credit_program_catalog_page_idx",
+      "commerce_entitlement_template_catalog_page_idx", "commerce_product_version_catalog_page_idx",
+      "commerce_redemption_program_catalog_page_idx", "commerce_code_batch_catalog_page_idx"]) {
+      expect(migration).toContain(`CREATE INDEX ${index}`);
+    }
+    expect(migrator).toContain("GRANT UPDATE ON TABLE platform.commerce_catalog_epoch_authority");
+  });
+
   it("forces default-deny Site RLS across all fresh Commerce and Credit authority tables", () => {
     expect(migration).toContain("ALTER TABLE platform.%I FORCE ROW LEVEL SECURITY");
     expect(migration).toContain("CREATE POLICY site_isolation");

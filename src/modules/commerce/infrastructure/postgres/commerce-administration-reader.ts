@@ -45,7 +45,7 @@ export type EntitlementTemplateRevisionRecord = Readonly<{
 }>;
 
 export interface CommerceAdministrationReader {
-  captureWatermark(permit: AdminQueryPermit): Promise<string>;
+  observeCatalog(permit: AdminQueryPermit): Promise<Readonly<{ watermark: string; observedAt: string }>>;
   getCreditProgramRevision(permit: AdminQueryPermit, siteId: string,
     revisionRef: string): Promise<CreditProgramRevisionRecord | null>;
   listCreditProgramRevisions(permit: AdminQueryPermit,
@@ -98,14 +98,18 @@ interface EntitlementTemplateRow extends Record<string, unknown> {
 export class PostgresCommerceAdministrationReader implements CommerceAdministrationReader {
   constructor(private readonly host: AdminQueryTransactionHost) {}
 
-  captureWatermark(permit: AdminQueryPermit) {
+  observeCatalog(permit: AdminQueryPermit) {
     return this.host.adminQueryTransaction(permit, async (ownerTransaction) => {
       const rows = await resolvePlatformTransaction(ownerTransaction).query<Record<string, unknown> & {
-        watermark: Date | string;
-      }>(`SELECT transaction_timestamp() AS watermark`);
-      const value = rows[0]?.watermark; const timestamp = new Date(value ?? Number.NaN);
-      if (!Number.isFinite(timestamp.getTime())) throw new Error("COMMERCE_ADMIN_WATERMARK_UNAVAILABLE");
-      return timestamp.toISOString();
+        watermark: bigint | string; observedAt: Date | string;
+      }>(`SELECT current_epoch::text AS watermark,clock_timestamp() AS "observedAt"
+          FROM platform.commerce_catalog_epoch_authority WHERE singleton=TRUE`);
+      const row = rows[0]; const watermark = row?.watermark?.toString() ?? "";
+      const observedAt = new Date(row?.observedAt ?? Number.NaN);
+      if (rows.length !== 1 || !validCatalogEpoch(watermark) || !Number.isFinite(observedAt.getTime())) {
+        throw new Error("COMMERCE_ADMIN_WATERMARK_UNAVAILABLE");
+      }
+      return Object.freeze({ watermark, observedAt: observedAt.toISOString() });
     });
   }
 
@@ -121,11 +125,11 @@ export class PostgresCommerceAdministrationReader implements CommerceAdministrat
   }
 
   listCreditProgramRevisions(permit: AdminQueryPermit, input: Page) {
-    requireSite(permit, input.siteId);
+    requireSite(permit, input.siteId); requirePage(input);
     return this.host.adminQueryTransaction(permit, async (ownerTransaction) => {
       const rows = await resolvePlatformTransaction(ownerTransaction).query<CreditProgramRow>(
         `${creditProgramProjection()} WHERE revision.site_ref=$1 AND revision.credit_program_revision_ref>$2
-           AND revision.published_at<=$3::timestamptz
+           AND revision.catalog_epoch<=$3::bigint
          ORDER BY revision.credit_program_revision_ref ASC LIMIT $4`,
         [input.siteId, input.afterRef ?? "", input.watermark, input.limit],
       );
@@ -145,11 +149,11 @@ export class PostgresCommerceAdministrationReader implements CommerceAdministrat
   }
 
   listEntitlementTemplateRevisions(permit: AdminQueryPermit, input: Page) {
-    requireSite(permit, input.siteId);
+    requireSite(permit, input.siteId); requirePage(input);
     return this.host.adminQueryTransaction(permit, async (ownerTransaction) => {
       const rows = await resolvePlatformTransaction(ownerTransaction).query<EntitlementTemplateRow>(
         `${entitlementTemplateProjection()} WHERE revision.site_ref=$1 AND revision.entitlement_template_revision_ref>$2
-           AND revision.published_at<=$3::timestamptz
+           AND revision.catalog_epoch<=$3::bigint
          ORDER BY revision.entitlement_template_revision_ref ASC LIMIT $4`,
         [input.siteId, input.afterRef ?? "", input.watermark, input.limit],
       );
@@ -169,11 +173,11 @@ export class PostgresCommerceAdministrationReader implements CommerceAdministrat
   }
 
   listOffers(permit: AdminQueryPermit, input: Page) {
-    requireSite(permit, input.siteId);
+    requireSite(permit, input.siteId); requirePage(input);
     return this.host.adminQueryTransaction(permit, async (ownerTransaction) => {
       const rows = await resolvePlatformTransaction(ownerTransaction).query<OfferRow>(
         `${offerProjection()} WHERE version.site_ref=$1 AND version.product_version_ref>$2
-           AND version.published_at<=$3::timestamptz
+           AND version.catalog_epoch<=$3::bigint
          ORDER BY version.product_version_ref ASC LIMIT $4`,
         [input.siteId, input.afterRef ?? "", input.watermark, input.limit],
       );
@@ -193,11 +197,11 @@ export class PostgresCommerceAdministrationReader implements CommerceAdministrat
   }
 
   listRedemptionPrograms(permit: AdminQueryPermit, input: Page) {
-    requireSite(permit, input.siteId);
+    requireSite(permit, input.siteId); requirePage(input);
     return this.host.adminQueryTransaction(permit, async (ownerTransaction) => {
       const rows = await resolvePlatformTransaction(ownerTransaction).query<ProgramRow>(
         `${programProjection()} WHERE revision.site_ref=$1 AND revision.redemption_program_revision_ref>$2
-           AND revision.published_at<=$3::timestamptz
+           AND revision.catalog_epoch<=$3::bigint
          ORDER BY revision.redemption_program_revision_ref ASC LIMIT $4`,
         [input.siteId, input.afterRef ?? "", input.watermark, input.limit],
       );
@@ -217,11 +221,11 @@ export class PostgresCommerceAdministrationReader implements CommerceAdministrat
   }
 
   listCodeBatches(permit: AdminQueryPermit, input: Page) {
-    requireSite(permit, input.siteId);
+    requireSite(permit, input.siteId); requirePage(input);
     return this.host.adminQueryTransaction(permit, async (ownerTransaction) => {
       const rows = await resolvePlatformTransaction(ownerTransaction).query<BatchRow>(
         `${batchProjection()} WHERE batch.site_ref=$1 AND batch.batch_ref>$2::uuid
-           AND batch.created_at<=$3::timestamptz ORDER BY batch.batch_ref ASC LIMIT $4`,
+           AND batch.catalog_epoch<=$3::bigint ORDER BY batch.batch_ref ASC LIMIT $4`,
         [input.siteId, input.afterRef ?? "00000000-0000-0000-0000-000000000000", input.watermark, input.limit],
       );
       return Object.freeze(rows.map(batch));
@@ -299,6 +303,14 @@ function requireSite(permit: AdminQueryPermit, siteId: string): void {
   const allowed = permit.scope.kind === "global" ? null : permit.scope.kind === "site"
     ? permit.scope.siteRefs : permit.scope.resourceRefs;
   if (allowed !== null && !allowed.includes(siteId)) throw new Error("ADMIN_SITE_SCOPE_DENIED");
+}
+function validCatalogEpoch(value: string): boolean {
+  return /^(?:0|[1-9][0-9]*)$/u.test(value) && BigInt(value) <= 9_223_372_036_854_775_807n;
+}
+function requirePage(input: Page): void {
+  if (!validCatalogEpoch(input.watermark) || !Number.isInteger(input.limit) || input.limit < 1 || input.limit > 201) {
+    throw new Error("COMMERCE_ADMIN_PAGE_INVALID");
+  }
 }
 function creditProgram(row: CreditProgramRow): CreditProgramRevisionRecord {
   const buckets = ["daily", "period", "permanent"] as const;

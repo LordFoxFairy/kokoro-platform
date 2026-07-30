@@ -357,24 +357,28 @@ function receipt(context: AuthenticatedOperatorCommandContext, operation: string
 }
 
 type ResolvedPage = Readonly<{ permit: AdminQueryPermit; limit: number; after: string | null;
-  watermark: string; binding: string }>;
+  watermark: string; observedAt: string; binding: string }>;
 async function pageInput(input: Parameters<typeof createAdminCommerceConnectService>[0],
   context: AuthenticatedOperatorQueryContext, transport: HandlerContext,
   operation: AdminQueryPermit["operation"], siteId: string, token: string | undefined,
   requestedSize: number, kind: string, _now?: () => Date): Promise<ResolvedPage> {
   const limit = pageSize(requestedSize); const cursor = token === undefined ? null : input.cursors.decode(token);
   if (cursor !== null && (cursor.kind !== kind || Object.keys(cursor).sort().join(",") !==
-      "after,binding,kind,watermark")) throw new Error("ADMIN_PAGE_TOKEN_INVALID");
+      "after,binding,kind,watermark" || typeof cursor.watermark !== "string" ||
+      !catalogEpoch(cursor.watermark))) throw new Error("ADMIN_PAGE_TOKEN_INVALID");
   const permit = await query(input.resolver, context, transport, operation, siteId, [siteId]);
   const binding = scopedBinding(permit, siteId);
   if (cursor !== null && cursor.binding !== binding) throw new Error("ADMIN_PAGE_TOKEN_INVALID");
-  const watermark = cursor?.watermark ?? await input.reader.captureWatermark(permit);
-  return Object.freeze({ permit, limit, after: cursor?.after ?? null, watermark, binding });
+  const observation = await input.reader.observeCatalog(permit);
+  const watermark = cursor?.watermark ?? observation.watermark;
+  return Object.freeze({ permit, limit, after: cursor?.after ?? null, watermark,
+    observedAt: observation.observedAt, binding });
 }
 function pageResult<Row, Message>(rows: readonly Row[], page: ResolvedPage, cursors: AdminPageCursorCodec,
   kind: string, reference: (row: Row) => string, map: (row: Row) => Message, field: string) {
   const visible = rows.slice(0, page.limit); const last = visible.at(-1);
-  return { [field]: visible.map(map), ...(rows.length > page.limit && last !== undefined
+  return { [field]: visible.map(map), observedAt: timestampFromDate(new Date(page.observedAt)),
+    ...(rows.length > page.limit && last !== undefined
     ? { nextPageToken: cursors.encode({ kind, after: reference(last), watermark: page.watermark,
         binding: page.binding }) } : {}) };
 }
@@ -518,6 +522,9 @@ function commandContext(value: AuthenticatedOperatorCommandContext | undefined):
 }
 function required<Value>(value: Value | undefined, code: string): Value { if (value === undefined) throw new Error(code); return value; }
 function pageSize(value: number): number { if (value === 0) return 50; if (!Number.isInteger(value) || value < 1 || value > 200) throw new Error("ADMIN_PAGE_SIZE_INVALID"); return value; }
+function catalogEpoch(value: string): boolean {
+  return /^(?:0|[1-9][0-9]*)$/u.test(value) && BigInt(value) <= 9_223_372_036_854_775_807n;
+}
 function optionalTimestamp(value: Readonly<{ seconds: bigint; nanos: number }> | undefined): string | null {
   return value === undefined ? null : new Date(Number(value.seconds) * 1000 + Math.floor(value.nanos / 1_000_000)).toISOString();
 }

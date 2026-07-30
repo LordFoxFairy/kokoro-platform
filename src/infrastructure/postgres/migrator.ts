@@ -858,7 +858,7 @@ async function grantFoundationPrivileges(
         `GRANT INSERT ON TABLE platform.commerce_command, platform.commerce_catalog_product, platform.commerce_catalog_plan, platform.commerce_catalog_plan_version, platform.commerce_fulfillment_program_revision, platform.commerce_fulfillment_program_output, platform.commerce_catalog_product_version, platform.commerce_redemption_program_revision, platform.commerce_redemption_program_availability, platform.commerce_code_batch, platform.commerce_redeem_code, platform.commerce_code_batch_approval, platform.commerce_code_secret_export, platform.commerce_audit_entry TO ${identifier}`,
       );
       await client.query(
-        `GRANT UPDATE ON TABLE platform.commerce_catalog_product, platform.commerce_catalog_plan, platform.commerce_code_batch, platform.commerce_redemption_program_availability TO ${identifier}`,
+        `GRANT UPDATE ON TABLE platform.commerce_catalog_epoch_authority, platform.commerce_catalog_product, platform.commerce_catalog_plan, platform.commerce_code_batch, platform.commerce_redemption_program_availability TO ${identifier}`,
       );
       await client.query(
         `GRANT EXECUTE ON FUNCTION platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT), platform.load_model_option_inventory(TEXT), platform.load_model_option_revisions(TEXT[]), platform.materialize_model_options(UUID, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT), platform.publish_site_release_model_catalog(UUID, JSONB, TEXT) TO ${identifier}`,
@@ -902,6 +902,7 @@ const AUTHORIZATION_TABLES = [
 
 const COMMERCE_TABLES = [
   "platform.commerce_command",
+  "platform.commerce_catalog_epoch_authority",
   "platform.commerce_billing_account",
   "platform.commerce_billing_account_membership",
   "platform.commerce_catalog_product",

@@ -189,8 +189,8 @@ describe("AdminCommerce catalog primitive Connect provider", () => {
     expect(error).toMatchObject({ code: Code.AlreadyExists, rawMessage: "command identity conflict" });
   });
 
-  it("uses a database-issued watermark and round-trips the full signed cursor", async () => {
-    const captureWatermark = vi.fn(async () => "2026-07-30T02:00:00.000Z");
+  it("uses a database-issued epoch snapshot and reports the separately observed database time", async () => {
+    const observeCatalog = vi.fn(async () => ({ watermark: "41", observedAt: "2026-07-30T02:00:00.000Z" }));
     const listCreditProgramRevisions = vi.fn(async () => []);
     const cursors = new HmacAdminPageCursorCodec(Buffer.alloc(32, 7));
     const service = createAdminCommerceConnectService({
@@ -198,22 +198,23 @@ describe("AdminCommerce catalog primitive Connect provider", () => {
         region: "us-east-1", operation: "commerce.credit-program.read",
         scope: { kind: "site", siteRefs: ["site-1"] } }) } as never,
       owner: {} as never,
-      reader: { captureWatermark, listCreditProgramRevisions } as never,
+      reader: { observeCatalog, listCreditProgramRevisions } as never,
       cursors,
       clock: () => new Date("2099-01-01T00:00:00.000Z"),
     });
     await expect(service.listCreditProgramRevisions({ context: {},
       siteId: "site-1", pageSize: 200 } as never, transport))
-      .resolves.toEqual({ creditProgramRevisions: [] });
-    expect(captureWatermark).toHaveBeenCalledOnce();
+      .resolves.toEqual({ creditProgramRevisions: [],
+        observedAt: timestampFromDate(new Date("2026-07-30T02:00:00.000Z")) });
+    expect(observeCatalog).toHaveBeenCalledOnce();
     expect(listCreditProgramRevisions).toHaveBeenCalledWith(expect.anything(), {
-      siteId: "site-1", afterRef: null, watermark: "2026-07-30T02:00:00.000Z", limit: 201,
+      siteId: "site-1", afterRef: null, watermark: "41", limit: 201,
     });
     const token = cursors.encode({ kind: "credit-program-revisions", after: "x".repeat(256),
-      watermark: "2026-07-30T02:00:00.000Z", binding: "b".repeat(64) });
+      watermark: "41", binding: "b".repeat(64) });
     expect(token.length).toBeLessThanOrEqual(1024);
     expect(cursors.decode(token)).toEqual({ kind: "credit-program-revisions", after: "x".repeat(256),
-      watermark: "2026-07-30T02:00:00.000Z", binding: "b".repeat(64) });
+      watermark: "41", binding: "b".repeat(64) });
   });
 });
 

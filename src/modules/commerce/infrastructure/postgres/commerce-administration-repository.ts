@@ -13,19 +13,20 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
   ) {
     const prior = await replayedReceipt(this.receipts, transaction, input.command);
     if (prior !== null) return adminOutcome("replayed", prior, creditProgramResult(prior));
-    const sql = resolvePlatformTransaction(transaction); const occurredAt = await databaseNow(transaction);
+    const sql = resolvePlatformTransaction(transaction); const catalogEpoch = await allocateCatalogEpoch(sql);
+    const occurredAt = await databaseNow(transaction);
     await command(sql, input, occurredAt);
     await exactlyOne(sql.execute(
       `INSERT INTO platform.commerce_credit_program_revision
        (credit_program_revision_ref,site_ref,program_ref,revision,ux_bucket_class,unit,amount,
         burn_priority,scope_policy,liability_merchant_account_ref,window_kind,rollover_policy,
-        calendar_zone,window_anchor,expires_after_seconds,revision_digest,published_at)
-       VALUES ($1,$2,$3,$4::bigint,$5,$6,$7::numeric,$8,$9::jsonb,$10,$11,$12,$13,$14,$15::bigint,$16,$17::timestamptz)`,
+        calendar_zone,window_anchor,expires_after_seconds,revision_digest,catalog_epoch,published_at)
+       VALUES ($1,$2,$3,$4::bigint,$5,$6,$7::numeric,$8,$9::jsonb,$10,$11,$12,$13,$14,$15::bigint,$16,$17::bigint,$18::timestamptz)`,
       [input.creditProgramRevisionRef, input.siteId, input.programRef, input.revision,
         input.uxBucketClass, input.unit, input.amount, input.burnPriority,
         JSON.stringify(input.scopePolicy), input.liabilityMerchantAccountRef, input.windowKind,
         input.rolloverPolicy, input.calendarZone, input.windowAnchor, input.expiresAfterSeconds,
-        input.revisionDigest, occurredAt],
+        input.revisionDigest, catalogEpoch, occurredAt],
     ), "COMMERCE_CREDIT_PROGRAM_PERSIST_FAILED");
     await audit(sql, input, "commerce.credit_program.published", input.revisionDigest, occurredAt);
     const receipt = await complete(this.receipts, transaction, input.command, {
@@ -41,15 +42,17 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
   ) {
     const prior = await replayedReceipt(this.receipts, transaction, input.command);
     if (prior !== null) return adminOutcome("replayed", prior, entitlementTemplateResult(prior));
-    const sql = resolvePlatformTransaction(transaction); const occurredAt = await databaseNow(transaction);
+    const sql = resolvePlatformTransaction(transaction); const catalogEpoch = await allocateCatalogEpoch(sql);
+    const occurredAt = await databaseNow(transaction);
     await command(sql, input, occurredAt);
     await exactlyOne(sql.execute(
       `INSERT INTO platform.commerce_entitlement_template_revision
        (entitlement_template_revision_ref,site_ref,template_ref,revision,capability_key,safe_label,
-        expires_after_seconds,revision_digest,published_at)
-       VALUES ($1,$2,$3,$4::bigint,$5,$6,$7::bigint,$8,$9::timestamptz)`,
+        expires_after_seconds,revision_digest,catalog_epoch,published_at)
+       VALUES ($1,$2,$3,$4::bigint,$5,$6,$7::bigint,$8,$9::bigint,$10::timestamptz)`,
       [input.entitlementTemplateRevisionRef, input.siteId, input.templateRef, input.revision,
-        input.capabilityKey, input.safeLabel, input.expiresAfterSeconds, input.revisionDigest, occurredAt],
+        input.capabilityKey, input.safeLabel, input.expiresAfterSeconds, input.revisionDigest,
+        catalogEpoch, occurredAt],
     ), "COMMERCE_ENTITLEMENT_TEMPLATE_PERSIST_FAILED");
     await audit(sql, input, "commerce.entitlement_template.published", input.revisionDigest, occurredAt);
     const receipt = await complete(this.receipts, transaction, input.command, {
@@ -62,7 +65,8 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
   async publishOffer(transaction: Parameters<CommerceAdministrationRepository["publishOffer"]>[0], input: Parameters<CommerceAdministrationRepository["publishOffer"]>[1]) {
     const prior = await replayedReceipt(this.receipts, transaction, input.command);
     if (prior !== null) return adminOutcome("replayed", prior, offerResult(prior));
-    const sql = resolvePlatformTransaction(transaction); const occurredAt = await databaseNow(transaction);
+    const sql = resolvePlatformTransaction(transaction); const catalogEpoch = await allocateCatalogEpoch(sql);
+    const occurredAt = await databaseNow(transaction);
     await command(sql, input, occurredAt);
     await exactlyOne(sql.execute(
       `INSERT INTO platform.commerce_catalog_product(site_ref,product_ref,kind,state,created_at,updated_at)
@@ -82,20 +86,20 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
       await exactlyOne(sql.execute(
         `INSERT INTO platform.commerce_catalog_plan_version
          (plan_version_ref,site_ref,plan_ref,revision,safe_label,term_action,term_seconds,
-          stacking_scope,revision_digest,published_at)
-         VALUES ($1,$2,$3,$4::bigint,$5,$6,$7::bigint,$8,$9,$10::timestamptz)`,
+          stacking_scope,revision_digest,catalog_epoch,published_at)
+         VALUES ($1,$2,$3,$4::bigint,$5,$6,$7::bigint,$8,$9,$10::bigint,$11::timestamptz)`,
         [input.planVersion.planVersionRef, input.siteId, input.planVersion.planRef,
           input.planVersion.revision, input.planVersion.safeLabel, input.planVersion.termAction,
           input.planVersion.termSeconds, input.planVersion.stackingScope,
-          input.planVersion.revisionDigest, occurredAt],
+          input.planVersion.revisionDigest, catalogEpoch, occurredAt],
       ), "COMMERCE_PLAN_VERSION_PERSIST_FAILED");
     }
     await exactlyOne(sql.execute(
       `INSERT INTO platform.commerce_fulfillment_program_revision
-       (fulfillment_program_revision_ref,site_ref,program_ref,revision,output_plan_digest,published_at)
-       VALUES ($1,$2,$3,$4::bigint,$5,$6::timestamptz)`,
+       (fulfillment_program_revision_ref,site_ref,program_ref,revision,output_plan_digest,catalog_epoch,published_at)
+       VALUES ($1,$2,$3,$4::bigint,$5,$6::bigint,$7::timestamptz)`,
       [input.fulfillmentProgramRevisionRef, input.siteId, input.fulfillmentProgramRef,
-        input.fulfillmentProgramRevision, input.outputPlanDigest, occurredAt],
+        input.fulfillmentProgramRevision, input.outputPlanDigest, catalogEpoch, occurredAt],
     ), "COMMERCE_FULFILLMENT_PROGRAM_PERSIST_FAILED");
     await exactlyCount(sql.execute(
       `INSERT INTO platform.commerce_fulfillment_program_output
@@ -116,11 +120,11 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
     await exactlyOne(sql.execute(
       `INSERT INTO platform.commerce_catalog_product_version
        (product_version_ref,site_ref,product_ref,revision,safe_label,plan_version_ref,
-        fulfillment_program_revision_ref,legal_term_refs,revision_digest,published_at)
-       VALUES ($1,$2,$3,$4::bigint,$5,$6,$7,$8::text[],$9,$10::timestamptz)`,
+        fulfillment_program_revision_ref,legal_term_refs,revision_digest,catalog_epoch,published_at)
+       VALUES ($1,$2,$3,$4::bigint,$5,$6,$7,$8::text[],$9,$10::bigint,$11::timestamptz)`,
       [input.productVersionRef, input.siteId, input.productRef, input.productRevision, input.safeLabel,
         input.planVersion?.planVersionRef ?? null, input.fulfillmentProgramRevisionRef,
-        input.legalTermRefs, input.offerDigest, occurredAt],
+        input.legalTermRefs, input.offerDigest, catalogEpoch, occurredAt],
     ), "COMMERCE_PRODUCT_VERSION_PERSIST_FAILED");
     await audit(sql, input, "commerce.offer.published", input.offerDigest, occurredAt);
     const receipt = await complete(this.receipts, transaction, input.command, {
@@ -132,16 +136,17 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
   async publishProgram(transaction: Parameters<CommerceAdministrationRepository["publishProgram"]>[0], input: Parameters<CommerceAdministrationRepository["publishProgram"]>[1]) {
     const prior = await replayedReceipt(this.receipts, transaction, input.command);
     if (prior !== null) return adminOutcome("replayed", prior, programResult(prior));
-    const sql = resolvePlatformTransaction(transaction); const occurredAt = await databaseNow(transaction);
+    const sql = resolvePlatformTransaction(transaction); const catalogEpoch = await allocateCatalogEpoch(sql);
+    const occurredAt = await databaseNow(transaction);
     await command(sql, input, occurredAt);
     await exactlyOne(sql.execute(
       `INSERT INTO platform.commerce_redemption_program_revision
        (redemption_program_revision_ref,site_ref,program_ref,revision,product_version_ref,
-        fulfillment_program_revision_ref,program_digest,max_redemptions_per_account,published_at)
-       VALUES ($1,$2,$3,$4::bigint,$5,$6,$7,$8,$9::timestamptz)`,
+        fulfillment_program_revision_ref,program_digest,max_redemptions_per_account,catalog_epoch,published_at)
+       VALUES ($1,$2,$3,$4::bigint,$5,$6,$7,$8,$9::bigint,$10::timestamptz)`,
       [input.redemptionProgramRevisionRef, input.siteId, input.programRef, input.revision,
         input.productVersionRef, input.fulfillmentProgramRevisionRef, input.programDigest,
-        input.maxRedemptionsPerAccount, occurredAt],
+        input.maxRedemptionsPerAccount, catalogEpoch, occurredAt],
     ), "COMMERCE_PROGRAM_PERSIST_FAILED");
     await exactlyOne(sql.execute(
       `INSERT INTO platform.commerce_redemption_program_availability
@@ -163,15 +168,17 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
     if (material.codes.length !== input.count || material.rawCodes.length !== input.count) {
       throw new Error("COMMERCE_CODE_ISSUANCE_COUNT_MISMATCH");
     }
-    const sql = resolvePlatformTransaction(transaction); const occurredAt = await databaseNow(transaction);
+    const sql = resolvePlatformTransaction(transaction); const catalogEpoch = await allocateCatalogEpoch(sql);
+    const occurredAt = await databaseNow(transaction);
     await command(sql, input, occurredAt);
     await exactlyOne(sql.execute(
       `INSERT INTO platform.commerce_code_batch
        (batch_ref,site_ref,redemption_program_revision_ref,code_lookup_key_revision,batch_selector,
-        created_by_subject_ref,state,starts_at,ends_at,inventory_count,created_at)
-       VALUES ($1::uuid,$2,$3,$4,$5,$6,'draft',$7::timestamptz,$8::timestamptz,$9,$10::timestamptz)`,
+        created_by_subject_ref,state,starts_at,ends_at,inventory_count,catalog_epoch,created_at)
+       VALUES ($1::uuid,$2,$3,$4,$5,$6,'draft',$7::timestamptz,$8::timestamptz,$9,$10::bigint,$11::timestamptz)`,
       [input.batchRef, input.siteId, input.redemptionProgramRevisionRef, material.keyRevision,
-        material.batchSelector, input.subjectId, input.startsAt, input.endsAt, material.codes.length, occurredAt],
+        material.batchSelector, input.subjectId, input.startsAt, input.endsAt, material.codes.length,
+        catalogEpoch, occurredAt],
     ), "COMMERCE_CODE_BATCH_PERSIST_FAILED");
     await exactlyCount(sql.execute(
       `INSERT INTO platform.commerce_redeem_code
@@ -312,6 +319,18 @@ async function audit(sql: ReturnType<typeof resolvePlatformTransaction>, input: 
      VALUES ($1::uuid,$2,$3,$4,$5,$6::timestamptz)`,
     [randomUUID(), input.command.commandId, input.siteId, eventType, payloadDigest, occurredAt],
   ), "COMMERCE_ADMIN_AUDIT_PERSIST_FAILED");
+}
+async function allocateCatalogEpoch(sql: ReturnType<typeof resolvePlatformTransaction>): Promise<string> {
+  const rows = await sql.query<Record<string, unknown> & { catalogEpoch: bigint | string }>(
+    `UPDATE platform.commerce_catalog_epoch_authority
+     SET current_epoch=current_epoch+1,updated_at=clock_timestamp()
+     WHERE singleton=TRUE AND current_epoch<9223372036854775807
+     RETURNING current_epoch::text AS "catalogEpoch"`,
+  );
+  const value = rows[0]?.catalogEpoch;
+  if (rows.length !== 1 || value === undefined || !/^[1-9][0-9]*$/u.test(value.toString()) ||
+      BigInt(value) > 9_223_372_036_854_775_807n) throw new Error("COMMERCE_CATALOG_EPOCH_UNAVAILABLE");
+  return value.toString();
 }
 async function databaseNow(transaction: Parameters<CommerceAdministrationRepository["publishProgram"]>[0]): Promise<string> {
   const rows = await resolvePlatformTransaction(transaction).query<Record<string, unknown> & { occurredAt: Date | string }>(
