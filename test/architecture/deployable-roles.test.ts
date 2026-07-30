@@ -10,7 +10,10 @@ import {
   runPlatformMigrations,
   type MigrationLockClient,
 } from "../../src/infrastructure/postgres/migrator.js";
-import { SPLIT_WORKER_RLS_AUTHORITY } from
+import {
+  SPLIT_WORKER_DEFINER_RLS_AUTHORITY,
+  SPLIT_WORKER_RLS_AUTHORITY,
+} from
   "../../src/infrastructure/postgres/split-worker-authority.js";
 import { createPlatformApiProcess } from "../../src/process/api.js";
 import { createPlatformWorkerProcess } from "../../src/process/worker.js";
@@ -189,6 +192,10 @@ describe("Platform migrator", () => {
           const roleName = String(values?.[0]);
           events.push(`verify-${roleName}`);
           return { rows: [splitAuthority()] };
+        }
+        if (sql.includes('AS "roleIdentityAuthorityExact"')) {
+          events.push("verify-split-worker-role-identities");
+          return { rows: [{ roleIdentityAuthorityExact: true }] };
         }
         if (sql.includes("publicRoutineAuthorityClosed")) {
           return { rows: [{ publicRoutineAuthorityClosed: true }] };
@@ -405,6 +412,7 @@ describe("Platform migrator", () => {
       "verify-platform_site_worker", "verify-platform_asset_worker",
       "verify-platform_admin_worker", "verify-platform_identity_worker",
       "verify-platform_authorization_maintenance",
+      "verify-split-worker-role-identities",
     ]) expect(events).toContain(expected);
     expect(events.slice(-2)).toEqual([
       `SELECT pg_advisory_unlock(hashtext($1)):${MIGRATION_ADVISORY_LOCK}`, "end",
@@ -414,6 +422,7 @@ describe("Platform migrator", () => {
   it.each([
     ["belongs to an upstream database role", "hasAnyMembership"],
     ["has a downstream database-role member", "isPeerMember"],
+    ["owns a PostgreSQL database", "ownsAnyDatabase"],
   ] as const)("fails closed when a runtime role %s", async (_description, membershipField) => {
     const lockClient: MigrationLockClient = {
       async connect() {},
@@ -789,6 +798,7 @@ function safeRole(roleName: string): Record<string, unknown> {
     hasAnyMembership: false,
     isMigratorMember: false,
     isPeerMember: false,
+    ownsAnyDatabase: false,
   };
 }
 
@@ -866,7 +876,7 @@ function splitWorkerPolicyRows(): readonly Record<string, unknown>[] {
     "asset-worker": "platform_asset_worker",
     "admin-worker": "platform_admin_worker",
   } as const;
-  return Object.entries(SPLIT_WORKER_RLS_AUTHORITY).flatMap(([role, authority]) =>
+  const runtimePolicies = Object.entries(SPLIT_WORKER_RLS_AUTHORITY).flatMap(([role, authority]) =>
     authority.policies.map(([relationName, policyName]) => ({
       relationName,
       policyName,
@@ -877,6 +887,22 @@ function splitWorkerPolicyRows(): readonly Record<string, unknown>[] {
       withCheckExpression: null,
     })),
   );
+  const definerPolicies = SPLIT_WORKER_DEFINER_RLS_AUTHORITY.map((authority) => ({
+    relationName: authority.relationName,
+    policyName: authority.policyName,
+    command: authority.command,
+    permissive: true,
+    schemaOwnerOnly: true,
+    usingExpression:
+      `(platform.split_worker_role_identity_is_current('${authority.authorityRole}'::text) AND ` +
+      `current_setting('app.workload_kind'::text,true)='${authority.workloadKind}'::text AND ` +
+      `current_setting('app.operation'::text,true)='${authority.operation}'::text` +
+      `${authority.requiresAdminExecution
+        ? " AND current_setting('app.admin_execution'::text,true)='true'::text"
+        : ""})`,
+    withCheckExpression: null,
+  }));
+  return [...runtimePolicies, ...definerPolicies];
 }
 
 function outboxPolicyRows(): readonly Record<string, unknown>[] {
