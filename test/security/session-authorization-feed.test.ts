@@ -80,6 +80,18 @@ describe("Session authorization feed security", () => {
     expect(first.page?.keySetRevision).toBe("a".repeat(64));
     const cursor = first.page?.nextPageCursor;
     expect(cursor).toBeTypeOf("string");
+    const separator = cursor!.lastIndexOf(".");
+    const canonicalMac = cursor!.slice(separator + 1);
+    const nonCanonicalMac = nonCanonicalBase64urlEquivalent(canonicalMac);
+    expect(Buffer.from(nonCanonicalMac, "base64url")).toEqual(Buffer.from(canonicalMac, "base64url"));
+    await expect(service.getAuthorizationSnapshotPage(
+      create(GetAuthorizationSnapshotPageRequestSchema, {
+        snapshotRef,
+        pageCursor: `${cursor!.slice(0, separator + 1)}${nonCanonicalMac}`,
+        limit: 1,
+      }),
+      {} as never,
+    )).rejects.toMatchObject({ code: 3 });
     await expect(service.getAuthorizationSnapshotPage(
       create(GetAuthorizationSnapshotPageRequestSchema, {
         snapshotRef,
@@ -180,6 +192,13 @@ describe("Session authorization feed security", () => {
     expect(migration).toContain("CREATE TRIGGER authorization_snapshot_record_immutable");
   });
 });
+
+function nonCanonicalBase64urlEquivalent(value: string): string {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  const lastIndex = alphabet.indexOf(value.at(-1) ?? "");
+  if (lastIndex < 0 || lastIndex % 4 !== 0) throw new Error("expected canonical 32-byte base64url value");
+  return `${value.slice(0, -1)}${alphabet[lastIndex + 1]}`;
+}
 
 function createService(
   repositoryOverrides: Partial<PostgresAuthorizationFeedRepository>,

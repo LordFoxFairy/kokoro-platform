@@ -267,7 +267,10 @@ function createSnapshotCursorCodec(secret: Uint8Array, clock: () => Date) {
       const expectedMac = createHmac("sha256", key).update(body).digest();
       let actualMac: Buffer;
       try { actualMac = Buffer.from(suppliedMac, "base64url"); } catch { throw new ConnectError("cursor invalid", Code.InvalidArgument); }
-      if (actualMac.length !== expectedMac.length || !timingSafeEqual(actualMac, expectedMac)) {
+      if (
+        actualMac.length !== 32 || actualMac.toString("base64url") !== suppliedMac ||
+        !timingSafeEqual(actualMac, expectedMac)
+      ) {
         throw new ConnectError("cursor invalid", Code.InvalidArgument);
       }
       let parsed: unknown;
