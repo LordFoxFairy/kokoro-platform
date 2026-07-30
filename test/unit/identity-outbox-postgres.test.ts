@@ -171,7 +171,10 @@ describe("Postgres Identity outbox outcome authority", () => {
     expect(calls).toContain(
       "outbox-renew:event-verification-01:lease-01:identity-worker-01:identity:45",
     );
-    expect(calls).toContain("outbox-release-owned:identity-worker-01:identity-worker");
+    expect(calls).toContain(
+      "outbox-release-owned:identity-worker-01:identity-worker:" +
+      "identity.verification.delivery.requested,identity.namespace.allocation.requested",
+    );
   });
 
   it("requires the complete namespace graph to match before activating admission", async () => {
@@ -271,7 +274,7 @@ function outbox(calls: string[]): Pick<OutboxRepository,
       calls.push(`outbox-retry:${input.eventId}:${input.errorCode}:${input.retryAt}`);
     },
     releaseOwnedLeases: async (_transaction, input) => {
-      calls.push(`outbox-release-owned:${input.workerId}:${input.consumer}`);
+      calls.push(`outbox-release-owned:${input.workerId}:${input.consumer}:${input.eventTypes.join(",")}`);
       return 1;
     },
   };

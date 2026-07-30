@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { PlatformTransactionalDatabaseClient } from
   "../../../../infrastructure/postgres/client.js";
-import { OutboxRepository } from "../../../../shared/outbox-inbox/outbox.js";
+import {
+  OUTBOX_ROUTE_CATALOG,
+  OutboxRepository,
+} from "../../../../shared/outbox-inbox/outbox.js";
 import { AdminExecutionService } from "../../application/admin-execution-service.js";
 import { createAdminExecutionCycle } from "../../application/admin-execution-cycle.js";
 import { AdminLocalCommandRegistry } from "../../application/admin-command-service.js";
@@ -54,6 +57,7 @@ export function createAdminWorkerExecutionRuntime(input: Readonly<{
         outbox.releaseOwnedLeases(transaction, {
           workerId: input.workerId,
           consumer: "admin-worker",
+          eventTypes: OUTBOX_ROUTE_CATALOG["admin-execution"].eventTypes,
         }));
     },
   });

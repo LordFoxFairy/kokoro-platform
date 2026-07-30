@@ -345,6 +345,7 @@ export function createPostgresIdentityEffectEventQueue(
         await outbox.releaseOwnedLeases(transaction, {
           workerId: options.workerId,
           consumer: OUTBOX_ROUTE_CATALOG.identity.consumer,
+          eventTypes: OUTBOX_ROUTE_CATALOG.identity.eventTypes,
         });
       },
     ),

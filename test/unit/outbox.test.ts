@@ -199,10 +199,13 @@ describe("outbox retry bounds", () => {
       await expect(new OutboxRepository().releaseOwnedLeases(lease.transaction, {
         workerId: "admin-worker-01",
         consumer: "admin-worker",
+        eventTypes: ["admin.approval.execution.requested"],
       })).resolves.toBe(2);
       expect(statements[0]).toMatchObject({
-        statement: expect.stringContaining("lease_owner=$1"),
-        values: ["admin-worker-01", ["admin-execution"]],
+        statement: expect.stringContaining(
+          "lease_owner=$1 AND owner=ANY($2::text[]) AND event_type=ANY($3::text[])",
+        ),
+        values: ["admin-worker-01", ["admin-execution"], ["admin.approval.execution.requested"]],
       });
     } finally {
       revokePlatformTransaction(lease);
@@ -222,15 +225,54 @@ describe("outbox retry bounds", () => {
       const repository = new OutboxRepository();
       await repository.releaseOwnedLeases(lease.transaction, {
         workerId: "worker-a", consumer: "identity-worker",
+        eventTypes: [
+          "identity.verification.delivery.requested", "identity.namespace.allocation.requested",
+        ],
       });
       await repository.releaseOwnedLeases(lease.transaction, {
         workerId: "worker-b", consumer: "identity-worker",
+        eventTypes: [
+          "identity.verification.delivery.requested", "identity.namespace.allocation.requested",
+        ],
       });
       expect(executions).toEqual([
-        expect.objectContaining({ values: ["worker-a", ["identity"]] }),
-        expect.objectContaining({ values: ["worker-b", ["identity"]] }),
+        expect.objectContaining({ values: ["worker-a", ["identity"], [
+          "identity.verification.delivery.requested", "identity.namespace.allocation.requested",
+        ]] }),
+        expect.objectContaining({ values: ["worker-b", ["identity"], [
+          "identity.verification.delivery.requested", "identity.namespace.allocation.requested",
+        ]] }),
       ]);
-      expect(executions[0]?.statement).toContain("lease_owner=$1 AND owner=ANY($2::text[])");
+      expect(executions[0]?.statement).toContain(
+        "lease_owner=$1 AND owner=ANY($2::text[]) AND event_type=ANY($3::text[])",
+      );
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["out of order", [
+      "identity.namespace.allocation.requested",
+      "identity.verification.delivery.requested",
+    ]],
+    ["extra", [
+      "identity.verification.delivery.requested",
+      "identity.namespace.allocation.requested",
+      "admin.approval.execution.requested",
+    ]],
+  ])("fails closed for a %s shutdown event-type allowlist", async (_case, eventTypes) => {
+    const lease = issuePlatformTransaction({
+      query: async () => [],
+      execute: async () => { throw new Error("SQL_MUST_NOT_RUN"); },
+    });
+    try {
+      await expect(new OutboxRepository().releaseOwnedLeases(lease.transaction, {
+        workerId: "identity-worker-01",
+        consumer: "identity-worker",
+        eventTypes: eventTypes as never,
+      })).rejects.toThrow("OUTBOX_EVENT_TYPE_ALLOWLIST_INVALID");
     } finally {
       revokePlatformTransaction(lease);
     }

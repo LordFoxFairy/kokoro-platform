@@ -179,16 +179,21 @@ export class OutboxRepository {
 
   async releaseOwnedLeases(
     transaction: PlatformTransaction,
-    input: Readonly<{ workerId: string; consumer: OutboxConsumer }>,
+    input: Readonly<{
+      workerId: string;
+      consumer: OutboxConsumer;
+      eventTypes: readonly OutboxEventType[];
+    }>,
   ): Promise<number> {
     assertBoundedIdentifier(input.workerId, "OUTBOX_WORKER_ID_INVALID");
     const owners = outboxOwnersForConsumer(input.consumer);
+    assertOutboxConsumerEventTypes(input.consumer, input.eventTypes);
     return resolvePlatformTransaction(transaction).execute(
       `UPDATE platform.outbox_event
        SET state='pending',available_at=now(),lease_owner=NULL,lease_token=NULL,
            lease_expires_at=NULL,updated_at=now(),last_error_code='WORKER_SHUTDOWN'
-       WHERE state='leased' AND lease_owner=$1 AND owner=ANY($2::text[])`,
-      [input.workerId, owners],
+       WHERE state='leased' AND lease_owner=$1 AND owner=ANY($2::text[]) AND event_type=ANY($3::text[])`,
+      [input.workerId, owners, input.eventTypes],
     );
   }
 }
