@@ -8,6 +8,8 @@ import { resolvePlatformTransaction } from "../shared/unit-of-work/platform-tran
 import { AdmissionService } from "../interfaces/connect/generated/kokoro/platform/admission/v1/admission_pb.js";
 import { AssetEligibilityService as AssetEligibilityConnectDefinition } from
   "../interfaces/connect/generated-asset-eligibility/kokoro/platform/asset/v1/asset_eligibility_pb.js";
+import { CapabilityCatalogProjectionService as CapabilityProjectionConnectDefinition } from
+  "../interfaces/connect/generated-capability-catalog/kokoro/platform/capability/v1/capability_catalog_pb.js";
 import { AdmissionApplicationService } from "../modules/admission/application/admission-service.js";
 import type { AdmissionCaller, AdmissionOwnerAuthority } from "../modules/admission/application/admission-ports.js";
 import {
@@ -33,8 +35,14 @@ import {
   PostgresAdmissionCapabilityOwner,
   PostgresAdmissionRuntimePolicyOwner,
 } from "../modules/admission/infrastructure/postgres/admission-runtime-owners.js";
+import { createEd25519CapabilityPublicationVerifier } from
+  "../modules/admission/infrastructure/crypto/capability-publication-verifier.js";
+import { PostgresCapabilityCatalogProjectionRepository } from
+  "../modules/admission/infrastructure/postgres/capability-catalog-projection-repository.js";
 import { PostgresAdmissionSiteOwner } from "../modules/admission/infrastructure/postgres/admission-site-owner.js";
 import { createAdmissionConnectService } from "../modules/admission/interfaces/connect/admission-service.js";
+import { createCapabilityCatalogProjectionConnectService } from
+  "../modules/admission/interfaces/connect/capability-catalog-projection-service.js";
 import { AssetEligibilityApplicationService } from
   "../modules/asset/application/services/asset-eligibility.js";
 import { AssetOwnerQueryService } from "../modules/asset/application/services/asset-owner-query.js";
@@ -224,7 +232,7 @@ export async function createAdmissionProductionComposition(input: Readonly<{
   clock?: () => Date;
 }>): Promise<AdmissionProductionComposition> {
   const environment = input.environment ?? process.env;
-  const [tls, peerRegistry, gaRunRequestDraftSealer] = await Promise.all([
+  const [tls, peerRegistry, gaRunRequestDraftSealer, capabilityProjectionVerifier] = await Promise.all([
     loadAdmissionTls(environment),
     loadAdmissionPeers(
       required(environment, "PLATFORM_ADMISSION_MTLS_PEERS_FILE"),
@@ -236,10 +244,17 @@ export async function createAdmissionProductionComposition(input: Readonly<{
       input.gaDispatchAudience,
       input.clock,
     ),
+    loadCapabilityProjectionVerifier(
+      required(environment, "PLATFORM_CAPABILITY_PROJECTION_HUB_PUBLIC_KEY_RING_FILE"),
+    ),
   ]);
   const sessionCallerIdentity = required(environment, "PLATFORM_ASSET_ELIGIBILITY_SESSION_CALLER_SAN_URI");
   if (!peerRegistry.some((peer) => peer.identity === sessionCallerIdentity)) {
     throw new Error("PLATFORM_ASSET_ELIGIBILITY_SESSION_CALLER_NOT_REGISTERED");
+  }
+  const hubCallerIdentity = required(environment, "PLATFORM_CAPABILITY_PROJECTION_HUB_CALLER_SAN_URI");
+  if (!peerRegistry.some((peer) => peer.identity === hubCallerIdentity)) {
+    throw new Error("PLATFORM_CAPABILITY_PROJECTION_HUB_CALLER_NOT_REGISTERED");
   }
   const callers = new AsyncLocalStorage<AdmissionCaller>();
   const authority = createPlatformAdmissionOwnerAuthority({
@@ -274,10 +289,19 @@ export async function createAdmissionProductionComposition(input: Readonly<{
     }),
     caller: callerResolver,
   });
+  const capabilityProjectionService = createCapabilityCatalogProjectionConnectService({
+    repository: new PostgresCapabilityCatalogProjectionRepository(input.database, {
+      ...(input.clock === undefined ? {} : { now: input.clock }),
+    }),
+    verifyPublication: capabilityProjectionVerifier,
+    caller: callerResolver,
+    hubCallerIdentity,
+  });
   const connect = connectNodeAdapter({
     routes: (router) => {
       router.service(AdmissionService, service);
       router.service(AssetEligibilityConnectDefinition, assetEligibilityService);
+      router.service(CapabilityProjectionConnectDefinition, capabilityProjectionService);
     },
     connect: true,
     grpc: false,
@@ -311,6 +335,37 @@ export async function createAdmissionProductionComposition(input: Readonly<{
     handler,
     createServer: (listener: AdmissionRequestListener) => createSecureServer(tls, listener),
   });
+}
+
+async function loadCapabilityProjectionVerifier(path: string) {
+  let value: unknown;
+  try {
+    value = JSON.parse(await readAdmissionFile(path, 256 * 1024));
+  } catch {
+    throw new Error("PLATFORM_CAPABILITY_PROJECTION_HUB_PUBLIC_KEY_RING_INVALID");
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("PLATFORM_CAPABILITY_PROJECTION_HUB_PUBLIC_KEY_RING_INVALID");
+  }
+  const root = value as Record<string, unknown>;
+  if (root.version !== 1 || !Array.isArray(root.keys) ||
+      Object.keys(root).sort().join(",") !== "keys,version") {
+    throw new Error("PLATFORM_CAPABILITY_PROJECTION_HUB_PUBLIC_KEY_RING_INVALID");
+  }
+  const keys = new Map<string, string>();
+  for (const item of root.keys) {
+    if (item === null || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error("PLATFORM_CAPABILITY_PROJECTION_HUB_PUBLIC_KEY_RING_INVALID");
+    }
+    const key = item as Record<string, unknown>;
+    if (Object.keys(key).sort().join(",") !== "keyRef,publicKeyPem" ||
+        typeof key.keyRef !== "string" || typeof key.publicKeyPem !== "string" ||
+        keys.has(key.keyRef)) {
+      throw new Error("PLATFORM_CAPABILITY_PROJECTION_HUB_PUBLIC_KEY_RING_INVALID");
+    }
+    keys.set(key.keyRef, key.publicKeyPem);
+  }
+  return createEd25519CapabilityPublicationVerifier({ keys });
 }
 
 async function loadAdmissionHpkeSealer(

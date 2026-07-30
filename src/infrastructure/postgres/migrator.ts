@@ -526,10 +526,13 @@ async function grantFoundationPrivileges(
         `GRANT SELECT ON TABLE ${ADMISSION_TABLES}, ${ADMISSION_RUNTIME_SNAPSHOT_TABLES}, platform.site, platform.site_release, platform.authorization_site, platform.authorization_site_release, platform.authorization_product_binding, platform.authorization_subject, platform.authorization_identity_session, platform.authorization_project, platform.authorization_project_membership, platform.authorization_session_access_grant, platform.identity_personal_bootstrap, platform.identity_execution_space, platform.identity_namespace_allocation_intent, platform.commerce_billing_account, platform.credit_account, platform.credit_grant, platform.credit_hold, platform.credit_hold_allocation, platform.credit_journal_transaction, platform.credit_journal_entry, platform.credit_execution_budget_root, platform.credit_budget_allocation, platform.credit_budget_allocation_revision, platform.credit_authorization_segment, platform.credit_budget_operation_receipt, platform.asset_resource, platform.asset_version, platform.asset_eligibility_projection TO ${identifier}`,
       );
       await client.query(
-        `GRANT INSERT ON TABLE platform.admission_command, platform.admission_session_execution_binding, platform.admission_execution_manifest, platform.outbox_event, platform.credit_hold, platform.credit_hold_allocation, platform.credit_journal_transaction, platform.credit_journal_entry, platform.credit_execution_budget_root, platform.credit_budget_allocation, platform.credit_budget_allocation_revision, platform.credit_authorization_segment, platform.credit_budget_operation_receipt TO ${identifier}`,
+        `GRANT INSERT ON TABLE platform.admission_command, platform.admission_session_execution_binding, platform.admission_execution_manifest, platform.admission_capability_catalog_snapshot, platform.capability_projection_command, platform.outbox_event, platform.credit_hold, platform.credit_hold_allocation, platform.credit_journal_transaction, platform.credit_journal_entry, platform.credit_execution_budget_root, platform.credit_budget_allocation, platform.credit_budget_allocation_revision, platform.credit_authorization_segment, platform.credit_budget_operation_receipt TO ${identifier}`,
       );
       await client.query(
         `GRANT UPDATE ON TABLE platform.admission_command, platform.admission_execution_manifest, platform.credit_hold, platform.credit_execution_budget_root, platform.credit_authorization_segment TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT UPDATE(state,agent_catalog_ref,updated_at) ON TABLE platform.capability_projection_command TO ${identifier}`,
       );
       await client.query(
         `GRANT SELECT ON TABLE platform.credit_rating_policy_revision, platform.credit_rating_snapshot, platform.credit_usage_attempt_intent, platform.credit_attempt_usage_evidence, platform.credit_usage_segment_closure, platform.credit_usage_closure_evidence, platform.credit_usage_settlement, platform.credit_rated_usage, platform.credit_usage_settlement_source, platform.credit_usage_variance, platform.credit_usage_reconciliation, platform.credit_usage_command_receipt TO ${identifier}`,
@@ -672,6 +675,7 @@ const KERNEL_TABLES = [
 
 const ADMISSION_TABLES = [
   "platform.admission_command",
+  "platform.capability_projection_command",
   "platform.admission_session_execution_binding",
   "platform.admission_execution_manifest",
 ].join(", ");
@@ -794,6 +798,7 @@ const ASSET_WORKER_UPDATE_RELATIONS = [
 ] as const;
 const ADMISSION_RELATIONS = [
   "admission_command",
+  "capability_projection_command",
   "admission_session_execution_binding",
   "admission_execution_manifest",
   "admission_launch_profile_snapshot",
@@ -832,8 +837,10 @@ const ADMISSION_SELECT_RELATIONS = [
 ] as const;
 const ADMISSION_INSERT_RELATIONS = [
   "admission_command",
+  "capability_projection_command",
   "admission_session_execution_binding",
   "admission_execution_manifest",
+  "admission_capability_catalog_snapshot",
   "outbox_event",
   "credit_hold",
   "credit_hold_allocation",
@@ -847,6 +854,7 @@ const ADMISSION_INSERT_RELATIONS = [
 ] as const;
 const ADMISSION_UPDATE_RELATIONS = [
   "admission_command",
+  "capability_projection_command",
   "admission_execution_manifest",
   "credit_hold",
   "credit_execution_budget_root",
@@ -1211,10 +1219,14 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            AND has_column_privilege(runtime_role.rolname, 'platform.asset_eligibility_projection', 'state', 'SELECT')
          WHEN runtime_role.rolname = $5 THEN
            has_table_privilege(runtime_role.rolname, 'platform.admission_command', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(runtime_role.rolname, 'platform.capability_projection_command', 'SELECT,INSERT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.capability_projection_command', 'state', 'UPDATE')
+           AND has_column_privilege(runtime_role.rolname, 'platform.capability_projection_command', 'agent_catalog_ref', 'UPDATE')
+           AND has_column_privilege(runtime_role.rolname, 'platform.capability_projection_command', 'updated_at', 'UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.admission_session_execution_binding', 'SELECT,INSERT')
            AND has_table_privilege(runtime_role.rolname, 'platform.admission_execution_manifest', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(runtime_role.rolname, 'platform.admission_launch_profile_snapshot', 'SELECT')
-           AND has_table_privilege(runtime_role.rolname, 'platform.admission_capability_catalog_snapshot', 'SELECT')
+           AND has_table_privilege(runtime_role.rolname, 'platform.admission_capability_catalog_snapshot', 'SELECT,INSERT')
            AND has_table_privilege(runtime_role.rolname, 'platform.outbox_event', 'INSERT')
            AND has_table_privilege(runtime_role.rolname, 'platform.site', 'SELECT')
            AND has_table_privilege(runtime_role.rolname, 'platform.site_release', 'SELECT')

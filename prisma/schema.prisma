@@ -131,42 +131,42 @@ model AdminOperatorIdentity {
 }
 
 model AdminOidcTransaction {
-  transactionRef          String    @id @map("transaction_ref") @db.Uuid
-  state                   String
-  beginCommandId          String    @unique @map("begin_command_id")
-  beginIdempotencyKey     String    @map("begin_idempotency_key")
-  beginRequestDigest      String    @map("begin_request_digest") @db.Char(64)
-  workloadIdentityRef     String    @map("workload_identity_ref")
-  environment             String
-  region                  String
-  managedDeviceRef        String    @map("managed_device_ref")
-  audience                String
-  returnIntentRef         String    @map("return_intent_ref")
-  issuer                  String
-  clientId                String    @map("client_id")
-  oidcAudience            String    @map("oidc_audience")
-  exactCallbackUri        String    @map("exact_callback_uri")
-  pkceVerifierCiphertext  String    @map("pkce_verifier_ciphertext")
-  pkceChallenge           String    @map("pkce_challenge")
-  nonceCiphertext         String    @map("nonce_ciphertext")
-  stateDigest             String    @map("state_digest") @db.Char(64)
-  recoveryDigest          String    @unique @map("recovery_digest") @db.Char(64)
-  signingKeyRevision      String    @map("signing_key_revision")
-  deliveryKeyRevision     String    @map("delivery_key_revision")
-  exchangeCommandId       String?   @unique @map("exchange_command_id")
-  exchangeIdempotencyKey  String?   @map("exchange_idempotency_key")
-  exchangeRequestDigest   String?   @map("exchange_request_digest") @db.Char(64)
-  operatorSessionRef      String?   @unique @map("operator_session_ref") @db.Uuid
-  sessionExpiresAt        DateTime? @map("session_expires_at") @db.Timestamptz(6)
-  deliveryEnvelope        String?   @map("delivery_envelope")
-  exchangeReceipt         Json?     @map("exchange_receipt")
-  expiresAt               DateTime  @map("expires_at") @db.Timestamptz(6)
-  recoveryExpiresAt       DateTime  @map("recovery_expires_at") @db.Timestamptz(6)
-  deliveryExpiresAt       DateTime? @map("delivery_expires_at") @db.Timestamptz(6)
-  claimedAt               DateTime? @map("claimed_at") @db.Timestamptz(6)
-  committedAt             DateTime? @map("committed_at") @db.Timestamptz(6)
-  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt               DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  transactionRef         String    @id @map("transaction_ref") @db.Uuid
+  state                  String
+  beginCommandId         String    @unique @map("begin_command_id")
+  beginIdempotencyKey    String    @map("begin_idempotency_key")
+  beginRequestDigest     String    @map("begin_request_digest") @db.Char(64)
+  workloadIdentityRef    String    @map("workload_identity_ref")
+  environment            String
+  region                 String
+  managedDeviceRef       String    @map("managed_device_ref")
+  audience               String
+  returnIntentRef        String    @map("return_intent_ref")
+  issuer                 String
+  clientId               String    @map("client_id")
+  oidcAudience           String    @map("oidc_audience")
+  exactCallbackUri       String    @map("exact_callback_uri")
+  pkceVerifierCiphertext String    @map("pkce_verifier_ciphertext")
+  pkceChallenge          String    @map("pkce_challenge")
+  nonceCiphertext        String    @map("nonce_ciphertext")
+  stateDigest            String    @map("state_digest") @db.Char(64)
+  recoveryDigest         String    @unique @map("recovery_digest") @db.Char(64)
+  signingKeyRevision     String    @map("signing_key_revision")
+  deliveryKeyRevision    String    @map("delivery_key_revision")
+  exchangeCommandId      String?   @unique @map("exchange_command_id")
+  exchangeIdempotencyKey String?   @map("exchange_idempotency_key")
+  exchangeRequestDigest  String?   @map("exchange_request_digest") @db.Char(64)
+  operatorSessionRef     String?   @unique @map("operator_session_ref") @db.Uuid
+  sessionExpiresAt       DateTime? @map("session_expires_at") @db.Timestamptz(6)
+  deliveryEnvelope       String?   @map("delivery_envelope")
+  exchangeReceipt        Json?     @map("exchange_receipt")
+  expiresAt              DateTime  @map("expires_at") @db.Timestamptz(6)
+  recoveryExpiresAt      DateTime  @map("recovery_expires_at") @db.Timestamptz(6)
+  deliveryExpiresAt      DateTime? @map("delivery_expires_at") @db.Timestamptz(6)
+  claimedAt              DateTime? @map("claimed_at") @db.Timestamptz(6)
+  committedAt            DateTime? @map("committed_at") @db.Timestamptz(6)
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@unique([workloadIdentityRef, environment, region, beginIdempotencyKey])
   @@index([state, expiresAt])
@@ -176,27 +176,27 @@ model AdminOidcTransaction {
 
 model AdminOperatorSession {
   operatorSessionRef    String    @id @map("operator_session_ref") @db.Uuid
-  credentialDigest     String    @unique @map("credential_digest") @db.Char(64)
-  operatorRef          String    @map("operator_ref")
-  operatorGeneration   BigInt    @map("operator_generation")
-  workloadIdentityRef  String    @map("workload_identity_ref")
-  environment          String
-  region               String
-  managedDeviceRef     String    @map("managed_device_ref")
-  audience             String
-  operatorSecurityEpoch BigInt   @map("operator_security_epoch")
-  sessionEpoch         BigInt    @map("session_epoch")
-  restrictionEpoch     BigInt    @map("restriction_epoch")
-  policyEpoch          BigInt    @map("policy_epoch")
-  assuranceLevel       String    @map("assurance_level")
-  factorClasses        String[]  @map("factor_classes")
-  state                String
-  authenticatedAt      DateTime  @map("authenticated_at") @db.Timestamptz(6)
-  stepUpAt             DateTime? @map("step_up_at") @db.Timestamptz(6)
-  expiresAt            DateTime  @map("expires_at") @db.Timestamptz(6)
-  revokedAt            DateTime? @map("revoked_at") @db.Timestamptz(6)
-  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt            DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  credentialDigest      String    @unique @map("credential_digest") @db.Char(64)
+  operatorRef           String    @map("operator_ref")
+  operatorGeneration    BigInt    @map("operator_generation")
+  workloadIdentityRef   String    @map("workload_identity_ref")
+  environment           String
+  region                String
+  managedDeviceRef      String    @map("managed_device_ref")
+  audience              String
+  operatorSecurityEpoch BigInt    @map("operator_security_epoch")
+  sessionEpoch          BigInt    @map("session_epoch")
+  restrictionEpoch      BigInt    @map("restriction_epoch")
+  policyEpoch           BigInt    @map("policy_epoch")
+  assuranceLevel        String    @map("assurance_level")
+  factorClasses         String[]  @map("factor_classes")
+  state                 String
+  authenticatedAt       DateTime  @map("authenticated_at") @db.Timestamptz(6)
+  stepUpAt              DateTime? @map("step_up_at") @db.Timestamptz(6)
+  expiresAt             DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt             DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@index([operatorRef, operatorGeneration, state, expiresAt])
   @@index([workloadIdentityRef, environment, region, state, expiresAt])
@@ -249,24 +249,24 @@ model AdminAuthorityBootstrap {
 }
 
 model AdminCommandDecision {
-  decisionRef          String   @id @map("decision_ref") @db.Uuid
-  commandId            String   @map("command_id")
-  requestDigest        String   @map("request_digest") @db.Char(64)
-  operatorRef          String   @map("operator_ref")
-  operatorGeneration   BigInt   @map("operator_generation")
-  operation            String
-  targetSiteRef        String?  @map("target_site_ref")
-  environment          String
-  region               String
-  allowed              Boolean
-  reasonCode           String   @map("reason_code")
-  effectClass          String   @map("effect_class")
-  approvalPolicy       String   @map("approval_policy")
-  operatorReason       String?  @map("operator_reason")
-  breakGlassTicketRef  String?  @map("break_glass_ticket_ref")
+  decisionRef         String   @id @map("decision_ref") @db.Uuid
+  commandId           String   @map("command_id")
+  requestDigest       String   @map("request_digest") @db.Char(64)
+  operatorRef         String   @map("operator_ref")
+  operatorGeneration  BigInt   @map("operator_generation")
+  operation           String
+  targetSiteRef       String?  @map("target_site_ref")
+  environment         String
+  region              String
+  allowed             Boolean
+  reasonCode          String   @map("reason_code")
+  effectClass         String   @map("effect_class")
+  approvalPolicy      String   @map("approval_policy")
+  operatorReason      String?  @map("operator_reason")
+  breakGlassTicketRef String?  @map("break_glass_ticket_ref")
   authorizationEpoch  BigInt?  @map("authorization_epoch")
-  occurredAt           DateTime @map("occurred_at") @db.Timestamptz(6)
-  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  occurredAt          DateTime @map("occurred_at") @db.Timestamptz(6)
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([operatorRef, occurredAt])
   @@index([targetSiteRef, occurredAt])
@@ -275,36 +275,36 @@ model AdminCommandDecision {
 }
 
 model AdminApproval {
-  approvalRef              String    @id @map("approval_ref") @db.Uuid
-  commandId                String    @unique @map("command_id")
-  requestDigest            String    @map("request_digest") @db.Char(64)
-  payload                  Json
-  payloadDigest            String    @map("payload_digest") @db.Char(64)
-  operation                String
-  makerRef                 String    @map("maker_ref")
-  makerGeneration          BigInt    @map("maker_generation")
-  makerAuthorizationEpoch BigInt    @map("maker_authorization_epoch")
-  targetSiteRef            String?   @map("target_site_ref")
-  environment              String
-  region                   String
-  effectClass              String    @map("effect_class")
-  approvalPolicy           String    @map("approval_policy")
-  operatorReason           String    @map("operator_reason")
-  admittedAt               DateTime  @map("admitted_at") @db.Timestamptz(6)
-  expiresAt                DateTime  @map("expires_at") @db.Timestamptz(6)
-  state                    String    @default("pending")
-  revision                 BigInt    @default(1)
-  checkerRef               String?   @map("checker_ref")
-  checkerGeneration        BigInt?   @map("checker_generation")
-  checkerAuthorizationEpoch BigInt?  @map("checker_authorization_epoch")
-  checkerDecision          String?   @map("checker_decision")
-  checkerReason            String?   @map("checker_reason")
-  result                   Json?
-  resultDigest             String?   @map("result_digest") @db.Char(64)
-  terminalReason           String?   @map("terminal_reason")
-  decidedAt                DateTime? @map("decided_at") @db.Timestamptz(6)
-  createdAt                DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt                DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  approvalRef               String    @id @map("approval_ref") @db.Uuid
+  commandId                 String    @unique @map("command_id")
+  requestDigest             String    @map("request_digest") @db.Char(64)
+  payload                   Json
+  payloadDigest             String    @map("payload_digest") @db.Char(64)
+  operation                 String
+  makerRef                  String    @map("maker_ref")
+  makerGeneration           BigInt    @map("maker_generation")
+  makerAuthorizationEpoch   BigInt    @map("maker_authorization_epoch")
+  targetSiteRef             String?   @map("target_site_ref")
+  environment               String
+  region                    String
+  effectClass               String    @map("effect_class")
+  approvalPolicy            String    @map("approval_policy")
+  operatorReason            String    @map("operator_reason")
+  admittedAt                DateTime  @map("admitted_at") @db.Timestamptz(6)
+  expiresAt                 DateTime  @map("expires_at") @db.Timestamptz(6)
+  state                     String    @default("pending")
+  revision                  BigInt    @default(1)
+  checkerRef                String?   @map("checker_ref")
+  checkerGeneration         BigInt?   @map("checker_generation")
+  checkerAuthorizationEpoch BigInt?   @map("checker_authorization_epoch")
+  checkerDecision           String?   @map("checker_decision")
+  checkerReason             String?   @map("checker_reason")
+  result                    Json?
+  resultDigest              String?   @map("result_digest") @db.Char(64)
+  terminalReason            String?   @map("terminal_reason")
+  decidedAt                 DateTime? @map("decided_at") @db.Timestamptz(6)
+  createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@index([environment, region, targetSiteRef, state, expiresAt])
   @@map("admin_approval")
@@ -312,30 +312,30 @@ model AdminApproval {
 }
 
 model AdminPostEffectReview {
-  reviewRef                 String    @id @map("review_ref") @db.Uuid
-  commandId                 String    @unique @map("command_id")
-  requestDigest             String    @map("request_digest") @db.Char(64)
-  operation                 String
-  requiredPermission        String    @map("required_permission")
-  makerRef                  String    @map("maker_ref")
-  makerGeneration           BigInt    @map("maker_generation")
-  makerAuthorizationEpoch   BigInt    @map("maker_authorization_epoch")
-  targetSiteRef             String?   @map("target_site_ref")
-  environment               String
-  region                    String
-  breakGlassTicketRef       String    @map("break_glass_ticket_ref")
-  outcome                   Json
-  outcomeDigest             String    @map("outcome_digest") @db.Char(64)
-  state                     String    @default("pending")
-  reviewerRef               String?   @map("reviewer_ref")
-  reviewerGeneration        BigInt?   @map("reviewer_generation")
-  reviewerAuthorizationEpoch BigInt?  @map("reviewer_authorization_epoch")
-  reviewerReason            String?   @map("reviewer_reason")
-  terminalReason            String?   @map("terminal_reason")
-  createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  expiresAt                 DateTime  @map("expires_at") @db.Timestamptz(6)
-  reviewedAt                DateTime? @map("reviewed_at") @db.Timestamptz(6)
-  revision                  BigInt    @default(1)
+  reviewRef                  String    @id @map("review_ref") @db.Uuid
+  commandId                  String    @unique @map("command_id")
+  requestDigest              String    @map("request_digest") @db.Char(64)
+  operation                  String
+  requiredPermission         String    @map("required_permission")
+  makerRef                   String    @map("maker_ref")
+  makerGeneration            BigInt    @map("maker_generation")
+  makerAuthorizationEpoch    BigInt    @map("maker_authorization_epoch")
+  targetSiteRef              String?   @map("target_site_ref")
+  environment                String
+  region                     String
+  breakGlassTicketRef        String    @map("break_glass_ticket_ref")
+  outcome                    Json
+  outcomeDigest              String    @map("outcome_digest") @db.Char(64)
+  state                      String    @default("pending")
+  reviewerRef                String?   @map("reviewer_ref")
+  reviewerGeneration         BigInt?   @map("reviewer_generation")
+  reviewerAuthorizationEpoch BigInt?   @map("reviewer_authorization_epoch")
+  reviewerReason             String?   @map("reviewer_reason")
+  terminalReason             String?   @map("terminal_reason")
+  createdAt                  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt                  DateTime  @map("expires_at") @db.Timestamptz(6)
+  reviewedAt                 DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  revision                   BigInt    @default(1)
 
   @@index([environment, region, targetSiteRef, state, expiresAt])
   @@map("admin_post_effect_review")
@@ -343,20 +343,20 @@ model AdminPostEffectReview {
 }
 
 model AdminApprovalDecision {
-  decisionRef        String   @id @map("decision_ref") @db.Uuid
-  approvalRef        String   @map("approval_ref")
-  executionCommandId String   @map("execution_command_id")
-  checkerRef         String   @map("checker_ref")
-  checkerGeneration  BigInt   @map("checker_generation")
-  checkerAuthorizationEpoch BigInt? @map("checker_authorization_epoch")
-  targetSiteRef      String?  @map("target_site_ref")
-  environment        String
-  region             String
-  allowed            Boolean
-  reasonCode         String   @map("reason_code")
-  requestDigest      String   @map("request_digest") @db.Char(64)
-  occurredAt         DateTime @map("occurred_at") @db.Timestamptz(6)
-  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  decisionRef               String   @id @map("decision_ref") @db.Uuid
+  approvalRef               String   @map("approval_ref")
+  executionCommandId        String   @map("execution_command_id")
+  checkerRef                String   @map("checker_ref")
+  checkerGeneration         BigInt   @map("checker_generation")
+  checkerAuthorizationEpoch BigInt?  @map("checker_authorization_epoch")
+  targetSiteRef             String?  @map("target_site_ref")
+  environment               String
+  region                    String
+  allowed                   Boolean
+  reasonCode                String   @map("reason_code")
+  requestDigest             String   @map("request_digest") @db.Char(64)
+  occurredAt                DateTime @map("occurred_at") @db.Timestamptz(6)
+  createdAt                 DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([approvalRef, occurredAt])
   @@map("admin_approval_decision")
@@ -402,17 +402,40 @@ model AdmissionLaunchProfileSnapshot {
 }
 
 model AdmissionCapabilityCatalogSnapshot {
-  agentCatalogRef String   @id @map("agent_catalog_ref")
-  siteId          String   @map("site_ref")
-  siteReleaseRef  String   @map("site_release_ref")
-  snapshotDigest  String   @map("snapshot_digest") @db.Char(64)
-  snapshot        Json
-  publishedAt     DateTime @map("published_at") @db.Timestamptz(6)
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  agentCatalogRef        String   @id @map("agent_catalog_ref")
+  siteId                 String   @map("site_ref")
+  siteReleaseRef         String   @map("site_release_ref")
+  snapshotDigest         String   @map("snapshot_digest") @db.Char(64)
+  snapshot               Json
+  publishedAt            DateTime @map("published_at") @db.Timestamptz(6)
+  frozenAt               DateTime @map("frozen_at") @db.Timestamptz(6)
+  signingKeyRef          String   @map("signing_key_ref")
+  signatureAlgorithm     String   @map("signature_algorithm")
+  signaturePayloadDigest String   @map("signature_payload_digest") @db.Char(64)
+  signature              Bytes
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@unique([siteReleaseRef, siteId])
   @@unique([agentCatalogRef, siteReleaseRef, siteId])
   @@map("admission_capability_catalog_snapshot")
+  @@schema("platform")
+}
+
+model CapabilityProjectionCommand {
+  siteId          String   @map("site_id")
+  commandId       String   @map("command_id")
+  callerIdentity  String   @map("caller_identity")
+  idempotencyKey  String   @map("idempotency_key")
+  requestDigest   String   @map("request_digest") @db.Char(64)
+  state           String
+  agentCatalogRef String?  @map("agent_catalog_ref")
+  recordedAt      DateTime @map("recorded_at") @db.Timestamptz(6)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@id([siteId, commandId])
+  @@unique([callerIdentity, siteId, idempotencyKey])
+  @@map("capability_projection_command")
   @@schema("platform")
 }
 
@@ -434,31 +457,31 @@ model AdmissionSessionExecutionBinding {
 }
 
 model AdmissionExecutionManifest {
-  siteId                    String   @map("site_id")
-  manifestRef               String   @map("manifest_ref")
-  manifestDigest            String   @map("manifest_digest") @db.Char(64)
-  sessionId                 String   @map("session_id")
-  launchId                  String   @map("launch_id")
-  runId                     String   @map("run_id")
-  commandId                 String   @map("command_id")
-  requestDigest             String   @map("request_digest") @db.Char(64)
-  triggerMessageId          String   @map("trigger_message_id")
-  bindingRef                String   @map("binding_ref")
-  modelOptionRevisionRef    String   @map("model_option_revision_ref")
-  resolvedRuntime           Json     @map("resolved_runtime")
-  executionBudgetRootRef    String   @map("execution_budget_root_ref") @db.Uuid
-  rootHoldRef               String   @map("root_hold_ref") @db.Uuid
-  authorizationSegmentRef   String   @map("authorization_segment_ref") @db.Uuid
-  segmentVersion            BigInt   @map("segment_version")
-  expiresAt                 DateTime @map("expires_at") @db.Timestamptz(6)
-  maximumExpiresAt          DateTime @map("maximum_expires_at") @db.Timestamptz(6)
-  capabilitySnapshotRef     String   @map("capability_snapshot_ref")
-  configurationRevisionId   String   @map("configuration_revision_id")
-  attachmentRefs            Json     @map("attachment_refs")
-  state                     String
-  resolutionRef             String?  @map("resolution_ref")
-  createdAt                 DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt                 DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  siteId                  String   @map("site_id")
+  manifestRef             String   @map("manifest_ref")
+  manifestDigest          String   @map("manifest_digest") @db.Char(64)
+  sessionId               String   @map("session_id")
+  launchId                String   @map("launch_id")
+  runId                   String   @map("run_id")
+  commandId               String   @map("command_id")
+  requestDigest           String   @map("request_digest") @db.Char(64)
+  triggerMessageId        String   @map("trigger_message_id")
+  bindingRef              String   @map("binding_ref")
+  modelOptionRevisionRef  String   @map("model_option_revision_ref")
+  resolvedRuntime         Json     @map("resolved_runtime")
+  executionBudgetRootRef  String   @map("execution_budget_root_ref") @db.Uuid
+  rootHoldRef             String   @map("root_hold_ref") @db.Uuid
+  authorizationSegmentRef String   @map("authorization_segment_ref") @db.Uuid
+  segmentVersion          BigInt   @map("segment_version")
+  expiresAt               DateTime @map("expires_at") @db.Timestamptz(6)
+  maximumExpiresAt        DateTime @map("maximum_expires_at") @db.Timestamptz(6)
+  capabilitySnapshotRef   String   @map("capability_snapshot_ref")
+  configurationRevisionId String   @map("configuration_revision_id")
+  attachmentRefs          Json     @map("attachment_refs")
+  state                   String
+  resolutionRef           String?  @map("resolution_ref")
+  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@id([siteId, manifestRef])
   @@unique([siteId, launchId])
@@ -470,26 +493,26 @@ model AdmissionExecutionManifest {
 }
 
 model OutboxEvent {
-  eventId        String    @id @map("event_id") @db.Uuid
-  owner          String
-  eventType      String    @map("event_type")
-  aggregateId    String    @map("aggregate_id")
-  payload        Json
-  payloadDigest  String    @map("payload_digest") @db.Char(64)
-  correlationId  String    @map("correlation_id")
-  causationId    String?   @map("causation_id")
-  state          String    @default("pending")
-  attempt        Int       @default(0)
-  availableAt    DateTime  @default(now()) @map("available_at") @db.Timestamptz(6)
-  leaseOwner     String?   @map("lease_owner")
-  leaseToken     String?   @map("lease_token")
-  leaseExpiresAt DateTime? @map("lease_expires_at") @db.Timestamptz(6)
-  lastErrorCode  String?   @map("last_error_code")
-  deliveredAt    DateTime? @map("delivered_at") @db.Timestamptz(6)
-  consumerDeliveryId String? @map("consumer_delivery_id")
+  eventId                String    @id @map("event_id") @db.Uuid
+  owner                  String
+  eventType              String    @map("event_type")
+  aggregateId            String    @map("aggregate_id")
+  payload                Json
+  payloadDigest          String    @map("payload_digest") @db.Char(64)
+  correlationId          String    @map("correlation_id")
+  causationId            String?   @map("causation_id")
+  state                  String    @default("pending")
+  attempt                Int       @default(0)
+  availableAt            DateTime  @default(now()) @map("available_at") @db.Timestamptz(6)
+  leaseOwner             String?   @map("lease_owner")
+  leaseToken             String?   @map("lease_token")
+  leaseExpiresAt         DateTime? @map("lease_expires_at") @db.Timestamptz(6)
+  lastErrorCode          String?   @map("last_error_code")
+  deliveredAt            DateTime? @map("delivered_at") @db.Timestamptz(6)
+  consumerDeliveryId     String?   @map("consumer_delivery_id")
   consumerAcknowledgedAt DateTime? @map("consumer_acknowledged_at") @db.Timestamptz(6)
-  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@map("outbox_event")
   @@schema("platform")
@@ -860,17 +883,17 @@ model SiteReleaseModelCatalogOption {
 }
 
 model SiteAuthority {
-  siteRef          String    @id @map("site_ref")
-  siteKey          String    @unique @map("site_key")
-  state            String
-  activeReleaseRef String?   @map("active_release_ref")
-  securityEpoch    BigInt    @default(1) @map("security_epoch")
-  policyEpoch      BigInt    @default(1) @map("policy_epoch")
-  revocationEpoch  BigInt    @default(1) @map("revocation_epoch")
-  runtimeBindingEpoch BigInt @default(1) @map("runtime_binding_epoch")
-  tombstonedAt     DateTime? @map("tombstoned_at") @db.Timestamptz(6)
-  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt        DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  siteRef             String    @id @map("site_ref")
+  siteKey             String    @unique @map("site_key")
+  state               String
+  activeReleaseRef    String?   @map("active_release_ref")
+  securityEpoch       BigInt    @default(1) @map("security_epoch")
+  policyEpoch         BigInt    @default(1) @map("policy_epoch")
+  revocationEpoch     BigInt    @default(1) @map("revocation_epoch")
+  runtimeBindingEpoch BigInt    @default(1) @map("runtime_binding_epoch")
+  tombstonedAt        DateTime? @map("tombstoned_at") @db.Timestamptz(6)
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@index([state])
   @@map("site")
@@ -878,18 +901,18 @@ model SiteAuthority {
 }
 
 model SiteProjectBindingAuthority {
-  bindingRef          String   @id @map("binding_ref")
-  siteRef             String   @map("site_ref")
-  repositoryRef       String   @unique @map("repository_ref")
-  providerNamespace   String   @map("provider_namespace")
-  providerProjectRef  String   @map("provider_project_ref")
-  environment         String
-  region              String
-  workloadIdentityId  String   @unique @map("workload_identity_id")
-  bindingEpoch        BigInt   @default(1) @map("binding_epoch")
-  state               String
-  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt           DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  bindingRef         String   @id @map("binding_ref")
+  siteRef            String   @map("site_ref")
+  repositoryRef      String   @unique @map("repository_ref")
+  providerNamespace  String   @map("provider_namespace")
+  providerProjectRef String   @map("provider_project_ref")
+  environment        String
+  region             String
+  workloadIdentityId String   @unique @map("workload_identity_id")
+  bindingEpoch       BigInt   @default(1) @map("binding_epoch")
+  state              String
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@unique([bindingRef, siteRef])
   @@unique([providerNamespace, providerProjectRef, environment])
@@ -925,19 +948,19 @@ model SiteReleaseAuthority {
 }
 
 model SiteDeploymentBindingAuthority {
-  deploymentRef          String   @id @map("deployment_ref")
-  bindingRef             String   @map("binding_ref")
-  siteRef                String   @map("site_ref")
-  releaseRef             String   @map("release_ref")
-  environment            String
-  region                 String
-  audience               String
-  sessionContractRevision String  @map("session_contract_revision")
-  webArtifactDigest      String   @map("web_artifact_digest") @db.Char(64)
-  bindingEpoch           BigInt   @default(1) @map("binding_epoch")
-  state                  String
-  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt              DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  deploymentRef           String   @id @map("deployment_ref")
+  bindingRef              String   @map("binding_ref")
+  siteRef                 String   @map("site_ref")
+  releaseRef              String   @map("release_ref")
+  environment             String
+  region                  String
+  audience                String
+  sessionContractRevision String   @map("session_contract_revision")
+  webArtifactDigest       String   @map("web_artifact_digest") @db.Char(64)
+  bindingEpoch            BigInt   @default(1) @map("binding_epoch")
+  state                   String
+  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@unique([deploymentRef, siteRef, releaseRef])
   @@index([siteRef, environment, state])
@@ -946,31 +969,31 @@ model SiteDeploymentBindingAuthority {
 }
 
 model SiteActivationAttemptAuthority {
-  attemptRef                    String    @id @map("attempt_ref")
-  siteRef                       String    @map("site_ref")
-  candidateReleaseRef           String    @map("candidate_release_ref")
-  expectedActiveReleaseRef      String?   @map("expected_active_release_ref")
-  candidateWebArtifactDigest    String    @map("candidate_web_artifact_digest") @db.Char(64)
-  candidateManifestDigest       String    @map("candidate_manifest_digest") @db.Char(64)
-  candidateCertificationDigest  String    @map("candidate_certification_digest") @db.Char(64)
-  siteProjectBindingRef         String    @map("site_project_binding_ref")
-  siteProjectBindingEpoch       BigInt    @map("site_project_binding_epoch")
-  runtimeBindingEpoch           BigInt    @map("runtime_binding_epoch")
-  environment                   String
-  region                        String
-  audience                      String
-  sessionContractRevision       String    @map("session_contract_revision")
-  state                         String
-  requestedAt                   DateTime  @map("requested_at") @db.Timestamptz(6)
-  providerOperationKey          String?   @unique @map("provider_operation_key")
-  deploymentRef                 String?   @map("deployment_ref")
-  observedAt                    DateTime? @map("observed_at") @db.Timestamptz(6)
-  failureCode                   String?   @map("failure_code")
-  createdAt                     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt                     DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  attemptRef                   String    @id @map("attempt_ref")
+  siteRef                      String    @map("site_ref")
+  candidateReleaseRef          String    @map("candidate_release_ref")
+  expectedActiveReleaseRef     String?   @map("expected_active_release_ref")
+  candidateWebArtifactDigest   String    @map("candidate_web_artifact_digest") @db.Char(64)
+  candidateManifestDigest      String    @map("candidate_manifest_digest") @db.Char(64)
+  candidateCertificationDigest String    @map("candidate_certification_digest") @db.Char(64)
+  siteProjectBindingRef        String    @map("site_project_binding_ref")
+  siteProjectBindingEpoch      BigInt    @map("site_project_binding_epoch")
+  runtimeBindingEpoch          BigInt    @map("runtime_binding_epoch")
+  environment                  String
+  region                       String
+  audience                     String
+  sessionContractRevision      String    @map("session_contract_revision")
+  state                        String
+  requestedAt                  DateTime  @map("requested_at") @db.Timestamptz(6)
+  providerOperationKey         String?   @unique @map("provider_operation_key")
+  deploymentRef                String?   @map("deployment_ref")
+  observedAt                   DateTime? @map("observed_at") @db.Timestamptz(6)
+  failureCode                  String?   @map("failure_code")
+  createdAt                    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                    DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
 
-  @@index([siteRef, state, requestedAt])
   @@unique([siteRef, runtimeBindingEpoch])
+  @@index([siteRef, state, requestedAt])
   @@map("site_activation_attempt")
   @@schema("platform")
 }
@@ -994,23 +1017,23 @@ model SiteDeploymentObservationAuthority {
 }
 
 model SiteTrafficStopAttemptAuthority {
-  attemptRef          String    @id @map("attempt_ref")
-  siteRef             String    @map("site_ref")
-  action              String
-  releaseRef          String    @map("release_ref")
-  deploymentRef       String    @map("deployment_ref")
-  bindingRef          String    @map("binding_ref")
-  runtimeBindingEpoch BigInt    @map("runtime_binding_epoch")
-  providerNamespace   String    @map("provider_namespace")
-  environment         String
-  region              String
-  state               String
-  requestedAt         DateTime  @map("requested_at") @db.Timestamptz(6)
-  providerOperationKey String?  @unique @map("provider_operation_key")
-  observedAt          DateTime? @map("observed_at") @db.Timestamptz(6)
-  failureCode         String?   @map("failure_code")
-  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt           DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  attemptRef           String    @id @map("attempt_ref")
+  siteRef              String    @map("site_ref")
+  action               String
+  releaseRef           String    @map("release_ref")
+  deploymentRef        String    @map("deployment_ref")
+  bindingRef           String    @map("binding_ref")
+  runtimeBindingEpoch  BigInt    @map("runtime_binding_epoch")
+  providerNamespace    String    @map("provider_namespace")
+  environment          String
+  region               String
+  state                String
+  requestedAt          DateTime  @map("requested_at") @db.Timestamptz(6)
+  providerOperationKey String?   @unique @map("provider_operation_key")
+  observedAt           DateTime? @map("observed_at") @db.Timestamptz(6)
+  failureCode          String?   @map("failure_code")
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@index([siteRef, state, updatedAt])
   @@map("site_traffic_stop_attempt")
@@ -1018,14 +1041,14 @@ model SiteTrafficStopAttemptAuthority {
 }
 
 model SiteTrafficStopObservationAuthority {
-  observationRef      String   @id @map("observation_ref") @db.Uuid
-  attemptRef          String   @map("attempt_ref")
-  providerOperationKey String  @map("provider_operation_key")
-  deploymentRef       String   @map("deployment_ref")
-  status              String
-  observedAt          DateTime @map("observed_at") @db.Timestamptz(6)
-  payloadDigest       String   @map("payload_digest") @db.Char(64)
-  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  observationRef       String   @id @map("observation_ref") @db.Uuid
+  attemptRef           String   @map("attempt_ref")
+  providerOperationKey String   @map("provider_operation_key")
+  deploymentRef        String   @map("deployment_ref")
+  status               String
+  observedAt           DateTime @map("observed_at") @db.Timestamptz(6)
+  payloadDigest        String   @map("payload_digest") @db.Char(64)
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@unique([attemptRef, payloadDigest])
   @@map("site_traffic_stop_observation")
@@ -1482,30 +1505,30 @@ model IdentityReauthenticationChallenge {
 }
 
 model IdentityTotpEnrollmentTransaction {
-  siteRef                       String    @map("site_ref")
-  transactionRef                String    @map("transaction_ref")
-  siteReleaseRef                String    @map("site_release_ref")
-  siteProjectBindingRef         String    @map("site_project_binding_ref")
-  workloadIdentityId            String    @map("workload_identity_id")
-  bindingEpoch                  BigInt    @map("binding_epoch")
-  accountRef                    String    @map("account_ref")
-  subjectRef                    String    @map("subject_ref")
-  sessionRef                    String    @map("session_ref")
-  authenticatorRef              String    @map("authenticator_ref")
-  accountSecurityEpoch          BigInt    @map("account_security_epoch")
-  subjectGeneration             BigInt    @map("subject_generation")
-  sessionEpoch                  BigInt    @map("session_epoch")
-  credentialEpoch               BigInt    @map("credential_epoch")
-  authStrengthPolicyRevision    String    @map("auth_strength_policy_revision")
-  initiatingCommandId           String    @unique @map("initiating_command_id")
-  requestDigest                 String    @map("request_digest") @db.Char(64)
-  state                         String    @default("pending")
-  attemptCount                  Int       @default(0) @map("attempt_count")
-  maxAttempts                   Int       @default(5) @map("max_attempts")
-  expiresAt                     DateTime  @map("expires_at") @db.Timestamptz(6)
-  confirmedAt                   DateTime? @map("confirmed_at") @db.Timestamptz(6)
-  createdAt                     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt                     DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  siteRef                    String    @map("site_ref")
+  transactionRef             String    @map("transaction_ref")
+  siteReleaseRef             String    @map("site_release_ref")
+  siteProjectBindingRef      String    @map("site_project_binding_ref")
+  workloadIdentityId         String    @map("workload_identity_id")
+  bindingEpoch               BigInt    @map("binding_epoch")
+  accountRef                 String    @map("account_ref")
+  subjectRef                 String    @map("subject_ref")
+  sessionRef                 String    @map("session_ref")
+  authenticatorRef           String    @map("authenticator_ref")
+  accountSecurityEpoch       BigInt    @map("account_security_epoch")
+  subjectGeneration          BigInt    @map("subject_generation")
+  sessionEpoch               BigInt    @map("session_epoch")
+  credentialEpoch            BigInt    @map("credential_epoch")
+  authStrengthPolicyRevision String    @map("auth_strength_policy_revision")
+  initiatingCommandId        String    @unique @map("initiating_command_id")
+  requestDigest              String    @map("request_digest") @db.Char(64)
+  state                      String    @default("pending")
+  attemptCount               Int       @default(0) @map("attempt_count")
+  maxAttempts                Int       @default(5) @map("max_attempts")
+  expiresAt                  DateTime  @map("expires_at") @db.Timestamptz(6)
+  confirmedAt                DateTime? @map("confirmed_at") @db.Timestamptz(6)
+  createdAt                  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@id([siteRef, transactionRef])
   @@index([expiresAt])
@@ -1772,19 +1795,19 @@ model IdentityPersonalBootstrap {
 }
 
 model IdentityReceiptRecoveryCapability {
-  commandId               String    @id @map("command_id")
-  siteRef                 String    @map("site_ref")
-  siteReleaseRef          String    @map("site_release_ref")
-  siteProjectBindingRef   String    @map("site_project_binding_ref")
-  workloadIdentityId      String    @map("workload_identity_id")
-  bindingEpoch            BigInt    @map("binding_epoch")
-  purpose                 String
-  transactionRef          String?   @map("transaction_ref")
-  capabilityDigest        String    @map("capability_digest") @db.Char(64)
-  state                   String    @default("active")
-  expiresAt               DateTime  @map("expires_at") @db.Timestamptz(6)
-  consumedAt              DateTime? @map("consumed_at") @db.Timestamptz(6)
-  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  commandId             String    @id @map("command_id")
+  siteRef               String    @map("site_ref")
+  siteReleaseRef        String    @map("site_release_ref")
+  siteProjectBindingRef String    @map("site_project_binding_ref")
+  workloadIdentityId    String    @map("workload_identity_id")
+  bindingEpoch          BigInt    @map("binding_epoch")
+  purpose               String
+  transactionRef        String?   @map("transaction_ref")
+  capabilityDigest      String    @map("capability_digest") @db.Char(64)
+  state                 String    @default("active")
+  expiresAt             DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt            DateTime? @map("consumed_at") @db.Timestamptz(6)
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([expiresAt])
   @@map("identity_receipt_recovery_capability")
@@ -2068,27 +2091,27 @@ model AssetUploadSession {
 }
 
 model AssetMultipartUpload {
-  uploadRef                    String    @id @map("upload_ref")
-  siteRef                      String    @map("site_ref")
-  intentRef                    String    @map("intent_ref")
-  sessionRef                   String    @map("session_ref")
-  clientUploadId               String    @map("client_upload_id")
-  providerUploadId             String?   @map("provider_upload_id")
-  capabilityEpoch              BigInt    @map("capability_epoch")
-  state                        String
-  outcomeOperation             String?   @map("outcome_operation")
-  expectedVersion              BigInt    @map("expected_version")
-  initiationIdempotencyKey     String    @map("initiation_idempotency_key")
-  initiationRequestDigest      String    @map("initiation_request_digest") @db.Char(64)
-  initiationReceiptRef         String    @unique @map("initiation_receipt_ref")
-  completionIdempotencyKey     String?   @map("completion_idempotency_key")
-  completionRequestDigest      String?   @map("completion_request_digest") @db.Char(64)
-  completionReceiptRef         String?   @unique @map("completion_receipt_ref")
-  abortIdempotencyKey          String?   @map("abort_idempotency_key")
-  abortRequestDigest           String?   @map("abort_request_digest") @db.Char(64)
-  abortReceiptRef              String?   @unique @map("abort_receipt_ref")
-  createdAt                    DateTime  @map("created_at") @db.Timestamptz(6)
-  updatedAt                    DateTime  @map("updated_at") @db.Timestamptz(6)
+  uploadRef                String   @id @map("upload_ref")
+  siteRef                  String   @map("site_ref")
+  intentRef                String   @map("intent_ref")
+  sessionRef               String   @map("session_ref")
+  clientUploadId           String   @map("client_upload_id")
+  providerUploadId         String?  @map("provider_upload_id")
+  capabilityEpoch          BigInt   @map("capability_epoch")
+  state                    String
+  outcomeOperation         String?  @map("outcome_operation")
+  expectedVersion          BigInt   @map("expected_version")
+  initiationIdempotencyKey String   @map("initiation_idempotency_key")
+  initiationRequestDigest  String   @map("initiation_request_digest") @db.Char(64)
+  initiationReceiptRef     String   @unique @map("initiation_receipt_ref")
+  completionIdempotencyKey String?  @map("completion_idempotency_key")
+  completionRequestDigest  String?  @map("completion_request_digest") @db.Char(64)
+  completionReceiptRef     String?  @unique @map("completion_receipt_ref")
+  abortIdempotencyKey      String?  @map("abort_idempotency_key")
+  abortRequestDigest       String?  @map("abort_request_digest") @db.Char(64)
+  abortReceiptRef          String?  @unique @map("abort_receipt_ref")
+  createdAt                DateTime @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime @map("updated_at") @db.Timestamptz(6)
 
   @@unique([siteRef, uploadRef])
   @@unique([siteRef, sessionRef])
@@ -2099,21 +2122,21 @@ model AssetMultipartUpload {
 }
 
 model AssetMultipartPart {
-  siteRef        String   @map("site_ref")
-  uploadRef      String   @map("upload_ref")
-  partNumber     Int      @map("part_number")
-  partReceipt    String   @unique @map("part_receipt")
-  providerEtag   String?  @map("provider_etag")
-  size           BigInt
-  checksumSha256 String   @map("checksum_sha256") @db.Char(64)
-  idempotencyKey String   @map("idempotency_key")
-  requestDigest  String   @map("request_digest") @db.Char(64)
-  state          String
-  expectedVersion BigInt  @map("expected_version")
-  effectToken    String?  @map("effect_token")
+  siteRef              String    @map("site_ref")
+  uploadRef            String    @map("upload_ref")
+  partNumber           Int       @map("part_number")
+  partReceipt          String    @unique @map("part_receipt")
+  providerEtag         String?   @map("provider_etag")
+  size                 BigInt
+  checksumSha256       String    @map("checksum_sha256") @db.Char(64)
+  idempotencyKey       String    @map("idempotency_key")
+  requestDigest        String    @map("request_digest") @db.Char(64)
+  state                String
+  expectedVersion      BigInt    @map("expected_version")
+  effectToken          String?   @map("effect_token")
   effectLeaseExpiresAt DateTime? @map("effect_lease_expires_at") @db.Timestamptz(6)
-  createdAt      DateTime @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime @map("updated_at") @db.Timestamptz(6)
+  createdAt            DateTime  @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime  @map("updated_at") @db.Timestamptz(6)
 
   @@id([siteRef, uploadRef, partNumber])
   @@unique([siteRef, uploadRef, idempotencyKey])
@@ -2194,13 +2217,13 @@ model AssetBlobCandidate {
 }
 
 model AssetUploadRejection {
-  rejectionRef   String   @id @map("rejection_ref")
-  siteRef        String   @map("site_ref")
-  intentRef      String   @unique @map("intent_ref")
-  sessionRef     String   @unique @map("session_ref")
-  reasonCode     String   @map("reason_code")
-  cleanupGroupRef String  @unique @map("cleanup_group_ref")
-  rejectedAt     DateTime @default(now()) @map("rejected_at") @db.Timestamptz(6)
+  rejectionRef    String   @id @map("rejection_ref")
+  siteRef         String   @map("site_ref")
+  intentRef       String   @unique @map("intent_ref")
+  sessionRef      String   @unique @map("session_ref")
+  reasonCode      String   @map("reason_code")
+  cleanupGroupRef String   @unique @map("cleanup_group_ref")
+  rejectedAt      DateTime @default(now()) @map("rejected_at") @db.Timestamptz(6)
 
   @@map("asset_upload_rejection")
   @@schema("platform")
@@ -2233,24 +2256,24 @@ model AssetCleanupGroup {
 }
 
 model AssetObjectCleanup {
-  cleanupRef        String    @id @map("cleanup_ref")
-  cleanupGroupRef   String    @map("cleanup_group_ref")
-  siteRef           String    @map("site_ref")
-  intentRef         String    @map("intent_ref")
-  sessionRef        String    @map("session_ref")
-  storageTenantRef  String    @map("storage_tenant_ref")
-  storageRegion     String    @map("storage_region")
-  objectRole        String    @map("object_role")
-  objectRef         String    @map("object_ref")
-  providerVersionRef String   @map("provider_version_ref")
-  retainedBytes     BigInt    @map("retained_bytes")
-  state             String
-  expectedVersion   BigInt    @map("expected_version")
-  cleanupEventId    String    @unique @map("cleanup_event_id") @db.Uuid
-  lastErrorCode     String?   @map("last_error_code")
-  completedAt       DateTime? @map("completed_at") @db.Timestamptz(6)
-  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt         DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  cleanupRef         String    @id @map("cleanup_ref")
+  cleanupGroupRef    String    @map("cleanup_group_ref")
+  siteRef            String    @map("site_ref")
+  intentRef          String    @map("intent_ref")
+  sessionRef         String    @map("session_ref")
+  storageTenantRef   String    @map("storage_tenant_ref")
+  storageRegion      String    @map("storage_region")
+  objectRole         String    @map("object_role")
+  objectRef          String    @map("object_ref")
+  providerVersionRef String    @map("provider_version_ref")
+  retainedBytes      BigInt    @map("retained_bytes")
+  state              String
+  expectedVersion    BigInt    @map("expected_version")
+  cleanupEventId     String    @unique @map("cleanup_event_id") @db.Uuid
+  lastErrorCode      String?   @map("last_error_code")
+  completedAt        DateTime? @map("completed_at") @db.Timestamptz(6)
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@unique([siteRef, cleanupRef])
   @@unique([storageTenantRef, storageRegion, objectRef, providerVersionRef])
@@ -2348,18 +2371,18 @@ model AssetPromotionIntent {
 }
 
 model AssetBlob {
-  blobRef                    String   @id @map("blob_ref")
-  siteRef                    String   @map("site_ref")
-  storageTenantRef           String   @map("storage_tenant_ref")
-  storageRegion              String   @map("storage_region")
-  trustedObjectRef           String   @map("trusted_object_ref")
-  providerVersionRef         String   @map("provider_version_ref")
-  providerEtagDigest         String   @map("provider_etag_digest") @db.Char(64)
-  checksumSha256             String   @map("checksum_sha256") @db.Char(64)
-  size                       BigInt
-  state                      String
-  createdAt                  DateTime @map("created_at") @db.Timestamptz(6)
-  updatedAt                  DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  blobRef            String   @id @map("blob_ref")
+  siteRef            String   @map("site_ref")
+  storageTenantRef   String   @map("storage_tenant_ref")
+  storageRegion      String   @map("storage_region")
+  trustedObjectRef   String   @map("trusted_object_ref")
+  providerVersionRef String   @map("provider_version_ref")
+  providerEtagDigest String   @map("provider_etag_digest") @db.Char(64)
+  checksumSha256     String   @map("checksum_sha256") @db.Char(64)
+  size               BigInt
+  state              String
+  createdAt          DateTime @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@unique([siteRef, blobRef])
   @@unique([storageTenantRef, storageRegion, trustedObjectRef, providerVersionRef])
@@ -2386,20 +2409,20 @@ model AssetResource {
 }
 
 model AssetVersion {
-  assetVersionRef      String   @id @map("asset_version_ref")
-  siteRef              String   @map("site_ref")
-  assetRef             String   @map("asset_ref")
-  blobRef              String   @map("blob_ref")
-  sourceUploadIntentRef String  @unique @map("source_upload_intent_ref")
-  scanEvaluationRef    String   @unique @map("scan_evaluation_ref")
-  policyRevisionRef    String   @map("policy_revision_ref")
-  detectedMediaType    String   @map("detected_media_type")
-  checksumSha256       String   @map("checksum_sha256") @db.Char(64)
-  size                 BigInt
-  state                String
-  eligibilityEpoch     BigInt   @map("eligibility_epoch")
-  createdAt            DateTime @map("created_at") @db.Timestamptz(6)
-  updatedAt            DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  assetVersionRef       String   @id @map("asset_version_ref")
+  siteRef               String   @map("site_ref")
+  assetRef              String   @map("asset_ref")
+  blobRef               String   @map("blob_ref")
+  sourceUploadIntentRef String   @unique @map("source_upload_intent_ref")
+  scanEvaluationRef     String   @unique @map("scan_evaluation_ref")
+  policyRevisionRef     String   @map("policy_revision_ref")
+  detectedMediaType     String   @map("detected_media_type")
+  checksumSha256        String   @map("checksum_sha256") @db.Char(64)
+  size                  BigInt
+  state                 String
+  eligibilityEpoch      BigInt   @map("eligibility_epoch")
+  createdAt             DateTime @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@unique([siteRef, assetVersionRef])
   @@index([siteRef, assetRef, state, createdAt])
@@ -2408,16 +2431,16 @@ model AssetVersion {
 }
 
 model AssetReference {
-  referenceRef   String    @id @map("reference_ref")
-  siteRef        String    @map("site_ref")
-  assetVersionRef String   @map("asset_version_ref")
-  ownerContext   String    @map("owner_context")
-  resourceRef    String    @map("resource_ref")
-  resourceVersion BigInt   @map("resource_version")
-  purpose        String
-  state          String
-  createdAt      DateTime  @map("created_at") @db.Timestamptz(6)
-  releasedAt     DateTime? @map("released_at") @db.Timestamptz(6)
+  referenceRef    String    @id @map("reference_ref")
+  siteRef         String    @map("site_ref")
+  assetVersionRef String    @map("asset_version_ref")
+  ownerContext    String    @map("owner_context")
+  resourceRef     String    @map("resource_ref")
+  resourceVersion BigInt    @map("resource_version")
+  purpose         String
+  state           String
+  createdAt       DateTime  @map("created_at") @db.Timestamptz(6)
+  releasedAt      DateTime? @map("released_at") @db.Timestamptz(6)
 
   @@unique([siteRef, ownerContext, resourceRef, resourceVersion, assetVersionRef, purpose])
   @@index([siteRef, ownerContext, resourceRef, resourceVersion, state])
@@ -2447,15 +2470,15 @@ model AssetEligibilityProjection {
 }
 
 model AssetPromotionReceipt {
-  receiptRef               String   @id @map("receipt_ref")
-  siteRef                  String   @map("site_ref")
-  promotionRef             String   @unique @map("promotion_ref")
-  assetRef                 String   @unique @map("asset_ref")
-  assetVersionRef          String   @unique @map("asset_version_ref")
-  blobRef                  String   @unique @map("blob_ref")
-  trustedProviderVersionRef String  @map("trusted_provider_version_ref")
-  checksumSha256           String   @map("checksum_sha256") @db.Char(64)
-  completedAt              DateTime @map("completed_at") @db.Timestamptz(6)
+  receiptRef                String   @id @map("receipt_ref")
+  siteRef                   String   @map("site_ref")
+  promotionRef              String   @unique @map("promotion_ref")
+  assetRef                  String   @unique @map("asset_ref")
+  assetVersionRef           String   @unique @map("asset_version_ref")
+  blobRef                   String   @unique @map("blob_ref")
+  trustedProviderVersionRef String   @map("trusted_provider_version_ref")
+  checksumSha256            String   @map("checksum_sha256") @db.Char(64)
+  completedAt               DateTime @map("completed_at") @db.Timestamptz(6)
 
   @@map("asset_promotion_receipt")
   @@schema("platform")

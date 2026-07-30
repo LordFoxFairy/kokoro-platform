@@ -169,6 +169,7 @@ export type AssetDataPlaneOperation =
 
 export type PlatformInternalOperation =
   | "admission.command"
+  | "capability.projection"
   | "asset.eligibility.check-active"
   | "asset.eligibility.resolve"
   | "authorization.feed.read"
@@ -845,6 +846,7 @@ const ASSET_WORKER_UPDATE_RELATIONS = [
 ] as const;
 const ADMISSION_RELATIONS = [
   "admission_command",
+  "capability_projection_command",
   "admission_session_execution_binding",
   "admission_execution_manifest",
   "admission_launch_profile_snapshot",
@@ -1032,10 +1034,14 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_table_privilege(current_user, 'platform.asset_eligibility_projection', 'SELECT')
          WHEN $2 = 'admission' THEN
            has_table_privilege(current_user, 'platform.admission_command', 'SELECT,INSERT,UPDATE')
+           AND has_table_privilege(current_user, 'platform.capability_projection_command', 'SELECT,INSERT')
+           AND has_column_privilege(current_user, 'platform.capability_projection_command', 'state', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.capability_projection_command', 'agent_catalog_ref', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.capability_projection_command', 'updated_at', 'UPDATE')
            AND has_table_privilege(current_user, 'platform.admission_session_execution_binding', 'SELECT,INSERT')
            AND has_table_privilege(current_user, 'platform.admission_execution_manifest', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.admission_launch_profile_snapshot', 'SELECT')
-           AND has_table_privilege(current_user, 'platform.admission_capability_catalog_snapshot', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.admission_capability_catalog_snapshot', 'SELECT,INSERT')
            AND has_table_privilege(current_user, 'platform.outbox_event', 'INSERT')
            AND has_table_privilege(current_user, 'platform.site', 'SELECT')
            AND has_table_privilege(current_user, 'platform.site_release', 'SELECT')
