@@ -6,8 +6,6 @@ import {
 } from "../infrastructure/postgres/client.js";
 import { createAdminProductionComposition } from "./admin-composition.js";
 import { createPlatformAdmissionProcess } from "./admission.js";
-import { createCommerceAdministrationComposition } from "./commerce-admin-composition.js";
-import { createPlatformSiteAdminComposition } from "./site-admin-composition.js";
 
 /**
  * Single production Admin control-plane deployable. Identity, Query and Command
@@ -15,8 +13,6 @@ import { createPlatformSiteAdminComposition } from "./site-admin-composition.js"
  */
 export async function runPlatformAdminMain(): Promise<void> {
   const database = createPlatformDatabaseClient(loadPlatformDatabaseConfig("admin"));
-  await createCommerceAdministrationComposition({ database });
-  createPlatformSiteAdminComposition(database);
   const composition = await createAdminProductionComposition({ database });
   const processHost = createPlatformAdmissionProcess({ database, composition });
   const port = parsePort(process.env.PLATFORM_ADMIN_PORT ?? "4101");

@@ -31,6 +31,27 @@ import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/plat
 export class PostgresSiteAuthorityRepository implements
   SiteAuthorityRepository, SitePublicationRepository, SiteTrafficStopRepository,
   SiteRuntimeRepository {
+  async assertCapabilityCatalogSnapshot(
+    transaction: PlatformTransaction,
+    input: Readonly<{ siteRef: string; releaseRef: string }>,
+  ): Promise<void> {
+    const rows = await resolvePlatformTransaction(transaction).query<{ snapshotDigest: unknown }>(
+      `SELECT catalog.snapshot_digest AS "snapshotDigest"
+       FROM platform.site_release AS release
+       JOIN platform.admission_capability_catalog_snapshot AS catalog
+         ON catalog.site_ref=release.site_ref
+        AND catalog.site_release_ref=release.release_ref
+        AND catalog.agent_catalog_ref=release.agent_catalog_ref
+       WHERE release.site_ref=$1 AND release.release_ref=$2 AND release.state='ready'
+       FOR SHARE OF catalog`,
+      [input.siteRef, input.releaseRef],
+    );
+    if (rows.length !== 1 || typeof rows[0]?.snapshotDigest !== "string" ||
+        !/^[a-f0-9]{64}$/u.test(rows[0].snapshotDigest)) {
+      throw new Error("SITE_ACTIVATION_CAPABILITY_SNAPSHOT_REQUIRED");
+    }
+  }
+
   async loadActiveProjectBindingForUpdate(
     transaction: PlatformTransaction,
     siteRef: string,

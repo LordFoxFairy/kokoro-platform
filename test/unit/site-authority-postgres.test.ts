@@ -28,6 +28,33 @@ const attempt: ActivationAttempt = Object.freeze({
 });
 
 describe("Postgres Site authority", () => {
+  it("fails activation closed unless the release-pinned capability snapshot exists", async () => {
+    const statements: string[] = [];
+    const lease = issuePlatformTransaction({
+      query: async <Row extends Record<string, unknown>>(statement: string) => {
+        statements.push(statement);
+        return [{ snapshotDigest: "a".repeat(64) }] as unknown as readonly Row[];
+      },
+      execute: async () => 0,
+    });
+    try {
+      await expect(new PostgresSiteAuthorityRepository().assertCapabilityCatalogSnapshot(
+        lease.transaction, { siteRef: "site_01", releaseRef: "release_02" },
+      )).resolves.toBeUndefined();
+      expect(statements[0]).toContain("catalog.agent_catalog_ref=release.agent_catalog_ref");
+      expect(statements[0]).toContain("release.state='ready'");
+    } finally { revokePlatformTransaction(lease); }
+  });
+
+  it("rejects a missing release-pinned capability snapshot", async () => {
+    const lease = issuePlatformTransaction({ query: async () => [], execute: async () => 0 });
+    try {
+      await expect(new PostgresSiteAuthorityRepository().assertCapabilityCatalogSnapshot(
+        lease.transaction, { siteRef: "site_01", releaseRef: "release_02" },
+      )).rejects.toThrow("SITE_ACTIVATION_CAPABILITY_SNAPSHOT_REQUIRED");
+    } finally { revokePlatformTransaction(lease); }
+  });
+
   it("creates the Site and independent project binding atomically through the caller transaction", async () => {
     const calls: { statement: string; values: readonly unknown[] }[] = [];
     const lease = issuePlatformTransaction({ query: async () => [], execute: async (statement, values = []) => {

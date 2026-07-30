@@ -7,10 +7,8 @@ import { PostgresSiteAuthorityJournal } from "../modules/site/infrastructure/pos
 import { PostgresSiteAuthorityRepository } from "../modules/site/infrastructure/postgres/site-authority-repository.js";
 import { PostgresSiteEffectApprovalAuthority } from "../modules/site/infrastructure/postgres/site-effect-approval-authority.js";
 import { PlatformUnitOfWork } from "../shared/unit-of-work/index.js";
-import { createPlatformApiProcess, type PlatformApiProcess } from "./api.js";
 
 export interface PlatformSiteAdminComposition {
-  readonly process: PlatformApiProcess;
   readonly site: SiteDangerousAdminHandler;
 }
 
@@ -23,12 +21,14 @@ export function createPlatformSiteAdminComposition(
   const journal = new PostgresSiteAuthorityJournal();
   const approvalAuthority = new PostgresSiteEffectApprovalAuthority();
   const approvals = new SiteEffectApprovalService(unitOfWork, approvalAuthority);
-  const lifecycle = new SiteLifecycleService(unitOfWork, repository, journal, { approvalAuthority });
+  const lifecycle = new SiteLifecycleService(unitOfWork, repository, journal, {
+    approvalAuthority,
+    preconditions: repository,
+  });
   const trafficStop = new SiteTrafficStopService(unitOfWork, repository, journal, {
     approvalAuthority,
   });
   return Object.freeze({
-    process: createPlatformApiProcess({ database }),
     site: new SiteDangerousAdminHandler(approvals, lifecycle, trafficStop),
   });
 }

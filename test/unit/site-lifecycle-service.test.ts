@@ -49,6 +49,9 @@ describe("SiteLifecycleService", () => {
     const service = new SiteLifecycleService(unitOfWork(), repository, journal, {
       now: () => "2026-07-28T12:00:00.000Z",
       approvalAuthority: { consume: async (transaction) => { calls.push(`approval:${token(transaction)}`); } },
+      preconditions: { assertCapabilityCatalogSnapshot: async (transaction) => {
+        calls.push(`capability:${token(transaction)}`);
+      } },
     });
 
     const receipt = await service.beginActivation({
@@ -61,14 +64,16 @@ describe("SiteLifecycleService", () => {
       expectedActiveReleaseRef: "release_01",
       audience: "site-product",
       sessionContractRevision: "browser-v3",
+      reason: "launch approved",
     }, await context("site.activation.begin", "site_01", "admin_workload"));
 
-    expect(receipt).toEqual({ attemptRef: "activation_02", state: "preparing", replayed: false });
+    expect(receipt).toEqual({ attemptRef: "activation_02", state: "preparing", replayed: false,
+      recordedAt: "2026-07-28T12:00:00.000Z" });
     expect(saved).toMatchObject({ candidateReleaseRef: "release_02", expectedActiveReleaseRef: "release_01" });
     expect(saved).toMatchObject({ runtimeBindingEpoch: 4n });
     expect(new Set(calls.map((value) => value.split(":")[1]))).toEqual(new Set(["one"]));
     expect(calls.map((value) => value.split(":")[0])).toEqual([
-      "begin", "approval", "site", "release", "insert", "succeed",
+      "begin", "approval", "site", "release", "capability", "insert", "succeed",
     ]);
   });
 
@@ -87,6 +92,7 @@ describe("SiteLifecycleService", () => {
       expectedActiveReleaseRef: "release_01",
       audience: "site-product",
       sessionContractRevision: "browser-v3",
+      reason: "launch approved",
     }, wrongSite)).toThrow(
       "SITE_ADMIN_SCOPE_MISMATCH",
     );

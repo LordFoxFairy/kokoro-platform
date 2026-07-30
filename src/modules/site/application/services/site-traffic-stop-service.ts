@@ -33,12 +33,14 @@ export class SiteTrafficStopService {
   requestTrafficStop(
     input: CommandInput & Readonly<{
       attemptRef: string; approvalRef: string; siteRef: string; action: "suspend" | "decommission";
+      reason: string;
     }>,
     context: VerifiedRequestSecurityContext,
   ): Promise<SiteAuthorityReceipt> {
     admin(context, input.siteRef);
     const command = createSiteAuthorityCommand("site.traffic-stop.request", input.siteRef, input, context, {
       attemptRef: input.attemptRef, action: input.action,
+      reason: input.reason,
     });
     return this.unitOfWork.execute({ context, operation: command.operation }, async (transaction) => {
       const disposition = await this.journal.begin(transaction, command);

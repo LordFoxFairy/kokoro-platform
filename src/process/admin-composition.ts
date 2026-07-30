@@ -11,6 +11,8 @@ import { AdminQueryService } from
   "../interfaces/connect/generated-admin-query-v2/kokoro/platform/admin/v2/admin_query_pb.js";
 import { AdminCommandService as AdminCommandDescriptor } from
   "../interfaces/connect/generated-admin-v2/kokoro/platform/admin/v2/admin_command_pb.js";
+import { SiteLifecycleService } from
+  "../interfaces/connect/generated-site-lifecycle/kokoro/platform/site/v1/site_lifecycle_pb.js";
 import { PlatformUnitOfWork } from "../shared/unit-of-work/index.js";
 import { CommandReceiptRepository } from "../shared/outbox-inbox/receipt.js";
 import { OutboxRepository } from "../shared/outbox-inbox/outbox.js";
@@ -50,7 +52,10 @@ import { createAdminIdentityConnectService } from
   "../modules/admin/interfaces/connect/admin-identity-service.js";
 import { createAdminQueryConnectService } from
   "../modules/admin/interfaces/connect/admin-query-service.js";
+import { createSiteLifecycleConnectService } from
+  "../modules/site/interfaces/connect/site-lifecycle-service.js";
 import { readBoundedPrivateFile, readBoundedRegularFile } from "./secret-files.js";
+import { createPlatformSiteAdminComposition } from "./site-admin-composition.js";
 
 export type AdminRequestListener = (
   request: Http2ServerRequest,
@@ -176,11 +181,16 @@ export async function createAdminProductionComposition(input: Readonly<{
     receipts: new PostgresAdminCommandReceiptReader(unitOfWork),
     resolver,
   });
+  const siteLifecycleService = createSiteLifecycleConnectService({
+    owner: createPlatformSiteAdminComposition(input.database).site,
+    resolver,
+  });
   const connect = connectNodeAdapter({
     routes: (router) => {
       router.service(AdminIdentityService, identityService);
       router.service(AdminQueryService, queryService);
       router.service(AdminCommandDescriptor, commandService);
+      router.service(SiteLifecycleService, siteLifecycleService);
     },
     connect: true,
     grpc: false,

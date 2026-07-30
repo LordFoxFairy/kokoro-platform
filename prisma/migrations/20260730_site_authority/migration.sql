@@ -191,6 +191,10 @@ CREATE TABLE platform.site_effect_approval (
     'site.traffic-stop.decommission'
   )),
   effect_digest CHAR(64) NOT NULL CHECK(effect_digest ~ '^[0-9a-f]{64}$'),
+  reason TEXT NOT NULL CHECK(length(reason) BETWEEN 3 AND 512),
+  command_id TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  request_digest CHAR(64) NOT NULL CHECK(request_digest ~ '^[0-9a-f]{64}$'),
   state TEXT NOT NULL CHECK(state IN ('pending','approved','consumed','revoked')),
   maker_subject_ref TEXT NOT NULL,
   checker_subject_ref TEXT,
@@ -301,10 +305,12 @@ EXECUTE FUNCTION platform.reject_site_deployment_observation_update();
 CREATE FUNCTION platform.site_effect_approval_terminal() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
-  IF ROW(NEW.approval_ref,NEW.site_ref,NEW.operation,NEW.effect_digest,
+  IF ROW(NEW.approval_ref,NEW.site_ref,NEW.operation,NEW.effect_digest,NEW.reason,
+         NEW.command_id,NEW.idempotency_key,NEW.request_digest,
          NEW.maker_subject_ref,NEW.requested_at,NEW.expires_at,NEW.created_at)
      IS DISTINCT FROM
-     ROW(OLD.approval_ref,OLD.site_ref,OLD.operation,OLD.effect_digest,
+     ROW(OLD.approval_ref,OLD.site_ref,OLD.operation,OLD.effect_digest,OLD.reason,
+         OLD.command_id,OLD.idempotency_key,OLD.request_digest,
          OLD.maker_subject_ref,OLD.requested_at,OLD.expires_at,OLD.created_at) THEN
     RAISE EXCEPTION 'Site effect approval immutable facts cannot change';
   END IF;

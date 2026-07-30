@@ -138,6 +138,36 @@ export class AdminControlPlaneResolver implements
     });
   }
 
+  async resolveSiteCommand(
+    claimed: AuthenticatedOperatorCommandContext,
+    transport: HandlerContext,
+    request: Readonly<{
+      operation: "site.approval.request" | "site.activation.begin";
+      siteRef: string;
+      resourceRefs: readonly string[];
+      allowedOperations: readonly (
+        "site.approval.request" | "site.approval.approve" | "site.activation.begin"
+      )[];
+    }>,
+  ): Promise<Readonly<{
+    context: VerifiedRequestSecurityContext;
+    axes: VerifiedAuthenticatedAdminAxes;
+  }>> {
+    const authenticated = await this.authenticate(claimed, transport);
+    const requested = scopeFromWire(claimed.scope);
+    this.authorizeScope(
+      authenticated, requested, request.operation, request.operation, request.siteRef,
+      [request.siteRef, ...request.resourceRefs], [], true,
+    );
+    return Object.freeze({
+      axes: axes(authenticated.session),
+      context: await this.context(
+        authenticated.session, request.operation, request.siteRef, scopeLabels(requested),
+        claimed.command?.commandId ?? "", request.allowedOperations,
+      ),
+    });
+  }
+
   async resolveQuery(
     claimed: AuthenticatedOperatorQueryContext,
     transport: HandlerContext,
@@ -243,6 +273,7 @@ export class AdminControlPlaneResolver implements
     siteRef: string | null,
     scopes: readonly string[],
     requestId: string,
+    allowedOperations: readonly string[] = [operation],
   ): Promise<VerifiedRequestSecurityContext> {
     const peer = this.requirePeer();
     const now = this.now();
@@ -254,7 +285,7 @@ export class AdminControlPlaneResolver implements
       audience: peer.audience,
       environment: peer.environment,
       region: peer.region,
-      allowedOperations: [operation],
+      allowedOperations: [...allowedOperations],
       siteId: null,
       bindingEpoch: peer.bindingEpoch.toString(),
       issuedAt,

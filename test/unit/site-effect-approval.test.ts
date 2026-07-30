@@ -3,6 +3,27 @@ import { PostgresSiteEffectApprovalAuthority } from "../../src/modules/site/infr
 import { issuePlatformTransaction, revokePlatformTransaction } from "../../src/shared/unit-of-work/platform-transaction.js";
 
 describe("PostgresSiteEffectApprovalAuthority", () => {
+  it("returns the persisted approval expiry on an exact request replay", async () => {
+    const lease = issuePlatformTransaction({
+      execute: async () => 0,
+      query: async <Row extends Record<string, unknown>>() => ([{
+        exact: true, state: "pending", recordedAt: new Date("2026-07-30T10:00:00.000Z"),
+        expiresAt: new Date("2026-07-30T10:10:00.000Z"),
+      }] as unknown as readonly Row[]),
+    });
+    try {
+      await expect(new PostgresSiteEffectApprovalAuthority().request(lease.transaction, {
+        approvalRef: "approval_01", siteRef: "site_01", operation: "site.activation.begin",
+        effectDigest: "a".repeat(64), reason: "launch approved", makerSubjectRef: "operator_maker",
+        commandId: "01983f57-8cf1-7000-8000-000000000001",
+        idempotencyKey: "activation-approval-01", requestDigest: "b".repeat(64),
+        requestedAt: "2026-07-30T10:03:00.000Z", expiresAt: "2026-07-30T10:13:00.000Z",
+      })).resolves.toEqual({ approvalRef: "approval_01", state: "pending",
+        recordedAt: "2026-07-30T10:00:00.000Z",
+        expiresAt: "2026-07-30T10:10:00.000Z" });
+    } finally { revokePlatformTransaction(lease); }
+  });
+
   it("requires a distinct approved checker and consumes the exact effect once", async () => {
     const calls: { statement: string; values: readonly unknown[] }[] = [];
     const lease = issuePlatformTransaction({ query: async () => [], execute: async (statement, values = []) => {
@@ -12,7 +33,9 @@ describe("PostgresSiteEffectApprovalAuthority", () => {
     try {
       await authority.request(lease.transaction, {
         approvalRef: "approval_01", siteRef: "site_01", operation: "site.activation.begin",
-        effectDigest: "a".repeat(64), makerSubjectRef: "operator_maker",
+        effectDigest: "a".repeat(64), reason: "launch approved", makerSubjectRef: "operator_maker",
+        commandId: "01983f57-8cf1-7000-8000-000000000001",
+        idempotencyKey: "activation-approval-01", requestDigest: "b".repeat(64),
         requestedAt: "2026-07-30T10:00:00.000Z", expiresAt: "2026-07-30T10:10:00.000Z",
       });
       await authority.approve(lease.transaction, {

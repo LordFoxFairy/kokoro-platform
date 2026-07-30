@@ -24,11 +24,20 @@ export interface SiteEffectApprovalAdministration extends SiteEffectApprovalAuth
       siteRef: string;
       operation: SiteDangerousOperation;
       effectDigest: string;
+      reason: string;
+      commandId: string;
+      idempotencyKey: string;
+      requestDigest: string;
       makerSubjectRef: string;
       requestedAt: string;
       expiresAt: string;
     }>,
-  ): Promise<void>;
+  ): Promise<Readonly<{
+    approvalRef: string;
+    state: "pending" | "approved" | "consumed";
+    recordedAt: string;
+    expiresAt: string;
+  }>>;
   approve(
     transaction: PlatformTransaction,
     input: Readonly<{
@@ -44,13 +53,13 @@ export interface SiteEffectApprovalAdministration extends SiteEffectApprovalAuth
 
 export function siteActivationEffectDigest(input: Readonly<{
   siteRef: string; candidateReleaseRef: string; expectedActiveReleaseRef: string | null;
-  audience: string; sessionContractRevision: string;
+  audience: string; sessionContractRevision: string; reason: string;
 }>): string {
   return effectDigest("site.activation.begin", input);
 }
 
 export function siteTrafficStopEffectDigest(input: Readonly<{
-  siteRef: string; action: "suspend" | "decommission";
+  siteRef: string; action: "suspend" | "decommission"; reason: string;
 }>): string {
   return effectDigest(`site.traffic-stop.${input.action}`, input);
 }

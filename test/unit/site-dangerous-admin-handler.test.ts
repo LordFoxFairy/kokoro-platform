@@ -35,6 +35,7 @@ describe("Site dangerous-effect administration", () => {
       expectedActiveReleaseRef: "release_01",
       audience: "site-product",
       sessionContractRevision: "browser-v3",
+      reason: "launch approved",
     } as const;
 
     await expect(handler.approveAndActivate(input, {} as VerifiedRequestSecurityContext))
@@ -53,6 +54,8 @@ describe("Site dangerous-effect administration", () => {
     const authority: SiteEffectApprovalAdministration = {
       request: async (_transaction, input) => {
         calls.push({ name: "request", actor: input.makerSubjectRef, operation: input.operation });
+        return { approvalRef: input.approvalRef, state: "pending", recordedAt: input.requestedAt,
+          expiresAt: input.expiresAt };
       },
       approve: async (_transaction, input) => {
         calls.push({ name: "approve", actor: input.checkerSubjectRef, operation: input.operation });
@@ -72,7 +75,9 @@ describe("Site dangerous-effect administration", () => {
     });
     const identity = {
       approvalRef: "approval_01", siteRef: "site_01", operation: "site.activation.begin",
-      effectDigest: "a".repeat(64),
+      effectDigest: "a".repeat(64), reason: "launch approved",
+      commandId: "01983f57-8cf1-7000-8000-000000000001",
+      idempotencyKey: "activation-approval-01", requestDigest: "b".repeat(64),
     } as const;
 
     await service.request(identity, await context("operator_maker", ["site.approval.request"]));

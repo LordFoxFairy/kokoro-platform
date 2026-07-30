@@ -34,7 +34,7 @@ export class SiteDangerousAdminHandler {
   ) {}
 
   requestActivationApproval(
-    input: Readonly<Omit<ActivationInput, "commandId" | "idempotencyKey" | "attemptRef">>,
+    input: Readonly<Omit<ActivationInput, "attemptRef"> & { requestDigest: string }>,
     context: VerifiedRequestSecurityContext,
   ): Promise<SiteEffectApprovalReceipt> {
     return this.approvals.request({
@@ -42,6 +42,10 @@ export class SiteDangerousAdminHandler {
       siteRef: input.siteRef,
       operation: "site.activation.begin",
       effectDigest: siteActivationEffectDigest(input),
+      reason: input.reason,
+      commandId: input.commandId,
+      idempotencyKey: input.idempotencyKey,
+      requestDigest: input.requestDigest,
     }, context);
   }
 
@@ -59,7 +63,10 @@ export class SiteDangerousAdminHandler {
   }
 
   requestTrafficStopApproval(
-    input: Readonly<Pick<TrafficStopInput, "approvalRef" | "siteRef" | "action">>,
+    input: Readonly<Pick<TrafficStopInput,
+      "approvalRef" | "siteRef" | "action" | "reason" | "commandId" | "idempotencyKey"> & {
+        requestDigest: string;
+      }>,
     context: VerifiedRequestSecurityContext,
   ): Promise<SiteEffectApprovalReceipt> {
     return this.approvals.request({
@@ -67,6 +74,10 @@ export class SiteDangerousAdminHandler {
       siteRef: input.siteRef,
       operation: `site.traffic-stop.${input.action}`,
       effectDigest: siteTrafficStopEffectDigest(input),
+      reason: input.reason,
+      commandId: input.commandId,
+      idempotencyKey: input.idempotencyKey,
+      requestDigest: input.requestDigest,
     }, context);
   }
 

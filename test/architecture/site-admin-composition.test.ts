@@ -14,6 +14,6 @@ describe("Site admin production composition", () => {
     expect(composition).toContain("new SiteTrafficStopService");
     expect(composition).toContain("new SiteDangerousAdminHandler");
     expect(composition).not.toMatch(/fetch\(|http:\/\/|https:\/\//u);
-    expect(admin).toContain("createPlatformSiteAdminComposition(database)");
+    expect(admin).not.toContain("createPlatformSiteAdminComposition(database)");
   });
 });

@@ -16,9 +16,21 @@ interface ApprovalIdentity {
 export class PostgresSiteEffectApprovalAuthority implements SiteEffectApprovalAdministration {
   async request(
     transaction: PlatformTransaction,
-    input: ApprovalIdentity & Readonly<{ makerSubjectRef: string; requestedAt: string; expiresAt: string }>,
-  ): Promise<void> {
+    input: ApprovalIdentity & Readonly<{
+      reason: string; commandId: string; idempotencyKey: string; requestDigest: string;
+      makerSubjectRef: string; requestedAt: string; expiresAt: string;
+    }>,
+  ): Promise<Readonly<{
+    approvalRef: string; state: "pending" | "approved" | "consumed";
+    recordedAt: string; expiresAt: string;
+  }>> {
     verifyIdentity(input);
+    verifyReason(input.reason);
+    identifier(input.commandId, "SITE_APPROVAL_COMMAND_ID_INVALID");
+    identifier(input.idempotencyKey, "SITE_APPROVAL_IDEMPOTENCY_KEY_INVALID");
+    if (!/^[a-f0-9]{64}$/u.test(input.requestDigest)) {
+      throw new Error("SITE_APPROVAL_REQUEST_DIGEST_INVALID");
+    }
     identifier(input.makerSubjectRef, "SITE_APPROVAL_MAKER_INVALID");
     instant(input.requestedAt, "SITE_APPROVAL_TIME_INVALID");
     instant(input.expiresAt, "SITE_APPROVAL_TIME_INVALID");
@@ -28,20 +40,32 @@ export class PostgresSiteEffectApprovalAuthority implements SiteEffectApprovalAd
     const sql = resolvePlatformTransaction(transaction);
     const inserted = await sql.execute(
       `INSERT INTO platform.site_effect_approval
-       (approval_ref,site_ref,operation,effect_digest,state,maker_subject_ref,requested_at,expires_at)
-       VALUES ($1,$2,$3,$4,'pending',$5,$6::timestamptz,$7::timestamptz)
+       (approval_ref,site_ref,operation,effect_digest,reason,command_id,idempotency_key,request_digest,
+        state,maker_subject_ref,requested_at,expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9,$10::timestamptz,$11::timestamptz)
        ON CONFLICT (approval_ref) DO NOTHING`,
-      [input.approvalRef, input.siteRef, input.operation, input.effectDigest,
-        input.makerSubjectRef, input.requestedAt, input.expiresAt],
+      [input.approvalRef, input.siteRef, input.operation, input.effectDigest, input.reason,
+        input.commandId, input.idempotencyKey, input.requestDigest, input.makerSubjectRef,
+        input.requestedAt, input.expiresAt],
     );
-    if (inserted === 1) return;
-    const existing = await sql.query<{ exact: boolean }>(
-      `SELECT site_ref=$2 AND operation=$3 AND effect_digest=$4 AND maker_subject_ref=$5
-              AS exact
+    if (inserted === 1) return Object.freeze({ approvalRef: input.approvalRef,
+      state: "pending", recordedAt: input.requestedAt, expiresAt: input.expiresAt });
+    const existing = await sql.query<{
+      exact: boolean; state: unknown; recordedAt: unknown; expiresAt: unknown;
+    }>(
+      `SELECT site_ref=$2 AND operation=$3 AND effect_digest=$4 AND reason=$5
+              AND command_id=$6 AND idempotency_key=$7 AND request_digest=$8
+              AND maker_subject_ref=$9 AS exact,state,requested_at AS "recordedAt",
+              expires_at AS "expiresAt"
        FROM platform.site_effect_approval WHERE approval_ref=$1`,
-      [input.approvalRef, input.siteRef, input.operation, input.effectDigest, input.makerSubjectRef],
+      [input.approvalRef, input.siteRef, input.operation, input.effectDigest, input.reason,
+        input.commandId, input.idempotencyKey, input.requestDigest, input.makerSubjectRef],
     );
-    if (existing[0]?.exact !== true) throw new Error("SITE_EFFECT_APPROVAL_REQUEST_CONFLICT");
+    const row = existing[0];
+    if (row?.exact !== true) throw new Error("SITE_EFFECT_APPROVAL_REQUEST_CONFLICT");
+    return Object.freeze({ approvalRef: input.approvalRef,
+      state: approvalState(row.state), recordedAt: instantValue(row.recordedAt),
+      expiresAt: instantValue(row.expiresAt) });
   }
 
   async approve(
@@ -101,4 +125,26 @@ function identifier(value: string, code: string): void {
 }
 function instant(value: string, code: string): void {
   if (!Number.isFinite(Date.parse(value))) throw new Error(code);
+}
+function verifyReason(value: string): void {
+  const hasControl = Array.from(value).some((character) => {
+    const point = character.codePointAt(0) ?? 0;
+    return point < 32 || point === 127;
+  });
+  if (value.length < 3 || value.length > 512 || hasControl) {
+    throw new Error("SITE_APPROVAL_REASON_INVALID");
+  }
+}
+function approvalState(value: unknown): "pending" | "approved" | "consumed" {
+  if (value !== "pending" && value !== "approved" && value !== "consumed") {
+    throw new Error("SITE_EFFECT_APPROVAL_ROW_CORRUPT");
+  }
+  return value;
+}
+function instantValue(value: unknown): string {
+  const date = value instanceof Date ? value : typeof value === "string" ? new Date(value) : null;
+  if (date === null || !Number.isFinite(date.getTime())) {
+    throw new Error("SITE_EFFECT_APPROVAL_ROW_CORRUPT");
+  }
+  return date.toISOString();
 }

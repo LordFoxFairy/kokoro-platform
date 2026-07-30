@@ -27,18 +27,31 @@ interface CommandInput {
   readonly idempotencyKey: string;
 }
 
+export interface SiteActivationPreconditionAuthority {
+  assertCapabilityCatalogSnapshot(
+    transaction: Parameters<SiteAuthorityRepository["loadSiteForUpdate"]>[0],
+    input: Readonly<{ siteRef: string; releaseRef: string }>,
+  ): Promise<void>;
+}
+
 export class SiteLifecycleService {
   readonly #now: () => string;
   readonly #approvalAuthority: SiteEffectApprovalAuthority;
+  readonly #preconditions: SiteActivationPreconditionAuthority;
 
   constructor(
     private readonly unitOfWork: PlatformUnitOfWork,
     private readonly repository: SiteAuthorityRepository,
     private readonly journal: SiteAuthorityJournal,
-    options: Readonly<{ now?: () => string; approvalAuthority?: SiteEffectApprovalAuthority }> = {},
+    options: Readonly<{
+      now?: () => string;
+      approvalAuthority?: SiteEffectApprovalAuthority;
+      preconditions?: SiteActivationPreconditionAuthority;
+    }> = {},
   ) {
     this.#now = options.now ?? (() => new Date().toISOString());
     this.#approvalAuthority = options.approvalAuthority ?? denyApprovalAuthority;
+    this.#preconditions = options.preconditions ?? denyPreconditions;
   }
 
   beginActivation(
@@ -50,6 +63,7 @@ export class SiteLifecycleService {
       expectedActiveReleaseRef: string | null;
       audience: string;
       sessionContractRevision: string;
+      reason: string;
     }>,
     context: VerifiedRequestSecurityContext,
   ): Promise<SiteAuthorityReceipt> {
@@ -60,6 +74,7 @@ export class SiteLifecycleService {
       expectedActiveReleaseRef: input.expectedActiveReleaseRef,
       audience: input.audience,
       sessionContractRevision: input.sessionContractRevision,
+      reason: input.reason,
     });
     return this.unitOfWork.execute({ context, operation: command.operation }, async (transaction) => {
       const environment = deploymentEnvironment(context);
@@ -73,7 +88,8 @@ export class SiteLifecycleService {
             existing.sessionContractRevision !== input.sessionContractRevision) {
           throw new Error("SITE_ACTIVATION_REPLAY_CONFLICT");
         }
-        return Object.freeze({ attemptRef: existing.attemptRef, state: existing.state, replayed: true });
+        return Object.freeze({ attemptRef: existing.attemptRef, state: existing.state,
+          replayed: true, recordedAt: existing.requestedAt });
       }
       if (existing !== null) throw new Error("SITE_ACTIVATION_REF_CONFLICT");
       await this.#approvalAuthority.consume(transaction, {
@@ -97,6 +113,10 @@ export class SiteLifecycleService {
       if (site === null || candidate === null || binding === null) {
         throw new Error("SITE_ACTIVATION_TARGET_NOT_FOUND");
       }
+      await this.#preconditions.assertCapabilityCatalogSnapshot(transaction, {
+        siteRef: input.siteRef,
+        releaseRef: input.candidateReleaseRef,
+      });
       const runtimeBindingEpoch = await this.repository.reserveRuntimeBindingEpoch(
         transaction,
         input.siteRef,
@@ -117,7 +137,8 @@ export class SiteLifecycleService {
         requestedAt: this.#now(),
       });
       await this.repository.insertActivation(transaction, attempt);
-      const receipt = Object.freeze({ attemptRef: attempt.attemptRef, state: attempt.state, replayed: false });
+      const receipt = Object.freeze({ attemptRef: attempt.attemptRef, state: attempt.state,
+        replayed: false, recordedAt: attempt.requestedAt });
       await this.journal.succeed(transaction, command, receipt, context);
       return receipt;
     });
@@ -369,6 +390,11 @@ export class SiteLifecycleService {
 
 const denyApprovalAuthority: SiteEffectApprovalAuthority = Object.freeze({
   consume: async () => { throw new Error("SITE_EFFECT_APPROVAL_AUTHORITY_REQUIRED"); },
+});
+const denyPreconditions: SiteActivationPreconditionAuthority = Object.freeze({
+  assertCapabilityCatalogSnapshot: async () => {
+    throw new Error("SITE_ACTIVATION_PRECONDITION_AUTHORITY_REQUIRED");
+  },
 });
 
 function admin(context: VerifiedRequestSecurityContext, siteRef: string): void {

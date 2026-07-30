@@ -77,6 +77,7 @@ export interface SiteAuthorityReceipt {
   readonly siteRef?: string;
   readonly state: string;
   readonly replayed: boolean;
+  readonly recordedAt?: string;
 }
 
 export interface SiteAuthorityJournal {

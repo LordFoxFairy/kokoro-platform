@@ -42,7 +42,7 @@ describe("SiteTrafficStopService", () => {
       commandId: "01983f57-8cf1-7000-8000-000000000021",
       idempotencyKey: "site-traffic-stop-command-01", attemptRef: "traffic_stop_01",
       approvalRef: "approval_01",
-      siteRef: "site_01", action: "suspend",
+      siteRef: "site_01", action: "suspend", reason: "security incident",
     }, await context("site.traffic-stop.request", "admin_workload"))).resolves.toEqual({
       attemptRef: "traffic_stop_01", state: "requested", replayed: false,
     });

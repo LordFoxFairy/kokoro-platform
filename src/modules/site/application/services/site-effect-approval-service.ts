@@ -7,7 +7,8 @@ import type {
 
 export interface SiteEffectApprovalReceipt {
   readonly approvalRef: string;
-  readonly state: "pending" | "approved";
+  readonly state: "pending" | "approved" | "consumed";
+  readonly recordedAt?: string;
   readonly expiresAt?: string;
 }
 
@@ -30,17 +31,17 @@ export class SiteEffectApprovalService {
 
   request(
     input: Readonly<{ approvalRef: string; siteRef: string; operation: SiteDangerousOperation;
-      effectDigest: string }>,
+      effectDigest: string; reason: string; commandId: string; idempotencyKey: string;
+      requestDigest: string }>,
     context: VerifiedRequestSecurityContext,
   ): Promise<SiteEffectApprovalReceipt> {
     admin(context, input.siteRef);
     const requestedAt = this.#now();
     const expiresAt = new Date(Date.parse(requestedAt) + this.#approvalLifetimeMs).toISOString();
     return this.unitOfWork.execute({ context, operation: "site.approval.request" }, async (transaction) => {
-      await this.authority.request(transaction, {
+      return this.authority.request(transaction, {
         ...input, makerSubjectRef: context.actor.subjectId, requestedAt, expiresAt,
       });
-      return Object.freeze({ approvalRef: input.approvalRef, state: "pending", expiresAt });
     });
   }
 
