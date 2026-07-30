@@ -80,6 +80,10 @@ import type { SiteModelPolicy } from "../../domain/site-model-policy.js";
 import { withCommandReceiptConflictMapping } from
   "../../../../interfaces/connect/command-receipt-conflict.js";
 import {
+  classifyModelControlError,
+  MODEL_CONTROL_CONTRACTED_INVALID_CODES,
+} from "./model-control-error-policy.js";
+import {
   permitBinding,
   scopedBinding,
   type AdminPageCursorCodec,
@@ -488,8 +492,7 @@ function modelControlConnectError(error: unknown, requestId: string): ConnectErr
   if (error instanceof ConnectError && error.code === Code.AlreadyExists) {
     return contractedModelError("commandReceiptConflict", requestId, error);
   }
-  if (error instanceof Error &&
-      (error.message === "ADMIN_PAGE_TOKEN_INVALID" || error.message === "MODEL_ADMIN_PAGE_TOKEN_INVALID")) {
+  if (error instanceof Error && MODEL_CONTROL_CONTRACTED_INVALID_CODES.some((code) => code === error.message)) {
     return contractedModelError("adminPageTokenInvalid", requestId, error);
   }
   if (error instanceof ConnectError) {
@@ -498,7 +501,11 @@ function modelControlConnectError(error: unknown, requestId: string): ConnectErr
     return detailedModelError(code, fallback.domainCode, fallback.safeMessage,
       fallback.retryClass, requestId, error.metadata, error);
   }
-  if (error instanceof Error && /^MODEL_/u.test(error.message) && !internalModelFailure(error.message)) {
+  const classification = classifyModelControlError(error);
+  if (classification === "adminSessionUnauthenticated" || classification === "adminPermissionDenied") {
+    return contractedModelError(classification, requestId, error);
+  }
+  if (classification === "invalidRequest") {
     return detailedModelError(Code.InvalidArgument, "model.control.invalid_request",
       "Invalid model control request", RetryClass.NEVER, requestId, undefined, error);
   }
@@ -516,7 +523,9 @@ function contractedModelError(kind: ModelControlAdminErrorKind, requestId: strin
   cause: unknown): ConnectError {
   const contract = MODEL_CONTROL_ADMIN_ERRORS[kind];
   const code = contract.connectCode === "not_found" ? Code.NotFound
-    : contract.connectCode === "already_exists" ? Code.AlreadyExists : Code.InvalidArgument;
+    : contract.connectCode === "already_exists" ? Code.AlreadyExists
+      : contract.connectCode === "unauthenticated" ? Code.Unauthenticated
+        : contract.connectCode === "permission_denied" ? Code.PermissionDenied : Code.InvalidArgument;
   return new ConnectError(contract.safeMessage, code, undefined,
     [modelControlAdminErrorDetail(kind, requestId)], cause);
 }
@@ -570,11 +579,6 @@ function modelRequestId(request: unknown, context: HandlerContext): string {
 
 function safeRequestId(value: string): string {
   return /^[A-Za-z0-9._:-]{1,128}$/u.test(value) ? value : "model-control";
-}
-
-function internalModelFailure(code: string): boolean {
-  return /(?:RECEIPT|ROW|WATERMARK|COMMAND_RESULT|TIME)_INVALID$/u.test(code)
-    || code === "MODEL_SELECTION_DECISION_NOT_PERSISTED";
 }
 
 interface ResolvedModelPage {
