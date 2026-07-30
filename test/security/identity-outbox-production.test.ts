@@ -42,6 +42,15 @@ describe("Identity outbox production authority", () => {
     );
   });
 
+  it("checks sequence privileges only against real sequences", async () => {
+    const migrator = await readFile("src/infrastructure/postgres/migrator.ts", "utf8");
+    expect(migrator).not.toMatch(
+      /relkind\s*=\s*'S'\s+AND\s+has_sequence_privilege\([^)]*\.oid/gu,
+    );
+    expect(migrator).toContain("CASE WHEN sequence_row.relkind='S' THEN");
+    expect(migrator).toContain("CASE WHEN candidate.relkind = 'S' THEN");
+  });
+
   it("persists bounded namespace failure evidence without storing verification credentials", async () => {
     const migration = await readFile(
       "prisma/migrations/20260804_identity_outbox_consumer/migration.sql",

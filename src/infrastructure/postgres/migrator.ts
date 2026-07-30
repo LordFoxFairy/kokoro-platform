@@ -1007,8 +1007,10 @@ const IDENTITY_WORKER_POST_AUTHORITY_SQL = `
     ) OR EXISTS (
       SELECT 1 FROM pg_class sequence_row
       JOIN pg_namespace namespace_row ON namespace_row.oid=sequence_row.relnamespace
-      WHERE namespace_row.nspname='platform' AND sequence_row.relkind='S'
-        AND has_sequence_privilege($1,sequence_row.oid,'USAGE,SELECT,UPDATE')
+      WHERE namespace_row.nspname='platform'
+        AND CASE WHEN sequence_row.relkind='S' THEN
+          has_sequence_privilege($1,sequence_row.oid,'USAGE,SELECT,UPDATE')
+        ELSE FALSE END
     ) AS "hasUnexpectedIdentityPrivilege"
   /* identityWorkerAuthority */`;
 
@@ -2193,9 +2195,11 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            FROM pg_class candidate
            WHERE candidate.relnamespace = platform_schema.oid
              AND (
-               (candidate.relkind = 'S' AND has_sequence_privilege(
-                 runtime_role.rolname, candidate.oid, 'USAGE,SELECT,UPDATE'
-               ))
+               (CASE WHEN candidate.relkind = 'S' THEN
+                 has_sequence_privilege(
+                   runtime_role.rolname, candidate.oid, 'USAGE,SELECT,UPDATE'
+                 )
+               ELSE FALSE END)
                OR (candidate.relkind <> 'S' AND candidate.relname <> ALL(ARRAY[
                  'platform_foundation','command_receipt','outbox_event','inbox_delivery',
                  'model_inventory_import','model_inventory_activation','model_inventory_pointer','model_provider_snapshot',
