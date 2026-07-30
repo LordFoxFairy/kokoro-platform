@@ -319,7 +319,7 @@ CREATE TABLE platform.commerce_subscription_term (
   site_ref TEXT NOT NULL,
   billing_account_ref TEXT NOT NULL,
   plan_version_ref TEXT NOT NULL,
-  source_type TEXT NOT NULL CHECK(source_type IN ('redemption','admin_grant','program_window')),
+  source_type TEXT NOT NULL CHECK(source_type IN ('redemption','payment','admin_grant','program_window')),
   source_ref TEXT NOT NULL CHECK(length(source_ref) BETWEEN 1 AND 256),
   starts_at TIMESTAMPTZ NOT NULL,
   ends_at TIMESTAMPTZ NOT NULL,
@@ -547,7 +547,7 @@ CREATE TABLE platform.commerce_entitlement_grant (
   entitlement_template_revision_ref TEXT NOT NULL,
   capability_key TEXT NOT NULL CHECK(capability_key ~ '^[a-z0-9][a-z0-9._:-]{0,127}$'),
   safe_label TEXT NOT NULL CHECK(length(safe_label) BETWEEN 1 AND 160),
-  source_type TEXT NOT NULL CHECK(source_type IN ('redemption','admin_grant','program_window')),
+  source_type TEXT NOT NULL CHECK(source_type IN ('redemption','payment','admin_grant','program_window')),
   source_ref TEXT NOT NULL CHECK(length(source_ref) BETWEEN 1 AND 256),
   effective_at TIMESTAMPTZ NOT NULL,
   expires_at TIMESTAMPTZ,
@@ -606,7 +606,7 @@ CREATE TABLE platform.credit_grant (
   site_ref TEXT NOT NULL,
   billing_account_ref TEXT NOT NULL,
   credit_program_revision_ref TEXT NOT NULL,
-  source_type TEXT NOT NULL CHECK(source_type IN ('redemption','admin_grant','program_window')),
+  source_type TEXT NOT NULL CHECK(source_type IN ('redemption','payment','admin_grant','program_window')),
   source_ref TEXT NOT NULL CHECK(length(source_ref) BETWEEN 1 AND 256),
   source_window_key TEXT NOT NULL DEFAULT '' CHECK(length(source_window_key) <= 256),
   issuance_journal_transaction_ref UUID NOT NULL,
@@ -1078,15 +1078,18 @@ CREATE TABLE platform.commerce_fulfillment_transaction (
   command_id TEXT,
   site_ref TEXT NOT NULL REFERENCES platform.authorization_site(site_ref),
   billing_account_ref TEXT NOT NULL,
-  source_type TEXT NOT NULL CHECK (source_type IN ('redemption','admin_grant','program_window')),
+  source_type TEXT NOT NULL CHECK(source_type IN ('redemption','payment','admin_grant','program_window')),
   source_id TEXT NOT NULL,
   purpose TEXT NOT NULL,
   cycle_key TEXT NOT NULL,
+  idempotency_key CHAR(64) NOT NULL UNIQUE CHECK(idempotency_key ~ '^[a-f0-9]{64}$'),
   product_version_ref TEXT NOT NULL,
   plan_version_ref TEXT,
   offering_version_ref TEXT NOT NULL,
   fulfillment_program_version_ref TEXT NOT NULL,
   output_plan_digest CHAR(64) NOT NULL CHECK (output_plan_digest ~ '^[a-f0-9]{64}$'),
+  acquisition_snapshot_digest CHAR(64) NOT NULL CHECK(acquisition_snapshot_digest ~ '^[a-f0-9]{64}$'),
+  pricing_snapshot_ref TEXT CHECK(pricing_snapshot_ref IS NULL OR length(pricing_snapshot_ref) BETWEEN 1 AND 256),
   output_set_digest CHAR(64) CHECK (output_set_digest IS NULL OR output_set_digest ~ '^[a-f0-9]{64}$'),
   result_digest CHAR(64) CHECK (result_digest IS NULL OR result_digest ~ '^[a-f0-9]{64}$'),
   status TEXT NOT NULL CHECK (status IN ('running','succeeded','failed')),
@@ -1101,7 +1104,8 @@ CREATE TABLE platform.commerce_fulfillment_transaction (
   CHECK (
     (status='running' AND output_set_digest IS NULL AND result_digest IS NULL AND completed_at IS NULL)
     OR (status IN ('succeeded','failed') AND output_set_digest IS NOT NULL AND result_digest IS NOT NULL AND completed_at IS NOT NULL)
-  )
+  ),
+  CHECK(source_type<>'payment' OR pricing_snapshot_ref IS NOT NULL)
 );
 CREATE INDEX commerce_fulfillment_account_idx
   ON platform.commerce_fulfillment_transaction(site_ref,billing_account_ref);
@@ -1219,12 +1223,14 @@ BEGIN
     RAISE EXCEPTION 'FULFILLMENT_STATUS_TRANSITION_INVALID' USING ERRCODE='23514';
   END IF;
   IF ROW(OLD.fulfillment_id,OLD.command_id,OLD.site_ref,OLD.billing_account_ref,OLD.source_type,OLD.source_id,OLD.purpose,
-         OLD.cycle_key,OLD.product_version_ref,OLD.plan_version_ref,OLD.offering_version_ref,
-         OLD.fulfillment_program_version_ref,OLD.output_plan_digest,OLD.created_at)
+         OLD.cycle_key,OLD.idempotency_key,OLD.product_version_ref,OLD.plan_version_ref,OLD.offering_version_ref,
+         OLD.fulfillment_program_version_ref,OLD.output_plan_digest,OLD.acquisition_snapshot_digest,
+         OLD.pricing_snapshot_ref,OLD.created_at)
      IS DISTINCT FROM
      ROW(NEW.fulfillment_id,NEW.command_id,NEW.site_ref,NEW.billing_account_ref,NEW.source_type,NEW.source_id,NEW.purpose,
-         NEW.cycle_key,NEW.product_version_ref,NEW.plan_version_ref,NEW.offering_version_ref,
-         NEW.fulfillment_program_version_ref,NEW.output_plan_digest,NEW.created_at) THEN
+         NEW.cycle_key,NEW.idempotency_key,NEW.product_version_ref,NEW.plan_version_ref,NEW.offering_version_ref,
+         NEW.fulfillment_program_version_ref,NEW.output_plan_digest,NEW.acquisition_snapshot_digest,
+         NEW.pricing_snapshot_ref,NEW.created_at) THEN
     RAISE EXCEPTION 'FULFILLMENT_IDENTITY_IMMUTABLE' USING ERRCODE='23000';
   END IF;
   IF NEW.status='succeeded' AND (

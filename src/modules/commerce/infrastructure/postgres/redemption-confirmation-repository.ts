@@ -9,6 +9,7 @@ import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/plat
 import { OutboxRepository } from "../../../../shared/outbox-inbox/outbox.js";
 import type { CommerceRepository } from "../../application/contracts/repository.js";
 import { PostgresCommerceRepository } from "./repository.js";
+import { FulfillmentService } from "../../application/services/fulfillment.js";
 import {
   publishedFulfillmentOutputPlanDigest,
   isSupportedRedemptionSafeTerms,
@@ -91,7 +92,7 @@ type OutputRow = Record<string, unknown> & {
 };
 
 type CommerceFulfillmentWriter = Pick<CommerceRepository,
-  "startFulfillment" | "recordExpectedOutputPlan" | "recordActualOutputs" |
+  "claimFulfillment" | "recordExpectedOutputPlan" | "recordActualOutputs" |
   "completeFulfillment" | "linkOutboxEvent" | "recordAudit">;
 
 type Dependencies = Readonly<{
@@ -113,6 +114,18 @@ type PreparedSubscription = Readonly<{
 }>;
 
 type PreparedSubscriptionTerm = Readonly<{ startsAt: string; endsAt: string }>;
+
+type RedemptionMaterialization = Readonly<{
+  siteId: string;
+  effectAt: string;
+  outputs: readonly OutputRow[];
+  nextRef: (purpose: string) => string;
+  creditAccounts: Map<string, PreparedCreditAccount>;
+  subscription: PreparedSubscription | null;
+  subscriptionTerm: PreparedSubscriptionTerm | null;
+  stackingScope: string | null;
+  planRef: string | null;
+}>;
 
 type ConfirmationCommandRow = Record<string, unknown> & {
   commandId: string;
@@ -139,11 +152,16 @@ type RedemptionReceiptRow = Record<string, unknown> & {
 
 export class PostgresRedemptionConfirmationRepository implements RedemptionConfirmationRepository {
   readonly #commerce: CommerceFulfillmentWriter;
+  readonly #fulfillment: FulfillmentService<RedemptionMaterialization>;
   readonly #outbox: Pick<OutboxRepository, "enqueue">;
   readonly #reference: Dependencies["reference"];
 
   constructor(dependencies: Partial<Dependencies> = {}) {
     this.#commerce = dependencies.commerce ?? new PostgresCommerceRepository();
+    this.#fulfillment = new FulfillmentService({
+      repository: this.#commerce,
+      issuer: { issue: (transaction, input) => this.#materializeOutputs(transaction, input) },
+    });
     this.#outbox = dependencies.outbox ?? new OutboxRepository();
     this.#reference = dependencies.reference ?? ((_purpose, _ordinal, now) => uuidV7(now));
   }
@@ -296,46 +314,7 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
     const nextRef = (purpose: string) => this.#reference(purpose, referenceOrdinal++, Date.parse(effectAt));
     const redemptionId = nextRef("redemption");
     const fulfillmentId = nextRef("fulfillment");
-    let subscriptionId = subscription?.subscriptionId ?? null;
-    if (subscription !== null) {
-      if (program.stackingScope === null || safeTerms.planRef === null) throw new Error("SUBSCRIPTION_PLAN_INVALID");
-      if (subscriptionId === null) {
-        subscriptionId = nextRef("subscription");
-        const created = await sql.execute(
-          `INSERT INTO platform.commerce_subscription
-           (subscription_ref,site_ref,billing_account_ref,stacking_scope,plan_ref,state)
-           VALUES ($1::uuid,$2,$3,$4,$5,'active')`,
-          [subscriptionId, input.siteId, preview.billingAccountId, program.stackingScope, safeTerms.planRef],
-        );
-        if (created !== 1) throw new Error("SUBSCRIPTION_CREATE_FAILED");
-      } else if (subscription.state === "expired") {
-        const reactivated = await sql.execute(
-          `UPDATE platform.commerce_subscription SET state='active',aggregate_version=aggregate_version+1,updated_at=$3::timestamptz
-           WHERE subscription_ref=$1::uuid AND site_ref=$2 AND state='expired'`,
-          [subscriptionId, input.siteId, effectAt],
-        );
-        if (reactivated !== 1) throw new Error("SUBSCRIPTION_REACTIVATION_CONFLICT");
-      }
-    }
-    if (creditAccounts.size > 0) {
-      for (const [key, prepared] of creditAccounts) {
-        if (prepared.account !== null) continue;
-        const identity = prepared.identity;
-        const creditAccountId = nextRef("credit_account");
-        const created = await sql.execute(
-          `INSERT INTO platform.credit_account
-           (credit_account_ref,site_ref,billing_account_ref,unit,liability_merchant_account_ref,state)
-           VALUES ($1::uuid,$2,$3,$4,$5,'active')`,
-          [creditAccountId, identity.siteId, identity.billingAccountId, identity.unit,
-            identity.liabilityMerchantAccountId],
-        );
-        if (created !== 1) throw new Error("CREDIT_ACCOUNT_CREATE_FAILED");
-        creditAccounts.set(key, Object.freeze({ identity, account: Object.freeze({
-          creditAccountId, state: "active" as const, aggregateVersion: 1n,
-        }) }));
-      }
-      locks.enter("credit_grant");
-    }
+    if (creditAccounts.size > 0) locks.enter("credit_grant");
     const inserted = await sql.execute(
       `INSERT INTO platform.commerce_redemption
        (redemption_id,command_id,site_ref,billing_account_ref,code_ref,batch_ref,
@@ -347,44 +326,48 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
     );
     if (inserted !== 1) throw new Error("REDEMPTION_INSERT_FAILED");
     const outputPlan = fulfillmentPlan(outputs);
-    await this.#commerce.startFulfillment(transaction, {
+    const fulfillment = await this.#fulfillment.execute(transaction, {
       fulfillmentId,
       commandId: input.commandId,
       siteId: input.siteId,
       billingAccountId: preview.billingAccountId,
       sourceType: "redemption",
-      sourceId: redemptionId,
-      purpose: "redeem_code",
+      sourceRef: preview.codeRef,
+      purpose: "acquisition",
       cycleKey: "once",
-      productVersion: safeTerms.productVersionRef,
-      planVersion: safeTerms.planVersionRef,
-      offeringVersion: safeTerms.productVersionRef,
-      fulfillmentProgramVersion: preview.fulfillmentProgramRevisionRef,
+      productVersionRef: safeTerms.productVersionRef,
+      planVersionRef: safeTerms.planVersionRef,
+      offeringVersionRef: preview.redemptionProgramRevisionRef,
+      fulfillmentProgramVersionRef: preview.fulfillmentProgramRevisionRef,
       outputPlanDigest: preview.outputPlanDigest,
+      acquisitionSnapshotDigest: digest({
+        version: 1,
+        sourceType: "redemption",
+        productRevisionDigest: preview.productRevisionDigest,
+        programDigest: preview.programDigest,
+        outputPlanDigest: preview.outputPlanDigest,
+        safeTerms,
+      }),
+      pricingSnapshotRef: null,
+      outputPlan,
+      materialization: Object.freeze({
+        siteId: input.siteId,
+        effectAt,
+        outputs,
+        nextRef,
+        creditAccounts,
+        subscription,
+        subscriptionTerm,
+        stackingScope: program.stackingScope,
+        planRef: safeTerms.planRef,
+      }),
     });
-    await this.#commerce.recordExpectedOutputPlan(transaction, fulfillmentId, outputPlan);
-    const materialized = await this.#materializeOutputs(transaction, {
-      input, preview, safeTerms, outputs, redemptionId, nextRef, creditAccounts, subscriptionId,
-      subscriptionTerm, effectAt,
-    });
-    await this.#commerce.recordActualOutputs(transaction, fulfillmentId, materialized.actual, outputPlan);
-    const outputSetDigest = digest({ version: 1, outputs: materialized.receipts });
-    const fulfillmentResultDigest = digest({
-      version: 1,
-      fulfillmentId,
-      outputSetDigest,
-      outputCount: materialized.receipts.length,
-    });
-    await this.#commerce.completeFulfillment(transaction, {
-      fulfillmentId,
-      outputSetDigest,
-      resultDigest: fulfillmentResultDigest,
-    });
+    const outputSetDigest = fulfillment.outputSetDigest;
     const fulfilled = await sql.execute(
       `UPDATE platform.commerce_redemption
        SET fulfillment_ref=$2::uuid,state='fulfilled',redeemed_at=$3::timestamptz,state_observed_at=$3::timestamptz
        WHERE redemption_id=$1::uuid AND site_ref=$4 AND state='executing'`,
-      [redemptionId, fulfillmentId, effectAt, input.siteId],
+      [redemptionId, fulfillment.fulfillmentId, effectAt, input.siteId],
     );
     if (fulfilled !== 1) throw new Error("REDEMPTION_COMPLETION_CONFLICT");
     for (const termRef of [...input.legalAcceptanceRefs].sort((a, b) => a.localeCompare(b, "en"))) {
@@ -412,7 +395,7 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
       siteId: input.siteId,
       redemptionId,
       commandId: input.commandId,
-      fulfillmentId,
+      fulfillmentId: fulfillment.fulfillmentId,
       outputSetDigest,
       redeemedAt: effectAt,
     });
@@ -442,9 +425,9 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
         commandReceivedAt: effectAt,
         commandUpdatedAt: effectAt,
         redemptionId,
-        fulfillmentRef: fulfillmentId,
+        fulfillmentRef: fulfillment.fulfillmentId,
         outputSetDigest,
-        outputs: Object.freeze(materialized.receipts),
+        outputs: fulfillment.outputs,
         planRef: safeTerms.planRef,
         planVersionRef: safeTerms.planVersionRef,
         productRef: safeTerms.productRef,
@@ -501,38 +484,74 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
   async #materializeOutputs(
     transaction: Parameters<RedemptionConfirmationRepository["confirmRedemption"]>[0],
     context: Readonly<{
-      input: Parameters<RedemptionConfirmationRepository["confirmRedemption"]>[1];
-      preview: PreviewConfirmationRow;
-      safeTerms: RedemptionSafeTerms;
-      outputs: readonly OutputRow[];
-      redemptionId: string;
-      nextRef: (purpose: string) => string;
-      creditAccounts: ReadonlyMap<string, PreparedCreditAccount>;
-      subscriptionId: string | null;
-      subscriptionTerm: PreparedSubscriptionTerm | null;
-      effectAt: string;
+      commandId: string;
+      billingAccountId: string;
+      source: Readonly<{ sourceType: "redemption" | "payment" | "admin_grant" | "program_window"; idempotencyKey: string }>;
+      materialization: RedemptionMaterialization;
     }>,
-  ): Promise<Readonly<{ receipts: RedemptionOutputReceipt[]; actual: ActualFulfillmentOutput[] }>> {
+  ): Promise<Readonly<{ outputs: RedemptionOutputReceipt[]; actual: ActualFulfillmentOutput[] }>> {
     const sql = resolvePlatformTransaction(transaction);
+    const materialization = context.materialization;
     const receipts: RedemptionOutputReceipt[] = [];
     const actual: ActualFulfillmentOutput[] = [];
-    for (const output of context.outputs) {
+    let subscriptionId = materialization.subscription?.subscriptionId ?? null;
+    if (materialization.subscription !== null) {
+      if (materialization.stackingScope === null || materialization.planRef === null) {
+        throw new Error("SUBSCRIPTION_PLAN_INVALID");
+      }
+      if (subscriptionId === null) {
+        subscriptionId = materialization.nextRef("subscription");
+        const created = await sql.execute(
+          `INSERT INTO platform.commerce_subscription
+           (subscription_ref,site_ref,billing_account_ref,stacking_scope,plan_ref,state)
+           VALUES ($1::uuid,$2,$3,$4,$5,'active')`,
+          [subscriptionId, materialization.siteId, context.billingAccountId,
+            materialization.stackingScope, materialization.planRef],
+        );
+        if (created !== 1) throw new Error("SUBSCRIPTION_CREATE_FAILED");
+      } else if (materialization.subscription.state === "expired") {
+        const reactivated = await sql.execute(
+          `UPDATE platform.commerce_subscription SET state='active',aggregate_version=aggregate_version+1,updated_at=$3::timestamptz
+           WHERE subscription_ref=$1::uuid AND site_ref=$2 AND state='expired'`,
+          [subscriptionId, materialization.siteId, materialization.effectAt],
+        );
+        if (reactivated !== 1) throw new Error("SUBSCRIPTION_REACTIVATION_CONFLICT");
+      }
+    }
+    for (const [key, prepared] of materialization.creditAccounts) {
+      if (prepared.account !== null) continue;
+      const identity = prepared.identity;
+      const creditAccountId = materialization.nextRef("credit_account");
+      const created = await sql.execute(
+        `INSERT INTO platform.credit_account
+         (credit_account_ref,site_ref,billing_account_ref,unit,liability_merchant_account_ref,state)
+         VALUES ($1::uuid,$2,$3,$4,$5,'active')`,
+        [creditAccountId, identity.siteId, identity.billingAccountId, identity.unit,
+          identity.liabilityMerchantAccountId],
+      );
+      if (created !== 1) throw new Error("CREDIT_ACCOUNT_CREATE_FAILED");
+      materialization.creditAccounts.set(key, Object.freeze({ identity, account: Object.freeze({
+        creditAccountId, state: "active" as const, aggregateVersion: 1n,
+      }) }));
+    }
+    for (const output of materialization.outputs) {
       for (let occurrence = 1; occurrence <= output.cardinality; occurrence += 1) {
         if (output.outputKind === "entitlement_grant") {
           if (output.entitlementTemplateRevisionRef === null || output.capabilityKey === null || output.safeLabel === null) {
             throw new Error("REDEMPTION_OUTPUT_INVALID");
           }
-          const outputRef = context.nextRef("entitlement_grant");
-          const expiresAt = expiry(context.effectAt, output.entitlementExpiresAfterSeconds);
+          const outputRef = materialization.nextRef("entitlement_grant");
+          const expiresAt = expiry(materialization.effectAt, output.entitlementExpiresAfterSeconds);
           await sql.execute(
             `INSERT INTO platform.commerce_entitlement_grant
              (entitlement_grant_ref,site_ref,billing_account_ref,entitlement_template_revision_ref,
               capability_key,safe_label,source_type,source_ref,effective_at,expires_at)
-             VALUES ($1::uuid,$2,$3,$4,$5,$6,'redemption',$7,$8::timestamptz,$9::timestamptz)`,
-            [outputRef, context.input.siteId, context.preview.billingAccountId,
+             VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9::timestamptz,$10::timestamptz)`,
+            [outputRef, materialization.siteId, context.billingAccountId,
               output.entitlementTemplateRevisionRef, output.capabilityKey, output.safeLabel,
-              outputSourceRef(context.redemptionId, output.outputLineId, occurrence),
-              context.effectAt, expiresAt],
+              context.source.sourceType,
+              outputSourceRef(context.source.idempotencyKey, output.outputLineId, occurrence),
+              materialization.effectAt, expiresAt],
           );
           receipts.push(Object.freeze({ kind: "entitlement_grant", outputLineId: output.outputLineId,
             resourceRef: outputRef, templateRevisionRef: output.entitlementTemplateRevisionRef }));
@@ -544,56 +563,57 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
             output.scopePolicy === null || typeof output.scopePolicy !== "object" || Array.isArray(output.scopePolicy)) {
             throw new Error("REDEMPTION_OUTPUT_INVALID");
           }
-          const identity = creditIdentity(context.input.siteId, context.preview.billingAccountId, output);
-          const creditAccount = context.creditAccounts.get(creditAccountAdvisoryKey(identity))?.account;
+          const identity = creditIdentity(materialization.siteId, context.billingAccountId, output);
+          const creditAccount = materialization.creditAccounts.get(creditAccountAdvisoryKey(identity))?.account;
           if (creditAccount === undefined || creditAccount === null || creditAccount.state !== "active") {
             throw new Error("CREDIT_ACCOUNT_AUTHORITY_MISSING");
           }
-          const outputRef = context.nextRef("credit_grant");
-          const journalRef = context.nextRef("grant_issue_journal");
-          const sourceRef = outputSourceRef(context.redemptionId, output.outputLineId, occurrence);
-          const expiresAt = expiry(context.effectAt, output.creditExpiresAfterSeconds);
+          const outputRef = materialization.nextRef("credit_grant");
+          const journalRef = materialization.nextRef("grant_issue_journal");
+          const sourceRef = outputSourceRef(context.source.idempotencyKey, output.outputLineId, occurrence);
+          const expiresAt = expiry(materialization.effectAt, output.creditExpiresAfterSeconds);
           const created = await sql.execute(
             `INSERT INTO platform.credit_grant
              (credit_grant_id,credit_account_ref,site_ref,billing_account_ref,credit_program_revision_ref,
               source_type,source_ref,issuance_journal_transaction_ref,ux_bucket_class,unit,
               liability_merchant_account_ref,original_amount,burn_priority,scope_policy,effective_at,expires_at,issued_at)
-             VALUES ($1::uuid,$2::uuid,$3,$4,$5,'redemption',$6,$7::uuid,$8,$9,$10,$11::numeric,$12,$13::jsonb,
-                     $14::timestamptz,$15::timestamptz,$14::timestamptz)`,
-            [outputRef, creditAccount.creditAccountId, context.input.siteId, context.preview.billingAccountId,
-              output.creditProgramRevisionRef, sourceRef, journalRef, output.bucketClass, output.unit,
+             VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8::uuid,$9,$10,$11,$12::numeric,$13,$14::jsonb,
+                     $15::timestamptz,$16::timestamptz,$15::timestamptz)`,
+            [outputRef, creditAccount.creditAccountId, materialization.siteId, context.billingAccountId,
+              output.creditProgramRevisionRef, context.source.sourceType, sourceRef, journalRef, output.bucketClass, output.unit,
               output.liabilityMerchantAccountId, output.amount, output.burnPriority, JSON.stringify(output.scopePolicy),
-              context.effectAt, expiresAt],
+              materialization.effectAt, expiresAt],
           );
           if (created !== 1) throw new Error("CREDIT_GRANT_CREATE_FAILED");
           await recordGrantIssueJournal(sql, {
             journalRef,
             creditAccountId: creditAccount.creditAccountId,
-            siteId: context.input.siteId,
+            siteId: materialization.siteId,
             unit: output.unit,
-            businessOperationKey: `redemption:${context.redemptionId}:${output.outputLineId}:${occurrence}`,
-            commandId: context.input.commandId,
+            businessOperationKey: `fulfillment:${context.source.idempotencyKey}:${output.outputLineId}:${occurrence}`,
+            commandId: context.commandId,
             creditGrantId: outputRef,
             amount: output.amount,
-            occurredAt: context.effectAt,
+            occurredAt: materialization.effectAt,
           });
           receipts.push(Object.freeze({ kind: "credit_grant", outputLineId: output.outputLineId,
             resourceRef: outputRef, templateRevisionRef: output.creditProgramRevisionRef }));
           actual.push(Object.freeze({ outputLineId: output.outputLineId, occurrence,
             templateRevision: output.creditProgramRevisionRef, outputKind: "credit_grant", outputRef }));
         } else {
-          if (output.planVersionRef === null || context.subscriptionId === null || context.subscriptionTerm === null) {
+          if (output.planVersionRef === null || subscriptionId === null || materialization.subscriptionTerm === null) {
             throw new Error("REDEMPTION_OUTPUT_INVALID");
           }
-          const outputRef = context.nextRef("subscription_term");
+          const outputRef = materialization.nextRef("subscription_term");
           const created = await sql.execute(
             `INSERT INTO platform.commerce_subscription_term
              (subscription_term_ref,subscription_ref,site_ref,billing_account_ref,plan_version_ref,
               source_type,source_ref,starts_at,ends_at)
-             VALUES ($1::uuid,$2::uuid,$3,$4,$5,'redemption',$6,$7::timestamptz,$8::timestamptz)`,
-            [outputRef, context.subscriptionId, context.input.siteId, context.preview.billingAccountId,
-              output.planVersionRef, outputSourceRef(context.redemptionId, output.outputLineId, occurrence),
-              context.subscriptionTerm.startsAt, context.subscriptionTerm.endsAt],
+             VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8::timestamptz,$9::timestamptz)`,
+            [outputRef, subscriptionId, materialization.siteId, context.billingAccountId,
+              output.planVersionRef, context.source.sourceType,
+              outputSourceRef(context.source.idempotencyKey, output.outputLineId, occurrence),
+              materialization.subscriptionTerm.startsAt, materialization.subscriptionTerm.endsAt],
           );
           if (created !== 1) throw new Error("SUBSCRIPTION_TERM_CREATE_FAILED");
           receipts.push(Object.freeze({ kind: "subscription_term", outputLineId: output.outputLineId,
@@ -603,7 +623,7 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
         }
       }
     }
-    return Object.freeze({ receipts, actual });
+    return Object.freeze({ outputs: receipts, actual });
   }
 
   async #lockCreditAccounts(
@@ -869,9 +889,9 @@ function sameStrings(left: readonly string[], right: readonly string[]): boolean
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-function outputSourceRef(redemptionId: string, outputLineId: string, occurrence: number): string {
-  const value = `${redemptionId}:${outputLineId}:${occurrence}`;
-  if (value.length > 256) throw new Error("REDEMPTION_OUTPUT_SOURCE_REF_INVALID");
+function outputSourceRef(fulfillmentIdempotencyKey: string, outputLineId: string, occurrence: number): string {
+  const value = `${fulfillmentIdempotencyKey}:${outputLineId}:${occurrence}`;
+  if (value.length > 256) throw new Error("FULFILLMENT_OUTPUT_SOURCE_REF_INVALID");
   return value;
 }
 
@@ -1156,18 +1176,27 @@ const REDEMPTION_OUTPUT_RECEIPT_SQL = `
   ORDER BY expected.ordinal,actual.occurrence`;
 
 const REDEMPTION_REVERSAL_RECEIPT_SQL = `
+  WITH fulfillment_source AS (
+    SELECT fulfillment.idempotency_key
+    FROM platform.commerce_redemption redemption
+    JOIN platform.commerce_fulfillment_transaction fulfillment
+      ON fulfillment.fulfillment_id=redemption.fulfillment_ref AND fulfillment.site_ref=redemption.site_ref
+    WHERE redemption.redemption_id=$1::uuid AND redemption.site_ref=$2
+  )
   SELECT reversal_ref AS "reversalRef" FROM (
     SELECT revocation.term_revocation_ref::text AS reversal_ref
     FROM platform.commerce_subscription_term term
     JOIN platform.commerce_subscription_term_revocation revocation
       ON revocation.subscription_term_ref=term.subscription_term_ref AND revocation.site_ref=term.site_ref
-    WHERE term.site_ref=$2 AND term.source_type='redemption' AND term.source_ref LIKE $1::text || ':%'
+    WHERE term.site_ref=$2 AND term.source_type='redemption'
+      AND term.source_ref LIKE (SELECT idempotency_key || ':%' FROM fulfillment_source)
     UNION ALL
     SELECT revocation.entitlement_revocation_ref::text AS reversal_ref
     FROM platform.commerce_entitlement_grant entitlement
     JOIN platform.commerce_entitlement_revocation revocation
       ON revocation.entitlement_grant_ref=entitlement.entitlement_grant_ref AND revocation.site_ref=entitlement.site_ref
-    WHERE entitlement.site_ref=$2 AND entitlement.source_type='redemption' AND entitlement.source_ref LIKE $1::text || ':%'
+    WHERE entitlement.site_ref=$2 AND entitlement.source_type='redemption'
+      AND entitlement.source_ref LIKE (SELECT idempotency_key || ':%' FROM fulfillment_source)
     UNION ALL
     SELECT DISTINCT journal.journal_transaction_ref::text AS reversal_ref
     FROM platform.credit_grant grant_fact
@@ -1175,7 +1204,7 @@ const REDEMPTION_REVERSAL_RECEIPT_SQL = `
     JOIN platform.credit_journal_transaction journal
       ON journal.journal_transaction_ref=entry.journal_transaction_ref AND journal.site_ref=grant_fact.site_ref
     WHERE grant_fact.site_ref=$2 AND grant_fact.source_type='redemption'
-      AND grant_fact.source_ref LIKE $1::text || ':%'
+      AND grant_fact.source_ref LIKE (SELECT idempotency_key || ':%' FROM fulfillment_source)
       AND journal.operation_kind IN ('grant_revoke','reversal')
   ) reversal
   ORDER BY reversal_ref`;

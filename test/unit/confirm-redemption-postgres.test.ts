@@ -86,7 +86,10 @@ describe("PostgresRedemptionConfirmationRepository", () => {
     });
     const repository = new PostgresRedemptionConfirmationRepository({
       commerce: {
-        startFulfillment: async () => { commerceCalls.push("start"); },
+        claimFulfillment: async (_transaction, claim) => {
+          commerceCalls.push("start");
+          return { disposition: "execute", fulfillmentId: claim.fulfillmentId };
+        },
         recordExpectedOutputPlan: async () => { commerceCalls.push("plan"); },
         recordActualOutputs: async () => { commerceCalls.push("actual"); },
         completeFulfillment: async () => { commerceCalls.push("complete"); },
@@ -175,8 +178,8 @@ describe("PostgresRedemptionConfirmationRepository", () => {
       expect(joined).toContain("grant_issuance_source");
       expect(joined).toContain("customer_available");
       const grantInsert = executions.find(({ statement }) => statement.includes("INSERT INTO platform.credit_grant"))!;
-      expect(grantInsert.values[13]).toBe("2026-07-29T01:00:00.000Z");
-      expect(grantInsert.values[14]).toBeNull();
+      expect(grantInsert.values[14]).toBe("2026-07-29T01:00:00.000Z");
+      expect(grantInsert.values[15]).toBeNull();
     } finally {
       revokePlatformTransaction(lease);
     }
@@ -289,6 +292,7 @@ describe("PostgresRedemptionConfirmationRepository", () => {
           state: "succeeded", commandReceivedAt: new Date("2026-07-29T00:59:58.000Z"),
           commandUpdatedAt: new Date("2026-07-29T01:00:01.000Z"),
         }] as never;
+        if (statement.includes("WITH fulfillment_source AS")) return [];
         if (statement.includes("FROM platform.commerce_redemption redemption")) return [{
           commandId: confirmationInput().commandId,
           redemptionId: "00000000-0000-7000-8000-000000000301",
@@ -627,7 +631,8 @@ function referenceFactory() {
 
 function noOpCommerce() {
   return {
-    startFulfillment: async () => undefined,
+    claimFulfillment: async (_transaction: unknown, claim: { fulfillmentId: string }) =>
+      ({ disposition: "execute" as const, fulfillmentId: claim.fulfillmentId }),
     recordExpectedOutputPlan: async () => undefined,
     recordActualOutputs: async () => undefined,
     completeFulfillment: async () => undefined,

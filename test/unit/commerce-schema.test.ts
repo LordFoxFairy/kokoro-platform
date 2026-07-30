@@ -32,6 +32,14 @@ describe("Wave 2A Commerce authority schema", () => {
     expect(migration).toContain("UNIQUE(site_ref,source_type,source_id,purpose,cycle_key)");
   });
 
+  it("makes acquisition-source replay the only fulfillment issuance fence", () => {
+    expect(migration).toContain("idempotency_key CHAR(64) NOT NULL UNIQUE");
+    expect(migration).toContain("acquisition_snapshot_digest CHAR(64) NOT NULL");
+    expect(migration).toContain("pricing_snapshot_ref TEXT");
+    expect(migration).toContain("source_type IN ('redemption','payment','admin_grant','program_window')");
+    expect(compactMigration).toContain("source_type<>'payment' OR pricing_snapshot_ref IS NOT NULL");
+  });
+
   it("stores no raw Code and binds every published output revision to one Site", () => {
     expect(migration).toContain("CREATE TABLE platform.commerce_redeem_code (");
     expect(migration).toContain("lookup_digest CHAR(64) NOT NULL");

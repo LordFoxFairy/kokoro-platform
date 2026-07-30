@@ -2,7 +2,11 @@ import { CommandReceiptRepository } from "../../../../shared/outbox-inbox/receip
 import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
 import { assertSha256 } from "../../domain/command-identity.js";
 import { compileFulfillmentOutputPlan, validateActualOutputSet } from "../../domain/output-line.js";
-import type { CommerceRepository, StartFulfillmentInput } from "../../application/contracts/repository.js";
+import type {
+  ClaimFulfillmentInput,
+  CommerceRepository,
+  FulfillmentOutputReceipt,
+} from "../../application/contracts/repository.js";
 
 export class PostgresCommerceRepository implements CommerceRepository {
   readonly #receipts = new CommandReceiptRepository();
@@ -60,17 +64,59 @@ export class PostgresCommerceRepository implements CommerceRepository {
     if (changed !== 1) throw new Error("COMMERCE_COMMAND_COMPLETION_CONFLICT");
   }
 
-  async startFulfillment(transaction: Parameters<CommerceRepository["startFulfillment"]>[0], input: StartFulfillmentInput): Promise<void> {
-    assertSha256(input.outputPlanDigest);
-    await resolvePlatformTransaction(transaction).execute(
+  async claimFulfillment(
+    transaction: Parameters<CommerceRepository["claimFulfillment"]>[0],
+    input: ClaimFulfillmentInput,
+  ): ReturnType<CommerceRepository["claimFulfillment"]> {
+    assertSha256(input.source.idempotencyKey);
+    assertSha256(input.snapshot.outputPlanDigest);
+    assertSha256(input.snapshot.acquisitionSnapshotDigest);
+    const sql = resolvePlatformTransaction(transaction);
+    const inserted = await sql.query<{ fulfillmentId: string }>(
       `INSERT INTO platform.commerce_fulfillment_transaction
-       (fulfillment_id,command_id,site_ref,billing_account_ref,source_type,source_id,purpose,cycle_key,
-        product_version_ref,plan_version_ref,offering_version_ref,fulfillment_program_version_ref,output_plan_digest,status)
-       VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'running')`,
-      [input.fulfillmentId, input.commandId, input.siteId, input.billingAccountId, input.sourceType,
-        input.sourceId, input.purpose, input.cycleKey, input.productVersion, input.planVersion,
-        input.offeringVersion, input.fulfillmentProgramVersion, input.outputPlanDigest],
+       (fulfillment_id,command_id,site_ref,billing_account_ref,source_type,source_id,purpose,cycle_key,idempotency_key,
+        product_version_ref,plan_version_ref,offering_version_ref,fulfillment_program_version_ref,output_plan_digest,
+        acquisition_snapshot_digest,pricing_snapshot_ref,status)
+       VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'running')
+       ON CONFLICT (idempotency_key) DO NOTHING
+       RETURNING fulfillment_id AS "fulfillmentId"`,
+      [input.fulfillmentId, input.commandId, input.source.siteId, input.billingAccountId, input.source.sourceType,
+        input.source.sourceRef, input.source.purpose, input.source.cycleKey, input.source.idempotencyKey,
+        input.snapshot.productVersionRef, input.snapshot.planVersionRef, input.snapshot.offeringVersionRef,
+        input.snapshot.fulfillmentProgramVersionRef, input.snapshot.outputPlanDigest,
+        input.snapshot.acquisitionSnapshotDigest, input.snapshot.pricingSnapshotRef],
     );
+    if (inserted.length === 1 && inserted[0] !== undefined) {
+      return Object.freeze({ disposition: "execute" as const, fulfillmentId: inserted[0].fulfillmentId });
+    }
+    if (inserted.length !== 0) throw new Error("FULFILLMENT_CLAIM_AMBIGUOUS");
+    const storedRows = await sql.query<FulfillmentRow>(FULFILLMENT_BY_IDEMPOTENCY_SQL, [
+      input.source.idempotencyKey,
+    ]);
+    const stored = storedRows[0];
+    if (stored === undefined || storedRows.length !== 1) throw new Error("FULFILLMENT_CLAIM_LOST");
+    if (!sameFulfillmentClaim(stored, input)) throw new Error("FULFILLMENT_SOURCE_CONFLICT");
+    if (stored.status !== "succeeded" || stored.outputSetDigest === null || stored.resultDigest === null) {
+      throw new Error("FULFILLMENT_OUTCOME_UNKNOWN");
+    }
+    const outputRows = await sql.query<Record<string, unknown> & FulfillmentOutputReceipt>(
+      FULFILLMENT_OUTPUT_RECEIPT_SQL,
+      [stored.fulfillmentId],
+    );
+    return Object.freeze({
+      disposition: "replay" as const,
+      receipt: Object.freeze({
+        fulfillmentId: stored.fulfillmentId,
+        outputSetDigest: stored.outputSetDigest,
+        resultDigest: stored.resultDigest,
+        outputs: Object.freeze(outputRows.map((output) => Object.freeze({
+          kind: output.kind,
+          outputLineId: output.outputLineId,
+          resourceRef: output.resourceRef,
+          templateRevisionRef: output.templateRevisionRef,
+        }))),
+      }),
+    });
   }
 
   async recordExpectedOutputPlan(transaction: Parameters<CommerceRepository["recordExpectedOutputPlan"]>[0], fulfillmentId: string, plan: Parameters<CommerceRepository["recordExpectedOutputPlan"]>[2]): Promise<void> {
@@ -126,3 +172,62 @@ export class PostgresCommerceRepository implements CommerceRepository {
     );
   }
 }
+
+type FulfillmentRow = Record<string, unknown> & {
+  fulfillmentId: string;
+  siteId: string;
+  billingAccountId: string;
+  sourceType: string;
+  sourceRef: string;
+  purpose: string;
+  cycleKey: string;
+  idempotencyKey: string;
+  productVersionRef: string;
+  planVersionRef: string | null;
+  offeringVersionRef: string;
+  fulfillmentProgramVersionRef: string;
+  outputPlanDigest: string;
+  acquisitionSnapshotDigest: string;
+  pricingSnapshotRef: string | null;
+  outputSetDigest: string | null;
+  resultDigest: string | null;
+  status: "running" | "succeeded" | "failed";
+};
+
+function sameFulfillmentClaim(stored: FulfillmentRow, input: ClaimFulfillmentInput): boolean {
+  return stored.siteId === input.source.siteId &&
+    stored.billingAccountId === input.billingAccountId &&
+    stored.sourceType === input.source.sourceType &&
+    stored.sourceRef === input.source.sourceRef &&
+    stored.purpose === input.source.purpose &&
+    stored.cycleKey === input.source.cycleKey &&
+    stored.idempotencyKey === input.source.idempotencyKey &&
+    stored.productVersionRef === input.snapshot.productVersionRef &&
+    stored.planVersionRef === input.snapshot.planVersionRef &&
+    stored.offeringVersionRef === input.snapshot.offeringVersionRef &&
+    stored.fulfillmentProgramVersionRef === input.snapshot.fulfillmentProgramVersionRef &&
+    stored.outputPlanDigest === input.snapshot.outputPlanDigest &&
+    stored.acquisitionSnapshotDigest === input.snapshot.acquisitionSnapshotDigest &&
+    stored.pricingSnapshotRef === input.snapshot.pricingSnapshotRef;
+}
+
+const FULFILLMENT_BY_IDEMPOTENCY_SQL = `
+  SELECT fulfillment_id AS "fulfillmentId",site_ref AS "siteId",billing_account_ref AS "billingAccountId",
+         source_type AS "sourceType",source_id AS "sourceRef",purpose,cycle_key AS "cycleKey",
+         idempotency_key AS "idempotencyKey",product_version_ref AS "productVersionRef",
+         plan_version_ref AS "planVersionRef",offering_version_ref AS "offeringVersionRef",
+         fulfillment_program_version_ref AS "fulfillmentProgramVersionRef",output_plan_digest AS "outputPlanDigest",
+         acquisition_snapshot_digest AS "acquisitionSnapshotDigest",pricing_snapshot_ref AS "pricingSnapshotRef",
+         output_set_digest AS "outputSetDigest",result_digest AS "resultDigest",status
+  FROM platform.commerce_fulfillment_transaction
+  WHERE idempotency_key=$1
+  FOR UPDATE`;
+
+const FULFILLMENT_OUTPUT_RECEIPT_SQL = `
+  SELECT actual.output_kind AS kind,actual.output_line_id AS "outputLineId",
+         actual.output_ref AS "resourceRef",actual.template_revision AS "templateRevisionRef"
+  FROM platform.commerce_fulfillment_actual_output actual
+  JOIN platform.commerce_fulfillment_output_plan expected
+    ON expected.fulfillment_id=actual.fulfillment_id AND expected.output_line_id=actual.output_line_id
+  WHERE actual.fulfillment_id=$1::uuid
+  ORDER BY expected.ordinal,actual.occurrence`;

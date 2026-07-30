@@ -11,6 +11,11 @@ Platform through HTTP/RPC and never exposes a Prisma client to application code.
   fence at the BillingAccount node in the shared lock DAG.
 - Fulfillment transaction, frozen expected output lines, actual output occurrences, generic outbox links, and append-only audit entries
   commit in one `PlatformUnitOfWork`.
+- `FulfillmentService` is the only issuance orchestrator. Redemption and future Payment settlement are acquisition adapters: they
+  submit a Site-scoped source identity plus immutable product/plan/offering/program/output-plan/acquisition snapshots. The service
+  derives the sole SHA-256 idempotency fence from Site + source type + source ref + purpose + cycle and replays the stored receipt
+  without issuing SubscriptionTerms, EntitlementGrants, or CreditGrants again. Payment sources additionally require a frozen pricing
+  snapshot reference before the owner accepts them.
 - The database rejects non-contiguous output plans, output mutation, illegal fulfillment transitions, and successful fulfillment whose
   actual multiset does not exactly satisfy the frozen plan.
 
@@ -27,7 +32,8 @@ Platform through HTTP/RPC and never exposes a Prisma client to application code.
 - `previewRedemption` is a required production public operation. It uses the generic command receipt fence and returns the same safe
   preview on an exact idempotent replay while the preview remains live.
 - `confirmRedemption`, command recovery, and durable receipt reads are public operations. Confirmation re-locks every mutable
-  authority, binds the effect to the database clock, claims the Code, and materializes all fulfillment outputs atomically.
+  authority, binds the effect to the database clock, claims the Code, and invokes the shared Fulfillment authority atomically. Code
+  identity—not a newly generated receipt id—is the stable redemption acquisition source.
 - The latest release supports permanent Credit packs, immutable non-renewing SubscriptionTerms, and EntitlementGrants. Daily/period
   Credit programs fail closed in redemption until calendar-window acquisition is a real owner workflow; relative-expiry grants are
   not used as an approximation.
