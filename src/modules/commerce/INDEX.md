@@ -46,6 +46,9 @@ Platform through HTTP/RPC and never exposes a Prisma client to application code.
 - `AdminCommerceService` is a closed typed Connect surface mounted only on the Admin mTLS listener. Admin authenticates the
   operator, verifies exact Site scope/permission/fresh step-up and the canonical protobuf command digest; Commerce remains the
   application/repository owner and never accepts a generic route or action proxy.
+- All ten Admin write operations bind retries to the full persisted command identity. Exact retries restore the original durable
+  result and database-recorded receipt time after revalidating its SHA-256 digest; identity/digest drift becomes a typed Connect
+  conflict and replay never reconstructs a result from mutable business tables.
 - CreditProgram and EntitlementTemplate prerequisites have independent publish/list/get operations. Publication writes an immutable
   Site-scoped revision, its canonical content digest, command receipt and audit entry in one Platform transaction. Credit scope is a
   typed policy (surface, capability and Agent sets), and daily/period window facts are complete-or-rejected before persistence.
@@ -55,7 +58,8 @@ Platform through HTTP/RPC and never exposes a Prisma client to application code.
   delivery is lost. Approval is a separate maker-checker fact; activation requires it. Abandon/revoke void unused inventory.
 - Raw codes are capped at 1,000, returned only by the first committed Issue response, and never written to storage, receipts, audit,
   errors or query DTOs. An exact command replay returns `delivery_unavailable`; batch queries expose only count and safe export
-  receipt metadata. The Admin listener does not log payloads and its telemetry redactor recognizes the secret response field.
+  receipt metadata. Code generation itself occurs only after a new receipt has been claimed, so replay cannot mint replacement
+  secrets. The Admin listener does not log payloads and its telemetry redactor recognizes the secret response field.
 - List queries use HMAC-authenticated cursors bound to operator/deployment/permission scope, Site and a first-page watermark.
 
 All module ports accept only the opaque `PlatformTransaction`; no sibling module may introduce a second transaction or self-RPC.

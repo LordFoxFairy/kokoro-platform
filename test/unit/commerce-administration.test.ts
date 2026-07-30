@@ -15,7 +15,7 @@ describe("CommerceAdministrationService", () => {
       unitOfWork: { execute: async (_fence, work) => work(lease.transaction) },
       repository: repositoryStub({ publishCreditProgramRevision: async (_transaction, input) => {
         persisted.push(input);
-        return { kind: "committed", command: input.command, result: {
+        return { kind: "committed", command: input.command, recordedAt: "2026-07-30T01:00:01.000Z", result: {
           creditProgramRevisionRef: input.creditProgramRevisionRef,
           revisionDigest: input.revisionDigest, publishedAt: "2026-07-30T01:00:00.000Z",
         } };
@@ -111,7 +111,7 @@ describe("CommerceAdministrationService", () => {
       unitOfWork: { execute: async (_fence, work) => work(lease.transaction) },
       repository: repositoryStub({ publishEntitlementTemplateRevision: async (_transaction, input) => {
         persisted.push(input);
-        return { kind: "committed", command: input.command, result: {
+        return { kind: "committed", command: input.command, recordedAt: "2026-07-30T01:00:01.000Z", result: {
           entitlementTemplateRevisionRef: input.entitlementTemplateRevisionRef,
           revisionDigest: input.revisionDigest, publishedAt: "2026-07-30T01:00:00.000Z",
         } };
@@ -136,7 +136,8 @@ describe("CommerceAdministrationService", () => {
       unitOfWork: { execute: async (_fence, work) => work(lease.transaction) },
       repository: repositoryStub({ publishOffer: async (_transaction, input) => {
         persisted.push(input);
-        return { kind: "committed", occurredAt: "2026-07-29T01:00:00.000Z" };
+        return { kind: "committed", command: input.command, recordedAt: "2026-07-29T01:00:01.000Z",
+          result: { productVersionRef: input.productVersionRef, publishedAt: "2026-07-29T01:00:00.000Z" } };
       } }),
       codes: { issueCode: () => { throw new Error("MUST_NOT_ISSUE"); } },
     });
@@ -165,14 +166,25 @@ describe("CommerceAdministrationService", () => {
     let invocation = 0; let persisted: Parameters<CommerceAdministrationRepository["issueBatch"]>[1] | null = null;
     const repository = repositoryStub({ issueBatch: async (_transaction, input) => {
       persisted = input; invocation += 1;
-      return { kind: invocation === 1 ? "committed" : "replayed", occurredAt: "2026-07-29T01:00:00.000Z" };
+      const result = { batchRef: input.batchRef, codeCount: input.count,
+        redemptionProgramRevisionRef: input.redemptionProgramRevisionRef,
+        createdByOperatorRef: input.subjectId, startsAt: input.startsAt, endsAt: input.endsAt,
+        exportedAt: "2026-07-29T01:00:00.000Z" };
+      if (invocation === 1) {
+        const material = input.issueCodes();
+        return { kind: "committed", command: input.command, recordedAt: "2026-07-29T01:00:01.000Z",
+          result, rawCodes: material.rawCodes };
+      }
+      return { kind: "replayed", command: input.command, recordedAt: "2026-07-29T01:00:01.000Z", result };
     } });
     let reference = 300;
+    const issueCode = vi.fn(() => ({ code: "KC1-01234567-0123456789-0123456789ABCDEFGHJKMNPQRSTVWXYZ-01234567",
+      keyRevision: "code-1", batchSelector: "0123456789", lookupDigest: "a".repeat(64),
+      safeFingerprint: "CODE-0123456789ABCDEF" }));
     const service = new CommerceAdministrationService({
       unitOfWork: { execute: async (_fence, work) => work(lease.transaction) }, repository,
       reference: () => `00000000-0000-7000-8000-${String(reference++).padStart(12, "0")}`,
-      codes: { issueCode: () => ({ code: "KC1-01234567-0123456789-0123456789ABCDEFGHJKMNPQRSTVWXYZ-01234567",
-        keyRevision: "code-1", batchSelector: "0123456789", lookupDigest: "a".repeat(64), safeFingerprint: "CODE-0123456789ABCDEF" }) },
+      codes: { issueCode },
     });
     const input = {
       context: context("operator-maker", "commerce.code-batch.issue"), siteId: "site-1",
@@ -183,10 +195,11 @@ describe("CommerceAdministrationService", () => {
     try {
       await expect(service.issueBatch(input)).resolves.toMatchObject({ kind: "secret_export", codeCount: 2, codes: expect.any(Array) });
       expect(JSON.stringify(persisted)).not.toContain("KC1-");
-      await expect(service.issueBatch(input)).resolves.toEqual({
+      await expect(service.issueBatch(input)).resolves.toMatchObject({
         kind: "delivery_unavailable", batchRef: input.batchRef, codeCount: 2,
         exportedAt: "2026-07-29T01:00:00.000Z",
       });
+      expect(issueCode).toHaveBeenCalledTimes(2);
     } finally { revokePlatformTransaction(lease); }
   });
 
@@ -209,6 +222,7 @@ describe("CommerceAdministrationService", () => {
         commandId: "00000000-0000-7000-8000-000000000203", environment: "production", region: "us-east-1",
         callerIdentity: "admin-1:operator-maker", operation: "commerce.code-batch.approve", idempotencyKey: "approve-1",
         requestDigest: "a".repeat(64), state: "pending", result: null, resultDigest: null,
+        recordedAt: "2026-07-29T01:00:00.000Z",
       }] as never : [{ occurredAt: new Date("2026-07-29T01:00:00.000Z") }] as never,
       execute: async (statement) => statement.includes("commerce_code_batch_approval") ? 0 : 1,
     });
@@ -237,7 +251,7 @@ describe("CommerceAdministrationService", () => {
             revisionDigest: "b".repeat(64), publishedAt: "2026-07-30T01:00:00.000Z" } : null,
           resultDigest: recorded ? digestResult({ creditProgramRevisionRef: "credits-program-v1",
             revisionDigest: "b".repeat(64), publishedAt: "2026-07-30T01:00:00.000Z" }) : null,
-          state: recorded ? "succeeded" : "pending" }] as never;
+          state: recorded ? "succeeded" : "pending", recordedAt: "2026-07-30T01:00:01.000Z" }] as never;
         return [{ occurredAt: new Date("2026-07-30T01:00:00.000Z") }] as never;
       },
       execute: async (statement) => { statements.push(statement);
@@ -263,7 +277,7 @@ describe("CommerceAdministrationService", () => {
     } finally { revokePlatformTransaction(lease); }
   });
 
-  it("replays the persisted command identity and result when a retry drifts commandId", async () => {
+  it("rejects commandId drift even when idempotency key and digest match", async () => {
     const persistedCommandId = "00000000-0000-7000-8000-000000000226";
     const retryCommandId = "00000000-0000-7000-8000-000000000227";
     const identity = {
@@ -279,7 +293,7 @@ describe("CommerceAdministrationService", () => {
         statements.push(statement);
         if (statement.includes("FROM platform.command_receipt")) return [{ ...identity,
           commandId: persistedCommandId, state: "succeeded", result: persistedResult,
-          resultDigest: digestResult(persistedResult) }] as never;
+          resultDigest: digestResult(persistedResult), recordedAt: "2026-07-30T01:00:01.000Z" }] as never;
         throw new Error("REPLAY_MUST_NOT_RECONSTRUCT_RESULT_FROM_BUSINESS_TABLE");
       },
       execute: async (statement) => { statements.push(statement); return 0; },
@@ -295,9 +309,9 @@ describe("CommerceAdministrationService", () => {
           windowKind: "none", rolloverPolicy: "none", calendarZone: null, windowAnchor: null,
           expiresAfterSeconds: null, revisionDigest: "b".repeat(64),
         },
-      )).resolves.toEqual({ kind: "replayed", command: { ...identity, commandId: persistedCommandId },
-        result: persistedResult });
+      )).rejects.toThrow("COMMAND_IDENTITY_CONFLICT");
       expect(statements.filter((statement) => statement.includes("FROM platform.command_receipt"))).toHaveLength(1);
+      expect(statements.some((statement) => statement.includes("commerce_command"))).toBe(false);
     } finally { revokePlatformTransaction(lease); }
   });
 
@@ -326,16 +340,37 @@ function repositoryStub(overrides: Partial<CommerceAdministrationRepository> = {
     idempotencyKey: "catalog-stub", requestDigest: "a".repeat(64) };
   return {
     publishCreditProgramRevision: async (_transaction, input) => ({ kind: "committed", command,
+      recordedAt: "2026-07-29T01:00:01.000Z",
       result: { creditProgramRevisionRef: input.creditProgramRevisionRef,
         revisionDigest: input.revisionDigest, publishedAt: "2026-07-29T01:00:00.000Z" } }),
     publishEntitlementTemplateRevision: async (_transaction, input) => ({ kind: "committed", command,
+      recordedAt: "2026-07-29T01:00:01.000Z",
       result: { entitlementTemplateRevisionRef: input.entitlementTemplateRevisionRef,
         revisionDigest: input.revisionDigest, publishedAt: "2026-07-29T01:00:00.000Z" } }),
-    publishOffer: async () => ({ kind: "committed", occurredAt: "2026-07-29T01:00:00.000Z" }),
-    publishProgram: async () => ({ kind: "committed", occurredAt: "2026-07-29T01:00:00.000Z" }), issueBatch: async () => ({ kind: "committed", occurredAt: "2026-07-29T01:00:00.000Z" }),
-    approveBatch: async () => "committed", activateBatch: async () => "committed",
-    abandonBatch: async () => "committed", suspendBatch: async () => "committed", revokeBatch: async () => "committed", ...overrides,
+    publishOffer: async (_transaction, input) => ({ kind: "committed", command: input.command,
+      recordedAt: "2026-07-29T01:00:01.000Z",
+      result: { productVersionRef: input.productVersionRef, publishedAt: "2026-07-29T01:00:00.000Z" } }),
+    publishProgram: async (_transaction, input) => ({ kind: "committed", command: input.command,
+      recordedAt: "2026-07-29T01:00:01.000Z", result: {
+        redemptionProgramRevisionRef: input.redemptionProgramRevisionRef, publishedAt: "2026-07-29T01:00:00.000Z" } }),
+    issueBatch: async (_transaction, input) => { const material = input.issueCodes(); return {
+      kind: "committed", command: input.command, recordedAt: "2026-07-29T01:00:01.000Z",
+      result: { batchRef: input.batchRef, codeCount: input.count,
+        redemptionProgramRevisionRef: input.redemptionProgramRevisionRef,
+        createdByOperatorRef: input.subjectId, startsAt: input.startsAt, endsAt: input.endsAt,
+        exportedAt: "2026-07-29T01:00:00.000Z" }, rawCodes: material.rawCodes }; },
+    approveBatch: async (_transaction, input) => batchOutcome(input.command, input.batchRef, "draft", true),
+    activateBatch: async (_transaction, input) => batchOutcome(input.command, input.batchRef, "active", true),
+    abandonBatch: async (_transaction, input) => batchOutcome(input.command, input.batchRef, "abandoned", false),
+    suspendBatch: async (_transaction, input) => batchOutcome(input.command, input.batchRef, "suspended", true),
+    revokeBatch: async (_transaction, input) => batchOutcome(input.command, input.batchRef, "revoked", true), ...overrides,
   };
+}
+function batchOutcome(command: Parameters<CommerceAdministrationRepository["approveBatch"]>[1]["command"],
+  batchRef: string, state: "draft" | "active" | "abandoned" | "suspended" | "revoked", approved: boolean) {
+  return { kind: "committed" as const, command, recordedAt: "2026-07-29T01:00:01.000Z",
+    result: { batchRef, state, ...(approved ? { approvalState: "approved" as const } : {}),
+      changedAt: "2026-07-29T01:00:00.000Z" } };
 }
 function digestResult(value: Parameters<typeof commerceCanonicalJson>[0]): string {
   return createHash("sha256").update(commerceCanonicalJson(value)).digest("hex");

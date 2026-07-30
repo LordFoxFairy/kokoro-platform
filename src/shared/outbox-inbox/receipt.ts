@@ -18,6 +18,7 @@ export interface CommandReceipt extends CommandIdentity {
   readonly state: CommandReceiptState;
   readonly result: JsonValue | null;
   readonly resultDigest: string | null;
+  readonly recordedAt?: string;
 }
 
 export type CommandReceiptConflictKind = "identity" | "digest" | "result";
@@ -45,7 +46,7 @@ export class CommandReceiptRepository {
         identity.operation, identity.idempotencyKey, identity.requestDigest],
     );
     const receipt = await this.#find(sql, identity);
-    if (receipt.commandId !== commandId) throw new CommandReceiptConflictError("identity");
+    assertSameIdentity(receipt, identity);
     if (receipt.requestDigest !== identity.requestDigest) throw new CommandReceiptConflictError("digest");
     return receipt;
   }
@@ -58,16 +59,14 @@ export class CommandReceiptRepository {
     assertDigest(outcome.resultDigest);
     const sql = resolvePlatformTransaction(transaction);
     const receipt = await this.#find(sql, identity);
-    if (receipt.commandId !== canonicalCommandId(identity.commandId)) {
-      throw new CommandReceiptConflictError("identity");
-    }
+    assertSameIdentity(receipt, identity);
     if (receipt.requestDigest !== identity.requestDigest) throw new CommandReceiptConflictError("digest");
     if (receipt.state !== "pending" && receipt.state !== "outcome_unknown") {
       if (receipt.state === outcome.state && receipt.resultDigest === outcome.resultDigest) return receipt;
       throw new CommandReceiptConflictError("result");
     }
     await sql.execute(
-      `UPDATE platform.command_receipt SET state=$1, result=$2::jsonb, result_digest=$3, updated_at=now()
+      `UPDATE platform.command_receipt SET state=$1, result=$2::jsonb, result_digest=$3, updated_at=clock_timestamp()
        WHERE command_id=$4 AND request_digest=$5`,
       [outcome.state, JSON.stringify(outcome.result), outcome.resultDigest, receipt.commandId, identity.requestDigest],
     );
@@ -78,7 +77,7 @@ export class CommandReceiptRepository {
     const rows = await sql.query<ReceiptRow>(
       `SELECT command_id AS "commandId", environment, region, caller_identity AS "callerIdentity",
               operation, idempotency_key AS "idempotencyKey", request_digest AS "requestDigest",
-              state, result, result_digest AS "resultDigest"
+              state, result, result_digest AS "resultDigest", updated_at AS "recordedAt"
        FROM platform.command_receipt
        WHERE environment=$1 AND caller_identity=$2 AND operation=$3 AND idempotency_key=$4
        FOR UPDATE`,
@@ -86,11 +85,24 @@ export class CommandReceiptRepository {
     );
     const receipt = rows[0];
     if (!receipt) throw new Error("COMMAND_RECEIPT_NOT_FOUND");
-    return receipt;
+    if (receipt.recordedAt === undefined) {
+      return Object.freeze({ ...receipt, commandId: canonicalCommandId(receipt.commandId) });
+    }
+    const recordedAt = new Date(receipt.recordedAt);
+    if (!Number.isFinite(recordedAt.getTime())) throw new Error("COMMAND_RECEIPT_RECORDED_AT_INVALID");
+    return Object.freeze({ ...receipt, commandId: canonicalCommandId(receipt.commandId),
+      recordedAt: recordedAt.toISOString() });
   }
 }
 
 type ReceiptRow = CommandReceipt & Record<string, unknown>;
+
+function assertSameIdentity(receipt: CommandReceipt, identity: CommandIdentity): void {
+  if (canonicalCommandId(receipt.commandId) !== canonicalCommandId(identity.commandId) ||
+      receipt.environment !== identity.environment || receipt.region !== identity.region ||
+      receipt.callerIdentity !== identity.callerIdentity || receipt.operation !== identity.operation ||
+      receipt.idempotencyKey !== identity.idempotencyKey) throw new CommandReceiptConflictError("identity");
+}
 
 export function assertDigest(value: string): void {
   if (!/^[a-f0-9]{64}$/u.test(value)) throw new Error("SHA256_DIGEST_REQUIRED");

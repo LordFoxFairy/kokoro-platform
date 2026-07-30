@@ -1,4 +1,4 @@
-import { CommandReceiptRepository } from "../../../../shared/outbox-inbox/receipt.js";
+import { CommandReceiptConflictError, CommandReceiptRepository } from "../../../../shared/outbox-inbox/receipt.js";
 import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
 import { assertSha256 } from "../../domain/command-identity.js";
 import { compileFulfillmentOutputPlan, validateActualOutputSet } from "../../domain/output-line.js";
@@ -20,7 +20,8 @@ export class PostgresCommerceRepository implements CommerceRepository {
         idempotencyKey: identity.idempotencyKey, requestDigest: identity.requestDigest,
       });
     } catch (error) {
-      if (error instanceof Error && error.message === "COMMAND_DIGEST_CONFLICT") throw new Error("IDEMPOTENCY_CONFLICT");
+      if (error instanceof CommandReceiptConflictError &&
+          (error.kind === "identity" || error.kind === "digest")) throw new Error("IDEMPOTENCY_CONFLICT");
       throw error;
     }
     if (receipt.commandId !== identity.commandId) throw new Error("IDEMPOTENCY_CONFLICT");
