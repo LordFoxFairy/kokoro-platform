@@ -22,6 +22,7 @@ const ownerFacts: VerifiedGaRunRequestOwnerFacts = {
   thread_id: "thread-1",
   input: { message_id: "message-1", content: "hello" },
   runtime: {
+    agent_catalog_ref: `agent-catalog:sha256:${"a".repeat(64)}`,
     agent_type: "general",
     model: {
       provider: "anthropic",

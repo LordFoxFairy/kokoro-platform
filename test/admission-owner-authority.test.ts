@@ -142,6 +142,7 @@ function ports(events: string[] = []): PlatformAdmissionOwnerPorts {
         kind: "resolved" as const,
         value: {
           capabilitySnapshotRef: "capability-1",
+          agentCatalogRef: `agent-catalog:sha256:${"a".repeat(64)}`,
           tools: ["read_file"], skills: [], mcpServers: [], subagents: [],
           safeCapabilities: [{ kind: "skill" as const, label: "Files" }],
           prerequisiteRefs: [],
