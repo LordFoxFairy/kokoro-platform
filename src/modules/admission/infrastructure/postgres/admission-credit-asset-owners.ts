@@ -204,7 +204,7 @@ export class PostgresAdmissionAssetOwner implements AdmissionAssetOwnerPort {
             AND resource.subject_ref=$3 AND resource.subject_generation=$4
             AND resource.asset_ref=$5 AND version.asset_version_ref=$6
             AND eligibility.eligibility_ref=$7
-            AND resource.purpose='chat_run_input'
+            AND resource.purpose='chat.attachment'
             AND resource.state='active' AND version.state='ready' AND eligibility.state='ready'
           LIMIT 2`,
         [input.siteId, input.projectRef, input.subjectRef, input.subjectGeneration, attachment.assetRef,
