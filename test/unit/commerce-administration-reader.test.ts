@@ -75,5 +75,6 @@ describe("PostgresCommerceAdministrationReader", () => {
 
 function permit(operation: string): AdminQueryPermit {
   return { operatorRef: "operator:1", environment: "production", region: "us-east-1",
-    operation, scope: { kind: "site", siteRefs: ["site-1"] } } as AdminQueryPermit;
+    operation, authorityBindingDigest: "a".repeat(64),
+    scope: { kind: "site", siteRefs: ["site-1"] } } as AdminQueryPermit;
 }

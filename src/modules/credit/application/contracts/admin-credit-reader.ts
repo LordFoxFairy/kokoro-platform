@@ -82,6 +82,18 @@ export interface AdminCreditHoldRecord {
   readonly sourceCount: bigint;
 }
 
+export interface AdminCreditHoldAllocationRecord {
+  readonly siteId: string;
+  readonly creditHoldRef: string;
+  readonly creditGrantId: string;
+  readonly creditAccountRef: string;
+  readonly unit: string;
+  readonly reserveJournalTransactionRef: string;
+  readonly allocatedAmount: string;
+  readonly allocationOrdinal: number;
+  readonly createdAt: string;
+}
+
 export interface AdminCreditJournalTransactionRecord {
   readonly siteId: string;
   readonly journalTransactionRef: string;
@@ -135,15 +147,34 @@ export interface AdminRatedUsageRecord {
   readonly createdAt: string;
 }
 
+export interface AdminRatedUsageSourceAllocationRecord {
+  readonly siteId: string;
+  readonly ratedUsageRef: string;
+  readonly settlementRef: string;
+  readonly creditGrantId: string;
+  readonly direction: "capture" | "increase" | "decrease";
+  readonly amount: string;
+  readonly allocationOrdinal: number;
+  readonly sourceOrdinal: number;
+}
+
+export interface AdminCreditMembershipPageResult<Record> {
+  readonly items: readonly Record[];
+  readonly membershipWatermark: string;
+  readonly observedAt: string;
+}
+
 export interface AdminCreditPage {
   readonly siteId: string;
   readonly afterRef: string | null;
-  readonly watermark: string;
+  readonly membershipWatermark: string | null;
   readonly limit: number;
 }
 
 export interface AdminCreditTracePage extends AdminCreditPage {
   readonly creditAccountRef: string | null;
+  readonly creditGrantId: string | null;
+  readonly sourceType: AdminCreditGrantRecord["sourceType"] | null;
   readonly sourceRef: string | null;
   readonly executionRootRef: string | null;
 }
@@ -152,22 +183,33 @@ export interface AdminCreditReader {
   getSiteCreditSummary(permit: AdminQueryPermit, siteId: string): Promise<AdminCreditSiteSummaryRecord>;
   listCreditAccounts(permit: AdminQueryPermit, input: AdminCreditPage & Readonly<{
     billingAccountRef: string | null;
-  }>): Promise<readonly AdminCreditAccountRecord[]>;
+  }>): Promise<AdminCreditMembershipPageResult<AdminCreditAccountRecord>>;
   getCreditAccount(permit: AdminQueryPermit, siteId: string,
     creditAccountRef: string): Promise<AdminCreditAccountRecord | null>;
   listCreditGrants(permit: AdminQueryPermit,
-    input: AdminCreditTracePage): Promise<readonly AdminCreditGrantRecord[]>;
+    input: AdminCreditTracePage): Promise<AdminCreditMembershipPageResult<AdminCreditGrantRecord>>;
   listCreditHolds(permit: AdminQueryPermit,
-    input: AdminCreditTracePage): Promise<readonly AdminCreditHoldRecord[]>;
+    input: AdminCreditTracePage): Promise<AdminCreditMembershipPageResult<AdminCreditHoldRecord>>;
+  listCreditHoldAllocations(permit: AdminQueryPermit, input: Readonly<{
+    siteId: string; creditHoldRef: string | null; creditGrantId: string | null;
+    afterHoldRef: string | null; afterAllocationOrdinal: number | null;
+    membershipWatermark: string | null; limit: number;
+  }>): Promise<AdminCreditMembershipPageResult<AdminCreditHoldAllocationRecord>>;
   listCreditJournalTransactions(permit: AdminQueryPermit,
     input: AdminCreditTracePage & Readonly<{ creditGrantId: string | null;
-      creditHoldRef: string | null }>): Promise<readonly AdminCreditJournalTransactionRecord[]>;
+      creditHoldRef: string | null }>): Promise<AdminCreditMembershipPageResult<AdminCreditJournalTransactionRecord>>;
   listCreditJournalEntries(permit: AdminQueryPermit, input: Readonly<{
-    siteId: string; journalTransactionRef: string; afterOrdinal: number | null; limit: number;
-  }>): Promise<readonly AdminCreditJournalEntryRecord[]>;
+    siteId: string; journalTransactionRef: string; afterOrdinal: number | null;
+    membershipWatermark: string | null; limit: number;
+  }>): Promise<AdminCreditMembershipPageResult<AdminCreditJournalEntryRecord>>;
   listRatedUsage(permit: AdminQueryPermit, input: AdminCreditTracePage & Readonly<{
     creditHoldRef: string | null; attemptRef: string | null;
-  }>): Promise<readonly AdminRatedUsageRecord[]>;
+  }>): Promise<AdminCreditMembershipPageResult<AdminRatedUsageRecord>>;
+  listRatedUsageSourceAllocations(permit: AdminQueryPermit, input: Readonly<{
+    siteId: string; ratedUsageRef: string | null; settlementRef: string | null;
+    afterRatedUsageRef: string | null; afterSourceOrdinal: number | null;
+    membershipWatermark: string | null; limit: number;
+  }>): Promise<AdminCreditMembershipPageResult<AdminRatedUsageSourceAllocationRecord>>;
 }
 
 export interface AdminSiteQueryTransactionHost {

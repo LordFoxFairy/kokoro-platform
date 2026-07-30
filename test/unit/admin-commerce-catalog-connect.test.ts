@@ -134,6 +134,7 @@ describe("AdminCommerce catalog primitive Connect provider", () => {
     const service = createAdminCommerceConnectService({
       resolver: { resolve: async () => ({ operatorRef: "operator:7", environment: "production",
         region: "us-east-1", operation: "commerce.credit-program.read",
+        authorityBindingDigest: "a".repeat(64),
         scope: { kind: "site", siteRefs: ["site-1"] } }) } as never,
       owner: {} as never,
       reader: { captureWatermark, listCreditProgramRevisions } as never,

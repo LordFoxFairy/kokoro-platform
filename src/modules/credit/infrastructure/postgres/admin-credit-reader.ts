@@ -3,12 +3,14 @@ import type { AdminQueryPermit } from
 import type {
   AdminCreditAccountRecord,
   AdminCreditGrantRecord,
+  AdminCreditHoldAllocationRecord,
   AdminCreditHoldRecord,
   AdminCreditJournalEntryRecord,
   AdminCreditJournalTransactionRecord,
   AdminCreditReader,
   AdminCreditSiteSummaryRecord,
   AdminRatedUsageRecord,
+  AdminRatedUsageSourceAllocationRecord,
   AdminSiteQueryTransactionHost,
   CreditBalanceRecord,
 } from "../../application/contracts/admin-credit-reader.js";
@@ -18,6 +20,22 @@ const NIL_UUID = "00000000-0000-0000-0000-000000000000";
 
 export class PostgresAdminCreditReader implements AdminCreditReader {
   constructor(private readonly host: AdminSiteQueryTransactionHost) {}
+
+  private membershipPage<Record>(permit: AdminQueryPermit, siteId: string,
+    membershipWatermark: string | null,
+    read: (transaction: ReturnType<typeof resolvePlatformTransaction>,
+      watermark: string) => Promise<readonly Record[]>) {
+    return this.host.adminSiteQueryTransaction(permit, siteId, async (ownerTransaction) => {
+      const transaction = resolvePlatformTransaction(ownerTransaction);
+      const rows = await transaction.query<ObservationRow>(
+        `SELECT transaction_timestamp() AS "observedAt"`,
+      );
+      const observedAt = instant(requiredRow(rows).observedAt);
+      const watermark = membershipWatermark === null ? observedAt : instant(membershipWatermark);
+      return Object.freeze({ items: await read(transaction, watermark),
+        membershipWatermark: watermark, observedAt });
+    });
+  }
 
   getSiteCreditSummary(permit: AdminQueryPermit, siteId: string) {
     return this.host.adminSiteQueryTransaction(permit, siteId, async (transaction) => {
@@ -63,14 +81,14 @@ export class PostgresAdminCreditReader implements AdminCreditReader {
   }
 
   listCreditAccounts(permit: AdminQueryPermit, input: Parameters<AdminCreditReader["listCreditAccounts"]>[1]) {
-    return this.host.adminSiteQueryTransaction(permit, input.siteId, async (transaction) => {
-      const rows = await resolvePlatformTransaction(transaction).query<AccountRow>(
+    return this.membershipPage(permit, input.siteId, input.membershipWatermark, async (transaction, watermark) => {
+      const rows = await transaction.query<AccountRow>(
         `${accountProjection()}
          WHERE account.site_ref=$1 AND account.credit_account_ref>$2::uuid
            AND account.created_at<=$3::timestamptz
            AND ($4::text IS NULL OR account.billing_account_ref=$4)
          ORDER BY account.credit_account_ref ASC LIMIT $5`,
-        [input.siteId, input.afterRef ?? NIL_UUID, input.watermark, input.billingAccountRef, input.limit],
+        [input.siteId, input.afterRef ?? NIL_UUID, watermark, input.billingAccountRef, input.limit],
       );
       return Object.freeze(rows.map(account));
     });
@@ -87,8 +105,9 @@ export class PostgresAdminCreditReader implements AdminCreditReader {
   }
 
   listCreditGrants(permit: AdminQueryPermit, input: Parameters<AdminCreditReader["listCreditGrants"]>[1]) {
-    return this.host.adminSiteQueryTransaction(permit, input.siteId, async (transaction) => {
-      const rows = await resolvePlatformTransaction(transaction).query<GrantRow>(
+    requireSourcePair(input.sourceType, input.sourceRef);
+    return this.membershipPage(permit, input.siteId, input.membershipWatermark, async (transaction, watermark) => {
+      const rows = await transaction.query<GrantRow>(
         `SELECT grant_fact.site_ref AS "siteId",grant_fact.credit_grant_id AS "creditGrantId",
            grant_fact.credit_account_ref AS "creditAccountRef",grant_fact.billing_account_ref AS "billingAccountRef",
            grant_fact.credit_program_revision_ref AS "creditProgramRevisionRef",
@@ -110,24 +129,26 @@ export class PostgresAdminCreditReader implements AdminCreditReader {
          FROM platform.credit_grant grant_fact
          WHERE grant_fact.site_ref=$1 AND grant_fact.credit_grant_id>$2::uuid
            AND grant_fact.created_at<=$3::timestamptz
-           AND ($4::uuid IS NULL OR grant_fact.credit_account_ref=$4::uuid)
-           AND ($5::text IS NULL OR grant_fact.source_ref=$5)
-           AND ($6::text IS NULL OR EXISTS (
+           AND ($4::uuid IS NULL OR grant_fact.credit_grant_id=$4::uuid)
+           AND ($5::uuid IS NULL OR grant_fact.credit_account_ref=$5::uuid)
+           AND ($6::text IS NULL OR (grant_fact.source_type=$6 AND grant_fact.source_ref=$7))
+           AND ($8::text IS NULL OR EXISTS (
              SELECT 1 FROM platform.credit_hold_allocation allocation JOIN platform.credit_hold hold
                ON hold.site_ref=allocation.site_ref AND hold.credit_hold_ref=allocation.credit_hold_ref
              WHERE allocation.site_ref=grant_fact.site_ref AND allocation.credit_grant_id=grant_fact.credit_grant_id
-               AND hold.execution_root_ref=$6))
-         ORDER BY grant_fact.credit_grant_id ASC LIMIT $7`,
-        [input.siteId, input.afterRef ?? NIL_UUID, input.watermark, input.creditAccountRef,
-          input.sourceRef, input.executionRootRef, input.limit],
+               AND hold.execution_root_ref=$8))
+         ORDER BY grant_fact.credit_grant_id ASC LIMIT $9`,
+        [input.siteId, input.afterRef ?? NIL_UUID, watermark, input.creditGrantId,
+          input.creditAccountRef, input.sourceType, input.sourceRef, input.executionRootRef, input.limit],
       );
       return Object.freeze(rows.map(grant));
     });
   }
 
   listCreditHolds(permit: AdminQueryPermit, input: Parameters<AdminCreditReader["listCreditHolds"]>[1]) {
-    return this.host.adminSiteQueryTransaction(permit, input.siteId, async (transaction) => {
-      const rows = await resolvePlatformTransaction(transaction).query<HoldRow>(
+    requireSourcePair(input.sourceType, input.sourceRef);
+    return this.membershipPage(permit, input.siteId, input.membershipWatermark, async (transaction, watermark) => {
+      const rows = await transaction.query<HoldRow>(
         `SELECT hold.site_ref AS "siteId",hold.credit_hold_ref AS "creditHoldRef",
            hold.credit_account_ref AS "creditAccountRef",hold.execution_root_ref AS "executionRootRef",hold.unit,
            hold.requested_amount::text AS "requestedAmount",hold.reserved_amount::text AS "reservedAmount",
@@ -144,21 +165,60 @@ export class PostgresAdminCreditReader implements AdminCreditReader {
            ON grant_fact.site_ref=allocation.site_ref AND grant_fact.credit_grant_id=allocation.credit_grant_id
          WHERE hold.site_ref=$1 AND hold.credit_hold_ref>$2::uuid AND hold.created_at<=$3::timestamptz
            AND ($4::uuid IS NULL OR hold.credit_account_ref=$4::uuid)
-           AND ($5::text IS NULL OR grant_fact.source_ref=$5)
-           AND ($6::text IS NULL OR hold.execution_root_ref=$6)
+           AND ($5::uuid IS NULL OR EXISTS (
+             SELECT 1 FROM platform.credit_hold_allocation grant_allocation
+             WHERE grant_allocation.site_ref=hold.site_ref
+               AND grant_allocation.credit_hold_ref=hold.credit_hold_ref
+               AND grant_allocation.credit_grant_id=$5::uuid))
+           AND ($6::text IS NULL OR EXISTS (
+             SELECT 1 FROM platform.credit_hold_allocation source_allocation
+             JOIN platform.credit_grant source_grant
+               ON source_grant.site_ref=source_allocation.site_ref
+                 AND source_grant.credit_grant_id=source_allocation.credit_grant_id
+             WHERE source_allocation.site_ref=hold.site_ref
+               AND source_allocation.credit_hold_ref=hold.credit_hold_ref
+               AND source_grant.source_type=$6 AND source_grant.source_ref=$7))
+           AND ($8::text IS NULL OR hold.execution_root_ref=$8)
          GROUP BY hold.credit_hold_ref
-         ORDER BY hold.credit_hold_ref ASC LIMIT $7`,
-        [input.siteId, input.afterRef ?? NIL_UUID, input.watermark, input.creditAccountRef,
-          input.sourceRef, input.executionRootRef, input.limit],
+         ORDER BY hold.credit_hold_ref ASC LIMIT $9`,
+        [input.siteId, input.afterRef ?? NIL_UUID, watermark, input.creditAccountRef,
+          input.creditGrantId, input.sourceType, input.sourceRef, input.executionRootRef, input.limit],
       );
       return Object.freeze(rows.map(hold));
     });
   }
 
+  listCreditHoldAllocations(permit: AdminQueryPermit,
+    input: Parameters<AdminCreditReader["listCreditHoldAllocations"]>[1]) {
+    requireExactlyOne(input.creditHoldRef, input.creditGrantId, "ADMIN_CREDIT_ALLOCATION_TRACE_INVALID");
+    return this.membershipPage(permit, input.siteId, input.membershipWatermark, async (transaction, watermark) => {
+      const rows = await transaction.query<HoldAllocationRow>(
+        `SELECT allocation.site_ref AS "siteId",allocation.credit_hold_ref AS "creditHoldRef",
+           allocation.credit_grant_id AS "creditGrantId",
+           allocation.credit_account_ref AS "creditAccountRef",allocation.unit,
+           allocation.reserve_journal_transaction_ref AS "reserveJournalTransactionRef",
+           allocation.allocated_amount::text AS "allocatedAmount",
+           allocation.allocation_ordinal AS "allocationOrdinal",allocation.created_at AS "createdAt"
+         FROM platform.credit_hold_allocation allocation
+         WHERE allocation.site_ref=$1
+           AND ($2::uuid IS NULL OR allocation.credit_hold_ref=$2::uuid)
+           AND ($3::uuid IS NULL OR allocation.credit_grant_id=$3::uuid)
+           AND (allocation.credit_hold_ref>$4::uuid OR
+             (allocation.credit_hold_ref=$4::uuid AND allocation.allocation_ordinal>$5))
+           AND allocation.created_at<=$6::timestamptz
+         ORDER BY allocation.credit_hold_ref ASC,allocation.allocation_ordinal ASC LIMIT $7`,
+        [input.siteId, input.creditHoldRef, input.creditGrantId, input.afterHoldRef ?? NIL_UUID,
+          input.afterAllocationOrdinal ?? -1, watermark, input.limit],
+      );
+      return Object.freeze(rows.map(holdAllocation));
+    });
+  }
+
   listCreditJournalTransactions(permit: AdminQueryPermit,
     input: Parameters<AdminCreditReader["listCreditJournalTransactions"]>[1]) {
-    return this.host.adminSiteQueryTransaction(permit, input.siteId, async (transaction) => {
-      const rows = await resolvePlatformTransaction(transaction).query<JournalTransactionRow>(
+    requireSourcePair(input.sourceType, input.sourceRef);
+    return this.membershipPage(permit, input.siteId, input.membershipWatermark, async (transaction, watermark) => {
+      const rows = await transaction.query<JournalTransactionRow>(
         `SELECT journal.site_ref AS "siteId",journal.journal_transaction_ref AS "journalTransactionRef",
            journal.credit_account_ref AS "creditAccountRef",journal.unit,
            journal.business_operation_key AS "businessOperationKey",journal.operation_kind AS "operationKind",
@@ -179,15 +239,16 @@ export class PostgresAdminCreditReader implements AdminCreditReader {
              JOIN platform.credit_grant grant_fact ON grant_fact.site_ref=entry.site_ref
                AND grant_fact.credit_grant_id=entry.credit_grant_id
              WHERE entry.site_ref=journal.site_ref AND entry.journal_transaction_ref=journal.journal_transaction_ref
-               AND grant_fact.source_ref=$7))
-           AND ($8::text IS NULL OR EXISTS (SELECT 1 FROM platform.credit_journal_entry entry
+               AND grant_fact.source_type=$7 AND grant_fact.source_ref=$8))
+           AND ($9::text IS NULL OR EXISTS (SELECT 1 FROM platform.credit_journal_entry entry
              JOIN platform.credit_hold hold ON hold.site_ref=entry.site_ref
                AND hold.credit_hold_ref=entry.credit_hold_ref
              WHERE entry.site_ref=journal.site_ref AND entry.journal_transaction_ref=journal.journal_transaction_ref
-               AND hold.execution_root_ref=$8))
-         ORDER BY journal.journal_transaction_ref ASC LIMIT $9`,
-        [input.siteId, input.afterRef ?? NIL_UUID, input.watermark, input.creditAccountRef,
-          input.creditGrantId, input.creditHoldRef, input.sourceRef, input.executionRootRef, input.limit],
+               AND hold.execution_root_ref=$9))
+         ORDER BY journal.journal_transaction_ref ASC LIMIT $10`,
+        [input.siteId, input.afterRef ?? NIL_UUID, watermark, input.creditAccountRef,
+          input.creditGrantId, input.creditHoldRef, input.sourceType, input.sourceRef,
+          input.executionRootRef, input.limit],
       );
       return Object.freeze(rows.map(journalTransaction));
     });
@@ -195,8 +256,8 @@ export class PostgresAdminCreditReader implements AdminCreditReader {
 
   listCreditJournalEntries(permit: AdminQueryPermit,
     input: Parameters<AdminCreditReader["listCreditJournalEntries"]>[1]) {
-    return this.host.adminSiteQueryTransaction(permit, input.siteId, async (transaction) => {
-      const rows = await resolvePlatformTransaction(transaction).query<JournalEntryRow>(
+    return this.membershipPage(permit, input.siteId, input.membershipWatermark, async (transaction, watermark) => {
+      const rows = await transaction.query<JournalEntryRow>(
         `SELECT entry.site_ref AS "siteId",entry.journal_transaction_ref AS "journalTransactionRef",
            entry.entry_ordinal AS "entryOrdinal",entry.credit_account_ref AS "creditAccountRef",entry.unit,
            entry.entry_side AS "entrySide",entry.account_type AS "accountType",entry.amount::text AS amount,
@@ -209,16 +270,18 @@ export class PostgresAdminCreditReader implements AdminCreditReader {
          LEFT JOIN platform.credit_hold hold
            ON hold.site_ref=entry.site_ref AND hold.credit_hold_ref=entry.credit_hold_ref
          WHERE entry.site_ref=$1 AND entry.journal_transaction_ref=$2::uuid
-           AND entry.entry_ordinal>$3 ORDER BY entry.entry_ordinal ASC LIMIT $4`,
-        [input.siteId, input.journalTransactionRef, input.afterOrdinal ?? -1, input.limit],
+           AND entry.entry_ordinal>$3 AND entry.created_at<=$4::timestamptz
+         ORDER BY entry.entry_ordinal ASC LIMIT $5`,
+        [input.siteId, input.journalTransactionRef, input.afterOrdinal ?? -1, watermark, input.limit],
       );
       return Object.freeze(rows.map(journalEntry));
     });
   }
 
   listRatedUsage(permit: AdminQueryPermit, input: Parameters<AdminCreditReader["listRatedUsage"]>[1]) {
-    return this.host.adminSiteQueryTransaction(permit, input.siteId, async (transaction) => {
-      const rows = await resolvePlatformTransaction(transaction).query<RatedUsageRow>(
+    requireSourcePair(input.sourceType, input.sourceRef);
+    return this.membershipPage(permit, input.siteId, input.membershipWatermark, async (transaction, watermark) => {
+      const rows = await transaction.query<RatedUsageRow>(
         `SELECT usage.site_ref AS "siteId",usage.rated_usage_ref AS "ratedUsageRef",
            usage.authorization_segment_ref AS "authorizationSegmentRef",usage.closure_ref AS "closureRef",
            usage.settlement_ref AS "settlementRef",usage.evidence_ref AS "evidenceRef",
@@ -242,19 +305,51 @@ export class PostgresAdminCreditReader implements AdminCreditReader {
            ON root.site_ref=settlement.site_ref AND root.execution_budget_root_ref=settlement.execution_budget_root_ref
          WHERE usage.site_ref=$1 AND usage.rated_usage_ref>$2::uuid AND usage.created_at<=$3::timestamptz
            AND ($4::uuid IS NULL OR settlement.credit_account_ref=$4::uuid)
-           AND ($5::uuid IS NULL OR settlement.credit_hold_ref=$5::uuid)
-           AND ($6::text IS NULL OR EXISTS (SELECT 1 FROM platform.credit_usage_settlement_source source_fact
+           AND ($5::uuid IS NULL OR EXISTS (SELECT 1 FROM platform.credit_usage_settlement_source grant_source
+             WHERE grant_source.site_ref=usage.site_ref AND grant_source.settlement_ref=usage.settlement_ref
+               AND grant_source.credit_grant_id=$5::uuid))
+           AND ($6::uuid IS NULL OR settlement.credit_hold_ref=$6::uuid)
+           AND ($7::text IS NULL OR EXISTS (SELECT 1 FROM platform.credit_usage_settlement_source source_fact
              JOIN platform.credit_grant grant_fact ON grant_fact.site_ref=source_fact.site_ref
                AND grant_fact.credit_grant_id=source_fact.credit_grant_id
              WHERE source_fact.site_ref=usage.site_ref AND source_fact.settlement_ref=usage.settlement_ref
-               AND grant_fact.source_ref=$6))
-           AND ($7::text IS NULL OR root.execution_root_ref=$7)
-           AND ($8::text IS NULL OR usage.attempt_ref=$8)
-         ORDER BY usage.rated_usage_ref ASC LIMIT $9`,
-        [input.siteId, input.afterRef ?? NIL_UUID, input.watermark, input.creditAccountRef,
-          input.creditHoldRef, input.sourceRef, input.executionRootRef, input.attemptRef, input.limit],
+               AND grant_fact.source_type=$7 AND grant_fact.source_ref=$8))
+           AND ($9::text IS NULL OR root.execution_root_ref=$9)
+           AND ($10::text IS NULL OR usage.attempt_ref=$10)
+         ORDER BY usage.rated_usage_ref ASC LIMIT $11`,
+        [input.siteId, input.afterRef ?? NIL_UUID, watermark, input.creditAccountRef,
+          input.creditGrantId, input.creditHoldRef, input.sourceType, input.sourceRef,
+          input.executionRootRef, input.attemptRef, input.limit],
       );
       return Object.freeze(rows.map(ratedUsage));
+    });
+  }
+
+  listRatedUsageSourceAllocations(permit: AdminQueryPermit,
+    input: Parameters<AdminCreditReader["listRatedUsageSourceAllocations"]>[1]) {
+    requireExactlyOne(input.ratedUsageRef, input.settlementRef,
+      "ADMIN_CREDIT_RATED_USAGE_ALLOCATION_TRACE_INVALID");
+    return this.membershipPage(permit, input.siteId, input.membershipWatermark, async (transaction, watermark) => {
+      const rows = await transaction.query<RatedUsageSourceAllocationRow>(
+        `SELECT usage.site_ref AS "siteId",usage.rated_usage_ref AS "ratedUsageRef",
+           source_fact.settlement_ref AS "settlementRef",source_fact.credit_grant_id AS "creditGrantId",
+           source_fact.direction,source_fact.amount::text AS amount,
+           source_fact.allocation_ordinal AS "allocationOrdinal",
+           source_fact.source_ordinal AS "sourceOrdinal"
+         FROM platform.credit_rated_usage usage
+         JOIN platform.credit_usage_settlement_source source_fact
+           ON source_fact.site_ref=usage.site_ref AND source_fact.settlement_ref=usage.settlement_ref
+         WHERE usage.site_ref=$1
+           AND ($2::uuid IS NULL OR usage.rated_usage_ref=$2::uuid)
+           AND ($3::uuid IS NULL OR usage.settlement_ref=$3::uuid)
+           AND (usage.rated_usage_ref>$4::uuid OR
+             (usage.rated_usage_ref=$4::uuid AND source_fact.source_ordinal>$5))
+           AND usage.created_at<=$6::timestamptz AND source_fact.created_at<=$6::timestamptz
+         ORDER BY usage.rated_usage_ref ASC,source_fact.source_ordinal ASC LIMIT $7`,
+        [input.siteId, input.ratedUsageRef, input.settlementRef,
+          input.afterRatedUsageRef ?? NIL_UUID, input.afterSourceOrdinal ?? -1, watermark, input.limit],
+      );
+      return Object.freeze(rows.map(ratedUsageSourceAllocation));
     });
   }
 }
@@ -300,6 +395,7 @@ function accountProjection(): string {
 interface SummaryRow extends Record<string, unknown> { siteId: unknown; creditAccountCount: unknown;
   activeCreditAccountCount: unknown; openHoldCount: unknown; reconciliationRequiredHoldCount: unknown;
   balances: unknown; asOf: unknown }
+interface ObservationRow extends Record<string, unknown> { observedAt: unknown }
 interface AccountRow extends Record<string, unknown> { siteId: unknown; creditAccountRef: unknown;
   billingAccountRef: unknown; unit: unknown; state: unknown; aggregateVersion: unknown;
   availableAmount: unknown; reservedAmount: unknown; consumedAmount: unknown; expiredAmount: unknown;
@@ -317,6 +413,10 @@ interface HoldRow extends Record<string, unknown> { siteId: unknown; creditHoldR
   resolutionKind: unknown; resolutionRef: unknown; fenceEpoch: unknown; expiresAt: unknown;
   settledAt: unknown; releasedAt: unknown; createdAt: unknown; updatedAt: unknown;
   grantCount: unknown; sourceCount: unknown }
+interface HoldAllocationRow extends Record<string, unknown> { siteId: unknown; creditHoldRef: unknown;
+  creditGrantId: unknown; creditAccountRef: unknown; unit: unknown;
+  reserveJournalTransactionRef: unknown; allocatedAmount: unknown; allocationOrdinal: unknown;
+  createdAt: unknown }
 interface JournalTransactionRow extends Record<string, unknown> { siteId: unknown;
   journalTransactionRef: unknown; creditAccountRef: unknown; unit: unknown;
   businessOperationKey: unknown; operationKind: unknown; entryCount: unknown;
@@ -331,6 +431,9 @@ interface RatedUsageRow extends Record<string, unknown> { siteId: unknown; rated
   attemptRef: unknown; executionRootRef: unknown; creditHoldRef: unknown; creditAccountRef: unknown;
   unit: unknown; policyRatedAmount: unknown; customerAmount: unknown; platformExposureAmount: unknown;
   lineItemCount: unknown; ratedUsageDigest: unknown; sourceCount: unknown; createdAt: unknown }
+interface RatedUsageSourceAllocationRow extends Record<string, unknown> { siteId: unknown;
+  ratedUsageRef: unknown; settlementRef: unknown; creditGrantId: unknown; direction: unknown;
+  amount: unknown; allocationOrdinal: unknown; sourceOrdinal: unknown }
 
 function siteSummary(row: SummaryRow): AdminCreditSiteSummaryRecord {
   return Object.freeze({ siteId: text(row.siteId), creditAccountCount: count(row.creditAccountCount),
@@ -374,6 +477,13 @@ function hold(row: HoldRow): AdminCreditHoldRecord {
     createdAt: instant(row.createdAt), updatedAt: instant(row.updatedAt), grantCount: count(row.grantCount),
     sourceCount: count(row.sourceCount) });
 }
+function holdAllocation(row: HoldAllocationRow): AdminCreditHoldAllocationRecord {
+  return Object.freeze({ siteId: text(row.siteId), creditHoldRef: uuid(row.creditHoldRef),
+    creditGrantId: uuid(row.creditGrantId), creditAccountRef: uuid(row.creditAccountRef),
+    unit: text(row.unit), reserveJournalTransactionRef: uuid(row.reserveJournalTransactionRef),
+    allocatedAmount: positiveDecimal(row.allocatedAmount),
+    allocationOrdinal: nonNegativeInteger(row.allocationOrdinal), createdAt: instant(row.createdAt) });
+}
 function journalTransaction(row: JournalTransactionRow): AdminCreditJournalTransactionRecord {
   const entryCount = integer(row.entryCount); if (entryCount < 2 || entryCount > 512) corrupt();
   return Object.freeze({ siteId: text(row.siteId), journalTransactionRef: uuid(row.journalTransactionRef),
@@ -407,6 +517,13 @@ function ratedUsage(row: RatedUsageRow): AdminRatedUsageRecord {
     lineItemCount: nonNegativeInteger(row.lineItemCount),
     ratedUsageDigest: digest(row.ratedUsageDigest), sourceCount: count(row.sourceCount),
     createdAt: instant(row.createdAt) });
+}
+function ratedUsageSourceAllocation(row: RatedUsageSourceAllocationRow): AdminRatedUsageSourceAllocationRecord {
+  return Object.freeze({ siteId: text(row.siteId), ratedUsageRef: uuid(row.ratedUsageRef),
+    settlementRef: uuid(row.settlementRef), creditGrantId: uuid(row.creditGrantId),
+    direction: one(row.direction, ["capture", "increase", "decrease"]),
+    amount: positiveDecimal(row.amount), allocationOrdinal: nonNegativeInteger(row.allocationOrdinal),
+    sourceOrdinal: nonNegativeInteger(row.sourceOrdinal) });
 }
 function balances(value: unknown): readonly CreditBalanceRecord[] {
   let parsed = value; if (typeof value === "string") try { parsed = JSON.parse(value) as unknown; } catch { corrupt(); }
@@ -455,5 +572,13 @@ function one<const Value extends string>(value: unknown, allowed: readonly Value
 }
 function nullableOne<const Value extends string>(value: unknown, allowed: readonly Value[]): Value | null {
   return value === null ? null : one(value, allowed);
+}
+function requireSourcePair(sourceType: string | null, sourceRef: string | null): void {
+  if ((sourceType === null) !== (sourceRef === null)) {
+    throw new Error("ADMIN_CREDIT_SOURCE_FILTER_INCOMPLETE");
+  }
+}
+function requireExactlyOne(left: string | null, right: string | null, code: string): void {
+  if ((left === null) === (right === null)) throw new Error(code);
 }
 function corrupt(): never { throw new Error("ADMIN_CREDIT_ROW_CORRUPT"); }

@@ -29,6 +29,7 @@ const authority: AdminOperatorAuthority = Object.freeze({
   operatorRef: session.operatorRef,
   operatorGeneration: session.operatorGeneration,
   operatorSecurityEpoch: session.operatorSecurityEpoch,
+  authorizationEpoch: 13n,
   state: "active",
   permissions: ["site.read", "admin.authority.manage", "support.case.read"],
   expiresAt: "2026-07-30T15:00:00.000Z",
