@@ -8,6 +8,28 @@ export type CommerceAdminActor = Readonly<{
   command: CommandIdentity;
 }>;
 
+export type CommerceAdminOutcome<Result, Kind extends "committed" | "replayed" = "committed" | "replayed"> = Readonly<{
+  kind: Kind;
+  command: CommandIdentity;
+  recordedAt: string;
+  result: Readonly<Result>;
+}>;
+
+export type CodeIssueMaterial = Readonly<{
+  keyRevision: string;
+  batchSelector: string;
+  exportDigest: string;
+  rawCodes: readonly string[];
+  codes: readonly Readonly<{ codeRef: string; lookupDigest: string; safeFingerprint: string }>[];
+}>;
+
+export type CodeBatchMutationResult = Readonly<{
+  batchRef: string;
+  state: "draft" | "active" | "abandoned" | "suspended" | "revoked";
+  approvalState?: "approved";
+  changedAt: string;
+}>;
+
 export interface CommerceAdministrationRepository {
   publishCreditProgramRevision(transaction: PlatformTransaction, input: CommerceAdminActor & Readonly<{
     creditProgramRevisionRef: string;
@@ -31,9 +53,9 @@ export interface CommerceAdministrationRepository {
     windowAnchor: string | null;
     expiresAfterSeconds: string | null;
     revisionDigest: string;
-  }>): Promise<Readonly<{ kind: "committed" | "replayed"; command: CommandIdentity; result: Readonly<{
+  }>): Promise<CommerceAdminOutcome<{
     creditProgramRevisionRef: string; revisionDigest: string; publishedAt: string;
-  }> }>>;
+  }>>;
   publishEntitlementTemplateRevision(transaction: PlatformTransaction, input: CommerceAdminActor & Readonly<{
     entitlementTemplateRevisionRef: string;
     templateRef: string;
@@ -42,9 +64,9 @@ export interface CommerceAdministrationRepository {
     safeLabel: string;
     expiresAfterSeconds: string | null;
     revisionDigest: string;
-  }>): Promise<Readonly<{ kind: "committed" | "replayed"; command: CommandIdentity; result: Readonly<{
+  }>): Promise<CommerceAdminOutcome<{
     entitlementTemplateRevisionRef: string; revisionDigest: string; publishedAt: string;
-  }> }>>;
+  }>>;
   publishOffer(transaction: PlatformTransaction, input: CommerceAdminActor & Readonly<{
     productRef: string;
     productKind: "free" | "credit_pack" | "subscription" | "bundle";
@@ -74,29 +96,34 @@ export interface CommerceAdministrationRepository {
     }>[];
     legalTermRefs: readonly string[];
     offerDigest: string;
-  }>): Promise<Readonly<{ kind: "committed" | "replayed"; occurredAt: string }>>;
+  }>): Promise<CommerceAdminOutcome<{ productVersionRef: string; publishedAt: string }>>;
   publishProgram(transaction: PlatformTransaction, input: CommerceAdminActor & Readonly<{
     redemptionProgramRevisionRef: string; programRef: string; revision: string; productVersionRef: string;
     fulfillmentProgramRevisionRef: string; programDigest: string; maxRedemptionsPerAccount: number;
-  }>): Promise<Readonly<{ kind: "committed" | "replayed"; occurredAt: string }>>;
+  }>): Promise<CommerceAdminOutcome<{ redemptionProgramRevisionRef: string; publishedAt: string }>>;
   issueBatch(transaction: PlatformTransaction, input: CommerceAdminActor & Readonly<{
-    batchRef: string; batchSelector: string; redemptionProgramRevisionRef: string; keyRevision: string;
-    startsAt: string | null; endsAt: string | null; exportDigest: string;
-    codes: readonly Readonly<{ codeRef: string; lookupDigest: string; safeFingerprint: string }>[];
-  }>): Promise<Readonly<{ kind: "committed" | "replayed"; occurredAt: string }>>;
+    batchRef: string; redemptionProgramRevisionRef: string; count: number;
+    startsAt: string | null; endsAt: string | null; issueCodes: () => CodeIssueMaterial;
+  }>): Promise<
+    | (CommerceAdminOutcome<{ batchRef: string; codeCount: number; redemptionProgramRevisionRef: string;
+        createdByOperatorRef: string; startsAt: string | null; endsAt: string | null; exportedAt: string }, "committed"> &
+        Readonly<{ rawCodes: readonly string[] }>)
+    | CommerceAdminOutcome<{ batchRef: string; codeCount: number; redemptionProgramRevisionRef: string;
+        createdByOperatorRef: string; startsAt: string | null; endsAt: string | null; exportedAt: string }, "replayed">
+  >;
   approveBatch(transaction: PlatformTransaction, input: CommerceAdminActor & Readonly<{
     batchRef: string; approvalDigest: string;
-  }>): Promise<"committed" | "replayed">;
+  }>): Promise<CommerceAdminOutcome<CodeBatchMutationResult>>;
   activateBatch(transaction: PlatformTransaction, input: CommerceAdminActor & Readonly<{
     batchRef: string;
-  }>): Promise<"committed" | "replayed">;
+  }>): Promise<CommerceAdminOutcome<CodeBatchMutationResult>>;
   abandonBatch(transaction: PlatformTransaction, input: CommerceAdminActor & Readonly<{
     batchRef: string; reasonDigest: string;
-  }>): Promise<"committed" | "replayed">;
+  }>): Promise<CommerceAdminOutcome<CodeBatchMutationResult>>;
   suspendBatch(transaction: PlatformTransaction, input: CommerceAdminActor & Readonly<{
     batchRef: string; reasonDigest: string;
-  }>): Promise<"committed" | "replayed">;
+  }>): Promise<CommerceAdminOutcome<CodeBatchMutationResult>>;
   revokeBatch(transaction: PlatformTransaction, input: CommerceAdminActor & Readonly<{
     batchRef: string; reasonDigest: string;
-  }>): Promise<"committed" | "replayed">;
+  }>): Promise<CommerceAdminOutcome<CodeBatchMutationResult>>;
 }

@@ -1,6 +1,8 @@
 import { create } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import type { HandlerContext, ServiceImpl } from "@connectrpc/connect";
+import { withCommandReceiptConflictMapping } from
+  "../../../../interfaces/connect/command-receipt-conflict.js";
 import {
   AdminCommerceService,
   CodeBatchApprovalState,
@@ -83,14 +85,14 @@ export function createAdminCommerceConnectService(input: Readonly<{
       const canonicalScopePolicy = scopePolicyFromWire(scopePolicy);
       const uxBucketClass = bucketFromWire(effect.uxBucketClass);
       const window = creditWindowFromWire(effect, uxBucketClass);
-      const result = await input.owner.publishCreditProgramRevision({ context: verified.context, ...identity(context),
+      const result = await withCommandReceiptConflictMapping(() => input.owner.publishCreditProgramRevision({ context: verified.context, ...identity(context),
         requestDigest: context.command!.requestDigest, siteId: request.siteId,
         creditProgramRevisionRef: effect.creditProgramRevisionRef, programRef: effect.programRef,
         revision: effect.revision.toString(), uxBucketClass,
         unit: effect.unit, amount: effect.amount, burnPriority: effect.burnPriority,
         scopePolicy: canonicalScopePolicy,
-        liabilityMerchantAccountRef: effect.liabilityMerchantAccountRef, ...window });
-      return { receipt: receipt(context, result.command.operation, result.publishedAt, result.command),
+        liabilityMerchantAccountRef: effect.liabilityMerchantAccountRef, ...window }));
+      return { receipt: receipt(context, result.command.operation, result.recordedAt, result.command),
         creditProgramRevision: creditProgramMessage({ siteId: request.siteId,
           creditProgramRevisionRef: result.creditProgramRevisionRef, programRef: effect.programRef,
           revision: effect.revision, uxBucketClass,
@@ -130,13 +132,13 @@ export function createAdminCommerceConnectService(input: Readonly<{
         [effect.entitlementTemplateRevisionRef, effect.templateRef]);
       verifyDigest(context, publishEntitlementTemplateRevisionRequestDigest(
         context, request.siteId, effect, verified.axes));
-      const result = await input.owner.publishEntitlementTemplateRevision({ context: verified.context,
+      const result = await withCommandReceiptConflictMapping(() => input.owner.publishEntitlementTemplateRevision({ context: verified.context,
         ...identity(context), requestDigest: context.command!.requestDigest, siteId: request.siteId,
         entitlementTemplateRevisionRef: effect.entitlementTemplateRevisionRef,
         templateRef: effect.templateRef, revision: effect.revision.toString(),
         capabilityKey: effect.capabilityKey, safeLabel: effect.safeLabel,
-        expiresAfterSeconds: effect.expiresAfterSeconds?.toString() ?? null });
-      return { receipt: receipt(context, result.command.operation, result.publishedAt, result.command),
+        expiresAfterSeconds: effect.expiresAfterSeconds?.toString() ?? null }));
+      return { receipt: receipt(context, result.command.operation, result.recordedAt, result.command),
         entitlementTemplateRevision: entitlementTemplateMessage({ siteId: request.siteId,
           entitlementTemplateRevisionRef: result.entitlementTemplateRevisionRef,
           templateRef: effect.templateRef, revision: effect.revision,
@@ -171,7 +173,7 @@ export function createAdminCommerceConnectService(input: Readonly<{
       const verified = await command(input.resolver, context, transport, "commerce.offer.publish", request.siteId,
         [effect.productVersionRef, effect.fulfillmentProgramRevisionRef]);
       verifyDigest(context, publishOfferRequestDigest(context, request.siteId, effect, verified.axes));
-      const result = await input.owner.publishOffer({ context: verified.context, ...identity(context), siteId: request.siteId,
+      const result = await withCommandReceiptConflictMapping(() => input.owner.publishOffer({ context: verified.context, ...identity(context), siteId: request.siteId,
         requestDigest: context.command!.requestDigest, productRef: effect.productRef,
         productKind: productKindFromWire(effect.productKind), productVersionRef: effect.productVersionRef,
         productRevision: effect.productRevision.toString(), safeLabel: effect.safeLabel,
@@ -183,8 +185,8 @@ export function createAdminCommerceConnectService(input: Readonly<{
         fulfillmentProgramRevisionRef: effect.fulfillmentProgramRevisionRef,
         fulfillmentProgramRef: effect.fulfillmentProgramRef,
         fulfillmentProgramRevision: effect.fulfillmentProgramRevision.toString(),
-        outputs: effect.outputs.map(outputFromWire), legalTermRefs: effect.legalTermRefs });
-      return { receipt: receipt(context, "commerce.offer.publish", result.publishedAt),
+        outputs: effect.outputs.map(outputFromWire), legalTermRefs: effect.legalTermRefs }));
+      return { receipt: receipt(context, result.command.operation, result.recordedAt, result.command),
         offer: offerMessage({ siteId: request.siteId, productRef: effect.productRef,
           productKind: productKindFromWire(effect.productKind), productVersionRef: effect.productVersionRef,
           revision: effect.productRevision, safeLabel: effect.safeLabel,
@@ -216,14 +218,14 @@ export function createAdminCommerceConnectService(input: Readonly<{
       const verified = await command(input.resolver, context, transport, "commerce.redemption-program.publish",
         request.siteId, [effect.redemptionProgramRevisionRef]);
       verifyDigest(context, publishRedemptionProgramRequestDigest(context, request.siteId, effect, verified.axes));
-      const result = await input.owner.publishProgram({ context: verified.context, ...identity(context),
+      const result = await withCommandReceiptConflictMapping(() => input.owner.publishProgram({ context: verified.context, ...identity(context),
         requestDigest: context.command!.requestDigest, siteId: request.siteId,
         redemptionProgramRevisionRef: effect.redemptionProgramRevisionRef, programRef: effect.programRef,
         revision: effect.revision.toString(), productVersionRef: effect.productVersionRef,
         fulfillmentProgramRevisionRef: effect.fulfillmentProgramRevisionRef,
-        maxRedemptionsPerAccount: effect.maxRedemptionsPerAccount });
+        maxRedemptionsPerAccount: effect.maxRedemptionsPerAccount }));
       const publishedAt = result.publishedAt;
-      return { receipt: receipt(context, "commerce.redemption-program.publish", publishedAt),
+      return { receipt: receipt(context, result.command.operation, result.recordedAt, result.command),
         program: programMessage({ siteId: request.siteId,
           redemptionProgramRevisionRef: effect.redemptionProgramRevisionRef, programRef: effect.programRef,
           revision: effect.revision, productVersionRef: effect.productVersionRef,
@@ -254,18 +256,18 @@ export function createAdminCommerceConnectService(input: Readonly<{
       const verified = await command(input.resolver, context, transport, "commerce.code-batch.issue",
         request.siteId, [effect.batchRef, effect.redemptionProgramRevisionRef]);
       verifyDigest(context, issueCodeBatchRequestDigest(context, request.siteId, effect, verified.axes));
-      const result = await input.owner.issueBatch({ context: verified.context, ...identity(context),
+      const result = await withCommandReceiptConflictMapping(() => input.owner.issueBatch({ context: verified.context, ...identity(context),
         requestDigest: context.command!.requestDigest, siteId: request.siteId, batchRef: effect.batchRef,
         redemptionProgramRevisionRef: effect.redemptionProgramRevisionRef, count: effect.count,
-        startsAt: optionalTimestamp(effect.startsAt), endsAt: optionalTimestamp(effect.endsAt) });
-      const batch = batchMessage({ siteId: request.siteId, batchRef: effect.batchRef,
-        redemptionProgramRevisionRef: effect.redemptionProgramRevisionRef, state: "draft",
-        approvalState: "pending", inventoryCount: effect.count, createdByOperatorRef: context.actorRef,
-        startsAt: optionalTimestamp(effect.startsAt), endsAt: optionalTimestamp(effect.endsAt),
+        startsAt: optionalTimestamp(effect.startsAt), endsAt: optionalTimestamp(effect.endsAt) }));
+      const batch = batchMessage({ siteId: request.siteId, batchRef: result.batchRef,
+        redemptionProgramRevisionRef: result.redemptionProgramRevisionRef, state: "draft",
+        approvalState: "pending", inventoryCount: result.codeCount, createdByOperatorRef: result.createdByOperatorRef,
+        startsAt: result.startsAt, endsAt: result.endsAt,
         createdAt: result.exportedAt, activatedAt: null,
-        exportReceipt: { batchRef: effect.batchRef, exportCommandId: context.command!.commandId,
-          exportedToOperatorRef: context.actorRef, codeCount: effect.count, exportedAt: result.exportedAt } });
-      return { receipt: receipt(context, "commerce.code-batch.issue", result.exportedAt),
+        exportReceipt: { batchRef: result.batchRef, exportCommandId: result.command.commandId,
+          exportedToOperatorRef: result.createdByOperatorRef, codeCount: result.codeCount, exportedAt: result.exportedAt } });
+      return { receipt: receipt(context, result.command.operation, result.recordedAt, result.command),
         deliveryState: result.kind === "secret_export" ? CodeDeliveryState.SECRET_EXPORT : CodeDeliveryState.DELIVERY_UNAVAILABLE,
         batch, rawCodes: result.kind === "secret_export" ? [...result.codes] : [] };
     },
@@ -305,20 +307,23 @@ type BatchDigest = (context: AuthenticatedOperatorCommandContext, siteId: string
   effect: CodeBatchActionEffect, axes: VerifiedAuthenticatedAdminAxes) => string;
 async function batchCommand(input: Parameters<typeof createAdminCommerceConnectService>[0], request: CommandRequest,
   transport: HandlerContext, action: "approve" | "activate" | "abandon" | "suspend" | "revoke",
-  digest: BatchDigest, state: CodeBatchState, approval: CodeBatchApprovalState | undefined,
-  now: () => Date) {
+  digest: BatchDigest, _state: CodeBatchState, _approval: CodeBatchApprovalState | undefined,
+  _now: () => Date) {
   const context = commandContext(request.context); const effect = required(request.effect, "COMMERCE_BATCH_EFFECT_REQUIRED");
   const operation = `commerce.code-batch.${action}` as CommerceAdminCommandOperation;
   const verified = await command(input.resolver, context, transport, operation, request.siteId, [effect.batchRef]);
   verifyDigest(context, digest(context, request.siteId, effect, verified.axes));
   const ownerInput = { context: verified.context, ...identity(context), requestDigest: context.command!.requestDigest,
     siteId: request.siteId, batchRef: effect.batchRef };
-  if (action === "approve") await input.owner.approveBatch(ownerInput);
-  else if (action === "activate") await input.owner.activateBatch(ownerInput);
-  else await input.owner[`${action}Batch`]({ ...ownerInput, reason: effect.reason });
-  const recordedAt = now().toISOString();
-  return { receipt: receipt(context, operation, recordedAt), result: create(CodeBatchMutationResultSchema, {
-    batchRef: effect.batchRef, state, ...(approval === undefined ? {} : { approvalState: approval }),
+  const result = await withCommandReceiptConflictMapping(async () => {
+    if (action === "approve") return input.owner.approveBatch(ownerInput);
+    if (action === "activate") return input.owner.activateBatch(ownerInput);
+    return input.owner[`${action}Batch`]({ ...ownerInput, reason: effect.reason });
+  });
+  return { receipt: receipt(context, result.command.operation, result.recordedAt, result.command),
+    result: create(CodeBatchMutationResultSchema, {
+    batchRef: result.batchRef, state: batchStateToWire(result.state),
+    ...(result.approvalState === undefined ? {} : { approvalState: CodeBatchApprovalState.APPROVED }),
   }) };
 }
 

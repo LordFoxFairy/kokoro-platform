@@ -12,8 +12,7 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
     input: Parameters<CommerceAdministrationRepository["publishCreditProgramRevision"]>[1],
   ) {
     const prior = await replayedReceipt(this.receipts, transaction, input.command);
-    if (prior !== null) return Object.freeze({ kind: "replayed" as const,
-      command: commandIdentity(prior), result: creditProgramResult(prior) });
+    if (prior !== null) return adminOutcome("replayed", prior, creditProgramResult(prior));
     const sql = resolvePlatformTransaction(transaction); const occurredAt = await databaseNow(transaction);
     await command(sql, input, occurredAt);
     await exactlyOne(sql.execute(
@@ -33,8 +32,7 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
       creditProgramRevisionRef: input.creditProgramRevisionRef,
       revisionDigest: input.revisionDigest, publishedAt: occurredAt,
     });
-    return Object.freeze({ kind: "committed" as const, command: commandIdentity(receipt),
-      result: creditProgramResult(receipt) });
+    return adminOutcome("committed", receipt, creditProgramResult(receipt));
   }
 
   async publishEntitlementTemplateRevision(
@@ -42,8 +40,7 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
     input: Parameters<CommerceAdministrationRepository["publishEntitlementTemplateRevision"]>[1],
   ) {
     const prior = await replayedReceipt(this.receipts, transaction, input.command);
-    if (prior !== null) return Object.freeze({ kind: "replayed" as const,
-      command: commandIdentity(prior), result: entitlementTemplateResult(prior) });
+    if (prior !== null) return adminOutcome("replayed", prior, entitlementTemplateResult(prior));
     const sql = resolvePlatformTransaction(transaction); const occurredAt = await databaseNow(transaction);
     await command(sql, input, occurredAt);
     await exactlyOne(sql.execute(
@@ -59,14 +56,12 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
       entitlementTemplateRevisionRef: input.entitlementTemplateRevisionRef,
       revisionDigest: input.revisionDigest, publishedAt: occurredAt,
     });
-    return Object.freeze({ kind: "committed" as const, command: commandIdentity(receipt),
-      result: entitlementTemplateResult(receipt) });
+    return adminOutcome("committed", receipt, entitlementTemplateResult(receipt));
   }
 
   async publishOffer(transaction: Parameters<CommerceAdministrationRepository["publishOffer"]>[0], input: Parameters<CommerceAdministrationRepository["publishOffer"]>[1]) {
-    if (await replayed(this.receipts, transaction, input.command)) {
-      return { kind: "replayed" as const, occurredAt: await databaseNow(transaction) };
-    }
+    const prior = await replayedReceipt(this.receipts, transaction, input.command);
+    if (prior !== null) return adminOutcome("replayed", prior, offerResult(prior));
     const sql = resolvePlatformTransaction(transaction); const occurredAt = await databaseNow(transaction);
     await command(sql, input, occurredAt);
     await exactlyOne(sql.execute(
@@ -128,23 +123,15 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
         input.legalTermRefs, input.offerDigest, occurredAt],
     ), "COMMERCE_PRODUCT_VERSION_PERSIST_FAILED");
     await audit(sql, input, "commerce.offer.published", input.offerDigest, occurredAt);
-    await complete(this.receipts, transaction, input.command, {
+    const receipt = await complete(this.receipts, transaction, input.command, {
       productVersionRef: input.productVersionRef, publishedAt: occurredAt,
     });
-    return Object.freeze({ kind: "committed" as const, occurredAt });
+    return adminOutcome("committed", receipt, offerResult(receipt));
   }
 
   async publishProgram(transaction: Parameters<CommerceAdministrationRepository["publishProgram"]>[0], input: Parameters<CommerceAdministrationRepository["publishProgram"]>[1]) {
-    if (await replayed(this.receipts, transaction, input.command)) {
-      const rows = await resolvePlatformTransaction(transaction).query<Record<string, unknown> & { publishedAt: Date | string }>(
-        `SELECT published_at AS "publishedAt" FROM platform.commerce_redemption_program_revision
-         WHERE redemption_program_revision_ref=$1 AND site_ref=$2 LIMIT 1`,
-        [input.redemptionProgramRevisionRef, input.siteId],
-      );
-      const publishedAt = rows[0]?.publishedAt;
-      if (publishedAt === undefined) throw new Error("COMMERCE_PROGRAM_RECEIPT_MISSING");
-      return { kind: "replayed" as const, occurredAt: new Date(publishedAt).toISOString() };
-    }
+    const prior = await replayedReceipt(this.receipts, transaction, input.command);
+    if (prior !== null) return adminOutcome("replayed", prior, programResult(prior));
     const sql = resolvePlatformTransaction(transaction); const occurredAt = await databaseNow(transaction);
     await command(sql, input, occurredAt);
     await exactlyOne(sql.execute(
@@ -163,22 +150,18 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
       [input.siteId, input.redemptionProgramRevisionRef, occurredAt],
     ), "COMMERCE_PROGRAM_AVAILABILITY_PERSIST_FAILED");
     await audit(sql, input, "commerce.redemption_program.published", input.programDigest, occurredAt);
-    await complete(this.receipts, transaction, input.command, {
+    const receipt = await complete(this.receipts, transaction, input.command, {
       redemptionProgramRevisionRef: input.redemptionProgramRevisionRef, publishedAt: occurredAt,
     });
-    return { kind: "committed" as const, occurredAt };
+    return adminOutcome("committed", receipt, programResult(receipt));
   }
 
   async issueBatch(transaction: Parameters<CommerceAdministrationRepository["issueBatch"]>[0], input: Parameters<CommerceAdministrationRepository["issueBatch"]>[1]) {
-    if (await replayed(this.receipts, transaction, input.command)) {
-      const rows = await resolvePlatformTransaction(transaction).query<Record<string, unknown> & { exportedAt: Date | string }>(
-        `SELECT exported_at AS "exportedAt" FROM platform.commerce_code_secret_export
-         WHERE batch_ref=$1::uuid AND site_ref=$2 AND export_command_id=$3 LIMIT 1`,
-        [input.batchRef, input.siteId, input.command.commandId],
-      );
-      const exportedAt = rows[0]?.exportedAt;
-      if (exportedAt === undefined) throw new Error("COMMERCE_CODE_EXPORT_RECEIPT_MISSING");
-      return { kind: "replayed" as const, occurredAt: new Date(exportedAt).toISOString() };
+    const prior = await replayedReceipt(this.receipts, transaction, input.command);
+    if (prior !== null) return adminOutcome("replayed", prior, issueBatchResult(prior));
+    const material = input.issueCodes();
+    if (material.codes.length !== input.count || material.rawCodes.length !== input.count) {
+      throw new Error("COMMERCE_CODE_ISSUANCE_COUNT_MISMATCH");
     }
     const sql = resolvePlatformTransaction(transaction); const occurredAt = await databaseNow(transaction);
     await command(sql, input, occurredAt);
@@ -187,33 +170,39 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
        (batch_ref,site_ref,redemption_program_revision_ref,code_lookup_key_revision,batch_selector,
         created_by_subject_ref,state,starts_at,ends_at,inventory_count,created_at)
        VALUES ($1::uuid,$2,$3,$4,$5,$6,'draft',$7::timestamptz,$8::timestamptz,$9,$10::timestamptz)`,
-      [input.batchRef, input.siteId, input.redemptionProgramRevisionRef, input.keyRevision,
-        input.batchSelector, input.subjectId, input.startsAt, input.endsAt, input.codes.length, occurredAt],
+      [input.batchRef, input.siteId, input.redemptionProgramRevisionRef, material.keyRevision,
+        material.batchSelector, input.subjectId, input.startsAt, input.endsAt, material.codes.length, occurredAt],
     ), "COMMERCE_CODE_BATCH_PERSIST_FAILED");
     await exactlyCount(sql.execute(
       `INSERT INTO platform.commerce_redeem_code
        (code_ref,batch_ref,site_ref,code_lookup_key_revision,lookup_digest,safe_fingerprint,state,created_at)
        SELECT value.code_ref::uuid,$1::uuid,$2,$3,value.lookup_digest,value.safe_fingerprint,'available',$4::timestamptz
        FROM jsonb_to_recordset($5::jsonb) AS value(code_ref TEXT,lookup_digest TEXT,safe_fingerprint TEXT)`,
-      [input.batchRef, input.siteId, input.keyRevision, occurredAt, JSON.stringify(input.codes.map((code) => ({
+      [input.batchRef, input.siteId, material.keyRevision, occurredAt, JSON.stringify(material.codes.map((code) => ({
         code_ref: code.codeRef, lookup_digest: code.lookupDigest, safe_fingerprint: code.safeFingerprint,
       })))],
-    ), input.codes.length, "COMMERCE_CODE_INVENTORY_PERSIST_FAILED");
+    ), material.codes.length, "COMMERCE_CODE_INVENTORY_PERSIST_FAILED");
     await exactlyOne(sql.execute(
       `INSERT INTO platform.commerce_code_secret_export
        (batch_ref,site_ref,export_command_id,exported_to_subject_ref,code_count,export_digest,exported_at)
        VALUES ($1::uuid,$2,$3,$4,$5,$6,$7::timestamptz)`,
-      [input.batchRef, input.siteId, input.command.commandId, input.subjectId, input.codes.length, input.exportDigest, occurredAt],
+      [input.batchRef, input.siteId, input.command.commandId, input.subjectId, material.codes.length,
+        material.exportDigest, occurredAt],
     ), "COMMERCE_CODE_EXPORT_PERSIST_FAILED");
-    await audit(sql, input, "commerce.code_batch.issued", input.exportDigest, occurredAt);
-    await complete(this.receipts, transaction, input.command, {
-      batchRef: input.batchRef, codeCount: input.codes.length, exportDigest: input.exportDigest, exportedAt: occurredAt,
+    await audit(sql, input, "commerce.code_batch.issued", material.exportDigest, occurredAt);
+    const receipt = await complete(this.receipts, transaction, input.command, {
+      batchRef: input.batchRef, codeCount: material.codes.length,
+      redemptionProgramRevisionRef: input.redemptionProgramRevisionRef,
+      createdByOperatorRef: input.subjectId, startsAt: input.startsAt, endsAt: input.endsAt,
+      exportedAt: occurredAt,
     });
-    return Object.freeze({ kind: "committed" as const, occurredAt });
+    return Object.freeze({ ...adminOutcome("committed", receipt, issueBatchResult(receipt)),
+      rawCodes: Object.freeze([...material.rawCodes]) });
   }
 
   async approveBatch(transaction: Parameters<CommerceAdministrationRepository["approveBatch"]>[0], input: Parameters<CommerceAdministrationRepository["approveBatch"]>[1]) {
-    if (await replayed(this.receipts, transaction, input.command)) return "replayed" as const;
+    const prior = await replayedReceipt(this.receipts, transaction, input.command);
+    if (prior !== null) return adminOutcome("replayed", prior, batchMutationResult(prior));
     const sql = resolvePlatformTransaction(transaction); const occurredAt = await databaseNow(transaction);
     await command(sql, input, occurredAt);
     await exactlyOne(sql.execute(
@@ -226,12 +215,15 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
       [input.batchRef, input.siteId, input.subjectId, input.command.commandId, occurredAt, input.approvalDigest],
     ), "COMMERCE_BATCH_MAKER_CHECKER_REQUIRED");
     await audit(sql, input, "commerce.code_batch.approved", input.approvalDigest, occurredAt);
-    await complete(this.receipts, transaction, input.command, { batchRef: input.batchRef, approvedAt: occurredAt });
-    return "committed" as const;
+    const receipt = await complete(this.receipts, transaction, input.command, {
+      batchRef: input.batchRef, state: "draft", approvalState: "approved", changedAt: occurredAt,
+    });
+    return adminOutcome("committed", receipt, batchMutationResult(receipt));
   }
 
   async activateBatch(transaction: Parameters<CommerceAdministrationRepository["activateBatch"]>[0], input: Parameters<CommerceAdministrationRepository["activateBatch"]>[1]) {
-    if (await replayed(this.receipts, transaction, input.command)) return "replayed" as const;
+    const prior = await replayedReceipt(this.receipts, transaction, input.command);
+    if (prior !== null) return adminOutcome("replayed", prior, batchMutationResult(prior));
     const sql = resolvePlatformTransaction(transaction); const occurredAt = await databaseNow(transaction);
     await command(sql, input, occurredAt);
     await exactlyOne(sql.execute(
@@ -244,8 +236,10 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
     ), "COMMERCE_BATCH_APPROVAL_REQUIRED");
     const resultDigest = digest({ version: 1, batchRef: input.batchRef, activatedAt: occurredAt });
     await audit(sql, input, "commerce.code_batch.activated", resultDigest, occurredAt);
-    await complete(this.receipts, transaction, input.command, { batchRef: input.batchRef, activatedAt: occurredAt });
-    return "committed" as const;
+    const receipt = await complete(this.receipts, transaction, input.command, {
+      batchRef: input.batchRef, state: "active", approvalState: "approved", changedAt: occurredAt,
+    });
+    return adminOutcome("committed", receipt, batchMutationResult(receipt));
   }
 
   async abandonBatch(transaction: Parameters<CommerceAdministrationRepository["abandonBatch"]>[0], input: Parameters<CommerceAdministrationRepository["abandonBatch"]>[1]) {
@@ -267,7 +261,8 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
     toState: "abandoned" | "suspended" | "revoked",
     voidInventory: boolean,
   ) {
-    if (await replayed(this.receipts, transaction, input.command)) return "replayed" as const;
+    const prior = await replayedReceipt(this.receipts, transaction, input.command);
+    if (prior !== null) return adminOutcome("replayed", prior, batchMutationResult(prior));
     const sql = resolvePlatformTransaction(transaction); const occurredAt = await databaseNow(transaction);
     await command(sql, input, occurredAt);
     await exactlyOne(sql.execute(
@@ -283,18 +278,13 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
       );
     }
     await audit(sql, input, `commerce.code_batch.${toState}`, input.reasonDigest, occurredAt);
-    await complete(this.receipts, transaction, input.command, {
-      batchRef: input.batchRef, state: toState, changedAt: occurredAt,
+    const receipt = await complete(this.receipts, transaction, input.command, {
+      batchRef: input.batchRef, state: toState,
+      ...(toState === "suspended" || toState === "revoked" ? { approvalState: "approved" } : {}),
+      changedAt: occurredAt,
     });
-    return "committed" as const;
+    return adminOutcome("committed", receipt, batchMutationResult(receipt));
   }
-}
-
-async function replayed(receipts: CommandReceiptRepository, transaction: Parameters<CommerceAdministrationRepository["publishProgram"]>[0], identity: Parameters<CommandReceiptRepository["begin"]>[1]): Promise<boolean> {
-  const receipt = await receipts.begin(transaction, identity);
-  if (receipt.state === "succeeded") return true;
-  if (receipt.state !== "pending") throw new Error("COMMERCE_ADMIN_COMMAND_TERMINAL");
-  return false;
 }
 async function replayedReceipt(receipts: CommandReceiptRepository,
   transaction: Parameters<CommerceAdministrationRepository["publishProgram"]>[0],
@@ -335,6 +325,10 @@ function commandIdentity(receipt: CommandReceipt) {
     callerIdentity: receipt.callerIdentity, operation: receipt.operation,
     idempotencyKey: receipt.idempotencyKey, requestDigest: receipt.requestDigest });
 }
+function adminOutcome<Kind extends "committed" | "replayed", Result>(kind: Kind,
+  receipt: CommandReceipt, result: Readonly<Result>) {
+  return Object.freeze({ kind, command: commandIdentity(receipt), recordedAt: receiptRecordedAt(receipt), result });
+}
 function creditProgramResult(receipt: CommandReceipt) {
   const value = catalogResult(receipt, "creditProgramRevisionRef");
   return Object.freeze({ creditProgramRevisionRef: value.reference,
@@ -346,9 +340,7 @@ function entitlementTemplateResult(receipt: CommandReceipt) {
     revisionDigest: value.revisionDigest, publishedAt: value.publishedAt });
 }
 function catalogResult(receipt: CommandReceipt, referenceKey: string) {
-  if (receipt.result === null || typeof receipt.result !== "object" || Array.isArray(receipt.result) ||
-      receipt.resultDigest !== digest(receipt.result)) throw new Error("COMMERCE_ADMIN_RECEIPT_CORRUPT");
-  const result = receipt.result as Readonly<Record<string, JsonValue>>;
+  const result = durableResult(receipt);
   const reference = result[referenceKey]; const revisionDigest = result.revisionDigest;
   const publishedAt = result.publishedAt;
   if (typeof reference !== "string" || reference.length < 1 || reference.length > 256 ||
@@ -357,6 +349,68 @@ function catalogResult(receipt: CommandReceipt, referenceKey: string) {
     throw new Error("COMMERCE_ADMIN_RECEIPT_CORRUPT");
   }
   return Object.freeze({ reference, revisionDigest, publishedAt: new Date(publishedAt).toISOString() });
+}
+function offerResult(receipt: CommandReceipt) {
+  const result = durableResult(receipt);
+  return Object.freeze({ productVersionRef: boundedReceiptRef(result.productVersionRef),
+    publishedAt: receiptInstant(result.publishedAt) });
+}
+function programResult(receipt: CommandReceipt) {
+  const result = durableResult(receipt);
+  return Object.freeze({ redemptionProgramRevisionRef: boundedReceiptRef(result.redemptionProgramRevisionRef),
+    publishedAt: receiptInstant(result.publishedAt) });
+}
+function issueBatchResult(receipt: CommandReceipt) {
+  const result = durableResult(receipt);
+  const codeCount = result.codeCount;
+  const startsAt = nullableReceiptInstant(result.startsAt); const endsAt = nullableReceiptInstant(result.endsAt);
+  if (typeof codeCount !== "number" || !Number.isInteger(codeCount) || codeCount < 1 || codeCount > 1_000) {
+    throw new Error("COMMERCE_ADMIN_RECEIPT_CORRUPT");
+  }
+  return Object.freeze({ batchRef: boundedReceiptRef(result.batchRef), codeCount,
+    redemptionProgramRevisionRef: boundedReceiptRef(result.redemptionProgramRevisionRef),
+    createdByOperatorRef: boundedReceiptRef(result.createdByOperatorRef), startsAt, endsAt,
+    exportedAt: receiptInstant(result.exportedAt) });
+}
+function batchMutationResult(receipt: CommandReceipt) {
+  const result = durableResult(receipt); const state = result.state; const approvalState = result.approvalState;
+  if (state !== "draft" && state !== "active" && state !== "abandoned" && state !== "suspended" &&
+      state !== "revoked") throw new Error("COMMERCE_ADMIN_RECEIPT_CORRUPT");
+  if (approvalState !== undefined && approvalState !== "approved") {
+    throw new Error("COMMERCE_ADMIN_RECEIPT_CORRUPT");
+  }
+  return Object.freeze({ batchRef: boundedReceiptRef(result.batchRef), state,
+    ...(approvalState === undefined ? {} : { approvalState }), changedAt: receiptInstant(result.changedAt) });
+}
+function durableResult(receipt: CommandReceipt): Readonly<Record<string, JsonValue>> {
+  if (receipt.result === null || typeof receipt.result !== "object" || Array.isArray(receipt.result) ||
+      receipt.resultDigest !== digest(receipt.result) || receipt.recordedAt === undefined ||
+      !Number.isFinite(Date.parse(receipt.recordedAt))) {
+    throw new Error("COMMERCE_ADMIN_RECEIPT_CORRUPT");
+  }
+  return receipt.result;
+}
+function receiptRecordedAt(receipt: CommandReceipt): string {
+  if (receipt.recordedAt === undefined || !Number.isFinite(Date.parse(receipt.recordedAt))) {
+    throw new Error("COMMERCE_ADMIN_RECEIPT_CORRUPT");
+  }
+  return new Date(receipt.recordedAt).toISOString();
+}
+function boundedReceiptRef(value: JsonValue | undefined): string {
+  if (typeof value !== "string" || value.length < 1 || value.length > 256) {
+    throw new Error("COMMERCE_ADMIN_RECEIPT_CORRUPT");
+  }
+  return value;
+}
+function receiptInstant(value: JsonValue | undefined): string {
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) {
+    throw new Error("COMMERCE_ADMIN_RECEIPT_CORRUPT");
+  }
+  return new Date(value).toISOString();
+}
+function nullableReceiptInstant(value: JsonValue | undefined): string | null {
+  if (value === null) return null;
+  return receiptInstant(value);
 }
 function digest(value: Parameters<typeof commerceCanonicalJson>[0]): string { return createHash("sha256").update(commerceCanonicalJson(value)).digest("hex"); }
 async function exactlyOne(changed: number | Promise<number>, code: string): Promise<void> { if (await changed !== 1) throw new Error(code); }

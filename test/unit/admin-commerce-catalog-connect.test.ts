@@ -1,6 +1,6 @@
 import { create, getExtension } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
-import type { HandlerContext } from "@connectrpc/connect";
+import { Code, type HandlerContext } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
 import {
   CommandDigestAlgorithmV2,
@@ -43,6 +43,7 @@ import { createAdminCommerceConnectService } from
 import { HmacAdminPageCursorCodec } from
   "../../src/modules/admin/infrastructure/security/admin-page-cursor.js";
 import type { VerifiedRequestSecurityContext } from "../../src/shared/security-context/index.js";
+import { CommandReceiptConflictError } from "../../src/shared/outbox-inbox/receipt.js";
 
 const transport = {} as HandlerContext;
 const authenticatedAt = timestampFromDate(new Date("2026-07-30T00:00:00.000Z"));
@@ -88,7 +89,7 @@ describe("AdminCommerce catalog primitive Connect provider", () => {
     const persistedCommandId = "018f1212-1212-7212-8212-121212121211";
     const publish = vi.fn(async (input: { requestDigest: string }) => ({ kind: "committed" as const,
       creditProgramRevisionRef: "credits-v1", revisionDigest: "b".repeat(64),
-      publishedAt: "2026-07-30T01:00:00.000Z", command: {
+      publishedAt: "2026-07-30T01:00:00.000Z", recordedAt: "2026-07-30T01:00:01.000Z", command: {
         commandId: persistedCommandId, idempotencyKey: "catalog-key-0001",
         requestDigest: input.requestDigest, environment: "production", region: "us-east-1",
         callerIdentity: "admin-1:operator:7", operation: "commerce.credit-program.publish",
@@ -136,7 +137,7 @@ describe("AdminCommerce catalog primitive Connect provider", () => {
   it("publishes an EntitlementTemplate through its independent permission", async () => {
     const publish = vi.fn(async (input: { requestDigest: string }) => ({ kind: "committed" as const,
       entitlementTemplateRevisionRef: "premium-v1", revisionDigest: "c".repeat(64),
-      publishedAt: "2026-07-30T01:00:00.000Z", command: {
+      publishedAt: "2026-07-30T01:00:00.000Z", recordedAt: "2026-07-30T01:00:01.000Z", command: {
         commandId: "018f1212-1212-7212-8212-121212121212", idempotencyKey: "catalog-key-0001",
         requestDigest: input.requestDigest, environment: "production", region: "us-east-1",
         callerIdentity: "admin-1:operator:7", operation: "commerce.entitlement-template.publish",
@@ -162,6 +163,30 @@ describe("AdminCommerce catalog primitive Connect provider", () => {
       operation: "commerce.entitlement-template.publish", siteRef: "site-1",
       resourceRefs: ["premium-v1", "premium"],
     });
+  });
+
+  it("maps a durable Commerce command identity conflict to a typed Connect error", async () => {
+    const resolveCommerceCommand = vi.fn(async () => ({ context: internalContext(
+      "commerce.credit-program.publish"), axes }));
+    const service = harness({ publishCreditProgramRevision: async () => {
+      throw new CommandReceiptConflictError("identity");
+    }, resolveCommerceCommand });
+    const context = commandContext();
+    const effect = create(PublishCreditProgramRevisionEffectSchema, {
+      creditProgramRevisionRef: "credits-v1", programRef: "credits", revision: 1n,
+      uxBucketClass: CreditBucketClass.PERMANENT, unit: "kokoro-credit", amount: "1000",
+      burnPriority: 1000, scopePolicy: create(CreditScopePolicySchema, {
+        surfaceRefs: ["chat"], capabilityKeys: ["model.chat"], allowUnattributedAgent: true,
+      }), liabilityMerchantAccountRef: "merchant:main",
+      windowPolicy: { case: "permanentWindow", value: create(PermanentCreditWindowPolicySchema, {
+        rolloverPolicy: CreditRolloverPolicy.NONE,
+      }) },
+    });
+    context.command!.requestDigest = publishCreditProgramRevisionRequestDigest(context, "site-1", effect, axes);
+    const error = await Promise.resolve(service.publishCreditProgramRevision(create(PublishCreditProgramRevisionRequestSchema, {
+      context, siteId: "site-1", effect,
+    }), transport)).catch((cause: unknown) => cause);
+    expect(error).toMatchObject({ code: Code.AlreadyExists, rawMessage: "command identity conflict" });
   });
 
   it("uses a database-issued watermark and round-trips the full signed cursor", async () => {

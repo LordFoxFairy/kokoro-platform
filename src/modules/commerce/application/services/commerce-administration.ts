@@ -44,7 +44,7 @@ export class CommerceAdministrationService {
         ...actor, command, ...payload, revisionDigest,
       }),
     );
-    return Object.freeze({ kind: result.kind, command: result.command,
+    return Object.freeze({ kind: result.kind, command: result.command, recordedAt: result.recordedAt,
       creditProgramRevisionRef: result.result.creditProgramRevisionRef,
       revisionDigest: result.result.revisionDigest, publishedAt: result.result.publishedAt });
   }
@@ -69,7 +69,7 @@ export class CommerceAdministrationService {
         ...actor, command, ...payload, revisionDigest,
       }),
     );
-    return Object.freeze({ kind: result.kind, command: result.command,
+    return Object.freeze({ kind: result.kind, command: result.command, recordedAt: result.recordedAt,
       entitlementTemplateRevisionRef: result.result.entitlementTemplateRevisionRef,
       revisionDigest: result.result.revisionDigest, publishedAt: result.result.publishedAt });
   }
@@ -113,8 +113,8 @@ export class CommerceAdministrationService {
         },
       }),
     );
-    return Object.freeze({ kind: result.kind, productVersionRef: payload.productVersionRef,
-      publishedAt: result.occurredAt });
+    return Object.freeze({ kind: result.kind, command: result.command, recordedAt: result.recordedAt,
+      productVersionRef: result.result.productVersionRef, publishedAt: result.result.publishedAt });
   }
 
   async publishProgram(input: CommandInput & Readonly<{
@@ -133,8 +133,9 @@ export class CommerceAdministrationService {
       this.dependencies.repository.publishProgram(transaction, {
         ...actor, command, ...payload, programDigest: digest({ version: 1, ...payload }),
       }));
-    return Object.freeze({ kind: result.kind, redemptionProgramRevisionRef: payload.redemptionProgramRevisionRef,
-      publishedAt: result.occurredAt });
+    return Object.freeze({ kind: result.kind, command: result.command, recordedAt: result.recordedAt,
+      redemptionProgramRevisionRef: result.result.redemptionProgramRevisionRef,
+      publishedAt: result.result.publishedAt });
   }
 
   async issueBatch(input: CommandInput & Readonly<{
@@ -144,27 +145,39 @@ export class CommerceAdministrationService {
     const batchRef = uuid(input.batchRef);
     const count = boundedCount(input.count, 1_000);
     const redemptionProgramRevisionRef = bounded(input.redemptionProgramRevisionRef);
-    const issued = Array.from({ length: count }, () => this.dependencies.codes.issueCode(input.siteId, batchRef));
-    const keyRevision = one(issued.map((item) => item.keyRevision), "CODE_ISSUANCE_KEY_CHANGED");
-    const batchSelector = one(issued.map((item) => item.batchSelector), "CODE_ISSUANCE_BATCH_SELECTOR_CHANGED");
     const startsAt = nullableInstant(input.startsAt); const endsAt = nullableInstant(input.endsAt);
     if (startsAt !== null && endsAt !== null && Date.parse(endsAt) <= Date.parse(startsAt)) throw new Error("CODE_BATCH_WINDOW_INVALID");
     const payload = { siteId: input.siteId, batchRef, redemptionProgramRevisionRef, count, startsAt, endsAt };
     const command = commandIdentity(input, actor.subjectId, "commerce.code-batch.issue", digest(payload));
-    const rawCodes = issued.map((item) => item.code);
-    const exportDigest = digest({ version: 1, batchRef, codes: rawCodes });
     const result = await this.dependencies.unitOfWork.execute({ context: input.context, operation: command.operation }, (transaction) =>
       this.dependencies.repository.issueBatch(transaction, {
-        ...actor, command, batchRef, batchSelector, redemptionProgramRevisionRef, keyRevision, startsAt, endsAt, exportDigest,
-        codes: issued.map((item) => Object.freeze({
-          codeRef: (this.dependencies.reference ?? randomUUID)(), lookupDigest: item.lookupDigest, safeFingerprint: item.safeFingerprint,
-        })),
+        ...actor, command, batchRef, redemptionProgramRevisionRef, count, startsAt, endsAt,
+        issueCodes: () => {
+          const issued = Array.from({ length: count }, () => this.dependencies.codes.issueCode(input.siteId, batchRef));
+          const keyRevision = one(issued.map((item) => item.keyRevision), "CODE_ISSUANCE_KEY_CHANGED");
+          const batchSelector = one(issued.map((item) => item.batchSelector), "CODE_ISSUANCE_BATCH_SELECTOR_CHANGED");
+          const rawCodes = issued.map((item) => item.code);
+          return Object.freeze({ keyRevision, batchSelector, rawCodes: Object.freeze(rawCodes),
+            exportDigest: digest({ version: 1, batchRef, codes: rawCodes }),
+            codes: Object.freeze(issued.map((item) => Object.freeze({
+              codeRef: (this.dependencies.reference ?? randomUUID)(), lookupDigest: item.lookupDigest,
+              safeFingerprint: item.safeFingerprint,
+            }))) });
+        },
       }));
     if (result.kind === "replayed") return Object.freeze({
-      kind: "delivery_unavailable" as const, batchRef, codeCount: count, exportedAt: result.occurredAt,
+      kind: "delivery_unavailable" as const, command: result.command, recordedAt: result.recordedAt,
+      batchRef: result.result.batchRef, codeCount: result.result.codeCount,
+      redemptionProgramRevisionRef: result.result.redemptionProgramRevisionRef,
+      createdByOperatorRef: result.result.createdByOperatorRef, startsAt: result.result.startsAt,
+      endsAt: result.result.endsAt, exportedAt: result.result.exportedAt,
     });
     return Object.freeze({
-      kind: "secret_export" as const, batchRef, codeCount: count, codes: Object.freeze(rawCodes), exportedAt: result.occurredAt,
+      kind: "secret_export" as const, command: result.command, recordedAt: result.recordedAt,
+      batchRef: result.result.batchRef, codeCount: result.result.codeCount,
+      redemptionProgramRevisionRef: result.result.redemptionProgramRevisionRef,
+      createdByOperatorRef: result.result.createdByOperatorRef, startsAt: result.result.startsAt,
+      endsAt: result.result.endsAt, codes: result.rawCodes, exportedAt: result.result.exportedAt,
     });
   }
 
@@ -174,7 +187,8 @@ export class CommerceAdministrationService {
     const command = commandIdentity(input, actor.subjectId, "commerce.code-batch.approve", approvalDigest);
     const result = await this.dependencies.unitOfWork.execute({ context: input.context, operation: command.operation }, (transaction) =>
       this.dependencies.repository.approveBatch(transaction, { ...actor, command, batchRef, approvalDigest }));
-    return Object.freeze({ kind: result, batchRef });
+    return Object.freeze({ kind: result.kind, command: result.command, recordedAt: result.recordedAt,
+      ...result.result });
   }
 
   async activateBatch(input: CommandInput & Readonly<{ batchRef: string }>) {
@@ -183,7 +197,8 @@ export class CommerceAdministrationService {
     const command = commandIdentity(input, actor.subjectId, "commerce.code-batch.activate", digest({ version: 1, siteId: input.siteId, batchRef }));
     const result = await this.dependencies.unitOfWork.execute({ context: input.context, operation: command.operation }, (transaction) =>
       this.dependencies.repository.activateBatch(transaction, { ...actor, command, batchRef }));
-    return Object.freeze({ kind: result, batchRef });
+    return Object.freeze({ kind: result.kind, command: result.command, recordedAt: result.recordedAt,
+      ...result.result });
   }
 
   async abandonBatch(input: CommandInput & Readonly<{ batchRef: string; reason: string }>) {
@@ -213,7 +228,8 @@ export class CommerceAdministrationService {
       { context: input.context, operation },
       (transaction) => effect(transaction, { ...actor, command, batchRef, reasonDigest }),
     );
-    return Object.freeze({ kind: result, batchRef });
+    return Object.freeze({ kind: result.kind, command: result.command, recordedAt: result.recordedAt,
+      ...result.result });
   }
 }
 
