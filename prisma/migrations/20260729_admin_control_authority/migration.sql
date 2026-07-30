@@ -415,16 +415,103 @@ BEGIN
        OR COALESCE(item->>'operatorSecurityEpoch','') !~ '^[1-9][0-9]*$'
        OR COALESCE(item->>'authorizationEpoch','') !~ '^[1-9][0-9]*$'
        OR jsonb_typeof(item->'permissions')<>'array'
+       OR jsonb_array_length(item->'permissions')<2
        OR NOT (item->'permissions' ?& ARRAY['admin.approval.execute','admin.authority.manage'])
        OR jsonb_typeof(item->'siteScopes')<>'array'
        OR jsonb_typeof(item->'globalScopes')<>'array'
        OR jsonb_array_length(item->'globalScopes')<1
        OR jsonb_typeof(item->'identities')<>'array'
        OR jsonb_array_length(item->'identities')<1
-       OR COALESCE(item->>'expiresAt','')::TIMESTAMPTZ<=now()
+       OR NOT pg_input_is_valid(COALESCE(item->>'expiresAt',''),'timestamp with time zone')
+       OR CASE
+            WHEN pg_input_is_valid(COALESCE(item->>'expiresAt',''),'timestamp with time zone')
+              THEN (item->>'expiresAt')::TIMESTAMPTZ<=now()
+            ELSE TRUE
+          END
   ) OR (
     SELECT count(*)<>count(DISTINCT item->>'operatorRef')
     FROM jsonb_array_elements(p_authorities) AS item
+  ) THEN
+    RAISE EXCEPTION 'ADMIN_AUTHORITY_BOOTSTRAP_INVALID' USING ERRCODE='22023';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM jsonb_array_elements(p_authorities) AS item
+    CROSS JOIN LATERAL jsonb_array_elements(item->'permissions') AS permission
+    WHERE jsonb_typeof(permission)<>'string'
+       OR length(permission #>> '{}')>128
+       OR (permission #>> '{}') !~ '^[a-z][a-z0-9.-]*(\.\*)?$'
+  ) OR EXISTS (
+    SELECT 1
+    FROM jsonb_array_elements(p_authorities) AS item
+    WHERE jsonb_array_length(item->'permissions')<>(
+      SELECT count(DISTINCT permission #>> '{}')
+      FROM jsonb_array_elements(item->'permissions') AS permission
+    )
+  ) THEN
+    RAISE EXCEPTION 'ADMIN_AUTHORITY_BOOTSTRAP_INVALID' USING ERRCODE='22023';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM jsonb_array_elements(p_authorities) AS item
+    CROSS JOIN LATERAL jsonb_array_elements(item->'siteScopes') AS scope
+    WHERE jsonb_typeof(scope)<>'object'
+       OR scope-ARRAY['siteRef','environment','region','scopeEpoch','expiresAt']::TEXT[]<>'{}'::JSONB
+       OR COALESCE(scope->>'siteRef','')='*'
+       OR COALESCE(scope->>'siteRef','') !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$'
+       OR COALESCE(scope->>'environment','') !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{1,63}$'
+       OR COALESCE(scope->>'region','') !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{1,63}$'
+       OR COALESCE(scope->>'scopeEpoch','') !~ '^[1-9][0-9]*$'
+       OR NOT pg_input_is_valid(COALESCE(scope->>'expiresAt',''),'timestamp with time zone')
+       OR CASE
+            WHEN pg_input_is_valid(COALESCE(scope->>'expiresAt',''),'timestamp with time zone')
+              THEN (scope->>'expiresAt')::TIMESTAMPTZ<=now()
+            ELSE TRUE
+          END
+  ) THEN
+    RAISE EXCEPTION 'ADMIN_AUTHORITY_BOOTSTRAP_INVALID' USING ERRCODE='22023';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM jsonb_array_elements(p_authorities) AS item
+    CROSS JOIN LATERAL jsonb_array_elements(item->'globalScopes') AS scope
+    WHERE jsonb_typeof(scope)<>'object'
+       OR scope-ARRAY['grantRef','environment','region','scopeEpoch','expiresAt']::TEXT[]<>'{}'::JSONB
+       OR COALESCE(scope->>'grantRef','') !~ '^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$'
+       OR COALESCE(scope->>'environment','') !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{1,63}$'
+       OR COALESCE(scope->>'region','') !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{1,63}$'
+       OR COALESCE(scope->>'scopeEpoch','') !~ '^[1-9][0-9]*$'
+       OR NOT pg_input_is_valid(COALESCE(scope->>'expiresAt',''),'timestamp with time zone')
+       OR CASE
+            WHEN pg_input_is_valid(COALESCE(scope->>'expiresAt',''),'timestamp with time zone')
+              THEN (scope->>'expiresAt')::TIMESTAMPTZ<=now()
+            ELSE TRUE
+          END
+  ) OR (
+    SELECT count(*)<>count(DISTINCT scope->>'grantRef')
+    FROM jsonb_array_elements(p_authorities) AS item
+    CROSS JOIN LATERAL jsonb_array_elements(item->'globalScopes') AS scope
+  ) THEN
+    RAISE EXCEPTION 'ADMIN_AUTHORITY_BOOTSTRAP_INVALID' USING ERRCODE='22023';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM jsonb_array_elements(p_authorities) AS item
+    CROSS JOIN LATERAL jsonb_array_elements(item->'identities') AS identity
+    WHERE jsonb_typeof(identity)<>'object'
+       OR identity-ARRAY['identityRef','issuer','subject']::TEXT[]<>'{}'::JSONB
+       OR COALESCE(identity->>'identityRef','') !~ '^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$'
+       OR COALESCE(identity->>'issuer','') !~ '^https://'
+       OR length(COALESCE(identity->>'issuer',''))>512
+       OR length(COALESCE(identity->>'subject','')) NOT BETWEEN 1 AND 256
+  ) OR (
+    SELECT count(*)<>count(DISTINCT identity->>'identityRef')
+    FROM jsonb_array_elements(p_authorities) AS item
+    CROSS JOIN LATERAL jsonb_array_elements(item->'identities') AS identity
+  ) OR (
+    SELECT count(*)<>count(DISTINCT jsonb_build_array(identity->>'issuer',identity->>'subject'))
+    FROM jsonb_array_elements(p_authorities) AS item
+    CROSS JOIN LATERAL jsonb_array_elements(item->'identities') AS identity
   ) THEN
     RAISE EXCEPTION 'ADMIN_AUTHORITY_BOOTSTRAP_INVALID' USING ERRCODE='22023';
   END IF;

@@ -35,6 +35,15 @@ describe("Admin control-plane authority schema", () => {
     expect(migration).toContain("post_effect_review_no_delete");
   });
 
+  it("rejects malformed nested bootstrap facts instead of silently dropping them", () => {
+    expect(migration).toContain("scope-ARRAY['siteRef','environment','region','scopeEpoch','expiresAt']");
+    expect(migration).toContain("scope-ARRAY['grantRef','environment','region','scopeEpoch','expiresAt']");
+    expect(migration).toContain("identity-ARRAY['identityRef','issuer','subject']");
+    expect(migration).toContain("pg_input_is_valid(COALESCE(scope->>'expiresAt',''),'timestamp with time zone')");
+    expect(migration).toContain("count(DISTINCT identity->>'identityRef')");
+    expect(migration).toContain("ADMIN_AUTHORITY_BOOTSTRAP_INVALID");
+  });
+
   it("forces RLS across Site, operator, environment and region axes", () => {
     for (const table of ["admin_operator_authority", "admin_command_decision",
       "admin_approval", "admin_approval_decision"]) {
