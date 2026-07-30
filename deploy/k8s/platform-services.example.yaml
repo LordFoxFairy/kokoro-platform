@@ -172,3 +172,95 @@ items:
                 - { name: KOKORO_HUB_PORT, value: "4251" }
               ports:
                 - { name: http, containerPort: 4251 }
+
+  - apiVersion: v1
+    kind: ServiceAccount
+    metadata: { name: platform-hub-connect }
+    automountServiceAccountToken: false
+
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata: { name: platform-hub-connect }
+    spec:
+      replicas: 2
+      selector: { matchLabels: { app: platform-hub-connect } }
+      strategy:
+        type: RollingUpdate
+        rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+      template:
+        metadata: { labels: { app: platform-hub-connect } }
+        spec:
+          serviceAccountName: platform-hub-connect
+          automountServiceAccountToken: false
+          terminationGracePeriodSeconds: 30
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            fsGroupChangePolicy: OnRootMismatch
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: platform-hub-connect
+              image: ghcr.io/lordfoxfairy/kokoro-platform:RELEASE_DIGEST
+              imagePullPolicy: IfNotPresent
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
+              envFrom:
+                - configMapRef: { name: platform-hub-connect-runtime }
+                - secretRef: { name: platform-hub-connect-secrets }
+              env:
+                - { name: KOKORO_SERVICE_PACKAGE, value: platform-hub-connect }
+                - { name: KOKORO_HUB_CONNECT_PORT, value: "4252" }
+                - { name: KOKORO_HUB_CONNECT_HEALTH_PORT, value: "4253" }
+                - { name: KOKORO_WORKSPACE_CONFIG, value: /run/config/kokoro/storage.yaml }
+                - { name: KOKORO_HUB_CONNECT_TLS_KEY_FILE, value: /run/secrets/hub-connect/server.key }
+                - { name: KOKORO_HUB_CONNECT_TLS_CERT_FILE, value: /run/secrets/hub-connect/server.crt }
+                - { name: KOKORO_HUB_CONNECT_TLS_CLIENT_CA_FILE, value: /run/secrets/hub-connect/client-ca.crt }
+                - { name: KOKORO_HUB_CONNECT_MTLS_PEERS_FILE, value: /run/secrets/hub-connect/inbound-peers.json }
+                - { name: KOKORO_HUB_CAPABILITY_SIGNING_KEY_FILE, value: /run/secrets/hub-connect/catalog-signing.key }
+                - { name: KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_KEY_FILE, value: /run/secrets/hub-connect/platform-client.key }
+                - { name: KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_CERT_FILE, value: /run/secrets/hub-connect/platform-client.crt }
+                - { name: KOKORO_HUB_PLATFORM_PROJECTION_SERVER_CA_FILE, value: /run/secrets/hub-connect/platform-ca.crt }
+              ports:
+                - { name: connect, containerPort: 4252 }
+                - { name: health, containerPort: 4253 }
+              startupProbe:
+                httpGet: { path: /health/live, port: health, scheme: HTTP }
+                failureThreshold: 30
+                periodSeconds: 2
+              livenessProbe:
+                httpGet: { path: /health/live, port: health, scheme: HTTP }
+                periodSeconds: 10
+                timeoutSeconds: 2
+                failureThreshold: 3
+              readinessProbe:
+                httpGet: { path: /health/ready, port: health, scheme: HTTP }
+                periodSeconds: 5
+                timeoutSeconds: 2
+                failureThreshold: 2
+              resources:
+                requests: { cpu: 100m, memory: 256Mi }
+                limits: { cpu: "2", memory: 1Gi }
+              volumeMounts:
+                - { name: hub-connect-mtls, mountPath: /run/secrets/hub-connect, readOnly: true }
+                - { name: hub-storage-config, mountPath: /run/config/kokoro, readOnly: true }
+          volumes:
+            - name: hub-connect-mtls
+              secret:
+                secretName: platform-hub-connect-files
+                defaultMode: 288
+            - name: hub-storage-config
+              configMap:
+                name: platform-hub-connect-storage
+                defaultMode: 292
+
+  - apiVersion: v1
+    kind: Service
+    metadata: { name: platform-hub-connect }
+    spec:
+      selector: { app: platform-hub-connect }
+      ports:
+        - { name: connect, port: 4252, targetPort: connect }

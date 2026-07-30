@@ -56,6 +56,11 @@ pnpm --filter @kokoro/hub start
 pnpm --filter @kokoro/hub start:connect
 ```
 
+生产 artifact 使用两个互不混跑的 selector：`@kokoro/hub` 启动 HTTP 管理面，
+`platform-hub-connect` 启动 4252 私有 mTLS ConnectRPC；4253 只提供 Mongo-aware
+health/readiness，不进入 Service discovery。Connect 进程在打开 listener 前强制校验 Mongo、
+package store、secret keyring、签名 key、入站 peer registry 与出站 Platform projection mTLS。
+
 ## 测试
 
 ```bash

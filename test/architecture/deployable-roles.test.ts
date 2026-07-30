@@ -613,7 +613,7 @@ describe("independent deployable roles", () => {
   it("publishes executable image selectors and distinct database roles", async () => {
     const manifest = await readFile(resolve("deployables.yaml"), "utf8");
     const entrypoint = await readFile(resolve("deploy/docker/runtime-entrypoint.mjs"), "utf8");
-    for (const role of ["platform-api", "platform-admission", "platform-authorization", "platform-asset-data-plane", "platform-model-gateway", "platform-worker", "platform-admin", "platform-migrator"]) {
+    for (const role of ["platform-api", "platform-admission", "platform-authorization", "platform-asset-data-plane", "platform-model-gateway", "platform-worker", "platform-admin", "platform-hub-connect", "platform-migrator"]) {
       expect(manifest).toContain(`KOKORO_SERVICE_PACKAGE=${role}`);
       expect(entrypoint).toContain(`"${role}"`);
     }

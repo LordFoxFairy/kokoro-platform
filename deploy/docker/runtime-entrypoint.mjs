@@ -3,6 +3,10 @@ import { URL } from "node:url";
 
 const serviceEntries = Object.freeze({
   "@kokoro/hub": { module: "../../kokoro-hub/dist/interfaces/http/main.js" },
+  "platform-hub-connect": {
+    module: "../../kokoro-hub/dist/interfaces/connect/main.js",
+    start: "runHubConnectMain",
+  },
   "platform-api": { module: "../../dist/src/process/api.js", start: "runPlatformApiMain" },
   "platform-admission": { module: "../../dist/src/process/admission.js", start: "runPlatformAdmissionMain" },
   "platform-authorization": { module: "../../dist/src/process/authorization.js", start: "runPlatformAuthorizationMain" },

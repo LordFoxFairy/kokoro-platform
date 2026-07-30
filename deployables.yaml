@@ -217,6 +217,34 @@ deployables:
     runbookOwner: platform
     releaseOwner: platform
 
+  - id: platform-hub-connect
+    command: node --conditions=kokoro-runtime deploy/docker/runtime-entrypoint.mjs
+    selectorEnvironment: KOKORO_SERVICE_PACKAGE=platform-hub-connect
+    processRole: hub-connect-runtime
+    inboundContracts: []
+    declaredInboundContracts: [hub-runtime, hub-capability-catalog]
+    outboundContracts: [platform-capability-projection]
+    activationAuthorized: false
+    runtimeTraffic: true
+    secretClasses:
+      [
+        hub-mongo,
+        hub-package-storage,
+        hub-secret-keyring,
+        capability-catalog-signing-key,
+        mtls-server,
+        mtls-peer-registry,
+        mtls-client,
+        platform-admission-peer-ca,
+      ]
+    audience: platform-hub-connect
+    scalingKey: connect-request-concurrency
+    readiness: /health/ready
+    drain: http2-graceful
+    sloOwner: platform-hub
+    runbookOwner: platform-hub
+    releaseOwner: platform
+
   - id: platform-migrator
     command: node --conditions=kokoro-runtime deploy/docker/runtime-entrypoint.mjs
     selectorEnvironment: KOKORO_SERVICE_PACKAGE=platform-migrator
