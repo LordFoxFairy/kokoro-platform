@@ -99,6 +99,15 @@ importers:
       '@aws-sdk/client-s3':
         specifier: ^3.1079.0
         version: 3.1084.0
+      '@bufbuild/protobuf':
+        specifier: 2.13.0
+        version: 2.13.0
+      '@connectrpc/connect':
+        specifier: 2.1.2
+        version: 2.1.2(@bufbuild/protobuf@2.13.0)
+      '@connectrpc/connect-node':
+        specifier: 2.1.2
+        version: 2.1.2(@bufbuild/protobuf@2.13.0)(@connectrpc/connect@2.1.2(@bufbuild/protobuf@2.13.0))
       '@fastify/multipart':
         specifier: ^9.2.1
         version: 9.4.0

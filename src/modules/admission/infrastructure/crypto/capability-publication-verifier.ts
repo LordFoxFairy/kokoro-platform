@@ -13,7 +13,7 @@ const skill = z.object({
   label: z.string().min(1).max(128),
   name: reference,
   contentHash: digest,
-  description: z.string().min(1).max(2_048),
+  description: z.string().min(1).refine((value) => Buffer.byteLength(value, "utf8") <= 2_048),
   scope: reference,
   prerequisiteRef: reference.optional(),
 }).strict();
@@ -182,7 +182,7 @@ export function createEd25519CapabilityPublicationVerifier(input: Readonly<{
 
 function canonicalSnapshot(value: CapabilityCatalogSnapshot): CapabilityCatalogSnapshot {
   const byRef = <Value extends { optionRef: string }>(items: readonly Value[]) =>
-    [...items].sort((left, right) => left.optionRef.localeCompare(right.optionRef));
+    [...items].sort((left, right) => compare(left.optionRef, right.optionRef));
   return {
     schemaVersion: 1,
     agentOptions: byRef(value.agentOptions),
@@ -199,10 +199,14 @@ function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   return `{${Object.entries(value as Record<string, unknown>)
     .filter(([, child]) => child !== undefined)
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort(([left], [right]) => compare(left, right))
     .map(([key, child]) => `${JSON.stringify(key)}:${canonicalJson(child)}`).join(",")}}`;
 }
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function compare(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }

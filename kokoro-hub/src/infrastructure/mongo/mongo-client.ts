@@ -6,6 +6,7 @@ import {
   type McpTransport,
 } from "../../contract/mcp-storage.js";
 import type { ReviewStatus } from "../../contract/skill-curation-storage.js";
+import type { CapabilityCatalogSnapshot } from "../../domain/capability-catalog.js";
 import { SKILL_REVISIONS_COLLECTION, SKILL_STATE_COLLECTION, SKILLS_COLLECTION } from "../../contract/storage.js";
 
 // Mongo 存储态记录（hub 写、agent 读，同库读写分离）。deleted_at 显式可空：
@@ -101,6 +102,30 @@ export interface McpSecretRecord {
   deleted_at: number | null;
 }
 
+export interface CapabilityPublicationRecord {
+  site_id: string;
+  site_release_ref: string;
+  command_id: string;
+  idempotency_key: string;
+  request_digest: string;
+  agent_catalog_ref: string;
+  snapshot_digest: string;
+  snapshot: CapabilityCatalogSnapshot;
+  frozen_at: string;
+  signing_key_ref: string;
+  signature_algorithm: "ed25519-sha256-v1";
+  signature_payload_digest: string;
+  signature: Uint8Array;
+  recorded_at: string;
+  projection_state: "pending" | "committed" | "rejected" | "outcome_unknown";
+  projection_attempt: number;
+  projection_next_attempt_at: string;
+  projection_lease_id: string | null;
+  projection_lease_until: string | null;
+  projected_at: string | null;
+  last_projection_error_code: string | null;
+}
+
 export interface HubCollections {
   skills: Collection<SkillRecord>;
   state: Collection<SkillStateRecord>;
@@ -108,6 +133,7 @@ export interface HubCollections {
   mcpServers: Collection<McpServerRecord>;
   mcpServerRevisions: Collection<McpServerRevisionRecord>;
   mcpSecrets: Collection<McpSecretRecord>;
+  capabilityPublications: Collection<CapabilityPublicationRecord>;
 }
 
 export function createMongoClient(url: string): MongoClient {
@@ -122,5 +148,6 @@ export function hubCollections(db: Db): HubCollections {
     mcpServers: db.collection<McpServerRecord>(MCP_SERVERS_COLLECTION),
     mcpServerRevisions: db.collection<McpServerRevisionRecord>(MCP_SERVER_REVISIONS_COLLECTION),
     mcpSecrets: db.collection<McpSecretRecord>(MCP_SECRETS_COLLECTION),
+    capabilityPublications: db.collection<CapabilityPublicationRecord>("capability_publications"),
   };
 }

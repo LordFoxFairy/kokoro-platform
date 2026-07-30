@@ -11,7 +11,10 @@ const MAX_RESOLVE_HANDLES = 100;
 export const createSecretBodySchema = z
   .object({
     name: z.string().trim().min(1).max(128),
-    value: z.string().min(1).max(MAX_SECRET_VALUE_BYTES),
+    value: z.string().min(1).refine(
+      (value) => Buffer.byteLength(value, "utf8") <= MAX_SECRET_VALUE_BYTES,
+      `value must be at most ${MAX_SECRET_VALUE_BYTES} UTF-8 bytes`,
+    ),
   })
   .strict();
 

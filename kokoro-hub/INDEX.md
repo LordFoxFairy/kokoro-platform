@@ -11,20 +11,20 @@ owners:
 Own Skill/MCP catalog administration, revisions, enablement, package metadata, uploads, and operator-facing capability workflows.
 
 ## Non-responsibilities
-Hub does not execute Agent tools, own GA graph nodes, or sit on every-run capability assembly hot paths.
+Hub does not execute Agent tools or own GA graph nodes. Admission serves the frozen non-secret catalog; Hub's only Agent hot-path RPC is scoped MCP secret material resolution.
 
 ## Public boundary
-`src/interfaces/http` and `src/interfaces/admin` expose the module; package/storage contracts live under `src/contract` and application ports.
+`src/interfaces/http`, `src/interfaces/connect`, and `src/interfaces/admin` expose the module; package/storage contracts live under `src/contract` and application ports.
 
 Admin MCP registration is an admission boundary, not a raw repository proxy: `env:VAR` references are accepted only when `VAR` is in `KOKORO_HUB_ENV_REF_ALLOWLIST`, and URL transports are resolved before persistence. The default policy requires HTTPS and admits only public-unicast IP literals/DNS answers; all special or non-unicast ranges, including IPv4-mapped forms, are rejected. `KOKORO_HUB_ALLOW_INSECURE_URL=1` is honored only outside production and only relaxes the HTTP scheme—the same address classifier remains mandatory.
 
 ## Callers and dependencies
-Admin and Platform orchestration write through Hub. Agent runtime consumes immutable grants/snapshots through its declared read boundary.
+Admin and Platform orchestration write through Hub. Platform freezes a SiteRelease-bound catalog through private ConnectRPC; Agent alone may resolve opaque MCP secret handles through the separate runtime service.
 
-Hub calls `kokoro-user` at `GET /memberships/check` to authorize `self` requests, and binds that response through `@kokoro/user/contract` rather than a local copy of the shape — a rename on the provider now fails this package's typecheck instead of surfacing as a runtime parse error. The import is the narrow contract entry, so none of user's Prisma/Fastify/mail stack is pulled in. This is the only edge Hub has beyond `platform.kit`, and it makes an existing wire dependency visible to the dependency gate rather than leaving it implicit.
+Fresh runtime has no `kokoro-user` dependency. Hub self-service remains fail-closed until the PostgreSQL Platform membership owner adapter is injected; do not restore the retired MySQL HTTP edge.
 
 ## Data ownership and events
-Hub owns capability catalog/revision metadata and package references in Mongo/S3-compatible storage.
+Hub owns capability catalog/revision metadata and package references in Mongo/S3-compatible storage. A frozen catalog is immutable, Ed25519-signed with an explicit key revision, and carries its durable Platform projection state in the same Mongo document.
 
 ## Runtime and security
 Uploads require validation, content addressing, bounded size/path rules, trusted operator context, and secret-free metadata.
@@ -33,7 +33,7 @@ Uploads require validation, content addressing, bounded size/path rules, trusted
 All official Hub Admin namespace resources (skill catalog, skill revision uploads, skill curation, and MCP servers) are explicitly platform-global (`siteScopeField: null`). The Admin gateway therefore exposes them only to operators with wildcard Site scope; no finite Site scope is treated as an implicit namespace filter.
 
 ## Idempotency, failure, and recovery
-Revision/CAS and content hashes handle duplicate publication; package-first metadata-second writes prevent dangling live references.
+Revision/CAS and content hashes handle duplicate publication; package-first metadata-second writes prevent dangling live references. Freeze command identity, request digest, publication, and projection intent are inserted atomically. Ambiguous projection delivery reconciles the exact Platform receipt before retrying the same command identity.
 
 ## Extension rules and forbidden dependencies
 Add new capability kinds only through the approved closed registry. Do not model DeepAgents internal graph nodes as catalog capabilities.

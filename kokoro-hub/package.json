@@ -12,7 +12,9 @@
   },
   "scripts": {
     "dev": "tsx src/interfaces/http/main.ts",
+    "dev:connect": "tsx src/interfaces/connect/main.ts",
     "start": "node --conditions=kokoro-runtime dist/interfaces/http/main.js",
+    "start:connect": "node --conditions=kokoro-runtime dist/interfaces/connect/main.js",
     "build:runtime": "tsc -p tsconfig.runtime.json",
     "test": "vitest run test/unit",
     "test:integration": "vitest run test/integration --no-file-parallelism",
@@ -22,6 +24,9 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1079.0",
+    "@bufbuild/protobuf": "2.13.0",
+    "@connectrpc/connect": "2.1.2",
+    "@connectrpc/connect-node": "2.1.2",
     "@fastify/multipart": "^9.2.1",
     "@kokoro/platform-kit": "workspace:*",
     "fastify": "^5.10.0",
