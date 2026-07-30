@@ -83,6 +83,7 @@ import type { ModelOptionDraft as DomainModelOptionDraft } from
 import type { ProviderOperationalAvailability } from
   "../../domain/provider-availability.js";
 import type { SiteModelPolicy } from "../../domain/site-model-policy.js";
+import { assertModelControlCommandId } from "../../application/model-control-command.js";
 import { withCommandReceiptConflictMapping } from
   "../../../../interfaces/connect/command-receipt-conflict.js";
 import {
@@ -163,6 +164,7 @@ export function createModelControlConnectService(input: Readonly<{
   const implementation: ModelControlConnectService = {
     async getCommandReceipt(request, transport) {
       const context = required(request.context, "MODEL_CONTROL_QUERY_CONTEXT_REQUIRED");
+      assertModelControlCommandId(request.commandId, "MODEL_CONTROL_COMMAND_ID_INVALID");
       if (request.digestAlgorithm !== CommandDigestAlgorithmV2.SHA256_COMMAND_ENVELOPE) {
         throw new Error("MODEL_CONTROL_RECEIPT_DIGEST_ALGORITHM_INVALID");
       }
@@ -338,6 +340,7 @@ export function createModelControlConnectService(input: Readonly<{
       const receipt = await withCommandReceiptConflictMapping(() => input.owners.importInventory.import({
         importId: identity.commandId,
         idempotencyKey: identity.idempotencyKey,
+        requestDigest: identity.requestDigest,
         inventory: inventoryDocument(inventory),
         ...(effect.providerAvailability.length === 0
           ? {}
@@ -374,6 +377,7 @@ export function createModelControlConnectService(input: Readonly<{
       const receipt = await withCommandReceiptConflictMapping(() => input.owners.activateInventory.activate({
         activationId: identity.commandId,
         idempotencyKey: identity.idempotencyKey,
+        requestDigest: identity.requestDigest,
         targetDigest: effect.targetDigest,
         expectedPointerRevision: signedUint64(effect.expectedPointerRevision,
           "MODEL_INVENTORY_EXPECTED_POINTER_REVISION_INVALID").toString(),
@@ -405,6 +409,7 @@ export function createModelControlConnectService(input: Readonly<{
       const receipt = await withCommandReceiptConflictMapping(() => input.owners.changeSitePolicy.change({
         changeId: identity.commandId,
         idempotencyKey: identity.idempotencyKey,
+        requestDigest: identity.requestDigest,
         expectedRevision: signedUint64(effect.expectedRevision,
           "MODEL_SITE_POLICY_EXPECTED_REVISION_INVALID").toString(),
         policy: siteModelPolicy(request.siteId, effect),
@@ -436,6 +441,7 @@ export function createModelControlConnectService(input: Readonly<{
       const receipt = await withCommandReceiptConflictMapping(() => input.owners.materializeModelOptions.materialize({
         materializationId: identity.commandId,
         idempotencyKey: identity.idempotencyKey,
+        requestDigest: identity.requestDigest,
         inventoryDigest: effect.inventoryDigest,
         options: effect.options.map(modelOptionDraft),
       }, verified.context));
@@ -467,6 +473,7 @@ export function createModelControlConnectService(input: Readonly<{
       const receipt = await withCommandReceiptConflictMapping(() => input.owners.publishSiteReleaseCatalog.publish({
         publicationId: identity.commandId,
         idempotencyKey: identity.idempotencyKey,
+        requestDigest: identity.requestDigest,
         siteId: request.siteId,
         siteReleaseRef: effect.siteReleaseRef,
         inventoryDigest: effect.inventoryDigest,
@@ -990,6 +997,7 @@ function pinnedCatalog(digest: string | undefined): SiteModelPolicy["catalog"] {
 
 function commandIdentity(context: AuthenticatedOperatorCommandContext) {
   const identity = required(context.command, "MODEL_CONTROL_COMMAND_IDENTITY_REQUIRED");
+  assertModelControlCommandId(identity.commandId, "MODEL_CONTROL_COMMAND_ID_INVALID");
   if (identity.digestAlgorithm !== CommandDigestAlgorithmV2.SHA256_COMMAND_ENVELOPE) {
     throw new Error("MODEL_CONTROL_COMMAND_DIGEST_ALGORITHM_INVALID");
   }

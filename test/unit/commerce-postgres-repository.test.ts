@@ -5,10 +5,12 @@ import { issuePlatformTransaction, revokePlatformTransaction, type PlatformSqlTr
 import { canonicalCommandId } from "../../src/shared/outbox-inbox/receipt.js";
 
 describe("PostgresCommerceRepository", () => {
-  it("accepts only the current 32hex and UUIDv7 wire identities", () => {
-    expect(() => canonicalCommandId("00000000-0000-4000-8000-000000000001")).toThrow("COMMAND_ID_INVALID");
+  it("round-trips Model UUID v4 alongside the generic receipt identities without normalization", () => {
+    expect(canonicalCommandId("00000000-0000-4000-8000-000000000001")).toBe("00000000-0000-4000-8000-000000000001");
     expect(canonicalCommandId("00000000-0000-7000-8000-000000000001")).toBe("00000000-0000-7000-8000-000000000001");
     expect(canonicalCommandId("a".repeat(32))).toBe("a".repeat(32));
+    expect(() => canonicalCommandId("00000000-0000-4000-8000-00000000000A"))
+      .toThrow("COMMAND_ID_INVALID");
   });
   it("locks the generic idempotency receipt before creating Commerce truth", async () => {
     const statements: string[] = [];
@@ -44,7 +46,9 @@ describe("PostgresCommerceRepository", () => {
       };
       const lease = issuePlatformTransaction(sql);
       try {
-        await expect(new PostgresCommerceRepository().claimCommand(lease.transaction, identity)).rejects.toThrow("IDEMPOTENCY_CONFLICT");
+        await expect(new PostgresCommerceRepository().claimCommand(lease.transaction, identity)).rejects.toThrow(
+          conflict === "command" ? "COMMAND_IDENTITY_CONFLICT" : "IDEMPOTENCY_CONFLICT",
+        );
         expect(statements.some((statement) => statement.includes("commerce_command"))).toBe(false);
       } finally { revokePlatformTransaction(lease); }
     }
@@ -63,5 +67,5 @@ describe("PostgresCommerceRepository", () => {
 });
 
 function commandIdentity() {
-  return createCommerceCommandIdentity({ commandId: "a".repeat(32), environment: "production", region: "us-east-1", siteId: "site-1", actorKind: "user", actorSubject: "user-1", actorGeneration: "3", operation: "confirmRedemption", idempotencyKey: "idem-1", commandVersion: "2026-07-28", requestDigest: "a".repeat(64) });
+  return createCommerceCommandIdentity({ commandId: "00000000-0000-7000-8000-000000000009", environment: "production", region: "us-east-1", siteId: "site-1", actorKind: "user", actorSubject: "user-1", actorGeneration: "3", operation: "confirmRedemption", idempotencyKey: "idem-1", commandVersion: "2026-07-28", requestDigest: "a".repeat(64) });
 }

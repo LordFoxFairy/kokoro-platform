@@ -220,7 +220,7 @@ function commandContext(scope: "global" | "site", activeSession = session) {
   const attestation = operatorAttestation(activeSession);
   return create(AuthenticatedOperatorCommandContextSchema, {
     command: create(CommandIdentityV2Schema, {
-      commandId: "018f1212-1212-7212-8212-121212121212",
+      commandId: "018f1212-1212-4212-8212-121212121212",
       idempotencyKey: "idempotency-key-0001",
       digestAlgorithm: CommandDigestAlgorithmV2.SHA256_COMMAND_ENVELOPE,
       requestDigest: "a".repeat(64),

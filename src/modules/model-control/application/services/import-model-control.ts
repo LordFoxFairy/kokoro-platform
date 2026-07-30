@@ -8,7 +8,11 @@ import type {
   ModelInventoryImportReceipt,
 } from "../contracts/model-control-ports.js";
 import type { ModelControlCommandJournal } from "../contracts/model-control-command-journal.js";
-import { createModelControlCommand, modelControlSecurityFacts } from "../model-control-command.js";
+import {
+  assertModelControlCommandId,
+  createModelControlCommand,
+  modelControlSecurityFacts,
+} from "../model-control-command.js";
 
 export class ImportModelControlService implements ModelInventoryImportAdministration {
   constructor(
@@ -20,12 +24,7 @@ export class ImportModelControlService implements ModelInventoryImportAdministra
     input: Parameters<ModelInventoryImportAdministration["import"]>[0],
     context: VerifiedRequestSecurityContext,
   ): Promise<ModelInventoryImportReceipt> {
-    if (
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
-        input.importId,
-      )
-    )
-      throw new Error("MODEL_IMPORT_ID_INVALID");
+    assertModelControlCommandId(input.importId, "MODEL_IMPORT_ID_INVALID");
     const inventory = canonicalizeModelInventory(input.inventory);
     const providerAvailability = canonicalizeProviderOperationalAvailability(
       input.providerAvailability ??
@@ -46,6 +45,7 @@ export class ImportModelControlService implements ModelInventoryImportAdministra
     const command = createModelControlCommand({
       commandId: input.importId,
       idempotencyKey: input.idempotencyKey ?? input.importId,
+      requestDigest: input.requestDigest,
       operation: "model.inventory.import",
       security: modelControlSecurityFacts(context),
       effect: {

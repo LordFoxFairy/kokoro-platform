@@ -62,6 +62,7 @@ describe("Product ModelOption application services", () => {
     ).materialize(
       {
         materializationId,
+        requestDigest: "1".repeat(64),
         inventoryDigest: inventory.digest,
         options: [chatDraft()],
       },
@@ -111,6 +112,7 @@ describe("Product ModelOption application services", () => {
     ).publish(
       {
         publicationId: "00000000-0000-4000-8000-000000000012",
+        requestDigest: "2".repeat(64),
         siteId: "site-a",
         siteReleaseRef: "release-a",
         inventoryDigest: inventory.digest,
@@ -158,6 +160,7 @@ describe("Product ModelOption application services", () => {
       { now: () => "2026-07-29T12:05:00.000Z" },
     ).publish({
       publicationId: "00000000-0000-4000-8000-000000000012",
+      requestDigest: "2".repeat(64),
       siteId: "site-a",
       siteReleaseRef: "release-a",
       inventoryDigest: inventory.digest,

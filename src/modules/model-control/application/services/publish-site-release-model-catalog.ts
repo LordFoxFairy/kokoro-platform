@@ -7,7 +7,11 @@ import type {
   SiteReleaseModelCatalogAdministration,
   SiteReleaseModelCatalogPublishReceipt,
 } from "../contracts/product-model-option-ports.js";
-import { createModelControlCommand, modelControlSecurityFacts } from "../model-control-command.js";
+import {
+  assertModelControlCommandId,
+  createModelControlCommand,
+  modelControlSecurityFacts,
+} from "../model-control-command.js";
 
 export class PublishSiteReleaseModelCatalogService
   implements SiteReleaseModelCatalogAdministration
@@ -23,7 +27,7 @@ export class PublishSiteReleaseModelCatalogService
     input: Parameters<SiteReleaseModelCatalogAdministration["publish"]>[0],
     context: VerifiedRequestSecurityContext,
   ): Promise<SiteReleaseModelCatalogPublishReceipt> {
-    uuid(input.publicationId, "MODEL_OPTION_PUBLICATION_ID_INVALID");
+    assertModelControlCommandId(input.publicationId, "MODEL_OPTION_PUBLICATION_ID_INVALID");
     if (
       context.trustedCaller.kind !== "admin_workload" ||
       (context.actor.kind !== "operator" && context.actor.kind !== "workload") ||
@@ -54,6 +58,7 @@ export class PublishSiteReleaseModelCatalogService
         const command = createModelControlCommand({
           commandId: input.publicationId,
           idempotencyKey: input.idempotencyKey ?? input.publicationId,
+          requestDigest: input.requestDigest,
           operation: "model.site-release-catalog.publish",
           security: modelControlSecurityFacts(context),
           effect: {
@@ -99,9 +104,4 @@ function assertPublishReceipt(
 function canonicalInstant(value: string): boolean {
   const date = new Date(value);
   return Number.isFinite(date.getTime()) && date.toISOString() === value;
-}
-
-function uuid(value: string, code: string): void {
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value))
-    throw new Error(code);
 }

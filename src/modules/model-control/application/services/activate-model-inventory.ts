@@ -7,6 +7,7 @@ import type {
 } from "../contracts/model-control-ports.js";
 import type { ModelControlCommandJournal } from "../contracts/model-control-command-journal.js";
 import {
+  assertModelControlCommandId,
   createModelControlCommand,
   modelControlSecurityFacts,
 } from "../model-control-command.js";
@@ -22,7 +23,7 @@ export class ActivateModelInventoryService implements ModelInventoryActivationAd
     input: Parameters<ModelInventoryActivationAdministration["activate"]>[0],
     context: VerifiedRequestSecurityContext,
   ): Promise<ModelInventoryActivationReceipt> {
-    if (!uuid(input.activationId)) throw new Error("MODEL_ACTIVATION_ID_INVALID");
+    assertModelControlCommandId(input.activationId, "MODEL_ACTIVATION_ID_INVALID");
     if (!/^[a-f0-9]{64}$/u.test(input.targetDigest))
       throw new Error("MODEL_ACTIVATION_TARGET_INVALID");
     if (!/^(?:0|[1-9][0-9]*)$/u.test(input.expectedPointerRevision))
@@ -34,6 +35,7 @@ export class ActivateModelInventoryService implements ModelInventoryActivationAd
     const command = createModelControlCommand({
       commandId: input.activationId,
       idempotencyKey: input.idempotencyKey ?? input.activationId,
+      requestDigest: input.requestDigest,
       operation: "model.inventory.activate",
       security: modelControlSecurityFacts(context),
       effect: {
@@ -56,8 +58,4 @@ export class ActivateModelInventoryService implements ModelInventoryActivationAd
       },
     );
   }
-}
-
-function uuid(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value);
 }

@@ -105,6 +105,7 @@ export interface ModelOptionMaterializationAdministration {
     input: {
       readonly materializationId: string;
       readonly idempotencyKey?: string;
+      readonly requestDigest: string;
       readonly inventoryDigest: string;
       readonly options: readonly ModelOptionDraft[];
     },
@@ -117,6 +118,7 @@ export interface SiteReleaseModelCatalogAdministration {
     input: {
       readonly publicationId: string;
       readonly idempotencyKey?: string;
+      readonly requestDigest: string;
       readonly siteId: string;
       readonly siteReleaseRef: string;
       readonly inventoryDigest: string;

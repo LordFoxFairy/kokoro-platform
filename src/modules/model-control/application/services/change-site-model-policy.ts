@@ -8,6 +8,7 @@ import type {
 } from "../contracts/model-control-ports.js";
 import type { ModelControlCommandJournal } from "../contracts/model-control-command-journal.js";
 import {
+  assertModelControlCommandId,
   createModelControlCommand,
   modelControlSecurityFacts,
 } from "../model-control-command.js";
@@ -23,7 +24,7 @@ export class ChangeSiteModelPolicyService implements SiteModelPolicyAdministrati
     input: Parameters<SiteModelPolicyAdministration["change"]>[0],
     context: VerifiedRequestSecurityContext,
   ): Promise<SiteModelPolicyChangeReceipt> {
-    if (!uuid(input.changeId)) throw new Error("MODEL_SITE_POLICY_CHANGE_ID_INVALID");
+    assertModelControlCommandId(input.changeId, "MODEL_SITE_POLICY_CHANGE_ID_INVALID");
     if (!/^(?:0|[1-9][0-9]*)$/u.test(input.expectedRevision))
       throw new Error("MODEL_SITE_POLICY_REVISION_INVALID");
     if (context.trustedCaller.kind !== "admin_workload")
@@ -40,6 +41,7 @@ export class ChangeSiteModelPolicyService implements SiteModelPolicyAdministrati
     const command = createModelControlCommand({
       commandId: input.changeId,
       idempotencyKey: input.idempotencyKey ?? input.changeId,
+      requestDigest: input.requestDigest,
       operation: "model.site-policy.change",
       security: modelControlSecurityFacts(context),
       effect: {
@@ -64,8 +66,4 @@ export class ChangeSiteModelPolicyService implements SiteModelPolicyAdministrati
       },
     );
   }
-}
-
-function uuid(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value);
 }

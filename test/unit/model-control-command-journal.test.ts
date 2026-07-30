@@ -20,9 +20,11 @@ const security = {
 };
 
 describe("ModelControl command identity and outbox", () => {
-  it("binds import identity to catalog, availability, actor, source, and fence evidence", () => {
+  it("preserves the Connect-verified canonical request digest without re-hashing the effect", () => {
+    const verifiedRequestDigest = "f".repeat(64);
     const base = createModelControlCommand({
       commandId: "00000000-0000-4000-8000-000000000001",
+      requestDigest: verifiedRequestDigest,
       operation: "model.inventory.import",
       security,
       effect: {
@@ -40,7 +42,7 @@ describe("ModelControl command identity and outbox", () => {
         ],
       },
     });
-    expect(base.requestDigest).toMatch(/^[a-f0-9]{64}$/u);
+    expect(base.requestDigest).toBe(verifiedRequestDigest);
     expect(createModelControlCommand({
       ...base.input,
       idempotencyKey: "a-different-idempotency-key",
@@ -53,7 +55,7 @@ describe("ModelControl command identity and outbox", () => {
           providerAvailability: [{ ...base.input.effect.providerAvailability[0]!, health: "down" }],
         },
       }).requestDigest,
-    ).not.toBe(base.requestDigest);
+    ).toBe(verifiedRequestDigest);
     expect(
       createModelControlCommand({
         ...base.input,
@@ -62,13 +64,13 @@ describe("ModelControl command identity and outbox", () => {
           inventoryDigest: "c".repeat(64),
         },
       }).requestDigest,
-    ).not.toBe(base.requestDigest);
+    ).toBe(verifiedRequestDigest);
     expect(
       createModelControlCommand({
         ...base.input,
         security: { ...security, actorSubjectGeneration: "4" },
       }).requestDigest,
-    ).not.toBe(base.requestDigest);
+    ).toBe(verifiedRequestDigest);
     expect(
       createModelControlCommand({
         ...base.input,
@@ -77,12 +79,19 @@ describe("ModelControl command identity and outbox", () => {
           source: { kind: "platform-native", reference: "catalog#revision=two" },
         },
       }).requestDigest,
-    ).not.toBe(base.requestDigest);
+    ).toBe(verifiedRequestDigest);
+    expect(() => createModelControlCommand({ ...base.input, requestDigest: "F".repeat(64) }))
+      .toThrow("MODEL_CONTROL_REQUEST_DIGEST_INVALID");
+    expect(() => createModelControlCommand({
+      ...base.input,
+      commandId: "00000000-0000-7000-8000-000000000001",
+    })).toThrow("MODEL_CONTROL_COMMAND_ID_INVALID");
   });
 
   it("builds a stable consumer event without replay-only fields", () => {
     const command = createModelControlCommand({
       commandId: "00000000-0000-4000-8000-000000000002",
+      requestDigest: "b".repeat(64),
       operation: "model.inventory.activate",
       security,
       effect: { targetDigest: "b".repeat(64), expectedPointerRevision: "7" },
@@ -124,6 +133,7 @@ describe("ModelControl command identity and outbox", () => {
     try {
       const command = createModelControlCommand({
         commandId: "00000000-0000-4000-8000-000000000004",
+        requestDigest: "d".repeat(64),
         operation: "model.inventory.activate",
         security,
         effect: { targetDigest: "d".repeat(64), expectedPointerRevision: "2" },

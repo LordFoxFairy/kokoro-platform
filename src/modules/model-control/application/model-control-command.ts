@@ -42,6 +42,7 @@ export type ModelControlCommandInput =
   | {
       readonly commandId: string;
       readonly idempotencyKey?: string;
+      readonly requestDigest: string;
       readonly operation: "model.inventory.import";
       readonly security: ModelControlCommandSecurityFacts;
       readonly effect: {
@@ -53,6 +54,7 @@ export type ModelControlCommandInput =
   | {
       readonly commandId: string;
       readonly idempotencyKey?: string;
+      readonly requestDigest: string;
       readonly operation: "model.option.materialize";
       readonly security: ModelControlCommandSecurityFacts;
       readonly effect: {
@@ -65,6 +67,7 @@ export type ModelControlCommandInput =
   | {
       readonly commandId: string;
       readonly idempotencyKey?: string;
+      readonly requestDigest: string;
       readonly operation: "model.site-release-catalog.publish";
       readonly security: ModelControlCommandSecurityFacts;
       readonly effect: {
@@ -78,6 +81,7 @@ export type ModelControlCommandInput =
   | {
       readonly commandId: string;
       readonly idempotencyKey?: string;
+      readonly requestDigest: string;
       readonly operation: "model.inventory.activate";
       readonly security: ModelControlCommandSecurityFacts;
       readonly effect: {
@@ -88,6 +92,7 @@ export type ModelControlCommandInput =
   | {
       readonly commandId: string;
       readonly idempotencyKey?: string;
+      readonly requestDigest: string;
       readonly operation: "model.site-policy.change";
       readonly security: ModelControlCommandSecurityFacts;
       readonly effect: {
@@ -138,7 +143,10 @@ export interface ModelControlCommittedEvent {
 export function createModelControlCommand<const Input extends ModelControlCommandInput>(
   input: Input,
 ): ModelControlCommand<Input> {
-  uuid(input.commandId, "MODEL_CONTROL_COMMAND_ID_INVALID");
+  assertModelControlCommandId(input.commandId, "MODEL_CONTROL_COMMAND_ID_INVALID");
+  if (!/^[0-9a-f]{64}$/u.test(input.requestDigest)) {
+    throw new Error("MODEL_CONTROL_REQUEST_DIGEST_INVALID");
+  }
   const idempotencyKey = input.idempotencyKey ?? input.commandId;
   if (idempotencyKey.length < 16 || idempotencyKey.length > 256 || containsControl(idempotencyKey)) {
     throw new Error("MODEL_CONTROL_IDEMPOTENCY_KEY_INVALID");
@@ -164,14 +172,7 @@ export function createModelControlCommand<const Input extends ModelControlComman
   return Object.freeze({
     commandId: canonicalInput.commandId,
     operation: canonicalInput.operation,
-    requestDigest: sha256(
-      stableJson({
-        schemaVersion: 1,
-        operation: canonicalInput.operation,
-        security: canonicalInput.security,
-        effect: canonicalInput.effect,
-      }),
-    ),
+    requestDigest: canonicalInput.requestDigest,
     input: canonicalInput,
   });
 }
@@ -233,8 +234,8 @@ function deterministicUuid(value: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function uuid(value: string, code: string): void {
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value))
+export function assertModelControlCommandId(value: string, code: string): void {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(value))
     throw new Error(code);
 }
 

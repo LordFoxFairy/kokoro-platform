@@ -7,7 +7,11 @@ import type {
   ModelOptionMaterializationAdministration,
   ModelOptionMaterializationReceipt,
 } from "../contracts/product-model-option-ports.js";
-import { createModelControlCommand, modelControlSecurityFacts } from "../model-control-command.js";
+import {
+  assertModelControlCommandId,
+  createModelControlCommand,
+  modelControlSecurityFacts,
+} from "../model-control-command.js";
 
 export class MaterializeModelOptionsService implements ModelOptionMaterializationAdministration {
   constructor(
@@ -20,7 +24,7 @@ export class MaterializeModelOptionsService implements ModelOptionMaterializatio
     input: Parameters<ModelOptionMaterializationAdministration["materialize"]>[0],
     context: VerifiedRequestSecurityContext,
   ): Promise<ModelOptionMaterializationReceipt> {
-    uuid(input.materializationId, "MODEL_OPTION_MATERIALIZATION_ID_INVALID");
+    assertModelControlCommandId(input.materializationId, "MODEL_OPTION_MATERIALIZATION_ID_INVALID");
     digest(input.inventoryDigest, "MODEL_OPTION_INVENTORY_DIGEST_INVALID");
     if (
       context.trustedCaller.kind !== "admin_workload" ||
@@ -47,6 +51,7 @@ export class MaterializeModelOptionsService implements ModelOptionMaterializatio
         const command = createModelControlCommand({
           commandId: input.materializationId,
           idempotencyKey: input.idempotencyKey ?? input.materializationId,
+          requestDigest: input.requestDigest,
           operation: "model.option.materialize",
           security: modelControlSecurityFacts(context),
           effect: {
@@ -86,12 +91,6 @@ function assertMaterializationReceipt(
     receipt.optionRevisionRefs.some((value, index) => value !== expectedRefs[index]) ||
     typeof receipt.replayed !== "boolean"
   ) throw new Error("MODEL_OPTION_MATERIALIZATION_RECEIPT_INVALID");
-}
-
-function uuid(value: string, code: string): void {
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value)) {
-    throw new Error(code);
-  }
 }
 
 function digest(value: string, code: string): void {

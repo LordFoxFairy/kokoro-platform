@@ -70,8 +70,35 @@ import { createModelControlConnectService } from
   "../../src/modules/model-control/interfaces/connect/model-control-service.js";
 import type { VerifiedRequestSecurityContext } from
   "../../src/shared/security-context/index.js";
+import { verifyRequestSecurityContext } from
+  "../../src/shared/security-context/request-security-context.js";
 import { CommandReceiptConflictError } from
   "../../src/shared/outbox-inbox/receipt.js";
+import type {
+  CommandIdentity,
+  CommandReceipt,
+} from "../../src/shared/outbox-inbox/receipt.js";
+import { PlatformUnitOfWork } from "../../src/shared/unit-of-work/index.js";
+import type {
+  PlatformTransaction,
+  PlatformTransactionHost,
+} from "../../src/shared/unit-of-work/index.js";
+import type { ModelControlRepository } from
+  "../../src/modules/model-control/application/contracts/model-control-ports.js";
+import type { ModelOptionCatalogRepository } from
+  "../../src/modules/model-control/application/contracts/product-model-option-ports.js";
+import { ImportModelControlService } from
+  "../../src/modules/model-control/application/services/import-model-control.js";
+import { ActivateModelInventoryService } from
+  "../../src/modules/model-control/application/services/activate-model-inventory.js";
+import { ChangeSiteModelPolicyService } from
+  "../../src/modules/model-control/application/services/change-site-model-policy.js";
+import { MaterializeModelOptionsService } from
+  "../../src/modules/model-control/application/services/materialize-model-options.js";
+import { PublishSiteReleaseModelCatalogService } from
+  "../../src/modules/model-control/application/services/publish-site-release-model-catalog.js";
+import { PostgresModelControlCommandJournal } from
+  "../../src/modules/model-control/infrastructure/postgres/model-control-command-journal.js";
 
 const transport = {} as HandlerContext;
 const verifiedContext = Object.freeze({}) as VerifiedRequestSecurityContext;
@@ -103,15 +130,20 @@ describe("ModelControl Connect provider", () => {
     const receipts = { read: vi.fn(async () => recordedAt) };
     const service = createModelControlConnectService({ owners, resolver, receipts, ...readDependencies });
 
-    const imported = await service.importInventory(importRequest(), transport);
-    const activated = await service.activateInventory(activationRequest(), transport);
-    const changed = await service.changeSitePolicy(policyRequest(), transport);
-    const materialized = await service.materializeModelOptions(materializationRequest(), transport);
-    const published = await service.publishSiteReleaseCatalog(publicationRequest(), transport);
+    const requests = {
+      imported: importRequest(), activated: activationRequest(), changed: policyRequest(),
+      materialized: materializationRequest(), published: publicationRequest(),
+    };
+    const imported = await service.importInventory(requests.imported, transport);
+    const activated = await service.activateInventory(requests.activated, transport);
+    const changed = await service.changeSitePolicy(requests.changed, transport);
+    const materialized = await service.materializeModelOptions(requests.materialized, transport);
+    const published = await service.publishSiteReleaseCatalog(requests.published, transport);
 
     expect(owners.importInventory.import).toHaveBeenCalledWith({
       importId: commandId,
       idempotencyKey: "idempotency-key-0001",
+      requestDigest: requests.imported.context!.command!.requestDigest,
       inventory: {
         schemaVersion: 1,
         source: { kind: "platform-native", reference: "inventory:2026-07-29" },
@@ -142,12 +174,14 @@ describe("ModelControl Connect provider", () => {
     expect(owners.activateInventory.activate).toHaveBeenCalledWith({
       activationId: commandId,
       idempotencyKey: "idempotency-key-0001",
+      requestDigest: requests.activated.context!.command!.requestDigest,
       targetDigest: digest,
       expectedPointerRevision: "3",
     }, verifiedContext);
     expect(owners.changeSitePolicy.change).toHaveBeenCalledWith({
       changeId: commandId,
       idempotencyKey: "idempotency-key-0001",
+      requestDigest: requests.changed.context!.command!.requestDigest,
       expectedRevision: "4",
       policy: {
         schemaVersion: 1,
@@ -168,6 +202,7 @@ describe("ModelControl Connect provider", () => {
     expect(owners.materializeModelOptions.materialize).toHaveBeenCalledWith({
       materializationId: commandId,
       idempotencyKey: "idempotency-key-0001",
+      requestDigest: requests.materialized.context!.command!.requestDigest,
       inventoryDigest: digest,
       options: [{
         schemaVersion: 1,
@@ -186,6 +221,7 @@ describe("ModelControl Connect provider", () => {
     expect(owners.publishSiteReleaseCatalog.publish).toHaveBeenCalledWith({
       publicationId: commandId,
       idempotencyKey: "idempotency-key-0001",
+      requestDigest: requests.published.context!.command!.requestDigest,
       siteId: "site:alpha",
       siteReleaseRef: "release:7",
       inventoryDigest: digest,
@@ -212,8 +248,175 @@ describe("ModelControl Connect provider", () => {
     expect(published.publishedAt).toEqual(timestampFromDate(new Date(publishedAt)));
   });
 
+  it("carries one UUID v4 and the verified envelope digest through all five real owners and durable reconciliation", async () => {
+    const storedReceipts = new Map<string, CommandReceipt>();
+    const receiptRepository = {
+      begin: async (_transaction: PlatformTransaction, identity: CommandIdentity) => {
+        const receipt: CommandReceipt = {
+          ...identity, state: "pending", result: null, resultDigest: null,
+        };
+        storedReceipts.set(identity.commandId, receipt);
+        return receipt;
+      },
+      recordOutcome: async (
+        _transaction: PlatformTransaction,
+        identity: CommandIdentity,
+        outcome: Parameters<import("../../src/shared/outbox-inbox/receipt.js").CommandReceiptRepository["recordOutcome"]>[2],
+      ) => {
+        const receipt: CommandReceipt = { ...identity, ...outcome };
+        storedReceipts.set(identity.commandId, receipt);
+        return receipt;
+      },
+    };
+    const journal = new PostgresModelControlCommandJournal(receiptRepository, {
+      enqueue: async () => undefined,
+    });
+    const unitOfWork = inMemoryUnitOfWork();
+    let activeInventory: Parameters<ModelControlRepository["importInventory"]>[1]["inventory"] | null = null;
+    let optionRevisions: Parameters<ModelOptionCatalogRepository["loadOptionRevisions"]>[1] extends never
+      ? never
+      : Awaited<ReturnType<ModelOptionCatalogRepository["loadOptionRevisions"]>> = [];
+    const modelRepository: ModelControlRepository = {
+      importInventory: async (_transaction, input) => {
+        activeInventory = input.inventory;
+        return { importId: input.importId, digest: input.inventory.digest, replayed: false,
+          counts: input.inventory.counts };
+      },
+      activateInventory: async (_transaction, input) => ({
+        activationId: input.activationId, importId: input.activationId,
+        targetDigest: input.targetDigest, expectedRevision: input.expectedPointerRevision,
+        activatedRevision: (BigInt(input.expectedPointerRevision) + 1n).toString(), replayed: false,
+      }),
+      putSitePolicy: async (_transaction, input) => ({
+        changeId: input.changeId, policyDigest: input.policy.digest, revision: "5", replayed: false,
+      }),
+      reportProviderAvailability: async () => { throw new Error("unexpected availability report"); },
+      loadCandidates: async () => { throw new Error("unexpected candidate load"); },
+      findSelectionDecision: async () => null,
+      recordSelectionDecision: async (_transaction, decision) => decision,
+    };
+    const optionRepository: ModelOptionCatalogRepository = {
+      loadInventory: async (_transaction, inventoryDigest) =>
+        activeInventory?.digest === inventoryDigest ? activeInventory : null,
+      materializeOptions: async (_transaction, input) => {
+        optionRevisions = input.materialization.optionRevisions;
+        return {
+          materializationId: input.materializationId,
+          sourceDigest: input.materialization.sourceDigest,
+          inventoryDigest: input.materialization.inventoryDigest,
+          materializationDigest: input.materialization.materializationDigest,
+          optionRevisionRefs: input.materialization.optionRevisions.map(
+            ({ modelOptionRevisionRef }) => modelOptionRevisionRef,
+          ),
+          replayed: false,
+        };
+      },
+      loadOptionRevisions: async (_transaction, revisionRefs) =>
+        optionRevisions.filter(({ modelOptionRevisionRef }) =>
+          revisionRefs.includes(modelOptionRevisionRef)),
+      publishSiteReleaseCatalog: async (_transaction, input) => ({
+        publicationId: input.publicationId,
+        siteId: input.catalog.siteId,
+        siteReleaseRef: input.catalog.siteReleaseRef,
+        modelOptionCatalogRef: input.catalog.modelOptionCatalogRef,
+        catalogDigest: input.catalog.catalogDigest,
+        publishedAt: input.catalog.publishedAt,
+        replayed: false,
+      }),
+      loadProductCatalogSnapshot: async () => null,
+    };
+    const owners = {
+      importInventory: new ImportModelControlService(unitOfWork, modelRepository, journal),
+      activateInventory: new ActivateModelInventoryService(unitOfWork, modelRepository, journal),
+      changeSitePolicy: new ChangeSiteModelPolicyService(unitOfWork, modelRepository, journal),
+      materializeModelOptions: new MaterializeModelOptionsService(unitOfWork, optionRepository, journal),
+      publishSiteReleaseCatalog: new PublishSiteReleaseModelCatalogService(
+        unitOfWork, optionRepository, journal, { now: () => publishedAt },
+      ),
+    };
+    const ambiguousActivation = {
+      activate: async (...args: Parameters<typeof owners.activateInventory.activate>) => {
+        await owners.activateInventory.activate(...args);
+        throw new ConnectError("commit response lost", Code.Unavailable);
+      },
+    };
+    const receipts = {
+      read: async (_context: VerifiedRequestSecurityContext, input: { commandId: string }) => {
+        if (storedReceipts.get(input.commandId)?.state !== "succeeded") {
+          throw new Error("receipt not committed");
+        }
+        return recordedAt;
+      },
+      get: async (_context: VerifiedRequestSecurityContext, input: { commandId: string }) => {
+        const receipt = storedReceipts.get(input.commandId);
+        return receipt?.state === "succeeded" && receipt.result !== null ? {
+          commandId: receipt.commandId,
+          idempotencyKey: receipt.idempotencyKey,
+          requestDigest: receipt.requestDigest,
+          operation: receipt.operation,
+          state: "succeeded" as const,
+          recordedAt,
+          result: receipt.result,
+        } : null;
+      },
+    };
+    const resolver = {
+      resolve: resolveUnexpectedRead,
+      resolveModelControlCommand: async (
+        _claimed: unknown,
+        _transport: HandlerContext,
+        request: { operation: string; siteRef: string | null },
+      ) => ({ context: await realOwnerContext(request.operation, request.siteRef), axes }),
+      resolveModelControlReceipt: async () => realOwnerContext("model.inventory.activate", null),
+    };
+    const service = createModelControlConnectService({
+      owners: { ...owners, activateInventory: ambiguousActivation },
+      resolver, receipts, ...readDependencies,
+    });
+    const ids = [
+      "00000000-0000-4000-8000-000000000031",
+      "00000000-0000-4000-8000-000000000032",
+      "00000000-0000-4000-8000-000000000033",
+      "00000000-0000-4000-8000-000000000034",
+      "00000000-0000-4000-8000-000000000035",
+    ] as const;
+    const importedRequest = importRequest(true, ids[0]);
+    const imported = await service.importInventory(importedRequest, transport);
+    const activation = activationRequest(ids[1]);
+    const ambiguous = ConnectError.from(await Promise.resolve(service.activateInventory(activation, transport))
+      .catch((error: unknown) => error));
+    expect(ambiguous).toMatchObject({ code: Code.Unavailable });
+    expect(ambiguous.findDetails(KokoroErrorDetailSchema)[0]).toMatchObject({ receiptRef: ids[1] });
+    await service.changeSitePolicy(policyRequest(ids[2]), transport);
+    const materializedRequest = materializationRequest(ids[3], imported.inventoryDigest);
+    const materialized = await service.materializeModelOptions(materializedRequest, transport);
+    const materializedRevisionRef = materialized.optionRevisionRefs?.[0];
+    if (materializedRevisionRef === undefined) throw new Error("materialized revision missing");
+    const publication = publicationRequest(
+      ids[4], materializedRevisionRef, imported.inventoryDigest,
+    );
+    await service.publishSiteReleaseCatalog(publication, transport);
+
+    const requests = [importedRequest, activation, policyRequest(ids[2]), materializedRequest, publication];
+    expect([...storedReceipts.values()].map(({ commandId }) => commandId)).toEqual(ids);
+    for (const [index, receipt] of [...storedReceipts.values()].entries()) {
+      expect(receipt.commandId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
+      expect(receipt.requestDigest).toBe(requests[index]!.context!.command!.requestDigest);
+    }
+    const reconciled = await service.getCommandReceipt(create(GetCommandReceiptRequestSchema, {
+      context: create(AuthenticatedOperatorQueryContextSchema, { requestId: ids[1] }),
+      commandId: ids[1], operation: ModelControlCommandOperation.ACTIVATE_INVENTORY,
+      digestAlgorithm: CommandDigestAlgorithmV2.SHA256_COMMAND_ENVELOPE,
+      requestDigest: activation.context!.command!.requestDigest,
+    }), transport);
+    expect(reconciled.receipt?.identity?.commandId).toBe(ids[1]);
+    expect(reconciled.receipt?.identity?.requestDigest)
+      .toBe(activation.context!.command!.requestDigest);
+    expect(reconciled.result?.case).toBe("activateInventory");
+  });
+
   it("reconciles a committed effect by stable command identity and typed result", async () => {
-    const receiptCommandId = "0123456789abcdef0123456789abcdef";
+    const receiptCommandId = "00000000-0000-4000-8000-000000000021";
     const receipts = {
       read: vi.fn(async () => recordedAt),
       get: vi.fn(async () => ({
@@ -251,7 +454,7 @@ describe("ModelControl Connect provider", () => {
   });
 
   it("rejects receipt reconciliation when the original request digest does not match", async () => {
-    const receiptCommandId = "0123456789abcdef0123456789abcdef";
+    const receiptCommandId = "00000000-0000-4000-8000-000000000021";
     const receipts = { read: vi.fn(async () => recordedAt), get: vi.fn(async () => ({
       commandId: receiptCommandId, idempotencyKey: receiptCommandId,
       requestDigest: "8".repeat(64), operation: "model.inventory.activate" as const,
@@ -535,7 +738,7 @@ describe("ModelControl Connect provider", () => {
   });
 });
 
-const commandId = "018f1212-1212-7212-8212-121212121212";
+const commandId = "018f1212-1212-4212-8212-121212121212";
 const digest = "a".repeat(64);
 const optionRevisionRef = `model-option:sha256:${"b".repeat(64)}`;
 const publishedAt = "2026-07-29T12:01:00.000Z";
@@ -576,10 +779,10 @@ function ownerDoubles() {
   };
 }
 
-function commandContext(scope: "global" | "site") {
+function commandContext(scope: "global" | "site", effectCommandId = commandId) {
   return create(AuthenticatedOperatorCommandContextSchema, {
     command: create(CommandIdentityV2Schema, {
-      commandId,
+      commandId: effectCommandId,
       idempotencyKey: "idempotency-key-0001",
       digestAlgorithm: CommandDigestAlgorithmV2.SHA256_COMMAND_ENVELOPE,
       requestDigest: "0".repeat(64),
@@ -639,8 +842,8 @@ function inventory() {
   });
 }
 
-function importRequest(includeAvailability = true) {
-  const context = commandContext("global");
+function importRequest(includeAvailability = true, effectCommandId = commandId) {
+  const context = commandContext("global", effectCommandId);
   const effect = create(ImportInventoryEffectSchema, {
     inventory: inventory(),
     providerAvailability: includeAvailability
@@ -655,8 +858,8 @@ function importRequest(includeAvailability = true) {
   return create(ImportInventoryRequestSchema, { context, effect });
 }
 
-function activationRequest() {
-  const context = commandContext("global");
+function activationRequest(effectCommandId = commandId) {
+  const context = commandContext("global", effectCommandId);
   const effect = create(ActivateInventoryEffectSchema, {
     targetDigest: digest, expectedPointerRevision: 3n,
   });
@@ -664,8 +867,8 @@ function activationRequest() {
   return create(ActivateInventoryRequestSchema, { context, effect });
 }
 
-function policyRequest() {
-  const context = commandContext("site");
+function policyRequest(effectCommandId = commandId) {
+  const context = commandContext("site", effectCommandId);
   const effect = create(ChangeSitePolicyEffectSchema, {
     product: ModelProduct.MUSIC,
     enabled: true,
@@ -687,13 +890,16 @@ function policyRequest() {
   return create(ChangeSitePolicyRequestSchema, { context, siteId: "site:alpha", effect });
 }
 
-function materializationRequest() {
-  const context = commandContext("global");
+function materializationRequest(
+  effectCommandId = commandId,
+  sourceInventoryDigest = digest,
+) {
+  const context = commandContext("global", effectCommandId);
   const selection = create(ModelOptionRoleSelectionSchema, {
     primaryModelKey: "chat-primary", fallbackModelKeys: [],
   });
   const effect = create(MaterializeModelOptionsEffectSchema, {
-    inventoryDigest: digest,
+    inventoryDigest: sourceInventoryDigest,
     options: [create(ModelOptionDraftSchema, {
       optionKey: "chat.standard", surface: ModelProduct.CHAT, label: "Standard",
       tier: "standard", lifecycle: ModelOptionLifecycle.ACTIVE,
@@ -704,14 +910,18 @@ function materializationRequest() {
   return create(MaterializeModelOptionsRequestSchema, { context, effect });
 }
 
-function publicationRequest() {
-  const context = commandContext("site");
+function publicationRequest(
+  effectCommandId = commandId,
+  releaseOptionRevisionRef = optionRevisionRef,
+  sourceInventoryDigest = digest,
+) {
+  const context = commandContext("site", effectCommandId);
   const effect = create(PublishSiteReleaseCatalogEffectSchema, {
-    siteReleaseRef: "release:7", inventoryDigest: digest,
+    siteReleaseRef: "release:7", inventoryDigest: sourceInventoryDigest,
     surfaces: [{
       surface: ModelProduct.CHAT,
-      allowedOptionRevisionRefs: [optionRevisionRef],
-      defaultOptionRevisionRef: optionRevisionRef,
+      allowedOptionRevisionRefs: [releaseOptionRevisionRef],
+      defaultOptionRevisionRef: releaseOptionRevisionRef,
     }],
   });
   context.command!.requestDigest = publishSiteReleaseCatalogRequestDigest(
@@ -719,5 +929,78 @@ function publicationRequest() {
   );
   return create(PublishSiteReleaseCatalogRequestSchema, {
     context, siteId: "site:alpha", effect,
+  });
+}
+
+function inMemoryUnitOfWork(): PlatformUnitOfWork {
+  const host: PlatformTransactionHost = {
+    transaction: async (_fence, work) => work({} as PlatformTransaction),
+  };
+  return new PlatformUnitOfWork(host, () => "2026-07-29T12:00:00.000Z");
+}
+
+async function realOwnerContext(
+  operation: string,
+  siteId: string | null,
+): Promise<VerifiedRequestSecurityContext> {
+  const purpose = operation === "model.site-release-catalog.publish"
+    ? "site_release"
+    : "model_control_administration";
+  const input = {
+    requestId: `request-${operation}`,
+    correlationId: `correlation-${operation}`,
+    trustedCaller: {
+      kind: "admin_workload" as const,
+      workloadIdentityId: "spiffe://kokoro/web-admin",
+      ...(siteId === null ? {} : { siteId }),
+      environment: "production",
+      region: "us-east-1",
+      audience: "platform",
+      allowedOperations: [operation],
+      bindingEpoch: "2",
+      issuedAt: "2026-07-29T11:59:00.000Z",
+      expiresAt: "2026-07-29T12:05:00.000Z",
+    },
+    actor: { kind: "operator" as const, subjectId: "operator:7", subjectGeneration: "2" },
+    delegatedGrant: null,
+    target: {
+      siteId,
+      workspaceId: null,
+      projectId: null,
+      purpose,
+      scopes: operation === "model.site-release-catalog.publish"
+        ? ["model:site-release:publish"]
+        : [],
+    },
+    audience: "platform",
+    environment: "production",
+    region: "us-east-1",
+    evidence: [{ kind: "signature", evidenceId: "evidence-1", issuer: "issuer-a" }],
+    policyEpoch: "1",
+    issuedAt: "2026-07-29T11:59:00.000Z",
+    expiresAt: "2026-07-29T12:05:00.000Z",
+  };
+  return verifyRequestSecurityContext(input, {
+    now: "2026-07-29T12:00:00.000Z",
+    operation,
+    expectedAudience: "platform",
+    expectedEnvironment: "production",
+    expectedRegion: "us-east-1",
+    callerVerifier: {
+      verify: async () => ({
+        workloadIdentityId: input.trustedCaller.workloadIdentityId,
+        kind: input.trustedCaller.kind,
+        audience: input.trustedCaller.audience,
+        environment: input.trustedCaller.environment,
+        region: input.trustedCaller.region,
+        allowedOperations: input.trustedCaller.allowedOperations,
+        siteId,
+        bindingEpoch: input.trustedCaller.bindingEpoch,
+        issuedAt: input.trustedCaller.issuedAt,
+        expiresAt: input.trustedCaller.expiresAt,
+        issuer: "issuer-a",
+        keyVersion: "key-1",
+      }),
+    },
   });
 }
