@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
+import { SPLIT_WORKER_RELATION_AUTHORITY } from "../../src/infrastructure/postgres/split-worker-authority.js";
 
 describe("Identity outbox production authority", () => {
   it("preserves applied migrations and keeps Asset completion INSERT-only under RLS", async () => {
@@ -47,8 +48,33 @@ describe("Identity outbox production authority", () => {
     expect(runtimeAuthority).toContain("permissive BOOLEAN");
     expect(runtimeAuthority).toContain("actual.permissive IS DISTINCT FROM TRUE");
     expect(runtimeAuthority).toContain("expected.permissive IS DISTINCT FROM TRUE");
-    expect(runtimeAuthority).toContain(
-      "actual.permissive IS DISTINCT FROM expected.permissive",
+    expect(runtimeAuthority).toContain("actual.permissive IS DISTINCT FROM expected.permissive");
+  });
+
+  it("checks sequence privileges only against real sequences", async () => {
+    const [migrator, client, splitWorkerAuthority] = await Promise.all([
+      readFile("src/infrastructure/postgres/migrator.ts", "utf8"),
+      readFile("src/infrastructure/postgres/client.ts", "utf8"),
+      readFile("src/infrastructure/postgres/split-worker-authority.ts", "utf8"),
+    ]);
+    for (const authority of [migrator, client, splitWorkerAuthority])
+      expect(authority).not.toMatch(
+        /relkind\s*=\s*'S'\s+AND\s+has_sequence_privilege\([^)]*\.oid/gu,
+      );
+    expect(migrator).toContain("SPLIT_WORKER_EXACT_AUTHORITY_SQL");
+    expect(splitWorkerAuthority).toContain("CASE WHEN sequence_row.relkind='S' THEN");
+    expect(migrator).toContain("CASE WHEN candidate.relkind = 'S' THEN");
+    expect(client).toContain("CASE WHEN sequence_row.relkind='S' THEN");
+    expect(client).toContain("CASE WHEN candidate.relkind = 'S' THEN");
+  });
+
+  it("allows the Identity worker's exact column updates in both privilege audits", async () => {
+    const client = await readFile("src/infrastructure/postgres/client.ts", "utf8");
+    const exactIdentityUpdateAllowlist =
+      /\$2 = 'identity-worker' AND candidate\.relname = ANY\(ARRAY\[\s*'outbox_event','identity_verification_delivery','identity_execution_space',\s*'identity_namespace_allocation_intent'\s*\]\)/gu;
+    expect([...client.matchAll(exactIdentityUpdateAllowlist)]).toHaveLength(2);
+    expect(client).not.toMatch(
+      /\$2 = 'worker' AND candidate\.relname = ANY\(ARRAY\[[^\]]*identity_verification_delivery/gu,
     );
   });
 
@@ -98,41 +124,104 @@ describe("Identity outbox production authority", () => {
       "utf8",
     );
     expect(migrator).toContain("PLATFORM_DATABASE_IDENTITY_WORKER_ROLE");
-    expect(migrator).toContain("grantIdentityWorkerPrivileges");
-    expect(migrator).toContain("IDENTITY_WORKER_POST_AUTHORITY_SQL");
-    expect(migrator).toMatch(
-      /GRANT SELECT\(site_ref,transaction_ref,state,resend_count,expires_at\)[\s\S]+ON TABLE platform\.identity_verification_transaction TO \$\{identityWorker\}/u,
+    expect(migrator).toContain("grantSplitWorkerPrivileges");
+    expect(migrator).toContain("SPLIT_WORKER_EXACT_AUTHORITY_SQL");
+    expect(SPLIT_WORKER_RELATION_AUTHORITY["identity-worker"]).toEqual([
+      { relation: "platform_foundation", privilege: "SELECT" },
+      { relation: "outbox_event", privilege: "SELECT" },
+      {
+        relation: "outbox_event",
+        privilege: "UPDATE",
+        columns: [
+          "state",
+          "available_at",
+          "last_error_code",
+          "lease_owner",
+          "lease_token",
+          "lease_expires_at",
+          "attempt",
+          "delivered_at",
+          "consumer_delivery_id",
+          "consumer_acknowledged_at",
+          "updated_at",
+        ],
+      },
+      {
+        relation: "identity_verification_transaction",
+        privilege: "SELECT",
+        columns: ["site_ref", "transaction_ref", "state", "resend_count", "expires_at"],
+      },
+      {
+        relation: "identity_verification_delivery",
+        privilege: "SELECT",
+        columns: ["event_id", "site_ref", "transaction_ref", "credential_revision", "state"],
+      },
+      {
+        relation: "identity_verification_delivery",
+        privilege: "UPDATE",
+        columns: [
+          "state",
+          "attempt_count",
+          "delivered_at",
+          "failed_at",
+          "superseded_at",
+          "last_error_code",
+          "updated_at",
+        ],
+      },
+      {
+        relation: "identity_personal_bootstrap",
+        privilege: "SELECT",
+        columns: [
+          "site_ref",
+          "subject_ref",
+          "workspace_ref",
+          "project_ref",
+          "execution_space_ref",
+          "execution_namespace",
+          "namespace_intent_ref",
+        ],
+      },
+      {
+        relation: "identity_execution_space",
+        privilege: "SELECT",
+        columns: ["site_ref", "execution_space_ref", "project_ref", "execution_namespace", "state"],
+      },
+      {
+        relation: "identity_execution_space",
+        privilege: "UPDATE",
+        columns: ["state", "updated_at"],
+      },
+      {
+        relation: "identity_namespace_allocation_intent",
+        privilege: "SELECT",
+        columns: [
+          "intent_ref",
+          "event_id",
+          "site_ref",
+          "execution_space_ref",
+          "execution_namespace",
+          "state",
+        ],
+      },
+      {
+        relation: "identity_namespace_allocation_intent",
+        privilege: "UPDATE",
+        columns: ["state", "attempt_count", "last_error_code", "updated_at"],
+      },
+    ]);
+    expect(SPLIT_WORKER_RELATION_AUTHORITY["identity-worker"]).not.toContainEqual(
+      expect.objectContaining({ privilege: "INSERT" }),
     );
-    expect(migrator).toMatch(
-      /GRANT SELECT\(event_id,site_ref,transaction_ref,credential_revision,state\)[\s\S]+ON TABLE platform\.identity_verification_delivery TO \$\{identityWorker\}/u,
+    expect(SPLIT_WORKER_RELATION_AUTHORITY["identity-worker"]).not.toContainEqual(
+      expect.objectContaining({ privilege: "DELETE" }),
     );
-    expect(migrator).toMatch(
-      /GRANT SELECT\(site_ref,subject_ref,workspace_ref,project_ref,execution_space_ref,[\s\S]+execution_namespace,namespace_intent_ref\)[\s\S]+ON TABLE platform\.identity_personal_bootstrap TO \$\{identityWorker\}/u,
-    );
-    expect(migrator).toMatch(
-      /GRANT UPDATE\(state,attempt_count,delivered_at,failed_at,superseded_at,[\s\S]+last_error_code,updated_at\)[\s\S]+ON TABLE platform\.identity_verification_delivery[\s\S]+TO \$\{identityWorker\}/u,
-    );
-    expect(migrator).toMatch(
-      /UPDATE\(state,updated_at\) ON TABLE platform\.identity_execution_space[\s\S]+TO \$\{identityWorker\}/u,
-    );
-    expect(migrator).toMatch(
-      /UPDATE\(state,attempt_count,last_error_code,updated_at\)[\s\S]+ON TABLE platform\.identity_namespace_allocation_intent TO \$\{identityWorker\}/u,
-    );
-    expect(migrator).not.toMatch(
-      /workerRole[\s\S]+GRANT (?:INSERT|DELETE) ON TABLE platform\.identity_/u,
-    );
-    expect(migrator).toContain(
-      "NOT has_column_privilege($1,'platform.identity_verification_transaction','secret_digest','SELECT')",
-    );
-    expect(migrator).toContain("hasUnexpectedIdentityPrivilege");
     expect(migrator).toContain("configureOutboxOwnerPolicies");
     expect(migrator).toContain("ALTER TABLE platform.outbox_event FORCE ROW LEVEL SECURITY");
     expect(migrator).toContain("outbox_identity_worker_select");
     expect(migrator).toContain("outbox_identity_worker_update");
     expect(migrator).toMatch(/identityWorker[\s\S]+owners:\s*\["identity"\]/u);
-    expect(migrator).toMatch(
-      /worker[\s\S]+owners:\s*\["commerce",\s*"credit",\s*"site",\s*"asset",\s*"admin-execution"\]/u,
-    );
+    expect(migrator).toMatch(/commerceWorker[\s\S]+owners:\s*\["commerce",\s*"credit"\]/u);
     expect(migrator).not.toMatch(
       /GRANT UPDATE ON TABLE platform\.command_receipt, platform\.outbox_event/u,
     );
@@ -156,9 +245,10 @@ describe("Identity outbox production authority", () => {
     expect(ownerFence).toContain("ALTER TABLE platform.outbox_event FORCE ROW LEVEL SECURITY");
     expect(ownerFence).not.toMatch(/current_setting|set_config|app\./u);
     expect(ownerFence).toContain("owner bypass are not part of this boundary");
-    const assetCompletionFunction = assetCompletionAuthority.match(
-      /CREATE OR REPLACE FUNCTION platform\.enqueue_asset_upload_completion_event[\s\S]+?REVOKE ALL ON FUNCTION/u,
-    )?.[0] ?? "";
+    const assetCompletionFunction =
+      assetCompletionAuthority.match(
+        /CREATE OR REPLACE FUNCTION platform\.enqueue_asset_upload_completion_event[\s\S]+?REVOKE ALL ON FUNCTION/u,
+      )?.[0] ?? "";
     expect(assetCompletionFunction).toContain("SECURITY DEFINER");
     expect(assetCompletionFunction).toContain("SET search_path=pg_catalog,platform");
     expect(assetCompletionFunction).not.toMatch(
@@ -180,7 +270,9 @@ describe("Identity outbox production authority", () => {
     expect(identityWorker).toContain("identity.stopClaiming");
     expect(identityWorker).toContain("identity.returnLeases");
     expect(identityWorker).toContain('loadPlatformDatabaseConfig("identity-worker"');
-    expect(client).toContain('operation === "identity.outbox.consume"');
+    expect(client).toContain(
+      'internalOperations: Object.freeze(["identity.outbox.consume"] as const)',
+    );
     expect(client).toContain('config.role === "identity-worker"');
     expect(compose).toContain("platform-identity-worker:");
     expect(compose).toContain("PLATFORM_IDENTITY_DELIVERY_ENDPOINT");

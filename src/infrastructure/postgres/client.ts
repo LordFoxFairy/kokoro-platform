@@ -10,18 +10,43 @@ import type { PlatformTransactionHost } from "../../shared/unit-of-work/unit-of-
 import { assertVerifiedRequestSecurityContext } from "../../shared/security-context/request-security-context.js";
 import type { SessionAuthenticationPort } from "../../modules/authorization/application/contracts/session-authorization-ports.js";
 import type { AuthenticatedUserSession } from "../../modules/authorization/domain/session-access-grant.js";
-import type { AdminQueryPermit } from
-  "../../modules/admin/interfaces/connect/admin-query-service.js";
-import type { AdminWorkloadAxes } from
-  "../../modules/admin/application/services/admin-oidc-service.js";
+import type { AdminQueryPermit } from "../../modules/admin/interfaces/connect/admin-query-service.js";
+import type { AdminWorkloadAxes } from "../../modules/admin/application/services/admin-oidc-service.js";
 import { OUTBOX_POLICY_RUNTIME_ASSERTION_SQL } from "./outbox-policy-authority.js";
+import {
+  canonicalRelationAuthority,
+  splitWorkerRelationNames,
+  SPLIT_WORKER_EXACT_AUTHORITY_SQL,
+  SPLIT_WORKER_ROUTINE_AUTHORITY,
+  type ExactWorkerAuthorityRow,
+} from "./split-worker-authority.js";
 
 export type PlatformProcessRole =
-  | "api" | "admission" | "authorization" | "asset-data-plane" | "worker" |
-  "identity-worker" | "admin" | "migrator";
+  | "api"
+  | "admission"
+  | "authorization"
+  | "asset-data-plane"
+  | "commerce-worker"
+  | "site-worker"
+  | "asset-worker"
+  | "admin-worker"
+  | "identity-worker"
+  | "authorization-maintenance"
+  | "admin"
+  | "migrator";
 export type PlatformCredentialClass =
-  | "api" | "admission" | "authorization" | "asset-data-plane" | "worker" |
-  "identity-worker" | "admin" | "migrator";
+  | "api"
+  | "admission"
+  | "authorization"
+  | "asset-data-plane"
+  | "commerce-worker"
+  | "site-worker"
+  | "asset-worker"
+  | "admin-worker"
+  | "identity-worker"
+  | "authorization-maintenance"
+  | "admin"
+  | "migrator";
 
 const ROLE_DEFAULTS = {
   api: { poolMax: 20, credentialClass: "api", identityEnv: "PLATFORM_DATABASE_API_ROLE" },
@@ -40,15 +65,35 @@ const ROLE_DEFAULTS = {
     credentialClass: "asset-data-plane",
     identityEnv: "PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE",
   },
-  worker: {
+  "commerce-worker": {
     poolMax: 8,
-    credentialClass: "worker",
-    identityEnv: "PLATFORM_DATABASE_WORKER_ROLE",
+    credentialClass: "commerce-worker",
+    identityEnv: "PLATFORM_DATABASE_COMMERCE_WORKER_ROLE",
+  },
+  "site-worker": {
+    poolMax: 8,
+    credentialClass: "site-worker",
+    identityEnv: "PLATFORM_DATABASE_SITE_WORKER_ROLE",
+  },
+  "asset-worker": {
+    poolMax: 8,
+    credentialClass: "asset-worker",
+    identityEnv: "PLATFORM_DATABASE_ASSET_WORKER_ROLE",
+  },
+  "admin-worker": {
+    poolMax: 4,
+    credentialClass: "admin-worker",
+    identityEnv: "PLATFORM_DATABASE_ADMIN_WORKER_ROLE",
   },
   "identity-worker": {
     poolMax: 4,
     credentialClass: "identity-worker",
     identityEnv: "PLATFORM_DATABASE_IDENTITY_WORKER_ROLE",
+  },
+  "authorization-maintenance": {
+    poolMax: 2,
+    credentialClass: "authorization-maintenance",
+    identityEnv: "PLATFORM_DATABASE_AUTHORIZATION_MAINTENANCE_ROLE",
   },
   admin: {
     poolMax: 4,
@@ -205,6 +250,72 @@ export type PlatformScopedInternalOperation =
   | "asset.promotion.finalize"
   | "asset.cleanup.delete";
 
+export type PlatformWorkerAuthorityRole = Extract<
+  PlatformProcessRole,
+  | "commerce-worker"
+  | "site-worker"
+  | "asset-worker"
+  | "admin-worker"
+  | "identity-worker"
+  | "authorization-maintenance"
+>;
+
+export const PLATFORM_WORKER_DATABASE_AUTHORITY = Object.freeze({
+  "commerce-worker": Object.freeze({
+    workloadKind: "platform_commerce_worker",
+    internalOperations: Object.freeze(["commerce.outbox.reconcile"] as const),
+    scopedOperations: Object.freeze([]),
+    adminExecution: false,
+  }),
+  "site-worker": Object.freeze({
+    workloadKind: "platform_site_worker",
+    internalOperations: Object.freeze(["site.runtime.consume"] as const),
+    scopedOperations: Object.freeze([]),
+    adminExecution: false,
+  }),
+  "asset-worker": Object.freeze({
+    workloadKind: "platform_asset_worker",
+    internalOperations: Object.freeze(["asset.outbox.consume"] as const),
+    scopedOperations: Object.freeze([
+      "asset.upload-completion.observe",
+      "asset.scan.evaluate",
+      "asset.promotion.finalize",
+      "asset.cleanup.delete",
+    ] as const),
+    adminExecution: false,
+  }),
+  "admin-worker": Object.freeze({
+    workloadKind: "platform_admin_worker",
+    internalOperations: Object.freeze([
+      "admin.execution.claim",
+      "admin.execution.retry",
+      "admin.terminalize",
+    ] as const),
+    scopedOperations: Object.freeze([]),
+    adminExecution: true,
+  }),
+  "identity-worker": Object.freeze({
+    workloadKind: "platform_identity_worker",
+    internalOperations: Object.freeze(["identity.outbox.consume"] as const),
+    scopedOperations: Object.freeze([]),
+    adminExecution: false,
+  }),
+  "authorization-maintenance": Object.freeze({
+    workloadKind: "platform_authorization_maintenance",
+    internalOperations: Object.freeze(["authorization.retention"] as const),
+    scopedOperations: Object.freeze([]),
+    adminExecution: false,
+  }),
+} as const satisfies Record<
+  PlatformWorkerAuthorityRole,
+  Readonly<{
+    workloadKind: string;
+    internalOperations: readonly PlatformInternalOperation[];
+    scopedOperations: readonly PlatformScopedInternalOperation[];
+    adminExecution: boolean;
+  }>
+>);
+
 export function loadPlatformDatabaseConfig(
   role: PlatformProcessRole,
   environment: Readonly<Record<string, string | undefined>> = process.env,
@@ -295,6 +406,32 @@ export function createPlatformDatabaseClient(
     connect: async () => {
       await prisma.$connect();
       try {
+        const splitAuthority = workerAuthorityForRole(config.role);
+        if (splitAuthority !== undefined) {
+          const rows = await prisma.$queryRawUnsafe<SplitWorkerRuntimeIdentity[]>(
+            SPLIT_WORKER_RUNTIME_IDENTITY_SQL,
+            config.migratorDatabaseUser,
+            splitWorkerRelationNames(config.role as PlatformWorkerAuthorityRole),
+          );
+          if (!validSplitWorkerRuntimeIdentity(rows[0], config)) {
+            throw new Error(
+              `PLATFORM_RUNTIME_DATABASE_ROLE_INVALID:${JSON.stringify(rows[0] ?? null)}`,
+            );
+          }
+          const exactAuthority = await prisma.$queryRawUnsafe<ExactWorkerAuthorityRow[]>(
+            SPLIT_WORKER_EXACT_AUTHORITY_SQL,
+            config.expectedDatabaseUser,
+            JSON.stringify(canonicalRelationAuthority(config.role as PlatformWorkerAuthorityRole)),
+            SPLIT_WORKER_ROUTINE_AUTHORITY[config.role as PlatformWorkerAuthorityRole],
+          );
+          if (!validExactWorkerAuthority(exactAuthority[0])) {
+            throw new Error(
+              `PLATFORM_RUNTIME_DATABASE_ROLE_INVALID:${JSON.stringify(exactAuthority[0] ?? null)}`,
+            );
+          }
+          await prisma.$queryRaw`SELECT "schemaVersion" FROM platform.platform_foundation WHERE singleton = TRUE`;
+          return;
+        }
         const rows = await prisma.$queryRawUnsafe<RuntimeIdentity[]>(
           RUNTIME_IDENTITY_SQL,
           config.migratorDatabaseUser,
@@ -360,22 +497,19 @@ export function createPlatformDatabaseClient(
       operation: PlatformInternalOperation,
       work: (transaction: PlatformTransaction) => Promise<Result>,
     ) => {
-      const allowed = config.role === "admission"
-        ? operation === "admission.command" || operation === "asset.eligibility.check-active" ||
-          operation === "asset.eligibility.resolve"
-        : config.role === "identity-worker"
-          ? operation === "identity.outbox.consume"
-          : config.role === "worker"
-          ? operation === "authorization.retention" ||
-            operation === "commerce.outbox.reconcile" ||
-            operation === "asset.outbox.consume" ||
-            operation === "site.runtime.consume" ||
-            operation === "admin.execution.claim" ||
-            operation === "admin.execution.retry" ||
-            operation === "admin.terminalize"
-          : config.role === "authorization" &&
-            (operation === "authorization.feed.read" ||
-              operation === "authorization.snapshot.create");
+      const workerAuthority = workerAuthorityForRole(config.role);
+      const allowed =
+        config.role === "admission"
+          ? operation === "admission.command" ||
+            operation === "asset.eligibility.check-active" ||
+            operation === "asset.eligibility.resolve"
+          : workerAuthority !== undefined
+            ? (workerAuthority.internalOperations as readonly PlatformInternalOperation[]).includes(
+                operation,
+              )
+            : config.role === "authorization" &&
+              (operation === "authorization.feed.read" ||
+                operation === "authorization.snapshot.create");
       if (!allowed) throw new Error("PLATFORM_INTERNAL_OPERATION_ROLE_FORBIDDEN");
       return prisma.$transaction(
         async (databaseTransaction) => {
@@ -383,13 +517,8 @@ export function createPlatformDatabaseClient(
             `SELECT set_config('app.operation',$1,true),
                   set_config('app.workload_kind',$2,true)`,
             operation,
-            config.role === "identity-worker"
-              ? "platform_identity_worker"
-              : config.role === "worker"
-                ? "platform_worker"
-              : config.role === "admission"
-                ? "platform_admission"
-                : "platform_authorization",
+            workerAuthority?.workloadKind ??
+              (config.role === "admission" ? "platform_admission" : "platform_authorization"),
           );
           const lease = issuePlatformTransaction({
             query: (statement, values = []) =>
@@ -410,49 +539,64 @@ export function createPlatformDatabaseClient(
         },
       );
     },
-    internalScopedTransaction: async <Result>(scope: Readonly<{
-      operation: PlatformScopedInternalOperation;
-      siteRef: string;
-      environment: string;
-      region: string;
-      scopes: readonly ["asset:worker"];
-    }>, work: (transaction: PlatformTransaction) => Promise<Result>) => {
-      if (config.role !== "worker" || !new Set<PlatformScopedInternalOperation>([
-        "asset.upload-completion.observe", "asset.scan.evaluate", "asset.promotion.finalize",
-        "asset.cleanup.delete",
-      ]).has(scope.operation) ||
-          scope.scopes.length !== 1 || scope.scopes[0] !== "asset:worker") {
+    internalScopedTransaction: async <Result>(
+      scope: Readonly<{
+        operation: PlatformScopedInternalOperation;
+        siteRef: string;
+        environment: string;
+        region: string;
+        scopes: readonly ["asset:worker"];
+      }>,
+      work: (transaction: PlatformTransaction) => Promise<Result>,
+    ) => {
+      const workerAuthority = workerAuthorityForRole(config.role);
+      if (
+        config.role !== "asset-worker" ||
+        workerAuthority === undefined ||
+        !(workerAuthority.scopedOperations as readonly PlatformScopedInternalOperation[]).includes(
+          scope.operation,
+        ) ||
+        scope.scopes.length !== 1 ||
+        scope.scopes[0] !== "asset:worker"
+      ) {
         throw new Error("PLATFORM_SCOPED_INTERNAL_OPERATION_ROLE_FORBIDDEN");
       }
       scopedIdentifier(scope.siteRef, "PLATFORM_INTERNAL_SITE_INVALID");
       scopedIdentifier(scope.environment, "PLATFORM_INTERNAL_ENVIRONMENT_INVALID");
       scopedIdentifier(scope.region, "PLATFORM_INTERNAL_REGION_INVALID");
-      return prisma.$transaction(async (databaseTransaction) => {
-        await databaseTransaction.$queryRawUnsafe(
-          `SELECT set_config('app.operation',$1,true),set_config('app.site_id',$2,true),
+      return prisma.$transaction(
+        async (databaseTransaction) => {
+          await databaseTransaction.$queryRawUnsafe(
+            `SELECT set_config('app.operation',$1,true),set_config('app.site_id',$2,true),
                   set_config('app.environment',$3,true),set_config('app.region',$4,true),
-                  set_config('app.workload_kind','platform_worker',true),
+                  set_config('app.workload_kind',$5,true),
                   set_config('app.actor_kind','workload',true),
-                  set_config('app.subject_id','',true),set_config('app.scopes',$5,true)`,
-          scope.operation, scope.siteRef, scope.environment, scope.region,
-          JSON.stringify(scope.scopes),
-        );
-        const lease = issuePlatformTransaction({
-          query: (statement, values = []) =>
-            databaseTransaction.$queryRawUnsafe(statement, ...values),
-          execute: (statement, values = []) =>
-            databaseTransaction.$executeRawUnsafe(statement, ...values),
-        });
-        try {
-          return await work(lease.transaction);
-        } finally {
-          revokePlatformTransaction(lease);
-        }
-      }, {
-        isolationLevel: config.transaction.isolationLevel,
-        maxWait: config.transaction.maxWaitMs,
-        timeout: config.transaction.timeoutMs,
-      });
+                  set_config('app.subject_id','',true),set_config('app.scopes',$6,true)`,
+            scope.operation,
+            scope.siteRef,
+            scope.environment,
+            scope.region,
+            workerAuthority.workloadKind,
+            JSON.stringify(scope.scopes),
+          );
+          const lease = issuePlatformTransaction({
+            query: (statement, values = []) =>
+              databaseTransaction.$queryRawUnsafe(statement, ...values),
+            execute: (statement, values = []) =>
+              databaseTransaction.$executeRawUnsafe(statement, ...values),
+          });
+          try {
+            return await work(lease.transaction);
+          } finally {
+            revokePlatformTransaction(lease);
+          }
+        },
+        {
+          isolationLevel: config.transaction.isolationLevel,
+          maxWait: config.transaction.maxWaitMs,
+          timeout: config.transaction.timeoutMs,
+        },
+      );
     },
     assetDataPlaneTransaction: async <Result>(
       fence: AssetDataPlaneTransactionFence,
@@ -460,40 +604,51 @@ export function createPlatformDatabaseClient(
     ) => {
       if (config.role !== "asset-data-plane") throw new Error("ASSET_DATA_PLANE_ROLE_FORBIDDEN");
       assertAssetDataPlaneFence(fence);
-      return prisma.$transaction(async (databaseTransaction) => {
-        await databaseTransaction.$queryRawUnsafe(
-          `SELECT set_config('app.operation',$1,true),set_config('app.site_id',$2,true),
+      return prisma.$transaction(
+        async (databaseTransaction) => {
+          await databaseTransaction.$queryRawUnsafe(
+            `SELECT set_config('app.operation',$1,true),set_config('app.site_id',$2,true),
                   set_config('app.subject_id',$3,true),set_config('app.subject_generation',$4,true),
                   set_config('app.project_id',$5,true),set_config('app.purpose',$6,true),
                   set_config('app.policy_epoch',$7,true),
                   set_config('app.workload_kind','site_product',true),
                   set_config('app.actor_kind','user',true),
                   set_config('app.scopes','["asset:upload"]',true)`,
-          fence.operation, fence.siteRef, fence.subjectRef, fence.subjectGeneration,
-          fence.projectRef, fence.purpose, fence.capabilityEpoch,
-        );
-        const lease = issuePlatformTransaction({
-          query: (statement, values = []) =>
-            databaseTransaction.$queryRawUnsafe(statement, ...values),
-          execute: (statement, values = []) =>
-            databaseTransaction.$executeRawUnsafe(statement, ...values),
-        });
-        try {
-          return await work(lease.transaction);
-        } finally {
-          revokePlatformTransaction(lease);
-        }
-      }, {
-        isolationLevel: config.transaction.isolationLevel,
-        maxWait: config.transaction.maxWaitMs,
-        timeout: config.transaction.timeoutMs,
-      });
+            fence.operation,
+            fence.siteRef,
+            fence.subjectRef,
+            fence.subjectGeneration,
+            fence.projectRef,
+            fence.purpose,
+            fence.capabilityEpoch,
+          );
+          const lease = issuePlatformTransaction({
+            query: (statement, values = []) =>
+              databaseTransaction.$queryRawUnsafe(statement, ...values),
+            execute: (statement, values = []) =>
+              databaseTransaction.$executeRawUnsafe(statement, ...values),
+          });
+          try {
+            return await work(lease.transaction);
+          } finally {
+            revokePlatformTransaction(lease);
+          }
+        },
+        {
+          isolationLevel: config.transaction.isolationLevel,
+          maxWait: config.transaction.maxWaitMs,
+          timeout: config.transaction.timeoutMs,
+        },
+      );
     },
     adminExecutionTransaction: async <Result>(
       fence: AdminExecutionTransactionFence,
       work: (transaction: PlatformTransaction) => Promise<Result>,
     ) => {
-      if (config.role !== "worker") throw new Error("ADMIN_EXECUTION_ROLE_FORBIDDEN");
+      const workerAuthority = workerAuthorityForRole(config.role);
+      if (config.role !== "admin-worker" || workerAuthority?.adminExecution !== true) {
+        throw new Error("ADMIN_EXECUTION_ROLE_FORBIDDEN");
+      }
       assertAdminExecutionFence(fence);
       return prisma.$transaction(
         async (databaseTransaction) => {
@@ -502,7 +657,7 @@ export function createPlatformDatabaseClient(
                     set_config('app.site_id',$2,true),
                     set_config('app.environment',$3,true),
                     set_config('app.region',$4,true),
-                    set_config('app.workload_kind','platform_worker',true),
+                    set_config('app.workload_kind',$11,true),
                     set_config('app.actor_kind','operator',true),
                     set_config('app.subject_id',$5,true),
                     set_config('app.subject_generation',$6,true),
@@ -521,6 +676,7 @@ export function createPlatformDatabaseClient(
             fence.makerGeneration.toString(),
             fence.makerAuthorizationEpoch.toString(),
             fence.checkerAuthorizationEpoch.toString(),
+            workerAuthority.workloadKind,
           );
           const lease = issuePlatformTransaction({
             query: (statement, values = []) =>
@@ -593,36 +749,47 @@ export function createPlatformDatabaseClient(
     ) => {
       if (config.role !== "admin") throw new Error("ADMIN_QUERY_ROLE_FORBIDDEN");
       assertAdminQueryPermit(permit);
-      const siteRefs = permit.scope.kind === "site"
-        ? permit.scope.siteRefs
-        : permit.scope.kind === "breakglass" ? permit.scope.resourceRefs : [];
-      return prisma.$transaction(async (databaseTransaction) => {
-        await databaseTransaction.$queryRawUnsafe(
-          `SELECT set_config('app.operation',$1,true),set_config('app.environment',$2,true),
+      const siteRefs =
+        permit.scope.kind === "site"
+          ? permit.scope.siteRefs
+          : permit.scope.kind === "breakglass"
+            ? permit.scope.resourceRefs
+            : [];
+      return prisma.$transaction(
+        async (databaseTransaction) => {
+          await databaseTransaction.$queryRawUnsafe(
+            `SELECT set_config('app.operation',$1,true),set_config('app.environment',$2,true),
                   set_config('app.region',$3,true),set_config('app.workload_kind','platform_admin',true),
                   set_config('app.actor_kind','operator',true),set_config('app.subject_id',$4,true),
                   set_config('app.admin_scope_kind',$5,true),
                   set_config('app.admin_site_refs',$6,true),set_config('app.site_id','',true),
                   set_config('app.scopes',$7,true)`,
-          permit.operation, permit.environment, permit.region, permit.operatorRef,
-          permit.scope.kind, JSON.stringify(siteRefs), JSON.stringify([`admin:${permit.operation}`]),
-        );
-        const lease = issuePlatformTransaction({
-          query: (statement, values = []) =>
-            databaseTransaction.$queryRawUnsafe(statement, ...values),
-          execute: (statement, values = []) =>
-            databaseTransaction.$executeRawUnsafe(statement, ...values),
-        });
-        try {
-          return await work(lease.transaction);
-        } finally {
-          revokePlatformTransaction(lease);
-        }
-      }, {
-        isolationLevel: config.transaction.isolationLevel,
-        maxWait: config.transaction.maxWaitMs,
-        timeout: config.transaction.timeoutMs,
-      });
+            permit.operation,
+            permit.environment,
+            permit.region,
+            permit.operatorRef,
+            permit.scope.kind,
+            JSON.stringify(siteRefs),
+            JSON.stringify([`admin:${permit.operation}`]),
+          );
+          const lease = issuePlatformTransaction({
+            query: (statement, values = []) =>
+              databaseTransaction.$queryRawUnsafe(statement, ...values),
+            execute: (statement, values = []) =>
+              databaseTransaction.$executeRawUnsafe(statement, ...values),
+          });
+          try {
+            return await work(lease.transaction);
+          } finally {
+            revokePlatformTransaction(lease);
+          }
+        },
+        {
+          isolationLevel: config.transaction.isolationLevel,
+          maxWait: config.transaction.maxWaitMs,
+          timeout: config.transaction.timeoutMs,
+        },
+      );
     },
     adminSiteQueryTransaction: async <Result>(
       permit: AdminQueryPermit,
@@ -632,36 +799,47 @@ export function createPlatformDatabaseClient(
       if (config.role !== "admin") throw new Error("ADMIN_QUERY_ROLE_FORBIDDEN");
       assertAdminQueryPermit(permit);
       assertAdminSiteQueryPermit(permit, siteRef);
-      const siteRefs = permit.scope.kind === "site"
-        ? permit.scope.siteRefs
-        : permit.scope.kind === "breakglass" ? permit.scope.resourceRefs : [];
-      return prisma.$transaction(async (databaseTransaction) => {
-        await databaseTransaction.$queryRawUnsafe(
-          `SELECT set_config('app.operation',$1,true),set_config('app.environment',$2,true),
+      const siteRefs =
+        permit.scope.kind === "site"
+          ? permit.scope.siteRefs
+          : permit.scope.kind === "breakglass"
+            ? permit.scope.resourceRefs
+            : [];
+      return prisma.$transaction(
+        async (databaseTransaction) => {
+          await databaseTransaction.$queryRawUnsafe(
+            `SELECT set_config('app.operation',$1,true),set_config('app.environment',$2,true),
                   set_config('app.region',$3,true),set_config('app.workload_kind','platform_admin',true),
                   set_config('app.actor_kind','operator',true),set_config('app.subject_id',$4,true),
                   set_config('app.admin_scope_kind',$5,true),set_config('app.admin_site_refs',$6,true),
                   set_config('app.site_id',$7,true),set_config('app.scopes',$8,true)`,
-          permit.operation, permit.environment, permit.region, permit.operatorRef,
-          permit.scope.kind, JSON.stringify(siteRefs), siteRef,
-          JSON.stringify([`admin:${permit.operation}`]),
-        );
-        const lease = issuePlatformTransaction({
-          query: (statement, values = []) =>
-            databaseTransaction.$queryRawUnsafe(statement, ...values),
-          execute: (statement, values = []) =>
-            databaseTransaction.$executeRawUnsafe(statement, ...values),
-        });
-        try {
-          return await work(lease.transaction);
-        } finally {
-          revokePlatformTransaction(lease);
-        }
-      }, {
-        isolationLevel: config.transaction.isolationLevel,
-        maxWait: config.transaction.maxWaitMs,
-        timeout: config.transaction.timeoutMs,
-      });
+            permit.operation,
+            permit.environment,
+            permit.region,
+            permit.operatorRef,
+            permit.scope.kind,
+            JSON.stringify(siteRefs),
+            siteRef,
+            JSON.stringify([`admin:${permit.operation}`]),
+          );
+          const lease = issuePlatformTransaction({
+            query: (statement, values = []) =>
+              databaseTransaction.$queryRawUnsafe(statement, ...values),
+            execute: (statement, values = []) =>
+              databaseTransaction.$executeRawUnsafe(statement, ...values),
+          });
+          try {
+            return await work(lease.transaction);
+          } finally {
+            revokePlatformTransaction(lease);
+          }
+        },
+        {
+          isolationLevel: config.transaction.isolationLevel,
+          maxWait: config.transaction.maxWaitMs,
+          timeout: config.transaction.timeoutMs,
+        },
+      );
     },
     adminAuthenticationTransaction: async <Result>(
       fence: Readonly<AdminWorkloadAxes & { credentialDigest: string }>,
@@ -672,34 +850,40 @@ export function createPlatformDatabaseClient(
       if (!/^[a-f0-9]{64}$/u.test(fence.credentialDigest)) {
         throw new Error("ADMIN_AUTHENTICATION_FENCE_INVALID");
       }
-      return prisma.$transaction(async (databaseTransaction) => {
-        await databaseTransaction.$queryRawUnsafe(
-          `SELECT set_config('app.operation','admin.session.authenticate',true),
+      return prisma.$transaction(
+        async (databaseTransaction) => {
+          await databaseTransaction.$queryRawUnsafe(
+            `SELECT set_config('app.operation','admin.session.authenticate',true),
                   set_config('app.workload_identity_ref',$1,true),
                   set_config('app.environment',$2,true),set_config('app.region',$3,true),
                   set_config('app.managed_device_ref',$4,true),set_config('app.audience',$5,true),
                   set_config('app.workload_kind','platform_admin',true),
                   set_config('app.actor_kind','operator',true),set_config('app.subject_id','',true),
                   set_config('app.site_id','',true),set_config('app.scopes','[]',true)`,
-          fence.workloadIdentityRef, fence.environment, fence.region,
-          fence.managedDeviceRef, fence.audience,
-        );
-        const lease = issuePlatformTransaction({
-          query: (statement, values = []) =>
-            databaseTransaction.$queryRawUnsafe(statement, ...values),
-          execute: (statement, values = []) =>
-            databaseTransaction.$executeRawUnsafe(statement, ...values),
-        });
-        try {
-          return await work(lease.transaction);
-        } finally {
-          revokePlatformTransaction(lease);
-        }
-      }, {
-        isolationLevel: config.transaction.isolationLevel,
-        maxWait: config.transaction.maxWaitMs,
-        timeout: config.transaction.timeoutMs,
-      });
+            fence.workloadIdentityRef,
+            fence.environment,
+            fence.region,
+            fence.managedDeviceRef,
+            fence.audience,
+          );
+          const lease = issuePlatformTransaction({
+            query: (statement, values = []) =>
+              databaseTransaction.$queryRawUnsafe(statement, ...values),
+            execute: (statement, values = []) =>
+              databaseTransaction.$executeRawUnsafe(statement, ...values),
+          });
+          try {
+            return await work(lease.transaction);
+          } finally {
+            revokePlatformTransaction(lease);
+          }
+        },
+        {
+          isolationLevel: config.transaction.isolationLevel,
+          maxWait: config.transaction.maxWaitMs,
+          timeout: config.transaction.timeoutMs,
+        },
+      );
     },
     transaction: async <Result>(
       fence: Parameters<PlatformTransactionHost["transaction"]>[0],
@@ -761,13 +945,20 @@ export function createPlatformDatabaseClient(
 
 function assertAdminIdentityFence(fence: AdminIdentityTransactionFence): void {
   const operations = new Set<AdminIdentityTransactionFence["operation"]>([
-    "admin.identity.begin", "admin.identity.exchange", "admin.identity.delivery.read",
+    "admin.identity.begin",
+    "admin.identity.exchange",
+    "admin.identity.delivery.read",
   ]);
   if (!operations.has(fence.operation) || !fence.workloadIdentityRef.startsWith("spiffe://")) {
     throw new Error("ADMIN_IDENTITY_FENCE_INVALID");
   }
-  for (const value of [fence.workloadIdentityRef, fence.environment, fence.region,
-    fence.managedDeviceRef, fence.audience]) {
+  for (const value of [
+    fence.workloadIdentityRef,
+    fence.environment,
+    fence.region,
+    fence.managedDeviceRef,
+    fence.audience,
+  ]) {
     if (value.length < 1 || value.length > 256 || hasControlCharacter(value)) {
       throw new Error("ADMIN_IDENTITY_FENCE_INVALID");
     }
@@ -775,24 +966,48 @@ function assertAdminIdentityFence(fence: AdminIdentityTransactionFence): void {
 }
 
 function assertAdminQueryPermit(permit: AdminQueryPermit): void {
-  if (!new Set<AdminQueryPermit["operation"]>([
-    "admin.site.read", "admin.site.list", "admin.user.read", "admin.audit.read",
-    "admin.operator.self.read", "admin.operator.read", "admin.operator.list", "admin.approval.list",
-    "commerce.credit-program.read", "commerce.entitlement-template.read",
-    "commerce.offer.read", "commerce.redemption-program.read", "commerce.code-batch.read",
-    "credit.summary.read", "credit.account.read", "credit.grant.read", "credit.hold.read",
-    "credit.journal.read", "credit.rated-usage.read",
-    "model.inventory.read", "model.option.read", "model.site-policy.read",
-    "model.site-release-catalog.read",
-  ]).has(permit.operation)) throw new Error("ADMIN_QUERY_PERMIT_INVALID");
+  if (
+    !new Set<AdminQueryPermit["operation"]>([
+      "admin.site.read",
+      "admin.site.list",
+      "admin.user.read",
+      "admin.audit.read",
+      "admin.operator.self.read",
+      "admin.operator.read",
+      "admin.operator.list",
+      "admin.approval.list",
+      "commerce.credit-program.read",
+      "commerce.entitlement-template.read",
+      "commerce.offer.read",
+      "commerce.redemption-program.read",
+      "commerce.code-batch.read",
+      "credit.summary.read",
+      "credit.account.read",
+      "credit.grant.read",
+      "credit.hold.read",
+      "credit.journal.read",
+      "credit.rated-usage.read",
+      "model.inventory.read",
+      "model.option.read",
+      "model.site-policy.read",
+      "model.site-release-catalog.read",
+    ]).has(permit.operation)
+  )
+    throw new Error("ADMIN_QUERY_PERMIT_INVALID");
   for (const value of [permit.operatorRef, permit.environment, permit.region]) {
     if (value.length < 1 || value.length > 128 || hasControlCharacter(value)) {
       throw new Error("ADMIN_QUERY_PERMIT_INVALID");
     }
   }
-  if (permit.scope.kind === "site" && (permit.scope.siteRefs.length < 1 ||
-      permit.scope.siteRefs.length > 100 || permit.scope.siteRefs.some((value) =>
-        value === "*" || value.length < 1 || value.length > 128 || hasControlCharacter(value)))) {
+  if (
+    permit.scope.kind === "site" &&
+    (permit.scope.siteRefs.length < 1 ||
+      permit.scope.siteRefs.length > 100 ||
+      permit.scope.siteRefs.some(
+        (value) =>
+          value === "*" || value.length < 1 || value.length > 128 || hasControlCharacter(value),
+      ))
+  ) {
     throw new Error("ADMIN_QUERY_PERMIT_INVALID");
   }
   if (permit.scope.kind === "breakglass" && permit.scope.resourceRefs.length < 1) {
@@ -802,21 +1017,29 @@ function assertAdminQueryPermit(permit: AdminQueryPermit): void {
 
 function assertAdminSiteQueryPermit(permit: AdminQueryPermit, siteRef: string): void {
   scopedIdentifier(siteRef, "ADMIN_QUERY_SITE_INVALID");
-  if ((permit.scope.kind === "site" && !permit.scope.siteRefs.includes(siteRef)) ||
-      (permit.scope.kind === "breakglass" && !permit.scope.resourceRefs.includes(siteRef))) {
+  if (
+    (permit.scope.kind === "site" && !permit.scope.siteRefs.includes(siteRef)) ||
+    (permit.scope.kind === "breakglass" && !permit.scope.resourceRefs.includes(siteRef))
+  ) {
     throw new Error("ADMIN_QUERY_SITE_SCOPE_DENIED");
   }
 }
 
 function assertAssetDataPlaneFence(value: AssetDataPlaneTransactionFence): void {
   const operations = new Set<AssetDataPlaneOperation>([
-    "asset.multipart.initiate", "asset.multipart.put-part", "asset.multipart.complete",
-    "asset.multipart.abort", "asset.multipart.status",
+    "asset.multipart.initiate",
+    "asset.multipart.put-part",
+    "asset.multipart.complete",
+    "asset.multipart.abort",
+    "asset.multipart.status",
   ]);
-  if (!operations.has(value.operation) ||
-      !/^[1-9][0-9]{0,19}$/u.test(value.subjectGeneration) ||
-      !/^[1-9][0-9]{0,19}$/u.test(value.capabilityEpoch) ||
-      !Number.isFinite(Date.parse(value.expiresAt)) || Date.now() >= Date.parse(value.expiresAt)) {
+  if (
+    !operations.has(value.operation) ||
+    !/^[1-9][0-9]{0,19}$/u.test(value.subjectGeneration) ||
+    !/^[1-9][0-9]{0,19}$/u.test(value.capabilityEpoch) ||
+    !Number.isFinite(Date.parse(value.expiresAt)) ||
+    Date.now() >= Date.parse(value.expiresAt)
+  ) {
     throw new Error("ASSET_DATA_PLANE_FENCE_INVALID");
   }
   for (const field of [value.siteRef, value.subjectRef, value.projectRef, value.purpose]) {
@@ -827,19 +1050,30 @@ function assertAssetDataPlaneFence(value: AssetDataPlaneTransactionFence): void 
 }
 
 function assertAdminExecutionFence(fence: AdminExecutionTransactionFence): void {
-  for (const value of [fence.operation, fence.environment, fence.region, fence.makerRef,
-    fence.checkerRef]) {
+  for (const value of [
+    fence.operation,
+    fence.environment,
+    fence.region,
+    fence.makerRef,
+    fence.checkerRef,
+  ]) {
     if (value.length < 1 || value.length > 128 || hasControlCharacter(value)) {
       throw new Error("ADMIN_EXECUTION_FENCE_INVALID");
     }
   }
-  if (fence.siteRef !== null && (fence.siteRef.length < 1 || fence.siteRef.length > 128 ||
-    hasControlCharacter(fence.siteRef))) {
+  if (
+    fence.siteRef !== null &&
+    (fence.siteRef.length < 1 || fence.siteRef.length > 128 || hasControlCharacter(fence.siteRef))
+  ) {
     throw new Error("ADMIN_EXECUTION_FENCE_INVALID");
   }
-  if (fence.makerRef === fence.checkerRef || fence.makerGeneration < 1n ||
-    fence.makerAuthorizationEpoch < 1n || fence.checkerGeneration < 1n ||
-    fence.checkerAuthorizationEpoch < 1n) {
+  if (
+    fence.makerRef === fence.checkerRef ||
+    fence.makerGeneration < 1n ||
+    fence.makerAuthorizationEpoch < 1n ||
+    fence.checkerGeneration < 1n ||
+    fence.checkerAuthorizationEpoch < 1n
+  ) {
     throw new Error("ADMIN_EXECUTION_FENCE_INVALID");
   }
 }
@@ -907,32 +1141,94 @@ interface RuntimeIdentity {
   unexpectedPlatformFunctions: readonly string[];
 }
 
+interface SplitWorkerRuntimeIdentity {
+  currentUser: string;
+  currentDatabase: string;
+  serverMajor: number;
+  databaseOwner: string;
+  schemaOwner: string | null;
+  foundationOwner: string | null;
+  canUseSchema: boolean;
+  canCreateSchema: boolean;
+  canCreateDatabaseObject: boolean;
+  canReadFoundation: boolean;
+  canMutateFoundation: boolean;
+  isMigratorMember: boolean;
+  isSuperuser: boolean;
+  canCreateDatabase: boolean;
+  canCreateRole: boolean;
+  canReplicate: boolean;
+  canBypassRls: boolean;
+  inheritsPrivileges: boolean;
+  hasAnyMembership: boolean;
+  hasAnyMembers: boolean;
+  ownsPlatformRelation: boolean;
+  ownsPlatformFunction: boolean;
+  outboxRlsEnabled: boolean;
+  outboxForceRlsEnabled: boolean;
+  outboxPoliciesValid: boolean;
+  hasUnexpectedRelationPrivilege: boolean;
+  hasAnySequencePrivilege: boolean;
+  canExecuteModelAvailabilityReport: boolean;
+  canExecuteAdminAuthorityChange: boolean;
+}
+
 const ASSET_RELATIONS = [
-  "asset_upload_intent", "asset_upload_session", "asset_quota_account",
-  "asset_quota_reservation", "asset_multipart_upload", "asset_multipart_part",
-  "asset_blob_candidate", "asset_cleanup_group",
-  "asset_object_cleanup", "asset_object_cleanup_receipt", "asset_upload_rejection",
-  "asset_scan_evaluation", "asset_promotion_intent", "asset_blob", "asset_resource",
-  "asset_version", "asset_reference", "asset_eligibility_projection", "asset_promotion_receipt",
+  "asset_upload_intent",
+  "asset_upload_session",
+  "asset_quota_account",
+  "asset_quota_reservation",
+  "asset_multipart_upload",
+  "asset_multipart_part",
+  "asset_blob_candidate",
+  "asset_cleanup_group",
+  "asset_object_cleanup",
+  "asset_object_cleanup_receipt",
+  "asset_upload_rejection",
+  "asset_scan_evaluation",
+  "asset_promotion_intent",
+  "asset_blob",
+  "asset_resource",
+  "asset_version",
+  "asset_reference",
+  "asset_eligibility_projection",
+  "asset_promotion_receipt",
 ] as const;
 const ASSET_API_RELATIONS = [
-  "asset_upload_intent", "asset_upload_session", "asset_quota_account",
-  "asset_quota_reservation", "asset_blob_candidate", "asset_upload_rejection",
-  "asset_promotion_intent", "asset_resource", "asset_version", "asset_eligibility_projection",
+  "asset_upload_intent",
+  "asset_upload_session",
+  "asset_quota_account",
+  "asset_quota_reservation",
+  "asset_blob_candidate",
+  "asset_upload_rejection",
+  "asset_promotion_intent",
+  "asset_resource",
+  "asset_version",
+  "asset_eligibility_projection",
 ] as const;
 const ASSET_API_MUTABLE_RELATIONS = ASSET_API_RELATIONS.slice(0, 4);
 const ASSET_API_OWNER_READ_RELATIONS = ASSET_API_RELATIONS.slice(4);
 const ASSET_DATA_PLANE_RELATIONS = [
-  "asset_upload_intent", "asset_upload_session", "asset_multipart_upload", "asset_multipart_part",
+  "asset_upload_intent",
+  "asset_upload_session",
+  "asset_multipart_upload",
+  "asset_multipart_part",
 ] as const;
 const ASSET_DATA_PLANE_MUTABLE_RELATIONS = [
-  "asset_upload_session", "asset_multipart_upload", "asset_multipart_part",
+  "asset_upload_session",
+  "asset_multipart_upload",
+  "asset_multipart_part",
 ] as const;
 const ASSET_WORKER_INSERT_RELATIONS = ASSET_RELATIONS.slice(6);
 const ASSET_WORKER_UPDATE_RELATIONS = [
-  "asset_upload_intent", "asset_upload_session", "asset_quota_account",
-  "asset_quota_reservation", "asset_blob_candidate", "asset_cleanup_group",
-  "asset_object_cleanup", "asset_promotion_intent",
+  "asset_upload_intent",
+  "asset_upload_session",
+  "asset_quota_account",
+  "asset_quota_reservation",
+  "asset_blob_candidate",
+  "asset_cleanup_group",
+  "asset_object_cleanup",
+  "asset_promotion_intent",
 ] as const;
 const ADMISSION_RELATIONS = [
   "admission_command",
@@ -943,11 +1239,18 @@ const ADMISSION_RELATIONS = [
   "admission_capability_catalog_snapshot",
 ] as const;
 const CREDIT_USAGE_RELATIONS = [
-  "credit_rating_policy_revision", "credit_rating_snapshot", "credit_usage_attempt_intent",
-  "credit_attempt_usage_evidence", "credit_usage_segment_closure",
-  "credit_usage_closure_evidence", "credit_usage_settlement", "credit_rated_usage",
-  "credit_usage_settlement_source", "credit_usage_variance",
-  "credit_usage_reconciliation", "credit_usage_command_receipt",
+  "credit_rating_policy_revision",
+  "credit_rating_snapshot",
+  "credit_usage_attempt_intent",
+  "credit_attempt_usage_evidence",
+  "credit_usage_segment_closure",
+  "credit_usage_closure_evidence",
+  "credit_usage_settlement",
+  "credit_rated_usage",
+  "credit_usage_settlement_source",
+  "credit_usage_variance",
+  "credit_usage_reconciliation",
+  "credit_usage_command_receipt",
 ] as const;
 const MODEL_GATEWAY_ADMISSION_RELATIONS = ["model_gateway_execution_authorization"] as const;
 const ADMISSION_SELECT_RELATIONS = [
@@ -1054,6 +1357,63 @@ const ADMISSION_INSERT_RELATIONS_SQL = sqlLiterals(ADMISSION_INSERT_RELATIONS);
 const ADMISSION_UPDATE_RELATIONS_SQL = sqlLiterals(ADMISSION_UPDATE_RELATIONS);
 const CREDIT_USAGE_RELATIONS_SQL = sqlLiterals(CREDIT_USAGE_RELATIONS);
 const MODEL_GATEWAY_ADMISSION_RELATIONS_SQL = sqlLiterals(MODEL_GATEWAY_ADMISSION_RELATIONS);
+
+const SPLIT_WORKER_RUNTIME_IDENTITY_SQL = `
+  SELECT current_user AS "currentUser",
+    current_database() AS "currentDatabase",
+    current_setting('server_version_num')::int / 10000 AS "serverMajor",
+    db_owner.rolname AS "databaseOwner", schema_owner.rolname AS "schemaOwner",
+    foundation_owner.rolname AS "foundationOwner",
+    has_schema_privilege(current_user,'platform','USAGE') AS "canUseSchema",
+    has_schema_privilege(current_user,'platform','CREATE') AS "canCreateSchema",
+    has_database_privilege(current_user,current_database(),'CREATE') AS "canCreateDatabaseObject",
+    has_table_privilege(current_user,'platform.platform_foundation','SELECT') AS "canReadFoundation",
+    has_table_privilege(current_user,'platform.platform_foundation',
+      'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') AS "canMutateFoundation",
+    pg_has_role(current_user,$1,'MEMBER') AS "isMigratorMember",
+    runtime_role.rolsuper AS "isSuperuser", runtime_role.rolcreatedb AS "canCreateDatabase",
+    runtime_role.rolcreaterole AS "canCreateRole", runtime_role.rolreplication AS "canReplicate",
+    runtime_role.rolbypassrls AS "canBypassRls", runtime_role.rolinherit AS "inheritsPrivileges",
+    EXISTS (SELECT 1 FROM pg_auth_members membership WHERE membership.member=runtime_role.oid)
+      AS "hasAnyMembership",
+    EXISTS (SELECT 1 FROM pg_auth_members membership WHERE membership.roleid=runtime_role.oid)
+      AS "hasAnyMembers",
+    EXISTS (SELECT 1 FROM pg_class relation WHERE relation.relnamespace=platform_schema.oid
+      AND relation.relowner=runtime_role.oid) AS "ownsPlatformRelation",
+    EXISTS (SELECT 1 FROM pg_proc routine WHERE routine.pronamespace=platform_schema.oid
+      AND routine.proowner=runtime_role.oid) AS "ownsPlatformFunction",
+    outbox.relrowsecurity AS "outboxRlsEnabled",
+    outbox.relforcerowsecurity AS "outboxForceRlsEnabled",
+    ${OUTBOX_POLICY_RUNTIME_ASSERTION_SQL} AS "outboxPoliciesValid",
+    EXISTS (SELECT 1 FROM information_schema.role_table_grants grant_row
+      WHERE grant_row.grantee=current_user AND grant_row.table_schema='platform'
+        AND grant_row.table_name <> ALL($2::text[]))
+      OR EXISTS (SELECT 1 FROM information_schema.role_column_grants grant_row
+      WHERE grant_row.grantee=current_user AND grant_row.table_schema='platform'
+        AND grant_row.table_name <> ALL($2::text[])) AS "hasUnexpectedRelationPrivilege",
+    EXISTS (SELECT 1 FROM pg_class sequence_row
+      WHERE sequence_row.relnamespace=platform_schema.oid
+        AND CASE WHEN sequence_row.relkind='S' THEN has_sequence_privilege(
+          current_user,sequence_row.oid,'USAGE,SELECT,UPDATE') ELSE FALSE END)
+      AS "hasAnySequencePrivilege",
+    has_function_privilege(current_user,
+      'platform.report_model_provider_availability(uuid,text,text,text,bigint,text,timestamptz,text)',
+      'EXECUTE') AS "canExecuteModelAvailabilityReport",
+    has_function_privilege(current_user,'platform.apply_admin_authority_change(uuid,jsonb)','EXECUTE')
+      AS "canExecuteAdminAuthorityChange"
+  FROM pg_database database_row
+  JOIN pg_roles db_owner ON db_owner.oid=database_row.datdba
+  JOIN pg_roles runtime_role ON runtime_role.rolname=current_user
+  LEFT JOIN pg_namespace platform_schema ON platform_schema.nspname='platform'
+  LEFT JOIN pg_roles schema_owner ON schema_owner.oid=platform_schema.nspowner
+  LEFT JOIN pg_class foundation ON foundation.relnamespace=platform_schema.oid
+    AND foundation.relname='platform_foundation'
+  LEFT JOIN pg_roles foundation_owner ON foundation_owner.oid=foundation.relowner
+  LEFT JOIN platform.platform_foundation foundation_marker ON foundation_marker.singleton=TRUE
+  LEFT JOIN pg_class outbox ON outbox.relnamespace=platform_schema.oid
+    AND outbox.relname='outbox_event'
+  WHERE database_row.datname=current_database()
+`;
 
 const RUNTIME_IDENTITY_SQL = `
   SELECT current_user AS "currentUser",
@@ -1285,7 +1645,7 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_column_privilege(current_user, 'platform.outbox_event', 'consumer_delivery_id', 'UPDATE')
            AND has_column_privilege(current_user, 'platform.outbox_event', 'consumer_acknowledged_at', 'UPDATE')
            AND has_column_privilege(current_user, 'platform.outbox_event', 'updated_at', 'UPDATE')
-         WHEN $2 = 'worker' THEN
+         WHEN $2 = '__retired_runtime_role__' THEN
            has_table_privilege(current_user, 'platform.outbox_event', 'SELECT')
            AND NOT has_table_privilege(current_user, 'platform.outbox_event', 'UPDATE')
            AND NOT has_column_privilege(current_user, 'platform.outbox_event', 'owner', 'UPDATE')
@@ -1535,7 +1895,7 @@ const RUNTIME_IDENTITY_SQL = `
                  has_sequence_privilege(current_user,sequence_row.oid,'USAGE,SELECT,UPDATE')
                ELSE FALSE END
            )
-         WHEN $2='worker' THEN
+         WHEN $2='__retired_runtime_role__' THEN
            EXISTS (
              SELECT 1 FROM information_schema.role_table_grants grant_row
              WHERE grant_row.grantee=current_user AND grant_row.table_schema='platform'
@@ -1771,7 +2131,8 @@ const RUNTIME_IDENTITY_SQL = `
                     'site_traffic_stop_observation','site_effect_approval'
                   ]) AND NOT (
                     ($2='api' AND candidate.relname=ANY(ARRAY['site','site_release']))
-                    OR ($2='worker' AND candidate.relname<>'site_effect_approval') OR $2='admin'
+                    OR ($2='__retired_runtime_role__' AND candidate.relname<>'site_effect_approval')
+                    OR $2='admin'
                     OR ($2='admission' AND candidate.relname=ANY(ARRAY['site','site_release']))
                   ))
                  OR
@@ -1779,7 +2140,7 @@ const RUNTIME_IDENTITY_SQL = `
                   OR has_any_column_privilege(runtime_role.rolname,candidate.oid,'SELECT'))
                   AND candidate.relname=ANY(ARRAY[${ASSET_RELATIONS_SQL}]) AND NOT (
                     ($2='api' AND candidate.relname=ANY(ARRAY[${ASSET_API_RELATIONS_SQL}]))
-                    OR ($2 IN ('worker','admin') AND
+                    OR ($2 IN ('__retired_runtime_role__','admin') AND
                       candidate.relname=ANY(ARRAY[${ASSET_RELATIONS_SQL}]))
                     OR ($2='asset-data-plane' AND
                       candidate.relname=ANY(ARRAY[${ASSET_DATA_PLANE_RELATIONS_SQL}]))
@@ -1801,7 +2162,7 @@ const RUNTIME_IDENTITY_SQL = `
                  OR
                  (has_table_privilege(runtime_role.rolname, candidate.oid,
                    'DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN') AND NOT (
-                   $2 = 'worker' AND candidate.relname = ANY(ARRAY[
+                   $2 = '__retired_runtime_role__' AND candidate.relname = ANY(ARRAY[
                      'authorization_scoped_event_log','authorization_scoped_snapshot'
                    ])
                  ))
@@ -1839,8 +2200,8 @@ const RUNTIME_IDENTITY_SQL = `
                    OR ($2 = 'api' AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
                    OR ($2 = 'asset-data-plane' AND
                      candidate.relname=ANY(ARRAY['asset_multipart_upload','asset_multipart_part']))
-                   OR ($2 = 'worker' AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_INSERT_RELATIONS_SQL}]))
-                   OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
+                   OR ($2 = '__retired_runtime_role__' AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_INSERT_RELATIONS_SQL}]))
+                   OR ($2 = '__retired_runtime_role__' AND candidate.relname = ANY(ARRAY[
                      'inbox_delivery','outbox_event',
                      'site_deployment_binding','site_deployment_observation',
                      'site_traffic_stop_observation','authorization_scoped_site_cursor','authorization_scoped_event_log','authorization_site',
@@ -1880,7 +2241,7 @@ const RUNTIME_IDENTITY_SQL = `
                    ]))
                    OR ($2 = 'admission' AND
                      candidate.relname=ANY(ARRAY[${ADMISSION_UPDATE_RELATIONS_SQL}]))
-                   OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
+                   OR ($2 = '__retired_runtime_role__' AND candidate.relname = ANY(ARRAY[
                      'outbox_event','site','site_release','site_deployment_binding',
                      'site_activation_attempt','site_traffic_stop_attempt','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_site',
                      'authorization_site_release','authorization_product_binding'
@@ -1892,8 +2253,8 @@ const RUNTIME_IDENTITY_SQL = `
                    OR ($2 = 'api' AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
                    OR ($2 = 'asset-data-plane' AND
                      candidate.relname=ANY(ARRAY[${ASSET_DATA_PLANE_MUTABLE_RELATIONS_SQL}]))
-                   OR ($2 = 'worker' AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_UPDATE_RELATIONS_SQL}]))
-                   OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
+                   OR ($2 = '__retired_runtime_role__' AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_UPDATE_RELATIONS_SQL}]))
+                   OR ($2 = '__retired_runtime_role__' AND candidate.relname = ANY(ARRAY[
                      'command_receipt','outbox_event','inbox_delivery','admin_approval',
                      'admin_post_effect_review'
                    ]))
@@ -1941,8 +2302,8 @@ const RUNTIME_IDENTITY_SQL = `
                    OR ($2 = 'api' AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
                    OR ($2 = 'asset-data-plane' AND
                      candidate.relname=ANY(ARRAY['asset_multipart_upload','asset_multipart_part']))
-                   OR ($2 = 'worker' AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_INSERT_RELATIONS_SQL}]))
-                   OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
+                   OR ($2 = '__retired_runtime_role__' AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_INSERT_RELATIONS_SQL}]))
+                   OR ($2 = '__retired_runtime_role__' AND candidate.relname = ANY(ARRAY[
                      'inbox_delivery','outbox_event',
                      'site_deployment_binding','site_deployment_observation',
                      'site_traffic_stop_observation','authorization_scoped_site_cursor','authorization_scoped_event_log','authorization_site',
@@ -1982,7 +2343,7 @@ const RUNTIME_IDENTITY_SQL = `
                    ]))
                    OR ($2 = 'admission' AND
                      candidate.relname=ANY(ARRAY[${ADMISSION_UPDATE_RELATIONS_SQL}]))
-                   OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
+                   OR ($2 = '__retired_runtime_role__' AND candidate.relname = ANY(ARRAY[
                      'outbox_event','site','site_release','site_deployment_binding',
                      'site_activation_attempt','site_traffic_stop_attempt','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_site',
                      'authorization_site_release','authorization_product_binding'
@@ -1994,8 +2355,8 @@ const RUNTIME_IDENTITY_SQL = `
                    OR ($2 = 'api' AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
                    OR ($2 = 'asset-data-plane' AND
                      candidate.relname=ANY(ARRAY[${ASSET_DATA_PLANE_MUTABLE_RELATIONS_SQL}]))
-                   OR ($2 = 'worker' AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_UPDATE_RELATIONS_SQL}]))
-                   OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
+                   OR ($2 = '__retired_runtime_role__' AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_UPDATE_RELATIONS_SQL}]))
+                   OR ($2 = '__retired_runtime_role__' AND candidate.relname = ANY(ARRAY[
                      'command_receipt','outbox_event','inbox_delivery','admin_approval',
                      'admin_post_effect_review'
                    ]))
@@ -2047,19 +2408,12 @@ const RUNTIME_IDENTITY_SQL = `
                  to_regprocedure('platform.resolve_admission_model_owner(text,text,text)'),
                  to_regprocedure('platform.valid_credit_scope_policy(jsonb)')
                ]))
-               OR ($2 = 'worker' AND candidate_function.oid = ANY(ARRAY[
+               OR ($2 = '__retired_runtime_role__' AND candidate_function.oid = ANY(ARRAY[
                  to_regprocedure('platform.report_model_provider_availability(uuid,text,text,text,bigint,text,timestamptz,text)'),
                  to_regprocedure('platform.apply_admin_authority_change(uuid,jsonb)')
                ]))
                OR ($2 = 'asset-data-plane' AND candidate_function.oid =
                  to_regprocedure('platform.enqueue_asset_upload_completion_event(uuid,text,jsonb,character,text,text)'))
-               OR candidate_function.oid = ANY(ARRAY[
-                 to_regprocedure('platform.model_identifier_is_valid(text)'),
-                 to_regprocedure('platform.model_text_is_valid(text)'),
-                 to_regprocedure('platform.model_secret_reference_is_valid(text)'),
-                 to_regprocedure('platform.model_identifier_array_is_canonical(text[],boolean)'),
-                 to_regprocedure('platform.model_json_identifier_array_is_canonical(jsonb,boolean)')
-               ])
              )
          ) AS "unexpectedPlatformFunctions"
   FROM pg_database database_row
@@ -2115,20 +2469,75 @@ function validRuntimeIdentity(
     identity.canExecuteModelSitePolicyChange === (config.role === "admin") &&
     identity.canExecuteModelCandidatesProjection === (config.role === "api") &&
     identity.canExecuteModelDecisionProjection === (config.role === "api") &&
-    identity.canExecuteModelAvailabilityReport === (config.role === "worker") &&
+    identity.canExecuteModelAvailabilityReport === false &&
     identity.canExecuteCreditScopePolicy ===
       (config.role === "api" || config.role === "admission" || config.role === "admin") &&
     identity.canExecuteCommerceSafeLabel === (config.role === "api" || config.role === "admin") &&
     identity.canExecuteCommerceIanaZone === (config.role === "admin") &&
     identity.canReadCommerceCatalogEpoch === (config.role === "admin") &&
     identity.canUpdateCommerceCatalogEpoch === (config.role === "admin") &&
-    identity.canExecuteAdminAuthorityChange === (config.role === "worker") &&
+    identity.canExecuteAdminAuthorityChange === (config.role === "admin-worker") &&
     identity.hasRequiredModelOptionFunctions &&
     identity.canSelectModelCatalogTable === (config.role === "admin") &&
     !identity.canReadModelSensitiveColumn &&
     identity.unexpectedPlatformRelations.length === 0 &&
     identity.unexpectedPlatformFunctions.length === 0,
   );
+}
+
+function validSplitWorkerRuntimeIdentity(
+  identity: SplitWorkerRuntimeIdentity | undefined,
+  config: PlatformDatabaseConfig,
+): boolean {
+  return Boolean(
+    identity &&
+    identity.currentUser === config.expectedDatabaseUser &&
+    identity.currentDatabase === config.expectedDatabaseName &&
+    identity.serverMajor === 18 &&
+    identity.databaseOwner === config.migratorDatabaseUser &&
+    identity.schemaOwner === config.migratorDatabaseUser &&
+    identity.foundationOwner === config.migratorDatabaseUser &&
+    identity.canUseSchema &&
+    !identity.canCreateSchema &&
+    !identity.canCreateDatabaseObject &&
+    identity.canReadFoundation &&
+    !identity.canMutateFoundation &&
+    !identity.isMigratorMember &&
+    !identity.isSuperuser &&
+    !identity.canCreateDatabase &&
+    !identity.canCreateRole &&
+    !identity.canReplicate &&
+    !identity.canBypassRls &&
+    !identity.inheritsPrivileges &&
+    !identity.hasAnyMembership &&
+    !identity.hasAnyMembers &&
+    !identity.ownsPlatformRelation &&
+    !identity.ownsPlatformFunction &&
+    identity.outboxRlsEnabled &&
+    identity.outboxForceRlsEnabled &&
+    identity.outboxPoliciesValid &&
+    !identity.hasUnexpectedRelationPrivilege &&
+    !identity.hasAnySequencePrivilege &&
+    !identity.canExecuteModelAvailabilityReport &&
+    identity.canExecuteAdminAuthorityChange === (config.role === "admin-worker"),
+  );
+}
+
+function validExactWorkerAuthority(identity: ExactWorkerAuthorityRow | undefined): boolean {
+  return Boolean(
+    identity?.roleAuthorityExact === true &&
+    identity.relationAuthorityExact === true &&
+    identity.routineAuthorityExact === true &&
+    identity.publicRelationAuthorityClosed === true &&
+    identity.publicRoutineAuthorityClosed === true &&
+    identity.sequenceAuthorityClosed === true,
+  );
+}
+
+function workerAuthorityForRole(role: PlatformProcessRole) {
+  return role in PLATFORM_WORKER_DATABASE_AUTHORITY
+    ? PLATFORM_WORKER_DATABASE_AUTHORITY[role as PlatformWorkerAuthorityRole]
+    : undefined;
 }
 
 function requireIdentifier(value: string | undefined, name: string): string {

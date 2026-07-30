@@ -10,12 +10,15 @@ import {
   runPlatformMigrations,
   type MigrationLockClient,
 } from "../../src/infrastructure/postgres/migrator.js";
+import { SPLIT_WORKER_RLS_AUTHORITY } from
+  "../../src/infrastructure/postgres/split-worker-authority.js";
 import { createPlatformApiProcess } from "../../src/process/api.js";
 import { createPlatformWorkerProcess } from "../../src/process/worker.js";
 
 const apiUrl = "postgresql://platform_api:secret@localhost:5432/kokoro_platform";
 const admissionUrl = "postgresql://platform_admission:secret@localhost:5432/kokoro_platform";
-const workerUrl = "postgresql://platform_worker:secret@localhost:5432/kokoro_platform";
+const commerceWorkerUrl =
+  "postgresql://platform_commerce_worker:secret@localhost:5432/kokoro_platform";
 const identityWorkerUrl =
   "postgresql://platform_identity_worker:secret@localhost:5432/kokoro_platform";
 const authorizationUrl = "postgresql://platform_authorization:secret@localhost:5432/kokoro_platform";
@@ -30,7 +33,12 @@ const commonEnvironment = {
   PLATFORM_DATABASE_AUTHORIZATION_ROLE: "platform_authorization",
   PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE: "platform_asset_data_plane",
   PLATFORM_DATABASE_MODEL_GATEWAY_ROLE: "platform_model_gateway",
+  PLATFORM_DATABASE_COMMERCE_WORKER_ROLE: "platform_commerce_worker",
+  PLATFORM_DATABASE_SITE_WORKER_ROLE: "platform_site_worker",
+  PLATFORM_DATABASE_ASSET_WORKER_ROLE: "platform_asset_worker",
+  PLATFORM_DATABASE_ADMIN_WORKER_ROLE: "platform_admin_worker",
   PLATFORM_DATABASE_IDENTITY_WORKER_ROLE: "platform_identity_worker",
+  PLATFORM_DATABASE_AUTHORIZATION_MAINTENANCE_ROLE: "platform_authorization_maintenance",
 } as const;
 
 describe("Platform PostgreSQL authority", () => {
@@ -64,11 +72,11 @@ describe("Platform PostgreSQL authority", () => {
 
   it("requires URL, expected database, and explicit process identity to agree", () => {
     expect(() =>
-      loadPlatformDatabaseConfig("worker", {
+      loadPlatformDatabaseConfig("commerce-worker", {
         ...commonEnvironment,
-        DATABASE_URL_PLATFORM: workerUrl,
-        PLATFORM_DATABASE_CREDENTIAL_CLASS: "worker",
-        PLATFORM_DATABASE_WORKER_ROLE: "unexpected_worker",
+        DATABASE_URL_PLATFORM: commerceWorkerUrl,
+        PLATFORM_DATABASE_CREDENTIAL_CLASS: "commerce-worker",
+        PLATFORM_DATABASE_COMMERCE_WORKER_ROLE: "unexpected_worker",
       }),
     ).toThrowError("PLATFORM_DATABASE_URL_USER_MISMATCH");
   });
@@ -80,11 +88,10 @@ describe("Platform PostgreSQL authority", () => {
       PLATFORM_DATABASE_CREDENTIAL_CLASS: "api",
       PLATFORM_DATABASE_API_ROLE: "platform_api",
     });
-    const worker = loadPlatformDatabaseConfig("worker", {
+    const commerceWorker = loadPlatformDatabaseConfig("commerce-worker", {
       ...commonEnvironment,
-      DATABASE_URL_PLATFORM: workerUrl,
-      PLATFORM_DATABASE_CREDENTIAL_CLASS: "worker",
-      PLATFORM_DATABASE_WORKER_ROLE: "platform_worker",
+      DATABASE_URL_PLATFORM: commerceWorkerUrl,
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: "commerce-worker",
     });
     const identityWorker = loadPlatformDatabaseConfig("identity-worker", {
       ...commonEnvironment,
@@ -115,7 +122,7 @@ describe("Platform PostgreSQL authority", () => {
       new Set([
         api.expectedDatabaseUser,
         admission.expectedDatabaseUser,
-        worker.expectedDatabaseUser,
+        commerceWorker.expectedDatabaseUser,
         identityWorker.expectedDatabaseUser,
         authorization.expectedDatabaseUser,
         assetDataPlane.expectedDatabaseUser,
@@ -150,32 +157,10 @@ describe("Platform migrator", () => {
         events.push("connect");
       },
       async query(sql, values) {
-        if (sql.includes("modelGatewayRolePreflight")) {
-          events.push("preflight-model-gateway");
-          return { rows: [{
-            ...safeRole("platform_model_gateway"),
-            hasAnyPlatformTablePrivilege: false,
-            canUsePlatformSchema: false,
-            canCreatePlatformSchema: false,
-          }] };
-        }
-        if (sql.includes("assetDataPlaneRolePreflight")) {
-          events.push("preflight-asset-data-plane");
-          return { rows: [{
-            ...safeRole("platform_asset_data_plane"),
-            hasAnyPlatformTablePrivilege: false,
-            canUsePlatformSchema: false,
-            canCreatePlatformSchema: false,
-          }] };
-        }
-        if (sql.includes("identityWorkerRolePreflight")) {
-          events.push("preflight-identity-worker");
-          return { rows: [{
-            ...safeRole("platform_identity_worker"),
-            hasAnyPlatformTablePrivilege: false,
-            canUsePlatformSchema: false,
-            canCreatePlatformSchema: false,
-          }] };
+        if (sql.includes("singleRuntimeRolePreflight")) {
+          const roleName = String(values?.[0]);
+          events.push(`preflight-${roleName.replace("platform_", "").replaceAll("_", "-")}`);
+          return { rows: [safeRole(roleName)] };
         }
         if (sql.includes("modelGatewayAuthority")) {
           events.push("verify-model-gateway");
@@ -199,6 +184,14 @@ describe("Platform migrator", () => {
             identityWorkerAuthorityOk: true,
             hasUnexpectedIdentityPrivilege: false,
           }] };
+        }
+        if (sql.includes("splitWorkerExactAuthority")) {
+          const roleName = String(values?.[0]);
+          events.push(`verify-${roleName}`);
+          return { rows: [splitAuthority()] };
+        }
+        if (sql.includes("publicRoutineAuthorityClosed")) {
+          return { rows: [{ publicRoutineAuthorityClosed: true }] };
         }
         if (sql.includes("server_version_num")) {
           events.push("preflight-migrator");
@@ -237,7 +230,6 @@ describe("Platform migrator", () => {
               safeRole("platform_api"),
               safeRole("platform_admission"),
               safeRole("platform_authorization"),
-              safeRole("platform_worker"),
               safeRole("platform_admin"),
             ],
           };
@@ -250,10 +242,15 @@ describe("Platform migrator", () => {
               authority("platform_api"),
               authority("platform_admission"),
               authority("platform_authorization"),
-              authority("platform_worker"),
               authority("platform_admin"),
             ],
           };
+        }
+        if (sql.includes("splitWorkerPolicyLookup")) {
+          return { rows: [splitWorkerPolicyLookup(values)] };
+        }
+        if (sql.includes("splitWorkerPolicyCatalog")) {
+          return { rows: splitWorkerPolicyRows() };
         }
         if (sql.includes("FROM pg_policy policy")) {
           events.push("verify-outbox-policies");
@@ -282,7 +279,6 @@ describe("Platform migrator", () => {
         DATABASE_URL_PLATFORM: migratorUrl,
         PLATFORM_DATABASE_CREDENTIAL_CLASS: "migrator",
         PLATFORM_DATABASE_API_ROLE: "platform_api",
-        PLATFORM_DATABASE_WORKER_ROLE: "platform_worker",
         PATH: "/usr/bin",
         NODE_OPTIONS: "--inspect=0.0.0.0:9229",
         SITE_PROVIDER_SECRET: "must-not-leak",
@@ -300,16 +296,21 @@ describe("Platform migrator", () => {
       },
     });
 
-    expect(events.slice(0, 8)).toEqual([
+    expect(events.slice(0, 12)).toEqual([
       "connect",
       "preflight-migrator",
       "preflight-runtime-roles",
       "preflight-model-gateway",
       "preflight-asset-data-plane",
+      "preflight-commerce-worker",
+      "preflight-site-worker",
+      "preflight-asset-worker",
+      "preflight-admin-worker",
       "preflight-identity-worker",
+      "preflight-authorization-maintenance",
       `SELECT pg_advisory_lock(hashtext($1)):${MIGRATION_ADVISORY_LOCK}`,
-      "execute",
     ]);
+    expect(events[12]).toBe("execute");
     expect(grants).toContain(
       "GRANT EXECUTE ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.resolve_admission_model_owner(TEXT, TEXT, TEXT) TO \"platform_admission\"",
     );
@@ -349,9 +350,17 @@ describe("Platform migrator", () => {
       sql.startsWith("GRANT INSERT") &&
       sql.endsWith('TO "platform_api"'),
     )).toBe(false);
-    expect(grants.filter((sql) =>
-      sql.endsWith('TO "platform_worker"') && sql.includes("platform.identity_"),
-    )).toEqual([]);
+    for (const workerRole of [
+      "platform_commerce_worker",
+      "platform_site_worker",
+      "platform_asset_worker",
+      "platform_admin_worker",
+      "platform_authorization_maintenance",
+    ]) {
+      expect(grants.filter((sql) =>
+        sql.endsWith(`TO "${workerRole}"`) && sql.includes("platform.identity_"),
+      )).toEqual([]);
+    }
     expect(grants.some((sql) =>
       sql.endsWith('TO "platform_identity_worker"') &&
       sql.includes("platform.identity_verification_transaction"),
@@ -390,15 +399,15 @@ describe("Platform migrator", () => {
     expect(authoritySql).toMatch(
       /runtime_role\.rolname=\$3 AND \([\s\S]+grant_row\.table_name LIKE 'identity\\_%'/u,
     );
-    expect(events.slice(-8)).toEqual([
-      "verify-outbox-policies",
-      "persist-outbox-policy-authority",
-      "verify-authority",
-      "verify-model-gateway",
-      "verify-asset-data-plane",
-      "verify-identity-worker",
-      `SELECT pg_advisory_unlock(hashtext($1)):${MIGRATION_ADVISORY_LOCK}`,
-      "end",
+    for (const expected of [
+      "verify-outbox-policies", "persist-outbox-policy-authority", "verify-authority",
+      "verify-model-gateway", "verify-asset-data-plane", "verify-platform_commerce_worker",
+      "verify-platform_site_worker", "verify-platform_asset_worker",
+      "verify-platform_admin_worker", "verify-platform_identity_worker",
+      "verify-platform_authorization_maintenance",
+    ]) expect(events).toContain(expected);
+    expect(events.slice(-2)).toEqual([
+      `SELECT pg_advisory_unlock(hashtext($1)):${MIGRATION_ADVISORY_LOCK}`, "end",
     ]);
   });
 
@@ -446,17 +455,9 @@ describe("Platform migrator", () => {
   it("fails closed when a runtime role can access any Platform object beyond marker SELECT", async () => {
     const lockClient: MigrationLockClient = {
       async connect() {},
-      async query(sql) {
-        if (sql.includes("modelGatewayRolePreflight")) {
-          return { rows: [{
-            ...safeRole("platform_model_gateway"),
-            hasAnyPlatformTablePrivilege: false,
-            canUsePlatformSchema: false,
-            canCreatePlatformSchema: false,
-          }] };
-        }
-        if (sql.includes("assetDataPlaneRolePreflight")) {
-          return { rows: [safeRole("platform_asset_data_plane")] };
+      async query(sql, values) {
+        if (sql.includes("singleRuntimeRolePreflight")) {
+          return { rows: [safeRole(String(values?.[0]))] };
         }
         if (sql.includes("assetDataPlaneAuthority")) {
           return { rows: [{
@@ -465,9 +466,6 @@ describe("Platform migrator", () => {
             canReadGenericOutbox: false,
             canMutateAssetOwnerIntent: false,
           }] };
-        }
-        if (sql.includes("identityWorkerRolePreflight")) {
-          return { rows: [safeRole("platform_identity_worker")] };
         }
         if (sql.includes("identityWorkerAuthority")) {
           return { rows: [{
@@ -482,11 +480,17 @@ describe("Platform migrator", () => {
               safeRole("platform_api"),
               safeRole("platform_admission"),
               safeRole("platform_authorization"),
-              safeRole("platform_worker"),
               safeRole("platform_admin"),
             ],
           };
         }
+        if (sql.includes("splitWorkerPolicyLookup")) {
+          return { rows: [splitWorkerPolicyLookup(values)] };
+        }
+        if (sql.includes("splitWorkerPolicyCatalog")) {
+          return { rows: splitWorkerPolicyRows() };
+        }
+        if (sql.includes("splitWorkerExactAuthority")) return { rows: [splitAuthority()] };
         if (sql.includes("FROM pg_policy policy")) return { rows: outboxPolicyRows() };
         if (sql.includes('SET "outboxPolicyAuthority"')) {
           return { rows: [{ singleton: true }] };
@@ -494,10 +498,9 @@ describe("Platform migrator", () => {
         if (sql.includes("hasUnexpectedPlatformPrivilege")) {
           return {
             rows: [
-              authority("platform_api"),
+              { ...authority("platform_api"), hasUnexpectedPlatformPrivilege: true },
               authority("platform_admission"),
               authority("platform_authorization"),
-              { ...authority("platform_worker"), hasUnexpectedPlatformPrivilege: true },
               authority("platform_admin"),
             ],
           };
@@ -525,20 +528,9 @@ describe("Platform migrator", () => {
     async (roleName, field, value) => {
       const lockClient: MigrationLockClient = {
         async connect() {},
-        async query(sql) {
-          if (sql.includes("modelGatewayRolePreflight")) {
-            return { rows: [{
-              ...safeRole("platform_model_gateway"),
-              hasAnyPlatformTablePrivilege: false,
-              canUsePlatformSchema: false,
-              canCreatePlatformSchema: false,
-            }] };
-          }
-          if (sql.includes("assetDataPlaneRolePreflight")) {
-            return { rows: [safeRole("platform_asset_data_plane")] };
-          }
-          if (sql.includes("identityWorkerRolePreflight")) {
-            return { rows: [safeRole("platform_identity_worker")] };
+        async query(sql, values) {
+          if (sql.includes("singleRuntimeRolePreflight")) {
+            return { rows: [safeRole(String(values?.[0]))] };
           }
           if (sql.includes("identityWorkerAuthority")) {
             return { rows: [{
@@ -550,10 +542,17 @@ describe("Platform migrator", () => {
           if (sql.includes("hasAnyMembership") || sql.includes("isMigratorMember")) {
             return { rows: [
               safeRole("platform_api"), safeRole("platform_admission"),
-              safeRole("platform_authorization"), safeRole("platform_worker"),
+              safeRole("platform_authorization"),
               safeRole("platform_admin"),
             ] };
           }
+          if (sql.includes("splitWorkerPolicyLookup")) {
+            return { rows: [splitWorkerPolicyLookup(values)] };
+          }
+          if (sql.includes("splitWorkerPolicyCatalog")) {
+            return { rows: splitWorkerPolicyRows() };
+          }
+          if (sql.includes("splitWorkerExactAuthority")) return { rows: [splitAuthority()] };
           if (sql.includes("FROM pg_policy policy")) return { rows: outboxPolicyRows() };
           if (sql.includes('SET "outboxPolicyAuthority"')) {
             return { rows: [{ singleton: true }] };
@@ -561,7 +560,7 @@ describe("Platform migrator", () => {
           if (sql.includes("hasUnexpectedPlatformPrivilege")) {
             return { rows: [
               authority("platform_api"), authority("platform_admission"),
-              authority("platform_authorization"), authority("platform_worker"),
+              authority("platform_authorization"),
               authority("platform_admin"),
             ].map((row) => row.roleName === roleName ? { ...row, [field]: value } : row) };
           }
@@ -813,7 +812,7 @@ function authority(roleName: string): Record<string, unknown> {
     canExecuteModelSitePolicyChange: roleName === "platform_admin",
     canExecuteModelCandidatesProjection: roleName === "platform_api",
     canExecuteModelDecisionProjection: roleName === "platform_api",
-    canExecuteModelAvailabilityReport: roleName === "platform_worker",
+    canExecuteModelAvailabilityReport: false,
     canExecuteCreditScopePolicy:
       roleName === "platform_api" ||
       roleName === "platform_admission" ||
@@ -823,12 +822,61 @@ function authority(roleName: string): Record<string, unknown> {
     canExecuteCommerceIanaZone: roleName === "platform_admin",
     canReadCommerceCatalogEpoch: roleName === "platform_admin",
     canUpdateCommerceCatalogEpoch: roleName === "platform_admin",
-    canExecuteAdminAuthorityChange: roleName === "platform_worker",
+    canExecuteAdminAuthorityChange: false,
     hasRequiredModelOptionFunctions: true,
     canSelectModelCatalogTable: roleName === "platform_admin",
     canReadModelSensitiveColumn: false,
     hasUnexpectedPlatformPrivilege: false,
   };
+}
+
+function splitAuthority(): Record<string, unknown> {
+  return {
+    roleAuthorityExact: true,
+    relationAuthorityExact: true,
+    routineAuthorityExact: true,
+    publicRelationAuthorityClosed: true,
+    publicRoutineAuthorityClosed: true,
+    sequenceAuthorityClosed: true,
+  };
+}
+
+function splitWorkerPolicyLookup(
+  values: readonly unknown[] | undefined,
+): Record<string, unknown> {
+  const relationName = String(values?.[0]);
+  const policyName = String(values?.[1]);
+  const authority = Object.values(SPLIT_WORKER_RLS_AUTHORITY).find((candidate) =>
+    candidate.policies.some(([relation, policy]) =>
+      relation === relationName && policy === policyName));
+  if (authority === undefined) throw new Error("SPLIT_WORKER_POLICY_FIXTURE_MISSING");
+  return {
+    relationName,
+    policyName,
+    usingExpression:
+      `(current_setting('app.workload_kind'::text, true) = ` +
+      `'${authority.workloadKind}'::text)`,
+    withCheckExpression: null,
+  };
+}
+
+function splitWorkerPolicyRows(): readonly Record<string, unknown>[] {
+  const roles = {
+    "site-worker": "platform_site_worker",
+    "asset-worker": "platform_asset_worker",
+    "admin-worker": "platform_admin_worker",
+  } as const;
+  return Object.entries(SPLIT_WORKER_RLS_AUTHORITY).flatMap(([role, authority]) =>
+    authority.policies.map(([relationName, policyName]) => ({
+      relationName,
+      policyName,
+      usingExpression:
+        `((CURRENT_USER = '${roles[role as keyof typeof roles]}'::name) AND ` +
+        `(current_setting('app.workload_kind'::text, true) = ` +
+        `'${authority.workloadKind}'::text))`,
+      withCheckExpression: null,
+    })),
+  );
 }
 
 function outboxPolicyRows(): readonly Record<string, unknown>[] {
@@ -843,12 +891,17 @@ function outboxPolicyRows(): readonly Record<string, unknown>[] {
     ["outbox_api_select", "r", "platform_api", ["identity", "commerce", "asset"]],
     ["outbox_identity_worker_select", "r", "platform_identity_worker", ["identity"]],
     ["outbox_identity_worker_update", "w", "platform_identity_worker", ["identity"]],
-    ["outbox_worker_insert", "a", "platform_worker",
-      ["commerce", "credit", "site", "asset", "admin-execution"]],
-    ["outbox_worker_select", "r", "platform_worker",
-      ["commerce", "credit", "site", "asset", "admin-execution"]],
-    ["outbox_worker_update", "w", "platform_worker",
-      ["commerce", "credit", "site", "asset", "admin-execution"]],
+    ["outbox_commerce_worker_select", "r", "platform_commerce_worker",
+      ["commerce", "credit"]],
+    ["outbox_commerce_worker_update", "w", "platform_commerce_worker",
+      ["commerce", "credit"]],
+    ["outbox_site_worker_select", "r", "platform_site_worker", ["site"]],
+    ["outbox_site_worker_update", "w", "platform_site_worker", ["site"]],
+    ["outbox_asset_worker_insert", "a", "platform_asset_worker", ["asset"]],
+    ["outbox_asset_worker_select", "r", "platform_asset_worker", ["asset"]],
+    ["outbox_asset_worker_update", "w", "platform_asset_worker", ["asset"]],
+    ["outbox_admin_worker_select", "r", "platform_admin_worker", ["admin-execution"]],
+    ["outbox_admin_worker_update", "w", "platform_admin_worker", ["admin-execution"]],
   ].map(([policyName, command, role, owners], index) => {
     const expression = `CURRENT_USER='${role}'::name AND owner=ANY(ARRAY[${
       (owners as string[]).map((owner) => `'${owner}'::text`).join(",")
@@ -897,8 +950,6 @@ function migratorEnvironment(): Record<string, string> {
     DATABASE_URL_PLATFORM: migratorUrl,
     PLATFORM_DATABASE_CREDENTIAL_CLASS: "migrator",
     PLATFORM_DATABASE_API_ROLE: "platform_api",
-    PLATFORM_DATABASE_WORKER_ROLE: "platform_worker",
-    PLATFORM_DATABASE_IDENTITY_WORKER_ROLE: "platform_identity_worker",
     PLATFORM_DATABASE_ADMIN_ROLE: "platform_admin",
   };
 }

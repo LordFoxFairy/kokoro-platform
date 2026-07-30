@@ -86,8 +86,12 @@ jobs:
       DATABASE_URL_PLATFORM_API_TEST: postgresql://platform_api:platform-api-ci@127.0.0.1:5432/kokoro_test_platform
       DATABASE_URL_PLATFORM_ADMISSION_TEST: postgresql://platform_admission:platform-admission-ci@127.0.0.1:5432/kokoro_test_platform
       DATABASE_URL_PLATFORM_ASSET_DATA_PLANE_TEST: postgresql://platform_asset_data_plane:platform-asset-data-plane-ci@127.0.0.1:5432/kokoro_test_platform
-      DATABASE_URL_PLATFORM_WORKER_TEST: postgresql://platform_worker:platform-worker-ci@127.0.0.1:5432/kokoro_test_platform
+      DATABASE_URL_PLATFORM_COMMERCE_WORKER_TEST: postgresql://platform_commerce_worker:platform-commerce-worker-ci@127.0.0.1:5432/kokoro_test_platform
+      DATABASE_URL_PLATFORM_SITE_WORKER_TEST: postgresql://platform_site_worker:platform-site-worker-ci@127.0.0.1:5432/kokoro_test_platform
+      DATABASE_URL_PLATFORM_ASSET_WORKER_TEST: postgresql://platform_asset_worker:platform-asset-worker-ci@127.0.0.1:5432/kokoro_test_platform
+      DATABASE_URL_PLATFORM_ADMIN_WORKER_TEST: postgresql://platform_admin_worker:platform-admin-worker-ci@127.0.0.1:5432/kokoro_test_platform
       DATABASE_URL_PLATFORM_IDENTITY_WORKER_TEST: postgresql://platform_identity_worker:platform-identity-worker-ci@127.0.0.1:5432/kokoro_test_platform
+      DATABASE_URL_PLATFORM_AUTHORIZATION_MAINTENANCE_TEST: postgresql://platform_authorization_maintenance:platform-authorization-maintenance-ci@127.0.0.1:5432/kokoro_test_platform
       DATABASE_URL_PLATFORM_ADMIN_TEST: postgresql://platform_admin:platform-admin-ci@127.0.0.1:5432/kokoro_test_platform
       DATABASE_URL_PLATFORM_MODEL_GATEWAY_TEST: postgresql://platform_model_gateway:platform-model-gateway-ci@127.0.0.1:5432/kokoro_test_platform
       PLATFORM_DATABASE_CREDENTIAL_CLASS: migrator
@@ -97,8 +101,12 @@ jobs:
       PLATFORM_DATABASE_ADMISSION_ROLE: platform_admission
       PLATFORM_DATABASE_AUTHORIZATION_ROLE: platform_authorization
       PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE: platform_asset_data_plane
-      PLATFORM_DATABASE_WORKER_ROLE: platform_worker
+      PLATFORM_DATABASE_COMMERCE_WORKER_ROLE: platform_commerce_worker
+      PLATFORM_DATABASE_SITE_WORKER_ROLE: platform_site_worker
+      PLATFORM_DATABASE_ASSET_WORKER_ROLE: platform_asset_worker
+      PLATFORM_DATABASE_ADMIN_WORKER_ROLE: platform_admin_worker
       PLATFORM_DATABASE_IDENTITY_WORKER_ROLE: platform_identity_worker
+      PLATFORM_DATABASE_AUTHORIZATION_MAINTENANCE_ROLE: platform_authorization_maintenance
       PLATFORM_DATABASE_ADMIN_ROLE: platform_admin
       PLATFORM_DATABASE_MODEL_GATEWAY_ROLE: platform_model_gateway
     steps:

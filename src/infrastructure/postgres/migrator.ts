@@ -4,6 +4,16 @@ import { pathToFileURL } from "node:url";
 import { Client } from "pg";
 import { loadPlatformDatabaseConfig } from "./client.js";
 import { OUTBOX_OWNER_POLICY_COUNT } from "./outbox-policy-authority.js";
+import {
+  canonicalRelationAuthority,
+  compareUtf8Bytewise,
+  SPLIT_WORKER_EXACT_AUTHORITY_SQL,
+  SPLIT_WORKER_RELATION_AUTHORITY,
+  SPLIT_WORKER_RLS_AUTHORITY,
+  SPLIT_WORKER_ROUTINE_AUTHORITY,
+  type SplitWorkerRole,
+  type ExactWorkerAuthorityRow,
+} from "./split-worker-authority.js";
 
 export const MIGRATION_ADVISORY_LOCK = "kokoro-platform:migrations:v1";
 
@@ -27,6 +37,15 @@ export type MigrationCommandExecutor = (
   args: readonly string[],
   environment: Readonly<Record<string, string | undefined>>,
 ) => Promise<number>;
+
+interface SplitWorkerRoles {
+  readonly commerceWorker: string;
+  readonly siteWorker: string;
+  readonly assetWorker: string;
+  readonly adminWorker: string;
+  readonly identityWorker: string;
+  readonly authorizationMaintenance: string;
+}
 
 const MIGRATOR_ENVIRONMENT_ALLOWLIST = [
   "PATH",
@@ -52,14 +71,32 @@ export async function runPlatformMigrations(
     environment.PLATFORM_DATABASE_ADMISSION_ROLE,
     "PLATFORM_DATABASE_ADMISSION_ROLE",
   );
-  const workerRole = requireRole(
-    environment.PLATFORM_DATABASE_WORKER_ROLE,
-    "PLATFORM_DATABASE_WORKER_ROLE",
-  );
-  const identityWorkerRole = requireRole(
-    environment.PLATFORM_DATABASE_IDENTITY_WORKER_ROLE,
-    "PLATFORM_DATABASE_IDENTITY_WORKER_ROLE",
-  );
+  const workerRoles = Object.freeze({
+    commerceWorker: requireRole(
+      environment.PLATFORM_DATABASE_COMMERCE_WORKER_ROLE,
+      "PLATFORM_DATABASE_COMMERCE_WORKER_ROLE",
+    ),
+    siteWorker: requireRole(
+      environment.PLATFORM_DATABASE_SITE_WORKER_ROLE,
+      "PLATFORM_DATABASE_SITE_WORKER_ROLE",
+    ),
+    assetWorker: requireRole(
+      environment.PLATFORM_DATABASE_ASSET_WORKER_ROLE,
+      "PLATFORM_DATABASE_ASSET_WORKER_ROLE",
+    ),
+    adminWorker: requireRole(
+      environment.PLATFORM_DATABASE_ADMIN_WORKER_ROLE,
+      "PLATFORM_DATABASE_ADMIN_WORKER_ROLE",
+    ),
+    identityWorker: requireRole(
+      environment.PLATFORM_DATABASE_IDENTITY_WORKER_ROLE,
+      "PLATFORM_DATABASE_IDENTITY_WORKER_ROLE",
+    ),
+    authorizationMaintenance: requireRole(
+      environment.PLATFORM_DATABASE_AUTHORIZATION_MAINTENANCE_ROLE,
+      "PLATFORM_DATABASE_AUTHORIZATION_MAINTENANCE_ROLE",
+    ),
+  });
   const authorizationRole = requireRole(
     environment.PLATFORM_DATABASE_AUTHORIZATION_ROLE,
     "PLATFORM_DATABASE_AUTHORIZATION_ROLE",
@@ -76,17 +113,16 @@ export async function runPlatformMigrations(
     environment.PLATFORM_DATABASE_MODEL_GATEWAY_ROLE,
     "PLATFORM_DATABASE_MODEL_GATEWAY_ROLE",
   );
-  assertDistinctRoles(
+  assertDistinctRoles([
     config.expectedDatabaseUser,
     apiRole,
     admissionRole,
     authorizationRole,
     assetDataPlaneRole,
-    workerRole,
-    identityWorkerRole,
+    ...Object.values(workerRoles),
     adminRole,
     modelGatewayRole,
-  );
+  ]);
 
   const lockClient = (options.createLockClient ?? defaultLockClient)(config.url);
   const execute = options.execute ?? executeMigrationCommand;
@@ -102,20 +138,19 @@ export async function runPlatformMigrations(
       apiRole,
       admissionRole,
       authorizationRole,
-      workerRole,
       adminRole,
     });
-    await assertModelGatewayRolePreflight(lockClient, modelGatewayRole, config.expectedDatabaseUser);
+    await assertModelGatewayRolePreflight(
+      lockClient,
+      modelGatewayRole,
+      config.expectedDatabaseUser,
+    );
     await assertAssetDataPlaneRolePreflight(
       lockClient,
       assetDataPlaneRole,
       config.expectedDatabaseUser,
     );
-    await assertIdentityWorkerRolePreflight(
-      lockClient,
-      identityWorkerRole,
-      config.expectedDatabaseUser,
-    );
+    await assertSplitWorkerRolePreflight(lockClient, workerRoles, config.expectedDatabaseUser);
     await lockClient.query("SELECT pg_advisory_lock(hashtext($1))", [MIGRATION_ADVISORY_LOCK]);
     locked = true;
 
@@ -132,23 +167,27 @@ export async function runPlatformMigrations(
     );
     if (exitCode !== 0) throw new Error(`PLATFORM_MIGRATION_FAILED:${exitCode}`);
 
+    await closePublicRoutineAuthority(lockClient, config.expectedDatabaseUser);
+    await configureSplitWorkerRlsAuthority(lockClient, workerRoles);
     await grantFoundationPrivileges(
       lockClient,
       apiRole,
       admissionRole,
       authorizationRole,
-      workerRole,
       adminRole,
     );
     await grantModelGatewayPrivileges(lockClient, modelGatewayRole, admissionRole);
     await grantAssetDataPlanePrivileges(lockClient, assetDataPlaneRole);
-    await grantIdentityWorkerPrivileges(lockClient, identityWorkerRole);
+    await grantSplitWorkerPrivileges(lockClient, workerRoles);
     await configureOutboxOwnerPolicies(lockClient, {
       migrator: config.expectedDatabaseUser,
       api: apiRole,
       admission: admissionRole,
-      worker: workerRole,
-      identityWorker: identityWorkerRole,
+      commerceWorker: workerRoles.commerceWorker,
+      siteWorker: workerRoles.siteWorker,
+      assetWorker: workerRoles.assetWorker,
+      adminWorker: workerRoles.adminWorker,
+      identityWorker: workerRoles.identityWorker,
       admin: adminRole,
     });
     await assertPostMigrationAuthority(
@@ -157,7 +196,6 @@ export async function runPlatformMigrations(
       apiRole,
       admissionRole,
       authorizationRole,
-      workerRole,
       adminRole,
     );
     await assertModelGatewayAuthority(lockClient, modelGatewayRole);
@@ -166,7 +204,8 @@ export async function runPlatformMigrations(
       assetDataPlaneRole,
       config.expectedDatabaseUser,
     );
-    await assertIdentityWorkerAuthority(lockClient, identityWorkerRole);
+    await assertSplitWorkerAuthority(lockClient, workerRoles);
+    await assertPublicRoutineAuthority(lockClient, config.expectedDatabaseUser);
   } finally {
     try {
       if (locked) {
@@ -188,7 +227,6 @@ async function assertMigratorPreflight(
     apiRole: string;
     admissionRole: string;
     authorizationRole: string;
-    workerRole: string;
     adminRole: string;
   },
 ): Promise<void> {
@@ -196,7 +234,6 @@ async function assertMigratorPreflight(
     expected.apiRole,
     expected.admissionRole,
     expected.authorizationRole,
-    expected.workerRole,
     expected.adminRole,
   ]);
   const row = result.rows?.[0];
@@ -216,7 +253,6 @@ async function assertMigratorPreflight(
     row.isApiMember === true ||
     row.isAdmissionMember === true ||
     row.isAuthorizationMember === true ||
-    row.isWorkerMember === true ||
     row.isAdminMember === true ||
     row.canCreateDatabaseObject !== true ||
     (schemaExists &&
@@ -231,11 +267,10 @@ async function assertMigratorPreflight(
     expected.apiRole,
     expected.admissionRole,
     expected.authorizationRole,
-    expected.workerRole,
     expected.adminRole,
     expected.migratorRole,
   ]);
-  if (roles.rows?.length !== 5 || roles.rows.some((role) => !safeRuntimeRole(role))) {
+  if (roles.rows?.length !== 4 || roles.rows.some((role) => !safeRuntimeRole(role))) {
     throw new Error("PLATFORM_RUNTIME_ROLE_PREFLIGHT_FAILED");
   }
 }
@@ -256,8 +291,7 @@ const MIGRATOR_PREFLIGHT_SQL = `
          pg_has_role(current_user, $1, 'MEMBER') AS "isApiMember",
          pg_has_role(current_user, $2, 'MEMBER') AS "isAdmissionMember",
          pg_has_role(current_user, $3, 'MEMBER') AS "isAuthorizationMember",
-         pg_has_role(current_user, $4, 'MEMBER') AS "isWorkerMember",
-         pg_has_role(current_user, $5, 'MEMBER') AS "isAdminMember",
+         pg_has_role(current_user, $4, 'MEMBER') AS "isAdminMember",
          has_database_privilege(current_user, current_database(), 'CREATE') AS "canCreateDatabaseObject",
          platform_schema.oid IS NOT NULL AS "schemaExists",
          schema_owner.rolname AS "schemaOwner",
@@ -289,11 +323,11 @@ const RUNTIME_ROLE_PREFLIGHT_SQL = `
          runtime_role.rolinherit AS "inheritsPrivileges",
          EXISTS (SELECT 1 FROM pg_auth_members membership WHERE membership.member = runtime_role.oid)
            AS "hasAnyMembership",
-         pg_has_role(runtime_role.rolname, $6, 'MEMBER') AS "isMigratorMember",
+         pg_has_role(runtime_role.rolname, $5, 'MEMBER') AS "isMigratorMember",
          EXISTS (SELECT 1 FROM pg_auth_members membership
            WHERE membership.roleid=runtime_role.oid) AS "isPeerMember"
   FROM pg_roles runtime_role
-  WHERE runtime_role.rolname = ANY(ARRAY[$1,$2,$3,$4,$5]::text[])
+  WHERE runtime_role.rolname = ANY(ARRAY[$1,$2,$3,$4]::text[])
   ORDER BY runtime_role.rolname
 `;
 
@@ -317,14 +351,12 @@ async function assertModelGatewayRolePreflight(
   modelGatewayRole: string,
   migratorRole: string,
 ): Promise<void> {
-  const result = await client.query(MODEL_GATEWAY_ROLE_PREFLIGHT_SQL, [
+  await assertSingleRuntimeRolePreflight(
+    client,
     modelGatewayRole,
     migratorRole,
-  ]);
-  const row = result.rows?.[0];
-  if (result.rows?.length !== 1 || !safeRuntimeRole(row ?? {})) {
-    throw new Error("PLATFORM_MODEL_GATEWAY_ROLE_PREFLIGHT_FAILED");
-  }
+    "PLATFORM_MODEL_GATEWAY_ROLE_PREFLIGHT_FAILED",
+  );
 }
 
 async function assertAssetDataPlaneRolePreflight(
@@ -332,28 +364,38 @@ async function assertAssetDataPlaneRolePreflight(
   assetDataPlaneRole: string,
   migratorRole: string,
 ): Promise<void> {
-  const result = await client.query(ASSET_DATA_PLANE_ROLE_PREFLIGHT_SQL, [
+  await assertSingleRuntimeRolePreflight(
+    client,
     assetDataPlaneRole,
     migratorRole,
-  ]);
-  const row = result.rows?.[0];
-  if (result.rows?.length !== 1 || !safeRuntimeRole(row ?? {})) {
-    throw new Error("PLATFORM_ASSET_DATA_PLANE_ROLE_PREFLIGHT_FAILED");
+    "PLATFORM_ASSET_DATA_PLANE_ROLE_PREFLIGHT_FAILED",
+  );
+}
+
+async function assertSplitWorkerRolePreflight(
+  client: MigrationLockClient,
+  roles: SplitWorkerRoles,
+  migratorRole: string,
+): Promise<void> {
+  for (const [key, role] of Object.entries(roles)) {
+    await assertSingleRuntimeRolePreflight(
+      client,
+      role,
+      migratorRole,
+      `PLATFORM_SPLIT_WORKER_ROLE_PREFLIGHT_FAILED:${key}`,
+    );
   }
 }
 
-async function assertIdentityWorkerRolePreflight(
+async function assertSingleRuntimeRolePreflight(
   client: MigrationLockClient,
-  identityWorkerRole: string,
+  runtimeRole: string,
   migratorRole: string,
+  errorCode: string,
 ): Promise<void> {
-  const result = await client.query(IDENTITY_WORKER_ROLE_PREFLIGHT_SQL, [
-    identityWorkerRole,
-    migratorRole,
-  ]);
-  const row = result.rows?.[0];
-  if (result.rows?.length !== 1 || !safeRuntimeRole(row ?? {})) {
-    throw new Error("PLATFORM_IDENTITY_WORKER_ROLE_PREFLIGHT_FAILED");
+  const result = await client.query(SINGLE_RUNTIME_ROLE_PREFLIGHT_SQL, [runtimeRole, migratorRole]);
+  if (result.rows?.length !== 1 || !safeRuntimeRole(result.rows[0] ?? {})) {
+    throw new Error(errorCode);
   }
 }
 
@@ -393,8 +435,10 @@ async function grantModelGatewayPrivileges(
     `GRANT EXECUTE ON FUNCTION platform.list_model_gateway_dispatch_candidates(INTEGER) TO ${gateway}`,
   );
   await client.query(
-    `GRANT SELECT ON TABLE platform.model_gateway_capacity TO ${gateway}`,
+    `GRANT EXECUTE ON FUNCTION platform.report_model_provider_availability(` +
+      `UUID,TEXT,TEXT,TEXT,BIGINT,TEXT,TIMESTAMPTZ,TEXT) TO ${gateway}`,
   );
+  await client.query(`GRANT SELECT ON TABLE platform.model_gateway_capacity TO ${gateway}`);
   await client.query(
     `GRANT UPDATE(active_count,queued_count,updated_at) ` +
       `ON TABLE platform.model_gateway_capacity TO ${gateway}`,
@@ -408,12 +452,8 @@ async function grantModelGatewayPrivileges(
       `frame_count,total_frame_bytes,updated_at) ` +
       `ON TABLE platform.model_gateway_invocation TO ${gateway}`,
   );
-  await client.query(
-    `GRANT SELECT,INSERT ON TABLE platform.model_gateway_frame TO ${gateway}`,
-  );
-  await client.query(
-    `GRANT INSERT ON TABLE platform.model_gateway_dispatch_queue TO ${gateway}`,
-  );
+  await client.query(`GRANT SELECT,INSERT ON TABLE platform.model_gateway_frame TO ${gateway}`);
+  await client.query(`GRANT INSERT ON TABLE platform.model_gateway_dispatch_queue TO ${gateway}`);
   await client.query(
     `GRANT UPDATE(state,dispatch_owner_ref,dispatch_lease_expires_at,updated_at) ` +
       `ON TABLE platform.model_gateway_dispatch_queue TO ${gateway}`,
@@ -421,9 +461,7 @@ async function grantModelGatewayPrivileges(
   await client.query(
     `GRANT SELECT,INSERT ON TABLE platform.model_gateway_attempt_usage_fact TO ${gateway}`,
   );
-  await client.query(
-    `GRANT SELECT,INSERT ON TABLE platform.model_gateway_outbox TO ${gateway}`,
-  );
+  await client.query(`GRANT SELECT,INSERT ON TABLE platform.model_gateway_outbox TO ${gateway}`);
   await client.query(
     `GRANT SELECT ON TABLE platform.credit_rating_policy_revision, platform.credit_rating_snapshot, ` +
       `platform.credit_authorization_segment, platform.credit_budget_allocation, ` +
@@ -456,8 +494,11 @@ async function assertModelGatewayAuthority(
 ): Promise<void> {
   const result = await client.query(MODEL_GATEWAY_POST_AUTHORITY_SQL, [modelGatewayRole]);
   const row = result.rows?.[0];
-  if (result.rows?.length !== 1 || row?.modelGatewayAuthorityOk !== true ||
-      row?.canReadAuthorizationProjection !== false) {
+  if (
+    result.rows?.length !== 1 ||
+    row?.modelGatewayAuthorityOk !== true ||
+    row?.canReadAuthorizationProjection !== false
+  ) {
     throw new Error("PLATFORM_MODEL_GATEWAY_POST_AUTHORITY_INVALID");
   }
 }
@@ -529,99 +570,322 @@ async function assertAssetDataPlaneAuthority(
     migratorRole,
   ]);
   const row = result.rows?.[0];
-  if (result.rows?.length !== 1 || row?.assetDataPlaneAuthorityOk !== true ||
-      row?.completionFunctionAuthorityOk !== true ||
-      row?.canReadGenericOutbox !== false || row?.canMutateAssetOwnerIntent !== false) {
+  if (
+    result.rows?.length !== 1 ||
+    row?.assetDataPlaneAuthorityOk !== true ||
+    row?.completionFunctionAuthorityOk !== true ||
+    row?.canReadGenericOutbox !== false ||
+    row?.canMutateAssetOwnerIntent !== false
+  ) {
     throw new Error("PLATFORM_ASSET_DATA_PLANE_POST_AUTHORITY_INVALID");
   }
 }
 
-async function grantIdentityWorkerPrivileges(
+async function grantSplitWorkerPrivileges(
   client: MigrationLockClient,
-  identityWorkerRole: string,
+  roles: SplitWorkerRoles,
 ): Promise<void> {
-  const identityWorker = quoteRoleIdentifier(identityWorkerRole);
-  await client.query(`REVOKE ALL ON SCHEMA platform FROM ${identityWorker}`);
+  for (const [authorityRole, roleName] of Object.entries(splitWorkerRoleNames(roles)) as [
+    SplitWorkerRole,
+    string,
+  ][]) {
+    const role = await prepareSplitWorkerRole(client, roleName);
+    for (const authority of SPLIT_WORKER_RELATION_AUTHORITY[authorityRole]) {
+      const columnList = authority.columns === undefined ? "" : `(${authority.columns.join(",")})`;
+      await client.query(
+        `GRANT ${authority.privilege}${columnList} ON TABLE ` +
+          `platform.${authority.relation} TO ${role}`,
+      );
+    }
+    for (const routine of SPLIT_WORKER_ROUTINE_AUTHORITY[authorityRole]) {
+      await client.query(`GRANT EXECUTE ON FUNCTION ${routine} TO ${role}`);
+    }
+  }
+}
+
+async function prepareSplitWorkerRole(
+  client: MigrationLockClient,
+  roleName: string,
+): Promise<string> {
+  const role = quoteRoleIdentifier(roleName);
+  await client.query(`REVOKE ALL ON SCHEMA platform FROM ${role}`);
+  await client.query(`REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA platform FROM ${role}`);
+  await client.query(`REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA platform FROM ${role}`);
+  await client.query(`REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA platform FROM ${role}`);
+  await client.query(`GRANT USAGE ON SCHEMA platform TO ${role}`);
   await client.query(
-    `REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA platform FROM ${identityWorker}`,
+    `ALTER DEFAULT PRIVILEGES IN SCHEMA platform REVOKE ALL ON TABLES FROM ${role}`,
   );
   await client.query(
-    `REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA platform FROM ${identityWorker}`,
+    `ALTER DEFAULT PRIVILEGES IN SCHEMA platform REVOKE ALL ON SEQUENCES FROM ${role}`,
   );
   await client.query(
-    `REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA platform FROM ${identityWorker}`,
+    `ALTER DEFAULT PRIVILEGES IN SCHEMA platform REVOKE ALL ON FUNCTIONS FROM ${role}`,
   );
-  await client.query(`GRANT USAGE ON SCHEMA platform TO ${identityWorker}`);
+  return role;
+}
+
+function splitWorkerRoleNames(roles: SplitWorkerRoles): Readonly<Record<SplitWorkerRole, string>> {
+  return Object.freeze({
+    "commerce-worker": roles.commerceWorker,
+    "site-worker": roles.siteWorker,
+    "asset-worker": roles.assetWorker,
+    "admin-worker": roles.adminWorker,
+    "identity-worker": roles.identityWorker,
+    "authorization-maintenance": roles.authorizationMaintenance,
+  });
+}
+
+async function closePublicRoutineAuthority(
+  client: MigrationLockClient,
+  migratorRole: string,
+): Promise<void> {
+  await client.query("REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA platform FROM PUBLIC");
   await client.query(
-    `GRANT SELECT ON TABLE platform.platform_foundation, platform.outbox_event ` +
-      `TO ${identityWorker}`,
-  );
-  await client.query(
-    `GRANT UPDATE(state,available_at,last_error_code,lease_owner,lease_token,` +
-      `lease_expires_at,attempt,delivered_at,consumer_delivery_id,` +
-      `consumer_acknowledged_at,updated_at) ON TABLE platform.outbox_event ` +
-      `TO ${identityWorker}`,
-  );
-  await client.query(
-    `GRANT SELECT(site_ref,transaction_ref,state,resend_count,expires_at) ` +
-      `ON TABLE platform.identity_verification_transaction TO ${identityWorker}`,
-  );
-  await client.query(
-    `GRANT SELECT(event_id,site_ref,transaction_ref,credential_revision,state) ` +
-      `ON TABLE platform.identity_verification_delivery TO ${identityWorker}`,
-  );
-  await client.query(
-    `GRANT UPDATE(state,attempt_count,delivered_at,failed_at,superseded_at,` +
-      `last_error_code,updated_at) ON TABLE platform.identity_verification_delivery ` +
-      `TO ${identityWorker}`,
-  );
-  await client.query(
-    `GRANT SELECT(site_ref,subject_ref,workspace_ref,project_ref,execution_space_ref,` +
-      `execution_namespace,namespace_intent_ref) ` +
-      `ON TABLE platform.identity_personal_bootstrap TO ${identityWorker}`,
-  );
-  await client.query(
-    `GRANT SELECT(site_ref,execution_space_ref,project_ref,execution_namespace,state), ` +
-      `UPDATE(state,updated_at) ON TABLE platform.identity_execution_space ` +
-      `TO ${identityWorker}`,
-  );
-  await client.query(
-    `GRANT SELECT(intent_ref,event_id,site_ref,execution_space_ref,execution_namespace,state), ` +
-      `UPDATE(state,attempt_count,last_error_code,updated_at) ` +
-      `ON TABLE platform.identity_namespace_allocation_intent TO ${identityWorker}`,
-  );
-  await client.query(
-    `REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ` +
-      `ON TABLE platform.platform_foundation FROM ${identityWorker}`,
-  );
-  await client.query(
-    `ALTER DEFAULT PRIVILEGES IN SCHEMA platform REVOKE ALL ON TABLES ` +
-      `FROM ${identityWorker}`,
-  );
-  await client.query(
-    `ALTER DEFAULT PRIVILEGES IN SCHEMA platform REVOKE ALL ON SEQUENCES ` +
-      `FROM ${identityWorker}`,
-  );
-  await client.query(
-    `ALTER DEFAULT PRIVILEGES IN SCHEMA platform REVOKE ALL ON FUNCTIONS ` +
-      `FROM ${identityWorker}`,
+    `ALTER DEFAULT PRIVILEGES FOR ROLE ${quoteRoleIdentifier(migratorRole)} ` +
+      "IN SCHEMA platform REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC",
   );
 }
 
-async function assertIdentityWorkerAuthority(
+async function assertPublicRoutineAuthority(
   client: MigrationLockClient,
-  identityWorkerRole: string,
+  migratorRole: string,
 ): Promise<void> {
-  const result = await client.query(IDENTITY_WORKER_POST_AUTHORITY_SQL, [identityWorkerRole]);
-  const row = result.rows?.[0];
+  const result = await client.query(PUBLIC_ROUTINE_AUTHORITY_SQL, [migratorRole]);
+  if (result.rows?.length !== 1 || result.rows[0]?.publicRoutineAuthorityClosed !== true) {
+    throw new Error("PLATFORM_PUBLIC_ROUTINE_AUTHORITY_INVALID");
+  }
+}
+
+const PUBLIC_ROUTINE_AUTHORITY_SQL = `
+  SELECT NOT EXISTS (
+    SELECT 1 FROM pg_proc routine
+    JOIN pg_namespace namespace ON namespace.oid=routine.pronamespace
+    CROSS JOIN LATERAL aclexplode(COALESCE(
+      routine.proacl,acldefault('f',routine.proowner)
+    )) acl
+    WHERE namespace.nspname='platform' AND acl.grantee=0
+      AND acl.privilege_type='EXECUTE'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM pg_default_acl defaults
+    JOIN pg_namespace namespace ON namespace.oid=defaults.defaclnamespace
+    CROSS JOIN LATERAL aclexplode(defaults.defaclacl) acl
+    WHERE defaults.defaclrole=(SELECT oid FROM pg_roles WHERE rolname=$1)
+      AND namespace.nspname='platform' AND defaults.defaclobjtype='f'
+      AND acl.grantee=0 AND acl.privilege_type='EXECUTE'
+  ) AS "publicRoutineAuthorityClosed"
+`;
+
+interface WorkerPolicyRow extends Record<string, unknown> {
+  readonly relationName: string;
+  readonly policyName: string;
+  readonly usingExpression: string | null;
+  readonly withCheckExpression: string | null;
+}
+
+async function configureSplitWorkerRlsAuthority(
+  client: MigrationLockClient,
+  roles: SplitWorkerRoles,
+): Promise<void> {
+  const configuredRoles = splitWorkerRoleNames(roles);
+  for (const [authorityRole, authority] of Object.entries(SPLIT_WORKER_RLS_AUTHORITY) as [
+    keyof typeof SPLIT_WORKER_RLS_AUTHORITY,
+    (typeof SPLIT_WORKER_RLS_AUTHORITY)[keyof typeof SPLIT_WORKER_RLS_AUTHORITY],
+  ][]) {
+    const roleName = configuredRoles[authorityRole];
+    for (const [relationName, policyName] of authority.policies) {
+      const result = await client.query(WORKER_POLICY_SQL, [relationName, policyName]);
+      const row = result.rows?.[0] as WorkerPolicyRow | undefined;
+      if (result.rows?.length !== 1 || row === undefined) {
+        throw new Error(`PLATFORM_WORKER_RLS_POLICY_MISSING:${relationName}.${policyName}`);
+      }
+      const usingFence = bindWorkerPolicyExpression(
+        row.usingExpression,
+        authority.workloadKind,
+        roleName,
+      );
+      const checkFence = bindWorkerPolicyExpression(
+        row.withCheckExpression,
+        authority.workloadKind,
+        roleName,
+      );
+      if (usingFence.replacements + checkFence.replacements < 1) {
+        throw new Error(`PLATFORM_WORKER_RLS_WORKLOAD_MISSING:${relationName}.${policyName}`);
+      }
+      await client.query(
+        `ALTER POLICY ${quoteRoleIdentifier(policyName)} ON ` +
+          `platform.${quoteRoleIdentifier(relationName)}` +
+          (usingFence.expression === null ? "" : ` USING (${usingFence.expression})`) +
+          (checkFence.expression === null ? "" : ` WITH CHECK (${checkFence.expression})`),
+      );
+    }
+  }
+  await assertSplitWorkerRlsAuthority(client, roles);
+}
+
+async function assertSplitWorkerRlsAuthority(
+  client: MigrationLockClient,
+  roles: SplitWorkerRoles,
+): Promise<void> {
+  const result = await client.query(ALL_PLATFORM_POLICIES_SQL);
+  const rows = (result.rows ?? []) as readonly WorkerPolicyRow[];
+  const configuredRoles = splitWorkerRoleNames(roles);
+  const expected = new Set<string>();
+  for (const [authorityRole, authority] of Object.entries(SPLIT_WORKER_RLS_AUTHORITY) as [
+    keyof typeof SPLIT_WORKER_RLS_AUTHORITY,
+    (typeof SPLIT_WORKER_RLS_AUTHORITY)[keyof typeof SPLIT_WORKER_RLS_AUTHORITY],
+  ][]) {
+    const roleName = configuredRoles[authorityRole];
+    for (const [relationName, policyName] of authority.policies) {
+      const identity = `${relationName}.${policyName}`;
+      expected.add(identity);
+      const row = rows.find(
+        (candidate) =>
+          candidate.relationName === relationName && candidate.policyName === policyName,
+      );
+      if (
+        row === undefined ||
+        !workerPolicyExpressionsAreFenced(row, authority.workloadKind, roleName)
+      )
+        throw new Error(`PLATFORM_WORKER_RLS_POLICY_INVALID:${identity}`);
+    }
+  }
+  const workloadKinds = Object.values(SPLIT_WORKER_RLS_AUTHORITY).map(
+    (authority) => authority.workloadKind,
+  );
+  const actual = rows.filter((row) =>
+    workloadKinds.some((workloadKind) =>
+      `${row.usingExpression ?? ""}${row.withCheckExpression ?? ""}`.includes(workloadKind),
+    ),
+  );
   if (
-    result.rows?.length !== 1 || row?.identityWorkerAuthorityOk !== true ||
-    row.hasUnexpectedIdentityPrivilege !== false
-  ) throw new Error("PLATFORM_IDENTITY_WORKER_POST_AUTHORITY_INVALID");
+    actual.length !== expected.size ||
+    actual.some((row) => !expected.has(`${row.relationName}.${row.policyName}`))
+  ) {
+    throw new Error("PLATFORM_WORKER_RLS_POLICY_CATALOG_INVALID");
+  }
 }
 
-type OutboxPolicyRole = "migrator" | "api" | "admission" | "worker" | "identityWorker" |
-  "admin";
+const WORKER_POLICY_SQL = `
+  SELECT relation.relname AS "relationName",policy.polname AS "policyName",
+    pg_get_expr(policy.polqual,policy.polrelid,false) AS "usingExpression",
+    pg_get_expr(policy.polwithcheck,policy.polrelid,false) AS "withCheckExpression"
+  FROM pg_policy policy
+  JOIN pg_class relation ON relation.oid=policy.polrelid
+  JOIN pg_namespace namespace ON namespace.oid=relation.relnamespace
+  WHERE namespace.nspname='platform' AND relation.relname=$1 AND policy.polname=$2
+  /* splitWorkerPolicyLookup */
+`;
+
+const ALL_PLATFORM_POLICIES_SQL = `
+  SELECT relation.relname AS "relationName",policy.polname AS "policyName",
+    pg_get_expr(policy.polqual,policy.polrelid,false) AS "usingExpression",
+    pg_get_expr(policy.polwithcheck,policy.polrelid,false) AS "withCheckExpression"
+  FROM pg_policy policy
+  JOIN pg_class relation ON relation.oid=policy.polrelid
+  JOIN pg_namespace namespace ON namespace.oid=relation.relnamespace
+  WHERE namespace.nspname='platform'
+  /* splitWorkerPolicyCatalog */
+`;
+
+function bindWorkerPolicyExpression(
+  expression: string | null,
+  workloadKind: string,
+  roleName: string,
+): Readonly<{ expression: string | null; replacements: number }> {
+  if (expression === null) return { expression: null, replacements: 0 };
+  const predicate = workerWorkloadPredicate(workloadKind);
+  const withoutPreviousFence = expression.replace(workerRoleFencePrefixPattern(workloadKind), "(");
+  const replacements = withoutPreviousFence.split(predicate).length - 1;
+  return {
+    expression: withoutPreviousFence.replaceAll(
+      predicate,
+      `(CURRENT_USER = ${sqlString(roleName)}::name AND ${predicate})`,
+    ),
+    replacements,
+  };
+}
+
+function workerPolicyExpressionsAreFenced(
+  row: WorkerPolicyRow,
+  workloadKind: string,
+  roleName: string,
+): boolean {
+  const expression = `${row.usingExpression ?? ""} ${row.withCheckExpression ?? ""}`;
+  const workloadCount = expression.split(`'${workloadKind}'::text`).length - 1;
+  const roleFenceCount = [...expression.matchAll(workerRoleFencePattern(workloadKind, roleName))]
+    .length;
+  return workloadCount > 0 && workloadCount === roleFenceCount;
+}
+
+function workerWorkloadPredicate(workloadKind: string): string {
+  return `(current_setting('app.workload_kind'::text, true) = '${workloadKind}'::text)`;
+}
+
+function workerRoleFencePattern(workloadKind: string, roleName: string): RegExp {
+  const role = escapeRegex(roleName);
+  const workload = workloadKind.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return new RegExp(
+    `\\(\\(CURRENT_USER = '${role}'::name\\) AND ` +
+      `\\(current_setting\\('app\\.workload_kind'::text, true\\) = ` +
+      `'${workload}'::text\\)`,
+    "gu",
+  );
+}
+
+function workerRoleFencePrefixPattern(workloadKind: string): RegExp {
+  const workload = escapeRegex(workloadKind);
+  return new RegExp(
+    `\\(\\(CURRENT_USER = '[a-z_][a-z0-9_]{0,62}'::name\\) AND ` +
+      `(?=\\(current_setting\\('app\\.workload_kind'::text, true\\) = ` +
+      `'${workload}'::text\\))`,
+    "gu",
+  );
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+async function assertSplitWorkerAuthority(
+  client: MigrationLockClient,
+  roles: SplitWorkerRoles,
+): Promise<void> {
+  for (const [authorityKind, roleName] of Object.entries(splitWorkerRoleNames(roles)) as [
+    SplitWorkerRole,
+    string,
+  ][]) {
+    const result = await client.query(SPLIT_WORKER_EXACT_AUTHORITY_SQL, [
+      roleName,
+      JSON.stringify(canonicalRelationAuthority(authorityKind)),
+      SPLIT_WORKER_ROUTINE_AUTHORITY[authorityKind],
+    ]);
+    const row = result.rows?.[0] as ExactWorkerAuthorityRow | undefined;
+    if (
+      result.rows?.length !== 1 ||
+      row?.roleAuthorityExact !== true ||
+      row.relationAuthorityExact !== true ||
+      row.routineAuthorityExact !== true ||
+      row.publicRelationAuthorityClosed !== true ||
+      row.publicRoutineAuthorityClosed !== true ||
+      row.sequenceAuthorityClosed !== true
+    ) {
+      throw new Error(`PLATFORM_SPLIT_WORKER_POST_AUTHORITY_INVALID:${authorityKind}`);
+    }
+  }
+  await assertSplitWorkerRlsAuthority(client, roles);
+}
+
+type OutboxPolicyRole =
+  | "migrator"
+  | "api"
+  | "admission"
+  | "commerceWorker"
+  | "siteWorker"
+  | "assetWorker"
+  | "adminWorker"
+  | "identityWorker"
+  | "admin";
 type OutboxPolicyCommand = "SELECT" | "INSERT" | "UPDATE";
 
 interface OutboxOwnerPolicy {
@@ -640,28 +904,73 @@ interface OutboxOwnerPolicy {
 const OUTBOX_OWNER_POLICIES: readonly OutboxOwnerPolicy[] = Object.freeze([
   // The asset completion command is SECURITY DEFINER. FORCE RLS therefore
   // evaluates this exact policy as the function owner instead of bypassing it.
-  { name: "outbox_asset_function_insert", role: "migrator", command: "INSERT",
-    owners: ["asset"] },
-  { name: "outbox_api_select", role: "api", command: "SELECT",
-    owners: ["identity", "commerce", "asset"] },
-  { name: "outbox_api_insert", role: "api", command: "INSERT",
-    owners: ["identity", "commerce", "asset"] },
-  { name: "outbox_admission_insert", role: "admission", command: "INSERT",
-    owners: ["credit"] },
-  { name: "outbox_worker_select", role: "worker", command: "SELECT",
-    owners: ["commerce", "credit", "site", "asset", "admin-execution"] },
-  { name: "outbox_worker_insert", role: "worker", command: "INSERT",
-    owners: ["commerce", "credit", "site", "asset", "admin-execution"] },
-  { name: "outbox_worker_update", role: "worker", command: "UPDATE",
-    owners: ["commerce", "credit", "site", "asset", "admin-execution"] },
-  { name: "outbox_identity_worker_select", role: "identityWorker", command: "SELECT",
-    owners: ["identity"] },
-  { name: "outbox_identity_worker_update", role: "identityWorker", command: "UPDATE",
-    owners: ["identity"] },
-  { name: "outbox_admin_select", role: "admin", command: "SELECT",
-    owners: ["admin-execution", "commerce", "site"] },
-  { name: "outbox_admin_insert", role: "admin", command: "INSERT",
-    owners: ["admin-execution", "commerce", "site"] },
+  { name: "outbox_asset_function_insert", role: "migrator", command: "INSERT", owners: ["asset"] },
+  {
+    name: "outbox_api_select",
+    role: "api",
+    command: "SELECT",
+    owners: ["identity", "commerce", "asset"],
+  },
+  {
+    name: "outbox_api_insert",
+    role: "api",
+    command: "INSERT",
+    owners: ["identity", "commerce", "asset"],
+  },
+  { name: "outbox_admission_insert", role: "admission", command: "INSERT", owners: ["credit"] },
+  {
+    name: "outbox_commerce_worker_select",
+    role: "commerceWorker",
+    command: "SELECT",
+    owners: ["commerce", "credit"],
+  },
+  {
+    name: "outbox_commerce_worker_update",
+    role: "commerceWorker",
+    command: "UPDATE",
+    owners: ["commerce", "credit"],
+  },
+  { name: "outbox_site_worker_select", role: "siteWorker", command: "SELECT", owners: ["site"] },
+  { name: "outbox_site_worker_update", role: "siteWorker", command: "UPDATE", owners: ["site"] },
+  { name: "outbox_asset_worker_select", role: "assetWorker", command: "SELECT", owners: ["asset"] },
+  { name: "outbox_asset_worker_insert", role: "assetWorker", command: "INSERT", owners: ["asset"] },
+  { name: "outbox_asset_worker_update", role: "assetWorker", command: "UPDATE", owners: ["asset"] },
+  {
+    name: "outbox_admin_worker_select",
+    role: "adminWorker",
+    command: "SELECT",
+    owners: ["admin-execution"],
+  },
+  {
+    name: "outbox_admin_worker_update",
+    role: "adminWorker",
+    command: "UPDATE",
+    owners: ["admin-execution"],
+  },
+  {
+    name: "outbox_identity_worker_select",
+    role: "identityWorker",
+    command: "SELECT",
+    owners: ["identity"],
+  },
+  {
+    name: "outbox_identity_worker_update",
+    role: "identityWorker",
+    command: "UPDATE",
+    owners: ["identity"],
+  },
+  {
+    name: "outbox_admin_select",
+    role: "admin",
+    command: "SELECT",
+    owners: ["admin-execution", "commerce", "site"],
+  },
+  {
+    name: "outbox_admin_insert",
+    role: "admin",
+    command: "INSERT",
+    owners: ["admin-execution", "commerce", "site"],
+  },
 ]);
 
 async function configureOutboxOwnerPolicies(
@@ -673,11 +982,12 @@ async function configureOutboxOwnerPolicies(
   for (const policy of OUTBOX_OWNER_POLICIES) {
     await client.query(`DROP POLICY IF EXISTS ${policy.name} ON platform.outbox_event`);
     const ownerFence = policyFenceExpression(policy, roles[policy.role]);
-    const predicate = policy.command === "INSERT"
-      ? `WITH CHECK (${ownerFence})`
-      : policy.command === "UPDATE"
-        ? `USING (${ownerFence}) WITH CHECK (${ownerFence})`
-        : `USING (${ownerFence})`;
+    const predicate =
+      policy.command === "INSERT"
+        ? `WITH CHECK (${ownerFence})`
+        : policy.command === "UPDATE"
+          ? `USING (${ownerFence}) WITH CHECK (${ownerFence})`
+          : `USING (${ownerFence})`;
     await client.query(
       `CREATE POLICY ${policy.name} ON platform.outbox_event AS PERMISSIVE ` +
         `FOR ${policy.command} ` +
@@ -699,7 +1009,9 @@ async function configureOutboxOwnerPolicies(
      WHERE policy.polrelid='platform.outbox_event'::regclass
      ORDER BY policy.polname`,
   );
-  const policies = result.rows ?? [];
+  const policies = [...(result.rows ?? [])].sort((left, right) =>
+    compareUtf8Bytewise(String(left.policyName), String(right.policyName)),
+  );
   if (
     policies.length !== OUTBOX_OWNER_POLICY_COUNT ||
     OUTBOX_OWNER_POLICIES.some((expected) => {
@@ -708,28 +1020,35 @@ async function configureOutboxOwnerPolicies(
       const expectedExpression = canonicalPolicyExpression(
         policyFenceExpression(expected, expectedRole),
       );
-      const usingExpression = typeof actual?.usingExpression === "string"
-        ? canonicalPolicyExpression(actual.usingExpression)
-        : null;
-      const withCheckExpression = typeof actual?.withCheckExpression === "string"
-        ? canonicalPolicyExpression(actual.withCheckExpression)
-        : null;
-      const expectedCommand = expected.command === "SELECT"
-        ? "r"
-        : expected.command === "INSERT"
-          ? "a"
-          : "w";
-      return actual?.command !== expectedCommand || actual?.permissive !== true ||
+      const usingExpression =
+        typeof actual?.usingExpression === "string"
+          ? canonicalPolicyExpression(actual.usingExpression)
+          : null;
+      const withCheckExpression =
+        typeof actual?.withCheckExpression === "string"
+          ? canonicalPolicyExpression(actual.withCheckExpression)
+          : null;
+      const expectedCommand =
+        expected.command === "SELECT" ? "r" : expected.command === "INSERT" ? "a" : "w";
+      return (
+        actual?.command !== expectedCommand ||
+        actual?.permissive !== true ||
         !Array.isArray(actual.roles) ||
-        actual.roles.length !== 1 || actual.roles[0] !== expectedRole ||
-        !Array.isArray(actual.roleOids) || actual.roleOids.length !== 1 ||
+        actual.roles.length !== 1 ||
+        actual.roles[0] !== expectedRole ||
+        !Array.isArray(actual.roleOids) ||
+        actual.roleOids.length !== 1 ||
         actual.roleOids[0] === "0" ||
-        (expected.command === "INSERT" ? usingExpression !== null :
-          usingExpression !== expectedExpression) ||
-        (expected.command === "SELECT" ? withCheckExpression !== null :
-          withCheckExpression !== expectedExpression);
+        (expected.command === "INSERT"
+          ? usingExpression !== null
+          : usingExpression !== expectedExpression) ||
+        (expected.command === "SELECT"
+          ? withCheckExpression !== null
+          : withCheckExpression !== expectedExpression)
+      );
     })
-  ) throw new Error("PLATFORM_OUTBOX_OWNER_POLICIES_INVALID");
+  )
+    throw new Error("PLATFORM_OUTBOX_OWNER_POLICIES_INVALID");
   const authority = policies.map((policy) => ({
     policy_name: policy.policyName,
     command: policy.command,
@@ -750,16 +1069,21 @@ async function configureOutboxOwnerPolicies(
 }
 
 function policyFenceExpression(policy: OutboxOwnerPolicy, roleName: string): string {
-  return `current_user=${sqlString(roleName)} AND ` +
-    `owner=ANY(ARRAY[${sqlLiterals(policy.owners)}]::text[])`;
+  return (
+    `current_user=${sqlString(roleName)} AND ` +
+    `owner=ANY(ARRAY[${sqlLiterals(policy.owners)}]::text[])`
+  );
 }
 
 function canonicalPolicyExpression(value: string): string {
-  return value.replace(/\s+/gu, "").replace(/::(?:name|text)(?:\[\])?/giu, "")
-    .replace(/[()]/gu, "").toLowerCase();
+  return value
+    .replace(/\s+/gu, "")
+    .replace(/::(?:name|text)(?:\[\])?/giu, "")
+    .replace(/[()]/gu, "")
+    .toLowerCase();
 }
 
-const MODEL_GATEWAY_ROLE_PREFLIGHT_SQL = `
+const SINGLE_RUNTIME_ROLE_PREFLIGHT_SQL = `
   SELECT runtime_role.rolname AS "roleName",runtime_role.rolsuper AS "isSuperuser",
     runtime_role.rolcreatedb AS "canCreateDatabase",runtime_role.rolcreaterole AS "canCreateRole",
     runtime_role.rolreplication AS "canReplicate",runtime_role.rolbypassrls AS "canBypassRls",
@@ -776,31 +1100,7 @@ const MODEL_GATEWAY_ROLE_PREFLIGHT_SQL = `
       ELSE has_schema_privilege(runtime_role.rolname,'platform','USAGE') END AS "canUsePlatformSchema",
     CASE WHEN to_regnamespace('platform') IS NULL THEN FALSE
       ELSE has_schema_privilege(runtime_role.rolname,'platform','CREATE') END AS "canCreatePlatformSchema"
-  FROM pg_roles runtime_role WHERE runtime_role.rolname=$1 /* modelGatewayRolePreflight */`;
-
-const IDENTITY_WORKER_ROLE_PREFLIGHT_SQL = MODEL_GATEWAY_ROLE_PREFLIGHT_SQL.replace(
-  "modelGatewayRolePreflight",
-  "identityWorkerRolePreflight",
-);
-
-const ASSET_DATA_PLANE_ROLE_PREFLIGHT_SQL = `
-  SELECT runtime_role.rolname AS "roleName",runtime_role.rolsuper AS "isSuperuser",
-    runtime_role.rolcreatedb AS "canCreateDatabase",runtime_role.rolcreaterole AS "canCreateRole",
-    runtime_role.rolreplication AS "canReplicate",runtime_role.rolbypassrls AS "canBypassRls",
-    runtime_role.rolinherit AS "inheritsPrivileges",
-    EXISTS (SELECT 1 FROM pg_auth_members membership WHERE membership.member=runtime_role.oid)
-      AS "hasAnyMembership",
-    pg_has_role(runtime_role.rolname,$2,'MEMBER') AS "isMigratorMember",
-    EXISTS (SELECT 1 FROM pg_auth_members membership WHERE membership.roleid=runtime_role.oid)
-      AS "isPeerMember",
-    EXISTS (SELECT 1 FROM information_schema.role_table_grants grant_row
-      WHERE grant_row.grantee=runtime_role.rolname AND grant_row.table_schema='platform')
-      AS "hasAnyPlatformTablePrivilege",
-    CASE WHEN to_regnamespace('platform') IS NULL THEN FALSE
-      ELSE has_schema_privilege(runtime_role.rolname,'platform','USAGE') END AS "canUsePlatformSchema",
-    CASE WHEN to_regnamespace('platform') IS NULL THEN FALSE
-      ELSE has_schema_privilege(runtime_role.rolname,'platform','CREATE') END AS "canCreatePlatformSchema"
-  FROM pg_roles runtime_role WHERE runtime_role.rolname=$1 /* assetDataPlaneRolePreflight */`;
+  FROM pg_roles runtime_role WHERE runtime_role.rolname=$1 /* singleRuntimeRolePreflight */`;
 
 const MODEL_GATEWAY_POST_AUTHORITY_SQL = `
   SELECT
@@ -810,6 +1110,7 @@ const MODEL_GATEWAY_POST_AUTHORITY_SQL = `
       AND NOT has_table_privilege($1,'platform.platform_foundation','INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
       AND has_function_privilege($1,'platform.resolve_model_gateway_authorization(TEXT,TEXT)','EXECUTE')
       AND has_function_privilege($1,'platform.list_model_gateway_dispatch_candidates(INTEGER)','EXECUTE')
+      AND has_function_privilege($1,'platform.report_model_provider_availability(UUID,TEXT,TEXT,TEXT,BIGINT,TEXT,TIMESTAMPTZ,TEXT)','EXECUTE')
       AND has_table_privilege($1,'platform.model_gateway_capacity','SELECT')
       AND has_column_privilege($1,'platform.model_gateway_capacity','active_count','UPDATE')
       AND has_column_privilege($1,'platform.model_gateway_capacity','queued_count','UPDATE')
@@ -912,118 +1213,15 @@ const ASSET_DATA_PLANE_POST_AUTHORITY_SQL = `
       AS "canMutateAssetOwnerIntent"
   /* assetDataPlaneAuthority */`;
 
-const IDENTITY_WORKER_POST_AUTHORITY_SQL = `
-  SELECT
-    has_schema_privilege($1,'platform','USAGE')
-      AND NOT has_schema_privilege($1,'platform','CREATE')
-      AND has_table_privilege($1,'platform.platform_foundation','SELECT')
-      AND has_table_privilege($1,'platform.outbox_event','SELECT')
-      AND NOT has_table_privilege($1,'platform.outbox_event','UPDATE')
-      AND NOT has_column_privilege($1,'platform.outbox_event','owner','UPDATE')
-      AND has_column_privilege($1,'platform.outbox_event','state','UPDATE')
-      AND has_column_privilege($1,'platform.outbox_event','lease_owner','UPDATE')
-      AND has_column_privilege($1,'platform.outbox_event','lease_token','UPDATE')
-      AND has_column_privilege($1,'platform.outbox_event','lease_expires_at','UPDATE')
-      AND has_column_privilege($1,'platform.outbox_event','attempt','UPDATE')
-      AND has_column_privilege($1,'platform.outbox_event','consumer_delivery_id','UPDATE')
-      AND has_column_privilege($1,'platform.outbox_event','consumer_acknowledged_at','UPDATE')
-      AND has_column_privilege($1,'platform.identity_verification_transaction','site_ref','SELECT')
-      AND has_column_privilege($1,'platform.identity_verification_transaction','transaction_ref','SELECT')
-      AND has_column_privilege($1,'platform.identity_verification_transaction','state','SELECT')
-      AND has_column_privilege($1,'platform.identity_verification_transaction','resend_count','SELECT')
-      AND has_column_privilege($1,'platform.identity_verification_transaction','expires_at','SELECT')
-      AND NOT has_column_privilege($1,'platform.identity_verification_transaction','email_normalized','SELECT')
-      AND NOT has_column_privilege($1,'platform.identity_verification_transaction','secret_digest','SELECT')
-      AND has_column_privilege($1,'platform.identity_verification_delivery','event_id','SELECT')
-      AND has_column_privilege($1,'platform.identity_verification_delivery','state','UPDATE')
-      AND has_column_privilege($1,'platform.identity_personal_bootstrap','namespace_intent_ref','SELECT')
-      AND has_column_privilege($1,'platform.identity_execution_space','state','SELECT')
-      AND has_column_privilege($1,'platform.identity_execution_space','state','UPDATE')
-      AND has_column_privilege($1,'platform.identity_namespace_allocation_intent','state','SELECT')
-      AND has_column_privilege($1,'platform.identity_namespace_allocation_intent','state','UPDATE')
-      AS "identityWorkerAuthorityOk",
-    EXISTS (
-      SELECT 1 FROM information_schema.role_table_grants grant_row
-      WHERE grant_row.grantee=$1 AND grant_row.table_schema='platform' AND NOT (
-        grant_row.privilege_type='SELECT'
-        AND grant_row.table_name=ANY(ARRAY['platform_foundation','outbox_event'])
-      )
-    ) OR EXISTS (
-      SELECT 1 FROM information_schema.role_column_grants grant_row
-      WHERE grant_row.grantee=$1 AND grant_row.table_schema='platform' AND NOT (
-        (grant_row.privilege_type='SELECT' AND grant_row.table_name=ANY(ARRAY[
-          'platform_foundation','outbox_event'
-        ]))
-        OR (grant_row.privilege_type='UPDATE' AND grant_row.table_name='outbox_event'
-          AND grant_row.column_name=ANY(ARRAY[
-            'state','available_at','last_error_code','lease_owner','lease_token',
-            'lease_expires_at','attempt','delivered_at','consumer_delivery_id',
-            'consumer_acknowledged_at','updated_at'
-          ]))
-        OR (grant_row.privilege_type='SELECT'
-          AND grant_row.table_name='identity_verification_transaction'
-          AND grant_row.column_name=ANY(ARRAY[
-            'site_ref','transaction_ref','state','resend_count','expires_at'
-          ]))
-        OR (grant_row.privilege_type='SELECT'
-          AND grant_row.table_name='identity_verification_delivery'
-          AND grant_row.column_name=ANY(ARRAY[
-            'event_id','site_ref','transaction_ref','credential_revision','state'
-          ]))
-        OR (grant_row.privilege_type='UPDATE'
-          AND grant_row.table_name='identity_verification_delivery'
-          AND grant_row.column_name=ANY(ARRAY[
-            'state','attempt_count','delivered_at','failed_at','superseded_at',
-            'last_error_code','updated_at'
-          ]))
-        OR (grant_row.privilege_type='SELECT'
-          AND grant_row.table_name='identity_personal_bootstrap'
-          AND grant_row.column_name=ANY(ARRAY[
-            'site_ref','subject_ref','workspace_ref','project_ref','execution_space_ref',
-            'execution_namespace','namespace_intent_ref'
-          ]))
-        OR (grant_row.privilege_type='SELECT'
-          AND grant_row.table_name='identity_execution_space'
-          AND grant_row.column_name=ANY(ARRAY[
-            'site_ref','execution_space_ref','project_ref','execution_namespace','state'
-          ]))
-        OR (grant_row.privilege_type='UPDATE'
-          AND grant_row.table_name='identity_execution_space'
-          AND grant_row.column_name=ANY(ARRAY['state','updated_at']))
-        OR (grant_row.privilege_type='SELECT'
-          AND grant_row.table_name='identity_namespace_allocation_intent'
-          AND grant_row.column_name=ANY(ARRAY[
-            'intent_ref','event_id','site_ref','execution_space_ref','execution_namespace','state'
-          ]))
-        OR (grant_row.privilege_type='UPDATE'
-          AND grant_row.table_name='identity_namespace_allocation_intent'
-          AND grant_row.column_name=ANY(ARRAY[
-            'state','attempt_count','last_error_code','updated_at'
-          ]))
-      )
-    ) OR EXISTS (
-      SELECT 1 FROM information_schema.role_routine_grants grant_row
-      WHERE grant_row.grantee=$1 AND grant_row.specific_schema='platform'
-    ) OR EXISTS (
-      SELECT 1 FROM pg_class sequence_row
-      JOIN pg_namespace namespace_row ON namespace_row.oid=sequence_row.relnamespace
-      WHERE namespace_row.nspname='platform'
-        AND CASE WHEN sequence_row.relkind='S' THEN
-          has_sequence_privilege($1,sequence_row.oid,'USAGE,SELECT,UPDATE')
-        ELSE FALSE END
-    ) AS "hasUnexpectedIdentityPrivilege"
-  /* identityWorkerAuthority */`;
-
 async function grantFoundationPrivileges(
   client: MigrationLockClient,
   apiRole: string,
   admissionRole: string,
   authorizationRole: string,
-  workerRole: string,
   adminRole: string,
 ): Promise<void> {
   await client.query("REVOKE ALL ON SCHEMA platform FROM PUBLIC");
-  for (const role of [apiRole, admissionRole, authorizationRole, workerRole, adminRole]) {
+  for (const role of [apiRole, admissionRole, authorizationRole, adminRole]) {
     const identifier = quoteRoleIdentifier(role);
     await client.query(`REVOKE CREATE ON SCHEMA platform FROM ${identifier}`);
     await client.query(`GRANT USAGE ON SCHEMA platform TO ${identifier}`);
@@ -1082,7 +1280,9 @@ async function grantFoundationPrivileges(
       await client.query(
         `GRANT SELECT, INSERT, UPDATE ON TABLE platform.authorization_scoped_site_cursor TO ${identifier}`,
       );
-      await client.query(`GRANT INSERT ON TABLE platform.authorization_scoped_event_log TO ${identifier}`);
+      await client.query(
+        `GRANT INSERT ON TABLE platform.authorization_scoped_event_log TO ${identifier}`,
+      );
       await client.query(
         `GRANT INSERT ON TABLE platform.authorization_subject, platform.authorization_identity_session, platform.authorization_project, platform.authorization_project_membership, ${IDENTITY_TABLES}, platform.commerce_billing_account, platform.commerce_billing_account_membership TO ${identifier}`,
       );
@@ -1133,72 +1333,6 @@ async function grantFoundationPrivileges(
       await client.query(
         `GRANT INSERT ON TABLE platform.authorization_scoped_snapshot, platform.authorization_scoped_snapshot_record TO ${identifier}`,
       );
-    } else if (role === workerRole) {
-      await client.query(
-        `GRANT SELECT ON TABLE ${KERNEL_TABLES}, ${SITE_RECONCILIATION_TABLES}, platform.authorization_site, platform.authorization_site_release, platform.authorization_product_binding, platform.authorization_scoped_stream_state, platform.authorization_scoped_site_cursor, platform.authorization_scoped_event_log, platform.authorization_scoped_snapshot, platform.authorization_product_context, platform.authorization_session_access_grant, platform.commerce_redemption, platform.commerce_fulfillment_transaction, platform.credit_budget_operation_receipt, platform.credit_authorization_segment, platform.admin_operator_authority, platform.admin_operator_site_scope, platform.admin_operator_global_scope_grant, platform.admin_breakglass_grant, platform.admin_approval, platform.admin_post_effect_review TO ${identifier}`,
-      );
-      await client.query(
-        `GRANT INSERT, UPDATE ON TABLE platform.authorization_scoped_site_cursor TO ${identifier}`,
-      );
-      await client.query(
-        `GRANT UPDATE ON TABLE platform.authorization_scoped_stream_state TO ${identifier}`,
-      );
-      await client.query(`GRANT INSERT ON TABLE platform.authorization_scoped_event_log TO ${identifier}`);
-      await client.query(`GRANT INSERT ON TABLE platform.inbox_delivery TO ${identifier}`);
-      await client.query(
-        `GRANT INSERT ON TABLE platform.site_deployment_binding, platform.site_deployment_observation, platform.site_traffic_stop_observation, platform.authorization_site, platform.authorization_site_release, platform.authorization_product_binding TO ${identifier}`,
-      );
-      await client.query(
-        `GRANT UPDATE ON TABLE platform.command_receipt, platform.inbox_delivery TO ${identifier}`,
-      );
-      await client.query(
-        `GRANT UPDATE(state,available_at,last_error_code,lease_owner,lease_token,` +
-          `lease_expires_at,attempt,delivered_at,consumer_delivery_id,` +
-          `consumer_acknowledged_at,updated_at) ON TABLE platform.outbox_event TO ${identifier}`,
-      );
-      await client.query(
-        `GRANT UPDATE(state,active_release_ref,policy_epoch,revocation_epoch,tombstoned_at,updated_at) ON TABLE platform.site TO ${identifier}`,
-      );
-      await client.query(
-        `GRANT UPDATE(state,updated_at) ON TABLE platform.site_release TO ${identifier}`,
-      );
-      await client.query(
-        `GRANT UPDATE(state,updated_at) ON TABLE platform.site_deployment_binding TO ${identifier}`,
-      );
-      await client.query(
-        `GRANT UPDATE(state,provider_operation_key,deployment_ref,observed_at,failure_code,updated_at) ON TABLE platform.site_activation_attempt TO ${identifier}`,
-      );
-      await client.query(
-        `GRANT UPDATE(state,provider_operation_key,observed_at,failure_code,updated_at) ON TABLE platform.site_traffic_stop_attempt TO ${identifier}`,
-      );
-      await client.query(
-        `GRANT UPDATE(state,security_epoch,policy_epoch,revocation_epoch,updated_at) ON TABLE platform.authorization_site TO ${identifier}`,
-      );
-      await client.query(
-        `GRANT UPDATE(state,updated_at) ON TABLE platform.authorization_site_release TO ${identifier}`,
-      );
-      await client.query(
-        `GRANT UPDATE(workload_identity_id,deployment_ref,release_ref,environment,region,audience,session_contract_revision,binding_epoch,state,updated_at) ON TABLE platform.authorization_product_binding TO ${identifier}`,
-      );
-      await client.query(
-        `GRANT UPDATE ON TABLE platform.admin_approval, platform.admin_post_effect_review TO ${identifier}`,
-      );
-      await client.query(`GRANT SELECT ON TABLE ${ASSET_TABLES} TO ${identifier}`);
-      await client.query(
-        `GRANT INSERT ON TABLE platform.outbox_event, platform.asset_blob_candidate, platform.asset_cleanup_group, platform.asset_object_cleanup, platform.asset_object_cleanup_receipt, platform.asset_upload_rejection, platform.asset_scan_evaluation, platform.asset_promotion_intent, platform.asset_blob, platform.asset_resource, platform.asset_version, platform.asset_reference, platform.asset_eligibility_projection, platform.asset_promotion_receipt TO ${identifier}`,
-      );
-      await client.query(
-        `GRANT UPDATE ON TABLE platform.asset_upload_intent, platform.asset_upload_session, platform.asset_quota_account, platform.asset_quota_reservation, platform.asset_blob_candidate, platform.asset_cleanup_group, platform.asset_object_cleanup, platform.asset_promotion_intent TO ${identifier}`,
-      );
-      await client.query(
-        `GRANT SELECT, DELETE ON TABLE platform.authorization_scoped_event_log, platform.authorization_scoped_snapshot TO ${identifier}`,
-      );
-      await client.query(
-        `GRANT EXECUTE ON FUNCTION platform.report_model_provider_availability(UUID, TEXT, TEXT, TEXT, BIGINT, TEXT, TIMESTAMPTZ, TEXT) TO ${identifier}`,
-      );
-      await client.query(
-        `GRANT EXECUTE ON FUNCTION platform.apply_admin_authority_change(UUID, JSONB) TO ${identifier}`,
-      );
     } else {
       await client.query(
         `GRANT SELECT ON TABLE platform.command_receipt, platform.outbox_event, ${ADMISSION_RUNTIME_SNAPSHOT_TABLES}, ${AUTHORIZATION_TABLES}, ${SITE_TABLES} TO ${identifier}`,
@@ -1237,7 +1371,9 @@ async function grantFoundationPrivileges(
       await client.query(
         `GRANT SELECT, INSERT, UPDATE ON TABLE platform.authorization_scoped_site_cursor TO ${identifier}`,
       );
-      await client.query(`GRANT INSERT ON TABLE platform.authorization_scoped_event_log TO ${identifier}`);
+      await client.query(
+        `GRANT INSERT ON TABLE platform.authorization_scoped_event_log TO ${identifier}`,
+      );
       await client.query(
         `GRANT UPDATE(state,updated_at) ON TABLE platform.authorization_product_binding TO ${identifier}`,
       );
@@ -1456,9 +1592,7 @@ const CREDIT_USAGE_RELATIONS = [
   "credit_usage_reconciliation",
   "credit_usage_command_receipt",
 ] as const;
-const MODEL_GATEWAY_ADMISSION_RELATIONS = [
-  "model_gateway_execution_authorization",
-] as const;
+const MODEL_GATEWAY_ADMISSION_RELATIONS = ["model_gateway_execution_authorization"] as const;
 const ADMISSION_SELECT_RELATIONS = [
   ...ADMISSION_RELATIONS,
   ...CREDIT_USAGE_RELATIONS,
@@ -1574,17 +1708,6 @@ const SITE_TABLES = [
   "platform.site_traffic_stop_attempt",
   "platform.site_traffic_stop_observation",
   "platform.site_effect_approval",
-].join(", ");
-
-const SITE_RECONCILIATION_TABLES = [
-  "platform.site",
-  "platform.site_project_binding",
-  "platform.site_release",
-  "platform.site_deployment_binding",
-  "platform.site_activation_attempt",
-  "platform.site_deployment_observation",
-  "platform.site_traffic_stop_attempt",
-  "platform.site_traffic_stop_observation",
 ].join(", ");
 
 const ADMIN_TABLES = [
@@ -1705,56 +1828,57 @@ async function assertPostMigrationAuthority(
   apiRole: string,
   admissionRole: string,
   authorizationRole: string,
-  workerRole: string,
   adminRole: string,
 ): Promise<void> {
+  // Keeps the legacy five-slot SQL parameter layout while making its former
+  // aggregate authority branch unreachable. Exact worker roles are audited by
+  // assertSplitWorkerAuthority below.
+  const noRuntimeRole = "__no_runtime_role__";
   const result = await client.query(POST_MIGRATION_AUTHORITY_SQL, [
     apiRole,
     authorizationRole,
-    workerRole,
+    noRuntimeRole,
     adminRole,
     admissionRole,
   ]);
-  const invalidRows = result.rows?.filter(
-    (row) =>
-      row.schemaOwner !== migratorRole ||
-      row.foundationOwner !== migratorRole ||
-      row.publicCanUseSchema !== false ||
-      row.publicCanCreateSchema !== false ||
-      row.canUseSchema !== true ||
-      row.canCreateSchema !== false ||
-      row.canReadFoundation !== true ||
-      row.canMutateFoundation !== false ||
-      row.ownsPlatformRelation !== false ||
-      row.ownsPlatformFunction !== false ||
-      row.hasRequiredPlatformWrites !== true ||
-      row.hasIdentityOutboxConsumerAuthority !== false ||
-      row.canExecuteModelInventoryImport !== (row.roleName === adminRole) ||
-      row.canExecuteModelInventoryActivate !== (row.roleName === adminRole) ||
-      row.canExecuteModelSitePolicyChange !== (row.roleName === adminRole) ||
-      row.canExecuteModelCandidatesProjection !== (row.roleName === apiRole) ||
-      row.canExecuteModelDecisionProjection !== (row.roleName === apiRole) ||
-      row.canExecuteModelAvailabilityReport !== (row.roleName === workerRole) ||
-      row.canExecuteCreditScopePolicy !==
-        (row.roleName === apiRole || row.roleName === admissionRole || row.roleName === adminRole) ||
-      row.canExecuteCommerceSafeLabel !==
-        (row.roleName === apiRole || row.roleName === adminRole) ||
-      row.canExecuteCommerceIanaZone !== (row.roleName === adminRole) ||
-      row.canReadCommerceCatalogEpoch !== (row.roleName === adminRole) ||
-      row.canUpdateCommerceCatalogEpoch !== (row.roleName === adminRole) ||
-      row.canExecuteAdminAuthorityChange !== (row.roleName === workerRole) ||
-      row.hasRequiredModelOptionFunctions !== true ||
-      row.canSelectModelCatalogTable !== (row.roleName === adminRole) ||
-      row.canReadModelSensitiveColumn !== false ||
-      row.hasUnexpectedPlatformPrivilege !== false,
-  ) ?? [];
-  if (
-    result.rows?.length !== 5 ||
-    invalidRows.length > 0
-  ) {
-    throw new Error(
-      `PLATFORM_POST_MIGRATION_AUTHORITY_INVALID:${JSON.stringify(invalidRows)}`,
-    );
+  const invalidRows =
+    result.rows?.filter(
+      (row) =>
+        row.schemaOwner !== migratorRole ||
+        row.foundationOwner !== migratorRole ||
+        row.publicCanUseSchema !== false ||
+        row.publicCanCreateSchema !== false ||
+        row.canUseSchema !== true ||
+        row.canCreateSchema !== false ||
+        row.canReadFoundation !== true ||
+        row.canMutateFoundation !== false ||
+        row.ownsPlatformRelation !== false ||
+        row.ownsPlatformFunction !== false ||
+        row.hasRequiredPlatformWrites !== true ||
+        row.hasIdentityOutboxConsumerAuthority !== false ||
+        row.canExecuteModelInventoryImport !== (row.roleName === adminRole) ||
+        row.canExecuteModelInventoryActivate !== (row.roleName === adminRole) ||
+        row.canExecuteModelSitePolicyChange !== (row.roleName === adminRole) ||
+        row.canExecuteModelCandidatesProjection !== (row.roleName === apiRole) ||
+        row.canExecuteModelDecisionProjection !== (row.roleName === apiRole) ||
+        row.canExecuteModelAvailabilityReport !== false ||
+        row.canExecuteCreditScopePolicy !==
+          (row.roleName === apiRole ||
+            row.roleName === admissionRole ||
+            row.roleName === adminRole) ||
+        row.canExecuteCommerceSafeLabel !==
+          (row.roleName === apiRole || row.roleName === adminRole) ||
+        row.canExecuteCommerceIanaZone !== (row.roleName === adminRole) ||
+        row.canReadCommerceCatalogEpoch !== (row.roleName === adminRole) ||
+        row.canUpdateCommerceCatalogEpoch !== (row.roleName === adminRole) ||
+        row.canExecuteAdminAuthorityChange !== false ||
+        row.hasRequiredModelOptionFunctions !== true ||
+        row.canSelectModelCatalogTable !== (row.roleName === adminRole) ||
+        row.canReadModelSensitiveColumn !== false ||
+        row.hasUnexpectedPlatformPrivilege !== false,
+    ) ?? [];
+  if (result.rows?.length !== 4 || invalidRows.length > 0) {
+    throw new Error(`PLATFORM_POST_MIGRATION_AUTHORITY_INVALID:${JSON.stringify(invalidRows)}`);
   }
 }
 
@@ -2635,30 +2759,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
   ORDER BY runtime_role.rolname
 `;
 
-function assertDistinctRoles(
-  migratorRole: string,
-  apiRole: string,
-  admissionRole: string,
-  authorizationRole: string,
-  assetDataPlaneRole: string,
-  workerRole: string,
-  identityWorkerRole: string,
-  adminRole: string,
-  modelGatewayRole: string,
-): void {
-  if (
-    new Set([
-      migratorRole,
-      apiRole,
-      admissionRole,
-      authorizationRole,
-      assetDataPlaneRole,
-      workerRole,
-      identityWorkerRole,
-      adminRole,
-      modelGatewayRole,
-    ]).size !== 9
-  ) {
+function assertDistinctRoles(roles: readonly string[]): void {
+  if (new Set(roles).size !== roles.length) {
     throw new Error("PLATFORM_DATABASE_ROLES_MUST_BE_DISTINCT");
   }
 }

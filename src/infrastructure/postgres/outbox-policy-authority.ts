@@ -1,4 +1,4 @@
-export const OUTBOX_OWNER_POLICY_COUNT = 11;
+export const OUTBOX_OWNER_POLICY_COUNT = 17;
 
 /**
  * Audits every policy on the shared outbox against the migrator-owned

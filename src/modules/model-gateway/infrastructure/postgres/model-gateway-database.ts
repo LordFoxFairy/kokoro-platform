@@ -405,6 +405,7 @@ interface RuntimeIdentity extends Record<string, unknown> {
   canMutateFoundation: boolean;
   canExecuteAuthorizationResolver: boolean;
   canExecuteDispatchScanner: boolean;
+  canExecuteAvailabilityReport: boolean;
   outboxRlsEnabled: boolean;
   outboxForceRlsEnabled: boolean;
   outboxPoliciesValid: boolean;
@@ -424,6 +425,7 @@ function validIdentity(
     row.canCreateDatabaseObject === false && row.canUseSchema === true && row.canCreateSchema === false &&
     row.canReadFoundation === true && row.canMutateFoundation === false &&
     row.canExecuteAuthorizationResolver === true && row.canExecuteDispatchScanner === true &&
+    row.canExecuteAvailabilityReport === true &&
     row.outboxRlsEnabled === true && row.outboxForceRlsEnabled === true &&
     row.outboxPoliciesValid === true &&
     row.hasRequiredGatewayWrites === true;
@@ -458,6 +460,11 @@ const RUNTIME_IDENTITY_SQL = `
     has_table_privilege(current_user,'platform.platform_foundation','INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') AS "canMutateFoundation",
     has_function_privilege(current_user,'platform.resolve_model_gateway_authorization(TEXT,TEXT)','EXECUTE') AS "canExecuteAuthorizationResolver",
     has_function_privilege(current_user,'platform.list_model_gateway_dispatch_candidates(INTEGER)','EXECUTE') AS "canExecuteDispatchScanner",
+    has_function_privilege(
+      current_user,
+      'platform.report_model_provider_availability(UUID,TEXT,TEXT,TEXT,BIGINT,TEXT,TIMESTAMPTZ,TEXT)',
+      'EXECUTE'
+    ) AS "canExecuteAvailabilityReport",
     outbox.relrowsecurity AS "outboxRlsEnabled",
     outbox.relforcerowsecurity AS "outboxForceRlsEnabled",
     ${OUTBOX_POLICY_RUNTIME_ASSERTION_SQL} AS "outboxPoliciesValid",

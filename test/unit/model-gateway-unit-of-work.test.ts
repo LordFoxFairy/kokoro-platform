@@ -142,6 +142,7 @@ function modelGatewayRuntimeIdentity(
     canMutateFoundation: false,
     canExecuteAuthorizationResolver: true,
     canExecuteDispatchScanner: true,
+    canExecuteAvailabilityReport: true,
     hasRequiredGatewayWrites: true,
     outboxRlsEnabled: true,
     outboxForceRlsEnabled: true,

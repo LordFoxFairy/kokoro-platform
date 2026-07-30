@@ -4,17 +4,17 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   createPlatformDatabaseClient,
   loadPlatformDatabaseConfig,
+  PLATFORM_WORKER_DATABASE_AUTHORITY,
   type PlatformDatabaseClient,
+  type PlatformTransactionalDatabaseClient,
+  type PlatformWorkerAuthorityRole,
 } from "../../src/infrastructure/postgres/client.js";
 import { runPlatformMigrations } from "../../src/infrastructure/postgres/migrator.js";
 import {
   createPostgresModelGatewayDatabase,
   loadModelGatewayDatabaseConfig,
 } from "../../src/modules/model-gateway/infrastructure/postgres/model-gateway-database.js";
-import {
-  OUTBOX_ROUTE_CATALOG,
-  type OutboxOwner,
-} from "../../src/shared/outbox-inbox/outbox.js";
+import { OUTBOX_ROUTE_CATALOG, type OutboxOwner } from "../../src/shared/outbox-inbox/outbox.js";
 
 const migratorDatabaseUrl = requireLeasedDatabaseUrl(
   process.env.DATABASE_URL_PLATFORM_MIGRATOR_TEST,
@@ -26,15 +26,21 @@ const admissionDatabaseUrl = requireLeasedDatabaseUrl(
 const assetDataPlaneDatabaseUrl = requireLeasedDatabaseUrl(
   process.env.DATABASE_URL_PLATFORM_ASSET_DATA_PLANE_TEST,
 );
-const identityWorkerDatabaseUrl = requireLeasedDatabaseUrl(
-  process.env.DATABASE_URL_PLATFORM_IDENTITY_WORKER_TEST,
-);
-const workerDatabaseUrl = requireLeasedDatabaseUrl(
-  process.env.DATABASE_URL_PLATFORM_WORKER_TEST,
-);
-const adminDatabaseUrl = requireLeasedDatabaseUrl(
-  process.env.DATABASE_URL_PLATFORM_ADMIN_TEST,
-);
+const workerDatabaseUrls = {
+  "commerce-worker": requireLeasedDatabaseUrl(
+    process.env.DATABASE_URL_PLATFORM_COMMERCE_WORKER_TEST,
+  ),
+  "site-worker": requireLeasedDatabaseUrl(process.env.DATABASE_URL_PLATFORM_SITE_WORKER_TEST),
+  "asset-worker": requireLeasedDatabaseUrl(process.env.DATABASE_URL_PLATFORM_ASSET_WORKER_TEST),
+  "admin-worker": requireLeasedDatabaseUrl(process.env.DATABASE_URL_PLATFORM_ADMIN_WORKER_TEST),
+  "identity-worker": requireLeasedDatabaseUrl(
+    process.env.DATABASE_URL_PLATFORM_IDENTITY_WORKER_TEST,
+  ),
+  "authorization-maintenance": requireLeasedDatabaseUrl(
+    process.env.DATABASE_URL_PLATFORM_AUTHORIZATION_MAINTENANCE_TEST,
+  ),
+} as const satisfies Record<PlatformWorkerAuthorityRole, string>;
+const adminDatabaseUrl = requireLeasedDatabaseUrl(process.env.DATABASE_URL_PLATFORM_ADMIN_TEST);
 const modelGatewayDatabaseUrl = requireLeasedDatabaseUrl(
   process.env.DATABASE_URL_PLATFORM_MODEL_GATEWAY_TEST,
 );
@@ -43,13 +49,23 @@ const apiUser = decodeURIComponent(new URL(apiDatabaseUrl).username);
 const authorizationUser = requireRole(process.env.PLATFORM_DATABASE_AUTHORIZATION_ROLE);
 const admissionUser = requireRole(process.env.PLATFORM_DATABASE_ADMISSION_ROLE);
 const assetDataPlaneUser = requireRole(process.env.PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE);
-const workerUser = requireRole(process.env.PLATFORM_DATABASE_WORKER_ROLE);
-const identityWorkerUser = requireRole(process.env.PLATFORM_DATABASE_IDENTITY_WORKER_ROLE);
+const workerUsers = {
+  "commerce-worker": requireRole(process.env.PLATFORM_DATABASE_COMMERCE_WORKER_ROLE),
+  "site-worker": requireRole(process.env.PLATFORM_DATABASE_SITE_WORKER_ROLE),
+  "asset-worker": requireRole(process.env.PLATFORM_DATABASE_ASSET_WORKER_ROLE),
+  "admin-worker": requireRole(process.env.PLATFORM_DATABASE_ADMIN_WORKER_ROLE),
+  "identity-worker": requireRole(process.env.PLATFORM_DATABASE_IDENTITY_WORKER_ROLE),
+  "authorization-maintenance": requireRole(
+    process.env.PLATFORM_DATABASE_AUTHORIZATION_MAINTENANCE_ROLE,
+  ),
+} as const satisfies Record<PlatformWorkerAuthorityRole, string>;
+const identityWorkerDatabaseUrl = workerDatabaseUrls["identity-worker"];
+const identityWorkerUser = workerUsers["identity-worker"];
 const adminUser = requireRole(process.env.PLATFORM_DATABASE_ADMIN_ROLE);
 const modelGatewayUser = requireRole(process.env.PLATFORM_DATABASE_MODEL_GATEWAY_ROLE);
 const databaseName = decodeURIComponent(new URL(migratorDatabaseUrl).pathname.slice(1));
 let database: PlatformDatabaseClient;
-let identityWorkerDatabase: PlatformDatabaseClient;
+let workerDatabases: Record<PlatformWorkerAuthorityRole, PlatformTransactionalDatabaseClient>;
 let modelGatewayDatabase: ReturnType<typeof createPostgresModelGatewayDatabase>;
 
 describe("Platform PostgreSQL foundation", () => {
@@ -63,8 +79,12 @@ describe("Platform PostgreSQL foundation", () => {
         PLATFORM_DATABASE_ADMISSION_ROLE: admissionUser,
         PLATFORM_DATABASE_AUTHORIZATION_ROLE: authorizationUser,
         PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE: assetDataPlaneUser,
-        PLATFORM_DATABASE_WORKER_ROLE: workerUser,
-        PLATFORM_DATABASE_IDENTITY_WORKER_ROLE: identityWorkerUser,
+        PLATFORM_DATABASE_COMMERCE_WORKER_ROLE: workerUsers["commerce-worker"],
+        PLATFORM_DATABASE_SITE_WORKER_ROLE: workerUsers["site-worker"],
+        PLATFORM_DATABASE_ASSET_WORKER_ROLE: workerUsers["asset-worker"],
+        PLATFORM_DATABASE_ADMIN_WORKER_ROLE: workerUsers["admin-worker"],
+        PLATFORM_DATABASE_IDENTITY_WORKER_ROLE: workerUsers["identity-worker"],
+        PLATFORM_DATABASE_AUTHORIZATION_MAINTENANCE_ROLE: workerUsers["authorization-maintenance"],
         PLATFORM_DATABASE_ADMIN_ROLE: adminUser,
         PLATFORM_DATABASE_MODEL_GATEWAY_ROLE: modelGatewayUser,
         PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
@@ -81,16 +101,21 @@ describe("Platform PostgreSQL foundation", () => {
       }),
     );
     await database.connect();
-    identityWorkerDatabase = createPlatformDatabaseClient(
-      loadPlatformDatabaseConfig("identity-worker", {
-        DATABASE_URL_PLATFORM: identityWorkerDatabaseUrl,
-        PLATFORM_DATABASE_CREDENTIAL_CLASS: "identity-worker",
-        PLATFORM_DATABASE_IDENTITY_WORKER_ROLE: identityWorkerUser,
-        PLATFORM_DATABASE_MIGRATOR_ROLE: migratorUser,
-        PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
-      }),
-    );
-    await identityWorkerDatabase.connect();
+    workerDatabases = Object.fromEntries(
+      (Object.keys(workerDatabaseUrls) as PlatformWorkerAuthorityRole[]).map((role) => [
+        role,
+        createPlatformDatabaseClient(
+          loadPlatformDatabaseConfig(role, {
+            DATABASE_URL_PLATFORM: workerDatabaseUrls[role],
+            PLATFORM_DATABASE_CREDENTIAL_CLASS: role,
+            [workerRoleEnvironmentName(role)]: workerUsers[role],
+            PLATFORM_DATABASE_MIGRATOR_ROLE: migratorUser,
+            PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
+          }),
+        ),
+      ]),
+    ) as Record<PlatformWorkerAuthorityRole, PlatformTransactionalDatabaseClient>;
+    await Promise.all(Object.values(workerDatabases).map((client) => client.connect()));
     modelGatewayDatabase = createPostgresModelGatewayDatabase(
       loadModelGatewayDatabaseConfig({
         DATABASE_URL_PLATFORM: modelGatewayDatabaseUrl,
@@ -106,7 +131,9 @@ describe("Platform PostgreSQL foundation", () => {
 
   afterAll(async () => {
     await database?.disconnect();
-    await identityWorkerDatabase?.disconnect();
+    await Promise.allSettled(
+      Object.values(workerDatabases ?? {}).map((client) => client.disconnect()),
+    );
     await modelGatewayDatabase?.disconnect();
   });
 
@@ -277,15 +304,17 @@ describe("Platform PostgreSQL foundation", () => {
         [effectIds],
       );
       expect(effects.rows.map((row) => row.event_type)).toEqual([...effectTypes].sort());
-      await expect(direct.query(
-        `INSERT INTO platform.outbox_event
+      await expect(
+        direct.query(
+          `INSERT INTO platform.outbox_event
          (event_id,owner,event_type,aggregate_id,payload,payload_digest,correlation_id)
          VALUES (
            '30000000-0000-4000-8000-000000000001','identity',
            'identity.totp.enrollment_started','component-local-fact','{}'::jsonb,
            repeat('d',64),'component-security-correlation'
          )`,
-      )).rejects.toMatchObject({ code: "23514" });
+        ),
+      ).rejects.toMatchObject({ code: "23514" });
     } finally {
       await direct.query("ROLLBACK");
       await direct.end();
@@ -303,28 +332,40 @@ describe("Platform PostgreSQL foundation", () => {
     const producers = [
       { name: "api", url: apiDatabaseUrl, allowed: ["identity", "commerce", "asset"] },
       { name: "admission", url: admissionDatabaseUrl, allowed: ["credit"] },
-      { name: "admin", url: adminDatabaseUrl,
-        allowed: ["admin-execution", "commerce", "site"] },
-      { name: "worker", url: workerDatabaseUrl,
-        allowed: ["commerce", "credit", "site", "asset", "admin-execution"] },
+      { name: "admin", url: adminDatabaseUrl, allowed: ["admin-execution", "commerce", "site"] },
+      { name: "asset-worker", url: workerDatabaseUrls["asset-worker"], allowed: ["asset"] },
     ] as const;
     const allOwners = [
-      "identity", "commerce", "asset", "credit", "site", "admin-execution",
+      "identity",
+      "commerce",
+      "asset",
+      "credit",
+      "site",
+      "admin-execution",
     ] as const satisfies readonly OutboxOwner[];
     const clients = producers.map((producer) => new Client({ connectionString: producer.url }));
+    const commerceWorker = new Client({ connectionString: workerDatabaseUrls["commerce-worker"] });
+    const siteWorker = new Client({ connectionString: workerDatabaseUrls["site-worker"] });
+    const adminWorker = new Client({ connectionString: workerDatabaseUrls["admin-worker"] });
     const insertedByOwner = new Map<string, string[]>();
     try {
       await Promise.all([
-        migrator.connect(), identity.connect(), assetDataPlane.connect(),
+        migrator.connect(),
+        identity.connect(),
+        assetDataPlane.connect(),
+        commerceWorker.connect(),
+        siteWorker.connect(),
+        adminWorker.connect(),
         ...clients.map((client) => client.connect()),
       ]);
-      await expect(migrator.query<{
-        row_level_security: boolean;
-        force_row_level_security: boolean;
-        policy_count: string;
-        public_policy_count: string;
-        restrictive_policy_count: string;
-      }>(`
+      await expect(
+        migrator.query<{
+          row_level_security: boolean;
+          force_row_level_security: boolean;
+          policy_count: string;
+          public_policy_count: string;
+          restrictive_policy_count: string;
+        }>(`
         SELECT relation.relrowsecurity AS row_level_security,
                relation.relforcerowsecurity AS force_row_level_security,
                count(policy.oid)::text AS policy_count,
@@ -336,20 +377,27 @@ describe("Platform PostgreSQL foundation", () => {
           LEFT JOIN pg_policy policy ON policy.polrelid=relation.oid
          WHERE namespace.nspname='platform' AND relation.relname='outbox_event'
          GROUP BY relation.relrowsecurity,relation.relforcerowsecurity
-      `)).resolves.toMatchObject({ rows: [{
-        row_level_security: true,
-        force_row_level_security: true,
-        policy_count: "11",
-        public_policy_count: "0",
-        restrictive_policy_count: "0",
-      }] });
-      await expect(migrator.query<{
-        function_owner: string;
-        security_definer: boolean;
-        fixed_search_path: boolean;
-        public_can_execute: boolean;
-        data_plane_can_execute: boolean;
-      }>(`
+      `),
+      ).resolves.toMatchObject({
+        rows: [
+          {
+            row_level_security: true,
+            force_row_level_security: true,
+            policy_count: "17",
+            public_policy_count: "0",
+            restrictive_policy_count: "0",
+          },
+        ],
+      });
+      await expect(
+        migrator.query<{
+          function_owner: string;
+          security_definer: boolean;
+          fixed_search_path: boolean;
+          public_can_execute: boolean;
+          data_plane_can_execute: boolean;
+        }>(
+          `
         SELECT function_owner.rolname AS function_owner,
                function_row.prosecdef AS security_definer,
                EXISTS (
@@ -373,13 +421,20 @@ describe("Platform PostgreSQL foundation", () => {
          WHERE function_row.oid=to_regprocedure(
            'platform.enqueue_asset_upload_completion_event(uuid,text,jsonb,character,text,text)'
          )
-      `, [assetDataPlaneUser])).resolves.toMatchObject({ rows: [{
-        function_owner: migratorUser,
-        security_definer: true,
-        fixed_search_path: true,
-        public_can_execute: false,
-        data_plane_can_execute: true,
-      }] });
+      `,
+          [assetDataPlaneUser],
+        ),
+      ).resolves.toMatchObject({
+        rows: [
+          {
+            function_owner: migratorUser,
+            security_definer: true,
+            fixed_search_path: true,
+            public_can_execute: false,
+            data_plane_can_execute: true,
+          },
+        ],
+      });
 
       const assetCompletionEventId = randomUUID();
       const assetSessionRef = `asset-session-${randomUUID()}`;
@@ -398,29 +453,42 @@ describe("Platform PostgreSQL foundation", () => {
                 set_config('app.site_id',$1,false)`,
         [assetPayload.siteRef],
       );
-      await expect(assetDataPlane.query(
-        `SELECT platform.enqueue_asset_upload_completion_event(
+      await expect(
+        assetDataPlane.query(
+          `SELECT platform.enqueue_asset_upload_completion_event(
           $1::uuid,$2,$3::jsonb,$4::char(64),$5,$6
         )`,
-        [assetCompletionEventId, assetSessionRef, JSON.stringify(assetPayload),
-          "a".repeat(64), "asset-component-correlation", "asset-component-causation"],
-      )).resolves.toMatchObject({ rowCount: 1 });
-      await expect(assetDataPlane.query(
-        `SELECT platform.enqueue_asset_upload_completion_event(
+          [
+            assetCompletionEventId,
+            assetSessionRef,
+            JSON.stringify(assetPayload),
+            "a".repeat(64),
+            "asset-component-correlation",
+            "asset-component-causation",
+          ],
+        ),
+      ).resolves.toMatchObject({ rowCount: 1 });
+      await expect(
+        assetDataPlane.query(
+          `SELECT platform.enqueue_asset_upload_completion_event(
           $1::uuid,$2,$3::jsonb,$4::char(64),$5,$6
         )`,
-        [assetCompletionEventId, assetSessionRef, JSON.stringify(assetPayload),
-          "a".repeat(64), "asset-component-correlation", "asset-component-causation"],
-      )).rejects.toMatchObject({ code: "23505" });
-      await expect(assetDataPlane.query(
-        "SELECT event_id FROM platform.outbox_event LIMIT 1",
-      )).rejects.toMatchObject({ code: "42501" });
-      await expect(insertOutboxEvent(
-        assetDataPlane,
-        randomUUID(),
-        "asset",
-        "asset-data-plane-forged-direct",
-      )).rejects.toMatchObject({ code: "42501" });
+          [
+            assetCompletionEventId,
+            assetSessionRef,
+            JSON.stringify(assetPayload),
+            "a".repeat(64),
+            "asset-component-correlation",
+            "asset-component-causation",
+          ],
+        ),
+      ).rejects.toMatchObject({ code: "23505" });
+      await expect(
+        assetDataPlane.query("SELECT event_id FROM platform.outbox_event LIMIT 1"),
+      ).rejects.toMatchObject({ code: "42501" });
+      await expect(
+        insertOutboxEvent(assetDataPlane, randomUUID(), "asset", "asset-data-plane-forged-direct"),
+      ).rejects.toMatchObject({ code: "42501" });
 
       for (const [index, producer] of producers.entries()) {
         const client = clients[index];
@@ -433,60 +501,539 @@ describe("Platform PostgreSQL foundation", () => {
           insertedByOwner.set(owner, [...(insertedByOwner.get(owner) ?? []), eventId]);
         }
         for (const owner of allOwners.filter((candidate) => !allowedOwners.has(candidate))) {
-          await expect(insertOutboxEvent(client, randomUUID(), owner, `${producer.name}-forged`))
-            .rejects.toMatchObject({ code: "42501" });
+          await expect(
+            insertOutboxEvent(client, randomUUID(), owner, `${producer.name}-forged`),
+          ).rejects.toMatchObject({ code: "42501" });
         }
       }
 
-      await expect(identity.query(
-        "SELECT DISTINCT owner FROM platform.outbox_event ORDER BY owner",
-      )).resolves.toMatchObject({ rows: [{ owner: "identity" }] });
-      const worker = clients[3];
-      if (worker === undefined) throw new Error("COMPONENT_WORKER_CLIENT_MISSING");
-      await expect(worker.query("SELECT DISTINCT owner FROM platform.outbox_event ORDER BY owner"))
-        .resolves.toMatchObject({ rows: [
-          { owner: "admin-execution" }, { owner: "asset" }, { owner: "commerce" },
-          { owner: "credit" }, { owner: "site" },
-        ] });
-      await expect(worker.query(
-        "SELECT event_id FROM platform.outbox_event WHERE event_id=$1",
-        [assetCompletionEventId],
-      )).resolves.toMatchObject({ rows: [{ event_id: assetCompletionEventId }] });
-      await expect(migrator.query(
-        "SELECT event_id FROM platform.outbox_event WHERE event_id=$1",
-        [assetCompletionEventId],
-      )).resolves.toMatchObject({ rowCount: 0 });
-      await expect(migrator.query(
-        "UPDATE platform.outbox_event SET state='dead_letter' WHERE event_id=$1",
-        [assetCompletionEventId],
-      )).resolves.toMatchObject({ rowCount: 0 });
-      await expect(migrator.query(
-        "DELETE FROM platform.outbox_event WHERE event_id=$1",
-        [assetCompletionEventId],
-      )).resolves.toMatchObject({ rowCount: 0 });
+      await expect(
+        identity.query("SELECT DISTINCT owner FROM platform.outbox_event ORDER BY owner"),
+      ).resolves.toMatchObject({ rows: [{ owner: "identity" }] });
+      const assetWorker = clients[3];
+      if (assetWorker === undefined) throw new Error("COMPONENT_ASSET_WORKER_CLIENT_MISSING");
+      await expect(
+        commerceWorker.query("SELECT DISTINCT owner FROM platform.outbox_event ORDER BY owner"),
+      ).resolves.toMatchObject({ rows: [{ owner: "commerce" }, { owner: "credit" }] });
+      await expect(
+        siteWorker.query("SELECT DISTINCT owner FROM platform.outbox_event ORDER BY owner"),
+      ).resolves.toMatchObject({ rows: [{ owner: "site" }] });
+      await expect(
+        assetWorker.query("SELECT DISTINCT owner FROM platform.outbox_event ORDER BY owner"),
+      ).resolves.toMatchObject({ rows: [{ owner: "asset" }] });
+      await expect(
+        adminWorker.query("SELECT DISTINCT owner FROM platform.outbox_event ORDER BY owner"),
+      ).resolves.toMatchObject({ rows: [{ owner: "admin-execution" }] });
+      await expect(
+        assetWorker.query("SELECT event_id FROM platform.outbox_event WHERE event_id=$1", [
+          assetCompletionEventId,
+        ]),
+      ).resolves.toMatchObject({ rows: [{ event_id: assetCompletionEventId }] });
+      await expect(
+        migrator.query("SELECT event_id FROM platform.outbox_event WHERE event_id=$1", [
+          assetCompletionEventId,
+        ]),
+      ).resolves.toMatchObject({ rowCount: 0 });
+      await expect(
+        migrator.query("UPDATE platform.outbox_event SET state='dead_letter' WHERE event_id=$1", [
+          assetCompletionEventId,
+        ]),
+      ).resolves.toMatchObject({ rowCount: 0 });
+      await expect(
+        migrator.query("DELETE FROM platform.outbox_event WHERE event_id=$1", [
+          assetCompletionEventId,
+        ]),
+      ).resolves.toMatchObject({ rowCount: 0 });
       const identityEvent = insertedByOwner.get("identity")?.[0];
       const commerceEvent = insertedByOwner.get("commerce")?.[0];
       if (identityEvent === undefined || commerceEvent === undefined) {
         throw new Error("COMPONENT_OUTBOX_SEED_MISSING");
       }
-      await expect(identity.query(
-        "UPDATE platform.outbox_event SET state='dead_letter' WHERE event_id=$1",
-        [commerceEvent],
-      )).resolves.toMatchObject({ rowCount: 0 });
-      await expect(worker.query(
-        "UPDATE platform.outbox_event SET state='dead_letter' WHERE event_id=$1",
-        [identityEvent],
-      )).resolves.toMatchObject({ rowCount: 0 });
-      await expect(identity.query(
-        "UPDATE platform.outbox_event SET owner='commerce' WHERE event_id=$1",
-        [identityEvent],
-      )).rejects.toMatchObject({ code: "42501" });
+      await expect(
+        identity.query("UPDATE platform.outbox_event SET state='dead_letter' WHERE event_id=$1", [
+          commerceEvent,
+        ]),
+      ).resolves.toMatchObject({ rowCount: 0 });
+      await expect(
+        adminWorker.query(
+          "UPDATE platform.outbox_event SET state='dead_letter' WHERE event_id=$1",
+          [identityEvent],
+        ),
+      ).resolves.toMatchObject({ rowCount: 0 });
+      await expect(
+        identity.query("UPDATE platform.outbox_event SET owner='commerce' WHERE event_id=$1", [
+          identityEvent,
+        ]),
+      ).rejects.toMatchObject({ code: "42501" });
     } finally {
       await migrator.query("TRUNCATE TABLE platform.outbox_event").catch(() => undefined);
       await Promise.allSettled([
-        migrator.end(), identity.end(), assetDataPlane.end(),
+        migrator.end(),
+        identity.end(),
+        assetDataPlane.end(),
+        commerceWorker.end(),
+        siteWorker.end(),
+        adminWorker.end(),
         ...clients.map((client) => client.end()),
       ]);
+    }
+  });
+
+  it("enforces exact worker operations and dedicated function authority", async () => {
+    const exactOperations = {
+      "commerce-worker": "commerce.outbox.reconcile",
+      "site-worker": "site.runtime.consume",
+      "asset-worker": "asset.outbox.consume",
+      "admin-worker": "admin.execution.claim",
+      "identity-worker": "identity.outbox.consume",
+      "authorization-maintenance": "authorization.retention",
+    } as const;
+    const roles = Object.keys(exactOperations) as PlatformWorkerAuthorityRole[];
+    for (const [index, role] of roles.entries()) {
+      await expect(
+        workerDatabases[role].internalTransaction(exactOperations[role], async () => role),
+      ).resolves.toBe(role);
+      const foreignRole = roles[(index + 1) % roles.length];
+      if (foreignRole === undefined) throw new Error("COMPONENT_FOREIGN_WORKER_ROLE_MISSING");
+      await expect(
+        workerDatabases[role].internalTransaction(
+          exactOperations[foreignRole],
+          async () => undefined,
+        ),
+      ).rejects.toThrowError("PLATFORM_INTERNAL_OPERATION_ROLE_FORBIDDEN");
+    }
+
+    const scopedFence = {
+      operation: "asset.scan.evaluate" as const,
+      siteRef: "site-component",
+      environment: "production",
+      region: "us-east-1",
+      scopes: ["asset:worker"] as const,
+    };
+    await expect(
+      workerDatabases["asset-worker"].internalScopedTransaction(
+        scopedFence,
+        async () => "asset-scoped",
+      ),
+    ).resolves.toBe("asset-scoped");
+    await expect(
+      workerDatabases["commerce-worker"].internalScopedTransaction(
+        scopedFence,
+        async () => undefined,
+      ),
+    ).rejects.toThrowError("PLATFORM_SCOPED_INTERNAL_OPERATION_ROLE_FORBIDDEN");
+
+    const adminFence = {
+      operation: "admin.authority.change",
+      siteRef: null,
+      environment: "production",
+      region: "us-east-1",
+      makerRef: "operator-maker",
+      makerGeneration: 1n,
+      makerAuthorizationEpoch: 1n,
+      checkerRef: "operator-checker",
+      checkerGeneration: 1n,
+      checkerAuthorizationEpoch: 1n,
+    };
+    await expect(
+      workerDatabases["admin-worker"].adminExecutionTransaction(
+        adminFence,
+        async () => "admin-execution",
+      ),
+    ).resolves.toBe("admin-execution");
+    await expect(
+      workerDatabases["site-worker"].adminExecutionTransaction(adminFence, async () => undefined),
+    ).rejects.toThrowError("ADMIN_EXECUTION_ROLE_FORBIDDEN");
+
+    const roleClients = await Promise.all([
+      ...roles.map(async (role) => {
+        const client = new Client({ connectionString: workerDatabaseUrls[role] });
+        await client.connect();
+        return { role, client };
+      }),
+      (async () => {
+        const client = new Client({ connectionString: modelGatewayDatabaseUrl });
+        await client.connect();
+        return { role: "model-gateway" as const, client };
+      })(),
+    ]);
+    try {
+      for (const { role, client } of roleClients) {
+        if (role !== "model-gateway") {
+          const relationProbe = {
+            "commerce-worker": {
+              own: "SELECT redemption_id FROM platform.commerce_redemption LIMIT 0",
+              foreign: "SELECT site_ref FROM platform.site LIMIT 0",
+            },
+            "site-worker": {
+              own: "SELECT site_ref FROM platform.site LIMIT 0",
+              foreign: "SELECT intent_ref FROM platform.asset_upload_intent LIMIT 0",
+            },
+            "asset-worker": {
+              own: "SELECT intent_ref FROM platform.asset_upload_intent LIMIT 0",
+              foreign: "SELECT approval_ref FROM platform.admin_approval LIMIT 0",
+            },
+            "admin-worker": {
+              own: "SELECT approval_ref FROM platform.admin_approval LIMIT 0",
+              foreign:
+                "SELECT transaction_ref FROM platform.identity_verification_transaction LIMIT 0",
+            },
+            "identity-worker": {
+              own: "SELECT transaction_ref FROM platform.identity_verification_transaction LIMIT 0",
+              foreign: "SELECT redemption_id FROM platform.commerce_redemption LIMIT 0",
+            },
+            "authorization-maintenance": {
+              own: "SELECT event_id FROM platform.authorization_scoped_event_log LIMIT 0",
+              foreign: "SELECT event_id FROM platform.outbox_event LIMIT 0",
+            },
+          } as const;
+          const targetRole = roles[(roles.indexOf(role) + 1) % roles.length];
+          if (targetRole === undefined) throw new Error("COMPONENT_TARGET_WORKER_ROLE_MISSING");
+          await client.query("SELECT set_config('app.workload_kind',$1,false)", [
+            PLATFORM_WORKER_DATABASE_AUTHORITY[role].workloadKind,
+          ]);
+          await expect(client.query(relationProbe[role].own)).resolves.toMatchObject({ rows: [] });
+          await client.query(
+            `SELECT set_config('app.workload_kind',$1,false),
+                    set_config('app.scopes','["asset:worker"]',false),
+                    set_config('app.admin_execution','true',false)`,
+            [PLATFORM_WORKER_DATABASE_AUTHORITY[targetRole].workloadKind],
+          );
+          await expect(client.query(relationProbe[role].foreign)).rejects.toMatchObject({
+            code: "42501",
+          });
+        }
+        const privilege = await client.query<{
+          model_report: boolean;
+          admin_authority: boolean;
+        }>(`
+          SELECT has_function_privilege(
+                   current_user,
+                   'platform.report_model_provider_availability(uuid,text,text,text,bigint,text,timestamptz,text)',
+                   'EXECUTE'
+                 ) AS model_report,
+                 has_function_privilege(
+                   current_user,'platform.apply_admin_authority_change(uuid,jsonb)','EXECUTE'
+                 ) AS admin_authority
+        `);
+        expect(privilege.rows).toEqual([
+          {
+            model_report: role === "model-gateway",
+            admin_authority: role === "admin-worker",
+          },
+        ]);
+      }
+    } finally {
+      await Promise.allSettled(roleClients.map(({ client }) => client.end()));
+    }
+  });
+
+  it("keeps the six worker roles LOGIN-only and rejects database TEMP drift", async () => {
+    const migrator = new Client({ connectionString: migratorDatabaseUrl });
+    await migrator.connect();
+    try {
+      const authority = await migrator.query<{
+        role_name: string;
+        can_login: boolean;
+        is_superuser: boolean;
+        inherits: boolean;
+        bypasses_rls: boolean;
+        can_create_database: boolean;
+        can_create_role: boolean;
+        can_replicate: boolean;
+        can_create_objects: boolean;
+        can_create_temporary: boolean;
+        has_membership: boolean;
+        has_members: boolean;
+        owns_database: boolean;
+        owns_schema: boolean;
+        owns_relation: boolean;
+        owns_routine: boolean;
+      }>(
+        `
+        SELECT runtime_role.rolname AS role_name,
+               runtime_role.rolcanlogin AS can_login,
+               runtime_role.rolsuper AS is_superuser,
+               runtime_role.rolinherit AS inherits,
+               runtime_role.rolbypassrls AS bypasses_rls,
+               runtime_role.rolcreatedb AS can_create_database,
+               runtime_role.rolcreaterole AS can_create_role,
+               runtime_role.rolreplication AS can_replicate,
+               has_database_privilege(runtime_role.rolname,current_database(),'CREATE')
+                 AS can_create_objects,
+               has_database_privilege(runtime_role.rolname,current_database(),'TEMPORARY')
+                 AS can_create_temporary,
+               EXISTS (SELECT 1 FROM pg_auth_members membership
+                 WHERE membership.member=runtime_role.oid) AS has_membership,
+               EXISTS (SELECT 1 FROM pg_auth_members membership
+                 WHERE membership.roleid=runtime_role.oid) AS has_members,
+               EXISTS (SELECT 1 FROM pg_database database_row
+                 WHERE database_row.datdba=runtime_role.oid) AS owns_database,
+               EXISTS (SELECT 1 FROM pg_namespace namespace
+                 WHERE namespace.nspowner=runtime_role.oid) AS owns_schema,
+               EXISTS (SELECT 1 FROM pg_class relation
+                 WHERE relation.relowner=runtime_role.oid) AS owns_relation,
+               EXISTS (SELECT 1 FROM pg_proc routine
+                 WHERE routine.proowner=runtime_role.oid) AS owns_routine
+          FROM pg_roles runtime_role
+         WHERE runtime_role.rolname=ANY($1::text[])
+         ORDER BY runtime_role.rolname
+      `,
+        [Object.values(workerUsers)],
+      );
+      expect(authority.rows).toHaveLength(6);
+      for (const row of authority.rows)
+        expect(row).toMatchObject({
+          can_login: true,
+          is_superuser: false,
+          inherits: false,
+          bypasses_rls: false,
+          can_create_database: false,
+          can_create_role: false,
+          can_replicate: false,
+          can_create_objects: false,
+          can_create_temporary: false,
+          has_membership: false,
+          has_members: false,
+          owns_database: false,
+          owns_schema: false,
+          owns_relation: false,
+          owns_routine: false,
+        });
+
+      await migrator.query(
+        `GRANT TEMPORARY ON DATABASE ${quoteIdentifier(databaseName)} ` +
+          `TO ${quoteIdentifier(workerUsers["commerce-worker"])}`,
+      );
+      const invalidWorker = createPlatformDatabaseClient(
+        loadPlatformDatabaseConfig("commerce-worker", {
+          DATABASE_URL_PLATFORM: workerDatabaseUrls["commerce-worker"],
+          PLATFORM_DATABASE_CREDENTIAL_CLASS: "commerce-worker",
+          PLATFORM_DATABASE_COMMERCE_WORKER_ROLE: workerUsers["commerce-worker"],
+          PLATFORM_DATABASE_MIGRATOR_ROLE: migratorUser,
+          PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
+        }),
+      );
+      try {
+        await expect(invalidWorker.connect()).rejects.toThrowError(
+          "PLATFORM_RUNTIME_DATABASE_ROLE_INVALID",
+        );
+      } finally {
+        await invalidWorker.disconnect();
+      }
+    } finally {
+      await migrator
+        .query(
+          `REVOKE TEMPORARY ON DATABASE ${quoteIdentifier(databaseName)} ` +
+            `FROM ${quoteIdentifier(workerUsers["commerce-worker"])}`,
+        )
+        .catch(() => undefined);
+      await migrator.end();
+    }
+  });
+
+  it("does not let an API credential impersonate any exact worker through GUCs", async () => {
+    const ownedSiteRef = `site-owned-${randomUUID()}`;
+    const foreignSiteRef = `site-foreign-${randomUUID()}`;
+    const admin = new Client({ connectionString: adminDatabaseUrl });
+    const api = new Client({ connectionString: apiDatabaseUrl });
+    await Promise.all([admin.connect(), api.connect()]);
+    try {
+      await admin.query("BEGIN");
+      for (const [siteRef, siteKey] of [
+        [ownedSiteRef, `owned-${randomUUID()}`],
+        [foreignSiteRef, `foreign-${randomUUID()}`],
+      ] as const) {
+        await admin.query(
+          `SELECT set_config('app.site_id',$1,true),
+                  set_config('app.workload_kind','admin_workload',true)`,
+          [siteRef],
+        );
+        await admin.query(
+          `INSERT INTO platform.site(site_ref,site_key,state) VALUES ($1,$2,'preview_ready')`,
+          [siteRef, siteKey],
+        );
+      }
+      await admin.query("COMMIT");
+
+      await api.query("BEGIN");
+      await api.query(
+        `SELECT set_config('app.site_id',$1,true),
+                set_config('app.workload_kind','platform_site_worker',true)`,
+        [ownedSiteRef],
+      );
+      const visible = await api.query<{ site_ref: string }>(
+        `SELECT site_ref FROM platform.site WHERE site_ref=ANY($1::text[]) ORDER BY site_ref`,
+        [[ownedSiteRef, foreignSiteRef]],
+      );
+      expect(visible.rows).toEqual([{ site_ref: ownedSiteRef }]);
+
+      const probes = [
+        [
+          "platform_site_worker",
+          "SELECT attempt_ref FROM platform.site_activation_attempt LIMIT 0",
+        ],
+        [
+          "platform_asset_worker",
+          "SELECT evaluation_ref FROM platform.asset_scan_evaluation LIMIT 0",
+        ],
+        [
+          "platform_admin_worker",
+          "SELECT platform.apply_admin_authority_change(gen_random_uuid(),'{}'::jsonb)",
+        ],
+        ["platform_identity_worker", "UPDATE platform.outbox_event SET state=state WHERE FALSE"],
+        ["platform_commerce_worker", "UPDATE platform.outbox_event SET state=state WHERE FALSE"],
+        [
+          "platform_authorization_maintenance",
+          "DELETE FROM platform.authorization_scoped_snapshot WHERE FALSE",
+        ],
+      ] as const;
+      await api.query("COMMIT");
+      for (const [workloadKind, sql] of probes) {
+        await api.query(
+          `SELECT set_config('app.workload_kind',$1,false),
+                  set_config('app.scopes','["asset:worker"]',false),
+                  set_config('app.admin_execution','true',false)`,
+          [workloadKind],
+        );
+        await expect(api.query(sql)).rejects.toMatchObject({ code: "42501" });
+      }
+    } finally {
+      await api.query("ROLLBACK").catch(() => undefined);
+      await admin.query("ROLLBACK").catch(() => undefined);
+      await Promise.allSettled([api.end(), admin.end()]);
+    }
+  });
+
+  it("keeps PUBLIC routine execution closed and rejects a widened routine ACL", async () => {
+    const migrator = new Client({ connectionString: migratorDatabaseUrl });
+    await migrator.connect();
+    try {
+      const publicAuthority = await migrator.query<{
+        public_routine_count: string;
+        public_default_execute: boolean;
+      }>(
+        `
+        SELECT (
+          SELECT count(*)::text
+          FROM pg_proc routine
+          JOIN pg_namespace namespace ON namespace.oid=routine.pronamespace
+          CROSS JOIN LATERAL aclexplode(COALESCE(
+            routine.proacl,acldefault('f',routine.proowner)
+          )) acl
+          WHERE namespace.nspname='platform'
+            AND acl.grantee=0
+            AND acl.privilege_type='EXECUTE'
+        ) AS public_routine_count,
+        EXISTS (
+          SELECT 1
+          FROM pg_default_acl defaults
+          JOIN pg_namespace namespace ON namespace.oid=defaults.defaclnamespace
+          CROSS JOIN LATERAL aclexplode(defaults.defaclacl) acl
+          WHERE defaults.defaclrole=(SELECT oid FROM pg_roles WHERE rolname=$1)
+            AND namespace.nspname='platform'
+            AND defaults.defaclobjtype='f'
+            AND acl.grantee=0
+            AND acl.privilege_type='EXECUTE'
+        ) AS public_default_execute
+      `,
+        [migratorUser],
+      );
+      expect(publicAuthority.rows).toEqual([
+        {
+          public_routine_count: "0",
+          public_default_execute: false,
+        },
+      ]);
+
+      await migrator.query(
+        `GRANT EXECUTE ON FUNCTION platform.resolve_model_candidates(TEXT,TEXT,TEXT) TO PUBLIC`,
+      );
+      const invalidWorker = createPlatformDatabaseClient(
+        loadPlatformDatabaseConfig("commerce-worker", {
+          DATABASE_URL_PLATFORM: workerDatabaseUrls["commerce-worker"],
+          PLATFORM_DATABASE_CREDENTIAL_CLASS: "commerce-worker",
+          PLATFORM_DATABASE_COMMERCE_WORKER_ROLE: workerUsers["commerce-worker"],
+          PLATFORM_DATABASE_MIGRATOR_ROLE: migratorUser,
+          PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
+        }),
+      );
+      try {
+        await expect(invalidWorker.connect()).rejects.toThrowError(
+          "PLATFORM_RUNTIME_DATABASE_ROLE_INVALID",
+        );
+      } finally {
+        await invalidWorker.disconnect();
+      }
+    } finally {
+      await migrator
+        .query(
+          `REVOKE EXECUTE ON FUNCTION platform.resolve_model_candidates(TEXT,TEXT,TEXT) FROM PUBLIC`,
+        )
+        .catch(() => undefined);
+      await migrator.end();
+    }
+  });
+
+  it("uses exact Site cursor update columns and rejects an added key-column grant", async () => {
+    const migrator = new Client({ connectionString: migratorDatabaseUrl });
+    await migrator.connect();
+    try {
+      const authority = await migrator.query<{
+        stream_singleton_update: boolean;
+        stream_watermark_update: boolean;
+        cursor_site_update: boolean;
+        cursor_sequence_update: boolean;
+      }>(
+        `
+        SELECT has_column_privilege($1,'platform.authorization_scoped_stream_state',
+                  'singleton','UPDATE') AS stream_singleton_update,
+               has_column_privilege($1,'platform.authorization_scoped_stream_state',
+                  'high_watermark','UPDATE') AS stream_watermark_update,
+               has_column_privilege($1,'platform.authorization_scoped_site_cursor',
+                  'site_ref','UPDATE') AS cursor_site_update,
+               has_column_privilege($1,'platform.authorization_scoped_site_cursor',
+                  'aggregate_sequence','UPDATE') AS cursor_sequence_update
+      `,
+        [workerUsers["site-worker"]],
+      );
+      expect(authority.rows).toEqual([
+        {
+          stream_singleton_update: false,
+          stream_watermark_update: true,
+          cursor_site_update: false,
+          cursor_sequence_update: true,
+        },
+      ]);
+
+      await migrator.query(
+        `GRANT UPDATE(site_ref) ON TABLE platform.authorization_scoped_site_cursor ` +
+          `TO ${workerUsers["site-worker"]}`,
+      );
+      const invalidWorker = createPlatformDatabaseClient(
+        loadPlatformDatabaseConfig("site-worker", {
+          DATABASE_URL_PLATFORM: workerDatabaseUrls["site-worker"],
+          PLATFORM_DATABASE_CREDENTIAL_CLASS: "site-worker",
+          PLATFORM_DATABASE_SITE_WORKER_ROLE: workerUsers["site-worker"],
+          PLATFORM_DATABASE_MIGRATOR_ROLE: migratorUser,
+          PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
+        }),
+      );
+      try {
+        await expect(invalidWorker.connect()).rejects.toThrowError(
+          "PLATFORM_RUNTIME_DATABASE_ROLE_INVALID",
+        );
+      } finally {
+        await invalidWorker.disconnect();
+      }
+    } finally {
+      await migrator
+        .query(
+          `REVOKE UPDATE(site_ref) ON TABLE platform.authorization_scoped_site_cursor ` +
+            `FROM ${workerUsers["site-worker"]}`,
+        )
+        .catch(() => undefined);
+      await migrator.end();
     }
   });
 
@@ -497,16 +1044,19 @@ describe("Platform PostgreSQL foundation", () => {
       await migrator.query(
         "CREATE POLICY outbox_public_probe ON platform.outbox_event FOR SELECT TO PUBLIC USING (FALSE)",
       );
-      const invalidApi = createPlatformDatabaseClient(loadPlatformDatabaseConfig("api", {
-        DATABASE_URL_PLATFORM: apiDatabaseUrl,
-        PLATFORM_DATABASE_CREDENTIAL_CLASS: "api",
-        PLATFORM_DATABASE_API_ROLE: apiUser,
-        PLATFORM_DATABASE_MIGRATOR_ROLE: migratorUser,
-        PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
-      }));
+      const invalidApi = createPlatformDatabaseClient(
+        loadPlatformDatabaseConfig("api", {
+          DATABASE_URL_PLATFORM: apiDatabaseUrl,
+          PLATFORM_DATABASE_CREDENTIAL_CLASS: "api",
+          PLATFORM_DATABASE_API_ROLE: apiUser,
+          PLATFORM_DATABASE_MIGRATOR_ROLE: migratorUser,
+          PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
+        }),
+      );
       try {
-        await expect(invalidApi.connect())
-          .rejects.toThrowError("PLATFORM_RUNTIME_DATABASE_ROLE_INVALID");
+        await expect(invalidApi.connect()).rejects.toThrowError(
+          "PLATFORM_RUNTIME_DATABASE_ROLE_INVALID",
+        );
       } finally {
         await invalidApi.disconnect();
       }
@@ -526,13 +1076,15 @@ describe("Platform PostgreSQL foundation", () => {
         }),
       );
       try {
-        await expect(invalidIdentity.connect())
-          .rejects.toThrowError("PLATFORM_RUNTIME_DATABASE_ROLE_INVALID");
+        await expect(invalidIdentity.connect()).rejects.toThrowError(
+          "PLATFORM_RUNTIME_DATABASE_ROLE_INVALID",
+        );
       } finally {
         await invalidIdentity.disconnect();
       }
-      await restorePolicy(migrator, "outbox_identity_worker_select", identityWorkerUser,
-        "USING", ["identity"]);
+      await restorePolicy(migrator, "outbox_identity_worker_select", identityWorkerUser, "USING", [
+        "identity",
+      ]);
 
       await migrator.query(
         `ALTER POLICY outbox_admin_insert ON platform.outbox_event
@@ -548,13 +1100,17 @@ describe("Platform PostgreSQL foundation", () => {
         }),
       );
       try {
-        await expect(invalidModelGateway.connect())
-          .rejects.toThrowError("MODEL_GATEWAY_DATABASE_ROLE_INVALID");
+        await expect(invalidModelGateway.connect()).rejects.toThrowError(
+          "MODEL_GATEWAY_DATABASE_ROLE_INVALID",
+        );
       } finally {
         await invalidModelGateway.disconnect();
       }
-      await restorePolicy(migrator, "outbox_admin_insert", adminUser,
-        "WITH CHECK", ["admin-execution", "commerce", "site"]);
+      await restorePolicy(migrator, "outbox_admin_insert", adminUser, "WITH CHECK", [
+        "admin-execution",
+        "commerce",
+        "site",
+      ]);
 
       await replaceSelectPolicy(
         migrator,
@@ -573,8 +1129,9 @@ describe("Platform PostgreSQL foundation", () => {
         }),
       );
       try {
-        await expect(restrictiveIdentity.connect())
-          .rejects.toThrowError("PLATFORM_RUNTIME_DATABASE_ROLE_INVALID");
+        await expect(restrictiveIdentity.connect()).rejects.toThrowError(
+          "PLATFORM_RUNTIME_DATABASE_ROLE_INVALID",
+        );
       } finally {
         await restrictiveIdentity.disconnect();
       }
@@ -586,7 +1143,8 @@ describe("Platform PostgreSQL foundation", () => {
         "PERMISSIVE",
       );
     } finally {
-      await migrator.query("DROP POLICY IF EXISTS outbox_public_probe ON platform.outbox_event")
+      await migrator
+        .query("DROP POLICY IF EXISTS outbox_public_probe ON platform.outbox_event")
         .catch(() => undefined);
       await replaceSelectPolicy(
         migrator,
@@ -595,8 +1153,11 @@ describe("Platform PostgreSQL foundation", () => {
         ["identity"],
         "PERMISSIVE",
       ).catch(() => undefined);
-      await restorePolicy(migrator, "outbox_admin_insert", adminUser,
-        "WITH CHECK", ["admin-execution", "commerce", "site"]).catch(() => undefined);
+      await restorePolicy(migrator, "outbox_admin_insert", adminUser, "WITH CHECK", [
+        "admin-execution",
+        "commerce",
+        "site",
+      ]).catch(() => undefined);
       await migrator.end();
     }
   });
@@ -614,6 +1175,10 @@ function requireLeasedDatabaseUrl(value: string | undefined): string {
   return value;
 }
 
+function workerRoleEnvironmentName(role: PlatformWorkerAuthorityRole): string {
+  return `PLATFORM_DATABASE_${role.replaceAll("-", "_").toUpperCase()}_ROLE`;
+}
+
 async function replaceSelectPolicy(
   client: Client,
   policyName: string,
@@ -621,8 +1186,11 @@ async function replaceSelectPolicy(
   owners: readonly string[],
   mode: "PERMISSIVE" | "RESTRICTIVE",
 ): Promise<void> {
-  if (!/^[a-z_][a-z0-9_]{0,62}$/u.test(policyName) ||
-      !/^[a-z_][a-z0-9_]{0,62}$/u.test(roleName) || owners.length < 1) {
+  if (
+    !/^[a-z_][a-z0-9_]{0,62}$/u.test(policyName) ||
+    !/^[a-z_][a-z0-9_]{0,62}$/u.test(roleName) ||
+    owners.length < 1
+  ) {
     throw new Error("COMPONENT_POLICY_REPLACEMENT_INVALID");
   }
   const ownerLiterals = owners.map(sqlLiteral).join(",");
@@ -650,8 +1218,15 @@ function insertOutboxEvent(
        (event_id,owner,event_type,aggregate_id,payload,payload_digest,
         correlation_id,causation_id)
      VALUES ($1::uuid,$2,$3,$4,'{}'::jsonb,$5,$6,$7)`,
-    [eventId, owner, OUTBOX_ROUTE_CATALOG[owner].eventTypes[0], `${producer}:${eventId}`,
-      "0".repeat(64), `${producer}:correlation`, `${producer}:causation`],
+    [
+      eventId,
+      owner,
+      OUTBOX_ROUTE_CATALOG[owner].eventTypes[0],
+      `${producer}:${eventId}`,
+      "0".repeat(64),
+      `${producer}:correlation`,
+      `${producer}:causation`,
+    ],
   );
 }
 
@@ -662,8 +1237,11 @@ async function restorePolicy(
   clause: "USING" | "WITH CHECK",
   owners: readonly string[],
 ): Promise<void> {
-  if (!/^[a-z_][a-z0-9_]{0,62}$/u.test(policyName) ||
-      !/^[a-z_][a-z0-9_]{0,62}$/u.test(roleName) || owners.length < 1) {
+  if (
+    !/^[a-z_][a-z0-9_]{0,62}$/u.test(policyName) ||
+    !/^[a-z_][a-z0-9_]{0,62}$/u.test(roleName) ||
+    owners.length < 1
+  ) {
     throw new Error("COMPONENT_POLICY_RESTORE_INVALID");
   }
   const ownerLiterals = owners.map(sqlLiteral).join(",");
@@ -676,4 +1254,11 @@ async function restorePolicy(
 
 function sqlLiteral(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
+}
+
+function quoteIdentifier(value: string): string {
+  if (!/^[a-z_][a-z0-9_]{0,62}$/u.test(value)) {
+    throw new Error("COMPONENT_SQL_IDENTIFIER_INVALID");
+  }
+  return `"${value}"`;
 }

@@ -62,14 +62,19 @@ test("PostgreSQL CI provisions isolated non-superuser roles", async () => {
     "platform_admission",
     "platform_authorization",
     "platform_asset_data_plane",
-    "platform_worker",
+    "platform_commerce_worker",
+    "platform_site_worker",
+    "platform_asset_worker",
+    "platform_admin_worker",
     "platform_identity_worker",
+    "platform_authorization_maintenance",
     "platform_admin",
     "platform_model_gateway",
   ];
   for (const role of roles) {
     assert.match(source, new RegExp(`CREATE ROLE ${role}\\b`, "u"));
   }
+  assert.doesNotMatch(source, /CREATE ROLE platform_worker\b/u);
   assert.equal(
     (source.match(/NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS/gu) ?? []).length,
     roles.length,

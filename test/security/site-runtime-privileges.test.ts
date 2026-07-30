@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { SPLIT_WORKER_RELATION_AUTHORITY } from
+  "../../src/infrastructure/postgres/split-worker-authority.js";
 
 const migrator = readFileSync(
   new URL("../../src/infrastructure/postgres/migrator.ts", import.meta.url),
@@ -11,19 +13,28 @@ const client = readFileSync(
 );
 
 describe("Site runtime privileges", () => {
-  it("grants worker only the owner projections required by durable reconciliation", () => {
-    expect(migrator).toContain(
-      "platform.site_deployment_binding, platform.site_deployment_observation, platform.site_traffic_stop_observation",
-    );
-    expect(migrator).toContain(
-      "platform.authorization_site, platform.authorization_site_release, platform.authorization_product_binding",
-    );
-    expect(migrator).toContain(
-      "UPDATE(state,provider_operation_key,deployment_ref,observed_at,failure_code,updated_at) ON TABLE platform.site_activation_attempt",
-    );
-    expect(migrator).toContain(
-      "UPDATE(state,provider_operation_key,observed_at,failure_code,updated_at) ON TABLE platform.site_traffic_stop_attempt",
-    );
+  it("grants the Site worker only the owner projections required by durable reconciliation", () => {
+    const authority = SPLIT_WORKER_RELATION_AUTHORITY["site-worker"];
+    for (const relation of [
+      "site_deployment_binding", "site_deployment_observation",
+      "site_traffic_stop_observation", "authorization_site",
+      "authorization_site_release", "authorization_product_binding",
+    ]) expect(authority).toContainEqual({ relation, privilege: "INSERT" });
+    expect(authority).toContainEqual({
+      relation: "site_activation_attempt",
+      privilege: "UPDATE",
+      columns: [
+        "state", "provider_operation_key", "deployment_ref", "observed_at", "failure_code",
+        "updated_at",
+      ],
+    });
+    expect(authority).toContainEqual({
+      relation: "site_traffic_stop_attempt",
+      privilege: "UPDATE",
+      columns: [
+        "state", "provider_operation_key", "observed_at", "failure_code", "updated_at",
+      ],
+    });
   });
 
   it("grants admin maker-checker and admission writes without exposing approvals to API", () => {
@@ -41,22 +52,17 @@ describe("Site runtime privileges", () => {
     expect(apiBranch).not.toContain("site_effect_approval");
   });
 
-  it("fails process startup and post-migration verification when Site grants drift", () => {
-    for (const source of [migrator, client]) {
-      expect(source).toContain("'platform.site_traffic_stop_attempt', 'SELECT'");
-      for (const relation of [
-        "site_traffic_stop_observation",
-        "site_effect_approval",
-        "authorization_product_binding",
-        "authorization_site_release",
-      ]) {
-        expect(source).toMatch(new RegExp(
-          `has_table_privilege\\([^\\n]*'platform\\.${relation}', 'SELECT'\\)` +
-            `[\\s\\S]{0,160}has_table_privilege\\([^\\n]*'platform\\.${relation}', 'INSERT'\\)`,
-          "u",
-        ));
-      }
-      expect(source).toContain("candidate.relname<>'site_effect_approval'");
+  it("fails startup and post-migration verification when exact Site grants drift", () => {
+    const relations = new Set(SPLIT_WORKER_RELATION_AUTHORITY["site-worker"]
+      .map((authority) => authority.relation));
+    for (const relation of [
+      "site_traffic_stop_attempt", "site_traffic_stop_observation",
+      "authorization_product_binding", "authorization_site_release",
+    ]) expect(relations).toContain(relation);
+    for (const relation of ["site_effect_approval", "asset_upload_intent", "admin_approval"]) {
+      expect(relations).not.toContain(relation);
     }
+    expect(migrator).toContain("SPLIT_WORKER_EXACT_AUTHORITY_SQL");
+    expect(client).toContain("SPLIT_WORKER_EXACT_AUTHORITY_SQL");
   });
 });

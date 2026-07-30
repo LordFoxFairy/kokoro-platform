@@ -10,10 +10,10 @@ export type DedicatedWorkerDatabaseRole =
   | "admin-worker"
   | "authorization-maintenance";
 
-/** Integration seam for the separately reviewed least-privilege database-authority change. */
+/** Shared typed entry point for independently deployed worker database credentials. */
 export function loadDedicatedWorkerDatabaseConfig(
   role: DedicatedWorkerDatabaseRole,
   environment: Readonly<Record<string, string | undefined>>,
 ): PlatformDatabaseConfig {
-  return Reflect.apply(loadPlatformDatabaseConfig, undefined, [role, environment]) as PlatformDatabaseConfig;
+  return loadPlatformDatabaseConfig(role, environment);
 }
