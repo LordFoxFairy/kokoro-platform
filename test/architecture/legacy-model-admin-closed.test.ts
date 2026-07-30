@@ -21,13 +21,26 @@ describe("legacy kokoro-model Admin authority retirement", () => {
     expect(module).not.toMatch(/admin-manifest|basePath: "\/admin\/models"/u);
   });
 
-  it("retains executable 404 coverage for callers holding Admin credentials", () => {
+  it("retains executable 404 coverage for every retired product mutation route", () => {
     const test = readFileSync(
       new URL("test/unit/legacy-admin-closed.test.ts", modelRoot),
       "utf8",
     );
-    expect(test).toMatch(/x-kokoro-service": "admin"/u);
-    expect(test).toMatch(/\/admin\/models\/provider-accounts/u);
-    expect(test).toMatch(/statusCode\)\.toBe\(404\)/u);
+    for (const route of [
+      "/admin/models/provider-accounts",
+      "/provider-accounts/ensure",
+      "/provider-accounts/provider-one/restore",
+      "/model-bindings/ensure",
+      "/model-bindings/binding-one/restore",
+      "/model-labels/ensure",
+    ]) {
+      expect(test, route).toContain(route);
+    }
+    expect(test).toMatch(/\["DELETE", "\/provider-accounts\/provider-one"\]/u);
+    expect(test).toMatch(/\["DELETE", "\/model-bindings\/binding-one"\]/u);
+    expect(test).toMatch(/statusCode,[\s\S]*\.toBe\(404\)/u);
+
+    const routes = readFileSync(new URL("src/interfaces/http/routes.ts", modelRoot), "utf8");
+    expect(routes).not.toMatch(/app\.(?:post|put|patch|delete)\(/u);
   });
 });
