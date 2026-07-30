@@ -29,6 +29,7 @@
     "start:admission": "node dist/src/process/admission.js",
     "start:admin": "node dist/src/process/admin.js",
     "start:authorization": "node dist/src/process/authorization.js",
+    "start:asset-data-plane": "node dist/src/process/asset-data-plane.js",
     "start:worker": "node dist/src/process/worker.js",
     "test:repository": "node --test test/repository/*.test.mjs",
     "test:platform": "vitest run test/*.test.ts test/architecture/*.test.ts",
