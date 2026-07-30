@@ -1,4 +1,5 @@
 import { create } from "@bufbuild/protobuf";
+import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError, type HandlerContext } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
 import { KokoroErrorDetailSchema } from
@@ -7,8 +8,13 @@ import { MODEL_CONTROL_ADMIN_ERRORS } from
   "../../src/interfaces/connect/generated-model-control/model-control-errors.js";
 import { AuthenticatedOperatorQueryContextSchema } from
   "../../src/interfaces/connect/generated-model-control/kokoro/platform/admin/v2/admin_shared_pb.js";
+import { GlobalScopeSchema, OperatorScopeSchema, SecurityEpochsSchema } from
+  "../../src/interfaces/connect/generated-model-control/kokoro/platform/admin/v2/admin_shared_pb.js";
+import { OperatorAssuranceLevel } from
+  "../../src/interfaces/connect/generated-model-control/kokoro/common/v2/command_envelope_pb.js";
 import {
   GetInventoryRevisionRequestSchema,
+  ListInventoryRevisionsRequestSchema,
   ListInventoryProvidersRequestSchema,
   ListSiteModelPoliciesRequestSchema,
   ModelAdminPageSchema,
@@ -19,6 +25,10 @@ import { HmacAdminPageCursorCodec } from
   "../../src/modules/admin/infrastructure/security/admin-page-cursor.js";
 import type { AdminQueryPermit } from
   "../../src/modules/admin/interfaces/connect/admin-query-service.js";
+import type { AdminOperatorAuthority, AuthenticatedAdminSession } from
+  "../../src/modules/admin/domain/admin-authorization.js";
+import { AdminControlPlaneResolver, operatorAttestation } from
+  "../../src/modules/admin/infrastructure/security/admin-control-plane-resolver.js";
 import { createModelControlConnectService } from
   "../../src/modules/model-control/interfaces/connect/model-control-service.js";
 
@@ -63,6 +73,28 @@ describe("ModelControl Admin Connect reads", () => {
       safeMessage: MODEL_CONTROL_ADMIN_ERRORS.adminPageTokenInvalid.safeMessage,
     }]);
   });
+
+  it.each([
+    ["missing session", null, Code.Unauthenticated, "admin.session.unauthenticated"],
+    ["missing permission", authenticatedWithoutModelRead, Code.PermissionDenied, "admin.permission_denied"],
+  ] as const)("maps a real resolver %s outcome to its stable security classification",
+    async (_label, authenticated, code, domainCode) => {
+      const reader = readerDouble();
+      const resolver = new AdminControlPlaneResolver({
+        peer: () => verifiedPeer,
+        authenticator: { authenticate: vi.fn(async () => authenticated) } as never,
+        clock: () => new Date(securityNow),
+      });
+      const service = serviceWith(reader, resolver);
+
+      const error = await errorOf(service.listInventoryRevisions(create(ListInventoryRevisionsRequestSchema, {
+        context: securityQueryContext(),
+      }), authenticatedTransport));
+
+      expect(error.code).toBe(code);
+      expect(error.findDetails(KokoroErrorDetailSchema)).toMatchObject([{ domainCode }]);
+      expect(reader.listInventoryRevisions).not.toHaveBeenCalled();
+    });
 
   it("returns only the safe provider projection and carries the DB watermark across pages", async () => {
     const reader = readerDouble();
@@ -149,7 +181,9 @@ function readerDouble() { return {
   listSiteModelPolicies: vi.fn(), listSiteReleaseCatalogs: vi.fn(),
 }; }
 
-function serviceWith(reader: ReturnType<typeof readerDouble>, resolver: ReturnType<typeof resolverDouble>) {
+function serviceWith(reader: ReturnType<typeof readerDouble>, resolver: Parameters<
+  typeof createModelControlConnectService
+>[0]["resolver"]) {
   const unexpected = vi.fn(async () => { throw new Error("unexpected command"); });
   return createModelControlConnectService({ resolver, reader,
     cursors: new HmacAdminPageCursorCodec(new Uint8Array(32).fill(7)),
@@ -157,5 +191,53 @@ function serviceWith(reader: ReturnType<typeof readerDouble>, resolver: ReturnTy
     owners: { importInventory: { import: unexpected }, activateInventory: { activate: unexpected },
       changeSitePolicy: { change: unexpected }, materializeModelOptions: { materialize: unexpected },
       publishSiteReleaseCatalog: { publish: unexpected } },
+  });
+}
+
+const securityNow = "2026-07-30T12:00:00.000Z";
+const securitySession: AuthenticatedAdminSession = Object.freeze({
+  operatorRef: "operator:7", operatorGeneration: 2n, operatorSecurityEpoch: 3n,
+  sessionRef: "session:9", sessionEpoch: 4n, restrictionEpoch: 5n, policyEpoch: 6n,
+  workloadIdentityRef: "spiffe://kokoro/web-admin", audience: "platform-admin",
+  environment: "production", region: "us-east-1", managedDeviceRef: "device:3",
+  assuranceLevel: "phishing_resistant", factorClasses: Object.freeze(["oidc", "webauthn"]),
+  authenticatedAt: "2026-07-30T11:50:00.000Z", stepUpAt: "2026-07-30T11:59:00.000Z",
+  expiresAt: "2026-07-30T13:00:00.000Z",
+});
+const securityAuthority: AdminOperatorAuthority = Object.freeze({
+  operatorRef: securitySession.operatorRef, operatorGeneration: securitySession.operatorGeneration,
+  operatorSecurityEpoch: securitySession.operatorSecurityEpoch, authorizationEpoch: 11n,
+  state: "active", permissions: Object.freeze(["unrelated.read"]),
+  expiresAt: "2026-07-30T13:00:00.000Z", siteScopes: Object.freeze([]),
+  globalScopes: Object.freeze([{ grantRef: "grant:global", environment: "production",
+    region: "us-east-1", scopeEpoch: 8n, expiresAt: "2026-07-30T13:00:00.000Z" }]),
+  breakGlassScopes: Object.freeze([]),
+});
+const authenticatedWithoutModelRead = Object.freeze({ session: securitySession, authority: securityAuthority });
+const verifiedPeer = Object.freeze({ workloadIdentityRef: securitySession.workloadIdentityRef,
+  environment: securitySession.environment, region: securitySession.region, audience: securitySession.audience,
+  managedDeviceRef: securitySession.managedDeviceRef, bindingEpoch: 9n });
+const authenticatedTransport = { requestHeader: new Headers({
+  authorization: `Bearer ${"x".repeat(32)}`,
+}) } as HandlerContext;
+
+function securityQueryContext() {
+  const attestation = operatorAttestation(securitySession);
+  return create(AuthenticatedOperatorQueryContextSchema, {
+    requestId: "request:model:security", actorRef: securitySession.operatorRef,
+    operatorGeneration: securitySession.operatorGeneration, operatorSessionRef: securitySession.sessionRef,
+    environment: securitySession.environment, region: securitySession.region,
+    managedDeviceRef: securitySession.managedDeviceRef,
+    assuranceLevel: OperatorAssuranceLevel.PHISHING_RESISTANT,
+    factorClasses: [...securitySession.factorClasses],
+    authenticatedAt: timestampFromDate(new Date(securitySession.authenticatedAt)),
+    stepUpAt: timestampFromDate(new Date(securitySession.stepUpAt!)),
+    operatorAttestationRef: attestation.ref, operatorAttestationDigest: attestation.digest,
+    securityEpochs: create(SecurityEpochsSchema, { operatorSecurityEpoch: securitySession.operatorSecurityEpoch,
+      sessionEpoch: securitySession.sessionEpoch, restrictionEpoch: securitySession.restrictionEpoch,
+      policyEpoch: securitySession.policyEpoch }),
+    scope: create(OperatorScopeSchema, { kind: { case: "global", value: create(GlobalScopeSchema, {
+      grantId: "grant:global", environment: securitySession.environment, region: securitySession.region,
+    }) } }),
   });
 }

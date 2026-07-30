@@ -24,6 +24,20 @@ export const MODEL_CONTROL_ADMIN_ERRORS = Object.freeze({
     retryClass: RetryClass.NEVER,
     httpStatus: 400,
   }),
+  adminSessionUnauthenticated: Object.freeze({
+    connectCode: "unauthenticated",
+    domainCode: "admin.session.unauthenticated",
+    safeMessage: "Admin session authentication failed",
+    retryClass: RetryClass.NEVER,
+    httpStatus: 401,
+  }),
+  adminPermissionDenied: Object.freeze({
+    connectCode: "permission_denied",
+    domainCode: "admin.permission_denied",
+    safeMessage: "Admin operation is not permitted",
+    retryClass: RetryClass.NEVER,
+    httpStatus: 403,
+  }),
 });
 
 export type ModelControlAdminErrorKind = keyof typeof MODEL_CONTROL_ADMIN_ERRORS;

@@ -1,4 +1,5 @@
 import { create } from "@bufbuild/protobuf";
+import { readFileSync } from "node:fs";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError, type HandlerContext } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
@@ -6,6 +7,15 @@ import { KokoroErrorDetailSchema } from
   "../../src/interfaces/connect/generated-model-control/kokoro/common/v1/error_pb.js";
 import { MODEL_CONTROL_ADMIN_ERRORS } from
   "../../src/interfaces/connect/generated-model-control/model-control-errors.js";
+import {
+  ADMIN_PERMISSION_DENIED_ERROR_CODES,
+  ADMIN_REQUEST_INVALID_ERROR_CODES,
+  ADMIN_UNAUTHENTICATED_ERROR_CODES,
+  classifyModelControlError,
+  MODEL_CONTROL_CONTRACTED_INVALID_CODES,
+  MODEL_CONTROL_INTERNAL_INVARIANT_CODES,
+  MODEL_CONTROL_REQUEST_INVALID_CODES,
+} from "../../src/modules/model-control/interfaces/connect/model-control-error-policy.js";
 import {
   CommandDigestAlgorithmV2,
   CommandIdentityV2Schema,
@@ -320,6 +330,90 @@ describe("ModelControl Connect provider", () => {
       domainCode: "model.control.internal",
       safeMessage: "Model control request failed",
     }]);
+  });
+
+  it("fails closed when owner results corrupt activated or Site-policy revisions", async () => {
+    for (const kind of ["activation", "policy"] as const) {
+      const owners = ownerDoubles();
+      if (kind === "activation") {
+        owners.activateInventory.activate.mockResolvedValueOnce({
+          activationId: commandId, importId: commandId, targetDigest: digest,
+          expectedRevision: "3", activatedRevision: "corrupt", replayed: false,
+        });
+      } else {
+        owners.changeSitePolicy.change.mockResolvedValueOnce({
+          changeId: commandId, policyDigest: digest, revision: "corrupt", replayed: false,
+        });
+      }
+      const service = createModelControlConnectService({
+        owners,
+        resolver: {
+          resolve: resolveUnexpectedRead,
+          resolveModelControlCommand: vi.fn(async () => ({ context: verifiedContext, axes })),
+        },
+        receipts: { read: vi.fn(async () => recordedAt) },
+        ...readDependencies,
+      });
+      const result = kind === "activation"
+        ? service.activateInventory(activationRequest(), transport)
+        : service.changeSitePolicy(policyRequest(), transport);
+      const error = ConnectError.from(await Promise.resolve(result).catch((failure: unknown) => failure));
+
+      expect(error.code).toBe(Code.Internal);
+      expect(error.findDetails(KokoroErrorDetailSchema)).toMatchObject([{
+        domainCode: "model.control.internal",
+        safeMessage: "Model control request failed",
+      }]);
+    }
+  });
+
+  it("explicitly classifies every Model error code emitted by this service", () => {
+    const source = readFileSync(new URL(
+      "../../src/modules/model-control/interfaces/connect/model-control-service.ts",
+      import.meta.url,
+    ), "utf8");
+    const emitted = new Set([...source.matchAll(/"(MODEL_[A-Z0-9_]+)"/gu)].map((match) => match[1]!));
+    const classified: ReadonlySet<string> = new Set<string>([...MODEL_CONTROL_REQUEST_INVALID_CODES,
+      ...MODEL_CONTROL_INTERNAL_INVARIANT_CODES, ...MODEL_CONTROL_CONTRACTED_INVALID_CODES]);
+
+    expect([...emitted].filter((code) => !classified.has(code)).sort()).toEqual([]);
+    expect(MODEL_CONTROL_INTERNAL_INVARIANT_CODES).toEqual(expect.arrayContaining([
+      "MODEL_INVENTORY_ACTIVATED_REVISION_INVALID", "MODEL_SITE_POLICY_REVISION_INVALID",
+    ]));
+  });
+
+  it("exhaustively classifies the real Admin authorization error set without pattern matching", () => {
+    const source = readFileSync(new URL(
+      "../../src/modules/admin/domain/admin-authorization.ts",
+      import.meta.url,
+    ), "utf8");
+    const emitted = new Set([...source.matchAll(/"(ADMIN_[A-Z0-9_]+)"/gu)].map((match) => match[1]!));
+    const classified: ReadonlySet<string> = new Set<string>([...ADMIN_UNAUTHENTICATED_ERROR_CODES,
+      ...ADMIN_PERMISSION_DENIED_ERROR_CODES, ...MODEL_CONTROL_INTERNAL_INVARIANT_CODES]);
+
+    expect([...emitted].filter((code) => !classified.has(code)).sort()).toEqual([]);
+    for (const code of ADMIN_UNAUTHENTICATED_ERROR_CODES) {
+      expect(classifyModelControlError(new Error(code))).toBe("adminSessionUnauthenticated");
+    }
+    for (const code of ADMIN_PERMISSION_DENIED_ERROR_CODES) {
+      expect(classifyModelControlError(new Error(code))).toBe("adminPermissionDenied");
+    }
+    expect(classifyModelControlError(new Error("ADMIN_AUTHORIZATION_TIME_INVALID"))).toBe("internal");
+  });
+
+  it("explicitly classifies every Admin error emitted by the production resolver", () => {
+    const source = readFileSync(new URL(
+      "../../src/modules/admin/infrastructure/security/admin-control-plane-resolver.ts",
+      import.meta.url,
+    ), "utf8");
+    const emitted = new Set([...source.matchAll(/"(ADMIN_[A-Z0-9_]+)"/gu)].map((match) => match[1]!));
+    const classified: ReadonlySet<string> = new Set<string>([...ADMIN_UNAUTHENTICATED_ERROR_CODES,
+      ...ADMIN_PERMISSION_DENIED_ERROR_CODES, ...ADMIN_REQUEST_INVALID_ERROR_CODES]);
+
+    expect([...emitted].filter((code) => !classified.has(code)).sort()).toEqual([]);
+    for (const code of ADMIN_REQUEST_INVALID_ERROR_CODES) {
+      expect(classifyModelControlError(new Error(code))).toBe("invalidRequest");
+    }
   });
 });
 
