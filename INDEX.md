@@ -42,7 +42,13 @@ Each module owns its schema/migrations and domain events. Cross-module orchestra
 
 ## Runtime and security
 
-Every request resolves trusted workload and Site context before business use. Secrets remain environment/secret-manager owned and private tables are never cross-service APIs.
+Every request resolves trusted workload and Site context before business use. The public API serves
+mandatory-client-certificate HTTPS on 4100 and a distinct pod-only HTTP health listener on 4101.
+Its machine-readable runtime contract enumerates every mounted registry, TLS, Session, Commerce,
+Asset and Identity file. Production readers support read-only Kubernetes AtomicWriter/fsGroup mounts
+through a stable trust root and `O_NOFOLLOW` descriptor checks; group/world-writable, executable or
+world-accessible private material is rejected. Secrets remain environment/secret-manager owned and
+private tables are never cross-service APIs.
 
 ## Idempotency, failure, and recovery
 
@@ -59,6 +65,8 @@ admission decisions. Model Gateway owns resumable chat provider effects, encrypt
 adaptation; Agent consumes only the opaque authorization and verifies the frame digest chain. Image, music and video generation
 must use dedicated product/generation routes instead of expanding the chat corpus. Payment provider connectors may remain disabled
 per Site; card redemption reaches the same Commerce fulfillment and Credit grant path as a successful purchase.
+The API health port is probe-only and must never be added to a Service or Ingress; ordinary HTTP
+probes cannot authenticate to the mTLS public listener.
 
 ## Verification
 

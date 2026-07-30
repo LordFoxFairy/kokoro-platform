@@ -9,7 +9,7 @@ accepts a module path.
 | Process | Store/role | Purpose |
 |---|---|---|
 | `platform-migrator` | PostgreSQL migrator | one-shot schema/ACL migration |
-| `platform-api` | PostgreSQL API role | public Platform HTTP owner |
+| `platform-api` | PostgreSQL API role | public mTLS HTTPS owner on 4100; pod-only HTTP probes on 4101 |
 | `platform-admission` | PostgreSQL Admission role | Admission Connect owner |
 | `platform-authorization` | PostgreSQL authorization role | session authorization feed |
 | `platform-asset-data-plane` | PostgreSQL asset-data-plane role | capability-scoped multipart provider effects |
@@ -39,6 +39,21 @@ another database.
 `deploy/docker-compose.services.yml` contains only root Platform processes and Hub. It expects
 role-specific `DATABASE_URL_PLATFORM_*` variables plus Hub Mongo configuration from the caller's
 environment. It does not start infrastructure implicitly and never supplies development credentials.
+
+`platform-api` has no network outbound contract beyond its PostgreSQL authority. Its public listener
+uses mandatory client certificates on 4100, while its unpublished HTTP listener on 4101 serves only
+`/health/live` and `/health/ready`; Compose health checks therefore need no client private key. The
+17 `PLATFORM_*_FILE` values in `.env.example` are explicit host paths. Compose binds each file
+read-only to its canonical name under `/run/secrets/platform-api` and supplies that directory as
+`PLATFORM_API_FILE_TRUST_ROOT`. The set covers the product workload registry; Session access and
+authorization-event signing rings; public key/certificate/client CA; Commerce redemption ring;
+Asset policy/capability rings; and all eight Identity password, verification, session, refresh,
+reauthentication, audit, delivery and TOTP materials.
+
+Private API files must be 0400/0600 for the configured runtime UID or 0440/0640 for its dedicated
+runtime GID. The reader rejects group/world write, execute, and world access. It accepts bounded
+Kubernetes AtomicWriter symlinks only when every hop stays inside a stable non-symlink trust root,
+then correlates the final path with one `O_NOFOLLOW` descriptor before and after bounded I/O.
 
 `platform-hub-connect` uses Connect 4252 and an unpublished probe-only port 4253. The Compose bind
 directory named by `KOKORO_HUB_CONNECT_SECRETS_DIRECTORY` must contain `server.key`, `server.crt`,
@@ -75,6 +90,14 @@ For `platform-hub-connect`, create these referenced objects before rollout:
 
 The Kubernetes Service publishes only 4252. Port 4253 remains pod-local to probes, so health checks
 never require or gain a caller mTLS private key.
+
+For `platform-api`, `platform-api-secrets` contains only environment credentials such as
+`DATABASE_URL_PLATFORM`. Secret `platform-api-files` contains the 17 canonical filenames declared by
+the machine-readable runtime contract and the manifest projects them at mode 0440. The pod runs as
+UID/GID 1000 with `fsGroup: 1000`, a read-only root filesystem, no service-account token, no Linux
+capabilities and no privilege escalation. Service `platform-api` publishes only the mTLS public port
+4100; health port 4101 is declared on the container solely for kubelet startup/liveness/readiness
+probes and is absent from the Service.
 
 ## Multi-Pod rules
 

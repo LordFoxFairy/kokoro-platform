@@ -18,6 +18,9 @@ const required = Object.freeze([
   "dist/src/generated/platform-prisma/client.js",
   "dist/src/infrastructure/postgres/migrator.js",
   "dist/src/process/api.js",
+  "dist/src/process/platform-api-runtime-contract.js",
+  "dist/src/process/platform-public-composition.js",
+  "dist/src/process/secret-files.js",
   "dist/src/process/admission.js",
   "dist/src/process/admin.js",
   "dist/src/process/admin-authority-bootstrap.js",
@@ -95,6 +98,14 @@ test("production image verifier accepts the closed fresh layout", async (context
   context.after(() => rm(imageRoot, { recursive: true, force: true }));
   await writeImageLayout(imageRoot);
   await verifyProductionImage(imageRoot);
+});
+
+test("production image verifier rejects a missing Platform API composition contract", async (context) => {
+  const imageRoot = await mkdtemp(resolve(tmpdir(), "kokoro-platform-image-api-contract-"));
+  context.after(() => rm(imageRoot, { recursive: true, force: true }));
+  await writeImageLayout(imageRoot);
+  await rm(resolve(imageRoot, "dist/src/process/platform-api-runtime-contract.js"));
+  await assert.rejects(() => verifyProductionImage(imageRoot), /missing compiled entrypoint/u);
 });
 
 test("production image verifier rejects retired runtime packages", async (context) => {
