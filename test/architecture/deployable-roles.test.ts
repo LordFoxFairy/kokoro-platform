@@ -497,14 +497,16 @@ describe("independent deployable roles", () => {
   it("serializes API start/drain and returns to stopped", async () => {
     const calls: string[] = [];
     const process = createPlatformApiProcess({ database: fakeDatabase(calls) });
-    const address = await process.start({ host: "127.0.0.1", port: 0 });
+    await process.start({ host: "127.0.0.1", port: 0 });
+    const healthAddress = process.healthAddress();
+    expect(healthAddress).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/u);
     expect(process.status()).toEqual({
       state: "running",
       live: true,
       ready: true,
       draining: false,
     });
-    expect(await fetch(`${address}/health/ready`).then((response) => response.status)).toBe(200);
+    expect(await fetch(`${healthAddress}/health/ready`).then((response) => response.status)).toBe(200);
     await process.shutdown();
     expect(process.status()).toEqual({
       state: "stopped",
@@ -525,12 +527,13 @@ describe("independent deployable roles", () => {
       },
     };
     const process = createPlatformApiProcess({ database });
-    const address = await process.start({ host: "127.0.0.1", port: 0 });
+    await process.start({ host: "127.0.0.1", port: 0 });
+    const healthAddress = process.healthAddress();
     databaseAvailable = false;
-    expect(await fetch(`${address}/health/ready`).then((response) => response.status)).toBe(503);
+    expect(await fetch(`${healthAddress}/health/ready`).then((response) => response.status)).toBe(503);
     expect(process.status().ready).toBe(false);
     databaseAvailable = true;
-    expect(await fetch(`${address}/health/ready`).then((response) => response.status)).toBe(200);
+    expect(await fetch(`${healthAddress}/health/ready`).then((response) => response.status)).toBe(200);
     expect(process.status().ready).toBe(true);
     await process.shutdown();
   });

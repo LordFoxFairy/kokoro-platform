@@ -1,5 +1,6 @@
 import { constants as fileSystemConstants } from "node:fs";
-import { open } from "node:fs/promises";
+import { open, realpath } from "node:fs/promises";
+import { isAbsolute, relative, sep } from "node:path";
 
 const MAXIMUM_SUPPORTED_BYTES = 16 * 1024 * 1024;
 
@@ -26,6 +27,11 @@ export interface BoundedFileHandle {
 
 export interface BoundedFileSystem {
   open(path: string, flags: number): Promise<BoundedFileHandle>;
+}
+
+export interface TrustedRootBoundedFileReader {
+  readRegular(path: string, maximumBytes: number, invalidCode: string): Promise<string>;
+  readPrivate(path: string, maximumBytes: number, invalidCode: string): Promise<string>;
 }
 
 const NODE_FILE_SYSTEM: BoundedFileSystem = Object.freeze({
@@ -67,11 +73,77 @@ export function readBoundedPrivateFile(
   return readFile(path, maximumBytes, invalidCode, true, fileSystem);
 }
 
-async function readFile(
+/**
+ * Resolves Kubernetes AtomicWriter links inside one explicit read-only trust
+ * root, then reads the resolved file through a stable O_NOFOLLOW descriptor.
+ * Private files may be owner-readable or fsGroup-readable, but never writable
+ * by group/world or readable by world.
+ */
+export async function createBoundedFileReaderWithinTrustRoot(
+  trustRoot: string,
+  invalidCode: string,
+): Promise<TrustedRootBoundedFileReader> {
+  if (!isAbsolute(trustRoot) || trustRoot.includes("\0") || !safeCode(invalidCode)) {
+    throw new Error(invalidCode);
+  }
+  let resolvedRoot: string;
+  try {
+    resolvedRoot = await realpath(trustRoot);
+  } catch {
+    throw new Error(invalidCode);
+  }
+  return Object.freeze({
+    readRegular: async (path: string, maximumBytes: number, fileInvalidCode: string) =>
+      readTrustedFile(
+        resolvedRoot,
+        path,
+        maximumBytes,
+        fileInvalidCode,
+        false,
+      ),
+    readPrivate: async (path: string, maximumBytes: number, fileInvalidCode: string) =>
+      readTrustedFile(
+        resolvedRoot,
+        path,
+        maximumBytes,
+        fileInvalidCode,
+        true,
+      ),
+  });
+}
+
+async function readTrustedFile(
+  resolvedRoot: string,
   path: string,
   maximumBytes: number,
   invalidCode: string,
   privateMaterial: boolean,
+): Promise<string> {
+  try {
+    if (!isAbsolute(path) || path.includes("\0")) throw new Error(invalidCode);
+    const resolvedPath = await realpath(path);
+    const relativePath = relative(resolvedRoot, resolvedPath);
+    if (
+      relativePath.length === 0 || relativePath === ".." ||
+      relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)
+    ) throw new Error(invalidCode);
+    return await readFile(
+      resolvedPath,
+      maximumBytes,
+      invalidCode,
+      privateMaterial ? "trusted-private" : false,
+      NODE_FILE_SYSTEM,
+    );
+  } catch {
+    throw new Error(invalidCode);
+  }
+}
+
+async function readFile(
+  path: string,
+  maximumBytes: number,
+  invalidCode: string,
+  privateMaterial: boolean | "trusted-private",
   fileSystem: BoundedFileSystem,
 ): Promise<string> {
   let handle: BoundedFileHandle | undefined;
@@ -127,7 +199,7 @@ async function readFile(
 function assertMetadata(
   metadata: BoundedFileMetadata,
   maximumBytes: number,
-  privateMaterial: boolean,
+  privateMaterial: boolean | "trusted-private",
   invalidCode: string,
 ): void {
   if (
@@ -138,8 +210,15 @@ function assertMetadata(
   ) throw new Error(invalidCode);
 }
 
-function safeMode(mode: bigint, privateMaterial: boolean): boolean {
+function safeMode(mode: bigint, privateMaterial: boolean | "trusted-private"): boolean {
   const permissions = mode & 0o777n;
+  if (privateMaterial === "trusted-private") {
+    return (
+      (permissions & 0o400n) !== 0n &&
+      (permissions & 0o007n) === 0n &&
+      (permissions & 0o022n) === 0n
+    );
+  }
   if (privateMaterial) return permissions === 0o400n || permissions === 0o600n;
   return (permissions & 0o400n) !== 0n && (permissions & 0o022n) === 0n;
 }

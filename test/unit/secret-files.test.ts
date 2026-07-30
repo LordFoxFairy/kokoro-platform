@@ -1,14 +1,60 @@
-import { chmod, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   readBoundedPrivateFile,
   readBoundedRegularFile,
+  createBoundedFileReaderWithinTrustRoot,
   type BoundedFileSystem,
 } from "../../src/process/secret-files.js";
 
 describe("bounded secret files", () => {
+  it("reads Kubernetes AtomicWriter links with fsGroup 0440 through a trusted root", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "kokoro-projected-secret-"));
+    const revision = join(directory, "..2026_07_30_00_00_00.000000000");
+    await mkdir(revision, { mode: 0o755 });
+    await writeFile(join(revision, "session-access.json"), "private-key-ring", { mode: 0o440 });
+    await symlink("..2026_07_30_00_00_00.000000000", join(directory, "..data"));
+    await symlink("..data/session-access.json", join(directory, "session-access.json"));
+
+    const reader = await createBoundedFileReaderWithinTrustRoot(
+      directory,
+      "TEST_TRUST_ROOT_INVALID",
+    );
+    await expect(reader.readPrivate(
+      join(directory, "session-access.json"),
+      64,
+      "TEST_PRIVATE_INVALID",
+    )).resolves.toBe("private-key-ring");
+  });
+
+  it("rejects projected links outside the root and group-writable private material", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "kokoro-projected-secret-"));
+    const outside = await mkdtemp(join(tmpdir(), "kokoro-outside-secret-"));
+    const outsideFile = join(outside, "escaped.key");
+    const writableFile = join(directory, "writable.key");
+    await writeFile(outsideFile, "escaped", { mode: 0o440 });
+    await writeFile(writableFile, "writable", { mode: 0o660 });
+    await chmod(writableFile, 0o660);
+    await symlink(outsideFile, join(directory, "escaped.key"));
+
+    const reader = await createBoundedFileReaderWithinTrustRoot(
+      directory,
+      "TEST_TRUST_ROOT_INVALID",
+    );
+    await expect(reader.readPrivate(
+      join(directory, "escaped.key"),
+      64,
+      "TEST_PRIVATE_INVALID",
+    )).rejects.toThrowError("TEST_PRIVATE_INVALID");
+    await expect(reader.readPrivate(
+      writableFile,
+      64,
+      "TEST_PRIVATE_INVALID",
+    )).rejects.toThrowError("TEST_PRIVATE_INVALID");
+  });
+
   it("reads only an absolute, regular, non-symlink file within the byte cap", async () => {
     const directory = await mkdtemp(join(tmpdir(), "kokoro-secret-"));
     const target = join(directory, "ca.pem");

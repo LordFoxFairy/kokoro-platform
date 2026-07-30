@@ -19,36 +19,50 @@ export interface PlatformApiProcessStatus {
 }
 
 export interface PlatformApiProcess {
-  start(address?: { host: string; port: number }): Promise<string>;
+  start(
+    address?: { host: string; port: number },
+    healthAddress?: { host: string; port: number },
+  ): Promise<string>;
   shutdown(options?: { deadlineMs?: number }): Promise<void>;
   status(): PlatformApiProcessStatus;
+  healthAddress(): string | undefined;
 }
 
 export function createPlatformApiProcess(options: {
   database: PlatformDatabaseClient;
   publicHttp?: PlatformPublicHttpHandler;
   serverFactory?: (listener: RequestListener) => Server;
+  healthServerFactory?: (listener: RequestListener) => Server;
   secure?: boolean;
 }): PlatformApiProcess {
   const { database } = options;
   const serverFactory = options.serverFactory ?? createServer;
+  const healthServerFactory = options.healthServerFactory ?? createServer;
   let state: PlatformProcessState = "stopped";
   let ready = false;
   let server: Server | undefined;
+  let healthServer: Server | undefined;
+  let healthUrl: string | undefined;
   let databaseConnected = false;
   let startPromise: Promise<string> | undefined;
   let shutdownPromise: Promise<void> | undefined;
   const currentState = (): PlatformProcessState => state;
 
   const api: PlatformApiProcess = {
-    start(address = { host: "0.0.0.0", port: 4100 }) {
+    start(
+      address = { host: "0.0.0.0", port: 4100 },
+      healthAddress = {
+        host: address.host,
+        port: address.port === 0 ? 0 : 4101,
+      },
+    ) {
       if (state !== "stopped" || startPromise) {
         return Promise.reject(new Error("PLATFORM_API_NOT_STOPPED"));
       }
       state = "starting";
       ready = false;
       shutdownPromise = undefined;
-      startPromise = startApi(address).finally(() => {
+      startPromise = startApi(address, healthAddress).finally(() => {
         startPromise = undefined;
       });
       return startPromise;
@@ -67,12 +81,27 @@ export function createPlatformApiProcess(options: {
         );
         const startStopped = await settlesWithin(observedStart, remaining(deadlineAt));
         const activeServer = server;
+        const activeHealthServer = healthServer;
         let serverStopped = true;
-        if (activeServer) {
-          activeServer.closeIdleConnections();
-          serverStopped = await closeWithDeadline(activeServer, remaining(deadlineAt));
-          if (!serverStopped) activeServer.closeAllConnections();
+        if (activeServer || activeHealthServer) {
+          activeServer?.closeIdleConnections();
+          activeHealthServer?.closeIdleConnections();
+          const stopped = await Promise.all([
+            activeServer
+              ? closeWithDeadline(activeServer, remaining(deadlineAt))
+              : Promise.resolve(true),
+            activeHealthServer
+              ? closeWithDeadline(activeHealthServer, remaining(deadlineAt))
+              : Promise.resolve(true),
+          ]);
+          serverStopped = stopped.every(Boolean);
+          if (!serverStopped) {
+            activeServer?.closeAllConnections();
+            activeHealthServer?.closeAllConnections();
+          }
           server = undefined;
+          healthServer = undefined;
+          healthUrl = undefined;
         }
         let databaseStopped = true;
         if (databaseConnected) {
@@ -95,9 +124,13 @@ export function createPlatformApiProcess(options: {
       ready: state === "running" && ready,
       draining: state === "draining",
     }),
+    healthAddress: () => healthUrl,
   };
 
-  async function startApi(address: { host: string; port: number }): Promise<string> {
+  async function startApi(
+    address: { host: string; port: number },
+    healthAddress: { host: string; port: number },
+  ): Promise<string> {
     try {
       await database.connect();
       databaseConnected = true;
@@ -105,19 +138,22 @@ export function createPlatformApiProcess(options: {
       await database.checkHealth();
       if (currentState() !== "starting") throw new Error("PLATFORM_API_START_ABORTED");
 
-      server = serverFactory(async (request, response) => {
+      const handleHealth = async (
+        request: Parameters<RequestListener>[0],
+        response: Parameters<RequestListener>[1],
+      ): Promise<boolean> => {
         response.setHeader("content-type", "application/json; charset=utf-8");
         response.setHeader("cache-control", "no-store");
         if (request.method === "GET" && request.url === "/health/live") {
           response.statusCode = state === "running" || state === "draining" ? 200 : 503;
           response.end(JSON.stringify({ state }));
-          return;
+          return true;
         }
         if (request.method === "GET" && request.url === "/health/ready") {
           if (state !== "running") {
             response.statusCode = 503;
             response.end(JSON.stringify({ status: "not_ready", state }));
-            return;
+            return true;
           }
           try {
             await database.checkHealth();
@@ -129,8 +165,18 @@ export function createPlatformApiProcess(options: {
             response.statusCode = 503;
             response.end(JSON.stringify({ status: "database_unavailable" }));
           }
-          return;
+          return true;
         }
+        return false;
+      };
+
+      healthServer = healthServerFactory(async (request, response) => {
+        if (await handleHealth(request, response)) return;
+        response.statusCode = 404;
+        response.end(JSON.stringify({ error: "not_found" }));
+      });
+      server = serverFactory(async (request, response) => {
+        if (await handleHealth(request, response)) return;
         if (state !== "draining" && options.publicHttp !== undefined) {
           try {
             if (await options.publicHttp.handle(request, response)) return;
@@ -155,6 +201,12 @@ export function createPlatformApiProcess(options: {
         response.end(JSON.stringify({ error: state === "draining" ? "draining" : "not_found" }));
       });
 
+      await listen(healthServer, healthAddress);
+      const healthBound = healthServer.address();
+      if (!healthBound || typeof healthBound === "string") {
+        throw new Error("PLATFORM_API_HEALTH_ADDRESS_UNAVAILABLE");
+      }
+      healthUrl = `http://${healthAddress.host}:${healthBound.port}`;
       await listen(server, address);
       if (currentState() !== "starting") throw new Error("PLATFORM_API_START_ABORTED");
       state = "running";
@@ -165,9 +217,14 @@ export function createPlatformApiProcess(options: {
     } catch (error) {
       ready = false;
       const failedServer = server;
+      const failedHealthServer = healthServer;
       server = undefined;
+      healthServer = undefined;
+      healthUrl = undefined;
       if (failedServer?.listening)
         await closeWithDeadline(failedServer, 1_000).catch(() => false);
+      if (failedHealthServer?.listening)
+        await closeWithDeadline(failedHealthServer, 1_000).catch(() => false);
       if (databaseConnected) {
         await database.disconnect();
         databaseConnected = false;
@@ -252,6 +309,7 @@ export async function runPlatformApiMain(): Promise<void> {
     secure: publicComposition.secure,
   });
   const port = Number.parseInt(process.env.PLATFORM_API_PORT ?? "4100", 10);
+  const healthPort = Number.parseInt(process.env.PLATFORM_API_HEALTH_PORT ?? "4101", 10);
   const shutdown = () => {
     void api.shutdown().catch((error: unknown) => {
       process.exitCode = 1;
@@ -260,8 +318,11 @@ export async function runPlatformApiMain(): Promise<void> {
   };
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
-  const address = await api.start({ host: "0.0.0.0", port });
-  console.log(`Platform API listening at ${address}`);
+  const address = await api.start(
+    { host: "0.0.0.0", port },
+    { host: "0.0.0.0", port: healthPort },
+  );
+  console.log(`Platform API listening at ${address}; health at ${api.healthAddress()}`);
 }
 
 if (isMainModule()) {
