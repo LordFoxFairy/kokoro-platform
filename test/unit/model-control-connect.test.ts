@@ -53,6 +53,8 @@ import { createModelControlConnectService } from
   "../../src/modules/model-control/interfaces/connect/model-control-service.js";
 import type { VerifiedRequestSecurityContext } from
   "../../src/shared/security-context/index.js";
+import { CommandReceiptConflictError } from
+  "../../src/shared/outbox-inbox/receipt.js";
 
 const transport = {} as HandlerContext;
 const verifiedContext = Object.freeze({}) as VerifiedRequestSecurityContext;
@@ -218,7 +220,7 @@ describe("ModelControl Connect provider", () => {
 
   it("returns a typed conflict when an idempotency key is reused with another command id", async () => {
     const owners = ownerDoubles();
-    owners.activateInventory.activate.mockRejectedValueOnce(new Error("COMMAND_IDENTITY_CONFLICT"));
+    owners.activateInventory.activate.mockRejectedValueOnce(new CommandReceiptConflictError("identity"));
     const service = createModelControlConnectService({
       owners,
       resolver: {
@@ -232,6 +234,21 @@ describe("ModelControl Connect provider", () => {
     expect(error).toBeInstanceOf(ConnectError);
     expect(ConnectError.from(error).code).toBe(Code.AlreadyExists);
     expect(ConnectError.from(error).rawMessage).toBe("command identity conflict");
+  });
+
+  it("does not translate an unrelated Error that happens to reuse a receipt message", async () => {
+    const owners = ownerDoubles();
+    const cause = new Error("COMMAND_IDENTITY_CONFLICT");
+    owners.activateInventory.activate.mockRejectedValueOnce(cause);
+    const service = createModelControlConnectService({
+      owners,
+      resolver: {
+        resolveModelControlCommand: vi.fn(async () => ({ context: verifiedContext, axes })),
+      },
+      receipts: { read: vi.fn(async () => recordedAt) },
+    });
+
+    await expect(service.activateInventory(activationRequest(), transport)).rejects.toBe(cause);
   });
 });
 
