@@ -12,6 +12,45 @@ import { CapabilityProjectionDeliveryError } from
   "../../src/infrastructure/connect/platform-capability-projection-client.js";
 
 describe("capability projection worker", () => {
+  it("releases a claimed lease when shutdown wins the claim race", async () => {
+    let resolveClaim!: (value: CapabilityProjectionDelivery | null) => void;
+    const claim = new Promise<CapabilityProjectionDelivery | null>((resolve) => {
+      resolveClaim = resolve;
+    });
+    const releaseProjection = vi.fn().mockResolvedValue(undefined);
+    const completeProjection = vi.fn().mockResolvedValue(undefined);
+    const deferProjection = vi.fn().mockResolvedValue(undefined);
+    const project = vi.fn().mockResolvedValue(undefined);
+    const repository = repositoryStub({
+      pending: delivery(),
+      deferProjection,
+      releaseProjection,
+      completeProjection,
+      claimProjection: vi.fn().mockReturnValue(claim),
+    });
+    const worker = new CapabilityProjectionWorker({
+      repository,
+      client: { project },
+      clock: () => new Date("2026-07-29T12:00:00.000Z"),
+      leaseId: () => "lease-1",
+    });
+    const controller = new AbortController();
+    const tick = worker.tick(controller.signal);
+
+    controller.abort(new Error("HUB_SHUTDOWN"));
+    resolveClaim(delivery());
+
+    await expect(tick).resolves.toBe("idle");
+    expect(releaseProjection).toHaveBeenCalledWith({
+      siteId: "site-a",
+      siteReleaseRef: "release-7",
+      leaseId: "lease-1",
+    });
+    expect(project).not.toHaveBeenCalled();
+    expect(completeProjection).not.toHaveBeenCalled();
+    expect(deferProjection).not.toHaveBeenCalled();
+  });
+
   it("durably defers an ambiguous result with bounded backoff", async () => {
     const pending = delivery();
     const deferProjection = vi.fn().mockResolvedValue(undefined);
@@ -59,14 +98,18 @@ describe("capability projection worker", () => {
 function repositoryStub(input: Readonly<{
   pending: CapabilityProjectionDelivery;
   deferProjection: ReturnType<typeof vi.fn>;
+  releaseProjection?: ReturnType<typeof vi.fn>;
+  completeProjection?: ReturnType<typeof vi.fn>;
+  claimProjection?: ReturnType<typeof vi.fn>;
 }>): CapabilityPublicationRepository {
   return {
     freeze: vi.fn(),
     get: vi.fn(),
     findByAgentCatalogRef: vi.fn(),
-    claimProjection: vi.fn().mockResolvedValue(input.pending),
-    completeProjection: vi.fn(),
+    claimProjection: input.claimProjection ?? vi.fn().mockResolvedValue(input.pending),
+    completeProjection: input.completeProjection ?? vi.fn(),
     deferProjection: input.deferProjection,
+    releaseProjection: input.releaseProjection ?? vi.fn(),
   };
 }
 

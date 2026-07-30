@@ -35,6 +35,16 @@ export class CapabilityProjectionWorker {
     const request = new AbortController();
     const aborted = () => request.abort(signal.reason);
     signal.addEventListener("abort", aborted, { once: true });
+    if (signal.aborted) aborted();
+    if (request.signal.aborted) {
+      signal.removeEventListener("abort", aborted);
+      await this.input.repository.releaseProjection({
+        siteId: delivery.publication.siteId,
+        siteReleaseRef: delivery.publication.siteReleaseRef,
+        leaseId,
+      });
+      return "idle";
+    }
     const timer = setTimeout(() => request.abort(new Error("PROJECTION_TIMEOUT")),
       this.input.requestTimeoutMs ?? 5_000);
     timer.unref();

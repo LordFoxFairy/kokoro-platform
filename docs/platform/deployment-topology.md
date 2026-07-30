@@ -44,7 +44,10 @@ environment. It does not start infrastructure implicitly and never supplies deve
 directory named by `KOKORO_HUB_CONNECT_SECRETS_DIRECTORY` must contain `server.key`, `server.crt`,
 `client-ca.crt`, `inbound-peers.json`, `catalog-signing.key`, `platform-client.key`,
 `platform-client.crt`, and `platform-ca.crt`; private key files must be mode 0400/0600 or mode 0440
-for a dedicated workload group. The storage
+for a dedicated workload group. `KOKORO_HUB_CONNECT_TRUST_ROOT` must name that exact mounted
+directory; startup permits only a bounded Kubernetes AtomicWriter symlink chain whose final regular
+file remains inside the resolved trust root, and opens the target with `O_NOFOLLOW` plus inode and
+post-read snapshot checks. The storage
 YAML named by `KOKORO_WORKSPACE_CONFIG_FILE` must have a production `hub` object-store entry.
 
 ```bash
@@ -65,8 +68,9 @@ For `platform-hub-connect`, create these referenced objects before rollout:
 - ConfigMap `platform-hub-connect-runtime`: `KOKORO_HUB_MONGO_DB`, both caller SAN URIs,
   capability signing key ref, Platform projection base URL and server name.
 - Secret `platform-hub-connect-secrets`: Mongo URL, S3 access/secret keys, and Hub secret master key.
-- Secret `platform-hub-connect-files`: the eight files listed for Compose; the workload mounts them
-  mode 0440 for its dedicated non-root fsGroup.
+- Secret `platform-hub-connect-files`: the eight files listed for Compose; the volume declares
+  `defaultMode: 0400`. Kubernetes AtomicWriter links are accepted only inside the mount trust root;
+  a dedicated non-root fsGroup may add group-read but never group-write/execute or world access.
 - ConfigMap `platform-hub-connect-storage`: `storage.yaml` with the Hub package-store declaration.
 
 The Kubernetes Service publishes only 4252. Port 4253 remains pod-local to probes, so health checks

@@ -132,6 +132,26 @@ export class MongoCapabilityPublicationRepository implements CapabilityPublicati
     if (result.modifiedCount !== 1) throw new Error("HUB_CAPABILITY_PROJECTION_LEASE_LOST");
   }
 
+  async releaseProjection(input: Readonly<{
+    siteId: string;
+    siteReleaseRef: string;
+    leaseId: string;
+  }>): Promise<void> {
+    const result = await this.collections.capabilityPublications.updateOne(
+      {
+        site_id: input.siteId,
+        site_release_ref: input.siteReleaseRef,
+        projection_lease_id: input.leaseId,
+        projection_state: { $in: ["pending", "outcome_unknown"] },
+      },
+      { $set: {
+        projection_lease_id: null,
+        projection_lease_until: null,
+      } },
+    );
+    if (result.modifiedCount !== 1) throw new Error("HUB_CAPABILITY_PROJECTION_LEASE_LOST");
+  }
+
   async deferProjection(input: Readonly<{
     siteId: string;
     siteReleaseRef: string;

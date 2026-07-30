@@ -216,6 +216,7 @@ items:
                 - { name: KOKORO_HUB_CONNECT_PORT, value: "4252" }
                 - { name: KOKORO_HUB_CONNECT_HEALTH_PORT, value: "4253" }
                 - { name: KOKORO_WORKSPACE_CONFIG, value: /run/config/kokoro/storage.yaml }
+                - { name: KOKORO_HUB_CONNECT_TRUST_ROOT, value: /run/secrets/hub-connect }
                 - { name: KOKORO_HUB_CONNECT_TLS_KEY_FILE, value: /run/secrets/hub-connect/server.key }
                 - { name: KOKORO_HUB_CONNECT_TLS_CERT_FILE, value: /run/secrets/hub-connect/server.crt }
                 - { name: KOKORO_HUB_CONNECT_TLS_CLIENT_CA_FILE, value: /run/secrets/hub-connect/client-ca.crt }
@@ -251,7 +252,7 @@ items:
             - name: hub-connect-mtls
               secret:
                 secretName: platform-hub-connect-files
-                defaultMode: 288
+                defaultMode: 256
             - name: hub-storage-config
               configMap:
                 name: platform-hub-connect-storage

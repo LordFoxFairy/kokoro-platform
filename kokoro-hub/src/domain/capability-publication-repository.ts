@@ -49,6 +49,11 @@ export interface CapabilityPublicationRepository {
     leaseId: string;
     projectedAt: string;
   }>): Promise<void>;
+  releaseProjection(input: Readonly<{
+    siteId: string;
+    siteReleaseRef: string;
+    leaseId: string;
+  }>): Promise<void>;
   deferProjection(input: Readonly<{
     siteId: string;
     siteReleaseRef: string;

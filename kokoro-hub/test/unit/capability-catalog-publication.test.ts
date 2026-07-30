@@ -48,7 +48,8 @@ describe("signed capability catalog publication", () => {
         get: vi.fn().mockResolvedValue(existing),
         findByAgentCatalogRef: vi.fn(),
         freeze,
-        claimProjection: vi.fn(), completeProjection: vi.fn(), deferProjection: vi.fn(),
+        claimProjection: vi.fn(), completeProjection: vi.fn(), releaseProjection: vi.fn(),
+        deferProjection: vi.fn(),
       },
     });
     await expect(service.freeze({
@@ -87,7 +88,8 @@ describe("signed capability catalog publication", () => {
         },
         get: vi.fn().mockResolvedValue(null),
         findByAgentCatalogRef: vi.fn(),
-        claimProjection: vi.fn(), completeProjection: vi.fn(), deferProjection: vi.fn(),
+        claimProjection: vi.fn(), completeProjection: vi.fn(), releaseProjection: vi.fn(),
+        deferProjection: vi.fn(),
       },
     });
     const record = await service.freeze({
