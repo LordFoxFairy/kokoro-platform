@@ -37,6 +37,7 @@ export function createHubConnectProcess(input: Readonly<{
   const shutdownDeadlineMs = boundedMilliseconds(input.shutdownDeadlineMs ?? 10_000, 10, 60_000);
   const controller = new AbortController();
   const sessions = new Set<ConnectSession>();
+  const sessionDrainWaiters = new Set<() => void>();
   let draining = false;
   let started = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -52,6 +53,10 @@ export function createHubConnectProcess(input: Readonly<{
       const closed = () => {
         sessions.delete(session);
         try { session.off("close", closed); } catch { sessionActionUnconfirmed = true; }
+        if (sessions.size === 0) {
+          for (const resolveDrained of sessionDrainWaiters) resolveDrained();
+          sessionDrainWaiters.clear();
+        }
       };
       try {
         session.once("close", closed);
@@ -125,20 +130,22 @@ export function createHubConnectProcess(input: Readonly<{
     ]);
     const gracefulMs = Math.max(1, Math.floor(shutdownDeadlineMs * 0.6));
     const gracefulOutcomes = await beforeDeadline(services, gracefulMs);
-    if (gracefulOutcomes === null) {
+    if (gracefulOutcomes === null || sessions.size > 0) {
       forceDestroying = true;
       for (const session of sessions) {
         destroySession(session, new Error("HUB_CONNECT_SHUTDOWN_DEADLINE"));
       }
     }
     const mongo = settle(Promise.resolve().then(input.closeMongo));
-    const completion = Promise.all([services, mongo]).then(([serviceOutcomes, mongoOutcome]) =>
+    const completion = Promise.all([services, mongo, waitForSessionsToDrain()])
+      .then(([serviceOutcomes, mongoOutcome]) =>
       [...serviceOutcomes, mongoOutcome]);
     const remainingMs = Math.max(1, shutdownDeadlineMs - (Date.now() - shutdownStartedAt));
     const outcomes = await beforeDeadline(completion, remainingMs);
 
     if (
       sessionActionUnconfirmed ||
+      sessions.size > 0 ||
       outcomes === null ||
       outcomes.some((outcome) => outcome.status === "rejected")
     ) {
@@ -166,6 +173,11 @@ export function createHubConnectProcess(input: Readonly<{
       sessionActionUnconfirmed = true;
       return false;
     }
+  }
+
+  function waitForSessionsToDrain(): Promise<void> {
+    if (sessions.size === 0) return Promise.resolve();
+    return new Promise((resolveDrained) => sessionDrainWaiters.add(resolveDrained));
   }
 
   return Object.freeze({ start, shutdown, isDraining: () => draining });
