@@ -379,7 +379,8 @@ CREATE FUNCTION platform.publish_site_release_model_catalog(
   p_publication_id UUID,p_catalog JSONB,p_published_by TEXT
 ) RETURNS TABLE(
   result_publication_id UUID,result_site_id TEXT,result_site_release_ref TEXT,
-  result_model_option_catalog_ref TEXT,result_catalog_digest TEXT,replayed BOOLEAN
+  result_model_option_catalog_ref TEXT,result_catalog_digest TEXT,
+  result_published_at TIMESTAMPTZ,replayed BOOLEAN
 )
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$
 DECLARE
@@ -422,12 +423,13 @@ BEGIN
   SELECT publication.* INTO existing FROM platform.site_release_model_catalog_publication publication
     WHERE publication.publication_id=p_publication_id;
   IF FOUND THEN
-    IF platform.site_release_model_catalog_payload(existing.publication_id) IS DISTINCT FROM p_catalog
+    IF (platform.site_release_model_catalog_payload(existing.publication_id) - 'publishedAt')
+         IS DISTINCT FROM (p_catalog - 'publishedAt')
        OR existing.published_by<>p_published_by THEN
       RAISE EXCEPTION USING ERRCODE='23505',MESSAGE='MODEL_OPTION_PUBLICATION_ID_CONFLICT';
     END IF;
     RETURN QUERY SELECT existing.publication_id,existing.site_id,existing.site_release_ref,
-      existing.model_option_catalog_ref,existing.catalog_digest::TEXT,TRUE;
+      existing.model_option_catalog_ref,existing.catalog_digest::TEXT,existing.published_at,TRUE;
     RETURN;
   END IF;
   IF EXISTS(SELECT 1 FROM platform.site_release_model_catalog_publication publication
@@ -481,7 +483,8 @@ BEGIN
     RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='MODEL_OPTION_PUBLICATION_PAYLOAD_MISMATCH';
   END IF;
   RETURN QUERY SELECT p_publication_id,p_catalog->>'siteId',p_catalog->>'siteReleaseRef',
-    p_catalog->>'modelOptionCatalogRef',p_catalog->>'catalogDigest',FALSE;
+    p_catalog->>'modelOptionCatalogRef',p_catalog->>'catalogDigest',
+    (p_catalog->>'publishedAt')::TIMESTAMPTZ,FALSE;
 END $$;
 
 CREATE FUNCTION platform.resolve_product_model_option_catalog(p_site_id TEXT,p_site_release_ref TEXT)

@@ -17,6 +17,8 @@ import { AdminCommerceService } from
   "../interfaces/connect/generated-admin-commerce/kokoro/platform/commerce/v1/admin_commerce_pb.js";
 import { SiteProvisioningService } from
   "../interfaces/connect/generated-site-provisioning/kokoro/platform/site/v1/site_provisioning_pb.js";
+import { ModelControlService } from
+  "../interfaces/connect/generated-model-control/kokoro/platform/model/v1/model_control_pb.js";
 import { PlatformUnitOfWork } from "../shared/unit-of-work/index.js";
 import { CommandReceiptRepository } from "../shared/outbox-inbox/receipt.js";
 import { OutboxRepository } from "../shared/outbox-inbox/outbox.js";
@@ -60,6 +62,8 @@ import { createSiteLifecycleConnectService } from
   "../modules/site/interfaces/connect/site-lifecycle-service.js";
 import { createSiteProvisioningConnectService } from
   "../modules/site/interfaces/connect/site-provisioning-service.js";
+import { createModelControlConnectService } from
+  "../modules/model-control/interfaces/connect/model-control-service.js";
 import { createAdminCommerceConnectService } from
   "../modules/commerce/interfaces/connect/admin-commerce-service.js";
 import { PostgresCommerceAdministrationReader } from
@@ -79,6 +83,8 @@ import {
   "../modules/site/infrastructure/crypto/site-release-certification-authority.js";
 import { PostgresControlCommandReceiptTimestampReader } from
   "../modules/admin/infrastructure/postgres/control-command-receipt-reader.js";
+import { createProductModelOptionAdministrationComposition } from
+  "./model-option-admin-composition.js";
 
 export type AdminRequestListener = (
   request: Http2ServerRequest,
@@ -230,10 +236,26 @@ export async function createAdminProductionComposition(input: Readonly<{
     new Ed25519SiteReleaseCertificationAuthority(siteCertificationKeys),
     input.clock === undefined ? {} : { now: () => input.clock!().toISOString() },
   );
+  const controlReceiptTimestamps = new PostgresControlCommandReceiptTimestampReader(unitOfWork);
   const siteProvisioningService = createSiteProvisioningConnectService({
     owner: siteProvisioning.publication,
     resolver,
-    receipts: new PostgresControlCommandReceiptTimestampReader(unitOfWork),
+    receipts: controlReceiptTimestamps,
+  });
+  const modelControl = createProductModelOptionAdministrationComposition(
+    input.database,
+    input.clock === undefined ? {} : { now: () => input.clock!().toISOString() },
+  );
+  const modelControlService = createModelControlConnectService({
+    owners: {
+      importInventory: modelControl.importInventory,
+      activateInventory: modelControl.activateInventory,
+      changeSitePolicy: modelControl.changeSitePolicy,
+      materializeModelOptions: modelControl.materialize,
+      publishSiteReleaseCatalog: modelControl.publishSiteRelease,
+    },
+    resolver,
+    receipts: controlReceiptTimestamps,
   });
   const connect = connectNodeAdapter({
     routes: (router) => {
@@ -242,6 +264,7 @@ export async function createAdminProductionComposition(input: Readonly<{
       router.service(AdminCommandDescriptor, commandService);
       router.service(SiteLifecycleService, siteLifecycleService);
       router.service(SiteProvisioningService, siteProvisioningService);
+      router.service(ModelControlService, modelControlService);
       router.service(AdminCommerceService, commerceService);
     },
     connect: true,

@@ -16,6 +16,7 @@ export class PublishSiteReleaseModelCatalogService
     private readonly unitOfWork: PlatformUnitOfWork,
     private readonly repository: ModelOptionCatalogRepository,
     private readonly journal: ModelControlCommandJournal,
+    private readonly options: Readonly<{ now?: () => string }> = {},
   ) {}
 
   publish(
@@ -34,6 +35,10 @@ export class PublishSiteReleaseModelCatalogService
     const revisionRefs = [
       ...new Set(input.surfaces.flatMap((surface) => surface.allowedModelOptionRevisionRefs)),
     ];
+    const publishedAt = this.options.now?.() ?? new Date().toISOString();
+    if (!Number.isFinite(Date.parse(publishedAt)) || new Date(publishedAt).toISOString() !== publishedAt) {
+      throw new Error("MODEL_OPTION_PUBLICATION_TIME_INVALID");
+    }
     return this.unitOfWork.execute(
       { context, operation: "model.site-release-catalog.publish" },
       async (transaction) => {
@@ -41,9 +46,14 @@ export class PublishSiteReleaseModelCatalogService
           transaction,
           revisionRefs,
         );
-        const catalog = createSiteReleaseModelCatalogRevision({ ...input, optionRevisions });
+        const catalog = createSiteReleaseModelCatalogRevision({
+          ...input,
+          publishedAt,
+          optionRevisions,
+        });
         const command = createModelControlCommand({
           commandId: input.publicationId,
+          idempotencyKey: input.idempotencyKey ?? input.publicationId,
           operation: "model.site-release-catalog.publish",
           security: modelControlSecurityFacts(context),
           effect: {
@@ -79,9 +89,16 @@ function assertPublishReceipt(
     receipt.siteReleaseRef !== catalog.siteReleaseRef ||
     receipt.modelOptionCatalogRef !== catalog.modelOptionCatalogRef ||
     receipt.catalogDigest !== catalog.catalogDigest ||
-    typeof receipt.replayed !== "boolean"
+    typeof receipt.replayed !== "boolean" ||
+    !canonicalInstant(receipt.publishedAt) ||
+    (!receipt.replayed && receipt.publishedAt !== catalog.publishedAt)
   )
     throw new Error("MODEL_OPTION_SITE_RELEASE_RECEIPT_INVALID");
+}
+
+function canonicalInstant(value: string): boolean {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) && date.toISOString() === value;
 }
 
 function uuid(value: string, code: string): void {

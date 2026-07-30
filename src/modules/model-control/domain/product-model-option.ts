@@ -268,17 +268,17 @@ export function createSiteReleaseModelCatalogRevision(input: {
   surfaces.sort(
     (left, right) => modelProducts.indexOf(left.surfaceId) - modelProducts.indexOf(right.surfaceId),
   );
-  const payload = deepFreeze({
+  const contentPayload = deepFreeze({
     schemaVersion: 1 as const,
     siteId,
     siteReleaseRef,
     inventoryDigest,
-    publishedAt,
     surfaces,
   });
-  const catalogDigest = sha256(stableJson(payload));
+  const catalogDigest = sha256(stableJson(contentPayload));
   return deepFreeze({
-    ...payload,
+    ...contentPayload,
+    publishedAt,
     modelOptionCatalogRef: `site-release-model-catalog:sha256:${catalogDigest}`,
     catalogDigest,
   });
@@ -469,21 +469,21 @@ export function verifySiteReleaseModelCatalogRevision(
     )
   )
     throw new Error("MODEL_OPTION_RELEASE_CATALOG_INVALID");
-  const payload = deepFreeze({
+  const contentPayload = deepFreeze({
     schemaVersion: 1 as const,
     siteId: identifier(value.siteId),
     siteReleaseRef: boundedText(value.siteReleaseRef, 256),
     inventoryDigest: digest(value.inventoryDigest, "MODEL_OPTION_RELEASE_CATALOG_INVALID"),
-    publishedAt: instant(value.publishedAt),
     surfaces,
   });
+  const publishedAt = instant(value.publishedAt);
   const catalogDigest = digest(value.catalogDigest, "MODEL_OPTION_RELEASE_CATALOG_INVALID");
-  if (sha256(stableJson(payload)) !== catalogDigest)
+  if (sha256(stableJson(contentPayload)) !== catalogDigest)
     throw new Error("MODEL_OPTION_RELEASE_CATALOG_DIGEST_MISMATCH");
   const modelOptionCatalogRef = boundedText(value.modelOptionCatalogRef, 256);
   if (modelOptionCatalogRef !== `site-release-model-catalog:sha256:${catalogDigest}`)
     throw new Error("MODEL_OPTION_RELEASE_CATALOG_REF_MISMATCH");
-  return deepFreeze({ ...payload, modelOptionCatalogRef, catalogDigest });
+  return deepFreeze({ ...contentPayload, publishedAt, modelOptionCatalogRef, catalogDigest });
 }
 
 function compileRoleBinding(

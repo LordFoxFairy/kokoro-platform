@@ -41,6 +41,10 @@ describe("ModelControl command identity and outbox", () => {
       },
     });
     expect(base.requestDigest).toMatch(/^[a-f0-9]{64}$/u);
+    expect(createModelControlCommand({
+      ...base.input,
+      idempotencyKey: "a-different-idempotency-key",
+    }).requestDigest).toBe(base.requestDigest);
     expect(
       createModelControlCommand({
         ...base.input,
@@ -140,6 +144,9 @@ describe("ModelControl command identity and outbox", () => {
       );
       expect(calls.map(({ kind }) => kind).sort()).toEqual(["begin", "outbox", "outcome"]);
       expect(calls.every(({ transaction }) => transaction === lease.transaction)).toBe(true);
+      expect(calls.find(({ kind }) => kind === "begin")?.value).toMatchObject({
+        idempotencyKey: command.commandId,
+      });
       expect(calls.find(({ kind }) => kind === "outbox")?.value).toMatchObject({
         owner: "model-control",
         eventType: "model.inventory.activated.v1",

@@ -141,6 +141,7 @@ describe("Postgres Product ModelOption repository", () => {
       siteReleaseRef: fixture.release.siteReleaseRef,
       modelOptionCatalogRef: fixture.release.modelOptionCatalogRef,
       catalogDigest: fixture.release.catalogDigest,
+      publishedAt: fixture.release.publishedAt,
       replayed: false,
     } as const;
     const calls: { statement: string; values: readonly unknown[] }[] = [];
@@ -165,6 +166,35 @@ describe("Postgres Product ModelOption repository", () => {
         JSON.stringify(fixture.release),
         "operator-a",
       ]);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("accepts the persisted publication time on an exact replay", async () => {
+    const fixture = catalogFixture();
+    const receipt = {
+      publicationId: "00000000-0000-4000-8000-000000000022",
+      siteId: fixture.release.siteId,
+      siteReleaseRef: fixture.release.siteReleaseRef,
+      modelOptionCatalogRef: fixture.release.modelOptionCatalogRef,
+      catalogDigest: fixture.release.catalogDigest,
+      publishedAt: "2026-07-29T11:59:00.000Z",
+      replayed: true,
+    } as const;
+    const lease = issuePlatformTransaction({
+      query: async <Row extends Record<string, unknown>>() =>
+        [receipt] as unknown as readonly Row[],
+      execute: async () => 0,
+    });
+    try {
+      await expect(
+        new PostgresProductModelOptionRepository().publishSiteReleaseCatalog(lease.transaction, {
+          publicationId: receipt.publicationId,
+          publishedBy: "operator-a",
+          catalog: fixture.release,
+        }),
+      ).resolves.toEqual(receipt);
     } finally {
       revokePlatformTransaction(lease);
     }

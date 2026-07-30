@@ -41,6 +41,7 @@ export function modelControlSecurityFacts(
 export type ModelControlCommandInput =
   | {
       readonly commandId: string;
+      readonly idempotencyKey?: string;
       readonly operation: "model.inventory.import";
       readonly security: ModelControlCommandSecurityFacts;
       readonly effect: {
@@ -51,6 +52,7 @@ export type ModelControlCommandInput =
     }
   | {
       readonly commandId: string;
+      readonly idempotencyKey?: string;
       readonly operation: "model.option.materialize";
       readonly security: ModelControlCommandSecurityFacts;
       readonly effect: {
@@ -62,6 +64,7 @@ export type ModelControlCommandInput =
     }
   | {
       readonly commandId: string;
+      readonly idempotencyKey?: string;
       readonly operation: "model.site-release-catalog.publish";
       readonly security: ModelControlCommandSecurityFacts;
       readonly effect: {
@@ -74,6 +77,7 @@ export type ModelControlCommandInput =
     }
   | {
       readonly commandId: string;
+      readonly idempotencyKey?: string;
       readonly operation: "model.inventory.activate";
       readonly security: ModelControlCommandSecurityFacts;
       readonly effect: {
@@ -83,6 +87,7 @@ export type ModelControlCommandInput =
     }
   | {
       readonly commandId: string;
+      readonly idempotencyKey?: string;
       readonly operation: "model.site-policy.change";
       readonly security: ModelControlCommandSecurityFacts;
       readonly effect: {
@@ -99,7 +104,7 @@ export interface ModelControlCommand<
   readonly commandId: string;
   readonly operation: Input["operation"];
   readonly requestDigest: string;
-  readonly input: Input;
+  readonly input: Input & Readonly<{ idempotencyKey: string }>;
 }
 
 export type ModelControlCommandReceipt =
@@ -134,8 +139,13 @@ export function createModelControlCommand<const Input extends ModelControlComman
   input: Input,
 ): ModelControlCommand<Input> {
   uuid(input.commandId, "MODEL_CONTROL_COMMAND_ID_INVALID");
+  const idempotencyKey = input.idempotencyKey ?? input.commandId;
+  if (idempotencyKey.length < 16 || idempotencyKey.length > 256 || containsControl(idempotencyKey)) {
+    throw new Error("MODEL_CONTROL_IDEMPOTENCY_KEY_INVALID");
+  }
   const canonicalInput = deepFreeze({
     ...input,
+    idempotencyKey,
     security: {
       environment: text(input.security.environment),
       region: text(input.security.region),
@@ -145,7 +155,7 @@ export function createModelControlCommand<const Input extends ModelControlComman
       actorSubjectId: text(input.security.actorSubjectId),
       actorSubjectGeneration: epoch(input.security.actorSubjectGeneration),
     },
-  }) as Input;
+  }) as Input & Readonly<{ idempotencyKey: string }>;
   if (
     canonicalInput.security.actorKind !== "operator" &&
     canonicalInput.security.actorKind !== "workload"

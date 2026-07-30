@@ -14,6 +14,13 @@ port and an opaque UoW; no separate per-domain Model service participates. The P
 Provider execution and secrets remain behind the remote Model Gateway: selection returns only a safe gateway route. `direct` and
 `litellm` describe adapters internal to Model Gateway and never authorize Platform or a product to execute against a provider.
 
+`ModelControlService` is the typed operator ingress mounted on the existing Admin mTLS listener. It is a provider adapter over the
+same local application services, not a new deployable and never a Platform self-RPC hop. Inventory import/activation and global
+ModelOption materialization require a Global grant; Site policy and SiteRelease catalog publication require the exact Site grant.
+Every mutation also requires the normal phishing-resistant Admin step-up, verifies the canonical command-envelope digest, and
+returns the durable owner receipt timestamp. Publication time is Platform-owned metadata: it is persisted and returned on replay,
+but excluded from the content-addressed catalog digest so retries and the upstream SiteRelease authority share one stable catalog ref.
+
 The global inventory contains definitions, provider bindings and the structurally allowed route pool. Product-facing choices are
 native `ModelOptionDraft` records layered above that inventory: Chat selects one ordered assistant route, while Music/Image/Video
 select an ordered chat-orchestration route and an independent ordered generation route. A SiteRelease publishes only the allowed

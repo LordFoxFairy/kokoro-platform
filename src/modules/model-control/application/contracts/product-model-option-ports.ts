@@ -28,6 +28,7 @@ export interface SiteReleaseModelCatalogPublishReceipt {
   readonly siteReleaseRef: string;
   readonly modelOptionCatalogRef: string;
   readonly catalogDigest: string;
+  readonly publishedAt: string;
   readonly replayed: boolean;
 }
 
@@ -103,6 +104,7 @@ export interface ModelOptionMaterializationAdministration {
   materialize(
     input: {
       readonly materializationId: string;
+      readonly idempotencyKey?: string;
       readonly inventoryDigest: string;
       readonly options: readonly ModelOptionDraft[];
     },
@@ -114,10 +116,10 @@ export interface SiteReleaseModelCatalogAdministration {
   publish(
     input: {
       readonly publicationId: string;
+      readonly idempotencyKey?: string;
       readonly siteId: string;
       readonly siteReleaseRef: string;
       readonly inventoryDigest: string;
-      readonly publishedAt: string;
       readonly surfaces: readonly {
         readonly surfaceId: ModelProduct;
         readonly allowedModelOptionRevisionRefs: readonly string[];

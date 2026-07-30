@@ -20,6 +20,22 @@ describe("ModelControl consumer boundary", () => {
     expect(manifest.dependencies).not.toHaveProperty("@kokoro/model");
   });
 
+  it("mounts the typed ModelControl provider only on the existing Admin mTLS listener", async () => {
+    const [composition, provider] = await Promise.all([
+      readFile(resolve("src/process/admin-composition.ts"), "utf8"),
+      readFile(
+        resolve("src/modules/model-control/interfaces/connect/model-control-service.ts"),
+        "utf8",
+      ),
+    ]);
+    expect(composition).toContain("createProductModelOptionAdministrationComposition(");
+    expect(composition).toContain("createModelControlConnectService(");
+    expect(composition).toContain("router.service(ModelControlService");
+    expect(provider).toContain('scope: "global"');
+    expect(provider).toContain('scope: "site"');
+    expect(provider).not.toMatch(/fetch\(|http:\/\/|https:\/\//u);
+  });
+
   it("materializes and activates catalogs through separate immutable commands", async () => {
     const migration = await readFile(
       resolve("prisma/migrations/0003_model_control/migration.sql"),
@@ -113,6 +129,11 @@ describe("ModelControl consumer boundary", () => {
     expect(migration).toContain("REFERENCES platform.authorization_site_release");
     expect(migration).toContain("MODEL_OPTION_PUBLICATION_ID_CONFLICT");
     expect(migration).toContain("MODEL_OPTION_MATERIALIZATION_ID_CONFLICT");
+    expect(migration).toContain("result_published_at TIMESTAMPTZ");
+    expect(migration).toContain("existing.published_at,TRUE");
+    expect(migration).toMatch(
+      /site_release_model_catalog_payload\(existing\.publication_id\) - 'publishedAt'\)\s+IS DISTINCT FROM \(p_catalog - 'publishedAt'\)/u,
+    );
     expect(migration).toContain("platform.resolve_product_model_option_catalog");
     expect(migration).toContain("model_availability.status='active'");
     expect(migration).toContain("provider_availability.health IN ('healthy','degraded')");

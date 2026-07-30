@@ -207,6 +207,37 @@ describe("Product ModelOption and SiteRelease catalog", () => {
     ).toThrowError("MODEL_OPTION_SURFACE_MISMATCH");
   });
 
+  it("keeps catalog content identity stable when Platform publication metadata changes", () => {
+    const inventory = catalog();
+    const chat = compileModelOptionRevision({
+      inventory,
+      draft: option("chat.standard", "chat", ["chat-primary"], "chat-primary"),
+    });
+    const facts = {
+      siteId: "site-a",
+      siteReleaseRef: "release-a",
+      inventoryDigest: inventory.digest,
+      surfaces: [{
+        surfaceId: "chat" as const,
+        allowedModelOptionRevisionRefs: [chat.modelOptionRevisionRef],
+        defaultModelOptionRevisionRef: chat.modelOptionRevisionRef,
+      }],
+      optionRevisions: [chat],
+    };
+    const first = createSiteReleaseModelCatalogRevision({
+      ...facts,
+      publishedAt: "2026-07-29T12:00:00.000Z",
+    });
+    const retry = createSiteReleaseModelCatalogRevision({
+      ...facts,
+      publishedAt: "2026-07-29T12:05:00.000Z",
+    });
+
+    expect(retry.modelOptionCatalogRef).toBe(first.modelOptionCatalogRef);
+    expect(retry.catalogDigest).toBe(first.catalogDigest);
+    expect(retry.publishedAt).not.toBe(first.publishedAt);
+  });
+
   it("fails ProductContext when the exact published default has no runtime-available route", () => {
     const inventory = catalog();
     const primary = compileModelOptionRevision({

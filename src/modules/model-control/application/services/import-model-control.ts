@@ -45,6 +45,7 @@ export class ImportModelControlService implements ModelInventoryImportAdministra
       throw new Error("MODEL_INVENTORY_IMPORT_MANAGEMENT_PRINCIPAL_REQUIRED");
     const command = createModelControlCommand({
       commandId: input.importId,
+      idempotencyKey: input.idempotencyKey ?? input.importId,
       operation: "model.inventory.import",
       security: modelControlSecurityFacts(context),
       effect: {

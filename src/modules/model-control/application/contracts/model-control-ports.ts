@@ -175,6 +175,7 @@ export interface ModelInventoryImportAdministration {
   import(
     input: {
       readonly importId: string;
+      readonly idempotencyKey?: string;
       readonly inventory: CanonicalModelInventory;
       readonly providerAvailability?: readonly ProviderOperationalAvailability[];
     },
@@ -185,6 +186,7 @@ export interface SiteModelPolicyAdministration {
   change(
     input: {
       readonly changeId: string;
+      readonly idempotencyKey?: string;
       readonly expectedRevision: string;
       readonly policy: SiteModelPolicy;
     },
@@ -195,6 +197,7 @@ export interface ModelInventoryActivationAdministration {
   activate(
     input: {
       readonly activationId: string;
+      readonly idempotencyKey?: string;
       readonly targetDigest: string;
       readonly expectedPointerRevision: string;
     },

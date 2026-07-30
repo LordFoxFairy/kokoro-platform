@@ -33,6 +33,7 @@ export class ActivateModelInventoryService implements ModelInventoryActivationAd
       throw new Error("MODEL_INVENTORY_ACTIVATION_MANAGEMENT_PRINCIPAL_REQUIRED");
     const command = createModelControlCommand({
       commandId: input.activationId,
+      idempotencyKey: input.idempotencyKey ?? input.activationId,
       operation: "model.inventory.activate",
       security: modelControlSecurityFacts(context),
       effect: {
