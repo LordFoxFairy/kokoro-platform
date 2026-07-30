@@ -9,7 +9,6 @@ deployables:
     processRole: api
     database:
       environmentVariable: DATABASE_URL_PLATFORM
-      authorityMode: transition-candidate
       expectedUserEnvironmentVariable: PLATFORM_DATABASE_API_ROLE
       migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
       expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
@@ -36,7 +35,6 @@ deployables:
     processRole: admission
     database:
       environmentVariable: DATABASE_URL_PLATFORM
-      authorityMode: transition-candidate
       expectedUserEnvironmentVariable: PLATFORM_DATABASE_ADMISSION_ROLE
       migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
       expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
@@ -73,7 +71,6 @@ deployables:
     processRole: worker
     database:
       environmentVariable: DATABASE_URL_PLATFORM
-      authorityMode: transition-candidate
       expectedUserEnvironmentVariable: PLATFORM_DATABASE_WORKER_ROLE
       migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
       expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
@@ -99,7 +96,6 @@ deployables:
     processRole: model-gateway
     database:
       environmentVariable: DATABASE_URL_PLATFORM
-      authorityMode: transition-candidate
       expectedUserEnvironmentVariable: PLATFORM_DATABASE_MODEL_GATEWAY_ROLE
       migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
       expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
@@ -110,7 +106,7 @@ deployables:
     runtimeTraffic: false
     inboundContracts: []
     declaredInboundContracts: [platform-model-gateway-connect-v1]
-    outboundContracts: [litellm-openai-chat-completions]
+    outboundContracts: [litellm-openai-chat-completions, platform-model-gateway-reconciliation-https]
     secretClasses:
       [platform-model-gateway-database, mtls-server, mtls-peer-registry,
        model-gateway-response-keyring, litellm-api-key]
@@ -128,7 +124,6 @@ deployables:
     processRole: authorization
     database:
       environmentVariable: DATABASE_URL_PLATFORM
-      authorityMode: transition-candidate
       expectedUserEnvironmentVariable: PLATFORM_DATABASE_AUTHORIZATION_ROLE
       migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
       expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
@@ -161,7 +156,6 @@ deployables:
     processRole: admin
     database:
       environmentVariable: DATABASE_URL_PLATFORM
-      authorityMode: transition-candidate
       expectedUserEnvironmentVariable: PLATFORM_DATABASE_ADMIN_ROLE
       migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
       expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
@@ -198,7 +192,6 @@ deployables:
     processRole: migrator
     database:
       environmentVariable: DATABASE_URL_PLATFORM
-      authorityMode: transition-candidate
       expectedUserEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
       apiRoleEnvironmentVariable: PLATFORM_DATABASE_API_ROLE
       admissionRoleEnvironmentVariable: PLATFORM_DATABASE_ADMISSION_ROLE

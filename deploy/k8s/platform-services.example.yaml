@@ -1,328 +1,174 @@
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: kokoro-site
-  labels:
-    app.kubernetes.io/name: kokoro-site
-    app.kubernetes.io/part-of: kokoro-platform
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: kokoro-site
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: kokoro-site
-        app.kubernetes.io/part-of: kokoro-platform
-    spec:
-      containers:
-        - name: kokoro-site
-          image: ghcr.io/lordfoxfairy/kokoro-platform-service:latest
-          imagePullPolicy: IfNotPresent
-          env:
-            - name: KOKORO_SERVICE_PACKAGE
-              value: "@kokoro/site"
-            - name: KOKORO_SITE_PORT
-              value: "4201"
-            - name: DATABASE_URL_SITE
-              valueFrom:
-                secretKeyRef:
-                  name: kokoro-platform-secrets
-                  key: DATABASE_URL_SITE
-            - name: KOKORO_SITE_BASE_URL
-              value: http://kokoro-site:4201
-          ports:
-            - name: http
-              containerPort: 4201
-          readinessProbe:
-            httpGet:
-              path: /healthz
-              port: http
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: http
----
 apiVersion: v1
-kind: Service
-metadata:
-  name: kokoro-site
-  labels:
-    app.kubernetes.io/name: kokoro-site
-    app.kubernetes.io/part-of: kokoro-platform
-spec:
-  selector:
-    app.kubernetes.io/name: kokoro-site
-  ports:
-    - name: http
-      port: 4201
-      targetPort: http
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: kokoro-user
-  labels:
-    app.kubernetes.io/name: kokoro-user
-    app.kubernetes.io/part-of: kokoro-platform
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: kokoro-user
-  template:
+kind: List
+items:
+  - apiVersion: batch/v1
+    kind: Job
     metadata:
-      labels:
-        app.kubernetes.io/name: kokoro-user
-        app.kubernetes.io/part-of: kokoro-platform
+      name: platform-migrator
     spec:
-      containers:
-        - name: kokoro-user
-          image: ghcr.io/lordfoxfairy/kokoro-platform-service:latest
-          imagePullPolicy: IfNotPresent
-          env:
-            - name: KOKORO_SERVICE_PACKAGE
-              value: "@kokoro/user"
-            - name: KOKORO_USER_PORT
-              value: "4211"
-            - name: DATABASE_URL_USER
-              valueFrom:
-                secretKeyRef:
-                  name: kokoro-platform-secrets
-                  key: DATABASE_URL_USER
-            - name: KOKORO_USER_BASE_URL
-              value: http://kokoro-user:4211
-            - name: KOKORO_MODEL_BASE_URL
-              value: http://kokoro-model:4221
-            - name: KOKORO_CREDIT_BASE_URL
-              value: http://kokoro-credit:4231
-            - name: KOKORO_PAYMENT_BASE_URL
-              value: http://kokoro-payment:4241
-          ports:
-            - name: http
-              containerPort: 4211
-          readinessProbe:
-            httpGet:
-              path: /healthz
-              port: http
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: http
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: kokoro-user
-  labels:
-    app.kubernetes.io/name: kokoro-user
-    app.kubernetes.io/part-of: kokoro-platform
-spec:
-  selector:
-    app.kubernetes.io/name: kokoro-user
-  ports:
-    - name: http
-      port: 4211
-      targetPort: http
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: kokoro-model
-  labels:
-    app.kubernetes.io/name: kokoro-model
-    app.kubernetes.io/part-of: kokoro-platform
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: kokoro-model
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: kokoro-model
-        app.kubernetes.io/part-of: kokoro-platform
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: platform-migrator
+              image: ghcr.io/lordfoxfairy/kokoro-platform:RELEASE_DIGEST
+              envFrom:
+                - configMapRef: { name: platform-runtime }
+                - secretRef: { name: platform-migrator-secrets }
+              env:
+                - { name: KOKORO_SERVICE_PACKAGE, value: platform-migrator }
+                - { name: PLATFORM_DATABASE_CREDENTIAL_CLASS, value: migrator }
+
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata: { name: platform-api }
     spec:
-      containers:
-        - name: kokoro-model
-          image: ghcr.io/lordfoxfairy/kokoro-platform-service:latest
-          imagePullPolicy: IfNotPresent
-          env:
-            - name: KOKORO_SERVICE_PACKAGE
-              value: "@kokoro/model"
-            - name: KOKORO_MODEL_PORT
-              value: "4221"
-            - name: DATABASE_URL_MODEL
-              valueFrom:
-                secretKeyRef:
-                  name: kokoro-platform-secrets
-                  key: DATABASE_URL_MODEL
-            - name: KOKORO_USER_BASE_URL
-              value: http://kokoro-user:4211
-            - name: KOKORO_MODEL_BASE_URL
-              value: http://kokoro-model:4221
-            - name: KOKORO_CREDIT_BASE_URL
-              value: http://kokoro-credit:4231
-            - name: KOKORO_PAYMENT_BASE_URL
-              value: http://kokoro-payment:4241
-          ports:
-            - name: http
-              containerPort: 4221
-          readinessProbe:
-            httpGet:
-              path: /healthz
-              port: http
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: http
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: kokoro-model
-  labels:
-    app.kubernetes.io/name: kokoro-model
-    app.kubernetes.io/part-of: kokoro-platform
-spec:
-  selector:
-    app.kubernetes.io/name: kokoro-model
-  ports:
-    - name: http
-      port: 4221
-      targetPort: http
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: kokoro-credit
-  labels:
-    app.kubernetes.io/name: kokoro-credit
-    app.kubernetes.io/part-of: kokoro-platform
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: kokoro-credit
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: kokoro-credit
-        app.kubernetes.io/part-of: kokoro-platform
+      replicas: 2
+      selector: { matchLabels: { app: platform-api } }
+      template:
+        metadata: { labels: { app: platform-api } }
+        spec:
+          containers:
+            - name: platform-api
+              image: ghcr.io/lordfoxfairy/kokoro-platform:RELEASE_DIGEST
+              envFrom:
+                - configMapRef: { name: platform-runtime }
+                - secretRef: { name: platform-api-secrets }
+              env:
+                - { name: KOKORO_SERVICE_PACKAGE, value: platform-api }
+                - { name: PLATFORM_DATABASE_CREDENTIAL_CLASS, value: api }
+
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata: { name: platform-admission }
     spec:
-      containers:
-        - name: kokoro-credit
-          image: ghcr.io/lordfoxfairy/kokoro-platform-service:latest
-          imagePullPolicy: IfNotPresent
-          env:
-            - name: KOKORO_SERVICE_PACKAGE
-              value: "@kokoro/credit"
-            - name: KOKORO_CREDIT_PORT
-              value: "4231"
-            - name: DATABASE_URL_CREDIT
-              valueFrom:
-                secretKeyRef:
-                  name: kokoro-platform-secrets
-                  key: DATABASE_URL_CREDIT
-            - name: KOKORO_USER_BASE_URL
-              value: http://kokoro-user:4211
-            - name: KOKORO_MODEL_BASE_URL
-              value: http://kokoro-model:4221
-            - name: KOKORO_CREDIT_BASE_URL
-              value: http://kokoro-credit:4231
-            - name: KOKORO_PAYMENT_BASE_URL
-              value: http://kokoro-payment:4241
-          ports:
-            - name: http
-              containerPort: 4231
-          readinessProbe:
-            httpGet:
-              path: /healthz
-              port: http
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: http
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: kokoro-credit
-  labels:
-    app.kubernetes.io/name: kokoro-credit
-    app.kubernetes.io/part-of: kokoro-platform
-spec:
-  selector:
-    app.kubernetes.io/name: kokoro-credit
-  ports:
-    - name: http
-      port: 4231
-      targetPort: http
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: kokoro-payment
-  labels:
-    app.kubernetes.io/name: kokoro-payment
-    app.kubernetes.io/part-of: kokoro-platform
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: kokoro-payment
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: kokoro-payment
-        app.kubernetes.io/part-of: kokoro-platform
+      replicas: 2
+      selector: { matchLabels: { app: platform-admission } }
+      template:
+        metadata: { labels: { app: platform-admission } }
+        spec:
+          containers:
+            - name: platform-admission
+              image: ghcr.io/lordfoxfairy/kokoro-platform:RELEASE_DIGEST
+              envFrom:
+                - configMapRef: { name: platform-runtime }
+                - secretRef: { name: platform-admission-secrets }
+              env:
+                - { name: KOKORO_SERVICE_PACKAGE, value: platform-admission }
+                - { name: PLATFORM_DATABASE_CREDENTIAL_CLASS, value: admission }
+
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata: { name: platform-authorization }
     spec:
-      containers:
-        - name: kokoro-payment
-          image: ghcr.io/lordfoxfairy/kokoro-platform-service:latest
-          imagePullPolicy: IfNotPresent
-          env:
-            - name: KOKORO_SERVICE_PACKAGE
-              value: "@kokoro/payment"
-            - name: KOKORO_PAYMENT_PORT
-              value: "4241"
-            - name: DATABASE_URL_PAYMENT_READ
-              valueFrom:
-                secretKeyRef:
-                  name: kokoro-platform-secrets
-                  key: DATABASE_URL_PAYMENT_READ
-            - name: KOKORO_USER_BASE_URL
-              value: http://kokoro-user:4211
-            - name: KOKORO_MODEL_BASE_URL
-              value: http://kokoro-model:4221
-            - name: KOKORO_CREDIT_BASE_URL
-              value: http://kokoro-credit:4231
-            - name: KOKORO_PAYMENT_BASE_URL
-              value: http://kokoro-payment:4241
-          ports:
-            - name: http
-              containerPort: 4241
-          readinessProbe:
-            httpGet:
-              path: /healthz
-              port: http
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: http
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: kokoro-payment
-  labels:
-    app.kubernetes.io/name: kokoro-payment
-    app.kubernetes.io/part-of: kokoro-platform
-spec:
-  selector:
-    app.kubernetes.io/name: kokoro-payment
-  ports:
-    - name: http
-      port: 4241
-      targetPort: http
+      replicas: 2
+      selector: { matchLabels: { app: platform-authorization } }
+      template:
+        metadata: { labels: { app: platform-authorization } }
+        spec:
+          containers:
+            - name: platform-authorization
+              image: ghcr.io/lordfoxfairy/kokoro-platform:RELEASE_DIGEST
+              envFrom:
+                - configMapRef: { name: platform-runtime }
+                - secretRef: { name: platform-authorization-secrets }
+              env:
+                - { name: KOKORO_SERVICE_PACKAGE, value: platform-authorization }
+                - { name: PLATFORM_DATABASE_CREDENTIAL_CLASS, value: authorization }
+
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata: { name: platform-model-gateway }
+    spec:
+      replicas: 2
+      selector: { matchLabels: { app: platform-model-gateway } }
+      template:
+        metadata: { labels: { app: platform-model-gateway } }
+        spec:
+          containers:
+            - name: platform-model-gateway
+              image: ghcr.io/lordfoxfairy/kokoro-platform:RELEASE_DIGEST
+              envFrom:
+                - configMapRef: { name: platform-runtime }
+                - secretRef: { name: platform-model-gateway-secrets }
+              env:
+                - { name: KOKORO_SERVICE_PACKAGE, value: platform-model-gateway }
+                - { name: PLATFORM_DATABASE_CREDENTIAL_CLASS, value: model-gateway }
+
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata: { name: platform-worker }
+    spec:
+      replicas: 2
+      selector: { matchLabels: { app: platform-worker } }
+      template:
+        metadata: { labels: { app: platform-worker } }
+        spec:
+          containers:
+            - name: platform-worker
+              image: ghcr.io/lordfoxfairy/kokoro-platform:RELEASE_DIGEST
+              envFrom:
+                - configMapRef: { name: platform-runtime }
+                - secretRef: { name: platform-worker-secrets }
+              env:
+                - { name: KOKORO_SERVICE_PACKAGE, value: platform-worker }
+                - { name: PLATFORM_DATABASE_CREDENTIAL_CLASS, value: worker }
+
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata: { name: platform-admin }
+    spec:
+      replicas: 2
+      selector: { matchLabels: { app: platform-admin } }
+      template:
+        metadata: { labels: { app: platform-admin } }
+        spec:
+          containers:
+            - name: platform-admin
+              image: ghcr.io/lordfoxfairy/kokoro-platform:RELEASE_DIGEST
+              envFrom:
+                - configMapRef: { name: platform-runtime }
+                - secretRef: { name: platform-admin-secrets }
+              env:
+                - { name: KOKORO_SERVICE_PACKAGE, value: platform-admin }
+                - { name: PLATFORM_DATABASE_CREDENTIAL_CLASS, value: admin }
+
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata: { name: platform-asset-data-plane }
+    spec:
+      replicas: 2
+      selector: { matchLabels: { app: platform-asset-data-plane } }
+      template:
+        metadata: { labels: { app: platform-asset-data-plane } }
+        spec:
+          containers:
+            - name: platform-asset-data-plane
+              image: ghcr.io/lordfoxfairy/kokoro-platform:RELEASE_DIGEST
+              envFrom:
+                - configMapRef: { name: platform-runtime }
+                - secretRef: { name: platform-asset-data-plane-secrets }
+              env:
+                - { name: KOKORO_SERVICE_PACKAGE, value: platform-asset-data-plane }
+                - { name: PLATFORM_DATABASE_CREDENTIAL_CLASS, value: api }
+
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata: { name: kokoro-hub }
+    spec:
+      replicas: 2
+      selector: { matchLabels: { app: kokoro-hub } }
+      template:
+        metadata: { labels: { app: kokoro-hub } }
+        spec:
+          containers:
+            - name: kokoro-hub
+              image: ghcr.io/lordfoxfairy/kokoro-platform:RELEASE_DIGEST
+              envFrom:
+                - secretRef: { name: kokoro-hub-secrets }
+              env:
+                - { name: KOKORO_SERVICE_PACKAGE, value: "@kokoro/hub" }
+                - { name: KOKORO_HUB_PORT, value: "4251" }
+              ports:
+                - { name: http, containerPort: 4251 }

@@ -10,7 +10,7 @@ independently revised Site product policies, availability projections, and immut
 once; provider account, upstream identifier and gateway alias live only on bindings.
 
 Callers import `ModelControlApplication` from this module's public `index.ts`. Same-process consumers inject the local application
-port and an opaque UoW; they never call the legacy `kokoro-model` URL. The PostgreSQL repository is private composition material.
+port and an opaque UoW; no separate per-domain Model service participates. The PostgreSQL repository is private composition material.
 Provider execution and secrets remain behind the remote Model Gateway: selection returns only a safe gateway route. `direct` and
 `litellm` describe adapters internal to Model Gateway and never authorize Platform or a product to execute against a provider.
 
@@ -45,8 +45,8 @@ different digest fails closed.
 
 The migrator is the only identity allowed to read raw catalog, policy, receipt, provider account, `secret_ref`, or canonical-payload
 tables. API resolves candidates, decision replays, and exact SiteRelease ModelOption projections through scoped owner functions
-only. Admin can execute the three inventory/Site-policy commands plus the four narrow ModelOption inventory-read, revision-read,
-materialization, and publication functions; it still has no raw ModelOption table access. Worker has one separate
+only. Admin can execute the inventory/Site-policy commands plus narrow ModelOption inventory-read, revision-read, and publication
+functions; it still has no raw ModelOption table access. Worker has one separate
 provider-availability report command: it atomically compare-and-swaps the provider epoch and writes an immutable idempotency receipt.
 Provider status/health is therefore a mutable operational fact, never a catalog-release mutation.
 
@@ -56,35 +56,9 @@ binding priority, provider priority and binding key. It records the full candida
 decision digest. The policy-input digest is recomputed locally from Site/product/role/capabilities, never trusted from a caller, and
 no resolution performs remote I/O in the UoW.
 
-Legacy cutover is one deterministic, content-addressed bundle. Export includes the canonical catalog, provider operational
-status/health and all non-deleted Sites—including Sites with no legacy model-policy row—and emits four deterministic Site commands
-per Site. A product whose hidden routes leave no viable main/generation path is restored disabled instead of producing an invalid
-policy. Import verifies the whole bundle digest and a signed migration context, then replays fixed import, activation and Site change
-IDs. Re-running the same bundle returns the same receipts and revisions; a changed payload under a reused ID fails closed. Cross-Site
-replay is available only to the admin migration purpose carrying `model:site-policy:migrate`; ordinary commands remain exact-Site.
-Export requires a short-lived owner-issued quiesce lease supplied as `--fence-attestation` plus its pinned public key. The signed
-claims bind issuer/key revision, lease lifetime, purpose, exact database identities, fenced timestamp and full-content write
-watermarks; an arbitrary string cannot become a fence. When both sources resolve to one database URL, all Model and Site reads share
-one read-only repeatable-read consistent snapshot. With separate databases, each source uses its own consistent snapshot.
-Pre-snapshot, in-snapshot and post-commit watermarks must all equal the signed owner watermark and no row may be newer than the
-fence. Only a digest of the lease evidence and captured watermarks enters the catalog source reference and bundle digest.
-Legacy provider credentials are accepted only when already encoded as a valid `secret://`, `vault://`, or `env://` reference.
-Plaintext and bare environment-variable names fail with a non-reflective quarantine error; export never manufactures a reference.
-
-Legacy `ModelLabel` is public product-option metadata, not a logical model definition. Export therefore preserves every label as a
-separate, recursively closed and content-addressed `modelOptionMigration` artifact instead of adding `productOptions` to the base
-inventory. A valid label records its legacy identity, product, presentation fields, enabled state, ordered candidate logical-model
-keys and the default selected through `defaultBindingId -> ModelBinding.id -> modelKey`; invalid, duplicate, unresolved and orphan
-facts become non-reflective hashed quarantine entries. The artifact and its quarantine counts are covered by the bundle digest, and
-its digest is also bound into the import command identity. Bundle import reports it explicitly as
-`pending_site_release_materialization`: the source bundle remains the artifact of record and its digest is conflict-bound to the
-import receipt. Operators then run the signed `model-option:materialize-legacy` command, which persists immutable revisions and every
-quarantine fact, followed by `model-option:publish-site-release` for an already-authorized exact SiteRelease catalog reference.
-Publication is relational (`publication -> surface -> allowed/default revision`) and cannot cross Site, release, catalog, or inventory
-boundaries. ProductContext reads that same publication inside the authorization transaction; missing operational model/provider/
-binding facts make the default unavailable and fail the request closed.
-
-The legacy package remains only as a read-only migration source and rollback artifact until operational cutover consumes or resolves
-every option/quarantine fact; no new Platform consumer may import it or use `KOKORO_MODEL_BASE_URL`. Upstream SiteRelease authority
-provisioning remains a separate owner: ModelControl may publish only when its requested catalog reference already matches the locked
-`authorization_site_release` row.
+Fresh deployments author canonical Platform-native inventories and immutable SiteRelease option revisions directly. There is no
+legacy database exporter, rollback authority, or migration CLI in the production path. Publication remains relational
+(`publication -> surface -> allowed/default revision`) and cannot cross Site, release, catalog, or inventory boundaries.
+ProductContext reads that publication inside the authorization transaction; missing operational model/provider/binding facts make
+the default unavailable and fail the request closed. Upstream SiteRelease authority provisioning remains a separate owner:
+ModelControl may publish only when its requested catalog reference already matches the locked `authorization_site_release` row.

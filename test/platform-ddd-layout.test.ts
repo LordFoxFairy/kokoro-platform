@@ -1,36 +1,45 @@
-import { readdirSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const businessModules = ["kokoro-site", "kokoro-user", "kokoro-model", "kokoro-credit", "kokoro-payment"];
-const allowedTopLevelEntries = new Set([
+const platformModules = [
+  "admin",
+  "admin-control",
+  "admission",
+  "asset",
+  "authorization",
+  "commerce",
+  "credit",
+  "identity",
+  "model-control",
+  "model-gateway",
+  "policy",
+  "site",
+];
+const allowedModuleEntries = new Set([
+  "INDEX.md",
   "application",
-  "config",
   "domain",
+  "index.ts",
   "infrastructure",
   "interfaces",
-  "index.ts",
-  "module.ts",
+  "migration",
 ]);
 
-describe("platform module DDD layout", () => {
-  it("keeps business modules on the four DDD layers", () => {
-    for (const moduleName of businessModules) {
-      const sourceEntries = readdirSync(join(process.cwd(), moduleName, "src"));
-      const unexpectedEntries = sourceEntries.filter((entry) => !allowedTopLevelEntries.has(entry));
-
-      expect(unexpectedEntries, `${moduleName} has non-DDD top-level entries`).toEqual([]);
-    }
+describe("fresh Platform module topology", () => {
+  it("owns every business capability under the root module tree", () => {
+    const actual = readdirSync(join(process.cwd(), "src/modules"))
+      .filter((entry) => statSync(join(process.cwd(), "src/modules", entry)).isDirectory())
+      .sort();
+    expect(actual).toEqual(platformModules);
   });
 
-  it("keeps admin adapters under interfaces and repository interfaces under domain", () => {
-    for (const moduleName of businessModules) {
-      const sourceRoot = join(process.cwd(), moduleName, "src");
-      const interfaceEntries = readdirSync(join(sourceRoot, "interfaces"));
-      const domainEntries = readdirSync(join(sourceRoot, "domain"));
-
-      expect(interfaceEntries, `${moduleName} exposes admin through interfaces/admin`).toContain("admin");
-      expect(domainEntries, `${moduleName} owns repository interfaces in domain`).toContain("repository.ts");
+  it("keeps module code inside explicit DDD and migration boundaries", () => {
+    for (const moduleName of platformModules) {
+      const entries = readdirSync(join(process.cwd(), "src/modules", moduleName));
+      const unexpected = entries.filter((entry) => !allowedModuleEntries.has(entry));
+      expect(unexpected, `${moduleName} has an unowned top-level surface`).toEqual([]);
+      expect(entries).toContain("application");
     }
   });
 });

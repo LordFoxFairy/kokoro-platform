@@ -32,7 +32,10 @@ The same commit/lock inputs must produce a traceable artifact; release rollback 
 Keep service build logic here and dependency installation lock-driven. Do not copy sibling worktrees or `.env` files.
 
 ## Current gotchas
-CI currently builds but does not yet publish, sign, or attach SBOM/provenance to the image.
+The final image contains only root PostgreSQL Platform processes, Hub, and Platform Kit. Retired
+per-domain packages are excluded from the workspace and Docker context. Hub self-service membership
+is intentionally fail-closed until its PostgreSQL Platform owner adapter is mounted. CI currently
+builds but does not yet publish, sign, or attach SBOM/provenance to the image.
 
 ## Verification
 Run the repository CI artifact job or `docker build --file deploy/docker/Dockerfile --tag kokoro-platform:test .` after all gates.

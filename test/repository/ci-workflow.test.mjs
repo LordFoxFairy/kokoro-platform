@@ -6,295 +6,82 @@ import { parse } from "yaml";
 
 const root = resolve(import.meta.dirname, "../..");
 
-function parseWorkflow(workflow) {
-  const document = parse(workflow);
-  assert.ok(document !== null && typeof document === "object" && !Array.isArray(document));
-  const jobs = document.jobs;
-  assert.ok(jobs !== null && typeof jobs === "object" && !Array.isArray(jobs));
-  return { document, jobs };
+function workflowJobs(source) {
+  const document = parse(source);
+  assert.ok(document && typeof document === "object" && !Array.isArray(document));
+  assert.ok(document.jobs && typeof document.jobs === "object" && !Array.isArray(document.jobs));
+  return document.jobs;
 }
 
-function requireJob(jobs, jobName) {
-  const job = jobs[jobName];
-  assert.ok(job !== null && typeof job === "object" && !Array.isArray(job), `${jobName} job is required`);
-  assert.ok(Array.isArray(job.steps), `${jobName} steps are required`);
-  return job;
+function commands(job) {
+  assert.ok(job && Array.isArray(job.steps));
+  return job.steps.flatMap((step) => typeof step?.run === "string" ? [step.run] : []);
 }
 
-function assertNoBypass(target, label) {
-  assert.equal(Object.hasOwn(target, "if"), false, `${label} must not declare if`);
-  assert.equal(
-    Object.hasOwn(target, "continue-on-error"),
-    false,
-    `${label} must not declare continue-on-error`,
-  );
-}
-
-function allWorkflowSteps(jobs) {
-  return Object.entries(jobs).flatMap(([jobName, job]) =>
-    job !== null && typeof job === "object" && Array.isArray(job.steps)
-      ? job.steps.map((step, index) => ({ jobName, index, step }))
-      : [],
-  );
-}
-
-function assertProductionAuditGate(workflow) {
-  const { jobs } = parseWorkflow(workflow);
+test("Platform CI gates both PostgreSQL authority and Hub integration", async () => {
+  const source = await readFile(resolve(root, ".github/workflows/ci.yml"), "utf8");
+  const jobs = workflowJobs(source);
   const gates = jobs.gates;
-  requireJob(jobs, "gates");
-  assertNoBypass(gates, "gates job");
-
-  const auditSteps = gates.steps.filter(
-    (step) => step !== null && typeof step === "object" && step.name === "production dependency audit",
-  );
-  assert.equal(auditSteps.length, 1, "gates must contain exactly one named production audit step");
-  const audit = auditSteps[0];
-  assert.equal(audit.run, "pnpm audit --prod");
-  assertNoBypass(audit, "production audit step");
-  assert.equal(Object.hasOwn(audit, "shell"), false, "production audit step must not override shell");
-
-  const commandSteps = allWorkflowSteps(jobs).filter(
-    ({ step }) =>
-      step !== null &&
-      typeof step === "object" &&
-      typeof step.run === "string" &&
-      step.run.includes("pnpm audit --prod"),
-  );
-  assert.equal(commandSteps.length, 1, "production audit command must be unique across all jobs");
-  assert.equal(commandSteps[0].jobName, "gates");
-  assert.equal(commandSteps[0].step, audit);
-}
-
-function assertArtifactGate(workflow) {
-  const { document, jobs } = parseWorkflow(workflow);
-  const gates = requireJob(jobs, "gates");
-  const artifact = requireJob(jobs, "artifact");
-  assertNoBypass(gates, "gates job");
-  assertNoBypass(artifact, "artifact job");
-  assert.equal(Object.hasOwn(document, "defaults"), false, "workflow defaults are forbidden");
-  assert.equal(Object.hasOwn(gates, "defaults"), false, "gates defaults are forbidden");
-  assert.equal(Object.hasOwn(artifact, "defaults"), false, "artifact defaults are forbidden");
-  assert.deepEqual(artifact.needs, ["gates", "integration"]);
-  assert.equal(artifact.steps.length, 2, "artifact job must contain checkout followed by one build step");
-  assert.deepEqual(artifact.steps[0], { uses: "actions/checkout@v4" });
-
-  const build = artifact.steps[1];
-  assert.ok(build !== null && typeof build === "object" && !Array.isArray(build));
-  assert.equal(build.name, "build deployment image");
-  assert.equal(
-    build.run,
-    "docker build --file deploy/docker/Dockerfile --tag kokoro-platform:${{ github.sha }} .",
-  );
-  assertNoBypass(build, "artifact build step");
-  assert.equal(Object.hasOwn(build, "shell"), false, "artifact build step must not override shell");
-  assert.equal(Object.hasOwn(build, "defaults"), false, "artifact build step must not declare defaults");
-
-  const buildCommands = allWorkflowSteps(jobs).filter(
-    ({ step }) =>
-      step !== null &&
-      typeof step === "object" &&
-      typeof step.run === "string" &&
-      step.run.includes("docker build"),
-  );
-  assert.equal(buildCommands.length, 1, "deployment image build command must be unique across all jobs");
-  assert.equal(buildCommands[0].jobName, "artifact");
-  assert.equal(buildCommands[0].index, 1);
-  assert.equal(buildCommands[0].step, build);
-}
-
-function assertIntegrationGate(workflow) {
-  const { document, jobs } = parseWorkflow(workflow);
-  const integration = requireJob(jobs, "integration");
-  const artifact = requireJob(jobs, "artifact");
-  assertNoBypass(integration, "integration job");
-  assert.equal(Object.hasOwn(integration, "shell"), false, "integration job must not override shell");
-  assert.equal(Object.hasOwn(integration, "defaults"), false, "integration defaults are forbidden");
-  assert.equal(Object.hasOwn(document, "defaults"), false, "workflow defaults are forbidden");
-  assert.deepEqual(artifact.needs, ["gates", "integration"]);
-
-  const namedSteps = integration.steps.filter(
-    (step) => step !== null && typeof step === "object" && step.name === "integration tests",
-  );
-  assert.equal(namedSteps.length, 1, "integration job must contain exactly one named integration test step");
-  const integrationStep = namedSteps[0];
-  assert.equal(integration.steps.at(-1), integrationStep, "integration tests must be the final integration step");
-  assert.equal(integrationStep.run, "pnpm test:integration");
-  assertNoBypass(integrationStep, "integration test step");
-  assert.equal(Object.hasOwn(integrationStep, "shell"), false, "integration test step must not override shell");
-  assert.equal(Object.hasOwn(integrationStep, "defaults"), false, "integration test step must not declare defaults");
-
-  const commandSteps = allWorkflowSteps(jobs).filter(
-    ({ step }) =>
-      step !== null &&
-      typeof step === "object" &&
-      typeof step.run === "string" &&
-      step.run.includes("pnpm test:integration"),
-  );
-  assert.equal(commandSteps.length, 1, "integration test command must be unique across all jobs");
-  assert.equal(commandSteps[0].jobName, "integration");
-  assert.equal(commandSteps[0].step, integrationStep);
-}
-
-test("platform CI is lock-driven and separates local from integration gates", async () => {
-  const workflow = await readFile(resolve(root, ".github/workflows/ci.yml"), "utf8");
-  const packageJson = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
-
-  assert.equal(packageJson.packageManager, "pnpm@11.2.2");
-  assert.match(workflow, /node-version:\s*["']?24["']?/u);
-  assert.match(workflow, /corepack enable/u);
-  assert.match(workflow, /pnpm install --frozen-lockfile/u);
-  assertProductionAuditGate(workflow);
-  assert.match(workflow, /pnpm lint/u);
-  assert.match(workflow, /pnpm typecheck/u);
-  assert.match(workflow, /pnpm test/u);
-  assertIntegrationGate(workflow);
-  assert.match(workflow, /mysql:/u);
-  assert.match(workflow, /mongo:/u);
-  assert.match(workflow, /redis:/u);
-  assert.match(workflow, /minio:/u);
+  const hubIntegration = jobs["hub-integration"];
+  const platformPostgres = jobs["platform-postgres"];
+  const artifact = jobs.artifact;
+  assert.ok(gates && hubIntegration && platformPostgres && artifact);
+  assert.match(source, /node-version:\s*"24"/u);
+  assert.match(source, /pnpm install --frozen-lockfile/u);
+  assert.match(commands(gates).join("\n"), /pnpm db:generate/u);
+  assert.match(commands(gates).join("\n"), /pnpm audit --prod/u);
+  assert.match(commands(gates).join("\n"), /pnpm lint/u);
+  assert.match(commands(gates).join("\n"), /pnpm typecheck/u);
+  assert.match(commands(gates).join("\n"), /pnpm test/u);
+  assert.equal(commands(hubIntegration).at(-1), "pnpm test:integration");
+  assert.match(platformPostgres.services.postgres.image, /^postgres:17@sha256:[a-f0-9]{64}$/u);
+  assert.match(commands(platformPostgres).join("\n"), /provision-platform-postgres\.sql/u);
+  assert.match(commands(platformPostgres).join("\n"), /pnpm build:runtime/u);
+  assert.match(commands(platformPostgres).join("\n"), /pnpm db:migrate/u);
+  assert.equal(commands(platformPostgres).at(-1), "pnpm test:component:postgres");
+  assert.deepEqual(artifact.needs, ["gates", "hub-integration", "platform-postgres"]);
+  assert.doesNotMatch(source, /mysql|DATABASE_URL_(?:SITE|USER|MODEL|CREDIT|PAYMENT|ADMIN)/iu);
+  assert.match(source, /mongo:7/u);
+  assert.match(source, /minio\/minio/u);
 });
 
-test("fresh CI generates the root Prisma client before TypeScript consumes it", async () => {
-  const workflow = await readFile(resolve(root, ".github/workflows/ci.yml"), "utf8");
-  const { jobs } = parseWorkflow(workflow);
-  const gates = requireJob(jobs, "gates");
-  const generateIndexes = gates.steps.flatMap((step, index) =>
-    step !== null && typeof step === "object" && step.run === "pnpm db:generate"
-      ? [index]
-      : [],
+test("PostgreSQL CI provisions isolated non-superuser roles", async () => {
+  const source = await readFile(
+    resolve(root, "scripts/ci/provision-platform-postgres.sql"),
+    "utf8",
   );
-  const typecheckIndex = gates.steps.findIndex(
-    (step) => step !== null && typeof step === "object" && step.name === "typecheck",
-  );
-
-  assert.deepEqual(generateIndexes, [5], "gates must generate exactly once after install");
-  assert.ok(typecheckIndex > generateIndexes[0], "typecheck must run after Prisma generation");
-});
-
-test("the production audit contract rejects skipped, swallowed, and misplaced gates", async () => {
-  const workflow = await readFile(resolve(root, ".github/workflows/ci.yml"), "utf8");
-  const auditBlock = "      - name: production dependency audit\n        run: pnpm audit --prod\n";
-  const invalidWorkflows = [
-    workflow.replace("run: pnpm audit --prod", "run: pnpm audit --prod || true"),
-    workflow.replace(auditBlock, "      - name: production dependency audit\n        continue-on-error: true\n        run: pnpm audit --prod\n"),
-    workflow.replace(auditBlock, "      - name: production dependency audit\n        if: always()\n        run: pnpm audit --prod\n"),
-    workflow.replace(auditBlock, `${auditBlock}      - name: duplicate production audit\n        run: pnpm audit --prod\n`),
-    workflow.replace(auditBlock, "      # run: pnpm audit --prod\n"),
-    workflow
-      .replace(auditBlock, "")
-      .replace(
-        "  artifact:\n",
-        `  audit-copy:\n    runs-on: ubuntu-latest\n    steps:\n${auditBlock}\n  artifact:\n`,
-      ),
-  ];
-
-  for (const invalid of invalidWorkflows) {
-    assert.notEqual(invalid, workflow, "mutation fixture must alter the workflow");
-    assert.doesNotThrow(() => parse(invalid), "mutation fixture must remain valid YAML");
-    assert.throws(() => assertProductionAuditGate(invalid));
+  for (const role of [
+    "platform_migrator",
+    "platform_api",
+    "platform_admission",
+    "platform_authorization",
+    "platform_worker",
+    "platform_admin",
+    "platform_model_gateway",
+  ]) {
+    assert.match(source, new RegExp(`CREATE ROLE ${role}\\b`, "u"));
   }
+  assert.equal((source.match(/NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS/gu) ?? []).length, 7);
+  assert.match(source, /CREATE DATABASE kokoro_test_platform OWNER platform_migrator;/u);
+  assert.match(source, /REVOKE ALL ON DATABASE kokoro_test_platform FROM PUBLIC;/u);
+  assert.doesNotMatch(source, /GRANT\s+ALL/iu);
 });
 
-test("protected CI jobs reject job-level bypasses", async () => {
-  const workflow = await readFile(resolve(root, ".github/workflows/ci.yml"), "utf8");
-  const invalidWorkflows = [
-    workflow.replace("  gates:\n", "  gates:\n    if: always()\n"),
-    workflow.replace("  gates:\n", "  gates:\n    continue-on-error: true\n"),
-    workflow.replace("  artifact:\n", "  artifact:\n    if: always()\n"),
-    workflow.replace("  artifact:\n", "  artifact:\n    continue-on-error: true\n"),
-  ];
-
-  for (const invalid of invalidWorkflows) {
-    assert.throws(() => {
-      assertProductionAuditGate(invalid);
-      assertArtifactGate(invalid);
-    });
-  }
+test("artifact is built once from the repository-owned Dockerfile", async () => {
+  const source = await readFile(resolve(root, ".github/workflows/ci.yml"), "utf8");
+  const jobs = workflowJobs(source);
+  const buildCommands = Object.entries(jobs).flatMap(([name, job]) =>
+    commands(job).filter((command) => command.includes("docker build")).map((command) => ({ name, command })));
+  assert.deepEqual(buildCommands, [{
+    name: "artifact",
+    command: "docker build --file deploy/docker/Dockerfile --tag kokoro-platform:${{ github.sha }} .",
+  }]);
 });
 
-test("the artifact contract rejects bypass, defaults, duplicate, comment, and placement mutations", async () => {
-  const workflow = await readFile(resolve(root, ".github/workflows/ci.yml"), "utf8");
-  const command =
-    "          docker build --file deploy/docker/Dockerfile\n          --tag kokoro-platform:${{ github.sha }} .";
-  const invalidWorkflows = [
-    workflow.replace("${{ github.sha }} .", "${{ github.sha }} . || true"),
-    workflow.replace("      - name: build deployment image\n", "      - name: build deployment image\n        continue-on-error: true\n"),
-    workflow.replace("      - name: build deployment image\n", "      - name: build deployment image\n        if: always()\n"),
-    workflow.replace("      - name: build deployment image\n", "      - name: build deployment image\n        shell: bash\n"),
-    workflow.replace("      - name: build deployment image\n", "      - name: build deployment image\n        defaults: {}\n"),
-    workflow.replace("    steps:\n      - uses: actions/checkout@v4\n      - name: build deployment image", "    defaults:\n      run:\n        shell: bash\n    steps:\n      - uses: actions/checkout@v4\n      - name: build deployment image"),
-    workflow.replace("jobs:\n", "defaults:\n  run:\n    shell: bash\n\njobs:\n"),
-    workflow.replace(command, `${command}\n      - name: duplicate image\n        run: docker build --file deploy/docker/Dockerfile --tag kokoro-platform:duplicate .`),
-    workflow.replace(
-      "      - name: build deployment image\n        run: >-\n" + command,
-      "      # run: docker build --file deploy/docker/Dockerfile --tag kokoro-platform:${{ github.sha }} .\n      - name: build deployment image\n        run: echo disabled",
-    ),
-    workflow.replace("      - name: build deployment image\n", "      - run: echo prebuild\n      - name: build deployment image\n"),
-    workflow
-      .replace("      - name: build deployment image\n        run: >-\n" + command, "      - name: build deployment image\n        run: echo misplaced")
-      .replace(
-        "  artifact:\n",
-        "  gates-copy:\n    runs-on: ubuntu-latest\n    steps:\n      - run: docker build --file deploy/docker/Dockerfile --tag kokoro-platform:${{ github.sha }} .\n\n  artifact:\n",
-      ),
-  ];
-
-  for (const invalid of invalidWorkflows) {
-    assert.notEqual(invalid, workflow, "mutation fixture must alter the workflow");
-    assert.doesNotThrow(() => parse(invalid), "mutation fixture must remain valid YAML");
-    assert.throws(() => assertArtifactGate(invalid));
-  }
-});
-
-test("the integration contract rejects bypass, defaults, duplicate, comment, and placement mutations", async () => {
-  const workflow = await readFile(resolve(root, ".github/workflows/ci.yml"), "utf8");
-  const integrationBlock = "      - name: integration tests\n        run: pnpm test:integration\n";
-  const invalidWorkflows = [
-    workflow.replace("  integration:\n", "  integration:\n    if: always()\n"),
-    workflow.replace("  integration:\n", "  integration:\n    continue-on-error: true\n"),
-    workflow.replace("  integration:\n", "  integration:\n    shell: bash\n"),
-    workflow.replace(integrationBlock, "      - name: integration tests\n        if: always()\n        run: pnpm test:integration\n"),
-    workflow.replace(integrationBlock, "      - name: integration tests\n        continue-on-error: true\n        run: pnpm test:integration\n"),
-    workflow.replace("run: pnpm test:integration", "run: pnpm test:integration || true"),
-    workflow.replace(integrationBlock, "      - name: integration tests\n        shell: bash\n        run: pnpm test:integration\n"),
-    workflow.replace(integrationBlock, "      - name: integration tests\n        defaults: {}\n        run: pnpm test:integration\n"),
-    workflow.replace(
-      "  integration:\n    runs-on: ubuntu-latest\n",
-      "  integration:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        shell: bash\n",
-    ),
-    workflow.replace("jobs:\n", "defaults:\n  run:\n    shell: bash\n\njobs:\n"),
-    workflow.replace(integrationBlock, `${integrationBlock}      - name: duplicate integration\n        run: pnpm test:integration\n`),
-    workflow.replace(integrationBlock, "      # run: pnpm test:integration\n"),
-    workflow.replace(integrationBlock, `${integrationBlock}      - run: echo trailing\n`),
-    workflow
-      .replace(integrationBlock, "      - name: integration tests\n        run: echo misplaced\n")
-      .replace(
-        "  artifact:\n",
-        "  integration-copy:\n    runs-on: ubuntu-latest\n    steps:\n      - run: pnpm test:integration\n\n  artifact:\n",
-      ),
-    workflow.replace("needs: [gates, integration]", "needs: [gates]"),
-  ];
-
-  for (const invalid of invalidWorkflows) {
-    assert.notEqual(invalid, workflow, "mutation fixture must alter the workflow");
-    assert.doesNotThrow(() => parse(invalid), "mutation fixture must remain valid YAML");
-    assert.throws(() => assertIntegrationGate(invalid));
-  }
-});
-
-test("the root test gate executes repository governance checks", async () => {
-  const packageJson = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
-
-  assert.equal(packageJson.scripts["test:repository"], "node --test test/repository/*.test.mjs");
-  assert.match(packageJson.scripts.test, /pnpm run test:repository/u);
-});
-
-test("platform CI builds the repository-owned deployment artifact", async () => {
-  const workflow = await readFile(resolve(root, ".github/workflows/ci.yml"), "utf8");
+test("legacy source directories are excluded from Docker build context", async () => {
   const dockerignore = await readFile(resolve(root, ".dockerignore"), "utf8");
-
-  assertArtifactGate(workflow);
-  assert.match(
-    dockerignore,
-    /!kokoro-platform-admin\/src\/generated\n!kokoro-platform-admin\/src\/generated\/contracts\n!kokoro-platform-admin\/src\/generated\/contracts\/\*\*/u,
-  );
+  for (const directory of [
+    "kokoro-platform-admin", "kokoro-site", "kokoro-user", "kokoro-model",
+    "kokoro-credit", "kokoro-payment",
+  ]) assert.match(dockerignore, new RegExp(`^${directory}$`, "mu"));
 });

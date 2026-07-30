@@ -319,7 +319,12 @@ describe("Platform Admission owner authority", () => {
       input: { message_id: "message-1", content: "hello" },
       runtime: {
         agent_type: "general",
-        model: { provider: "anthropic", name: "claude-sonnet", effort: "medium" },
+        model: {
+          provider: "anthropic",
+          name: "claude-sonnet",
+          effort: "medium",
+          authorization_handle: expect.stringMatching(/^model-authorization:sha256:[0-9a-f]{64}$/u),
+        },
         tools: ["read_file"], skills: [], mcp_servers: [], subagents: [], backend: "state",
         permissions: {
           approval_tools: [], review_tools: [], subagent_create: "deny", filesystem: "read_only",

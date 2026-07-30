@@ -2,15 +2,11 @@ import process from "node:process";
 import { URL } from "node:url";
 
 const serviceEntries = Object.freeze({
-  "@kokoro/site": { module: "../../kokoro-site/dist/interfaces/http/main.js" },
-  "@kokoro/user": { module: "../../kokoro-user/dist/interfaces/http/main.js" },
-  "@kokoro/model": { module: "../../kokoro-model/dist/interfaces/http/main.js" },
-  "@kokoro/credit": { module: "../../kokoro-credit/dist/interfaces/http/main.js" },
-  "@kokoro/payment": { module: "../../kokoro-payment/dist/interfaces/http/main.js" },
   "@kokoro/hub": { module: "../../kokoro-hub/dist/interfaces/http/main.js" },
   "platform-api": { module: "../../dist/src/process/api.js", start: "runPlatformApiMain" },
   "platform-admission": { module: "../../dist/src/process/admission.js", start: "runPlatformAdmissionMain" },
   "platform-authorization": { module: "../../dist/src/process/authorization.js", start: "runPlatformAuthorizationMain" },
+  "platform-asset-data-plane": { module: "../../dist/src/process/asset-data-plane.js", start: "runAssetDataPlaneMain" },
   "platform-model-gateway": { module: "../../dist/src/process/model-gateway.js", start: "runPlatformModelGatewayMain" },
   "platform-admin": { module: "../../dist/src/process/admin.js", start: "runPlatformAdminMain" },
   "platform-worker": { module: "../../dist/src/process/worker.js", start: "runPlatformWorkerMain" },
@@ -20,7 +16,7 @@ const serviceEntries = Object.freeze({
   },
 });
 
-const selected = process.env.KOKORO_SERVICE_PACKAGE ?? "@kokoro/user";
+const selected = process.env.KOKORO_SERVICE_PACKAGE ?? "platform-api";
 const entry = serviceEntries[selected];
 if (entry === undefined) {
   throw new Error(`Unsupported KOKORO_SERVICE_PACKAGE: ${selected}`);

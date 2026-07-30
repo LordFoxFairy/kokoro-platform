@@ -40,7 +40,7 @@ export interface CreateHubServerOptions {
   onClose?: () => Promise<void>;
   // 入站访问控制配置；不传=空 secret + 非生产=dev 直通（测试/本地）；生产由 main.ts 注入 per-caller secret。
   routeAccess?: RouteAccessConfig;
-  // self 面成员校验器；缺省 fail-closed(一切 self 请求 403)。main 注入 HTTP 版(调 user /memberships/check)，测试注入 fake。
+  // self 面成员校验器；缺省 fail-closed。生产只接受 PostgreSQL Platform owner adapter。
   membershipAuthorizer?: MembershipAuthorizer;
   // self 面 MCP mutation 部署门（KOKORO_HUB_MCP_MUTATION=on）；缺省 false = mutation 恒 503 fail-closed。
   mcpMutationEnabled?: boolean;
@@ -54,8 +54,7 @@ export interface CreateHubServerOptions {
 
 // hub 所需 caller 凭据（HUB-AUTHZ 三面）：
 // 入站——session(runtime pool/resolve)、web-bff(self self-service)、admin(网关 admin 面)；
-// 出站——hub 自身(caller=hub 调 user /memberships/check 做 self 成员校验)。
-const HUB_REQUIRED_CALLERS: ServiceCaller[] = ["session", "web-bff", "admin", "hub"];
+const HUB_REQUIRED_CALLERS: ServiceCaller[] = ["session", "web-bff", "admin"];
 
 export function createHubServer(options: CreateHubServerOptions) {
   const app = Fastify({ logger: false });

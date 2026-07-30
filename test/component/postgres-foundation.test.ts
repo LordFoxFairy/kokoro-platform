@@ -16,6 +16,7 @@ const apiUser = decodeURIComponent(new URL(apiDatabaseUrl).username);
 const authorizationUser = requireRole(process.env.PLATFORM_DATABASE_AUTHORIZATION_ROLE);
 const workerUser = requireRole(process.env.PLATFORM_DATABASE_WORKER_ROLE);
 const adminUser = requireRole(process.env.PLATFORM_DATABASE_ADMIN_ROLE);
+const modelGatewayUser = requireRole(process.env.PLATFORM_DATABASE_MODEL_GATEWAY_ROLE);
 const databaseName = decodeURIComponent(new URL(migratorDatabaseUrl).pathname.slice(1));
 let database: PlatformDatabaseClient;
 
@@ -24,13 +25,13 @@ describe("Platform PostgreSQL foundation", () => {
     await runPlatformMigrations({
       environment: {
         DATABASE_URL_PLATFORM: migratorDatabaseUrl,
-        PLATFORM_DATABASE_AUTHORITY_MODE: "transition-candidate",
         PLATFORM_DATABASE_CREDENTIAL_CLASS: "migrator",
         PLATFORM_DATABASE_MIGRATOR_ROLE: migratorUser,
         PLATFORM_DATABASE_API_ROLE: apiUser,
         PLATFORM_DATABASE_AUTHORIZATION_ROLE: authorizationUser,
         PLATFORM_DATABASE_WORKER_ROLE: workerUser,
         PLATFORM_DATABASE_ADMIN_ROLE: adminUser,
+        PLATFORM_DATABASE_MODEL_GATEWAY_ROLE: modelGatewayUser,
         PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
         PATH: process.env.PATH,
       },
@@ -38,7 +39,6 @@ describe("Platform PostgreSQL foundation", () => {
     database = createPlatformDatabaseClient(
       loadPlatformDatabaseConfig("api", {
         DATABASE_URL_PLATFORM: apiDatabaseUrl,
-        PLATFORM_DATABASE_AUTHORITY_MODE: "transition-candidate",
         PLATFORM_DATABASE_CREDENTIAL_CLASS: "api",
         PLATFORM_DATABASE_API_ROLE: apiUser,
         PLATFORM_DATABASE_MIGRATOR_ROLE: migratorUser,

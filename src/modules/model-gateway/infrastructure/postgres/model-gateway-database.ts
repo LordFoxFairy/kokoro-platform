@@ -143,9 +143,6 @@ export class PostgresModelGatewayDatabase implements ModelGatewayUnitOfWork {
 export function loadModelGatewayDatabaseConfig(
   environment: Readonly<Record<string, string | undefined>> = process.env,
 ): ModelGatewayDatabaseConfig {
-  if (environment.PLATFORM_DATABASE_AUTHORITY_MODE !== "transition-candidate") {
-    throw new Error("PLATFORM_DATABASE_AUTHORITY_MODE_REQUIRED:transition-candidate");
-  }
   if (environment.PLATFORM_DATABASE_CREDENTIAL_CLASS !== "model-gateway") {
     throw new Error("PLATFORM_DATABASE_CREDENTIAL_CLASS_REQUIRED:model-gateway");
   }
@@ -256,7 +253,7 @@ function validIdentity(
 ): boolean {
   return row !== undefined && row.currentUser === expected.expectedDatabaseUser &&
     row.currentDatabase === expected.expectedDatabaseName && row.databaseOwner === expected.migratorDatabaseUser &&
-    row.serverMajor === 18 && row.isSuperuser === false && row.canCreateDatabase === false &&
+    row.serverMajor === 17 && row.isSuperuser === false && row.canCreateDatabase === false &&
     row.canCreateRole === false && row.canReplicate === false && row.canBypassRls === false &&
     row.inheritsPrivileges === false && row.hasAnyMembership === false && row.isMigratorMember === false &&
     row.canCreateDatabaseObject === false && row.canUseSchema === true && row.canCreateSchema === false &&

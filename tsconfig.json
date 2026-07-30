@@ -4,11 +4,7 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@kokoro/user": ["kokoro-user/src/index.ts"],
-      "@kokoro/hub": ["kokoro-hub/src/index.ts"],
-      "@kokoro/model": ["kokoro-model/src/index.ts"],
-      "@kokoro/credit": ["kokoro-credit/src/index.ts"],
-      "@kokoro/payment": ["kokoro-payment/src/index.ts"]
+      "@kokoro/hub": ["kokoro-hub/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts", "test/**/*.ts"]

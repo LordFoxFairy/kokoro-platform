@@ -1,12 +1,6 @@
 packages:
   - "kokoro-platform-kit"
-  - "kokoro-platform-admin"
-  - "kokoro-site"
-  - "kokoro-user"
   - "kokoro-hub"
-  - "kokoro-model"
-  - "kokoro-credit"
-  - "kokoro-payment"
 autoInstallPeers: false
 allowBuilds:
   "@prisma/client": true

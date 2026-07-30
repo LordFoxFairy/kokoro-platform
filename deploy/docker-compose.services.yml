@@ -1,107 +1,91 @@
+x-platform-service: &platform-service
+  build:
+    context: .
+    dockerfile: deploy/docker/Dockerfile
+  restart: unless-stopped
+
+x-platform-database: &platform-database
+  PLATFORM_DATABASE_EXPECTED_DATABASE: ${PLATFORM_DATABASE_EXPECTED_DATABASE:-kokoro_platform}
+  PLATFORM_DATABASE_MIGRATOR_ROLE: ${PLATFORM_DATABASE_MIGRATOR_ROLE:-platform_migrator}
+  PLATFORM_DATABASE_API_ROLE: ${PLATFORM_DATABASE_API_ROLE:-platform_api}
+  PLATFORM_DATABASE_ADMISSION_ROLE: ${PLATFORM_DATABASE_ADMISSION_ROLE:-platform_admission}
+  PLATFORM_DATABASE_AUTHORIZATION_ROLE: ${PLATFORM_DATABASE_AUTHORIZATION_ROLE:-platform_authorization}
+  PLATFORM_DATABASE_MODEL_GATEWAY_ROLE: ${PLATFORM_DATABASE_MODEL_GATEWAY_ROLE:-platform_model_gateway}
+  PLATFORM_DATABASE_WORKER_ROLE: ${PLATFORM_DATABASE_WORKER_ROLE:-platform_worker}
+  PLATFORM_DATABASE_ADMIN_ROLE: ${PLATFORM_DATABASE_ADMIN_ROLE:-platform_admin}
+
 services:
-  kokoro-site:
-    build:
-      context: .
-      dockerfile: deploy/docker/Dockerfile
+  platform-migrator:
+    <<: *platform-service
+    restart: "no"
     environment:
-      KOKORO_SERVICE_PACKAGE: "@kokoro/site"
-      DATABASE_URL_SITE: mysql://root:kokoro_root@mysql:3306/kokoro
-      KOKORO_SITE_PORT: 4201
-      KOKORO_SITE_BASE_URL: http://kokoro-site:4201
-    depends_on:
-      mysql:
-        condition: service_healthy
-    ports:
-      - "4201:4201"
+      <<: *platform-database
+      KOKORO_SERVICE_PACKAGE: platform-migrator
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: migrator
+      DATABASE_URL_PLATFORM: ${DATABASE_URL_PLATFORM_MIGRATOR:?required}
 
-  kokoro-user:
-    build:
-      context: .
-      dockerfile: deploy/docker/Dockerfile
+  platform-api:
+    <<: *platform-service
     environment:
-      KOKORO_SERVICE_PACKAGE: "@kokoro/user"
-      DATABASE_URL_USER: mysql://root:kokoro_root@mysql:3306/kokoro
-      KOKORO_SITE_BASE_URL: http://kokoro-site:4201
-      KOKORO_USER_PORT: 4211
-      KOKORO_USER_BASE_URL: http://kokoro-user:4211
-      KOKORO_MODEL_BASE_URL: http://kokoro-model:4221
-      KOKORO_CREDIT_BASE_URL: http://kokoro-credit:4231
-      KOKORO_PAYMENT_BASE_URL: http://kokoro-payment:4241
-    depends_on:
-      mysql:
-        condition: service_healthy
-    ports:
-      - "4211:4211"
+      <<: *platform-database
+      KOKORO_SERVICE_PACKAGE: platform-api
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: api
+      DATABASE_URL_PLATFORM: ${DATABASE_URL_PLATFORM_API:?required}
 
-  kokoro-model:
-    build:
-      context: .
-      dockerfile: deploy/docker/Dockerfile
+  platform-admission:
+    <<: *platform-service
     environment:
-      KOKORO_SERVICE_PACKAGE: "@kokoro/model"
-      DATABASE_URL_MODEL: mysql://root:kokoro_root@mysql:3306/kokoro
-      KOKORO_SITE_BASE_URL: http://kokoro-site:4201
-      KOKORO_MODEL_PORT: 4221
-      KOKORO_USER_BASE_URL: http://kokoro-user:4211
-      KOKORO_MODEL_BASE_URL: http://kokoro-model:4221
-      KOKORO_CREDIT_BASE_URL: http://kokoro-credit:4231
-      KOKORO_PAYMENT_BASE_URL: http://kokoro-payment:4241
-    depends_on:
-      mysql:
-        condition: service_healthy
-    ports:
-      - "4221:4221"
+      <<: *platform-database
+      KOKORO_SERVICE_PACKAGE: platform-admission
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: admission
+      DATABASE_URL_PLATFORM: ${DATABASE_URL_PLATFORM_ADMISSION:?required}
 
-  kokoro-credit:
-    build:
-      context: .
-      dockerfile: deploy/docker/Dockerfile
+  platform-authorization:
+    <<: *platform-service
     environment:
-      KOKORO_SERVICE_PACKAGE: "@kokoro/credit"
-      DATABASE_URL_CREDIT: mysql://root:kokoro_root@mysql:3306/kokoro
-      KOKORO_SITE_BASE_URL: http://kokoro-site:4201
-      KOKORO_CREDIT_PORT: 4231
-      KOKORO_USER_BASE_URL: http://kokoro-user:4211
-      KOKORO_MODEL_BASE_URL: http://kokoro-model:4221
-      KOKORO_CREDIT_BASE_URL: http://kokoro-credit:4231
-      KOKORO_PAYMENT_BASE_URL: http://kokoro-payment:4241
-    depends_on:
-      mysql:
-        condition: service_healthy
-    ports:
-      - "4231:4231"
+      <<: *platform-database
+      KOKORO_SERVICE_PACKAGE: platform-authorization
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: authorization
+      DATABASE_URL_PLATFORM: ${DATABASE_URL_PLATFORM_AUTHORIZATION:?required}
 
-  kokoro-payment:
-    build:
-      context: .
-      dockerfile: deploy/docker/Dockerfile
+  platform-model-gateway:
+    <<: *platform-service
     environment:
-      KOKORO_SERVICE_PACKAGE: "@kokoro/payment"
-      # Local-only convenience. Production must inject a SELECT-only payment reader role.
-      DATABASE_URL_PAYMENT_READ: mysql://root:kokoro_root@mysql:3306/kokoro
-      KOKORO_SITE_BASE_URL: http://kokoro-site:4201
-      KOKORO_PAYMENT_PORT: 4241
-      KOKORO_USER_BASE_URL: http://kokoro-user:4211
-      KOKORO_MODEL_BASE_URL: http://kokoro-model:4221
-      KOKORO_CREDIT_BASE_URL: http://kokoro-credit:4231
-      KOKORO_PAYMENT_BASE_URL: http://kokoro-payment:4241
-    depends_on:
-      mysql:
-        condition: service_healthy
-    ports:
-      - "4241:4241"
+      <<: *platform-database
+      KOKORO_SERVICE_PACKAGE: platform-model-gateway
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: model-gateway
+      DATABASE_URL_PLATFORM: ${DATABASE_URL_PLATFORM_MODEL_GATEWAY:?required}
 
-  # 能力中台(Wave6 部署面补齐):Mongo 元数据 + MCP mutation 门缺省关(fail-closed 503)。
-  # secret 主密钥/S3 凭据走 env_file 注入,不落 compose 字面。
+  platform-worker:
+    <<: *platform-service
+    environment:
+      <<: *platform-database
+      KOKORO_SERVICE_PACKAGE: platform-worker
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: worker
+      DATABASE_URL_PLATFORM: ${DATABASE_URL_PLATFORM_WORKER:?required}
+
+  platform-admin:
+    <<: *platform-service
+    environment:
+      <<: *platform-database
+      KOKORO_SERVICE_PACKAGE: platform-admin
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: admin
+      DATABASE_URL_PLATFORM: ${DATABASE_URL_PLATFORM_ADMIN:?required}
+
+  platform-asset-data-plane:
+    <<: *platform-service
+    environment:
+      <<: *platform-database
+      KOKORO_SERVICE_PACKAGE: platform-asset-data-plane
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: api
+      DATABASE_URL_PLATFORM: ${DATABASE_URL_PLATFORM_API:?required}
+
   kokoro-hub:
-    build:
-      context: .
-      dockerfile: deploy/docker/Dockerfile
+    <<: *platform-service
     environment:
       KOKORO_SERVICE_PACKAGE: "@kokoro/hub"
       KOKORO_HUB_PORT: 4251
-      KOKORO_HUB_BASE_URL: http://kokoro-hub:4251
-      KOKORO_HUB_MONGO_URL: mongodb://mongo:27017
-      KOKORO_HUB_MONGO_DB: kokoro_hub
+      KOKORO_HUB_MONGO_URL: ${KOKORO_HUB_MONGO_URL:?required}
+      KOKORO_HUB_MONGO_DB: ${KOKORO_HUB_MONGO_DB:-kokoro_hub}
     ports:
       - "4251:4251"

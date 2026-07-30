@@ -7,10 +7,7 @@ describe("ModelControl consumer boundary", () => {
     const files = await Promise.all(
       [
         "src/modules/model-control/application/contracts/model-control-ports.ts",
-        "src/platform-registry.ts",
-        "kokoro-user/src/config/env.ts",
-        "kokoro-credit/src/config/env.ts",
-        "kokoro-platform-admin/src/config.ts",
+        "src/process/model-option-admin-composition.ts",
       ].map((file) => readFile(resolve(file), "utf8")),
     );
     expect(files.join("\n")).not.toMatch(
@@ -134,10 +131,9 @@ describe("ModelControl consumer boundary", () => {
     expect(api).toContain("await runPlatformApiMain()");
     expect(api).not.toContain("failStandaloneWithoutModelOptionOwner");
     expect(publicComposition).toContain("new PostgresProductModelOptionCatalogReader()");
-    expect(adminComposition).toContain("new MaterializeLegacyModelOptionsService");
     expect(adminComposition).toContain("new PublishSiteReleaseModelCatalogService");
     expect(adminComposition).toContain("new PostgresModelControlCommandJournal()");
-    expect(manifest).toContain("model-option:materialize-legacy");
+    expect(manifest).not.toContain("model-option:materialize-legacy");
     expect(manifest).toContain("model-option:publish-site-release");
   });
 
@@ -176,17 +172,14 @@ describe("ModelControl consumer boundary", () => {
     expect(migrator).toContain("GRANT UPDATE ON TABLE platform.command_receipt");
   });
 
-  it("bootstraps operational provider availability without rewriting it as catalog state", async () => {
-    const [migration, exporter, repository] = await Promise.all([
+  it("keeps operational provider availability separate from catalog state", async () => {
+    const [migration, repository] = await Promise.all([
       readFile(resolve("prisma/migrations/0003_model_control/migration.sql"), "utf8"),
-      readFile(resolve("scripts/model-control/export-legacy.mts"), "utf8"),
       readFile(
         resolve("src/modules/model-control/infrastructure/postgres/model-control-repository.ts"),
         "utf8",
       ),
     ]);
-    expect(exporter).toContain("healthStatus");
-    expect(exporter).toContain("providerAvailability");
     expect(migration).toContain("p_provider_availability JSONB");
     expect(migration).not.toContain(
       "SELECT item->>'key','active','unknown',0 FROM jsonb_array_elements(canonical_payload->'providers')",
@@ -209,38 +202,6 @@ describe("ModelControl consumer boundary", () => {
     expect(service).toContain("model:site-policy:migrate");
     expect(migration).toContain("set_config('app.site_id',site_key,true)");
     expect(packageManifest).toContain("model-control:import-bundle");
-  });
-
-  it("exports legacy state only under an explicit cross-source consistency fence", async () => {
-    const [exporter, snapshot] = await Promise.all([
-      readFile(resolve("scripts/model-control/export-legacy.mts"), "utf8"),
-      readFile(resolve("src/modules/model-control/migration/legacy-export-snapshot.ts"), "utf8"),
-    ]);
-    expect(exporter).toContain('argument("--fence-attestation")');
-    expect(exporter).toContain('argument("--fence-public-key")');
-    expect(exporter).toContain('requiredEnv("MODEL_CONTROL_FENCE_ISSUER")');
-    expect(exporter).not.toContain('argument("--fence-token")');
-    expect(exporter).toContain("START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY");
-    expect(exporter).toContain("captureCrossDatabase");
-    expect(exporter).toContain("COMBINED_WATERMARK_SQL");
-    expect(snapshot).toContain("assertSameWatermark");
-    expect(snapshot).toContain("verifyLegacyExportFenceAttestation");
-    expect(snapshot).toContain("assertAuthorizedWatermark");
-    expect(snapshot).toContain("MODEL_LEGACY_EXPORT_FENCE_VIOLATED");
-  });
-
-  it("preserves legacy ModelLabel facts as a separate pending migration artifact", async () => {
-    const [exporter, importer, catalog] = await Promise.all([
-      readFile(resolve("scripts/model-control/export-legacy.mts"), "utf8"),
-      readFile(resolve("scripts/model-control/import-bundle.mts"), "utf8"),
-      readFile(resolve("src/modules/model-control/domain/model-catalog.ts"), "utf8"),
-    ]);
-    expect(exporter).toContain("FROM model_labels");
-    expect(exporter).toContain("defaultBindingId");
-    expect(exporter).toContain("modelOptionMigration");
-    expect(importer).toContain("pendingModelOptionMigration");
-    expect(importer).toContain("migrationArtifactDigest");
-    expect(catalog).not.toContain("productOptions");
   });
 
   it("keeps SQL import schemas closed and validates only published products", async () => {

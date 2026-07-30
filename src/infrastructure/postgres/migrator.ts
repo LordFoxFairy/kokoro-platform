@@ -165,7 +165,7 @@ async function assertMigratorPreflight(
   const row = result.rows?.[0];
   const schemaExists = row?.schemaExists === true;
   if (
-    row?.serverMajor !== 18 ||
+    row?.serverMajor !== 17 ||
     row.currentUser !== expected.migratorRole ||
     row.currentDatabase !== expected.expectedDatabase ||
     row.databaseOwner !== expected.migratorRole ||

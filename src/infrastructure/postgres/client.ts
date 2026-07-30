@@ -56,7 +56,6 @@ export interface PlatformDatabaseConfig {
   readonly url: string;
   readonly role: PlatformProcessRole;
   readonly credentialClass: PlatformCredentialClass;
-  readonly authorityMode: "transition-candidate";
   readonly expectedDatabaseUser: string;
   readonly expectedDatabaseName: string;
   readonly migratorDatabaseUser: string;
@@ -191,10 +190,6 @@ export function loadPlatformDatabaseConfig(
   role: PlatformProcessRole,
   environment: Readonly<Record<string, string | undefined>> = process.env,
 ): PlatformDatabaseConfig {
-  if (environment.PLATFORM_DATABASE_AUTHORITY_MODE !== "transition-candidate") {
-    throw new Error("PLATFORM_DATABASE_AUTHORITY_MODE_REQUIRED:transition-candidate");
-  }
-
   const value = environment.DATABASE_URL_PLATFORM;
   if (!value) throw new Error("DATABASE_URL_PLATFORM_REQUIRED");
 
@@ -230,7 +225,6 @@ export function loadPlatformDatabaseConfig(
   const publicConfig = {
     role,
     credentialClass: defaults.credentialClass,
-    authorityMode: "transition-candidate" as const,
     expectedDatabaseUser,
     expectedDatabaseName,
     migratorDatabaseUser,
@@ -1622,7 +1616,7 @@ function validRuntimeIdentity(
     identity &&
     identity.currentUser === config.expectedDatabaseUser &&
     identity.currentDatabase === config.expectedDatabaseName &&
-    identity.serverMajor === 18 &&
+    identity.serverMajor === 17 &&
     identity.databaseOwner === config.migratorDatabaseUser &&
     identity.schemaOwner === config.migratorDatabaseUser &&
     identity.foundationOwner === config.migratorDatabaseUser &&

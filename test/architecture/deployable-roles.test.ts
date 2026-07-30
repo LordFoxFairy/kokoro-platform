@@ -20,7 +20,6 @@ const authorizationUrl = "postgresql://platform_authorization:secret@localhost:5
 const adminUrl = "postgresql://platform_admin:secret@localhost:5432/kokoro_platform";
 const migratorUrl = "postgresql://platform_migrator:secret@localhost:5432/kokoro_platform";
 const commonEnvironment = {
-  PLATFORM_DATABASE_AUTHORITY_MODE: "transition-candidate",
   PLATFORM_DATABASE_EXPECTED_DATABASE: "kokoro_platform",
   PLATFORM_DATABASE_MIGRATOR_ROLE: "platform_migrator",
   PLATFORM_DATABASE_ADMISSION_ROLE: "platform_admission",
@@ -41,7 +40,6 @@ describe("Platform PostgreSQL authority", () => {
     expect(config).toMatchObject({
       role: "api",
       credentialClass: "api",
-      authorityMode: "transition-candidate",
       expectedDatabaseUser: "platform_api",
       expectedDatabaseName: "kokoro_platform",
       migratorDatabaseUser: "platform_migrator",
@@ -119,7 +117,7 @@ describe("Platform PostgreSQL authority", () => {
 });
 
 describe("Platform migrator", () => {
-  it("preflights PG18/roles, locks migration, grants role-scoped access, and sanitizes env", async () => {
+  it("preflights PostgreSQL 17 roles, locks migration, grants scoped access, and sanitizes env", async () => {
     const events: string[] = [];
     const grants: string[] = [];
     let authoritySql = "";
@@ -149,7 +147,7 @@ describe("Platform migrator", () => {
           return {
             rows: [
               {
-                serverMajor: 18,
+                serverMajor: 17,
                 currentUser: "platform_migrator",
                 currentDatabase: "kokoro_platform",
                 databaseOwner: "platform_migrator",
@@ -560,7 +558,7 @@ function authority(roleName: string): Record<string, unknown> {
 
 function safeMigratorAuthority(): Record<string, unknown> {
   return {
-    serverMajor: 18,
+    serverMajor: 17,
     currentUser: "platform_migrator",
     currentDatabase: "kokoro_platform",
     databaseOwner: "platform_migrator",
