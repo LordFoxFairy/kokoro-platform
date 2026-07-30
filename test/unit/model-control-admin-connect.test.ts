@@ -1,9 +1,14 @@
 import { create } from "@bufbuild/protobuf";
-import type { HandlerContext } from "@connectrpc/connect";
+import { Code, ConnectError, type HandlerContext } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
+import { KokoroErrorDetailSchema } from
+  "../../src/interfaces/connect/generated-model-control/kokoro/common/v1/error_pb.js";
+import { MODEL_CONTROL_ADMIN_ERRORS } from
+  "../../src/interfaces/connect/generated-model-control/model-control-errors.js";
 import { AuthenticatedOperatorQueryContextSchema } from
   "../../src/interfaces/connect/generated-model-control/kokoro/platform/admin/v2/admin_shared_pb.js";
 import {
+  GetInventoryRevisionRequestSchema,
   ListInventoryProvidersRequestSchema,
   ListSiteModelPoliciesRequestSchema,
   ModelAdminPageSchema,
@@ -27,6 +32,38 @@ const globalPermit: AdminQueryPermit = Object.freeze({ operatorRef: "operator:1"
   scope: { kind: "global" as const, grantRef: "grant:global" } });
 
 describe("ModelControl Admin Connect reads", () => {
+  it("returns the generated not-found classification for an absent immutable inventory", async () => {
+    const reader = readerDouble();
+    reader.getInventoryRevision.mockResolvedValue({ asOf, item: null });
+    const service = serviceWith(reader, resolverDouble(globalPermit));
+
+    const error = await errorOf(service.getInventoryRevision(create(GetInventoryRevisionRequestSchema, {
+      context, inventoryDigest: digest,
+    }), transport));
+
+    expect(error.code).toBe(Code.NotFound);
+    expect(error.findDetails(KokoroErrorDetailSchema)).toMatchObject([{
+      domainCode: MODEL_CONTROL_ADMIN_ERRORS.inventoryRevisionNotFound.domainCode,
+      safeMessage: MODEL_CONTROL_ADMIN_ERRORS.inventoryRevisionNotFound.safeMessage,
+      requestId: "request:model:1",
+    }]);
+  });
+
+  it("returns the generated invalid-argument classification for a malformed page token", async () => {
+    const service = serviceWith(readerDouble(), resolverDouble(globalPermit));
+
+    const error = await errorOf(service.listInventoryProviders(create(ListInventoryProvidersRequestSchema, {
+      context, inventoryDigest: digest,
+      page: create(ModelAdminPageSchema, { pageSize: 1, pageToken: "malformed" }),
+    }), transport));
+
+    expect(error.code).toBe(Code.InvalidArgument);
+    expect(error.findDetails(KokoroErrorDetailSchema)).toMatchObject([{
+      domainCode: MODEL_CONTROL_ADMIN_ERRORS.adminPageTokenInvalid.domainCode,
+      safeMessage: MODEL_CONTROL_ADMIN_ERRORS.adminPageTokenInvalid.safeMessage,
+    }]);
+  });
+
   it("returns only the safe provider projection and carries the DB watermark across pages", async () => {
     const reader = readerDouble();
     reader.listInventoryProviders.mockResolvedValueOnce({ asOf, items: [provider("provider-a"),
@@ -79,13 +116,22 @@ describe("ModelControl Admin Connect reads", () => {
       context, siteId: "site:alpha", page: create(ModelAdminPageSchema, { pageSize: 1 }),
     }), transport);
     resolver.resolve.mockResolvedValueOnce(Object.freeze({ ...sitePermit, operatorRef: "operator:2" }));
-    await expect(service.listSiteModelPolicies(create(ListSiteModelPoliciesRequestSchema, {
+    const error = await errorOf(service.listSiteModelPolicies(create(ListSiteModelPoliciesRequestSchema, {
       context, siteId: "site:alpha", page: create(ModelAdminPageSchema, {
         pageSize: 1, pageToken: paged.page!.nextPageToken,
       }),
-    }), transport)).rejects.toThrow("MODEL_ADMIN_PAGE_TOKEN_INVALID");
+    }), transport));
+    expect(error.code).toBe(Code.InvalidArgument);
+    expect(error.findDetails(KokoroErrorDetailSchema)).toMatchObject([{
+      domainCode: MODEL_CONTROL_ADMIN_ERRORS.adminPageTokenInvalid.domainCode,
+    }]);
   });
 });
+
+async function errorOf(value: unknown | Promise<unknown>): Promise<ConnectError> {
+  return ConnectError.from(await Promise.resolve(value)
+    .then(() => { throw new Error("expected rejection"); }, (error) => error));
+}
 
 function provider(providerKey: string) { return { providerKey, provider: "openai", accountKey: "primary",
   adapterKind: "litellm" as const, priority: 0, secretReferencePresent: true,
