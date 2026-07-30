@@ -1,18 +1,13 @@
 type ActiveProcessRoute = Readonly<{
-  module: "src/process/worker.ts";
+  module: "src/process/worker.ts" | "src/process/identity-worker.ts";
   symbol: string;
 }>;
 
 export const OUTBOX_ROUTE_CATALOG = Object.freeze({
-  identity: Object.freeze({
-    consumer: "identity-worker",
-    closure: "reserved",
-    eventTypes: Object.freeze([
-      "identity.verification.delivery.requested",
-      "identity.namespace.allocation.requested",
-    ] as const),
-    process: null,
-  }),
+  identity: activeRoute("identity-worker", [
+    "identity.verification.delivery.requested",
+    "identity.namespace.allocation.requested",
+  ] as const, "runPlatformIdentityWorkerMain", "src/process/identity-worker.ts"),
   commerce: activeRoute("commerce-worker", [
     "commerce.redemption.fulfilled.v1",
   ] as const, "createCommerceOutboxReconciliationCycle"),
@@ -94,6 +89,7 @@ function activeRoute<Consumer extends OutboxConsumerLiteral, EventTypes extends 
   consumer: Consumer,
   eventTypes: EventTypes,
   symbol: string,
+  module: ActiveProcessRoute["module"] = "src/process/worker.ts",
 ): Readonly<{
   consumer: Consumer;
   closure: "active";
@@ -104,7 +100,7 @@ function activeRoute<Consumer extends OutboxConsumerLiteral, EventTypes extends 
     consumer,
     closure: "active" as const,
     eventTypes: Object.freeze(eventTypes),
-    process: Object.freeze({ module: "src/process/worker.ts" as const, symbol }),
+    process: Object.freeze({ module, symbol }),
   });
 }
 

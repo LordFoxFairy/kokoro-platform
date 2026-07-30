@@ -15,8 +15,8 @@ reconcile `outcome_unknown`, or dead-letter in a later short transaction. Inbox 
 The typed route catalog is the closed producer-event-type-to-consumer authority: each owner declares an exact event set, consumer,
 and active process composition. Claim APIs require that consumer's complete canonical event-type allowlist and derive its owners;
 callers cannot invent either axis. Enqueue rejects an unknown owner/event pair, and PostgreSQL repeats the exact route constraint so
-direct SQL cannot bypass the TypeScript boundary. Identity routes are explicitly marked `reserved` until the independent Identity
-worker slice supplies its process composition; this reservation is not evidence that the delivery path is active.
+direct SQL cannot bypass the TypeScript boundary. Identity's two effect routes are active only through the independent
+`platform-identity-worker` entrypoint; local Identity security facts never enter the outbox catalog.
 The shared HMAC HTTPS transport provides bounded signed requests, signed acknowledgements and a stable event-id idempotency key;
 owner modules wrap it in typed ports and retain ownership of payload validation and durable outcome projection. A successful HTTP
 response whose acknowledgement stream resets or times out is an outcome-unknown retry, while a complete invalid acknowledgement

@@ -201,6 +201,7 @@ items:
       template:
         metadata: { labels: { app: platform-worker } }
         spec:
+          terminationGracePeriodSeconds: 30
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
@@ -216,6 +217,71 @@ items:
               env:
                 - { name: KOKORO_SERVICE_PACKAGE, value: platform-worker }
                 - { name: PLATFORM_DATABASE_CREDENTIAL_CLASS, value: worker }
+                - { name: PLATFORM_WORKER_HEALTH_PORT, value: "4190" }
+                - name: PLATFORM_WORKER_ID
+                  valueFrom: { fieldRef: { fieldPath: metadata.uid } }
+                - name: PLATFORM_OUTBOX_DELIVERY_ENDPOINT
+                  valueFrom: { configMapKeyRef: { name: platform-runtime, key: PLATFORM_OUTBOX_DELIVERY_ENDPOINT } }
+                - name: PLATFORM_OUTBOX_DELIVERY_KEY_ID
+                  valueFrom: { configMapKeyRef: { name: platform-runtime, key: PLATFORM_OUTBOX_DELIVERY_KEY_ID } }
+                - { name: PLATFORM_SITE_PROVIDER_REGISTRY_FILE, value: /var/run/config/kokoro/site/provider-registry.json }
+                - { name: PLATFORM_AUTHORIZATION_EVENT_KEY_RING_FILE, value: /var/run/secrets/kokoro/authorization/event-key-ring.json }
+              ports:
+                - { name: health, containerPort: 4190, protocol: TCP }
+              startupProbe:
+                httpGet: { path: /health/live, port: health }
+                periodSeconds: 2
+                failureThreshold: 30
+              readinessProbe:
+                httpGet: { path: /health/ready, port: health }
+                periodSeconds: 2
+                failureThreshold: 1
+              livenessProbe:
+                httpGet: { path: /health/live, port: health }
+                periodSeconds: 10
+                failureThreshold: 3
+              volumeMounts:
+                - { name: platform-worker-site-registry, mountPath: /var/run/config/kokoro/site, readOnly: true }
+                - { name: platform-worker-site-secrets, mountPath: /var/run/secrets/kokoro/site/providers, readOnly: true }
+                - { name: platform-worker-authorization-secrets, mountPath: /var/run/secrets/kokoro/authorization, readOnly: true }
+          volumes:
+            - name: platform-worker-site-registry
+              configMap: { name: platform-worker-site-registry }
+            - name: platform-worker-site-secrets
+              secret:
+                secretName: platform-worker-site-secrets
+                defaultMode: 0440
+            - name: platform-worker-authorization-secrets
+              secret:
+                secretName: platform-worker-authorization-secrets
+                defaultMode: 0440
+
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata: { name: platform-identity-worker }
+    spec:
+      replicas: 2
+      selector: { matchLabels: { app: platform-identity-worker } }
+      template:
+        metadata: { labels: { app: platform-identity-worker } }
+        spec:
+          terminationGracePeriodSeconds: 30
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            fsGroupChangePolicy: OnRootMismatch
+          containers:
+            - name: platform-identity-worker
+              image: ghcr.io/lordfoxfairy/kokoro-platform:RELEASE_DIGEST
+              envFrom:
+                - configMapRef: { name: platform-runtime }
+                - secretRef: { name: platform-identity-worker-secrets }
+              env:
+                - { name: KOKORO_SERVICE_PACKAGE, value: platform-identity-worker }
+                - { name: PLATFORM_DATABASE_CREDENTIAL_CLASS, value: identity-worker }
+                - { name: PLATFORM_WORKER_HEALTH_PORT, value: "4190" }
                 - name: PLATFORM_WORKER_ID
                   valueFrom: { fieldRef: { fieldPath: metadata.uid } }
                 - { name: PLATFORM_IDENTITY_AUDIT_DIGEST_KEY_FILE, value: /var/run/secrets/kokoro/identity/audit-digest.key }
@@ -225,12 +291,26 @@ items:
                   valueFrom: { configMapKeyRef: { name: platform-runtime, key: PLATFORM_IDENTITY_DELIVERY_ENDPOINT } }
                 - name: PLATFORM_IDENTITY_DELIVERY_HMAC_KEY_ID
                   valueFrom: { configMapKeyRef: { name: platform-runtime, key: PLATFORM_IDENTITY_DELIVERY_HMAC_KEY_ID } }
+              ports:
+                - { name: health, containerPort: 4190, protocol: TCP }
+              startupProbe:
+                httpGet: { path: /health/live, port: health }
+                periodSeconds: 2
+                failureThreshold: 30
+              readinessProbe:
+                httpGet: { path: /health/ready, port: health }
+                periodSeconds: 2
+                failureThreshold: 1
+              livenessProbe:
+                httpGet: { path: /health/live, port: health }
+                periodSeconds: 10
+                failureThreshold: 3
               volumeMounts:
-                - { name: platform-worker-identity-secrets, mountPath: /var/run/secrets/kokoro/identity, readOnly: true }
+                - { name: platform-identity-worker-secrets, mountPath: /var/run/secrets/kokoro/identity, readOnly: true }
           volumes:
-            - name: platform-worker-identity-secrets
+            - name: platform-identity-worker-secrets
               secret:
-                secretName: platform-worker-identity-secrets
+                secretName: platform-identity-worker-secrets
                 defaultMode: 0440
 
   - apiVersion: apps/v1

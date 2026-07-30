@@ -16,6 +16,8 @@ import { createPlatformWorkerProcess } from "../../src/process/worker.js";
 const apiUrl = "postgresql://platform_api:secret@localhost:5432/kokoro_platform";
 const admissionUrl = "postgresql://platform_admission:secret@localhost:5432/kokoro_platform";
 const workerUrl = "postgresql://platform_worker:secret@localhost:5432/kokoro_platform";
+const identityWorkerUrl =
+  "postgresql://platform_identity_worker:secret@localhost:5432/kokoro_platform";
 const authorizationUrl = "postgresql://platform_authorization:secret@localhost:5432/kokoro_platform";
 const assetDataPlaneUrl = "postgresql://platform_asset_data_plane:secret@localhost:5432/kokoro_platform";
 const adminUrl = "postgresql://platform_admin:secret@localhost:5432/kokoro_platform";
@@ -28,6 +30,7 @@ const commonEnvironment = {
   PLATFORM_DATABASE_AUTHORIZATION_ROLE: "platform_authorization",
   PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE: "platform_asset_data_plane",
   PLATFORM_DATABASE_MODEL_GATEWAY_ROLE: "platform_model_gateway",
+  PLATFORM_DATABASE_IDENTITY_WORKER_ROLE: "platform_identity_worker",
 } as const;
 
 describe("Platform PostgreSQL authority", () => {
@@ -83,6 +86,11 @@ describe("Platform PostgreSQL authority", () => {
       PLATFORM_DATABASE_CREDENTIAL_CLASS: "worker",
       PLATFORM_DATABASE_WORKER_ROLE: "platform_worker",
     });
+    const identityWorker = loadPlatformDatabaseConfig("identity-worker", {
+      ...commonEnvironment,
+      DATABASE_URL_PLATFORM: identityWorkerUrl,
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: "identity-worker",
+    });
     const admission = loadPlatformDatabaseConfig("admission", {
       ...commonEnvironment,
       DATABASE_URL_PLATFORM: admissionUrl,
@@ -108,18 +116,26 @@ describe("Platform PostgreSQL authority", () => {
         api.expectedDatabaseUser,
         admission.expectedDatabaseUser,
         worker.expectedDatabaseUser,
+        identityWorker.expectedDatabaseUser,
         authorization.expectedDatabaseUser,
         assetDataPlane.expectedDatabaseUser,
         admin.expectedDatabaseUser,
         api.migratorDatabaseUser,
       ]).size,
-    ).toBe(7);
+    ).toBe(8);
     expect(admission).toMatchObject({
       role: "admission",
       credentialClass: "admission",
       expectedDatabaseUser: "platform_admission",
       applicationName: "kokoro-platform-admission",
       pool: { max: 12, connectionTimeoutMs: 5_000 },
+    });
+    expect(identityWorker).toMatchObject({
+      role: "identity-worker",
+      credentialClass: "identity-worker",
+      expectedDatabaseUser: "platform_identity_worker",
+      applicationName: "kokoro-platform-identity-worker",
+      pool: { max: 4, connectionTimeoutMs: 5_000 },
     });
   });
 });
@@ -152,6 +168,15 @@ describe("Platform migrator", () => {
             canCreatePlatformSchema: false,
           }] };
         }
+        if (sql.includes("identityWorkerRolePreflight")) {
+          events.push("preflight-identity-worker");
+          return { rows: [{
+            ...safeRole("platform_identity_worker"),
+            hasAnyPlatformTablePrivilege: false,
+            canUsePlatformSchema: false,
+            canCreatePlatformSchema: false,
+          }] };
+        }
         if (sql.includes("modelGatewayAuthority")) {
           events.push("verify-model-gateway");
           return { rows: [{
@@ -165,6 +190,13 @@ describe("Platform migrator", () => {
             assetDataPlaneAuthorityOk: true,
             canReadGenericOutbox: false,
             canMutateAssetOwnerIntent: false,
+          }] };
+        }
+        if (sql.includes("identityWorkerAuthority")) {
+          events.push("verify-identity-worker");
+          return { rows: [{
+            identityWorkerAuthorityOk: true,
+            hasUnexpectedIdentityPrivilege: false,
           }] };
         }
         if (sql.includes("server_version_num")) {
@@ -259,12 +291,13 @@ describe("Platform migrator", () => {
       },
     });
 
-    expect(events.slice(0, 7)).toEqual([
+    expect(events.slice(0, 8)).toEqual([
       "connect",
       "preflight-migrator",
       "preflight-runtime-roles",
       "preflight-model-gateway",
       "preflight-asset-data-plane",
+      "preflight-identity-worker",
       `SELECT pg_advisory_lock(hashtext($1)):${MIGRATION_ADVISORY_LOCK}`,
       "execute",
     ]);
@@ -307,6 +340,13 @@ describe("Platform migrator", () => {
       sql.startsWith("GRANT INSERT") &&
       sql.endsWith('TO "platform_api"'),
     )).toBe(false);
+    expect(grants.filter((sql) =>
+      sql.endsWith('TO "platform_worker"') && sql.includes("platform.identity_"),
+    )).toEqual([]);
+    expect(grants.some((sql) =>
+      sql.endsWith('TO "platform_identity_worker"') &&
+      sql.includes("platform.identity_verification_transaction"),
+    )).toBe(true);
     const columnInsertAuthority = authoritySql.match(
       /has_any_column_privilege\(runtime_role\.rolname, candidate\.oid, 'INSERT'\)[\s\S]*?(?=OR \(has_any_column_privilege\(runtime_role\.rolname, candidate\.oid, 'UPDATE'\))/u,
     )?.[0];
@@ -338,10 +378,14 @@ describe("Platform migrator", () => {
     )).toHaveLength(2);
     expect(authoritySql).toContain('AS "canReadCommerceCatalogEpoch"');
     expect(authoritySql).toContain('AS "canUpdateCommerceCatalogEpoch"');
-    expect(events.slice(-5)).toEqual([
+    expect(authoritySql).toMatch(
+      /runtime_role\.rolname=\$3 AND \([\s\S]+grant_row\.table_name LIKE 'identity\\_%'/u,
+    );
+    expect(events.slice(-6)).toEqual([
       "verify-authority",
       "verify-model-gateway",
       "verify-asset-data-plane",
+      "verify-identity-worker",
       `SELECT pg_advisory_unlock(hashtext($1)):${MIGRATION_ADVISORY_LOCK}`,
       "end",
     ]);
@@ -353,6 +397,9 @@ describe("Platform migrator", () => {
       async query(sql) {
         if (sql.includes("assetDataPlaneRolePreflight")) {
           return { rows: [safeRole("platform_asset_data_plane")] };
+        }
+        if (sql.includes("identityWorkerRolePreflight")) {
+          return { rows: [safeRole("platform_identity_worker")] };
         }
         if (sql.includes("server_version_num")) {
           return { rows: [safeMigratorAuthority()] };
@@ -402,6 +449,15 @@ describe("Platform migrator", () => {
             assetDataPlaneAuthorityOk: true,
             canReadGenericOutbox: false,
             canMutateAssetOwnerIntent: false,
+          }] };
+        }
+        if (sql.includes("identityWorkerRolePreflight")) {
+          return { rows: [safeRole("platform_identity_worker")] };
+        }
+        if (sql.includes("identityWorkerAuthority")) {
+          return { rows: [{
+            identityWorkerAuthorityOk: true,
+            hasUnexpectedIdentityPrivilege: false,
           }] };
         }
         if (sql.includes("server_version_num")) return { rows: [safeMigratorAuthority()] };
@@ -461,6 +517,15 @@ describe("Platform migrator", () => {
           }
           if (sql.includes("assetDataPlaneRolePreflight")) {
             return { rows: [safeRole("platform_asset_data_plane")] };
+          }
+          if (sql.includes("identityWorkerRolePreflight")) {
+            return { rows: [safeRole("platform_identity_worker")] };
+          }
+          if (sql.includes("identityWorkerAuthority")) {
+            return { rows: [{
+              identityWorkerAuthorityOk: true,
+              hasUnexpectedIdentityPrivilege: false,
+            }] };
           }
           if (sql.includes("server_version_num")) return { rows: [safeMigratorAuthority()] };
           if (sql.includes("hasAnyMembership") || sql.includes("isMigratorMember")) {
@@ -655,7 +720,7 @@ describe("independent deployable roles", () => {
   it("publishes executable image selectors and distinct database roles", async () => {
     const manifest = await readFile(resolve("deployables.yaml"), "utf8");
     const entrypoint = await readFile(resolve("deploy/docker/runtime-entrypoint.mjs"), "utf8");
-    for (const role of ["platform-api", "platform-admission", "platform-authorization", "platform-asset-data-plane", "platform-model-gateway", "platform-worker", "platform-admin", "platform-hub-connect", "platform-migrator"]) {
+    for (const role of ["platform-api", "platform-admission", "platform-authorization", "platform-asset-data-plane", "platform-model-gateway", "platform-worker", "platform-identity-worker", "platform-admin", "platform-hub-connect", "platform-migrator"]) {
       expect(manifest).toContain(`KOKORO_SERVICE_PACKAGE=${role}`);
       expect(entrypoint).toContain(`"${role}"`);
     }
@@ -666,6 +731,10 @@ describe("independent deployable roles", () => {
       "declaredInboundContracts: [platform-admission-connect, platform-asset-eligibility-connect]",
     );
     expect(manifest).toContain("credentialClass: platform-worker");
+    expect(manifest).toContain("credentialClass: platform-identity-worker");
+    expect(manifest).toContain(
+      "expectedUserEnvironmentVariable: PLATFORM_DATABASE_IDENTITY_WORKER_ROLE",
+    );
     expect(manifest).toContain("identity-verification-delivery-https");
     expect(manifest).toContain("identity-audit-digest-key");
     expect(manifest).toContain("identity-delivery-hmac-key");
@@ -714,7 +783,7 @@ function authority(roleName: string): Record<string, unknown> {
     ownsPlatformRelation: false,
     ownsPlatformFunction: false,
     hasRequiredPlatformWrites: true,
-    hasIdentityOutboxConsumerAuthority: roleName === "platform_worker",
+    hasIdentityOutboxConsumerAuthority: false,
     canExecuteModelInventoryImport: roleName === "platform_admin",
     canExecuteModelInventoryActivate: roleName === "platform_admin",
     canExecuteModelSitePolicyChange: roleName === "platform_admin",
@@ -771,6 +840,7 @@ function migratorEnvironment(): Record<string, string> {
     PLATFORM_DATABASE_CREDENTIAL_CLASS: "migrator",
     PLATFORM_DATABASE_API_ROLE: "platform_api",
     PLATFORM_DATABASE_WORKER_ROLE: "platform_worker",
+    PLATFORM_DATABASE_IDENTITY_WORKER_ROLE: "platform_identity_worker",
     PLATFORM_DATABASE_ADMIN_ROLE: "platform_admin",
   };
 }

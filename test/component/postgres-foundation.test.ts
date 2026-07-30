@@ -11,16 +11,21 @@ const migratorDatabaseUrl = requireLeasedDatabaseUrl(
   process.env.DATABASE_URL_PLATFORM_MIGRATOR_TEST,
 );
 const apiDatabaseUrl = requireLeasedDatabaseUrl(process.env.DATABASE_URL_PLATFORM_API_TEST);
+const identityWorkerDatabaseUrl = requireLeasedDatabaseUrl(
+  process.env.DATABASE_URL_PLATFORM_IDENTITY_WORKER_TEST,
+);
 const migratorUser = decodeURIComponent(new URL(migratorDatabaseUrl).username);
 const apiUser = decodeURIComponent(new URL(apiDatabaseUrl).username);
 const authorizationUser = requireRole(process.env.PLATFORM_DATABASE_AUTHORIZATION_ROLE);
 const admissionUser = requireRole(process.env.PLATFORM_DATABASE_ADMISSION_ROLE);
 const assetDataPlaneUser = requireRole(process.env.PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE);
 const workerUser = requireRole(process.env.PLATFORM_DATABASE_WORKER_ROLE);
+const identityWorkerUser = requireRole(process.env.PLATFORM_DATABASE_IDENTITY_WORKER_ROLE);
 const adminUser = requireRole(process.env.PLATFORM_DATABASE_ADMIN_ROLE);
 const modelGatewayUser = requireRole(process.env.PLATFORM_DATABASE_MODEL_GATEWAY_ROLE);
 const databaseName = decodeURIComponent(new URL(migratorDatabaseUrl).pathname.slice(1));
 let database: PlatformDatabaseClient;
+let identityWorkerDatabase: PlatformDatabaseClient;
 
 describe("Platform PostgreSQL foundation", () => {
   beforeAll(async () => {
@@ -34,6 +39,7 @@ describe("Platform PostgreSQL foundation", () => {
         PLATFORM_DATABASE_AUTHORIZATION_ROLE: authorizationUser,
         PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE: assetDataPlaneUser,
         PLATFORM_DATABASE_WORKER_ROLE: workerUser,
+        PLATFORM_DATABASE_IDENTITY_WORKER_ROLE: identityWorkerUser,
         PLATFORM_DATABASE_ADMIN_ROLE: adminUser,
         PLATFORM_DATABASE_MODEL_GATEWAY_ROLE: modelGatewayUser,
         PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
@@ -50,10 +56,21 @@ describe("Platform PostgreSQL foundation", () => {
       }),
     );
     await database.connect();
+    identityWorkerDatabase = createPlatformDatabaseClient(
+      loadPlatformDatabaseConfig("identity-worker", {
+        DATABASE_URL_PLATFORM: identityWorkerDatabaseUrl,
+        PLATFORM_DATABASE_CREDENTIAL_CLASS: "identity-worker",
+        PLATFORM_DATABASE_IDENTITY_WORKER_ROLE: identityWorkerUser,
+        PLATFORM_DATABASE_MIGRATOR_ROLE: migratorUser,
+        PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
+      }),
+    );
+    await identityWorkerDatabase.connect();
   }, 60_000);
 
   afterAll(async () => {
     await database?.disconnect();
+    await identityWorkerDatabase?.disconnect();
   });
 
   it("creates exactly one Platform-owned schema and foundation marker", async () => {

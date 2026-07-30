@@ -14,6 +14,10 @@ const serviceEntries = Object.freeze({
   "platform-model-gateway": { module: "../../dist/src/process/model-gateway.js", start: "runPlatformModelGatewayMain" },
   "platform-admin": { module: "../../dist/src/process/admin.js", start: "runPlatformAdminMain" },
   "platform-worker": { module: "../../dist/src/process/worker.js", start: "runPlatformWorkerMain" },
+  "platform-identity-worker": {
+    module: "../../dist/src/process/identity-worker.js",
+    start: "runPlatformIdentityWorkerMain",
+  },
   "platform-migrator": {
     module: "../../dist/src/infrastructure/postgres/migrator.js",
     start: "runPlatformMigrations",

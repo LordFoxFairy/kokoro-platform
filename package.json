@@ -24,6 +24,7 @@
     "start:asset-data-plane": "node dist/src/process/asset-data-plane.js",
     "start:model-gateway": "node dist/src/process/model-gateway.js",
     "start:worker": "node dist/src/process/worker.js",
+    "start:identity-worker": "node dist/src/process/identity-worker.js",
     "test:repository": "node --test test/repository/*.test.mjs",
     "test:platform": "vitest run test/*.test.ts test/architecture/*.test.ts",
     "test:platform-api-runtime": "vitest run test/unit/platform-api-runtime-contract.test.ts test/unit/secret-files.test.ts",

@@ -28,6 +28,9 @@ const required = Object.freeze([
   "dist/src/process/authorization.js",
   "dist/src/process/model-gateway.js",
   "dist/src/process/worker.js",
+  "dist/src/process/identity-worker.js",
+  "dist/src/process/worker-health-server.js",
+  "dist/src/process/worker-deployment-contract.js",
   "prisma/schema.prisma",
   "prisma/migrations/migration_lock.toml",
   "prisma/migrations/0001_platform_foundation/migration.sql",
@@ -73,7 +76,8 @@ test("runtime entrypoint exposes only PostgreSQL Platform processes and Hub", as
   const entrypoint = await readFile(resolve(root, "deploy/docker/runtime-entrypoint.mjs"), "utf8");
   for (const role of [
     "platform-api", "platform-admission", "platform-admin", "platform-asset-data-plane",
-    "platform-authorization", "platform-model-gateway", "platform-worker", "platform-migrator",
+    "platform-authorization", "platform-model-gateway", "platform-worker",
+    "platform-identity-worker", "platform-migrator",
     "@kokoro/hub",
     "platform-hub-connect",
   ]) assert.match(entrypoint, new RegExp(`"${role}"`, "u"));

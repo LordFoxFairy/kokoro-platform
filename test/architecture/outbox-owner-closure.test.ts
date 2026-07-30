@@ -66,8 +66,9 @@ describe("Platform outbox producer to consumer closure", () => {
 
   it("maps every exact producer event type to one consumer and process composition", async () => {
     expect(OUTBOX_ROUTE_CATALOG).toEqual({
-      identity: { consumer: "identity-worker", closure: "reserved",
-        eventTypes: identityEventTypes, process: null },
+      identity: { consumer: "identity-worker", closure: "active",
+        eventTypes: identityEventTypes,
+        process: { module: "src/process/identity-worker.ts", symbol: "runPlatformIdentityWorkerMain" } },
       commerce: { consumer: "commerce-worker", closure: "active",
         eventTypes: ["commerce.redemption.fulfilled.v1"],
         process: { module: workerProcess, symbol: "createCommerceOutboxReconciliationCycle" } },

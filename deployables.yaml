@@ -125,16 +125,59 @@ deployables:
     inboundContracts: []
     activationAuthorized: false
     runtimeTraffic: false
-    outboundContracts: [identity-verification-delivery-https]
+    requiredEnvironment:
+      [DATABASE_URL_PLATFORM, PLATFORM_DATABASE_CREDENTIAL_CLASS,
+       PLATFORM_DATABASE_EXPECTED_DATABASE, PLATFORM_DATABASE_MIGRATOR_ROLE,
+       PLATFORM_DATABASE_WORKER_ROLE, PLATFORM_WORKER_ID,
+       PLATFORM_OUTBOX_DELIVERY_ENDPOINT, PLATFORM_OUTBOX_DELIVERY_KEY_ID,
+       PLATFORM_OUTBOX_DELIVERY_SECRET_BASE64, PLATFORM_SITE_PROVIDER_REGISTRY_FILE,
+       PLATFORM_AUTHORIZATION_EVENT_KEY_RING_FILE]
+    outboundContracts:
+      [commerce-credit-outbox-delivery-https, site-deployment-provider-https]
     secretClasses:
       [platform-worker-database, authorization-event-signing-keyring,
-       identity-audit-digest-key, identity-delivery-hmac-key]
+       commerce-credit-outbox-delivery-hmac-key, site-provider-registry,
+       site-provider-bearer-tokens]
     audience: platform-worker
     scalingKey: queue-lag
     readiness: process-state
     drain: stop-claim-then-return-lease
     sloOwner: platform
     runbookOwner: platform
+    releaseOwner: platform
+
+  - id: platform-identity-worker
+    command: node --conditions=kokoro-runtime deploy/docker/runtime-entrypoint.mjs
+    selectorEnvironment: KOKORO_SERVICE_PACKAGE=platform-identity-worker
+    processRole: identity-worker
+    database:
+      environmentVariable: DATABASE_URL_PLATFORM
+      expectedUserEnvironmentVariable: PLATFORM_DATABASE_IDENTITY_WORKER_ROLE
+      migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
+      expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
+      credentialClass: platform-identity-worker
+      permissions: identity-outbox-consumer-only
+      ddl: forbidden
+    inboundContracts: []
+    activationAuthorized: false
+    runtimeTraffic: false
+    requiredEnvironment:
+      [DATABASE_URL_PLATFORM, PLATFORM_DATABASE_CREDENTIAL_CLASS,
+       PLATFORM_DATABASE_EXPECTED_DATABASE, PLATFORM_DATABASE_MIGRATOR_ROLE,
+       PLATFORM_DATABASE_IDENTITY_WORKER_ROLE, PLATFORM_WORKER_ID,
+       PLATFORM_IDENTITY_AUDIT_DIGEST_KEY_FILE, PLATFORM_IDENTITY_SECRET_TRUST_ROOT,
+       PLATFORM_IDENTITY_DELIVERY_ENDPOINT, PLATFORM_IDENTITY_DELIVERY_HMAC_KEY_ID,
+       PLATFORM_IDENTITY_DELIVERY_HMAC_SECRET_FILE]
+    outboundContracts: [identity-verification-delivery-https]
+    secretClasses:
+      [platform-identity-worker-database, identity-audit-digest-key,
+       identity-delivery-hmac-key]
+    audience: platform-identity-worker
+    scalingKey: identity-outbox-lag
+    readiness: process-state
+    drain: stop-identity-claim-then-return-lease
+    sloOwner: platform-identity
+    runbookOwner: platform-identity
     releaseOwner: platform
 
   - id: platform-model-gateway
@@ -302,6 +345,7 @@ deployables:
       apiRoleEnvironmentVariable: PLATFORM_DATABASE_API_ROLE
       admissionRoleEnvironmentVariable: PLATFORM_DATABASE_ADMISSION_ROLE
       workerRoleEnvironmentVariable: PLATFORM_DATABASE_WORKER_ROLE
+      identityWorkerRoleEnvironmentVariable: PLATFORM_DATABASE_IDENTITY_WORKER_ROLE
       authorizationRoleEnvironmentVariable: PLATFORM_DATABASE_AUTHORIZATION_ROLE
       assetDataPlaneRoleEnvironmentVariable: PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE
       adminRoleEnvironmentVariable: PLATFORM_DATABASE_ADMIN_ROLE

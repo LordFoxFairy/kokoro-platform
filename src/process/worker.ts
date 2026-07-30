@@ -11,14 +11,20 @@ import { createCommerceOutboxReconciliationCycle, HmacHttpOutboxDeliveryTranspor
   "../modules/commerce/infrastructure/postgres/commerce-outbox-reconciler.js";
 import { createSiteRuntimeWorkerProductionComposition } from "./site-runtime-worker-composition.js";
 import { createAssetWorkerProductionComposition } from "./asset-worker-composition.js";
-import { createIdentityOutboxWorkerProductionComposition } from
-  "./identity-outbox-worker-composition.js";
+import {
+  PLATFORM_WORKER_DEPLOYMENT_CONTRACT,
+  resolveProcessDeploymentEnvironment,
+} from "./worker-deployment-contract.js";
 import { createAdminTerminalizerCycle } from
   "../modules/admin-control/application/admin-terminalizer.js";
 import { createAdminWorkerExecutionRuntime } from
   "../modules/admin-control/infrastructure/postgres/admin-worker-composition.js";
 import { PostgresAdminAuthorityRepository } from
   "../modules/admin-control/infrastructure/postgres/admin-authority-repository.js";
+import {
+  createPlatformWorkerHealthServer,
+  loadPlatformWorkerHealthPort,
+} from "./worker-health-server.js";
 
 export interface PlatformWorkerProcessStatus {
   readonly state: PlatformProcessState;
@@ -240,9 +246,16 @@ function isMainModule(): boolean {
 }
 
 export async function runPlatformWorkerMain(): Promise<void> {
-  const database = createPlatformDatabaseClient(loadPlatformDatabaseConfig("worker"));
-  const workerId = loadPlatformWorkerId(process.env);
-  const retentionDays = Number.parseInt(process.env.PLATFORM_AUTHORIZATION_EVENT_RETENTION_DAYS ?? "7", 10);
+  const environment = resolveProcessDeploymentEnvironment(
+    PLATFORM_WORKER_DEPLOYMENT_CONTRACT,
+    process.env,
+  );
+  const database = createPlatformDatabaseClient(loadPlatformDatabaseConfig("worker", environment));
+  const workerId = loadPlatformWorkerId(environment);
+  const retentionDays = Number.parseInt(
+    environment.PLATFORM_AUTHORIZATION_EVENT_RETENTION_DAYS ?? "7",
+    10,
+  );
   const authorizationRetention = createAuthorizationRetentionCycle({
     database,
     retentionMs: retentionDays * 24 * 60 * 60_000,
@@ -250,18 +263,18 @@ export async function runPlatformWorkerMain(): Promise<void> {
   const commerceOutbox = createCommerceOutboxReconciliationCycle({
     database,
     transport: new HmacHttpOutboxDeliveryTransport({
-      endpoint: requireEnvironment("PLATFORM_OUTBOX_DELIVERY_ENDPOINT"),
-      keyId: requireEnvironment("PLATFORM_OUTBOX_DELIVERY_KEY_ID"),
-      secretBase64: requireEnvironment("PLATFORM_OUTBOX_DELIVERY_SECRET_BASE64"),
-      timeoutMs: Number.parseInt(process.env.PLATFORM_OUTBOX_DELIVERY_TIMEOUT_MS ?? "10000", 10),
+      endpoint: requireEnvironment(environment, "PLATFORM_OUTBOX_DELIVERY_ENDPOINT"),
+      keyId: requireEnvironment(environment, "PLATFORM_OUTBOX_DELIVERY_KEY_ID"),
+      secretBase64: requireEnvironment(environment, "PLATFORM_OUTBOX_DELIVERY_SECRET_BASE64"),
+      timeoutMs: Number.parseInt(environment.PLATFORM_OUTBOX_DELIVERY_TIMEOUT_MS ?? "10000", 10),
     }),
     workerId,
   });
-  const siteRuntime = await createSiteRuntimeWorkerProductionComposition({ database, workerId });
-  const assetRuntime = await createAssetWorkerProductionComposition({ database, workerId });
-  const identityOutbox = await createIdentityOutboxWorkerProductionComposition({
-    database,
-    workerId,
+  const siteRuntime = await createSiteRuntimeWorkerProductionComposition({
+    database, workerId, environment,
+  });
+  const assetRuntime = await createAssetWorkerProductionComposition({
+    database, workerId, environment,
   });
   const terminalizeAdmin = createAdminTerminalizerCycle({
     database,
@@ -275,14 +288,12 @@ export async function runPlatformWorkerMain(): Promise<void> {
     database,
     runOneCycle: (context) => runPlatformWorkerActivities(context,
       [authorizationRetention, commerceOutbox,
-        (context) => identityOutbox.runOneCycle(context),
         (context) => siteRuntime.runOneCycle(context),
         (context) => assetRuntime.runOneCycle(context),
         terminalizeAdmin,
         adminExecution.runOneCycle]),
     stopClaiming: async () => {
       await Promise.all([
-        identityOutbox.stopClaiming(),
         siteRuntime.stopClaiming(),
         assetRuntime.stopClaiming(),
         adminExecution.stopClaiming(),
@@ -290,7 +301,6 @@ export async function runPlatformWorkerMain(): Promise<void> {
     },
     returnLease: async (reason) => {
       await Promise.all([
-        identityOutbox.returnLeases(reason),
         siteRuntime.returnLease(reason),
         assetRuntime.returnLeases(reason),
         adminExecution.returnLeases(reason),
@@ -298,16 +308,44 @@ export async function runPlatformWorkerMain(): Promise<void> {
     },
     onCycleError: (error) => console.error("Platform Worker cycle failed", error),
   });
+  const health = createPlatformWorkerHealthServer({
+    status: worker.status,
+    port: loadPlatformWorkerHealthPort(environment),
+  });
+  await worker.start();
+  try {
+    await health.start();
+  } catch (error) {
+    await worker.shutdown();
+    throw error;
+  }
   const shutdown = () => {
-    void worker.shutdown().catch((error: unknown) => {
+    void shutdownPlatformWorkerRuntime(worker, health).catch((error: unknown) => {
       process.exitCode = 1;
       console.error("Platform Worker failed to drain", error);
     });
   };
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
-  await worker.start();
   console.log("Platform Worker ready");
+}
+
+export async function shutdownPlatformWorkerRuntime(
+  worker: PlatformWorkerProcess,
+  health: Readonly<{ close(): Promise<void> }>,
+): Promise<void> {
+  let failure: unknown;
+  try {
+    await worker.shutdown();
+  } catch (error) {
+    failure = error;
+  }
+  try {
+    await health.close();
+  } catch (error) {
+    failure ??= error;
+  }
+  if (failure !== undefined) throw failure;
 }
 
 export function loadPlatformWorkerId(
@@ -321,8 +359,11 @@ export function loadPlatformWorkerId(
   return value;
 }
 
-function requireEnvironment(name: string): string {
-  const value = process.env[name];
+function requireEnvironment(
+  environment: Readonly<Record<string, string | undefined>>,
+  name: string,
+): string {
+  const value = environment[name];
   if (value === undefined || value.length === 0) throw new Error(`${name}_REQUIRED`);
   return value;
 }

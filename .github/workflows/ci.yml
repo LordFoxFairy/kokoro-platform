@@ -84,6 +84,7 @@ jobs:
       DATABASE_URL_PLATFORM: postgresql://platform_migrator:platform-migrator-ci@127.0.0.1:5432/kokoro_test_platform
       DATABASE_URL_PLATFORM_MIGRATOR_TEST: postgresql://platform_migrator:platform-migrator-ci@127.0.0.1:5432/kokoro_test_platform
       DATABASE_URL_PLATFORM_API_TEST: postgresql://platform_api:platform-api-ci@127.0.0.1:5432/kokoro_test_platform
+      DATABASE_URL_PLATFORM_IDENTITY_WORKER_TEST: postgresql://platform_identity_worker:platform-identity-worker-ci@127.0.0.1:5432/kokoro_test_platform
       PLATFORM_DATABASE_CREDENTIAL_CLASS: migrator
       PLATFORM_DATABASE_EXPECTED_DATABASE: kokoro_test_platform
       PLATFORM_DATABASE_MIGRATOR_ROLE: platform_migrator
@@ -92,6 +93,7 @@ jobs:
       PLATFORM_DATABASE_AUTHORIZATION_ROLE: platform_authorization
       PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE: platform_asset_data_plane
       PLATFORM_DATABASE_WORKER_ROLE: platform_worker
+      PLATFORM_DATABASE_IDENTITY_WORKER_ROLE: platform_identity_worker
       PLATFORM_DATABASE_ADMIN_ROLE: platform_admin
       PLATFORM_DATABASE_MODEL_GATEWAY_ROLE: platform_model_gateway
     steps:

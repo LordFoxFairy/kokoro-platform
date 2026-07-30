@@ -55,6 +55,10 @@ export async function runPlatformMigrations(
     environment.PLATFORM_DATABASE_WORKER_ROLE,
     "PLATFORM_DATABASE_WORKER_ROLE",
   );
+  const identityWorkerRole = requireRole(
+    environment.PLATFORM_DATABASE_IDENTITY_WORKER_ROLE,
+    "PLATFORM_DATABASE_IDENTITY_WORKER_ROLE",
+  );
   const authorizationRole = requireRole(
     environment.PLATFORM_DATABASE_AUTHORIZATION_ROLE,
     "PLATFORM_DATABASE_AUTHORIZATION_ROLE",
@@ -78,6 +82,7 @@ export async function runPlatformMigrations(
     authorizationRole,
     assetDataPlaneRole,
     workerRole,
+    identityWorkerRole,
     adminRole,
     modelGatewayRole,
   );
@@ -103,6 +108,11 @@ export async function runPlatformMigrations(
     await assertAssetDataPlaneRolePreflight(
       lockClient,
       assetDataPlaneRole,
+      config.expectedDatabaseUser,
+    );
+    await assertIdentityWorkerRolePreflight(
+      lockClient,
+      identityWorkerRole,
       config.expectedDatabaseUser,
     );
     await lockClient.query("SELECT pg_advisory_lock(hashtext($1))", [MIGRATION_ADVISORY_LOCK]);
@@ -131,6 +141,7 @@ export async function runPlatformMigrations(
     );
     await grantModelGatewayPrivileges(lockClient, modelGatewayRole, admissionRole);
     await grantAssetDataPlanePrivileges(lockClient, assetDataPlaneRole);
+    await grantIdentityWorkerPrivileges(lockClient, identityWorkerRole);
     await assertPostMigrationAuthority(
       lockClient,
       config.expectedDatabaseUser,
@@ -142,6 +153,7 @@ export async function runPlatformMigrations(
     );
     await assertModelGatewayAuthority(lockClient, modelGatewayRole);
     await assertAssetDataPlaneAuthority(lockClient, assetDataPlaneRole);
+    await assertIdentityWorkerAuthority(lockClient, identityWorkerRole);
   } finally {
     try {
       if (locked) {
@@ -320,6 +332,21 @@ async function assertAssetDataPlaneRolePreflight(
   }
 }
 
+async function assertIdentityWorkerRolePreflight(
+  client: MigrationLockClient,
+  identityWorkerRole: string,
+  migratorRole: string,
+): Promise<void> {
+  const result = await client.query(IDENTITY_WORKER_ROLE_PREFLIGHT_SQL, [
+    identityWorkerRole,
+    migratorRole,
+  ]);
+  const row = result.rows?.[0];
+  if (result.rows?.length !== 1 || !safeRuntimeRole(row ?? {})) {
+    throw new Error("PLATFORM_IDENTITY_WORKER_ROLE_PREFLIGHT_FAILED");
+  }
+}
+
 async function grantModelGatewayPrivileges(
   client: MigrationLockClient,
   modelGatewayRole: string,
@@ -494,6 +521,90 @@ async function assertAssetDataPlaneAuthority(
   }
 }
 
+async function grantIdentityWorkerPrivileges(
+  client: MigrationLockClient,
+  identityWorkerRole: string,
+): Promise<void> {
+  const identityWorker = quoteRoleIdentifier(identityWorkerRole);
+  await client.query(`REVOKE ALL ON SCHEMA platform FROM ${identityWorker}`);
+  await client.query(
+    `REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA platform FROM ${identityWorker}`,
+  );
+  await client.query(
+    `REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA platform FROM ${identityWorker}`,
+  );
+  await client.query(
+    `REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA platform FROM ${identityWorker}`,
+  );
+  await client.query(`GRANT USAGE ON SCHEMA platform TO ${identityWorker}`);
+  await client.query(
+    `GRANT SELECT ON TABLE platform.platform_foundation, platform.outbox_event ` +
+      `TO ${identityWorker}`,
+  );
+  await client.query(
+    `GRANT UPDATE(state,available_at,last_error_code,lease_owner,lease_token,` +
+      `lease_expires_at,attempt,delivered_at,consumer_delivery_id,` +
+      `consumer_acknowledged_at,updated_at) ON TABLE platform.outbox_event ` +
+      `TO ${identityWorker}`,
+  );
+  await client.query(
+    `GRANT SELECT(site_ref,transaction_ref,state,resend_count,expires_at) ` +
+      `ON TABLE platform.identity_verification_transaction TO ${identityWorker}`,
+  );
+  await client.query(
+    `GRANT SELECT(event_id,site_ref,transaction_ref,credential_revision,state) ` +
+      `ON TABLE platform.identity_verification_delivery TO ${identityWorker}`,
+  );
+  await client.query(
+    `GRANT UPDATE(state,attempt_count,delivered_at,failed_at,superseded_at,` +
+      `last_error_code,updated_at) ON TABLE platform.identity_verification_delivery ` +
+      `TO ${identityWorker}`,
+  );
+  await client.query(
+    `GRANT SELECT(site_ref,subject_ref,workspace_ref,project_ref,execution_space_ref,` +
+      `execution_namespace,namespace_intent_ref) ` +
+      `ON TABLE platform.identity_personal_bootstrap TO ${identityWorker}`,
+  );
+  await client.query(
+    `GRANT SELECT(site_ref,execution_space_ref,project_ref,execution_namespace,state), ` +
+      `UPDATE(state,updated_at) ON TABLE platform.identity_execution_space ` +
+      `TO ${identityWorker}`,
+  );
+  await client.query(
+    `GRANT SELECT(intent_ref,event_id,site_ref,execution_space_ref,execution_namespace,state), ` +
+      `UPDATE(state,attempt_count,last_error_code,updated_at) ` +
+      `ON TABLE platform.identity_namespace_allocation_intent TO ${identityWorker}`,
+  );
+  await client.query(
+    `REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ` +
+      `ON TABLE platform.platform_foundation FROM ${identityWorker}`,
+  );
+  await client.query(
+    `ALTER DEFAULT PRIVILEGES IN SCHEMA platform REVOKE ALL ON TABLES ` +
+      `FROM ${identityWorker}`,
+  );
+  await client.query(
+    `ALTER DEFAULT PRIVILEGES IN SCHEMA platform REVOKE ALL ON SEQUENCES ` +
+      `FROM ${identityWorker}`,
+  );
+  await client.query(
+    `ALTER DEFAULT PRIVILEGES IN SCHEMA platform REVOKE ALL ON FUNCTIONS ` +
+      `FROM ${identityWorker}`,
+  );
+}
+
+async function assertIdentityWorkerAuthority(
+  client: MigrationLockClient,
+  identityWorkerRole: string,
+): Promise<void> {
+  const result = await client.query(IDENTITY_WORKER_POST_AUTHORITY_SQL, [identityWorkerRole]);
+  const row = result.rows?.[0];
+  if (
+    result.rows?.length !== 1 || row?.identityWorkerAuthorityOk !== true ||
+    row.hasUnexpectedIdentityPrivilege !== false
+  ) throw new Error("PLATFORM_IDENTITY_WORKER_POST_AUTHORITY_INVALID");
+}
+
 const MODEL_GATEWAY_ROLE_PREFLIGHT_SQL = `
   SELECT runtime_role.rolname AS "roleName",runtime_role.rolsuper AS "isSuperuser",
     runtime_role.rolcreatedb AS "canCreateDatabase",runtime_role.rolcreaterole AS "canCreateRole",
@@ -512,6 +623,11 @@ const MODEL_GATEWAY_ROLE_PREFLIGHT_SQL = `
     CASE WHEN to_regnamespace('platform') IS NULL THEN FALSE
       ELSE has_schema_privilege(runtime_role.rolname,'platform','CREATE') END AS "canCreatePlatformSchema"
   FROM pg_roles runtime_role WHERE runtime_role.rolname=$1 /* modelGatewayRolePreflight */`;
+
+const IDENTITY_WORKER_ROLE_PREFLIGHT_SQL = MODEL_GATEWAY_ROLE_PREFLIGHT_SQL.replace(
+  "modelGatewayRolePreflight",
+  "identityWorkerRolePreflight",
+);
 
 const ASSET_DATA_PLANE_ROLE_PREFLIGHT_SQL = `
   SELECT runtime_role.rolname AS "roleName",runtime_role.rolsuper AS "isSuperuser",
@@ -619,6 +735,104 @@ const ASSET_DATA_PLANE_POST_AUTHORITY_SQL = `
       OR has_table_privilege($1,'platform.asset_upload_intent','DELETE,TRUNCATE'))
       AS "canMutateAssetOwnerIntent"
   /* assetDataPlaneAuthority */`;
+
+const IDENTITY_WORKER_POST_AUTHORITY_SQL = `
+  SELECT
+    has_schema_privilege($1,'platform','USAGE')
+      AND NOT has_schema_privilege($1,'platform','CREATE')
+      AND has_table_privilege($1,'platform.platform_foundation','SELECT')
+      AND has_table_privilege($1,'platform.outbox_event','SELECT')
+      AND has_column_privilege($1,'platform.outbox_event','state','UPDATE')
+      AND has_column_privilege($1,'platform.outbox_event','lease_owner','UPDATE')
+      AND has_column_privilege($1,'platform.outbox_event','lease_token','UPDATE')
+      AND has_column_privilege($1,'platform.outbox_event','lease_expires_at','UPDATE')
+      AND has_column_privilege($1,'platform.outbox_event','attempt','UPDATE')
+      AND has_column_privilege($1,'platform.outbox_event','consumer_delivery_id','UPDATE')
+      AND has_column_privilege($1,'platform.outbox_event','consumer_acknowledged_at','UPDATE')
+      AND has_column_privilege($1,'platform.identity_verification_transaction','site_ref','SELECT')
+      AND has_column_privilege($1,'platform.identity_verification_transaction','transaction_ref','SELECT')
+      AND has_column_privilege($1,'platform.identity_verification_transaction','state','SELECT')
+      AND has_column_privilege($1,'platform.identity_verification_transaction','resend_count','SELECT')
+      AND has_column_privilege($1,'platform.identity_verification_transaction','expires_at','SELECT')
+      AND NOT has_column_privilege($1,'platform.identity_verification_transaction','email_normalized','SELECT')
+      AND NOT has_column_privilege($1,'platform.identity_verification_transaction','secret_digest','SELECT')
+      AND has_column_privilege($1,'platform.identity_verification_delivery','event_id','SELECT')
+      AND has_column_privilege($1,'platform.identity_verification_delivery','state','UPDATE')
+      AND has_column_privilege($1,'platform.identity_personal_bootstrap','namespace_intent_ref','SELECT')
+      AND has_column_privilege($1,'platform.identity_execution_space','state','SELECT')
+      AND has_column_privilege($1,'platform.identity_execution_space','state','UPDATE')
+      AND has_column_privilege($1,'platform.identity_namespace_allocation_intent','state','SELECT')
+      AND has_column_privilege($1,'platform.identity_namespace_allocation_intent','state','UPDATE')
+      AS "identityWorkerAuthorityOk",
+    EXISTS (
+      SELECT 1 FROM information_schema.role_table_grants grant_row
+      WHERE grant_row.grantee=$1 AND grant_row.table_schema='platform' AND NOT (
+        grant_row.privilege_type='SELECT'
+        AND grant_row.table_name=ANY(ARRAY['platform_foundation','outbox_event'])
+      )
+    ) OR EXISTS (
+      SELECT 1 FROM information_schema.role_column_grants grant_row
+      WHERE grant_row.grantee=$1 AND grant_row.table_schema='platform' AND NOT (
+        (grant_row.privilege_type='SELECT' AND grant_row.table_name=ANY(ARRAY[
+          'platform_foundation','outbox_event'
+        ]))
+        OR (grant_row.privilege_type='UPDATE' AND grant_row.table_name='outbox_event'
+          AND grant_row.column_name=ANY(ARRAY[
+            'state','available_at','last_error_code','lease_owner','lease_token',
+            'lease_expires_at','attempt','delivered_at','consumer_delivery_id',
+            'consumer_acknowledged_at','updated_at'
+          ]))
+        OR (grant_row.privilege_type='SELECT'
+          AND grant_row.table_name='identity_verification_transaction'
+          AND grant_row.column_name=ANY(ARRAY[
+            'site_ref','transaction_ref','state','resend_count','expires_at'
+          ]))
+        OR (grant_row.privilege_type='SELECT'
+          AND grant_row.table_name='identity_verification_delivery'
+          AND grant_row.column_name=ANY(ARRAY[
+            'event_id','site_ref','transaction_ref','credential_revision','state'
+          ]))
+        OR (grant_row.privilege_type='UPDATE'
+          AND grant_row.table_name='identity_verification_delivery'
+          AND grant_row.column_name=ANY(ARRAY[
+            'state','attempt_count','delivered_at','failed_at','superseded_at',
+            'last_error_code','updated_at'
+          ]))
+        OR (grant_row.privilege_type='SELECT'
+          AND grant_row.table_name='identity_personal_bootstrap'
+          AND grant_row.column_name=ANY(ARRAY[
+            'site_ref','subject_ref','workspace_ref','project_ref','execution_space_ref',
+            'execution_namespace','namespace_intent_ref'
+          ]))
+        OR (grant_row.privilege_type='SELECT'
+          AND grant_row.table_name='identity_execution_space'
+          AND grant_row.column_name=ANY(ARRAY[
+            'site_ref','execution_space_ref','project_ref','execution_namespace','state'
+          ]))
+        OR (grant_row.privilege_type='UPDATE'
+          AND grant_row.table_name='identity_execution_space'
+          AND grant_row.column_name=ANY(ARRAY['state','updated_at']))
+        OR (grant_row.privilege_type='SELECT'
+          AND grant_row.table_name='identity_namespace_allocation_intent'
+          AND grant_row.column_name=ANY(ARRAY[
+            'intent_ref','event_id','site_ref','execution_space_ref','execution_namespace','state'
+          ]))
+        OR (grant_row.privilege_type='UPDATE'
+          AND grant_row.table_name='identity_namespace_allocation_intent'
+          AND grant_row.column_name=ANY(ARRAY[
+            'state','attempt_count','last_error_code','updated_at'
+          ]))
+      )
+    ) OR EXISTS (
+      SELECT 1 FROM information_schema.role_routine_grants grant_row
+      WHERE grant_row.grantee=$1 AND grant_row.specific_schema='platform'
+    ) OR EXISTS (
+      SELECT 1 FROM pg_class sequence_row
+      JOIN pg_namespace namespace_row ON namespace_row.oid=sequence_row.relnamespace
+      WHERE namespace_row.nspname='platform' AND sequence_row.relkind='S'
+        AND has_sequence_privilege($1,sequence_row.oid,'USAGE,SELECT,UPDATE')
+    ) AS "hasUnexpectedIdentityPrivilege"
+  /* identityWorkerAuthority */`;
 
 async function grantFoundationPrivileges(
   client: MigrationLockClient,
@@ -744,21 +958,6 @@ async function grantFoundationPrivileges(
         `GRANT SELECT ON TABLE ${KERNEL_TABLES}, ${SITE_RECONCILIATION_TABLES}, platform.authorization_site, platform.authorization_site_release, platform.authorization_product_binding, platform.authorization_scoped_stream_state, platform.authorization_scoped_site_cursor, platform.authorization_scoped_event_log, platform.authorization_scoped_snapshot, platform.authorization_product_context, platform.authorization_session_access_grant, platform.commerce_redemption, platform.commerce_fulfillment_transaction, platform.credit_budget_operation_receipt, platform.credit_authorization_segment, platform.admin_operator_authority, platform.admin_operator_site_scope, platform.admin_operator_global_scope_grant, platform.admin_breakglass_grant, platform.admin_approval, platform.admin_post_effect_review TO ${identifier}`,
       );
       await client.query(
-        `GRANT SELECT(site_ref,transaction_ref,state,resend_count,expires_at) ON TABLE platform.identity_verification_transaction TO ${identifier}`,
-      );
-      await client.query(
-        `GRANT SELECT(event_id,site_ref,transaction_ref,credential_revision,state) ON TABLE platform.identity_verification_delivery TO ${identifier}`,
-      );
-      await client.query(
-        `GRANT SELECT(site_ref,subject_ref,workspace_ref,project_ref,execution_space_ref,execution_namespace,namespace_intent_ref) ON TABLE platform.identity_personal_bootstrap TO ${identifier}`,
-      );
-      await client.query(
-        `GRANT SELECT(site_ref,execution_space_ref,project_ref,execution_namespace,state) ON TABLE platform.identity_execution_space TO ${identifier}`,
-      );
-      await client.query(
-        `GRANT SELECT(intent_ref,event_id,site_ref,execution_space_ref,execution_namespace,state) ON TABLE platform.identity_namespace_allocation_intent TO ${identifier}`,
-      );
-      await client.query(
         `GRANT INSERT, UPDATE ON TABLE platform.authorization_scoped_site_cursor TO ${identifier}`,
       );
       await client.query(
@@ -771,15 +970,6 @@ async function grantFoundationPrivileges(
       );
       await client.query(
         `GRANT UPDATE ON TABLE platform.command_receipt, platform.outbox_event, platform.inbox_delivery TO ${identifier}`,
-      );
-      await client.query(
-        `GRANT UPDATE(state,attempt_count,delivered_at,failed_at,superseded_at,last_error_code,updated_at) ON TABLE platform.identity_verification_delivery TO ${identifier}`,
-      );
-      await client.query(
-        `GRANT UPDATE(state,updated_at) ON TABLE platform.identity_execution_space TO ${identifier}`,
-      );
-      await client.query(
-        `GRANT UPDATE(state,attempt_count,last_error_code,updated_at) ON TABLE platform.identity_namespace_allocation_intent TO ${identifier}`,
       );
       await client.query(
         `GRANT UPDATE(state,active_release_ref,policy_epoch,revocation_epoch,tombstoned_at,updated_at) ON TABLE platform.site TO ${identifier}`,
@@ -1353,7 +1543,7 @@ async function assertPostMigrationAuthority(
       row.ownsPlatformRelation !== false ||
       row.ownsPlatformFunction !== false ||
       row.hasRequiredPlatformWrites !== true ||
-      row.hasIdentityOutboxConsumerAuthority !== (row.roleName === workerRole) ||
+      row.hasIdentityOutboxConsumerAuthority !== false ||
       row.canExecuteModelInventoryImport !== (row.roleName === adminRole) ||
       row.canExecuteModelInventoryActivate !== (row.roleName === adminRole) ||
       row.canExecuteModelSitePolicyChange !== (row.roleName === adminRole) ||
@@ -2062,9 +2252,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                    OR (runtime_role.rolname = $3 AND candidate.relname = ANY(ARRAY[
                      'outbox_event','site','site_release','site_deployment_binding',
                      'site_activation_attempt','site_traffic_stop_attempt','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_site',
-                     'authorization_site_release','authorization_product_binding',
-                     'identity_verification_delivery','identity_execution_space',
-                     'identity_namespace_allocation_intent'
+                     'authorization_site_release','authorization_product_binding'
                    ]))
                    OR (runtime_role.rolname = $3 AND candidate.relname = ANY(ARRAY[
                      'command_receipt','outbox_event','inbox_delivery','admin_approval','admin_post_effect_review'
@@ -2221,6 +2409,21 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                  to_regprocedure('platform.model_json_identifier_array_is_canonical(jsonb,boolean)')
                ])
              )
+         ) OR (
+           runtime_role.rolname=$3 AND (
+             EXISTS (
+               SELECT 1 FROM information_schema.role_table_grants grant_row
+               WHERE grant_row.grantee=runtime_role.rolname
+                 AND grant_row.table_schema='platform'
+                 AND grant_row.table_name LIKE 'identity\\_%' ESCAPE '\\'
+             )
+             OR EXISTS (
+               SELECT 1 FROM information_schema.role_column_grants grant_row
+               WHERE grant_row.grantee=runtime_role.rolname
+                 AND grant_row.table_schema='platform'
+                 AND grant_row.table_name LIKE 'identity\\_%' ESCAPE '\\'
+             )
+           )
          ) AS "hasUnexpectedPlatformPrivilege"
   FROM pg_roles runtime_role
   JOIN pg_namespace platform_schema ON platform_schema.nspname = 'platform'
@@ -2239,6 +2442,7 @@ function assertDistinctRoles(
   authorizationRole: string,
   assetDataPlaneRole: string,
   workerRole: string,
+  identityWorkerRole: string,
   adminRole: string,
   modelGatewayRole: string,
 ): void {
@@ -2250,9 +2454,10 @@ function assertDistinctRoles(
       authorizationRole,
       assetDataPlaneRole,
       workerRole,
+      identityWorkerRole,
       adminRole,
       modelGatewayRole,
-    ]).size !== 8
+    ]).size !== 9
   ) {
     throw new Error("PLATFORM_DATABASE_ROLES_MUST_BE_DISTINCT");
   }
