@@ -1,6 +1,6 @@
 import { create } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
-import type { HandlerContext } from "@connectrpc/connect";
+import { Code, ConnectError, type HandlerContext } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
 import {
   CommandDigestAlgorithmV2,
@@ -214,6 +214,24 @@ describe("ModelControl Connect provider", () => {
     expect(importedInput).not.toHaveProperty(
       "providerAvailability",
     );
+  });
+
+  it("returns a typed conflict when an idempotency key is reused with another command id", async () => {
+    const owners = ownerDoubles();
+    owners.activateInventory.activate.mockRejectedValueOnce(new Error("COMMAND_IDENTITY_CONFLICT"));
+    const service = createModelControlConnectService({
+      owners,
+      resolver: {
+        resolveModelControlCommand: vi.fn(async () => ({ context: verifiedContext, axes })),
+      },
+      receipts: { read: vi.fn(async () => recordedAt) },
+    });
+
+    const error = await Promise.resolve(service.activateInventory(activationRequest(), transport))
+      .catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(ConnectError);
+    expect(ConnectError.from(error).code).toBe(Code.AlreadyExists);
+    expect(ConnectError.from(error).rawMessage).toBe("command identity conflict");
   });
 });
 

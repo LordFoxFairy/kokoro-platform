@@ -34,6 +34,7 @@ export class CommandReceiptRepository {
         identity.operation, identity.idempotencyKey, identity.requestDigest],
     );
     const receipt = await this.#find(sql, identity);
+    if (receipt.commandId !== commandId) throw new Error("COMMAND_IDENTITY_CONFLICT");
     if (receipt.requestDigest !== identity.requestDigest) throw new Error("COMMAND_DIGEST_CONFLICT");
     return receipt;
   }
@@ -46,6 +47,9 @@ export class CommandReceiptRepository {
     assertDigest(outcome.resultDigest);
     const sql = resolvePlatformTransaction(transaction);
     const receipt = await this.#find(sql, identity);
+    if (receipt.commandId !== canonicalCommandId(identity.commandId)) {
+      throw new Error("COMMAND_IDENTITY_CONFLICT");
+    }
     if (receipt.requestDigest !== identity.requestDigest) throw new Error("COMMAND_DIGEST_CONFLICT");
     if (receipt.state !== "pending" && receipt.state !== "outcome_unknown") {
       if (receipt.state === outcome.state && receipt.resultDigest === outcome.resultDigest) return receipt;

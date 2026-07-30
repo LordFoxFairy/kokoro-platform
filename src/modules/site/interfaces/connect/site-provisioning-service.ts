@@ -1,5 +1,5 @@
 import { create } from "@bufbuild/protobuf";
-import type { HandlerContext, ServiceImpl } from "@connectrpc/connect";
+import { Code, ConnectError, type HandlerContext, type ServiceImpl } from "@connectrpc/connect";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import {
   CommandDigestAlgorithmV2,
@@ -64,7 +64,7 @@ export function createSiteProvisioningConnectService(input: Readonly<{
       const identity = commandIdentity(context);
       requireDigest(identity.requestDigest,
         registerSiteRequestDigest(context, request.siteId, effect, verified.axes));
-      const result = await input.owner.registerSite({
+      const result = await commandEffect(() => input.owner.registerSite({
         commandId: identity.commandId,
         idempotencyKey: identity.idempotencyKey,
         siteRef: request.siteId,
@@ -75,7 +75,7 @@ export function createSiteProvisioningConnectService(input: Readonly<{
         providerProjectRef: effect.providerProjectRef,
         environment: siteEnvironment(verified.context.environment),
         workloadIdentityId: effect.workloadIdentityRef,
-      }, verified.context);
+      }, verified.context));
       const recordedAt = await input.receipts.read(verified.context, {
         commandId: identity.commandId,
         operation: "site.register",
@@ -104,7 +104,7 @@ export function createSiteProvisioningConnectService(input: Readonly<{
       const identity = commandIdentity(context);
       requireDigest(identity.requestDigest,
         publishSiteReleaseRequestDigest(context, request.siteId, effect, verified.axes));
-      const result = await input.owner.publishRelease({
+      const result = await commandEffect(() => input.owner.publishRelease({
         commandId: identity.commandId,
         idempotencyKey: identity.idempotencyKey,
         siteRef: request.siteId,
@@ -133,7 +133,7 @@ export function createSiteProvisioningConnectService(input: Readonly<{
             "SITE_RELEASE_CERTIFICATION_EXPIRES_AT_REQUIRED"),
           signature: new Uint8Array(certification.signature),
         },
-      }, verified.context);
+      }, verified.context));
       const recordedAt = await input.receipts.read(verified.context, {
         commandId: identity.commandId,
         operation: "site.release.publish",
@@ -147,6 +147,20 @@ export function createSiteProvisioningConnectService(input: Readonly<{
       };
     },
   };
+}
+
+async function commandEffect<Result>(effect: () => Promise<Result>): Promise<Result> {
+  try {
+    return await effect();
+  } catch (error) {
+    if (error instanceof Error && error.message === "COMMAND_IDENTITY_CONFLICT") {
+      throw new ConnectError("command identity conflict", Code.AlreadyExists);
+    }
+    if (error instanceof Error && error.message === "COMMAND_DIGEST_CONFLICT") {
+      throw new ConnectError("command digest conflict", Code.AlreadyExists);
+    }
+    throw error;
+  }
 }
 
 function commandIdentity(context: AuthenticatedOperatorCommandContext) {
