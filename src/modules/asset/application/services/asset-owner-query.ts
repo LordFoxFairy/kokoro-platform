@@ -1,11 +1,13 @@
 import type { VerifiedRequestSecurityContext } from "../../../../shared/security-context/index.js";
+import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
 import type { AssetUnitOfWorkPort } from "../contracts/asset-upload-ports.js";
 import type {
+  AssetAttachmentIntent,
   AssetOwnerQueryRepositoryPort,
   StoredAssetUploadStatus,
   StoredTrustedAssetGrant,
 } from "../contracts/asset-owner-query-ports.js";
-import { resolveAssetUserAuthority } from "../asset-user-authority.js";
+import { resolveAssetUserAuthority, type AssetOwnerAuthority } from "../asset-user-authority.js";
 
 export interface AssetUploadStatusView {
   readonly intentRef: string;
@@ -50,17 +52,65 @@ export interface AssetUploadCommandView {
   readonly upload: AssetUploadStatusView | null;
 }
 
+export interface ReadySessionAttachmentView {
+  readonly assetRef: string;
+  readonly assetVersionRef: string;
+  readonly assetGrantRef: string;
+  readonly checksumSha256: string;
+  readonly safeDisplayName: string;
+  readonly detectedMediaType: string;
+  readonly sizeBytes: bigint;
+  readonly eligibilityEpoch: bigint;
+}
+
 export class AssetOwnerQueryService {
   constructor(private readonly dependencies: Readonly<{
-    unitOfWork: AssetUnitOfWorkPort;
+    unitOfWork: AssetUnitOfWorkPort | null;
     repository: AssetOwnerQueryRepositoryPort;
   }>) {}
+
+  static forInternalOwner(repository: AssetOwnerQueryRepositoryPort): AssetOwnerQueryService {
+    return new AssetOwnerQueryService({ unitOfWork: null, repository });
+  }
 
   getUploadStatus(input: Readonly<{
     context: VerifiedRequestSecurityContext;
     intentRef: string;
   }>): Promise<AssetUploadStatusView> {
     return this.readStatus(input.context, "getAssetUploadStatus", input.intentRef);
+  }
+
+  async resolveSessionAttachments(input: Readonly<{
+    transaction: PlatformTransaction;
+    authority: AssetOwnerAuthority;
+    purpose: string;
+    attachments: readonly AssetAttachmentIntent[];
+  }>): Promise<readonly ReadySessionAttachmentView[]> {
+    const stored = await this.dependencies.repository.loadSessionAttachments(input.transaction, {
+      authority: input.authority,
+      purpose: input.purpose,
+      attachments: input.attachments,
+    });
+    if (stored === null) throw new Error("ASSET_NOT_ACCEPTED");
+    return Object.freeze(stored.map((value, index) => {
+      const expected = input.attachments[index];
+      if (
+        expected === undefined || value.assetRef !== expected.assetRef ||
+        value.assetVersionRef !== expected.assetVersionRef || value.assetGrantRef !== expected.assetGrantRef ||
+        value.projectRef !== input.authority.projectRef || value.purpose !== input.purpose ||
+        value.subjectGeneration !== input.authority.subjectGeneration
+      ) throw new Error("ASSET_OWNER_ATTACHMENT_CORRUPT");
+      return Object.freeze({
+        assetRef: value.assetRef,
+        assetVersionRef: value.assetVersionRef,
+        assetGrantRef: value.assetGrantRef,
+        checksumSha256: value.checksumSha256,
+        safeDisplayName: value.safeDisplayName,
+        detectedMediaType: value.detectedMediaType,
+        sizeBytes: value.size,
+        eligibilityEpoch: value.eligibilityEpoch,
+      });
+    }));
   }
 
   async readCommand(input: Readonly<{
@@ -72,7 +122,7 @@ export class AssetOwnerQueryService {
     const expectedOperation = input.requestOperation === "recoverAssetUploadCommand"
       ? undefined
       : input.requestOperation;
-    const receipt = await this.dependencies.unitOfWork.execute(
+    const receipt = await this.userUnitOfWork().execute(
       { context: input.context, operation: input.requestOperation },
       (transaction) => this.dependencies.repository.loadCommand(transaction, {
         authority,
@@ -111,7 +161,7 @@ export class AssetOwnerQueryService {
   }>): Promise<TrustedAssetGrantView> {
     const operation = "getTrustedAssetGrant";
     const authority = resolveAssetUserAuthority(input.context, operation);
-    const grant = await this.dependencies.unitOfWork.execute(
+    const grant = await this.userUnitOfWork().execute(
       { context: input.context, operation },
       (transaction) => this.dependencies.repository.loadTrustedGrant(transaction, {
         authority,
@@ -133,12 +183,17 @@ export class AssetOwnerQueryService {
     intentRef: string,
   ): Promise<AssetUploadStatusView> {
     const authority = resolveAssetUserAuthority(context, operation);
-    const stored = await this.dependencies.unitOfWork.execute(
+    const stored = await this.userUnitOfWork().execute(
       { context, operation },
       (transaction) => this.dependencies.repository.loadUploadStatus(transaction, { authority, intentRef }),
     );
     if (stored === null) throw new Error("ASSET_NOT_ACCEPTED");
     return uploadStatus(stored);
+  }
+
+  private userUnitOfWork(): AssetUnitOfWorkPort {
+    if (this.dependencies.unitOfWork === null) throw new Error("ASSET_USER_UNIT_OF_WORK_REQUIRED");
+    return this.dependencies.unitOfWork;
   }
 }
 

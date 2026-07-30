@@ -2,6 +2,7 @@ import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/plat
 import type {
   AssetOwnerCommandOperation,
   AssetOwnerQueryRepositoryPort,
+  StoredSessionAttachment,
   StoredAssetOwnerReceipt,
   StoredAssetUploadStatus,
   StoredTrustedAssetGrant,
@@ -107,6 +108,62 @@ export class PostgresAssetOwnerQueryRepository implements AssetOwnerQueryReposit
     );
     return rows[0] ? grant(rows[0]) : null;
   }
+
+  async loadSessionAttachments(
+    transaction: Parameters<AssetOwnerQueryRepositoryPort["loadSessionAttachments"]>[0],
+    input: Parameters<AssetOwnerQueryRepositoryPort["loadSessionAttachments"]>[1],
+  ): ReturnType<AssetOwnerQueryRepositoryPort["loadSessionAttachments"]> {
+    if (input.attachments.length === 0) return Object.freeze([]);
+    const rows = await resolvePlatformTransaction(transaction).query<SessionAttachmentRow>(
+      `WITH requested AS (
+         SELECT requested.asset_ref,requested.asset_version_ref,requested.asset_grant_ref,
+                requested.ordinal
+           FROM unnest($6::text[],$7::text[],$8::text[])
+             WITH ORDINALITY AS requested(asset_ref,asset_version_ref,asset_grant_ref,ordinal)
+       )
+       SELECT requested.ordinal,resource.asset_ref AS "assetRef",
+              version.asset_version_ref AS "assetVersionRef",
+              eligibility.eligibility_ref AS "assetGrantRef",resource.project_ref AS "projectRef",
+              resource.purpose,resource.subject_generation AS "subjectGeneration",
+              eligibility.eligibility_epoch AS "eligibilityEpoch",
+              version.checksum_sha256 AS "checksumSha256",
+              intent.safe_display_name AS "safeDisplayName",
+              version.detected_media_type AS "detectedMediaType",version.size
+         FROM requested
+         JOIN platform.asset_resource resource
+           ON resource.site_ref=$1 AND resource.asset_ref=requested.asset_ref
+         JOIN platform.asset_version version
+           ON version.site_ref=resource.site_ref AND version.asset_ref=resource.asset_ref
+          AND version.asset_version_ref=requested.asset_version_ref
+         JOIN platform.asset_eligibility_projection eligibility
+           ON eligibility.site_ref=version.site_ref
+          AND eligibility.asset_version_ref=version.asset_version_ref
+          AND eligibility.eligibility_ref=requested.asset_grant_ref
+          AND eligibility.subject_ref=resource.subject_ref
+          AND eligibility.subject_generation=resource.subject_generation
+          AND eligibility.project_ref=resource.project_ref
+          AND eligibility.purpose=resource.purpose
+          AND eligibility.eligibility_epoch=version.eligibility_epoch
+         JOIN platform.asset_upload_intent intent
+           ON intent.site_ref=version.site_ref
+          AND intent.intent_ref=version.source_upload_intent_ref
+          AND intent.subject_ref=resource.subject_ref
+          AND intent.subject_generation=resource.subject_generation
+          AND intent.project_ref=resource.project_ref
+          AND intent.purpose=resource.purpose
+        WHERE resource.subject_ref=$2 AND resource.subject_generation=$3::bigint
+          AND resource.project_ref=$4 AND resource.purpose=$5
+          AND resource.state='active' AND version.state='ready' AND eligibility.state='ready'
+        ORDER BY requested.ordinal`,
+      [input.authority.siteRef, input.authority.subjectRef, input.authority.subjectGeneration,
+        input.authority.projectRef, input.purpose,
+        input.attachments.map((attachment) => attachment.assetRef),
+        input.attachments.map((attachment) => attachment.assetVersionRef),
+        input.attachments.map((attachment) => attachment.assetGrantRef)],
+    );
+    if (rows.length !== input.attachments.length) return null;
+    return Object.freeze(rows.map((row, index) => sessionAttachment(row, input.attachments[index]!, index)));
+  }
 }
 
 type UploadStatusRow = Omit<StoredAssetUploadStatus, "trustedGrant"> & Readonly<{
@@ -129,6 +186,9 @@ type CommandRow = Readonly<{
 }>;
 
 type GrantRow = StoredTrustedAssetGrant & Record<string, unknown>;
+
+type SessionAttachmentRow = StoredSessionAttachment & Readonly<{ ordinal: bigint }> &
+  Record<string, unknown>;
 
 function status(row: UploadStatusRow): StoredAssetUploadStatus {
   const ready = row.assetRef !== null && row.assetVersionRef !== null && row.assetGrantRef !== null &&
@@ -166,6 +226,34 @@ function receipt(row: CommandRow): StoredAssetOwnerReceipt {
 
 function grant(row: GrantRow): StoredTrustedAssetGrant {
   return Object.freeze({ ...row });
+}
+
+function sessionAttachment(
+  row: SessionAttachmentRow,
+  expected: Readonly<{ assetRef: string; assetVersionRef: string; assetGrantRef: string }>,
+  index: number,
+): StoredSessionAttachment {
+  if (
+    row.ordinal !== BigInt(index + 1) || row.assetRef !== expected.assetRef ||
+    row.assetVersionRef !== expected.assetVersionRef || row.assetGrantRef !== expected.assetGrantRef ||
+    !/^[0-9a-f]{64}$/u.test(row.checksumSha256) ||
+    row.safeDisplayName.length < 1 || row.safeDisplayName.length > 512 ||
+    row.detectedMediaType.length < 1 || row.detectedMediaType.length > 191 ||
+    row.size <= 0n || row.eligibilityEpoch <= 0n
+  ) throw new Error("ASSET_OWNER_ATTACHMENT_CORRUPT");
+  return Object.freeze({
+    assetRef: row.assetRef,
+    assetVersionRef: row.assetVersionRef,
+    assetGrantRef: row.assetGrantRef,
+    projectRef: row.projectRef,
+    purpose: row.purpose,
+    subjectGeneration: row.subjectGeneration,
+    eligibilityEpoch: row.eligibilityEpoch,
+    checksumSha256: row.checksumSha256,
+    safeDisplayName: row.safeDisplayName,
+    detectedMediaType: row.detectedMediaType,
+    size: row.size,
+  });
 }
 
 function record(value: unknown): Record<string, unknown> | null {

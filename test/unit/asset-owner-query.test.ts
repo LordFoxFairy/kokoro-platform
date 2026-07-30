@@ -25,6 +25,49 @@ const base: StoredAssetUploadStatus = Object.freeze({
 });
 
 describe("AssetOwnerQueryService", () => {
+  it("projects an all-or-nothing immutable Session attachment set without caller owner fields", async () => {
+    const loadSessionAttachments = vi.fn(async () => [{
+      assetRef: "asset_02", assetVersionRef: "version_02", assetGrantRef: "eligibility_02",
+      projectRef: "project_01", purpose: "chat.attachment", subjectGeneration: 4n,
+      eligibilityEpoch: 10n, checksumSha256: "b".repeat(64), safeDisplayName: "diagram.png",
+      detectedMediaType: "image/png", size: 4321n,
+    }, {
+      assetRef: "asset_01", assetVersionRef: "version_01", assetGrantRef: "eligibility_01",
+      projectRef: "project_01", purpose: "chat.attachment", subjectGeneration: 4n,
+      eligibilityEpoch: 9n, checksumSha256: "a".repeat(64), safeDisplayName: "notes.txt",
+      detectedMediaType: "text/plain", size: 1234n,
+    }]);
+    const service = new AssetOwnerQueryService({
+      unitOfWork: { execute: async (_fence, work) => work(transaction) },
+      repository: {
+        loadUploadStatus: async () => null,
+        loadCommand: async () => null,
+        loadTrustedGrant: async () => null,
+        loadSessionAttachments,
+      },
+    });
+    const authority = {
+      siteRef: "site_01", subjectRef: "subject_01", subjectGeneration: 4n, projectRef: "project_01",
+    };
+    const attachments = [
+      { assetRef: "asset_02", assetVersionRef: "version_02", assetGrantRef: "eligibility_02" },
+      { assetRef: "asset_01", assetVersionRef: "version_01", assetGrantRef: "eligibility_01" },
+    ];
+
+    await expect(service.resolveSessionAttachments({
+      transaction, authority, purpose: "chat.attachment", attachments,
+    })).resolves.toEqual([{
+      assetRef: "asset_02", assetVersionRef: "version_02", assetGrantRef: "eligibility_02",
+      checksumSha256: "b".repeat(64), safeDisplayName: "diagram.png",
+      detectedMediaType: "image/png", sizeBytes: 4321n, eligibilityEpoch: 10n,
+    }, {
+      assetRef: "asset_01", assetVersionRef: "version_01", assetGrantRef: "eligibility_01",
+      checksumSha256: "a".repeat(64), safeDisplayName: "notes.txt",
+      detectedMediaType: "text/plain", sizeBytes: 1234n, eligibilityEpoch: 9n,
+    }]);
+    expect(loadSessionAttachments).toHaveBeenCalledWith(transaction, { authority, purpose: "chat.attachment", attachments });
+  });
+
   it.each([
     [{ sessionState: "awaiting_capability", candidateState: null }, "upload_interrupted"],
     [{ sessionState: "uploading", candidateState: null }, "uploading"],
@@ -40,6 +83,7 @@ describe("AssetOwnerQueryService", () => {
         loadUploadStatus: async () => ({ ...base, ...change }),
         loadCommand: async () => null,
         loadTrustedGrant: async () => null,
+        loadSessionAttachments: async () => null,
       },
     });
     await expect(service.getUploadStatus({ context: context("getAssetUploadStatus"),
@@ -60,6 +104,7 @@ describe("AssetOwnerQueryService", () => {
           promotionState: "completed", trustedGrant: grant }),
         loadCommand: async () => null,
         loadTrustedGrant,
+        loadSessionAttachments: async () => null,
       },
     });
     await expect(service.getUploadStatus({ context: context("getAssetUploadStatus"),
@@ -91,6 +136,7 @@ describe("AssetOwnerQueryService", () => {
           updatedAt: "2026-07-28T12:00:00.000Z",
         }),
         loadTrustedGrant: async () => null,
+        loadSessionAttachments: async () => null,
       },
     });
     const result = await service.readCommand({ context: context("recoverAssetUploadCommand"),
@@ -104,7 +150,7 @@ describe("AssetOwnerQueryService", () => {
     const service = new AssetOwnerQueryService({
       unitOfWork: { execute: async (_fence, work) => work(transaction) },
       repository: { loadUploadStatus: async () => null, loadCommand: async () => null,
-        loadTrustedGrant: async () => null },
+        loadTrustedGrant: async () => null, loadSessionAttachments: async () => null },
     });
     await expect(service.getTrustedGrant({ context: context("getTrustedAssetGrant"),
       assetRef: "asset_01", assetVersionRef: "asset_version_01", assetGrantRef: "eligibility_01",

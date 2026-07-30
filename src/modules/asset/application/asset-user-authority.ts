@@ -1,13 +1,16 @@
 import type { VerifiedRequestSecurityContext } from "../../../shared/security-context/index.js";
 
-export interface AssetUserAuthority {
+export interface AssetOwnerAuthority {
   readonly siteRef: string;
-  readonly workloadIdentityId: string;
-  readonly siteReleaseRef: string;
-  readonly bindingEpoch: bigint;
   readonly subjectRef: string;
   readonly subjectGeneration: bigint;
   readonly projectRef: string;
+}
+
+export interface AssetUserAuthority extends AssetOwnerAuthority {
+  readonly workloadIdentityId: string;
+  readonly siteReleaseRef: string;
+  readonly bindingEpoch: bigint;
 }
 
 export function resolveAssetUserAuthority(

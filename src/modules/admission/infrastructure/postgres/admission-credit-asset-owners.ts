@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { AdmissionRetryClass } from "../../../../interfaces/connect/generated/kokoro/platform/admission/v1/admission_pb.js";
 import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
+import { CHAT_ATTACHMENT_PURPOSE } from "../../../asset/domain/asset-purpose.js";
+import { applyAssetOwnerScope } from "../../../asset/infrastructure/postgres/asset-owner-scope.js";
 import { CreditService } from "../../../credit/application/credit-service.js";
 import { UsageSettlementService } from "../../../credit/application/usage-settlement-service.js";
 import type {
@@ -313,6 +315,13 @@ export class PostgresAdmissionAssetOwner implements AdmissionAssetOwnerPort {
     input: Parameters<AdmissionAssetOwnerPort["validate"]>[1],
   ): Promise<AdmissionOwnerResolution<undefined>> {
     const sql = resolvePlatformTransaction(transaction);
+    await applyAssetOwnerScope(transaction, {
+      siteRef: input.siteId,
+      projectRef: input.projectRef,
+      subjectRef: input.subjectRef,
+      subjectGeneration: input.subjectGeneration,
+      purpose: CHAT_ATTACHMENT_PURPOSE,
+    });
     for (const attachment of input.attachments) {
       const rows = await sql.query<AssetGrantRow>(
         `SELECT resource.asset_ref AS "assetRef",version.asset_version_ref AS "assetVersionRef",
@@ -332,11 +341,11 @@ export class PostgresAdmissionAssetOwner implements AdmissionAssetOwnerPort {
             AND resource.subject_ref=$3 AND resource.subject_generation=$4
             AND resource.asset_ref=$5 AND version.asset_version_ref=$6
             AND eligibility.eligibility_ref=$7
-            AND resource.purpose='chat.attachment'
+            AND resource.purpose=$8 AND eligibility.purpose=$8
             AND resource.state='active' AND version.state='ready' AND eligibility.state='ready'
           LIMIT 2`,
         [input.siteId, input.projectRef, input.subjectRef, input.subjectGeneration, attachment.assetRef,
-          attachment.assetVersionRef, attachment.assetGrantRef],
+          attachment.assetVersionRef, attachment.assetGrantRef, CHAT_ATTACHMENT_PURPOSE],
       );
       const grant = only(rows, "ADMISSION_ASSET_GRANT_AMBIGUOUS");
       if (grant === undefined) return denied("ADMISSION_ASSET_GRANT_NOT_ELIGIBLE");

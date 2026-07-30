@@ -6,6 +6,8 @@ import { connectNodeAdapter } from "@connectrpc/connect-node";
 import type { PlatformTransactionalDatabaseClient } from "../infrastructure/postgres/client.js";
 import { resolvePlatformTransaction } from "../shared/unit-of-work/platform-transaction.js";
 import { AdmissionService } from "../interfaces/connect/generated/kokoro/platform/admission/v1/admission_pb.js";
+import { AssetEligibilityService as AssetEligibilityConnectDefinition } from
+  "../interfaces/connect/generated-asset-eligibility/kokoro/platform/asset/v1/asset_eligibility_pb.js";
 import { AdmissionApplicationService } from "../modules/admission/application/admission-service.js";
 import type { AdmissionCaller, AdmissionOwnerAuthority } from "../modules/admission/application/admission-ports.js";
 import {
@@ -33,6 +35,16 @@ import {
 } from "../modules/admission/infrastructure/postgres/admission-runtime-owners.js";
 import { PostgresAdmissionSiteOwner } from "../modules/admission/infrastructure/postgres/admission-site-owner.js";
 import { createAdmissionConnectService } from "../modules/admission/interfaces/connect/admission-service.js";
+import { AssetEligibilityApplicationService } from
+  "../modules/asset/application/services/asset-eligibility.js";
+import { AssetOwnerQueryService } from "../modules/asset/application/services/asset-owner-query.js";
+import { PostgresAssetOwnerQueryRepository } from
+  "../modules/asset/infrastructure/postgres/asset-owner-query-repository.js";
+import { applyAssetOwnerScope } from "../modules/asset/infrastructure/postgres/asset-owner-scope.js";
+import { createAssetEligibilityConnectService } from
+  "../modules/asset/interfaces/connect/asset-eligibility-service.js";
+import { PostgresSessionAccessGrantVerifier } from
+  "../modules/authorization/infrastructure/postgres/session-access-grant-verifier.js";
 import { readBoundedPrivateFile, readBoundedRegularFile } from "./secret-files.js";
 
 export interface AdmissionDraftComposition {
@@ -153,6 +165,53 @@ export function createPlatformAdmissionOwnerAuthority(input: Readonly<{
 }
 
 /**
+ * Mounts AssetEligibility into the existing Admission trust/process boundary.
+ * Authorization verification and Asset reads share one read-only transaction.
+ */
+export function createAssetEligibilityApplicationComposition(input: Readonly<{
+  database: Pick<PlatformTransactionalDatabaseClient, "internalTransaction">;
+  sessionCallerIdentity: string;
+}>): AssetEligibilityApplicationService {
+  const assetQueries = AssetOwnerQueryService.forInternalOwner(new PostgresAssetOwnerQueryRepository());
+  return new AssetEligibilityApplicationService({
+    verifier: new PostgresSessionAccessGrantVerifier(),
+    assetQueries,
+    sessionCallerIdentity: input.sessionCallerIdentity,
+    unitOfWork: {
+      checkActive: (caller) => input.database.internalTransaction(
+        "asset.eligibility.check-active",
+        async (transaction) => {
+          const rows = await resolvePlatformTransaction(transaction).query<Readonly<{ active: boolean }>>(
+            `SELECT EXISTS(
+               SELECT 1 FROM platform.platform_foundation WHERE singleton=TRUE
+             ) AS active,
+             set_config('app.caller_identity',$1,true),
+             set_config('statement_timeout','5000',true)`,
+            [caller.identity],
+          );
+          if (rows.length !== 1 || rows[0]?.active !== true) {
+            throw new Error("ASSET_ELIGIBILITY_DATABASE_NOT_READY");
+          }
+        },
+      ),
+      execute: (fence, work) => input.database.internalTransaction(
+        "asset.eligibility.resolve",
+        async (transaction) => {
+          await resolvePlatformTransaction(transaction).query(
+            `SELECT set_config('app.site_id',$1,true),
+                    set_config('app.caller_identity',$2,true),
+                    set_config('statement_timeout','5000',true)`,
+            [fence.siteId, fence.caller.identity],
+          );
+          return work(transaction);
+        },
+      ),
+      scopeOwner: applyAssetOwnerScope,
+    },
+  });
+}
+
+/**
  * Production Admission is a private HTTP/2 Connect service. The outer listener
  * authenticates the exact client certificate and scopes the caller before any
  * protobuf handler can execute.
@@ -178,6 +237,10 @@ export async function createAdmissionProductionComposition(input: Readonly<{
       input.clock,
     ),
   ]);
+  const sessionCallerIdentity = required(environment, "PLATFORM_ASSET_ELIGIBILITY_SESSION_CALLER_SAN_URI");
+  if (!peerRegistry.some((peer) => peer.identity === sessionCallerIdentity)) {
+    throw new Error("PLATFORM_ASSET_ELIGIBILITY_SESSION_CALLER_NOT_REGISTERED");
+  }
   const callers = new AsyncLocalStorage<AdmissionCaller>();
   const authority = createPlatformAdmissionOwnerAuthority({
     database: input.database,
@@ -193,18 +256,29 @@ export async function createAdmissionProductionComposition(input: Readonly<{
     gaDispatchAudience: input.gaDispatchAudience,
     ...(input.clock === undefined ? {} : { clock: input.clock }),
   }).application;
+  const callerResolver = {
+    resolve: () => {
+      const caller = callers.getStore();
+      if (caller === undefined) throw new Error("ADMISSION_VERIFIED_CALLER_REQUIRED");
+      return caller;
+    },
+  };
   const service = createAdmissionConnectService({
     application,
-    caller: {
-      resolve: () => {
-        const caller = callers.getStore();
-        if (caller === undefined) throw new Error("ADMISSION_VERIFIED_CALLER_REQUIRED");
-        return caller;
-      },
-    },
+    caller: callerResolver,
+  });
+  const assetEligibilityService = createAssetEligibilityConnectService({
+    application: createAssetEligibilityApplicationComposition({
+      database: input.database,
+      sessionCallerIdentity,
+    }),
+    caller: callerResolver,
   });
   const connect = connectNodeAdapter({
-    routes: (router) => router.service(AdmissionService, service),
+    routes: (router) => {
+      router.service(AdmissionService, service);
+      router.service(AssetEligibilityConnectDefinition, assetEligibilityService);
+    },
     connect: true,
     grpc: false,
     grpcWeb: false,

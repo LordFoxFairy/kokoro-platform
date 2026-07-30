@@ -51,6 +51,7 @@ class OwnerSql implements PlatformSqlTransaction {
       ratedAmount: "125", unit: "credit_micros",
       ratingSnapshotRef: "44444444-4444-4444-8444-444444444444",
     }] as unknown as Row[];
+    if (statement.includes("set_config('app.subject_id'")) return [];
     if (statement.includes("credit_authorization_segment")) return [{ matched: true }] as unknown as Row[];
     throw new Error(`unexpected query: ${statement}`);
   }
@@ -186,7 +187,12 @@ describe("native Admission Credit and Asset owners", () => {
         attachments: [{ assetRef: "asset-a", assetVersionRef: "asset-version-a", assetGrantRef: "grant-a" }],
       })).resolves.toEqual({ kind: "resolved", value: undefined });
       expect(sql.calls.find(({ statement }) => statement.includes("asset_eligibility_projection"))?.values)
-        .toEqual(["site-a", "project-a", "subject-a", 3n, "asset-a", "asset-version-a", "grant-a"]);
+        .toEqual(["site-a", "project-a", "subject-a", 3n, "asset-a", "asset-version-a", "grant-a",
+          "chat.attachment"]);
+      expect(sql.calls.find(({ statement }) => statement.includes("asset_eligibility_projection"))?.statement)
+        .toContain("resource.purpose=$8");
+      expect(sql.calls.find(({ statement }) => statement.includes("set_config('app.subject_id'"))?.values)
+        .toEqual(["site-a", "subject-a", "3", "project-a", "chat.attachment"]);
     } finally {
       revokePlatformTransaction(lease);
     }

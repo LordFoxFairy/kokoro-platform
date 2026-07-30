@@ -1,5 +1,11 @@
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
-import type { AssetUserAuthority } from "../asset-user-authority.js";
+import type { AssetOwnerAuthority, AssetUserAuthority } from "../asset-user-authority.js";
+
+export interface AssetAttachmentIntent {
+  readonly assetRef: string;
+  readonly assetVersionRef: string;
+  readonly assetGrantRef: string;
+}
 
 export type AssetOwnerCommandOperation = "createAssetUploadIntent" | "completeAssetUpload";
 
@@ -42,6 +48,11 @@ export interface StoredTrustedAssetGrant {
   readonly size: bigint;
 }
 
+export interface StoredSessionAttachment extends StoredTrustedAssetGrant {
+  readonly checksumSha256: string;
+  readonly safeDisplayName: string;
+}
+
 export interface AssetOwnerQueryRepositoryPort {
   loadUploadStatus(
     transaction: PlatformTransaction,
@@ -70,4 +81,13 @@ export interface AssetOwnerQueryRepositoryPort {
       eligibilityEpoch: bigint;
     }>,
   ): Promise<StoredTrustedAssetGrant | null>;
+
+  loadSessionAttachments(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      authority: AssetOwnerAuthority;
+      purpose: string;
+      attachments: readonly AssetAttachmentIntent[];
+    }>,
+  ): Promise<readonly StoredSessionAttachment[] | null>;
 }

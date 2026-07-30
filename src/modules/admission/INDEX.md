@@ -19,6 +19,15 @@ The application provider implements all four effect commands plus typed receipt 
 
 Session is the sole owner of immutable dispatch-publication evidence. Platform Admission is its only consumer through the Root-generated `session-dispatch-owner-evidence@v1` Connect contract. The adapter uses HTTP/2 mTLS with TLS 1.3, a five-second maximum deadline, 8 KiB request/response limits, no compression, and typed `found` / `not_found` outcomes. It preserves protobuf `uint64` values as decimal strings and fails closed unless the evidence reference, Site, Session, launch, run, authorization segment, and segment version match Platform-owned facts exactly. No browser, Site BFF, Admin, Agent, shared-secret, or legacy evidence path exists.
 
+The same private HTTP/2+mTLS process also hosts the Root-generated
+`platform-asset-eligibility@v1` read boundary for Session. Only the configured
+Session SAN may call it. Platform verifies the opaque delivered
+SessionAccessGrant, derives current Site/project/subject/generation facts,
+applies those facts to Asset forced-RLS, and resolves the exact immutable
+asset/version/grant tuple set in caller order. `chat.attachment` is the only
+accepted purpose; any stale, revoked, or cross-scope member rejects the whole
+set without revealing which owner check failed.
+
 RunRequest material uses a concrete RFC 9180 HPKE sealer: DHKEM(P-256, HKDF-SHA256), HKDF-SHA256 and AES-128-GCM.
 Production loads a strict bounded public-key ring, requires one active exact-audience revision, and binds key revision, audience,
 Site, Session, run, expiry and plaintext digest into authenticated data. The private key exists only in Session; there is no

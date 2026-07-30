@@ -46,7 +46,7 @@ deployables:
     activationAuthorized: false
     runtimeTraffic: false
     inboundContracts: []
-    declaredInboundContracts: [platform-admission-connect]
+    declaredInboundContracts: [platform-admission-connect, platform-asset-eligibility-connect]
     outboundContracts:
       [session-admission-owner-connect, session-dispatch-owner-evidence-connect, agent-execution-evidence-connect]
     secretClasses:

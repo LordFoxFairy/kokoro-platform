@@ -497,7 +497,9 @@ describe("independent deployable roles", () => {
     expect(manifest).toContain("credentialClass: platform-api");
     expect(manifest).toContain("credentialClass: platform-admission");
     expect(manifest).toContain("expectedUserEnvironmentVariable: PLATFORM_DATABASE_ADMISSION_ROLE");
-    expect(manifest).toContain("declaredInboundContracts: [platform-admission-connect]");
+    expect(manifest).toContain(
+      "declaredInboundContracts: [platform-admission-connect, platform-asset-eligibility-connect]",
+    );
     expect(manifest).toContain("credentialClass: platform-worker");
     expect(manifest).toContain("credentialClass: platform-model-gateway");
     expect(manifest).toContain("expectedUserEnvironmentVariable: PLATFORM_DATABASE_MODEL_GATEWAY_ROLE");

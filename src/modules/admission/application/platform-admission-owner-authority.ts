@@ -105,6 +105,8 @@ export interface AdmissionSessionGrantOwnerPort {
       runId: string;
       configurationRevisionId: string;
       credential: string;
+      environment: string;
+      region: string;
     }>,
   ): Promise<AdmissionOwnerResolution<Readonly<{
     subjectRef: string;
@@ -405,6 +407,8 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         runId: command.effect.proposedRunId,
         configurationRevisionId: site.value.configurationRevisionId,
         credential: command.effect.sessionAccessGrant,
+        environment: command.caller.environment,
+        region: command.caller.region,
       });
       if (sessionGrant.kind !== "resolved") return sessionGrant;
       const runtimePolicy = await this.#ports.runtimePolicy.resolve(transaction, {

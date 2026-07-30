@@ -141,6 +141,8 @@ export type AssetDataPlaneOperation =
 
 export type PlatformInternalOperation =
   | "admission.command"
+  | "asset.eligibility.check-active"
+  | "asset.eligibility.resolve"
   | "authorization.feed.read"
   | "authorization.snapshot.create"
   | "authorization.retention"
@@ -315,7 +317,8 @@ export function createPlatformDatabaseClient(
       work: (transaction: PlatformTransaction) => Promise<Result>,
     ) => {
       const allowed = config.role === "admission"
-        ? operation === "admission.command"
+        ? operation === "admission.command" || operation === "asset.eligibility.check-active" ||
+          operation === "asset.eligibility.resolve"
         : config.role === "worker"
           ? operation === "authorization.retention" ||
             operation === "commerce.outbox.reconcile" ||

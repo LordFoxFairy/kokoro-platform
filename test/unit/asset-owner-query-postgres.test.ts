@@ -73,4 +73,117 @@ describe("PostgresAssetOwnerQueryRepository", () => {
       revokePlatformTransaction(lease);
     }
   });
+
+  it("resolves an exact bounded attachment set in caller order from the current owner projection", async () => {
+    let statement = "";
+    let values: readonly unknown[] = [];
+    const sql: PlatformSqlTransaction = {
+      query: async <Row extends Record<string, unknown>>(query: string, parameters = []): Promise<readonly Row[]> => {
+        statement = query;
+        values = parameters;
+        return [{
+          ordinal: 1n,
+          assetRef: "asset_02",
+          assetVersionRef: "version_02",
+          assetGrantRef: "eligibility_02",
+          projectRef: "project_01",
+          purpose: "chat.attachment",
+          subjectGeneration: 4n,
+          eligibilityEpoch: 10n,
+          checksumSha256: "b".repeat(64),
+          safeDisplayName: "diagram.png",
+          detectedMediaType: "image/png",
+          size: 4321n,
+        }, {
+          ordinal: 2n,
+          assetRef: "asset_01",
+          assetVersionRef: "version_01",
+          assetGrantRef: "eligibility_01",
+          projectRef: "project_01",
+          purpose: "chat.attachment",
+          subjectGeneration: 4n,
+          eligibilityEpoch: 9n,
+          checksumSha256: "a".repeat(64),
+          safeDisplayName: "notes.txt",
+          detectedMediaType: "text/plain",
+          size: 1234n,
+        }] as unknown as readonly Row[];
+      },
+      execute: async () => 0,
+    };
+    const lease = issuePlatformTransaction(sql);
+    try {
+      const result = await new PostgresAssetOwnerQueryRepository().loadSessionAttachments(
+        lease.transaction,
+        {
+          authority: {
+            siteRef: "site_01", subjectRef: "subject_01", subjectGeneration: 4n,
+            projectRef: "project_01",
+          },
+          purpose: "chat.attachment",
+          attachments: [
+            { assetRef: "asset_02", assetVersionRef: "version_02", assetGrantRef: "eligibility_02" },
+            { assetRef: "asset_01", assetVersionRef: "version_01", assetGrantRef: "eligibility_01" },
+          ],
+        },
+      );
+      expect(result?.map((entry) => entry.assetRef)).toEqual(["asset_02", "asset_01"]);
+      expect(result?.[0]).toMatchObject({
+        checksumSha256: "b".repeat(64), safeDisplayName: "diagram.png",
+        detectedMediaType: "image/png", size: 4321n, eligibilityEpoch: 10n,
+      });
+      for (const fragment of [
+        "WITH ORDINALITY", "ORDER BY requested.ordinal", "resource.subject_ref=$2",
+        "resource.subject_generation=$3::bigint", "resource.project_ref=$4",
+        "resource.purpose=$5", "version.checksum_sha256", "intent.safe_display_name",
+        "resource.state='active'", "version.state='ready'", "eligibility.state='ready'",
+      ]) expect(statement).toContain(fragment);
+      expect(values).toEqual([
+        "site_01", "subject_01", 4n, "project_01", "chat.attachment",
+        ["asset_02", "asset_01"], ["version_02", "version_01"],
+        ["eligibility_02", "eligibility_01"],
+      ]);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("rejects the entire set when any exact attachment is stale, revoked, or cross-scope", async () => {
+    const sql: PlatformSqlTransaction = {
+      query: async <Row extends Record<string, unknown>>(): Promise<readonly Row[]> => [{
+        ordinal: 1n,
+        assetRef: "asset_01",
+        assetVersionRef: "version_01",
+        assetGrantRef: "eligibility_01",
+        projectRef: "project_01",
+        purpose: "chat.attachment",
+        subjectGeneration: 4n,
+        eligibilityEpoch: 9n,
+        checksumSha256: "a".repeat(64),
+        safeDisplayName: "notes.txt",
+        detectedMediaType: "text/plain",
+        size: 1234n,
+      }] as unknown as readonly Row[],
+      execute: async () => 0,
+    };
+    const lease = issuePlatformTransaction(sql);
+    try {
+      await expect(new PostgresAssetOwnerQueryRepository().loadSessionAttachments(
+        lease.transaction,
+        {
+          authority: {
+            siteRef: "site_01", subjectRef: "subject_01", subjectGeneration: 4n,
+            projectRef: "project_01",
+          },
+          purpose: "chat.attachment",
+          attachments: [
+            { assetRef: "asset_01", assetVersionRef: "version_01", assetGrantRef: "eligibility_01" },
+            { assetRef: "asset_02", assetVersionRef: "version_02", assetGrantRef: "eligibility_02" },
+          ],
+        },
+      )).resolves.toBeNull();
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
 });
