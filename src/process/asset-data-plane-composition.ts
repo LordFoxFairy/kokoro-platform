@@ -156,13 +156,18 @@ async function readBoundedFile(
   let handle;
   try {
     handle = await open(path, fileSystemConstants.O_RDONLY | fileSystemConstants.O_NOFOLLOW);
-    const metadata = await handle.stat();
+    const metadata = await handle.stat({ bigint: true });
     if (
-      !metadata.isFile() || metadata.size < 1 || metadata.size > maximumBytes ||
-      (privateFile && (metadata.mode & 0o077) !== 0)
+      !metadata.isFile() || metadata.size < 1n || metadata.size > BigInt(maximumBytes) ||
+      (privateFile && (metadata.mode & 0o077n) !== 0n)
     ) throw new Error("PLATFORM_ASSET_DATA_PLANE_FILE_INVALID");
     const value = await handle.readFile("utf8");
-    if (Buffer.byteLength(value, "utf8") > maximumBytes) {
+    const after = await handle.stat({ bigint: true });
+    if (
+      Buffer.byteLength(value, "utf8") > maximumBytes || !after.isFile() ||
+      metadata.dev !== after.dev || metadata.ino !== after.ino || metadata.size !== after.size ||
+      metadata.mode !== after.mode || metadata.mtimeNs !== after.mtimeNs || metadata.ctimeNs !== after.ctimeNs
+    ) {
       throw new Error("PLATFORM_ASSET_DATA_PLANE_FILE_INVALID");
     }
     return value;
