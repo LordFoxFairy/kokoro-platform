@@ -849,6 +849,13 @@ async function grantFoundationPrivileges(
       );
       await client.query(`GRANT SELECT ON TABLE ${ADMIN_TABLES} TO ${identifier}`);
       await client.query(`GRANT SELECT ON TABLE ${ASSET_TABLES} TO ${identifier}`);
+      await client.query(`GRANT SELECT ON TABLE ${MODEL_ADMIN_READ_TABLES} TO ${identifier}`);
+      await client.query(
+        `GRANT SELECT(import_id,source_digest,source_reference,counts,imported_at) ON TABLE platform.model_inventory_import TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT SELECT(import_id,provider_key,provider,account_key,adapter_kind,priority) ON TABLE platform.model_provider_snapshot TO ${identifier}`,
+      );
       await client.query(
         `GRANT INSERT ON TABLE platform.admin_command_decision, platform.admin_approval, platform.admin_approval_decision, platform.admin_post_effect_review, platform.admin_oidc_transaction, platform.admin_operator_session, platform.admin_step_up_transaction TO ${identifier}`,
       );
@@ -959,6 +966,20 @@ const CREDIT_ADMIN_READ_TABLES = [
   "platform.credit_usage_settlement",
   "platform.credit_rated_usage",
   "platform.credit_usage_settlement_source",
+].join(", ");
+
+const MODEL_ADMIN_READ_TABLES = [
+  "platform.model_inventory_pointer",
+  "platform.model_definition_snapshot",
+  "platform.model_provider_binding_snapshot",
+  "platform.model_product_route_snapshot",
+  "platform.model_provider_availability",
+  "platform.model_option_revision",
+  "platform.model_site_policy_revision",
+  "platform.model_site_assignment_revision",
+  "platform.model_site_policy_pointer",
+  "platform.site_release_model_catalog_publication",
+  "platform.site_release_model_catalog_surface",
 ].join(", ");
 
 const ASSET_RELATIONS = [
@@ -1314,7 +1335,7 @@ async function assertPostMigrationAuthority(
         (row.roleName === apiRole || row.roleName === admissionRole || row.roleName === adminRole) ||
       row.canExecuteAdminAuthorityChange !== (row.roleName === workerRole) ||
       row.hasRequiredModelOptionFunctions !== true ||
-      row.canSelectModelCatalogTable !== false ||
+      row.canSelectModelCatalogTable !== (row.roleName === adminRole) ||
       row.canReadModelSensitiveColumn !== false ||
       row.hasUnexpectedPlatformPrivilege !== false,
   ) ?? [];
@@ -1651,7 +1672,30 @@ const POST_MIGRATION_AUTHORITY_SQL = `
             AND has_function_privilege(runtime_role.rolname,'platform.materialize_model_options(uuid,text,text,text,text,jsonb,text)','EXECUTE')
             AND has_function_privilege(runtime_role.rolname,'platform.publish_site_release_model_catalog(uuid,jsonb,text)','EXECUTE')
           ELSE TRUE END AS "hasRequiredModelOptionFunctions"
-         ,EXISTS (
+         ,CASE WHEN runtime_role.rolname=$4 THEN
+           has_column_privilege(runtime_role.rolname,'platform.model_inventory_import','import_id','SELECT')
+           AND has_column_privilege(runtime_role.rolname,'platform.model_inventory_import','source_digest','SELECT')
+           AND has_column_privilege(runtime_role.rolname,'platform.model_inventory_import','source_reference','SELECT')
+           AND has_column_privilege(runtime_role.rolname,'platform.model_inventory_import','counts','SELECT')
+           AND has_column_privilege(runtime_role.rolname,'platform.model_inventory_import','imported_at','SELECT')
+           AND has_column_privilege(runtime_role.rolname,'platform.model_provider_snapshot','import_id','SELECT')
+           AND has_column_privilege(runtime_role.rolname,'platform.model_provider_snapshot','provider_key','SELECT')
+           AND has_column_privilege(runtime_role.rolname,'platform.model_provider_snapshot','provider','SELECT')
+           AND has_column_privilege(runtime_role.rolname,'platform.model_provider_snapshot','account_key','SELECT')
+           AND has_column_privilege(runtime_role.rolname,'platform.model_provider_snapshot','adapter_kind','SELECT')
+           AND has_column_privilege(runtime_role.rolname,'platform.model_provider_snapshot','priority','SELECT')
+           AND has_table_privilege(runtime_role.rolname,'platform.model_inventory_pointer','SELECT')
+           AND has_table_privilege(runtime_role.rolname,'platform.model_definition_snapshot','SELECT')
+           AND has_table_privilege(runtime_role.rolname,'platform.model_provider_binding_snapshot','SELECT')
+           AND has_table_privilege(runtime_role.rolname,'platform.model_product_route_snapshot','SELECT')
+           AND has_table_privilege(runtime_role.rolname,'platform.model_provider_availability','SELECT')
+           AND has_table_privilege(runtime_role.rolname,'platform.model_option_revision','SELECT')
+           AND has_table_privilege(runtime_role.rolname,'platform.model_site_policy_revision','SELECT')
+           AND has_table_privilege(runtime_role.rolname,'platform.model_site_assignment_revision','SELECT')
+           AND has_table_privilege(runtime_role.rolname,'platform.model_site_policy_pointer','SELECT')
+           AND has_table_privilege(runtime_role.rolname,'platform.site_release_model_catalog_publication','SELECT')
+           AND has_table_privilege(runtime_role.rolname,'platform.site_release_model_catalog_surface','SELECT')
+         ELSE EXISTS (
            SELECT 1 FROM pg_class model_relation
            WHERE model_relation.relnamespace=platform_schema.oid
              AND model_relation.relname=ANY(ARRAY[
@@ -1665,9 +1709,9 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                'site_release_model_catalog_option'
              ])
              AND has_table_privilege(runtime_role.rolname,model_relation.oid,'SELECT')
-         ) AS "canSelectModelCatalogTable"
-         ,(has_any_column_privilege(runtime_role.rolname,'platform.model_inventory_import','SELECT')
-           OR has_any_column_privilege(runtime_role.rolname,'platform.model_provider_snapshot','SELECT'))
+         ) END AS "canSelectModelCatalogTable"
+         ,(has_column_privilege(runtime_role.rolname,'platform.model_inventory_import','canonical_payload','SELECT')
+           OR has_column_privilege(runtime_role.rolname,'platform.model_provider_snapshot','secret_ref','SELECT'))
            AS "canReadModelSensitiveColumn"
          ,EXISTS (
            SELECT 1

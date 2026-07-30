@@ -91,6 +91,8 @@ import { PostgresControlCommandReceiptTimestampReader } from
   "../modules/admin/infrastructure/postgres/control-command-receipt-reader.js";
 import { createProductModelOptionAdministrationComposition } from
   "./model-option-admin-composition.js";
+import { PostgresModelControlAdminReader } from
+  "../modules/model-control/infrastructure/postgres/model-control-admin-reader.js";
 
 export type AdminRequestListener = (
   request: Http2ServerRequest,
@@ -266,6 +268,8 @@ export async function createAdminProductionComposition(input: Readonly<{
     },
     resolver,
     receipts: controlReceiptTimestamps,
+    reader: new PostgresModelControlAdminReader(input.database),
+    cursors,
   });
   const connect = connectNodeAdapter({
     routes: (router) => {

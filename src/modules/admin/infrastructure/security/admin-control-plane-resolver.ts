@@ -647,7 +647,9 @@ function sameStrings(left: readonly string[], right: readonly string[]): boolean
 }
 
 function permissionFor(operation: string): string {
-  return operation === "admin.authority.change" ? "admin.authority.manage" : operation;
+  if (operation === "admin.authority.change") return "admin.authority.manage";
+  if (operation.startsWith("model.") && operation.endsWith(".read")) return "model.read";
+  return operation;
 }
 
 function requestIdentifier(value: string): string {

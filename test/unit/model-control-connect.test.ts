@@ -59,11 +59,24 @@ import { CommandReceiptConflictError } from
 const transport = {} as HandlerContext;
 const verifiedContext = Object.freeze({}) as VerifiedRequestSecurityContext;
 const recordedAt = "2026-07-29T12:02:00.000Z";
+const unexpectedRead = vi.fn(async () => { throw new Error("unexpected model read"); });
+const readDependencies = {
+  reader: {
+    listInventoryRevisions: unexpectedRead, getInventoryRevision: unexpectedRead,
+    listInventoryProviders: unexpectedRead, listInventoryModels: unexpectedRead,
+    listInventoryBindings: unexpectedRead, listInventoryProductRoutes: unexpectedRead,
+    listModelOptions: unexpectedRead, listSiteModelPolicies: unexpectedRead,
+    listSiteReleaseCatalogs: unexpectedRead,
+  },
+  cursors: { encode: vi.fn(() => "page-token"), decode: vi.fn(() => ({})) },
+};
+const resolveUnexpectedRead = vi.fn(async () => { throw new Error("unexpected model read"); });
 
 describe("ModelControl Connect provider", () => {
   it("maps every typed command to its owner under the required global or exact-Site scope", async () => {
     const owners = ownerDoubles();
     const resolver = {
+      resolve: resolveUnexpectedRead,
       resolveModelControlCommand: vi.fn(async (
         _claimed: unknown,
         _transport: HandlerContext,
@@ -71,7 +84,7 @@ describe("ModelControl Connect provider", () => {
       ) => ({ context: verifiedContext, axes })),
     };
     const receipts = { read: vi.fn(async () => recordedAt) };
-    const service = createModelControlConnectService({ owners, resolver, receipts });
+    const service = createModelControlConnectService({ owners, resolver, receipts, ...readDependencies });
 
     const imported = await service.importInventory(importRequest(), transport);
     const activated = await service.activateInventory(activationRequest(), transport);
@@ -189,9 +202,11 @@ describe("ModelControl Connect provider", () => {
     const service = createModelControlConnectService({
       owners,
       resolver: {
+        resolve: resolveUnexpectedRead,
         resolveModelControlCommand: vi.fn(async () => ({ context: verifiedContext, axes })),
       },
       receipts: { read: vi.fn(async () => recordedAt) },
+      ...readDependencies,
     });
 
     await expect(service.activateInventory(request, transport))
@@ -204,9 +219,11 @@ describe("ModelControl Connect provider", () => {
     const service = createModelControlConnectService({
       owners,
       resolver: {
+        resolve: resolveUnexpectedRead,
         resolveModelControlCommand: vi.fn(async () => ({ context: verifiedContext, axes })),
       },
       receipts: { read: vi.fn(async () => recordedAt) },
+      ...readDependencies,
     });
 
     await service.importInventory(importRequest(false), transport);
@@ -224,9 +241,11 @@ describe("ModelControl Connect provider", () => {
     const service = createModelControlConnectService({
       owners,
       resolver: {
+        resolve: resolveUnexpectedRead,
         resolveModelControlCommand: vi.fn(async () => ({ context: verifiedContext, axes })),
       },
       receipts: { read: vi.fn(async () => recordedAt) },
+      ...readDependencies,
     });
 
     const error = await Promise.resolve(service.activateInventory(activationRequest(), transport))
@@ -243,9 +262,11 @@ describe("ModelControl Connect provider", () => {
     const service = createModelControlConnectService({
       owners,
       resolver: {
+        resolve: resolveUnexpectedRead,
         resolveModelControlCommand: vi.fn(async () => ({ context: verifiedContext, axes })),
       },
       receipts: { read: vi.fn(async () => recordedAt) },
+      ...readDependencies,
     });
 
     await expect(service.activateInventory(activationRequest(), transport)).rejects.toBe(cause);
