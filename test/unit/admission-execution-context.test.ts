@@ -23,7 +23,11 @@ const ownerFacts: VerifiedGaRunRequestOwnerFacts = {
   input: { message_id: "message-1", content: "hello" },
   runtime: {
     agent_type: "general",
-    model: { provider: "anthropic", name: "claude-sonnet" },
+    model: {
+      provider: "anthropic",
+      name: "claude-sonnet",
+      authorization_handle: `model-authorization:sha256:${"f".repeat(64)}`,
+    },
     tools: [],
     skills: [],
     mcp_servers: [],

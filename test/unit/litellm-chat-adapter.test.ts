@@ -98,7 +98,13 @@ describe("LiteLlmChatAdapter", () => {
     expect(new TextDecoder().decode(outcome.kind === "failed" ? outcome.responseBody : new Uint8Array()))
       .not.toContain("provider-secret-detail");
     if (outcome.kind === "failed") {
-      expect(outcome.sourceDigest).toBe(createHash("sha256").update(outcome.responseBody).digest("hex"));
+      expect(outcome.responseDigest).toBe(
+        createHash("sha256").update(outcome.responseBody).digest("hex"),
+      );
+      expect(outcome.sourceDigest).toBe(
+        createHash("sha256").update("provider-secret-detail").digest("hex"),
+      );
+      expect(outcome.responseDigest).not.toBe(outcome.sourceDigest);
     }
   });
 
@@ -126,7 +132,9 @@ function request() {
   return {
     protocol: "openai.chat.completions.v1" as const,
     model: "chat-primary",
-    messages: [{ role: "user" as const, content: "hello" }],
+    messages: [{ role: "user" as const, content: "hello", toolCalls: [] }],
     maxOutputTokens: 128,
+    tools: [],
+    toolChoice: "none" as const,
   };
 }

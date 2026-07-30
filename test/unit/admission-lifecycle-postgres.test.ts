@@ -101,7 +101,14 @@ const prepareInput: Parameters<AdmissionLifecycleOwnerPort["prepare"]>[1] = {
     input: { message_id: "message-1", content: "private prompt must not be persisted" },
     runtime: {
       agent_type: "general",
-      model: { provider: "litellm", name: "claude-code", effort: "medium" },
+      model: {
+        provider: "litellm",
+        name: "claude-code",
+        effort: "medium",
+        authorization_handle: `model-authorization:sha256:${createHash("sha256").update(
+          `kokoro.model-gateway.authorization.v1\0${"c".repeat(64)}`,
+        ).digest("hex")}`,
+      },
       tools: ["read_file"], skills: [], mcp_servers: [], subagents: [], backend: "state",
       permissions: {
         approval_tools: [], review_tools: [], subagent_create: "deny",

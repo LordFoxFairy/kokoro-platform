@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   ModelGatewayService,
   type ModelGatewayInvocationRecord,
+  type ModelGatewayProviderPort,
   type ModelGatewayRepository,
+  type ModelGatewayRequest,
   type ModelGatewayUnitOfWork,
   type ModelInvocationAuthorization,
   type PreparedModelProviderRequest,
@@ -27,6 +29,7 @@ describe("ModelGatewayService", () => {
       responseBody: bytes({ id: "provider-response", choices: [{ message: { content: "hello" } }] }),
       usage: [{ dimensionKey: "input_tokens", sourceUnit: "tokens", quantity: 12n },
         { dimensionKey: "output_tokens", sourceUnit: "tokens", quantity: 4n }],
+      responseDigest: digest(bytes({ id: "provider-response", choices: [{ message: { content: "hello" } }] })),
       sourceDigest: digest(bytes({ id: "provider-response", choices: [{ message: { content: "hello" } }] })),
       occurredAt: "2029-01-01T00:00:01.000Z",
     });
@@ -105,6 +108,7 @@ describe("ModelGatewayService", () => {
         kind: "succeeded",
         responseBody: bytes({ id: "provider-response", choices: [] }),
         usage: null,
+        responseDigest: digest(bytes({ id: "provider-response", choices: [] })),
         sourceDigest: digest(bytes({ id: "provider-response", choices: [] })),
         occurredAt: "2029-01-01T00:00:01.000Z",
       }),
@@ -265,12 +269,14 @@ function invocation(overrides: Partial<Parameters<ModelGatewayService["invoke"]>
   };
 }
 
-function request() {
+function request(): ModelGatewayRequest {
   return {
-    protocol: "openai.chat.completions.v1" as const,
+    protocol: "openai.chat.completions.v1",
     model: "chat-primary",
-    messages: [{ role: "user" as const, content: "hello" }],
+    messages: [{ role: "user", content: "hello", toolCalls: [] }],
     maxOutputTokens: 128,
+    tools: [],
+    toolChoice: "none",
   };
 }
 
@@ -314,7 +320,7 @@ class MemoryRepository implements ModelGatewayRepository {
 
 function providerAdapter(events: string[], outcome: Awaited<ReturnType<PreparedModelProviderRequest["invoke"]>>) {
   return {
-    prepare(requested: ReturnType<typeof request>): PreparedModelProviderRequest {
+    prepare(requested: ModelGatewayRequest): PreparedModelProviderRequest {
       const body = bytes(requested);
       return {
         gatewayModel: requested.model,
@@ -329,7 +335,7 @@ function providerAdapter(events: string[], outcome: Awaited<ReturnType<PreparedM
         },
       };
     },
-  };
+  } satisfies ModelGatewayProviderPort;
 }
 
 function usageOwner(events: string[], options: { prepareKind?: "invalid_state" } = {}) {
@@ -366,6 +372,7 @@ function successfulProviderOutcome() {
     responseBody: bytes({ id: "provider-response", choices: [] }),
     usage: [{ dimensionKey: "input_tokens", sourceUnit: "tokens", quantity: 1n },
       { dimensionKey: "output_tokens", sourceUnit: "tokens", quantity: 1n }],
+    responseDigest: digest(bytes({ id: "provider-response", choices: [] })),
     sourceDigest: digest(bytes({ id: "provider-response", choices: [] })),
     occurredAt: "2029-01-01T00:00:01.000Z",
   };
