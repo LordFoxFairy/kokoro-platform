@@ -324,10 +324,8 @@ function creditWindow(bucket: "daily" | "period" | "permanent", rolloverPolicy: 
     expiresAfterSeconds: expiry });
 }
 function canonicalIanaZone(value: string): boolean {
-  if (value.length < 1 || value.length > 64 ||
-      !/^(?:UTC|[A-Za-z][A-Za-z0-9._+-]*(?:\/[A-Za-z][A-Za-z0-9._+-]*)+)$/u.test(value)) return false;
-  try { new Intl.DateTimeFormat("en-US", { timeZone: value }); return true; }
-  catch { return false; }
+  return value.length >= 1 && value.length <= 64 &&
+    /^(?:UTC|[A-Za-z][A-Za-z0-9._+-]*(?:\/[A-Za-z][A-Za-z0-9._+-]*)+)$/u.test(value);
 }
 function capabilityKey(value: string): string {
   if (!/^[a-z0-9][a-z0-9._:-]{0,127}$/u.test(value)) {

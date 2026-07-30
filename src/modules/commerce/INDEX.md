@@ -52,6 +52,12 @@ Platform through HTTP/RPC and never exposes a Prisma client to application code.
 - CreditProgram and EntitlementTemplate prerequisites have independent publish/list/get operations. Publication writes an immutable
   Site-scoped revision, its canonical content digest, command receipt and audit entry in one Platform transaction. Credit scope is a
   typed policy (surface, capability and Agent sets), and daily/period window facts are complete-or-rejected before persistence.
+- Display labels have the same fail-closed rule at the protobuf, application, read-projection, and PostgreSQL boundaries: 1–160
+  Unicode code points, exact NFC, no boundary Unicode space separator, and no Cc/Cf/Zl/Zp character. All four persisted label columns
+  call one database validator whose category table is pinned to Unicode 17.0.
+- The application rejects malformed calendar-zone syntax early, but PostgreSQL `pg_timezone_names.name` is the final IANA authority
+  before a catalog epoch can be allocated. Persisted recurring windows use the same database authority; Node/ICU support is never
+  allowed to redefine the catalog.
 - `PublishOffer` freezes Product, optional PlanVersion, ordered FulfillmentProgram outputs, ProductVersion and legal references in
   one transaction. Output ordinals are contiguous, line ids are unique, and product/plan/output shape is checked before persistence.
 - Code batches follow `draft -> active -> suspended -> revoked`, with `draft -> abandoned` as recovery when the one-time secret

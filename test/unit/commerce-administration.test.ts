@@ -63,7 +63,7 @@ describe("CommerceAdministrationService", () => {
   });
 
   it.each([
-    ["Not/AZone", "daily@00:00:00"],
+    ["Not A Zone", "daily@00:00:00"],
     ["America/New_York", "daily@24:00:00"],
     ["America/New_York", "subscription-term-start"],
   ])("rejects a non-executable daily window (%s, %s)", async (calendarZone, windowAnchor) => {
@@ -86,7 +86,37 @@ describe("CommerceAdministrationService", () => {
     expect(publish).not.toHaveBeenCalled();
   });
 
-  it.each(["Premium\u202Echat", "Premium\nchat", "Cafe\u0301", " Premium chat"])(
+  it("uses PostgreSQL pg_timezone_names as the final recurring-window authority", async () => {
+    const identity = { commandId: "00000000-0000-7000-8000-000000000228",
+      environment: "production", region: "us-east-1", callerIdentity: "admin-1:operator-maker",
+      operation: "commerce.credit-program.publish", idempotencyKey: "credit-zone-db",
+      requestDigest: "a".repeat(64) };
+    const statements: string[] = [];
+    const lease = issuePlatformTransaction({ execute: async (statement) => { statements.push(statement); return 0; },
+      query: async (statement) => { statements.push(statement);
+        if (statement.includes("FROM platform.command_receipt")) return [{ ...identity,
+          state: "pending", result: null, resultDigest: null,
+          recordedAt: "2026-07-30T01:00:00.000Z" }] as never;
+        if (statement.includes("pg_timezone_names")) return [{ valid: false }] as never;
+        throw new Error("MUST_NOT_ALLOCATE_OR_WRITE");
+      } });
+    try {
+      await expect(new PostgresCommerceAdministrationRepository().publishCreditProgramRevision(
+        lease.transaction, { siteId: "site-1", subjectId: "operator-maker", subjectGeneration: "1",
+          command: identity, creditProgramRevisionRef: "daily-v1", programRef: "daily", revision: "1",
+          uxBucketClass: "daily", unit: "kokoro-credit", amount: "25", burnPriority: 100,
+          scopePolicy: { version: 1, surfaceRefs: ["chat"], capabilityKeys: ["model.chat"],
+            agentRefs: [], allowUnattributedAgent: true }, liabilityMerchantAccountRef: "merchant:main",
+          windowKind: "daily", rolloverPolicy: "none", calendarZone: "Not/AZone",
+          windowAnchor: "daily@00:00:00", expiresAfterSeconds: "86400", revisionDigest: "b".repeat(64) },
+      )).rejects.toThrow("COMMERCE_CREDIT_CALENDAR_ZONE_INVALID");
+      expect(statements.some((statement) => statement.includes("pg_catalog.pg_timezone_names"))).toBe(true);
+      expect(statements.some((statement) => statement.includes("commerce_catalog_epoch_authority"))).toBe(false);
+    } finally { revokePlatformTransaction(lease); }
+  });
+
+  it.each(["Premium\u202Echat", "Premium\nchat", "Cafe\u0301", " Premium chat",
+    "Premium chat\u00A0", "Premium\u00ADchat", "Premium\u2029chat"])(
     "rejects an unsafe or non-NFC display label (%s)", async (safeLabel) => {
       const publish = vi.fn();
       const service = new CommerceAdministrationService({

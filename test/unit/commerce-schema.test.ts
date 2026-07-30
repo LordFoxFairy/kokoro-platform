@@ -17,6 +17,14 @@ const migrator = readFileSync(
   new URL("../../src/infrastructure/postgres/migrator.ts", import.meta.url),
   "utf8",
 );
+const commerceReader = readFileSync(
+  new URL("../../src/modules/commerce/infrastructure/postgres/commerce-administration-reader.ts", import.meta.url),
+  "utf8",
+);
+const commerceService = readFileSync(
+  new URL("../../src/modules/commerce/application/services/commerce-administration.ts", import.meta.url),
+  "utf8",
+);
 const compactMigration = migration.replace(/\s+/gu, " ");
 
 describe("Wave 2A Commerce authority schema", () => {
@@ -190,10 +198,22 @@ describe("Wave 2A Commerce authority schema", () => {
     expect(migration).toContain("rollover_policy TEXT NOT NULL CHECK(rollover_policy='none')");
     expect(migration).toContain("window_anchor ~ '^daily@");
     expect(migration).toContain("window_anchor='subscription-term-start'");
-    expect(migration).toContain("calendar_zone ~ '^(UTC|");
-    expect(migration).toContain("safe_label IS NFC NORMALIZED");
-    expect(migration).toContain("safe_label !~ '[[:cntrl:]]'");
+    expect(migration).toContain("platform.commerce_iana_zone_is_valid(calendar_zone)");
+    expect(migration).toContain("FROM pg_catalog.pg_timezone_names WHERE name=zone");
+    expect(migration).not.toContain("calendar_zone ~ '^(UTC|");
+    expect(commerceReader).not.toContain("Intl.DateTimeFormat");
+    expect(commerceService).not.toContain("Intl.DateTimeFormat");
     expect(migration).not.toContain("bucket_spend_order");
+  });
+
+  it("uses one Unicode-complete safe-label authority for every persisted label", () => {
+    expect(migration).toContain("CREATE FUNCTION platform.commerce_safe_label_is_valid(value TEXT)");
+    expect(migration).toContain("value IS NFC NORMALIZED");
+    expect(migration).toContain("generate_series(1,char_length(value))");
+    expect(migration).toContain("code_point BETWEEN 127 AND 159");
+    expect(migration).toContain("code_point BETWEEN 917536 AND 917631");
+    expect(migration.match(/CHECK\(platform\.commerce_safe_label_is_valid\(safe_label\)\)/gu) ?? [])
+      .toHaveLength(4);
   });
 
   it("assembles explicit API/admin privileges while PUBLIC remains revoked", () => {
