@@ -207,6 +207,7 @@ deployables:
         admin-session-jose-key-ring,
         admin-page-cursor-key,
         authorization-event-signing-keyring,
+        site-release-certification-verification-keyring,
       ]
     audience: platform-admin
     scalingKey: admin-command-concurrency
@@ -246,3 +247,27 @@ deployables:
     sloOwner: platform-data
     runbookOwner: platform-data
     releaseOwner: platform-data
+
+  - id: platform-admin-authority-bootstrap
+    command: node --conditions=kokoro-runtime dist/src/process/admin-authority-bootstrap.js --file /run/secrets/kokoro/admin-authority-bootstrap.json
+    processRole: bootstrap
+    database:
+      environmentVariable: DATABASE_URL_PLATFORM
+      expectedUserEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
+      migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
+      expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
+      credentialClass: platform-migrator
+      permissions: sealed-initial-admin-authority-only
+      runtimeTraffic: forbidden
+    inboundContracts: []
+    activationAuthorized: false
+    runtimeTraffic: false
+    outboundContracts: []
+    secretClasses: [platform-migrator-database, initial-admin-authority-document]
+    audience: platform-admin-authority-bootstrap
+    scalingKey: fresh-install-singleton
+    readiness: one-shot-sealed-exit-code
+    drain: transaction-completion
+    sloOwner: platform-security
+    runbookOwner: platform-security
+    releaseOwner: platform-security

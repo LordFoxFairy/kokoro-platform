@@ -551,6 +551,10 @@ describe("independent deployable roles", () => {
     expect(manifest).toContain("expectedUserEnvironmentVariable: PLATFORM_DATABASE_AUTHORIZATION_ROLE");
     expect(manifest).toContain("credentialClass: platform-admin");
     expect(manifest).toContain("credentialClass: platform-migrator");
+    expect(manifest).toContain("id: platform-admin-authority-bootstrap");
+    expect(manifest).toContain("initial-admin-authority-document");
+    expect(manifest).toContain("site-release-certification-verification-keyring");
+    expect(entrypoint).not.toContain('"platform-admin-authority-bootstrap"');
   });
 });
 
