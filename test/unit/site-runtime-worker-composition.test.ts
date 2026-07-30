@@ -4,9 +4,11 @@ import { createSiteRuntimeWorkerProductionComposition } from "../../src/process/
 
 describe("Site runtime worker production composition", () => {
   it("fails closed when the provider registry is not explicitly configured", async () => {
-    await expect(createSiteRuntimeWorkerProductionComposition({ database: {} as never, environment: {
-      PLATFORM_SITE_WORKER_ID: "site-worker-01",
-    } })).rejects.toThrow("PLATFORM_SITE_PROVIDER_REGISTRY_FILE_REQUIRED");
+    await expect(createSiteRuntimeWorkerProductionComposition({
+      database: {} as never,
+      workerId: "site-worker-01",
+      environment: {},
+    })).rejects.toThrow("PLATFORM_SITE_PROVIDER_REGISTRY_FILE_REQUIRED");
   });
 
   it("is wired into the production worker lifecycle with lease draining", async () => {

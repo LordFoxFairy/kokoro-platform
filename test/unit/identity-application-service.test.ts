@@ -27,10 +27,13 @@ const commandId = "1".repeat(32);
 describe("Identity launch application service", () => {
   it("freezes legal evidence and queues only a sealed verification envelope", async () => {
     let created: Parameters<IdentityRepository["createVerification"]>[1] | undefined;
+    let delivery: Parameters<IdentityRepository["recordVerificationDelivery"]>[1] | undefined;
     let outboxPayload: unknown;
     const repository = {
       async createVerification(_transaction: unknown, input: NonNullable<typeof created>) { created = input; return "created" as const; },
-      async recordVerificationDelivery() {},
+      async recordVerificationDelivery(_transaction: unknown, input: NonNullable<typeof delivery>) {
+        delivery = input;
+      },
     } as unknown as IdentityRepository;
     const receipts = pendingReceipts();
     const references = [
@@ -58,10 +61,50 @@ describe("Identity launch application service", () => {
     expect(created?.emailNormalized).toBe("person@example.com");
     expect(created?.legalAcceptances.map((item) => item.termRef)).toEqual(["privacy-v1", "terms-v1"]);
     expect(created?.acceptedAt).toBe("2026-07-29T00:00:00.000Z");
+    expect(delivery?.credentialRevision).toBe(0);
+    expect(outboxPayload).toMatchObject({ credentialRevision: 0 });
     const serialized = JSON.stringify(outboxPayload);
     expect(serialized).not.toContain("person@example.com");
     expect(serialized).not.toContain("correct horse battery staple");
     expect(serialized).not.toContain("verification-secret");
+  });
+
+  it("fences resend delivery to the rotated credential revision", async () => {
+    let rotation: Parameters<IdentityRepository["rotateVerificationSecret"]>[1] | undefined;
+    let delivery: Parameters<IdentityRepository["recordVerificationDelivery"]>[1] | undefined;
+    let outboxPayload: unknown;
+    const repository = {
+      async findPendingVerificationByEmail() {
+        return {
+          transactionRef: "verification-1", accountRef: "account-1", subjectRef: "subject-1",
+          emailNormalized: "person@example.com", passwordHash: "$argon2id$stored", pepperVersion: 1,
+          secretDigest: "b".repeat(64), state: "pending" as const, attemptCount: 0, maxAttempts: 8,
+          resendCount: 2, expiresAt: "2026-07-28T23:00:00.000Z",
+          lastDeliveryAt: "2026-07-28T23:00:00.000Z",
+        };
+      },
+      async rotateVerificationSecret(_transaction: unknown, input: NonNullable<typeof rotation>) {
+        rotation = input;
+      },
+      async recordVerificationDelivery(_transaction: unknown, input: NonNullable<typeof delivery>) {
+        delivery = input;
+      },
+    } as unknown as IdentityRepository;
+    const service = createService({
+      repository,
+      receipts: pendingReceipts(),
+      references: ["018f1111-1111-7111-8111-111111111111", "delivery-3"],
+      outbox: { async enqueue(_transaction, event) { outboxPayload = event.payload; } },
+    });
+
+    await service.resendEmailVerification({
+      workload: workload as never, context, commandId, idempotencyKey: "r".repeat(16),
+      email: "person@example.com",
+    });
+
+    expect(rotation?.expectedResendCount).toBe(2);
+    expect(delivery?.credentialRevision).toBe(3);
+    expect(outboxPayload).toMatchObject({ credentialRevision: 3 });
   });
 
   it("delivers a credential pair once and never replays it on an exact retry", async () => {

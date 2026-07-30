@@ -173,11 +173,16 @@ describe("outbox retry bounds", () => {
     } });
     try {
       await new OutboxRepository().renewLease(lease.transaction, {
-        eventId: "event-01", leaseToken: "lease-01", leaseSeconds: 30,
+        eventId: "event-01", leaseToken: "lease-01", workerId: "worker-a",
+        owner: "identity", leaseSeconds: 30,
       });
-      expect(executions[0]?.statement).toContain("state='leased' AND lease_token=$2");
+      expect(executions[0]?.statement).toContain(
+        "state='leased' AND lease_token=$2 AND lease_owner=$3 AND owner=$4",
+      );
       expect(executions[0]?.statement).toContain("lease_expires_at=now()+make_interval");
-      expect(executions[0]?.values).toEqual(["event-01", "lease-01", 30]);
+      expect(executions[0]?.values).toEqual([
+        "event-01", "lease-01", "worker-a", "identity", 30,
+      ]);
     } finally { revokePlatformTransaction(lease); }
   });
 
@@ -199,6 +204,33 @@ describe("outbox retry bounds", () => {
         statement: expect.stringContaining("lease_owner=$1"),
         values: ["admin-worker-01", ["admin-execution"]],
       });
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("never returns another worker instance's leases", async () => {
+    const executions: Array<{ statement: string; values: readonly unknown[] }> = [];
+    const lease = issuePlatformTransaction({
+      query: async () => [],
+      execute: async (statement, values = []) => {
+        executions.push({ statement, values });
+        return 1;
+      },
+    });
+    try {
+      const repository = new OutboxRepository();
+      await repository.releaseOwnedLeases(lease.transaction, {
+        workerId: "worker-a", consumer: "identity-worker",
+      });
+      await repository.releaseOwnedLeases(lease.transaction, {
+        workerId: "worker-b", consumer: "identity-worker",
+      });
+      expect(executions).toEqual([
+        expect.objectContaining({ values: ["worker-a", ["identity"]] }),
+        expect.objectContaining({ values: ["worker-b", ["identity"]] }),
+      ]);
+      expect(executions[0]?.statement).toContain("lease_owner=$1 AND owner=ANY($2::text[])");
     } finally {
       revokePlatformTransaction(lease);
     }

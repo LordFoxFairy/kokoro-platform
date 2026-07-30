@@ -666,6 +666,9 @@ describe("independent deployable roles", () => {
       "declaredInboundContracts: [platform-admission-connect, platform-asset-eligibility-connect]",
     );
     expect(manifest).toContain("credentialClass: platform-worker");
+    expect(manifest).toContain("identity-verification-delivery-https");
+    expect(manifest).toContain("identity-audit-digest-key");
+    expect(manifest).toContain("identity-delivery-hmac-key");
     expect(manifest).toContain("credentialClass: platform-model-gateway");
     expect(manifest).toContain("expectedUserEnvironmentVariable: PLATFORM_DATABASE_MODEL_GATEWAY_ROLE");
     expect(manifest).toContain("platform-model-gateway-reconciliation-https");
@@ -711,6 +714,7 @@ function authority(roleName: string): Record<string, unknown> {
     ownsPlatformRelation: false,
     ownsPlatformFunction: false,
     hasRequiredPlatformWrites: true,
+    hasIdentityOutboxConsumerAuthority: roleName === "platform_worker",
     canExecuteModelInventoryImport: roleName === "platform_admin",
     canExecuteModelInventoryActivate: roleName === "platform_admin",
     canExecuteModelSitePolicyChange: roleName === "platform_admin",

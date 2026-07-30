@@ -125,8 +125,10 @@ deployables:
     inboundContracts: []
     activationAuthorized: false
     runtimeTraffic: false
-    outboundContracts: []
-    secretClasses: [platform-worker-database, authorization-event-signing-keyring]
+    outboundContracts: [identity-verification-delivery-https]
+    secretClasses:
+      [platform-worker-database, authorization-event-signing-keyring,
+       identity-audit-digest-key, identity-delivery-hmac-key]
     audience: platform-worker
     scalingKey: queue-lag
     readiness: process-state

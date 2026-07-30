@@ -185,6 +185,7 @@ export type PlatformInternalOperation =
   | "authorization.snapshot.create"
   | "authorization.retention"
   | "commerce.outbox.reconcile"
+  | "identity.outbox.consume"
   | "asset.outbox.consume"
   | "site.runtime.consume"
   | "admin.execution.claim"
@@ -357,6 +358,7 @@ export function createPlatformDatabaseClient(
         : config.role === "worker"
           ? operation === "authorization.retention" ||
             operation === "commerce.outbox.reconcile" ||
+            operation === "identity.outbox.consume" ||
             operation === "asset.outbox.consume" ||
             operation === "site.runtime.consume" ||
             operation === "admin.execution.claim" ||
@@ -869,6 +871,7 @@ interface RuntimeIdentity {
   ownsPlatformRelation: boolean;
   ownsPlatformFunction: boolean;
   hasRequiredPlatformWrites: boolean;
+  hasIdentityOutboxConsumerAuthority: boolean;
   canExecuteModelInventoryImport: boolean;
   canExecuteModelInventoryActivate: boolean;
   canExecuteModelSitePolicyChange: boolean;
@@ -1360,6 +1363,51 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_table_privilege(current_user, 'platform.asset_eligibility_projection', 'SELECT')
            AND has_table_privilege(current_user, 'platform.asset_promotion_receipt', 'SELECT')
          END AS "hasRequiredPlatformWrites",
+         CASE WHEN $2 = 'worker' THEN
+           has_column_privilege(current_user, 'platform.identity_verification_transaction', 'site_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_verification_transaction', 'transaction_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_verification_transaction', 'state', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_verification_transaction', 'resend_count', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_verification_transaction', 'expires_at', 'SELECT')
+           AND NOT has_column_privilege(current_user, 'platform.identity_verification_transaction', 'email_normalized', 'SELECT')
+           AND NOT has_column_privilege(current_user, 'platform.identity_verification_transaction', 'secret_digest', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_verification_delivery', 'event_id', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_verification_delivery', 'site_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_verification_delivery', 'transaction_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_verification_delivery', 'credential_revision', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_verification_delivery', 'state', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_verification_delivery', 'state', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.identity_verification_delivery', 'attempt_count', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.identity_verification_delivery', 'delivered_at', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.identity_verification_delivery', 'failed_at', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.identity_verification_delivery', 'superseded_at', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.identity_verification_delivery', 'last_error_code', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.identity_verification_delivery', 'updated_at', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.identity_personal_bootstrap', 'site_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_personal_bootstrap', 'subject_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_personal_bootstrap', 'workspace_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_personal_bootstrap', 'project_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_personal_bootstrap', 'execution_space_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_personal_bootstrap', 'execution_namespace', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_personal_bootstrap', 'namespace_intent_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_execution_space', 'site_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_execution_space', 'execution_space_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_execution_space', 'project_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_execution_space', 'execution_namespace', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_execution_space', 'state', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_execution_space', 'state', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.identity_execution_space', 'updated_at', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.identity_namespace_allocation_intent', 'intent_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_namespace_allocation_intent', 'event_id', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_namespace_allocation_intent', 'site_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_namespace_allocation_intent', 'execution_space_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_namespace_allocation_intent', 'execution_namespace', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_namespace_allocation_intent', 'state', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.identity_namespace_allocation_intent', 'state', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.identity_namespace_allocation_intent', 'attempt_count', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.identity_namespace_allocation_intent', 'last_error_code', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.identity_namespace_allocation_intent', 'updated_at', 'UPDATE')
+         ELSE FALSE END AS "hasIdentityOutboxConsumerAuthority",
          has_function_privilege(current_user, 'platform.import_model_inventory(uuid,text,text,jsonb,jsonb,text)', 'EXECUTE')
            AS "canExecuteModelInventoryImport",
          has_function_privilege(current_user, 'platform.activate_model_inventory(uuid,text,bigint,text)', 'EXECUTE')
@@ -1694,7 +1742,9 @@ const RUNTIME_IDENTITY_SQL = `
                    OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
                      'outbox_event','site','site_release','site_deployment_binding',
                      'site_activation_attempt','site_traffic_stop_attempt','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_site',
-                     'authorization_site_release','authorization_product_binding'
+                     'authorization_site_release','authorization_product_binding',
+                     'identity_verification_delivery','identity_execution_space',
+                     'identity_namespace_allocation_intent'
                    ]))
                    OR ($2 = 'api' AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
                    OR ($2 = 'asset-data-plane' AND
@@ -1792,7 +1842,9 @@ const RUNTIME_IDENTITY_SQL = `
                    OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
                      'outbox_event','site','site_release','site_deployment_binding',
                      'site_activation_attempt','site_traffic_stop_attempt','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_site',
-                     'authorization_site_release','authorization_product_binding'
+                     'authorization_site_release','authorization_product_binding',
+                     'identity_verification_delivery','identity_execution_space',
+                     'identity_namespace_allocation_intent'
                    ]))
                    OR ($2 = 'api' AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
                    OR ($2 = 'asset-data-plane' AND
@@ -1904,6 +1956,7 @@ function validRuntimeIdentity(
     !identity.ownsPlatformRelation &&
     !identity.ownsPlatformFunction &&
     identity.hasRequiredPlatformWrites &&
+    identity.hasIdentityOutboxConsumerAuthority === (config.role === "worker") &&
     identity.canExecuteModelInventoryImport === (config.role === "admin") &&
     identity.canExecuteModelInventoryActivate === (config.role === "admin") &&
     identity.canExecuteModelSitePolicyChange === (config.role === "admin") &&

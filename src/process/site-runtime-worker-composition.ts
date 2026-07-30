@@ -24,11 +24,12 @@ export interface SiteRuntimeWorkerProductionComposition {
 
 export async function createSiteRuntimeWorkerProductionComposition(input: Readonly<{
   database: PlatformTransactionalDatabaseClient;
+  workerId: string;
   environment?: Readonly<Record<string, string | undefined>>;
 }>): Promise<SiteRuntimeWorkerProductionComposition> {
   const environment = input.environment ?? process.env;
   const registryPath = required(environment, "PLATFORM_SITE_PROVIDER_REGISTRY_FILE");
-  const workerId = required(environment, "PLATFORM_SITE_WORKER_ID");
+  const workerId = scopedIdentifier(input.workerId, "PLATFORM_SITE_WORKER_ID_INVALID");
   const [providers, eventKeyRing] = await Promise.all([
     loadSiteProviderRegistry(registryPath),
     loadAuthorizationEventKeyRing(required(environment, "PLATFORM_AUTHORIZATION_EVENT_KEY_RING_FILE")),
@@ -55,6 +56,11 @@ export async function createSiteRuntimeWorkerProductionComposition(input: Readon
     returnLease: (reason) => consumer.returnLeases(reason),
   };
   return Object.freeze(composition);
+}
+
+function scopedIdentifier(value: string, code: string): string {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/u.test(value)) throw new Error(code);
+  return value;
 }
 
 function required(environment: Readonly<Record<string, string | undefined>>, name: string): string {

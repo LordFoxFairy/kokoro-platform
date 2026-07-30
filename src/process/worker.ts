@@ -11,6 +11,8 @@ import { createCommerceOutboxReconciliationCycle, HmacHttpOutboxDeliveryTranspor
   "../modules/commerce/infrastructure/postgres/commerce-outbox-reconciler.js";
 import { createSiteRuntimeWorkerProductionComposition } from "./site-runtime-worker-composition.js";
 import { createAssetWorkerProductionComposition } from "./asset-worker-composition.js";
+import { createIdentityOutboxWorkerProductionComposition } from
+  "./identity-outbox-worker-composition.js";
 import { createAdminTerminalizerCycle } from
   "../modules/admin-control/application/admin-terminalizer.js";
 import { createAdminWorkerExecutionRuntime } from
@@ -239,7 +241,7 @@ function isMainModule(): boolean {
 
 export async function runPlatformWorkerMain(): Promise<void> {
   const database = createPlatformDatabaseClient(loadPlatformDatabaseConfig("worker"));
-  const workerId = process.env.PLATFORM_WORKER_ID ?? `platform-worker-${process.pid}`;
+  const workerId = loadPlatformWorkerId(process.env);
   const retentionDays = Number.parseInt(process.env.PLATFORM_AUTHORIZATION_EVENT_RETENTION_DAYS ?? "7", 10);
   const authorizationRetention = createAuthorizationRetentionCycle({
     database,
@@ -255,8 +257,12 @@ export async function runPlatformWorkerMain(): Promise<void> {
     }),
     workerId,
   });
-  const siteRuntime = await createSiteRuntimeWorkerProductionComposition({ database });
+  const siteRuntime = await createSiteRuntimeWorkerProductionComposition({ database, workerId });
   const assetRuntime = await createAssetWorkerProductionComposition({ database, workerId });
+  const identityOutbox = await createIdentityOutboxWorkerProductionComposition({
+    database,
+    workerId,
+  });
   const terminalizeAdmin = createAdminTerminalizerCycle({
     database,
     repository: new PostgresAdminAuthorityRepository(),
@@ -269,12 +275,14 @@ export async function runPlatformWorkerMain(): Promise<void> {
     database,
     runOneCycle: (context) => runPlatformWorkerActivities(context,
       [authorizationRetention, commerceOutbox,
+        (context) => identityOutbox.runOneCycle(context),
         (context) => siteRuntime.runOneCycle(context),
         (context) => assetRuntime.runOneCycle(context),
         terminalizeAdmin,
         adminExecution.runOneCycle]),
     stopClaiming: async () => {
       await Promise.all([
+        identityOutbox.stopClaiming(),
         siteRuntime.stopClaiming(),
         assetRuntime.stopClaiming(),
         adminExecution.stopClaiming(),
@@ -282,6 +290,7 @@ export async function runPlatformWorkerMain(): Promise<void> {
     },
     returnLease: async (reason) => {
       await Promise.all([
+        identityOutbox.returnLeases(reason),
         siteRuntime.returnLease(reason),
         assetRuntime.returnLeases(reason),
         adminExecution.returnLeases(reason),
@@ -299,6 +308,17 @@ export async function runPlatformWorkerMain(): Promise<void> {
   process.once("SIGTERM", shutdown);
   await worker.start();
   console.log("Platform Worker ready");
+}
+
+export function loadPlatformWorkerId(
+  environment: Readonly<Record<string, string | undefined>>,
+): string {
+  const value = environment.PLATFORM_WORKER_ID;
+  if (value === undefined || value.length === 0) throw new Error("PLATFORM_WORKER_ID_REQUIRED");
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/u.test(value)) {
+    throw new Error("PLATFORM_WORKER_ID_INVALID");
+  }
+  return value;
 }
 
 function requireEnvironment(name: string): string {

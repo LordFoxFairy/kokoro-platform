@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -8,6 +8,15 @@ import {
   createBoundedFileReaderWithinTrustRoot,
   type BoundedFileSystem,
 } from "../../src/process/secret-files.js";
+import * as secretFileModule from "../../src/process/secret-files.js";
+
+type TrustRootReader = (
+  path: string,
+  trustRoot: string,
+  maximumBytes: number,
+  invalidCode: string,
+  fileSystem?: BoundedFileSystem & Readonly<{ realpath(path: string): Promise<string> }>,
+) => Promise<string>;
 
 describe("bounded secret files", () => {
   it("reads Kubernetes AtomicWriter links with fsGroup 0440 through a trusted root", async () => {
@@ -163,5 +172,89 @@ describe("bounded secret files", () => {
       fileSystem,
     )).rejects.toThrowError("TEST_SECRET_INVALID");
     expect(bytesReadTotal).toBe(9);
+  });
+
+  it("safely reads a group-readable Kubernetes AtomicWriter secret inside its trust root", async () => {
+    const readFromTrustRoot = (secretFileModule as unknown as {
+      readBoundedPrivateFileWithinTrustRoot?: TrustRootReader;
+    }).readBoundedPrivateFileWithinTrustRoot;
+    expect(readFromTrustRoot).toBeTypeOf("function");
+    if (readFromTrustRoot === undefined) return;
+    const root = await mkdtemp(join(tmpdir(), "kokoro-atomic-secret-"));
+    try {
+      const revision = join(root, "..2026_07_30_04_00_00.000000001");
+      await mkdir(revision);
+      await writeFile(join(revision, "delivery-hmac.key"), "private-value", { mode: 0o440 });
+      await symlink("..2026_07_30_04_00_00.000000001", join(root, "..data"));
+      await symlink("..data/delivery-hmac.key", join(root, "delivery-hmac.key"));
+
+      await expect(readFromTrustRoot(
+        join(root, "delivery-hmac.key"), root, 64, "TEST_PRIVATE_INVALID",
+      )).resolves.toBe("private-value");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects AtomicWriter links that resolve outside the configured trust root", async () => {
+    const readFromTrustRoot = (secretFileModule as unknown as {
+      readBoundedPrivateFileWithinTrustRoot?: TrustRootReader;
+    }).readBoundedPrivateFileWithinTrustRoot;
+    expect(readFromTrustRoot).toBeTypeOf("function");
+    if (readFromTrustRoot === undefined) return;
+    const root = await mkdtemp(join(tmpdir(), "kokoro-atomic-escape-"));
+    const outside = await mkdtemp(join(tmpdir(), "kokoro-atomic-outside-"));
+    try {
+      await writeFile(join(outside, "key"), "escaped", { mode: 0o440 });
+      await symlink(join(outside, "key"), join(root, "key"));
+      await expect(readFromTrustRoot(
+        join(root, "key"), root, 64, "TEST_PRIVATE_INVALID",
+      )).rejects.toThrow("TEST_PRIVATE_INVALID");
+    } finally {
+      await Promise.all([
+        rm(root, { recursive: true, force: true }),
+        rm(outside, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
+  it("rejects an AtomicWriter target swapped between resolution and descriptor verification", async () => {
+    const readFromTrustRoot = (secretFileModule as unknown as {
+      readBoundedPrivateFileWithinTrustRoot?: TrustRootReader;
+    }).readBoundedPrivateFileWithinTrustRoot;
+    expect(readFromTrustRoot).toBeTypeOf("function");
+    if (readFromTrustRoot === undefined) return;
+    const bytes = Buffer.from("private-value");
+    let logicalResolutions = 0;
+    const fileSystem = {
+      async realpath(path: string) {
+        if (path === "/run/secrets/identity") return path;
+        logicalResolutions += 1;
+        return logicalResolutions === 1
+          ? "/run/secrets/identity/..revision/key"
+          : "/tmp/escaped-key";
+      },
+      async open() {
+        return {
+          async stat() {
+            return {
+              dev: 1n, ino: 2n, mode: 0o100440n, size: BigInt(bytes.byteLength),
+              ctimeNs: 1n, mtimeNs: 1n, isFile: () => true,
+            };
+          },
+          async read(buffer: Buffer, offset: number, length: number, position: number) {
+            if (position >= bytes.byteLength) return { bytesRead: 0 };
+            const count = Math.min(length, bytes.byteLength - position);
+            bytes.copy(buffer, offset, position, position + count);
+            return { bytesRead: count };
+          },
+          async close() {},
+        };
+      },
+    };
+    await expect(readFromTrustRoot(
+      "/run/secrets/identity/key", "/run/secrets/identity", 64,
+      "TEST_PRIVATE_INVALID", fileSystem,
+    )).rejects.toThrow("TEST_PRIVATE_INVALID");
   });
 });

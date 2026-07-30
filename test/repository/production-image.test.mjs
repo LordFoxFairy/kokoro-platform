@@ -93,6 +93,20 @@ test("production image carries the sealed one-time Admin authority bootstrap", a
   assert.match(runtime, /loadPlatformDatabaseConfig\("migrator", environment\)/u);
 });
 
+test("worker deployment safely resolves Kubernetes AtomicWriter identity secrets", async () => {
+  const [reader, kubernetes] = await Promise.all([
+    readFile(resolve(root, "src/process/secret-files.ts"), "utf8"),
+    readFile(resolve(root, "deploy/k8s/platform-services.example.yaml"), "utf8"),
+  ]);
+  assert.match(reader, /readBoundedPrivateFileWithinTrustRoot/u);
+  assert.match(reader, /realpath/u);
+  assert.match(reader, /O_NOFOLLOW/u);
+  assert.match(kubernetes, /fieldPath: metadata\.uid/u);
+  assert.match(kubernetes, /runAsNonRoot: true/u);
+  assert.match(kubernetes, /fsGroup: 1000/u);
+  assert.match(kubernetes, /defaultMode: 0440/u);
+});
+
 test("production image verifier accepts the closed fresh layout", async (context) => {
   const imageRoot = await mkdtemp(resolve(tmpdir(), "kokoro-platform-image-"));
   context.after(() => rm(imageRoot, { recursive: true, force: true }));

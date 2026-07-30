@@ -744,6 +744,21 @@ async function grantFoundationPrivileges(
         `GRANT SELECT ON TABLE ${KERNEL_TABLES}, ${SITE_RECONCILIATION_TABLES}, platform.authorization_site, platform.authorization_site_release, platform.authorization_product_binding, platform.authorization_scoped_stream_state, platform.authorization_scoped_site_cursor, platform.authorization_scoped_event_log, platform.authorization_scoped_snapshot, platform.authorization_product_context, platform.authorization_session_access_grant, platform.commerce_redemption, platform.commerce_fulfillment_transaction, platform.credit_budget_operation_receipt, platform.credit_authorization_segment, platform.admin_operator_authority, platform.admin_operator_site_scope, platform.admin_operator_global_scope_grant, platform.admin_breakglass_grant, platform.admin_approval, platform.admin_post_effect_review TO ${identifier}`,
       );
       await client.query(
+        `GRANT SELECT(site_ref,transaction_ref,state,resend_count,expires_at) ON TABLE platform.identity_verification_transaction TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT SELECT(event_id,site_ref,transaction_ref,credential_revision,state) ON TABLE platform.identity_verification_delivery TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT SELECT(site_ref,subject_ref,workspace_ref,project_ref,execution_space_ref,execution_namespace,namespace_intent_ref) ON TABLE platform.identity_personal_bootstrap TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT SELECT(site_ref,execution_space_ref,project_ref,execution_namespace,state) ON TABLE platform.identity_execution_space TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT SELECT(intent_ref,event_id,site_ref,execution_space_ref,execution_namespace,state) ON TABLE platform.identity_namespace_allocation_intent TO ${identifier}`,
+      );
+      await client.query(
         `GRANT INSERT, UPDATE ON TABLE platform.authorization_scoped_site_cursor TO ${identifier}`,
       );
       await client.query(
@@ -756,6 +771,15 @@ async function grantFoundationPrivileges(
       );
       await client.query(
         `GRANT UPDATE ON TABLE platform.command_receipt, platform.outbox_event, platform.inbox_delivery TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT UPDATE(state,attempt_count,delivered_at,failed_at,superseded_at,last_error_code,updated_at) ON TABLE platform.identity_verification_delivery TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT UPDATE(state,updated_at) ON TABLE platform.identity_execution_space TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT UPDATE(state,attempt_count,last_error_code,updated_at) ON TABLE platform.identity_namespace_allocation_intent TO ${identifier}`,
       );
       await client.query(
         `GRANT UPDATE(state,active_release_ref,policy_epoch,revocation_epoch,tombstoned_at,updated_at) ON TABLE platform.site TO ${identifier}`,
@@ -1329,6 +1353,7 @@ async function assertPostMigrationAuthority(
       row.ownsPlatformRelation !== false ||
       row.ownsPlatformFunction !== false ||
       row.hasRequiredPlatformWrites !== true ||
+      row.hasIdentityOutboxConsumerAuthority !== (row.roleName === workerRole) ||
       row.canExecuteModelInventoryImport !== (row.roleName === adminRole) ||
       row.canExecuteModelInventoryActivate !== (row.roleName === adminRole) ||
       row.canExecuteModelSitePolicyChange !== (row.roleName === adminRole) ||
@@ -1657,6 +1682,51 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            AND has_table_privilege(runtime_role.rolname, 'platform.asset_eligibility_projection', 'SELECT')
            AND has_table_privilege(runtime_role.rolname, 'platform.asset_promotion_receipt', 'SELECT')
          END AS "hasRequiredPlatformWrites"
+         ,CASE WHEN runtime_role.rolname = $3 THEN
+           has_column_privilege(runtime_role.rolname, 'platform.identity_verification_transaction', 'site_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_verification_transaction', 'transaction_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_verification_transaction', 'state', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_verification_transaction', 'resend_count', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_verification_transaction', 'expires_at', 'SELECT')
+           AND NOT has_column_privilege(runtime_role.rolname, 'platform.identity_verification_transaction', 'email_normalized', 'SELECT')
+           AND NOT has_column_privilege(runtime_role.rolname, 'platform.identity_verification_transaction', 'secret_digest', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_verification_delivery', 'event_id', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_verification_delivery', 'site_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_verification_delivery', 'transaction_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_verification_delivery', 'credential_revision', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_verification_delivery', 'state', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_verification_delivery', 'state', 'UPDATE')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_verification_delivery', 'attempt_count', 'UPDATE')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_verification_delivery', 'delivered_at', 'UPDATE')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_verification_delivery', 'failed_at', 'UPDATE')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_verification_delivery', 'superseded_at', 'UPDATE')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_verification_delivery', 'last_error_code', 'UPDATE')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_verification_delivery', 'updated_at', 'UPDATE')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_personal_bootstrap', 'site_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_personal_bootstrap', 'subject_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_personal_bootstrap', 'workspace_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_personal_bootstrap', 'project_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_personal_bootstrap', 'execution_space_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_personal_bootstrap', 'execution_namespace', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_personal_bootstrap', 'namespace_intent_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_execution_space', 'site_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_execution_space', 'execution_space_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_execution_space', 'project_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_execution_space', 'execution_namespace', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_execution_space', 'state', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_execution_space', 'state', 'UPDATE')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_execution_space', 'updated_at', 'UPDATE')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_namespace_allocation_intent', 'intent_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_namespace_allocation_intent', 'event_id', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_namespace_allocation_intent', 'site_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_namespace_allocation_intent', 'execution_space_ref', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_namespace_allocation_intent', 'execution_namespace', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_namespace_allocation_intent', 'state', 'SELECT')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_namespace_allocation_intent', 'state', 'UPDATE')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_namespace_allocation_intent', 'attempt_count', 'UPDATE')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_namespace_allocation_intent', 'last_error_code', 'UPDATE')
+           AND has_column_privilege(runtime_role.rolname, 'platform.identity_namespace_allocation_intent', 'updated_at', 'UPDATE')
+         ELSE FALSE END AS "hasIdentityOutboxConsumerAuthority"
          ,has_function_privilege(runtime_role.rolname, 'platform.import_model_inventory(uuid,text,text,jsonb,jsonb,text)', 'EXECUTE')
            AS "canExecuteModelInventoryImport"
          ,has_function_privilege(runtime_role.rolname, 'platform.activate_model_inventory(uuid,text,bigint,text)', 'EXECUTE')
@@ -1992,7 +2062,9 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                    OR (runtime_role.rolname = $3 AND candidate.relname = ANY(ARRAY[
                      'outbox_event','site','site_release','site_deployment_binding',
                      'site_activation_attempt','site_traffic_stop_attempt','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_site',
-                     'authorization_site_release','authorization_product_binding'
+                     'authorization_site_release','authorization_product_binding',
+                     'identity_verification_delivery','identity_execution_space',
+                     'identity_namespace_allocation_intent'
                    ]))
                    OR (runtime_role.rolname = $3 AND candidate.relname = ANY(ARRAY[
                      'command_receipt','outbox_event','inbox_delivery','admin_approval','admin_post_effect_review'
@@ -2084,7 +2156,9 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                    OR (runtime_role.rolname = $3 AND candidate.relname = ANY(ARRAY[
                      'outbox_event','site','site_release','site_deployment_binding',
                      'site_activation_attempt','site_traffic_stop_attempt','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_site',
-                     'authorization_site_release','authorization_product_binding'
+                     'authorization_site_release','authorization_product_binding',
+                     'identity_verification_delivery','identity_execution_space',
+                     'identity_namespace_allocation_intent'
                    ]))
                    OR (runtime_role.rolname = $3 AND candidate.relname = ANY(ARRAY[
                      'command_receipt','outbox_event','inbox_delivery','admin_approval','admin_post_effect_review'

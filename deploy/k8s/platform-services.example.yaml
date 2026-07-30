@@ -201,6 +201,12 @@ items:
       template:
         metadata: { labels: { app: platform-worker } }
         spec:
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            fsGroupChangePolicy: OnRootMismatch
           containers:
             - name: platform-worker
               image: ghcr.io/lordfoxfairy/kokoro-platform:RELEASE_DIGEST
@@ -210,6 +216,22 @@ items:
               env:
                 - { name: KOKORO_SERVICE_PACKAGE, value: platform-worker }
                 - { name: PLATFORM_DATABASE_CREDENTIAL_CLASS, value: worker }
+                - name: PLATFORM_WORKER_ID
+                  valueFrom: { fieldRef: { fieldPath: metadata.uid } }
+                - { name: PLATFORM_IDENTITY_AUDIT_DIGEST_KEY_FILE, value: /var/run/secrets/kokoro/identity/audit-digest.key }
+                - { name: PLATFORM_IDENTITY_SECRET_TRUST_ROOT, value: /var/run/secrets/kokoro/identity }
+                - { name: PLATFORM_IDENTITY_DELIVERY_HMAC_SECRET_FILE, value: /var/run/secrets/kokoro/identity/delivery-hmac.key }
+                - name: PLATFORM_IDENTITY_DELIVERY_ENDPOINT
+                  valueFrom: { configMapKeyRef: { name: platform-runtime, key: PLATFORM_IDENTITY_DELIVERY_ENDPOINT } }
+                - name: PLATFORM_IDENTITY_DELIVERY_HMAC_KEY_ID
+                  valueFrom: { configMapKeyRef: { name: platform-runtime, key: PLATFORM_IDENTITY_DELIVERY_HMAC_KEY_ID } }
+              volumeMounts:
+                - { name: platform-worker-identity-secrets, mountPath: /var/run/secrets/kokoro/identity, readOnly: true }
+          volumes:
+            - name: platform-worker-identity-secrets
+              secret:
+                secretName: platform-worker-identity-secrets
+                defaultMode: 0440
 
   - apiVersion: apps/v1
     kind: Deployment

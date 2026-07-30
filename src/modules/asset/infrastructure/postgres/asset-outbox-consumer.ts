@@ -196,7 +196,13 @@ export function createPostgresAssetEffectEventQueue(
       leaseSeconds,
     })),
     renew: (eventId, leaseToken) => database.internalTransaction("asset.outbox.consume",
-      (lease) => outbox.renewLease(lease, { eventId, leaseToken, leaseSeconds })),
+      (lease) => outbox.renewLease(lease, {
+        eventId,
+        leaseToken,
+        workerId: options.workerId,
+        owner: "asset",
+        leaseSeconds,
+      })),
     ack: (eventId, leaseToken) => database.internalTransaction("asset.outbox.consume",
       (lease) => outbox.complete(lease, {
       eventId,

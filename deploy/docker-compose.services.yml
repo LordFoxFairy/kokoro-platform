@@ -116,6 +116,15 @@ services:
       KOKORO_SERVICE_PACKAGE: platform-worker
       PLATFORM_DATABASE_CREDENTIAL_CLASS: worker
       DATABASE_URL_PLATFORM: ${DATABASE_URL_PLATFORM_WORKER:?required}
+      PLATFORM_WORKER_ID: ${PLATFORM_WORKER_ID:?required}
+      PLATFORM_IDENTITY_AUDIT_DIGEST_KEY_FILE: /run/secrets/kokoro/identity/audit-digest.key
+      PLATFORM_IDENTITY_SECRET_TRUST_ROOT: /run/secrets/kokoro/identity
+      PLATFORM_IDENTITY_DELIVERY_ENDPOINT: ${PLATFORM_IDENTITY_DELIVERY_ENDPOINT:?required}
+      PLATFORM_IDENTITY_DELIVERY_HMAC_KEY_ID: ${PLATFORM_IDENTITY_DELIVERY_HMAC_KEY_ID:?required}
+      PLATFORM_IDENTITY_DELIVERY_HMAC_SECRET_FILE: /run/secrets/kokoro/identity/delivery-hmac.key
+    volumes:
+      - ${PLATFORM_IDENTITY_AUDIT_DIGEST_KEY_FILE:?required}:/run/secrets/kokoro/identity/audit-digest.key:ro
+      - ${PLATFORM_IDENTITY_DELIVERY_HMAC_SECRET_FILE:?required}:/run/secrets/kokoro/identity/delivery-hmac.key:ro
 
   platform-admin:
     <<: *platform-service

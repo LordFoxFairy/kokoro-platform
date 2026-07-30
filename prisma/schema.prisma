@@ -1362,17 +1362,19 @@ model IdentityVerificationLegalAcceptance {
 }
 
 model IdentityVerificationDelivery {
-  siteRef        String    @map("site_ref")
-  transactionRef String    @map("transaction_ref")
-  deliveryRef    String    @map("delivery_ref") @db.Uuid
-  eventId        String    @unique @map("event_id") @db.Uuid
-  state          String    @default("queued")
-  attemptCount   Int       @default(0) @map("attempt_count")
-  deliveredAt    DateTime? @map("delivered_at") @db.Timestamptz(6)
-  failedAt       DateTime? @map("failed_at") @db.Timestamptz(6)
-  lastErrorCode  String?   @map("last_error_code")
-  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  siteRef            String    @map("site_ref")
+  transactionRef     String    @map("transaction_ref")
+  deliveryRef        String    @map("delivery_ref") @db.Uuid
+  eventId            String    @unique @map("event_id") @db.Uuid
+  credentialRevision Int       @default(0) @map("credential_revision")
+  state              String    @default("queued")
+  attemptCount       Int       @default(0) @map("attempt_count")
+  deliveredAt        DateTime? @map("delivered_at") @db.Timestamptz(6)
+  failedAt           DateTime? @map("failed_at") @db.Timestamptz(6)
+  supersededAt       DateTime? @map("superseded_at") @db.Timestamptz(6)
+  lastErrorCode      String?   @map("last_error_code")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@id([siteRef, transactionRef, deliveryRef])
   @@map("identity_verification_delivery")
@@ -1777,6 +1779,7 @@ model IdentityNamespaceAllocationIntent {
   executionNamespace String   @unique @map("execution_namespace")
   state              String   @default("pending")
   attemptCount       Int      @default(0) @map("attempt_count")
+  lastErrorCode      String?  @map("last_error_code")
   createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 

@@ -98,8 +98,10 @@ export class PostgresIdentityRepository implements IdentityRepository {
   ): Promise<void> {
     const changed = await resolvePlatformTransaction(transaction).execute(
       `INSERT INTO platform.identity_verification_delivery
-       (site_ref,transaction_ref,delivery_ref,event_id) VALUES ($1,$2,$3::uuid,$4::uuid)`,
-      [input.siteRef, input.transactionRef, input.deliveryRef, input.eventId],
+       (site_ref,transaction_ref,delivery_ref,event_id,credential_revision)
+       VALUES ($1,$2,$3::uuid,$4::uuid,$5)`,
+      [input.siteRef, input.transactionRef, input.deliveryRef, input.eventId,
+        input.credentialRevision],
     );
     if (changed !== 1) throw new Error("IDENTITY_VERIFICATION_DELIVERY_CREATE_FAILED");
   }
@@ -129,14 +131,35 @@ export class PostgresIdentityRepository implements IdentityRepository {
     transaction: PlatformTransaction,
     input: Parameters<IdentityRepository["rotateVerificationSecret"]>[1],
   ): Promise<void> {
-    const changed = await resolvePlatformTransaction(transaction).execute(
+    const sql = resolvePlatformTransaction(transaction);
+    // Dispatch admission and credential rotation fence on the same delivery rows. A resend
+    // either supersedes a queued revision before dispatch, or observes dispatching and aborts.
+    await sql.query(
+      `SELECT event_id FROM platform.identity_verification_delivery
+       WHERE site_ref=$1 AND transaction_ref=$2 AND state IN ('queued','dispatching')
+       ORDER BY credential_revision,event_id
+       FOR UPDATE`,
+      [input.siteRef, input.transactionRef],
+    );
+    const changed = await sql.execute(
       `UPDATE platform.identity_verification_transaction
        SET secret_digest=$4,resend_count=resend_count+1,expires_at=$5::timestamptz,updated_at=$6::timestamptz
-       WHERE site_ref=$1 AND transaction_ref=$2 AND state='pending' AND resend_count=$3`,
+       WHERE site_ref=$1 AND transaction_ref=$2 AND state='pending' AND resend_count=$3
+         AND NOT EXISTS (
+           SELECT 1 FROM platform.identity_verification_delivery delivery
+           WHERE delivery.site_ref=$1 AND delivery.transaction_ref=$2 AND delivery.state='dispatching'
+         )`,
       [input.siteRef, input.transactionRef, input.expectedResendCount,
         input.secretDigest, input.expiresAt, input.now],
     );
     if (changed !== 1) throw new Error("IDENTITY_VERIFICATION_STALE");
+    await sql.execute(
+      `UPDATE platform.identity_verification_delivery
+       SET state='superseded',superseded_at=$4::timestamptz,
+           last_error_code='IDENTITY_VERIFICATION_DELIVERY_SUPERSEDED',updated_at=$4::timestamptz
+       WHERE site_ref=$1 AND transaction_ref=$2 AND credential_revision<$3 AND state='queued'`,
+      [input.siteRef, input.transactionRef, input.expectedResendCount + 1, input.now],
+    );
   }
 
   async loadVerificationForUpdate(

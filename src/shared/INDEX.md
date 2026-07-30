@@ -17,6 +17,10 @@ and active process composition. Claim APIs require that consumer's complete cano
 callers cannot invent either axis. Enqueue rejects an unknown owner/event pair, and PostgreSQL repeats the exact route constraint so
 direct SQL cannot bypass the TypeScript boundary. Identity routes are explicitly marked `reserved` until the independent Identity
 worker slice supplies its process composition; this reservation is not evidence that the delivery path is active.
+The shared HMAC HTTPS transport provides bounded signed requests, signed acknowledgements and a stable event-id idempotency key;
+owner modules wrap it in typed ports and retain ownership of payload validation and durable outcome projection. A successful HTTP
+response whose acknowledgement stream resets or times out is an outcome-unknown retry, while a complete invalid acknowledgement
+is a permanent protocol failure.
 
 `security-context/` separates structural parsing from trust. An interface/infrastructure verifier validates caller cryptographic
 attestation against trusted issuer/key material and issues a runtime-tracked `VerifiedRequestSecurityContext`; application code

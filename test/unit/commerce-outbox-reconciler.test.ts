@@ -109,6 +109,49 @@ describe("Commerce outbox reconciler", () => {
       deliveryId: "consumer-delivery-1", acknowledgedAt: "2026-07-29T01:00:01.000Z",
     });
   });
+
+  it("classifies a reset 200 acknowledgement stream as retryable outcome unknown", async () => {
+    const transport = new HmacHttpOutboxDeliveryTransport({
+      endpoint: "https://consumer.internal/events",
+      keyId: "delivery-key-1",
+      secretBase64: Buffer.alloc(32, 7).toString("base64"),
+      fetch: async () => new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("{"));
+          controller.error(new Error("ack stream reset"));
+        },
+      }), { status: 200 }),
+    });
+
+    await expect(transport.publish(event(), new AbortController().signal))
+      .rejects.toMatchObject({
+        code: "OUTBOX_DELIVERY_ACK_OUTCOME_UNKNOWN",
+        retryable: true,
+      });
+  });
+
+  it("classifies a timed-out 200 acknowledgement stream as retryable outcome unknown", async () => {
+    const transport = new HmacHttpOutboxDeliveryTransport({
+      endpoint: "https://consumer.internal/events",
+      keyId: "delivery-key-1",
+      secretBase64: Buffer.alloc(32, 7).toString("base64"),
+      timeoutMs: 100,
+      fetch: async (_input, init) => new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("{"));
+          init?.signal?.addEventListener("abort", () => {
+            controller.error(init.signal?.reason ?? new Error("acknowledgement timeout"));
+          }, { once: true });
+        },
+      }), { status: 200 }),
+    });
+
+    await expect(transport.publish(event(), new AbortController().signal))
+      .rejects.toMatchObject({
+        code: "OUTBOX_DELIVERY_ACK_OUTCOME_UNKNOWN",
+        retryable: true,
+      });
+  });
 });
 
 class RecordingOutbox implements Pick<OutboxRepository, "claim" | "complete" | "retryOrDeadLetter"> {

@@ -101,6 +101,7 @@ export interface IdentityRepository {
   }>): Promise<"created" | "undisclosed">;
   recordVerificationDelivery(transaction: PlatformTransaction, input: Readonly<{
     siteRef: string; transactionRef: string; deliveryRef: string; eventId: string;
+    credentialRevision: number;
   }>): Promise<void>;
   findPendingVerificationByEmail(transaction: PlatformTransaction, input: Readonly<{
     siteRef: string; emailNormalized: string; now: string;

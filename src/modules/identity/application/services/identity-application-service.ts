@@ -125,7 +125,9 @@ export class IdentityApplicationService {
             siteRef: input.workload.siteRef, transactionRef, email: emailNormalized,
             verificationSecret: secret.credential, expiresAt,
           });
-          const payload = json({ kind: "sealed_identity_verification_v1", sealedEnvelope });
+          const payload = json({
+            kind: "sealed_identity_verification_v1", credentialRevision: 0, sealedEnvelope,
+          });
           await this.dependencies.outbox.enqueue(transaction, {
             eventId, owner: "identity", eventType: "identity.verification.delivery.requested",
             aggregateId: transactionRef, payload,
@@ -134,6 +136,7 @@ export class IdentityApplicationService {
           });
           await this.dependencies.repository.recordVerificationDelivery(transaction, {
             siteRef: input.workload.siteRef, transactionRef, deliveryRef, eventId,
+            credentialRevision: 0,
           });
         }
         const transactionResult = Object.freeze({ transactionRef, expiresAt, deliveryState: "queued" as const });
@@ -172,7 +175,7 @@ export class IdentityApplicationService {
           await this.success(transaction, identity, { transaction: transactionResult, committedAt: now });
           return { receipt: receipt(input.commandId, requestDigest, now), transaction: transactionResult };
         }
-        const rateLimited = pending.lastDeliveryAt !== null &&
+        const rateLimited = pending.resendCount >= 20 || pending.lastDeliveryAt !== null &&
           Date.parse(now) - Date.parse(pending.lastDeliveryAt) < 60_000;
         if (rateLimited) {
           const transactionResult = Object.freeze({
@@ -193,7 +196,10 @@ export class IdentityApplicationService {
           siteRef: input.workload.siteRef, transactionRef: pending.transactionRef,
           email: emailNormalized, verificationSecret: secret.credential, expiresAt,
         });
-        const payload = json({ kind: "sealed_identity_verification_v1", sealedEnvelope });
+        const credentialRevision = pending.resendCount + 1;
+        const payload = json({
+          kind: "sealed_identity_verification_v1", credentialRevision, sealedEnvelope,
+        });
         await this.dependencies.outbox.enqueue(transaction, {
           eventId, owner: "identity", eventType: "identity.verification.delivery.requested",
           aggregateId: pending.transactionRef, payload,
@@ -202,7 +208,7 @@ export class IdentityApplicationService {
         });
         await this.dependencies.repository.recordVerificationDelivery(transaction, {
           siteRef: input.workload.siteRef, transactionRef: pending.transactionRef,
-          deliveryRef: this.reference(), eventId,
+          deliveryRef: this.reference(), eventId, credentialRevision,
         });
         const transactionResult = Object.freeze({
           transactionRef: pending.transactionRef, expiresAt, deliveryState: "queued" as const,

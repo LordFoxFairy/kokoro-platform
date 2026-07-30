@@ -34,6 +34,10 @@ export interface TrustedRootBoundedFileReader {
   readPrivate(path: string, maximumBytes: number, invalidCode: string): Promise<string>;
 }
 
+export interface BoundedTrustRootFileSystem extends BoundedFileSystem {
+  realpath(path: string): Promise<string>;
+}
+
 const NODE_FILE_SYSTEM: BoundedFileSystem = Object.freeze({
   open: async (path: string, flags: number) => {
     const handle = await open(path, flags);
@@ -48,6 +52,11 @@ const NODE_FILE_SYSTEM: BoundedFileSystem = Object.freeze({
       close: () => handle.close(),
     });
   },
+});
+
+const NODE_TRUST_ROOT_FILE_SYSTEM: BoundedTrustRootFileSystem = Object.freeze({
+  ...NODE_FILE_SYSTEM,
+  realpath,
 });
 
 /**
@@ -71,6 +80,54 @@ export function readBoundedPrivateFile(
   fileSystem: BoundedFileSystem = NODE_FILE_SYSTEM,
 ): Promise<string> {
   return readFile(path, maximumBytes, invalidCode, true, fileSystem);
+}
+
+/**
+ * Safely follows a Kubernetes AtomicWriter logical symlink only when both the
+ * logical name and its resolved regular file stay inside one immutable trust
+ * root. The resolved final file is still opened with O_NOFOLLOW and verified
+ * through the same descriptor before and after bounded I/O.
+ */
+export async function readBoundedPrivateFileWithinTrustRoot(
+  path: string,
+  trustRoot: string,
+  maximumBytes: number,
+  invalidCode: string,
+  fileSystem: BoundedTrustRootFileSystem = NODE_TRUST_ROOT_FILE_SYSTEM,
+): Promise<string> {
+  try {
+    if (
+      !isAbsolute(path) || !isAbsolute(trustRoot) || path.includes("\0") ||
+      trustRoot.includes("\0") || !containedBy(path, trustRoot)
+    ) throw new Error(invalidCode);
+    const [resolvedRootBefore, resolvedPathBefore] = await Promise.all([
+      fileSystem.realpath(trustRoot),
+      fileSystem.realpath(path),
+    ]);
+    if (
+      !isAbsolute(resolvedRootBefore) || !isAbsolute(resolvedPathBefore) ||
+      !containedBy(resolvedPathBefore, resolvedRootBefore) ||
+      resolvedPathBefore === resolvedRootBefore
+    ) throw new Error(invalidCode);
+    const value = await readFile(
+      resolvedPathBefore,
+      maximumBytes,
+      invalidCode,
+      "trusted-private",
+      fileSystem,
+    );
+    const [resolvedRootAfter, resolvedPathAfter] = await Promise.all([
+      fileSystem.realpath(trustRoot),
+      fileSystem.realpath(path),
+    ]);
+    if (
+      resolvedRootAfter !== resolvedRootBefore || resolvedPathAfter !== resolvedPathBefore ||
+      !containedBy(resolvedPathAfter, resolvedRootAfter)
+    ) throw new Error(invalidCode);
+    return value;
+  } catch {
+    throw new Error(invalidCode);
+  }
 }
 
 /**
@@ -221,6 +278,12 @@ function safeMode(mode: bigint, privateMaterial: boolean | "trusted-private"): b
   }
   if (privateMaterial) return permissions === 0o400n || permissions === 0o600n;
   return (permissions & 0o400n) !== 0n && (permissions & 0o022n) === 0n;
+}
+
+function containedBy(path: string, root: string): boolean {
+  const suffix = relative(root, path);
+  return suffix === "" || suffix !== ".." && !suffix.startsWith(`..${sep}`) &&
+    !isAbsolute(suffix);
 }
 
 function safeCode(value: string): boolean {
