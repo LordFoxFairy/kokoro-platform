@@ -2,8 +2,8 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 describe("Identity outbox production authority", () => {
-  it("preserves the applied multipart migration and upgrades collision handling forward", async () => {
-    const [historicalMigration, forwardMigration] = await Promise.all([
+  it("preserves applied migrations and keeps Asset completion INSERT-only under RLS", async () => {
+    const [historicalMigration, firstCorrection, rlsCorrection] = await Promise.all([
       readFile(
         "prisma/migrations/20260729_zz_asset_multipart_data_plane/migration.sql",
         "utf8",
@@ -12,17 +12,27 @@ describe("Identity outbox production authority", () => {
         "prisma/migrations/20260805_asset_completion_collision_authority/migration.sql",
         "utf8",
       ),
+      readFile(
+        "prisma/migrations/20260806_asset_completion_rls_insert/migration.sql",
+        "utf8",
+      ),
     ]);
     expect(historicalMigration).toContain("ON CONFLICT (event_id) DO UPDATE");
     expect(historicalMigration).not.toContain("ON CONFLICT (event_id) DO NOTHING");
-    expect(forwardMigration).toContain(
+    expect(firstCorrection).toContain(
       "CREATE OR REPLACE FUNCTION platform.enqueue_asset_upload_completion_event(",
     );
-    expect(forwardMigration).toContain("ON CONFLICT (event_id) DO NOTHING");
-    expect(forwardMigration).not.toMatch(/ON CONFLICT[\s\S]+DO UPDATE/u);
-    expect(forwardMigration).toContain(
+    expect(firstCorrection).toContain("ON CONFLICT (event_id) DO NOTHING");
+    expect(firstCorrection).not.toMatch(/ON CONFLICT[\s\S]+DO UPDATE/u);
+    expect(firstCorrection).toContain(
       "RAISE EXCEPTION 'ASSET_COMPLETION_OUTBOX_EVENT_CONFLICT' USING ERRCODE='23505'",
     );
+    expect(rlsCorrection).toContain(
+      "CREATE OR REPLACE FUNCTION platform.enqueue_asset_upload_completion_event(",
+    );
+    expect(rlsCorrection).not.toMatch(/\n\s*ON CONFLICT/u);
+    expect(rlsCorrection).not.toContain("GET DIAGNOSTICS");
+    expect(rlsCorrection).toContain("let the event_id primary key surface replay collisions");
   });
 
   it("binds policy permissiveness into the migrator catalog and every runtime audit", async () => {
@@ -84,7 +94,7 @@ describe("Identity outbox production authority", () => {
       readFile("prisma/migrations/20260804_outbox_owner_fencing/migration.sql", "utf8"),
     ]);
     const assetCompletionAuthority = await readFile(
-      "prisma/migrations/20260805_asset_completion_collision_authority/migration.sql",
+      "prisma/migrations/20260806_asset_completion_rls_insert/migration.sql",
       "utf8",
     );
     expect(migrator).toContain("PLATFORM_DATABASE_IDENTITY_WORKER_ROLE");
@@ -151,8 +161,9 @@ describe("Identity outbox production authority", () => {
     )?.[0] ?? "";
     expect(assetCompletionFunction).toContain("SECURITY DEFINER");
     expect(assetCompletionFunction).toContain("SET search_path=pg_catalog,platform");
-    expect(assetCompletionFunction).toContain("ON CONFLICT (event_id) DO NOTHING");
-    expect(assetCompletionFunction).not.toMatch(/DO UPDATE|DELETE FROM platform\.outbox_event/u);
+    expect(assetCompletionFunction).not.toMatch(
+      /ON CONFLICT|DO UPDATE|DELETE FROM platform\.outbox_event/u,
+    );
   });
 
   it("isolates exact Identity claims and lease return in its own process", async () => {

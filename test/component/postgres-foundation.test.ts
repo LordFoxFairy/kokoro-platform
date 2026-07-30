@@ -179,14 +179,18 @@ describe("Platform PostgreSQL foundation", () => {
   });
 
   it("persists local Identity security facts without outbox rows and keeps Identity effects exact", async () => {
+    const authority = new Client({ connectionString: migratorDatabaseUrl });
     const direct = new Client({ connectionString: apiDatabaseUrl });
-    await direct.connect();
+    await Promise.all([authority.connect(), direct.connect()]);
+    await authority.query(`
+      INSERT INTO platform.authorization_site
+        (site_ref,state,security_epoch,policy_epoch,revocation_epoch)
+      VALUES ('component-security-site','active',1,1,1)
+      ON CONFLICT (site_ref) DO NOTHING
+    `);
     await direct.query("BEGIN");
     try {
       await direct.query(`
-        INSERT INTO platform.authorization_site
-          (site_ref,state,security_epoch,policy_epoch,revocation_epoch)
-        VALUES ('component-security-site','active',1,1,1);
         INSERT INTO platform.authorization_subject
           (subject_ref,site_ref,display_name,state,subject_generation,restriction_epoch)
         VALUES ('component-security-subject','component-security-site','Security Test','active',1,1);
@@ -285,6 +289,10 @@ describe("Platform PostgreSQL foundation", () => {
     } finally {
       await direct.query("ROLLBACK");
       await direct.end();
+      await authority.query(
+        "DELETE FROM platform.authorization_site WHERE site_ref='component-security-site'",
+      );
+      await authority.end();
     }
   });
 
