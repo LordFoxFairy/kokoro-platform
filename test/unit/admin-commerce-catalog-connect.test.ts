@@ -1,4 +1,4 @@
-import { create } from "@bufbuild/protobuf";
+import { create, getExtension } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import type { HandlerContext } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
@@ -14,15 +14,25 @@ import {
   SiteScopeSchema,
 } from "../../src/interfaces/connect/generated-admin-commerce/kokoro/platform/admin/v2/admin_shared_pb.js";
 import {
+  CreditProgramRevisionSummarySchema,
   CreditBucketClass,
   CreditRolloverPolicy,
   CreditScopePolicySchema,
+  EntitlementTemplateRevisionSummarySchema,
+  OfferSummarySchema,
   PermanentCreditWindowPolicySchema,
+  PlanVersionDraftSchema,
   PublishCreditProgramRevisionEffectSchema,
   PublishCreditProgramRevisionRequestSchema,
   PublishEntitlementTemplateRevisionEffectSchema,
   PublishEntitlementTemplateRevisionRequestSchema,
+  PublishOfferEffectSchema,
+  PublishRedemptionProgramEffectSchema,
+  RecurringCreditWindowPolicySchema,
+  RedemptionProgramSummarySchema,
 } from "../../src/interfaces/connect/generated-admin-commerce/kokoro/platform/commerce/v1/admin_commerce_pb.js";
+import { field as validationField } from
+  "../../src/interfaces/connect/generated-admin-commerce/buf/validate/validate_pb.js";
 import {
   publishCreditProgramRevisionRequestDigest,
   publishEntitlementTemplateRevisionRequestDigest,
@@ -47,6 +57,33 @@ const axes: VerifiedAuthenticatedAdminAxes = Object.freeze({
 });
 
 describe("AdminCommerce catalog primitive Connect provider", () => {
+  it("keeps every Commerce uint64 persisted as PostgreSQL BIGINT within INT64_MAX", () => {
+    const persistedFields = [
+      [RecurringCreditWindowPolicySchema, ["expires_after_seconds"]],
+      [PublishCreditProgramRevisionEffectSchema, ["revision"]],
+      [CreditProgramRevisionSummarySchema, ["revision"]],
+      [PublishEntitlementTemplateRevisionEffectSchema, ["revision", "expires_after_seconds"]],
+      [EntitlementTemplateRevisionSummarySchema, ["revision", "expires_after_seconds"]],
+      [PlanVersionDraftSchema, ["revision", "term_seconds"]],
+      [PublishOfferEffectSchema, ["product_revision", "fulfillment_program_revision"]],
+      [OfferSummarySchema, ["revision"]],
+      [PublishRedemptionProgramEffectSchema, ["revision"]],
+      [RedemptionProgramSummarySchema, ["revision"]],
+    ] as const;
+    for (const [schema, fieldNames] of persistedFields) {
+      for (const fieldName of fieldNames) {
+        const descriptor = schema.fields.find((candidate) => candidate.name === fieldName);
+        expect(descriptor, `${schema.typeName}.${fieldName}`).toBeDefined();
+        const rules = getExtension(descriptor!.proto.options!, validationField);
+        expect(rules.type.case, `${schema.typeName}.${fieldName}`).toBe("uint64");
+        if (rules.type.case !== "uint64") throw new Error("COMMERCE_UINT64_RULE_MISSING");
+        expect(rules.type.value.lessThan, `${schema.typeName}.${fieldName}`).toEqual({
+          case: "lte", value: 9_223_372_036_854_775_807n,
+        });
+      }
+    }
+  });
+
   it("authorizes and publishes a CreditProgram using the exact typed digest and Site scope", async () => {
     const persistedCommandId = "018f1212-1212-7212-8212-121212121211";
     const publish = vi.fn(async (input: { requestDigest: string }) => ({ kind: "committed" as const,
