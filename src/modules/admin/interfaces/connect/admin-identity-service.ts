@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { create } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import type { HandlerContext, ServiceImpl } from "@connectrpc/connect";
@@ -6,6 +7,7 @@ import {
   CommandIdentityV2Schema,
   CommandReceiptStateV2,
   CommandReceiptV2Schema,
+  OperatorAssuranceLevel,
 } from "../../../../interfaces/connect/generated-admin-identity/kokoro/common/v2/command_envelope_pb.js";
 import {
   AdminIdentityService as AdminIdentityServiceDescriptor,
@@ -90,6 +92,8 @@ export interface AdminOperatorSessionService {
   }>): Promise<Readonly<{
     operatorSessionRef: string;
     stepUpAt: string;
+    sessionEpoch: bigint;
+    factorClasses: readonly string[];
     receipt: IdentityReceipt;
   }>>;
   signOut(input: Readonly<{
@@ -220,10 +224,16 @@ export function createAdminIdentityConnectService(input: Readonly<{
         transactionRef: effect.transactionRef,
         authorizationCode: effect.authorizationCode,
       });
+      const attestation = continuationAttestation(context, verified.axes, result.sessionEpoch);
       return {
         operatorSessionRef: result.operatorSessionRef,
         stepUpAt: timestamp(result.stepUpAt),
         receipt: wireReceipt(result.receipt),
+        sessionEpoch: result.sessionEpoch,
+        assuranceLevel: OperatorAssuranceLevel.PHISHING_RESISTANT,
+        factorClasses: [...result.factorClasses],
+        operatorAttestationRef: attestation.ref,
+        operatorAttestationDigest: attestation.digest,
       };
     },
 
@@ -250,6 +260,24 @@ export function createAdminIdentityConnectService(input: Readonly<{
       return { receipt: wireReceipt(result.receipt) };
     },
   };
+}
+
+function continuationAttestation(
+  context: Parameters<typeof completeStepUpRequestDigest>[0],
+  axes: VerifiedAuthenticatedAdminAxes,
+  sessionEpoch: bigint,
+): Readonly<{ ref: string; digest: string }> {
+  const epochs = required(context.securityEpochs, "ADMIN_SECURITY_EPOCHS_REQUIRED");
+  const ref = `admin-session:${context.operatorSessionRef}:${sessionEpoch.toString()}`;
+  const digest = createHash("sha256").update("kokoro.admin-operator-attestation.v1")
+    .update("\0").update(JSON.stringify({
+      ref, operatorRef: context.actorRef, operatorGeneration: context.operatorGeneration.toString(),
+      operatorSecurityEpoch: epochs.operatorSecurityEpoch.toString(),
+      restrictionEpoch: epochs.restrictionEpoch.toString(), policyEpoch: epochs.policyEpoch.toString(),
+      workloadIdentityRef: axes.workloadIdentityRef, environment: context.environment, region: context.region,
+      managedDeviceRef: context.managedDeviceRef, audience: axes.audience,
+    })).digest("hex");
+  return Object.freeze({ ref, digest });
 }
 
 function commandIdentity(value: Parameters<typeof beginOperatorLoginRequestDigest>[0]["command"]) {

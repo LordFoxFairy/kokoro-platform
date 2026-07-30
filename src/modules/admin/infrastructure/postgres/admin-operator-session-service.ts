@@ -34,6 +34,9 @@ interface StepUpRow extends Record<string, unknown> {
   completeReceipt: unknown;
   expiresAt: unknown;
   stepUpAt: unknown;
+  sessionEpoch: unknown;
+  assuranceLevel: unknown;
+  factorClasses: unknown;
 }
 
 type StepUpState = "pending" | "redeeming" | "committed" | "provider_outcome_unknown" | "rejected";
@@ -220,6 +223,8 @@ export class AdminOperatorSessionApplicationService implements AdminOperatorSess
       },
     );
     return Object.freeze({ operatorSessionRef: input.axes.operatorSessionRef, stepUpAt,
+      sessionEpoch: input.context.securityEpochs!.sessionEpoch + 1n,
+      factorClasses: Object.freeze([...claims.factorClasses]),
       receipt: completeReceipt });
   }
 
@@ -340,7 +345,8 @@ function stepUpReturning(): string {
     callback_ref AS "callbackRef",issuer,client_id AS "clientId",oidc_audience AS "oidcAudience",
     exact_callback_uri AS "exactCallbackUri",pkce_verifier_ciphertext AS "pkceVerifierCiphertext",
     nonce_ciphertext AS "nonceCiphertext",complete_receipt AS "completeReceipt",
-    expires_at AS "expiresAt",NULL::timestamptz AS "stepUpAt"`;
+    expires_at AS "expiresAt",NULL::timestamptz AS "stepUpAt",NULL::bigint AS "sessionEpoch",
+    NULL::text AS "assuranceLevel",NULL::text[] AS "factorClasses"`;
 }
 
 async function findStepUp(
@@ -360,7 +366,9 @@ async function findStepUp(
             stepup.oidc_audience AS "oidcAudience",stepup.exact_callback_uri AS "exactCallbackUri",
             stepup.pkce_verifier_ciphertext AS "pkceVerifierCiphertext",
             stepup.nonce_ciphertext AS "nonceCiphertext",stepup.complete_receipt AS "completeReceipt",
-            stepup.expires_at AS "expiresAt",session_row.step_up_at AS "stepUpAt"
+            stepup.expires_at AS "expiresAt",session_row.step_up_at AS "stepUpAt",
+            session_row.session_epoch AS "sessionEpoch",session_row.assurance_level AS "assuranceLevel",
+            session_row.factor_classes AS "factorClasses"
      FROM platform.admin_step_up_transaction stepup
      JOIN platform.admin_operator_session session_row
        ON session_row.operator_session_ref=stepup.operator_session_ref
@@ -391,6 +399,9 @@ interface MappedStepUp {
   readonly completeReceipt: unknown;
   readonly expiresAt: string;
   readonly stepUpAt: string | null;
+  readonly sessionEpoch: bigint | null;
+  readonly assuranceLevel: string | null;
+  readonly factorClasses: readonly string[] | null;
 }
 
 function mapStepUp(row: StepUpRow): MappedStepUp {
@@ -412,6 +423,9 @@ function mapStepUp(row: StepUpRow): MappedStepUp {
     pkceVerifierCiphertext: text(row.pkceVerifierCiphertext),
     nonceCiphertext: text(row.nonceCiphertext), completeReceipt: row.completeReceipt,
     expiresAt: instant(row.expiresAt), stepUpAt: row.stepUpAt === null ? null : instant(row.stepUpAt),
+    sessionEpoch: row.sessionEpoch === null || row.sessionEpoch === undefined ? null : BigInt(String(row.sessionEpoch)),
+    assuranceLevel: nullableText(row.assuranceLevel),
+    factorClasses: row.factorClasses === null || row.factorClasses === undefined ? null : strings(row.factorClasses),
   });
 }
 
@@ -438,7 +452,9 @@ async function findStepUpByBeginCommand(
             stepup.oidc_audience AS "oidcAudience",stepup.exact_callback_uri AS "exactCallbackUri",
             stepup.pkce_verifier_ciphertext AS "pkceVerifierCiphertext",
             stepup.nonce_ciphertext AS "nonceCiphertext",stepup.complete_receipt AS "completeReceipt",
-            stepup.expires_at AS "expiresAt",session_row.step_up_at AS "stepUpAt"
+            stepup.expires_at AS "expiresAt",session_row.step_up_at AS "stepUpAt",
+            session_row.session_epoch AS "sessionEpoch",session_row.assurance_level AS "assuranceLevel",
+            session_row.factor_classes AS "factorClasses"
      FROM platform.admin_step_up_transaction stepup
      JOIN platform.admin_operator_session session_row
        ON session_row.operator_session_ref=stepup.operator_session_ref
@@ -465,7 +481,11 @@ function committedResult(
   input: Readonly<{ commandId: string; idempotencyKey: string; requestDigest: string }>,
 ) {
   if (row.stepUpAt === null || row.completeReceipt === null) throw new Error("ADMIN_STEP_UP_ROW_CORRUPT");
+  if (row.sessionEpoch === null || row.assuranceLevel !== "phishing_resistant" || row.factorClasses === null) {
+    throw new Error("ADMIN_STEP_UP_ROW_CORRUPT");
+  }
   return Object.freeze({ operatorSessionRef: row.operatorSessionRef, stepUpAt: row.stepUpAt,
+    sessionEpoch: row.sessionEpoch, factorClasses: row.factorClasses,
     receipt: receipt(input, "admin.identity.step-up.complete", row.stepUpAt) });
 }
 
