@@ -7,14 +7,13 @@ owners:
 
 # Kokoro Platform
 
-## Current transition state
+## Current production architecture
 
-Legacy Site/User/Model/Credit/Payment/Admin packages remain the current MySQL-backed runtime and rollback baseline.
-The root Prisma 7/PostgreSQL 18 implementation is a `transition-candidate` only: its release artifact contains independently
-selectable API, Worker, and Migrator roles, but `activationAuthorized=false` and `runtimeTraffic=false`. Task 3 owns only
-the foundation marker, database/role/ACL preflight, health/readiness, migration locking, and graceful drain. No business
-owner table has moved yet. API and Worker use distinct least-privilege roles and can only read the foundation marker.
-Root-managed PG18 component and cutover evidence must pass before the legacy MySQL write surfaces are removed.
+The root Prisma 7/PostgreSQL implementation is the only Platform business authority. Site, identity, authorization, policy,
+model control, credit/usage, commerce redemption, assets, Admission and privileged Admin all live in this source tree and share
+one migration authority. API, worker, Admission, Authorization, Asset Data Plane, Model Gateway, Admin and Migrator remain
+independently selectable processes with exact database credential classes. PostgreSQL RLS, security-definer projections and
+process-specific grants enforce the internal boundaries; there is no MySQL authority mode, dual write or legacy cutover path.
 
 ## Responsibilities
 
@@ -26,7 +25,11 @@ Platform does not execute Agent graphs, own Session messages/SSE, render Site We
 
 ## Public boundary
 
-Business packages expose Fastify HTTP adapters from `src/interfaces/http` (plus `admin`/`cli`); Connect/protobuf covers `kokoro.platform.admin.v1.AdminAuthService` only. The remaining cross-service traffic splits two ways: business modules call each other through `callService` plus a hand-written Zod schema, while the Admin gateway issues raw `fetch` with caller headers (`gateway.ts`). Root `src/index.ts` re-exports the module registry (`platformModules`, `listPlatformModules`, `getPlatformModule`, `listActivePlatformModules`, `assertPlatformRegistryIntegrity`, `PlatformModuleDescriptor`); the deployment image is built by `deploy/docker/Dockerfile`.
+Ordinary Site product traffic uses the bounded public HTTP/JSON BFF contract. Privileged control planes use Root-owned
+Protobuf/Connect contracts: Admin Identity/Auth/Query/Commerce, Session Admission and Asset Eligibility, Hub capability
+publication/runtime, and Agent Model Gateway. Same-Platform bounded contexts never self-RPC; application ports and one scoped
+transaction coordinate local owners. Root `src/index.ts` exposes only the Platform composition surface, and
+`deploy/docker/Dockerfile` builds the closed runtime artifact.
 
 ## Callers and dependencies
 
@@ -50,7 +53,11 @@ Keep domain/application independent of transport and persistence. Add deployable
 
 ## Current gotchas
 
-General Admission now has a transition-candidate application/Connect provider, exact-response PostgreSQL receipt journal, mTLS caller boundary, strict opaque execution-context mapping, and sealed GA request construction. Model Gateway now has an independent mTLS production process, opaque Admission authorization, durable attempt/usage ownership, encrypted response replay and a narrow LiteLLM chat adapter. Runtime traffic remains disabled until the Root contract carries the authorization handle and Session/Agent replace their direct model path; streaming, tools, reasoning and generation modalities still require certification.
+General Admission is the only constructor of sealed GA execution material and the owner of Site/model/capability/asset/credit
+admission decisions. Model Gateway owns resumable chat provider effects, encrypted frame journals, Credit evidence and LiteLLM
+adaptation; Agent consumes only the opaque authorization and verifies the frame digest chain. Image, music and video generation
+must use dedicated product/generation routes instead of expanding the chat corpus. Payment provider connectors may remain disabled
+per Site; card redemption reaches the same Commerce fulfillment and Credit grant path as a successful purchase.
 
 ## Verification
 

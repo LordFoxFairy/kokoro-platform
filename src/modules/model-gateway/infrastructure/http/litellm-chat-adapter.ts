@@ -19,7 +19,7 @@ type FetchPort = (
 ) => Promise<Response>;
 
 /**
- * Narrow certified Phase-A adapter: one authorized Gateway model alias maps to
+ * Narrow certified chat adapter: one authorized Gateway model alias maps to
  * one LiteLLM alias. Routing, retry, fallback, spend and customer rating stay
  * outside LiteLLM.
  */
