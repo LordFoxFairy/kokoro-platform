@@ -30,6 +30,18 @@ const identityEventTypes = [
   "identity.namespace.allocation.requested",
 ] as const;
 
+const localIdentitySecurityEventTypes = [
+  "identity.reauthentication.challenge_started",
+  "identity.reauthentication.proof_issued",
+  "identity.reauthentication.proof_superseded",
+  "identity.recovery_codes.delivery_superseded",
+  "identity.recovery_codes.regenerated",
+  "identity.totp.disabled",
+  "identity.totp.enrollment_confirmed",
+  "identity.totp.enrollment_started",
+  "identity.totp.enrollment_superseded",
+] as const;
+
 const workerProcess = "src/process/worker.ts";
 
 describe("Platform outbox producer to consumer closure", () => {
@@ -88,8 +100,10 @@ describe("Platform outbox producer to consumer closure", () => {
       .toThrow("OUTBOX_EVENT_ROUTE_UNREGISTERED");
     expect(() => assertOutboxEventRoute("site", "site.register.v1"))
       .toThrow("OUTBOX_EVENT_ROUTE_UNREGISTERED");
-    expect(() => assertOutboxEventRoute("identity", "identity.totp.enrollment_started"))
-      .toThrow("OUTBOX_EVENT_ROUTE_UNREGISTERED");
+    for (const eventType of localIdentitySecurityEventTypes) {
+      expect(() => assertOutboxEventRoute("identity", eventType))
+        .toThrow("OUTBOX_EVENT_ROUTE_UNREGISTERED");
+    }
   });
 
   it("enforces the same closed owner set at the PostgreSQL boundary", async () => {
@@ -125,5 +139,34 @@ describe("Platform outbox producer to consumer closure", () => {
     expect(service).not.toContain("asset.version.ready");
     expect(service).not.toContain("readyEvent");
     expect(repository).not.toContain("readyEvent");
+  });
+
+  it("keeps Identity security facts local while preserving its two real effect producers", async () => {
+    const [securityManagement, identityApplication, composition] = await Promise.all([
+      readFile(new URL(
+        "../../src/modules/identity/application/services/identity-security-management-service.ts",
+        import.meta.url,
+      ), "utf8"),
+      readFile(new URL(
+        "../../src/modules/identity/application/services/identity-application-service.ts",
+        import.meta.url,
+      ), "utf8"),
+      readFile(new URL("../../src/process/platform-public-composition.ts", import.meta.url), "utf8"),
+    ]);
+    expect(securityManagement).toContain("appendSecurityEvent");
+    expect(securityManagement).not.toContain("IdentityOutboxPort");
+    expect(securityManagement).not.toContain("OutboxEvent");
+    expect(securityManagement).not.toContain("dependencies.outbox");
+    for (const eventType of localIdentitySecurityEventTypes) {
+      expect(securityManagement).toContain(`"${eventType}"`);
+    }
+    const securityComposition = composition.slice(
+      composition.indexOf("const identitySecurityManagement"),
+      composition.indexOf("const authorizationOperations"),
+    );
+    expect(securityComposition).not.toContain("outbox:");
+    const effectEventTypes = [...identityApplication.matchAll(/eventType: "(identity\.[^"]+)"/gu)]
+      .map((match) => match[1]);
+    expect([...new Set(effectEventTypes)]).toEqual(identityEventTypes);
   });
 });

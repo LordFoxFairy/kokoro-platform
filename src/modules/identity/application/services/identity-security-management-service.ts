@@ -10,10 +10,8 @@ import type {
   CommandReceipt,
   JsonValue,
 } from "../../../../shared/outbox-inbox/receipt.js";
-import type { OutboxEvent } from "../../../../shared/outbox-inbox/outbox.js";
 import type {
   IdentityCommandReceiptPort,
-  IdentityOutboxPort,
   IdentityUnitOfWorkPort,
 } from "./identity-application-service.js";
 import { IdentityApplicationError } from "./identity-application-service.js";
@@ -44,7 +42,6 @@ export class IdentitySecurityManagementService {
       repository: IdentitySecurityManagementRepository;
       receiptRecovery: Pick<IdentityRepository, "bindReceiptRecoveryCapability">;
       receipts: IdentityCommandReceiptPort;
-      outbox: IdentityOutboxPort;
       totpEnrollmentIssuer: IdentityTotpEnrollmentIssuerPort;
       recoveryCodeIssuer: IdentityRecoveryCodeIssuerPort;
       totpSecretProtector: IdentityTotpSecretProtectorPort;
@@ -200,7 +197,7 @@ export class IdentitySecurityManagementService {
               challengeKind: "totp" as const, expiresAt: pendingExpiresAt });
             await this.securityEvent(transaction, input, {
               eventType: "identity.reauthentication.challenge_started", accountRef: material.accountRef,
-              accountSecurityEpoch: material.accountSecurityEpoch, occurredAt: now, aggregateRef: challengeRef,
+              accountSecurityEpoch: material.accountSecurityEpoch, occurredAt: now,
             });
             await this.success(transaction, identity, {
               kind: "reauthentication_pending", pending, committedAt: now,
@@ -248,7 +245,7 @@ export class IdentitySecurityManagementService {
           eventType: supersede ? "identity.reauthentication.proof_superseded" :
             "identity.reauthentication.proof_issued",
           accountRef: completed.accountRef, accountSecurityEpoch: completed.accountSecurityEpoch,
-          occurredAt: now, aggregateRef: input.commandId,
+          occurredAt: now,
         });
         await this.success(transaction, identity, {
           kind: "reauthentication_proof", audience: resolvedTarget.audience,
@@ -419,7 +416,6 @@ export class IdentitySecurityManagementService {
           accountRef: material.accountRef,
           accountSecurityEpoch: material.accountSecurityEpoch,
           occurredAt: now,
-          aggregateRef: transactionRef,
         });
         await this.success(transaction, identity, {
           kind: "totp_enrollment",
@@ -547,7 +543,6 @@ export class IdentitySecurityManagementService {
           accountRef: confirmed.accountRef,
           accountSecurityEpoch: confirmed.accountSecurityEpoch,
           occurredAt: now,
-          aggregateRef: setRef,
         });
         await this.success(transaction, identity, {
           kind: "recovery_code_set",
@@ -640,7 +635,6 @@ export class IdentitySecurityManagementService {
         await this.securityEvent(transaction, input, {
           eventType: "identity.totp.disabled", accountRef: changed.accountRef,
           accountSecurityEpoch: changed.accountSecurityEpoch, occurredAt: now,
-          aggregateRef: input.commandId,
         });
         await this.success(transaction, identity, { kind: "totp_disabled", accountRef: changed.accountRef,
           accountSecurityEpoch: changed.accountSecurityEpoch, committedAt: now });
@@ -736,7 +730,7 @@ export class IdentitySecurityManagementService {
           eventType: supersede ? "identity.recovery_codes.delivery_superseded" :
             "identity.recovery_codes.regenerated",
           accountRef: changed.accountRef, accountSecurityEpoch: changed.accountSecurityEpoch,
-          occurredAt: now, aggregateRef: setRef,
+          occurredAt: now,
         });
         await this.success(transaction, identity, { kind: "recovery_code_set", setRef,
           accountRef: changed.accountRef, accountSecurityEpoch: changed.accountSecurityEpoch,
@@ -872,7 +866,6 @@ export class IdentitySecurityManagementService {
       accountRef: string;
       accountSecurityEpoch: string;
       occurredAt: string;
-      aggregateRef: string;
     }>,
   ): Promise<void> {
     const eventId = this.reference();
@@ -887,17 +880,6 @@ export class IdentitySecurityManagementService {
       occurredAt: event.occurredAt,
     });
     const payloadDigest = this.dependencies.auditDigest(payload);
-    const outbox: OutboxEvent = Object.freeze({
-      eventId,
-      owner: "identity",
-      eventType: event.eventType,
-      aggregateId: event.aggregateRef,
-      payload,
-      payloadDigest,
-      correlationId: input.context.correlationId,
-      causationId: input.commandId,
-    });
-    await this.dependencies.outbox.enqueue(transaction, outbox);
     await this.dependencies.repository.appendSecurityEvent(transaction, {
       eventId,
       siteRef: input.workload.siteRef,

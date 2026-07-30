@@ -204,7 +204,6 @@ export async function createPlatformPublicProductionComposition(
     repository: new PostgresIdentitySecurityManagementRepository(),
     receiptRecovery: identityRepository,
     receipts: new CommandReceiptRepository(),
-    outbox: new OutboxRepository(),
     totpEnrollmentIssuer: createIdentityTotpEnrollmentIssuer(),
     recoveryCodeIssuer: createIdentityRecoveryCodeIssuer(),
     totpSecretProtector,

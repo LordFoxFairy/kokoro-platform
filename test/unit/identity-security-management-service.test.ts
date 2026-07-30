@@ -56,7 +56,9 @@ describe("Identity security management application service", () => {
       | Parameters<IdentitySecurityManagementRepository["beginTotpEnrollment"]>[1]
       | undefined;
     let receiptResult: JsonValue | null = null;
-    let eventPayload: JsonValue | undefined;
+    let securityEvent:
+      | Parameters<IdentitySecurityManagementRepository["appendSecurityEvent"]>[1]
+      | undefined;
     const receipts = pendingReceipts((result) => {
       receiptResult = result;
     });
@@ -71,7 +73,10 @@ describe("Identity security management application service", () => {
       async consumeReauthenticationProof() {
         throw new Error("proof consumption must stay inside the enrollment mutation");
       },
-      async appendSecurityEvent() {},
+      async appendSecurityEvent(
+        _transaction: unknown,
+        event: NonNullable<typeof securityEvent>,
+      ) { securityEvent = event; },
     } as unknown as IdentitySecurityManagementRepository;
     const service = createService({
       repository,
@@ -83,11 +88,6 @@ describe("Identity security management application service", () => {
         "discarded-retry-transaction",
         "discarded-retry-authenticator",
       ],
-      outbox: {
-        async enqueue(_transaction, event) {
-          eventPayload = event.payload;
-        },
-      },
     });
 
     const first = await service.beginTotpEnrollment({
@@ -133,7 +133,10 @@ describe("Identity security management application service", () => {
     });
     expect(JSON.stringify(receiptResult)).not.toContain("JBSWY3DPEHPK3PXP");
     expect(JSON.stringify(receiptResult)).not.toContain("otpauth://");
-    expect(JSON.stringify(eventPayload)).not.toContain("JBSWY3DPEHPK3PXP");
+    expect(securityEvent).toMatchObject({ eventType: "identity.totp.enrollment_started",
+      accountRef: "account-1", subjectRef: "subject-1", sessionRef: "session-1" });
+    expect(JSON.stringify(securityEvent)).not.toContain("JBSWY3DPEHPK3PXP");
+    expect(JSON.stringify(securityEvent)).not.toContain("otpauth://");
   });
 
   it("does not persist receipt recovery when the enrollment authority mutation is rejected", async () => {
@@ -395,6 +398,9 @@ describe("Identity security management application service", () => {
       | Parameters<IdentitySecurityManagementRepository["issueReauthenticationProof"]>[1]
       | undefined;
     let receiptResult: JsonValue | null = null;
+    let securityEvent:
+      | Parameters<IdentitySecurityManagementRepository["appendSecurityEvent"]>[1]
+      | undefined;
     const repository = {
       async loadReauthenticationMaterial() {
         return ownerMaterial();
@@ -403,7 +409,10 @@ describe("Identity security management application service", () => {
         issued = input;
         return true;
       },
-      async appendSecurityEvent() {},
+      async appendSecurityEvent(
+        _transaction: unknown,
+        event: NonNullable<typeof securityEvent>,
+      ) { securityEvent = event; },
     } as unknown as IdentitySecurityManagementRepository;
     const service = createService({
       repository,
@@ -453,6 +462,12 @@ describe("Identity security management application service", () => {
     });
     expect(Date.parse(issued?.expiresAt ?? "")).toBe(Date.parse(issued?.now ?? "") + 5 * 60_000);
     expect(JSON.stringify(receiptResult)).not.toContain("reauth-proof");
+    expect(securityEvent).toMatchObject({
+      eventType: "identity.reauthentication.proof_issued",
+      accountRef: "account-1",
+      subjectRef: "subject-1",
+      sessionRef: "session-1",
+    });
   });
 
   it("disables TOTP only when fresh possession and the exact proof are consumed atomically", async () => {
@@ -628,6 +643,9 @@ describe("Identity security management application service", () => {
     let mutation:
       | Parameters<IdentitySecurityManagementRepository["regenerateRecoveryCodes"]>[1]
       | undefined;
+    let securityEvent:
+      | Parameters<IdentitySecurityManagementRepository["appendSecurityEvent"]>[1]
+      | undefined;
     const codes = Array.from({ length: 10 }, (_, index) => `replacement-code-${index}`);
     const repository = {
       async loadActiveTotpMaterial() {
@@ -650,7 +668,10 @@ describe("Identity security management application service", () => {
         mutation = input;
         return { accountRef: "account-1", accountSecurityEpoch: "8" };
       },
-      async appendSecurityEvent() {},
+      async appendSecurityEvent(
+        _transaction: unknown,
+        event: NonNullable<typeof securityEvent>,
+      ) { securityEvent = event; },
     } as unknown as IdentitySecurityManagementRepository;
     const service = createService({
       repository,
@@ -686,6 +707,12 @@ describe("Identity security management application service", () => {
       },
     });
     expect(mutation?.recoveryCodeDigests).toHaveLength(10);
+    expect(securityEvent).toMatchObject({
+      eventType: "identity.recovery_codes.regenerated",
+      accountRef: "account-1",
+      subjectRef: "subject-1",
+      sessionRef: "session-1",
+    });
   });
 
   it("supersedes a lost enrollment delivery with only the caller-held recovery capability", async () => {
@@ -870,9 +897,6 @@ function createService(
     totpVerifier?: Readonly<{
       verify(): Promise<Readonly<{ valid: false } | { valid: true; timeStep: number }>>;
     }>;
-    outbox?: Readonly<{
-      enqueue(transaction: unknown, event: { payload: JsonValue }): Promise<void>;
-    }>;
     receiptRecovery?: Pick<IdentityRepository, "bindReceiptRecoveryCapability">;
     issuedLabels?: string[];
     onReauthenticationDigest?: (credential: string) => void;
@@ -889,7 +913,6 @@ function createService(
       async bindReceiptRecoveryCapability() {},
     },
     receipts: input.receipts,
-    outbox: (input.outbox ?? { async enqueue() {} }) as never,
     totpEnrollmentIssuer: {
       async issue(issueInput) {
         input.issuedLabels?.push(issueInput.issuer);
