@@ -93,6 +93,27 @@ describe("Admin ModelControl resolver", () => {
     )).rejects.toThrow("MODEL_CONTROL_SCOPE_KIND_INVALID");
   });
 
+  it("authorizes receipt reconciliation against the original operation and exact scope", async () => {
+    const resolver = new AdminControlPlaneResolver({
+      peer: () => peer,
+      authenticator: { authenticate: vi.fn(async () => authenticated) } as never,
+      clock: () => new Date(now),
+    });
+
+    const context = await resolver.resolveModelControlReceipt(
+      queryContext(7n, session), transport,
+      { operation: "model.site-policy.change", siteRef: "site:alpha", scope: "site" },
+    );
+
+    expect(context.target).toMatchObject({
+      siteId: "site:alpha", purpose: "model_control_receipt_reconciliation",
+    });
+    await expect(resolver.resolveModelControlReceipt(
+      queryContext(7n, session), transport,
+      { operation: "model.site-policy.change", siteRef: "site:alpha", scope: "global" },
+    )).rejects.toThrow("MODEL_CONTROL_RECEIPT_SCOPE_INVALID");
+  });
+
   it("derives query cursor authority binding only from verified generation and authority epochs", async () => {
     const resolveWith = (facts: Readonly<{ session: AuthenticatedAdminSession;
       authority: AdminOperatorAuthority }>, claimedSiteEpoch = 999n) => new AdminControlPlaneResolver({

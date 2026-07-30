@@ -153,6 +153,20 @@ describe("ModelControl command identity and outbox", () => {
         correlationId: "corr-1",
         causationId: "req-1",
       });
+      expect(calls.find(({ kind }) => kind === "outcome")?.value).toMatchObject({
+        state: "succeeded",
+        result: {
+          schemaVersion: 1,
+          commandId: command.commandId,
+          requestDigest: command.requestDigest,
+          operation: "model.inventory.activate",
+          siteId: null,
+          outcome: {
+            targetDigest: "d".repeat(64),
+            activatedRevision: "3",
+          },
+        },
+      });
     } finally {
       revokePlatformTransaction(lease);
     }

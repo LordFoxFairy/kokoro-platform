@@ -31,7 +31,16 @@ export class PostgresModelControlCommandJournal implements ModelControlCommandJo
     trace: { readonly requestId: string; readonly correlationId: string },
   ): Promise<void> {
     const event = modelControlEventFor(command, receipt);
-    const result = jsonValue(event.receipt);
+    const result = jsonValue({
+      schemaVersion: 1,
+      commandId: command.commandId,
+      requestDigest: command.requestDigest,
+      operation: command.operation,
+      siteId: "siteId" in command.input.effect
+        ? command.input.effect.siteId
+        : null,
+      outcome: event.receipt,
+    });
     if (!receipt.replayed) {
       await this.outbox.enqueue(transaction, {
         eventId: event.eventId,

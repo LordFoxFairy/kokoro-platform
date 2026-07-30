@@ -18,7 +18,9 @@ Provider execution and secrets remain behind the remote Model Gateway: selection
 same local application services, not a new deployable and never a Platform self-RPC hop. Inventory import/activation and global
 ModelOption materialization require a Global grant; Site policy and SiteRelease catalog publication require the exact Site grant.
 Every mutation also requires the normal phishing-resistant Admin step-up, verifies the canonical command-envelope digest, and
-returns the durable owner receipt timestamp. Publication time is Platform-owned metadata: it is persisted and returned on replay,
+returns the durable owner receipt timestamp. Ambiguous mutation outcomes carry the original command ID; the typed receipt query
+re-authenticates the operator against the original operation and Global/exact-Site scope, verifies the stored result digest, and
+returns only the operation-specific safe outcome. Publication time is Platform-owned metadata: it is persisted and returned on replay,
 but excluded from the content-addressed catalog digest so retries and the upstream SiteRelease authority share one stable catalog ref.
 
 The global inventory contains definitions, provider bindings and the structurally allowed route pool. Product-facing choices are

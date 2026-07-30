@@ -25,7 +25,12 @@ import {
   AdminModelProviderSchema,
   AdminSiteModelPolicySchema,
   AdminSiteReleaseCatalogSchema,
+  ActivateInventoryReceiptResultSchema,
+  ChangeSitePolicyReceiptResultSchema,
+  ImportInventoryReceiptResultSchema,
+  MaterializeModelOptionsReceiptResultSchema,
   ModelControlService,
+  ModelControlCommandOperation,
   ModelAdminPageInfoSchema,
   ModelOptionLifecycle,
   ModelProduct,
@@ -33,6 +38,7 @@ import {
   ProviderAdapterKind,
   ProviderHealth,
   ProviderOperationalStatus,
+  PublishSiteReleaseCatalogReceiptResultSchema,
   SiteModelAssignmentMode,
   SiteModelCatalogMode,
   type CanonicalModelInventory,
@@ -55,7 +61,7 @@ import {
 } from "../../../../interfaces/connect/generated-model-control/model-control-errors.js";
 import type { VerifiedRequestSecurityContext } from
   "../../../../shared/security-context/index.js";
-import type { ControlCommandReceiptTimestampReader } from
+import type { ControlCommandReceiptRecord, ControlCommandReceiptTimestampReader } from
   "../../../admin/infrastructure/postgres/control-command-receipt-reader.js";
 import type {
   ModelInventoryActivationAdministration,
@@ -127,6 +133,15 @@ export interface ModelControlAdminResolver {
     context: VerifiedRequestSecurityContext;
     axes: VerifiedAuthenticatedAdminAxes;
   }>>;
+  resolveModelControlReceipt?(
+    claimed: AuthenticatedOperatorQueryContext,
+    transport: HandlerContext,
+    request: Readonly<{
+      operation: ModelControlAdminOperation;
+      siteRef: string | null;
+      scope: "global" | "site";
+    }>,
+  ): Promise<VerifiedRequestSecurityContext>;
 }
 
 export function createModelControlConnectService(input: Readonly<{
@@ -146,6 +161,34 @@ export function createModelControlConnectService(input: Readonly<{
   cursors: AdminPageCursorCodec;
 }>): ModelControlConnectService {
   const implementation: ModelControlConnectService = {
+    async getCommandReceipt(request, transport) {
+      const context = required(request.context, "MODEL_CONTROL_QUERY_CONTEXT_REQUIRED");
+      if (request.digestAlgorithm !== CommandDigestAlgorithmV2.SHA256_COMMAND_ENVELOPE) {
+        throw new Error("MODEL_CONTROL_RECEIPT_DIGEST_ALGORITHM_INVALID");
+      }
+      const expected = receiptOperation(request.operation, request.siteId);
+      const resolveReceipt = input.resolver.resolveModelControlReceipt;
+      const getReceipt = input.receipts.get;
+      if (resolveReceipt === undefined || getReceipt === undefined) {
+        throw new Error("MODEL_CONTROL_RECEIPT_READER_REQUIRED");
+      }
+      const verified = await resolveReceipt.call(input.resolver, context, transport, {
+        operation: expected.operation, siteRef: expected.siteId, scope: expected.scope,
+      });
+      const stored = await getReceipt.call(input.receipts, verified, {
+        commandId: request.commandId, operation: expected.operation, siteId: expected.siteId,
+      });
+      if (stored === null) throw new ModelControlBoundaryFailure("commandReceiptNotFound");
+      if (stored.operation !== expected.operation || stored.requestDigest !== request.requestDigest) {
+        throw new ModelControlBoundaryFailure("commandReceiptMismatch");
+      }
+      const result = receiptResult(stored.result, stored, expected);
+      return {
+        receipt: persistedCommandReceipt(stored),
+        result,
+      };
+    },
+
     async listInventoryRevisions(request, transport) {
       const permit = await resolveRead(input.resolver, required(request.context,
         "MODEL_CONTROL_QUERY_CONTEXT_REQUIRED"), transport, "model.inventory.read", null, [],
@@ -332,7 +375,8 @@ export function createModelControlConnectService(input: Readonly<{
         activationId: identity.commandId,
         idempotencyKey: identity.idempotencyKey,
         targetDigest: effect.targetDigest,
-        expectedPointerRevision: effect.expectedPointerRevision.toString(),
+        expectedPointerRevision: signedUint64(effect.expectedPointerRevision,
+          "MODEL_INVENTORY_EXPECTED_POINTER_REVISION_INVALID").toString(),
       }, verified.context));
       return {
         targetDigest: receipt.targetDigest,
@@ -361,7 +405,8 @@ export function createModelControlConnectService(input: Readonly<{
       const receipt = await withCommandReceiptConflictMapping(() => input.owners.changeSitePolicy.change({
         changeId: identity.commandId,
         idempotencyKey: identity.idempotencyKey,
-        expectedRevision: effect.expectedRevision.toString(),
+        expectedRevision: signedUint64(effect.expectedRevision,
+          "MODEL_SITE_POLICY_EXPECTED_REVISION_INVALID").toString(),
         policy: siteModelPolicy(request.siteId, effect),
       }, verified.context));
       return {
@@ -449,6 +494,7 @@ export function createModelControlConnectService(input: Readonly<{
 
 function withModelControlErrorBoundary(service: ModelControlConnectService): ModelControlConnectService {
   return {
+    getCommandReceipt: modelHandler(service.getCommandReceipt),
     listInventoryRevisions: modelHandler(service.listInventoryRevisions),
     getInventoryRevision: modelHandler(service.getInventoryRevision),
     listInventoryProviders: modelHandler(service.listInventoryProviders),
@@ -474,7 +520,7 @@ function modelHandler<Request, Response>(handler: (
     try {
       return await handler(request, context);
     } catch (error) {
-      throw modelControlConnectError(error, modelRequestId(request, context));
+      throw modelControlConnectError(error, modelRequestId(request, context), modelReceiptRef(request));
     }
   };
 }
@@ -486,8 +532,9 @@ class ModelControlBoundaryFailure extends Error {
   }
 }
 
-function modelControlConnectError(error: unknown, requestId: string): ConnectError {
-  if (error instanceof ConnectError && error.findDetails(KokoroErrorDetailSchema).length > 0) return error;
+function modelControlConnectError(error: unknown, requestId: string, receiptRef: string | undefined): ConnectError {
+  if (error instanceof ConnectError && error.findDetails(KokoroErrorDetailSchema).length > 0 &&
+      error.code !== Code.DeadlineExceeded && error.code !== Code.Unavailable) return error;
   if (error instanceof ModelControlBoundaryFailure) return contractedModelError(error.kind, requestId, error);
   if (error instanceof ConnectError && error.code === Code.AlreadyExists) {
     return contractedModelError("commandReceiptConflict", requestId, error);
@@ -499,7 +546,8 @@ function modelControlConnectError(error: unknown, requestId: string): ConnectErr
     const code = publicModelControlCode(error.code);
     const fallback = connectFallback(code);
     return detailedModelError(code, fallback.domainCode, fallback.safeMessage,
-      fallback.retryClass, requestId, error.metadata, error);
+      fallback.retryClass, requestId, error.metadata, error,
+      code === Code.DeadlineExceeded || code === Code.Unavailable ? receiptRef : undefined);
   }
   const classification = classifyModelControlError(error);
   if (classification === "adminSessionUnauthenticated" || classification === "adminPermissionDenied") {
@@ -532,10 +580,11 @@ function contractedModelError(kind: ModelControlAdminErrorKind, requestId: strin
 
 function detailedModelError(code: Code, domainCode: string, safeMessage: string,
   retryClass: RetryClass, requestId: string, metadata: HeadersInit | undefined,
-  cause: unknown): ConnectError {
+  cause: unknown, receiptRef?: string): ConnectError {
   return new ConnectError(safeMessage, code, metadata, [{ desc: KokoroErrorDetailSchema,
     value: create(KokoroErrorDetailSchema, { domainCode, retryClass,
-      requestId: safeRequestId(requestId), correlationId: safeRequestId(requestId), safeMessage }) }], cause);
+      requestId: safeRequestId(requestId), correlationId: safeRequestId(requestId), safeMessage,
+      ...(receiptRef === undefined ? {} : { receiptRef }) }) }], cause);
 }
 
 function connectFallback(code: Code): Readonly<{ domainCode: string; safeMessage: string;
@@ -557,7 +606,7 @@ function connectFallback(code: Code): Readonly<{ domainCode: string; safeMessage
   if (code === Code.DeadlineExceeded) return { domainCode: "model.control.deadline_exceeded",
     safeMessage: "Model control deadline exceeded", retryClass: RetryClass.RECONCILE_RECEIPT };
   if (code === Code.Unavailable) return { domainCode: "model.control.unavailable",
-    safeMessage: "Model control is unavailable", retryClass: RetryClass.AFTER_DELAY };
+    safeMessage: "Model control is unavailable", retryClass: RetryClass.RECONCILE_RECEIPT };
   if (code === Code.Canceled) return { domainCode: "model.control.canceled",
     safeMessage: "Model control request canceled", retryClass: RetryClass.NEVER };
   return { domainCode: "model.control.internal", safeMessage: "Model control request failed",
@@ -574,11 +623,24 @@ function modelRequestId(request: unknown, context: HandlerContext): string {
       if (typeof value === "string") return safeRequestId(value);
     }
   }
-  return "model-control";
+  return "";
 }
 
 function safeRequestId(value: string): string {
-  return /^[A-Za-z0-9._:-]{1,128}$/u.test(value) ? value : "model-control";
+  return /^[A-Za-z0-9._:-]{1,128}$/u.test(value) ? value : "";
+}
+
+function modelReceiptRef(request: unknown): string | undefined {
+  if (request === null || typeof request !== "object") return undefined;
+  const direct = (request as { commandId?: unknown }).commandId;
+  if (typeof direct === "string" && /^[a-f0-9]{32}$/u.test(direct)) return direct;
+  const context = (request as { context?: unknown }).context;
+  if (context === null || typeof context !== "object") return undefined;
+  const command = (context as { command?: unknown }).command;
+  if (command === null || typeof command !== "object") return undefined;
+  const commandId = (command as { commandId?: unknown }).commandId;
+  return typeof commandId === "string" && /^[A-Za-z0-9._:-]{1,128}$/u.test(commandId)
+    ? commandId : undefined;
 }
 
 interface ResolvedModelPage {
@@ -784,7 +846,8 @@ function inventoryDocument(inventory: CanonicalModelInventory): DomainModelInven
       inputModalities: [...model.inputModalities],
       outputModalities: [...model.outputModalities],
       capabilities: [...model.capabilities],
-      contextWindow: model.contextWindow ?? null,
+      contextWindow: model.contextWindow === undefined ? null
+        : signedInt32(model.contextWindow, "MODEL_CONTEXT_WINDOW_INVALID"),
       enabled: model.enabled,
     })),
     bindings: inventory.bindings.map((binding) => ({
@@ -811,7 +874,7 @@ function providerAvailability(value: ProviderAvailability): ProviderOperationalA
     providerKey: value.providerKey,
     status: providerStatus(value.status),
     health: providerHealth(value.health),
-    epoch: value.epoch.toString(),
+    epoch: signedUint64(value.epoch, "MODEL_PROVIDER_AVAILABILITY_EPOCH_INVALID").toString(),
     observationRef: value.observationRef ?? null,
     observedAt: value.observedAt === undefined
       ? null
@@ -933,6 +996,143 @@ function commandIdentity(context: AuthenticatedOperatorCommandContext) {
   return identity;
 }
 
+type PersistedModelControlReceipt = ControlCommandReceiptRecord;
+
+type ReceiptOperation = Readonly<{
+  operation: ModelControlAdminOperation;
+  scope: "global" | "site";
+  siteId: string | null;
+}>;
+
+function receiptOperation(operation: ModelControlCommandOperation,
+  siteId: string | undefined): ReceiptOperation {
+  if (operation === ModelControlCommandOperation.IMPORT_INVENTORY) {
+    if (siteId !== undefined) throw new ModelControlBoundaryFailure("commandReceiptMismatch");
+    return { operation: "model.inventory.import", scope: "global", siteId: null };
+  }
+  if (operation === ModelControlCommandOperation.ACTIVATE_INVENTORY) {
+    if (siteId !== undefined) throw new ModelControlBoundaryFailure("commandReceiptMismatch");
+    return { operation: "model.inventory.activate", scope: "global", siteId: null };
+  }
+  if (operation === ModelControlCommandOperation.MATERIALIZE_MODEL_OPTIONS) {
+    if (siteId !== undefined) throw new ModelControlBoundaryFailure("commandReceiptMismatch");
+    return { operation: "model.option.materialize", scope: "global", siteId: null };
+  }
+  if (operation === ModelControlCommandOperation.CHANGE_SITE_POLICY) {
+    if (siteId === undefined || siteId.length === 0) {
+      throw new ModelControlBoundaryFailure("commandReceiptMismatch");
+    }
+    return { operation: "model.site-policy.change", scope: "site", siteId };
+  }
+  if (operation === ModelControlCommandOperation.PUBLISH_SITE_RELEASE_CATALOG) {
+    if (siteId === undefined || siteId.length === 0) {
+      throw new ModelControlBoundaryFailure("commandReceiptMismatch");
+    }
+    return { operation: "model.site-release-catalog.publish", scope: "site", siteId };
+  }
+  throw new Error("MODEL_CONTROL_RECEIPT_OPERATION_INVALID");
+}
+
+function persistedCommandReceipt(stored: PersistedModelControlReceipt) {
+  return create(CommandReceiptV2Schema, {
+    identity: create(CommandIdentityV2Schema, {
+      commandId: stored.commandId,
+      idempotencyKey: stored.idempotencyKey,
+      digestAlgorithm: CommandDigestAlgorithmV2.SHA256_COMMAND_ENVELOPE,
+      requestDigest: stored.requestDigest,
+    }),
+    operation: stored.operation,
+    state: CommandReceiptStateV2.COMMITTED,
+    recordedAt: timestampFromDate(canonicalDate(stored.recordedAt,
+      "MODEL_CONTROL_RECEIPT_TIME_INVALID")),
+  });
+}
+
+function receiptResult(value: unknown, stored: PersistedModelControlReceipt,
+  expected: ReceiptOperation) {
+  const wrapper = objectValue(value);
+  if (wrapper.schemaVersion !== 1 || wrapper.commandId !== stored.commandId ||
+      wrapper.requestDigest !== stored.requestDigest) {
+    throw new Error("MODEL_CONTROL_RECEIPT_RESULT_INVALID");
+  }
+  if (wrapper.operation !== expected.operation || wrapper.siteId !== expected.siteId) {
+    throw new ModelControlBoundaryFailure("commandReceiptMismatch");
+  }
+  const outcome = objectValue(wrapper.outcome);
+  if (expected.operation === "model.inventory.import") {
+    const counts = objectValue(outcome.counts);
+    return { case: "importInventory" as const,
+      value: create(ImportInventoryReceiptResultSchema, {
+        inventoryDigest: stringValue(outcome.digest),
+        counts: {
+          providers: unsignedInteger(counts.providers), models: unsignedInteger(counts.models),
+          bindings: unsignedInteger(counts.bindings),
+          productRoutes: unsignedInteger(counts.productRoutes),
+        },
+      }) };
+  }
+  if (expected.operation === "model.inventory.activate") {
+    return { case: "activateInventory" as const,
+      value: create(ActivateInventoryReceiptResultSchema, {
+        targetDigest: stringValue(outcome.targetDigest),
+        activatedRevision: uint64(stringValue(outcome.activatedRevision),
+          "MODEL_CONTROL_RECEIPT_RESULT_INVALID"),
+      }) };
+  }
+  if (expected.operation === "model.site-policy.change") {
+    return { case: "changeSitePolicy" as const,
+      value: create(ChangeSitePolicyReceiptResultSchema, {
+        siteId: expected.siteId!, policyDigest: stringValue(outcome.policyDigest),
+        revision: uint64(stringValue(outcome.revision), "MODEL_CONTROL_RECEIPT_RESULT_INVALID"),
+      }) };
+  }
+  if (expected.operation === "model.option.materialize") {
+    return { case: "materializeModelOptions" as const,
+      value: create(MaterializeModelOptionsReceiptResultSchema, {
+        inventoryDigest: stringValue(outcome.inventoryDigest),
+        sourceDigest: stringValue(outcome.sourceDigest),
+        materializationDigest: stringValue(outcome.materializationDigest),
+        optionRevisionRefs: stringArray(outcome.optionRevisionRefs),
+      }) };
+  }
+  return { case: "publishSiteReleaseCatalog" as const,
+    value: create(PublishSiteReleaseCatalogReceiptResultSchema, {
+      siteId: expected.siteId!, siteReleaseRef: stringValue(outcome.siteReleaseRef),
+      modelOptionCatalogRef: stringValue(outcome.modelOptionCatalogRef),
+      catalogDigest: stringValue(outcome.catalogDigest),
+      publishedAt: timestampFromDate(canonicalDate(stringValue(outcome.publishedAt),
+        "MODEL_CONTROL_RECEIPT_RESULT_INVALID")),
+    }) };
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("MODEL_CONTROL_RECEIPT_RESULT_INVALID");
+  }
+  return value as Record<string, unknown>;
+}
+
+function stringValue(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error("MODEL_CONTROL_RECEIPT_RESULT_INVALID");
+  }
+  return value;
+}
+
+function unsignedInteger(value: unknown): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 2147483647) {
+    throw new Error("MODEL_CONTROL_RECEIPT_RESULT_INVALID");
+  }
+  return value;
+}
+
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string" && item.length > 0)) {
+    throw new Error("MODEL_CONTROL_RECEIPT_RESULT_INVALID");
+  }
+  return [...value];
+}
+
 async function commandReceipt(
   reader: ControlCommandReceiptTimestampReader,
   context: VerifiedRequestSecurityContext,
@@ -972,8 +1172,18 @@ function canonicalDate(value: string, code: string): Date {
 function uint64(value: string, code: string): bigint {
   if (!/^(?:0|[1-9][0-9]*)$/u.test(value)) throw new Error(code);
   const result = BigInt(value);
-  if (result > 18446744073709551615n) throw new Error(code);
+  if (result > 9223372036854775807n) throw new Error(code);
   return result;
+}
+
+function signedUint64(value: bigint, code: string): bigint {
+  if (value < 0n || value > 9223372036854775807n) throw new Error(code);
+  return value;
+}
+
+function signedInt32(value: number, code: string): number {
+  if (!Number.isInteger(value) || value < 1 || value > 2147483647) throw new Error(code);
+  return value;
 }
 
 function requireDigest(actual: string, expected: string): void {

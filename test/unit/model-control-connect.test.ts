@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError, type HandlerContext } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
-import { KokoroErrorDetailSchema } from
+import { KokoroErrorDetailSchema, RetryClass } from
   "../../src/interfaces/connect/generated-model-control/kokoro/common/v1/error_pb.js";
 import { MODEL_CONTROL_ADMIN_ERRORS } from
   "../../src/interfaces/connect/generated-model-control/model-control-errors.js";
@@ -25,6 +25,7 @@ import {
   "../../src/interfaces/connect/generated-model-control/kokoro/common/v2/command_envelope_pb.js";
 import {
   AuthenticatedOperatorCommandContextSchema,
+  AuthenticatedOperatorQueryContextSchema,
   GlobalScopeSchema,
   OperatorScopeSchema,
   SecurityEpochsSchema,
@@ -41,6 +42,8 @@ import {
   ImportInventoryRequestSchema,
   MaterializeModelOptionsEffectSchema,
   MaterializeModelOptionsRequestSchema,
+  GetCommandReceiptRequestSchema,
+  ModelControlCommandOperation,
   ModelOptionDraftSchema,
   ModelOptionLifecycle,
   ModelOptionRoleSelectionSchema,
@@ -207,6 +210,121 @@ describe("ModelControl Connect provider", () => {
       result.receipt?.state === CommandReceiptStateV2.COMMITTED)).toBe(true);
     expect(receipts.read).toHaveBeenCalledTimes(5);
     expect(published.publishedAt).toEqual(timestampFromDate(new Date(publishedAt)));
+  });
+
+  it("reconciles a committed effect by stable command identity and typed result", async () => {
+    const receiptCommandId = "0123456789abcdef0123456789abcdef";
+    const receipts = {
+      read: vi.fn(async () => recordedAt),
+      get: vi.fn(async () => ({
+        commandId: receiptCommandId,
+        idempotencyKey: receiptCommandId,
+        requestDigest: "9".repeat(64),
+        operation: "model.inventory.activate" as const,
+        state: "succeeded" as const,
+        recordedAt,
+        result: { schemaVersion: 1, commandId: receiptCommandId,
+          requestDigest: "9".repeat(64), operation: "model.inventory.activate",
+          siteId: null, outcome: { activationId: receiptCommandId, importId: receiptCommandId,
+            targetDigest: digest, expectedRevision: "3", activatedRevision: "4" } },
+      })),
+    };
+    const resolver = { resolve: resolveUnexpectedRead,
+      resolveModelControlReceipt: vi.fn(async () => verifiedContext),
+      resolveModelControlCommand: vi.fn(async () => ({ context: verifiedContext, axes })) };
+    const service = createModelControlConnectService({ owners: ownerDoubles(), resolver: resolver as never,
+      receipts: receipts as never, ...readDependencies });
+
+    const response = await service.getCommandReceipt(create(GetCommandReceiptRequestSchema, {
+      context: create(AuthenticatedOperatorQueryContextSchema, { requestId: receiptCommandId }),
+      commandId: receiptCommandId, operation: ModelControlCommandOperation.ACTIVATE_INVENTORY,
+      digestAlgorithm: CommandDigestAlgorithmV2.SHA256_COMMAND_ENVELOPE,
+      requestDigest: "9".repeat(64),
+    }), transport);
+
+    expect(response.receipt?.identity?.commandId).toBe(receiptCommandId);
+    expect(response.result).toMatchObject({ case: "activateInventory",
+      value: { targetDigest: digest, activatedRevision: 4n } });
+    expect(receipts.get).toHaveBeenCalledWith(verifiedContext, {
+      commandId: receiptCommandId, operation: "model.inventory.activate", siteId: null,
+    });
+  });
+
+  it("rejects receipt reconciliation when the original request digest does not match", async () => {
+    const receiptCommandId = "0123456789abcdef0123456789abcdef";
+    const receipts = { read: vi.fn(async () => recordedAt), get: vi.fn(async () => ({
+      commandId: receiptCommandId, idempotencyKey: receiptCommandId,
+      requestDigest: "8".repeat(64), operation: "model.inventory.activate" as const,
+      state: "succeeded" as const, recordedAt,
+      result: { schemaVersion: 1, commandId: receiptCommandId,
+        requestDigest: "8".repeat(64), operation: "model.inventory.activate",
+        siteId: null, outcome: { activationId: receiptCommandId, importId: receiptCommandId,
+          targetDigest: digest, expectedRevision: "3", activatedRevision: "4" } },
+    })) };
+    const resolver = { resolve: resolveUnexpectedRead,
+      resolveModelControlReceipt: vi.fn(async () => verifiedContext),
+      resolveModelControlCommand: vi.fn(async () => ({ context: verifiedContext, axes })) };
+    const service = createModelControlConnectService({ owners: ownerDoubles(), resolver: resolver as never,
+      receipts: receipts as never, ...readDependencies });
+
+    const error = await Promise.resolve(service.getCommandReceipt(create(GetCommandReceiptRequestSchema, {
+      context: create(AuthenticatedOperatorQueryContextSchema, { requestId: receiptCommandId }),
+      commandId: receiptCommandId, operation: ModelControlCommandOperation.ACTIVATE_INVENTORY,
+      digestAlgorithm: CommandDigestAlgorithmV2.SHA256_COMMAND_ENVELOPE,
+      requestDigest: "9".repeat(64),
+    }), transport)).catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(ConnectError);
+    expect(error).toMatchObject({ code: Code.AlreadyExists });
+    expect((error as ConnectError).findDetails(KokoroErrorDetailSchema)[0]).toMatchObject({
+      domainCode: MODEL_CONTROL_ADMIN_ERRORS.commandReceiptMismatch.domainCode,
+    });
+  });
+
+  it("carries the real command ID on ambiguous timeout and Unavailable errors", async () => {
+    for (const code of [Code.DeadlineExceeded, Code.Unavailable]) {
+      const owners = ownerDoubles();
+      owners.activateInventory.activate.mockRejectedValueOnce(new ConnectError("ambiguous", code));
+      const service = createModelControlConnectService({ owners,
+        resolver: { resolve: resolveUnexpectedRead,
+          resolveModelControlCommand: vi.fn(async () => ({ context: verifiedContext, axes })) },
+        receipts: { read: vi.fn(async () => recordedAt) }, ...readDependencies });
+
+      const error = ConnectError.from(await Promise.resolve(service.activateInventory(activationRequest(), transport))
+        .catch((cause: unknown) => cause));
+
+      expect(error.findDetails(KokoroErrorDetailSchema)).toMatchObject([{
+        receiptRef: commandId, retryClass: RetryClass.RECONCILE_RECEIPT,
+      }]);
+    }
+  });
+
+  it("rejects unsigned values that PostgreSQL signed storage cannot represent", async () => {
+    const owners = ownerDoubles();
+    const resolver = { resolve: resolveUnexpectedRead,
+      resolveModelControlCommand: vi.fn(async () => ({ context: verifiedContext, axes })) };
+    const service = createModelControlConnectService({ owners, resolver,
+      receipts: { read: vi.fn(async () => recordedAt) }, ...readDependencies });
+    const activation = activationRequest();
+    activation.effect!.expectedPointerRevision = 9_223_372_036_854_775_808n;
+    activation.context!.command!.requestDigest = activateInventoryRequestDigest(
+      activation.context!, activation.effect!, axes,
+    );
+    const imported = importRequest();
+    imported.effect!.providerAvailability[0]!.epoch = 9_223_372_036_854_775_808n;
+    imported.effect!.inventory!.models[0]!.contextWindow = 2_147_483_648;
+    imported.context!.command!.requestDigest = importInventoryRequestDigest(
+      imported.context!, imported.effect!, axes,
+    );
+
+    for (const invoke of [
+      () => service.activateInventory(activation, transport),
+      () => service.importInventory(imported, transport),
+    ]) {
+      const error = ConnectError.from(await Promise.resolve(invoke()).catch((cause: unknown) => cause));
+      expect(error.code).toBe(Code.InvalidArgument);
+    }
+    expect(owners.activateInventory.activate).not.toHaveBeenCalled();
+    expect(owners.importInventory.import).not.toHaveBeenCalled();
   });
 
   it("rejects digest drift before invoking the domain owner", async () => {

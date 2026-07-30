@@ -17,6 +17,20 @@ export const MODEL_CONTROL_ADMIN_ERRORS = Object.freeze({
     retryClass: RetryClass.NEVER,
     httpStatus: 409,
   }),
+  commandReceiptNotFound: Object.freeze({
+    connectCode: "not_found",
+    domainCode: "model.command_receipt.not_found",
+    safeMessage: "Model command receipt not found",
+    retryClass: RetryClass.NEVER,
+    httpStatus: 404,
+  }),
+  commandReceiptMismatch: Object.freeze({
+    connectCode: "already_exists",
+    domainCode: "model.command_receipt.mismatch",
+    safeMessage: "Model command receipt does not match the requested operation or scope",
+    retryClass: RetryClass.NEVER,
+    httpStatus: 409,
+  }),
   adminPageTokenInvalid: Object.freeze({
     connectCode: "invalid_argument",
     domainCode: "model.admin_page_token.invalid",
@@ -61,5 +75,5 @@ export function modelControlAdminErrorDetail(
 }
 
 function safeReference(value: string): string {
-  return /^[A-Za-z0-9._:-]{1,128}$/u.test(value) ? value : "model-control";
+  return /^[A-Za-z0-9._:-]{1,128}$/u.test(value) ? value : "";
 }

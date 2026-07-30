@@ -279,6 +279,32 @@ export class AdminControlPlaneResolver implements
     });
   }
 
+  async resolveModelControlReceipt(
+    claimed: AuthenticatedOperatorQueryContext,
+    transport: HandlerContext,
+    request: Readonly<{
+      operation: ModelControlAdminOperation;
+      siteRef: string | null;
+      scope: "global" | "site";
+    }>,
+  ): Promise<VerifiedRequestSecurityContext> {
+    const authenticated = await this.authenticate(claimed, transport);
+    const requested = scopeFromWire(claimed.scope);
+    if (requested.kind !== request.scope ||
+        (request.scope === "global" && request.siteRef !== null) ||
+        (request.scope === "site" && request.siteRef === null)) {
+      throw new Error("MODEL_CONTROL_RECEIPT_SCOPE_INVALID");
+    }
+    this.authorizeScope(
+      authenticated, requested, request.operation, permissionFor(request.operation),
+      request.siteRef, request.siteRef === null ? [] : [request.siteRef], [], false,
+    );
+    return this.context(
+      authenticated.session, request.operation, request.siteRef, scopeLabels(requested),
+      claimed.requestId, [request.operation], "model_control_receipt_reconciliation",
+    );
+  }
+
   async resolveCommerceCommand(
     claimed: AuthenticatedOperatorCommandContext,
     transport: HandlerContext,
