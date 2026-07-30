@@ -23,12 +23,16 @@ describe("outbox retry bounds", () => {
         ],
         limit: 10,
         leaseSeconds: 30,
+        deployment: { environment: "production", region: "us-east-1" },
       });
       expect(queries[0]?.statement).toContain("event_type = ANY($6::text[])");
+      expect(queries[0]?.statement).toContain("payload->>'environment'=$7");
+      expect(queries[0]?.statement).toContain("payload->>'region'=$8");
       expect(queries[0]?.values).toEqual([
         10, "asset-worker-01", "lease-01", 30, ["asset"],
         ["asset.upload.completion.requested", "asset.scan.requested",
           "asset.blob.promotion.requested", "asset.object.cleanup.requested"],
+        "production", "us-east-1",
       ]);
     } finally {
       revokePlatformTransaction(lease);

@@ -9,12 +9,20 @@ import { AdminExecutionService } from "../../application/admin-execution-service
 import { createAdminExecutionCycle } from "../../application/admin-execution-cycle.js";
 import { AdminLocalCommandRegistry } from "../../application/admin-command-service.js";
 import { PostgresAdminAuthorityRepository } from "./admin-authority-repository.js";
+import { PostgresAdminWorkerOperatorAuthorityLock } from
+  "./admin-worker-operator-authority-lock.js";
 import { createAdminAuthorityCommandHandler } from "./admin-authority-command-handler.js";
 
 export interface AdminWorkerExecutionRuntime {
   runOneCycle(context: Readonly<{ signal: AbortSignal }>): Promise<void>;
   stopClaiming(): Promise<void>;
   returnLeases(reason: "shutdown" | "shutdown-deadline" | "stop-claim-failed"): Promise<void>;
+}
+
+export function createAdminWorkerAuthorityRepository(): PostgresAdminAuthorityRepository {
+  return new PostgresAdminAuthorityRepository(
+    new PostgresAdminWorkerOperatorAuthorityLock(),
+  );
 }
 
 export function createAdminWorkerExecutionRuntime(input: Readonly<{
@@ -29,7 +37,7 @@ export function createAdminWorkerExecutionRuntime(input: Readonly<{
   ]);
   const executor = new AdminExecutionService({
     registry,
-    repository: new PostgresAdminAuthorityRepository(),
+    repository: createAdminWorkerAuthorityRepository(),
     outbox: {
       complete: (transaction, eventId, leaseToken) => outbox.complete(transaction, {
         eventId,

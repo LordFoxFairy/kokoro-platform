@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { PostgresAdminAuthorityRepository } from
   "../../src/modules/admin-control/infrastructure/postgres/admin-authority-repository.js";
+import { PostgresAdminWorkerOperatorAuthorityLock } from
+  "../../src/modules/admin-control/infrastructure/postgres/admin-worker-operator-authority-lock.js";
 import {
   issuePlatformTransaction,
   revokePlatformTransaction,
@@ -8,6 +10,49 @@ import {
 } from "../../src/shared/unit-of-work/platform-transaction.js";
 
 describe("PostgresAdminAuthorityRepository", () => {
+  it("loads the complete worker authority projection through one narrow routine call", async () => {
+    const statements: string[] = [];
+    const lease = issuePlatformTransaction({
+      execute: async () => 1,
+      query: async (statement) => {
+        statements.push(statement);
+        if (!statement.includes("lock_admin_worker_operator_authority")) {
+          throw new Error(`unexpected direct worker query: ${statement}`);
+        }
+        return [{
+          operatorRef: "operator_01",
+          operatorGeneration: 3n,
+          state: "active",
+          permissions: ["admin.authority.manage"],
+          siteScopes: ["site_01"],
+          globalScopes: ["018f1515-1515-7515-8515-151515151515"],
+          environments: ["production"],
+          regions: ["us-east-1"],
+          authorizationEpoch: 9n,
+          expiresAt: new Date("2026-07-28T14:00:00.000Z"),
+          breakGlassExpiresAt: new Date("2026-07-28T13:15:00.000Z"),
+        }] as never;
+      },
+    });
+    try {
+      await expect(new PostgresAdminAuthorityRepository(
+        new PostgresAdminWorkerOperatorAuthorityLock(),
+      ).lockOperatorAuthority(lease.transaction, {
+        operatorRef: "operator_01",
+        operatorGeneration: 3n,
+      })).resolves.toMatchObject({
+        siteScopes: ["site_01"],
+        globalScopes: ["018f1515-1515-7515-8515-151515151515"],
+        environments: ["production"],
+        regions: ["us-east-1"],
+        breakGlassExpiresAt: "2026-07-28T13:15:00.000Z",
+      });
+      expect(statements).toHaveLength(1);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
   it("locks the exact operator generation and maps the current authority epoch", async () => {
     const statements: string[] = [];
     const lease = issuePlatformTransaction({

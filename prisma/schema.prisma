@@ -25,6 +25,16 @@ model PlatformFoundation {
   @@schema("platform")
 }
 
+model RuntimeRoleIdentityAuthority {
+  roleKind   String   @id @map("role_kind")
+  roleName   String   @unique @map("role_name")
+  roleOid    BigInt   @unique @map("role_oid")
+  recordedAt DateTime @default(now()) @map("recorded_at") @db.Timestamptz(6)
+
+  @@map("runtime_role_identity_authority")
+  @@schema("platform")
+}
+
 model CommandReceipt {
   commandId      String   @id @map("command_id")
   environment    String

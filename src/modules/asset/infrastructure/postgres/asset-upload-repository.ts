@@ -12,9 +12,12 @@ import {
   type AssetUploadSession,
 } from "../../domain/upload-intent.js";
 import { persistAssetCleanupPlan } from "./asset-cleanup-repository.js";
+import type { AssetWorkerAuthorityLock } from "./asset-worker-authority-lock.js";
 
 export class PostgresAssetUploadRepository implements AssetUploadRepositoryPort,
   AssetUploadCompletionRepositoryPort, AssetCompletionWorkerRepositoryPort {
+  constructor(private readonly workerAuthorityLock?: AssetWorkerAuthorityLock) {}
+
   async claimUploadIntent(
     transaction: Parameters<AssetUploadRepositoryPort["claimUploadIntent"]>[0],
     input: Parameters<AssetUploadRepositoryPort["claimUploadIntent"]>[1],
@@ -177,7 +180,12 @@ export class PostgresAssetUploadRepository implements AssetUploadRepositoryPort,
     transaction: Parameters<AssetCompletionWorkerRepositoryPort["loadCompletionWork"]>[0],
     input: Parameters<AssetCompletionWorkerRepositoryPort["loadCompletionWork"]>[1],
   ): ReturnType<AssetCompletionWorkerRepositoryPort["loadCompletionWork"]> {
-    const pair = await loadByIntent(resolvePlatformTransaction(transaction), input.siteRef, input.intentRef);
+    const sql = resolvePlatformTransaction(transaction);
+    await lockWorkerCompletionAuthority(sql, this.workerAuthorityLock, {
+      siteRef: input.siteRef,
+      intentRef: input.intentRef,
+    });
+    const pair = await loadByIntent(sql, input.siteRef, input.intentRef);
     if (pair === null || pair.session.sessionRef !== input.sessionRef) {
       return Object.freeze({ disposition: "superseded" });
     }
@@ -196,6 +204,10 @@ export class PostgresAssetUploadRepository implements AssetUploadRepositoryPort,
     input: Parameters<AssetCompletionWorkerRepositoryPort["commitCandidate"]>[1],
   ): ReturnType<AssetCompletionWorkerRepositoryPort["commitCandidate"]> {
     const sql = resolvePlatformTransaction(transaction);
+    await lockWorkerCompletionAuthority(sql, this.workerAuthorityLock, {
+      siteRef: input.candidate.siteRef,
+      intentRef: input.candidate.intentRef,
+    });
     const changed = await sql.execute(
       `UPDATE platform.asset_upload_session
        SET state='validating',expected_version=expected_version+1,updated_at=now()
@@ -255,6 +267,10 @@ export class PostgresAssetUploadRepository implements AssetUploadRepositoryPort,
     input: Parameters<AssetCompletionWorkerRepositoryPort["rejectCompletion"]>[1],
   ): ReturnType<AssetCompletionWorkerRepositoryPort["rejectCompletion"]> {
     const sql = resolvePlatformTransaction(transaction);
+    await lockWorkerCompletionAuthority(sql, this.workerAuthorityLock, {
+      siteRef: input.siteRef,
+      intentRef: input.intentRef,
+    });
     const pair = await loadByIntent(sql, input.siteRef, input.intentRef);
     if (pair === null || pair.session.sessionRef !== input.sessionRef) return "superseded";
     if (pair.session.state === "rejected") return "replay";
@@ -391,6 +407,16 @@ async function lockCurrentAuthority(
       intent.subjectRef, intent.subjectGeneration, intent.projectRef, operation],
   );
   if (!rows[0]?.allowed) throw new Error("ASSET_UPLOAD_AUTHORITY_STALE");
+}
+
+async function lockWorkerCompletionAuthority(
+  sql: PlatformSqlTransaction,
+  authorityLock: AssetWorkerAuthorityLock | undefined,
+  input: Readonly<{ siteRef: string; intentRef: string }>,
+): Promise<void> {
+  if (authorityLock !== undefined && !await authorityLock.lockUploadCompletion(sql, input)) {
+    throw new Error("ASSET_UPLOAD_AUTHORITY_STALE");
+  }
 }
 
 function assertAuthority(

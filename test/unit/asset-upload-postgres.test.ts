@@ -113,17 +113,25 @@ describe("PostgresAssetUploadRepository", () => {
 
   it("moves a completion to validating only when candidate and scan event commit together", async () => {
     const statements: string[] = [];
+    const authorityLocks: unknown[] = [];
     const sql: PlatformSqlTransaction = {
       query: async () => [],
       execute: async (statement) => { statements.push(statement); return 1; },
     };
     const lease = issuePlatformTransaction(sql);
     try {
-      await expect(new PostgresAssetUploadRepository().commitCandidate(lease.transaction, {
+      await expect(new PostgresAssetUploadRepository({
+        async lockUploadCompletion(_sql, value) { authorityLocks.push(value); return true; },
+        async lockPromotion() { throw new Error("not expected"); },
+      }).commitCandidate(lease.transaction, {
         candidate,
         expectedSessionVersion: 3n,
         scanEvent,
       })).resolves.toBe("committed");
+      expect(authorityLocks).toEqual([{
+        siteRef: candidate.siteRef,
+        intentRef: candidate.intentRef,
+      }]);
       const sessionCas = statements.findIndex((value) => value.includes("SET state='validating'"));
       const quotaTransition = statements.findIndex((value) =>
         value.includes("quarantine_bytes=quarantine_bytes+$4"));
@@ -164,6 +172,7 @@ describe("PostgresAssetUploadRepository", () => {
 
   it("rejects a mismatched object by retaining physical quota until durable cleanup completes", async () => {
     const statements: string[] = [];
+    const authorityLocks: unknown[] = [];
     const completing = beginUploadCompletion({
       ...session,
       state: "uploading",
@@ -197,7 +206,10 @@ describe("PostgresAssetUploadRepository", () => {
     };
     const lease = issuePlatformTransaction(sql);
     try {
-      await expect(new PostgresAssetUploadRepository().rejectCompletion(lease.transaction, {
+      await expect(new PostgresAssetUploadRepository({
+        async lockUploadCompletion(_sql, value) { authorityLocks.push(value); return true; },
+        async lockPromotion() { throw new Error("not expected"); },
+      }).rejectCompletion(lease.transaction, {
         siteRef: intent.siteRef,
         intentRef: intent.intentRef,
         sessionRef: session.sessionRef,
@@ -206,6 +218,10 @@ describe("PostgresAssetUploadRepository", () => {
         rejectionRef: "rejection_01",
         cleanupPlan,
       })).resolves.toBe("rejected");
+      expect(authorityLocks).toEqual([{
+        siteRef: intent.siteRef,
+        intentRef: intent.intentRef,
+      }]);
       const sessionReject = statements.findIndex((value) => value.includes("SET state='rejected'"));
       const quotaRelease = statements.findIndex((value) => value.includes("reserved_inflight_bytes=reserved_inflight_bytes-$4"));
       const reservationRelease = statements.findIndex((value) => value.includes("SET state='trash_retained'"));
@@ -216,6 +232,50 @@ describe("PostgresAssetUploadRepository", () => {
       expect(reservationRelease).toBeGreaterThan(quotaRelease);
       expect(outboxInsert).toBeGreaterThan(reservationRelease);
       expect(rejectionInsert).toBeGreaterThan(outboxInsert);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("revalidates completion authority before returning work for external observation", async () => {
+    const completing = beginUploadCompletion({
+      ...session,
+      state: "uploading",
+      capabilityEpoch: 1n,
+      capabilityExpiresAt: "2026-07-28T12:05:00.000Z",
+      expectedVersion: 2n,
+    }, 2n, "2026-07-28T12:01:00.000Z");
+    const authorityLocks: unknown[] = [];
+    const sql: PlatformSqlTransaction = {
+      query: async <Row extends Record<string, unknown>>(statement: string): Promise<readonly Row[]> => {
+        if (statement.includes("FROM platform.asset_upload_intent intent")) {
+          return result<Row>(databaseRow(requestDigest, {
+            capabilityEpoch: completing.capabilityEpoch,
+            capabilityExpiresAt: completing.capabilityExpiresAt,
+            completionRequestedAt: completing.completionRequestedAt,
+            sessionState: completing.state,
+            sessionExpectedVersion: completing.expectedVersion,
+          }));
+        }
+        throw new Error(`unexpected query: ${statement}`);
+      },
+      execute: async () => 1,
+    };
+    const lease = issuePlatformTransaction(sql);
+    try {
+      await expect(new PostgresAssetUploadRepository({
+        async lockUploadCompletion(_sql, value) { authorityLocks.push(value); return true; },
+        async lockPromotion() { throw new Error("not expected"); },
+      }).loadCompletionWork(lease.transaction, {
+        siteRef: intent.siteRef,
+        intentRef: intent.intentRef,
+        sessionRef: session.sessionRef,
+        expectedVersion: completing.expectedVersion,
+      })).resolves.toMatchObject({ disposition: "work" });
+      expect(authorityLocks).toEqual([{
+        siteRef: intent.siteRef,
+        intentRef: intent.intentRef,
+      }]);
     } finally {
       revokePlatformTransaction(lease);
     }

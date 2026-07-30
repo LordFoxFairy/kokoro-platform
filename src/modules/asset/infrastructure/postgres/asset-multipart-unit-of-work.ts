@@ -7,7 +7,10 @@ import type { AssetMultipartUnitOfWorkPort } from
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
 
 export class AssetMultipartUnitOfWork implements AssetMultipartUnitOfWorkPort {
-  constructor(private readonly database: PlatformTransactionalDatabaseClient) {}
+  constructor(
+    private readonly database: PlatformTransactionalDatabaseClient,
+    private readonly deployment: Readonly<{ environment: string; region: string }>,
+  ) {}
 
   execute<Result>(
     claims: Parameters<AssetMultipartUnitOfWorkPort["execute"]>[0],
@@ -17,6 +20,8 @@ export class AssetMultipartUnitOfWork implements AssetMultipartUnitOfWorkPort {
     return this.database.assetDataPlaneTransaction({
       operation: operation as AssetDataPlaneOperation,
       siteRef: claims.siteRef,
+      environment: this.deployment.environment,
+      region: this.deployment.region,
       subjectRef: claims.subjectRef,
       subjectGeneration: claims.subjectGeneration,
       projectRef: claims.projectRef,

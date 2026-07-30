@@ -52,7 +52,8 @@ describe("ProcessAssetScanService", () => {
           trustedObjectRef: "trusted/blob_01",
           state: "pending_copy",
         }),
-        promotionEvent: expect.objectContaining({ eventType: "asset.blob.promotion.requested" }),
+        promotionEvent: expect.objectContaining({ eventType: "asset.blob.promotion.requested",
+          payload: expect.objectContaining({ environment: "production", region: "us-east-1" }) }),
       }),
     }));
   });
@@ -83,7 +84,8 @@ describe("ProcessAssetScanService", () => {
             objectRole: "quarantine",
             providerVersionRef: "provider_version_01",
             retainedBytes: 1234n,
-            cleanupEvent: expect.objectContaining({ eventType: "asset.object.cleanup.requested" }),
+            cleanupEvent: expect.objectContaining({ eventType: "asset.object.cleanup.requested",
+              payload: expect.objectContaining({ environment: "production", region: "us-east-1" }) }),
           })],
         },
       }),
@@ -118,6 +120,7 @@ function fixture(input: Readonly<{
     : ["scan_evaluation_01", "promotion_01", "asset_01", "asset_version_01",
       "blob_01", "promotion_event_01"];
   const service = new ProcessAssetScanService({
+    deployment: { environment: "production", region: "us-east-1" },
     unitOfWork: { execute: async (_scope, work) => work(transaction) },
     repository: {
       claimScanWork: async () => input.claim === "superseded"

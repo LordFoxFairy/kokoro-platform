@@ -16,3 +16,6 @@ the Admin worker invokes the frozen local owner command. Rejection is terminal l
 Application code depends on the narrow queue port, command receipt port and owner repositories. Generic outbox operations and
 PostgreSQL adapters stay in composition/infrastructure. Add a new asynchronous effect only when a named worker consumes it; admission,
 decision, receipt and audit facts alone are not queue events.
+
+The Admin worker locks `admin_operator_authority` only through the role-, workload-, operation- and admin-execution-fenced
+PostgreSQL routine. Its database role never receives broad UPDATE authority on the operator authority table.

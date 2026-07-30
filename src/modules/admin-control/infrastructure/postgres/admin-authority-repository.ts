@@ -13,16 +13,24 @@ import type {
 } from "../../application/admin-post-effect-review-service.js";
 import type { AdminApprovalRecord } from "../../domain/admin-approval.js";
 import type { AdminOperatorAuthority } from "../../domain/admin-command.js";
+import type {
+  AdminWorkerOperatorAuthorityLock,
+  AdminWorkerOperatorAuthorityRow as OperatorRow,
+} from "./admin-worker-operator-authority-lock.js";
 
 export class PostgresAdminAuthorityRepository implements
   AdminAuthorityRepositoryPort,
   AdminApprovalRepositoryPort,
   AdminPostEffectReviewRepositoryPort {
+  constructor(private readonly workerOperatorAuthorityLock?: AdminWorkerOperatorAuthorityLock) {}
+
   async lockOperatorAuthority(
     transaction: PlatformTransaction,
     input: Readonly<{ operatorRef: string; operatorGeneration: bigint }>,
   ): Promise<AdminOperatorAuthority | null> {
-    const rows = await resolvePlatformTransaction(transaction).query<OperatorRow>(
+    const sql = resolvePlatformTransaction(transaction);
+    const row = this.workerOperatorAuthorityLock === undefined
+      ? (await sql.query<OperatorRow>(
       `SELECT authority.operator_ref AS "operatorRef",
               authority.operator_generation AS "operatorGeneration",
               authority.state,authority.permissions,
@@ -62,8 +70,8 @@ export class PostgresAdminAuthorityRepository implements
        WHERE authority.operator_ref=$1 AND authority.operator_generation=$2
        FOR UPDATE`,
       [input.operatorRef, input.operatorGeneration],
-    );
-    const row = rows[0];
+    ))[0]
+      : await this.workerOperatorAuthorityLock.lock(sql, input);
     if (!row) return null;
     return Object.freeze({
       operatorRef: row.operatorRef,
@@ -354,20 +362,6 @@ export class PostgresAdminAuthorityRepository implements
       [now],
     );
   }
-}
-
-interface OperatorRow extends Record<string, unknown> {
-  operatorRef: string;
-  operatorGeneration: bigint | string;
-  state: string;
-  permissions: readonly string[];
-  siteScopes: readonly string[];
-  globalScopes: readonly string[];
-  environments: readonly string[];
-  regions: readonly string[];
-  authorizationEpoch: bigint | string;
-  expiresAt: Date | string;
-  breakGlassExpiresAt: Date | string | null;
 }
 
 interface ApprovalRow extends Record<string, unknown> {

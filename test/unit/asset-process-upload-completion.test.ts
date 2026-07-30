@@ -42,7 +42,9 @@ describe("ProcessUploadCompletionService", () => {
         policyRevisionRef: "asset_policy_01", state: "checksum_verified" }),
       expectedSessionVersion: 3n,
       scanEvent: expect.objectContaining({ eventType: "asset.scan.requested",
-        causationId: "event_completion_01" }),
+        causationId: "event_completion_01", payload: expect.objectContaining({
+          environment: "production", region: "us-east-1",
+        }) }),
     }));
   });
 
@@ -79,7 +81,8 @@ describe("ProcessUploadCompletionService", () => {
           objectRef: "quarantine/opaque_0123456789",
           providerVersionRef: "provider_version_01",
           retainedBytes: 1234n,
-          cleanupEvent: expect.objectContaining({ eventType: "asset.object.cleanup.requested" }),
+          cleanupEvent: expect.objectContaining({ eventType: "asset.object.cleanup.requested",
+            payload: expect.objectContaining({ environment: "production", region: "us-east-1" }) }),
         })],
       },
     }));
@@ -104,6 +107,7 @@ function fixture(input: Readonly<{
       "rejection_01"]
     : ["blob_candidate_01", "scan_event_01"];
   const service = new ProcessUploadCompletionService({
+    deployment: { environment: "production", region: "us-east-1" },
     unitOfWork: { execute: async (_operation, work) => work(transaction) },
     repository: {
       loadCompletionWork: async () => ({ disposition: "work", intent, session }),

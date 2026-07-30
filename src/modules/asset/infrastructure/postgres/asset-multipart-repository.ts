@@ -10,6 +10,8 @@ import type { AssetUploadCapabilityClaims } from
 import { digestAssetCommand } from "../../application/asset-digest.js";
 
 export class PostgresAssetMultipartRepository implements AssetMultipartRepositoryPort {
+  constructor(private readonly deployment?: Readonly<{ environment: string; region: string }>) {}
+
   async readAuthorized(
     transaction: Parameters<AssetMultipartRepositoryPort["readAuthorized"]>[0],
     claims: AssetUploadCapabilityClaims,
@@ -445,9 +447,12 @@ export class PostgresAssetMultipartRepository implements AssetMultipartRepositor
     );
     const owner = ownerRows[0];
     if (owner !== undefined) {
+      const deployment = requiredDeployment(this.deployment);
       const payload = Object.freeze({
         kind: "asset_upload_completion_requested_v1",
         siteRef: input.claims.siteRef,
+        environment: deployment.environment,
+        region: deployment.region,
         intentRef: input.claims.intentRef,
         sessionRef: input.claims.sessionRef,
         expectedVersion: owner.expectedVersion.toString(),
@@ -616,6 +621,15 @@ export class PostgresAssetMultipartRepository implements AssetMultipartRepositor
     );
     if (changed !== 1) throw new Error("UPLOAD_STATE_CONFLICT");
   }
+}
+
+function requiredDeployment(
+  value: Readonly<{ environment: string; region: string }> | undefined,
+): Readonly<{ environment: string; region: string }> {
+  if (value === undefined || value.environment.length < 1 || value.region.length < 1) {
+    throw new Error("ASSET_OUTBOX_DEPLOYMENT_INVALID");
+  }
+  return value;
 }
 
 type AuthorityRow = Readonly<{

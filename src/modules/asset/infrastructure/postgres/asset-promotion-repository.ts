@@ -5,8 +5,17 @@ import type { AssetPromotionWorkerRepositoryPort } from
 import { verifyAssetPromotionIntent, type AssetPromotionIntent } from
   "../../domain/promotion-intent.js";
 import { persistAssetCleanupPlan } from "./asset-cleanup-repository.js";
+import {
+  PostgresAssetWorkerAuthorityLock,
+  type AssetWorkerAuthorityLock,
+} from "./asset-worker-authority-lock.js";
 
 export class PostgresAssetPromotionRepository implements AssetPromotionWorkerRepositoryPort {
+  constructor(
+    private readonly authorityLock: AssetWorkerAuthorityLock =
+      new PostgresAssetWorkerAuthorityLock(),
+  ) {}
+
   async claimPromotionWork(
     transaction: Parameters<AssetPromotionWorkerRepositoryPort["claimPromotionWork"]>[0],
     input: Parameters<AssetPromotionWorkerRepositoryPort["claimPromotionWork"]>[1],
@@ -55,7 +64,9 @@ export class PostgresAssetPromotionRepository implements AssetPromotionWorkerRep
     input: Parameters<AssetPromotionWorkerRepositoryPort["finalizePromotion"]>[1],
   ): ReturnType<AssetPromotionWorkerRepositoryPort["finalizePromotion"]> {
     const sql = resolvePlatformTransaction(transaction);
-    await lockCurrentPromotionAuthority(sql, input.promotion);
+    if (!await this.authorityLock.lockPromotion(sql, input.promotion)) {
+      throw new Error("ASSET_PROMOTION_AUTHORITY_STALE");
+    }
     let currentVersion = input.expectedPromotionVersion;
     if (input.promotion.state === "pending_copy") {
       const observing = await sql.execute(
@@ -328,35 +339,6 @@ function assertRejectedPromotionCleanupPlan(
       trusted.providerVersionRef.length < 1 || trusted.retainedBytes < 1n) {
     throw new Error("ASSET_CLEANUP_PLAN_INVALID");
   }
-}
-
-async function lockCurrentPromotionAuthority(
-  sql: PlatformSqlTransaction,
-  value: AssetPromotionIntent,
-): Promise<void> {
-  const rows = await sql.query<{ allowed: boolean }>(
-    `SELECT TRUE AS allowed
-     FROM platform.asset_upload_intent intent
-     JOIN platform.authorization_product_binding binding
-       ON binding.workload_identity_id=intent.workload_identity_id
-      AND binding.site_ref=intent.site_ref AND binding.release_ref=intent.site_release_ref
-     JOIN platform.authorization_subject subject
-       ON subject.subject_ref=intent.subject_ref AND subject.site_ref=intent.site_ref
-     JOIN platform.authorization_project project
-       ON project.project_ref=intent.project_ref AND project.site_ref=intent.site_ref
-     JOIN platform.authorization_project_membership membership
-       ON membership.project_ref=project.project_ref AND membership.subject_ref=subject.subject_ref
-     WHERE intent.site_ref=$1 AND intent.intent_ref=$2 AND intent.subject_ref=$3
-       AND intent.subject_generation=$4::bigint AND intent.project_ref=$5
-       AND intent.binding_epoch=binding.binding_epoch AND binding.state='active'
-       AND subject.subject_generation=intent.subject_generation AND subject.state='active'
-       AND project.state='active' AND membership.state='active'
-       AND current_setting('app.operation',true)='asset.promotion.finalize'
-       AND current_setting('app.site_id',true)=intent.site_ref
-     FOR UPDATE OF intent,binding,subject,project,membership`,
-    [value.siteRef, value.intentRef, value.subjectRef, value.subjectGeneration, value.projectRef],
-  );
-  if (!rows[0]?.allowed) throw new Error("ASSET_PROMOTION_AUTHORITY_STALE");
 }
 
 async function exactlyOne(

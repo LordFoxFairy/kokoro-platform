@@ -75,6 +75,8 @@ export class CompleteUploadService {
         const payload = json({
           kind: "asset_upload_completion_requested_v1",
           siteRef: authority.siteRef,
+          environment: input.context.environment,
+          region: input.context.region,
           intentRef: session.intentRef,
           sessionRef: session.sessionRef,
           expectedVersion: session.expectedVersion.toString(),

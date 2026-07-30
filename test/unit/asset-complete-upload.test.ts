@@ -73,7 +73,8 @@ describe("CompleteUploadService", () => {
     expect(enqueue).toHaveBeenCalledWith(transaction, expect.objectContaining({
       owner: "asset", eventType: "asset.upload.completion.requested", aggregateId: "upload_session_01",
       payload: { kind: "asset_upload_completion_requested_v1", siteRef: "site_01",
-        intentRef: "upload_intent_01", sessionRef: "upload_session_01", expectedVersion: "3" },
+        environment: "production", region: "us-east-1", intentRef: "upload_intent_01",
+        sessionRef: "upload_session_01", expectedVersion: "3" },
     }));
     expect(JSON.stringify(receipt()?.result as JsonValue)).not.toContain("quarantine");
   });

@@ -228,9 +228,6 @@ export const SPLIT_WORKER_RELATION_AUTHORITY = Object.freeze({
   "admin-worker": [
     ...base(
       "admin_operator_authority",
-      "admin_operator_site_scope",
-      "admin_operator_global_scope_grant",
-      "admin_breakglass_grant",
       "admin_approval",
       "admin_post_effect_review",
     ),
@@ -325,12 +322,24 @@ export const SPLIT_WORKER_RELATION_AUTHORITY = Object.freeze({
 } as const satisfies Readonly<Record<SplitWorkerRole, readonly RelationAuthority[]>>);
 
 export const SPLIT_WORKER_ROUTINE_AUTHORITY = Object.freeze({
-  "commerce-worker": [],
-  "site-worker": [],
-  "asset-worker": [],
-  "admin-worker": ["platform.apply_admin_authority_change(uuid,jsonb)"],
-  "identity-worker": [],
-  "authorization-maintenance": [],
+  "commerce-worker": ["platform.split_worker_role_identity_is_current(text)"],
+  "site-worker": [
+    "platform.split_worker_role_identity_is_current(text)",
+    "platform.lock_site_worker_project_binding(text,text,text)",
+    "platform.lock_site_worker_runtime_project_binding(text,text,bigint,text,text)",
+  ],
+  "asset-worker": [
+    "platform.split_worker_role_identity_is_current(text)",
+    "platform.lock_asset_worker_upload_completion_authority(text,text)",
+    "platform.lock_asset_worker_promotion_authority(text,text,text,bigint,text)",
+  ],
+  "admin-worker": [
+    "platform.split_worker_role_identity_is_current(text)",
+    "platform.lock_admin_worker_operator_authority(text,bigint)",
+    "platform.apply_admin_authority_change(uuid,jsonb)",
+  ],
+  "identity-worker": ["platform.split_worker_role_identity_is_current(text)"],
+  "authorization-maintenance": ["platform.split_worker_role_identity_is_current(text)"],
 } as const satisfies Readonly<Record<SplitWorkerRole, readonly string[]>>);
 
 export const SPLIT_WORKER_RLS_AUTHORITY = Object.freeze({
@@ -380,6 +389,108 @@ export const SPLIT_WORKER_RLS_AUTHORITY = Object.freeze({
     ],
   },
 } as const);
+
+export const SPLIT_WORKER_DEFINER_RLS_AUTHORITY = Object.freeze([
+  {
+    authorityRole: "asset-worker",
+    relationName: "asset_upload_intent",
+    policyName: "asset_upload_intent_worker_completion_lock_function",
+    workloadKind: "platform_asset_worker",
+    operation: "asset.upload-completion.observe",
+    command: "r",
+    requiresAdminExecution: false,
+  },
+  {
+    authorityRole: "asset-worker",
+    relationName: "asset_upload_intent",
+    policyName: "asset_upload_intent_worker_completion_update_lock_function",
+    workloadKind: "platform_asset_worker",
+    operation: "asset.upload-completion.observe",
+    command: "w",
+    requiresAdminExecution: false,
+  },
+  {
+    authorityRole: "asset-worker",
+    relationName: "asset_upload_intent",
+    policyName: "asset_upload_intent_worker_promotion_lock_function",
+    workloadKind: "platform_asset_worker",
+    operation: "asset.promotion.finalize",
+    command: "r",
+    requiresAdminExecution: false,
+  },
+  {
+    authorityRole: "asset-worker",
+    relationName: "asset_upload_intent",
+    policyName: "asset_upload_intent_worker_promotion_update_lock_function",
+    workloadKind: "platform_asset_worker",
+    operation: "asset.promotion.finalize",
+    command: "w",
+    requiresAdminExecution: false,
+  },
+  {
+    authorityRole: "site-worker",
+    relationName: "site_project_binding",
+    policyName: "site_project_binding_worker_lock_function",
+    workloadKind: "platform_site_worker",
+    operation: "site.runtime.consume",
+    command: "r",
+    requiresAdminExecution: false,
+  },
+  {
+    authorityRole: "site-worker",
+    relationName: "site_project_binding",
+    policyName: "site_project_binding_worker_update_lock_function",
+    workloadKind: "platform_site_worker",
+    operation: "site.runtime.consume",
+    command: "w",
+    requiresAdminExecution: false,
+  },
+  {
+    authorityRole: "admin-worker",
+    relationName: "admin_operator_authority",
+    policyName: "admin_operator_authority_worker_lock_function",
+    workloadKind: "platform_admin_worker",
+    operation: "admin.authority.change",
+    command: "r",
+    requiresAdminExecution: true,
+  },
+  {
+    authorityRole: "admin-worker",
+    relationName: "admin_operator_site_scope",
+    policyName: "admin_operator_site_scope_worker_projection_function",
+    workloadKind: "platform_admin_worker",
+    operation: "admin.authority.change",
+    command: "r",
+    requiresAdminExecution: true,
+  },
+  {
+    authorityRole: "admin-worker",
+    relationName: "admin_operator_global_scope_grant",
+    policyName: "admin_operator_global_scope_worker_projection_function",
+    workloadKind: "platform_admin_worker",
+    operation: "admin.authority.change",
+    command: "r",
+    requiresAdminExecution: true,
+  },
+  {
+    authorityRole: "admin-worker",
+    relationName: "admin_breakglass_grant",
+    policyName: "admin_breakglass_worker_projection_function",
+    workloadKind: "platform_admin_worker",
+    operation: "admin.authority.change",
+    command: "r",
+    requiresAdminExecution: true,
+  },
+  {
+    authorityRole: "admin-worker",
+    relationName: "admin_operator_authority",
+    policyName: "admin_operator_authority_worker_update_lock_function",
+    workloadKind: "platform_admin_worker",
+    operation: "admin.authority.change",
+    command: "w",
+    requiresAdminExecution: true,
+  },
+] as const);
 
 const utf8Encoder = new TextEncoder();
 
@@ -454,7 +565,6 @@ export const SPLIT_WORKER_EXACT_AUTHORITY_SQL = `
   )
   SELECT EXISTS (
     SELECT 1 FROM target_role runtime_role
-    JOIN pg_database database_row ON database_row.datname=current_database()
     WHERE runtime_role.rolcanlogin
       AND NOT runtime_role.rolinherit
       AND NOT runtime_role.rolsuper
@@ -464,7 +574,10 @@ export const SPLIT_WORKER_EXACT_AUTHORITY_SQL = `
       AND NOT runtime_role.rolbypassrls
       AND NOT has_database_privilege($1,current_database(),'CREATE')
       AND NOT has_database_privilege($1,current_database(),'TEMPORARY')
-      AND database_row.datdba<>runtime_role.oid
+      AND NOT EXISTS (
+        SELECT 1 FROM pg_database owned_database
+        WHERE owned_database.datdba=runtime_role.oid
+      )
       AND NOT EXISTS (
         SELECT 1 FROM pg_auth_members membership
         WHERE membership.member=runtime_role.oid OR membership.roleid=runtime_role.oid

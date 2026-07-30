@@ -18,6 +18,8 @@ provider observation of stopped traffic is success. Resume is the sole direct li
 
 The domain layer is transport- and database-independent. Application, PostgreSQL and Admin/worker
 adapters preserve authority transitions and command receipts in one owner transaction. Only
+the Site runtime worker locks project bindings through its role-, workload- and operation-fenced PostgreSQL routine; the worker
+does not receive direct UPDATE authority on `site_project_binding`. Only
 `site.activation.begin.v1` and `site.traffic-stop.request.v1` cross that transaction through
 `SiteEffectQueuePort`, because they trigger real provider effects. Registration, release publication,
 observations, commits, drain completion and resume are already authoritative local facts and never become

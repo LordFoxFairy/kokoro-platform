@@ -10,6 +10,7 @@ import {
   splitWorkerRelationNames,
   SPLIT_WORKER_EXACT_AUTHORITY_SQL,
   SPLIT_WORKER_RELATION_AUTHORITY,
+  SPLIT_WORKER_ROUTINE_AUTHORITY,
   type SplitWorkerRole,
 } from "../../src/infrastructure/postgres/split-worker-authority.js";
 
@@ -100,9 +101,10 @@ describe("Platform worker database authority split", () => {
   );
 
   it("does not expose the retired generic worker credential through the client API", async () => {
-    const [client, worker] = await Promise.all([
+    const [client, worker, entrypoint] = await Promise.all([
       readFile("src/infrastructure/postgres/client.ts", "utf8"),
       readFile("src/process/worker.ts", "utf8"),
+      readFile("deploy/docker/runtime-entrypoint.mjs", "utf8"),
     ]);
     const processRole = client.match(/export type PlatformProcessRole\s*=([\s\S]+?);/u)?.[1] ?? "";
     expect(processRole).not.toMatch(/\|\s*"worker"\b/u);
@@ -110,7 +112,9 @@ describe("Platform worker database authority split", () => {
     expect(client).not.toContain('role === "worker"');
     expect(worker).not.toContain("loadPlatformDatabaseConfig");
     expect(worker).not.toContain("runPlatformWorkerMain");
-    expect(worker).toContain("PLATFORM_AGGREGATE_WORKER_REMOVED");
+    expect(worker).not.toContain("PLATFORM_AGGREGATE_WORKER_REMOVED");
+    expect(entrypoint).not.toContain('"platform-worker":');
+    expect(entrypoint).not.toContain("../../dist/src/process/worker.js");
   });
 
   it("derives every relation allowlist from the one authority catalog", async () => {
@@ -146,18 +150,94 @@ describe("Platform worker database authority split", () => {
     }
   });
 
-  it("audits the complete LOGIN NOINHERIT role envelope including TEMP and ownership", () => {
+  it("audits the complete LOGIN NOINHERIT role envelope including OID and ownership", async () => {
     expect(SPLIT_WORKER_EXACT_AUTHORITY_SQL).toContain("runtime_role.rolcanlogin");
     expect(SPLIT_WORKER_EXACT_AUTHORITY_SQL).toContain("runtime_role.rolinherit");
     expect(SPLIT_WORKER_EXACT_AUTHORITY_SQL).toContain("'CREATE'");
     expect(SPLIT_WORKER_EXACT_AUTHORITY_SQL).toContain("'TEMPORARY'");
     expect(SPLIT_WORKER_EXACT_AUTHORITY_SQL).toContain("pg_auth_members");
-    expect(SPLIT_WORKER_EXACT_AUTHORITY_SQL).toContain("database_row.datdba<>runtime_role.oid");
+    expect(SPLIT_WORKER_EXACT_AUTHORITY_SQL).toContain(
+      "owned_database.datdba=runtime_role.oid",
+    );
+    const [client, migrator] = await Promise.all([
+      readFile("src/infrastructure/postgres/client.ts", "utf8"),
+      readFile("src/infrastructure/postgres/migrator.ts", "utf8"),
+    ]);
+    expect(client).toContain("split_worker_role_identity_is_current($3)");
+    expect(client).toContain("identity.roleIdentityExact");
+    expect(migrator).toContain("runtime_role_identity_authority");
+    expect(migrator).toContain("roleIdentityAuthorityExact");
     expect(SPLIT_WORKER_EXACT_AUTHORITY_SQL).toContain("relation.relowner=runtime_role.oid");
     expect(SPLIT_WORKER_EXACT_AUTHORITY_SQL).toContain("routine.proowner=runtime_role.oid");
     expect(SPLIT_WORKER_EXACT_AUTHORITY_SQL).not.toContain(
       "COALESCE(attribute.attacl,ARRAY[]::ACLITEM[])",
     );
+  });
+
+  it("grants only narrow role-fenced lock routines to workers that need row locks", () => {
+    expect(SPLIT_WORKER_ROUTINE_AUTHORITY["asset-worker"]).toContain(
+      "platform.lock_asset_worker_promotion_authority(text,text,text,bigint,text)",
+    );
+    expect(SPLIT_WORKER_ROUTINE_AUTHORITY["asset-worker"]).toContain(
+      "platform.lock_asset_worker_upload_completion_authority(text,text)",
+    );
+    expect(SPLIT_WORKER_ROUTINE_AUTHORITY["site-worker"]).toContain(
+      "platform.lock_site_worker_project_binding(text,text,text)",
+    );
+    expect(SPLIT_WORKER_ROUTINE_AUTHORITY["site-worker"]).toContain(
+      "platform.lock_site_worker_runtime_project_binding(text,text,bigint,text,text)",
+    );
+    expect(SPLIT_WORKER_ROUTINE_AUTHORITY["admin-worker"]).toContain(
+      "platform.lock_admin_worker_operator_authority(text,bigint)",
+    );
+    for (const role of Object.keys(SPLIT_WORKER_ROUTINE_AUTHORITY) as SplitWorkerRole[]) {
+      expect(SPLIT_WORKER_ROUTINE_AUTHORITY[role]).toContain(
+        "platform.split_worker_role_identity_is_current(text)",
+      );
+    }
+  });
+
+  it("binds the Asset completion authority routine to the exact transaction deployment", async () => {
+    const migration = await readFile(
+      "prisma/migrations/20260807_split_worker_lock_authority/migration.sql",
+      "utf8",
+    );
+    const assetCompletionRoutine = migration.match(
+      /CREATE FUNCTION platform\.lock_asset_worker_upload_completion_authority[\s\S]+?\$function\$;/u,
+    )?.[0] ?? "";
+    expect(assetCompletionRoutine).toContain(
+      "binding.environment=current_setting('app.environment',true)",
+    );
+    expect(assetCompletionRoutine).toContain(
+      "binding.region=current_setting('app.region',true)",
+    );
+    const assetPromotionRoutine = migration.match(
+      /CREATE FUNCTION platform\.lock_asset_worker_promotion_authority[\s\S]+?\$function\$;/u,
+    )?.[0] ?? "";
+    expect(assetPromotionRoutine).toContain(
+      "binding.environment=current_setting('app.environment',true)",
+    );
+    expect(assetPromotionRoutine).toContain(
+      "binding.region=current_setting('app.region',true)",
+    );
+  });
+
+  it("projects Admin authority only for the exact transaction deployment", async () => {
+    const migration = await readFile(
+      "prisma/migrations/20260807_split_worker_lock_authority/migration.sql",
+      "utf8",
+    );
+    const adminAuthorityRoutine = migration.match(
+      /CREATE FUNCTION platform\.lock_admin_worker_operator_authority[\s\S]+?\$function\$;/u,
+    )?.[0] ?? "";
+    for (const relationAlias of ["site_scope", "global_scope", "breakglass"] as const) {
+      expect(adminAuthorityRoutine).toContain(
+        `${relationAlias}.environment=current_setting('app.environment',true)`,
+      );
+      expect(adminAuthorityRoutine).toContain(
+        `${relationAlias}.region=current_setting('app.region',true)`,
+      );
+    }
   });
 
   it("sorts persisted SQL authority evidence with the same bytewise comparator", async () => {

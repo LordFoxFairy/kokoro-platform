@@ -45,7 +45,9 @@ describe("PostgresAssetPromotionRepository", () => {
     const statements: string[] = [];
     const sql: PlatformSqlTransaction = {
       query: async <Row extends Record<string, unknown>>(statement: string): Promise<readonly Row[]> =>
-        statement.includes("SELECT TRUE AS allowed") ? rows<Row>({ allowed: true }) : [],
+        statement.includes("lock_asset_worker_promotion_authority")
+          ? rows<Row>({ allowed: true })
+          : [],
       execute: async (statement) => { statements.push(statement); return 1; },
     };
     const lease = issuePlatformTransaction(sql);

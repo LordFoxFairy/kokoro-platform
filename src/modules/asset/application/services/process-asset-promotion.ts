@@ -15,6 +15,7 @@ export type ProcessAssetPromotionResult =
 
 export class ProcessAssetPromotionService {
   constructor(private readonly dependencies: Readonly<{
+    deployment: Readonly<{ environment: string; region: string }>;
     unitOfWork: AssetWorkerUnitOfWorkPort;
     repository: AssetPromotionWorkerRepositoryPort;
     objectStore: AssetTrustedObjectStorePort;
@@ -73,9 +74,13 @@ export class ProcessAssetPromotionService {
       if (observation.disposition !== "present") throw new Error("ASSET_OBSERVATION_INVARIANT");
       const cleanupGroupRef = this.reference();
       const trustedCleanupRef = this.reference();
-      const trustedCleanupEvent = cleanupEventEnvelope(input, trustedCleanupRef, this.reference());
+      const trustedCleanupEvent = cleanupEventEnvelope(
+        input, trustedCleanupRef, this.reference(), this.dependencies.deployment,
+      );
       const quarantineCleanupRef = this.reference();
-      const quarantineCleanupEvent = cleanupEventEnvelope(input, quarantineCleanupRef, this.reference());
+      const quarantineCleanupEvent = cleanupEventEnvelope(
+        input, quarantineCleanupRef, this.reference(), this.dependencies.deployment,
+      );
       const rejected = await this.dependencies.unitOfWork.execute(scope, (transaction) =>
         this.dependencies.repository.rejectPromotion(transaction, {
           promotionRef: promotion.promotionRef,
@@ -111,7 +116,9 @@ export class ProcessAssetPromotionService {
     const eligibilityRef = this.reference();
     const cleanupGroupRef = this.reference();
     const cleanupRef = this.reference();
-    const cleanupEvent = cleanupEventEnvelope(input, cleanupRef, this.reference());
+    const cleanupEvent = cleanupEventEnvelope(
+      input, cleanupRef, this.reference(), this.dependencies.deployment,
+    );
     const finalized = await this.dependencies.unitOfWork.execute(scope, (transaction) =>
       this.dependencies.repository.finalizePromotion(transaction, {
         promotion,
@@ -167,10 +174,12 @@ function cleanupEventEnvelope(
   input: Readonly<{ eventId: string; correlationId: string; siteRef: string }>,
   cleanupRef: string,
   eventId: string,
+  deployment: Readonly<{ environment: string; region: string }>,
 ) {
   return eventEnvelope(input, "asset.object.cleanup.requested", cleanupRef,
     json({ kind: "asset_object_cleanup_requested_v1", siteRef: input.siteRef,
-      cleanupRef, expectedVersion: "1" }), eventId);
+      cleanupRef, expectedVersion: "1",
+      ...deployment }), eventId);
 }
 
 function bounded(value: string, code: string): void {

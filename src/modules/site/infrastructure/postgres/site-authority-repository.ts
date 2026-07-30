@@ -27,10 +27,13 @@ import {
 } from "../../domain/site-traffic-stop.js";
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
 import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
+import type { SiteWorkerProjectBindingLock } from "./site-worker-project-binding-lock.js";
 
 export class PostgresSiteAuthorityRepository implements
   SiteAuthorityRepository, SitePublicationRepository, SiteTrafficStopRepository,
   SiteRuntimeRepository {
+  constructor(private readonly workerProjectBindingLock?: SiteWorkerProjectBindingLock) {}
+
   async assertCapabilityCatalogSnapshot(
     transaction: PlatformTransaction,
     input: Readonly<{ siteRef: string; releaseRef: string }>,
@@ -73,6 +76,14 @@ export class PostgresSiteAuthorityRepository implements
     transaction: PlatformTransaction,
     input: Parameters<SiteRuntimeRepository["loadRuntimeProjectBindingForUpdate"]>[1],
   ): Promise<Readonly<{ providerNamespace: string; providerProjectRef: string }> | null> {
+    const sql = resolvePlatformTransaction(transaction);
+    if (this.workerProjectBindingLock !== undefined) {
+      const project = await this.workerProjectBindingLock.lockRuntime(sql, input);
+      return project === null ? null : Object.freeze({
+        providerNamespace: project.providerNamespace,
+        providerProjectRef: project.providerProjectRef,
+      });
+    }
     const rows = await resolvePlatformTransaction(transaction).query<{
       providerNamespace: string; providerProjectRef: string;
     }>(
@@ -320,7 +331,32 @@ export class PostgresSiteAuthorityRepository implements
   ): Promise<Readonly<{ deploymentRef: string; webArtifactDigest: string;
     providerNamespace: string; providerProjectRef: string;
     environment: "development" | "preview" | "production"; region: string }> | null> {
-    const rows = await resolvePlatformTransaction(transaction).query<{
+    const sql = resolvePlatformTransaction(transaction);
+    if (this.workerProjectBindingLock !== undefined) {
+      const project = await this.workerProjectBindingLock.lockActive(sql, {
+        siteRef, environment, region,
+      });
+      if (project === null) return null;
+      const rows = await sql.query<{
+        deploymentRef: string; webArtifactDigest: string;
+        environment: "development" | "preview" | "production"; region: string;
+      }>(
+        `SELECT deployment_ref AS "deploymentRef",web_artifact_digest AS "webArtifactDigest",
+                environment,region
+         FROM platform.site_deployment_binding
+         WHERE site_ref=$1 AND environment=$2 AND region=$3 AND release_ref=$4
+           AND binding_ref=$5 AND state='draining' FOR UPDATE`,
+        [siteRef, environment, region, releaseRef, project.bindingRef],
+      );
+      if (rows.length > 1) throw new Error("SITE_DRAINING_DEPLOYMENT_CONFLICT");
+      const row = rows[0];
+      return row === undefined ? null : Object.freeze({
+        ...row,
+        providerNamespace: project.providerNamespace,
+        providerProjectRef: project.providerProjectRef,
+      });
+    }
+    const rows = await sql.query<{
       deploymentRef: string; webArtifactDigest: string; providerNamespace: string;
       providerProjectRef: string; environment: "development" | "preview" | "production";
       region: string;
@@ -348,7 +384,27 @@ export class PostgresSiteAuthorityRepository implements
     environment: "development" | "preview" | "production",
     region: string,
   ): Promise<ProviderBoundDeployment | null> {
-    const rows = await resolvePlatformTransaction(transaction).query<ProviderBoundDeployment & Record<string, unknown>>(
+    const sql = resolvePlatformTransaction(transaction);
+    if (this.workerProjectBindingLock !== undefined) {
+      const project = await this.workerProjectBindingLock.lockActive(sql, {
+        siteRef, environment, region,
+      });
+      if (project === null) return null;
+      const rows = await sql.query<ProviderBoundDeployment & Record<string, unknown>>(
+        `SELECT deployment_ref AS "deploymentRef",binding_ref AS "bindingRef",
+                site_ref AS "siteRef",release_ref AS "releaseRef",environment,region,audience,
+                session_contract_revision AS "sessionContractRevision",
+                web_artifact_digest AS "webArtifactDigest",binding_epoch AS "bindingEpoch",state,
+                $4::text AS "providerNamespace"
+         FROM platform.site_deployment_binding
+         WHERE site_ref=$1 AND environment=$2 AND region=$3 AND binding_ref=$5
+           AND state='active' FOR UPDATE`,
+        [siteRef, environment, region, project.providerNamespace, project.bindingRef],
+      );
+      if (rows.length > 1) throw new Error("SITE_ACTIVE_DEPLOYMENT_CONFLICT");
+      return rows[0] === undefined ? null : Object.freeze({ ...rows[0] });
+    }
+    const rows = await sql.query<ProviderBoundDeployment & Record<string, unknown>>(
       `SELECT deployment.deployment_ref AS "deploymentRef",deployment.binding_ref AS "bindingRef",
               deployment.site_ref AS "siteRef",deployment.release_ref AS "releaseRef",
               deployment.environment,deployment.region,deployment.audience,

@@ -44,6 +44,10 @@ export async function createAssetDataPlaneProductionComposition(input: Readonly<
 }>): Promise<AssetDataPlaneProductionComposition> {
   const environment = input.environment ?? process.env;
   const audience = required(environment, "PLATFORM_ASSET_DATA_PLANE_AUDIENCE");
+  const deployment = Object.freeze({
+    environment: required(environment, "PLATFORM_ENVIRONMENT"),
+    region: required(environment, "PLATFORM_REGION"),
+  });
   const [policies, capabilityKeys, storageRoutes, tls] = await Promise.all([
     loadPolicies(required(environment, "PLATFORM_ASSET_UPLOAD_POLICY_REGISTRY_FILE")),
     loadCapabilityKeys(required(environment, "PLATFORM_ASSET_UPLOAD_CAPABILITY_KEY_RING_FILE")),
@@ -53,8 +57,8 @@ export async function createAssetDataPlaneProductionComposition(input: Readonly<
   // Startup fails when the listener audience has no single policy-owned endpoint.
   policies.resolveEndpoint(audience);
   const service = new AssetMultipartService({
-    unitOfWork: new AssetMultipartUnitOfWork(input.database),
-    repository: new PostgresAssetMultipartRepository(),
+    unitOfWork: new AssetMultipartUnitOfWork(input.database, deployment),
+    repository: new PostgresAssetMultipartRepository(deployment),
     store: new S3AssetObjectStore(storageRoutes),
     ...(input.clock === undefined ? {} : { clock: input.clock }),
   });

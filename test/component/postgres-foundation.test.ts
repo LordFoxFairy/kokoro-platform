@@ -11,13 +11,35 @@ import {
 } from "../../src/infrastructure/postgres/client.js";
 import { runPlatformMigrations } from "../../src/infrastructure/postgres/migrator.js";
 import {
+  canonicalRelationAuthority,
+  SPLIT_WORKER_EXACT_AUTHORITY_SQL,
+  SPLIT_WORKER_RELATION_AUTHORITY,
+  SPLIT_WORKER_ROUTINE_AUTHORITY,
+} from "../../src/infrastructure/postgres/split-worker-authority.js";
+import {
   createPostgresModelGatewayDatabase,
   loadModelGatewayDatabaseConfig,
 } from "../../src/modules/model-gateway/infrastructure/postgres/model-gateway-database.js";
-import { OUTBOX_ROUTE_CATALOG, type OutboxOwner } from "../../src/shared/outbox-inbox/outbox.js";
+import { createAdminWorkerAuthorityRepository } from
+  "../../src/modules/admin-control/infrastructure/postgres/admin-worker-composition.js";
+import {
+  createAssetWorkerCompletionService,
+  createAssetWorkerUnitOfWork,
+} from "../../src/process/asset-worker-composition.js";
+import { digestAssetCommand } from "../../src/modules/asset/application/asset-digest.js";
+import { createPostgresAssetEffectEventQueue } from
+  "../../src/modules/asset/infrastructure/postgres/asset-outbox-consumer.js";
+import {
+  OUTBOX_ROUTE_CATALOG,
+  OutboxRepository,
+  type OutboxOwner,
+} from "../../src/shared/outbox-inbox/outbox.js";
 
 const migratorDatabaseUrl = requireLeasedDatabaseUrl(
   process.env.DATABASE_URL_PLATFORM_MIGRATOR_TEST,
+);
+const bootstrapDatabaseUrl = requireLeasedDatabaseUrl(
+  process.env.DATABASE_URL_PLATFORM_BOOTSTRAP_TEST,
 );
 const apiDatabaseUrl = requireLeasedDatabaseUrl(process.env.DATABASE_URL_PLATFORM_API_TEST);
 const admissionDatabaseUrl = requireLeasedDatabaseUrl(
@@ -71,25 +93,7 @@ let modelGatewayDatabase: ReturnType<typeof createPostgresModelGatewayDatabase>;
 describe("Platform PostgreSQL foundation", () => {
   beforeAll(async () => {
     await runPlatformMigrations({
-      environment: {
-        DATABASE_URL_PLATFORM: migratorDatabaseUrl,
-        PLATFORM_DATABASE_CREDENTIAL_CLASS: "migrator",
-        PLATFORM_DATABASE_MIGRATOR_ROLE: migratorUser,
-        PLATFORM_DATABASE_API_ROLE: apiUser,
-        PLATFORM_DATABASE_ADMISSION_ROLE: admissionUser,
-        PLATFORM_DATABASE_AUTHORIZATION_ROLE: authorizationUser,
-        PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE: assetDataPlaneUser,
-        PLATFORM_DATABASE_COMMERCE_WORKER_ROLE: workerUsers["commerce-worker"],
-        PLATFORM_DATABASE_SITE_WORKER_ROLE: workerUsers["site-worker"],
-        PLATFORM_DATABASE_ASSET_WORKER_ROLE: workerUsers["asset-worker"],
-        PLATFORM_DATABASE_ADMIN_WORKER_ROLE: workerUsers["admin-worker"],
-        PLATFORM_DATABASE_IDENTITY_WORKER_ROLE: workerUsers["identity-worker"],
-        PLATFORM_DATABASE_AUTHORIZATION_MAINTENANCE_ROLE: workerUsers["authorization-maintenance"],
-        PLATFORM_DATABASE_ADMIN_ROLE: adminUser,
-        PLATFORM_DATABASE_MODEL_GATEWAY_ROLE: modelGatewayUser,
-        PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
-        PATH: process.env.PATH,
-      },
+      environment: platformMigrationEnvironment(),
     });
     database = createPlatformDatabaseClient(
       loadPlatformDatabaseConfig("api", {
@@ -441,6 +445,8 @@ describe("Platform PostgreSQL foundation", () => {
       const assetPayload = {
         kind: "asset_upload_completion_requested_v1",
         siteRef: "site-component",
+        environment: "production",
+        region: "us-east-1",
         intentRef: `asset-intent-${randomUUID()}`,
         sessionRef: assetSessionRef,
         expectedVersion: "1",
@@ -450,8 +456,10 @@ describe("Platform PostgreSQL foundation", () => {
                 set_config('app.workload_kind','site_product',false),
                 set_config('app.actor_kind','user',false),
                 set_config('app.scopes','["asset:upload"]',false),
-                set_config('app.site_id',$1,false)`,
-        [assetPayload.siteRef],
+                set_config('app.site_id',$1,false),
+                set_config('app.environment',$2,false),
+                set_config('app.region',$3,false)`,
+        [assetPayload.siteRef, assetPayload.environment, assetPayload.region],
       );
       await expect(
         assetDataPlane.query(
@@ -728,6 +736,431 @@ describe("Platform PostgreSQL foundation", () => {
     }
   });
 
+  it("locks populated worker authority rows without granting authority-table UPDATE", async () => {
+    const suffix = randomUUID();
+    const siteRef = `site-lock-${suffix}`;
+    const releaseRef = `release-lock-${suffix}`;
+    const workloadIdentityId = `workload-lock-${suffix}`;
+    const subjectRef = `subject-lock-${suffix}`;
+    const projectRef = `project-lock-${suffix}`;
+    const executionSpaceRef = `space-lock-${suffix}`;
+    const bindingRef = `binding-lock-${suffix}`;
+    const intentRef = `intent-lock-${suffix}`;
+    const sessionRef = `session-lock-${suffix}`;
+    const operatorRef = `operator-lock-${suffix}`;
+    const globalGrantRef = randomUUID();
+    const breakglassGrantRef = randomUUID();
+    const matchingAssetEventId = randomUUID();
+    const foreignAssetEventId = randomUUID();
+    const matchingAssetPayload = Object.freeze({
+      kind: "asset_scan_requested_v1",
+      siteRef,
+      environment: "production",
+      region: "us-east-1",
+      candidateRef: `candidate-matching-${suffix}`,
+      expectedVersion: "1",
+    });
+    const foreignAssetPayload = Object.freeze({
+      ...matchingAssetPayload,
+      environment: "staging",
+      region: "us-west-2",
+      candidateRef: `candidate-foreign-${suffix}`,
+    });
+    const bootstrap = new Client({ connectionString: bootstrapDatabaseUrl });
+    const asset = new Client({ connectionString: workerDatabaseUrls["asset-worker"] });
+    const site = new Client({ connectionString: workerDatabaseUrls["site-worker"] });
+    const admin = new Client({ connectionString: workerDatabaseUrls["admin-worker"] });
+    await Promise.all([bootstrap.connect(), asset.connect(), site.connect(), admin.connect()]);
+    try {
+      await bootstrap.query("BEGIN");
+      try {
+        const seedQueries: readonly (readonly [string, readonly unknown[]])[] = [
+          [
+            `INSERT INTO platform.authorization_site
+               (site_ref,state,security_epoch,policy_epoch,revocation_epoch)
+             VALUES ($1,'active',1,1,1)`,
+            [siteRef],
+          ],
+          [
+            `INSERT INTO platform.authorization_site_release
+               (release_ref,site_ref,state,web_artifact_digest,enabled_surface_ids,
+                feature_policy_revision,model_option_catalog_ref,agent_catalog_ref,
+                identity_issuer_label,identity_auth_strength_policy_revision,locale_policy)
+             VALUES ($1,$2,'active',repeat('a',64),'[]'::jsonb,'policy-1','model-1','agent-1',
+                     'Component','auth-1','{}'::jsonb)`,
+            [releaseRef, siteRef],
+          ],
+          [
+            `INSERT INTO platform.authorization_product_binding
+               (binding_ref,workload_identity_id,deployment_ref,site_ref,release_ref,environment,
+                region,audience,session_contract_revision,binding_epoch,state)
+             VALUES ($1,$2,$3,$4,$5,'production','us-east-1','component','v1',1,'active')`,
+            [bindingRef, workloadIdentityId, `deployment-lock-${suffix}`, siteRef, releaseRef],
+          ],
+          [
+            `INSERT INTO platform.authorization_subject
+               (subject_ref,site_ref,display_name,state,subject_generation,restriction_epoch)
+             VALUES ($1,$2,'Component Subject','active',1,1)`,
+            [subjectRef, siteRef],
+          ],
+          [
+            `INSERT INTO platform.authorization_project
+               (project_ref,site_ref,workspace_ref,execution_space_ref,display_name,state)
+             VALUES ($1,$2,'workspace-component',$3,'Component Project','active')`,
+            [projectRef, siteRef, executionSpaceRef],
+          ],
+          [
+            `INSERT INTO platform.identity_execution_space
+               (site_ref,execution_space_ref,project_ref,execution_namespace,state,security_epoch)
+             VALUES ($1,$2,$3,$4,'active',1)`,
+            [siteRef, executionSpaceRef, projectRef,
+              `component-lock-${suffix.replaceAll("-", "")}`],
+          ],
+          [
+            `INSERT INTO platform.authorization_project_membership
+               (project_ref,subject_ref,state,membership_epoch,authorization_epoch,is_default)
+             VALUES ($1,$2,'active',1,1,true)`,
+            [projectRef, subjectRef],
+          ],
+          [
+            `INSERT INTO platform.asset_upload_intent
+               (intent_ref,site_ref,workload_identity_id,site_release_ref,binding_epoch,
+                subject_ref,subject_generation,project_ref,purpose,safe_display_name,
+                client_media_type,expected_size,expected_checksum_sha256,policy_revision_ref,
+                idempotency_key,request_digest,state,expected_version,expires_at)
+             VALUES ($1,$2,$3,$4,1,$5,1,$6,'component-lock','Component lock asset',
+                     'image/png',1,repeat('b',64),'policy-1',$7,repeat('c',64),
+                     'admitted',1,now()+interval '1 hour')`,
+            [intentRef, siteRef, workloadIdentityId, releaseRef, subjectRef, projectRef,
+              `idem-lock-${suffix}`],
+          ],
+          [
+            `INSERT INTO platform.asset_upload_session
+               (session_ref,intent_ref,site_ref,subject_ref,subject_generation,project_ref,purpose,
+                quota_revision_ref,storage_tenant_ref,storage_region,quarantine_object_ref,
+                protocol_revision,capability_audience,minimum_part_bytes,maximum_part_bytes,
+                capability_lifetime_seconds,capability_epoch,capability_expires_at,
+                completion_requested_at,state,expected_version,expires_at)
+             VALUES ($1,$2,$3,$4,1,$5,'component-lock','quota-1','tenant-1','us-east-1',
+                     'quarantine/component','s3-multipart-v1','component-audience',1,10,300,1,
+                     now()+interval '10 minutes',now()-interval '1 minute','completing',2,
+                     now()+interval '1 hour')`,
+            [sessionRef, intentRef, siteRef, subjectRef, projectRef],
+          ],
+          [
+            "INSERT INTO platform.site(site_ref,site_key,state) VALUES ($1,$2,'preview_ready')",
+            [siteRef, `lock-${suffix.slice(0, 24)}`],
+          ],
+          [
+            `INSERT INTO platform.site_project_binding
+               (binding_ref,site_ref,repository_ref,provider_namespace,provider_project_ref,
+                environment,region,workload_identity_id,binding_epoch,state)
+             VALUES ($1,$2,$3,$4,'provider-project','production','us-east-1',$5,1,'active')`,
+            [bindingRef, siteRef, `repository-lock-${suffix}`,
+              `namespace-${suffix.slice(0, 20)}`, workloadIdentityId],
+          ],
+          [
+            `INSERT INTO platform.admin_operator_authority
+               (operator_ref,operator_generation,state,permissions,operator_security_epoch,
+                authorization_epoch,expires_at)
+             VALUES ($1,1,'active',ARRAY['admin.authority.manage'],1,1,
+                     now()+interval '1 hour')`,
+            [operatorRef],
+          ],
+          [
+            `INSERT INTO platform.admin_operator_site_scope
+               (operator_ref,operator_generation,site_ref,environment,region,scope_epoch,state,
+                expires_at)
+             VALUES ($1,1,$2,'production','us-east-1',1,'active',now()+interval '1 hour')`,
+            [operatorRef, siteRef],
+          ],
+          [
+            `INSERT INTO platform.admin_operator_site_scope
+               (operator_ref,operator_generation,site_ref,environment,region,scope_epoch,state,
+                expires_at)
+             VALUES ($1,1,$2,'staging','us-west-2',2,'active',now()+interval '1 hour')`,
+            [operatorRef, siteRef],
+          ],
+          [
+            `INSERT INTO platform.admin_operator_global_scope_grant
+               (grant_ref,operator_ref,operator_generation,environment,region,scope_epoch,state,
+                expires_at)
+             VALUES ($1::uuid,$2,1,'production','us-east-1',1,'active',
+                     now()+interval '1 hour')`,
+            [globalGrantRef, operatorRef],
+          ],
+          [
+            `INSERT INTO platform.admin_breakglass_grant
+               (grant_ref,operator_ref,operator_generation,incident_ref,environment,region,
+                authorized_operation,resource_refs,field_allowlist,scope_epoch,state,
+                approved_by_refs,expires_at)
+             VALUES ($1::uuid,$2,1,'incident-component','production','us-east-1',
+                     'admin.authority.change',ARRAY['authority'],ARRAY['permissions'],1,'active',
+                     ARRAY['approver-one','approver-two'],now()+interval '10 minutes')`,
+            [breakglassGrantRef, operatorRef],
+          ],
+          [
+            `INSERT INTO platform.outbox_event
+               (event_id,owner,event_type,aggregate_id,payload,payload_digest,correlation_id)
+             VALUES ($1::uuid,'asset','asset.scan.requested',$2,$3::jsonb,$4,$5)`,
+            [matchingAssetEventId, matchingAssetPayload.candidateRef,
+              JSON.stringify(matchingAssetPayload), digestAssetCommand(matchingAssetPayload),
+              `correlation-matching-${suffix}`],
+          ],
+          [
+            `INSERT INTO platform.outbox_event
+               (event_id,owner,event_type,aggregate_id,payload,payload_digest,correlation_id)
+             VALUES ($1::uuid,'asset','asset.scan.requested',$2,$3::jsonb,$4,$5)`,
+            [foreignAssetEventId, foreignAssetPayload.candidateRef,
+              JSON.stringify(foreignAssetPayload), digestAssetCommand(foreignAssetPayload),
+              `correlation-foreign-${suffix}`],
+          ],
+        ];
+        for (const [statement, values] of seedQueries) {
+          await bootstrap.query(statement, values as unknown[]);
+        }
+        await bootstrap.query("COMMIT");
+      } catch (error) {
+        await bootstrap.query("ROLLBACK");
+        throw error;
+      }
+
+      await asset.query(
+        `SELECT set_config('app.workload_kind','platform_asset_worker',false),
+                set_config('app.operation','asset.upload-completion.observe',false),
+                set_config('app.site_id',$1,false),
+                set_config('app.environment','production',false),
+                set_config('app.region','us-east-1',false)`,
+        [siteRef],
+      );
+      await expect(asset.query(
+        `SELECT platform.lock_asset_worker_upload_completion_authority(
+           $1,$2
+         ) AS allowed`,
+        [siteRef, intentRef],
+      )).resolves.toMatchObject({ rows: [{ allowed: true }] });
+      await asset.query("SELECT set_config('app.region','us-west-2',false)");
+      await expect(asset.query(
+        `SELECT platform.lock_asset_worker_upload_completion_authority(
+           $1,$2
+         ) AS allowed`,
+        [siteRef, intentRef],
+      )).resolves.toMatchObject({ rows: [{ allowed: false }] });
+      await asset.query("SELECT set_config('app.region','us-east-1',false)");
+      await asset.query("SELECT set_config('app.operation','asset.promotion.finalize',false)");
+      await expect(asset.query(
+        `SELECT platform.lock_asset_worker_promotion_authority(
+           $1,$2,$3,1,$4
+         ) AS allowed`,
+        [siteRef, intentRef, subjectRef, projectRef],
+      )).resolves.toMatchObject({ rows: [{ allowed: true }] });
+
+      await site.query(
+        `SELECT set_config('app.workload_kind','platform_site_worker',false),
+                set_config('app.operation','site.runtime.consume',false)`,
+      );
+      await expect(site.query(
+        `SELECT binding_ref FROM platform.lock_site_worker_project_binding(
+           $1,'production','us-east-1'
+         )`,
+        [siteRef],
+      )).resolves.toMatchObject({ rows: [{ binding_ref: bindingRef }] });
+
+      const workerAuthority = await workerDatabases["admin-worker"].adminExecutionTransaction({
+        operation: "admin.authority.change",
+        siteRef: null,
+        environment: "production",
+        region: "us-east-1",
+        makerRef: operatorRef,
+        makerGeneration: 1n,
+        makerAuthorizationEpoch: 1n,
+        checkerRef: `checker-${suffix}`,
+        checkerGeneration: 1n,
+        checkerAuthorizationEpoch: 1n,
+      }, (transaction) => createAdminWorkerAuthorityRepository().lockOperatorAuthority(
+        transaction,
+        { operatorRef, operatorGeneration: 1n },
+      ));
+      expect(workerAuthority).toMatchObject({
+        operatorRef,
+        siteScopes: [siteRef],
+        globalScopes: [globalGrantRef],
+        environments: ["production"],
+        regions: ["us-east-1"],
+      });
+      expect(workerAuthority?.breakGlassExpiresAt).not.toBeNull();
+
+      await bootstrap.query(
+        `UPDATE platform.admin_operator_site_scope SET state='revoked'
+         WHERE operator_ref=$1 AND operator_generation=1
+           AND site_ref=$2 AND environment='production' AND region='us-east-1'`,
+        [operatorRef, siteRef],
+      );
+      const crossTupleAuthority = await workerDatabases["admin-worker"].adminExecutionTransaction({
+        operation: "admin.authority.change",
+        siteRef,
+        environment: "production",
+        region: "us-west-2",
+        makerRef: operatorRef,
+        makerGeneration: 1n,
+        makerAuthorizationEpoch: 1n,
+        checkerRef: `checker-cross-${suffix}`,
+        checkerGeneration: 1n,
+        checkerAuthorizationEpoch: 1n,
+      }, (transaction) => createAdminWorkerAuthorityRepository().lockOperatorAuthority(
+        transaction,
+        { operatorRef, operatorGeneration: 1n },
+      ));
+      expect(crossTupleAuthority).toMatchObject({
+        operatorRef,
+        siteScopes: [],
+        globalScopes: [],
+        environments: [],
+        regions: [],
+        breakGlassExpiresAt: null,
+      });
+      await bootstrap.query(
+        `UPDATE platform.admin_operator_site_scope SET state='active'
+         WHERE operator_ref=$1 AND operator_generation=1
+           AND site_ref=$2 AND environment='production' AND region='us-east-1'`,
+        [operatorRef, siteRef],
+      );
+
+      const claimedAssetEvents = await createPostgresAssetEffectEventQueue(
+        workerDatabases["asset-worker"],
+        { workerId: `asset-route-${suffix}`, environment: "production", region: "us-east-1" },
+        new OutboxRepository(),
+      ).claim();
+      const claimedAssetEventIds = new Set(claimedAssetEvents.map((event) => event.eventId));
+      expect(claimedAssetEventIds.has(matchingAssetEventId)).toBe(true);
+      expect(claimedAssetEventIds.has(foreignAssetEventId)).toBe(false);
+
+      let completionObservations = 0;
+      let revokeDuringObservation = false;
+      const completionService = createAssetWorkerCompletionService({
+        unitOfWork: createAssetWorkerUnitOfWork(workerDatabases["asset-worker"], {
+          environment: "production",
+          region: "us-east-1",
+        }),
+        deployment: { environment: "production", region: "us-east-1" },
+        objectStore: {
+          async observe() {
+            completionObservations += 1;
+            if (revokeDuringObservation) {
+              await bootstrap.query(
+                `UPDATE platform.authorization_project_membership SET state='revoked'
+                 WHERE project_ref=$1 AND subject_ref=$2`,
+                [projectRef, subjectRef],
+              );
+            }
+            return {
+              disposition: "present" as const,
+              providerVersionRef: "provider-version-component",
+              providerEtagDigest: "d".repeat(64),
+              size: 1n,
+              checksumSha256: "b".repeat(64),
+              observedAt: new Date().toISOString(),
+            };
+          },
+          async computeSha256() { throw new Error("not expected"); },
+        },
+      });
+      const revokedAuthorities = [
+        ["authorization_product_binding", "binding_ref", bindingRef, "revoked", "active"],
+        ["authorization_subject", "subject_ref", subjectRef, "disabled", "active"],
+        ["authorization_project", "project_ref", projectRef, "archived", "active"],
+        ["authorization_project_membership", "project_ref", projectRef, "revoked", "active"],
+      ] as const;
+      for (const [relation, key, value, revokedState, activeState] of revokedAuthorities) {
+        const observationsBeforeRejection = completionObservations;
+        await bootstrap.query(
+          `UPDATE platform.${quoteIdentifier(relation)} SET state=$1 ` +
+            `WHERE ${quoteIdentifier(key)}=$2`,
+          [revokedState, value],
+        );
+        await expect(completionService.execute({
+          eventId: randomUUID(),
+          siteRef,
+          intentRef,
+          sessionRef,
+          expectedVersion: 2n,
+          correlationId: `correlation-${suffix}`,
+        })).rejects.toThrowError("ASSET_UPLOAD_AUTHORITY_STALE");
+        expect(completionObservations).toBe(observationsBeforeRejection);
+        await bootstrap.query(
+          `UPDATE platform.${quoteIdentifier(relation)} SET state=$1 ` +
+            `WHERE ${quoteIdentifier(key)}=$2`,
+          [activeState, value],
+        );
+      }
+      revokeDuringObservation = true;
+      await expect(completionService.execute({
+        eventId: randomUUID(),
+        siteRef,
+        intentRef,
+        sessionRef,
+        expectedVersion: 2n,
+        correlationId: `correlation-${suffix}`,
+      })).rejects.toThrowError("ASSET_UPLOAD_AUTHORITY_STALE");
+      expect(completionObservations).toBe(1);
+      await bootstrap.query(
+        `UPDATE platform.authorization_project_membership SET state='active'
+         WHERE project_ref=$1 AND subject_ref=$2`,
+        [projectRef, subjectRef],
+      );
+
+      await expect(asset.query(
+        "SELECT binding_ref FROM platform.authorization_product_binding FOR UPDATE",
+      )).rejects.toMatchObject({ code: "42501" });
+      await expect(site.query(
+        "SELECT binding_ref FROM platform.site_project_binding FOR UPDATE",
+      )).rejects.toMatchObject({ code: "42501" });
+      await expect(admin.query(
+        "SELECT operator_ref FROM platform.admin_operator_authority FOR UPDATE",
+      )).rejects.toMatchObject({ code: "42501" });
+      await expect(admin.query(
+        "SELECT site_ref FROM platform.admin_operator_site_scope",
+      )).rejects.toMatchObject({ code: "42501" });
+    } finally {
+      const cleanupQueries: readonly (readonly [string, readonly unknown[]])[] = [
+        ["DELETE FROM platform.outbox_event WHERE event_id=ANY($1::uuid[])",
+          [[matchingAssetEventId, foreignAssetEventId]]],
+        ["DELETE FROM platform.admin_breakglass_grant WHERE grant_ref=$1::uuid", [breakglassGrantRef]],
+        ["DELETE FROM platform.admin_operator_global_scope_grant WHERE grant_ref=$1::uuid", [globalGrantRef]],
+        ["DELETE FROM platform.admin_operator_site_scope WHERE operator_ref=$1", [operatorRef]],
+        ["DELETE FROM platform.admin_operator_authority WHERE operator_ref=$1", [operatorRef]],
+        ["DELETE FROM platform.site_project_binding WHERE binding_ref=$1", [bindingRef]],
+        ["DELETE FROM platform.site WHERE site_ref=$1", [siteRef]],
+        ["DELETE FROM platform.asset_upload_session WHERE session_ref=$1", [sessionRef]],
+        ["DELETE FROM platform.asset_upload_intent WHERE intent_ref=$1", [intentRef]],
+        [
+          `DELETE FROM platform.authorization_project_membership
+           WHERE project_ref=$1 AND subject_ref=$2`,
+          [projectRef, subjectRef],
+        ],
+        [
+          "DELETE FROM platform.identity_execution_space WHERE execution_space_ref=$1",
+          [executionSpaceRef],
+        ],
+        ["DELETE FROM platform.authorization_project WHERE project_ref=$1", [projectRef]],
+        ["DELETE FROM platform.authorization_subject WHERE subject_ref=$1", [subjectRef]],
+        ["DELETE FROM platform.authorization_product_binding WHERE binding_ref=$1", [bindingRef]],
+        ["DELETE FROM platform.authorization_site_release WHERE release_ref=$1", [releaseRef]],
+        ["DELETE FROM platform.authorization_site WHERE site_ref=$1", [siteRef]],
+      ];
+      await bootstrap.query("BEGIN").catch(() => undefined);
+      try {
+        for (const [statement, values] of cleanupQueries) {
+          await bootstrap.query(statement, values as unknown[]);
+        }
+        await bootstrap.query("COMMIT");
+      } catch {
+        await bootstrap.query("ROLLBACK").catch(() => undefined);
+      }
+      await Promise.allSettled([bootstrap.end(), asset.end(), site.end(), admin.end()]);
+    }
+  });
+
   it("keeps the six worker roles LOGIN-only and rejects database TEMP drift", async () => {
     const migrator = new Client({ connectionString: migratorDatabaseUrl });
     await migrator.connect();
@@ -831,6 +1264,101 @@ describe("Platform PostgreSQL foundation", () => {
       await migrator.end();
     }
   });
+
+  it("rejects a worker that owns any database in the PostgreSQL cluster", async () => {
+    const ownedDatabase = `kokoro_test_worker_owner_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
+    const bootstrap = new Client({ connectionString: bootstrapDatabaseUrl });
+    await bootstrap.connect();
+    try {
+      await bootstrap.query(
+        `CREATE DATABASE ${quoteIdentifier(ownedDatabase)} ` +
+          `OWNER ${quoteIdentifier(workerUsers["commerce-worker"])}`,
+      );
+      const invalidWorker = createWorkerDatabaseClient("commerce-worker");
+      try {
+        await expect(invalidWorker.connect()).rejects.toThrowError(
+          "PLATFORM_RUNTIME_DATABASE_ROLE_INVALID",
+        );
+      } finally {
+        await invalidWorker.disconnect();
+      }
+    } finally {
+      await bootstrap
+        .query(`DROP DATABASE IF EXISTS ${quoteIdentifier(ownedDatabase)} WITH (FORCE)`)
+        .catch(() => undefined);
+      await bootstrap.end();
+    }
+  });
+
+  it("rejects a same-name worker role recreated with its exact former ACL", async () => {
+    const roleKind = "authorization-maintenance" as const;
+    const roleName = workerUsers[roleKind];
+    const roleUrl = new URL(workerDatabaseUrls[roleKind]);
+    const password = decodeURIComponent(roleUrl.password);
+    const bootstrap = new Client({ connectionString: bootstrapDatabaseUrl });
+    let replacementOid: string | undefined;
+    await workerDatabases[roleKind].disconnect();
+    await bootstrap.connect();
+    try {
+      const original = await bootstrap.query<{ oid: string }>(
+        "SELECT oid::bigint::text AS oid FROM pg_roles WHERE rolname=$1",
+        [roleName],
+      );
+      const originalOid = original.rows[0]?.oid;
+      expect(originalOid).toBeDefined();
+
+      await bootstrap.query(`DROP OWNED BY ${quoteIdentifier(roleName)}`);
+      await bootstrap.query(`DROP ROLE ${quoteIdentifier(roleName)}`);
+      await createLoginOnlyTestRole(bootstrap, roleName, password);
+      await restoreExactWorkerAcl(bootstrap, roleKind, roleName);
+
+      const replacement = await bootstrap.query<{ oid: string }>(
+        "SELECT oid::bigint::text AS oid FROM pg_roles WHERE rolname=$1",
+        [roleName],
+      );
+      replacementOid = replacement.rows[0]?.oid;
+      expect(replacementOid).toBeDefined();
+      expect(replacementOid).not.toBe(originalOid);
+
+      const legacyNameOnlyAudit = await bootstrap.query(
+        SPLIT_WORKER_EXACT_AUTHORITY_SQL,
+        [
+          roleName,
+          JSON.stringify(canonicalRelationAuthority(roleKind)),
+          SPLIT_WORKER_ROUTINE_AUTHORITY[roleKind],
+        ],
+      );
+      expect(legacyNameOnlyAudit.rows).toEqual([
+        {
+          roleAuthorityExact: true,
+          relationAuthorityExact: true,
+          routineAuthorityExact: true,
+          publicRelationAuthorityClosed: true,
+          publicRoutineAuthorityClosed: true,
+          sequenceAuthorityClosed: true,
+        },
+      ]);
+
+      const staleIdentityWorker = createWorkerDatabaseClient(roleKind);
+      try {
+        await expect(staleIdentityWorker.connect()).rejects.toThrowError(
+          "PLATFORM_RUNTIME_DATABASE_ROLE_INVALID",
+        );
+      } finally {
+        await staleIdentityWorker.disconnect();
+      }
+    } finally {
+      await ensureLoginOnlyTestRole(bootstrap, roleName, password);
+      await bootstrap.query(
+        `GRANT CONNECT ON DATABASE ${quoteIdentifier(databaseName)} TO ${quoteIdentifier(roleName)}`,
+      );
+      await runPlatformMigrations({ environment: platformMigrationEnvironment() });
+      workerDatabases[roleKind] = createWorkerDatabaseClient(roleKind);
+      await workerDatabases[roleKind].connect();
+      await bootstrap.end();
+    }
+    expect(replacementOid).toBeDefined();
+  }, 60_000);
 
   it("does not let an API credential impersonate any exact worker through GUCs", async () => {
     const ownedSiteRef = `site-owned-${randomUUID()}`;
@@ -1162,6 +1690,85 @@ describe("Platform PostgreSQL foundation", () => {
     }
   });
 });
+
+function platformMigrationEnvironment(): Readonly<Record<string, string | undefined>> {
+  return {
+    DATABASE_URL_PLATFORM: migratorDatabaseUrl,
+    PLATFORM_DATABASE_CREDENTIAL_CLASS: "migrator",
+    PLATFORM_DATABASE_MIGRATOR_ROLE: migratorUser,
+    PLATFORM_DATABASE_API_ROLE: apiUser,
+    PLATFORM_DATABASE_ADMISSION_ROLE: admissionUser,
+    PLATFORM_DATABASE_AUTHORIZATION_ROLE: authorizationUser,
+    PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE: assetDataPlaneUser,
+    PLATFORM_DATABASE_COMMERCE_WORKER_ROLE: workerUsers["commerce-worker"],
+    PLATFORM_DATABASE_SITE_WORKER_ROLE: workerUsers["site-worker"],
+    PLATFORM_DATABASE_ASSET_WORKER_ROLE: workerUsers["asset-worker"],
+    PLATFORM_DATABASE_ADMIN_WORKER_ROLE: workerUsers["admin-worker"],
+    PLATFORM_DATABASE_IDENTITY_WORKER_ROLE: workerUsers["identity-worker"],
+    PLATFORM_DATABASE_AUTHORIZATION_MAINTENANCE_ROLE:
+      workerUsers["authorization-maintenance"],
+    PLATFORM_DATABASE_ADMIN_ROLE: adminUser,
+    PLATFORM_DATABASE_MODEL_GATEWAY_ROLE: modelGatewayUser,
+    PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
+    PATH: process.env.PATH,
+  };
+}
+
+function createWorkerDatabaseClient(
+  role: PlatformWorkerAuthorityRole,
+): PlatformTransactionalDatabaseClient {
+  return createPlatformDatabaseClient(
+    loadPlatformDatabaseConfig(role, {
+      DATABASE_URL_PLATFORM: workerDatabaseUrls[role],
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: role,
+      [workerRoleEnvironmentName(role)]: workerUsers[role],
+      PLATFORM_DATABASE_MIGRATOR_ROLE: migratorUser,
+      PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
+    }),
+  );
+}
+
+async function createLoginOnlyTestRole(
+  client: Client,
+  roleName: string,
+  password: string,
+): Promise<void> {
+  await client.query(
+    `CREATE ROLE ${quoteIdentifier(roleName)} LOGIN NOINHERIT NOSUPERUSER NOCREATEDB ` +
+      `NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD ${sqlLiteral(password)}`,
+  );
+}
+
+async function ensureLoginOnlyTestRole(
+  client: Client,
+  roleName: string,
+  password: string,
+): Promise<void> {
+  const role = await client.query("SELECT 1 FROM pg_roles WHERE rolname=$1", [roleName]);
+  if (role.rowCount === 0) await createLoginOnlyTestRole(client, roleName, password);
+}
+
+async function restoreExactWorkerAcl(
+  client: Client,
+  roleKind: PlatformWorkerAuthorityRole,
+  roleName: string,
+): Promise<void> {
+  const role = quoteIdentifier(roleName);
+  await client.query(
+    `GRANT CONNECT ON DATABASE ${quoteIdentifier(databaseName)} TO ${role}; ` +
+      `GRANT USAGE ON SCHEMA platform TO ${role}`,
+  );
+  for (const authority of SPLIT_WORKER_RELATION_AUTHORITY[roleKind]) {
+    const columns = authority.columns?.map(quoteIdentifier).join(",");
+    await client.query(
+      `GRANT ${authority.privilege}${columns === undefined ? "" : `(${columns})`} ` +
+        `ON TABLE platform.${quoteIdentifier(authority.relation)} TO ${role}`,
+    );
+  }
+  for (const routine of SPLIT_WORKER_ROUTINE_AUTHORITY[roleKind]) {
+    await client.query(`GRANT EXECUTE ON FUNCTION ${routine} TO ${role}`);
+  }
+}
 
 function requireLeasedDatabaseUrl(value: string | undefined): string {
   if (!value) {

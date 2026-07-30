@@ -13,7 +13,9 @@ The root Prisma 7/PostgreSQL implementation is the only Platform business author
 model control, credit/usage, commerce redemption, assets, Admission and privileged Admin all live in this source tree and share
 one migration authority. API, worker, Admission, Authorization, Asset Data Plane, Model Gateway, Admin, Migrator, Hub HTTP and Hub Connect remain
 independently selectable processes with exact database credential classes. PostgreSQL RLS, security-definer projections and
-process-specific grants enforce the internal boundaries; there is no MySQL authority mode, dual write or legacy cutover path.
+process-specific grants enforce the internal boundaries. Split workers additionally bind their configured role name to a
+migrator-maintained PostgreSQL role OID and use only operation-fenced security-definer routines for authority row locks; no worker
+receives broad authority-table UPDATE. There is no MySQL authority mode, dual write or legacy cutover path.
 
 ## Responsibilities
 

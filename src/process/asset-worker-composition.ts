@@ -32,6 +32,11 @@ import { PostgresAssetScanRepository } from
   "../modules/asset/infrastructure/postgres/asset-scan-repository.js";
 import { PostgresAssetUploadRepository } from
   "../modules/asset/infrastructure/postgres/asset-upload-repository.js";
+import {
+  PostgresAssetWorkerAuthorityLock,
+  type AssetWorkerAuthorityLock,
+} from
+  "../modules/asset/infrastructure/postgres/asset-worker-authority-lock.js";
 import { parseAssetInspectionPolicyRegistry } from
   "../modules/asset/infrastructure/config/asset-inspection-policy-registry.js";
 import { HttpsAssetSecurityScanner } from
@@ -58,6 +63,22 @@ export interface AssetWorkerProductionComposition {
   returnLeases(reason: "shutdown" | "shutdown-deadline" | "stop-claim-failed"): Promise<void>;
 }
 
+export function createAssetWorkerCompletionService(input: Readonly<{
+  unitOfWork: AssetWorkerUnitOfWorkPort;
+  objectStore: AssetQuarantineObjectStorePort;
+  deployment: Readonly<{ environment: string; region: string }>;
+  authorityLock?: AssetWorkerAuthorityLock;
+}>): ProcessUploadCompletionService {
+  return new ProcessUploadCompletionService({
+    deployment: input.deployment,
+    unitOfWork: input.unitOfWork,
+    repository: new PostgresAssetUploadRepository(
+      input.authorityLock ?? new PostgresAssetWorkerAuthorityLock(),
+    ),
+    objectStore: input.objectStore,
+  });
+}
+
 export async function createAssetWorkerProductionComposition(input: Readonly<{
   database: PlatformTransactionalDatabaseClient;
   workerId: string;
@@ -74,21 +95,25 @@ export async function createAssetWorkerProductionComposition(input: Readonly<{
     environment: executionEnvironment,
     region,
   });
+  const authorityLock = new PostgresAssetWorkerAuthorityLock();
   const services = {
-    completion: new ProcessUploadCompletionService({
+    completion: createAssetWorkerCompletionService({
       unitOfWork,
-      repository: new PostgresAssetUploadRepository(),
       objectStore,
+      deployment: { environment: executionEnvironment, region },
+      authorityLock,
     }),
     scan: new ProcessAssetScanService({
+      deployment: { environment: executionEnvironment, region },
       unitOfWork,
       repository: new PostgresAssetScanRepository(),
       policyResolver,
       scanner,
     }),
     promotion: new ProcessAssetPromotionService({
+      deployment: { environment: executionEnvironment, region },
       unitOfWork,
-      repository: new PostgresAssetPromotionRepository(),
+      repository: new PostgresAssetPromotionRepository(authorityLock),
       objectStore,
     }),
     cleanup: new ProcessAssetObjectCleanupService({
@@ -103,6 +128,8 @@ export async function createAssetWorkerProductionComposition(input: Readonly<{
   const consumer = new AssetOutboxConsumer(
     createPostgresAssetEffectEventQueue(input.database, {
       workerId: input.workerId,
+      environment: executionEnvironment,
+      region,
       ...(claimLimit === undefined ? {} : { claimLimit }),
       ...(leaseSeconds === undefined ? {} : { leaseSeconds }),
     }),

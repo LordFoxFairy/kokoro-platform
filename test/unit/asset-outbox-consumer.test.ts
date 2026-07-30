@@ -198,9 +198,14 @@ function event(
   sequence: number,
   attempt = 1,
 ): ClaimedOutboxEvent {
+  const routedPayload = {
+    ...payload,
+    environment: "production",
+    region: "us-east-1",
+  };
   return {
-    eventId: `event_0${sequence}`, owner: "asset", eventType, aggregateId, payload,
-    payloadDigest: digestAssetCommand(payload), correlationId: "correlation_01",
+    eventId: `event_0${sequence}`, owner: "asset", eventType, aggregateId, payload: routedPayload,
+    payloadDigest: digestAssetCommand(routedPayload), correlationId: "correlation_01",
     causationId: "request_01", leaseToken: `lease_0${sequence}`, attempt,
   };
 }

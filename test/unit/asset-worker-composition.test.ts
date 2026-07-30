@@ -45,6 +45,36 @@ describe("Asset worker production composition", () => {
     }, expect.any(Function));
   });
 
+  it("binds shared Asset outbox claims to the worker deployment before leasing", async () => {
+    const calls: unknown[][] = [];
+    const database = {
+      internalTransaction: async (_operation: string, work: (transaction: PlatformTransaction) => Promise<unknown>) => {
+        const transaction = Object.freeze({}) as PlatformTransaction;
+        return work(transaction);
+      },
+    };
+    const outbox = {
+      claim: async (_transaction: PlatformTransaction, input: unknown) => {
+        calls.push([input]);
+        return [];
+      },
+    };
+    const { createPostgresAssetEffectEventQueue } = await import(
+      "../../src/modules/asset/infrastructure/postgres/asset-outbox-consumer.js"
+    );
+    const queue = createPostgresAssetEffectEventQueue(database as never, {
+      workerId: "asset-worker-01",
+      environment: "production",
+      region: "us-east-1",
+    }, outbox as never);
+
+    await queue.claim();
+
+    expect(calls).toEqual([[expect.objectContaining({
+      deployment: { environment: "production", region: "us-east-1" },
+    })]]);
+  });
+
   it("is wired into the independent Asset worker cycle and drain lifecycle", async () => {
     const source = await readFile(new URL("../../src/process/asset-worker.ts", import.meta.url), "utf8");
     expect(source).toContain("loadAssetWorkerProductionAdapters(environment)");

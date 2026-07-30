@@ -74,7 +74,8 @@ export class OutboxRepository {
     transaction: PlatformTransaction,
     input: { readonly workerId: string; readonly leaseToken: string;
       readonly consumer: OutboxConsumer; readonly eventTypes: readonly OutboxEventType[];
-      readonly limit: number; readonly leaseSeconds: number },
+      readonly limit: number; readonly leaseSeconds: number;
+      readonly deployment?: Readonly<{ environment: string; region: string }> },
   ): Promise<readonly ClaimedOutboxEvent[]> {
     if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 100) throw new Error("OUTBOX_CLAIM_LIMIT_INVALID");
     if (!Number.isInteger(input.leaseSeconds) || input.leaseSeconds < 1 || input.leaseSeconds > 300) throw new Error("OUTBOX_LEASE_SECONDS_INVALID");
@@ -84,10 +85,18 @@ export class OutboxRepository {
     assertOutboxConsumerEventTypes(input.consumer, input.eventTypes);
     const sql = resolvePlatformTransaction(transaction);
     const eventTypeFilter = " AND event_type = ANY($6::text[])";
+    const deploymentFilter = input.deployment === undefined
+      ? ""
+      : " AND payload->>'environment'=$7 AND payload->>'region'=$8";
+    if (input.deployment !== undefined) {
+      assertBoundedIdentifier(input.deployment.environment, "OUTBOX_DEPLOYMENT_INVALID");
+      assertBoundedIdentifier(input.deployment.region, "OUTBOX_DEPLOYMENT_INVALID");
+    }
     return sql.query<ClaimedOutboxEvent & Record<string, unknown>>(
       `WITH candidates AS (
          SELECT event_id FROM platform.outbox_event
-         WHERE owner = ANY($5::text[])${eventTypeFilter} AND ((state='pending' AND available_at <= now())
+         WHERE owner = ANY($5::text[])${eventTypeFilter}${deploymentFilter}
+           AND ((state='pending' AND available_at <= now())
             OR (state='leased' AND lease_expires_at <= now()))
          ORDER BY available_at, created_at
          FOR UPDATE SKIP LOCKED LIMIT $1
@@ -100,7 +109,10 @@ export class OutboxRepository {
                  event.aggregate_id AS "aggregateId", event.payload, event.payload_digest AS "payloadDigest",
                  event.correlation_id AS "correlationId", event.causation_id AS "causationId",
                  event.lease_token AS "leaseToken", event.attempt`,
-      [input.limit, input.workerId, input.leaseToken, input.leaseSeconds, owners, input.eventTypes],
+      [input.limit, input.workerId, input.leaseToken, input.leaseSeconds, owners, input.eventTypes,
+        ...(input.deployment === undefined
+          ? []
+          : [input.deployment.environment, input.deployment.region])],
     );
   }
 

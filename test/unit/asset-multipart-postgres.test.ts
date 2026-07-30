@@ -283,8 +283,12 @@ describe("PostgresAssetMultipartRepository", () => {
 
   it("persists integrity rejection before atomically handing owner cleanup to the outbox", async () => {
     const statements: string[] = [];
+    let routedPayload: unknown;
     const sql: PlatformSqlTransaction = {
-      query: async <Row extends Record<string, unknown>>(statement: string): Promise<readonly Row[]> => {
+      query: async <Row extends Record<string, unknown>>(
+        statement: string,
+        values: readonly unknown[] = [],
+      ): Promise<readonly Row[]> => {
         statements.push(statement);
         if (statement.includes("FROM platform.asset_upload_intent intent")) {
           return rows<Row>({ authoritySiteRef: claims.siteRef,
@@ -308,7 +312,8 @@ describe("PostgresAssetMultipartRepository", () => {
         if (statement.includes("UPDATE platform.asset_upload_session session")) {
           return rows<Row>({ expectedVersion: 3n });
         }
-        if (statement.includes("INSERT INTO platform.outbox_event")) {
+        if (statement.includes("enqueue_asset_upload_completion_event")) {
+          routedPayload = JSON.parse(String(values[2])) as unknown;
           return rows<Row>({ payloadDigest: "d".repeat(64) });
         }
         if (statement.includes("FROM platform.asset_multipart_part")) return [];
@@ -318,7 +323,9 @@ describe("PostgresAssetMultipartRepository", () => {
     };
     const lease = issuePlatformTransaction(sql);
     try {
-      await expect(new PostgresAssetMultipartRepository().rejectIntegrity(lease.transaction, {
+      await expect(new PostgresAssetMultipartRepository({
+        environment: "production", region: "us-east-1",
+      }).rejectIntegrity(lease.transaction, {
         claims,
         uploadRef: "multipart_upload_01",
         expectedVersion: 2n,
@@ -335,8 +342,9 @@ describe("PostgresAssetMultipartRepository", () => {
       );
       expect(statements.findIndex((value) =>
         value.includes("UPDATE platform.asset_upload_session session"))).toBeLessThan(
-        statements.findIndex((value) => value.includes("INSERT INTO platform.outbox_event")),
+        statements.findIndex((value) => value.includes("enqueue_asset_upload_completion_event")),
       );
+      expect(routedPayload).toMatchObject({ environment: "production", region: "us-east-1" });
     } finally {
       revokePlatformTransaction(lease);
     }

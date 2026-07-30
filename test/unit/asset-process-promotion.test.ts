@@ -47,7 +47,8 @@ describe("ProcessAssetPromotionService", () => {
           objectRole: "quarantine",
           providerVersionRef: "provider_version_01",
           retainedBytes: 1234n,
-          cleanupEvent: expect.objectContaining({ eventType: "asset.object.cleanup.requested" }),
+          cleanupEvent: expect.objectContaining({ eventType: "asset.object.cleanup.requested",
+            payload: expect.objectContaining({ environment: "production", region: "us-east-1" }) }),
         })],
       },
     }));
@@ -112,6 +113,7 @@ function fixture(input: Readonly<{
     : ["promotion_receipt_01", "asset_reference_01", "asset_eligibility_01",
       "cleanup_group_01", "cleanup_quarantine_01", "quarantine_cleanup_event_01"];
   const service = new ProcessAssetPromotionService({
+    deployment: { environment: "production", region: "us-east-1" },
     unitOfWork: { execute: async (_scope, work) => work(transaction) },
     repository: {
       claimPromotionWork: async () => input.claim === "superseded"

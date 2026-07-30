@@ -16,6 +16,7 @@ export type ProcessUploadCompletionResult =
 
 export class ProcessUploadCompletionService {
   constructor(private readonly dependencies: Readonly<{
+    deployment: Readonly<{ environment: string; region: string }>;
     unitOfWork: AssetWorkerUnitOfWorkPort;
     repository: AssetCompletionWorkerRepositoryPort;
     objectStore: AssetQuarantineObjectStorePort;
@@ -73,6 +74,7 @@ export class ProcessUploadCompletionService {
       const cleanupRef = this.reference();
       const cleanupEvent = eventEnvelope(input, "asset.object.cleanup.requested", json({
         kind: "asset_object_cleanup_requested_v1", siteRef: input.siteRef,
+        ...this.dependencies.deployment,
         cleanupRef, expectedVersion: "1",
       }), this.reference(), cleanupRef);
       const result = await this.dependencies.unitOfWork.execute(
@@ -99,6 +101,7 @@ export class ProcessUploadCompletionService {
     }
     const scanEvent = eventEnvelope(input, "asset.scan.requested", json({
       kind: "asset_scan_requested_v1", siteRef: input.siteRef,
+      ...this.dependencies.deployment,
       candidateRef: decision.candidate.candidateRef,
       expectedVersion: decision.candidate.expectedVersion.toString(),
     }), this.reference(), decision.candidate.candidateRef);

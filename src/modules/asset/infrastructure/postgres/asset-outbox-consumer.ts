@@ -179,13 +179,18 @@ export class AssetOutboxConsumer {
 
 export function createPostgresAssetEffectEventQueue(
   database: Pick<PlatformTransactionalDatabaseClient, "internalTransaction">,
-  options: Readonly<{ workerId: string; claimLimit?: number; leaseSeconds?: number }>,
+  options: Readonly<{ workerId: string; environment: string; region: string;
+    claimLimit?: number; leaseSeconds?: number }>,
   outbox: OutboxRepository = new OutboxRepository(),
 ): AssetEffectEventQueue {
   const claimLimit = boundedInteger(options.claimLimit ?? 10, 1, 100,
     "ASSET_CLAIM_LIMIT_INVALID");
   const leaseSeconds = boundedInteger(options.leaseSeconds ?? 30, 1, 300,
     "ASSET_LEASE_SECONDS_INVALID");
+  const deployment = Object.freeze({
+    environment: deploymentIdentifier(options.environment),
+    region: deploymentIdentifier(options.region),
+  });
   const queue: AssetEffectEventQueue = {
     claim: () => database.internalTransaction("asset.outbox.consume", (lease) => outbox.claim(lease, {
       workerId: options.workerId,
@@ -194,6 +199,7 @@ export function createPostgresAssetEffectEventQueue(
       eventTypes: ASSET_EFFECT_EVENT_TYPES,
       limit: claimLimit,
       leaseSeconds,
+      deployment,
     })),
     renew: (eventId, leaseToken) => database.internalTransaction("asset.outbox.consume",
       (lease) => outbox.renewLease(lease, {
@@ -224,46 +230,56 @@ export function createPostgresAssetEffectEventQueue(
 
 type AssetEffectCommand =
   | Readonly<{ kind: "completion"; siteRef: string; intentRef: string; sessionRef: string;
-    expectedVersion: bigint }>
-  | Readonly<{ kind: "scan"; siteRef: string; candidateRef: string; expectedVersion: bigint }>
+    environment: string; region: string; expectedVersion: bigint }>
+  | Readonly<{ kind: "scan"; siteRef: string; candidateRef: string; environment: string;
+    region: string; expectedVersion: bigint }>
   | Readonly<{ kind: "promotion"; siteRef: string; promotionRef: string;
-    expectedVersion: bigint }>
-  | Readonly<{ kind: "cleanup"; siteRef: string; cleanupRef: string; expectedVersion: bigint }>;
+    environment: string; region: string; expectedVersion: bigint }>
+  | Readonly<{ kind: "cleanup"; siteRef: string; cleanupRef: string; environment: string;
+    region: string; expectedVersion: bigint }>;
 
 function assetEffectCommand(event: ClaimedOutboxEvent): AssetEffectCommand {
   if (event.owner !== "asset" || digestAssetCommand(event.payload) !== event.payloadDigest ||
       !record(event.payload) || !identifier(event.correlationId)) invalid();
   const payload = event.payload as Record<string, unknown>;
   const siteRef = requiredIdentifier(payload.siteRef);
+  const environment = requiredIdentifier(payload.environment);
+  const region = requiredIdentifier(payload.region);
   const expectedVersion = positiveBigint(payload.expectedVersion);
   if (event.eventType === "asset.upload.completion.requested" &&
-      exactKeys(payload, ["kind", "siteRef", "intentRef", "sessionRef", "expectedVersion"]) &&
+      exactKeys(payload, ["kind", "siteRef", "environment", "region", "intentRef", "sessionRef",
+        "expectedVersion"]) &&
       payload.kind === "asset_upload_completion_requested_v1") {
     const intentRef = requiredIdentifier(payload.intentRef);
     const sessionRef = requiredIdentifier(payload.sessionRef);
     if (event.aggregateId !== sessionRef) invalid();
-    return Object.freeze({ kind: "completion", siteRef, intentRef, sessionRef, expectedVersion });
+    return Object.freeze({ kind: "completion", siteRef, environment, region,
+      intentRef, sessionRef, expectedVersion });
   }
   if (event.eventType === "asset.scan.requested" &&
-      exactKeys(payload, ["kind", "siteRef", "candidateRef", "expectedVersion"]) &&
+      exactKeys(payload, ["kind", "siteRef", "environment", "region", "candidateRef",
+        "expectedVersion"]) &&
       payload.kind === "asset_scan_requested_v1") {
     const candidateRef = requiredIdentifier(payload.candidateRef);
     if (event.aggregateId !== candidateRef) invalid();
-    return Object.freeze({ kind: "scan", siteRef, candidateRef, expectedVersion });
+    return Object.freeze({ kind: "scan", siteRef, environment, region, candidateRef, expectedVersion });
   }
   if (event.eventType === "asset.blob.promotion.requested" &&
-      exactKeys(payload, ["kind", "siteRef", "promotionRef", "expectedVersion"]) &&
+      exactKeys(payload, ["kind", "siteRef", "environment", "region", "promotionRef",
+        "expectedVersion"]) &&
       payload.kind === "asset_blob_promotion_requested_v1") {
     const promotionRef = requiredIdentifier(payload.promotionRef);
     if (event.aggregateId !== promotionRef) invalid();
-    return Object.freeze({ kind: "promotion", siteRef, promotionRef, expectedVersion });
+    return Object.freeze({ kind: "promotion", siteRef, environment, region,
+      promotionRef, expectedVersion });
   }
   if (event.eventType === "asset.object.cleanup.requested" &&
-      exactKeys(payload, ["kind", "siteRef", "cleanupRef", "expectedVersion"]) &&
+      exactKeys(payload, ["kind", "siteRef", "environment", "region", "cleanupRef",
+        "expectedVersion"]) &&
       payload.kind === "asset_object_cleanup_requested_v1") {
     const cleanupRef = requiredIdentifier(payload.cleanupRef);
     if (event.aggregateId !== cleanupRef) invalid();
-    return Object.freeze({ kind: "cleanup", siteRef, cleanupRef, expectedVersion });
+    return Object.freeze({ kind: "cleanup", siteRef, environment, region, cleanupRef, expectedVersion });
   }
   return invalid();
 }
@@ -293,6 +309,11 @@ function requiredIdentifier(value: unknown): string {
 
 function identifier(value: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9._:/-]{2,127}$/u.test(value);
+}
+
+function deploymentIdentifier(value: string): string {
+  if (!identifier(value)) throw new Error("ASSET_OUTBOX_DEPLOYMENT_INVALID");
+  return value;
 }
 
 function positiveBigint(value: unknown): bigint {

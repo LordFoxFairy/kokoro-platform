@@ -214,6 +214,8 @@ export interface AdminExecutionTransactionFence {
 export interface AssetDataPlaneTransactionFence {
   readonly operation: AssetDataPlaneOperation;
   readonly siteRef: string;
+  readonly environment: string;
+  readonly region: string;
   readonly subjectRef: string;
   readonly subjectGeneration: string;
   readonly projectRef: string;
@@ -412,6 +414,7 @@ export function createPlatformDatabaseClient(
             SPLIT_WORKER_RUNTIME_IDENTITY_SQL,
             config.migratorDatabaseUser,
             splitWorkerRelationNames(config.role as PlatformWorkerAuthorityRole),
+            config.role,
           );
           if (!validSplitWorkerRuntimeIdentity(rows[0], config)) {
             throw new Error(
@@ -611,6 +614,7 @@ export function createPlatformDatabaseClient(
                   set_config('app.subject_id',$3,true),set_config('app.subject_generation',$4,true),
                   set_config('app.project_id',$5,true),set_config('app.purpose',$6,true),
                   set_config('app.policy_epoch',$7,true),
+                  set_config('app.environment',$8,true),set_config('app.region',$9,true),
                   set_config('app.workload_kind','site_product',true),
                   set_config('app.actor_kind','user',true),
                   set_config('app.scopes','["asset:upload"]',true)`,
@@ -621,6 +625,8 @@ export function createPlatformDatabaseClient(
             fence.projectRef,
             fence.purpose,
             fence.capabilityEpoch,
+            fence.environment,
+            fence.region,
           );
           const lease = issuePlatformTransaction({
             query: (statement, values = []) =>
@@ -1042,7 +1048,8 @@ function assertAssetDataPlaneFence(value: AssetDataPlaneTransactionFence): void 
   ) {
     throw new Error("ASSET_DATA_PLANE_FENCE_INVALID");
   }
-  for (const field of [value.siteRef, value.subjectRef, value.projectRef, value.purpose]) {
+  for (const field of [value.siteRef, value.environment, value.region, value.subjectRef,
+    value.projectRef, value.purpose]) {
     if (field.length < 1 || field.length > 256 || hasControlCharacter(field)) {
       throw new Error("ASSET_DATA_PLANE_FENCE_INVALID");
     }
@@ -1171,6 +1178,7 @@ interface SplitWorkerRuntimeIdentity {
   hasAnySequencePrivilege: boolean;
   canExecuteModelAvailabilityReport: boolean;
   canExecuteAdminAuthorityChange: boolean;
+  roleIdentityExact: boolean;
 }
 
 const ASSET_RELATIONS = [
@@ -1400,7 +1408,8 @@ const SPLIT_WORKER_RUNTIME_IDENTITY_SQL = `
       'platform.report_model_provider_availability(uuid,text,text,text,bigint,text,timestamptz,text)',
       'EXECUTE') AS "canExecuteModelAvailabilityReport",
     has_function_privilege(current_user,'platform.apply_admin_authority_change(uuid,jsonb)','EXECUTE')
-      AS "canExecuteAdminAuthorityChange"
+      AS "canExecuteAdminAuthorityChange",
+    platform.split_worker_role_identity_is_current($3) AS "roleIdentityExact"
   FROM pg_database database_row
   JOIN pg_roles db_owner ON db_owner.oid=database_row.datdba
   JOIN pg_roles runtime_role ON runtime_role.rolname=current_user
@@ -2519,7 +2528,8 @@ function validSplitWorkerRuntimeIdentity(
     !identity.hasUnexpectedRelationPrivilege &&
     !identity.hasAnySequencePrivilege &&
     !identity.canExecuteModelAvailabilityReport &&
-    identity.canExecuteAdminAuthorityChange === (config.role === "admin-worker"),
+    identity.canExecuteAdminAuthorityChange === (config.role === "admin-worker") &&
+    identity.roleIdentityExact,
   );
 }
 

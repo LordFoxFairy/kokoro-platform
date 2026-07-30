@@ -18,6 +18,7 @@ export type ProcessAssetScanResult =
 
 export class ProcessAssetScanService {
   constructor(private readonly dependencies: Readonly<{
+    deployment: Readonly<{ environment: string; region: string }>;
     unitOfWork: AssetWorkerUnitOfWorkPort;
     repository: AssetScanWorkerRepositoryPort;
     policyResolver: AssetInspectionPolicyResolverPort;
@@ -90,6 +91,7 @@ export class ProcessAssetScanService {
       const cleanupRef = this.reference();
       const cleanupEvent = eventEnvelope(input, "asset.object.cleanup.requested", cleanupRef,
         json({ kind: "asset_object_cleanup_requested_v1", siteRef: input.siteRef,
+          ...this.dependencies.deployment,
           cleanupRef, expectedVersion: "1" }), this.reference());
       return Object.freeze({ disposition: decision.disposition, code: decision.code,
         evaluation: decision.evaluation,
@@ -118,6 +120,7 @@ export class ProcessAssetScanService {
     return Object.freeze({ disposition: "clean", evaluation: decision.evaluation, promotion,
       promotionEvent: eventEnvelope(input, "asset.blob.promotion.requested", promotion.promotionRef,
         json({ kind: "asset_blob_promotion_requested_v1", siteRef: input.siteRef,
+          ...this.dependencies.deployment,
           promotionRef: promotion.promotionRef, expectedVersion: promotion.expectedVersion.toString() }),
         this.reference()),
     });

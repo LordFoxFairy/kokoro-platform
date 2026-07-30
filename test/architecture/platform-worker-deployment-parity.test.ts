@@ -83,6 +83,9 @@ describe("Platform worker deployment parity", () => {
     expect(identityWorker).toContain("createIdentityOutboxWorkerProductionComposition");
     expect(lifecycleKernel).not.toContain("ProductionComposition");
     expect(lifecycleKernel).not.toContain("runPlatformWorkerMain");
+    expect(lifecycleKernel).not.toContain("PLATFORM_AGGREGATE_WORKER_REMOVED");
+    expect(entrypoint).not.toContain('"platform-worker":');
+    expect(entrypoint).not.toContain("../../dist/src/process/worker.js");
     for (const name of ["platform-commerce-worker", "platform-site-worker", "platform-asset-worker",
       "platform-admin-worker", "platform-identity-worker", "platform-authorization-maintenance"]) {
       expect(entrypoint).toContain(`"${name}"`);

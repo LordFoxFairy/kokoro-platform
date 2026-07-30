@@ -1,6 +1,8 @@
 import type { PlatformTransactionalDatabaseClient } from "../infrastructure/postgres/client.js";
 import { SiteRuntimeDispatcher } from "../modules/site/application/services/site-runtime-dispatcher.js";
 import { PostgresSiteAuthorityRepository } from "../modules/site/infrastructure/postgres/site-authority-repository.js";
+import { PostgresSiteWorkerProjectBindingLock } from
+  "../modules/site/infrastructure/postgres/site-worker-project-binding-lock.js";
 import {
   createPostgresSiteRuntimeEventQueue,
   SiteOutboxConsumer,
@@ -37,7 +39,9 @@ export async function createSiteRuntimeWorkerProductionComposition(input: Readon
     loadAuthorizationEventKeyRing(required(environment, "PLATFORM_AUTHORIZATION_EVENT_KEY_RING_FILE")),
   ]);
   const eventSigner = await createSessionAuthorizationEventSigner(eventKeyRing);
-  const repository = new PostgresSiteAuthorityRepository();
+  const repository = new PostgresSiteAuthorityRepository(
+    new PostgresSiteWorkerProjectBindingLock(),
+  );
   const store = new PostgresSiteRuntimeStateStore(
     createPostgresSiteRuntimeTransactionRunner(input.database),
     repository,

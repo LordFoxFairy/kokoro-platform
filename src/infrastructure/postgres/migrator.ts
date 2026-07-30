@@ -7,6 +7,7 @@ import { OUTBOX_OWNER_POLICY_COUNT } from "./outbox-policy-authority.js";
 import {
   canonicalRelationAuthority,
   compareUtf8Bytewise,
+  SPLIT_WORKER_DEFINER_RLS_AUTHORITY,
   SPLIT_WORKER_EXACT_AUTHORITY_SQL,
   SPLIT_WORKER_RELATION_AUTHORITY,
   SPLIT_WORKER_RLS_AUTHORITY,
@@ -168,6 +169,7 @@ export async function runPlatformMigrations(
     if (exitCode !== 0) throw new Error(`PLATFORM_MIGRATION_FAILED:${exitCode}`);
 
     await closePublicRoutineAuthority(lockClient, config.expectedDatabaseUser);
+    await maintainSplitWorkerRoleIdentityAuthority(lockClient, workerRoles);
     await configureSplitWorkerRlsAuthority(lockClient, workerRoles);
     await grantFoundationPrivileges(
       lockClient,
@@ -205,6 +207,7 @@ export async function runPlatformMigrations(
       config.expectedDatabaseUser,
     );
     await assertSplitWorkerAuthority(lockClient, workerRoles);
+    await assertSplitWorkerRoleIdentityAuthority(lockClient, workerRoles);
     await assertPublicRoutineAuthority(lockClient, config.expectedDatabaseUser);
   } finally {
     try {
@@ -325,7 +328,9 @@ const RUNTIME_ROLE_PREFLIGHT_SQL = `
            AS "hasAnyMembership",
          pg_has_role(runtime_role.rolname, $5, 'MEMBER') AS "isMigratorMember",
          EXISTS (SELECT 1 FROM pg_auth_members membership
-           WHERE membership.roleid=runtime_role.oid) AS "isPeerMember"
+           WHERE membership.roleid=runtime_role.oid) AS "isPeerMember",
+         EXISTS (SELECT 1 FROM pg_database database_row
+           WHERE database_row.datdba=runtime_role.oid) AS "ownsAnyDatabase"
   FROM pg_roles runtime_role
   WHERE runtime_role.rolname = ANY(ARRAY[$1,$2,$3,$4]::text[])
   ORDER BY runtime_role.rolname
@@ -342,8 +347,58 @@ function safeRuntimeRole(role: Readonly<Record<string, unknown>>): boolean {
     role.inheritsPrivileges === false &&
     role.hasAnyMembership === false &&
     role.isMigratorMember === false &&
-    role.isPeerMember === false
+    role.isPeerMember === false &&
+    role.ownsAnyDatabase === false
   );
+}
+
+async function maintainSplitWorkerRoleIdentityAuthority(
+  client: MigrationLockClient,
+  roles: SplitWorkerRoles,
+): Promise<void> {
+  const identities = Object.entries(splitWorkerRoleNames(roles)).map(([roleKind, roleName]) => ({
+    roleKind,
+    roleName,
+  }));
+  await client.query(
+    `INSERT INTO platform.runtime_role_identity_authority
+       (role_kind,role_name,role_oid,recorded_at)
+     SELECT identity."roleKind",identity."roleName",runtime_role.oid::bigint,now()
+     FROM jsonb_to_recordset($1::jsonb) AS identity("roleKind" text,"roleName" text)
+     JOIN pg_roles runtime_role ON runtime_role.rolname=identity."roleName"
+     ON CONFLICT (role_kind) DO UPDATE SET
+       role_name=EXCLUDED.role_name,role_oid=EXCLUDED.role_oid,recorded_at=EXCLUDED.recorded_at`,
+    [JSON.stringify(identities)],
+  );
+}
+
+async function assertSplitWorkerRoleIdentityAuthority(
+  client: MigrationLockClient,
+  roles: SplitWorkerRoles,
+): Promise<void> {
+  const identities = Object.entries(splitWorkerRoleNames(roles)).map(([roleKind, roleName]) => ({
+    roleKind,
+    roleName,
+  }));
+  const result = await client.query(
+    `WITH expected AS (
+       SELECT identity."roleKind",identity."roleName",runtime_role.oid::bigint AS "roleOid"
+       FROM jsonb_to_recordset($1::jsonb) AS identity("roleKind" text,"roleName" text)
+       JOIN pg_roles runtime_role ON runtime_role.rolname=identity."roleName"
+     ), actual AS (
+       SELECT role_kind AS "roleKind",role_name AS "roleName",role_oid AS "roleOid"
+       FROM platform.runtime_role_identity_authority
+     )
+     SELECT NOT EXISTS (
+       (SELECT * FROM actual EXCEPT SELECT * FROM expected)
+       UNION ALL
+       (SELECT * FROM expected EXCEPT SELECT * FROM actual)
+     ) AS "roleIdentityAuthorityExact"`,
+    [JSON.stringify(identities)],
+  );
+  if (result.rows?.length !== 1 || result.rows[0]?.roleIdentityAuthorityExact !== true) {
+    throw new Error("PLATFORM_SPLIT_WORKER_ROLE_IDENTITY_AUTHORITY_INVALID");
+  }
 }
 
 async function assertModelGatewayRolePreflight(
@@ -679,6 +734,9 @@ const PUBLIC_ROUTINE_AUTHORITY_SQL = `
 interface WorkerPolicyRow extends Record<string, unknown> {
   readonly relationName: string;
   readonly policyName: string;
+  readonly command: string;
+  readonly permissive: boolean;
+  readonly schemaOwnerOnly: boolean;
   readonly usingExpression: string | null;
   readonly withCheckExpression: string | null;
 }
@@ -753,11 +811,30 @@ async function assertSplitWorkerRlsAuthority(
   const workloadKinds = Object.values(SPLIT_WORKER_RLS_AUTHORITY).map(
     (authority) => authority.workloadKind,
   );
-  const actual = rows.filter((row) =>
-    workloadKinds.some((workloadKind) =>
-      `${row.usingExpression ?? ""}${row.withCheckExpression ?? ""}`.includes(workloadKind),
+  const definerPolicyIdentities = new Set(
+    SPLIT_WORKER_DEFINER_RLS_AUTHORITY.map(
+      (authority) => `${authority.relationName}.${authority.policyName}`,
     ),
   );
+  for (const authority of SPLIT_WORKER_DEFINER_RLS_AUTHORITY) {
+    const identity = `${authority.relationName}.${authority.policyName}`;
+    const row = rows.find(
+      (candidate) =>
+        candidate.relationName === authority.relationName &&
+        candidate.policyName === authority.policyName,
+    );
+    if (row === undefined || !definerWorkerPolicyIsExact(row, authority)) {
+      throw new Error(`PLATFORM_WORKER_DEFINER_RLS_POLICY_INVALID:${identity}`);
+    }
+  }
+  const actual = rows.filter((row) => {
+    if (definerPolicyIdentities.has(`${row.relationName}.${row.policyName}`)) return false;
+    const expression = `${row.usingExpression ?? ""}${row.withCheckExpression ?? ""}`;
+    return (
+      expression.includes("current_setting('app.workload_kind'") &&
+      workloadKinds.some((workloadKind) => expression.includes(workloadKind))
+    );
+  });
   if (
     actual.length !== expected.size ||
     actual.some((row) => !expected.has(`${row.relationName}.${row.policyName}`))
@@ -768,6 +845,8 @@ async function assertSplitWorkerRlsAuthority(
 
 const WORKER_POLICY_SQL = `
   SELECT relation.relname AS "relationName",policy.polname AS "policyName",
+    policy.polcmd::text AS command,policy.polpermissive AS permissive,
+    policy.polroles=ARRAY[namespace.nspowner]::oid[] AS "schemaOwnerOnly",
     pg_get_expr(policy.polqual,policy.polrelid,false) AS "usingExpression",
     pg_get_expr(policy.polwithcheck,policy.polrelid,false) AS "withCheckExpression"
   FROM pg_policy policy
@@ -779,6 +858,8 @@ const WORKER_POLICY_SQL = `
 
 const ALL_PLATFORM_POLICIES_SQL = `
   SELECT relation.relname AS "relationName",policy.polname AS "policyName",
+    policy.polcmd::text AS command,policy.polpermissive AS permissive,
+    policy.polroles=ARRAY[namespace.nspowner]::oid[] AS "schemaOwnerOnly",
     pg_get_expr(policy.polqual,policy.polrelid,false) AS "usingExpression",
     pg_get_expr(policy.polwithcheck,policy.polrelid,false) AS "withCheckExpression"
   FROM pg_policy policy
@@ -816,6 +897,31 @@ function workerPolicyExpressionsAreFenced(
   const roleFenceCount = [...expression.matchAll(workerRoleFencePattern(workloadKind, roleName))]
     .length;
   return workloadCount > 0 && workloadCount === roleFenceCount;
+}
+
+function definerWorkerPolicyIsExact(
+  row: WorkerPolicyRow,
+  authority: (typeof SPLIT_WORKER_DEFINER_RLS_AUTHORITY)[number],
+): boolean {
+  if (
+    row.command !== authority.command ||
+    row.permissive !== true ||
+    row.schemaOwnerOnly !== true ||
+    row.withCheckExpression !== null ||
+    row.usingExpression === null
+  ) {
+    return false;
+  }
+  const expression = canonicalPolicyExpression(row.usingExpression);
+  const required = [
+    `platform.split_worker_role_identity_is_current'${authority.authorityRole}'`,
+    `current_setting'app.workload_kind',true='${authority.workloadKind}'`,
+    `current_setting'app.operation',true='${authority.operation}'`,
+  ];
+  if (authority.requiresAdminExecution) {
+    required.push("current_setting'app.admin_execution',true='true'");
+  }
+  return required.every((fragment) => expression.includes(fragment));
 }
 
 function workerWorkloadPredicate(workloadKind: string): string {
@@ -1093,6 +1199,8 @@ const SINGLE_RUNTIME_ROLE_PREFLIGHT_SQL = `
     pg_has_role(runtime_role.rolname,$2,'MEMBER') AS "isMigratorMember",
     EXISTS (SELECT 1 FROM pg_auth_members membership WHERE membership.roleid=runtime_role.oid)
       AS "isPeerMember",
+    EXISTS (SELECT 1 FROM pg_database database_row WHERE database_row.datdba=runtime_role.oid)
+      AS "ownsAnyDatabase",
     EXISTS (SELECT 1 FROM information_schema.role_table_grants grant_row
       WHERE grant_row.grantee=runtime_role.rolname AND grant_row.table_schema='platform')
       AS "hasAnyPlatformTablePrivilege",
