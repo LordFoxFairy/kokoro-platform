@@ -1,5 +1,5 @@
 import { create } from "@bufbuild/protobuf";
-import { Code, ConnectError, type HandlerContext, type ServiceImpl } from "@connectrpc/connect";
+import { type HandlerContext, type ServiceImpl } from "@connectrpc/connect";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import {
   CommandDigestAlgorithmV2,
@@ -26,6 +26,8 @@ import type { ControlCommandReceiptTimestampReader } from
   "../../../admin/infrastructure/postgres/control-command-receipt-reader.js";
 import type { SitePublicationService } from
   "../../application/services/site-publication-service.js";
+import { withCommandReceiptConflictMapping } from
+  "../../../../interfaces/connect/command-receipt-conflict.js";
 
 export type SiteProvisioningConnectService = ServiceImpl<typeof SiteProvisioningService>;
 
@@ -64,7 +66,7 @@ export function createSiteProvisioningConnectService(input: Readonly<{
       const identity = commandIdentity(context);
       requireDigest(identity.requestDigest,
         registerSiteRequestDigest(context, request.siteId, effect, verified.axes));
-      const result = await commandEffect(() => input.owner.registerSite({
+      const result = await withCommandReceiptConflictMapping(() => input.owner.registerSite({
         commandId: identity.commandId,
         idempotencyKey: identity.idempotencyKey,
         siteRef: request.siteId,
@@ -104,7 +106,7 @@ export function createSiteProvisioningConnectService(input: Readonly<{
       const identity = commandIdentity(context);
       requireDigest(identity.requestDigest,
         publishSiteReleaseRequestDigest(context, request.siteId, effect, verified.axes));
-      const result = await commandEffect(() => input.owner.publishRelease({
+      const result = await withCommandReceiptConflictMapping(() => input.owner.publishRelease({
         commandId: identity.commandId,
         idempotencyKey: identity.idempotencyKey,
         siteRef: request.siteId,
@@ -147,20 +149,6 @@ export function createSiteProvisioningConnectService(input: Readonly<{
       };
     },
   };
-}
-
-async function commandEffect<Result>(effect: () => Promise<Result>): Promise<Result> {
-  try {
-    return await effect();
-  } catch (error) {
-    if (error instanceof Error && error.message === "COMMAND_IDENTITY_CONFLICT") {
-      throw new ConnectError("command identity conflict", Code.AlreadyExists);
-    }
-    if (error instanceof Error && error.message === "COMMAND_DIGEST_CONFLICT") {
-      throw new ConnectError("command digest conflict", Code.AlreadyExists);
-    }
-    throw error;
-  }
 }
 
 function commandIdentity(context: AuthenticatedOperatorCommandContext) {

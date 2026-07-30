@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CommandReceiptRepository, type CommandIdentity } from
+import { CommandReceiptConflictError, CommandReceiptRepository, type CommandIdentity } from
   "../../src/shared/outbox-inbox/receipt.js";
 import {
   issuePlatformTransaction,
@@ -29,8 +29,10 @@ describe("CommandReceiptRepository", () => {
       }] as unknown as readonly Row[],
     });
     try {
-      await expect(new CommandReceiptRepository().begin(lease.transaction, incoming))
-        .rejects.toThrow("COMMAND_IDENTITY_CONFLICT");
+      const error = await new CommandReceiptRepository().begin(lease.transaction, incoming)
+        .catch((cause: unknown) => cause);
+      expect(error).toBeInstanceOf(CommandReceiptConflictError);
+      expect(error).toMatchObject({ kind: "identity", message: "COMMAND_IDENTITY_CONFLICT" });
     } finally {
       revokePlatformTransaction(lease);
     }
