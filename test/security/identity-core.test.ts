@@ -84,6 +84,12 @@ describe("Platform Identity core security", () => {
     expect(migration).toContain("auth_strength_policy_revision");
     expect(migration).toContain("identity_security_event");
     expect(migration).toContain("identity_security_event_immutable");
+    const securityEventTable = migration.slice(
+      migration.indexOf("CREATE TABLE platform.identity_security_event ("),
+      migration.indexOf("CREATE FUNCTION platform.reject_identity_security_event_mutation"),
+    );
+    expect(securityEventTable).toContain("event_id UUID PRIMARY KEY,");
+    expect(securityEventTable).not.toContain("REFERENCES platform.outbox_event(event_id)");
     expect(migration).not.toMatch(/manual_entry_secret|recovery_code_plaintext|otpauth_uri/iu);
     expect(authorization).toContain("identity_issuer_label TEXT NOT NULL");
     expect(authorization).toContain("identity_issuer_label=btrim(identity_issuer_label)");

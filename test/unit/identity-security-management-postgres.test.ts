@@ -998,6 +998,59 @@ describe("Postgres Identity security-management SiteRelease authority", () => {
       revokePlatformTransaction(lease);
     }
   });
+
+  it.each([
+    "identity.totp.enrollment_started",
+    "identity.reauthentication.proof_issued",
+    "identity.recovery_codes.regenerated",
+  ])("appends the local %s fact without writing a generic outbox row", async (eventType) => {
+    const writes: { statement: string; values: readonly unknown[] }[] = [];
+    const lease = issuePlatformTransaction({
+      async query() {
+        return [];
+      },
+      async execute(statement, values = []) {
+        writes.push({ statement, values });
+        return 1;
+      },
+    });
+    try {
+      await new PostgresIdentitySecurityManagementRepository().appendSecurityEvent(
+        lease.transaction,
+        {
+          eventId: "10000000-0000-4000-8000-000000000001",
+          siteRef: "site-1",
+          accountRef: "account-1",
+          subjectRef: "subject-1",
+          sessionRef: "session-1",
+          eventType,
+          accountSecurityEpoch: "8",
+          payloadDigest: "a".repeat(64),
+          correlationId: "correlation-1",
+          causationId: "1".repeat(32),
+          occurredAt: "2026-07-30T00:00:00.000Z",
+        },
+      );
+      expect(writes).toHaveLength(1);
+      expect(writes[0]?.statement).toContain("INSERT INTO platform.identity_security_event");
+      expect(writes[0]?.statement).not.toContain("platform.outbox_event");
+      expect(writes[0]?.values).toEqual([
+        "10000000-0000-4000-8000-000000000001",
+        "site-1",
+        "account-1",
+        "subject-1",
+        "session-1",
+        eventType,
+        "8",
+        "a".repeat(64),
+        "correlation-1",
+        "1".repeat(32),
+        "2026-07-30T00:00:00.000Z",
+      ]);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
 });
 
 function binding(bindingEpoch = "1") {

@@ -520,7 +520,7 @@ CREATE TABLE platform.identity_recovery_code_delivery_claim (
 );
 
 CREATE TABLE platform.identity_security_event (
-  event_id UUID PRIMARY KEY REFERENCES platform.outbox_event(event_id),
+  event_id UUID PRIMARY KEY,
   site_ref TEXT NOT NULL,
   account_ref TEXT NOT NULL,
   subject_ref TEXT NOT NULL,

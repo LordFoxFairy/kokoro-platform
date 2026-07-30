@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import {
   OUTBOX_ROUTE_CATALOG,
@@ -43,6 +43,16 @@ const localIdentitySecurityEventTypes = [
 ] as const;
 
 const workerProcess = "src/process/worker.ts";
+
+const outboxBackedEffectTables = [
+  "asset_blob_candidate",
+  "asset_object_cleanup",
+  "asset_promotion_intent",
+  "commerce_command_outbox",
+  "credit_budget_operation_receipt",
+  "identity_namespace_allocation_intent",
+  "identity_verification_delivery",
+] as const;
 
 describe("Platform outbox producer to consumer closure", () => {
   it("keeps the complete owner set closed over one real worker authority", () => {
@@ -169,4 +179,51 @@ describe("Platform outbox producer to consumer closure", () => {
       .map((match) => match[1]);
     expect([...new Set(effectEventTypes)]).toEqual(identityEventTypes);
   });
+
+  it("gives local Identity security facts independent event ids and reserves outbox FKs for effects", async () => {
+    const [identityMigration, prismaSchema] = await Promise.all([
+      readFile(new URL(
+        "../../prisma/migrations/20260729_identity_core/migration.sql",
+        import.meta.url,
+      ), "utf8"),
+      readFile(new URL("../../prisma/schema.prisma", import.meta.url), "utf8"),
+    ]);
+    const securityEventTable = tableDefinition(identityMigration, "identity_security_event");
+    expect(securityEventTable).toContain("event_id UUID PRIMARY KEY,");
+    expect(securityEventTable).not.toContain("REFERENCES platform.outbox_event(event_id)");
+    const securityEventModel = prismaSchema.slice(
+      prismaSchema.indexOf("model IdentitySecurityEvent {"),
+      prismaSchema.indexOf("model IdentityRefreshFamily {"),
+    );
+    expect(securityEventModel).toContain("eventId              String   @id @map(\"event_id\") @db.Uuid");
+    expect(securityEventModel).not.toMatch(/outbox/iu);
+    expect(tableDefinition(identityMigration, "identity_verification_delivery"))
+      .toContain("event_id UUID NOT NULL UNIQUE REFERENCES platform.outbox_event(event_id)");
+    expect(tableDefinition(identityMigration, "identity_namespace_allocation_intent"))
+      .toContain("event_id UUID NOT NULL UNIQUE REFERENCES platform.outbox_event(event_id)");
+
+    const migrationsDirectory = new URL("../../prisma/migrations/", import.meta.url);
+    const migrationEntries = await readdir(migrationsDirectory, { withFileTypes: true });
+    const outboxForeignKeyTables = new Set<string>();
+    for (const entry of migrationEntries) {
+      if (!entry.isDirectory()) continue;
+      const migration = await readFile(new URL(`${entry.name}/migration.sql`, migrationsDirectory), "utf8");
+      for (const match of migration.matchAll(
+        /CREATE TABLE platform\.([a-z0-9_]+) \(([\s\S]*?)\n\);/gu,
+      )) {
+        if (match[1] !== undefined && match[2]?.includes(
+          "REFERENCES platform.outbox_event(event_id)",
+        )) outboxForeignKeyTables.add(match[1]);
+      }
+    }
+    expect([...outboxForeignKeyTables].sort()).toEqual([...outboxBackedEffectTables].sort());
+  });
 });
+
+function tableDefinition(migration: string, table: string): string {
+  const start = migration.indexOf(`CREATE TABLE platform.${table} (`);
+  if (start < 0) throw new Error(`TABLE_DEFINITION_MISSING:${table}`);
+  const end = migration.indexOf("\n);", start);
+  if (end < 0) throw new Error(`TABLE_DEFINITION_UNTERMINATED:${table}`);
+  return migration.slice(start, end + 3);
+}
