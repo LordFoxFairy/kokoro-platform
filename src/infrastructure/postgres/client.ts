@@ -691,6 +691,18 @@ const ADMISSION_SELECT_RELATIONS = [
   "credit_budget_allocation_revision",
   "credit_authorization_segment",
   "credit_budget_operation_receipt",
+  "credit_rating_policy_revision",
+  "credit_rating_snapshot",
+  "credit_usage_attempt_intent",
+  "credit_attempt_usage_evidence",
+  "credit_usage_segment_closure",
+  "credit_usage_closure_evidence",
+  "credit_usage_settlement",
+  "credit_rated_usage",
+  "credit_usage_settlement_source",
+  "credit_usage_variance",
+  "credit_usage_reconciliation",
+  "credit_usage_command_receipt",
   "asset_resource",
   "asset_version",
   "asset_eligibility_projection",
@@ -709,6 +721,15 @@ const ADMISSION_INSERT_RELATIONS = [
   "credit_budget_allocation_revision",
   "credit_authorization_segment",
   "credit_budget_operation_receipt",
+  "credit_rating_snapshot",
+  "credit_usage_segment_closure",
+  "credit_usage_closure_evidence",
+  "credit_usage_settlement",
+  "credit_rated_usage",
+  "credit_usage_settlement_source",
+  "credit_usage_variance",
+  "credit_usage_reconciliation",
+  "credit_usage_command_receipt",
 ] as const;
 const ADMISSION_UPDATE_RELATIONS = [
   "admission_command",
@@ -855,6 +876,18 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_table_privilege(current_user, 'platform.credit_budget_allocation_revision', 'SELECT,INSERT')
            AND has_table_privilege(current_user, 'platform.credit_authorization_segment', 'SELECT,INSERT,UPDATE')
            AND has_table_privilege(current_user, 'platform.credit_budget_operation_receipt', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.credit_rating_policy_revision', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.credit_rating_snapshot', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.credit_usage_attempt_intent', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.credit_attempt_usage_evidence', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.credit_usage_segment_closure', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.credit_usage_closure_evidence', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.credit_usage_settlement', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.credit_rated_usage', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.credit_usage_settlement_source', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.credit_usage_variance', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.credit_usage_reconciliation', 'SELECT,INSERT')
+           AND has_table_privilege(current_user, 'platform.credit_usage_command_receipt', 'SELECT,INSERT')
            AND has_table_privilege(current_user, 'platform.asset_resource', 'SELECT')
            AND has_table_privilege(current_user, 'platform.asset_version', 'SELECT')
            AND has_table_privilege(current_user, 'platform.asset_eligibility_projection', 'SELECT')

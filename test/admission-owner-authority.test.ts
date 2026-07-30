@@ -169,7 +169,7 @@ function ports(events: string[] = []): PlatformAdmissionOwnerPorts {
       }),
       commitRoot: vi.fn(async () => undefined),
       releaseRoot: vi.fn(async () => { events.push("budget.release") }),
-      reconcileRoot: vi.fn(async () => "reconciliation_required" as const),
+      reconcileRoot: vi.fn(async () => ({ kind: "reconciliation_required" as const })),
     },
     lifecycle: {
       prepare: vi.fn(async (_transaction, input) => {

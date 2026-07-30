@@ -137,8 +137,17 @@ export function rateSegmentUsage(
 ): SegmentUsageRatingResult {
   validatePolicy(policy);
   if (committedMaximum < 0n) throw new Error("CREDIT_USAGE_COMMITTED_MAXIMUM_INVALID");
-  if (evidenceSet.length < 1 || evidenceSet.length > 4_096) {
+  if (evidenceSet.length > 4_096) {
     throw new Error("CREDIT_USAGE_EVIDENCE_SET_INVALID");
+  }
+  if (evidenceSet.length === 0) {
+    return Object.freeze({
+      kind: "rated" as const,
+      customerAmount: 0n,
+      platformExposureAmount: 0n,
+      policyRatedAmount: 0n,
+      attemptRatings: Object.freeze([]),
+    });
   }
   const attemptKey = (evidence: AttemptUsageEvidence) =>
     `${evidence.producerKind}\u0000${evidence.producerContext}\u0000${evidence.producerGeneration}\u0000${evidence.attemptRef}`;

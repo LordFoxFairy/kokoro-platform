@@ -250,7 +250,20 @@ export interface AdmissionBudgetOwnerPort {
       requestDigest: string;
       terminalEvidenceRef?: string | undefined;
     }>,
-  ): Promise<"settled" | "reconciliation_required">;
+  ): Promise<
+    | Readonly<{
+        kind: "settled";
+        settlement: Readonly<{
+          settlementRef: string;
+          closureRef: string;
+          ratedAmount: string;
+          currencyOrCreditUnit: string;
+          ratingSnapshotRef: string;
+          usageEvidenceRefs: readonly string[];
+        }>;
+      }>
+    | Readonly<{ kind: "reconciliation_required" }>
+  >;
 }
 
 export type AdmissionAuthorizationState =
@@ -745,14 +758,15 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
           requestDigest: command.requestDigest,
           terminalEvidenceRef: executionEvidence.terminalEvidenceRef,
         });
-        const changed = budget === "settled"
+        const changed = budget.kind === "settled"
           ? await this.#ports.lifecycle.settle(transaction, locked)
           : await this.#ports.lifecycle.requireReconciliation(transaction, locked);
         return reconciliation(
-          budget === "settled" ? "settled" : "reconciliation_required",
+          budget.kind === "settled" ? "settled" : "reconciliation_required",
           changed,
           this.#date(),
           executionEvidence.safeStatusRef,
+          budget.kind === "settled" ? budget.settlement : undefined,
         );
       }
       const changed = await this.#ports.lifecycle.requireReconciliation(transaction, locked);
@@ -972,6 +986,14 @@ function reconciliation(
   record: AdmissionAuthorizationRecord,
   at: Date,
   safeStatusRef?: string,
+  settlement?: Readonly<{
+    settlementRef: string;
+    closureRef: string;
+    ratedAmount: string;
+    currencyOrCreditUnit: string;
+    ratingSnapshotRef: string;
+    usageEvidenceRefs: readonly string[];
+  }>,
 ): ReconcileRunOwnerDecision {
   return {
     kind,
@@ -980,6 +1002,9 @@ function reconciliation(
       segmentVersion: record.segmentVersion,
       observedAt: timestampFromDate(at),
       ...(safeStatusRef === undefined ? {} : { safeStatusRef }),
+      ...(settlement === undefined ? {} : {
+        settledUsage: { ...settlement, usageEvidenceRefs: [...settlement.usageEvidenceRefs] },
+      }),
     },
   };
 }

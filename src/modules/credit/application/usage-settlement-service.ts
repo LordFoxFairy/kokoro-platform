@@ -464,7 +464,7 @@ function validateClosure(input: Readonly<{ closureRef: string; closureRevision: 
   reference(input.businessOperationKey);
   digestValue(input.requestDigest);
   digestValue(input.closureDigest);
-  if (input.closureRevision <= 0n || input.evidenceRefs.length < 1 || input.evidenceRefs.length > 4_096 ||
+  if (input.closureRevision <= 0n || input.evidenceRefs.length > 4_096 ||
       new Set(input.evidenceRefs).size !== input.evidenceRefs.length) throw new Error("CREDIT_USAGE_CLOSURE_INVALID");
   input.evidenceRefs.forEach(reference);
   if (!Number.isFinite(Date.parse(input.closedAt))) throw new Error("CREDIT_USAGE_CLOSURE_TIME_INVALID");

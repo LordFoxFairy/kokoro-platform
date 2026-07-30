@@ -41,6 +41,16 @@ class OwnerSql implements PlatformSqlTransaction {
     if (statement.includes("asset_eligibility_projection")) return [{
       assetRef: "asset-a", assetVersionRef: "asset-version-a", assetGrantRef: "grant-a",
     }] as unknown as Row[];
+    if (statement.includes("credit_attempt_usage_evidence")) return [{
+      evidenceRef: "11111111-1111-4111-8111-111111111111",
+    }] as unknown as Row[];
+    if (statement.includes("credit_usage_segment_closure")) return [];
+    if (statement.includes("credit_usage_settlement")) return [{
+      settlementRef: "22222222-2222-4222-8222-222222222222",
+      closureRef: "33333333-3333-4333-8333-333333333333",
+      ratedAmount: "125", unit: "credit_micros",
+      ratingSnapshotRef: "44444444-4444-4444-8444-444444444444",
+    }] as unknown as Row[];
     if (statement.includes("credit_authorization_segment")) return [{ matched: true }] as unknown as Row[];
     throw new Error(`unexpected query: ${statement}`);
   }
@@ -112,10 +122,22 @@ describe("native Admission Credit and Asset owners", () => {
     }
   });
 
-  it("delegates every segment CAS to RunBudgetAuthority and never mutates Credit tables", async () => {
+  it("delegates authorization CAS and terminal rating to the canonical Credit owners", async () => {
     const lease = issuePlatformTransaction(new OwnerSql());
     const credit = fakeCredit();
-    const owner = new PostgresAdmissionBudgetOwner(credit);
+    const usageSettlement = { settleUsageSegment: vi.fn(async () => ({
+      kind: "accepted" as const,
+      value: {
+        settlementRef: "22222222-2222-4222-8222-222222222222",
+        authorizationSegmentRef: "segment-a",
+        closureRef: "33333333-3333-4333-8333-333333333333",
+        closureRevision: 1n,
+        state: "settled" as const,
+        customerAmount: 125n,
+        platformExposureAmount: 0n,
+      },
+    })) };
+    const owner = new PostgresAdmissionBudgetOwner(credit, usageSettlement);
     const base = {
       siteId: "site-a", rootHoldRef: "hold-a", authorizationSegmentRef: "segment-a",
       manifestRef: "manifest-a", expectedSegmentVersion: 1n, commandId: "command-a",
@@ -128,12 +150,27 @@ describe("native Admission Credit and Asset owners", () => {
       });
       await expect(owner.reconcileRoot(lease.transaction, {
         ...base, terminalEvidenceRef: "terminal-a",
-      })).resolves.toBe("reconciliation_required");
+      })).resolves.toEqual({
+        kind: "settled",
+        settlement: {
+          settlementRef: "22222222-2222-4222-8222-222222222222",
+          closureRef: "33333333-3333-4333-8333-333333333333",
+          ratedAmount: "125",
+          currencyOrCreditUnit: "credit_micros",
+          ratingSnapshotRef: "44444444-4444-4444-8444-444444444444",
+          usageEvidenceRefs: ["11111111-1111-4111-8111-111111111111"],
+        },
+      });
       expect(credit.finalizeAuthorizationSegment).toHaveBeenCalledOnce();
       expect(credit.releaseAuthorizationSegment).toHaveBeenCalledWith(lease.transaction,
         expect.objectContaining({ noDispatchEvidenceRef: "no-dispatch-a" }));
-      expect(credit.reconcileAuthorizationSegment).toHaveBeenCalledWith(lease.transaction,
-        expect.objectContaining({ ownerEvidence: { kind: "outcome_unknown", evidenceRef: "terminal-a" } }));
+      expect(usageSettlement.settleUsageSegment).toHaveBeenCalledWith(
+        lease.transaction,
+        expect.objectContaining({
+          evidenceRefs: ["11111111-1111-4111-8111-111111111111"],
+          executionManifestRef: "manifest-a",
+        }),
+      );
     } finally {
       revokePlatformTransaction(lease);
     }

@@ -532,6 +532,12 @@ async function grantFoundationPrivileges(
         `GRANT UPDATE ON TABLE platform.admission_command, platform.admission_execution_manifest, platform.credit_hold, platform.credit_execution_budget_root, platform.credit_authorization_segment TO ${identifier}`,
       );
       await client.query(
+        `GRANT SELECT ON TABLE platform.credit_rating_policy_revision, platform.credit_rating_snapshot, platform.credit_usage_attempt_intent, platform.credit_attempt_usage_evidence, platform.credit_usage_segment_closure, platform.credit_usage_closure_evidence, platform.credit_usage_settlement, platform.credit_rated_usage, platform.credit_usage_settlement_source, platform.credit_usage_variance, platform.credit_usage_reconciliation, platform.credit_usage_command_receipt TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT INSERT ON TABLE platform.credit_rating_snapshot, platform.credit_usage_segment_closure, platform.credit_usage_closure_evidence, platform.credit_usage_settlement, platform.credit_rated_usage, platform.credit_usage_settlement_source, platform.credit_usage_variance, platform.credit_usage_reconciliation, platform.credit_usage_command_receipt TO ${identifier}`,
+      );
+      await client.query(
         `GRANT EXECUTE ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.resolve_admission_model_owner(TEXT, TEXT, TEXT) TO ${identifier}`,
       );
     } else if (role === authorizationRole) {
