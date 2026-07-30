@@ -3,6 +3,29 @@ import { describe, expect, it, vi } from "vitest";
 import { createHubConnectProcess } from "../../src/interfaces/connect/hub-connect-process.js";
 
 describe("Hub Connect process lifecycle", () => {
+  it("force destroys a tracked session even when the server close callback returns early", async () => {
+    const server = new FakeServer();
+    const healthServer = new FakeServer();
+    const session = new FakeSession(false);
+    const process = createHubConnectProcess({
+      server,
+      healthServer,
+      worker: { tick: vi.fn().mockResolvedValue("idle") },
+      closeMongo: vi.fn().mockResolvedValue(undefined),
+      port: 4252,
+      healthPort: 4253,
+      shutdownDeadlineMs: 100,
+    });
+    await process.start();
+    server.emit("session", session);
+
+    await expect(process.shutdown()).resolves.toBeUndefined();
+
+    expect(session.close).toHaveBeenCalledOnce();
+    expect(session.destroy).toHaveBeenCalledOnce();
+    expect(session.listenerCount("close")).toBe(0);
+  });
+
   it("tracks a late draining session so the global deadline can destroy it", async () => {
     const server = new FakeServer({ closeHangs: true });
     const healthServer = new FakeServer();
@@ -87,7 +110,7 @@ describe("Hub Connect process lifecycle", () => {
     await expect(process.shutdown()).rejects.toThrowError("HUB_CONNECT_SHUTDOWN_UNCONFIRMED");
 
     expect(session.close).toHaveBeenCalledOnce();
-    expect(session.destroy).toHaveBeenCalledOnce();
+    expect(session.destroy).toHaveBeenCalled();
     expect(server.close).toHaveBeenCalledOnce();
     expect(healthServer.close).toHaveBeenCalledOnce();
     expect(closeMongo).toHaveBeenCalledOnce();
