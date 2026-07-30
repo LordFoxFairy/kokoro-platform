@@ -1,6 +1,6 @@
 import { create } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
-import type { HandlerContext, ServiceImpl } from "@connectrpc/connect";
+import { Code, ConnectError, type HandlerContext, type ServiceImpl } from "@connectrpc/connect";
 import {
   CommandDigestAlgorithmV2,
   CommandIdentityV2Schema,
@@ -111,14 +111,14 @@ export function createModelControlConnectService(input: Readonly<{
       });
       const identity = commandIdentity(context);
       requireDigest(identity.requestDigest, importInventoryRequestDigest(context, effect, verified.axes));
-      const receipt = await input.owners.importInventory.import({
+      const receipt = await commandEffect(() => input.owners.importInventory.import({
         importId: identity.commandId,
         idempotencyKey: identity.idempotencyKey,
         inventory: inventoryDocument(inventory),
         ...(effect.providerAvailability.length === 0
           ? {}
           : { providerAvailability: effect.providerAvailability.map(providerAvailability) }),
-      }, verified.context);
+      }, verified.context));
       return {
         inventoryDigest: receipt.digest,
         counts: {
@@ -147,12 +147,12 @@ export function createModelControlConnectService(input: Readonly<{
       const identity = commandIdentity(context);
       requireDigest(identity.requestDigest,
         activateInventoryRequestDigest(context, effect, verified.axes));
-      const receipt = await input.owners.activateInventory.activate({
+      const receipt = await commandEffect(() => input.owners.activateInventory.activate({
         activationId: identity.commandId,
         idempotencyKey: identity.idempotencyKey,
         targetDigest: effect.targetDigest,
         expectedPointerRevision: effect.expectedPointerRevision.toString(),
-      }, verified.context);
+      }, verified.context));
       return {
         targetDigest: receipt.targetDigest,
         activatedRevision: uint64(receipt.activatedRevision,
@@ -177,12 +177,12 @@ export function createModelControlConnectService(input: Readonly<{
       const identity = commandIdentity(context);
       requireDigest(identity.requestDigest,
         changeSitePolicyRequestDigest(context, request.siteId, effect, verified.axes));
-      const receipt = await input.owners.changeSitePolicy.change({
+      const receipt = await commandEffect(() => input.owners.changeSitePolicy.change({
         changeId: identity.commandId,
         idempotencyKey: identity.idempotencyKey,
         expectedRevision: effect.expectedRevision.toString(),
         policy: siteModelPolicy(request.siteId, effect),
-      }, verified.context);
+      }, verified.context));
       return {
         siteId: request.siteId,
         policyDigest: receipt.policyDigest,
@@ -207,12 +207,12 @@ export function createModelControlConnectService(input: Readonly<{
       const identity = commandIdentity(context);
       requireDigest(identity.requestDigest,
         materializeModelOptionsRequestDigest(context, effect, verified.axes));
-      const receipt = await input.owners.materializeModelOptions.materialize({
+      const receipt = await commandEffect(() => input.owners.materializeModelOptions.materialize({
         materializationId: identity.commandId,
         idempotencyKey: identity.idempotencyKey,
         inventoryDigest: effect.inventoryDigest,
         options: effect.options.map(modelOptionDraft),
-      }, verified.context);
+      }, verified.context));
       return {
         inventoryDigest: receipt.inventoryDigest,
         sourceDigest: receipt.sourceDigest,
@@ -238,7 +238,7 @@ export function createModelControlConnectService(input: Readonly<{
       const identity = commandIdentity(context);
       requireDigest(identity.requestDigest,
         publishSiteReleaseCatalogRequestDigest(context, request.siteId, effect, verified.axes));
-      const receipt = await input.owners.publishSiteReleaseCatalog.publish({
+      const receipt = await commandEffect(() => input.owners.publishSiteReleaseCatalog.publish({
         publicationId: identity.commandId,
         idempotencyKey: identity.idempotencyKey,
         siteId: request.siteId,
@@ -249,7 +249,7 @@ export function createModelControlConnectService(input: Readonly<{
           allowedModelOptionRevisionRefs: [...surface.allowedOptionRevisionRefs],
           defaultModelOptionRevisionRef: surface.defaultOptionRevisionRef,
         })),
-      }, verified.context);
+      }, verified.context));
       return {
         siteId: receipt.siteId,
         siteReleaseRef: receipt.siteReleaseRef,
@@ -263,6 +263,20 @@ export function createModelControlConnectService(input: Readonly<{
       };
     },
   };
+}
+
+async function commandEffect<Result>(effect: () => Promise<Result>): Promise<Result> {
+  try {
+    return await effect();
+  } catch (error) {
+    if (error instanceof Error && error.message === "COMMAND_IDENTITY_CONFLICT") {
+      throw new ConnectError("command identity conflict", Code.AlreadyExists);
+    }
+    if (error instanceof Error && error.message === "COMMAND_DIGEST_CONFLICT") {
+      throw new ConnectError("command digest conflict", Code.AlreadyExists);
+    }
+    throw error;
+  }
 }
 
 function inventoryDocument(inventory: CanonicalModelInventory): DomainModelInventory {
