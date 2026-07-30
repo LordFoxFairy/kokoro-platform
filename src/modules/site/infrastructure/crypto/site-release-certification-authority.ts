@@ -91,8 +91,35 @@ export function canonicalCertificationPayload(input: Readonly<{
   releaseManifestDigest: string;
   certificationDigest?: string;
   launchProfileRef: string;
+  siteConfigRevisionRef: string;
+  legalRevisionRef: string;
+  featurePolicyRevision: string;
+  modelOptionCatalogRef: string;
+  agentCatalogRef: string;
+  identityIssuerLabel: string;
+  identityAuthStrengthPolicyRevision: string;
+  enabledSurfaceIds: readonly string[];
+  localePolicy: Readonly<{
+    defaultLocale: string;
+    allowedLocales: readonly string[];
+  }>;
   proof: Readonly<{ signingKeyRef: string; issuedAt: string; expiresAt: string }>;
 }>): string {
+  const enabledSurfaceIds = canonicalStrings(
+    input.enabledSurfaceIds,
+    "SITE_RELEASE_CERTIFICATION_SURFACES_INVALID",
+    1,
+    64,
+  );
+  const allowedLocales = canonicalStrings(
+    input.localePolicy.allowedLocales,
+    "SITE_RELEASE_CERTIFICATION_LOCALES_INVALID",
+    1,
+    32,
+  );
+  if (!allowedLocales.includes(input.localePolicy.defaultLocale)) {
+    throw new Error("SITE_RELEASE_CERTIFICATION_DEFAULT_LOCALE_INVALID");
+  }
   return stableJson({
     schemaVersion: 1,
     siteRef: identifier(input.siteRef, "SITE_RELEASE_CERTIFICATION_SITE_INVALID"),
@@ -103,6 +130,46 @@ export function canonicalCertificationPayload(input: Readonly<{
       input.launchProfileRef,
       "SITE_RELEASE_CERTIFICATION_LAUNCH_PROFILE_INVALID",
     ),
+    siteConfigRevisionRef: identifier(
+      input.siteConfigRevisionRef,
+      "SITE_RELEASE_CERTIFICATION_SITE_CONFIG_INVALID",
+    ),
+    legalRevisionRef: identifier(
+      input.legalRevisionRef,
+      "SITE_RELEASE_CERTIFICATION_LEGAL_INVALID",
+    ),
+    featurePolicyRevision: identifier(
+      input.featurePolicyRevision,
+      "SITE_RELEASE_CERTIFICATION_FEATURE_POLICY_INVALID",
+    ),
+    modelOptionCatalogRef: identifier(
+      input.modelOptionCatalogRef,
+      "SITE_RELEASE_CERTIFICATION_MODEL_CATALOG_INVALID",
+    ),
+    agentCatalogRef: identifier(
+      input.agentCatalogRef,
+      "SITE_RELEASE_CERTIFICATION_AGENT_CATALOG_INVALID",
+    ),
+    identityIssuerLabel: boundedText(
+      input.identityIssuerLabel,
+      1,
+      64,
+      "SITE_RELEASE_CERTIFICATION_IDENTITY_ISSUER_INVALID",
+    ),
+    identityAuthStrengthPolicyRevision: identifier(
+      input.identityAuthStrengthPolicyRevision,
+      "SITE_RELEASE_CERTIFICATION_IDENTITY_POLICY_INVALID",
+    ),
+    enabledSurfaceIds,
+    localePolicy: {
+      defaultLocale: boundedText(
+        input.localePolicy.defaultLocale,
+        1,
+        64,
+        "SITE_RELEASE_CERTIFICATION_DEFAULT_LOCALE_INVALID",
+      ),
+      allowedLocales,
+    },
     signingKeyRef: identifier(
       input.proof.signingKeyRef,
       "SITE_RELEASE_CERTIFICATION_KEY_REF_INVALID",
@@ -130,6 +197,34 @@ function identifier(value: string, code: string): string {
 
 function digest(value: string): string {
   if (!/^[0-9a-f]{64}$/u.test(value)) throw new Error("SITE_RELEASE_CERTIFICATION_DIGEST_INVALID");
+  return value;
+}
+
+function canonicalStrings(
+  values: readonly string[],
+  code: string,
+  minimum: number,
+  maximum: number,
+): readonly string[] {
+  if (!Array.isArray(values) || values.length < minimum || values.length > maximum ||
+      values.some((value) => typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(value)) ||
+      new Set(values).size !== values.length) {
+    throw new Error(code);
+  }
+  return Object.freeze([...values].sort());
+}
+
+function boundedText(
+  value: string,
+  minimum: number,
+  maximum: number,
+  code: string,
+): string {
+  if (typeof value !== "string" || value.length < minimum || value.length > maximum ||
+      Array.from(value).some((character) => {
+        const point = character.codePointAt(0) ?? 0;
+        return point < 32 || point === 127;
+      })) throw new Error(code);
   return value;
 }
 

@@ -101,6 +101,15 @@ export class SitePublicationService {
       releaseManifestDigest: release.releaseManifestDigest,
       certificationDigest: release.certificationDigest,
       launchProfileRef: release.launchProfileRef,
+      siteConfigRevisionRef: release.siteConfigRevisionRef,
+      legalRevisionRef: release.legalRevisionRef,
+      featurePolicyRevision: release.featurePolicyRevision,
+      modelOptionCatalogRef: release.modelOptionCatalogRef,
+      agentCatalogRef: release.agentCatalogRef,
+      identityIssuerLabel: release.identityIssuerLabel,
+      identityAuthStrengthPolicyRevision: release.identityAuthStrengthPolicyRevision,
+      enabledSurfaceIds: release.enabledSurfaceIds,
+      localePolicy: release.localePolicy,
       proof: certificationProof,
     });
     const now = this.#now();

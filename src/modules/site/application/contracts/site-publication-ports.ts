@@ -22,6 +22,18 @@ export interface SiteReleaseCertificationAuthority {
     releaseManifestDigest: string;
     certificationDigest: string;
     launchProfileRef: string;
+    siteConfigRevisionRef: string;
+    legalRevisionRef: string;
+    featurePolicyRevision: string;
+    modelOptionCatalogRef: string;
+    agentCatalogRef: string;
+    identityIssuerLabel: string;
+    identityAuthStrengthPolicyRevision: string;
+    enabledSurfaceIds: readonly string[];
+    localePolicy: Readonly<{
+      defaultLocale: string;
+      allowedLocales: readonly string[];
+    }>;
     proof: Readonly<{
       signingKeyRef: string;
       issuedAt: string;

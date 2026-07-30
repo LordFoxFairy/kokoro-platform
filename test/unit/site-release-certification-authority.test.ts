@@ -15,6 +15,15 @@ describe("Ed25519SiteReleaseCertificationAuthority", () => {
       webArtifactDigest: "a".repeat(64),
       releaseManifestDigest: "b".repeat(64),
       launchProfileRef: "launch_profile_01",
+      siteConfigRevisionRef: "site_config_01",
+      legalRevisionRef: "legal_01",
+      featurePolicyRevision: "feature_policy_01",
+      modelOptionCatalogRef: "model_catalog_01",
+      agentCatalogRef: "agent_catalog_01",
+      identityIssuerLabel: "Image Studio",
+      identityAuthStrengthPolicyRevision: "identity_policy_01",
+      enabledSurfaceIds: ["account", "chat"],
+      localePolicy: { defaultLocale: "en-US", allowedLocales: ["en-US", "zh-CN"] },
       proof: {
         signingKeyRef: "release-key-01",
         issuedAt: "2026-07-30T10:00:00.000Z",
@@ -41,6 +50,13 @@ describe("Ed25519SiteReleaseCertificationAuthority", () => {
     await expect(authority.verify({
       ...facts,
       releaseRef: "release_02",
+      certificationDigest,
+      proof: { ...facts.proof, signature },
+    })).rejects.toThrow("SITE_RELEASE_CERTIFICATION_DIGEST_INVALID");
+
+    await expect(authority.verify({
+      ...facts,
+      modelOptionCatalogRef: "model_catalog_02",
       certificationDigest,
       proof: { ...facts.proof, signature },
     })).rejects.toThrow("SITE_RELEASE_CERTIFICATION_DIGEST_INVALID");
