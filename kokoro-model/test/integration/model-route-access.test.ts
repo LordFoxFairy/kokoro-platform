@@ -31,9 +31,9 @@ describe("model route-access 负向矩阵", () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it("runtime 凭据（session）打 /admin/models → 403", async () => {
+  it("runtime 凭据（session）打已退役 /admin/models → 404", async () => {
     const res = await app.inject({ method: "GET", url: "/admin/models/provider-accounts", headers: { [SVC]: "session", [SEC]: SECRETS.session } });
-    expect(res.statusCode).toBe(403);
+    expect(res.statusCode).toBe(404);
   });
 
   it("session 凭据打 /model-bindings/resolve → 过 guard（非 401/403）", async () => {
@@ -47,9 +47,9 @@ describe("model route-access 负向矩阵", () => {
     expect(res.statusCode).not.toBe(403);
   });
 
-  it("admin 凭据打 /admin/models → 200", async () => {
+  it("admin 凭据也不能直调已退役 /admin/models → 404", async () => {
     const res = await app.inject({ method: "GET", url: "/admin/models/provider-accounts", headers: { [SVC]: "admin", [SEC]: SECRETS.admin } });
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode).toBe(404);
   });
 
   it("/healthz 公开 → 无凭据放行", async () => {

@@ -58,6 +58,18 @@ async function seedChatLabels(): Promise<void> {
   });
 }
 
+async function setSitePolicy(
+  siteId: string,
+  labelKey: string,
+  status: "visible" | "hidden",
+): Promise<void> {
+  await prisma.siteModelPolicy.upsert({
+    where: { siteId_labelKey: { siteId, labelKey } },
+    create: { siteId, labelKey, status },
+    update: { status },
+  });
+}
+
 describe("site model policy API", () => {
   beforeEach(async () => {
     await cleanModelDatabase(prisma);
@@ -68,51 +80,9 @@ describe("site model policy API", () => {
     await prisma.$disconnect();
   });
 
-  it("upserts a policy and lists it, scoped by siteId", async () => {
-    const created = await app.inject({
-      method: "POST",
-      url: "/admin/models/site-policies",
-      payload: { siteId: "site-a", labelKey: "chat.premium", status: "hidden" },
-    });
-    expect(created.statusCode).toBe(200);
-    expect(created.json().data.status).toBe("hidden");
-
-    // upsert is idempotent on (siteId, labelKey): second call flips status, no duplicate.
-    const updated = await app.inject({
-      method: "POST",
-      url: "/admin/models/site-policies",
-      payload: { siteId: "site-a", labelKey: "chat.premium", status: "visible" },
-    });
-    expect(updated.json().data.id).toBe(created.json().data.id);
-    expect(updated.json().data.status).toBe("visible");
-
-    const all = await app.inject({ method: "GET", url: "/admin/models/site-policies" });
-    expect(all.json().data).toHaveLength(1);
-
-    const filtered = await app.inject({
-      method: "GET",
-      url: "/admin/models/site-policies?siteId=site-b",
-    });
-    expect(filtered.json().data).toHaveLength(0);
-  });
-
-  it("rejects an upsert with an unknown field", async () => {
-    const response = await app.inject({
-      method: "POST",
-      url: "/admin/models/site-policies",
-      payload: { siteId: "site-a", labelKey: "chat.premium", status: "hidden", junk: 1 },
-    });
-    expect(response.statusCode).toBe(400);
-  });
-
   it("hidden policy excludes the label for that site only", async () => {
     await seedChatBindings();
-
-    await app.inject({
-      method: "POST",
-      url: "/admin/models/site-policies",
-      payload: { siteId: "site-a", labelKey: "chat.premium", status: "hidden" },
-    });
+    await setSitePolicy("site-a", "chat.premium", "hidden");
 
     // site-a: gpt-4o carries chat.premium (hidden) → excluded; mini stays.
     const siteA = await app.inject({
@@ -140,11 +110,7 @@ describe("site model policy API", () => {
   it("rejects resolve without siteId instead of returning unfiltered bindings", async () => {
     await seedChatBindings();
 
-    await app.inject({
-      method: "POST",
-      url: "/admin/models/site-policies",
-      payload: { siteId: "site-a", labelKey: "chat.premium", status: "hidden" },
-    });
+    await setSitePolicy("site-a", "chat.premium", "hidden");
 
     const noSite = await app.inject({
       method: "GET",
@@ -189,11 +155,7 @@ describe("site model policy API", () => {
   it("catalogue hides the same labels resolve hides, per site", async () => {
     await seedChatLabels();
 
-    await app.inject({
-      method: "POST",
-      url: "/admin/models/site-policies",
-      payload: { siteId: "site-a", labelKey: "chat.premium", status: "hidden" },
-    });
+    await setSitePolicy("site-a", "chat.premium", "hidden");
 
     const siteA = await app.inject({ method: "GET", url: "/model-labels?siteId=site-a&featureKey=chat" });
     expect(siteA.statusCode).toBe(200);
@@ -211,11 +173,7 @@ describe("site model policy API", () => {
   it("rejects a catalogue request without siteId instead of returning every label", async () => {
     await seedChatLabels();
 
-    await app.inject({
-      method: "POST",
-      url: "/admin/models/site-policies",
-      payload: { siteId: "site-a", labelKey: "chat.premium", status: "hidden" },
-    });
+    await setSitePolicy("site-a", "chat.premium", "hidden");
 
     const noSite = await app.inject({ method: "GET", url: "/model-labels?featureKey=chat" });
     expect(noSite.statusCode).toBe(400);
@@ -271,11 +229,7 @@ describe("site model policy API", () => {
   it("visible policy does not hide the label", async () => {
     await seedChatBindings();
 
-    await app.inject({
-      method: "POST",
-      url: "/admin/models/site-policies",
-      payload: { siteId: "site-a", labelKey: "chat.premium", status: "visible" },
-    });
+    await setSitePolicy("site-a", "chat.premium", "visible");
 
     const siteA = await app.inject({
       method: "GET",

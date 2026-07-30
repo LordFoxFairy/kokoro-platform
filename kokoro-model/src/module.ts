@@ -11,13 +11,8 @@ export const modelPlatformModule = {
     databaseEnv: "DATABASE_URL_MODEL",
     ownsMigrations: true,
   },
-  admin: {
-    mode: "manifest",
-    basePath: "/admin/models",
-    manifestExport: "modelAdminManifest",
-  },
   runtime: {
-    surfaces: ["http", "internal-api", "admin-manifest"],
+    surfaces: ["http", "internal-api"],
     routes: [
       "GET /healthz",
       "POST /provider-accounts/ensure",

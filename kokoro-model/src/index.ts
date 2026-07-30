@@ -1,5 +1,3 @@
-export * from "./interfaces/admin/manifest.js";
-export * from "./interfaces/admin/schema.js";
 export * from "./application/model-service.js";
 export * from "./domain/model.js";
 export * from "./config/env.js";
