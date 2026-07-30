@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, open, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -220,6 +220,47 @@ describe("bounded secret files", () => {
       await expect(reader.readPrivate(
         join(root, "key"), 64, "TEST_PRIVATE_INVALID",
       )).rejects.toThrow("TEST_PRIVATE_INVALID");
+    } finally {
+      await Promise.all([
+        rm(root, { recursive: true, force: true }),
+        rm(outside, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
+  it("rejects an intermediate directory replaced by an outside-root symlink after traversal", async () => {
+    const root = await mkdtemp(join(tmpdir(), "kokoro-traversal-root-"));
+    const outside = await mkdtemp(join(tmpdir(), "kokoro-traversal-outside-"));
+    const revision = join(root, "revision");
+    const movedRevision = join(outside, "moved-revision");
+    const path = join(revision, "private.key");
+    let replaced = false;
+    try {
+      await mkdir(revision);
+      await writeFile(path, "private-value", { mode: 0o440 });
+      const racingFileSystem: BoundedFileSystem = {
+        async open(openedPath, flags) {
+          if (!replaced) {
+            replaced = true;
+            await rename(revision, movedRevision);
+            await symlink(movedRevision, revision);
+          }
+          const handle = await open(openedPath, flags);
+          return {
+            stat: () => handle.stat({ bigint: true }),
+            read: (buffer, offset, length, position) =>
+              handle.read(buffer, offset, length, position),
+            close: () => handle.close(),
+          };
+        },
+      };
+      const reader = await createBoundedFileReaderWithinTrustRoot(
+        root,
+        "TEST_TRUST_ROOT_INVALID",
+        racingFileSystem,
+      );
+      await expect(reader.readPrivate(path, 64, "TEST_PRIVATE_INVALID"))
+        .rejects.toThrowError("TEST_PRIVATE_INVALID");
     } finally {
       await Promise.all([
         rm(root, { recursive: true, force: true }),

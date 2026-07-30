@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "pg";
 import { loadPlatformDatabaseConfig } from "./client.js";
+import { OUTBOX_OWNER_POLICY_COUNT } from "./outbox-policy-authority.js";
 
 export const MIGRATION_ADVISORY_LOCK = "kokoro-platform:migrations:v1";
 
@@ -143,12 +144,12 @@ export async function runPlatformMigrations(
     await grantAssetDataPlanePrivileges(lockClient, assetDataPlaneRole);
     await grantIdentityWorkerPrivileges(lockClient, identityWorkerRole);
     await configureOutboxOwnerPolicies(lockClient, {
+      migrator: config.expectedDatabaseUser,
       api: apiRole,
       admission: admissionRole,
       worker: workerRole,
       identityWorker: identityWorkerRole,
       admin: adminRole,
-      modelGateway: modelGatewayRole,
     });
     await assertPostMigrationAuthority(
       lockClient,
@@ -160,7 +161,11 @@ export async function runPlatformMigrations(
       adminRole,
     );
     await assertModelGatewayAuthority(lockClient, modelGatewayRole);
-    await assertAssetDataPlaneAuthority(lockClient, assetDataPlaneRole);
+    await assertAssetDataPlaneAuthority(
+      lockClient,
+      assetDataPlaneRole,
+      config.expectedDatabaseUser,
+    );
     await assertIdentityWorkerAuthority(lockClient, identityWorkerRole);
   } finally {
     try {
@@ -285,11 +290,8 @@ const RUNTIME_ROLE_PREFLIGHT_SQL = `
          EXISTS (SELECT 1 FROM pg_auth_members membership WHERE membership.member = runtime_role.oid)
            AS "hasAnyMembership",
          pg_has_role(runtime_role.rolname, $6, 'MEMBER') AS "isMigratorMember",
-         EXISTS (
-           SELECT 1 FROM unnest(ARRAY[$1,$2,$3,$4,$5]::text[]) peer(role_name)
-           WHERE peer.role_name <> runtime_role.rolname
-             AND pg_has_role(runtime_role.rolname, peer.role_name, 'MEMBER')
-         ) AS "isPeerMember"
+         EXISTS (SELECT 1 FROM pg_auth_members membership
+           WHERE membership.roleid=runtime_role.oid) AS "isPeerMember"
   FROM pg_roles runtime_role
   WHERE runtime_role.rolname = ANY(ARRAY[$1,$2,$3,$4,$5]::text[])
   ORDER BY runtime_role.rolname
@@ -520,10 +522,15 @@ async function grantAssetDataPlanePrivileges(
 async function assertAssetDataPlaneAuthority(
   client: MigrationLockClient,
   assetDataPlaneRole: string,
+  migratorRole: string,
 ): Promise<void> {
-  const result = await client.query(ASSET_DATA_PLANE_POST_AUTHORITY_SQL, [assetDataPlaneRole]);
+  const result = await client.query(ASSET_DATA_PLANE_POST_AUTHORITY_SQL, [
+    assetDataPlaneRole,
+    migratorRole,
+  ]);
   const row = result.rows?.[0];
   if (result.rows?.length !== 1 || row?.assetDataPlaneAuthorityOk !== true ||
+      row?.completionFunctionAuthorityOk !== true ||
       row?.canReadGenericOutbox !== false || row?.canMutateAssetOwnerIntent !== false) {
     throw new Error("PLATFORM_ASSET_DATA_PLANE_POST_AUTHORITY_INVALID");
   }
@@ -613,8 +620,8 @@ async function assertIdentityWorkerAuthority(
   ) throw new Error("PLATFORM_IDENTITY_WORKER_POST_AUTHORITY_INVALID");
 }
 
-type OutboxPolicyRole = "api" | "admission" | "worker" | "identityWorker" |
-  "admin" | "modelGateway";
+type OutboxPolicyRole = "migrator" | "api" | "admission" | "worker" | "identityWorker" |
+  "admin";
 type OutboxPolicyCommand = "SELECT" | "INSERT" | "UPDATE";
 
 interface OutboxOwnerPolicy {
@@ -631,6 +638,10 @@ interface OutboxOwnerPolicy {
  * consumer cannot rewrite `owner` to move a row between allowed namespaces.
  */
 const OUTBOX_OWNER_POLICIES: readonly OutboxOwnerPolicy[] = Object.freeze([
+  // The asset completion command is SECURITY DEFINER. FORCE RLS therefore
+  // evaluates this exact policy as the function owner instead of bypassing it.
+  { name: "outbox_asset_function_insert", role: "migrator", command: "INSERT",
+    owners: ["asset"] },
   { name: "outbox_api_select", role: "api", command: "SELECT",
     owners: ["identity", "commerce", "asset"] },
   { name: "outbox_api_insert", role: "api", command: "INSERT",
@@ -648,11 +659,9 @@ const OUTBOX_OWNER_POLICIES: readonly OutboxOwnerPolicy[] = Object.freeze([
   { name: "outbox_identity_worker_update", role: "identityWorker", command: "UPDATE",
     owners: ["identity"] },
   { name: "outbox_admin_select", role: "admin", command: "SELECT",
-    owners: ["admin-control", "admin-execution", "commerce", "site", "model-control"] },
+    owners: ["admin-execution", "commerce", "site"] },
   { name: "outbox_admin_insert", role: "admin", command: "INSERT",
-    owners: ["admin-control", "admin-execution", "commerce", "site", "model-control"] },
-  { name: "outbox_model_gateway_insert", role: "modelGateway", command: "INSERT",
-    owners: ["credit-usage-rating"] },
+    owners: ["admin-execution", "commerce", "site"] },
 ]);
 
 async function configureOutboxOwnerPolicies(
@@ -660,9 +669,10 @@ async function configureOutboxOwnerPolicies(
   roles: Readonly<Record<OutboxPolicyRole, string>>,
 ): Promise<void> {
   await client.query("ALTER TABLE platform.outbox_event ENABLE ROW LEVEL SECURITY");
+  await client.query("ALTER TABLE platform.outbox_event FORCE ROW LEVEL SECURITY");
   for (const policy of OUTBOX_OWNER_POLICIES) {
     await client.query(`DROP POLICY IF EXISTS ${policy.name} ON platform.outbox_event`);
-    const ownerFence = `owner=ANY(ARRAY[${sqlLiterals(policy.owners)}]::text[])`;
+    const ownerFence = policyFenceExpression(policy, roles[policy.role]);
     const predicate = policy.command === "INSERT"
       ? `WITH CHECK (${ownerFence})`
       : policy.command === "UPDATE"
@@ -674,18 +684,75 @@ async function configureOutboxOwnerPolicies(
     );
   }
   const result = await client.query(
-    `SELECT policyname,cmd,roles::text[] AS roles FROM pg_policies ` +
-      `WHERE schemaname='platform' AND tablename='outbox_event' ORDER BY policyname`,
+    `SELECT policy.polname AS "policyName",policy.polcmd::text AS command,
+       ARRAY(SELECT role_oid::text FROM unnest(policy.polroles) role_oid)::text[] AS "roleOids",
+       ARRAY(
+         SELECT CASE WHEN role_oid=0 THEN 'PUBLIC' ELSE role_row.rolname END
+         FROM unnest(policy.polroles) role_oid
+         LEFT JOIN pg_roles role_row ON role_row.oid=role_oid
+       )::text[] AS roles,
+       pg_get_expr(policy.polqual,policy.polrelid,false) AS "usingExpression",
+       pg_get_expr(policy.polwithcheck,policy.polrelid,false) AS "withCheckExpression"
+     FROM pg_policy policy
+     WHERE policy.polrelid='platform.outbox_event'::regclass
+     ORDER BY policy.polname`,
   );
   const policies = result.rows ?? [];
   if (
-    policies.length !== OUTBOX_OWNER_POLICIES.length ||
+    policies.length !== OUTBOX_OWNER_POLICY_COUNT ||
     OUTBOX_OWNER_POLICIES.some((expected) => {
-      const actual = policies.find((candidate) => candidate.policyname === expected.name);
-      return actual?.cmd !== expected.command || !Array.isArray(actual.roles) ||
-        actual.roles.length !== 1 || actual.roles[0] !== roles[expected.role];
+      const actual = policies.find((candidate) => candidate.policyName === expected.name);
+      const expectedRole = roles[expected.role];
+      const expectedExpression = canonicalPolicyExpression(
+        policyFenceExpression(expected, expectedRole),
+      );
+      const usingExpression = typeof actual?.usingExpression === "string"
+        ? canonicalPolicyExpression(actual.usingExpression)
+        : null;
+      const withCheckExpression = typeof actual?.withCheckExpression === "string"
+        ? canonicalPolicyExpression(actual.withCheckExpression)
+        : null;
+      const expectedCommand = expected.command === "SELECT"
+        ? "r"
+        : expected.command === "INSERT"
+          ? "a"
+          : "w";
+      return actual?.command !== expectedCommand || !Array.isArray(actual.roles) ||
+        actual.roles.length !== 1 || actual.roles[0] !== expectedRole ||
+        !Array.isArray(actual.roleOids) || actual.roleOids.length !== 1 ||
+        actual.roleOids[0] === "0" ||
+        (expected.command === "INSERT" ? usingExpression !== null :
+          usingExpression !== expectedExpression) ||
+        (expected.command === "SELECT" ? withCheckExpression !== null :
+          withCheckExpression !== expectedExpression);
     })
   ) throw new Error("PLATFORM_OUTBOX_OWNER_POLICIES_INVALID");
+  const authority = policies.map((policy) => ({
+    policy_name: policy.policyName,
+    command: policy.command,
+    role_oid: Array.isArray(policy.roleOids) ? policy.roleOids[0] : null,
+    using_expression: policy.usingExpression ?? null,
+    with_check_expression: policy.withCheckExpression ?? null,
+  }));
+  const stored = await client.query(
+    `UPDATE platform.platform_foundation
+        SET "outboxPolicyAuthority"=$1::jsonb,"updatedAt"=now()
+      WHERE singleton=TRUE RETURNING singleton`,
+    [JSON.stringify(authority)],
+  );
+  if (stored.rows?.length !== 1) {
+    throw new Error("PLATFORM_OUTBOX_POLICY_AUTHORITY_PERSIST_FAILED");
+  }
+}
+
+function policyFenceExpression(policy: OutboxOwnerPolicy, roleName: string): string {
+  return `current_user=${sqlString(roleName)} AND ` +
+    `owner=ANY(ARRAY[${sqlLiterals(policy.owners)}]::text[])`;
+}
+
+function canonicalPolicyExpression(value: string): string {
+  return value.replace(/\s+/gu, "").replace(/::(?:name|text)(?:\[\])?/giu, "")
+    .replace(/[()]/gu, "").toLowerCase();
 }
 
 const MODEL_GATEWAY_ROLE_PREFLIGHT_SQL = `
@@ -813,6 +880,28 @@ const ASSET_DATA_PLANE_POST_AUTHORITY_SQL = `
       AND has_function_privilege($1,
         'platform.enqueue_asset_upload_completion_event(UUID,TEXT,JSONB,CHAR(64),TEXT,TEXT)',
         'EXECUTE') AS "assetDataPlaneAuthorityOk",
+    EXISTS (
+      SELECT 1
+      FROM pg_proc function_row
+      JOIN pg_roles function_owner ON function_owner.oid=function_row.proowner
+      WHERE function_row.oid=to_regprocedure(
+        'platform.enqueue_asset_upload_completion_event(uuid,text,jsonb,character,text,text)'
+      )
+        AND function_owner.rolname=$2
+        AND function_row.prosecdef
+        AND EXISTS (
+          SELECT 1 FROM unnest(COALESCE(function_row.proconfig,ARRAY[]::text[])) setting
+          WHERE replace(setting,' ','')='search_path=pg_catalog,platform'
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM aclexplode(COALESCE(
+            function_row.proacl,
+            acldefault('f',function_row.proowner)
+          )) acl
+          WHERE acl.grantee=0 AND acl.privilege_type='EXECUTE'
+        )
+    ) AS "completionFunctionAuthorityOk",
     has_any_column_privilege($1,'platform.outbox_event','SELECT') AS "canReadGenericOutbox",
     (has_any_column_privilege($1,'platform.asset_upload_intent','INSERT,UPDATE')
       OR has_table_privilege($1,'platform.asset_upload_intent','DELETE,TRUNCATE'))
@@ -2567,7 +2656,11 @@ function assertDistinctRoles(
 }
 
 function sqlLiterals(values: readonly string[]): string {
-  return values.map((value) => `'${value}'`).join(",");
+  return values.map(sqlString).join(",");
+}
+
+function sqlString(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
 }
 
 function requireRole(value: string | undefined, name: string): string {

@@ -38,6 +38,7 @@ worker's allowlist and prove that verification digest/email columns are unreadab
 audit-digest key file and their immutable trust root are mandatory production configuration; startup fails before claiming work
 when any is missing or unsafe. PostgreSQL RLS binds the shared outbox's `identity` owner to the exact Identity worker role; the
 aggregate worker cannot read or mutate those rows, and neither worker can rewrite `owner`. Runtime startup verifies the active RLS
-policy inventory as well as column-scoped grants. Kubernetes AtomicWriter symlinks may resolve only inside one stable, non-symlink
+policy inventory (including FORCE mode, PUBLIC, command, exact role OID, `USING`, and `WITH CHECK`) as well as column-scoped grants.
+Kubernetes AtomicWriter symlinks may resolve only inside one stable, non-symlink
 trust-root inode, and the final group-readable file is opened no-follow and checked against the same path snapshot through one
 stable descriptor.

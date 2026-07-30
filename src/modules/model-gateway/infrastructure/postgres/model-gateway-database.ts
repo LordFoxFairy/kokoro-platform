@@ -8,6 +8,8 @@ import {
   issuePlatformTransaction,
   revokePlatformTransaction,
 } from "../../../../shared/unit-of-work/platform-transaction.js";
+import { OUTBOX_POLICY_RUNTIME_ASSERTION_SQL } from
+  "../../../../infrastructure/postgres/outbox-policy-authority.js";
 
 interface QueryResult<Row extends Record<string, unknown> = Record<string, unknown>> {
   readonly rows: readonly Row[];
@@ -394,6 +396,7 @@ interface RuntimeIdentity extends Record<string, unknown> {
   canBypassRls: boolean;
   inheritsPrivileges: boolean;
   hasAnyMembership: boolean;
+  hasAnyMembers: boolean;
   isMigratorMember: boolean;
   canCreateDatabaseObject: boolean;
   canUseSchema: boolean;
@@ -403,7 +406,8 @@ interface RuntimeIdentity extends Record<string, unknown> {
   canExecuteAuthorizationResolver: boolean;
   canExecuteDispatchScanner: boolean;
   outboxRlsEnabled: boolean;
-  outboxPolicyNames: readonly string[];
+  outboxForceRlsEnabled: boolean;
+  outboxPoliciesValid: boolean;
   hasRequiredGatewayWrites: boolean;
 }
 
@@ -415,13 +419,13 @@ function validIdentity(
     row.currentDatabase === expected.expectedDatabaseName && row.databaseOwner === expected.migratorDatabaseUser &&
     row.serverMajor === 18 && row.isSuperuser === false && row.canCreateDatabase === false &&
     row.canCreateRole === false && row.canReplicate === false && row.canBypassRls === false &&
-    row.inheritsPrivileges === false && row.hasAnyMembership === false && row.isMigratorMember === false &&
+    row.inheritsPrivileges === false && row.hasAnyMembership === false && row.hasAnyMembers === false &&
+    row.isMigratorMember === false &&
     row.canCreateDatabaseObject === false && row.canUseSchema === true && row.canCreateSchema === false &&
     row.canReadFoundation === true && row.canMutateFoundation === false &&
     row.canExecuteAuthorizationResolver === true && row.canExecuteDispatchScanner === true &&
-    row.outboxRlsEnabled === true && Array.isArray(row.outboxPolicyNames) &&
-    row.outboxPolicyNames.length === 1 &&
-    row.outboxPolicyNames[0] === "outbox_model_gateway_insert" &&
+    row.outboxRlsEnabled === true && row.outboxForceRlsEnabled === true &&
+    row.outboxPoliciesValid === true &&
     row.hasRequiredGatewayWrites === true;
 }
 
@@ -445,6 +449,7 @@ const RUNTIME_IDENTITY_SQL = `
     runtime.rolreplication AS "canReplicate",runtime.rolbypassrls AS "canBypassRls",
     runtime.rolinherit AS "inheritsPrivileges",
     EXISTS (SELECT 1 FROM pg_auth_members member WHERE member.member=runtime.oid) AS "hasAnyMembership",
+    EXISTS (SELECT 1 FROM pg_auth_members member WHERE member.roleid=runtime.oid) AS "hasAnyMembers",
     pg_has_role(current_user,$1,'MEMBER') AS "isMigratorMember",
     has_database_privilege(current_user,current_database(),'CREATE') AS "canCreateDatabaseObject",
     has_schema_privilege(current_user,'platform','USAGE') AS "canUseSchema",
@@ -453,18 +458,9 @@ const RUNTIME_IDENTITY_SQL = `
     has_table_privilege(current_user,'platform.platform_foundation','INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') AS "canMutateFoundation",
     has_function_privilege(current_user,'platform.resolve_model_gateway_authorization(TEXT,TEXT)','EXECUTE') AS "canExecuteAuthorizationResolver",
     has_function_privilege(current_user,'platform.list_model_gateway_dispatch_candidates(INTEGER)','EXECUTE') AS "canExecuteDispatchScanner",
-    (SELECT outbox.relrowsecurity
-       FROM pg_class outbox
-       JOIN pg_namespace outbox_schema ON outbox_schema.oid=outbox.relnamespace
-      WHERE outbox_schema.nspname='platform' AND outbox.relname='outbox_event')
-      AS "outboxRlsEnabled",
-    ARRAY(
-      SELECT policy.policyname
-        FROM pg_policies policy
-       WHERE policy.schemaname='platform' AND policy.tablename='outbox_event'
-         AND current_user=ANY(policy.roles)
-       ORDER BY policy.policyname
-    ) AS "outboxPolicyNames",
+    outbox.relrowsecurity AS "outboxRlsEnabled",
+    outbox.relforcerowsecurity AS "outboxForceRlsEnabled",
+    ${OUTBOX_POLICY_RUNTIME_ASSERTION_SQL} AS "outboxPoliciesValid",
     (has_table_privilege(current_user, 'platform.model_gateway_invocation', 'SELECT') AND has_table_privilege(current_user, 'platform.model_gateway_invocation', 'INSERT'))
       AND has_column_privilege(current_user,'platform.model_gateway_invocation','state','UPDATE')
       AND has_column_privilege(current_user,'platform.model_gateway_invocation','response_envelope','UPDATE')
@@ -502,6 +498,13 @@ const RUNTIME_IDENTITY_SQL = `
       AND has_table_privilege(current_user,'platform.credit_hold','SELECT')
       AND NOT has_table_privilege(current_user,'platform.outbox_event','SELECT')
       AND NOT has_table_privilege(current_user,'platform.outbox_event','INSERT') AS "hasRequiredGatewayWrites"
-  FROM pg_roles runtime,pg_database database_row
+  FROM pg_roles runtime
+  JOIN pg_database database_row ON database_row.datname=current_database()
   JOIN pg_roles owner ON owner.oid=database_row.datdba
-  WHERE runtime.rolname=current_user AND database_row.datname=current_database() AND runtime.rolname=$2`;
+  JOIN pg_namespace platform_schema ON platform_schema.nspname='platform'
+  JOIN pg_class foundation ON foundation.relnamespace=platform_schema.oid
+                           AND foundation.relname='platform_foundation'
+  JOIN platform.platform_foundation foundation_marker ON foundation_marker.singleton=TRUE
+  JOIN pg_class outbox ON outbox.relnamespace=platform_schema.oid
+                       AND outbox.relname='outbox_event'
+  WHERE runtime.rolname=current_user AND runtime.rolname=$2`;

@@ -188,6 +188,7 @@ describe("Platform migrator", () => {
           events.push("verify-asset-data-plane");
           return { rows: [{
             assetDataPlaneAuthorityOk: true,
+            completionFunctionAuthorityOk: true,
             canReadGenericOutbox: false,
             canMutateAssetOwnerIntent: false,
           }] };
@@ -254,9 +255,13 @@ describe("Platform migrator", () => {
             ],
           };
         }
-        if (sql.includes("FROM pg_policies")) {
+        if (sql.includes("FROM pg_policy policy")) {
           events.push("verify-outbox-policies");
           return { rows: outboxPolicyRows() };
+        }
+        if (sql.includes('SET "outboxPolicyAuthority"')) {
+          events.push("persist-outbox-policy-authority");
+          return { rows: [{ singleton: true }] };
         }
         if (/^(?:REVOKE|GRANT|ALTER DEFAULT PRIVILEGES)/u.test(sql)) {
           events.push("grant");
@@ -385,8 +390,9 @@ describe("Platform migrator", () => {
     expect(authoritySql).toMatch(
       /runtime_role\.rolname=\$3 AND \([\s\S]+grant_row\.table_name LIKE 'identity\\_%'/u,
     );
-    expect(events.slice(-7)).toEqual([
+    expect(events.slice(-8)).toEqual([
       "verify-outbox-policies",
+      "persist-outbox-policy-authority",
       "verify-authority",
       "verify-model-gateway",
       "verify-asset-data-plane",
@@ -396,7 +402,10 @@ describe("Platform migrator", () => {
     ]);
   });
 
-  it("fails closed when a runtime role belongs to any other database role", async () => {
+  it.each([
+    ["belongs to an upstream database role", "hasAnyMembership"],
+    ["has a downstream database-role member", "isPeerMember"],
+  ] as const)("fails closed when a runtime role %s", async (_description, membershipField) => {
     const lockClient: MigrationLockClient = {
       async connect() {},
       async query(sql) {
@@ -415,7 +424,7 @@ describe("Platform migrator", () => {
               safeRole("platform_api"),
               safeRole("platform_admission"),
               safeRole("platform_authorization"),
-              { ...safeRole("platform_worker"), hasAnyMembership: true },
+              { ...safeRole("platform_worker"), [membershipField]: true },
               safeRole("platform_admin"),
             ],
           };
@@ -452,6 +461,7 @@ describe("Platform migrator", () => {
         if (sql.includes("assetDataPlaneAuthority")) {
           return { rows: [{
             assetDataPlaneAuthorityOk: true,
+            completionFunctionAuthorityOk: true,
             canReadGenericOutbox: false,
             canMutateAssetOwnerIntent: false,
           }] };
@@ -477,7 +487,10 @@ describe("Platform migrator", () => {
             ],
           };
         }
-        if (sql.includes("FROM pg_policies")) return { rows: outboxPolicyRows() };
+        if (sql.includes("FROM pg_policy policy")) return { rows: outboxPolicyRows() };
+        if (sql.includes('SET "outboxPolicyAuthority"')) {
+          return { rows: [{ singleton: true }] };
+        }
         if (sql.includes("hasUnexpectedPlatformPrivilege")) {
           return {
             rows: [
@@ -541,7 +554,10 @@ describe("Platform migrator", () => {
               safeRole("platform_admin"),
             ] };
           }
-          if (sql.includes("FROM pg_policies")) return { rows: outboxPolicyRows() };
+          if (sql.includes("FROM pg_policy policy")) return { rows: outboxPolicyRows() };
+          if (sql.includes('SET "outboxPolicyAuthority"')) {
+            return { rows: [{ singleton: true }] };
+          }
           if (sql.includes("hasUnexpectedPlatformPrivilege")) {
             return { rows: [
               authority("platform_api"), authority("platform_admission"),
@@ -816,18 +832,35 @@ function authority(roleName: string): Record<string, unknown> {
 
 function outboxPolicyRows(): readonly Record<string, unknown>[] {
   return [
-    ["outbox_admin_insert", "INSERT", "platform_admin"],
-    ["outbox_admin_select", "SELECT", "platform_admin"],
-    ["outbox_admission_insert", "INSERT", "platform_admission"],
-    ["outbox_api_insert", "INSERT", "platform_api"],
-    ["outbox_api_select", "SELECT", "platform_api"],
-    ["outbox_identity_worker_select", "SELECT", "platform_identity_worker"],
-    ["outbox_identity_worker_update", "UPDATE", "platform_identity_worker"],
-    ["outbox_model_gateway_insert", "INSERT", "platform_model_gateway"],
-    ["outbox_worker_insert", "INSERT", "platform_worker"],
-    ["outbox_worker_select", "SELECT", "platform_worker"],
-    ["outbox_worker_update", "UPDATE", "platform_worker"],
-  ].map(([policyname, cmd, role]) => ({ policyname, cmd, roles: [role] }));
+    ["outbox_asset_function_insert", "a", "platform_migrator", ["asset"]],
+    ["outbox_admin_insert", "a", "platform_admin",
+      ["admin-execution", "commerce", "site"]],
+    ["outbox_admin_select", "r", "platform_admin",
+      ["admin-execution", "commerce", "site"]],
+    ["outbox_admission_insert", "a", "platform_admission", ["credit"]],
+    ["outbox_api_insert", "a", "platform_api", ["identity", "commerce", "asset"]],
+    ["outbox_api_select", "r", "platform_api", ["identity", "commerce", "asset"]],
+    ["outbox_identity_worker_select", "r", "platform_identity_worker", ["identity"]],
+    ["outbox_identity_worker_update", "w", "platform_identity_worker", ["identity"]],
+    ["outbox_worker_insert", "a", "platform_worker",
+      ["commerce", "credit", "site", "asset", "admin-execution"]],
+    ["outbox_worker_select", "r", "platform_worker",
+      ["commerce", "credit", "site", "asset", "admin-execution"]],
+    ["outbox_worker_update", "w", "platform_worker",
+      ["commerce", "credit", "site", "asset", "admin-execution"]],
+  ].map(([policyName, command, role, owners], index) => {
+    const expression = `CURRENT_USER='${role}'::name AND owner=ANY(ARRAY[${
+      (owners as string[]).map((owner) => `'${owner}'::text`).join(",")
+    }])`;
+    return {
+      policyName,
+      command,
+      roleOids: [String(index + 10)],
+      roles: [role],
+      usingExpression: command === "a" ? null : expression,
+      withCheckExpression: command === "r" ? null : expression,
+    };
+  });
 }
 
 function safeMigratorAuthority(): Record<string, unknown> {

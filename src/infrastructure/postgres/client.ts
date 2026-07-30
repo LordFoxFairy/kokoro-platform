@@ -14,6 +14,7 @@ import type { AdminQueryPermit } from
   "../../modules/admin/interfaces/connect/admin-query-service.js";
 import type { AdminWorkloadAxes } from
   "../../modules/admin/application/services/admin-oidc-service.js";
+import { OUTBOX_POLICY_RUNTIME_ASSERTION_SQL } from "./outbox-policy-authority.js";
 
 export type PlatformProcessRole =
   | "api" | "admission" | "authorization" | "asset-data-plane" | "worker" |
@@ -878,10 +879,12 @@ interface RuntimeIdentity {
   canBypassRls: boolean;
   inheritsPrivileges: boolean;
   hasAnyMembership: boolean;
+  hasAnyMembers: boolean;
   ownsPlatformRelation: boolean;
   ownsPlatformFunction: boolean;
   outboxRlsEnabled: boolean;
-  outboxPolicyNames: readonly string[];
+  outboxForceRlsEnabled: boolean;
+  outboxPoliciesValid: boolean;
   hasRequiredPlatformWrites: boolean;
   hasIdentityOutboxConsumerAuthority: boolean;
   hasUnexpectedIdentityWorkerPrivilege: boolean;
@@ -1077,6 +1080,8 @@ const RUNTIME_IDENTITY_SQL = `
          runtime_role.rolinherit AS "inheritsPrivileges",
          EXISTS (SELECT 1 FROM pg_auth_members membership WHERE membership.member = runtime_role.oid)
            AS "hasAnyMembership",
+         EXISTS (SELECT 1 FROM pg_auth_members membership WHERE membership.roleid = runtime_role.oid)
+           AS "hasAnyMembers",
          EXISTS (
            SELECT 1
            FROM pg_class owned_relation
@@ -1090,13 +1095,8 @@ const RUNTIME_IDENTITY_SQL = `
              AND owned_function.proowner = runtime_role.oid
          ) AS "ownsPlatformFunction",
          outbox.relrowsecurity AS "outboxRlsEnabled",
-         ARRAY(
-           SELECT policy.policyname
-           FROM pg_policies policy
-           WHERE policy.schemaname='platform' AND policy.tablename='outbox_event'
-             AND current_user=ANY(policy.roles)
-           ORDER BY policy.policyname
-         ) AS "outboxPolicyNames",
+         outbox.relforcerowsecurity AS "outboxForceRlsEnabled",
+         ${OUTBOX_POLICY_RUNTIME_ASSERTION_SQL} AS "outboxPoliciesValid",
          CASE WHEN $2 = 'api' THEN
            (has_table_privilege(current_user, 'platform.command_receipt', 'INSERT') AND has_table_privilege(current_user, 'platform.command_receipt', 'UPDATE'))
            AND has_table_privilege(current_user, 'platform.outbox_event', 'INSERT')
@@ -2064,23 +2064,11 @@ const RUNTIME_IDENTITY_SQL = `
   LEFT JOIN pg_class foundation ON foundation.relnamespace = platform_schema.oid
                                 AND foundation.relname = 'platform_foundation'
   LEFT JOIN pg_roles foundation_owner ON foundation_owner.oid = foundation.relowner
+  LEFT JOIN platform.platform_foundation foundation_marker ON foundation_marker.singleton=TRUE
   LEFT JOIN pg_class outbox ON outbox.relnamespace = platform_schema.oid
                            AND outbox.relname = 'outbox_event'
   WHERE database_row.datname = current_database()
 `;
-
-const OUTBOX_POLICY_NAMES_BY_RUNTIME_ROLE = Object.freeze({
-  api: ["outbox_api_insert", "outbox_api_select"],
-  admission: ["outbox_admission_insert"],
-  authorization: [],
-  "asset-data-plane": [],
-  worker: ["outbox_worker_insert", "outbox_worker_select", "outbox_worker_update"],
-  "identity-worker": [
-    "outbox_identity_worker_select",
-    "outbox_identity_worker_update",
-  ],
-  admin: ["outbox_admin_insert", "outbox_admin_select"],
-} as const satisfies Record<Exclude<PlatformProcessRole, "migrator">, readonly string[]>);
 
 function validRuntimeIdentity(
   identity: RuntimeIdentity | undefined,
@@ -2107,9 +2095,12 @@ function validRuntimeIdentity(
     !identity.canBypassRls &&
     !identity.inheritsPrivileges &&
     !identity.hasAnyMembership &&
+    !identity.hasAnyMembers &&
     !identity.ownsPlatformRelation &&
     !identity.ownsPlatformFunction &&
-    hasExpectedOutboxPolicies(identity, config.role) &&
+    identity.outboxRlsEnabled &&
+    identity.outboxForceRlsEnabled &&
+    identity.outboxPoliciesValid &&
     identity.hasRequiredPlatformWrites &&
     identity.hasIdentityOutboxConsumerAuthority === (config.role === "identity-worker") &&
     !identity.hasUnexpectedIdentityWorkerPrivilege &&
@@ -2132,17 +2123,6 @@ function validRuntimeIdentity(
     identity.unexpectedPlatformRelations.length === 0 &&
     identity.unexpectedPlatformFunctions.length === 0,
   );
-}
-
-function hasExpectedOutboxPolicies(
-  identity: RuntimeIdentity,
-  role: PlatformProcessRole,
-): boolean {
-  if (role === "migrator" || !identity.outboxRlsEnabled ||
-      !Array.isArray(identity.outboxPolicyNames)) return false;
-  const expected = OUTBOX_POLICY_NAMES_BY_RUNTIME_ROLE[role];
-  return identity.outboxPolicyNames.length === expected.length &&
-    expected.every((name, index) => identity.outboxPolicyNames[index] === name);
 }
 
 function requireIdentifier(value: string | undefined, name: string): string {

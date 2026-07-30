@@ -17,6 +17,7 @@ datasource db {
 model PlatformFoundation {
   singleton     Boolean  @id @default(true)
   schemaVersion Int
+  outboxPolicyAuthority Json     @default("[]")
   createdAt     DateTime @default(now()) @db.Timestamptz(6)
   updatedAt     DateTime @updatedAt @db.Timestamptz(6)
 

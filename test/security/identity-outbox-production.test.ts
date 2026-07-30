@@ -19,6 +19,10 @@ describe("Identity outbox production authority", () => {
       readFile("src/infrastructure/postgres/client.ts", "utf8"),
       readFile("prisma/migrations/20260804_outbox_owner_fencing/migration.sql", "utf8"),
     ]);
+    const assetDataPlaneMigration = await readFile(
+      "prisma/migrations/20260729_zz_asset_multipart_data_plane/migration.sql",
+      "utf8",
+    );
     expect(migrator).toContain("PLATFORM_DATABASE_IDENTITY_WORKER_ROLE");
     expect(migrator).toContain("grantIdentityWorkerPrivileges");
     expect(migrator).toContain("IDENTITY_WORKER_POST_AUTHORITY_SQL");
@@ -48,6 +52,7 @@ describe("Identity outbox production authority", () => {
     );
     expect(migrator).toContain("hasUnexpectedIdentityPrivilege");
     expect(migrator).toContain("configureOutboxOwnerPolicies");
+    expect(migrator).toContain("ALTER TABLE platform.outbox_event FORCE ROW LEVEL SECURITY");
     expect(migrator).toContain("outbox_identity_worker_select");
     expect(migrator).toContain("outbox_identity_worker_update");
     expect(migrator).toMatch(/identityWorker[\s\S]+owners:\s*\["identity"\]/u);
@@ -60,12 +65,30 @@ describe("Identity outbox production authority", () => {
     expect(client).not.toMatch(
       /config\.role === "identity-worker"[\s\S]{0,400}has_table_privilege\(current_user, 'platform\.outbox_event', 'UPDATE'\)/u,
     );
+    expect(migrator).toContain("current_user=");
+    expect(migrator).toContain("membership.roleid=runtime_role.oid");
+    expect(migrator).toMatch(
+      /outbox_asset_function_insert[\s\S]+role:\s*"migrator"[\s\S]+owners:\s*\["asset"\]/u,
+    );
+    expect(client).toContain('AS "hasAnyMembers"');
     expect(client).toContain('outbox.relrowsecurity AS "outboxRlsEnabled"');
-    expect(client).toContain('AS "outboxPolicyNames"');
-    expect(client).toContain('"identity-worker": [\n    "outbox_identity_worker_select"');
-    expect(client).toContain("identity.outboxPolicyNames");
+    expect(client).toContain('outbox.relforcerowsecurity AS "outboxForceRlsEnabled"');
+    expect(client).toContain('AS "outboxPoliciesValid"');
+    expect(client).toContain(
+      "JOIN platform.platform_foundation foundation_marker ON foundation_marker.singleton=TRUE",
+    );
+    expect(client).toContain("identity.outboxPoliciesValid");
     expect(ownerFence).toContain("ALTER TABLE platform.outbox_event ENABLE ROW LEVEL SECURITY");
+    expect(ownerFence).toContain("ALTER TABLE platform.outbox_event FORCE ROW LEVEL SECURITY");
     expect(ownerFence).not.toMatch(/current_setting|set_config|app\./u);
+    expect(ownerFence).toContain("owner bypass are not part of this boundary");
+    const assetCompletionFunction = assetDataPlaneMigration.match(
+      /CREATE FUNCTION platform\.enqueue_asset_upload_completion_event[\s\S]+?REVOKE ALL ON FUNCTION/u,
+    )?.[0] ?? "";
+    expect(assetCompletionFunction).toContain("SECURITY DEFINER");
+    expect(assetCompletionFunction).toContain("SET search_path=pg_catalog,platform");
+    expect(assetCompletionFunction).toContain("ON CONFLICT (event_id) DO NOTHING");
+    expect(assetCompletionFunction).not.toMatch(/DO UPDATE|DELETE FROM platform\.outbox_event/u);
   });
 
   it("isolates exact Identity claims and lease return in its own process", async () => {

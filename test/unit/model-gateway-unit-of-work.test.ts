@@ -28,30 +28,28 @@ describe("Postgres Model Gateway database", () => {
     const database = new PostgresModelGatewayDatabase({
       pool: {
         query: async () => ({
-          rows: [{
-            currentUser: "platform_model_gateway",
-            currentDatabase: "kokoro_platform",
-            serverMajor: 18,
-            databaseOwner: "platform_migrator",
-            isSuperuser: false,
-            canCreateDatabase: false,
-            canCreateRole: false,
-            canReplicate: false,
-            canBypassRls: false,
-            inheritsPrivileges: false,
-            hasAnyMembership: false,
-            isMigratorMember: false,
-            canCreateDatabaseObject: false,
-            canUseSchema: true,
-            canCreateSchema: false,
-            canReadFoundation: true,
-            canMutateFoundation: false,
-            canExecuteAuthorizationResolver: true,
-            canExecuteDispatchScanner: true,
-            hasRequiredGatewayWrites: true,
-            outboxRlsEnabled: false,
-            outboxPolicyNames: [],
-          }],
+          rows: [modelGatewayRuntimeIdentity({
+            outboxRlsEnabled: true,
+            outboxForceRlsEnabled: false,
+            outboxPoliciesValid: false,
+          })],
+          rowCount: 1,
+        }),
+        connect: async () => { throw new Error("LISTENER_MUST_NOT_CONNECT"); },
+        end: async () => undefined,
+      },
+      expectedDatabaseUser: "platform_model_gateway",
+      expectedDatabaseName: "kokoro_platform",
+      migratorDatabaseUser: "platform_migrator",
+    });
+    await expect(database.connect()).rejects.toThrowError("MODEL_GATEWAY_DATABASE_ROLE_INVALID");
+  });
+
+  it("fails startup when another database role is a member of the gateway role", async () => {
+    const database = new PostgresModelGatewayDatabase({
+      pool: {
+        query: async () => ({
+          rows: [modelGatewayRuntimeIdentity({ hasAnyMembers: true })],
           rowCount: 1,
         }),
         connect: async () => { throw new Error("LISTENER_MUST_NOT_CONNECT"); },
@@ -119,3 +117,35 @@ describe("Postgres Model Gateway database", () => {
     expect(client.released).toBe(true);
   });
 });
+
+function modelGatewayRuntimeIdentity(
+  overrides: Readonly<Record<string, unknown>> = {},
+): Readonly<Record<string, unknown>> {
+  return {
+    currentUser: "platform_model_gateway",
+    currentDatabase: "kokoro_platform",
+    serverMajor: 18,
+    databaseOwner: "platform_migrator",
+    isSuperuser: false,
+    canCreateDatabase: false,
+    canCreateRole: false,
+    canReplicate: false,
+    canBypassRls: false,
+    inheritsPrivileges: false,
+    hasAnyMembership: false,
+    hasAnyMembers: false,
+    isMigratorMember: false,
+    canCreateDatabaseObject: false,
+    canUseSchema: true,
+    canCreateSchema: false,
+    canReadFoundation: true,
+    canMutateFoundation: false,
+    canExecuteAuthorizationResolver: true,
+    canExecuteDispatchScanner: true,
+    hasRequiredGatewayWrites: true,
+    outboxRlsEnabled: true,
+    outboxForceRlsEnabled: true,
+    outboxPoliciesValid: true,
+    ...overrides,
+  };
+}

@@ -1,4 +1,4 @@
-import { Client } from "pg";
+import { Client, type QueryResult } from "pg";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -11,11 +11,21 @@ import {
   createPostgresModelGatewayDatabase,
   loadModelGatewayDatabaseConfig,
 } from "../../src/modules/model-gateway/infrastructure/postgres/model-gateway-database.js";
+import {
+  OUTBOX_ROUTE_CATALOG,
+  type OutboxOwner,
+} from "../../src/shared/outbox-inbox/outbox.js";
 
 const migratorDatabaseUrl = requireLeasedDatabaseUrl(
   process.env.DATABASE_URL_PLATFORM_MIGRATOR_TEST,
 );
 const apiDatabaseUrl = requireLeasedDatabaseUrl(process.env.DATABASE_URL_PLATFORM_API_TEST);
+const admissionDatabaseUrl = requireLeasedDatabaseUrl(
+  process.env.DATABASE_URL_PLATFORM_ADMISSION_TEST,
+);
+const assetDataPlaneDatabaseUrl = requireLeasedDatabaseUrl(
+  process.env.DATABASE_URL_PLATFORM_ASSET_DATA_PLANE_TEST,
+);
 const identityWorkerDatabaseUrl = requireLeasedDatabaseUrl(
   process.env.DATABASE_URL_PLATFORM_IDENTITY_WORKER_TEST,
 );
@@ -278,63 +288,175 @@ describe("Platform PostgreSQL foundation", () => {
     }
   });
 
-  it("fences shared outbox reads and updates by authenticated worker role and owner", async () => {
+  it("enforces FORCE RLS and the complete producer/owner matrix", async () => {
     const migrator = new Client({ connectionString: migratorDatabaseUrl });
-    const api = new Client({ connectionString: apiDatabaseUrl });
-    const admin = new Client({ connectionString: adminDatabaseUrl });
-    const modelGateway = new Client({ connectionString: modelGatewayDatabaseUrl });
     const identity = new Client({ connectionString: identityWorkerDatabaseUrl });
-    const worker = new Client({ connectionString: workerDatabaseUrl });
-    const identityEvent = randomUUID();
-    const commerceEvent = randomUUID();
-    const adminEvent = randomUUID();
-    const siteEvent = randomUUID();
-    const usageEvent = randomUUID();
-    const forbiddenEvent = randomUUID();
+    const assetDataPlane = new Client({ connectionString: assetDataPlaneDatabaseUrl });
+    const producers = [
+      { name: "api", url: apiDatabaseUrl, allowed: ["identity", "commerce", "asset"] },
+      { name: "admission", url: admissionDatabaseUrl, allowed: ["credit"] },
+      { name: "admin", url: adminDatabaseUrl,
+        allowed: ["admin-execution", "commerce", "site"] },
+      { name: "worker", url: workerDatabaseUrl,
+        allowed: ["commerce", "credit", "site", "asset", "admin-execution"] },
+    ] as const;
+    const allOwners = [
+      "identity", "commerce", "asset", "credit", "site", "admin-execution",
+    ] as const satisfies readonly OutboxOwner[];
+    const clients = producers.map((producer) => new Client({ connectionString: producer.url }));
+    const insertedByOwner = new Map<string, string[]>();
     try {
       await Promise.all([
-        migrator.connect(), api.connect(), admin.connect(), modelGateway.connect(),
-        identity.connect(), worker.connect(),
+        migrator.connect(), identity.connect(), assetDataPlane.connect(),
+        ...clients.map((client) => client.connect()),
       ]);
-      await migrator.query(
-        `INSERT INTO platform.outbox_event
-         (event_id,owner,event_type,aggregate_id,payload,payload_digest,correlation_id)
-         VALUES ($1,'commerce','commerce.test','commerce-test','{}'::jsonb,$2,'test')`,
-        [commerceEvent, "0".repeat(64)],
+      await expect(migrator.query<{
+        row_level_security: boolean;
+        force_row_level_security: boolean;
+        policy_count: string;
+        public_policy_count: string;
+      }>(`
+        SELECT relation.relrowsecurity AS row_level_security,
+               relation.relforcerowsecurity AS force_row_level_security,
+               count(policy.oid)::text AS policy_count,
+               count(policy.oid) FILTER (WHERE 0=ANY(policy.polroles))::text AS public_policy_count
+          FROM pg_class relation
+          JOIN pg_namespace namespace ON namespace.oid=relation.relnamespace
+          LEFT JOIN pg_policy policy ON policy.polrelid=relation.oid
+         WHERE namespace.nspname='platform' AND relation.relname='outbox_event'
+         GROUP BY relation.relrowsecurity,relation.relforcerowsecurity
+      `)).resolves.toMatchObject({ rows: [{
+        row_level_security: true,
+        force_row_level_security: true,
+        policy_count: "11",
+        public_policy_count: "0",
+      }] });
+      await expect(migrator.query<{
+        function_owner: string;
+        security_definer: boolean;
+        fixed_search_path: boolean;
+        public_can_execute: boolean;
+        data_plane_can_execute: boolean;
+      }>(`
+        SELECT function_owner.rolname AS function_owner,
+               function_row.prosecdef AS security_definer,
+               EXISTS (
+                 SELECT 1
+                   FROM unnest(COALESCE(function_row.proconfig,ARRAY[]::text[])) setting
+                  WHERE replace(setting,' ','')='search_path=pg_catalog,platform'
+               ) AS fixed_search_path,
+               EXISTS (
+                 SELECT 1 FROM aclexplode(COALESCE(
+                   function_row.proacl,acldefault('f',function_row.proowner)
+                 )) acl
+                 WHERE acl.grantee=0 AND acl.privilege_type='EXECUTE'
+               ) AS public_can_execute,
+               has_function_privilege(
+                 $1,
+                 function_row.oid,
+                 'EXECUTE'
+               ) AS data_plane_can_execute
+          FROM pg_proc function_row
+          JOIN pg_roles function_owner ON function_owner.oid=function_row.proowner
+         WHERE function_row.oid=to_regprocedure(
+           'platform.enqueue_asset_upload_completion_event(uuid,text,jsonb,character,text,text)'
+         )
+      `, [assetDataPlaneUser])).resolves.toMatchObject({ rows: [{
+        function_owner: migratorUser,
+        security_definer: true,
+        fixed_search_path: true,
+        public_can_execute: false,
+        data_plane_can_execute: true,
+      }] });
+
+      const assetCompletionEventId = randomUUID();
+      const assetSessionRef = `asset-session-${randomUUID()}`;
+      const assetPayload = {
+        kind: "asset_upload_completion_requested_v1",
+        siteRef: "site-component",
+        intentRef: `asset-intent-${randomUUID()}`,
+        sessionRef: assetSessionRef,
+        expectedVersion: "1",
+      };
+      await assetDataPlane.query(
+        `SELECT set_config('app.operation','asset.multipart.complete',false),
+                set_config('app.workload_kind','site_product',false),
+                set_config('app.actor_kind','user',false),
+                set_config('app.scopes','["asset:upload"]',false),
+                set_config('app.site_id',$1,false)`,
+        [assetPayload.siteRef],
       );
-      await api.query(
-        `INSERT INTO platform.outbox_event
-         (event_id,owner,event_type,aggregate_id,payload,payload_digest,correlation_id)
-         VALUES ($1,'identity','identity.test','identity-test','{}'::jsonb,$2,'test')`,
-        [identityEvent, "0".repeat(64)],
-      );
-      await admin.query(
-        `INSERT INTO platform.outbox_event
-         (event_id,owner,event_type,aggregate_id,payload,payload_digest,correlation_id)
-         VALUES ($1,'admin-control','admin.test','admin-test','{}'::jsonb,$2,'test')`,
-        [adminEvent, "0".repeat(64)],
-      );
-      await worker.query(
-        `INSERT INTO platform.outbox_event
-         (event_id,owner,event_type,aggregate_id,payload,payload_digest,correlation_id)
-         VALUES ($1,'site','site.test','site-test','{}'::jsonb,$2,'test')`,
-        [siteEvent, "0".repeat(64)],
-      );
-      await modelGateway.query(
-        `INSERT INTO platform.outbox_event
-         (event_id,owner,event_type,aggregate_id,payload,payload_digest,correlation_id)
-         VALUES ($1,'credit-usage-rating','credit.test','credit-test','{}'::jsonb,$2,'test')`,
-        [usageEvent, "0".repeat(64)],
-      );
+      await expect(assetDataPlane.query(
+        `SELECT platform.enqueue_asset_upload_completion_event(
+          $1::uuid,$2,$3::jsonb,$4::char(64),$5,$6
+        )`,
+        [assetCompletionEventId, assetSessionRef, JSON.stringify(assetPayload),
+          "a".repeat(64), "asset-component-correlation", "asset-component-causation"],
+      )).resolves.toMatchObject({ rowCount: 1 });
+      await expect(assetDataPlane.query(
+        `SELECT platform.enqueue_asset_upload_completion_event(
+          $1::uuid,$2,$3::jsonb,$4::char(64),$5,$6
+        )`,
+        [assetCompletionEventId, assetSessionRef, JSON.stringify(assetPayload),
+          "a".repeat(64), "asset-component-correlation", "asset-component-causation"],
+      )).rejects.toMatchObject({ code: "23505" });
+      await expect(assetDataPlane.query(
+        "SELECT event_id FROM platform.outbox_event LIMIT 1",
+      )).rejects.toMatchObject({ code: "42501" });
+      await expect(insertOutboxEvent(
+        assetDataPlane,
+        randomUUID(),
+        "asset",
+        "asset-data-plane-forged-direct",
+      )).rejects.toMatchObject({ code: "42501" });
+
+      for (const [index, producer] of producers.entries()) {
+        const client = clients[index];
+        if (client === undefined) throw new Error("COMPONENT_PRODUCER_CLIENT_MISSING");
+        const allowedOwners = new Set<string>(producer.allowed);
+        for (const owner of producer.allowed) {
+          const eventId = randomUUID();
+          const result = await insertOutboxEvent(client, eventId, owner, producer.name);
+          expect(result.rowCount).toBe(1);
+          insertedByOwner.set(owner, [...(insertedByOwner.get(owner) ?? []), eventId]);
+        }
+        for (const owner of allOwners.filter((candidate) => !allowedOwners.has(candidate))) {
+          await expect(insertOutboxEvent(client, randomUUID(), owner, `${producer.name}-forged`))
+            .rejects.toMatchObject({ code: "42501" });
+        }
+      }
 
       await expect(identity.query(
-        "SELECT owner FROM platform.outbox_event WHERE event_id=ANY($1::uuid[]) ORDER BY owner",
-        [[identityEvent, commerceEvent, adminEvent, siteEvent, usageEvent]],
+        "SELECT DISTINCT owner FROM platform.outbox_event ORDER BY owner",
       )).resolves.toMatchObject({ rows: [{ owner: "identity" }] });
+      const worker = clients[3];
+      if (worker === undefined) throw new Error("COMPONENT_WORKER_CLIENT_MISSING");
+      await expect(worker.query("SELECT DISTINCT owner FROM platform.outbox_event ORDER BY owner"))
+        .resolves.toMatchObject({ rows: [
+          { owner: "admin-execution" }, { owner: "asset" }, { owner: "commerce" },
+          { owner: "credit" }, { owner: "site" },
+        ] });
       await expect(worker.query(
-        "SELECT owner FROM platform.outbox_event WHERE event_id=ANY($1::uuid[]) ORDER BY owner",
-        [[identityEvent, commerceEvent, adminEvent, siteEvent, usageEvent]],
-      )).resolves.toMatchObject({ rows: [{ owner: "commerce" }, { owner: "site" }] });
+        "SELECT event_id FROM platform.outbox_event WHERE event_id=$1",
+        [assetCompletionEventId],
+      )).resolves.toMatchObject({ rows: [{ event_id: assetCompletionEventId }] });
+      await expect(migrator.query(
+        "SELECT event_id FROM platform.outbox_event WHERE event_id=$1",
+        [assetCompletionEventId],
+      )).resolves.toMatchObject({ rowCount: 0 });
+      await expect(migrator.query(
+        "UPDATE platform.outbox_event SET state='dead_letter' WHERE event_id=$1",
+        [assetCompletionEventId],
+      )).resolves.toMatchObject({ rowCount: 0 });
+      await expect(migrator.query(
+        "DELETE FROM platform.outbox_event WHERE event_id=$1",
+        [assetCompletionEventId],
+      )).resolves.toMatchObject({ rowCount: 0 });
+      const identityEvent = insertedByOwner.get("identity")?.[0];
+      const commerceEvent = insertedByOwner.get("commerce")?.[0];
+      if (identityEvent === undefined || commerceEvent === undefined) {
+        throw new Error("COMPONENT_OUTBOX_SEED_MISSING");
+      }
       await expect(identity.query(
         "UPDATE platform.outbox_event SET state='dead_letter' WHERE event_id=$1",
         [commerceEvent],
@@ -347,20 +469,88 @@ describe("Platform PostgreSQL foundation", () => {
         "UPDATE platform.outbox_event SET owner='commerce' WHERE event_id=$1",
         [identityEvent],
       )).rejects.toMatchObject({ code: "42501" });
-      await expect(modelGateway.query(
-        `INSERT INTO platform.outbox_event
-         (event_id,owner,event_type,aggregate_id,payload,payload_digest,correlation_id)
-         VALUES ($1,'identity','identity.test','identity-forbidden','{}'::jsonb,$2,'test')`,
-        [forbiddenEvent, "0".repeat(64)],
-      )).rejects.toMatchObject({ code: "42501" });
     } finally {
-      await migrator.query(
-        "DELETE FROM platform.outbox_event WHERE event_id=ANY($1::uuid[])",
-        [[identityEvent, commerceEvent, adminEvent, siteEvent, usageEvent, forbiddenEvent]],
-      ).catch(() => undefined);
+      await migrator.query("TRUNCATE TABLE platform.outbox_event").catch(() => undefined);
       await Promise.allSettled([
-        migrator.end(), api.end(), admin.end(), modelGateway.end(), identity.end(), worker.end(),
+        migrator.end(), identity.end(), assetDataPlane.end(),
+        ...clients.map((client) => client.end()),
       ]);
+    }
+  });
+
+  it("fails runtime startup for extra PUBLIC or same-name widened policies", async () => {
+    const migrator = new Client({ connectionString: migratorDatabaseUrl });
+    await migrator.connect();
+    try {
+      await migrator.query(
+        "CREATE POLICY outbox_public_probe ON platform.outbox_event FOR SELECT TO PUBLIC USING (FALSE)",
+      );
+      const invalidApi = createPlatformDatabaseClient(loadPlatformDatabaseConfig("api", {
+        DATABASE_URL_PLATFORM: apiDatabaseUrl,
+        PLATFORM_DATABASE_CREDENTIAL_CLASS: "api",
+        PLATFORM_DATABASE_API_ROLE: apiUser,
+        PLATFORM_DATABASE_MIGRATOR_ROLE: migratorUser,
+        PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
+      }));
+      try {
+        await expect(invalidApi.connect())
+          .rejects.toThrowError("PLATFORM_RUNTIME_DATABASE_ROLE_INVALID");
+      } finally {
+        await invalidApi.disconnect();
+      }
+      await migrator.query("DROP POLICY outbox_public_probe ON platform.outbox_event");
+
+      await migrator.query(
+        `ALTER POLICY outbox_identity_worker_select ON platform.outbox_event
+         USING (TRUE)`,
+      );
+      const invalidIdentity = createPlatformDatabaseClient(
+        loadPlatformDatabaseConfig("identity-worker", {
+          DATABASE_URL_PLATFORM: identityWorkerDatabaseUrl,
+          PLATFORM_DATABASE_CREDENTIAL_CLASS: "identity-worker",
+          PLATFORM_DATABASE_IDENTITY_WORKER_ROLE: identityWorkerUser,
+          PLATFORM_DATABASE_MIGRATOR_ROLE: migratorUser,
+          PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
+        }),
+      );
+      try {
+        await expect(invalidIdentity.connect())
+          .rejects.toThrowError("PLATFORM_RUNTIME_DATABASE_ROLE_INVALID");
+      } finally {
+        await invalidIdentity.disconnect();
+      }
+      await restorePolicy(migrator, "outbox_identity_worker_select", identityWorkerUser,
+        "USING", ["identity"]);
+
+      await migrator.query(
+        `ALTER POLICY outbox_admin_insert ON platform.outbox_event
+         WITH CHECK (TRUE)`,
+      );
+      const invalidModelGateway = createPostgresModelGatewayDatabase(
+        loadModelGatewayDatabaseConfig({
+          DATABASE_URL_PLATFORM: modelGatewayDatabaseUrl,
+          PLATFORM_DATABASE_CREDENTIAL_CLASS: "model-gateway",
+          PLATFORM_DATABASE_MODEL_GATEWAY_ROLE: modelGatewayUser,
+          PLATFORM_DATABASE_MIGRATOR_ROLE: migratorUser,
+          PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
+        }),
+      );
+      try {
+        await expect(invalidModelGateway.connect())
+          .rejects.toThrowError("MODEL_GATEWAY_DATABASE_ROLE_INVALID");
+      } finally {
+        await invalidModelGateway.disconnect();
+      }
+      await restorePolicy(migrator, "outbox_admin_insert", adminUser,
+        "WITH CHECK", ["admin-execution", "commerce", "site"]);
+    } finally {
+      await migrator.query("DROP POLICY IF EXISTS outbox_public_probe ON platform.outbox_event")
+        .catch(() => undefined);
+      await restorePolicy(migrator, "outbox_identity_worker_select", identityWorkerUser,
+        "USING", ["identity"]).catch(() => undefined);
+      await restorePolicy(migrator, "outbox_admin_insert", adminUser,
+        "WITH CHECK", ["admin-execution", "commerce", "site"]).catch(() => undefined);
+      await migrator.end();
     }
   });
 });
@@ -380,4 +570,43 @@ function requireLeasedDatabaseUrl(value: string | undefined): string {
 function requireRole(value: string | undefined): string {
   if (!value) throw new Error("PLATFORM_DATABASE_RUNTIME_ROLE_REQUIRED");
   return value;
+}
+
+function insertOutboxEvent(
+  client: Client,
+  eventId: string,
+  owner: OutboxOwner,
+  producer: string,
+): Promise<QueryResult> {
+  return client.query(
+    `INSERT INTO platform.outbox_event
+       (event_id,owner,event_type,aggregate_id,payload,payload_digest,
+        correlation_id,causation_id)
+     VALUES ($1::uuid,$2,$3,$4,'{}'::jsonb,$5,$6,$7)`,
+    [eventId, owner, OUTBOX_ROUTE_CATALOG[owner].eventTypes[0], `${producer}:${eventId}`,
+      "0".repeat(64), `${producer}:correlation`, `${producer}:causation`],
+  );
+}
+
+async function restorePolicy(
+  client: Client,
+  policyName: string,
+  roleName: string,
+  clause: "USING" | "WITH CHECK",
+  owners: readonly string[],
+): Promise<void> {
+  if (!/^[a-z_][a-z0-9_]{0,62}$/u.test(policyName) ||
+      !/^[a-z_][a-z0-9_]{0,62}$/u.test(roleName) || owners.length < 1) {
+    throw new Error("COMPONENT_POLICY_RESTORE_INVALID");
+  }
+  const ownerLiterals = owners.map(sqlLiteral).join(",");
+  await client.query(
+    `ALTER POLICY ${policyName} ON platform.outbox_event ${clause} (` +
+      `current_user=${sqlLiteral(roleName)} AND ` +
+      `owner=ANY(ARRAY[${ownerLiterals}]::text[]))`,
+  );
+}
+
+function sqlLiteral(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
 }

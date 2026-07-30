@@ -25,7 +25,9 @@ evidence, the encrypted terminal response, a local immutable usage fact and term
 AAD binds key revision, Site, invocation and request digest. The Gateway role cannot read the authorization projection directly and
 receives only exact invocation/frame/usage/outbox and prepare/finalize Credit privileges.
 The shared outbox enables PostgreSQL RLS: the Gateway can insert only owner `credit-usage-rating`, cannot read or update generic
-outbox rows, and fails startup unless the exact role-bound insert policy is active.
+outbox rows, and fails startup unless FORCE RLS and the complete canonical policy inventory are active. `credit-usage-rating` is
+currently producer-only: no deployed worker claims or completes it until the rating-consumer business owner and effect contract
+are explicitly decided; the aggregate worker allowlist intentionally excludes it.
 
 Dispatch is a durable queued-to-owner-fenced state machine with leases, heartbeats, bounded active/queued capacity and a recovery
 scanner. Stream readers tail committed frames through one process-level PostgreSQL `LISTEN` connection; transactional `NOTIFY`

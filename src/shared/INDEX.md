@@ -17,6 +17,10 @@ and active process composition. Claim APIs require that consumer's complete cano
 callers cannot invent either axis. Enqueue rejects an unknown owner/event pair, and PostgreSQL repeats the exact route constraint so
 direct SQL cannot bypass the TypeScript boundary. Identity's two effect routes are active only through the independent
 `platform-identity-worker` entrypoint; local Identity security facts never enter the outbox catalog.
+The shared outbox uses FORCE RLS with one exact database-role and fixed-owner predicate per producer/consumer operation. Runtime
+startup compares the complete PostgreSQL policy catalog—including PUBLIC roles, commands, role OIDs, `USING`, and `WITH CHECK`—to
+the migrator-owned immutable foundation snapshot. The Asset Data Plane receives no generic outbox privilege; its fixed
+SECURITY DEFINER completion command runs as the migrator and is admitted only by the dedicated `asset` INSERT policy.
 The shared HMAC HTTPS transport provides bounded signed requests, signed acknowledgements and a stable event-id idempotency key;
 owner modules wrap it in typed ports and retain ownership of payload validation and durable outcome projection. A successful HTTP
 response whose acknowledgement stream resets or times out is an outcome-unknown retry, while a complete invalid acknowledgement

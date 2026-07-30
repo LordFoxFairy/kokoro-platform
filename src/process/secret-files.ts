@@ -136,11 +136,12 @@ async function readTrustedFile(
     if (!contained(trustRoot.rootPath, requestedPath) || requestedPath === trustRoot.rootPath) {
       throw new Error(invalidCode);
     }
-    const finalPath = await resolveInsideTrustRoot({
+    const resolvedPath = await resolveInsideTrustRoot({
       canonicalRoot: trustRoot.canonicalRoot,
       segments: splitRelative(relative(trustRoot.rootPath, requestedPath), invalidCode),
       invalidCode,
     });
+    const finalPath = resolvedPath.finalPath;
     const before = await lstat(finalPath, { bigint: true });
     if (!before.isFile() || before.isSymbolicLink()) throw new Error(invalidCode);
     const validatingFileSystem: BoundedFileSystem = Object.freeze({
@@ -172,6 +173,11 @@ async function readTrustedFile(
       privateMaterial ? "trusted-private" : false,
       validatingFileSystem,
     );
+    const finalRealPath = await realpath(requestedPath);
+    if (finalRealPath !== finalPath || !contained(trustRoot.canonicalRoot, finalRealPath)) {
+      throw new Error(invalidCode);
+    }
+    await assertTraversalStable(resolvedPath.snapshots, invalidCode);
     await assertTrustRootStable(trustRoot, invalidCode);
     return value;
   } catch {
@@ -203,11 +209,15 @@ async function resolveInsideTrustRoot(input: Readonly<{
   canonicalRoot: string;
   segments: string[];
   invalidCode: string;
-}>): Promise<string> {
+}>): Promise<Readonly<{
+  finalPath: string;
+  snapshots: readonly Readonly<{ path: string; metadata: BoundedFileMetadata }>[];
+}>> {
   let current = input.canonicalRoot;
   let pending = [...input.segments];
   let symlinkHops = 0;
   let resolvedSegments = 0;
+  const snapshots: Array<Readonly<{ path: string; metadata: BoundedFileMetadata }>> = [];
   while (pending.length > 0) {
     if (++resolvedSegments > MAXIMUM_RESOLVED_SEGMENTS) throw new Error(input.invalidCode);
     const [segment, ...remaining] = pending;
@@ -216,14 +226,21 @@ async function resolveInsideTrustRoot(input: Readonly<{
     }
     const candidate = resolve(current, segment);
     if (!contained(input.canonicalRoot, candidate)) throw new Error(input.invalidCode);
-    const metadata = await lstat(candidate);
+    const metadata = await lstat(candidate, { bigint: true });
     if (!metadata.isSymbolicLink()) {
+      snapshots.push(Object.freeze({ path: candidate, metadata }));
       current = candidate;
       pending = remaining;
       continue;
     }
     if (++symlinkHops > MAXIMUM_SYMLINK_HOPS) throw new Error(input.invalidCode);
-    const expanded = resolve(dirname(candidate), await readlink(candidate));
+    const target = await readlink(candidate);
+    const linkAfterRead = await lstat(candidate, { bigint: true });
+    if (!linkAfterRead.isSymbolicLink() || !sameSnapshot(metadata, linkAfterRead)) {
+      throw new Error(input.invalidCode);
+    }
+    snapshots.push(Object.freeze({ path: candidate, metadata: linkAfterRead }));
+    const expanded = resolve(dirname(candidate), target);
     if (!contained(input.canonicalRoot, expanded)) throw new Error(input.invalidCode);
     pending = [
       ...splitRelative(relative(input.canonicalRoot, expanded), input.invalidCode),
@@ -231,7 +248,17 @@ async function resolveInsideTrustRoot(input: Readonly<{
     ];
     current = input.canonicalRoot;
   }
-  return current;
+  return Object.freeze({ finalPath: current, snapshots: Object.freeze(snapshots) });
+}
+
+async function assertTraversalStable(
+  snapshots: readonly Readonly<{ path: string; metadata: BoundedFileMetadata }>[],
+  invalidCode: string,
+): Promise<void> {
+  for (const snapshot of snapshots) {
+    const current = await lstat(snapshot.path, { bigint: true });
+    if (!sameSnapshot(snapshot.metadata, current)) throw new Error(invalidCode);
+  }
 }
 
 function splitRelative(value: string, invalidCode: string): string[] {
