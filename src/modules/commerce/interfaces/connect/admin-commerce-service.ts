@@ -9,6 +9,10 @@ import {
   CodeBatchSummarySchema,
   CodeDeliveryState,
   CodeExportReceiptSchema,
+  CreditBucketClass,
+  CreditProgramRevisionSummarySchema,
+  CreditScopePolicySchema,
+  EntitlementTemplateRevisionSummarySchema,
   FulfillmentOutputDraftSchema,
   FulfillmentOutputKind,
   OfferSummarySchema,
@@ -17,6 +21,7 @@ import {
   RedemptionProgramSummarySchema,
   type CodeBatchActionEffect,
   type FulfillmentOutputDraft,
+  type PublishCreditProgramRevisionEffect,
 } from "../../../../interfaces/connect/generated-admin-commerce/kokoro/platform/commerce/v1/admin_commerce_pb.js";
 import {
   CommandDigestAlgorithmV2,
@@ -28,6 +33,8 @@ import {
   activateCodeBatchRequestDigest,
   approveCodeBatchRequestDigest,
   issueCodeBatchRequestDigest,
+  publishCreditProgramRevisionRequestDigest,
+  publishEntitlementTemplateRevisionRequestDigest,
   publishOfferRequestDigest,
   publishRedemptionProgramRequestDigest,
   revokeCodeBatchRequestDigest,
@@ -46,6 +53,8 @@ import type {
   CodeBatchRecord,
   CommerceAdministrationReader,
   CommerceOfferRecord,
+  CreditProgramRevisionRecord,
+  EntitlementTemplateRevisionRecord,
   RedemptionProgramRecord,
 } from "../../infrastructure/postgres/commerce-administration-reader.js";
 
@@ -60,6 +69,103 @@ export function createAdminCommerceConnectService(input: Readonly<{
 }>): AdminCommerceConnectService {
   const now = input.clock ?? (() => new Date());
   return {
+    async publishCreditProgramRevision(request, transport) {
+      const context = commandContext(request.context);
+      const effect = required(request.effect, "COMMERCE_CREDIT_PROGRAM_EFFECT_REQUIRED");
+      const verified = await command(input.resolver, context, transport, "commerce.credit-program.publish",
+        request.siteId, [effect.creditProgramRevisionRef, effect.programRef]);
+      verifyDigest(context, publishCreditProgramRevisionRequestDigest(
+        context, request.siteId, effect, verified.axes));
+      const scopePolicy = required(effect.scopePolicy, "COMMERCE_CREDIT_SCOPE_POLICY_REQUIRED");
+      const canonicalScopePolicy = scopePolicyFromWire(scopePolicy);
+      const uxBucketClass = bucketFromWire(effect.uxBucketClass);
+      const result = await input.owner.publishCreditProgramRevision({ context: verified.context, ...identity(context),
+        requestDigest: context.command!.requestDigest, siteId: request.siteId,
+        creditProgramRevisionRef: effect.creditProgramRevisionRef, programRef: effect.programRef,
+        revision: effect.revision.toString(), uxBucketClass,
+        unit: effect.unit, amount: effect.amount, burnPriority: effect.burnPriority,
+        scopePolicy: canonicalScopePolicy,
+        liabilityMerchantAccountRef: effect.liabilityMerchantAccountRef,
+        calendarZone: effect.calendarZone ?? null, windowAnchor: effect.windowAnchor ?? null,
+        expiresAfterSeconds: effect.expiresAfterSeconds?.toString() ?? null });
+      return { receipt: receipt(context, "commerce.credit-program.publish", result.publishedAt),
+        creditProgramRevision: creditProgramMessage({ siteId: request.siteId,
+          creditProgramRevisionRef: effect.creditProgramRevisionRef, programRef: effect.programRef,
+          revision: effect.revision, uxBucketClass,
+          unit: effect.unit, amount: effect.amount, burnPriority: effect.burnPriority,
+          scopePolicy: { version: 1, ...canonicalScopePolicy },
+          liabilityMerchantAccountRef: effect.liabilityMerchantAccountRef,
+          windowKind: uxBucketClass === "permanent" ? "none" : uxBucketClass,
+          calendarZone: effect.calendarZone ?? null, windowAnchor: effect.windowAnchor ?? null,
+          expiresAfterSeconds: effect.expiresAfterSeconds ?? null,
+          revisionDigest: result.revisionDigest, publishedAt: result.publishedAt }) };
+    },
+
+    async listCreditProgramRevisions(request, transport) {
+      const resolved = await pageInput(input, queryContext(request.context), transport,
+        "commerce.credit-program.read", request.siteId, request.pageToken, request.pageSize,
+        "credit-program-revisions", now);
+      const rows = await input.reader.listCreditProgramRevisions(resolved.permit, { siteId: request.siteId,
+        afterRef: resolved.after, watermark: resolved.watermark, limit: resolved.limit + 1 });
+      return pageResult(rows, resolved, input.cursors, "credit-program-revisions",
+        (row) => row.creditProgramRevisionRef, creditProgramMessage,
+        "creditProgramRevisions");
+    },
+
+    async getCreditProgramRevision(request, transport) {
+      const permit = await query(input.resolver, queryContext(request.context), transport,
+        "commerce.credit-program.read", request.siteId,
+        [request.siteId, request.creditProgramRevisionRef]);
+      const row = await input.reader.getCreditProgramRevision(
+        permit, request.siteId, request.creditProgramRevisionRef);
+      if (row === null) throw new Error("COMMERCE_CREDIT_PROGRAM_NOT_FOUND");
+      return { creditProgramRevision: creditProgramMessage(row) };
+    },
+
+    async publishEntitlementTemplateRevision(request, transport) {
+      const context = commandContext(request.context);
+      const effect = required(request.effect, "COMMERCE_ENTITLEMENT_TEMPLATE_EFFECT_REQUIRED");
+      const verified = await command(input.resolver, context, transport,
+        "commerce.entitlement-template.publish", request.siteId,
+        [effect.entitlementTemplateRevisionRef, effect.templateRef]);
+      verifyDigest(context, publishEntitlementTemplateRevisionRequestDigest(
+        context, request.siteId, effect, verified.axes));
+      const result = await input.owner.publishEntitlementTemplateRevision({ context: verified.context,
+        ...identity(context), requestDigest: context.command!.requestDigest, siteId: request.siteId,
+        entitlementTemplateRevisionRef: effect.entitlementTemplateRevisionRef,
+        templateRef: effect.templateRef, revision: effect.revision.toString(),
+        capabilityKey: effect.capabilityKey, safeLabel: effect.safeLabel,
+        expiresAfterSeconds: effect.expiresAfterSeconds?.toString() ?? null });
+      return { receipt: receipt(context, "commerce.entitlement-template.publish", result.publishedAt),
+        entitlementTemplateRevision: entitlementTemplateMessage({ siteId: request.siteId,
+          entitlementTemplateRevisionRef: effect.entitlementTemplateRevisionRef,
+          templateRef: effect.templateRef, revision: effect.revision,
+          capabilityKey: effect.capabilityKey, safeLabel: effect.safeLabel,
+          expiresAfterSeconds: effect.expiresAfterSeconds ?? null,
+          revisionDigest: result.revisionDigest, publishedAt: result.publishedAt }) };
+    },
+
+    async listEntitlementTemplateRevisions(request, transport) {
+      const resolved = await pageInput(input, queryContext(request.context), transport,
+        "commerce.entitlement-template.read", request.siteId, request.pageToken, request.pageSize,
+        "entitlement-template-revisions", now);
+      const rows = await input.reader.listEntitlementTemplateRevisions(resolved.permit, { siteId: request.siteId,
+        afterRef: resolved.after, watermark: resolved.watermark, limit: resolved.limit + 1 });
+      return pageResult(rows, resolved, input.cursors, "entitlement-template-revisions",
+        (row) => row.entitlementTemplateRevisionRef, entitlementTemplateMessage,
+        "entitlementTemplateRevisions");
+    },
+
+    async getEntitlementTemplateRevision(request, transport) {
+      const permit = await query(input.resolver, queryContext(request.context), transport,
+        "commerce.entitlement-template.read", request.siteId,
+        [request.siteId, request.entitlementTemplateRevisionRef]);
+      const row = await input.reader.getEntitlementTemplateRevision(
+        permit, request.siteId, request.entitlementTemplateRevisionRef);
+      if (row === null) throw new Error("COMMERCE_ENTITLEMENT_TEMPLATE_NOT_FOUND");
+      return { entitlementTemplateRevision: entitlementTemplateMessage(row) };
+    },
+
     async publishOffer(request, transport) {
       const context = commandContext(request.context); const effect = required(request.effect, "COMMERCE_OFFER_EFFECT_REQUIRED");
       const verified = await command(input.resolver, context, transport, "commerce.offer.publish", request.siteId,
@@ -263,6 +369,28 @@ function pageResult<Row, Message>(rows: readonly Row[], page: ResolvedPage, curs
         binding: page.binding }) } : {}) };
 }
 
+function creditProgramMessage(row: CreditProgramRevisionRecord) {
+  return create(CreditProgramRevisionSummarySchema, { siteId: row.siteId,
+    creditProgramRevisionRef: row.creditProgramRevisionRef, programRef: row.programRef,
+    revision: row.revision, uxBucketClass: bucketToWire(row.uxBucketClass), unit: row.unit,
+    amount: row.amount, burnPriority: row.burnPriority,
+    scopePolicy: create(CreditScopePolicySchema, { surfaceRefs: [...row.scopePolicy.surfaceRefs],
+      capabilityKeys: [...row.scopePolicy.capabilityKeys], agentRefs: [...row.scopePolicy.agentRefs],
+      allowUnattributedAgent: row.scopePolicy.allowUnattributedAgent }),
+    liabilityMerchantAccountRef: row.liabilityMerchantAccountRef,
+    ...(row.calendarZone === null ? {} : { calendarZone: row.calendarZone }),
+    ...(row.windowAnchor === null ? {} : { windowAnchor: row.windowAnchor }),
+    ...(row.expiresAfterSeconds === null ? {} : { expiresAfterSeconds: row.expiresAfterSeconds }),
+    revisionDigest: row.revisionDigest, publishedAt: timestampFromDate(new Date(row.publishedAt)) });
+}
+function entitlementTemplateMessage(row: EntitlementTemplateRevisionRecord) {
+  return create(EntitlementTemplateRevisionSummarySchema, { siteId: row.siteId,
+    entitlementTemplateRevisionRef: row.entitlementTemplateRevisionRef,
+    templateRef: row.templateRef, revision: row.revision, capabilityKey: row.capabilityKey,
+    safeLabel: row.safeLabel,
+    ...(row.expiresAfterSeconds === null ? {} : { expiresAfterSeconds: row.expiresAfterSeconds }),
+    revisionDigest: row.revisionDigest, publishedAt: timestampFromDate(new Date(row.publishedAt)) });
+}
 function offerMessage(row: CommerceOfferRecord) {
   return create(OfferSummarySchema, { siteId: row.siteId, productRef: row.productRef,
     productKind: productKindToWire(row.productKind), productVersionRef: row.productVersionRef,
@@ -304,6 +432,22 @@ function productKindFromWire(value: ProductKind): CommerceOfferRecord["productKi
   if (value === ProductKind.FREE) return "free"; if (value === ProductKind.CREDIT_PACK) return "credit_pack";
   if (value === ProductKind.SUBSCRIPTION) return "subscription"; if (value === ProductKind.BUNDLE) return "bundle";
   throw new Error("COMMERCE_PRODUCT_KIND_INVALID");
+}
+function bucketFromWire(value: CreditBucketClass): CreditProgramRevisionRecord["uxBucketClass"] {
+  if (value === CreditBucketClass.DAILY) return "daily";
+  if (value === CreditBucketClass.PERIOD) return "period";
+  if (value === CreditBucketClass.PERMANENT) return "permanent";
+  throw new Error("COMMERCE_CREDIT_BUCKET_INVALID");
+}
+function bucketToWire(value: CreditProgramRevisionRecord["uxBucketClass"]): CreditBucketClass {
+  return { daily: CreditBucketClass.DAILY, period: CreditBucketClass.PERIOD,
+    permanent: CreditBucketClass.PERMANENT }[value];
+}
+function scopePolicyFromWire(value: NonNullable<PublishCreditProgramRevisionEffect["scopePolicy"]>) {
+  return Object.freeze({ surfaceRefs: Object.freeze([...value.surfaceRefs].sort()),
+    capabilityKeys: Object.freeze([...value.capabilityKeys].sort()),
+    agentRefs: Object.freeze([...value.agentRefs].sort()),
+    allowUnattributedAgent: value.allowUnattributedAgent });
 }
 function productKindToWire(value: CommerceOfferRecord["productKind"]): ProductKind {
   return { free: ProductKind.FREE, credit_pack: ProductKind.CREDIT_PACK,

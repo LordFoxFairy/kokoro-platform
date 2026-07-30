@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { CommerceAdministrationService } from "../../src/modules/commerce/application/services/commerce-administration.js";
 import type { CommerceAdministrationRepository } from "../../src/modules/commerce/application/contracts/commerce-administration-repository.js";
 import { issuePlatformTransaction, revokePlatformTransaction } from "../../src/shared/unit-of-work/platform-transaction.js";
@@ -6,6 +6,78 @@ import type { VerifiedRequestSecurityContext } from "../../src/shared/security-c
 import { PostgresCommerceAdministrationRepository } from "../../src/modules/commerce/infrastructure/postgres/commerce-administration-repository.js";
 
 describe("CommerceAdministrationService", () => {
+  it("publishes an immutable Site-scoped CreditProgram revision before an offer references it", async () => {
+    const lease = issuePlatformTransaction({ query: async () => [], execute: async () => 0 });
+    const persisted: Parameters<CommerceAdministrationRepository["publishCreditProgramRevision"]>[1][] = [];
+    const service = new CommerceAdministrationService({
+      unitOfWork: { execute: async (_fence, work) => work(lease.transaction) },
+      repository: repositoryStub({ publishCreditProgramRevision: async (_transaction, input) => {
+        persisted.push(input);
+        return { kind: "committed", occurredAt: "2026-07-30T01:00:00.000Z" };
+      } }),
+      codes: { issueCode: () => { throw new Error("MUST_NOT_ISSUE"); } },
+    });
+    try {
+      await expect(service.publishCreditProgramRevision({
+        context: context("operator-maker", "commerce.credit-program.publish"), siteId: "site-1",
+        commandId: "00000000-0000-7000-8000-000000000220", idempotencyKey: "credit-program-1",
+        creditProgramRevisionRef: "credits-program-v1", programRef: "credits-program", revision: "1",
+        uxBucketClass: "permanent", unit: "kokoro-credit", amount: "1000", burnPriority: 1000,
+        scopePolicy: { surfaceRefs: ["chat"], capabilityKeys: ["model.chat"], agentRefs: [],
+          allowUnattributedAgent: true },
+        liabilityMerchantAccountRef: "merchant:main", calendarZone: null, windowAnchor: null,
+        expiresAfterSeconds: null,
+      })).resolves.toMatchObject({ kind: "committed", creditProgramRevisionRef: "credits-program-v1" });
+      expect(persisted[0]).toMatchObject({ windowKind: "none", revisionDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        scopePolicy: { version: 1, surfaceRefs: ["chat"], capabilityKeys: ["model.chat"] } });
+    } finally { revokePlatformTransaction(lease); }
+  });
+
+  it("rejects incomplete recurring CreditProgram window facts before opening a transaction", async () => {
+    const lease = issuePlatformTransaction({ query: async () => [], execute: async () => 0 });
+    const publish = vi.fn();
+    const service = new CommerceAdministrationService({
+      unitOfWork: { execute: async (_fence, work) => work(lease.transaction) },
+      repository: repositoryStub({ publishCreditProgramRevision: publish }),
+      codes: { issueCode: () => { throw new Error("MUST_NOT_ISSUE"); } },
+    });
+    try {
+      await expect(service.publishCreditProgramRevision({
+        context: context("operator-maker", "commerce.credit-program.publish"), siteId: "site-1",
+        commandId: "00000000-0000-7000-8000-000000000221", idempotencyKey: "credit-program-2",
+        creditProgramRevisionRef: "daily-program-v1", programRef: "daily-program", revision: "1",
+        uxBucketClass: "daily", unit: "kokoro-credit", amount: "25", burnPriority: 100,
+        scopePolicy: { surfaceRefs: ["chat"], capabilityKeys: ["model.chat"], agentRefs: [],
+          allowUnattributedAgent: true },
+        liabilityMerchantAccountRef: "merchant:main", calendarZone: null,
+        windowAnchor: "00:00", expiresAfterSeconds: "86400",
+      })).rejects.toThrow("COMMERCE_CREDIT_WINDOW_INVALID");
+      expect(publish).not.toHaveBeenCalled();
+    } finally { revokePlatformTransaction(lease); }
+  });
+
+  it("publishes a typed EntitlementTemplate revision as a separate immutable prerequisite", async () => {
+    const lease = issuePlatformTransaction({ query: async () => [], execute: async () => 0 });
+    const persisted: Parameters<CommerceAdministrationRepository["publishEntitlementTemplateRevision"]>[1][] = [];
+    const service = new CommerceAdministrationService({
+      unitOfWork: { execute: async (_fence, work) => work(lease.transaction) },
+      repository: repositoryStub({ publishEntitlementTemplateRevision: async (_transaction, input) => {
+        persisted.push(input);
+        return { kind: "committed", occurredAt: "2026-07-30T01:00:00.000Z" };
+      } }),
+      codes: { issueCode: () => { throw new Error("MUST_NOT_ISSUE"); } },
+    });
+    try {
+      await expect(service.publishEntitlementTemplateRevision({
+        context: context("operator-maker", "commerce.entitlement-template.publish"), siteId: "site-1",
+        commandId: "00000000-0000-7000-8000-000000000222", idempotencyKey: "entitlement-template-1",
+        entitlementTemplateRevisionRef: "premium-chat-v1", templateRef: "premium-chat", revision: "1",
+        capabilityKey: "chat.premium", safeLabel: "Premium chat", expiresAfterSeconds: null,
+      })).resolves.toMatchObject({ kind: "committed", entitlementTemplateRevisionRef: "premium-chat-v1" });
+      expect(persisted[0]?.revisionDigest).toMatch(/^[a-f0-9]{64}$/u);
+    } finally { revokePlatformTransaction(lease); }
+  });
+
   it("publishes the complete immutable offer graph through one Commerce owner transaction", async () => {
     const lease = issuePlatformTransaction({ query: async () => [], execute: async () => 0 });
     const persisted: Parameters<CommerceAdministrationRepository["publishOffer"]>[1][] = [];
@@ -99,6 +171,38 @@ describe("CommerceAdministrationService", () => {
     } finally { revokePlatformTransaction(lease); }
   });
 
+  it("persists a CreditProgram prerequisite with command receipt and audit in one transaction", async () => {
+    const statements: string[] = [];
+    const identity = { commandId: "00000000-0000-7000-8000-000000000223",
+      environment: "production", region: "us-east-1", callerIdentity: "admin-1:operator-maker",
+      operation: "commerce.credit-program.publish", idempotencyKey: "credit-program-3",
+      requestDigest: "a".repeat(64) };
+    const lease = issuePlatformTransaction({
+      query: async (statement) => {
+        statements.push(statement);
+        if (statement.includes("FROM platform.command_receipt")) return [{ ...identity, state: "pending",
+          result: null, resultDigest: null }] as never;
+        return [{ occurredAt: new Date("2026-07-30T01:00:00.000Z") }] as never;
+      },
+      execute: async (statement) => { statements.push(statement); return 1; },
+    });
+    try {
+      await expect(new PostgresCommerceAdministrationRepository().publishCreditProgramRevision(lease.transaction, {
+        siteId: "site-1", subjectId: "operator-maker", subjectGeneration: "1", command: identity,
+        creditProgramRevisionRef: "credits-program-v1", programRef: "credits-program", revision: "1",
+        uxBucketClass: "permanent", unit: "kokoro-credit", amount: "1000", burnPriority: 1000,
+        scopePolicy: { version: 1, surfaceRefs: ["chat"], capabilityKeys: ["model.chat"],
+          agentRefs: [], allowUnattributedAgent: true }, liabilityMerchantAccountRef: "merchant:main",
+        windowKind: "none", calendarZone: null, windowAnchor: null, expiresAfterSeconds: null,
+        revisionDigest: "b".repeat(64),
+      })).resolves.toMatchObject({ kind: "committed", occurredAt: "2026-07-30T01:00:00.000Z" });
+      expect(statements.some((statement) => statement.includes(
+        "INSERT INTO platform.commerce_credit_program_revision"))).toBe(true);
+      expect(statements.some((statement) => statement.includes("INSERT INTO platform.commerce_audit_entry"))).toBe(true);
+      expect(statements.some((statement) => statement.includes("UPDATE platform.command_receipt"))).toBe(true);
+    } finally { revokePlatformTransaction(lease); }
+  });
+
   it.each([
     ["abandonBatch", "commerce.code-batch.abandon"],
     ["suspendBatch", "commerce.code-batch.suspend"],
@@ -120,6 +224,8 @@ describe("CommerceAdministrationService", () => {
 
 function repositoryStub(overrides: Partial<CommerceAdministrationRepository> = {}): CommerceAdministrationRepository {
   return {
+    publishCreditProgramRevision: async () => ({ kind: "committed", occurredAt: "2026-07-29T01:00:00.000Z" }),
+    publishEntitlementTemplateRevision: async () => ({ kind: "committed", occurredAt: "2026-07-29T01:00:00.000Z" }),
     publishOffer: async () => ({ kind: "committed", occurredAt: "2026-07-29T01:00:00.000Z" }),
     publishProgram: async () => ({ kind: "committed", occurredAt: "2026-07-29T01:00:00.000Z" }), issueBatch: async () => ({ kind: "committed", occurredAt: "2026-07-29T01:00:00.000Z" }),
     approveBatch: async () => "committed", activateBatch: async () => "committed",

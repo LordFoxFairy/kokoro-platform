@@ -28,7 +28,31 @@ export type CodeBatchRecord = Readonly<{
     exportedToOperatorRef: string; codeCount: number; exportedAt: string }> | null;
 }>;
 
+export type CreditProgramRevisionRecord = Readonly<{
+  siteId: string; creditProgramRevisionRef: string; programRef: string; revision: bigint;
+  uxBucketClass: "daily" | "period" | "permanent"; unit: string; amount: string;
+  burnPriority: number; scopePolicy: Readonly<{ version: 1; surfaceRefs: readonly string[];
+    capabilityKeys: readonly string[]; agentRefs: readonly string[]; allowUnattributedAgent: boolean }>;
+  liabilityMerchantAccountRef: string; windowKind: "none" | "daily" | "period";
+  calendarZone: string | null; windowAnchor: string | null; expiresAfterSeconds: bigint | null;
+  revisionDigest: string; publishedAt: string;
+}>;
+
+export type EntitlementTemplateRevisionRecord = Readonly<{
+  siteId: string; entitlementTemplateRevisionRef: string; templateRef: string; revision: bigint;
+  capabilityKey: string; safeLabel: string; expiresAfterSeconds: bigint | null;
+  revisionDigest: string; publishedAt: string;
+}>;
+
 export interface CommerceAdministrationReader {
+  getCreditProgramRevision(permit: AdminQueryPermit, siteId: string,
+    revisionRef: string): Promise<CreditProgramRevisionRecord | null>;
+  listCreditProgramRevisions(permit: AdminQueryPermit,
+    input: Page): Promise<readonly CreditProgramRevisionRecord[]>;
+  getEntitlementTemplateRevision(permit: AdminQueryPermit, siteId: string,
+    revisionRef: string): Promise<EntitlementTemplateRevisionRecord | null>;
+  listEntitlementTemplateRevisions(permit: AdminQueryPermit,
+    input: Page): Promise<readonly EntitlementTemplateRevisionRecord[]>;
   getOffer(permit: AdminQueryPermit, siteId: string, productVersionRef: string): Promise<CommerceOfferRecord | null>;
   listOffers(permit: AdminQueryPermit, input: Page): Promise<readonly CommerceOfferRecord[]>;
   getRedemptionProgram(permit: AdminQueryPermit, siteId: string, revisionRef: string): Promise<RedemptionProgramRecord | null>;
@@ -56,9 +80,69 @@ interface BatchRow extends Record<string, unknown> {
   activatedAt: Date | string | null; exportCommandId: string | null;
   exportedToOperatorRef: string | null; exportCodeCount: number | null; exportedAt: Date | string | null;
 }
+interface CreditProgramRow extends Record<string, unknown> {
+  siteId: string; creditProgramRevisionRef: string; programRef: string; revision: bigint | string;
+  uxBucketClass: string; unit: string; amount: string; burnPriority: number; scopePolicy: unknown;
+  liabilityMerchantAccountRef: string; windowKind: string; calendarZone: string | null;
+  windowAnchor: string | null; expiresAfterSeconds: bigint | string | null;
+  revisionDigest: string; publishedAt: Date | string;
+}
+interface EntitlementTemplateRow extends Record<string, unknown> {
+  siteId: string; entitlementTemplateRevisionRef: string; templateRef: string; revision: bigint | string;
+  capabilityKey: string; safeLabel: string; expiresAfterSeconds: bigint | string | null;
+  revisionDigest: string; publishedAt: Date | string;
+}
 
 export class PostgresCommerceAdministrationReader implements CommerceAdministrationReader {
   constructor(private readonly host: AdminQueryTransactionHost) {}
+
+  getCreditProgramRevision(permit: AdminQueryPermit, siteId: string, revisionRef: string) {
+    requireSite(permit, siteId);
+    return this.host.adminQueryTransaction(permit, async (ownerTransaction) => {
+      const rows = await resolvePlatformTransaction(ownerTransaction).query<CreditProgramRow>(
+        `${creditProgramProjection()} WHERE revision.site_ref=$1 AND revision.credit_program_revision_ref=$2 LIMIT 1`,
+        [siteId, revisionRef],
+      );
+      return rows[0] === undefined ? null : creditProgram(rows[0]);
+    });
+  }
+
+  listCreditProgramRevisions(permit: AdminQueryPermit, input: Page) {
+    requireSite(permit, input.siteId);
+    return this.host.adminQueryTransaction(permit, async (ownerTransaction) => {
+      const rows = await resolvePlatformTransaction(ownerTransaction).query<CreditProgramRow>(
+        `${creditProgramProjection()} WHERE revision.site_ref=$1 AND revision.credit_program_revision_ref>$2
+           AND revision.published_at<=$3::timestamptz
+         ORDER BY revision.credit_program_revision_ref ASC LIMIT $4`,
+        [input.siteId, input.afterRef ?? "", input.watermark, input.limit],
+      );
+      return Object.freeze(rows.map(creditProgram));
+    });
+  }
+
+  getEntitlementTemplateRevision(permit: AdminQueryPermit, siteId: string, revisionRef: string) {
+    requireSite(permit, siteId);
+    return this.host.adminQueryTransaction(permit, async (ownerTransaction) => {
+      const rows = await resolvePlatformTransaction(ownerTransaction).query<EntitlementTemplateRow>(
+        `${entitlementTemplateProjection()} WHERE revision.site_ref=$1 AND revision.entitlement_template_revision_ref=$2 LIMIT 1`,
+        [siteId, revisionRef],
+      );
+      return rows[0] === undefined ? null : entitlementTemplate(rows[0]);
+    });
+  }
+
+  listEntitlementTemplateRevisions(permit: AdminQueryPermit, input: Page) {
+    requireSite(permit, input.siteId);
+    return this.host.adminQueryTransaction(permit, async (ownerTransaction) => {
+      const rows = await resolvePlatformTransaction(ownerTransaction).query<EntitlementTemplateRow>(
+        `${entitlementTemplateProjection()} WHERE revision.site_ref=$1 AND revision.entitlement_template_revision_ref>$2
+           AND revision.published_at<=$3::timestamptz
+         ORDER BY revision.entitlement_template_revision_ref ASC LIMIT $4`,
+        [input.siteId, input.afterRef ?? "", input.watermark, input.limit],
+      );
+      return Object.freeze(rows.map(entitlementTemplate));
+    });
+  }
 
   getOffer(permit: AdminQueryPermit, siteId: string, productVersionRef: string) {
     requireSite(permit, siteId);
@@ -132,6 +216,27 @@ export class PostgresCommerceAdministrationReader implements CommerceAdministrat
   }
 }
 
+function creditProgramProjection(): string {
+  return `SELECT revision.site_ref AS "siteId",
+    revision.credit_program_revision_ref AS "creditProgramRevisionRef",
+    revision.program_ref AS "programRef",revision.revision,
+    revision.ux_bucket_class AS "uxBucketClass",revision.unit,revision.amount::text AS amount,
+    revision.burn_priority AS "burnPriority",revision.scope_policy AS "scopePolicy",
+    revision.liability_merchant_account_ref AS "liabilityMerchantAccountRef",
+    revision.window_kind AS "windowKind",revision.calendar_zone AS "calendarZone",
+    revision.window_anchor AS "windowAnchor",revision.expires_after_seconds::text AS "expiresAfterSeconds",
+    revision.revision_digest AS "revisionDigest",revision.published_at AS "publishedAt"
+    FROM platform.commerce_credit_program_revision revision`;
+}
+function entitlementTemplateProjection(): string {
+  return `SELECT revision.site_ref AS "siteId",
+    revision.entitlement_template_revision_ref AS "entitlementTemplateRevisionRef",
+    revision.template_ref AS "templateRef",revision.revision,
+    revision.capability_key AS "capabilityKey",revision.safe_label AS "safeLabel",
+    revision.expires_after_seconds::text AS "expiresAfterSeconds",
+    revision.revision_digest AS "revisionDigest",revision.published_at AS "publishedAt"
+    FROM platform.commerce_entitlement_template_revision revision`;
+}
 function offerProjection(): string {
   return `SELECT version.site_ref AS "siteId",version.product_ref AS "productRef",
     product.kind AS "productKind",version.product_version_ref AS "productVersionRef",
@@ -180,6 +285,37 @@ function requireSite(permit: AdminQueryPermit, siteId: string): void {
   const allowed = permit.scope.kind === "global" ? null : permit.scope.kind === "site"
     ? permit.scope.siteRefs : permit.scope.resourceRefs;
   if (allowed !== null && !allowed.includes(siteId)) throw new Error("ADMIN_SITE_SCOPE_DENIED");
+}
+function creditProgram(row: CreditProgramRow): CreditProgramRevisionRecord {
+  const buckets = ["daily", "period", "permanent"] as const;
+  const windows = ["none", "daily", "period"] as const;
+  if (!buckets.includes(row.uxBucketClass as never) || !windows.includes(row.windowKind as never) ||
+      !/^[1-9][0-9]{0,37}$/u.test(row.amount) || !Number.isInteger(row.burnPriority)) {
+    throw new Error("COMMERCE_ADMIN_ROW_CORRUPT");
+  }
+  const expiresAfterSeconds = nullablePositive(row.expiresAfterSeconds);
+  const calendarZone = nullableText(row.calendarZone); const windowAnchor = nullableText(row.windowAnchor);
+  if ((row.uxBucketClass === "permanent" && (row.windowKind !== "none" || calendarZone !== null ||
+      windowAnchor !== null || expiresAfterSeconds !== null)) ||
+      (row.uxBucketClass !== "permanent" && (row.windowKind !== row.uxBucketClass || calendarZone === null ||
+        windowAnchor === null || expiresAfterSeconds === null))) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT");
+  return Object.freeze({ siteId: text(row.siteId), creditProgramRevisionRef: text(row.creditProgramRevisionRef),
+    programRef: text(row.programRef), revision: positive(row.revision),
+    uxBucketClass: row.uxBucketClass as typeof buckets[number], unit: text(row.unit), amount: row.amount,
+    burnPriority: row.burnPriority, scopePolicy: scopePolicy(row.scopePolicy),
+    liabilityMerchantAccountRef: text(row.liabilityMerchantAccountRef),
+    windowKind: row.windowKind as typeof windows[number], calendarZone, windowAnchor, expiresAfterSeconds,
+    revisionDigest: digestText(row.revisionDigest), publishedAt: instant(row.publishedAt) });
+}
+function entitlementTemplate(row: EntitlementTemplateRow): EntitlementTemplateRevisionRecord {
+  if (!/^[a-z0-9][a-z0-9._:-]{0,127}$/u.test(row.capabilityKey)) {
+    throw new Error("COMMERCE_ADMIN_ROW_CORRUPT");
+  }
+  return Object.freeze({ siteId: text(row.siteId),
+    entitlementTemplateRevisionRef: text(row.entitlementTemplateRevisionRef), templateRef: text(row.templateRef),
+    revision: positive(row.revision), capabilityKey: row.capabilityKey, safeLabel: text(row.safeLabel),
+    expiresAfterSeconds: nullablePositive(row.expiresAfterSeconds),
+    revisionDigest: digestText(row.revisionDigest), publishedAt: instant(row.publishedAt) });
 }
 function offer(row: OfferRow): CommerceOfferRecord {
   const kinds = ["free", "credit_pack", "subscription", "bundle"] as const;
@@ -232,6 +368,28 @@ function text(value: unknown): string { if (typeof value !== "string" || value.l
 function nullableText(value: unknown): string | null { return value === null ? null : text(value); }
 function integer(value: unknown): number { if (typeof value !== "number" || !Number.isInteger(value) || value < 0) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT"); return value; }
 function positive(value: unknown): bigint { const result = typeof value === "bigint" ? value : typeof value === "string" ? BigInt(value) : 0n; if (result < 1n) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT"); return result; }
+function nullablePositive(value: unknown): bigint | null { return value === null ? null : positive(value); }
 function instant(value: unknown): string { const result = value instanceof Date ? value : typeof value === "string" ? new Date(value) : null; if (result === null || !Number.isFinite(result.getTime())) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT"); return result.toISOString(); }
 function nullableInstant(value: unknown): string | null { return value === null ? null : instant(value); }
 function stringArray(value: unknown): readonly string[] { if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT"); return Object.freeze([...value] as string[]); }
+function digestText(value: unknown): string {
+  if (typeof value !== "string" || !/^[a-f0-9]{64}$/u.test(value)) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT");
+  return value;
+}
+function scopePolicy(value: unknown): CreditProgramRevisionRecord["scopePolicy"] {
+  const item = record(typeof value === "string" ? JSON.parse(value) as unknown : value);
+  if (Object.keys(item).sort().join(",") !==
+      "agentRefs,allowUnattributedAgent,capabilityKeys,surfaceRefs,version" || item.version !== 1 ||
+      typeof item.allowUnattributedAgent !== "boolean") throw new Error("COMMERCE_ADMIN_ROW_CORRUPT");
+  const surfaceRefs = policyArray(item.surfaceRefs, true, /^[a-z0-9][a-z0-9._:-]{0,255}$/u);
+  const capabilityKeys = policyArray(item.capabilityKeys, true, /^[a-z0-9][a-z0-9._:-]{0,255}$/u);
+  const agentRefs = policyArray(item.agentRefs, false, /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/u);
+  return Object.freeze({ version: 1, surfaceRefs, capabilityKeys, agentRefs,
+    allowUnattributedAgent: item.allowUnattributedAgent });
+}
+function policyArray(value: unknown, required: boolean, pattern: RegExp): readonly string[] {
+  if (!Array.isArray(value) || (required && value.length < 1) || value.length > 256 ||
+      value.some((item) => typeof item !== "string" || !pattern.test(item)) ||
+      new Set(value).size !== value.length) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT");
+  return Object.freeze([...value] as string[]);
+}

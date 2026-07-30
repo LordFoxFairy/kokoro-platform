@@ -9,6 +9,37 @@ export type CommerceAdminActor = Readonly<{
 }>;
 
 export interface CommerceAdministrationRepository {
+  publishCreditProgramRevision(transaction: PlatformTransaction, input: CommerceAdminActor & Readonly<{
+    creditProgramRevisionRef: string;
+    programRef: string;
+    revision: string;
+    uxBucketClass: "daily" | "period" | "permanent";
+    unit: string;
+    amount: string;
+    burnPriority: number;
+    scopePolicy: Readonly<{
+      version: 1;
+      surfaceRefs: readonly string[];
+      capabilityKeys: readonly string[];
+      agentRefs: readonly string[];
+      allowUnattributedAgent: boolean;
+    }>;
+    liabilityMerchantAccountRef: string;
+    windowKind: "none" | "daily" | "period";
+    calendarZone: string | null;
+    windowAnchor: string | null;
+    expiresAfterSeconds: string | null;
+    revisionDigest: string;
+  }>): Promise<Readonly<{ kind: "committed" | "replayed"; occurredAt: string }>>;
+  publishEntitlementTemplateRevision(transaction: PlatformTransaction, input: CommerceAdminActor & Readonly<{
+    entitlementTemplateRevisionRef: string;
+    templateRef: string;
+    revision: string;
+    capabilityKey: string;
+    safeLabel: string;
+    expiresAfterSeconds: string | null;
+    revisionDigest: string;
+  }>): Promise<Readonly<{ kind: "committed" | "replayed"; occurredAt: string }>>;
   publishOffer(transaction: PlatformTransaction, input: CommerceAdminActor & Readonly<{
     productRef: string;
     productKind: "free" | "credit_pack" | "subscription" | "bundle";

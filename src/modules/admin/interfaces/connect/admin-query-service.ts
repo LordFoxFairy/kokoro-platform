@@ -33,6 +33,7 @@ export interface AdminQueryPermit {
   readonly region: string;
   readonly operation: "admin.site.read" | "admin.site.list" | "admin.user.read" | "admin.audit.read" |
     "admin.operator.self.read" | "admin.operator.read" | "admin.operator.list" | "admin.approval.list" |
+    "commerce.credit-program.read" | "commerce.entitlement-template.read" |
     "commerce.offer.read" | "commerce.redemption-program.read" | "commerce.code-batch.read";
   readonly scope: AdminQueryScope;
 }

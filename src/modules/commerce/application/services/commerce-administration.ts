@@ -16,6 +16,61 @@ export class CommerceAdministrationService {
     reference?: () => string;
   }>) {}
 
+  async publishCreditProgramRevision(input: CommandInput & Readonly<{
+    creditProgramRevisionRef: string; programRef: string; revision: string;
+    uxBucketClass: "daily" | "period" | "permanent"; unit: string; amount: string;
+    burnPriority: number; scopePolicy: Readonly<{ surfaceRefs: readonly string[];
+      capabilityKeys: readonly string[]; agentRefs: readonly string[]; allowUnattributedAgent: boolean }>;
+    liabilityMerchantAccountRef: string; calendarZone: string | null; windowAnchor: string | null;
+    expiresAfterSeconds: string | null;
+  }>) {
+    const actor = adminActor(input.context, input.siteId, "commerce.credit-program.publish");
+    const window = creditWindow(input.uxBucketClass, input.calendarZone, input.windowAnchor,
+      input.expiresAfterSeconds);
+    const payload = Object.freeze({
+      siteId: boundedSite(input.siteId), creditProgramRevisionRef: bounded(input.creditProgramRevisionRef),
+      programRef: bounded(input.programRef), revision: positiveInteger(input.revision),
+      uxBucketClass: input.uxBucketClass, unit: boundedUnit(input.unit), amount: positiveDecimal(input.amount),
+      burnPriority: signedInteger(input.burnPriority), scopePolicy: creditScopePolicy(input.scopePolicy),
+      liabilityMerchantAccountRef: bounded(input.liabilityMerchantAccountRef), ...window,
+    });
+    const revisionDigest = digest({ version: 1, ...payload });
+    const command = commandIdentity(input, actor.subjectId, "commerce.credit-program.publish", revisionDigest);
+    const result = await this.dependencies.unitOfWork.execute(
+      { context: input.context, operation: command.operation },
+      (transaction) => this.dependencies.repository.publishCreditProgramRevision(transaction, {
+        ...actor, command, ...payload, revisionDigest,
+      }),
+    );
+    return Object.freeze({ kind: result.kind, creditProgramRevisionRef: payload.creditProgramRevisionRef,
+      revisionDigest, publishedAt: result.occurredAt });
+  }
+
+  async publishEntitlementTemplateRevision(input: CommandInput & Readonly<{
+    entitlementTemplateRevisionRef: string; templateRef: string; revision: string;
+    capabilityKey: string; safeLabel: string; expiresAfterSeconds: string | null;
+  }>) {
+    const actor = adminActor(input.context, input.siteId, "commerce.entitlement-template.publish");
+    const payload = Object.freeze({
+      siteId: boundedSite(input.siteId),
+      entitlementTemplateRevisionRef: bounded(input.entitlementTemplateRevisionRef),
+      templateRef: bounded(input.templateRef), revision: positiveInteger(input.revision),
+      capabilityKey: capabilityKey(input.capabilityKey), safeLabel: boundedLabel(input.safeLabel),
+      expiresAfterSeconds: input.expiresAfterSeconds === null ? null : positiveInteger(input.expiresAfterSeconds),
+    });
+    const revisionDigest = digest({ version: 1, ...payload });
+    const command = commandIdentity(input, actor.subjectId, "commerce.entitlement-template.publish", revisionDigest);
+    const result = await this.dependencies.unitOfWork.execute(
+      { context: input.context, operation: command.operation },
+      (transaction) => this.dependencies.repository.publishEntitlementTemplateRevision(transaction, {
+        ...actor, command, ...payload, revisionDigest,
+      }),
+    );
+    return Object.freeze({ kind: result.kind,
+      entitlementTemplateRevisionRef: payload.entitlementTemplateRevisionRef,
+      revisionDigest, publishedAt: result.occurredAt });
+  }
+
   async publishOffer(input: CommandInput & Readonly<{
     productRef: string; productKind: "free" | "credit_pack" | "subscription" | "bundle";
     productVersionRef: string; productRevision: string; safeLabel: string;
@@ -176,13 +231,74 @@ function bounded(value: string): string { if (value.length < 1 || value.length >
 function boundedLabel(value: string): string { if (value.length < 1 || value.length > 160) throw new Error("COMMERCE_ADMIN_LABEL_INVALID"); return value; }
 function boundedReason(value: string): string { if (value.length < 1 || value.length > 1000) throw new Error("COMMERCE_ADMIN_REASON_INVALID"); return value; }
 function uuid(value: string): string { if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(value)) throw new Error("COMMERCE_ADMIN_UUID_INVALID"); return value; }
-function positiveInteger(value: string): string { if (!/^[1-9][0-9]*$/u.test(value)) throw new Error("COMMERCE_ADMIN_REVISION_INVALID"); return value; }
+function positiveInteger(value: string): string {
+  if (!/^[1-9][0-9]*$/u.test(value) || BigInt(value) > 9_223_372_036_854_775_807n) {
+    throw new Error("COMMERCE_ADMIN_REVISION_INVALID");
+  }
+  return value;
+}
 function boundedCount(value: number, maximum: number): number { if (!Number.isInteger(value) || value < 1 || value > maximum) throw new Error("COMMERCE_ADMIN_COUNT_INVALID"); return value; }
 function nullableInstant(value: string | null): string | null { if (value === null) return null; const parsed = new Date(value); if (!Number.isFinite(parsed.getTime())) throw new Error("COMMERCE_ADMIN_TIME_INVALID"); return parsed.toISOString(); }
 function one(values: readonly string[], code: string): string { const unique = new Set(values); if (unique.size !== 1) throw new Error(code); return values[0]!; }
 function uniqueBounded(values: readonly string[], maximum: number): readonly string[] {
   if (values.length > maximum || new Set(values).size !== values.length) throw new Error("COMMERCE_ADMIN_COLLECTION_INVALID");
   return Object.freeze(values.map(bounded).sort());
+}
+function boundedSite(value: string): string {
+  if (value.length < 1 || value.length > 128) throw new Error("COMMERCE_ADMIN_SITE_INVALID");
+  return value;
+}
+function boundedUnit(value: string): string {
+  if (value.length < 1 || value.length > 64) throw new Error("COMMERCE_CREDIT_UNIT_INVALID");
+  return value;
+}
+function positiveDecimal(value: string): string {
+  if (!/^[1-9][0-9]{0,37}$/u.test(value)) throw new Error("COMMERCE_CREDIT_AMOUNT_INVALID");
+  return value;
+}
+function signedInteger(value: number): number {
+  if (!Number.isInteger(value) || value < -2_147_483_648 || value > 2_147_483_647) {
+    throw new Error("COMMERCE_CREDIT_BURN_PRIORITY_INVALID");
+  }
+  return value;
+}
+function creditScopePolicy(value: Readonly<{ surfaceRefs: readonly string[]; capabilityKeys: readonly string[];
+  agentRefs: readonly string[]; allowUnattributedAgent: boolean }>) {
+  return Object.freeze({ version: 1 as const,
+    surfaceRefs: policyRefs(value.surfaceRefs, true, /^[a-z0-9][a-z0-9._:-]{0,255}$/u),
+    capabilityKeys: policyRefs(value.capabilityKeys, true, /^[a-z0-9][a-z0-9._:-]{0,255}$/u),
+    agentRefs: policyRefs(value.agentRefs, false, /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/u),
+    allowUnattributedAgent: value.allowUnattributedAgent });
+}
+function policyRefs(values: readonly string[], required: boolean, pattern: RegExp): readonly string[] {
+  if ((required && values.length < 1) || values.length > 256 ||
+      new Set(values).size !== values.length || values.some((value) => !pattern.test(value))) {
+    throw new Error("COMMERCE_CREDIT_SCOPE_POLICY_INVALID");
+  }
+  return Object.freeze([...values].sort());
+}
+function creditWindow(bucket: "daily" | "period" | "permanent", calendarZone: string | null,
+  windowAnchor: string | null, expiresAfterSeconds: string | null) {
+  if (bucket === "permanent") {
+    if (calendarZone !== null || windowAnchor !== null || expiresAfterSeconds !== null) {
+      throw new Error("COMMERCE_CREDIT_WINDOW_INVALID");
+    }
+    return Object.freeze({ windowKind: "none" as const, calendarZone: null, windowAnchor: null,
+      expiresAfterSeconds: null });
+  }
+  if (calendarZone === null || calendarZone.length < 1 || calendarZone.length > 64 ||
+      windowAnchor === null || windowAnchor.length < 1 || windowAnchor.length > 128 ||
+      expiresAfterSeconds === null) throw new Error("COMMERCE_CREDIT_WINDOW_INVALID");
+  let expiry: string;
+  try { expiry = positiveInteger(expiresAfterSeconds); }
+  catch { throw new Error("COMMERCE_CREDIT_WINDOW_INVALID"); }
+  return Object.freeze({ windowKind: bucket, calendarZone, windowAnchor, expiresAfterSeconds: expiry });
+}
+function capabilityKey(value: string): string {
+  if (!/^[a-z0-9][a-z0-9._:-]{0,127}$/u.test(value)) {
+    throw new Error("COMMERCE_ENTITLEMENT_CAPABILITY_INVALID");
+  }
+  return value;
 }
 function validatePlanVersion(value: Readonly<{ planRef: string; planVersionRef: string; revision: string;
   safeLabel: string; termAction: "none" | "new_subscription" | "extend_from_max" | "reject_if_active";
