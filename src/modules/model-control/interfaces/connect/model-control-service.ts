@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { create } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError, type HandlerContext, type ServiceImpl } from "@connectrpc/connect";
+import { KokoroErrorDetailSchema, RetryClass } from
+  "../../../../interfaces/connect/generated-model-control/kokoro/common/v1/error_pb.js";
 import {
   CommandDigestAlgorithmV2,
   CommandIdentityV2Schema,
@@ -46,6 +48,11 @@ import {
   publishSiteReleaseCatalogRequestDigest,
   type VerifiedAuthenticatedAdminAxes,
 } from "../../../../interfaces/connect/generated-model-control/command-envelope-digest.js";
+import {
+  MODEL_CONTROL_ADMIN_ERRORS,
+  modelControlAdminErrorDetail,
+  type ModelControlAdminErrorKind,
+} from "../../../../interfaces/connect/generated-model-control/model-control-errors.js";
 import type { VerifiedRequestSecurityContext } from
   "../../../../shared/security-context/index.js";
 import type { ControlCommandReceiptTimestampReader } from
@@ -134,7 +141,7 @@ export function createModelControlConnectService(input: Readonly<{
     "listModelOptions" | "listSiteModelPolicies" | "listSiteReleaseCatalogs">;
   cursors: AdminPageCursorCodec;
 }>): ModelControlConnectService {
-  return {
+  const implementation: ModelControlConnectService = {
     async listInventoryRevisions(request, transport) {
       const permit = await resolveRead(input.resolver, required(request.context,
         "MODEL_CONTROL_QUERY_CONTEXT_REQUIRED"), transport, "model.inventory.read", null, [],
@@ -158,7 +165,7 @@ export function createModelControlConnectService(input: Readonly<{
       const permit = await resolveRead(input.resolver, context, transport, "model.inventory.read",
         null, [request.inventoryDigest], inventoryFields);
       const result = await input.reader.getInventoryRevision(permit, request.inventoryDigest);
-      if (result.item === null) throw new ConnectError("model inventory revision not found", Code.NotFound);
+      if (result.item === null) throw new ModelControlBoundaryFailure("inventoryRevisionNotFound");
       return { revision: inventoryRevisionMessage(result.item), asOf: timestamp(result.asOf) };
     },
 
@@ -433,6 +440,141 @@ export function createModelControlConnectService(input: Readonly<{
       };
     },
   };
+  return withModelControlErrorBoundary(implementation);
+}
+
+function withModelControlErrorBoundary(service: ModelControlConnectService): ModelControlConnectService {
+  return {
+    listInventoryRevisions: modelHandler(service.listInventoryRevisions),
+    getInventoryRevision: modelHandler(service.getInventoryRevision),
+    listInventoryProviders: modelHandler(service.listInventoryProviders),
+    listInventoryModels: modelHandler(service.listInventoryModels),
+    listInventoryBindings: modelHandler(service.listInventoryBindings),
+    listInventoryProductRoutes: modelHandler(service.listInventoryProductRoutes),
+    listModelOptions: modelHandler(service.listModelOptions),
+    listSiteModelPolicies: modelHandler(service.listSiteModelPolicies),
+    listSiteReleaseCatalogs: modelHandler(service.listSiteReleaseCatalogs),
+    importInventory: modelHandler(service.importInventory),
+    activateInventory: modelHandler(service.activateInventory),
+    changeSitePolicy: modelHandler(service.changeSitePolicy),
+    materializeModelOptions: modelHandler(service.materializeModelOptions),
+    publishSiteReleaseCatalog: modelHandler(service.publishSiteReleaseCatalog),
+  };
+}
+
+function modelHandler<Request, Response>(handler: (
+  request: Request,
+  context: HandlerContext,
+) => Response | Promise<Response>): (request: Request, context: HandlerContext) => Promise<Response> {
+  return async (request, context) => {
+    try {
+      return await handler(request, context);
+    } catch (error) {
+      throw modelControlConnectError(error, modelRequestId(request, context));
+    }
+  };
+}
+
+class ModelControlBoundaryFailure extends Error {
+  constructor(readonly kind: ModelControlAdminErrorKind) {
+    super(MODEL_CONTROL_ADMIN_ERRORS[kind].domainCode);
+    this.name = "ModelControlBoundaryFailure";
+  }
+}
+
+function modelControlConnectError(error: unknown, requestId: string): ConnectError {
+  if (error instanceof ConnectError && error.findDetails(KokoroErrorDetailSchema).length > 0) return error;
+  if (error instanceof ModelControlBoundaryFailure) return contractedModelError(error.kind, requestId, error);
+  if (error instanceof ConnectError && error.code === Code.AlreadyExists) {
+    return contractedModelError("commandReceiptConflict", requestId, error);
+  }
+  if (error instanceof Error &&
+      (error.message === "ADMIN_PAGE_TOKEN_INVALID" || error.message === "MODEL_ADMIN_PAGE_TOKEN_INVALID")) {
+    return contractedModelError("adminPageTokenInvalid", requestId, error);
+  }
+  if (error instanceof ConnectError) {
+    const code = publicModelControlCode(error.code);
+    const fallback = connectFallback(code);
+    return detailedModelError(code, fallback.domainCode, fallback.safeMessage,
+      fallback.retryClass, requestId, error.metadata, error);
+  }
+  if (error instanceof Error && /^MODEL_/u.test(error.message) && !internalModelFailure(error.message)) {
+    return detailedModelError(Code.InvalidArgument, "model.control.invalid_request",
+      "Invalid model control request", RetryClass.NEVER, requestId, undefined, error);
+  }
+  return detailedModelError(Code.Internal, "model.control.internal", "Model control request failed",
+    RetryClass.NEVER, requestId, undefined, error);
+}
+
+function publicModelControlCode(code: Code): Code {
+  return [Code.Canceled, Code.InvalidArgument, Code.DeadlineExceeded, Code.NotFound,
+    Code.AlreadyExists, Code.PermissionDenied, Code.ResourceExhausted, Code.FailedPrecondition,
+    Code.Aborted, Code.Unavailable, Code.Unauthenticated].includes(code) ? code : Code.Internal;
+}
+
+function contractedModelError(kind: ModelControlAdminErrorKind, requestId: string,
+  cause: unknown): ConnectError {
+  const contract = MODEL_CONTROL_ADMIN_ERRORS[kind];
+  const code = contract.connectCode === "not_found" ? Code.NotFound
+    : contract.connectCode === "already_exists" ? Code.AlreadyExists : Code.InvalidArgument;
+  return new ConnectError(contract.safeMessage, code, undefined,
+    [modelControlAdminErrorDetail(kind, requestId)], cause);
+}
+
+function detailedModelError(code: Code, domainCode: string, safeMessage: string,
+  retryClass: RetryClass, requestId: string, metadata: HeadersInit | undefined,
+  cause: unknown): ConnectError {
+  return new ConnectError(safeMessage, code, metadata, [{ desc: KokoroErrorDetailSchema,
+    value: create(KokoroErrorDetailSchema, { domainCode, retryClass,
+      requestId: safeRequestId(requestId), correlationId: safeRequestId(requestId), safeMessage }) }], cause);
+}
+
+function connectFallback(code: Code): Readonly<{ domainCode: string; safeMessage: string;
+  retryClass: RetryClass }> {
+  if (code === Code.InvalidArgument) return { domainCode: "model.control.invalid_request",
+    safeMessage: "Invalid model control request", retryClass: RetryClass.NEVER };
+  if (code === Code.Unauthenticated) return { domainCode: "workload.unauthenticated",
+    safeMessage: "Workload authentication failed", retryClass: RetryClass.NEVER };
+  if (code === Code.PermissionDenied) return { domainCode: "workload.permission_denied",
+    safeMessage: "Workload permission denied", retryClass: RetryClass.NEVER };
+  if (code === Code.NotFound) return { domainCode: "model.resource.not_found",
+    safeMessage: "Model resource not found", retryClass: RetryClass.NEVER };
+  if (code === Code.FailedPrecondition) return { domainCode: "model.control.precondition_failed",
+    safeMessage: "Model control precondition failed", retryClass: RetryClass.NEVER };
+  if (code === Code.ResourceExhausted) return { domainCode: "model.control.resource_exhausted",
+    safeMessage: "Model control capacity exhausted", retryClass: RetryClass.AFTER_DELAY };
+  if (code === Code.Aborted) return { domainCode: "model.control.aborted",
+    safeMessage: "Model control request aborted", retryClass: RetryClass.SAME_IDENTITY };
+  if (code === Code.DeadlineExceeded) return { domainCode: "model.control.deadline_exceeded",
+    safeMessage: "Model control deadline exceeded", retryClass: RetryClass.RECONCILE_RECEIPT };
+  if (code === Code.Unavailable) return { domainCode: "model.control.unavailable",
+    safeMessage: "Model control is unavailable", retryClass: RetryClass.AFTER_DELAY };
+  if (code === Code.Canceled) return { domainCode: "model.control.canceled",
+    safeMessage: "Model control request canceled", retryClass: RetryClass.NEVER };
+  return { domainCode: "model.control.internal", safeMessage: "Model control request failed",
+    retryClass: RetryClass.NEVER };
+}
+
+function modelRequestId(request: unknown, context: HandlerContext): string {
+  const header = (context as Partial<HandlerContext>).requestHeader?.get("x-request-id");
+  if (header !== null && header !== undefined) return safeRequestId(header);
+  if (request !== null && typeof request === "object") {
+    const claimed = (request as { context?: unknown }).context;
+    if (claimed !== null && typeof claimed === "object") {
+      const value = (claimed as { requestId?: unknown }).requestId;
+      if (typeof value === "string") return safeRequestId(value);
+    }
+  }
+  return "model-control";
+}
+
+function safeRequestId(value: string): string {
+  return /^[A-Za-z0-9._:-]{1,128}$/u.test(value) ? value : "model-control";
+}
+
+function internalModelFailure(code: string): boolean {
+  return /(?:RECEIPT|ROW|WATERMARK|COMMAND_RESULT|TIME)_INVALID$/u.test(code)
+    || code === "MODEL_SELECTION_DECISION_NOT_PERSISTED";
 }
 
 interface ResolvedModelPage {

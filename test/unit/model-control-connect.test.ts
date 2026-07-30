@@ -2,6 +2,10 @@ import { create } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError, type HandlerContext } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
+import { KokoroErrorDetailSchema } from
+  "../../src/interfaces/connect/generated-model-control/kokoro/common/v1/error_pb.js";
+import { MODEL_CONTROL_ADMIN_ERRORS } from
+  "../../src/interfaces/connect/generated-model-control/model-control-errors.js";
 import {
   CommandDigestAlgorithmV2,
   CommandIdentityV2Schema,
@@ -209,8 +213,13 @@ describe("ModelControl Connect provider", () => {
       ...readDependencies,
     });
 
-    await expect(service.activateInventory(request, transport))
-      .rejects.toThrow("MODEL_CONTROL_COMMAND_DIGEST_INVALID");
+    const error = ConnectError.from(await Promise.resolve(service.activateInventory(request, transport))
+      .catch((failure: unknown) => failure));
+    expect(error.code).toBe(Code.InvalidArgument);
+    expect(error.findDetails(KokoroErrorDetailSchema)).toMatchObject([{
+      domainCode: "model.control.invalid_request",
+      safeMessage: "Invalid model control request",
+    }]);
     expect(owners.activateInventory.activate).not.toHaveBeenCalled();
   });
 
@@ -235,9 +244,8 @@ describe("ModelControl Connect provider", () => {
     );
   });
 
-  it("returns a typed conflict when an idempotency key is reused with another command id", async () => {
+  it("returns the generated typed conflict for all five command receipt collisions", async () => {
     const owners = ownerDoubles();
-    owners.activateInventory.activate.mockRejectedValueOnce(new CommandReceiptConflictError("identity"));
     const service = createModelControlConnectService({
       owners,
       resolver: {
@@ -248,14 +256,27 @@ describe("ModelControl Connect provider", () => {
       ...readDependencies,
     });
 
-    const error = await Promise.resolve(service.activateInventory(activationRequest(), transport))
-      .catch((cause: unknown) => cause);
-    expect(error).toBeInstanceOf(ConnectError);
-    expect(ConnectError.from(error).code).toBe(Code.AlreadyExists);
-    expect(ConnectError.from(error).rawMessage).toBe("command identity conflict");
+    const cases = [
+      [owners.importInventory.import, () => service.importInventory(importRequest(), transport)],
+      [owners.activateInventory.activate, () => service.activateInventory(activationRequest(), transport)],
+      [owners.changeSitePolicy.change, () => service.changeSitePolicy(policyRequest(), transport)],
+      [owners.materializeModelOptions.materialize,
+        () => service.materializeModelOptions(materializationRequest(), transport)],
+      [owners.publishSiteReleaseCatalog.publish,
+        () => service.publishSiteReleaseCatalog(publicationRequest(), transport)],
+    ] as const;
+    for (const [owner, invoke] of cases) {
+      owner.mockRejectedValueOnce(new CommandReceiptConflictError("identity"));
+      const error = ConnectError.from(await Promise.resolve(invoke()).catch((cause: unknown) => cause));
+      expect(error.code).toBe(Code.AlreadyExists);
+      expect(error.findDetails(KokoroErrorDetailSchema)).toMatchObject([{
+        domainCode: MODEL_CONTROL_ADMIN_ERRORS.commandReceiptConflict.domainCode,
+        safeMessage: MODEL_CONTROL_ADMIN_ERRORS.commandReceiptConflict.safeMessage,
+      }]);
+    }
   });
 
-  it("does not translate an unrelated Error that happens to reuse a receipt message", async () => {
+  it("maps an unrelated owner error to a safe Internal response without message matching", async () => {
     const owners = ownerDoubles();
     const cause = new Error("COMMAND_IDENTITY_CONFLICT");
     owners.activateInventory.activate.mockRejectedValueOnce(cause);
@@ -269,7 +290,36 @@ describe("ModelControl Connect provider", () => {
       ...readDependencies,
     });
 
-    await expect(service.activateInventory(activationRequest(), transport)).rejects.toBe(cause);
+    const error = ConnectError.from(await Promise.resolve(service.activateInventory(activationRequest(), transport))
+      .catch((failure: unknown) => failure));
+    expect(error.code).toBe(Code.Internal);
+    expect(error.findDetails(KokoroErrorDetailSchema)).toMatchObject([{
+      domainCode: "model.control.internal",
+      safeMessage: "Model control request failed",
+    }]);
+    expect(error.cause).toBe(cause);
+  });
+
+  it("normalizes a naked upstream Unknown status to a detailed Internal response", async () => {
+    const owners = ownerDoubles();
+    owners.activateInventory.activate.mockRejectedValueOnce(new ConnectError("raw upstream error", Code.Unknown));
+    const service = createModelControlConnectService({
+      owners,
+      resolver: {
+        resolve: resolveUnexpectedRead,
+        resolveModelControlCommand: vi.fn(async () => ({ context: verifiedContext, axes })),
+      },
+      receipts: { read: vi.fn(async () => recordedAt) },
+      ...readDependencies,
+    });
+
+    const error = ConnectError.from(await Promise.resolve(service.activateInventory(activationRequest(), transport))
+      .catch((failure: unknown) => failure));
+    expect(error.code).toBe(Code.Internal);
+    expect(error.findDetails(KokoroErrorDetailSchema)).toMatchObject([{
+      domainCode: "model.control.internal",
+      safeMessage: "Model control request failed",
+    }]);
   });
 });
 
