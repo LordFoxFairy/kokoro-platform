@@ -11,7 +11,7 @@ owners:
 Own Skill/MCP catalog administration, revisions, enablement, package metadata, uploads, and operator-facing capability workflows.
 
 ## Non-responsibilities
-Hub does not execute Agent tools or own GA graph nodes. Admission serves the frozen non-secret catalog; Hub's only Agent hot-path RPC is scoped MCP secret material resolution.
+Hub does not execute Agent tools or own GA graph nodes. Admission serves the frozen non-secret catalog; Hub resolves the exact frozen execution assembly and streams skill artifacts to Agent over its private mTLS ConnectRPC boundary.
 
 ## Public boundary
 `src/interfaces/http`, `src/interfaces/connect`, and `src/interfaces/admin` expose the module; package/storage contracts live under `src/contract` and application ports.
@@ -19,16 +19,18 @@ Hub does not execute Agent tools or own GA graph nodes. Admission serves the fro
 Admin MCP registration is an admission boundary, not a raw repository proxy: `env:VAR` references are accepted only when `VAR` is in `KOKORO_HUB_ENV_REF_ALLOWLIST`, and URL transports are resolved before persistence. The default policy requires HTTPS and admits only public-unicast IP literals/DNS answers; all special or non-unicast ranges, including IPv4-mapped forms, are rejected. `KOKORO_HUB_ALLOW_INSECURE_URL=1` is honored only outside production and only relaxes the HTTP scheme—the same address classifier remains mandatory.
 
 ## Callers and dependencies
-Admin and Platform orchestration write through Hub. Platform freezes a SiteRelease-bound catalog through private ConnectRPC; Agent alone may resolve opaque MCP secret handles through the separate runtime service.
+Admin and Platform orchestration write through Hub. Platform freezes a SiteRelease-bound catalog through private ConnectRPC. Agent alone consumes `ResolveExecutionAssembly` and `FetchSkillArtifact`; it must present the exact `agent_catalog_ref` and ordered grants issued by Session.
 
 Fresh runtime has no `kokoro-user` dependency. Hub self-service remains fail-closed until the PostgreSQL Platform membership owner adapter is injected; do not restore the retired MySQL HTTP edge.
 
 ## Data ownership and events
 Hub owns capability catalog/revision metadata and package references in Mongo/S3-compatible storage. A frozen catalog is immutable, Ed25519-signed with an explicit key revision, and carries its durable Platform projection state in the same Mongo document.
+Agent never reads Hub Mongo or package storage directly.
 
 ## Runtime and security
 Uploads require validation, content addressing, bounded size/path rules, trusted operator context, and secret-free metadata.
 `createHubServer` receives the parsed env-ref allowlist and URL resolver policy explicitly; the real HTTP assembly derives them from validated env. Missing admission configuration fails closed rather than letting fake/test assembly bypass the same contract.
+The HTTP server exposes only self-service and admin routes. Runtime assembly is available only on the dedicated ConnectRPC listener with exact Agent SPIFFE authorization. A single skill artifact is capped at 32 MiB; one assembly is capped at 64 MiB compressed and 128 MiB unpacked.
 
 All official Hub Admin namespace resources (skill catalog, skill revision uploads, skill curation, and MCP servers) are explicitly platform-global (`siteScopeField: null`). The Admin gateway therefore exposes them only to operators with wildcard Site scope; no finite Site scope is treated as an implicit namespace filter.
 

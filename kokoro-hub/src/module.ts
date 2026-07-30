@@ -16,14 +16,9 @@ export const hubPlatformModule = {
     manifestExport: "hubAdminManifest",
   },
   runtime: {
-    surfaces: ["http", "internal-api", "admin-manifest"],
+    surfaces: ["http", "connectrpc", "admin-manifest"],
     routes: [
       "GET /healthz",
-      // runtime 面（runtime-internal：session/agent）：按已验 namespace 读池 + 聚合 resolve + secret 明文出口。
-      "GET /hub/runtime/skills/pool",
-      "GET /hub/runtime/resolve",
-      "GET /hub/runtime/mcp/servers/:scope/:name/revisions/:revision",
-      "POST /hub/runtime/mcp/secrets/resolve",
       // self 面（web-bff：信封 scope + user 成员校验）；MCP mutation 受部署门 KOKORO_HUB_MCP_MUTATION 控（off 恒 503）。
       "GET /hub/self/skills/pool",
       "GET /hub/self/skills/quota",
@@ -60,9 +55,9 @@ export const hubPlatformModule = {
       "DELETE /hub/admin/mcp/servers/:scope/:name",
     ],
     notes: [
-      "HUB-AUTHZ 三权限面：/hub/runtime(runtime caller 读池/resolve)、/hub/self(web-bff 信封 self-service，成员校验+MCP mutation fail-closed)、/hub/admin(admin 网关管理面)。",
+      "HTTP 权限面仅保留 /hub/self(web-bff 信封 self-service，成员校验+MCP mutation fail-closed) 与 /hub/admin(admin 网关管理面)。",
       "hub 是 skill/MCP 能力中台的管理写面权威（启停/官方位/软删/配额/池查询）。",
-      "agent 只读同一 Mongo 走装配热路径（hub 写、agent 读，读写分离同库）；每 run 不跨服务 RPC。",
+      "agent 只通过 mTLS ConnectRPC ResolveExecutionAssembly/FetchSkillArtifact 消费精确冻结的能力装配；不得直连 Hub Mongo 或对象存储。",
     ],
   },
   service: {
@@ -83,7 +78,7 @@ export const hubPlatformModule = {
       "skill review status machine (pending/approved/rejected; V1 auto-approve on publish)",
       "namespace upload quota view and enforcement",
       "mcp server registry (register/pool/enable/disable/soft delete; secret refs only, no plaintext credentials)",
-      "mcp secret broker (envelope AES-256-GCM at rest; opaque handle in/out; runtime resolve is the sole plaintext egress; per-namespace isolation)",
+      "mcp secret broker (envelope AES-256-GCM at rest; opaque handle in/out; ResolveExecutionAssembly is the sole plaintext egress; per-namespace isolation)",
     ],
     doesNotOwn: [
       "skill assembly hot path (kokoro-agent)",

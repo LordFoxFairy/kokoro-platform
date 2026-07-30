@@ -37,6 +37,7 @@ export interface CapabilityPublicationRepository {
     siteId: string;
     siteReleaseRef: string;
   }>): Promise<CapabilityCatalogPublicationRecord | null>;
+  findByAgentCatalogRef(agentCatalogRef: string): Promise<CapabilityCatalogPublicationRecord | null>;
   claimProjection(input: Readonly<{
     leaseId: string;
     now: string;

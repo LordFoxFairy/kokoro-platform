@@ -6,8 +6,8 @@ import type { MembershipAuthorizer, MembershipCheck } from "../../src/interfaces
 import { createHubServer } from "../../src/interfaces/http/server.js";
 import { connectTestHub, hubTestDbName, testSecretCipher, type TestHub } from "./helpers.js";
 
-// secret broker（HUB 半场）：self CRUD（成员校验）+ runtime resolve（唯一明文出口）。
-// route-access 未配 secret = dev 直通，隔离测 broker 逻辑本身。
+// secret broker HTTP 面仅提供 self CRUD（成员校验）；运行时明文只从 mTLS
+// ResolveExecutionAssembly 返回给 Agent，本测试不重复覆盖 ConnectRPC 装配面。
 const NS = "ns-secret";
 const OTHER_NS = "ns-other";
 const SELF = { "x-kokoro-namespace": NS, "x-kokoro-user-id": "u1" };
@@ -119,75 +119,12 @@ describe("hub MCP secret broker (real mongo + real cipher)", () => {
     expect(res.json().error.code).toBe("request.invalid");
   });
 
-  it("resolves handles to plaintext for the owning namespace (sole authorized egress)", async () => {
-    const secretValue = "resolve-me-plaintext";
-    const handle = await createSecret("token-c", secretValue);
-    const res = await app.inject({
-      method: "POST",
-      url: "/hub/runtime/mcp/secrets/resolve",
-      payload: { namespace: NS, handles: [handle] },
-    });
-    expect(res.statusCode).toBe(200);
-    expect(res.json().data.secrets[handle]).toBe(secretValue);
-  });
-
-  it("returns 404 for a cross-namespace handle, indistinguishable from a nonexistent one (no existence leak)", async () => {
-    const handle = await createSecret("token-d", "cross-ns-value");
-    const nonexistent = `srt_${"0".repeat(32)}`;
-
-    const foreign = await app.inject({
-      method: "POST",
-      url: "/hub/runtime/mcp/secrets/resolve",
-      payload: { namespace: OTHER_NS, handles: [handle] },
-    });
-    const missing = await app.inject({
-      method: "POST",
-      url: "/hub/runtime/mcp/secrets/resolve",
-      payload: { namespace: OTHER_NS, handles: [nonexistent] },
-    });
-    expect(foreign.statusCode).toBe(404);
-    expect(missing.statusCode).toBe(404);
-    // 跨 namespace 与纯粹不存在返回同一 404 面（code+message 一致），不泄露存在性。
-    expect(foreign.json().error).toEqual(missing.json().error);
-    // 且响应绝不含明文。
-    expect(foreign.body).not.toContain("cross-ns-value");
-  });
-
-  it("resolve is all-or-nothing: any unresolvable handle fails the whole batch (fail-closed)", async () => {
-    const handle = await createSecret("token-e", "batch-value");
-    const nonexistent = `srt_${"1".repeat(32)}`;
-    const res = await app.inject({
-      method: "POST",
-      url: "/hub/runtime/mcp/secrets/resolve",
-      payload: { namespace: NS, handles: [handle, nonexistent] },
-    });
-    expect(res.statusCode).toBe(404);
-    expect(res.json().error.code).toBe("hub.secret_not_found");
-  });
-
-  it("resolve treats a soft-deleted handle as unresolvable (404)", async () => {
-    const handle = await createSecret("token-f", "deleted-value");
-    await app.inject({ method: "DELETE", url: `/hub/self/mcp/secrets/${handle}`, headers: SELF });
-    const res = await app.inject({
-      method: "POST",
-      url: "/hub/runtime/mcp/secrets/resolve",
-      payload: { namespace: NS, handles: [handle] },
-    });
-    expect(res.statusCode).toBe(404);
-  });
-
-  it("never leaks plaintext across the self surface or error envelopes", async () => {
+  it("never leaks plaintext across the self surface", async () => {
     const secretValue = "no-leak-across-surface-xyz";
     const handle = await createSecret("token-g", secretValue);
     const surfaces = [
       await app.inject({ method: "GET", url: "/hub/self/mcp/secrets", headers: SELF }),
       await app.inject({ method: "DELETE", url: `/hub/self/mcp/secrets/${handle}`, headers: SELF }),
-      // 软删后跨面 resolve → 404 错误信封。
-      await app.inject({
-        method: "POST",
-        url: "/hub/runtime/mcp/secrets/resolve",
-        payload: { namespace: OTHER_NS, handles: [handle] },
-      }),
     ];
     for (const res of surfaces) {
       expect(res.body).not.toContain(secretValue);
@@ -215,7 +152,7 @@ describe("hub MCP secret broker disabled (no cipher configured)", () => {
     await disabledHub.client.close();
   });
 
-  it("returns 503 secret_broker_disabled on the self and runtime secret faces", async () => {
+  it("returns 503 secret_broker_disabled on the self secret face", async () => {
     await setup;
     const create = await disabledApp.inject({
       method: "POST",
@@ -223,14 +160,7 @@ describe("hub MCP secret broker disabled (no cipher configured)", () => {
       headers: SELF,
       payload: { name: "n", value: "v" },
     });
-    const resolve = await disabledApp.inject({
-      method: "POST",
-      url: "/hub/runtime/mcp/secrets/resolve",
-      payload: { namespace: NS, handles: [`srt_${"0".repeat(32)}`] },
-    });
     expect(create.statusCode).toBe(503);
     expect(create.json().error.code).toBe("secret_broker_disabled");
-    expect(resolve.statusCode).toBe(503);
-    expect(resolve.json().error.code).toBe("secret_broker_disabled");
   });
 });

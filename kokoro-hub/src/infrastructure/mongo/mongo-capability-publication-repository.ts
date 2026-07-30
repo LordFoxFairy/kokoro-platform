@@ -74,6 +74,15 @@ export class MongoCapabilityPublicationRepository implements CapabilityPublicati
     return map(row, true);
   }
 
+  async findByAgentCatalogRef(agentCatalogRef: string): Promise<CapabilityCatalogPublicationRecord | null> {
+    await this.#ensureIndexes();
+    const row = await this.collections.capabilityPublications.findOne(
+      { agent_catalog_ref: agentCatalogRef, projection_state: "committed" },
+      { sort: { recorded_at: -1 } },
+    );
+    return row === null ? null : map(row, true);
+  }
+
   async claimProjection(input: Readonly<{
     leaseId: string;
     now: string;
@@ -161,6 +170,7 @@ export class MongoCapabilityPublicationRepository implements CapabilityPublicati
         { site_id: 1, site_release_ref: 1 },
         { unique: true },
       ),
+      this.collections.capabilityPublications.createIndex({ agent_catalog_ref: 1, projection_state: 1 }),
       this.collections.capabilityPublications.createIndex({
         projection_state: 1,
         projection_next_attempt_at: 1,

@@ -19,8 +19,7 @@ function nowMs(): number {
   return Date.now();
 }
 
-// SkillHubRepository 的 Mongo 实现——逐条对齐 agent/src/kokoro_agent/skills/hub.py
-// 的 list_pool / set_enabled / set_official_flags / mark_deleted，双实现语义收敛。
+// SkillHubRepository 的 Hub 私有 Mongo 实现；跨仓消费者只能走正式 RPC 边界。
 export class MongoSkillRepository implements SkillHubRepository {
   private indexed = false;
 

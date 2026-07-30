@@ -6,10 +6,13 @@ import { pathToFileURL } from "node:url";
 import { CapabilityCatalogPublicationService } from
   "../../application/capability-catalog-publication-service.js";
 import { CapabilityProjectionWorker } from "../../application/capability-projection-worker.js";
+import { ExecutionAssemblyService } from "../../application/execution-assembly-service.js";
+import { McpHubService } from "../../application/mcp-hub-service.js";
 import { McpSecretService } from "../../application/mcp-secret-service.js";
 import { createEd25519CapabilityCatalogSigner } from "../../domain/capability-catalog.js";
 import { loadSecretKeyring } from "../../config/secret-keyring.js";
 import { loadHubEnv } from "../../config/env.js";
+import { loadHubStoreLocation } from "../../config/storage.js";
 import { AesGcmSecretCipher } from "../../infrastructure/crypto/aes-gcm-secret-cipher.js";
 import { createPlatformCapabilityProjectionClient } from
   "../../infrastructure/connect/platform-capability-projection-client.js";
@@ -19,6 +22,9 @@ import { MongoCapabilityPublicationRepository } from
   "../../infrastructure/mongo/mongo-capability-publication-repository.js";
 import { createMongoClient, hubCollections } from "../../infrastructure/mongo/mongo-client.js";
 import { MongoMcpSecretRepository } from "../../infrastructure/mongo/mongo-mcp-secret-repository.js";
+import { MongoMcpServerRepository } from "../../infrastructure/mongo/mongo-mcp-server-repository.js";
+import { MongoSkillRepository } from "../../infrastructure/mongo/mongo-skill-repository.js";
+import { makePackageStore } from "../../infrastructure/packages/package-store.js";
 import {
   createHubCatalogConnectService,
   createHubRuntimeConnectService,
@@ -44,8 +50,11 @@ export async function runHubConnectMain(
       !peers.some(({ identity }) => identity === agentIdentity)) {
     throw new Error("HUB_CONNECT_REQUIRED_CALLER_NOT_REGISTERED");
   }
-  const secretKeyring = loadSecretKeyring(loadHubEnv({ ...environment }));
+  const hubEnv = loadHubEnv({ ...environment });
+  const secretKeyring = loadSecretKeyring(hubEnv);
   if (secretKeyring === null) throw new Error("HUB_CONNECT_SECRET_KEYRING_REQUIRED");
+  const hubStoreLocation = loadHubStoreLocation(hubEnv.KOKORO_WORKSPACE_CONFIG);
+  if (hubStoreLocation === null) throw new Error("HUB_CONNECT_PACKAGE_STORE_REQUIRED");
 
   const mongo = createMongoClient(mongoUrl);
   await mongo.connect();
@@ -63,6 +72,23 @@ export async function runHubConnectMain(
     new MongoMcpSecretRepository(collections),
     new AesGcmSecretCipher(secretKeyring),
   );
+  const packages = makePackageStore(
+    hubStoreLocation,
+    hubEnv.KOKORO_WORKSPACE_S3_ACCESS_KEY !== undefined &&
+      hubEnv.KOKORO_WORKSPACE_S3_SECRET_KEY !== undefined
+      ? {
+          accessKeyId: hubEnv.KOKORO_WORKSPACE_S3_ACCESS_KEY,
+          secretAccessKey: hubEnv.KOKORO_WORKSPACE_S3_SECRET_KEY,
+        }
+      : null,
+  );
+  const assembly = new ExecutionAssemblyService({
+    publications: repository,
+    skills: new MongoSkillRepository(collections),
+    mcp: new McpHubService(new MongoMcpServerRepository(collections)),
+    secrets,
+    packages,
+  });
   const callers = new AsyncLocalStorage<HubConnectCaller>();
   let draining = false;
   const caller = { resolve: () => {
@@ -75,7 +101,7 @@ export async function runHubConnectMain(
     peers,
     callers,
     catalog: createHubCatalogConnectService({ publication, caller, platformCallerIdentity: platformIdentity }),
-    runtime: createHubRuntimeConnectService({ secrets, caller, agentCallerIdentity: agentIdentity }),
+    runtime: createHubRuntimeConnectService({ assembly, caller, agentCallerIdentity: agentIdentity }),
     ready: async () => {
       await mongo.db(mongoDatabase).command({ ping: 1 });
       return true;

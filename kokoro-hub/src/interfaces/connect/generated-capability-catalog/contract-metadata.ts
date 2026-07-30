@@ -2,8 +2,8 @@
 export const contractMetadata = Object.freeze({
   schemaId: "kokoro.platform.capability.v1.HubCatalogService+HubRuntimeService+CapabilityCatalogProjectionService",
   schemaVersion: 1,
-  sourceDigestSha256: "70d11ba7351f1ab14690aafc79ea2e31d637371b61664e183ecf5e709638a203",
-  artifactDigestSha256: "d3a8ba4322f945f795a1816e04b8ef3adec88664afd0e62efd67136e57eb4689",
+  sourceDigestSha256: "09d3021593f91decf0f6a7bebecdcbd8d81a37775fd3de1ec4b80165edf5dcc3",
+  artifactDigestSha256: "112292e16e2c1e8cce84cc47bfbd83e7b185ded5e2d84f245b07db7fcdfee849",
   sourcePaths: Object.freeze([
     "kokoro/common/v1/error.proto",
     "kokoro/common/v1/receipt.proto",

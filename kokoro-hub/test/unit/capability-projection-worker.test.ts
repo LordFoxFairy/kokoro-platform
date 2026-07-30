@@ -63,6 +63,7 @@ function repositoryStub(input: Readonly<{
   return {
     freeze: vi.fn(),
     get: vi.fn(),
+    findByAgentCatalogRef: vi.fn(),
     claimProjection: vi.fn().mockResolvedValue(input.pending),
     completeProjection: vi.fn(),
     deferProjection: input.deferProjection,

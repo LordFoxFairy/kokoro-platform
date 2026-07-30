@@ -46,6 +46,7 @@ describe("signed capability catalog publication", () => {
       signer: { sign: vi.fn() },
       repository: {
         get: vi.fn().mockResolvedValue(existing),
+        findByAgentCatalogRef: vi.fn(),
         freeze,
         claimProjection: vi.fn(), completeProjection: vi.fn(), deferProjection: vi.fn(),
       },
@@ -85,6 +86,7 @@ describe("signed capability catalog publication", () => {
           });
         },
         get: vi.fn().mockResolvedValue(null),
+        findByAgentCatalogRef: vi.fn(),
         claimProjection: vi.fn(), completeProjection: vi.fn(), deferProjection: vi.fn(),
       },
     });
@@ -111,7 +113,7 @@ describe("signed capability catalog publication", () => {
     expect(freeze).toHaveBeenCalledOnce();
   });
 
-  it("exposes exact caller-scoped catalog and Agent-only secret services", async () => {
+  it("exposes exact caller-scoped catalog and Agent-only execution assembly", async () => {
     const snapshot = create(CapabilityCatalogSnapshotSchema, SNAPSHOT);
     const effect = create(FreezeCatalogEffectSchema, {
       siteId: "site-a",
@@ -121,7 +123,12 @@ describe("signed capability catalog publication", () => {
     const record = publicationRecord();
     const platformCaller = "spiffe://kokoro/platform";
     const agentCaller = "spiffe://kokoro/agent";
-    const resolveSecrets = vi.fn().mockResolvedValue({ ["srt_" + "1".repeat(32)]: "secret-value" });
+    const resolveAssembly = vi.fn().mockResolvedValue({
+      agentCatalogRef: record.publication.agentCatalogRef,
+      assemblyDigest: "a".repeat(64),
+      skills: [],
+      mcpServers: [],
+    });
     const catalog = createHubCatalogConnectService({
       publication: {
         freeze: vi.fn().mockResolvedValue(record),
@@ -131,7 +138,7 @@ describe("signed capability catalog publication", () => {
       platformCallerIdentity: platformCaller,
     });
     const runtime = createHubRuntimeConnectService({
-      secrets: { resolve: resolveSecrets },
+      assembly: { resolve: resolveAssembly, fetchArtifact: vi.fn() },
       caller: { resolve: () => ({ identity: agentCaller }) },
       agentCallerIdentity: agentCaller,
     });
@@ -153,10 +160,23 @@ describe("signed capability catalog publication", () => {
     expect(frozen.publication?.agentCatalogRef).toBe(record.publication.agentCatalogRef);
 
     const runtimeClient = (await import("@connectrpc/connect")).createClient(HubRuntimeService, transport);
-    const handle = `srt_${"1".repeat(32)}`;
-    await expect(runtimeClient.resolveMcpSecrets({ namespace: "opaque-ns", handles: [handle] }))
-      .resolves.toMatchObject({ secrets: [{ handle, value: "secret-value" }] });
-    expect(resolveSecrets).toHaveBeenCalledWith("opaque-ns", [handle]);
+    await expect(runtimeClient.resolveExecutionAssembly({
+      namespace: "opaque-ns",
+      agentCatalogRef: record.publication.agentCatalogRef,
+      skillGrants: [],
+      mcpGrants: [],
+    })).resolves.toMatchObject({
+      agentCatalogRef: record.publication.agentCatalogRef,
+      assemblyDigest: "a".repeat(64),
+      skills: [],
+      mcpServers: [],
+    });
+    expect(resolveAssembly).toHaveBeenCalledWith({
+      namespace: "opaque-ns",
+      agentCatalogRef: record.publication.agentCatalogRef,
+      skills: [],
+      mcpServers: [],
+    });
   });
 });
 

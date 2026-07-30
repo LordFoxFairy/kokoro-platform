@@ -3,7 +3,10 @@ import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError, type HandlerContext, type ServiceImpl } from "@connectrpc/connect";
 import type { CapabilityCatalogPublicationService } from
   "../../application/capability-catalog-publication-service.js";
-import type { McpSecretService } from "../../application/mcp-secret-service.js";
+import {
+  ExecutionAssemblyError,
+  type ExecutionAssemblyService,
+} from "../../application/execution-assembly-service.js";
 import { SecretNotResolvableError } from "../../domain/errors.js";
 import type { CapabilityCatalogPublicationRecord } from
   "../../domain/capability-publication-repository.js";
@@ -13,12 +16,14 @@ import {
   FreezeCatalogEffectSchema,
   FreezeCatalogResponseSchema,
   FrozenCatalogPublicationSchema,
+  FetchSkillArtifactResponseSchema,
   GetCatalogPublicationResponseSchema,
   HubCatalogService,
   HubRuntimeService,
-  McpSecretMaterialSchema,
-  ResolveMcpSecretsResponseSchema,
+  McpAssemblyConfigSchema,
+  ResolveExecutionAssemblyResponseSchema,
   SignatureAlgorithm,
+  SkillArtifactManifestSchema,
   type CapabilityCatalogSnapshot,
   type FreezeCatalogEffect,
   type FrozenCatalogPublication,
@@ -89,30 +94,100 @@ export function createHubCatalogConnectService(input: Readonly<{
 }
 
 export function createHubRuntimeConnectService(input: Readonly<{
-  secrets: Pick<McpSecretService, "resolve">;
+  assembly: Pick<ExecutionAssemblyService, "resolve" | "fetchArtifact">;
   caller: Readonly<{ resolve(context: HandlerContext): Readonly<{ identity: string }> }>;
   agentCallerIdentity: string;
 }>): HubRuntimeConnectService {
   requireIdentity(input.agentCallerIdentity);
   return {
-    resolveMcpSecrets: (request, context) => safeSecret(async () => {
+    resolveExecutionAssembly: (request, context) => safeAssembly(async () => {
       authorize(context, input.caller, input.agentCallerIdentity);
-      if (!reference(request.namespace, 256) || request.handles.length < 1 || request.handles.length > 128 ||
-          new Set(request.handles).size !== request.handles.length ||
-          request.handles.some((handle) => !/^srt_[0-9a-f]{32}$/u.test(handle))) {
-        throw new ConnectError("MCP secret request invalid", Code.InvalidArgument);
-      }
-      const values = await input.secrets.resolve(request.namespace, request.handles);
-      return create(ResolveMcpSecretsResponseSchema, {
-        secrets: request.handles.map((handle) => {
-          const value = values[handle];
-          if (value === undefined || value.length < 1 || Buffer.byteLength(value, "utf8") > 8_192) {
-            throw new Error("MCP_SECRET_NOT_RESOLVABLE");
+      const result = await input.assembly.resolve({
+        namespace: request.namespace,
+        agentCatalogRef: request.agentCatalogRef,
+        skills: request.skillGrants.map((grant) => ({
+          optionRef: grant.optionRef,
+          scope: grant.scope,
+          name: grant.name,
+          contentHash: grant.contentHash,
+          description: grant.description,
+        })),
+        mcpServers: request.mcpGrants.map((grant) => {
+          const revision = Number(grant.revision);
+          if (!Number.isSafeInteger(revision) || revision < 1) {
+            throw new ExecutionAssemblyError("HUB_EXECUTION_ASSEMBLY_REQUEST_INVALID");
           }
-          return create(McpSecretMaterialSchema, { handle, value });
+          return {
+            optionRef: grant.optionRef,
+            scope: grant.scope,
+            name: grant.name,
+            revision,
+            configHash: grant.configHash,
+          };
         }),
       });
+      return create(ResolveExecutionAssemblyResponseSchema, {
+        agentCatalogRef: result.agentCatalogRef,
+        assemblyDigest: result.assemblyDigest,
+        skills: result.skills.map((skill) => create(SkillArtifactManifestSchema, {
+          optionRef: skill.optionRef,
+          scope: skill.scope,
+          name: skill.name,
+          contentHash: skill.contentHash,
+          description: skill.description,
+          artifactRef: skill.artifactRef,
+          artifactSize: BigInt(skill.artifactSize),
+          artifactSha256: skill.artifactSha256,
+        })),
+        mcpServers: result.mcpServers.map((server) => create(McpAssemblyConfigSchema, {
+          optionRef: server.optionRef,
+          scope: server.scope,
+          name: server.name,
+          revision: BigInt(server.revision),
+          configHash: server.configHash,
+          transport: server.transport,
+          url: server.url,
+          allowedTools: [...server.allowedTools],
+          ...(server.authorizationValue === undefined
+            ? {} : { authorizationValue: server.authorizationValue }),
+        })),
+      });
     }),
+    fetchSkillArtifact: async function* (request, context) {
+      authorize(context, input.caller, input.agentCallerIdentity);
+      try {
+        if (request.grant === undefined) {
+          throw new ExecutionAssemblyError("HUB_SKILL_ARTIFACT_REQUEST_INVALID");
+        }
+        const expectedSize = Number(request.expectedSize);
+        if (!Number.isSafeInteger(expectedSize)) {
+          throw new ExecutionAssemblyError("HUB_SKILL_ARTIFACT_REQUEST_INVALID");
+        }
+        const data = await input.assembly.fetchArtifact({
+          namespace: request.namespace,
+          agentCatalogRef: request.agentCatalogRef,
+          grant: {
+            optionRef: request.grant.optionRef,
+            scope: request.grant.scope,
+            name: request.grant.name,
+            contentHash: request.grant.contentHash,
+            description: request.grant.description,
+          },
+          artifactRef: request.artifactRef,
+          expectedSize,
+          expectedSha256: request.expectedSha256,
+        });
+        for (let offset = 0; offset < data.byteLength; offset += 64 * 1024) {
+          yield create(FetchSkillArtifactResponseSchema, {
+            artifactRef: request.artifactRef,
+            offset: BigInt(offset),
+            data: new Uint8Array(data.subarray(offset, offset + 64 * 1024)),
+          });
+        }
+      } catch (error) {
+        throw mapAssemblyError(error);
+      }
+    },
   };
 }
 
@@ -213,10 +288,6 @@ function requireIdentity(identity: string): void {
   }
 }
 
-function reference(value: string, maximum: number): boolean {
-  return value.length >= 1 && value.length <= maximum && value.trim() === value;
-}
-
 async function safe<Result>(work: () => Promise<Result>): Promise<Result> {
   try {
     return await work();
@@ -232,14 +303,28 @@ async function safe<Result>(work: () => Promise<Result>): Promise<Result> {
   }
 }
 
-async function safeSecret<Result>(work: () => Promise<Result>): Promise<Result> {
+async function safeAssembly<Result>(work: () => Promise<Result>): Promise<Result> {
   try {
     return await work();
   } catch (error) {
-    if (error instanceof ConnectError) throw error;
-    if (error instanceof SecretNotResolvableError) {
-      throw new ConnectError("MCP secret material not resolvable", Code.NotFound);
-    }
-    throw new ConnectError("MCP secret service unavailable", Code.Unavailable);
+    throw mapAssemblyError(error);
   }
+}
+
+function mapAssemblyError(error: unknown): ConnectError {
+  if (error instanceof ConnectError) return error;
+  if (error instanceof SecretNotResolvableError) {
+    return new ConnectError("execution assembly unavailable", Code.FailedPrecondition);
+  }
+  if (error instanceof ExecutionAssemblyError) {
+    if (error.code.endsWith("REQUEST_INVALID")) {
+      return new ConnectError("execution assembly request invalid", Code.InvalidArgument);
+    }
+    if (error.code.includes("CATALOG_NOT_FOUND") || error.code.includes("NOT_AUTHORIZED") ||
+        error.code.includes("CAPABILITY_REVOKED") || error.code.includes("SELECTION_INVALID") ||
+        error.code.includes("NOT_RESOLVABLE")) {
+      return new ConnectError("execution assembly unavailable", Code.FailedPrecondition);
+    }
+  }
+  return new ConnectError("execution assembly service unavailable", Code.Unavailable);
 }

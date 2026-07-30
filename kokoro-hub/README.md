@@ -12,16 +12,16 @@ skill/MCP 能力中台的管理写面与运行时发布权威。Fresh runtime �
 - **审核状态机**（HUB-4）：`review_status` 三态 `pending|approved|rejected`；V1 上传 confirm 真实写入自动 `approved`（字段先落，为后续人审留位）。
 - **配额视图**：某 namespace 已上传包的包数 / 字节合计 vs env 配置上限；confirm 发布时按项强制。
 - **发布闭环**：私有 mTLS ConnectRPC 冻结 SiteRelease 精确绑定的能力快照，Ed25519 key revision 签名，Mongo 不可变 publication + durable projection intent 同步落库；投影到 Platform 时按原命令 receipt 消除不确定性。
-- **密钥解析**：只有精确 Agent SPIFFE 身份可调用 `ResolveMcpSecrets`；按 opaque namespace 全有或全无解析，明文不持久化、不记录日志。
+- **运行时装配**：只有精确 Agent SPIFFE 身份可调用 mTLS ConnectRPC `ResolveExecutionAssembly` / `FetchSkillArtifact`。请求必须携带冻结的 `agent_catalog_ref` 与逐项 `option_ref` grant；Hub 返回精确绑定的 skill artifact manifest、MCP 配置和完整 `Authorization` 值，明文不持久化、不记录日志。
 
-## 读写分离边界（与 kokoro-agent）
+## 与 kokoro-agent 的边界
 
-hub 与 kokoro-agent **共享同一 Mongo**（`skills` / `skill_state` 两集合）：
+Hub 独占 Mongo 与包体存储；kokoro-agent 不直连这两类基础设施：
 
-- **hub 写**：本模块是管理写面的唯一入口。
-- **agent 读**：SiteRelease 固定的非密钥目录由 Platform Admission 投影下发；skill 包内容仍按 content hash 读取权威存储。只有 MCP opaque secret handle 通过 Agent-only Hub ConnectRPC 全有或全无解析。
+- **管理写面**：Hub 是 skill/MCP 元数据、启停、revision、secret 与包体的唯一权威。
+- **Agent 读面**：每个 run 使用 Session 已冻结的 `agent_catalog_ref` 和 grants 一次解析完整装配；skill 包通过有界 mTLS server stream 获取，MCP secret 只作为类型化 `Authorization` 值驻留 Agent 内存。
 
-双实现（Python 装配读路 + TS 管理写面）逐条同语义，是双实现收敛的第一步。契约单源 = 主仓 `contract/spec/storage.yaml`，`src/contract/storage.ts` 是其生成镜像（勿手改）。
+跨仓契约单源是主仓 protobuf 与 control spec；Agent 不复制 Hub 的 Mongo 查询语义，也不在启动时 seed Hub 数据。
 
 ## 契约面
 
@@ -45,7 +45,7 @@ hub 与 kokoro-agent **共享同一 Mongo**（`skills` / `skill_state` 两集合
 
 ## 路线图（未做，刻意不贪）
 
-- **灰度发布**：按 namespace 白名单/百分比放量新 revision。HUB-4 只落运营位与审核态字段；灰度需要"生效 revision 指针"与装配读路（agent hub.py）联动，等双实现读写语义再收敛一轮后做。
+- **灰度发布**：按 namespace 白名单/百分比放量新 revision。HUB-4 只落运营位与审核态字段；灰度需要新增生效 revision 指针，并在冻结 catalog 时完成选择。
 - **人审流**：`review_status` 字段与 `/review` API 已留位；接入人审时把 upsert 的自动 `approved` 改为 `pending` 即可，池过滤读路无需改动。
 
 ## 运行

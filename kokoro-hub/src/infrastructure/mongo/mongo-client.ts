@@ -9,7 +9,7 @@ import type { ReviewStatus } from "../../contract/skill-curation-storage.js";
 import type { CapabilityCatalogSnapshot } from "../../domain/capability-catalog.js";
 import { SKILL_REVISIONS_COLLECTION, SKILL_STATE_COLLECTION, SKILLS_COLLECTION } from "../../contract/storage.js";
 
-// Mongo 存储态记录（hub 写、agent 读，同库读写分离）。deleted_at 显式可空：
+// Hub 私有 Mongo 存储态记录。Agent 不直连该数据库。deleted_at 显式可空：
 // upsert 时写 null，软删时写毫秒时间戳；查询 { deleted_at: null } 同时命中 null 与缺省。
 export interface SkillRecord {
   scope: string;

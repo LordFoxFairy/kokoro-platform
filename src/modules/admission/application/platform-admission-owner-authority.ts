@@ -169,6 +169,7 @@ export interface AdmissionCapabilityOwnerPort {
     }>,
   ): Promise<AdmissionOwnerResolution<Readonly<{
     capabilitySnapshotRef: string;
+    agentCatalogRef: string;
     agent?: string | undefined;
     agentLabel?: string | undefined;
     tools: readonly string[];
@@ -464,6 +465,7 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
           content: command.effect.triggerMessageContent,
         },
         runtime: {
+          agent_catalog_ref: capability.value.agentCatalogRef,
           agent_type: "general" as const,
           ...(capability.value.agent === undefined ? {} : { agent: capability.value.agent }),
           model: {

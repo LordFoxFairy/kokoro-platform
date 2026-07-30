@@ -182,15 +182,18 @@ export class PostgresAdmissionCapabilityOwner implements AdmissionCapabilityOwne
       kind: "resolved",
       value: Object.freeze({
         capabilitySnapshotRef: `capability-snapshot:sha256:${digestValue(selection)}`,
+        agentCatalogRef: row.agentCatalogRef,
         ...(agent === undefined ? {} : { agent: agent.agent, agentLabel: agent.label }),
         tools: Object.freeze([...parsed.data.tools]),
         skills: Object.freeze(skills.map((item) => Object.freeze({
+          option_ref: item.optionRef,
           name: item.name,
           content_hash: item.contentHash,
           description: item.description,
           scope: item.scope,
         }))),
         mcpServers: Object.freeze(mcp.map((item) => Object.freeze({
+          option_ref: item.optionRef,
           scope: item.scope,
           name: item.name,
           revision: item.revision,

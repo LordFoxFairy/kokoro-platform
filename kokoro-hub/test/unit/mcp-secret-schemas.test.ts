@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { generateSecretHandle } from "../../src/domain/secret-handle.js";
-import {
-  createSecretBodySchema,
-  resolveSecretsBodySchema,
-  secretHandleParamsSchema,
-} from "../../src/interfaces/http/mcp-secret-schemas.js";
+import { createSecretBodySchema, secretHandleParamsSchema } from "../../src/interfaces/http/mcp-secret-schemas.js";
 
 describe("createSecretBodySchema", () => {
   it("accepts a well-formed create body", () => {
@@ -28,27 +24,5 @@ describe("secretHandleParamsSchema", () => {
     for (const handle of ["srt_short", "not-a-handle", `srt_${"A".repeat(32)}`, ""]) {
       expect(secretHandleParamsSchema.safeParse({ handle }).success, `'${handle}'`).toBe(false);
     }
-  });
-});
-
-describe("resolveSecretsBodySchema", () => {
-  const handles = [generateSecretHandle(), generateSecretHandle()];
-
-  it("accepts a namespace + handle batch", () => {
-    const parsed = resolveSecretsBodySchema.parse({ namespace: "ns-a", handles });
-    expect(parsed.handles).toEqual(handles);
-  });
-
-  it("rejects empty handles, bad handle shapes, oversize batches, and missing namespace", () => {
-    expect(resolveSecretsBodySchema.safeParse({ namespace: "ns-a", handles: [] }).success).toBe(false);
-    expect(resolveSecretsBodySchema.safeParse({ namespace: "ns-a", handles: ["bad"] }).success).toBe(false);
-    expect(
-      resolveSecretsBodySchema.safeParse({
-        namespace: "ns-a",
-        handles: Array.from({ length: 101 }, () => generateSecretHandle()),
-      }).success,
-    ).toBe(false);
-    expect(resolveSecretsBodySchema.safeParse({ handles }).success).toBe(false);
-    expect(resolveSecretsBodySchema.safeParse({ namespace: "ns-a", handles, extra: 1 }).success).toBe(false);
   });
 });
