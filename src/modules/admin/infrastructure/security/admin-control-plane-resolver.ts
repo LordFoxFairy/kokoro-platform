@@ -43,6 +43,8 @@ export interface VerifiedAdminPeer {
 }
 
 export type CommerceAdminCommandOperation =
+  | "commerce.credit-program.publish"
+  | "commerce.entitlement-template.publish"
   | "commerce.offer.publish"
   | "commerce.redemption-program.publish"
   | "commerce.code-batch.issue"

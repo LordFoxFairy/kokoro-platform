@@ -451,11 +451,16 @@ function authenticatedEnvelope(
 
 import {
   CodeBatchActionEffectSchema,
+  CreditScopePolicySchema,
   IssueCodeBatchEffectSchema,
+  PublishCreditProgramRevisionEffectSchema,
+  PublishEntitlementTemplateRevisionEffectSchema,
   PublishOfferEffectSchema,
   PublishRedemptionProgramEffectSchema,
   type CodeBatchActionEffect,
   type IssueCodeBatchEffect,
+  type PublishCreditProgramRevisionEffect,
+  type PublishEntitlementTemplateRevisionEffect,
   type PublishOfferEffect,
   type PublishRedemptionProgramEffect,
 } from "./kokoro/platform/commerce/v1/admin_commerce_pb.js";
@@ -470,6 +475,44 @@ function commerceDigest(
 ): string {
   return authenticatedEnvelope(
     "platform-admin-commerce@v1", operation, context, effect, [siteId, ...targetRefs], verified,
+  );
+}
+
+function canonicalCreditProgramRevisionEffect(
+  effect: PublishCreditProgramRevisionEffect,
+): PublishCreditProgramRevisionEffect {
+  if (effect.scopePolicy === undefined) throw new Error("commerce_credit_scope_policy_required");
+  return create(PublishCreditProgramRevisionEffectSchema, {
+    ...effect,
+    scopePolicy: create(CreditScopePolicySchema, {
+      surfaceRefs: uniqueSorted("effect.scopePolicy.surfaceRefs", effect.scopePolicy.surfaceRefs),
+      capabilityKeys: uniqueSorted("effect.scopePolicy.capabilityKeys", effect.scopePolicy.capabilityKeys),
+      agentRefs: uniqueSorted("effect.scopePolicy.agentRefs", effect.scopePolicy.agentRefs),
+      allowUnattributedAgent: effect.scopePolicy.allowUnattributedAgent,
+    }),
+  });
+}
+
+export function publishCreditProgramRevisionRequestDigest(
+  context: AuthenticatedOperatorCommandContext, siteId: string,
+  effect: PublishCreditProgramRevisionEffect, verified: VerifiedAuthenticatedAdminAxes,
+): string {
+  const canonicalEffect = canonicalCreditProgramRevisionEffect(effect);
+  return commerceDigest(
+    "kokoro.platform.commerce.v1.AdminCommerceService/PublishCreditProgramRevision", context, siteId,
+    { typeName: PublishCreditProgramRevisionEffectSchema.typeName, bytes: toBinary(PublishCreditProgramRevisionEffectSchema, canonicalEffect, { writeUnknownFields: false }) },
+    [canonicalEffect.creditProgramRevisionRef, canonicalEffect.programRef], verified,
+  );
+}
+
+export function publishEntitlementTemplateRevisionRequestDigest(
+  context: AuthenticatedOperatorCommandContext, siteId: string,
+  effect: PublishEntitlementTemplateRevisionEffect, verified: VerifiedAuthenticatedAdminAxes,
+): string {
+  return commerceDigest(
+    "kokoro.platform.commerce.v1.AdminCommerceService/PublishEntitlementTemplateRevision", context, siteId,
+    { typeName: PublishEntitlementTemplateRevisionEffectSchema.typeName, bytes: toBinary(PublishEntitlementTemplateRevisionEffectSchema, effect, { writeUnknownFields: false }) },
+    [effect.entitlementTemplateRevisionRef, effect.templateRef], verified,
   );
 }
 

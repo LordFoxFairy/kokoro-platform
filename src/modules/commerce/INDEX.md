@@ -46,6 +46,9 @@ Platform through HTTP/RPC and never exposes a Prisma client to application code.
 - `AdminCommerceService` is a closed typed Connect surface mounted only on the Admin mTLS listener. Admin authenticates the
   operator, verifies exact Site scope/permission/fresh step-up and the canonical protobuf command digest; Commerce remains the
   application/repository owner and never accepts a generic route or action proxy.
+- CreditProgram and EntitlementTemplate prerequisites have independent publish/list/get operations. Publication writes an immutable
+  Site-scoped revision, its canonical content digest, command receipt and audit entry in one Platform transaction. Credit scope is a
+  typed policy (surface, capability and Agent sets), and daily/period window facts are complete-or-rejected before persistence.
 - `PublishOffer` freezes Product, optional PlanVersion, ordered FulfillmentProgram outputs, ProductVersion and legal references in
   one transaction. Output ordinals are contiguous, line ids are unique, and product/plan/output shape is checked before persistence.
 - Code batches follow `draft -> active -> suspended -> revoked`, with `draft -> abandoned` as recovery when the one-time secret
