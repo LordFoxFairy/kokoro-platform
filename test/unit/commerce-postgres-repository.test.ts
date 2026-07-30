@@ -5,8 +5,8 @@ import { issuePlatformTransaction, revokePlatformTransaction, type PlatformSqlTr
 import { canonicalCommandId } from "../../src/shared/outbox-inbox/receipt.js";
 
 describe("PostgresCommerceRepository", () => {
-  it("normalizes legacy internal UUID command ids without changing 32hex or UUIDv7 wire ids", () => {
-    expect(canonicalCommandId("00000000-0000-4000-8000-000000000001")).toBe("00000000000040008000000000000001");
+  it("accepts only the current 32hex and UUIDv7 wire identities", () => {
+    expect(() => canonicalCommandId("00000000-0000-4000-8000-000000000001")).toThrow("COMMAND_ID_INVALID");
     expect(canonicalCommandId("00000000-0000-7000-8000-000000000001")).toBe("00000000-0000-7000-8000-000000000001");
     expect(canonicalCommandId("a".repeat(32))).toBe("a".repeat(32));
   });

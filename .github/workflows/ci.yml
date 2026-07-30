@@ -68,7 +68,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:17@sha256:a426e44bac0b759c95894d68e1a0ac03ecc20b619f498a91aae373bf06d8508d
+        image: postgres:18.4@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres-ci-bootstrap
@@ -90,6 +90,7 @@ jobs:
       PLATFORM_DATABASE_API_ROLE: platform_api
       PLATFORM_DATABASE_ADMISSION_ROLE: platform_admission
       PLATFORM_DATABASE_AUTHORIZATION_ROLE: platform_authorization
+      PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE: platform_asset_data_plane
       PLATFORM_DATABASE_WORKER_ROLE: platform_worker
       PLATFORM_DATABASE_ADMIN_ROLE: platform_admin
       PLATFORM_DATABASE_MODEL_GATEWAY_ROLE: platform_model_gateway

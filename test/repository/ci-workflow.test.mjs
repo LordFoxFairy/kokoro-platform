@@ -34,7 +34,7 @@ test("Platform CI gates both PostgreSQL authority and Hub integration", async ()
   assert.match(commands(gates).join("\n"), /pnpm typecheck/u);
   assert.match(commands(gates).join("\n"), /pnpm test/u);
   assert.equal(commands(hubIntegration).at(-1), "pnpm test:integration");
-  assert.match(platformPostgres.services.postgres.image, /^postgres:17@sha256:[a-f0-9]{64}$/u);
+  assert.match(platformPostgres.services.postgres.image, /^postgres:18\.4@sha256:[a-f0-9]{64}$/u);
   assert.match(commands(platformPostgres).join("\n"), /provision-platform-postgres\.sql/u);
   assert.match(commands(platformPostgres).join("\n"), /pnpm build:runtime/u);
   assert.match(commands(platformPostgres).join("\n"), /pnpm db:migrate/u);
@@ -50,18 +50,23 @@ test("PostgreSQL CI provisions isolated non-superuser roles", async () => {
     resolve(root, "scripts/ci/provision-platform-postgres.sql"),
     "utf8",
   );
-  for (const role of [
+  const roles = [
     "platform_migrator",
     "platform_api",
     "platform_admission",
     "platform_authorization",
+    "platform_asset_data_plane",
     "platform_worker",
     "platform_admin",
     "platform_model_gateway",
-  ]) {
+  ];
+  for (const role of roles) {
     assert.match(source, new RegExp(`CREATE ROLE ${role}\\b`, "u"));
   }
-  assert.equal((source.match(/NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS/gu) ?? []).length, 7);
+  assert.equal(
+    (source.match(/NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS/gu) ?? []).length,
+    roles.length,
+  );
   assert.match(source, /CREATE DATABASE kokoro_test_platform OWNER platform_migrator;/u);
   assert.match(source, /REVOKE ALL ON DATABASE kokoro_test_platform FROM PUBLIC;/u);
   assert.doesNotMatch(source, /GRANT\s+ALL/iu);

@@ -8,7 +8,6 @@ import type {
 import type { AssetUploadCapabilityClaims } from
   "../../application/contracts/asset-upload-ports.js";
 import { digestAssetCommand } from "../../application/asset-digest.js";
-import { OutboxRepository } from "../../../../shared/outbox-inbox/outbox.js";
 
 export class PostgresAssetMultipartRepository implements AssetMultipartRepositoryPort {
   async readAuthorized(
@@ -453,16 +452,14 @@ export class PostgresAssetMultipartRepository implements AssetMultipartRepositor
         sessionRef: input.claims.sessionRef,
         expectedVersion: owner.expectedVersion.toString(),
       });
-      await new OutboxRepository().enqueue(transaction, Object.freeze({
-        eventId: input.eventId,
-        owner: "asset",
-        eventType: "asset.upload.completion.requested",
-        aggregateId: input.claims.sessionRef,
-        payload,
-        payloadDigest: digestAssetCommand(payload),
-        correlationId: input.correlationId,
-        causationId: upload.completionReceiptRef ?? upload.uploadRef,
-      }));
+      await sql.query(
+        `SELECT platform.enqueue_asset_upload_completion_event(
+           $1::uuid,$2,$3::jsonb,$4,$5,$6
+         )`,
+        [input.eventId, input.claims.sessionRef, JSON.stringify(payload),
+          digestAssetCommand(payload), input.correlationId,
+          upload.completionReceiptRef ?? upload.uploadRef],
+      );
     } else {
       const ownerState = await sql.query<{ state: string }>(
         `SELECT state FROM platform.asset_upload_session

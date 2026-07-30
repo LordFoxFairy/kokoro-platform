@@ -208,17 +208,17 @@ STABLE
 SECURITY DEFINER
 SET search_path = pg_catalog, platform
 AS $$
-  SELECT authorization.authorization_handle,authorization.site_ref,
-         authorization.execution_manifest_ref,authorization.authorization_segment_ref,
-         authorization.gateway_model,authorization.adapter_kind,authorization.expires_at
-  FROM platform.model_gateway_execution_authorization authorization
-  WHERE authorization.authorization_handle=requested_handle
-    AND authorization.adapter_kind='litellm'
+  SELECT gateway_authorization.authorization_handle,gateway_authorization.site_ref,
+         gateway_authorization.execution_manifest_ref,gateway_authorization.authorization_segment_ref,
+         gateway_authorization.gateway_model,gateway_authorization.adapter_kind,gateway_authorization.expires_at
+  FROM platform.model_gateway_execution_authorization gateway_authorization
+  WHERE gateway_authorization.authorization_handle=requested_handle
+    AND gateway_authorization.adapter_kind='litellm'
     AND (
-      (requested_operation='prepare' AND authorization.state='active'
-        AND authorization.expires_at>clock_timestamp())
+      (requested_operation='prepare' AND gateway_authorization.state='active'
+        AND gateway_authorization.expires_at>clock_timestamp())
       OR (requested_operation IN ('attach','claim','frame','finalize','unknown')
-        AND authorization.state IN ('active','revoked','expired'))
+        AND gateway_authorization.state IN ('active','revoked','expired'))
     )
   LIMIT 1
 $$;

@@ -2,19 +2,6 @@ SET statement_timeout = '30s';
 SET lock_timeout = '5s';
 SET idle_in_transaction_session_timeout = '30s';
 
-ALTER TABLE platform.command_receipt
-  ALTER COLUMN command_id TYPE TEXT USING (
-    CASE
-      WHEN command_id::TEXT ~ '^[a-f0-9]{8}-[a-f0-9]{4}-7[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$'
-        THEN command_id::TEXT
-      ELSE replace(command_id::TEXT,'-','')
-    END
-  );
-ALTER TABLE platform.command_receipt
-  ADD CONSTRAINT command_receipt_command_id_format CHECK (
-    command_id ~ '^(?:[a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-7[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})$'
-  );
-
 ALTER TABLE platform.authorization_identity_session
   ADD COLUMN device_label TEXT NOT NULL
     CHECK(length(device_label) BETWEEN 1 AND 128),

@@ -56,7 +56,7 @@ Hub integration uses Mongo and its configured package store:
 pnpm test:integration
 ```
 
-PostgreSQL component tests require a PostgreSQL 17 database and distinct least-privilege
+PostgreSQL component tests require a PostgreSQL 18 database and distinct least-privilege
 roles. They never start an implicit local database.
 
 ## Deployment

@@ -411,7 +411,7 @@ function validIdentity(
 ): boolean {
   return row !== undefined && row.currentUser === expected.expectedDatabaseUser &&
     row.currentDatabase === expected.expectedDatabaseName && row.databaseOwner === expected.migratorDatabaseUser &&
-    row.serverMajor === 17 && row.isSuperuser === false && row.canCreateDatabase === false &&
+    row.serverMajor === 18 && row.isSuperuser === false && row.canCreateDatabase === false &&
     row.canCreateRole === false && row.canReplicate === false && row.canBypassRls === false &&
     row.inheritsPrivileges === false && row.hasAnyMembership === false && row.isMigratorMember === false &&
     row.canCreateDatabaseObject === false && row.canUseSchema === true && row.canCreateSchema === false &&
@@ -448,7 +448,7 @@ const RUNTIME_IDENTITY_SQL = `
     has_table_privilege(current_user,'platform.platform_foundation','INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') AS "canMutateFoundation",
     has_function_privilege(current_user,'platform.resolve_model_gateway_authorization(TEXT,TEXT)','EXECUTE') AS "canExecuteAuthorizationResolver",
     has_function_privilege(current_user,'platform.list_model_gateway_dispatch_candidates(INTEGER)','EXECUTE') AS "canExecuteDispatchScanner",
-    has_table_privilege(current_user,'platform.model_gateway_invocation','SELECT,INSERT')
+    (has_table_privilege(current_user, 'platform.model_gateway_invocation', 'SELECT') AND has_table_privilege(current_user, 'platform.model_gateway_invocation', 'INSERT'))
       AND has_column_privilege(current_user,'platform.model_gateway_invocation','state','UPDATE')
       AND has_column_privilege(current_user,'platform.model_gateway_invocation','response_envelope','UPDATE')
       AND has_column_privilege(current_user,'platform.model_gateway_invocation','evidence_ref','UPDATE')
@@ -456,9 +456,9 @@ const RUNTIME_IDENTITY_SQL = `
       AND has_column_privilege(current_user,'platform.model_gateway_invocation','owner_evidence_ref','UPDATE')
       AND has_column_privilege(current_user,'platform.model_gateway_invocation','fence_epoch','UPDATE')
       AND has_column_privilege(current_user,'platform.model_gateway_invocation','updated_at','UPDATE')
-      AND has_table_privilege(current_user,'platform.model_gateway_attempt_usage_fact','SELECT,INSERT')
-      AND has_table_privilege(current_user,'platform.model_gateway_outbox','SELECT,INSERT')
-      AND has_table_privilege(current_user,'platform.model_gateway_frame','SELECT,INSERT')
+      AND (has_table_privilege(current_user, 'platform.model_gateway_attempt_usage_fact', 'SELECT') AND has_table_privilege(current_user, 'platform.model_gateway_attempt_usage_fact', 'INSERT'))
+      AND (has_table_privilege(current_user, 'platform.model_gateway_outbox', 'SELECT') AND has_table_privilege(current_user, 'platform.model_gateway_outbox', 'INSERT'))
+      AND (has_table_privilege(current_user, 'platform.model_gateway_frame', 'SELECT') AND has_table_privilege(current_user, 'platform.model_gateway_frame', 'INSERT'))
       AND has_table_privilege(current_user,'platform.model_gateway_dispatch_queue','INSERT')
       AND NOT has_table_privilege(current_user,'platform.model_gateway_dispatch_queue','SELECT')
       AND has_column_privilege(current_user,'platform.model_gateway_dispatch_queue','state','UPDATE')
@@ -468,14 +468,14 @@ const RUNTIME_IDENTITY_SQL = `
       AND has_table_privilege(current_user,'platform.model_gateway_capacity','SELECT')
       AND has_column_privilege(current_user,'platform.model_gateway_capacity','active_count','UPDATE')
       AND has_column_privilege(current_user,'platform.model_gateway_capacity','queued_count','UPDATE')
-      AND has_table_privilege(current_user,'platform.credit_usage_command_receipt','SELECT,INSERT')
-      AND has_table_privilege(current_user,'platform.credit_usage_attempt_intent','SELECT,INSERT')
+      AND (has_table_privilege(current_user, 'platform.credit_usage_command_receipt', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_usage_command_receipt', 'INSERT'))
+      AND (has_table_privilege(current_user, 'platform.credit_usage_attempt_intent', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_usage_attempt_intent', 'INSERT'))
       AND has_column_privilege(current_user,'platform.credit_usage_attempt_intent','fence_epoch','UPDATE')
       AND has_column_privilege(current_user,'platform.credit_usage_attempt_intent','state','UPDATE')
       AND has_column_privilege(current_user,'platform.credit_usage_attempt_intent','owner_evidence_ref','UPDATE')
       AND has_column_privilege(current_user,'platform.credit_usage_attempt_intent','provisional_customer_amount','UPDATE')
       AND has_column_privilege(current_user,'platform.credit_usage_attempt_intent','updated_at','UPDATE')
-      AND has_table_privilege(current_user,'platform.credit_attempt_usage_evidence','SELECT,INSERT')
+      AND (has_table_privilege(current_user, 'platform.credit_attempt_usage_evidence', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_attempt_usage_evidence', 'INSERT'))
       AND has_table_privilege(current_user,'platform.credit_rating_policy_revision','SELECT')
       AND has_table_privilege(current_user,'platform.credit_rating_snapshot','SELECT')
       AND has_table_privilege(current_user,'platform.credit_authorization_segment','SELECT')

@@ -3,7 +3,9 @@ SET lock_timeout = '5s';
 SET idle_in_transaction_session_timeout = '30s';
 
 CREATE TABLE platform.command_receipt (
-  command_id UUID PRIMARY KEY,
+  command_id TEXT PRIMARY KEY CHECK (
+    command_id ~ '^(?:[a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-7[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})$'
+  ),
   environment TEXT NOT NULL,
   region TEXT NOT NULL,
   caller_identity TEXT NOT NULL,

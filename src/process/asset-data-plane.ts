@@ -255,7 +255,7 @@ function isMainModule(): boolean {
 }
 
 export async function runAssetDataPlaneMain(): Promise<void> {
-  const database = createPlatformDatabaseClient(loadPlatformDatabaseConfig("api"));
+  const database = createPlatformDatabaseClient(loadPlatformDatabaseConfig("asset-data-plane"));
   const composition = await createAssetDataPlaneProductionComposition({ database });
   const processHost = createAssetDataPlaneProcess({ database, composition });
   const port = Number.parseInt(process.env.PLATFORM_ASSET_DATA_PLANE_PORT ?? "4246", 10);

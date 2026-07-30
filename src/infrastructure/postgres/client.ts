@@ -16,9 +16,9 @@ import type { AdminWorkloadAxes } from
   "../../modules/admin/application/services/admin-oidc-service.js";
 
 export type PlatformProcessRole =
-  | "api" | "admission" | "authorization" | "worker" | "admin" | "migrator";
+  | "api" | "admission" | "authorization" | "asset-data-plane" | "worker" | "admin" | "migrator";
 export type PlatformCredentialClass =
-  | "api" | "admission" | "authorization" | "worker" | "admin" | "migrator";
+  | "api" | "admission" | "authorization" | "asset-data-plane" | "worker" | "admin" | "migrator";
 
 const ROLE_DEFAULTS = {
   api: { poolMax: 20, credentialClass: "api", identityEnv: "PLATFORM_DATABASE_API_ROLE" },
@@ -31,6 +31,11 @@ const ROLE_DEFAULTS = {
     poolMax: 8,
     credentialClass: "authorization",
     identityEnv: "PLATFORM_DATABASE_AUTHORIZATION_ROLE",
+  },
+  "asset-data-plane": {
+    poolMax: 16,
+    credentialClass: "asset-data-plane",
+    identityEnv: "PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE",
   },
   worker: {
     poolMax: 8,
@@ -282,7 +287,9 @@ export function createPlatformDatabaseClient(
           config.role,
         );
         if (!validRuntimeIdentity(rows[0], config)) {
-          throw new Error("PLATFORM_RUNTIME_DATABASE_ROLE_INVALID");
+          throw new Error(
+            `PLATFORM_RUNTIME_DATABASE_ROLE_INVALID:${JSON.stringify(rows[0] ?? null)}`,
+          );
         }
         await prisma.$queryRaw`SELECT "schemaVersion" FROM platform.platform_foundation WHERE singleton = TRUE`;
       } catch (error) {
@@ -433,7 +440,7 @@ export function createPlatformDatabaseClient(
       fence: AssetDataPlaneTransactionFence,
       work: (transaction: PlatformTransaction) => Promise<Result>,
     ) => {
-      if (config.role !== "api") throw new Error("ASSET_DATA_PLANE_ROLE_FORBIDDEN");
+      if (config.role !== "asset-data-plane") throw new Error("ASSET_DATA_PLANE_ROLE_FORBIDDEN");
       assertAssetDataPlaneFence(fence);
       return prisma.$transaction(async (databaseTransaction) => {
         await databaseTransaction.$queryRawUnsafe(
@@ -816,7 +823,8 @@ interface RuntimeIdentity {
   hasRequiredModelOptionFunctions: boolean;
   canSelectModelCatalogTable: boolean;
   canReadModelSensitiveColumn: boolean;
-  hasUnexpectedPlatformPrivilege: boolean;
+  unexpectedPlatformRelations: readonly string[];
+  unexpectedPlatformFunctions: readonly string[];
 }
 
 const ASSET_RELATIONS = [
@@ -829,11 +837,17 @@ const ASSET_RELATIONS = [
 ] as const;
 const ASSET_API_RELATIONS = [
   "asset_upload_intent", "asset_upload_session", "asset_quota_account",
-  "asset_quota_reservation", "asset_multipart_upload", "asset_multipart_part",
-  "asset_resource", "asset_version", "asset_reference",
-  "asset_eligibility_projection",
+  "asset_quota_reservation", "asset_blob_candidate", "asset_upload_rejection",
+  "asset_promotion_intent", "asset_resource", "asset_version", "asset_eligibility_projection",
 ] as const;
-const ASSET_API_MUTABLE_RELATIONS = ASSET_API_RELATIONS.slice(0, 6);
+const ASSET_API_MUTABLE_RELATIONS = ASSET_API_RELATIONS.slice(0, 4);
+const ASSET_API_OWNER_READ_RELATIONS = ASSET_API_RELATIONS.slice(4);
+const ASSET_DATA_PLANE_RELATIONS = [
+  "asset_upload_intent", "asset_upload_session", "asset_multipart_upload", "asset_multipart_part",
+] as const;
+const ASSET_DATA_PLANE_MUTABLE_RELATIONS = [
+  "asset_upload_session", "asset_multipart_upload", "asset_multipart_part",
+] as const;
 const ASSET_WORKER_INSERT_RELATIONS = ASSET_RELATIONS.slice(6);
 const ASSET_WORKER_UPDATE_RELATIONS = [
   "asset_upload_intent", "asset_upload_session", "asset_quota_account",
@@ -848,8 +862,18 @@ const ADMISSION_RELATIONS = [
   "admission_launch_profile_snapshot",
   "admission_capability_catalog_snapshot",
 ] as const;
+const CREDIT_USAGE_RELATIONS = [
+  "credit_rating_policy_revision", "credit_rating_snapshot", "credit_usage_attempt_intent",
+  "credit_attempt_usage_evidence", "credit_usage_segment_closure",
+  "credit_usage_closure_evidence", "credit_usage_settlement", "credit_rated_usage",
+  "credit_usage_settlement_source", "credit_usage_variance",
+  "credit_usage_reconciliation", "credit_usage_command_receipt",
+] as const;
+const MODEL_GATEWAY_ADMISSION_RELATIONS = ["model_gateway_execution_authorization"] as const;
 const ADMISSION_SELECT_RELATIONS = [
   ...ADMISSION_RELATIONS,
+  ...CREDIT_USAGE_RELATIONS,
+  ...MODEL_GATEWAY_ADMISSION_RELATIONS,
   "site",
   "site_release",
   "authorization_site",
@@ -875,26 +899,16 @@ const ADMISSION_SELECT_RELATIONS = [
   "credit_budget_allocation_revision",
   "credit_authorization_segment",
   "credit_budget_operation_receipt",
-  "credit_rating_policy_revision",
-  "credit_rating_snapshot",
-  "credit_usage_attempt_intent",
-  "credit_attempt_usage_evidence",
-  "credit_usage_segment_closure",
-  "credit_usage_closure_evidence",
-  "credit_usage_settlement",
-  "credit_rated_usage",
-  "credit_usage_settlement_source",
-  "credit_usage_variance",
-  "credit_usage_reconciliation",
-  "credit_usage_command_receipt",
   "asset_resource",
   "asset_version",
   "asset_eligibility_projection",
 ] as const;
 const ADMISSION_INSERT_RELATIONS = [
   "admission_command",
+  "capability_projection_command",
   "admission_session_execution_binding",
   "admission_execution_manifest",
+  "admission_capability_catalog_snapshot",
   "outbox_event",
   "credit_hold",
   "credit_hold_allocation",
@@ -914,23 +928,52 @@ const ADMISSION_INSERT_RELATIONS = [
   "credit_usage_variance",
   "credit_usage_reconciliation",
   "credit_usage_command_receipt",
+  "model_gateway_execution_authorization",
 ] as const;
 const ADMISSION_UPDATE_RELATIONS = [
   "admission_command",
+  "capability_projection_command",
   "admission_execution_manifest",
   "credit_hold",
   "credit_execution_budget_root",
   "credit_authorization_segment",
+  "model_gateway_execution_authorization",
 ] as const;
 const ASSET_RELATIONS_SQL = sqlLiterals(ASSET_RELATIONS);
 const ASSET_API_RELATIONS_SQL = sqlLiterals(ASSET_API_RELATIONS);
 const ASSET_API_MUTABLE_RELATIONS_SQL = sqlLiterals(ASSET_API_MUTABLE_RELATIONS);
+const ASSET_API_OWNER_READ_RELATIONS_SQL = sqlLiterals(ASSET_API_OWNER_READ_RELATIONS);
+const ASSET_API_OWNER_READ_COLUMN_ALLOWLIST_SQL = `
+  (candidate.relname='asset_blob_candidate' AND candidate_column.attname=ANY(ARRAY[
+    'site_ref','subject_ref','subject_generation','project_ref','intent_ref','state','updated_at'
+  ])) OR
+  (candidate.relname='asset_promotion_intent' AND candidate_column.attname=ANY(ARRAY[
+    'site_ref','subject_ref','subject_generation','project_ref','intent_ref','state','updated_at'
+  ])) OR
+  (candidate.relname='asset_upload_rejection' AND candidate_column.attname=ANY(ARRAY[
+    'site_ref','intent_ref','rejection_ref'
+  ])) OR
+  (candidate.relname='asset_resource' AND candidate_column.attname=ANY(ARRAY[
+    'site_ref','subject_ref','subject_generation','project_ref','asset_ref','purpose','state'
+  ])) OR
+  (candidate.relname='asset_version' AND candidate_column.attname=ANY(ARRAY[
+    'site_ref','asset_ref','asset_version_ref','source_upload_intent_ref','eligibility_epoch',
+    'detected_media_type','size','state'
+  ])) OR
+  (candidate.relname='asset_eligibility_projection' AND candidate_column.attname=ANY(ARRAY[
+    'site_ref','asset_version_ref','eligibility_ref','subject_ref','subject_generation','project_ref',
+    'purpose','eligibility_epoch','state'
+  ]))`;
+const ASSET_DATA_PLANE_RELATIONS_SQL = sqlLiterals(ASSET_DATA_PLANE_RELATIONS);
+const ASSET_DATA_PLANE_MUTABLE_RELATIONS_SQL = sqlLiterals(ASSET_DATA_PLANE_MUTABLE_RELATIONS);
 const ASSET_WORKER_INSERT_RELATIONS_SQL = sqlLiterals(ASSET_WORKER_INSERT_RELATIONS);
 const ASSET_WORKER_UPDATE_RELATIONS_SQL = sqlLiterals(ASSET_WORKER_UPDATE_RELATIONS);
 const ADMISSION_RELATIONS_SQL = sqlLiterals(ADMISSION_RELATIONS);
 const ADMISSION_SELECT_RELATIONS_SQL = sqlLiterals(ADMISSION_SELECT_RELATIONS);
 const ADMISSION_INSERT_RELATIONS_SQL = sqlLiterals(ADMISSION_INSERT_RELATIONS);
 const ADMISSION_UPDATE_RELATIONS_SQL = sqlLiterals(ADMISSION_UPDATE_RELATIONS);
+const CREDIT_USAGE_RELATIONS_SQL = sqlLiterals(CREDIT_USAGE_RELATIONS);
+const MODEL_GATEWAY_ADMISSION_RELATIONS_SQL = sqlLiterals(MODEL_GATEWAY_ADMISSION_RELATIONS);
 
 const RUNTIME_IDENTITY_SQL = `
   SELECT current_user AS "currentUser",
@@ -970,75 +1013,110 @@ const RUNTIME_IDENTITY_SQL = `
              AND owned_function.proowner = runtime_role.oid
          ) AS "ownsPlatformFunction",
          CASE WHEN $2 = 'api' THEN
-           has_table_privilege(current_user, 'platform.command_receipt', 'INSERT,UPDATE')
+           (has_table_privilege(current_user, 'platform.command_receipt', 'INSERT') AND has_table_privilege(current_user, 'platform.command_receipt', 'UPDATE'))
            AND has_table_privilege(current_user, 'platform.outbox_event', 'INSERT')
-           AND has_table_privilege(current_user, 'platform.inbox_delivery', 'INSERT,UPDATE')
+           AND (has_table_privilege(current_user, 'platform.inbox_delivery', 'INSERT') AND has_table_privilege(current_user, 'platform.inbox_delivery', 'UPDATE'))
            AND has_table_privilege(current_user, 'platform.model_selection_decision', 'INSERT')
-           AND has_table_privilege(current_user, 'platform.authorization_subject', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.authorization_identity_session', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.authorization_project', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.authorization_project_membership', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.authorization_product_context', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.authorization_session_access_grant', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.authorization_scoped_stream_state', 'SELECT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.authorization_scoped_site_cursor', 'SELECT,INSERT,UPDATE')
+           AND (has_table_privilege(current_user, 'platform.authorization_subject', 'SELECT') AND has_table_privilege(current_user, 'platform.authorization_subject', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.authorization_identity_session', 'SELECT') AND has_table_privilege(current_user, 'platform.authorization_identity_session', 'INSERT') AND has_table_privilege(current_user, 'platform.authorization_identity_session', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.authorization_project', 'SELECT') AND has_table_privilege(current_user, 'platform.authorization_project', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.authorization_project_membership', 'SELECT') AND has_table_privilege(current_user, 'platform.authorization_project_membership', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.authorization_product_context', 'SELECT') AND has_table_privilege(current_user, 'platform.authorization_product_context', 'INSERT') AND has_table_privilege(current_user, 'platform.authorization_product_context', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.authorization_session_access_grant', 'SELECT') AND has_table_privilege(current_user, 'platform.authorization_session_access_grant', 'INSERT') AND has_table_privilege(current_user, 'platform.authorization_session_access_grant', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.authorization_scoped_stream_state', 'SELECT') AND has_table_privilege(current_user, 'platform.authorization_scoped_stream_state', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.authorization_scoped_site_cursor', 'SELECT') AND has_table_privilege(current_user, 'platform.authorization_scoped_site_cursor', 'INSERT') AND has_table_privilege(current_user, 'platform.authorization_scoped_site_cursor', 'UPDATE'))
            AND has_table_privilege(current_user, 'platform.authorization_scoped_event_log', 'INSERT')
-           AND has_table_privilege(current_user, 'platform.identity_account', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.identity_verification_transaction', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.identity_auth_transaction', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.identity_reauthentication_challenge', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.identity_totp_authenticator', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.identity_recovery_code_set', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.identity_recovery_code', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.identity_auth_rate_limit', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.identity_totp_enrollment_transaction', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.identity_totp_enrollment_delivery_claim', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.identity_reauthentication_proof', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.identity_reauthentication_delivery_claim', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.identity_recovery_code_delivery_claim', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.identity_security_event', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.identity_refresh_family', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.identity_session_delivery_claim', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.identity_personal_bootstrap', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.commerce_command', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.commerce_billing_account', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.commerce_billing_account_membership', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.commerce_fulfillment_transaction', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.commerce_fulfillment_output_plan', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.commerce_fulfillment_actual_output', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.commerce_command_outbox', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.commerce_audit_entry', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.credit_account', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.credit_grant', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.credit_hold', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.credit_hold_allocation', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.credit_journal_transaction', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.credit_journal_entry', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.credit_execution_budget_root', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.credit_budget_allocation', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.credit_budget_allocation_revision', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.credit_authorization_segment', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.credit_budget_operation_receipt', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.asset_upload_intent', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.asset_upload_session', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.asset_quota_account', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.asset_quota_reservation', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.asset_multipart_upload', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.asset_multipart_part', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.asset_resource', 'SELECT')
-           AND has_table_privilege(current_user, 'platform.asset_version', 'SELECT')
-           AND has_table_privilege(current_user, 'platform.asset_reference', 'SELECT')
-           AND has_table_privilege(current_user, 'platform.asset_eligibility_projection', 'SELECT')
+           AND (has_table_privilege(current_user, 'platform.identity_account', 'SELECT') AND has_table_privilege(current_user, 'platform.identity_account', 'INSERT') AND has_table_privilege(current_user, 'platform.identity_account', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.identity_verification_transaction', 'SELECT') AND has_table_privilege(current_user, 'platform.identity_verification_transaction', 'INSERT') AND has_table_privilege(current_user, 'platform.identity_verification_transaction', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.identity_auth_transaction', 'SELECT') AND has_table_privilege(current_user, 'platform.identity_auth_transaction', 'INSERT') AND has_table_privilege(current_user, 'platform.identity_auth_transaction', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.identity_reauthentication_challenge', 'SELECT') AND has_table_privilege(current_user, 'platform.identity_reauthentication_challenge', 'INSERT') AND has_table_privilege(current_user, 'platform.identity_reauthentication_challenge', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.identity_totp_authenticator', 'SELECT') AND has_table_privilege(current_user, 'platform.identity_totp_authenticator', 'INSERT') AND has_table_privilege(current_user, 'platform.identity_totp_authenticator', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.identity_recovery_code_set', 'SELECT') AND has_table_privilege(current_user, 'platform.identity_recovery_code_set', 'INSERT') AND has_table_privilege(current_user, 'platform.identity_recovery_code_set', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.identity_recovery_code', 'SELECT') AND has_table_privilege(current_user, 'platform.identity_recovery_code', 'INSERT') AND has_table_privilege(current_user, 'platform.identity_recovery_code', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.identity_auth_rate_limit', 'SELECT') AND has_table_privilege(current_user, 'platform.identity_auth_rate_limit', 'INSERT') AND has_table_privilege(current_user, 'platform.identity_auth_rate_limit', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.identity_totp_enrollment_transaction', 'SELECT') AND has_table_privilege(current_user, 'platform.identity_totp_enrollment_transaction', 'INSERT') AND has_table_privilege(current_user, 'platform.identity_totp_enrollment_transaction', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.identity_totp_enrollment_delivery_claim', 'SELECT') AND has_table_privilege(current_user, 'platform.identity_totp_enrollment_delivery_claim', 'INSERT') AND has_table_privilege(current_user, 'platform.identity_totp_enrollment_delivery_claim', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.identity_reauthentication_proof', 'SELECT') AND has_table_privilege(current_user, 'platform.identity_reauthentication_proof', 'INSERT') AND has_table_privilege(current_user, 'platform.identity_reauthentication_proof', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.identity_reauthentication_delivery_claim', 'SELECT') AND has_table_privilege(current_user, 'platform.identity_reauthentication_delivery_claim', 'INSERT') AND has_table_privilege(current_user, 'platform.identity_reauthentication_delivery_claim', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.identity_recovery_code_delivery_claim', 'SELECT') AND has_table_privilege(current_user, 'platform.identity_recovery_code_delivery_claim', 'INSERT') AND has_table_privilege(current_user, 'platform.identity_recovery_code_delivery_claim', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.identity_security_event', 'SELECT') AND has_table_privilege(current_user, 'platform.identity_security_event', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.identity_refresh_family', 'SELECT') AND has_table_privilege(current_user, 'platform.identity_refresh_family', 'INSERT') AND has_table_privilege(current_user, 'platform.identity_refresh_family', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.identity_session_delivery_claim', 'SELECT') AND has_table_privilege(current_user, 'platform.identity_session_delivery_claim', 'INSERT') AND has_table_privilege(current_user, 'platform.identity_session_delivery_claim', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.identity_personal_bootstrap', 'SELECT') AND has_table_privilege(current_user, 'platform.identity_personal_bootstrap', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.commerce_command', 'SELECT') AND has_table_privilege(current_user, 'platform.commerce_command', 'INSERT') AND has_table_privilege(current_user, 'platform.commerce_command', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.commerce_billing_account', 'SELECT') AND has_table_privilege(current_user, 'platform.commerce_billing_account', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.commerce_billing_account_membership', 'SELECT') AND has_table_privilege(current_user, 'platform.commerce_billing_account_membership', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.commerce_fulfillment_transaction', 'SELECT') AND has_table_privilege(current_user, 'platform.commerce_fulfillment_transaction', 'INSERT') AND has_table_privilege(current_user, 'platform.commerce_fulfillment_transaction', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.commerce_fulfillment_output_plan', 'SELECT') AND has_table_privilege(current_user, 'platform.commerce_fulfillment_output_plan', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.commerce_fulfillment_actual_output', 'SELECT') AND has_table_privilege(current_user, 'platform.commerce_fulfillment_actual_output', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.commerce_command_outbox', 'SELECT') AND has_table_privilege(current_user, 'platform.commerce_command_outbox', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.commerce_audit_entry', 'SELECT') AND has_table_privilege(current_user, 'platform.commerce_audit_entry', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.credit_account', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_account', 'INSERT') AND has_table_privilege(current_user, 'platform.credit_account', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.credit_grant', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_grant', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.credit_hold', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_hold', 'INSERT') AND has_table_privilege(current_user, 'platform.credit_hold', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.credit_hold_allocation', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_hold_allocation', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.credit_journal_transaction', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_journal_transaction', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.credit_journal_entry', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_journal_entry', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.credit_execution_budget_root', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_execution_budget_root', 'INSERT') AND has_table_privilege(current_user, 'platform.credit_execution_budget_root', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.credit_budget_allocation', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_budget_allocation', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.credit_budget_allocation_revision', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_budget_allocation_revision', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.credit_authorization_segment', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_authorization_segment', 'INSERT') AND has_table_privilege(current_user, 'platform.credit_authorization_segment', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.credit_budget_operation_receipt', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_budget_operation_receipt', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.asset_upload_intent', 'SELECT') AND has_table_privilege(current_user, 'platform.asset_upload_intent', 'INSERT') AND has_table_privilege(current_user, 'platform.asset_upload_intent', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.asset_upload_session', 'SELECT') AND has_table_privilege(current_user, 'platform.asset_upload_session', 'INSERT') AND has_table_privilege(current_user, 'platform.asset_upload_session', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.asset_quota_account', 'SELECT') AND has_table_privilege(current_user, 'platform.asset_quota_account', 'INSERT') AND has_table_privilege(current_user, 'platform.asset_quota_account', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.asset_quota_reservation', 'SELECT') AND has_table_privilege(current_user, 'platform.asset_quota_reservation', 'INSERT') AND has_table_privilege(current_user, 'platform.asset_quota_reservation', 'UPDATE'))
+           AND has_column_privilege(current_user, 'platform.asset_blob_candidate', 'site_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_blob_candidate', 'subject_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_blob_candidate', 'subject_generation', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_blob_candidate', 'project_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_blob_candidate', 'intent_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_blob_candidate', 'state', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_blob_candidate', 'updated_at', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_upload_rejection', 'site_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_upload_rejection', 'intent_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_upload_rejection', 'rejection_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_promotion_intent', 'site_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_promotion_intent', 'subject_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_promotion_intent', 'subject_generation', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_promotion_intent', 'project_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_promotion_intent', 'intent_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_promotion_intent', 'state', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_promotion_intent', 'updated_at', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_resource', 'site_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_resource', 'subject_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_resource', 'subject_generation', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_resource', 'project_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_resource', 'asset_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_resource', 'purpose', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_resource', 'state', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_version', 'site_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_version', 'asset_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_version', 'asset_version_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_version', 'source_upload_intent_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_version', 'eligibility_epoch', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_version', 'detected_media_type', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_version', 'size', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_version', 'state', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_eligibility_projection', 'site_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_eligibility_projection', 'asset_version_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_eligibility_projection', 'eligibility_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_eligibility_projection', 'subject_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_eligibility_projection', 'subject_generation', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_eligibility_projection', 'project_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_eligibility_projection', 'purpose', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_eligibility_projection', 'eligibility_epoch', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_eligibility_projection', 'state', 'SELECT')
          WHEN $2 = 'admission' THEN
-           has_table_privilege(current_user, 'platform.admission_command', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.capability_projection_command', 'SELECT,INSERT')
+           (has_table_privilege(current_user, 'platform.admission_command', 'SELECT') AND has_table_privilege(current_user, 'platform.admission_command', 'INSERT') AND has_table_privilege(current_user, 'platform.admission_command', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.capability_projection_command', 'SELECT') AND has_table_privilege(current_user, 'platform.capability_projection_command', 'INSERT'))
            AND has_column_privilege(current_user, 'platform.capability_projection_command', 'state', 'UPDATE')
            AND has_column_privilege(current_user, 'platform.capability_projection_command', 'agent_catalog_ref', 'UPDATE')
            AND has_column_privilege(current_user, 'platform.capability_projection_command', 'updated_at', 'UPDATE')
-           AND has_table_privilege(current_user, 'platform.admission_session_execution_binding', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.admission_execution_manifest', 'SELECT,INSERT,UPDATE')
+           AND (has_table_privilege(current_user, 'platform.admission_session_execution_binding', 'SELECT') AND has_table_privilege(current_user, 'platform.admission_session_execution_binding', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.admission_execution_manifest', 'SELECT') AND has_table_privilege(current_user, 'platform.admission_execution_manifest', 'INSERT') AND has_table_privilege(current_user, 'platform.admission_execution_manifest', 'UPDATE'))
            AND has_table_privilege(current_user, 'platform.admission_launch_profile_snapshot', 'SELECT')
-           AND has_table_privilege(current_user, 'platform.admission_capability_catalog_snapshot', 'SELECT,INSERT')
+           AND (has_table_privilege(current_user, 'platform.admission_capability_catalog_snapshot', 'SELECT') AND has_table_privilege(current_user, 'platform.admission_capability_catalog_snapshot', 'INSERT'))
            AND has_table_privilege(current_user, 'platform.outbox_event', 'INSERT')
            AND has_table_privilege(current_user, 'platform.site', 'SELECT')
            AND has_table_privilege(current_user, 'platform.site_release', 'SELECT')
@@ -1056,126 +1134,153 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_table_privilege(current_user, 'platform.commerce_billing_account', 'SELECT')
            AND has_table_privilege(current_user, 'platform.credit_account', 'SELECT')
            AND has_table_privilege(current_user, 'platform.credit_grant', 'SELECT')
-           AND has_table_privilege(current_user, 'platform.credit_hold', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.credit_hold_allocation', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.credit_journal_transaction', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.credit_journal_entry', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.credit_execution_budget_root', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.credit_budget_allocation', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.credit_budget_allocation_revision', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.credit_authorization_segment', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.credit_budget_operation_receipt', 'SELECT,INSERT')
+           AND (has_table_privilege(current_user, 'platform.credit_hold', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_hold', 'INSERT') AND has_table_privilege(current_user, 'platform.credit_hold', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.credit_hold_allocation', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_hold_allocation', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.credit_journal_transaction', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_journal_transaction', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.credit_journal_entry', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_journal_entry', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.credit_execution_budget_root', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_execution_budget_root', 'INSERT') AND has_table_privilege(current_user, 'platform.credit_execution_budget_root', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.credit_budget_allocation', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_budget_allocation', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.credit_budget_allocation_revision', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_budget_allocation_revision', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.credit_authorization_segment', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_authorization_segment', 'INSERT') AND has_table_privilege(current_user, 'platform.credit_authorization_segment', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.credit_budget_operation_receipt', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_budget_operation_receipt', 'INSERT'))
            AND has_table_privilege(current_user, 'platform.credit_rating_policy_revision', 'SELECT')
-           AND has_table_privilege(current_user, 'platform.credit_rating_snapshot', 'SELECT,INSERT')
+           AND (has_table_privilege(current_user, 'platform.credit_rating_snapshot', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_rating_snapshot', 'INSERT'))
            AND has_table_privilege(current_user, 'platform.credit_usage_attempt_intent', 'SELECT')
            AND has_table_privilege(current_user, 'platform.credit_attempt_usage_evidence', 'SELECT')
-           AND has_table_privilege(current_user, 'platform.credit_usage_segment_closure', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.credit_usage_closure_evidence', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.credit_usage_settlement', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.credit_rated_usage', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.credit_usage_settlement_source', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.credit_usage_variance', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.credit_usage_reconciliation', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.credit_usage_command_receipt', 'SELECT,INSERT')
+           AND (has_table_privilege(current_user, 'platform.credit_usage_segment_closure', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_usage_segment_closure', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.credit_usage_closure_evidence', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_usage_closure_evidence', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.credit_usage_settlement', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_usage_settlement', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.credit_rated_usage', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_rated_usage', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.credit_usage_settlement_source', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_usage_settlement_source', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.credit_usage_variance', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_usage_variance', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.credit_usage_reconciliation', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_usage_reconciliation', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.credit_usage_command_receipt', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_usage_command_receipt', 'INSERT'))
            AND has_table_privilege(current_user, 'platform.asset_resource', 'SELECT')
            AND has_table_privilege(current_user, 'platform.asset_version', 'SELECT')
            AND has_table_privilege(current_user, 'platform.asset_eligibility_projection', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.model_gateway_execution_authorization', 'INSERT')
+           AND has_column_privilege(current_user, 'platform.model_gateway_execution_authorization', 'authorization_handle', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.model_gateway_execution_authorization', 'state', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.model_gateway_execution_authorization', 'state', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.model_gateway_execution_authorization', 'updated_at', 'UPDATE')
+         WHEN $2 = 'asset-data-plane' THEN
+           has_table_privilege(current_user, 'platform.authorization_product_binding', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.authorization_subject', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.authorization_project', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.authorization_project_membership', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.asset_upload_intent', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.asset_upload_session', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.asset_upload_session', 'state', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.asset_upload_session', 'completion_requested_at', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.asset_upload_session', 'expected_version', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.asset_upload_session', 'updated_at', 'UPDATE')
+           AND has_table_privilege(current_user, 'platform.asset_multipart_upload', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.asset_multipart_upload', 'INSERT')
+           AND has_column_privilege(current_user, 'platform.asset_multipart_upload', 'state', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.asset_multipart_upload', 'expected_version', 'UPDATE')
+           AND has_table_privilege(current_user, 'platform.asset_multipart_part', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.asset_multipart_part', 'INSERT')
+           AND has_column_privilege(current_user, 'platform.asset_multipart_part', 'state', 'UPDATE')
+           AND has_column_privilege(current_user, 'platform.asset_multipart_part', 'expected_version', 'UPDATE')
+           AND has_function_privilege(current_user,
+             'platform.enqueue_asset_upload_completion_event(uuid,text,jsonb,character,text,text)',
+             'EXECUTE')
          WHEN $2 = 'worker' THEN
-           has_table_privilege(current_user, 'platform.outbox_event', 'SELECT,UPDATE')
+           (has_table_privilege(current_user, 'platform.outbox_event', 'SELECT') AND has_table_privilege(current_user, 'platform.outbox_event', 'UPDATE'))
            AND has_table_privilege(current_user, 'platform.site', 'SELECT')
            AND has_any_column_privilege(current_user, 'platform.site', 'UPDATE')
            AND has_table_privilege(current_user, 'platform.site_project_binding', 'SELECT')
            AND has_table_privilege(current_user, 'platform.site_release', 'SELECT')
            AND has_any_column_privilege(current_user, 'platform.site_release', 'UPDATE')
-           AND has_table_privilege(current_user, 'platform.site_deployment_binding', 'SELECT,INSERT')
+           AND (has_table_privilege(current_user, 'platform.site_deployment_binding', 'SELECT') AND has_table_privilege(current_user, 'platform.site_deployment_binding', 'INSERT'))
            AND has_any_column_privilege(current_user, 'platform.site_deployment_binding', 'UPDATE')
            AND has_table_privilege(current_user, 'platform.site_activation_attempt', 'SELECT')
            AND has_any_column_privilege(current_user, 'platform.site_activation_attempt', 'UPDATE')
-           AND has_table_privilege(current_user, 'platform.site_deployment_observation', 'SELECT,INSERT')
+           AND (has_table_privilege(current_user, 'platform.site_deployment_observation', 'SELECT') AND has_table_privilege(current_user, 'platform.site_deployment_observation', 'INSERT'))
            AND has_table_privilege(current_user, 'platform.site_traffic_stop_attempt', 'SELECT')
            AND has_any_column_privilege(current_user, 'platform.site_traffic_stop_attempt', 'UPDATE')
-           AND has_table_privilege(current_user, 'platform.site_traffic_stop_observation', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.authorization_site', 'SELECT,INSERT')
+           AND (has_table_privilege(current_user, 'platform.site_traffic_stop_observation', 'SELECT') AND has_table_privilege(current_user, 'platform.site_traffic_stop_observation', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.authorization_site', 'SELECT') AND has_table_privilege(current_user, 'platform.authorization_site', 'INSERT'))
            AND has_any_column_privilege(current_user, 'platform.authorization_site', 'UPDATE')
-           AND has_table_privilege(current_user, 'platform.authorization_site_release', 'SELECT,INSERT')
+           AND (has_table_privilege(current_user, 'platform.authorization_site_release', 'SELECT') AND has_table_privilege(current_user, 'platform.authorization_site_release', 'INSERT'))
            AND has_any_column_privilege(current_user, 'platform.authorization_site_release', 'UPDATE')
-           AND has_table_privilege(current_user, 'platform.authorization_product_binding', 'SELECT,INSERT')
+           AND (has_table_privilege(current_user, 'platform.authorization_product_binding', 'SELECT') AND has_table_privilege(current_user, 'platform.authorization_product_binding', 'INSERT'))
            AND has_any_column_privilege(current_user, 'platform.authorization_product_binding', 'UPDATE')
            AND has_table_privilege(current_user, 'platform.command_receipt', 'UPDATE')
-           AND has_table_privilege(current_user, 'platform.inbox_delivery', 'INSERT,UPDATE')
+           AND (has_table_privilege(current_user, 'platform.inbox_delivery', 'INSERT') AND has_table_privilege(current_user, 'platform.inbox_delivery', 'UPDATE'))
            AND has_table_privilege(current_user, 'platform.authorization_session_access_grant', 'SELECT')
            AND has_table_privilege(current_user, 'platform.admin_operator_authority', 'SELECT')
-           AND has_table_privilege(current_user, 'platform.admin_approval', 'SELECT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.admin_post_effect_review', 'SELECT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.asset_upload_intent', 'SELECT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.asset_upload_session', 'SELECT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.asset_quota_account', 'SELECT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.asset_quota_reservation', 'SELECT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.asset_blob_candidate', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.asset_cleanup_group', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.asset_object_cleanup', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.asset_object_cleanup_receipt', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.asset_upload_rejection', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.asset_scan_evaluation', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.asset_promotion_intent', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.asset_blob', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.asset_resource', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.asset_version', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.asset_reference', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.asset_eligibility_projection', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.asset_promotion_receipt', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.authorization_scoped_stream_state', 'SELECT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.authorization_scoped_site_cursor', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.authorization_scoped_event_log', 'SELECT,INSERT,DELETE')
-           AND has_table_privilege(current_user, 'platform.authorization_scoped_snapshot', 'SELECT,DELETE')
+           AND (has_table_privilege(current_user, 'platform.admin_approval', 'SELECT') AND has_table_privilege(current_user, 'platform.admin_approval', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.admin_post_effect_review', 'SELECT') AND has_table_privilege(current_user, 'platform.admin_post_effect_review', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.asset_upload_intent', 'SELECT') AND has_table_privilege(current_user, 'platform.asset_upload_intent', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.asset_upload_session', 'SELECT') AND has_table_privilege(current_user, 'platform.asset_upload_session', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.asset_quota_account', 'SELECT') AND has_table_privilege(current_user, 'platform.asset_quota_account', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.asset_quota_reservation', 'SELECT') AND has_table_privilege(current_user, 'platform.asset_quota_reservation', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.asset_blob_candidate', 'SELECT') AND has_table_privilege(current_user, 'platform.asset_blob_candidate', 'INSERT') AND has_table_privilege(current_user, 'platform.asset_blob_candidate', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.asset_cleanup_group', 'SELECT') AND has_table_privilege(current_user, 'platform.asset_cleanup_group', 'INSERT') AND has_table_privilege(current_user, 'platform.asset_cleanup_group', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.asset_object_cleanup', 'SELECT') AND has_table_privilege(current_user, 'platform.asset_object_cleanup', 'INSERT') AND has_table_privilege(current_user, 'platform.asset_object_cleanup', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.asset_object_cleanup_receipt', 'SELECT') AND has_table_privilege(current_user, 'platform.asset_object_cleanup_receipt', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.asset_upload_rejection', 'SELECT') AND has_table_privilege(current_user, 'platform.asset_upload_rejection', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.asset_scan_evaluation', 'SELECT') AND has_table_privilege(current_user, 'platform.asset_scan_evaluation', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.asset_promotion_intent', 'SELECT') AND has_table_privilege(current_user, 'platform.asset_promotion_intent', 'INSERT') AND has_table_privilege(current_user, 'platform.asset_promotion_intent', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.asset_blob', 'SELECT') AND has_table_privilege(current_user, 'platform.asset_blob', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.asset_resource', 'SELECT') AND has_table_privilege(current_user, 'platform.asset_resource', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.asset_version', 'SELECT') AND has_table_privilege(current_user, 'platform.asset_version', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.asset_reference', 'SELECT') AND has_table_privilege(current_user, 'platform.asset_reference', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.asset_eligibility_projection', 'SELECT') AND has_table_privilege(current_user, 'platform.asset_eligibility_projection', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.asset_promotion_receipt', 'SELECT') AND has_table_privilege(current_user, 'platform.asset_promotion_receipt', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.authorization_scoped_stream_state', 'SELECT') AND has_table_privilege(current_user, 'platform.authorization_scoped_stream_state', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.authorization_scoped_site_cursor', 'SELECT') AND has_table_privilege(current_user, 'platform.authorization_scoped_site_cursor', 'INSERT') AND has_table_privilege(current_user, 'platform.authorization_scoped_site_cursor', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.authorization_scoped_event_log', 'SELECT') AND has_table_privilege(current_user, 'platform.authorization_scoped_event_log', 'INSERT') AND has_table_privilege(current_user, 'platform.authorization_scoped_event_log', 'DELETE'))
+           AND (has_table_privilege(current_user, 'platform.authorization_scoped_snapshot', 'SELECT') AND has_table_privilege(current_user, 'platform.authorization_scoped_snapshot', 'DELETE'))
          WHEN $2 = 'authorization' THEN
            has_table_privilege(current_user, 'platform.authorization_scoped_stream_state', 'SELECT')
            AND has_table_privilege(current_user, 'platform.authorization_scoped_site_cursor', 'SELECT')
            AND has_table_privilege(current_user, 'platform.authorization_scoped_event_log', 'SELECT')
-           AND has_table_privilege(current_user, 'platform.authorization_scoped_snapshot', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.authorization_scoped_snapshot_record', 'SELECT,INSERT')
+           AND (has_table_privilege(current_user, 'platform.authorization_scoped_snapshot', 'SELECT') AND has_table_privilege(current_user, 'platform.authorization_scoped_snapshot', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.authorization_scoped_snapshot_record', 'SELECT') AND has_table_privilege(current_user, 'platform.authorization_scoped_snapshot_record', 'INSERT'))
            AND has_table_privilege(current_user, 'platform.authorization_site', 'SELECT')
            AND has_table_privilege(current_user, 'platform.authorization_subject', 'SELECT')
            AND has_table_privilege(current_user, 'platform.authorization_identity_session', 'SELECT')
            AND has_table_privilege(current_user, 'platform.authorization_project_membership', 'SELECT')
            AND has_table_privilege(current_user, 'platform.authorization_session_access_grant', 'SELECT')
-         ELSE has_table_privilege(current_user, 'platform.command_receipt', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.outbox_event', 'SELECT,INSERT')
+         ELSE (has_table_privilege(current_user, 'platform.command_receipt', 'SELECT') AND has_table_privilege(current_user, 'platform.command_receipt', 'INSERT') AND has_table_privilege(current_user, 'platform.command_receipt', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.outbox_event', 'SELECT') AND has_table_privilege(current_user, 'platform.outbox_event', 'INSERT'))
            AND has_table_privilege(current_user, 'platform.authorization_site', 'SELECT')
            AND has_table_privilege(current_user, 'platform.authorization_subject', 'SELECT')
            AND has_table_privilege(current_user, 'platform.authorization_product_binding', 'SELECT')
-           AND has_table_privilege(current_user, 'platform.commerce_billing_account', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.commerce_billing_account_membership', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.site', 'SELECT,INSERT')
+           AND (has_table_privilege(current_user, 'platform.commerce_billing_account', 'SELECT') AND has_table_privilege(current_user, 'platform.commerce_billing_account', 'INSERT') AND has_table_privilege(current_user, 'platform.commerce_billing_account', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.commerce_billing_account_membership', 'SELECT') AND has_table_privilege(current_user, 'platform.commerce_billing_account_membership', 'INSERT') AND has_table_privilege(current_user, 'platform.commerce_billing_account_membership', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.site', 'SELECT') AND has_table_privilege(current_user, 'platform.site', 'INSERT'))
            AND has_any_column_privilege(current_user, 'platform.site', 'UPDATE')
-           AND has_table_privilege(current_user, 'platform.site_project_binding', 'SELECT,INSERT')
+           AND (has_table_privilege(current_user, 'platform.site_project_binding', 'SELECT') AND has_table_privilege(current_user, 'platform.site_project_binding', 'INSERT'))
            AND has_any_column_privilege(current_user, 'platform.site_project_binding', 'UPDATE')
-           AND has_table_privilege(current_user, 'platform.site_release', 'SELECT,INSERT')
+           AND (has_table_privilege(current_user, 'platform.site_release', 'SELECT') AND has_table_privilege(current_user, 'platform.site_release', 'INSERT'))
            AND has_any_column_privilege(current_user, 'platform.site_release', 'UPDATE')
-           AND has_table_privilege(current_user, 'platform.site_activation_attempt', 'SELECT,INSERT')
+           AND (has_table_privilege(current_user, 'platform.site_activation_attempt', 'SELECT') AND has_table_privilege(current_user, 'platform.site_activation_attempt', 'INSERT'))
            AND has_table_privilege(current_user, 'platform.site_deployment_binding', 'SELECT')
            AND has_any_column_privilege(current_user, 'platform.site_deployment_binding', 'UPDATE')
-           AND has_table_privilege(current_user, 'platform.site_traffic_stop_attempt', 'SELECT,INSERT')
+           AND (has_table_privilege(current_user, 'platform.site_traffic_stop_attempt', 'SELECT') AND has_table_privilege(current_user, 'platform.site_traffic_stop_attempt', 'INSERT'))
            AND has_table_privilege(current_user, 'platform.site_traffic_stop_observation', 'SELECT')
-           AND has_table_privilege(current_user, 'platform.site_effect_approval', 'SELECT,INSERT')
+           AND (has_table_privilege(current_user, 'platform.site_effect_approval', 'SELECT') AND has_table_privilege(current_user, 'platform.site_effect_approval', 'INSERT'))
            AND has_any_column_privilege(current_user, 'platform.site_effect_approval', 'UPDATE')
            AND has_any_column_privilege(current_user, 'platform.authorization_site', 'UPDATE')
            AND has_any_column_privilege(current_user, 'platform.authorization_product_binding', 'UPDATE')
-           AND has_table_privilege(current_user, 'platform.authorization_scoped_stream_state', 'SELECT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.authorization_scoped_site_cursor', 'SELECT,INSERT,UPDATE')
+           AND (has_table_privilege(current_user, 'platform.authorization_scoped_stream_state', 'SELECT') AND has_table_privilege(current_user, 'platform.authorization_scoped_stream_state', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.authorization_scoped_site_cursor', 'SELECT') AND has_table_privilege(current_user, 'platform.authorization_scoped_site_cursor', 'INSERT') AND has_table_privilege(current_user, 'platform.authorization_scoped_site_cursor', 'UPDATE'))
            AND has_table_privilege(current_user, 'platform.authorization_scoped_event_log', 'INSERT')
            AND has_table_privilege(current_user, 'platform.admin_operator_authority', 'SELECT')
            AND has_table_privilege(current_user, 'platform.admin_operator_site_scope', 'SELECT')
            AND has_table_privilege(current_user, 'platform.admin_operator_global_scope_grant', 'SELECT')
            AND has_table_privilege(current_user, 'platform.admin_breakglass_grant', 'SELECT')
            AND has_table_privilege(current_user, 'platform.admin_operator_identity', 'SELECT')
-           AND has_table_privilege(current_user, 'platform.admin_oidc_transaction', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.admin_operator_session', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.admin_step_up_transaction', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.admin_command_decision', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.admin_approval', 'SELECT,INSERT,UPDATE')
-           AND has_table_privilege(current_user, 'platform.admin_approval_decision', 'SELECT,INSERT')
-           AND has_table_privilege(current_user, 'platform.admin_post_effect_review', 'SELECT,INSERT,UPDATE')
+           AND (has_table_privilege(current_user, 'platform.admin_oidc_transaction', 'SELECT') AND has_table_privilege(current_user, 'platform.admin_oidc_transaction', 'INSERT') AND has_table_privilege(current_user, 'platform.admin_oidc_transaction', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.admin_operator_session', 'SELECT') AND has_table_privilege(current_user, 'platform.admin_operator_session', 'INSERT') AND has_table_privilege(current_user, 'platform.admin_operator_session', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.admin_step_up_transaction', 'SELECT') AND has_table_privilege(current_user, 'platform.admin_step_up_transaction', 'INSERT') AND has_table_privilege(current_user, 'platform.admin_step_up_transaction', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.admin_command_decision', 'SELECT') AND has_table_privilege(current_user, 'platform.admin_command_decision', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.admin_approval', 'SELECT') AND has_table_privilege(current_user, 'platform.admin_approval', 'INSERT') AND has_table_privilege(current_user, 'platform.admin_approval', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.admin_approval_decision', 'SELECT') AND has_table_privilege(current_user, 'platform.admin_approval_decision', 'INSERT'))
+           AND (has_table_privilege(current_user, 'platform.admin_post_effect_review', 'SELECT') AND has_table_privilege(current_user, 'platform.admin_post_effect_review', 'INSERT') AND has_table_privilege(current_user, 'platform.admin_post_effect_review', 'UPDATE'))
            AND has_table_privilege(current_user, 'platform.asset_upload_intent', 'SELECT')
            AND has_table_privilege(current_user, 'platform.asset_upload_session', 'SELECT')
            AND has_table_privilege(current_user, 'platform.asset_quota_account', 'SELECT')
@@ -1238,8 +1343,8 @@ const RUNTIME_IDENTITY_SQL = `
          (has_any_column_privilege(current_user,'platform.model_inventory_import','SELECT')
            OR has_any_column_privilege(current_user,'platform.model_provider_snapshot','SELECT'))
            AS "canReadModelSensitiveColumn",
-         EXISTS (
-           SELECT 1 FROM pg_class candidate
+         ARRAY(
+           SELECT candidate.relname::text FROM pg_class candidate
            WHERE candidate.relnamespace = platform_schema.oid
              AND (
                (candidate.relkind = 'S' AND has_sequence_privilege(
@@ -1278,6 +1383,7 @@ const RUNTIME_IDENTITY_SQL = `
                'commerce_catalog_product_version','commerce_redemption_program_revision',
                'commerce_redemption_program_availability','commerce_subscription','commerce_subscription_term',
                'commerce_subscription_term_revocation','commerce_code_batch','commerce_redeem_code',
+               'commerce_code_batch_approval','commerce_code_secret_export',
                'commerce_redemption','commerce_redemption_preview','commerce_redemption_legal_acceptance',
                'commerce_entitlement_grant','commerce_entitlement_revocation','credit_account','credit_grant',
                'credit_program_window_acquisition','credit_hold','credit_hold_allocation',
@@ -1293,7 +1399,9 @@ const RUNTIME_IDENTITY_SQL = `
                'admin_operator_session','admin_step_up_transaction','admin_command_decision','admin_approval','admin_approval_decision',
                'admin_authority_bootstrap','admin_post_effect_review',
                ${ADMISSION_RELATIONS_SQL},
-               ${ASSET_RELATIONS_SQL}
+               ${ASSET_RELATIONS_SQL},
+               ${CREDIT_USAGE_RELATIONS_SQL},
+               ${MODEL_GATEWAY_ADMISSION_RELATIONS_SQL}
                ]) AND (
                  has_table_privilege(runtime_role.rolname, candidate.oid,
                    'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
@@ -1333,6 +1441,7 @@ const RUNTIME_IDENTITY_SQL = `
                'commerce_catalog_product_version','commerce_redemption_program_revision',
                'commerce_redemption_program_availability','commerce_subscription','commerce_subscription_term',
                'commerce_subscription_term_revocation','commerce_code_batch','commerce_redeem_code',
+               'commerce_code_batch_approval','commerce_code_secret_export',
                'commerce_redemption','commerce_redemption_preview','commerce_redemption_legal_acceptance',
                'commerce_entitlement_grant','commerce_entitlement_revocation','credit_account','credit_grant',
                'credit_program_window_acquisition','credit_hold','credit_hold_allocation',
@@ -1348,9 +1457,12 @@ const RUNTIME_IDENTITY_SQL = `
                'admin_operator_session','admin_step_up_transaction','admin_command_decision','admin_approval','admin_approval_decision',
                'admin_authority_bootstrap','admin_post_effect_review',
                ${ADMISSION_RELATIONS_SQL},
-               ${ASSET_RELATIONS_SQL}
+               ${ASSET_RELATIONS_SQL},
+               ${CREDIT_USAGE_RELATIONS_SQL},
+               ${MODEL_GATEWAY_ADMISSION_RELATIONS_SQL}
                ]) AND (
-                 (candidate.relname LIKE 'model\\_%' ESCAPE '\\' AND (
+                 (candidate.relname LIKE 'model\\_%' ESCAPE '\\'
+                   AND candidate.relname<>'model_gateway_execution_authorization' AND (
                    has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
                    OR has_any_column_privilege(runtime_role.rolname,candidate.oid,'SELECT')
                  ))
@@ -1377,19 +1489,34 @@ const RUNTIME_IDENTITY_SQL = `
                     'site_activation_attempt','site_deployment_observation','site_traffic_stop_attempt',
                     'site_traffic_stop_observation','site_effect_approval'
                   ]) AND NOT (
-                    ($2='worker' AND candidate.relname<>'site_effect_approval') OR $2='admin'
+                    ($2='api' AND candidate.relname=ANY(ARRAY['site','site_release']))
+                    OR ($2='worker' AND candidate.relname<>'site_effect_approval') OR $2='admin'
                     OR ($2='admission' AND candidate.relname=ANY(ARRAY['site','site_release']))
                   ))
                  OR
                  ((has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
-                  OR has_any_column_privilege(runtime_role.rolname,candidate.oid,'SELECT')) AND NOT (
+                  OR has_any_column_privilege(runtime_role.rolname,candidate.oid,'SELECT'))
+                  AND candidate.relname=ANY(ARRAY[${ASSET_RELATIONS_SQL}]) AND NOT (
                     ($2='api' AND candidate.relname=ANY(ARRAY[${ASSET_API_RELATIONS_SQL}]))
                     OR ($2 IN ('worker','admin') AND
                       candidate.relname=ANY(ARRAY[${ASSET_RELATIONS_SQL}]))
+                    OR ($2='asset-data-plane' AND
+                      candidate.relname=ANY(ARRAY[${ASSET_DATA_PLANE_RELATIONS_SQL}]))
                     OR ($2='admission' AND candidate.relname=ANY(ARRAY[
                       'asset_resource','asset_version','asset_eligibility_projection'
                     ]))
                   ))
+                 OR
+                 ($2='api' AND candidate.relname=ANY(ARRAY[${ASSET_API_OWNER_READ_RELATIONS_SQL}])
+                  AND (has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT') OR EXISTS (
+                    SELECT 1 FROM pg_attribute candidate_column
+                    WHERE candidate_column.attrelid=candidate.oid
+                      AND candidate_column.attnum>0 AND NOT candidate_column.attisdropped
+                      AND has_column_privilege(
+                        runtime_role.rolname,candidate.oid,candidate_column.attnum,'SELECT'
+                      )
+                      AND NOT (${ASSET_API_OWNER_READ_COLUMN_ALLOWLIST_SQL})
+                  )))
                  OR
                  (has_table_privilege(runtime_role.rolname, candidate.oid,
                    'DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN') AND NOT (
@@ -1429,19 +1556,28 @@ const RUNTIME_IDENTITY_SQL = `
                      candidate.relname=ANY(ARRAY[${ADMISSION_INSERT_RELATIONS_SQL}]))
                    OR ($2 = 'authorization' AND candidate.relname = ANY(ARRAY['authorization_scoped_snapshot','authorization_scoped_snapshot_record']))
                    OR ($2 = 'api' AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
+                   OR ($2 = 'asset-data-plane' AND
+                     candidate.relname=ANY(ARRAY['asset_multipart_upload','asset_multipart_part']))
                    OR ($2 = 'worker' AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_INSERT_RELATIONS_SQL}]))
                    OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
+                     'inbox_delivery','outbox_event',
                      'site_deployment_binding','site_deployment_observation',
                      'site_traffic_stop_observation','authorization_scoped_site_cursor','authorization_scoped_event_log','authorization_site',
                      'authorization_site_release','authorization_product_binding'
                    ]))
                    OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY[
                      'command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership',
+                     'commerce_command','commerce_catalog_product','commerce_catalog_plan','commerce_catalog_plan_version',
+                     'commerce_fulfillment_program_revision','commerce_fulfillment_program_output',
+                     'commerce_catalog_product_version','commerce_redemption_program_revision',
+                     'commerce_redemption_program_availability','commerce_code_batch','commerce_redeem_code',
+                     'commerce_code_batch_approval','commerce_code_secret_export','commerce_audit_entry',
                      'site','site_project_binding','site_release','site_activation_attempt',
                      'site_traffic_stop_attempt','site_effect_approval','authorization_scoped_site_cursor','authorization_scoped_event_log',
                      'admin_command_decision','admin_approval','admin_approval_decision',
                      'admin_post_effect_review','admin_oidc_transaction',
-                     'admin_operator_session','admin_step_up_transaction'
+                     'admin_operator_session','admin_step_up_transaction',
+                     'admission_capability_catalog_snapshot','admission_launch_profile_snapshot'
                    ]))
                  ))
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
@@ -1469,6 +1605,8 @@ const RUNTIME_IDENTITY_SQL = `
                      'authorization_site_release','authorization_product_binding'
                    ]))
                    OR ($2 = 'api' AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
+                   OR ($2 = 'asset-data-plane' AND
+                     candidate.relname=ANY(ARRAY[${ASSET_DATA_PLANE_MUTABLE_RELATIONS_SQL}]))
                    OR ($2 = 'worker' AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_UPDATE_RELATIONS_SQL}]))
                    OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
                      'command_receipt','outbox_event','inbox_delivery','admin_approval',
@@ -1476,6 +1614,8 @@ const RUNTIME_IDENTITY_SQL = `
                    ]))
                    OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY[
                      'command_receipt','commerce_billing_account','commerce_billing_account_membership',
+                     'commerce_catalog_product','commerce_catalog_plan','commerce_code_batch',
+                     'commerce_redemption_program_availability',
                      'site','site_project_binding','site_release','site_deployment_binding',
                      'site_effect_approval','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_site','authorization_product_binding',
                      'admin_approval','admin_post_effect_review','admin_oidc_transaction',
@@ -1514,18 +1654,28 @@ const RUNTIME_IDENTITY_SQL = `
                      candidate.relname=ANY(ARRAY[${ADMISSION_INSERT_RELATIONS_SQL}]))
                    OR ($2 = 'authorization' AND candidate.relname = ANY(ARRAY['authorization_scoped_snapshot','authorization_scoped_snapshot_record']))
                    OR ($2 = 'api' AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
+                   OR ($2 = 'asset-data-plane' AND
+                     candidate.relname=ANY(ARRAY['asset_multipart_upload','asset_multipart_part']))
                    OR ($2 = 'worker' AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_INSERT_RELATIONS_SQL}]))
                    OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
+                     'inbox_delivery','outbox_event',
                      'site_deployment_binding','site_deployment_observation',
                      'site_traffic_stop_observation','authorization_scoped_site_cursor','authorization_scoped_event_log','authorization_site',
                      'authorization_site_release','authorization_product_binding'
                    ]))
                    OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY[
                      'command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership',
+                     'commerce_command','commerce_catalog_product','commerce_catalog_plan','commerce_catalog_plan_version',
+                     'commerce_fulfillment_program_revision','commerce_fulfillment_program_output',
+                     'commerce_catalog_product_version','commerce_redemption_program_revision',
+                     'commerce_redemption_program_availability','commerce_code_batch','commerce_redeem_code',
+                     'commerce_code_batch_approval','commerce_code_secret_export','commerce_audit_entry',
                      'site','site_project_binding','site_release','site_activation_attempt',
                      'site_traffic_stop_attempt','site_effect_approval','authorization_scoped_site_cursor','authorization_scoped_event_log',
                      'admin_command_decision','admin_approval','admin_approval_decision',
-                     'admin_post_effect_review'
+                     'admin_post_effect_review','admin_oidc_transaction',
+                     'admin_operator_session','admin_step_up_transaction',
+                     'admission_capability_catalog_snapshot','admission_launch_profile_snapshot'
                    ]))
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
@@ -1553,6 +1703,8 @@ const RUNTIME_IDENTITY_SQL = `
                      'authorization_site_release','authorization_product_binding'
                    ]))
                    OR ($2 = 'api' AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
+                   OR ($2 = 'asset-data-plane' AND
+                     candidate.relname=ANY(ARRAY[${ASSET_DATA_PLANE_MUTABLE_RELATIONS_SQL}]))
                    OR ($2 = 'worker' AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_UPDATE_RELATIONS_SQL}]))
                    OR ($2 = 'worker' AND candidate.relname = ANY(ARRAY[
                      'command_receipt','outbox_event','inbox_delivery','admin_approval',
@@ -1560,9 +1712,12 @@ const RUNTIME_IDENTITY_SQL = `
                    ]))
                    OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY[
                      'command_receipt','commerce_billing_account','commerce_billing_account_membership',
+                     'commerce_catalog_product','commerce_catalog_plan','commerce_code_batch',
+                     'commerce_redemption_program_availability',
                      'site','site_project_binding','site_release','site_deployment_binding',
                      'site_effect_approval','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_site','authorization_product_binding',
-                     'admin_approval','admin_post_effect_review'
+                     'admin_approval','admin_post_effect_review','admin_oidc_transaction',
+                     'admin_operator_session','admin_step_up_transaction'
                    ]))
                    OR ($2 = 'admin' AND candidate.relname = 'admin_approval')
                  ))
@@ -1574,8 +1729,9 @@ const RUNTIME_IDENTITY_SQL = `
                    'INSERT,UPDATE,REFERENCES')
                ))
              )
-         ) OR EXISTS (
-           SELECT 1 FROM pg_proc candidate_function
+         ) AS "unexpectedPlatformRelations",
+         ARRAY(
+           SELECT candidate_function.oid::regprocedure::text FROM pg_proc candidate_function
            WHERE candidate_function.pronamespace = platform_schema.oid
              AND has_function_privilege(runtime_role.rolname, candidate_function.oid, 'EXECUTE')
              AND NOT (
@@ -1603,6 +1759,8 @@ const RUNTIME_IDENTITY_SQL = `
                  to_regprocedure('platform.report_model_provider_availability(uuid,text,text,text,bigint,text,timestamptz,text)'),
                  to_regprocedure('platform.apply_admin_authority_change(uuid,jsonb)')
                ]))
+               OR ($2 = 'asset-data-plane' AND candidate_function.oid =
+                 to_regprocedure('platform.enqueue_asset_upload_completion_event(uuid,text,jsonb,character,text,text)'))
                OR candidate_function.oid = ANY(ARRAY[
                  to_regprocedure('platform.model_identifier_is_valid(text)'),
                  to_regprocedure('platform.model_text_is_valid(text)'),
@@ -1611,7 +1769,7 @@ const RUNTIME_IDENTITY_SQL = `
                  to_regprocedure('platform.model_json_identifier_array_is_canonical(jsonb,boolean)')
                ])
              )
-         ) AS "hasUnexpectedPlatformPrivilege"
+         ) AS "unexpectedPlatformFunctions"
   FROM pg_database database_row
   JOIN pg_roles db_owner ON db_owner.oid = database_row.datdba
   JOIN pg_roles runtime_role ON runtime_role.rolname = current_user
@@ -1631,7 +1789,7 @@ function validRuntimeIdentity(
     identity &&
     identity.currentUser === config.expectedDatabaseUser &&
     identity.currentDatabase === config.expectedDatabaseName &&
-    identity.serverMajor === 17 &&
+    identity.serverMajor === 18 &&
     identity.databaseOwner === config.migratorDatabaseUser &&
     identity.schemaOwner === config.migratorDatabaseUser &&
     identity.foundationOwner === config.migratorDatabaseUser &&
@@ -1663,7 +1821,8 @@ function validRuntimeIdentity(
     identity.hasRequiredModelOptionFunctions &&
     !identity.canSelectModelCatalogTable &&
     !identity.canReadModelSensitiveColumn &&
-    !identity.hasUnexpectedPlatformPrivilege,
+    identity.unexpectedPlatformRelations.length === 0 &&
+    identity.unexpectedPlatformFunctions.length === 0,
   );
 }
 

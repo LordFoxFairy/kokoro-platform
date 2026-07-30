@@ -151,7 +151,7 @@ items:
                 - secretRef: { name: platform-asset-data-plane-secrets }
               env:
                 - { name: KOKORO_SERVICE_PACKAGE, value: platform-asset-data-plane }
-                - { name: PLATFORM_DATABASE_CREDENTIAL_CLASS, value: api }
+                - { name: PLATFORM_DATABASE_CREDENTIAL_CLASS, value: asset-data-plane }
 
   - apiVersion: apps/v1
     kind: Deployment

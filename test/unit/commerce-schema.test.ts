@@ -9,6 +9,10 @@ const identityMigration = readFileSync(
   new URL("../../prisma/migrations/20260729_identity_core/migration.sql", import.meta.url),
   "utf8",
 );
+const transactionKernelMigration = readFileSync(
+  new URL("../../prisma/migrations/0002_platform_transaction_kernel/migration.sql", import.meta.url),
+  "utf8",
+);
 const migrator = readFileSync(
   new URL("../../src/infrastructure/postgres/migrator.ts", import.meta.url),
   "utf8",
@@ -16,11 +20,11 @@ const migrator = readFileSync(
 const compactMigration = migration.replace(/\s+/gu, " ");
 
 describe("Wave 2A Commerce authority schema", () => {
-  it("upgrades legacy UUID command ids to the authoritative 32hex representation", () => {
-    expect(identityMigration).toContain("ELSE replace(command_id::TEXT,'-','')");
-    expect(identityMigration).toContain("WHEN command_id::TEXT ~");
-    expect(identityMigration).toContain("[a-f0-9]{32}");
-    expect(identityMigration).toContain("-7[a-f0-9]{3}-[89ab]");
+  it("creates the authoritative command identity shape in the initial transaction kernel", () => {
+    expect(transactionKernelMigration).toContain("command_id TEXT PRIMARY KEY");
+    expect(transactionKernelMigration).toContain("[a-f0-9]{32}");
+    expect(transactionKernelMigration).toContain("-7[a-f0-9]{3}-[89ab]");
+    expect(identityMigration).not.toContain("ALTER COLUMN command_id TYPE");
     expect(migration).not.toContain("ALTER COLUMN command_id TYPE TEXT");
   });
 

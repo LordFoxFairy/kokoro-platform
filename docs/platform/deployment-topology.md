@@ -12,7 +12,7 @@ accepts a module path.
 | `platform-api` | PostgreSQL API role | public Platform HTTP owner |
 | `platform-admission` | PostgreSQL Admission role | Admission Connect owner |
 | `platform-authorization` | PostgreSQL authorization role | session authorization feed |
-| `platform-asset-data-plane` | PostgreSQL API role | scoped asset data plane |
+| `platform-asset-data-plane` | PostgreSQL asset-data-plane role | capability-scoped multipart provider effects |
 | `platform-model-gateway` | PostgreSQL model-gateway role | authorized provider invocation |
 | `platform-worker` | PostgreSQL worker role | durable reconciliation/outbox work |
 | `platform-admin` | PostgreSQL Admin role | typed privileged control plane |
@@ -23,7 +23,7 @@ Compose, Kubernetes, CI services, service discovery, or release manifests.
 
 ## Startup order
 
-1. Provision PostgreSQL 17 and the distinct roles named by `deployables.yaml`.
+1. Provision PostgreSQL 18 and the distinct roles named by `deployables.yaml`.
 2. Run `platform-migrator` to completion.
 3. Start root runtime processes with their own database credentials.
 4. Start Hub with Mongo, package storage, and caller-secret configuration.

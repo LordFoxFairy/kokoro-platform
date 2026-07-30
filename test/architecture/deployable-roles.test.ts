@@ -17,6 +17,7 @@ const apiUrl = "postgresql://platform_api:secret@localhost:5432/kokoro_platform"
 const admissionUrl = "postgresql://platform_admission:secret@localhost:5432/kokoro_platform";
 const workerUrl = "postgresql://platform_worker:secret@localhost:5432/kokoro_platform";
 const authorizationUrl = "postgresql://platform_authorization:secret@localhost:5432/kokoro_platform";
+const assetDataPlaneUrl = "postgresql://platform_asset_data_plane:secret@localhost:5432/kokoro_platform";
 const adminUrl = "postgresql://platform_admin:secret@localhost:5432/kokoro_platform";
 const migratorUrl = "postgresql://platform_migrator:secret@localhost:5432/kokoro_platform";
 const commonEnvironment = {
@@ -25,6 +26,7 @@ const commonEnvironment = {
   PLATFORM_DATABASE_ADMISSION_ROLE: "platform_admission",
   PLATFORM_DATABASE_ADMIN_ROLE: "platform_admin",
   PLATFORM_DATABASE_AUTHORIZATION_ROLE: "platform_authorization",
+  PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE: "platform_asset_data_plane",
   PLATFORM_DATABASE_MODEL_GATEWAY_ROLE: "platform_model_gateway",
 } as const;
 
@@ -91,6 +93,11 @@ describe("Platform PostgreSQL authority", () => {
       DATABASE_URL_PLATFORM: authorizationUrl,
       PLATFORM_DATABASE_CREDENTIAL_CLASS: "authorization",
     });
+    const assetDataPlane = loadPlatformDatabaseConfig("asset-data-plane", {
+      ...commonEnvironment,
+      DATABASE_URL_PLATFORM: assetDataPlaneUrl,
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: "asset-data-plane",
+    });
     const admin = loadPlatformDatabaseConfig("admin", {
       ...commonEnvironment,
       DATABASE_URL_PLATFORM: adminUrl,
@@ -102,10 +109,11 @@ describe("Platform PostgreSQL authority", () => {
         admission.expectedDatabaseUser,
         worker.expectedDatabaseUser,
         authorization.expectedDatabaseUser,
+        assetDataPlane.expectedDatabaseUser,
         admin.expectedDatabaseUser,
         api.migratorDatabaseUser,
       ]).size,
-    ).toBe(6);
+    ).toBe(7);
     expect(admission).toMatchObject({
       role: "admission",
       credentialClass: "admission",
@@ -117,7 +125,7 @@ describe("Platform PostgreSQL authority", () => {
 });
 
 describe("Platform migrator", () => {
-  it("preflights PostgreSQL 17 roles, locks migration, grants scoped access, and sanitizes env", async () => {
+  it("preflights PostgreSQL 18 roles, locks migration, grants scoped access, and sanitizes env", async () => {
     const events: string[] = [];
     const grants: string[] = [];
     let authoritySql = "";
@@ -135,6 +143,15 @@ describe("Platform migrator", () => {
             canCreatePlatformSchema: false,
           }] };
         }
+        if (sql.includes("assetDataPlaneRolePreflight")) {
+          events.push("preflight-asset-data-plane");
+          return { rows: [{
+            ...safeRole("platform_asset_data_plane"),
+            hasAnyPlatformTablePrivilege: false,
+            canUsePlatformSchema: false,
+            canCreatePlatformSchema: false,
+          }] };
+        }
         if (sql.includes("modelGatewayAuthority")) {
           events.push("verify-model-gateway");
           return { rows: [{
@@ -142,12 +159,20 @@ describe("Platform migrator", () => {
             canReadAuthorizationProjection: false,
           }] };
         }
+        if (sql.includes("assetDataPlaneAuthority")) {
+          events.push("verify-asset-data-plane");
+          return { rows: [{
+            assetDataPlaneAuthorityOk: true,
+            canReadGenericOutbox: false,
+            canMutateAssetOwnerIntent: false,
+          }] };
+        }
         if (sql.includes("server_version_num")) {
           events.push("preflight-migrator");
           return {
             rows: [
               {
-                serverMajor: 17,
+                serverMajor: 18,
                 currentUser: "platform_migrator",
                 currentDatabase: "kokoro_platform",
                 databaseOwner: "platform_migrator",
@@ -234,11 +259,12 @@ describe("Platform migrator", () => {
       },
     });
 
-    expect(events.slice(0, 6)).toEqual([
+    expect(events.slice(0, 7)).toEqual([
       "connect",
       "preflight-migrator",
       "preflight-runtime-roles",
       "preflight-model-gateway",
+      "preflight-asset-data-plane",
       `SELECT pg_advisory_lock(hashtext($1)):${MIGRATION_ADVISORY_LOCK}`,
       "execute",
     ]);
@@ -250,6 +276,9 @@ describe("Platform migrator", () => {
     );
     expect(grants).toContain(
       "GRANT INSERT ON TABLE platform.model_gateway_execution_authorization TO \"platform_admission\"",
+    );
+    expect(grants).toContain(
+      "GRANT EXECUTE ON FUNCTION platform.enqueue_asset_upload_completion_event(UUID,TEXT,JSONB,CHAR(64),TEXT,TEXT) TO \"platform_asset_data_plane\"",
     );
     expect(grants).toContain(
       "REVOKE ALL ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.import_model_inventory(UUID, TEXT, TEXT, JSONB, JSONB, TEXT), platform.activate_model_inventory(UUID, TEXT, BIGINT, TEXT), platform.put_model_site_policy(UUID, TEXT, TEXT, TEXT, BIGINT), platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID), platform.report_model_provider_availability(UUID, TEXT, TEXT, TEXT, BIGINT, TEXT, TIMESTAMPTZ, TEXT), platform.load_model_option_inventory(TEXT), platform.load_model_option_revisions(TEXT[]), platform.materialize_model_options(UUID, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT), platform.publish_site_release_model_catalog(UUID, JSONB, TEXT), platform.resolve_product_model_option_catalog(TEXT, TEXT), platform.resolve_admission_model_owner(TEXT, TEXT, TEXT) FROM \"platform_api\"",
@@ -278,9 +307,10 @@ describe("Platform migrator", () => {
     )?.[0];
     expect(admissionSelectFence).toContain("'authorization_session_access_grant'");
     expect(admissionSelectFence).toContain("'asset_eligibility_projection'");
-    expect(events.slice(-4)).toEqual([
+    expect(events.slice(-5)).toEqual([
       "verify-authority",
       "verify-model-gateway",
+      "verify-asset-data-plane",
       `SELECT pg_advisory_unlock(hashtext($1)):${MIGRATION_ADVISORY_LOCK}`,
       "end",
     ]);
@@ -290,6 +320,9 @@ describe("Platform migrator", () => {
     const lockClient: MigrationLockClient = {
       async connect() {},
       async query(sql) {
+        if (sql.includes("assetDataPlaneRolePreflight")) {
+          return { rows: [safeRole("platform_asset_data_plane")] };
+        }
         if (sql.includes("server_version_num")) {
           return { rows: [safeMigratorAuthority()] };
         }
@@ -328,6 +361,16 @@ describe("Platform migrator", () => {
             hasAnyPlatformTablePrivilege: false,
             canUsePlatformSchema: false,
             canCreatePlatformSchema: false,
+          }] };
+        }
+        if (sql.includes("assetDataPlaneRolePreflight")) {
+          return { rows: [safeRole("platform_asset_data_plane")] };
+        }
+        if (sql.includes("assetDataPlaneAuthority")) {
+          return { rows: [{
+            assetDataPlaneAuthorityOk: true,
+            canReadGenericOutbox: false,
+            canMutateAssetOwnerIntent: false,
           }] };
         }
         if (sql.includes("server_version_num")) return { rows: [safeMigratorAuthority()] };
@@ -488,7 +531,7 @@ describe("independent deployable roles", () => {
   it("publishes executable image selectors and distinct database roles", async () => {
     const manifest = await readFile(resolve("deployables.yaml"), "utf8");
     const entrypoint = await readFile(resolve("deploy/docker/runtime-entrypoint.mjs"), "utf8");
-    for (const role of ["platform-api", "platform-admission", "platform-authorization", "platform-model-gateway", "platform-worker", "platform-admin", "platform-migrator"]) {
+    for (const role of ["platform-api", "platform-admission", "platform-authorization", "platform-asset-data-plane", "platform-model-gateway", "platform-worker", "platform-admin", "platform-migrator"]) {
       expect(manifest).toContain(`KOKORO_SERVICE_PACKAGE=${role}`);
       expect(entrypoint).toContain(`"${role}"`);
     }
@@ -502,6 +545,8 @@ describe("independent deployable roles", () => {
     expect(manifest).toContain("credentialClass: platform-model-gateway");
     expect(manifest).toContain("expectedUserEnvironmentVariable: PLATFORM_DATABASE_MODEL_GATEWAY_ROLE");
     expect(manifest).toContain("platform-model-gateway-reconciliation-https");
+    expect(manifest).toContain("credentialClass: platform-asset-data-plane");
+    expect(manifest).toContain("expectedUserEnvironmentVariable: PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE");
     expect(manifest).toContain("credentialClass: platform-authorization");
     expect(manifest).toContain("expectedUserEnvironmentVariable: PLATFORM_DATABASE_AUTHORIZATION_ROLE");
     expect(manifest).toContain("credentialClass: platform-admin");
@@ -558,7 +603,7 @@ function authority(roleName: string): Record<string, unknown> {
 
 function safeMigratorAuthority(): Record<string, unknown> {
   return {
-    serverMajor: 17,
+    serverMajor: 18,
     currentUser: "platform_migrator",
     currentDatabase: "kokoro_platform",
     databaseOwner: "platform_migrator",

@@ -100,7 +100,7 @@ BEGIN
     OR (OLD.abort_request_digest IS NOT NULL AND ROW(NEW.abort_idempotency_key,
       NEW.abort_request_digest,NEW.abort_receipt_ref) IS DISTINCT FROM
       ROW(OLD.abort_idempotency_key,OLD.abort_request_digest,OLD.abort_receipt_ref))
-    OR NOT CASE OLD.state
+    OR NOT (CASE OLD.state
       WHEN 'initiating' THEN NEW.state IN ('initiating','uploading','outcome_unknown')
       WHEN 'uploading' THEN NEW.state IN ('completing','aborting')
       WHEN 'completing' THEN NEW.state IN ('completing','uploaded','integrity_rejected','outcome_unknown')
@@ -109,11 +109,12 @@ BEGIN
         'uploading','completing','uploaded','aborting','aborted','integrity_rejected','outcome_unknown'
       )
       ELSE FALSE
-    END THEN
+    END) THEN
     RAISE EXCEPTION 'ASSET_MULTIPART_TRANSITION_INVALID' USING ERRCODE='23514';
   END IF;
   RETURN NEW;
 END $$;
+REVOKE ALL ON FUNCTION platform.guard_asset_multipart_upload_update() FROM PUBLIC;
 
 CREATE TRIGGER asset_multipart_upload_update_guard
   BEFORE UPDATE ON platform.asset_multipart_upload
@@ -127,20 +128,90 @@ BEGIN
     ROW(NEW.site_ref,NEW.upload_ref,NEW.part_number,NEW.part_receipt,NEW.size,
     NEW.checksum_sha256,NEW.idempotency_key,NEW.request_digest,NEW.created_at)
     OR NEW.expected_version<>OLD.expected_version+1
-    OR NOT CASE OLD.state
+    OR NOT (CASE OLD.state
       WHEN 'pending' THEN NEW.state IN ('pending','retryable','committed','outcome_unknown')
       WHEN 'retryable' THEN NEW.state IN ('pending')
       WHEN 'outcome_unknown' THEN NEW.state IN ('pending','retryable','committed','outcome_unknown')
       ELSE FALSE
-    END THEN
+    END) THEN
     RAISE EXCEPTION 'ASSET_MULTIPART_PART_TRANSITION_INVALID' USING ERRCODE='23514';
   END IF;
   RETURN NEW;
 END $$;
+REVOKE ALL ON FUNCTION platform.guard_asset_multipart_part_update() FROM PUBLIC;
 
 CREATE TRIGGER asset_multipart_part_update_guard
   BEFORE UPDATE ON platform.asset_multipart_part
   FOR EACH ROW EXECUTE FUNCTION platform.guard_asset_multipart_part_update();
+
+-- Asset Data Plane never receives direct read access to the shared outbox.
+-- This exact SECURITY DEFINER command fixes owner/type, binds the event to the
+-- transaction's capability-derived Site/session facts, and preserves replay
+-- safety without exposing unrelated event payloads.
+CREATE FUNCTION platform.enqueue_asset_upload_completion_event(
+  requested_event_id UUID,
+  requested_aggregate_id TEXT,
+  requested_payload JSONB,
+  requested_payload_digest CHAR(64),
+  requested_correlation_id TEXT,
+  requested_causation_id TEXT
+) RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path=pg_catalog,platform
+AS $$
+DECLARE
+  affected_rows INTEGER;
+BEGIN
+  IF current_setting('app.operation',true)<>'asset.multipart.complete'
+     OR current_setting('app.workload_kind',true)<>'site_product'
+     OR current_setting('app.actor_kind',true)<>'user'
+     OR NOT (COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'asset:upload')
+     OR jsonb_typeof(requested_payload)<>'object'
+     OR (SELECT count(*) FROM jsonb_object_keys(
+       CASE WHEN jsonb_typeof(requested_payload)='object' THEN requested_payload ELSE '{}'::JSONB END
+     ))<>5
+     OR requested_payload->>'kind'<>'asset_upload_completion_requested_v1'
+     OR requested_payload->>'siteRef'<>current_setting('app.site_id',true)
+     OR jsonb_typeof(requested_payload->'intentRef')<>'string'
+     OR jsonb_typeof(requested_payload->'sessionRef')<>'string'
+     OR jsonb_typeof(requested_payload->'expectedVersion')<>'string'
+     OR length(requested_payload->>'intentRef') NOT BETWEEN 1 AND 256
+     OR length(requested_payload->>'sessionRef') NOT BETWEEN 1 AND 256
+     OR requested_aggregate_id<>requested_payload->>'sessionRef'
+     OR (requested_payload->>'expectedVersion') !~ '^[1-9][0-9]{0,18}$'
+     OR requested_payload_digest !~ '^[a-f0-9]{64}$'
+     OR length(requested_correlation_id) NOT BETWEEN 1 AND 128
+     OR length(requested_causation_id) NOT BETWEEN 1 AND 128
+     OR requested_correlation_id ~ '[[:cntrl:]]'
+     OR requested_causation_id ~ '[[:cntrl:]]'
+  THEN
+    RAISE EXCEPTION 'ASSET_COMPLETION_OUTBOX_EVENT_INVALID' USING ERRCODE='22023';
+  END IF;
+
+  INSERT INTO platform.outbox_event
+    (event_id,owner,event_type,aggregate_id,payload,payload_digest,correlation_id,causation_id)
+  VALUES
+    (requested_event_id,'asset','asset.upload.completion.requested',requested_aggregate_id,
+     requested_payload,requested_payload_digest,requested_correlation_id,requested_causation_id)
+  ON CONFLICT (event_id) DO UPDATE
+    SET event_id=outbox_event.event_id
+    WHERE outbox_event.owner='asset'
+      AND outbox_event.event_type='asset.upload.completion.requested'
+      AND outbox_event.aggregate_id=requested_aggregate_id
+      AND outbox_event.payload=requested_payload
+      AND outbox_event.payload_digest=requested_payload_digest
+      AND outbox_event.correlation_id=requested_correlation_id
+      AND outbox_event.causation_id=requested_causation_id;
+  GET DIAGNOSTICS affected_rows=ROW_COUNT;
+  IF affected_rows<>1 THEN
+    RAISE EXCEPTION 'ASSET_COMPLETION_OUTBOX_EVENT_CONFLICT' USING ERRCODE='23505';
+  END IF;
+END
+$$;
+REVOKE ALL ON FUNCTION platform.enqueue_asset_upload_completion_event(
+  UUID,TEXT,JSONB,CHAR(64),TEXT,TEXT
+) FROM PUBLIC;
 
 ALTER TABLE platform.asset_multipart_upload ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform.asset_multipart_upload FORCE ROW LEVEL SECURITY;

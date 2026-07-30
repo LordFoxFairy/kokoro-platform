@@ -151,6 +151,34 @@ deployables:
     runbookOwner: platform
     releaseOwner: platform
 
+  - id: platform-asset-data-plane
+    command: node --conditions=kokoro-runtime deploy/docker/runtime-entrypoint.mjs
+    selectorEnvironment: KOKORO_SERVICE_PACKAGE=platform-asset-data-plane
+    processRole: asset-data-plane
+    database:
+      environmentVariable: DATABASE_URL_PLATFORM
+      expectedUserEnvironmentVariable: PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE
+      migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
+      expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
+      credentialClass: platform-asset-data-plane
+      permissions: capability-scoped-multipart-effects-only
+      ddl: forbidden
+    activationAuthorized: false
+    runtimeTraffic: false
+    inboundContracts: []
+    declaredInboundContracts: [platform-asset-upload-https]
+    outboundContracts: [s3-multipart-api]
+    secretClasses:
+      [platform-asset-data-plane-database, tls-server, asset-upload-policy-registry,
+       asset-upload-capability-keyring, asset-storage-route-registry]
+    audience: platform-asset-data-plane
+    scalingKey: multipart-request-concurrency
+    readiness: /health/ready
+    drain: https-graceful
+    sloOwner: platform
+    runbookOwner: platform
+    releaseOwner: platform
+
   - id: platform-admin
     command: node --conditions=kokoro-runtime deploy/docker/runtime-entrypoint.mjs
     selectorEnvironment: KOKORO_SERVICE_PACKAGE=platform-admin
@@ -199,6 +227,7 @@ deployables:
       admissionRoleEnvironmentVariable: PLATFORM_DATABASE_ADMISSION_ROLE
       workerRoleEnvironmentVariable: PLATFORM_DATABASE_WORKER_ROLE
       authorizationRoleEnvironmentVariable: PLATFORM_DATABASE_AUTHORIZATION_ROLE
+      assetDataPlaneRoleEnvironmentVariable: PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE
       adminRoleEnvironmentVariable: PLATFORM_DATABASE_ADMIN_ROLE
       modelGatewayRoleEnvironmentVariable: PLATFORM_DATABASE_MODEL_GATEWAY_ROLE
       expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE

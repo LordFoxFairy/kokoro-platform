@@ -57,6 +57,8 @@ describe("Admin control-plane authority schema", () => {
     expect(migrator).not.toContain("GRANT INSERT ON TABLE platform.admin_operator_authority");
     expect(migrator).not.toContain("GRANT EXECUTE ON FUNCTION platform.bootstrap_admin_authorities");
     expect(client).toContain("'platform.admin_operator_authority', 'SELECT'");
-    expect(client).toContain("'platform.admin_approval', 'SELECT,INSERT,UPDATE'");
+    for (const privilege of ["SELECT", "INSERT", "UPDATE"]) {
+      expect(client).toContain(`'platform.admin_approval', '${privilege}'`);
+    }
   });
 });
