@@ -454,6 +454,7 @@ export type {
   MemoryImportState,
   MemoryImportStatus,
   MemoryNullableRevisionRef,
+  MemoryOwnerSnapshot,
   MemoryPriorityInput,
   MemoryPriorityRequest,
   MemoryPurgeCommandResult,

@@ -581,11 +581,13 @@ export const zMemoryArtifactDownloadRequest = z.strictObject({
     purpose: z.literal('export')
 });
 
+/**
+ * Describes content semantics only; category never selects an owner scope.
+ */
 export const zMemoryCategory = z.enum([
     'profile',
     'preference',
-    'fact',
-    'project_fact'
+    'fact'
 ]);
 
 export const zMemoryCommandKind = z.enum([
@@ -1509,7 +1511,7 @@ export const zMemoryEntryActiveView = z.strictObject({
     entryVersion: zPositiveUint64String,
     prioritized: z.boolean(),
     revision: z.int().gte(1).lte(2147483647),
-    scopeKind: z.enum(['user', 'project']),
+    scopeKind: z.literal('user'),
     source: zMemorySourceSummary,
     state: z.literal('active'),
     updatedAt: z.iso.datetime(),
@@ -1517,11 +1519,9 @@ export const zMemoryEntryActiveView = z.strictObject({
     validTo: z.iso.datetime().nullable()
 });
 
-export const zMemoryEntryPage = z.strictObject({
-    items: z.array(zMemoryEntryActiveView).max(100),
-    pageInfo: zPageInfo
-});
-
+/**
+ * Current owner projection of one stable entry identity. An entryRef is never reused after logical revocation or physical purge.
+ */
 export const zMemoryEntryView = z.discriminatedUnion('state', [
     zMemoryEntryActiveView,
     zMemoryEntryRevokedView,
@@ -1534,12 +1534,30 @@ export const zMemoryEntryCommandResult = z.strictObject({
 });
 
 export const zMemoryEntryResponse = z.strictObject({
-    entry: zMemoryEntryView
+    entry: zMemoryEntryView,
+    observedSpaceVersion: zPositiveUint64String
 });
 
 export const zMemoryForgetInput = z.strictObject({
     acknowledgeIrreversiblePurge: z.literal(true),
     expectedEntryVersion: zPositiveUint64String
+});
+
+/**
+ * Opaque owner-issued list snapshot. snapshotRef is bound to the authenticated personal Memory space, normalized filters, ordering, spaceVersion, and a bounded expiry. Every mutation that can change a public entry's content/current revision, priority, active membership, revocation or reset state advances spaceVersion. A continuation cursor is valid only while the owner remains at this exact version.
+ */
+export const zMemoryOwnerSnapshot = z.strictObject({
+    snapshotRef: z.string().min(3).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,255}$/),
+    spaceVersion: zPositiveUint64String
+});
+
+/**
+ * The first page creates ownerSnapshot. Every continuation returns the identical snapshotRef and spaceVersion. If the owner version changed, the cursor is rejected instead of serving an old snapshot; callers restart from a new first page.
+ */
+export const zMemoryEntryPage = z.strictObject({
+    items: z.array(zMemoryEntryActiveView).max(100),
+    ownerSnapshot: zMemoryOwnerSnapshot,
+    pageInfo: zPageInfo
 });
 
 export const zMemoryPriorityInput = z.strictObject({
@@ -1589,8 +1607,12 @@ export const zMemoryCommandResult = z.discriminatedUnion('resultKind', [
     zMemoryImportCommandResult
 ]);
 
+/**
+ * A recovered succeeded response repeats the original committedSpaceVersion. Pending and rejected outcomes never fabricate a committed owner version.
+ */
 export const zMemoryCommandSucceededResponse = z.strictObject({
     command: zMemoryCommandCursor,
+    committedSpaceVersion: zPositiveUint64String,
     result: zMemoryCommandResult,
     state: z.literal('succeeded')
 });

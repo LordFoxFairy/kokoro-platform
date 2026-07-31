@@ -1062,7 +1062,10 @@ export type MemoryArtifactDownloadRequest = {
     purpose: 'export';
 };
 
-export type MemoryCategory = 'profile' | 'preference' | 'fact' | 'project_fact';
+/**
+ * Describes content semantics only; category never selects an owner scope.
+ */
+export type MemoryCategory = 'profile' | 'preference' | 'fact';
 
 export type MemoryCommandCursor = {
     commandId: string;
@@ -1114,8 +1117,15 @@ export type MemoryCommandResult = ({
     resultKind: 'import';
 } & MemoryImportCommandResult);
 
+/**
+ * A recovered succeeded response repeats the original committedSpaceVersion. Pending and rejected outcomes never fabricate a committed owner version.
+ */
 export type MemoryCommandSucceededResponse = {
     command: MemoryCommandCursor;
+    /**
+     * Monotonic owner version committed by this command, or the current observed version for a succeeded command that does not change the entry/list projection.
+     */
+    committedSpaceVersion: PositiveUint64String;
     result: MemoryCommandResult;
     state: 'succeeded';
 };
@@ -1136,7 +1146,7 @@ export type MemoryEntryActiveView = {
     entryVersion: PositiveUint64String;
     prioritized: boolean;
     revision: number;
-    scopeKind: 'user' | 'project';
+    scopeKind: 'user';
     source: MemorySourceSummary;
     state: 'active';
     updatedAt: string;
@@ -1158,8 +1168,12 @@ export type MemoryEntryHistoryPage = {
     pageInfo: PageInfo;
 };
 
+/**
+ * The first page creates ownerSnapshot. Every continuation returns the identical snapshotRef and spaceVersion. If the owner version changed, the cursor is rejected instead of serving an old snapshot; callers restart from a new first page.
+ */
 export type MemoryEntryPage = {
     items: Array<MemoryEntryActiveView>;
+    ownerSnapshot: MemoryOwnerSnapshot;
     pageInfo: PageInfo;
 };
 
@@ -1172,6 +1186,10 @@ export type MemoryEntryPurgedView = {
 
 export type MemoryEntryResponse = {
     entry: MemoryEntryView;
+    /**
+     * Owner space version at which this current entry projection was authorized.
+     */
+    observedSpaceVersion: PositiveUint64String;
 };
 
 export type MemoryEntryRevokedView = {
@@ -1181,6 +1199,9 @@ export type MemoryEntryRevokedView = {
     state: 'revoked_purge_pending';
 };
 
+/**
+ * Current owner projection of one stable entry identity. An entryRef is never reused after logical revocation or physical purge.
+ */
 export type MemoryEntryView = ({
     state: 'active';
 } & MemoryEntryActiveView) | ({
@@ -1256,6 +1277,14 @@ export type MemoryImportStatus = {
 };
 
 export type MemoryNullableRevisionRef = string | null;
+
+/**
+ * Opaque owner-issued list snapshot. snapshotRef is bound to the authenticated personal Memory space, normalized filters, ordering, spaceVersion, and a bounded expiry. Every mutation that can change a public entry's content/current revision, priority, active membership, revocation or reset state advances spaceVersion. A continuation cursor is valid only while the owner remains at this exact version.
+ */
+export type MemoryOwnerSnapshot = {
+    snapshotRef: string;
+    spaceVersion: PositiveUint64String;
+};
 
 export type MemoryPriorityInput = {
     expectedEntryVersion: PositiveUint64String;
