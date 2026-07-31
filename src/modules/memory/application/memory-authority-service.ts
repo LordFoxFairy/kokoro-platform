@@ -566,10 +566,13 @@ function controlDigest(operation: Exclude<MemoryCommandOperation, "remember" | "
 
 function protectedContentDigestFields(value: unknown): readonly MemoryCommandDigestField[] {
   const metadata = protectedMemoryContentDigestMetadata(value);
-  return [["protectedKeyRevision", metadata.keyRevision],
-    ["protectedEnvelopeDigest", metadata.envelopeDigest],
+  return [["protectedEnvelopeVersion", metadata.envelopeVersion],
+    ["protectedKeyRevision", metadata.keyRevision],
+    ["protectedAadDigest", metadata.aadDigest],
+    ["protectedNonceDigest", metadata.nonceDigest],
     ["protectedCiphertextLength", metadata.ciphertextLength],
-    ["protectedCiphertextDigest", metadata.ciphertextDigest]];
+    ["protectedCiphertextDigest", metadata.ciphertextDigest],
+    ["protectedAuthenticationTagDigest", metadata.authenticationTagDigest]];
 }
 
 function bindingDigestFields(binding: MemoryScopeBinding): readonly MemoryCommandDigestField[] {

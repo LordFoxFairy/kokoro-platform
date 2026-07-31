@@ -26,9 +26,12 @@ ciphertext digest.
 MemoryEntry identity is stable across corrections. Revisions and provenance are append-only, while forget advances both entry and
 space revocation fences and leaves a tombstone. Space reset advances generation, learning generation, and revocation epoch.
 Protected content enters the authority service only through the type-only `ProtectedMemoryContent` capability returned by its
-factory. Its hidden, token-gated implementation validates and copies twice, keeps bytes in module-private storage, freezes its
-runtime surface, and binds them to an explicit key revision and envelope digest. The module defines a protection port but deliberately ships no protector adapter,
-key handling, plaintext persistence path, or decryption capability.
+factory. Its hidden, token-gated implementation owns separate nonce, ciphertext and authentication-tag copies in module-private
+storage. The single protector adapter uses AES-256-GCM with a 12-byte nonce and 16-byte tag. Canonical AAD is the
+`kokoro.memory.payload.v1\0` domain separator plus length-framed Site, Space, Entry and Revision references; its digest is checked
+before decryption. A bounded owner-private key-ring provides exactly one active key, decrypt-only rotation keys and material-free
+retired revisions. Production has no default or development key. Immutable revision headers and erasable envelope payloads are
+persisted separately.
 
 PostgreSQL tables are Site-composite and force RLS. M0.1 provisions the exact LOGIN/NOINHERIT/NOBYPASSRLS
 `platform_memory_public`, `platform_memory_runtime`, and `platform_memory_worker` identities and pins their OIDs. Public and worker

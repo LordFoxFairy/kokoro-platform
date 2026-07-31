@@ -23,11 +23,16 @@ import {
 import { issuePlatformTransaction, revokePlatformTransaction,
   type PlatformTransactionLease } from "../../src/shared/unit-of-work/platform-transaction.js";
 
-const protectedContent = () => createProtectedMemoryContent({
+const protectedEnvelope = (overrides: Readonly<Record<string, unknown>> = {}) => ({
+  envelopeVersion: 1,
   ciphertext: new Uint8Array([1, 2, 3]),
   keyRevision: "memory-key-r2",
-  envelopeDigest: "a".repeat(64),
+  nonce: new Uint8Array(12).fill(1),
+  authenticationTag: new Uint8Array(16).fill(2),
+  aadDigest: "a".repeat(64),
+  ...overrides,
 });
+const protectedContent = () => createProtectedMemoryContent(protectedEnvelope());
 
 const userBinding = Object.freeze({
   kind: "user" as const,
@@ -233,14 +238,14 @@ describe("MemoryAuthorityService", () => {
     await expect(service.remember(lease.transaction, { ...command, category: "fact" }))
       .rejects.toEqual(new MemoryApplicationError("MEMORY_COMMAND_DIGEST_CONFLICT"));
     const protectedMutations = [
-      createProtectedMemoryContent({ ciphertext: new Uint8Array([9, 2, 3]),
-        keyRevision: "memory-key-r2", envelopeDigest: "a".repeat(64) }),
-      createProtectedMemoryContent({ ciphertext: new Uint8Array([1, 2, 3, 4]),
-        keyRevision: "memory-key-r2", envelopeDigest: "a".repeat(64) }),
-      createProtectedMemoryContent({ ciphertext: new Uint8Array([1, 2, 3]),
-        keyRevision: "memory-key-r3", envelopeDigest: "a".repeat(64) }),
-      createProtectedMemoryContent({ ciphertext: new Uint8Array([1, 2, 3]),
-        keyRevision: "memory-key-r2", envelopeDigest: "c".repeat(64) }),
+      createProtectedMemoryContent(protectedEnvelope({ ciphertext: new Uint8Array([9, 2, 3]) })),
+      createProtectedMemoryContent(protectedEnvelope({ ciphertext: new Uint8Array([1, 2, 3, 4]) })),
+      createProtectedMemoryContent(protectedEnvelope({ keyRevision: "memory-key-r3" })),
+      createProtectedMemoryContent(protectedEnvelope({ aadDigest: "c".repeat(64) })),
+      createProtectedMemoryContent(protectedEnvelope({ nonce: new Uint8Array(12).fill(3) })),
+      createProtectedMemoryContent(protectedEnvelope({
+        authenticationTag: new Uint8Array(16).fill(3),
+      })),
     ];
     for (const protectedContentMutation of protectedMutations) {
       await expect(service.remember(lease.transaction,

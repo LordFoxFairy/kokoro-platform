@@ -15,11 +15,11 @@ datasource db {
 /// Migration-owned marker for the single Platform PostgreSQL authority.
 /// Owner module tables are added to this schema by subsequent migrations.
 model PlatformFoundation {
-  singleton     Boolean  @id @default(true)
-  schemaVersion Int
+  singleton             Boolean  @id @default(true)
+  schemaVersion         Int
   outboxPolicyAuthority Json     @default("[]")
-  createdAt     DateTime @default(now()) @db.Timestamptz(6)
-  updatedAt     DateTime @updatedAt @db.Timestamptz(6)
+  createdAt             DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime @updatedAt @db.Timestamptz(6)
 
   @@map("platform_foundation")
   @@schema("platform")
@@ -46,9 +46,9 @@ model MemorySpace {
   subjectRef                      String?  @map("subject_ref")
   subjectGeneration               BigInt?  @map("subject_generation")
   projectRef                      String?  @map("project_ref")
-  agentOptionRef                   String?  @map("agent_option_ref")
-  productSurfaceRef                String?  @map("product_surface_ref")
-  featurePolicyRevisionRef         String   @map("feature_policy_revision_ref")
+  agentOptionRef                  String?  @map("agent_option_ref")
+  productSurfaceRef               String?  @map("product_surface_ref")
+  featurePolicyRevisionRef        String   @map("feature_policy_revision_ref")
   version                         BigInt
   spaceGeneration                 BigInt   @map("space_generation")
   learningGeneration              BigInt   @map("learning_generation")
@@ -97,9 +97,6 @@ model MemoryRevision {
   entryRef                 String   @map("entry_ref")
   revision                 BigInt
   revisionRef              String   @map("revision_ref")
-  protectedCiphertext      Bytes?   @map("protected_ciphertext")
-  protectionKeyRevision    String?  @map("protection_key_revision")
-  envelopeDigest           String?  @map("envelope_digest") @db.Char(64)
   reason                   String
   supersedesRevision       BigInt?  @map("supersedes_revision")
   supersedesRevisionRef    String?  @map("supersedes_revision_ref")
@@ -112,22 +109,41 @@ model MemoryRevision {
   @@schema("platform")
 }
 
+model MemoryRevisionPayload {
+  siteRef               String   @map("site_ref")
+  spaceRef              String   @map("space_ref")
+  entryRef              String   @map("entry_ref")
+  revision              BigInt
+  revisionRef           String   @map("revision_ref")
+  envelopeVersion       Int      @map("envelope_version") @db.SmallInt
+  protectionKeyRevision String   @map("protection_key_revision")
+  nonce                 Bytes
+  protectedCiphertext   Bytes    @map("protected_ciphertext")
+  authenticationTag     Bytes    @map("authentication_tag")
+  aadDigest             String   @map("aad_digest") @db.Char(64)
+  protectedAt           DateTime @map("protected_at") @db.Timestamptz(6)
+
+  @@id([siteRef, spaceRef, entryRef, revision, revisionRef])
+  @@map("memory_revision_payload")
+  @@schema("platform")
+}
+
 model MemoryProvenance {
-  siteRef       String   @map("site_ref")
-  spaceRef      String   @map("space_ref")
-  entryRef      String   @map("entry_ref")
-  revision      BigInt
-  revisionRef   String   @map("revision_ref")
-  provenanceRef String   @map("provenance_ref")
-  sourceKind    String   @map("source_kind")
-  sourceRef     String   @map("source_ref")
-  sourceDigest  String   @map("source_digest") @db.Char(64)
+  siteRef                 String   @map("site_ref")
+  spaceRef                String   @map("space_ref")
+  entryRef                String   @map("entry_ref")
+  revision                BigInt
+  revisionRef             String   @map("revision_ref")
+  provenanceRef           String   @map("provenance_ref")
+  sourceKind              String   @map("source_kind")
+  sourceRef               String   @map("source_ref")
+  sourceDigest            String   @map("source_digest") @db.Char(64)
   actorSubjectRef         String   @map("actor_subject_ref")
   actorSubjectGeneration  BigInt   @map("actor_subject_generation")
-  actorProjectRef          String?  @map("actor_project_ref")
-  actorMembershipEpoch     BigInt?  @map("actor_membership_epoch")
-  actorAuthorizationEpoch  BigInt?  @map("actor_authorization_epoch")
-  recordedAt    DateTime @map("recorded_at") @db.Timestamptz(6)
+  actorProjectRef         String?  @map("actor_project_ref")
+  actorMembershipEpoch    BigInt?  @map("actor_membership_epoch")
+  actorAuthorizationEpoch BigInt?  @map("actor_authorization_epoch")
+  recordedAt              DateTime @map("recorded_at") @db.Timestamptz(6)
 
   @@id([siteRef, spaceRef, entryRef, revision, provenanceRef])
   @@unique([siteRef, provenanceRef])
@@ -136,38 +152,215 @@ model MemoryProvenance {
 }
 
 model MemoryCommandReceipt {
-  receiptId                    BigInt   @id @default(autoincrement()) @map("receipt_id")
-  siteRef                      String   @map("site_ref")
-  ownerScopeKind               String   @map("owner_scope_kind")
-  ownerSubjectRef              String?  @map("owner_subject_ref")
-  ownerSubjectGeneration       BigInt?  @map("owner_subject_generation")
-  ownerProjectRef              String?  @map("owner_project_ref")
-  callerSubjectRef             String   @map("caller_subject_ref")
-  callerSubjectGeneration      BigInt   @map("caller_subject_generation")
-  callerMembershipEpoch        BigInt?  @map("caller_membership_epoch")
-  callerAuthorizationEpoch     BigInt?  @map("caller_authorization_epoch")
-  commandRef                   String   @map("command_ref")
-  operation                    String
-  requestDigest                String   @map("request_digest") @db.Char(64)
-  resultKind                   String   @map("result_kind")
-  resultSpaceRef               String   @map("result_space_ref")
-  resultSpaceVersion           BigInt   @map("result_space_version")
-  resultEntryRef               String?  @map("result_entry_ref")
-  resultEntryVersion           BigInt?  @map("result_entry_version")
-  resultRevisionRef            String?  @map("result_revision_ref")
-  resultRevision               BigInt?  @map("result_revision")
-  resultSpaceGeneration        BigInt?  @map("result_space_generation")
-  resultLearningGeneration     BigInt?  @map("result_learning_generation")
-  resultRevocationEpoch        BigInt?  @map("result_revocation_epoch")
-  resultMinimumSourceOriginSeq BigInt?  @map("result_minimum_source_origin_seq")
-  resultLearningState          String?  @map("result_learning_state")
-  resultUseState               String?  @map("result_use_state")
-  resultPreviousFeaturePolicyRevisionRef String? @map("result_previous_feature_policy_revision_ref")
-  resultFeaturePolicyRevisionRef String? @map("result_feature_policy_revision_ref")
-  recordedAt                   DateTime @map("recorded_at") @db.Timestamptz(6)
+  receiptId                              BigInt   @id @default(autoincrement()) @map("receipt_id")
+  siteRef                                String   @map("site_ref")
+  ownerScopeKind                         String   @map("owner_scope_kind")
+  ownerSubjectRef                        String?  @map("owner_subject_ref")
+  ownerSubjectGeneration                 BigInt?  @map("owner_subject_generation")
+  ownerProjectRef                        String?  @map("owner_project_ref")
+  callerSubjectRef                       String   @map("caller_subject_ref")
+  callerSubjectGeneration                BigInt   @map("caller_subject_generation")
+  callerMembershipEpoch                  BigInt?  @map("caller_membership_epoch")
+  callerAuthorizationEpoch               BigInt?  @map("caller_authorization_epoch")
+  commandRef                             String   @map("command_ref")
+  operation                              String
+  requestDigest                          String   @map("request_digest") @db.Char(64)
+  resultKind                             String   @map("result_kind")
+  resultSpaceRef                         String   @map("result_space_ref")
+  resultSpaceVersion                     BigInt   @map("result_space_version")
+  resultEntryRef                         String?  @map("result_entry_ref")
+  resultEntryVersion                     BigInt?  @map("result_entry_version")
+  resultRevisionRef                      String?  @map("result_revision_ref")
+  resultRevision                         BigInt?  @map("result_revision")
+  resultSpaceGeneration                  BigInt?  @map("result_space_generation")
+  resultLearningGeneration               BigInt?  @map("result_learning_generation")
+  resultRevocationEpoch                  BigInt?  @map("result_revocation_epoch")
+  resultMinimumSourceOriginSeq           BigInt?  @map("result_minimum_source_origin_seq")
+  resultLearningState                    String?  @map("result_learning_state")
+  resultUseState                         String?  @map("result_use_state")
+  resultPreviousFeaturePolicyRevisionRef String?  @map("result_previous_feature_policy_revision_ref")
+  resultFeaturePolicyRevisionRef         String?  @map("result_feature_policy_revision_ref")
+  recordedAt                             DateTime @map("recorded_at") @db.Timestamptz(6)
 
   @@index([siteRef, ownerScopeKind, ownerSubjectRef, ownerSubjectGeneration, ownerProjectRef, recordedAt])
   @@map("memory_command_receipt")
+  @@schema("platform")
+}
+
+model MemoryPublicCommandInbox {
+  siteRef                String    @map("site_ref")
+  commandRef             String    @map("command_ref")
+  ownerScopeKind         String    @map("owner_scope_kind")
+  ownerSubjectRef        String?   @map("owner_subject_ref")
+  ownerSubjectGeneration BigInt?   @map("owner_subject_generation")
+  ownerProjectRef        String?   @map("owner_project_ref")
+  operation              String
+  requestDigest          String    @map("request_digest") @db.Char(64)
+  state                  String
+  safeResultKind         String?   @map("safe_result_kind")
+  resultRef              String?   @map("result_ref")
+  createdAt              DateTime  @map("created_at") @db.Timestamptz(6)
+  completedAt            DateTime? @map("completed_at") @db.Timestamptz(6)
+
+  @@id([siteRef, commandRef])
+  @@map("memory_public_command_inbox")
+  @@schema("platform")
+}
+
+model MemoryImportJob {
+  siteRef                String    @map("site_ref")
+  importRef              String    @map("import_ref")
+  commandRef             String    @map("command_ref")
+  ownerScopeKind         String    @map("owner_scope_kind")
+  ownerSubjectRef        String?   @map("owner_subject_ref")
+  ownerSubjectGeneration BigInt?   @map("owner_subject_generation")
+  ownerProjectRef        String?   @map("owner_project_ref")
+  uploadAssetRef         String    @map("upload_asset_ref")
+  uploadAssetVersionRef  String    @map("upload_asset_version_ref")
+  uploadDigest           String    @map("upload_digest") @db.Char(64)
+  importFormat           String    @map("import_format")
+  quarantineObjectRef    String    @map("quarantine_object_ref")
+  state                  String
+  attemptCount           Int       @default(0) @map("attempt_count")
+  leaseEpoch             BigInt    @default(0) @map("lease_epoch")
+  leaseTokenHash         String?   @map("lease_token_hash") @db.Char(64)
+  leaseExpiresAt         DateTime? @map("lease_expires_at") @db.Timestamptz(6)
+  createdAt              DateTime  @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime  @map("updated_at") @db.Timestamptz(6)
+
+  @@id([siteRef, importRef])
+  @@unique([siteRef, commandRef])
+  @@map("memory_import_job")
+  @@schema("platform")
+}
+
+model MemoryExportJob {
+  siteRef                String    @map("site_ref")
+  exportRef              String    @map("export_ref")
+  commandRef             String    @map("command_ref")
+  ownerScopeKind         String    @map("owner_scope_kind")
+  ownerSubjectRef        String?   @map("owner_subject_ref")
+  ownerSubjectGeneration BigInt?   @map("owner_subject_generation")
+  ownerProjectRef        String?   @map("owner_project_ref")
+  snapshotCutoff         BigInt    @map("snapshot_cutoff")
+  exportFormat           String    @map("export_format")
+  artifactRequestRef     String?   @map("artifact_request_ref")
+  state                  String
+  attemptCount           Int       @default(0) @map("attempt_count")
+  leaseEpoch             BigInt    @default(0) @map("lease_epoch")
+  leaseTokenHash         String?   @map("lease_token_hash") @db.Char(64)
+  leaseExpiresAt         DateTime? @map("lease_expires_at") @db.Timestamptz(6)
+  expiresAt              DateTime? @map("expires_at") @db.Timestamptz(6)
+  createdAt              DateTime  @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime  @map("updated_at") @db.Timestamptz(6)
+
+  @@id([siteRef, exportRef])
+  @@unique([siteRef, commandRef])
+  @@map("memory_export_job")
+  @@schema("platform")
+}
+
+model MemoryPurgeParticipantManifest {
+  manifestVersion BigInt @map("manifest_version")
+  participantKey  String @map("participant_key")
+  m0Applicability String @map("m0_applicability")
+
+  @@id([manifestVersion, participantKey])
+  @@map("memory_purge_participant_manifest")
+  @@schema("platform")
+}
+
+model MemoryPurgeJob {
+  siteRef                      String    @map("site_ref")
+  purgeJobRef                  String    @map("purge_job_ref")
+  commandRef                   String    @map("command_ref")
+  spaceRef                     String    @map("space_ref")
+  entryRef                     String?   @map("entry_ref")
+  spaceGeneration              BigInt    @map("space_generation")
+  learningGeneration           BigInt    @map("learning_generation")
+  revocationEpoch              BigInt    @map("revocation_epoch")
+  frozenManifestVersion        BigInt    @map("frozen_manifest_version")
+  revisionTargetCount          BigInt    @map("revision_target_count")
+  revisionTargetManifestDigest String    @map("revision_target_manifest_digest") @db.Char(64)
+  ingressCutoff                BigInt    @map("ingress_cutoff")
+  materializationCutoff        BigInt    @map("materialization_cutoff")
+  state                        String
+  attemptCount                 Int       @default(0) @map("attempt_count")
+  leaseEpoch                   BigInt    @default(0) @map("lease_epoch")
+  leaseTokenHash               String?   @map("lease_token_hash") @db.Char(64)
+  workerId                     String?   @map("worker_id")
+  leaseExpiresAt               DateTime? @map("lease_expires_at") @db.Timestamptz(6)
+  nextAttemptAt                DateTime  @map("next_attempt_at") @db.Timestamptz(6)
+  createdAt                    DateTime  @map("created_at") @db.Timestamptz(6)
+  updatedAt                    DateTime  @map("updated_at") @db.Timestamptz(6)
+
+  @@id([siteRef, purgeJobRef])
+  @@unique([siteRef, commandRef])
+  @@index([state, nextAttemptAt, createdAt, purgeJobRef])
+  @@map("memory_purge_job")
+  @@schema("platform")
+}
+
+model MemoryPurgeRevisionTarget {
+  siteRef            String    @map("site_ref")
+  purgeJobRef        String    @map("purge_job_ref")
+  targetOrdinal      BigInt    @map("target_ordinal")
+  spaceRef           String    @map("space_ref")
+  entryRef           String    @map("entry_ref")
+  revision           BigInt
+  revisionRef        String    @map("revision_ref")
+  spaceGeneration    BigInt    @map("space_generation")
+  learningGeneration BigInt    @map("learning_generation")
+  revocationEpoch    BigInt    @map("revocation_epoch")
+  targetedAt         DateTime  @map("targeted_at") @db.Timestamptz(6)
+  deletedAt          DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  @@id([siteRef, purgeJobRef, targetOrdinal])
+  @@unique([siteRef, purgeJobRef, spaceRef, entryRef, revision, revisionRef])
+  @@map("memory_purge_revision_target")
+  @@schema("platform")
+}
+
+model MemoryPurgeParticipantReceipt {
+  siteRef         String   @map("site_ref")
+  purgeJobRef     String   @map("purge_job_ref")
+  manifestVersion BigInt   @map("manifest_version")
+  participantKey  String   @map("participant_key")
+  status          String
+  receiptRef      String   @map("receipt_ref")
+  receiptDigest   String   @map("receipt_digest") @db.Char(64)
+  recordedAt      DateTime @map("recorded_at") @db.Timestamptz(6)
+
+  @@id([siteRef, purgeJobRef, participantKey])
+  @@unique([siteRef, receiptRef])
+  @@map("memory_purge_participant_receipt")
+  @@schema("platform")
+}
+
+model MemorySuppressionTombstone {
+  siteRef                String   @map("site_ref")
+  suppressionRef         String   @map("suppression_ref")
+  spaceRef               String   @map("space_ref")
+  category               String
+  spaceGeneration        BigInt   @map("space_generation")
+  learningGeneration     BigInt   @map("learning_generation")
+  privateKeyEpoch        BigInt   @map("private_key_epoch")
+  suppressionFingerprint Bytes    @map("suppression_fingerprint")
+  expiresAt              DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt              DateTime @map("created_at") @db.Timestamptz(6)
+
+  @@id([siteRef, suppressionRef])
+  @@unique([siteRef, spaceRef, category, spaceGeneration, learningGeneration, privateKeyEpoch, suppressionFingerprint])
+  @@map("memory_suppression_tombstone")
+  @@schema("platform")
+}
+
+model MemoryDatabaseRoleIdentity {
+  roleKind String @id @map("role_kind")
+  roleName String @unique @map("role_name")
+  roleOid  Int    @unique @map("role_oid") @db.Oid
+
+  @@map("memory_database_role_identity")
   @@schema("platform")
 }
 

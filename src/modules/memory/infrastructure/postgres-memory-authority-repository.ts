@@ -272,17 +272,28 @@ async function insertSpace(sql: Sql, space: MemorySpace): Promise<void> {
 async function insertRevision(sql: Sql, revision: MemoryRevision): Promise<void> {
   const inserted = await sql.execute(
     `INSERT INTO platform.memory_revision
-     (site_ref,space_ref,entry_ref,revision,revision_ref,protected_ciphertext,
-      protection_key_revision,envelope_digest,reason,supersedes_revision,supersedes_revision_ref,
-      feature_policy_revision_ref,recorded_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::timestamptz)`,
+     (site_ref,space_ref,entry_ref,revision,revision_ref,reason,supersedes_revision,
+      supersedes_revision_ref,feature_policy_revision_ref,recorded_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::timestamptz)`,
     [revision.siteRef, revision.spaceRef, revision.entryRef, revision.revision, revision.revisionRef,
-      Buffer.from(revision.protectedContent.copyCiphertext()), revision.protectedContent.keyRevision,
-      revision.protectedContent.envelopeDigest, revision.reason,
+      revision.reason,
       revision.supersedesRevisionRef === null ? null : revision.revision - 1n,
       revision.supersedesRevisionRef, revision.featurePolicyRevisionRef, revision.recordedAt],
   );
   if (inserted !== 1) throw new MemoryApplicationError("MEMORY_PERSISTENCE_CONFLICT");
+  const payloadInserted = await sql.execute(
+    `INSERT INTO platform.memory_revision_payload
+     (site_ref,space_ref,entry_ref,revision,revision_ref,envelope_version,
+      protection_key_revision,nonce,protected_ciphertext,authentication_tag,aad_digest,protected_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::timestamptz)`,
+    [revision.siteRef, revision.spaceRef, revision.entryRef, revision.revision, revision.revisionRef,
+      revision.protectedContent.envelopeVersion, revision.protectedContent.keyRevision,
+      Buffer.from(revision.protectedContent.copyNonce()),
+      Buffer.from(revision.protectedContent.copyCiphertext()),
+      Buffer.from(revision.protectedContent.copyAuthenticationTag()),
+      revision.protectedContent.aadDigest, revision.recordedAt],
+  );
+  if (payloadInserted !== 1) throw new MemoryApplicationError("MEMORY_PERSISTENCE_CONFLICT");
 }
 
 async function insertProvenance(sql: Sql, provenance: MemoryProvenance,

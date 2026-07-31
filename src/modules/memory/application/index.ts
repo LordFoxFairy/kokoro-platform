@@ -11,6 +11,7 @@ export type {
   MemoryCommandReceiptIdentity,
   MemoryCommandResult,
   MemoryContentProtectionPort,
+  MemoryPayloadBinding,
   MemoryReceiptClaim,
   MemoryReceiptOwner,
 } from "./memory-authority-ports.js";

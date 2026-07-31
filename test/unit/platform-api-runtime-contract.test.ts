@@ -42,6 +42,12 @@ describe("Platform API runtime contract", () => {
       .toBe(EXPECTED_FILE_ENVIRONMENT.length);
     expect(PLATFORM_API_RUNTIME_CONTRACT.files.filter(({ privateMaterial }) => privateMaterial))
       .toHaveLength(15);
+    expect(PLATFORM_API_RUNTIME_CONTRACT.uncomposedFiles).toEqual([{
+      environment: "PLATFORM_MEMORY_CONTENT_KEY_RING_FILE",
+      filename: "memory-content-keys.json",
+      privateMaterial: true,
+      secretClass: "memory-content-encryption-keyring",
+    }]);
   });
 
   it("loads strict public and health ports from the runtime contract", () => {
@@ -72,6 +78,12 @@ describe("Platform API runtime contract", () => {
     await expect(reader.read(
       "PLATFORM_PUBLIC_TLS_CERT_FILE", "/trust/server.crt", 1024, "TLS_CERT_INVALID",
     )).resolves.toBe("regular");
-    expect(calls).toEqual(["private:/trust/server.key", "regular:/trust/server.crt"]);
+    await expect(reader.read(
+      "PLATFORM_MEMORY_CONTENT_KEY_RING_FILE", "/trust/memory.json", 1024,
+      "MEMORY_KEY_RING_INVALID",
+    )).resolves.toBe("private");
+    expect(calls).toEqual([
+      "private:/trust/server.key", "regular:/trust/server.crt", "private:/trust/memory.json",
+    ]);
   });
 });

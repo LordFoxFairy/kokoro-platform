@@ -106,10 +106,15 @@ describe("Memory M0 feature-off authority schema", () => {
       schema.indexOf("model CommandReceipt {"));
     expect(memorySchema).not.toContain("workspaceRef");
     const processSources = readdirSync(join(process.cwd(), "src/process"))
-      .filter((name) => name.endsWith(".ts"))
+      .filter((name) => name.endsWith(".ts") && name !== "memory-content-protection.ts")
       .map((name) => readFileSync(join(process.cwd(), "src/process", name), "utf8"))
       .join("\n");
     expect(processSources).not.toMatch(/modules\/memory|platform-memory/u);
+    const loader = readFileSync(
+      join(process.cwd(), "src/process/memory-content-protection.ts"), "utf8",
+    );
+    expect(loader).toContain("loadPlatformApiMemoryContentProtector");
+    expect(loader).not.toMatch(/createSecureServer|\.listen\(|createServer\(|start:platform-memory/u);
     expect(readFileSync(join(process.cwd(), "package.json"), "utf8"))
       .not.toMatch(/start:memory|start:platform-memory/u);
     expect(readFileSync(join(process.cwd(), "deployables.yaml"), "utf8"))

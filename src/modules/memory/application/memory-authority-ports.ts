@@ -193,9 +193,20 @@ export interface MemoryAuthorityRepository {
 
 /** No transaction argument by design: protection must finish before an authority transaction opens. */
 export interface MemoryContentProtectionPort {
-  protect(input: Readonly<{ kind: "explicit_memory"; plaintext: string }>):
+  protect(input: Readonly<{ binding: MemoryPayloadBinding; plaintext: Uint8Array }>):
     Promise<ProtectedMemoryContent>;
+  reveal(input: Readonly<{
+    binding: MemoryPayloadBinding;
+    protectedContent: ProtectedMemoryContent;
+  }>): Promise<Uint8Array>;
 }
+
+export type MemoryPayloadBinding = Readonly<{
+  siteRef: SiteRef;
+  spaceRef: MemorySpaceRef;
+  entryRef: MemoryEntryRef;
+  revisionRef: MemoryRevisionRef;
+}>;
 
 export function memoryReceiptOwner(binding: MemoryScopeBinding): MemoryReceiptOwner {
   const base: BaseMemoryScopeBinding = binding.kind === "agent_product"

@@ -43,6 +43,11 @@ export const PLATFORM_API_RUNTIME_CONTRACT = Object.freeze({
     file("PLATFORM_IDENTITY_TOTP_KEY_RING_FILE", "identity-totp-keys.json", true,
       "identity-totp-encryption-keyring"),
   ]),
+  /** Validated by the same reader, but not mounted or required before its owner composition lands. */
+  uncomposedFiles: Object.freeze([
+    file("PLATFORM_MEMORY_CONTENT_KEY_RING_FILE", "memory-content-keys.json", true,
+      "memory-content-encryption-keyring"),
+  ]),
 });
 
 export interface PlatformApiBoundedFileReader {
@@ -52,7 +57,7 @@ export interface PlatformApiBoundedFileReader {
 
 export interface PlatformApiRuntimeFileReader {
   read(
-    environment: PlatformApiFileEnvironment,
+    environment: PlatformApiRuntimeFileEnvironment,
     path: string,
     maximumBytes: number,
     invalidCode: string,
@@ -60,7 +65,8 @@ export interface PlatformApiRuntimeFileReader {
 }
 
 const FILE_CONTRACT_BY_ENVIRONMENT = new Map(
-  PLATFORM_API_RUNTIME_CONTRACT.files.map((entry) => [entry.environment, entry] as const),
+  [...PLATFORM_API_RUNTIME_CONTRACT.files, ...PLATFORM_API_RUNTIME_CONTRACT.uncomposedFiles]
+    .map((entry) => [entry.environment, entry] as const),
 );
 
 export function createPlatformApiRuntimeFileReader(
@@ -68,7 +74,7 @@ export function createPlatformApiRuntimeFileReader(
 ): PlatformApiRuntimeFileReader {
   return Object.freeze({
     read(
-      environment: PlatformApiFileEnvironment,
+      environment: PlatformApiRuntimeFileEnvironment,
       path: string,
       maximumBytes: number,
       invalidCode: string,
@@ -107,6 +113,10 @@ function file<
 
 export type PlatformApiFileEnvironment =
   typeof PLATFORM_API_RUNTIME_CONTRACT.files[number]["environment"];
+
+export type PlatformApiRuntimeFileEnvironment =
+  | PlatformApiFileEnvironment
+  | typeof PLATFORM_API_RUNTIME_CONTRACT.uncomposedFiles[number]["environment"];
 
 function runtimePort(
   contract: Readonly<{ environment: string; default: number }>,

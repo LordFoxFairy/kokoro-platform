@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 const migrationPath = join(process.cwd(),
   "prisma/migrations/20260813_memory_m0_public_authority/migration.sql");
 const migration = readFileSync(migrationPath, "utf8");
+const schema = readFileSync(join(process.cwd(), "prisma/schema.prisma"), "utf8");
 
 describe("Memory M0.1 public database authority", () => {
   it("keeps revision headers immutable and moves every content byte into one erasable envelope", () => {
@@ -17,6 +18,15 @@ describe("Memory M0.1 public database authority", () => {
     expect(migration).toContain("ALTER TABLE platform.memory_revision\n  DROP COLUMN protected_ciphertext");
     expect(migration).toContain("BEFORE UPDATE ON platform.memory_revision_payload");
     expect(migration).not.toMatch(/(?:plain|canonical)_?content\s+(?:TEXT|JSONB)/iu);
+    const revisionModel = schema.slice(schema.indexOf("model MemoryRevision {"),
+      schema.indexOf("model MemoryRevisionPayload {"));
+    expect(revisionModel).not.toMatch(/protectedCiphertext|protectionKeyRevision|envelopeDigest/u);
+    const payloadModel = schema.slice(schema.indexOf("model MemoryRevisionPayload {"),
+      schema.indexOf("model MemoryProvenance {"));
+    for (const field of ["envelopeVersion", "protectionKeyRevision", "nonce",
+      "protectedCiphertext", "authenticationTag", "aadDigest", "protectedAt"]) {
+      expect(payloadModel).toContain(field);
+    }
   });
 
   it("creates only the M0.1 command, transfer, purge and suppression authority tables", () => {
@@ -44,6 +54,12 @@ describe("Memory M0.1 public database authority", () => {
     expect(migration).toContain("RETURN 'already_deleted'");
     expect(migration).toContain("RAISE EXCEPTION 'MEMORY_PURGE_TARGET_FORBIDDEN'");
     expect(migration).toContain("MEMORY_PURGE_REVISION_TARGETS_INCOMPLETE");
+    for (const model of ["MemoryPublicCommandInbox", "MemoryImportJob", "MemoryExportJob",
+      "MemoryPurgeParticipantManifest", "MemoryPurgeJob", "MemoryPurgeRevisionTarget",
+      "MemoryPurgeParticipantReceipt", "MemorySuppressionTombstone",
+      "MemoryDatabaseRoleIdentity"]) {
+      expect(schema).toContain(`model ${model} {`);
+    }
   });
 
   it("pins three actual least-privilege login OIDs while runtime remains grant-free", () => {

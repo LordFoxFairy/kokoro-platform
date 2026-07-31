@@ -23,8 +23,9 @@ const binding = Object.freeze({ kind: "user" as const, siteRef: "site-alpha",
   subjectRef: "subject-alpha", subjectGeneration: 3n });
 
 function content(bytes: readonly number[]) {
-  return createProtectedMemoryContent({ ciphertext: new Uint8Array(bytes),
-    keyRevision: "memory-key-r2", envelopeDigest: "a".repeat(64) });
+  return createProtectedMemoryContent({ envelopeVersion: 1, ciphertext: new Uint8Array(bytes),
+    keyRevision: "memory-key-r2", nonce: new Uint8Array(12).fill(1),
+    authenticationTag: new Uint8Array(16).fill(2), aadDigest: "a".repeat(64) });
 }
 
 function identity(): MemoryCommandReceiptIdentity {
@@ -157,12 +158,13 @@ describe("PostgresMemoryAuthorityRepository", () => {
     const writes = statements.filter(({ statement }) => statement.startsWith("INSERT") ||
       statement.startsWith("UPDATE"));
     expect(writes.map(({ statement }) => statement.split("\n")[0])).toEqual([
-      "INSERT INTO platform.memory_revision", "INSERT INTO platform.memory_provenance",
-      "UPDATE platform.memory_entry",
+      "INSERT INTO platform.memory_revision", "INSERT INTO platform.memory_revision_payload",
+      "INSERT INTO platform.memory_provenance", "UPDATE platform.memory_entry",
     ]);
-    expect(writes[0]?.values.some((value) => Buffer.isBuffer(value))).toBe(true);
-    expect(writes[2]?.statement).toContain("current_revision=$");
-    expect(writes[2]?.statement).toContain("version=$");
+    expect(writes[0]?.values.some((value) => Buffer.isBuffer(value))).toBe(false);
+    expect(writes[1]?.values.filter((value) => Buffer.isBuffer(value))).toHaveLength(3);
+    expect(writes[3]?.statement).toContain("current_revision=$");
+    expect(writes[3]?.statement).toContain("version=$");
   });
 
   it("turns a zero-row aggregate CAS into a typed persistence conflict", async () => {

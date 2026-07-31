@@ -10,6 +10,7 @@ export type {
   MemoryCommandReceiptIdentity,
   MemoryCommandResult,
   MemoryContentProtectionPort,
+  MemoryPayloadBinding,
   MemoryReceiptClaim,
   MemoryReceiptOwner,
 } from "./application/index.js";
@@ -96,6 +97,10 @@ export {
   memorySubjectGeneration,
   memorySubjectRef,
 } from "./domain/memory-references.js";
+export { createMemoryContentProtector, parseMemoryContentKeyRing } from
+  "./infrastructure/crypto/memory-content-protector.js";
+export type { MemoryContentKeyRing } from
+  "./infrastructure/crypto/memory-content-protector.js";
 
 export { PostgresMemoryAuthorityRepository } from
   "./infrastructure/postgres-memory-authority-repository.js";

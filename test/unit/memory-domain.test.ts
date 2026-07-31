@@ -37,9 +37,10 @@ function userSpace() {
 
 function protectedContent(bytes: readonly number[] = [1, 2, 3]) {
   return createProtectedMemoryContent({
-    ciphertext: new Uint8Array(bytes),
+    envelopeVersion: 1, ciphertext: new Uint8Array(bytes),
     keyRevision: "memory-key-r2",
-    envelopeDigest: "a".repeat(64),
+    nonce: new Uint8Array(12).fill(1), authenticationTag: new Uint8Array(16).fill(2),
+    aadDigest: "a".repeat(64),
   });
 }
 
@@ -169,18 +170,31 @@ describe("Memory M0 domain runtime boundary", () => {
 
   it("defensively owns protected ciphertext and never returns an internal alias", () => {
     const source = new Uint8Array([1, 2, 3]);
+    const nonce = new Uint8Array(12).fill(1);
+    const authenticationTag = new Uint8Array(16).fill(2);
     const content = createProtectedMemoryContent({
-      ciphertext: source,
+      envelopeVersion: 1, ciphertext: source,
       keyRevision: "memory-key-r2",
-      envelopeDigest: "a".repeat(64),
+      nonce, authenticationTag,
+      aadDigest: "a".repeat(64),
     });
     source[0] = 9;
+    nonce[0] = 9;
+    authenticationTag[0] = 9;
     const first = content.copyCiphertext();
     expect([...first]).toEqual([1, 2, 3]);
+    expect([...content.copyNonce()]).toEqual([...new Uint8Array(12).fill(1)]);
+    expect([...content.copyAuthenticationTag()]).toEqual([...new Uint8Array(16).fill(2)]);
     first[1] = 8;
+    const firstNonce = content.copyNonce();
+    const firstAuthenticationTag = content.copyAuthenticationTag();
+    firstNonce[1] = 8;
+    firstAuthenticationTag[1] = 8;
     const second = content.copyCiphertext();
     expect(second).not.toBe(first);
     expect([...second]).toEqual([1, 2, 3]);
+    expect(content.copyNonce()[1]).toBe(1);
+    expect(content.copyAuthenticationTag()[1]).toBe(2);
     expect("ProtectedMemoryContent" in protectedContentModule).toBe(false);
     expect(() => Reflect.construct(content.constructor, [new Uint8Array([7]),
       "memory-key-r2", "a".repeat(64)])).toThrowError(
