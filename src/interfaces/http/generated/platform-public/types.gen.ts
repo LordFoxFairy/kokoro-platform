@@ -1247,9 +1247,57 @@ export type MemoryForgetInput = {
     expectedEntryVersion: PositiveUint64String;
 };
 
+export type MemoryImportActiveStatus = {
+    acceptedEntryCount: number;
+    assetRef: string;
+    assetVersionRef: string;
+    format: 'kokoro_memory_export_v1';
+    importRef: string;
+    rejectedEntryCount: number;
+    requestedAt: string;
+    resultingSpaceVersion: null;
+    safeStatusCode: null;
+    state: 'queued' | 'validating' | 'applying';
+    statusVersion: PositiveUint64String;
+    updatedAt: string;
+};
+
 export type MemoryImportCommandResult = {
     import: MemoryImportStatus;
     resultKind: 'import';
+};
+
+export type MemoryImportCompletedStatus = {
+    acceptedEntryCount: number;
+    assetRef: string;
+    assetVersionRef: string;
+    format: 'kokoro_memory_export_v1';
+    importRef: string;
+    rejectedEntryCount: number;
+    requestedAt: string;
+    /**
+     * Exact owner space version committed by the apply transaction, including a zero-entry completion.
+     */
+    resultingSpaceVersion: PositiveUint64String;
+    safeStatusCode: null;
+    state: 'completed';
+    statusVersion: PositiveUint64String;
+    updatedAt: string;
+};
+
+export type MemoryImportFailedStatus = {
+    acceptedEntryCount: number;
+    assetRef: string;
+    assetVersionRef: string;
+    format: 'kokoro_memory_export_v1';
+    importRef: string;
+    rejectedEntryCount: number;
+    requestedAt: string;
+    resultingSpaceVersion: null;
+    safeStatusCode: 'temporarily_unavailable';
+    state: 'failed';
+    statusVersion: PositiveUint64String;
+    updatedAt: string;
 };
 
 /**
@@ -1262,6 +1310,36 @@ export type MemoryImportInput = {
     format: 'kokoro_memory_export_v1';
 };
 
+export type MemoryImportQuarantinedStatus = {
+    acceptedEntryCount: number;
+    assetRef: string;
+    assetVersionRef: string;
+    format: 'kokoro_memory_export_v1';
+    importRef: string;
+    rejectedEntryCount: number;
+    requestedAt: string;
+    resultingSpaceVersion: null;
+    safeStatusCode: 'awaiting_review';
+    state: 'quarantined';
+    statusVersion: PositiveUint64String;
+    updatedAt: string;
+};
+
+export type MemoryImportRejectedStatus = {
+    acceptedEntryCount: number;
+    assetRef: string;
+    assetVersionRef: string;
+    format: 'kokoro_memory_export_v1';
+    importRef: string;
+    rejectedEntryCount: number;
+    requestedAt: string;
+    resultingSpaceVersion: null;
+    safeStatusCode: 'invalid_manifest' | 'policy_rejected';
+    state: 'rejected';
+    statusVersion: PositiveUint64String;
+    updatedAt: string;
+};
+
 export type MemoryImportResponse = {
     import: MemoryImportStatus;
 };
@@ -1271,23 +1349,17 @@ export type MemoryImportState = 'queued' | 'validating' | 'quarantined' | 'apply
 /**
  * statusVersion starts at one and increases on every persisted change to this public status projection. For one importRef, a lower version is stale and must never replace a higher one; a replay at the same version is byte-equivalent. State transitions are restricted to the declared directed graph. completed is terminal and carries the exact resultingSpaceVersion committed by the apply transaction; every other state carries null.
  */
-export type MemoryImportStatus = {
-    acceptedEntryCount: number;
-    assetRef: string;
-    assetVersionRef: string;
-    format: 'kokoro_memory_export_v1';
-    importRef: string;
-    rejectedEntryCount: number;
-    requestedAt: string;
-    /**
-     * Exact owner space version committed by a completed import, including a zero-entry completion. Null for every non-completed state.
-     */
-    resultingSpaceVersion: PositiveUint64String | null;
-    safeStatusCode: null | 'awaiting_review' | 'invalid_manifest' | 'policy_rejected' | 'temporarily_unavailable';
-    state: MemoryImportState;
-    statusVersion: PositiveUint64String;
-    updatedAt: string;
-};
+export type MemoryImportStatus = ({
+    state: 'applying' | 'queued' | 'validating';
+} & MemoryImportActiveStatus) | ({
+    state: 'quarantined';
+} & MemoryImportQuarantinedStatus) | ({
+    state: 'completed';
+} & MemoryImportCompletedStatus) | ({
+    state: 'rejected';
+} & MemoryImportRejectedStatus) | ({
+    state: 'failed';
+} & MemoryImportFailedStatus);
 
 export type MemoryNullableRevisionRef = string | null;
 

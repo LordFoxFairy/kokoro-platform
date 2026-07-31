@@ -1511,10 +1511,7 @@ export const zMemoryForgetInput = z.strictObject({
     expectedEntryVersion: zPositiveUint64String
 });
 
-/**
- * statusVersion starts at one and increases on every persisted change to this public status projection. For one importRef, a lower version is stale and must never replace a higher one; a replay at the same version is byte-equivalent. State transitions are restricted to the declared directed graph. completed is terminal and carries the exact resultingSpaceVersion committed by the apply transaction; every other state carries null.
- */
-export const zMemoryImportStatus = z.strictObject({
+export const zMemoryImportActiveStatus = z.strictObject({
     acceptedEntryCount: z.int().gte(0).lte(100000),
     assetRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
     assetVersionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
@@ -1522,17 +1519,89 @@ export const zMemoryImportStatus = z.strictObject({
     importRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
     rejectedEntryCount: z.int().gte(0).lte(100000),
     requestedAt: z.iso.datetime(),
-    resultingSpaceVersion: zPositiveUint64String.nullable(),
-    safeStatusCode: z.enum([
-        'awaiting_review',
-        'invalid_manifest',
-        'policy_rejected',
-        'temporarily_unavailable'
-    ]).nullable(),
-    state: zMemoryImportState,
+    resultingSpaceVersion: z.null(),
+    safeStatusCode: z.null(),
+    state: z.enum([
+        'queued',
+        'validating',
+        'applying'
+    ]),
     statusVersion: zPositiveUint64String,
     updatedAt: z.iso.datetime()
 });
+
+export const zMemoryImportCompletedStatus = z.strictObject({
+    acceptedEntryCount: z.int().gte(0).lte(100000),
+    assetRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    assetVersionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    format: z.literal('kokoro_memory_export_v1'),
+    importRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    rejectedEntryCount: z.int().gte(0).lte(100000),
+    requestedAt: z.iso.datetime(),
+    resultingSpaceVersion: zPositiveUint64String,
+    safeStatusCode: z.null(),
+    state: z.literal('completed'),
+    statusVersion: zPositiveUint64String,
+    updatedAt: z.iso.datetime()
+});
+
+export const zMemoryImportFailedStatus = z.strictObject({
+    acceptedEntryCount: z.int().gte(0).lte(100000),
+    assetRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    assetVersionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    format: z.literal('kokoro_memory_export_v1'),
+    importRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    rejectedEntryCount: z.int().gte(0).lte(100000),
+    requestedAt: z.iso.datetime(),
+    resultingSpaceVersion: z.null(),
+    safeStatusCode: z.literal('temporarily_unavailable'),
+    state: z.literal('failed'),
+    statusVersion: zPositiveUint64String,
+    updatedAt: z.iso.datetime()
+});
+
+export const zMemoryImportQuarantinedStatus = z.strictObject({
+    acceptedEntryCount: z.int().gte(0).lte(100000),
+    assetRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    assetVersionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    format: z.literal('kokoro_memory_export_v1'),
+    importRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    rejectedEntryCount: z.int().gte(0).lte(100000),
+    requestedAt: z.iso.datetime(),
+    resultingSpaceVersion: z.null(),
+    safeStatusCode: z.literal('awaiting_review'),
+    state: z.literal('quarantined'),
+    statusVersion: zPositiveUint64String,
+    updatedAt: z.iso.datetime()
+});
+
+export const zMemoryImportRejectedStatus = z.strictObject({
+    acceptedEntryCount: z.int().gte(0).lte(100000),
+    assetRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    assetVersionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    format: z.literal('kokoro_memory_export_v1'),
+    importRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    rejectedEntryCount: z.int().gte(0).lte(100000),
+    requestedAt: z.iso.datetime(),
+    resultingSpaceVersion: z.null(),
+    safeStatusCode: z.enum(['invalid_manifest', 'policy_rejected']),
+    state: z.literal('rejected'),
+    statusVersion: zPositiveUint64String,
+    updatedAt: z.iso.datetime()
+});
+
+/**
+ * statusVersion starts at one and increases on every persisted change to this public status projection. For one importRef, a lower version is stale and must never replace a higher one; a replay at the same version is byte-equivalent. State transitions are restricted to the declared directed graph. completed is terminal and carries the exact resultingSpaceVersion committed by the apply transaction; every other state carries null.
+ */
+export const zMemoryImportStatus = z.discriminatedUnion('state', [
+    zMemoryImportActiveStatus.extend({ state: z.literal('applying') }),
+    zMemoryImportActiveStatus.extend({ state: z.literal('queued') }),
+    zMemoryImportActiveStatus.extend({ state: z.literal('validating') }),
+    zMemoryImportQuarantinedStatus,
+    zMemoryImportCompletedStatus,
+    zMemoryImportRejectedStatus,
+    zMemoryImportFailedStatus
+]);
 
 export const zMemoryImportCommandResult = z.strictObject({
     import: zMemoryImportStatus,
