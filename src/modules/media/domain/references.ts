@@ -1,4 +1,4 @@
-import { hasControlCharacter } from "./text-validation.js";
+import { hasControlCharacter, isWellFormedUtf16 } from "./text-validation.js";
 
 declare const mediaOperationRefBrand: unique symbol;
 declare const mediaStepRefBrand: unique symbol;
@@ -13,6 +13,8 @@ declare const trustDecisionRefBrand: unique symbol;
 declare const attemptUsageEvidenceReceiptRefBrand: unique symbol;
 declare const effectBudgetCommitRefBrand: unique symbol;
 declare const irreconcilableOutcomeReceiptRefBrand: unique symbol;
+declare const modelInvocationRefBrand: unique symbol;
+declare const gatewayCanonicalOutcomeReceiptRefBrand: unique symbol;
 
 export type MediaOperationRef = string & Readonly<{ [mediaOperationRefBrand]: true }>;
 export type MediaStepRef = string & Readonly<{ [mediaStepRefBrand]: true }>;
@@ -34,6 +36,10 @@ export type AttemptUsageEvidenceReceiptRef = string & Readonly<{
 export type EffectBudgetCommitRef = string & Readonly<{ [effectBudgetCommitRefBrand]: true }>;
 export type IrreconcilableOutcomeReceiptRef = string & Readonly<{
   [irreconcilableOutcomeReceiptRefBrand]: true;
+}>;
+export type ModelInvocationRef = string & Readonly<{ [modelInvocationRefBrand]: true }>;
+export type GatewayCanonicalOutcomeReceiptRef = string & Readonly<{
+  [gatewayCanonicalOutcomeReceiptRefBrand]: true;
 }>;
 
 export function mediaOperationRef(value: string): MediaOperationRef {
@@ -89,9 +95,25 @@ export function irreconcilableOutcomeReceiptRef(value: string): IrreconcilableOu
     IrreconcilableOutcomeReceiptRef;
 }
 
+export function modelInvocationRef(value: string): ModelInvocationRef {
+  return opaqueReference(value, "MEDIA_MODEL_INVOCATION_REF_INVALID") as ModelInvocationRef;
+}
+
+export function gatewayCanonicalOutcomeReceiptRef(value: string): GatewayCanonicalOutcomeReceiptRef {
+  return opaqueReference(value, "MEDIA_GATEWAY_CANONICAL_OUTCOME_RECEIPT_REF_INVALID") as
+    GatewayCanonicalOutcomeReceiptRef;
+}
+
 function opaqueReference(value: string, code: string): string {
-  if (value.length < 1 || value.length > 256 || hasControlCharacter(value)) {
-    throw new Error(code);
-  }
+  assertOpaqueReferenceValue(value, code);
   return value;
+}
+
+export function isOpaqueReferenceValue(value: unknown): value is string {
+  return typeof value === "string" && value.length >= 1 && value.length <= 256 &&
+    isWellFormedUtf16(value) && !hasControlCharacter(value);
+}
+
+export function assertOpaqueReferenceValue(value: unknown, code: string): asserts value is string {
+  if (!isOpaqueReferenceValue(value)) throw new Error(code);
 }

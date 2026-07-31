@@ -28,4 +28,12 @@ describe("Media opaque references", () => {
     expect(() => mediaOperationRef("operation\t01")).toThrow("MEDIA_OPERATION_REF_INVALID");
     expect(() => mediaOperationRef("operation\u007f01")).toThrow("MEDIA_OPERATION_REF_INVALID");
   });
+
+  it("accepts well-formed non-ASCII identities and rejects lone UTF-16 surrogates", () => {
+    expect(mediaOperationRef("operation:图像:🎨")).toBe("operation:图像:🎨");
+    expect(() => mediaOperationRef("operation:\ud800"))
+      .toThrow("MEDIA_OPERATION_REF_INVALID");
+    expect(() => mediaOperationRef("operation:\udc00"))
+      .toThrow("MEDIA_OPERATION_REF_INVALID");
+  });
 });

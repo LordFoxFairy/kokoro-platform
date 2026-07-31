@@ -11,6 +11,7 @@ const platformModules = [
   "commerce",
   "credit",
   "identity",
+  "media",
   "model-control",
   "model-gateway",
   "policy",
