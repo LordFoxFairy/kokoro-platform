@@ -2,6 +2,8 @@ import { randomBytes } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import {
   ArtifactDeliveryService,
+  ArtifactDeliveryCapabilityCodec,
+  InMemoryArtifactDeliveryAuditRepository,
   InMemoryArtifactDeliveryAuthorizationRepository,
   InMemoryArtifactObjectStore,
 } from "../../src/modules/artifact/index.js";
@@ -11,6 +13,10 @@ const scope = Object.freeze({
   subjectRef: "subject:one",
   subjectGeneration: 4n,
   projectRef: "project:one",
+});
+const workload = Object.freeze({
+  siteRef: "site:one", siteReleaseRef: "release:one", workloadIdentityRef: "workload:one",
+  workloadBindingEpoch: 1n, siteSecurityEpoch: 1n,
 });
 
 describe("Artifact staged/finalized delivery", () => {
@@ -47,13 +53,15 @@ describe("Artifact staged/finalized delivery", () => {
     const repository = new InMemoryArtifactDeliveryAuthorizationRepository();
     const service = new ArtifactDeliveryService({
       repository,
+      audit: new InMemoryArtifactDeliveryAuditRepository(),
       objectStore: store,
-      capabilityKey: randomBytes(32),
+      capabilities: new ArtifactDeliveryCapabilityCodec(randomBytes(32)),
       clock,
       reference: (kind) => `${kind}:one`,
     });
     const issued = await service.issue({
       ownerScope: scope,
+      workload,
       artifactRef: "artifact:one",
       artifactVersionRef: "artifact-version:one",
       purpose: "preview",
@@ -62,11 +70,12 @@ describe("Artifact staged/finalized delivery", () => {
     });
     expect(issued.deliveryCapability).not.toContain("artifact-version:one");
 
-    const response = await service.redeem({
+    const response = await service.redeemForWorkload({
       authorizationRef: issued.authorizationRef,
       deliveryCapability: issued.deliveryCapability,
-      ownerScope: scope,
+      workload,
       audience: "site-bff.artifact-delivery",
+      requestRef: "request:one",
       rangeHeader: "bytes=2-5",
       signal: new AbortController().signal,
     });
@@ -86,25 +95,30 @@ describe("Artifact staged/finalized delivery", () => {
     await store.promote({ stagedReceipt: staged,
       trustDecision: { kind: "allow", decisionRef: "trust:one", contentSha256: staged.contentSha256 } });
     const repository = new InMemoryArtifactDeliveryAuthorizationRepository();
-    const service = new ArtifactDeliveryService({ repository, objectStore: store,
-      capabilityKey: randomBytes(32), clock: () => now, reference: (kind) => `${kind}:one` });
-    const issued = await service.issue({ ownerScope: scope, artifactRef: "artifact:one",
+    const service = new ArtifactDeliveryService({ repository,
+      audit: new InMemoryArtifactDeliveryAuditRepository(), objectStore: store,
+      capabilities: new ArtifactDeliveryCapabilityCodec(randomBytes(32)),
+      clock: () => now, reference: (kind) => `${kind}:one` });
+    const issued = await service.issue({ ownerScope: scope, workload, artifactRef: "artifact:one",
       artifactVersionRef: "artifact-version:one", purpose: "download",
       audience: "site-bff.artifact-delivery", ttlMs: 1_000 });
 
-    await expect(service.redeem({ deliveryCapability: issued.deliveryCapability,
+    await expect(service.redeemForWorkload({ deliveryCapability: issued.deliveryCapability,
       authorizationRef: issued.authorizationRef,
-      ownerScope: { ...scope, subjectGeneration: 5n }, audience: "site-bff.artifact-delivery",
-      signal: new AbortController().signal })).rejects.toThrow("ARTIFACT_DELIVERY_SCOPE_MISMATCH");
-    await expect(service.redeem({ deliveryCapability: issued.deliveryCapability, ownerScope: scope,
+      workload: { ...workload, siteSecurityEpoch: 5n }, audience: "site-bff.artifact-delivery",
+      requestRef: "request:scope",
+      signal: new AbortController().signal })).rejects.toThrow("ARTIFACT_DELIVERY_WORKLOAD_MISMATCH");
+    await expect(service.redeemForWorkload({ deliveryCapability: issued.deliveryCapability, workload,
       authorizationRef: issued.authorizationRef,
       audience: "site-bff.artifact-delivery", rangeHeader: "bytes=0-1,4-5",
+      requestRef: "request:range",
       signal: new AbortController().signal })).rejects.toThrow("ARTIFACT_RANGE_MULTIPLE_UNSUPPORTED");
     expect((await service.revoke({ authorizationRef: issued.authorizationRef,
       ownerScope: scope })).state).toBe("revoked");
-    await expect(service.redeem({ deliveryCapability: issued.deliveryCapability, ownerScope: scope,
+    await expect(service.redeemForWorkload({ deliveryCapability: issued.deliveryCapability, workload,
       authorizationRef: issued.authorizationRef,
-      audience: "site-bff.artifact-delivery", signal: new AbortController().signal }))
+      audience: "site-bff.artifact-delivery", requestRef: "request:revoked",
+      signal: new AbortController().signal }))
       .rejects.toThrow("ARTIFACT_DELIVERY_REVOKED");
   });
 
@@ -116,19 +130,22 @@ describe("Artifact staged/finalized delivery", () => {
       trustDecision: { kind: "allow", decisionRef: "trust:one", contentSha256: staged.contentSha256 } });
     const service = new ArtifactDeliveryService({
       repository: new InMemoryArtifactDeliveryAuthorizationRepository(), objectStore: store,
-      capabilityKey: randomBytes(32), reference: () => "authorization:one",
+      audit: new InMemoryArtifactDeliveryAuditRepository(),
+      capabilities: new ArtifactDeliveryCapabilityCodec(randomBytes(32)),
+      reference: () => "authorization:one",
     });
 
-    await expect(service.issue({ ownerScope: scope, artifactRef: "artifact:other",
+    await expect(service.issue({ ownerScope: scope, workload, artifactRef: "artifact:other",
       artifactVersionRef: "artifact-version:one", purpose: "preview",
       audience: "site-bff.artifact-delivery", ttlMs: 1_000 }))
       .rejects.toThrow("ARTIFACT_VERSION_NOT_READY");
-    const issued = await service.issue({ ownerScope: scope, artifactRef: "artifact:one",
+    const issued = await service.issue({ ownerScope: scope, workload, artifactRef: "artifact:one",
       artifactVersionRef: "artifact-version:one", purpose: "preview",
       audience: "site-bff.artifact-delivery", ttlMs: 1_000 });
-    await expect(service.redeem({ authorizationRef: "authorization:wrong",
-      deliveryCapability: issued.deliveryCapability, ownerScope: scope,
-      audience: "site-bff.artifact-delivery", signal: new AbortController().signal }))
+    await expect(service.redeemForWorkload({ authorizationRef: "authorization:wrong",
+      deliveryCapability: issued.deliveryCapability, workload,
+      audience: "site-bff.artifact-delivery", requestRef: "request:wrong-auth",
+      signal: new AbortController().signal }))
       .rejects.toThrow("ARTIFACT_DELIVERY_AUTHORIZATION_MISMATCH");
   });
 });

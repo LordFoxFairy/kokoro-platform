@@ -106,6 +106,10 @@ export async function runPlatformMigrations(
     environment.PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE,
     "PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE",
   );
+  const artifactDataPlaneRole = requireRole(
+    environment.PLATFORM_DATABASE_ARTIFACT_DATA_PLANE_ROLE,
+    "PLATFORM_DATABASE_ARTIFACT_DATA_PLANE_ROLE",
+  );
   const adminRole = requireRole(
     environment.PLATFORM_DATABASE_ADMIN_ROLE,
     "PLATFORM_DATABASE_ADMIN_ROLE",
@@ -120,6 +124,7 @@ export async function runPlatformMigrations(
     admissionRole,
     authorizationRole,
     assetDataPlaneRole,
+    artifactDataPlaneRole,
     ...Object.values(workerRoles),
     adminRole,
     modelGatewayRole,
@@ -151,6 +156,11 @@ export async function runPlatformMigrations(
       assetDataPlaneRole,
       config.expectedDatabaseUser,
     );
+    await assertArtifactDataPlaneRolePreflight(
+      lockClient,
+      artifactDataPlaneRole,
+      config.expectedDatabaseUser,
+    );
     await assertSplitWorkerRolePreflight(lockClient, workerRoles, config.expectedDatabaseUser);
     await lockClient.query("SELECT pg_advisory_lock(hashtext($1))", [MIGRATION_ADVISORY_LOCK]);
     locked = true;
@@ -180,6 +190,7 @@ export async function runPlatformMigrations(
     );
     await grantModelGatewayPrivileges(lockClient, modelGatewayRole, admissionRole);
     await grantAssetDataPlanePrivileges(lockClient, assetDataPlaneRole);
+    await grantArtifactDataPlanePrivileges(lockClient, artifactDataPlaneRole);
     await grantSplitWorkerPrivileges(lockClient, workerRoles);
     await configureOutboxOwnerPolicies(lockClient, {
       migrator: config.expectedDatabaseUser,
@@ -204,6 +215,11 @@ export async function runPlatformMigrations(
     await assertAssetDataPlaneAuthority(
       lockClient,
       assetDataPlaneRole,
+      config.expectedDatabaseUser,
+    );
+    await assertArtifactDataPlaneAuthority(
+      lockClient,
+      artifactDataPlaneRole,
       config.expectedDatabaseUser,
     );
     await assertSplitWorkerAuthority(lockClient, workerRoles);
@@ -427,6 +443,19 @@ async function assertAssetDataPlaneRolePreflight(
   );
 }
 
+async function assertArtifactDataPlaneRolePreflight(
+  client: MigrationLockClient,
+  artifactDataPlaneRole: string,
+  migratorRole: string,
+): Promise<void> {
+  await assertSingleRuntimeRolePreflight(
+    client,
+    artifactDataPlaneRole,
+    migratorRole,
+    "PLATFORM_ARTIFACT_DATA_PLANE_ROLE_PREFLIGHT_FAILED",
+  );
+}
+
 async function assertSplitWorkerRolePreflight(
   client: MigrationLockClient,
   roles: SplitWorkerRoles,
@@ -633,6 +662,53 @@ async function assertAssetDataPlaneAuthority(
     row?.canMutateAssetOwnerIntent !== false
   ) {
     throw new Error("PLATFORM_ASSET_DATA_PLANE_POST_AUTHORITY_INVALID");
+  }
+}
+
+async function grantArtifactDataPlanePrivileges(
+  client: MigrationLockClient,
+  artifactDataPlaneRole: string,
+): Promise<void> {
+  const dataPlane = quoteRoleIdentifier(artifactDataPlaneRole);
+  await client.query(`REVOKE ALL ON SCHEMA platform FROM ${dataPlane}`);
+  await client.query(`REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA platform FROM ${dataPlane}`);
+  await client.query(`REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA platform FROM ${dataPlane}`);
+  await client.query(`REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA platform FROM ${dataPlane}`);
+  await client.query(`GRANT USAGE ON SCHEMA platform TO ${dataPlane}`);
+  await client.query(`GRANT SELECT ON TABLE platform.platform_foundation TO ${dataPlane}`);
+  await client.query(
+    `REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ` +
+      `ON TABLE platform.platform_foundation FROM ${dataPlane}`,
+  );
+  await client.query(
+    `ALTER DEFAULT PRIVILEGES IN SCHEMA platform REVOKE ALL ON TABLES FROM ${dataPlane}`,
+  );
+  await client.query(
+    `ALTER DEFAULT PRIVILEGES IN SCHEMA platform REVOKE ALL ON SEQUENCES FROM ${dataPlane}`,
+  );
+  await client.query(
+    `ALTER DEFAULT PRIVILEGES IN SCHEMA platform REVOKE ALL ON FUNCTIONS FROM ${dataPlane}`,
+  );
+  await client.query(
+    `GRANT EXECUTE ON FUNCTION platform.assert_artifact_delivery_data_plane_role(), ` +
+      `platform.find_artifact_delivery_authorization_by_capability(CHAR(64)), ` +
+      `platform.begin_artifact_delivery_redemption(TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,BIGINT,BIGINT,TEXT), ` +
+      `platform.complete_artifact_delivery_stream(TEXT,BIGINT), ` +
+      `platform.fail_artifact_delivery_stream(TEXT,TEXT) TO ${dataPlane}`,
+  );
+}
+
+async function assertArtifactDataPlaneAuthority(
+  client: MigrationLockClient,
+  artifactDataPlaneRole: string,
+  migratorRole: string,
+): Promise<void> {
+  const result = await client.query(ARTIFACT_DATA_PLANE_POST_AUTHORITY_SQL, [
+    artifactDataPlaneRole,
+    migratorRole,
+  ]);
+  if (result.rows?.length !== 1 || result.rows[0]?.artifactDataPlaneAuthorityOk !== true) {
+    throw new Error("PLATFORM_ARTIFACT_DATA_PLANE_POST_AUTHORITY_INVALID");
   }
 }
 
@@ -976,7 +1052,9 @@ async function assertSplitWorkerAuthority(
       row.publicRoutineAuthorityClosed !== true ||
       row.sequenceAuthorityClosed !== true
     ) {
-      throw new Error(`PLATFORM_SPLIT_WORKER_POST_AUTHORITY_INVALID:${authorityKind}`);
+      throw new Error(
+        `PLATFORM_SPLIT_WORKER_POST_AUTHORITY_INVALID:${authorityKind}:${JSON.stringify(row)}`,
+      );
     }
   }
   await assertSplitWorkerRlsAuthority(client, roles);
@@ -1320,6 +1398,53 @@ const ASSET_DATA_PLANE_POST_AUTHORITY_SQL = `
       OR has_table_privilege($1,'platform.asset_upload_intent','DELETE,TRUNCATE'))
       AS "canMutateAssetOwnerIntent"
   /* assetDataPlaneAuthority */`;
+
+const ARTIFACT_DATA_PLANE_POST_AUTHORITY_SQL = `
+  WITH expected_routine(name) AS (VALUES
+    ('assert_artifact_delivery_data_plane_role'),
+    ('find_artifact_delivery_authorization_by_capability'),
+    ('begin_artifact_delivery_redemption'),
+    ('complete_artifact_delivery_stream'),
+    ('fail_artifact_delivery_stream')
+  )
+  SELECT has_schema_privilege($1,'platform','USAGE')
+    AND NOT has_schema_privilege($1,'platform','CREATE')
+    AND has_table_privilege($1,'platform.platform_foundation','SELECT')
+    AND NOT has_table_privilege($1,'platform.platform_foundation',
+      'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+    AND has_function_privilege($1,
+      'platform.assert_artifact_delivery_data_plane_role()','EXECUTE')
+    AND has_function_privilege($1,
+      'platform.find_artifact_delivery_authorization_by_capability(CHAR(64))','EXECUTE')
+    AND has_function_privilege($1,
+      'platform.begin_artifact_delivery_redemption(TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,BIGINT,BIGINT,TEXT)',
+      'EXECUTE')
+    AND has_function_privilege($1,
+      'platform.complete_artifact_delivery_stream(TEXT,BIGINT)','EXECUTE')
+    AND has_function_privilege($1,
+      'platform.fail_artifact_delivery_stream(TEXT,TEXT)','EXECUTE')
+    AND NOT EXISTS (
+      SELECT 1 FROM information_schema.role_table_grants grant_row
+      WHERE grant_row.grantee=$1 AND grant_row.table_schema='platform'
+        AND NOT (grant_row.table_name='platform_foundation' AND grant_row.privilege_type='SELECT')
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM information_schema.role_routine_grants grant_row
+      WHERE grant_row.grantee=$1 AND grant_row.specific_schema='platform'
+        AND (grant_row.privilege_type<>'EXECUTE' OR
+          NOT EXISTS (SELECT 1 FROM expected_routine expected
+            WHERE expected.name=grant_row.routine_name))
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM pg_proc routine JOIN pg_roles owner ON owner.oid=routine.proowner
+      WHERE routine.pronamespace=to_regnamespace('platform')
+        AND routine.proname IN (SELECT name FROM expected_routine)
+        AND (owner.rolname<>$2 OR NOT routine.prosecdef OR NOT EXISTS (
+          SELECT 1 FROM unnest(COALESCE(routine.proconfig,ARRAY[]::TEXT[])) setting
+          WHERE replace(setting,' ','')='search_path=pg_catalog,platform'
+        ))
+    ) AS "artifactDataPlaneAuthorityOk"
+  /* artifactDataPlaneAuthority */`;
 
 async function grantFoundationPrivileges(
   client: MigrationLockClient,
@@ -1685,6 +1810,7 @@ const ADMISSION_RELATIONS = [
   "admission_execution_manifest",
   "admission_launch_profile_snapshot",
   "admission_capability_catalog_snapshot",
+  "admission_media_access_authorization",
 ] as const;
 const CREDIT_USAGE_RELATIONS = [
   "credit_rating_policy_revision",
@@ -1740,6 +1866,7 @@ const ADMISSION_INSERT_RELATIONS = [
   "admission_session_execution_binding",
   "admission_execution_manifest",
   "admission_capability_catalog_snapshot",
+  "admission_media_access_authorization",
   "outbox_event",
   "credit_hold",
   "credit_hold_allocation",
@@ -1765,6 +1892,7 @@ const ADMISSION_UPDATE_RELATIONS = [
   "admission_command",
   "capability_projection_command",
   "admission_execution_manifest",
+  "admission_media_access_authorization",
   "credit_hold",
   "credit_execution_budget_root",
   "credit_authorization_segment",
@@ -2482,7 +2610,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                ${ADMISSION_RELATIONS_SQL},
                ${ASSET_RELATIONS_SQL},
                ${CREDIT_USAGE_RELATIONS_SQL},
-               ${MODEL_GATEWAY_ADMISSION_RELATIONS_SQL}
+               ${MODEL_GATEWAY_ADMISSION_RELATIONS_SQL},
+               'media_operation_definition_revision','site_release_media_definition'
                ]) AND (
                  (candidate.relname LIKE 'model\\_%' ESCAPE '\\'
                    AND candidate.relname<>'model_gateway_execution_authorization' AND (
@@ -2545,7 +2674,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                ${ADMISSION_RELATIONS_SQL},
                ${ASSET_RELATIONS_SQL},
                ${CREDIT_USAGE_RELATIONS_SQL},
-               ${MODEL_GATEWAY_ADMISSION_RELATIONS_SQL}
+               ${MODEL_GATEWAY_ADMISSION_RELATIONS_SQL},
+               'media_operation_definition_revision','site_release_media_definition'
                ]) AND (
                  (runtime_role.rolname = $2 AND (
                    has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
@@ -2657,7 +2787,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                      'site_traffic_stop_attempt','site_effect_approval','authorization_scoped_site_cursor','authorization_scoped_event_log',
                      'admin_command_decision','admin_approval','admin_approval_decision','admin_post_effect_review',
                      'admin_oidc_transaction','admin_operator_session','admin_step_up_transaction',
-                     'admission_capability_catalog_snapshot','admission_launch_profile_snapshot'
+                     'admission_capability_catalog_snapshot','admission_launch_profile_snapshot',
+                     'site_release_media_definition'
                    ]))
                  ))
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
@@ -2749,7 +2880,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                      'site_traffic_stop_attempt','site_effect_approval','authorization_scoped_site_cursor','authorization_scoped_event_log',
                      'admin_command_decision','admin_approval','admin_approval_decision','admin_post_effect_review',
                      'admin_oidc_transaction','admin_operator_session','admin_step_up_transaction',
-                     'admission_capability_catalog_snapshot','admission_launch_profile_snapshot'
+                     'admission_capability_catalog_snapshot','admission_launch_profile_snapshot',
+                     'site_release_media_definition'
                    ]))
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
@@ -2823,7 +2955,15 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                  to_regprocedure('platform.find_model_selection_decision(uuid)'),
                  to_regprocedure('platform.resolve_product_model_option_catalog(text,text)'),
                  to_regprocedure('platform.valid_credit_scope_policy(jsonb)'),
-                 to_regprocedure('platform.commerce_safe_label_is_valid(text)')
+                 to_regprocedure('platform.commerce_safe_label_is_valid(text)'),
+                 to_regprocedure('platform.list_owned_artifacts(timestamptz,text,integer)'),
+                 to_regprocedure('platform.get_owned_artifact(text)'),
+                 to_regprocedure('platform.list_owned_artifact_versions(text,timestamptz,text,integer)'),
+                 to_regprocedure('platform.get_owned_artifact_version(text,text)'),
+                 to_regprocedure('platform.create_artifact_delivery_authorization(text,character,text,text,bigint,text,text,text,text,text,text,text,text,bigint,bigint,timestamptz,timestamptz,bigint)'),
+                 to_regprocedure('platform.find_artifact_delivery_authorization_by_reference(text)'),
+                 to_regprocedure('platform.revoke_artifact_delivery_authorization(text,timestamptz,bigint)'),
+                 to_regprocedure('platform.revoke_owned_artifact_delivery_authorization(text,timestamptz,text)')
                ]))
                OR (runtime_role.rolname = $5 AND candidate_function.oid = ANY(ARRAY[
                  to_regprocedure('platform.resolve_admission_model_owner(text,text,text)'),

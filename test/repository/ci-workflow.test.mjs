@@ -62,6 +62,7 @@ test("PostgreSQL CI provisions isolated non-superuser roles", async () => {
     "platform_admission",
     "platform_authorization",
     "platform_asset_data_plane",
+    "platform_artifact_data_plane",
     "platform_commerce_worker",
     "platform_site_worker",
     "platform_asset_worker",

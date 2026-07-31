@@ -13,6 +13,9 @@ CREATE ROLE platform_authorization
 CREATE ROLE platform_asset_data_plane
   LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS
   PASSWORD 'platform-asset-data-plane-ci';
+CREATE ROLE platform_artifact_data_plane
+  LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS
+  PASSWORD 'platform-artifact-data-plane-ci';
 CREATE ROLE platform_commerce_worker
   LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS
   PASSWORD 'platform-commerce-worker-ci';
@@ -58,6 +61,7 @@ GRANT CONNECT ON DATABASE kokoro_test_platform TO
   platform_admission,
   platform_authorization,
   platform_asset_data_plane,
+  platform_artifact_data_plane,
   platform_commerce_worker,
   platform_site_worker,
   platform_asset_worker,

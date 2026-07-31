@@ -12,6 +12,7 @@ The production artifact has one closed runtime set:
 - `platform-admission`
 - `platform-authorization`
 - `platform-asset-data-plane`
+- `platform-artifact-data-plane` (certified PostgreSQL authorization/audit owner plus private S3 reader)
 - `platform-model-gateway`
 - `platform-commerce-worker`
 - `platform-site-worker`

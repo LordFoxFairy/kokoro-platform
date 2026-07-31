@@ -87,6 +87,7 @@ jobs:
       DATABASE_URL_PLATFORM_API_TEST: postgresql://platform_api:platform-api-ci@127.0.0.1:5432/kokoro_test_platform
       DATABASE_URL_PLATFORM_ADMISSION_TEST: postgresql://platform_admission:platform-admission-ci@127.0.0.1:5432/kokoro_test_platform
       DATABASE_URL_PLATFORM_ASSET_DATA_PLANE_TEST: postgresql://platform_asset_data_plane:platform-asset-data-plane-ci@127.0.0.1:5432/kokoro_test_platform
+      DATABASE_URL_PLATFORM_ARTIFACT_DATA_PLANE_TEST: postgresql://platform_artifact_data_plane:platform-artifact-data-plane-ci@127.0.0.1:5432/kokoro_test_platform
       DATABASE_URL_PLATFORM_COMMERCE_WORKER_TEST: postgresql://platform_commerce_worker:platform-commerce-worker-ci@127.0.0.1:5432/kokoro_test_platform
       DATABASE_URL_PLATFORM_SITE_WORKER_TEST: postgresql://platform_site_worker:platform-site-worker-ci@127.0.0.1:5432/kokoro_test_platform
       DATABASE_URL_PLATFORM_ASSET_WORKER_TEST: postgresql://platform_asset_worker:platform-asset-worker-ci@127.0.0.1:5432/kokoro_test_platform
@@ -103,6 +104,7 @@ jobs:
       PLATFORM_DATABASE_ADMISSION_ROLE: platform_admission
       PLATFORM_DATABASE_AUTHORIZATION_ROLE: platform_authorization
       PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE: platform_asset_data_plane
+      PLATFORM_DATABASE_ARTIFACT_DATA_PLANE_ROLE: platform_artifact_data_plane
       PLATFORM_DATABASE_COMMERCE_WORKER_ROLE: platform_commerce_worker
       PLATFORM_DATABASE_SITE_WORKER_ROLE: platform_site_worker
       PLATFORM_DATABASE_ASSET_WORKER_ROLE: platform_asset_worker

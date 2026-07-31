@@ -30,6 +30,8 @@ deployables:
       - commerce-redemption-keyring
       - asset-upload-policy-registry
       - asset-upload-capability-keyring
+      - artifact-delivery-capability-hmac-key
+      - artifact-owner-cursor-hmac-key
       - identity-password-pepper-keyring
       - identity-verification-digest-key
       - identity-session-digest-key
@@ -55,6 +57,8 @@ deployables:
         - PLATFORM_COMMERCE_REDEMPTION_KEY_RING_FILE
         - PLATFORM_ASSET_UPLOAD_POLICY_REGISTRY_FILE
         - PLATFORM_ASSET_UPLOAD_CAPABILITY_KEY_RING_FILE
+        - PLATFORM_ARTIFACT_DELIVERY_CAPABILITY_KEY_FILE
+        - PLATFORM_ARTIFACT_OWNER_CURSOR_KEY_FILE
         - PLATFORM_IDENTITY_PASSWORD_PEPPER_RING_FILE
         - PLATFORM_IDENTITY_VERIFICATION_DIGEST_KEY_FILE
         - PLATFORM_IDENTITY_SESSION_DIGEST_KEY_FILE
@@ -460,6 +464,51 @@ deployables:
     runbookOwner: platform
     releaseOwner: platform
 
+  - id: platform-artifact-data-plane
+    command: node --conditions=kokoro-runtime deploy/docker/runtime-entrypoint.mjs
+    selectorEnvironment: KOKORO_SERVICE_PACKAGE=platform-artifact-data-plane
+    processRole: artifact-data-plane
+    database:
+      environmentVariable: DATABASE_URL_PLATFORM
+      expectedUserEnvironmentVariable: PLATFORM_DATABASE_ARTIFACT_DATA_PLANE_ROLE
+      migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
+      expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
+      credentialClass: artifact-data-plane
+      permissions: security-definer-artifact-read-and-audit-only
+      ddl: forbidden
+    activationAuthorized: true
+    runtimeTraffic: true
+    inboundContracts: [platform-public-http]
+    declaredInboundContracts: []
+    outboundContracts: [s3-compatible-object-read]
+    secretClasses:
+      [platform-artifact-data-plane-database, tls-server, product-workload-registry,
+       artifact-delivery-capability-key, artifact-private-object-route-registry]
+    ports:
+      - { name: public, containerPort: 4248, protocol: https, exposure: service, mtls: true }
+      - { name: health, containerPort: 4249, protocol: http, exposure: pod-only, mtls: false }
+    fileContract:
+      trustRootEnvironment: PLATFORM_ARTIFACT_DATA_PLANE_FILE_TRUST_ROOT
+      mountPath: /run/secrets/platform-artifact-data-plane
+      defaultMode: "0440"
+      requiredEnvironment:
+        - PLATFORM_ARTIFACT_DATA_PLANE_PRODUCT_WORKLOAD_REGISTRY_FILE
+        - PLATFORM_ARTIFACT_DELIVERY_CAPABILITY_KEY_FILE
+        - PLATFORM_ARTIFACT_PRIVATE_OBJECT_ROUTE_FILE
+        - PLATFORM_ARTIFACT_DATA_PLANE_TLS_KEY_FILE
+        - PLATFORM_ARTIFACT_DATA_PLANE_TLS_CERT_FILE
+        - PLATFORM_ARTIFACT_DATA_PLANE_TLS_CLIENT_CA_FILE
+    probes:
+      liveness: { path: /health/live, port: health, scheme: HTTP }
+      readiness: { path: /health/ready, port: health, scheme: HTTP }
+    audience: site-bff.artifact-delivery
+    scalingKey: artifact-stream-concurrency
+    readiness: /health/ready
+    drain: https-stream-graceful
+    sloOwner: platform
+    runbookOwner: platform
+    releaseOwner: platform
+
   - id: platform-admin
     command: node --conditions=kokoro-runtime deploy/docker/runtime-entrypoint.mjs
     selectorEnvironment: KOKORO_SERVICE_PACKAGE=platform-admin
@@ -543,6 +592,7 @@ deployables:
       authorizationMaintenanceRoleEnvironmentVariable: PLATFORM_DATABASE_AUTHORIZATION_MAINTENANCE_ROLE
       authorizationRoleEnvironmentVariable: PLATFORM_DATABASE_AUTHORIZATION_ROLE
       assetDataPlaneRoleEnvironmentVariable: PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE
+      artifactDataPlaneRoleEnvironmentVariable: PLATFORM_DATABASE_ARTIFACT_DATA_PLANE_ROLE
       adminRoleEnvironmentVariable: PLATFORM_DATABASE_ADMIN_ROLE
       modelGatewayRoleEnvironmentVariable: PLATFORM_DATABASE_MODEL_GATEWAY_ROLE
       expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE

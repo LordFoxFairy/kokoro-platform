@@ -11,7 +11,7 @@ owners:
 
 The root Prisma 7/PostgreSQL implementation is the only Platform business authority. Site, identity, authorization, policy,
 model control, credit/usage, commerce redemption, assets, Admission and privileged Admin all live in this source tree and share
-one migration authority. API, worker, Admission, Authorization, Asset Data Plane, Model Gateway, Admin, Migrator, Hub HTTP and Hub Connect remain
+one migration authority. API, worker, Admission, Authorization, Asset Data Plane, Artifact Data Plane, Model Gateway, Admin, Migrator, Hub HTTP and Hub Connect remain
 independently selectable processes with exact database credential classes. PostgreSQL RLS, security-definer projections and
 process-specific grants enforce the internal boundaries. Split workers additionally bind their configured role name to a
 migrator-maintained PostgreSQL role OID and use only operation-fenced security-definer routines for authority row locks; no worker
@@ -33,6 +33,11 @@ publication/runtime, and Agent Model Gateway. The legacy Admin Auth provider rem
 transaction coordinate local owners. Root `src/index.ts` exposes only the Platform composition surface, and
 `deploy/docker/Dockerfile` builds the closed runtime artifact. `platform-hub-connect` selects the private Hub
 Connect entrypoint independently from the `@kokoro/hub` HTTP process.
+
+Artifact metadata, capability issuance and revocation stay on the generated JSON control plane. Capability redemption uses a
+dedicated non-JSON streaming handler and independently selectable `platform-artifact-data-plane` process. That process pins the
+built-in `postgres-s3-v1` owner, exact least-privilege database routines, private S3 reads and mTLS ProductWorkload admission.
+Root currently registers only GET redemption; Platform does not invent HEAD or conditional request semantics.
 
 ## Callers and dependencies
 

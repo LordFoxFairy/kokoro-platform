@@ -1,8 +1,20 @@
-export { ArtifactDeliveryService } from "./application/artifact-delivery-service.js";
+export {
+  ArtifactDeliveryRangeError,
+  ArtifactDeliveryService,
+} from "./application/artifact-delivery-service.js";
+export { ArtifactPublicOwnerService } from "./application/artifact-public-owner.js";
 export type {
+  ArtifactDeliveryCapabilityCodecPort,
   ArtifactDeliveryAuthorizationRepository,
+  ArtifactDeliveryAuditRecord,
+  ArtifactDeliveryAuditRepository,
   ArtifactDeliveryPurpose,
+  ArtifactDeliveryWorkloadBinding,
+  ArtifactOwnerCursorCodec,
   ArtifactObjectStore,
+  ArtifactPublicRepository,
+  ArtifactSummaryRecord,
+  ArtifactVersionRecord,
   StoredArtifactDeliveryAuthorization,
 } from "./application/contracts.js";
 export {
@@ -21,6 +33,27 @@ export type {
 } from "./domain/artifact.js";
 export {
   InMemoryArtifactDeliveryAuthorizationRepository,
+  InMemoryArtifactDeliveryAuditRepository,
   InMemoryArtifactObjectStore,
 } from "./infrastructure/dev/in-memory-artifact-adapters.js";
+
+export {
+  ARTIFACT_PUBLIC_OPERATION_IDS,
+  createArtifactPublicApplicationOperations,
+  createArtifactPublicOperations,
+} from "./interfaces/http/index.js";
+export type {
+  ArtifactPublicOperationId,
+  ArtifactPublicOperationOwner,
+} from "./interfaces/http/index.js";
 export { S3ArtifactObjectStore } from "./infrastructure/s3/index.js";
+export { ArtifactDeliveryCapabilityCodec } from
+  "./infrastructure/crypto/artifact-delivery-capability.js";
+export { HmacArtifactOwnerCursorCodec } from
+  "./infrastructure/crypto/artifact-owner-cursor.js";
+export { PostgresArtifactDeliveryRepository } from "./infrastructure/postgres/index.js";
+export type {
+  ArtifactDeliveryDatabaseOperation,
+  ArtifactDeliveryPostgresDatabase,
+} from "./infrastructure/postgres/index.js";
+export { PostgresArtifactPublicRepository } from "./infrastructure/postgres/index.js";

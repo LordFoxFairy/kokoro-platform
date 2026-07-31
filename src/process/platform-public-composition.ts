@@ -82,6 +82,18 @@ import {
   createAssetPublicOperations,
 } from "../modules/asset/interfaces/http/asset-public-operations.js";
 import {
+  ARTIFACT_PUBLIC_OPERATION_IDS,
+  ArtifactDeliveryCapabilityCodec,
+  ArtifactPublicOwnerService,
+  HmacArtifactOwnerCursorCodec,
+  PostgresArtifactPublicRepository,
+  createArtifactPublicApplicationOperations,
+} from "../modules/artifact/index.js";
+import {
+  parseArtifactDeliveryCapabilityKey,
+  parseArtifactOwnerCursorKey,
+} from "../modules/artifact/infrastructure/config/artifact-delivery-capability-key.js";
+import {
   PLATFORM_API_RUNTIME_CONTRACT,
   createPlatformApiRuntimeFileReader,
   type PlatformApiFileEnvironment,
@@ -119,7 +131,8 @@ export async function createPlatformPublicProductionComposition(
       "PLATFORM_API_FILE_TRUST_ROOT_INVALID",
     ),
   );
-  const [workloads, keyRing, eventKeyRing, tls, redemptionSecrets, assetPolicies, assetCapabilityKeys] = await Promise.all([
+  const [workloads, keyRing, eventKeyRing, tls, redemptionSecrets, assetPolicies, assetCapabilityKeys,
+    artifactDeliveryKey, artifactCursorKey] = await Promise.all([
     loadProductWorkloadRegistry(files.PLATFORM_PRODUCT_WORKLOAD_REGISTRY_FILE, fileReader),
     loadSessionAccessKeyRing(files.PLATFORM_SESSION_ACCESS_KEY_RING_FILE, fileReader),
     loadAuthorizationEventKeyRing(
@@ -130,6 +143,11 @@ export async function createPlatformPublicProductionComposition(
     loadRedemptionSecretCodec(files.PLATFORM_COMMERCE_REDEMPTION_KEY_RING_FILE, fileReader),
     loadAssetUploadPolicies(files.PLATFORM_ASSET_UPLOAD_POLICY_REGISTRY_FILE, fileReader),
     loadAssetUploadCapabilityKeys(files.PLATFORM_ASSET_UPLOAD_CAPABILITY_KEY_RING_FILE, fileReader),
+    loadArtifactSecurityKey("PLATFORM_ARTIFACT_DELIVERY_CAPABILITY_KEY_FILE",
+      files.PLATFORM_ARTIFACT_DELIVERY_CAPABILITY_KEY_FILE, fileReader,
+      parseArtifactDeliveryCapabilityKey),
+    loadArtifactSecurityKey("PLATFORM_ARTIFACT_OWNER_CURSOR_KEY_FILE",
+      files.PLATFORM_ARTIFACT_OWNER_CURSOR_KEY_FILE, fileReader, parseArtifactOwnerCursorKey),
   ]);
   const signer = await createSessionAccessGrantSigner(keyRing);
   const eventSigner = await createSessionAuthorizationEventSigner(eventKeyRing);
@@ -273,12 +291,22 @@ export async function createPlatformPublicProductionComposition(
     }),
     queries: assetQueries,
   });
+  const artifactOperations = createArtifactPublicApplicationOperations(
+    new ArtifactPublicOwnerService({
+      unitOfWork,
+      repository: new PostgresArtifactPublicRepository(),
+      deliveryCapabilities: new ArtifactDeliveryCapabilityCodec(artifactDeliveryKey),
+      cursors: new HmacArtifactOwnerCursorCodec(artifactCursorKey),
+      reference: randomUUID,
+    }),
+  );
   const handler = createPlatformPublicHttpHandler({
     workloads,
     sessions: input.database,
-    operations: [...authorizationOperations, ...identityOperations, ...commerceOperations, ...assetOperations],
+    operations: [...authorizationOperations, ...identityOperations, ...commerceOperations,
+      ...assetOperations, ...artifactOperations],
     requiredOperationIds: [...AUTHORIZATION_PUBLIC_OPERATION_IDS, ...IDENTITY_LAUNCH_OPERATION_IDS,
-      ...COMMERCE_PUBLIC_OPERATION_IDS, ...ASSET_PUBLIC_OPERATION_IDS],
+      ...COMMERCE_PUBLIC_OPERATION_IDS, ...ASSET_PUBLIC_OPERATION_IDS, ...ARTIFACT_PUBLIC_OPERATION_IDS],
     grantSigner: signer,
     sessionCredentialDigest: sessionCredentials.digest,
   });
@@ -287,6 +315,16 @@ export async function createPlatformPublicProductionComposition(
     secure: true as const,
     createServer: (listener: RequestListener) => createHttpsServer(tls, listener),
   });
+}
+
+async function loadArtifactSecurityKey(
+  environment: "PLATFORM_ARTIFACT_DELIVERY_CAPABILITY_KEY_FILE" |
+    "PLATFORM_ARTIFACT_OWNER_CURSOR_KEY_FILE",
+  path: string,
+  fileReader: PlatformApiRuntimeFileReader,
+  parse: (value: string) => Uint8Array,
+): Promise<Uint8Array> {
+  return parse(await fileReader.read(environment, path, 8 * 1024, `${environment}_INVALID`));
 }
 
 async function loadAssetUploadPolicies(

@@ -190,6 +190,25 @@ describe("S3 Artifact immutable promotion", () => {
     };
     await expect(drain()).rejects.toThrow("ARTIFACT_OBJECT_BODY_DIGEST_MISMATCH");
   });
+
+  it("never exposes an object-store chunk larger than the 8 MiB data-plane cap", async () => {
+    const large = new Uint8Array(8 * 1024 * 1024 + 1);
+    const digest = createHash("sha256").update(large).digest("hex");
+    const metadata = { ContentLength: large.byteLength, ContentType: "image/png",
+      ETag: '"large-etag"', Metadata: { "content-sha256": digest,
+        "byte-size": String(large.byteLength), "trust-decision-ref": "trust:large" } };
+    const send = vi.fn().mockResolvedValueOnce(metadata)
+      .mockResolvedValueOnce({ ...metadata, Body: body(large) });
+    const store = new S3ArtifactObjectStore({ client: { send } as never, bucket: "artifact-bucket" });
+
+    const opened = await store.openReady({ ownerScope: stagedReceipt.ownerScope,
+      artifactRef: stagedReceipt.artifactRef, artifactVersionRef: stagedReceipt.artifactVersionRef,
+      signal: new AbortController().signal });
+    const observed: number[] = [];
+    for await (const chunk of opened.body) observed.push(chunk.byteLength);
+
+    expect(observed).toEqual([8 * 1024 * 1024, 1]);
+  });
 });
 
 function stagedWithObjectRef() {

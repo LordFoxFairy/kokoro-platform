@@ -389,6 +389,7 @@ export function platformPublicSafeProblem(error: unknown, requestId: string, cor
   let retryClass: ErrorResponse["retryClass"] = "after_delay";
   let safeMessage = "The service is temporarily unavailable.";
   const authorizationCode = error instanceof SessionAuthorizationError ? error.code : undefined;
+  const artifactCode = error instanceof Error ? error.message : undefined;
   if (error instanceof CommerceApplicationError) {
     if (error.code === "REDEEM_NOT_ACCEPTED") {
       status = 422; code = "REDEEM_NOT_ACCEPTED"; retryClass = "never";
@@ -414,6 +415,24 @@ export function platformPublicSafeProblem(error: unknown, requestId: string, cor
       status = 503; code = error.code; retryClass = "after_delay";
       safeMessage = "Asset processing is temporarily unavailable.";
     }
+  } else if (artifactCode === "INVALID_REQUEST") {
+    status = 400; code = "INVALID_REQUEST"; retryClass = "never";
+    safeMessage = "The request is invalid.";
+  } else if (artifactCode === "PAGE_CURSOR_INVALID") {
+    status = 400; code = "PAGE_CURSOR_INVALID"; retryClass = "never";
+    safeMessage = "The page cursor is invalid.";
+  } else if (artifactCode === "ARTIFACT_NOT_AVAILABLE") {
+    status = 404; code = "ARTIFACT_NOT_AVAILABLE"; retryClass = "never";
+    safeMessage = "The requested artifact is not available.";
+  } else if (artifactCode === "ARTIFACT_DELIVERY_NOT_ALLOWED") {
+    status = 404; code = "ARTIFACT_DELIVERY_NOT_ALLOWED"; retryClass = "never";
+    safeMessage = "Artifact delivery is not allowed.";
+  } else if (artifactCode === "ARTIFACT_VERSION_NOT_READY") {
+    status = 422; code = "ARTIFACT_DELIVERY_AUTHORIZATION_REJECTED";
+    retryClass = "after_user_action"; safeMessage = "Artifact delivery authorization was not accepted.";
+  } else if (artifactCode?.startsWith("ARTIFACT_") === true) {
+    status = 503; code = "ARTIFACT_TEMPORARILY_UNAVAILABLE"; retryClass = "after_delay";
+    safeMessage = "Artifact processing is temporarily unavailable.";
   } else if (authorizationCode === "USER_SESSION_REQUIRED" || (error instanceof IdentityApplicationError && error.code === "AUTHENTICATION_FAILED")) {
     status = 401; code = authorizationCode === "USER_SESSION_REQUIRED" ? "AUTHENTICATION_REQUIRED" : "AUTHENTICATION_FAILED";
     retryClass = "after_user_action"; safeMessage = "Authentication failed.";

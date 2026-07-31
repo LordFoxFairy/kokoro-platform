@@ -25,6 +25,8 @@ const required = Object.freeze([
   "dist/src/process/admin.js",
   "dist/src/process/admin-authority-bootstrap.js",
   "dist/src/process/asset-data-plane.js",
+  "dist/src/process/artifact-data-plane.js",
+  "dist/src/process/artifact-data-plane-composition.js",
   "dist/src/process/authorization.js",
   "dist/src/process/model-gateway.js",
   "dist/src/process/model-image-worker.js",
@@ -79,6 +81,7 @@ test("runtime entrypoint exposes only PostgreSQL Platform processes and Hub", as
   const entrypoint = await readFile(resolve(root, "deploy/docker/runtime-entrypoint.mjs"), "utf8");
   for (const role of [
     "platform-api", "platform-admission", "platform-admin", "platform-asset-data-plane",
+    "platform-artifact-data-plane",
     "platform-authorization", "platform-model-gateway", "platform-commerce-worker",
     "platform-site-worker", "platform-asset-worker", "platform-admin-worker",
     "platform-identity-worker", "platform-media-worker", "platform-model-image-worker",

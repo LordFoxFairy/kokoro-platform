@@ -15,6 +15,8 @@ const EXPECTED_FILE_ENVIRONMENT = Object.freeze([
   "PLATFORM_COMMERCE_REDEMPTION_KEY_RING_FILE",
   "PLATFORM_ASSET_UPLOAD_POLICY_REGISTRY_FILE",
   "PLATFORM_ASSET_UPLOAD_CAPABILITY_KEY_RING_FILE",
+  "PLATFORM_ARTIFACT_DELIVERY_CAPABILITY_KEY_FILE",
+  "PLATFORM_ARTIFACT_OWNER_CURSOR_KEY_FILE",
   "PLATFORM_IDENTITY_PASSWORD_PEPPER_RING_FILE",
   "PLATFORM_IDENTITY_VERIFICATION_DIGEST_KEY_FILE",
   "PLATFORM_IDENTITY_SESSION_DIGEST_KEY_FILE",
@@ -39,7 +41,7 @@ describe("Platform API runtime contract", () => {
     expect(new Set(PLATFORM_API_RUNTIME_CONTRACT.files.map(({ filename }) => filename)).size)
       .toBe(EXPECTED_FILE_ENVIRONMENT.length);
     expect(PLATFORM_API_RUNTIME_CONTRACT.files.filter(({ privateMaterial }) => privateMaterial))
-      .toHaveLength(13);
+      .toHaveLength(15);
   });
 
   it("loads strict public and health ports from the runtime contract", () => {

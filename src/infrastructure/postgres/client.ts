@@ -919,7 +919,11 @@ export function createPlatformDatabaseClient(
                   set_config('app.region', $10, true),
                   set_config('app.workload_kind', $11, true),
                   set_config('app.actor_kind', $12, true),
-                  set_config('app.scopes', $13, true)`,
+                  set_config('app.scopes', $13, true),
+                  set_config('app.site_release_ref', $14, true),
+                  set_config('app.workload_identity_ref', $15, true),
+                  set_config('app.workload_binding_epoch', $16, true),
+                  set_config('app.site_security_epoch', $17, true)`,
             fence.operation,
             context.target.siteId ?? "",
             context.target.workspaceId ?? "",
@@ -933,6 +937,10 @@ export function createPlatformDatabaseClient(
             context.trustedCaller.kind,
             context.actor.kind,
             JSON.stringify(context.target.scopes),
+            context.trustedCaller.siteReleaseRef ?? "",
+            context.trustedCaller.workloadIdentityId,
+            context.trustedCaller.bindingEpoch,
+            context.trustedCaller.siteSecurityEpoch ?? "",
           );
           const sql: PlatformSqlTransaction = {
             query: (statement, values = []) =>
@@ -2418,7 +2426,15 @@ const RUNTIME_IDENTITY_SQL = `
                  to_regprocedure('platform.find_model_selection_decision(uuid)'),
                  to_regprocedure('platform.resolve_product_model_option_catalog(text,text)'),
                  to_regprocedure('platform.valid_credit_scope_policy(jsonb)'),
-                 to_regprocedure('platform.commerce_safe_label_is_valid(text)')
+                 to_regprocedure('platform.commerce_safe_label_is_valid(text)'),
+                 to_regprocedure('platform.list_owned_artifacts(timestamptz,text,integer)'),
+                 to_regprocedure('platform.get_owned_artifact(text)'),
+                 to_regprocedure('platform.list_owned_artifact_versions(text,timestamptz,text,integer)'),
+                 to_regprocedure('platform.get_owned_artifact_version(text,text)'),
+                 to_regprocedure('platform.create_artifact_delivery_authorization(text,character,text,text,bigint,text,text,text,text,text,text,text,text,bigint,bigint,timestamptz,timestamptz,bigint)'),
+                 to_regprocedure('platform.find_artifact_delivery_authorization_by_reference(text)'),
+                 to_regprocedure('platform.revoke_artifact_delivery_authorization(text,timestamptz,bigint)'),
+                 to_regprocedure('platform.revoke_owned_artifact_delivery_authorization(text,timestamptz,text)')
                ]))
                OR ($2 = 'admission' AND candidate_function.oid = ANY(ARRAY[
                  to_regprocedure('platform.resolve_admission_model_owner(text,text,text)'),

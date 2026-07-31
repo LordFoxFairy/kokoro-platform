@@ -13,6 +13,7 @@ accepts a module path.
 | `platform-admission` | PostgreSQL Admission role | Admission Connect owner |
 | `platform-authorization` | PostgreSQL authorization role | session authorization feed |
 | `platform-asset-data-plane` | PostgreSQL asset-data-plane role | capability-scoped multipart provider effects |
+| `platform-artifact-data-plane` | PostgreSQL Artifact data-plane role + private S3 | generated GET binary redemption with durable audit and mTLS workload binding |
 | `platform-model-gateway` | PostgreSQL model-gateway role | authorized provider invocation |
 | `platform-commerce-worker` | PostgreSQL Commerce worker role | Commerce/Credit fulfillment outbox delivery |
 | `platform-site-worker` | PostgreSQL Site worker role | Site provider promotion, observation and traffic drain |
@@ -39,6 +40,11 @@ Compose, Kubernetes, CI services, service discovery, or release manifests.
 
 No runtime identity may use the migrator credential. No process falls back to an in-memory store or
 another database.
+
+`platform-artifact-data-plane` accepts only the pinned `postgres-s3-v1` owner revision. PostgreSQL security-definer routines own
+authorization admission and the pending-to-terminal stream audit; the login has no Artifact table privileges. Private S3 reads use
+the SDK credential chain and integrity/identity fences. Its HTTPS product listener and pod-only HTTP health listener are separate
+so kubelet never receives a Site BFF client key.
 
 ## Docker Compose
 

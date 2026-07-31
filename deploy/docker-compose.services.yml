@@ -18,6 +18,7 @@ services:
       PLATFORM_DATABASE_ADMISSION_ROLE: ${PLATFORM_DATABASE_ADMISSION_ROLE:-platform_admission}
       PLATFORM_DATABASE_AUTHORIZATION_ROLE: ${PLATFORM_DATABASE_AUTHORIZATION_ROLE:-platform_authorization}
       PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE: ${PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE:-platform_asset_data_plane}
+      PLATFORM_DATABASE_ARTIFACT_DATA_PLANE_ROLE: ${PLATFORM_DATABASE_ARTIFACT_DATA_PLANE_ROLE:-platform_artifact_data_plane}
       PLATFORM_DATABASE_MODEL_GATEWAY_ROLE: ${PLATFORM_DATABASE_MODEL_GATEWAY_ROLE:-platform_model_gateway}
       PLATFORM_DATABASE_COMMERCE_WORKER_ROLE: ${PLATFORM_DATABASE_COMMERCE_WORKER_ROLE:-platform_commerce_worker}
       PLATFORM_DATABASE_SITE_WORKER_ROLE: ${PLATFORM_DATABASE_SITE_WORKER_ROLE:-platform_site_worker}
@@ -49,6 +50,8 @@ services:
       PLATFORM_COMMERCE_REDEMPTION_KEY_RING_FILE: /run/secrets/platform-api/commerce-redemption-keys.json
       PLATFORM_ASSET_UPLOAD_POLICY_REGISTRY_FILE: /run/secrets/platform-api/asset-upload-policies.json
       PLATFORM_ASSET_UPLOAD_CAPABILITY_KEY_RING_FILE: /run/secrets/platform-api/asset-upload-capability-keys.json
+      PLATFORM_ARTIFACT_DELIVERY_CAPABILITY_KEY_FILE: /run/secrets/platform-api/artifact-delivery-capability-key.json
+      PLATFORM_ARTIFACT_OWNER_CURSOR_KEY_FILE: /run/secrets/platform-api/artifact-owner-cursor-key.json
       PLATFORM_IDENTITY_PASSWORD_PEPPER_RING_FILE: /run/secrets/platform-api/identity-password-peppers.json
       PLATFORM_IDENTITY_VERIFICATION_DIGEST_KEY_FILE: /run/secrets/platform-api/identity-verification-digest.key
       PLATFORM_IDENTITY_SESSION_DIGEST_KEY_FILE: /run/secrets/platform-api/identity-session-digest.key
@@ -69,6 +72,8 @@ services:
       - { type: bind, source: "${PLATFORM_COMMERCE_REDEMPTION_KEY_RING_FILE:?required}", target: /run/secrets/platform-api/commerce-redemption-keys.json, read_only: true }
       - { type: bind, source: "${PLATFORM_ASSET_UPLOAD_POLICY_REGISTRY_FILE:?required}", target: /run/secrets/platform-api/asset-upload-policies.json, read_only: true }
       - { type: bind, source: "${PLATFORM_ASSET_UPLOAD_CAPABILITY_KEY_RING_FILE:?required}", target: /run/secrets/platform-api/asset-upload-capability-keys.json, read_only: true }
+      - { type: bind, source: "${PLATFORM_ARTIFACT_DELIVERY_CAPABILITY_KEY_FILE:?required}", target: /run/secrets/platform-api/artifact-delivery-capability-key.json, read_only: true }
+      - { type: bind, source: "${PLATFORM_ARTIFACT_OWNER_CURSOR_KEY_FILE:?required}", target: /run/secrets/platform-api/artifact-owner-cursor-key.json, read_only: true }
       - { type: bind, source: "${PLATFORM_IDENTITY_PASSWORD_PEPPER_RING_FILE:?required}", target: /run/secrets/platform-api/identity-password-peppers.json, read_only: true }
       - { type: bind, source: "${PLATFORM_IDENTITY_VERIFICATION_DIGEST_KEY_FILE:?required}", target: /run/secrets/platform-api/identity-verification-digest.key, read_only: true }
       - { type: bind, source: "${PLATFORM_IDENTITY_SESSION_DIGEST_KEY_FILE:?required}", target: /run/secrets/platform-api/identity-session-digest.key, read_only: true }
@@ -302,6 +307,32 @@ services:
       PLATFORM_DATABASE_EXPECTED_DATABASE: ${PLATFORM_DATABASE_EXPECTED_DATABASE:-kokoro_platform}
       PLATFORM_DATABASE_MIGRATOR_ROLE: ${PLATFORM_DATABASE_MIGRATOR_ROLE:-platform_migrator}
       PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE: ${PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE:-platform_asset_data_plane}
+
+  platform-artifact-data-plane:
+    <<: *platform-service
+    environment:
+      KOKORO_SERVICE_PACKAGE: platform-artifact-data-plane
+      PLATFORM_ARTIFACT_DATA_PLANE_PORT: "4248"
+      PLATFORM_ARTIFACT_DATA_PLANE_OWNER_ADAPTER_REVISION: postgres-s3-v1
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: artifact-data-plane
+      DATABASE_URL_PLATFORM: ${DATABASE_URL_PLATFORM_ARTIFACT_DATA_PLANE:?required}
+      PLATFORM_DATABASE_EXPECTED_DATABASE: ${PLATFORM_DATABASE_EXPECTED_DATABASE:-kokoro_platform}
+      PLATFORM_DATABASE_MIGRATOR_ROLE: ${PLATFORM_DATABASE_MIGRATOR_ROLE:-platform_migrator}
+      PLATFORM_DATABASE_ARTIFACT_DATA_PLANE_ROLE: ${PLATFORM_DATABASE_ARTIFACT_DATA_PLANE_ROLE:-platform_artifact_data_plane}
+      PLATFORM_ARTIFACT_DATA_PLANE_FILE_TRUST_ROOT: /run/secrets/platform-artifact-data-plane
+      PLATFORM_ARTIFACT_DATA_PLANE_PRODUCT_WORKLOAD_REGISTRY_FILE: /run/secrets/platform-artifact-data-plane/product-workloads.json
+      PLATFORM_ARTIFACT_DELIVERY_CAPABILITY_KEY_FILE: /run/secrets/platform-artifact-data-plane/capability-key.json
+      PLATFORM_ARTIFACT_PRIVATE_OBJECT_ROUTE_FILE: /run/secrets/platform-artifact-data-plane/object-route.json
+      PLATFORM_ARTIFACT_DATA_PLANE_TLS_KEY_FILE: /run/secrets/platform-artifact-data-plane/tls.key
+      PLATFORM_ARTIFACT_DATA_PLANE_TLS_CERT_FILE: /run/secrets/platform-artifact-data-plane/tls.crt
+      PLATFORM_ARTIFACT_DATA_PLANE_TLS_CLIENT_CA_FILE: /run/secrets/platform-artifact-data-plane/client-ca.crt
+    volumes:
+      - { type: bind, source: "${PLATFORM_ARTIFACT_PRODUCT_WORKLOAD_REGISTRY_FILE:?required}", target: /run/secrets/platform-artifact-data-plane/product-workloads.json, read_only: true }
+      - { type: bind, source: "${PLATFORM_ARTIFACT_DELIVERY_CAPABILITY_KEY_FILE:?required}", target: /run/secrets/platform-artifact-data-plane/capability-key.json, read_only: true }
+      - { type: bind, source: "${PLATFORM_ARTIFACT_PRIVATE_OBJECT_ROUTE_FILE:?required}", target: /run/secrets/platform-artifact-data-plane/object-route.json, read_only: true }
+      - { type: bind, source: "${PLATFORM_ARTIFACT_DATA_PLANE_TLS_KEY_FILE:?required}", target: /run/secrets/platform-artifact-data-plane/tls.key, read_only: true }
+      - { type: bind, source: "${PLATFORM_ARTIFACT_DATA_PLANE_TLS_CERT_FILE:?required}", target: /run/secrets/platform-artifact-data-plane/tls.crt, read_only: true }
+      - { type: bind, source: "${PLATFORM_ARTIFACT_DATA_PLANE_TLS_CLIENT_CA_FILE:?required}", target: /run/secrets/platform-artifact-data-plane/client-ca.crt, read_only: true }
 
   kokoro-hub:
     <<: *platform-service

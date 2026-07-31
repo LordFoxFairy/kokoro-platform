@@ -766,7 +766,7 @@ BEGIN
   owner:=p_record->'owner'; command_record:=p_record->'command';
   protected_input:=p_record->'protectedInput'; operation_record:=p_record->'operation';
   credit_record:=p_record->'credit'; outbox_record:=p_record->'outbox';
-  SELECT journal,authority INTO STRICT journal_record,authority_record
+  SELECT journal INTO STRICT journal_record
     FROM platform.media_command_journal journal
     JOIN platform.admission_media_access_authorization authority
       ON authority.handle_digest=journal.access_authorization_handle_digest
@@ -785,6 +785,20 @@ BEGIN
      AND journal.lease_token_hash=p_lease_token_hash
      AND journal.state='processing'
    FOR UPDATE OF journal;
+  SELECT authority INTO STRICT authority_record
+    FROM platform.admission_media_access_authorization authority
+   WHERE authority.handle_digest=journal_record.access_authorization_handle_digest
+     AND authority.projection_reservation_digest=journal_record.projection_reservation_digest
+     AND authority.site_id=journal_record.site_ref
+     AND authority.subject_ref=journal_record.subject_ref
+     AND authority.subject_generation=journal_record.subject_generation
+     AND authority.project_ref=journal_record.project_ref
+     AND authority.reservation_receipt_ref=journal_record.authorization_reservation_receipt_ref
+     AND authority.expires_at=journal_record.authorization_expires_at
+     AND authority.execution_budget_root_ref=journal_record.credit_execution_budget_root_ref
+     AND authority.input_policy_decision_ref=journal_record.trust_input_decision_ref
+     AND authority.state='active'
+     AND authority.expires_at>statement_timestamp();
   PERFORM set_config('app.site_id',authority_record.site_id,true);
   PERFORM 1
     FROM platform.site_release_media_definition definition

@@ -11,6 +11,10 @@ const serviceEntries = Object.freeze({
   "platform-admission": { module: "../../dist/src/process/admission.js", start: "runPlatformAdmissionMain" },
   "platform-authorization": { module: "../../dist/src/process/authorization.js", start: "runPlatformAuthorizationMain" },
   "platform-asset-data-plane": { module: "../../dist/src/process/asset-data-plane.js", start: "runAssetDataPlaneMain" },
+  "platform-artifact-data-plane": {
+    module: "../../dist/src/process/artifact-data-plane.js",
+    start: "runArtifactDataPlaneMain",
+  },
   "platform-model-gateway": { module: "../../dist/src/process/model-gateway.js", start: "runPlatformModelGatewayMain" },
   "platform-admin": { module: "../../dist/src/process/admin.js", start: "runPlatformAdminMain" },
   "platform-commerce-worker": {

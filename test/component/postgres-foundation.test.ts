@@ -55,6 +55,9 @@ const admissionDatabaseUrl = requireLeasedDatabaseUrl(
 const assetDataPlaneDatabaseUrl = requireLeasedDatabaseUrl(
   process.env.DATABASE_URL_PLATFORM_ASSET_DATA_PLANE_TEST,
 );
+const artifactDataPlaneDatabaseUrl = requireLeasedDatabaseUrl(
+  process.env.DATABASE_URL_PLATFORM_ARTIFACT_DATA_PLANE_TEST,
+);
 const workerDatabaseUrls = {
   "commerce-worker": requireLeasedDatabaseUrl(
     process.env.DATABASE_URL_PLATFORM_COMMERCE_WORKER_TEST,
@@ -78,6 +81,9 @@ const apiUser = decodeURIComponent(new URL(apiDatabaseUrl).username);
 const authorizationUser = requireRole(process.env.PLATFORM_DATABASE_AUTHORIZATION_ROLE);
 const admissionUser = requireRole(process.env.PLATFORM_DATABASE_ADMISSION_ROLE);
 const assetDataPlaneUser = requireRole(process.env.PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE);
+const artifactDataPlaneUser = requireRole(
+  process.env.PLATFORM_DATABASE_ARTIFACT_DATA_PLANE_ROLE,
+);
 const workerUsers = {
   "commerce-worker": requireRole(process.env.PLATFORM_DATABASE_COMMERCE_WORKER_ROLE),
   "site-worker": requireRole(process.env.PLATFORM_DATABASE_SITE_WORKER_ROLE),
@@ -146,6 +152,92 @@ describe("Platform PostgreSQL foundation", () => {
       Object.values(workerDatabases ?? {}).map((client) => client.disconnect()),
     );
     await modelGatewayDatabase?.disconnect();
+  });
+
+  it("enforces Artifact owner-query RLS and exact data-plane role OID/routine authority", async () => {
+    const suffix = randomUUID();
+    const siteRef = `artifact-site-${suffix}`;
+    const subjectRef = `artifact-subject-${suffix}`;
+    const projectRef = `artifact-project-${suffix}`;
+    const ownedRef = `artifact-owned-${suffix}`;
+    const ownedVersionRef = `artifact-version-owned-${suffix}`;
+    const foreignRef = `artifact-foreign-${suffix}`;
+    const foreignVersionRef = `artifact-version-foreign-${suffix}`;
+    const bootstrap = new Client({ connectionString: bootstrapDatabaseUrl });
+    const api = new Client({ connectionString: apiDatabaseUrl });
+    const dataPlane = new Client({ connectionString: artifactDataPlaneDatabaseUrl });
+    await Promise.all([bootstrap.connect(), api.connect(), dataPlane.connect()]);
+    try {
+      await bootstrap.query("BEGIN");
+      await bootstrap.query(
+        "INSERT INTO platform.site(site_ref,site_key,state) VALUES ($1,$2,'preview_ready')",
+        [siteRef, `artifact-${suffix.slice(0, 24)}`],
+      );
+      for (const [artifactRef, versionRef, owner] of [
+        [ownedRef, ownedVersionRef, subjectRef],
+        [foreignRef, foreignVersionRef, `foreign-${subjectRef}`],
+      ] as const) {
+        await bootstrap.query(
+          `INSERT INTO platform.artifact(artifact_ref,site_ref,subject_ref,subject_generation,
+             project_ref,media_class,current_artifact_version_ref,created_at,updated_at)
+           VALUES ($1,$2,$3,1,$4,'image',$5,statement_timestamp(),statement_timestamp())`,
+          [artifactRef, siteRef, owner, projectRef, versionRef],
+        );
+        await bootstrap.query(
+          `INSERT INTO platform.artifact_version(artifact_version_ref,artifact_ref,site_ref,
+             subject_ref,subject_generation,project_ref,state,owner_version,created_at,updated_at)
+           VALUES ($1,$2,$3,$4,1,$5,'reserved',1,statement_timestamp(),statement_timestamp())`,
+          [versionRef, artifactRef, siteRef, owner, projectRef],
+        );
+      }
+      await bootstrap.query("COMMIT");
+
+      await api.query(
+        `SELECT set_config('app.site_id',$1,false),set_config('app.subject_id',$2,false),
+                set_config('app.subject_generation','1',false),
+                set_config('app.project_id',$3,false)`,
+        [siteRef, subjectRef, projectRef],
+      );
+      await expect(api.query(
+        "SELECT artifact_ref FROM platform.list_owned_artifacts(NULL,NULL,101)",
+      )).resolves.toMatchObject({ rows: [{ artifact_ref: ownedRef }] });
+
+      await expect(dataPlane.query(
+        "SELECT platform.assert_artifact_delivery_data_plane_role()",
+      )).resolves.toMatchObject({ rowCount: 1 });
+      await expect(dataPlane.query(
+        `SELECT authorization_ref FROM
+           platform.find_artifact_delivery_authorization_by_capability($1::char(64))`,
+        ["0".repeat(64)],
+      )).resolves.toMatchObject({ rowCount: 0 });
+      await expect(dataPlane.query("SELECT artifact_ref FROM platform.artifact LIMIT 1"))
+        .rejects.toMatchObject({ code: "42501" });
+      await expect(dataPlane.query(
+        "SELECT artifact_ref FROM platform.list_owned_artifacts(NULL,NULL,1)",
+      )).rejects.toMatchObject({ code: "42501" });
+      await expect(bootstrap.query(
+        `SELECT identity.role_name=$1::name AS "nameMatches",
+                identity.role_oid=(SELECT oid FROM pg_roles WHERE rolname=$1) AS "oidMatches"
+           FROM platform.artifact_delivery_data_plane_role_identity identity`,
+        [artifactDataPlaneUser],
+      )).resolves.toMatchObject({ rows: [{ nameMatches: true, oidMatches: true }] });
+    } finally {
+      await bootstrap.query("ROLLBACK").catch(() => undefined);
+      await bootstrap.query("BEGIN").catch(() => undefined);
+      await bootstrap.query("SET CONSTRAINTS ALL DEFERRED").catch(() => undefined);
+      await bootstrap.query(
+        "DELETE FROM platform.artifact_version WHERE artifact_ref=ANY($1::text[])",
+        [[ownedRef, foreignRef]],
+      ).catch(() => undefined);
+      await bootstrap.query(
+        "DELETE FROM platform.artifact WHERE artifact_ref=ANY($1::text[])",
+        [[ownedRef, foreignRef]],
+      ).catch(() => undefined);
+      await bootstrap.query("DELETE FROM platform.site WHERE site_ref=$1", [siteRef])
+        .catch(() => undefined);
+      await bootstrap.query("COMMIT").catch(() => undefined);
+      await Promise.allSettled([bootstrap.end(), api.end(), dataPlane.end()]);
+    }
   });
 
   it("creates exactly one Platform-owned schema and foundation marker", async () => {
@@ -1774,6 +1866,7 @@ function platformMigrationEnvironment(): Readonly<Record<string, string | undefi
     PLATFORM_DATABASE_ADMISSION_ROLE: admissionUser,
     PLATFORM_DATABASE_AUTHORIZATION_ROLE: authorizationUser,
     PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE: assetDataPlaneUser,
+    PLATFORM_DATABASE_ARTIFACT_DATA_PLANE_ROLE: artifactDataPlaneUser,
     PLATFORM_DATABASE_COMMERCE_WORKER_ROLE: workerUsers["commerce-worker"],
     PLATFORM_DATABASE_SITE_WORKER_ROLE: workerUsers["site-worker"],
     PLATFORM_DATABASE_ASSET_WORKER_ROLE: workerUsers["asset-worker"],

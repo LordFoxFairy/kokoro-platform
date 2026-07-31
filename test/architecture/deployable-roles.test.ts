@@ -37,6 +37,7 @@ const commonEnvironment = {
   PLATFORM_DATABASE_ADMIN_ROLE: "platform_admin",
   PLATFORM_DATABASE_AUTHORIZATION_ROLE: "platform_authorization",
   PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE: "platform_asset_data_plane",
+  PLATFORM_DATABASE_ARTIFACT_DATA_PLANE_ROLE: "platform_artifact_data_plane",
   PLATFORM_DATABASE_MODEL_GATEWAY_ROLE: "platform_model_gateway",
   PLATFORM_DATABASE_COMMERCE_WORKER_ROLE: "platform_commerce_worker",
   PLATFORM_DATABASE_SITE_WORKER_ROLE: "platform_site_worker",
@@ -197,6 +198,10 @@ describe("Platform migrator", () => {
             canMutateAssetOwnerIntent: false,
           }] };
         }
+        if (sql.includes("artifactDataPlaneAuthority")) {
+          events.push("verify-artifact-data-plane");
+          return { rows: [{ artifactDataPlaneAuthorityOk: true }] };
+        }
         if (sql.includes("identityWorkerAuthority")) {
           events.push("verify-identity-worker");
           return { rows: [{
@@ -319,12 +324,13 @@ describe("Platform migrator", () => {
       },
     });
 
-    expect(events.slice(0, 12)).toEqual([
+    expect(events.slice(0, 13)).toEqual([
       "connect",
       "preflight-migrator",
       "preflight-runtime-roles",
       "preflight-model-gateway",
       "preflight-asset-data-plane",
+      "preflight-artifact-data-plane",
       "preflight-commerce-worker",
       "preflight-site-worker",
       "preflight-asset-worker",
@@ -333,7 +339,7 @@ describe("Platform migrator", () => {
       "preflight-authorization-maintenance",
       `SELECT pg_advisory_lock(hashtext($1)):${MIGRATION_ADVISORY_LOCK}`,
     ]);
-    expect(events[12]).toBe("execute");
+    expect(events[13]).toBe("execute");
     expect(grants).toContain(
       "GRANT EXECUTE ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.resolve_admission_model_owner(TEXT, TEXT, TEXT) TO \"platform_admission\"",
     );

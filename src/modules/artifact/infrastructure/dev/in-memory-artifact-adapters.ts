@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import type {
+  ArtifactDeliveryAuditRecord,
+  ArtifactDeliveryAuditRepository,
   ArtifactDeliveryAuthorizationRepository,
   ArtifactObjectStore,
   StoredArtifactDeliveryAuthorization,
@@ -149,6 +151,38 @@ implements ArtifactDeliveryAuthorizationRepository {
       revocationEpoch: current.revocationEpoch + 1n });
     this.#byDigest.set(current.capabilityDigest, changed);
     return changed;
+  }
+}
+
+/** Deterministic audit adapter for tests/local development only. */
+export class InMemoryArtifactDeliveryAuditRepository implements ArtifactDeliveryAuditRepository {
+  readonly developmentOnly = true as const;
+  readonly #records = new Map<string, ArtifactDeliveryAuditRecord>();
+
+  async begin(record: ArtifactDeliveryAuditRecord): Promise<void> {
+    if (this.#records.has(record.redemptionRef)) throw new Error("ARTIFACT_DELIVERY_AUDIT_CONFLICT");
+    this.#records.set(record.redemptionRef, Object.freeze({ ...record }));
+  }
+
+  async completeStream(input: Parameters<ArtifactDeliveryAuditRepository["completeStream"]>[0]): Promise<void> {
+    const current = this.#records.get(input.redemptionRef);
+    if (current?.state !== "pending") throw new Error("ARTIFACT_DELIVERY_AUDIT_CONFLICT");
+    this.#records.set(input.redemptionRef, Object.freeze({ ...current, state: "stream_completed" as const,
+      streamCompletedAt: input.streamCompletedAt, bytesEmitted: input.bytesEmitted }));
+  }
+
+  async fail(input: Parameters<ArtifactDeliveryAuditRepository["fail"]>[0]): Promise<void> {
+    const current = this.#records.get(input.redemptionRef);
+    if (current?.state !== "pending") {
+      if (current?.state === "failed") return;
+      throw new Error("ARTIFACT_DELIVERY_AUDIT_CONFLICT");
+    }
+    this.#records.set(input.redemptionRef, Object.freeze({ ...current, state: "failed" as const,
+      completedAt: input.failedAt, failureCode: input.failureCode }));
+  }
+
+  records(): readonly ArtifactDeliveryAuditRecord[] {
+    return Object.freeze([...this.#records.values()]);
   }
 }
 

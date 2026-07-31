@@ -73,6 +73,8 @@ items:
                 - { name: PLATFORM_COMMERCE_REDEMPTION_KEY_RING_FILE, value: /run/secrets/platform-api/commerce-redemption-keys.json }
                 - { name: PLATFORM_ASSET_UPLOAD_POLICY_REGISTRY_FILE, value: /run/secrets/platform-api/asset-upload-policies.json }
                 - { name: PLATFORM_ASSET_UPLOAD_CAPABILITY_KEY_RING_FILE, value: /run/secrets/platform-api/asset-upload-capability-keys.json }
+                - { name: PLATFORM_ARTIFACT_DELIVERY_CAPABILITY_KEY_FILE, value: /run/secrets/platform-api/artifact-delivery-capability-key.json }
+                - { name: PLATFORM_ARTIFACT_OWNER_CURSOR_KEY_FILE, value: /run/secrets/platform-api/artifact-owner-cursor-key.json }
                 - { name: PLATFORM_IDENTITY_PASSWORD_PEPPER_RING_FILE, value: /run/secrets/platform-api/identity-password-peppers.json }
                 - { name: PLATFORM_IDENTITY_VERIFICATION_DIGEST_KEY_FILE, value: /run/secrets/platform-api/identity-verification-digest.key }
                 - { name: PLATFORM_IDENTITY_SESSION_DIGEST_KEY_FILE, value: /run/secrets/platform-api/identity-session-digest.key }
@@ -118,6 +120,8 @@ items:
                   - { key: commerce-redemption-keys.json, path: commerce-redemption-keys.json }
                   - { key: asset-upload-policies.json, path: asset-upload-policies.json }
                   - { key: asset-upload-capability-keys.json, path: asset-upload-capability-keys.json }
+                  - { key: artifact-delivery-capability-key.json, path: artifact-delivery-capability-key.json }
+                  - { key: artifact-owner-cursor-key.json, path: artifact-owner-cursor-key.json }
                   - { key: identity-password-peppers.json, path: identity-password-peppers.json }
                   - { key: identity-verification-digest.key, path: identity-verification-digest.key }
                   - { key: identity-session-digest.key, path: identity-session-digest.key }
@@ -514,6 +518,65 @@ items:
               env:
                 - { name: KOKORO_SERVICE_PACKAGE, value: platform-asset-data-plane }
                 - { name: PLATFORM_DATABASE_CREDENTIAL_CLASS, value: asset-data-plane }
+
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata: { name: platform-artifact-data-plane }
+    spec:
+      replicas: 2
+      selector: { matchLabels: { app: platform-artifact-data-plane } }
+      template:
+        metadata: { labels: { app: platform-artifact-data-plane } }
+        spec:
+          terminationGracePeriodSeconds: 30
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: platform-artifact-data-plane
+              image: ghcr.io/lordfoxfairy/kokoro-platform:RELEASE_DIGEST
+              envFrom:
+                - configMapRef: { name: platform-runtime }
+                - secretRef: { name: platform-artifact-data-plane-secrets }
+              env:
+                - { name: KOKORO_SERVICE_PACKAGE, value: platform-artifact-data-plane }
+                - { name: PLATFORM_ARTIFACT_DATA_PLANE_PORT, value: "4248" }
+                - { name: PLATFORM_DATABASE_CREDENTIAL_CLASS, value: artifact-data-plane }
+                - { name: PLATFORM_ARTIFACT_DATA_PLANE_OWNER_ADAPTER_REVISION, value: postgres-s3-v1 }
+                - { name: PLATFORM_ARTIFACT_DATA_PLANE_FILE_TRUST_ROOT, value: /run/secrets/platform-artifact-data-plane }
+                - { name: PLATFORM_ARTIFACT_DATA_PLANE_PRODUCT_WORKLOAD_REGISTRY_FILE, value: /run/secrets/platform-artifact-data-plane/product-workloads.json }
+                - { name: PLATFORM_ARTIFACT_DELIVERY_CAPABILITY_KEY_FILE, value: /run/secrets/platform-artifact-data-plane/capability-key.json }
+                - { name: PLATFORM_ARTIFACT_PRIVATE_OBJECT_ROUTE_FILE, value: /run/secrets/platform-artifact-data-plane/object-route.json }
+                - { name: PLATFORM_ARTIFACT_DATA_PLANE_TLS_KEY_FILE, value: /run/secrets/platform-artifact-data-plane/tls.key }
+                - { name: PLATFORM_ARTIFACT_DATA_PLANE_TLS_CERT_FILE, value: /run/secrets/platform-artifact-data-plane/tls.crt }
+                - { name: PLATFORM_ARTIFACT_DATA_PLANE_TLS_CLIENT_CA_FILE, value: /run/secrets/platform-artifact-data-plane/client-ca.crt }
+              ports:
+                - { name: https, containerPort: 4248 }
+                - { name: health, containerPort: 4249 }
+              startupProbe:
+                httpGet: { path: /health/live, port: health, scheme: HTTP }
+              livenessProbe:
+                httpGet: { path: /health/live, port: health, scheme: HTTP }
+              readinessProbe:
+                httpGet: { path: /health/ready, port: health, scheme: HTTP }
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
+              resources:
+                requests: { cpu: 100m, memory: 128Mi }
+                limits: { cpu: "2", memory: 512Mi }
+              volumeMounts:
+                - { name: artifact-data-plane-files, mountPath: /run/secrets/platform-artifact-data-plane, readOnly: true }
+          volumes:
+            - name: artifact-data-plane-files
+              secret:
+                secretName: platform-artifact-data-plane-files
+                defaultMode: 288
 
   - apiVersion: apps/v1
     kind: Deployment

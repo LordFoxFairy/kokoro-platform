@@ -11,6 +11,7 @@ import type { ArtifactReadyReceipt, ArtifactStagedReceipt } from "../../domain/a
 import { snapshotArtifactOwnerScope } from "../../domain/artifact.js";
 
 const MAXIMUM_ARTIFACT_BYTES = 32 * 1024 * 1024;
+const MAXIMUM_ARTIFACT_STREAM_CHUNK_BYTES = 8 * 1024 * 1024;
 type MediaType = "image/png" | "image/jpeg" | "image/webp";
 
 /** S3-compatible private object adapter. PostgreSQL remains the Artifact metadata owner. */
@@ -356,7 +357,11 @@ async function* boundedBody(
     received += raw.byteLength;
     if (received > expectedBytes) throw new Error("ARTIFACT_OBJECT_BODY_EXCEEDED");
     digest?.update(raw);
-    yield new Uint8Array(raw);
+    for (let offset = 0; offset < raw.byteLength; offset += MAXIMUM_ARTIFACT_STREAM_CHUNK_BYTES) {
+      if (signal.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
+      yield new Uint8Array(raw.subarray(offset,
+        Math.min(raw.byteLength, offset + MAXIMUM_ARTIFACT_STREAM_CHUNK_BYTES)));
+    }
   }
   if (received !== expectedBytes) throw new Error("ARTIFACT_OBJECT_BODY_TRUNCATED");
   if (digest !== undefined && digest.digest("hex") !== expectedSha256) {
