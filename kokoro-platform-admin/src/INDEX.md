@@ -25,10 +25,10 @@ The package version (`.v1`) is the contract version. There is no custom version 
 This source tree does not render Admin Web, expose Platform tables, or define Root protobuf sources.
 
 ## Public boundary
-The generated `kokoro.platform.admin.v1.AdminAuthService` Connect provider is the current public service boundary.
+The generated `kokoro.platform.admin.v1.AdminAuthService` Connect provider is retained as a legacy service boundary; it has no current official Web consumer.
 
 ## Callers and dependencies
-Admin Web calls the provider; handlers depend on generated contracts, Platform Kit interceptors, and the package-owned store.
+No current official Web consumer calls the provider. Handlers depend on generated contracts, Platform Kit interceptors, and the package-owned store.
 
 ## Data ownership and events
 The package owns operator, token-effect, auth-event, and command-receipt persistence.
@@ -43,7 +43,7 @@ Canonical protobuf digest plus transactional receipts detect duplicates/conflict
 Modify Root protobuf first and regenerate mirrors. Never hand-edit generated code or restore Web database access.
 
 ## Current gotchas
-Only Admin Auth has completed this generated Connect migration.
+Admin Auth is generated and implemented, but it is not part of the active Admin Web compatibility matrix.
 
 ## Verification
-Run Admin unit/integration tests, typecheck/lint, fresh migrations, and Root `platform-admin-auth` compatibility.
+Run Admin unit/integration tests, typecheck/lint, fresh migrations, and the Root generated-contract byte check for the provider mirror.

@@ -28,15 +28,15 @@ Platform does not execute Agent graphs, own Session messages/SSE, render Site We
 ## Public boundary
 
 Ordinary Site product traffic uses the bounded public HTTP/JSON BFF contract. Privileged control planes use Root-owned
-Protobuf/Connect contracts: Admin Identity/Auth/Query/Commerce, Session Admission and Asset Eligibility, Hub capability
-publication/runtime, and Agent Model Gateway. Same-Platform bounded contexts never self-RPC; application ports and one scoped
+Protobuf/Connect contracts: Admin Identity/Query/Commerce/Credit/Site Provisioning/Model Control, Session Admission and Asset Eligibility, Hub capability
+publication/runtime, and Agent Model Gateway. The legacy Admin Auth provider remains implemented without a current official Web consumer. Same-Platform bounded contexts never self-RPC; application ports and one scoped
 transaction coordinate local owners. Root `src/index.ts` exposes only the Platform composition surface, and
 `deploy/docker/Dockerfile` builds the closed runtime artifact. `platform-hub-connect` selects the private Hub
 Connect entrypoint independently from the `@kokoro/hub` HTTP process.
 
 ## Callers and dependencies
 
-Web Admin calls the Admin gateway's `/api/*` endpoints and the generated Admin Auth Connect service; Session consumes versioned internal APIs; Agent reaches model/capability backends only through approved runtime protocols.
+Web Admin calls the generated Admin Identity, Query, Commerce, Credit, Site Provisioning, and Model Control services; the legacy Admin Auth provider has no current official Web consumer. Session consumes versioned internal APIs; Agent reaches model/capability backends only through approved runtime protocols.
 
 ## Data ownership and events
 

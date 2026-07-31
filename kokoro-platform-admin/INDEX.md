@@ -14,10 +14,10 @@ Expose privileged Platform administration APIs, own Admin Auth persistence/effec
 Admin Web does not share this service's database, and this service does not render UI or own public Site sessions.
 
 ## Public boundary
-Two remote surfaces: the `createAdminServer` gateway's explicitly registered `/api/*` endpoints (`me`, `manifests`, `openapi/:moduleId`, `operators`, `roles`, `sites`, `billing-overview`, `user360`, `resource`, `action`, `approvals`, `audit`) and the generated Admin Auth Connect provider — see [`src/INDEX.md`](src/INDEX.md) for its contract, digest, and receipt rules.
+Two remote surfaces remain implemented: the `createAdminServer` gateway's explicitly registered `/api/*` endpoints (`me`, `manifests`, `openapi/:moduleId`, `operators`, `roles`, `sites`, `billing-overview`, `user360`, `resource`, `action`, `approvals`, `audit`) and the generated legacy Admin Auth Connect provider — see [`src/INDEX.md`](src/INDEX.md) for its contract, digest, and receipt rules. Neither is a current official Admin Web contract.
 
 ## Callers and dependencies
-Admin Web calls both surfaces; the gateway fans out to the site/user/model/credit/payment/hub module manifests with raw `fetch` in `gateway.ts`, stamping `x-kokoro-service: admin` plus the internal secret so each module's `registerRouteAccess` can authorize it.
+No current official Web consumer calls these legacy surfaces. The gateway fans out to the site/user/model/credit/payment/hub module manifests with raw `fetch` in `gateway.ts`, stamping `x-kokoro-service: admin` plus the internal secret so each module's `registerRouteAccess` can authorize it.
 
 ## Data ownership and events
 This package owns operator, RBAC, approval, and audit records, plus the Admin Auth tables listed in `src/INDEX.md`, and its Prisma migrations.
@@ -34,7 +34,7 @@ Resource reads are manifest-driven and fail closed: an operator is mandatory, ev
 Add privileged workflows through application services and generated contracts. Admin Web must reach Platform data only through this service, never through its own Prisma client.
 
 ## Current gotchas
-Gateway `/api/*` endpoints are hand-written Fastify routes with Zod-shaped payloads; only Admin Auth has a generated contract.
+Gateway `/api/*` endpoints are hand-written Fastify routes with Zod-shaped payloads; only Admin Auth has a generated contract, and that provider currently has no official Web consumer.
 
 ## Verification
-Run package unit/integration tests, typecheck/lint, fresh migrations, and Root Admin Auth compatibility.
+Run package unit/integration tests, typecheck/lint, fresh migrations, and the Root generated-contract byte check for the provider mirror.
