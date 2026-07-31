@@ -176,6 +176,10 @@ describe("Platform PostgreSQL foundation", () => {
     const executionSpaceRef = `memory-execution-${suffix}`;
     const purgeCommandRef = `memory-purge-command-${suffix}`;
     const purgeJobRef = `memory-purge-job-${suffix}`;
+    const exhaustedPurgeCommandRef = `memory-purge-exhausted-command-${suffix}`;
+    const exhaustedPurgeJobRef = `memory-purge-exhausted-job-${suffix}`;
+    const liveExhaustedPurgeCommandRef = `memory-purge-live-exhausted-command-${suffix}`;
+    const liveExhaustedPurgeJobRef = `memory-purge-live-exhausted-job-${suffix}`;
     const targetEntryRef = `memory-target-entry-${suffix}`;
     const targetRevisionRef = `memory-target-revision-${suffix}`;
     const postCutoffEntryRef = `memory-post-cutoff-entry-${suffix}`;
@@ -393,6 +397,18 @@ describe("Platform PostgreSQL foundation", () => {
          VALUES ($1,$2,'user',$3,1,'reset',$4,'accepted',statement_timestamp())`,
         [siteRef, purgeCommandRef, subjectRef, "c".repeat(64)],
       );
+      for (const [commandRef, digest] of [
+        [exhaustedPurgeCommandRef, "8".repeat(64)],
+        [liveExhaustedPurgeCommandRef, "9".repeat(64)],
+      ] as const) {
+        await bootstrap.query(
+          `INSERT INTO platform.memory_public_command_inbox
+             (site_ref,command_ref,owner_scope_kind,owner_subject_ref,owner_subject_generation,
+              operation,request_digest,state,created_at)
+           VALUES ($1,$2,'user',$3,1,'reset',$4,'accepted',statement_timestamp())`,
+          [siteRef, commandRef, subjectRef, digest],
+        );
+      }
       await bootstrap.query(
         `INSERT INTO platform.memory_purge_job
            (site_ref,purge_job_ref,command_ref,space_ref,entry_ref,space_generation,
@@ -402,6 +418,24 @@ describe("Platform PostgreSQL foundation", () => {
          VALUES ($1,$2,$3,$4,NULL,1,1,1,1,1,$5,0,0,'queued',statement_timestamp(),
            statement_timestamp(),statement_timestamp())`,
         [siteRef, purgeJobRef, purgeCommandRef, userSpaceRef, "d".repeat(64)],
+      );
+      await bootstrap.query(
+        `INSERT INTO platform.memory_purge_job
+           (site_ref,purge_job_ref,command_ref,space_ref,entry_ref,space_generation,
+            learning_generation,revocation_epoch,frozen_manifest_version,revision_target_count,
+            revision_target_manifest_digest,ingress_cutoff,materialization_cutoff,state,
+            attempt_count,lease_epoch,lease_token_hash,worker_id,lease_expires_at,next_attempt_at,
+            created_at,updated_at)
+         VALUES
+           ($1,$2,$3,$4,NULL,1,1,1,1,0,$5,0,0,'leased',100,100,$6,'exhausted-worker',
+             statement_timestamp()-interval '1 minute',statement_timestamp()-interval '2 minutes',
+             statement_timestamp()-interval '3 minutes',statement_timestamp()-interval '1 minute'),
+           ($1,$7,$8,$4,NULL,1,1,1,1,0,$9,0,0,'leased',100,100,$10,'active-worker',
+             statement_timestamp()+interval '10 minutes',statement_timestamp()-interval '2 minutes',
+             statement_timestamp()-interval '3 minutes',statement_timestamp())`,
+        [siteRef, exhaustedPurgeJobRef, exhaustedPurgeCommandRef, userSpaceRef,
+          "6".repeat(64), "4".repeat(64), liveExhaustedPurgeJobRef,
+          liveExhaustedPurgeCommandRef, "7".repeat(64), "5".repeat(64)],
       );
       await bootstrap.query(
         `INSERT INTO platform.memory_purge_revision_target
@@ -418,6 +452,23 @@ describe("Platform PostgreSQL foundation", () => {
         ["memory-worker-component", leaseTokenHash],
       )).resolves.toMatchObject({ rows: [{ site_ref: siteRef, purge_job_ref: purgeJobRef,
         lease_epoch: "1" }] });
+      const exhaustedClaims = await bootstrap.query<{
+        purge_job_ref: string; state: string; attempt_count: number;
+        lease_cleared: boolean;
+      }>(
+        `SELECT purge_job_ref,state,attempt_count,
+          lease_token_hash IS NULL AND worker_id IS NULL AND lease_expires_at IS NULL
+            AS lease_cleared
+         FROM platform.memory_purge_job WHERE site_ref=$1 AND purge_job_ref=ANY($2::text[])
+         ORDER BY purge_job_ref`,
+        [siteRef, [exhaustedPurgeJobRef, liveExhaustedPurgeJobRef]],
+      );
+      expect(exhaustedClaims.rows).toEqual([
+        { purge_job_ref: exhaustedPurgeJobRef, state: "failed", attempt_count: 100,
+          lease_cleared: true },
+        { purge_job_ref: liveExhaustedPurgeJobRef, state: "leased", attempt_count: 100,
+          lease_cleared: false },
+      ].sort((left, right) => left.purge_job_ref.localeCompare(right.purge_job_ref)));
       await expect(workerClient.query(
         `SELECT platform.memory_worker_record_purge_receipt(
           $1,$2,'revision_payload','completed',$3,$4::char(64),1,$5::char(64))`,
@@ -478,6 +529,36 @@ describe("Platform PostgreSQL foundation", () => {
       } finally {
         await pinnedPreflightClient.query("ROLLBACK");
         await pinnedPreflightClient.end();
+      }
+
+      const missingIdentityClient = new Client({ connectionString: migratorDatabaseUrl });
+      await missingIdentityClient.connect();
+      let missingIdentityMigrationExecuted = false;
+      try {
+        await missingIdentityClient.query("BEGIN");
+        await missingIdentityClient.query(
+          "GRANT USAGE ON SCHEMA platform TO platform_memory_public",
+        );
+        await missingIdentityClient.query("DROP TABLE platform.memory_database_role_identity");
+        await expect(runPlatformMigrations({
+          environment: platformMigrationEnvironment(),
+          createLockClient: () => ({
+            connect: async () => undefined,
+            query: (sql, values) => missingIdentityClient.query(sql, values as unknown[]),
+            end: async () => undefined,
+          }),
+          execute: async () => {
+            missingIdentityMigrationExecuted = true;
+            return 0;
+          },
+        })).rejects.toThrow("PLATFORM_MEMORY_ROLE_IDENTITY_PREFLIGHT_FAILED");
+        expect(missingIdentityMigrationExecuted).toBe(false);
+        await expect(missingIdentityClient.query(
+          "SELECT has_schema_privilege('platform_memory_public','platform','USAGE') AS retained",
+        )).resolves.toMatchObject({ rows: [{ retained: true }] });
+      } finally {
+        await missingIdentityClient.query("ROLLBACK");
+        await missingIdentityClient.end();
       }
 
       const databaseGrantClient = new Client({ connectionString: migratorDatabaseUrl });
@@ -552,6 +633,76 @@ describe("Platform PostgreSQL foundation", () => {
       } finally {
         await exactAuthorityClient.query("ROLLBACK");
         await exactAuthorityClient.end();
+      }
+
+      const publicDefaultClient = new Client({ connectionString: migratorDatabaseUrl });
+      await publicDefaultClient.connect();
+      try {
+        await publicDefaultClient.query("BEGIN");
+        await publicDefaultClient.query(
+          "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO PUBLIC",
+        );
+        await expect(runPlatformMigrations({
+          environment: platformMigrationEnvironment(),
+          createLockClient: () => ({
+            connect: async () => undefined,
+            query: (sql, values) => publicDefaultClient.query(sql, values as unknown[]),
+            end: async () => undefined,
+          }),
+          execute: async () => 0,
+        })).rejects.toThrow("PLATFORM_MEMORY_ROLE_AUTHORITY_INVALID");
+      } finally {
+        await publicDefaultClient.query("ROLLBACK");
+        await publicDefaultClient.end();
+      }
+
+      const sentinelOwner = `memory_default_sentinel_${suffix.replaceAll("-", "")}`;
+      await bootstrap.query("BEGIN");
+      try {
+        await bootstrap.query(`CREATE ROLE ${quoteIdentifier(sentinelOwner)} NOLOGIN NOINHERIT`);
+        await bootstrap.query(
+          `ALTER DEFAULT PRIVILEGES FOR ROLE ${quoteIdentifier(sentinelOwner)} ` +
+            "GRANT SELECT ON TABLES TO PUBLIC",
+        );
+        await bootstrap.query(
+          `ALTER DEFAULT PRIVILEGES FOR ROLE ${quoteIdentifier(sentinelOwner)} ` +
+            "GRANT USAGE ON SEQUENCES TO PUBLIC",
+        );
+        await bootstrap.query("SET LOCAL ROLE platform_migrator");
+        await runPlatformMigrations({
+          environment: platformMigrationEnvironment(),
+          createLockClient: () => ({
+            connect: async () => undefined,
+            query: (sql, values) => bootstrap.query(sql, values as unknown[]),
+            end: async () => undefined,
+          }),
+          execute: async () => 0,
+        });
+        await bootstrap.query("RESET ROLE");
+        const sentinelDefaults = await bootstrap.query<{
+          object_type: string; privilege_type: string; is_grantable: boolean;
+        }>(
+          `SELECT candidate.object_type::text,acl.privilege_type,acl.is_grantable
+           FROM pg_roles owner
+           CROSS JOIN LATERAL (VALUES ('S'::"char"),('f'::"char"),('r'::"char"))
+             candidate(object_type)
+           CROSS JOIN LATERAL aclexplode(COALESCE(
+             (SELECT defaults.defaclacl FROM pg_default_acl defaults
+              WHERE defaults.defaclrole=owner.oid AND defaults.defaclnamespace=0
+                AND defaults.defaclobjtype=candidate.object_type),
+             acldefault(candidate.object_type,owner.oid)
+           )) acl
+           WHERE owner.rolname=$1 AND acl.grantee=0
+           ORDER BY candidate.object_type,acl.privilege_type`,
+          [sentinelOwner],
+        );
+        expect(sentinelDefaults.rows).toEqual([
+          { object_type: "S", privilege_type: "USAGE", is_grantable: false },
+          { object_type: "f", privilege_type: "EXECUTE", is_grantable: false },
+          { object_type: "r", privilege_type: "SELECT", is_grantable: false },
+        ]);
+      } finally {
+        await bootstrap.query("ROLLBACK");
       }
 
       const oidMismatchReceiptRef = `memory-oid-mismatch-${suffix}`;

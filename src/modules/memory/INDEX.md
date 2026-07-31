@@ -36,9 +36,18 @@ persisted separately.
 PostgreSQL tables are Site-composite and force RLS. M0.1 provisions the exact LOGIN/NOINHERIT/NOBYPASSRLS
 `platform_memory_public`, `platform_memory_runtime`, and `platform_memory_worker` identities and pins their OIDs. The central
 Platform migrator qualifies all three identities, ownership and membership inventory before migration, closes their default
-privileges, and verifies the exact OID/ACL authority afterward. While the feature is off, `platform_memory_public` and
+privileges, and verifies the exact OID/ACL authority afterward. A missing OID identity table is accepted only while the public
+authority migration is genuinely pending and none of that migration's baseline objects exist; applied, failed, partial, or
+corrupted states stop before migration execution or ACL mutation. Direct defaults and reachable `PUBLIC` defaults are audited
+without rewriting unexpected owners' authority. PostgreSQL has no schema-local deny that can override its implicit global
+`PUBLIC EXECUTE` default for routines, so the migrator records the minimum effective default ACL: in the current Platform
+database, only future functions owned by `platform_migrator` lose `PUBLIC EXECUTE`. Existing routines are closed separately and
+only inside the `platform` schema; table and sequence defaults and every other owner's defaults remain unchanged. While the
+feature is off, `platform_memory_public` and
 `platform_memory_runtime` receive zero Platform schema, table, sequence, or routine grants. `platform_memory_worker` receives only
-Platform schema usage and the three fixed-search-path purge routines. All three retain PostgreSQL's shared ambient `public`
+Platform schema usage and the three fixed-search-path purge routines. Purge claims first terminalize at most 100 exhausted queued
+or expired leased/running jobs, clear their lease material, and then select only a sub-limit candidate so one exhausted job cannot
+starve the queue. All three retain PostgreSQL's shared ambient `public`
 schema `USAGE` only; they receive no `public` schema `CREATE`, object, sequence, or routine authority. Task 5 must introduce the
 real operation-specific public read/write routines, grants, RLS policies, and live owner-fact revalidation in a forward migration;
 the M0.1 owner helper remains migrator-internal and is not a callable product surface.

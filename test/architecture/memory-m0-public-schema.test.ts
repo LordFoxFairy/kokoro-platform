@@ -135,6 +135,9 @@ describe("Memory M0.1 public database authority", () => {
     expect(executeIndex).toBeGreaterThan(pinnedPreflightIndex);
     expect(migrator).toContain("memoryRoleIdentityTablePreflight");
     expect(migrator).toContain("memoryRoleIdentityPreflight");
+    expect(migrator).toContain("memoryRoleMigrationLedgerPreflight");
+    expect(migrator).toContain("20260813_memory_m0_public_authority");
+    expect(migrator).toContain('AS "authorityBaselineExists"');
     expect(migrator).toContain("PLATFORM_MEMORY_ROLE_IDENTITY_PREFLIGHT_FAILED");
   });
 
@@ -150,13 +153,32 @@ describe("Memory M0.1 public database authority", () => {
     expect(migrator).toContain("has_any_column_privilege");
     expect(migrator).toContain("has_sequence_privilege");
     expect(migrator).toContain("has_function_privilege");
-    expect(migrator).toContain("defaults.defaclnamespace IS NULL");
+    expect(migrator).toContain("defaults.defaclnamespace=0");
+    expect(migrator).not.toContain("defaults.defaclnamespace IS NULL");
+    expect(migrator).not.toContain("defaults.defaclnamespace IS NOT NULL");
+    expect(migrator).toContain("memoryRoleEffectivePublicDefaultAuthority");
+    expect(migrator).toContain("memoryRoleImplicitPublicRoutineDefaultAuthority");
+    expect(migrator).toContain("acldefault('f',owner.oid)");
+    expect(migrator).toContain("acl.grantee=0");
     expect(migrator).toContain("acl.is_grantable");
     expect(migrator).toContain("'public'::text,'public'::name,'USAGE'::text,false");
     expect(migrator).toContain('OR NOT "canUsePublicSchema" OR "canCreatePublicSchema"');
     expect(migrator).toContain("WITH GRANT OPTION");
     expect(migrator).toContain("canGrantConnectDatabase");
     expect(migrator).toContain("namespace.nspname !~ '^pg_(?:toast|temp)(?:_|$)'");
+  });
+
+  it("terminalizes exhausted purge claims before selecting another eligible job", () => {
+    const claimRoutine = migration.slice(
+      migration.indexOf("CREATE FUNCTION platform.memory_worker_claim_purge"),
+      migration.indexOf("CREATE FUNCTION platform.memory_worker_delete_revision_payload"),
+    );
+    expect(claimRoutine).toContain("exhausted_candidate");
+    expect(claimRoutine).toContain("job.attempt_count>=100");
+    expect(claimRoutine).toContain("SET state='failed'");
+    expect(claimRoutine).toContain("lease_token_hash=NULL,worker_id=NULL,lease_expires_at=NULL");
+    expect(claimRoutine).toContain("LIMIT 100");
+    expect(claimRoutine).toMatch(/candidate AS \([\s\S]+job\.attempt_count<100/u);
   });
 
   it("proves OID drift transactionally without mutating canonical login roles", () => {

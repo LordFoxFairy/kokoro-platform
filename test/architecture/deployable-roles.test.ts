@@ -215,7 +215,8 @@ describe("Platform migrator", () => {
       },
       async query(sql, values) {
         if (sql.includes("memoryRoleIdentityTablePreflight")) {
-          return { rows: [{ identityTableExists: false }] };
+          return { rows: [{ identityTableExists: false, migrationLedgerExists: false,
+            authorityBaselineExists: false }] };
         }
         if (sql.includes("memoryRolePreflight")) {
           events.push("preflight-memory-roles");
@@ -564,7 +565,8 @@ describe("Platform migrator", () => {
       async connect() {},
       async query(sql, values) {
         if (sql.includes("memoryRoleIdentityTablePreflight")) {
-          return { rows: [{ identityTableExists: false }] };
+          return { rows: [{ identityTableExists: false, migrationLedgerExists: false,
+            authorityBaselineExists: false }] };
         }
         if (sql.includes("server_version_num")) return { rows: [safeMigratorAuthority()] };
         if (sql.includes("singleRuntimeRolePreflight")) {
@@ -595,12 +597,57 @@ describe("Platform migrator", () => {
     expect(executed).toBe(false);
   });
 
+  it.each([
+    ["an applied public-authority migration", true, false],
+    ["an existing public-authority baseline object", false, true],
+  ] as const)("fails before execute or ACL mutation when the identity table is missing with %s",
+    async (_description, migrationLedgerExists, authorityBaselineExists) => {
+      let executed = false;
+      let mutationObserved = false;
+      const lockClient: MigrationLockClient = {
+        async connect() {},
+        async query(sql, values) {
+          if (sql.includes("memoryRoleIdentityTablePreflight")) {
+            return { rows: [{ identityTableExists: false, migrationLedgerExists,
+              authorityBaselineExists }] };
+          }
+          if (sql.includes("memoryRoleMigrationLedgerPreflight")) {
+            return { rows: migrationLedgerExists ? [{ migrationName:
+              "20260813_memory_m0_public_authority" }] : [] };
+          }
+          if (sql.includes("memoryRolePreflight")) return { rows: safeMemoryRoles() };
+          if (sql.includes("server_version_num")) return { rows: [safeMigratorAuthority()] };
+          if (sql.includes("singleRuntimeRolePreflight")) {
+            return { rows: [safeRole(String(values?.[0]))] };
+          }
+          if (sql.includes("isMigratorMember")) {
+            return { rows: [
+              safeRole("platform_api"), safeRole("platform_admission"),
+              safeRole("platform_authorization"), safeRole("platform_admin"),
+            ] };
+          }
+          if (!sql.includes("pg_advisory_")) mutationObserved = true;
+          return {};
+        },
+        async end() {},
+      };
+
+      await expect(runPlatformMigrations({
+        environment: migratorEnvironment(),
+        createLockClient: () => lockClient,
+        execute: async () => { executed = true; return 0; },
+      })).rejects.toThrowError("PLATFORM_MEMORY_ROLE_IDENTITY_PREFLIGHT_FAILED");
+      expect(executed).toBe(false);
+      expect(mutationObserved).toBe(false);
+    });
+
   it("fails closed when a runtime role can access any Platform object beyond marker SELECT", async () => {
     const lockClient: MigrationLockClient = {
       async connect() {},
       async query(sql, values) {
         if (sql.includes("memoryRoleIdentityTablePreflight")) {
-          return { rows: [{ identityTableExists: false }] };
+          return { rows: [{ identityTableExists: false, migrationLedgerExists: false,
+            authorityBaselineExists: false }] };
         }
         if (sql.includes("memoryRolePreflight")) {
           return { rows: safeMemoryRoles() };
@@ -682,7 +729,8 @@ describe("Platform migrator", () => {
         async connect() {},
         async query(sql, values) {
           if (sql.includes("memoryRoleIdentityTablePreflight")) {
-            return { rows: [{ identityTableExists: false }] };
+            return { rows: [{ identityTableExists: false, migrationLedgerExists: false,
+              authorityBaselineExists: false }] };
           }
           if (sql.includes("memoryRolePreflight")) {
             return { rows: safeMemoryRoles() };

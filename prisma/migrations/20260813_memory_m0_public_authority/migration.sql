@@ -404,11 +404,26 @@ BEGIN
     OR p_lease_token_hash !~ '^[a-f0-9]{64}$' OR p_lease_seconds NOT BETWEEN 1 AND 300 THEN
     RAISE EXCEPTION 'MEMORY_PURGE_LEASE_INVALID';
   END IF;
-  RETURN QUERY WITH candidate AS (
+  RETURN QUERY WITH exhausted_candidate AS (
+    SELECT job.site_ref,job.purge_job_ref FROM platform.memory_purge_job job
+     WHERE job.attempt_count>=100 AND (
+       job.state='queued' OR (job.state IN ('leased','running')
+         AND job.lease_expires_at<=statement_timestamp())
+     )
+     ORDER BY job.updated_at,job.created_at,job.purge_job_ref
+     FOR UPDATE SKIP LOCKED LIMIT 100
+  ), exhausted AS (
+    UPDATE platform.memory_purge_job job SET state='failed',
+      lease_token_hash=NULL,worker_id=NULL,lease_expires_at=NULL,
+      updated_at=statement_timestamp()
+      FROM exhausted_candidate WHERE job.site_ref=exhausted_candidate.site_ref
+        AND job.purge_job_ref=exhausted_candidate.purge_job_ref
+      RETURNING job.site_ref,job.purge_job_ref
+  ), candidate AS (
     SELECT job.site_ref,job.purge_job_ref FROM platform.memory_purge_job job
      WHERE (job.state='queued' OR (job.state IN ('leased','running')
        AND job.lease_expires_at<=statement_timestamp()))
-       AND job.next_attempt_at<=statement_timestamp()
+       AND job.next_attempt_at<=statement_timestamp() AND job.attempt_count<100
      ORDER BY job.next_attempt_at,job.created_at,job.purge_job_ref
      FOR UPDATE SKIP LOCKED LIMIT 1
   ), changed AS (
@@ -417,9 +432,11 @@ BEGIN
       lease_expires_at=statement_timestamp()+make_interval(secs=>p_lease_seconds),
       updated_at=statement_timestamp()
       FROM candidate WHERE job.site_ref=candidate.site_ref
-        AND job.purge_job_ref=candidate.purge_job_ref AND job.attempt_count<100
+        AND job.purge_job_ref=candidate.purge_job_ref
       RETURNING job.site_ref,job.purge_job_ref,job.lease_epoch
-  ) SELECT * FROM changed;
+  ), exhausted_count AS (
+    SELECT count(*) FROM exhausted
+  ) SELECT changed.* FROM changed CROSS JOIN exhausted_count;
 END $$;
 REVOKE ALL ON FUNCTION platform.memory_worker_claim_purge(TEXT,CHAR,INTEGER) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION platform.memory_worker_claim_purge(TEXT,CHAR,INTEGER)

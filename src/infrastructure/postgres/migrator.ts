@@ -60,6 +60,8 @@ const MEMORY_ROLE_CONTRACT = Object.freeze({
   worker: "platform_memory_worker",
 } as const satisfies MemoryRoles);
 
+const MEMORY_PUBLIC_AUTHORITY_MIGRATION = "20260813_memory_m0_public_authority";
+
 const MEMORY_WORKER_ROUTINES = Object.freeze([
   "platform.memory_worker_claim_purge(text,character,integer)",
   "platform.memory_worker_delete_revision_payload(text,text,text,text,bigint,text,bigint,character)",
@@ -542,7 +544,27 @@ async function assertMemoryRolePinnedIdentityPreflight(
   if (table.rows?.length !== 1) {
     throw new Error("PLATFORM_MEMORY_ROLE_IDENTITY_PREFLIGHT_FAILED");
   }
-  if (table.rows[0]?.identityTableExists !== true) return;
+  const state = table.rows[0];
+  if (
+    typeof state?.identityTableExists !== "boolean" ||
+    typeof state.migrationLedgerExists !== "boolean" ||
+    typeof state.authorityBaselineExists !== "boolean"
+  ) {
+    throw new Error("PLATFORM_MEMORY_ROLE_IDENTITY_PREFLIGHT_FAILED");
+  }
+  if (!state.identityTableExists) {
+    if (state.authorityBaselineExists) {
+      throw new Error("PLATFORM_MEMORY_ROLE_IDENTITY_PREFLIGHT_FAILED");
+    }
+    if (!state.migrationLedgerExists) return;
+    const migration = await client.query(MEMORY_ROLE_MIGRATION_LEDGER_PREFLIGHT_SQL, [
+      MEMORY_PUBLIC_AUTHORITY_MIGRATION,
+    ]);
+    if ((migration.rows?.length ?? 0) !== 0) {
+      throw new Error("PLATFORM_MEMORY_ROLE_IDENTITY_PREFLIGHT_FAILED");
+    }
+    return;
+  }
 
   const expected = Object.entries(roles).map(([roleKind, roleName]) => ({ roleKind, roleName }));
   const identity = await client.query(MEMORY_ROLE_IDENTITY_PREFLIGHT_SQL, [
@@ -924,9 +946,12 @@ async function closePublicRoutineAuthority(
   migratorRole: string,
 ): Promise<void> {
   await client.query("REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA platform FROM PUBLIC");
+  // PostgreSQL merges schema defaults with the global routine default; a schema-local
+  // REVOKE cannot subtract implicit PUBLIC EXECUTE. This is scoped to one owner, one
+  // object class, and future objects in the current database.
   await client.query(
     `ALTER DEFAULT PRIVILEGES FOR ROLE ${quoteRoleIdentifier(migratorRole)} ` +
-      "IN SCHEMA platform REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC",
+      "REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC",
   );
 }
 
@@ -950,12 +975,14 @@ const PUBLIC_ROUTINE_AUTHORITY_SQL = `
     WHERE namespace.nspname='platform' AND acl.grantee=0
       AND acl.privilege_type='EXECUTE'
   ) AND NOT EXISTS (
-    SELECT 1 FROM pg_default_acl defaults
-    JOIN pg_namespace namespace ON namespace.oid=defaults.defaclnamespace
-    CROSS JOIN LATERAL aclexplode(defaults.defaclacl) acl
-    WHERE defaults.defaclrole=(SELECT oid FROM pg_roles WHERE rolname=$1)
-      AND namespace.nspname='platform' AND defaults.defaclobjtype='f'
-      AND acl.grantee=0 AND acl.privilege_type='EXECUTE'
+    SELECT 1 FROM pg_roles owner
+    CROSS JOIN LATERAL aclexplode(COALESCE(
+      (SELECT defaults.defaclacl FROM pg_default_acl defaults
+       WHERE defaults.defaclrole=owner.oid AND defaults.defaclnamespace=0
+         AND defaults.defaclobjtype='f'),
+      acldefault('f',owner.oid)
+    )) acl
+    WHERE owner.rolname=$1 AND acl.grantee=0 AND acl.privilege_type='EXECUTE'
   ) AS "publicRoutineAuthorityClosed"
 `;
 
@@ -1457,7 +1484,33 @@ const MEMORY_ROLE_PREFLIGHT_SQL = `
 
 const MEMORY_ROLE_IDENTITY_TABLE_PREFLIGHT_SQL = `
   SELECT to_regclass('platform.memory_database_role_identity') IS NOT NULL
-    AS "identityTableExists" /* memoryRoleIdentityTablePreflight */`;
+      AS "identityTableExists",
+    to_regclass('public._prisma_migrations') IS NOT NULL AS "migrationLedgerExists",
+    EXISTS (
+      SELECT 1 FROM pg_class relation
+      JOIN pg_namespace namespace ON namespace.oid=relation.relnamespace
+      WHERE namespace.nspname='platform' AND relation.relname=ANY(ARRAY[
+        'memory_revision_payload','memory_public_command_inbox','memory_import_job',
+        'memory_export_job','memory_purge_participant_manifest','memory_purge_job',
+        'memory_purge_revision_target','memory_purge_participant_receipt',
+        'memory_suppression_tombstone'
+      ])
+    ) OR EXISTS (
+      SELECT 1 FROM pg_proc routine
+      JOIN pg_namespace namespace ON namespace.oid=routine.pronamespace
+      WHERE namespace.nspname='platform' AND routine.proname=ANY(ARRAY[
+        'reject_memory_revision_payload_update','reject_memory_public_fact_mutation',
+        'guard_memory_purge_revision_target_update','assert_memory_database_role',
+        'memory_assert_public_owner_authority','memory_worker_claim_purge',
+        'memory_worker_delete_revision_payload','memory_worker_record_purge_receipt'
+      ])
+    ) AS "authorityBaselineExists" /* memoryRoleIdentityTablePreflight */`;
+
+const MEMORY_ROLE_MIGRATION_LEDGER_PREFLIGHT_SQL = `
+  SELECT migration_name AS "migrationName",finished_at AS "finishedAt",
+    rolled_back_at AS "rolledBackAt"
+  FROM public._prisma_migrations WHERE migration_name=$1
+  ORDER BY started_at /* memoryRoleMigrationLedgerPreflight */`;
 
 const MEMORY_ROLE_IDENTITY_PREFLIGHT_SQL = `
   WITH expected AS (
@@ -1645,15 +1698,53 @@ const MEMORY_ROLE_AUTHORITY_SQL = `
     SELECT "roleKind",oid,privilege_type,is_grantable FROM expected_routine_authority
   ), default_authority AS (
     SELECT live."roleKind",owner.rolname,
-      CASE WHEN defaults.defaclnamespace IS NULL THEN NULL ELSE namespace.nspname END AS nspname,
+      CASE WHEN defaults.defaclnamespace=0 THEN NULL ELSE namespace.nspname END AS nspname,
       defaults.defaclobjtype,acl.privilege_type,acl.is_grantable,
-      defaults.defaclnamespace IS NULL AS global_default
+      defaults.defaclnamespace=0 AS global_default
     FROM pg_default_acl defaults
     JOIN pg_roles owner ON owner.oid=defaults.defaclrole
     LEFT JOIN pg_namespace namespace ON namespace.oid=defaults.defaclnamespace
     CROSS JOIN LATERAL aclexplode(defaults.defaclacl) acl
     JOIN live ON live."roleOid"=acl.grantee
     /* memoryRoleDefaultAuthority */
+  ), effective_public_default_authority AS (
+    SELECT live."roleKind",owner.rolname,
+      CASE WHEN defaults.defaclnamespace=0 THEN NULL ELSE namespace.nspname END AS nspname,
+      defaults.defaclobjtype,acl.privilege_type,acl.is_grantable,
+      defaults.defaclnamespace=0 AS global_default
+    FROM pg_default_acl defaults
+    JOIN pg_roles owner ON owner.oid=defaults.defaclrole
+    LEFT JOIN non_system_schema namespace ON namespace.oid=defaults.defaclnamespace
+    CROSS JOIN LATERAL aclexplode(defaults.defaclacl) acl
+    CROSS JOIN live
+    WHERE acl.grantee=0 AND defaults.defaclobjtype IN ('r','S','f')
+      AND (
+        (defaults.defaclnamespace<>0 AND namespace.oid IS NOT NULL
+          AND has_schema_privilege(owner.rolname,namespace.oid,'CREATE')
+          AND has_schema_privilege(live."roleName",namespace.oid,'USAGE'))
+        OR (defaults.defaclnamespace=0 AND EXISTS (
+          SELECT 1 FROM non_system_schema target_schema
+          WHERE has_schema_privilege(owner.rolname,target_schema.oid,'CREATE')
+            AND has_schema_privilege(live."roleName",target_schema.oid,'USAGE')
+        ))
+      )
+    /* memoryRoleEffectivePublicDefaultAuthority */
+  ), implicit_public_routine_default_authority AS (
+    SELECT live."roleKind",owner.rolname,acl.privilege_type,acl.is_grantable
+    FROM pg_roles owner CROSS JOIN live
+    CROSS JOIN LATERAL aclexplode(COALESCE(
+      (SELECT defaults.defaclacl FROM pg_default_acl defaults
+       WHERE defaults.defaclrole=owner.oid AND defaults.defaclnamespace=0
+         AND defaults.defaclobjtype='f'),
+      acldefault('f',owner.oid)
+    )) acl
+    WHERE owner.rolname=$2 AND acl.grantee=0 AND acl.privilege_type='EXECUTE'
+      AND EXISTS (
+        SELECT 1 FROM non_system_schema target_schema
+        WHERE has_schema_privilege(owner.rolname,target_schema.oid,'CREATE')
+          AND has_schema_privilege(live."roleName",target_schema.oid,'USAGE')
+      )
+    /* memoryRoleImplicitPublicRoutineDefaultAuthority */
   )
   SELECT (
     (SELECT count(*) FROM live)=3
@@ -1709,6 +1800,8 @@ const MEMORY_ROLE_AUTHORITY_SQL = `
     )
     AND NOT EXISTS (SELECT 1 FROM expected_worker_routine WHERE oid IS NULL)
     AND NOT EXISTS (SELECT 1 FROM default_authority)
+    AND NOT EXISTS (SELECT 1 FROM effective_public_default_authority)
+    AND NOT EXISTS (SELECT 1 FROM implicit_public_routine_default_authority)
     AND NOT EXISTS (
       SELECT 1 FROM expected_worker_routine expected_routine
       LEFT JOIN pg_proc routine ON routine.oid=expected_routine.oid
