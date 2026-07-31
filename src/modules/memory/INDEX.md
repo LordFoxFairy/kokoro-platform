@@ -43,7 +43,11 @@ without rewriting unexpected owners' authority. PostgreSQL has no schema-local d
 `PUBLIC EXECUTE` default for routines, so the migrator records the minimum effective default ACL: in the current Platform
 database, only future functions owned by `platform_migrator` lose `PUBLIC EXECUTE`. Existing routines are closed separately and
 only inside the `platform` schema; table and sequence defaults and every other owner's defaults remain unchanged. While the
-feature is off, `platform_memory_public` and
+postflight never rewrites another owner: it fails closed when an activatable, non-superuser owner with no explicit global
+function-default row can create in a non-system schema visible to a Memory role, because PostgreSQL would otherwise supply that
+owner's implicit `PUBLIC EXECUTE`. Superusers already bypass the runtime authority model, while PostgreSQL's NOLOGIN
+`pg_database_owner` pseudo-role is not an independently activatable object creator. While the feature is off,
+`platform_memory_public` and
 `platform_memory_runtime` receive zero Platform schema, table, sequence, or routine grants. `platform_memory_worker` receives only
 Platform schema usage and the three fixed-search-path purge routines. Purge claims first terminalize at most 100 exhausted queued
 or expired leased/running jobs, clear their lease material, and then select only a sub-limit candidate so one exhausted job cannot

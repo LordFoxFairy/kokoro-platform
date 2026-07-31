@@ -159,6 +159,9 @@ describe("Memory M0.1 public database authority", () => {
     expect(migrator).toContain("memoryRoleEffectivePublicDefaultAuthority");
     expect(migrator).toContain("memoryRoleImplicitPublicRoutineDefaultAuthority");
     expect(migrator).toContain("acldefault('f',owner.oid)");
+    expect(migrator).toContain("owner.rolname<>$2");
+    expect(migrator).toContain("NOT owner.rolsuper");
+    expect(migrator).toContain("owner.rolcanlogin OR EXISTS");
     expect(migrator).toContain("acl.grantee=0");
     expect(migrator).toContain("acl.is_grantable");
     expect(migrator).toContain("'public'::text,'public'::name,'USAGE'::text,false");

@@ -1729,16 +1729,25 @@ const MEMORY_ROLE_AUTHORITY_SQL = `
         ))
       )
     /* memoryRoleEffectivePublicDefaultAuthority */
+  ), activatable_non_migrator_owner AS (
+    SELECT owner.oid,owner.rolname
+    FROM pg_roles owner
+    WHERE owner.rolname<>$2 AND NOT owner.rolsuper AND (
+      owner.rolcanlogin OR EXISTS (
+        SELECT 1 FROM pg_auth_members membership WHERE membership.roleid=owner.oid
+      )
+    )
+    /* memoryRoleActivatableNonMigratorOwner */
   ), implicit_public_routine_default_authority AS (
     SELECT live."roleKind",owner.rolname,acl.privilege_type,acl.is_grantable
-    FROM pg_roles owner CROSS JOIN live
-    CROSS JOIN LATERAL aclexplode(COALESCE(
-      (SELECT defaults.defaclacl FROM pg_default_acl defaults
-       WHERE defaults.defaclrole=owner.oid AND defaults.defaclnamespace=0
-         AND defaults.defaclobjtype='f'),
-      acldefault('f',owner.oid)
-    )) acl
-    WHERE owner.rolname=$2 AND acl.grantee=0 AND acl.privilege_type='EXECUTE'
+    FROM activatable_non_migrator_owner owner CROSS JOIN live
+    CROSS JOIN LATERAL aclexplode(acldefault('f',owner.oid)) acl
+    WHERE NOT EXISTS (
+        SELECT 1 FROM pg_default_acl defaults
+        WHERE defaults.defaclrole=owner.oid AND defaults.defaclnamespace=0
+          AND defaults.defaclobjtype='f'
+      )
+      AND acl.grantee=0 AND acl.privilege_type='EXECUTE'
       AND EXISTS (
         SELECT 1 FROM non_system_schema target_schema
         WHERE has_schema_privilege(owner.rolname,target_schema.oid,'CREATE')

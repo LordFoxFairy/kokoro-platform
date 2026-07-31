@@ -659,7 +659,35 @@ describe("Platform PostgreSQL foundation", () => {
       const sentinelOwner = `memory_default_sentinel_${suffix.replaceAll("-", "")}`;
       await bootstrap.query("BEGIN");
       try {
-        await bootstrap.query(`CREATE ROLE ${quoteIdentifier(sentinelOwner)} NOLOGIN NOINHERIT`);
+        await bootstrap.query(
+          `CREATE ROLE ${quoteIdentifier(sentinelOwner)} ` +
+            "LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS",
+        );
+        await bootstrap.query(
+          `GRANT CREATE ON SCHEMA public TO ${quoteIdentifier(sentinelOwner)}`,
+        );
+        const implicitRoutineDefault = await bootstrap.query<{ count: string }>(
+          `SELECT count(*)::text AS count FROM pg_default_acl defaults
+           JOIN pg_roles owner ON owner.oid=defaults.defaclrole
+           WHERE owner.rolname=$1 AND defaults.defaclnamespace=0
+             AND defaults.defaclobjtype='f'`,
+          [sentinelOwner],
+        );
+        expect(implicitRoutineDefault.rows).toEqual([{ count: "0" }]);
+        await bootstrap.query("SET LOCAL ROLE platform_migrator");
+        await expect(runPlatformMigrations({
+          environment: platformMigrationEnvironment(),
+          createLockClient: () => ({
+            connect: async () => undefined,
+            query: (sql, values) => bootstrap.query(sql, values as unknown[]),
+            end: async () => undefined,
+          }),
+          execute: async () => 0,
+        })).rejects.toThrow("PLATFORM_MEMORY_ROLE_AUTHORITY_INVALID");
+        await bootstrap.query("RESET ROLE");
+        await bootstrap.query(
+          `REVOKE CREATE ON SCHEMA public FROM ${quoteIdentifier(sentinelOwner)}`,
+        );
         await bootstrap.query(
           `ALTER DEFAULT PRIVILEGES FOR ROLE ${quoteIdentifier(sentinelOwner)} ` +
             "GRANT SELECT ON TABLES TO PUBLIC",
