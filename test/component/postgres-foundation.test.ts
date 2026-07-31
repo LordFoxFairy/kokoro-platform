@@ -1,5 +1,5 @@
 import { Client, type QueryResult } from "pg";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   createPlatformDatabaseClient,
@@ -186,6 +186,8 @@ describe("Platform PostgreSQL foundation", () => {
       const secondPid = await second.query<{ pid: number }>("SELECT pg_backend_pid() AS pid");
       await first.query("BEGIN");
       await second.query("BEGIN");
+      await first.query("SELECT set_config('app.site_id',$1,true)", [seed.siteId]);
+      await second.query("SELECT set_config('app.site_id',$1,true)", [seed.siteId]);
       await second.query("SET LOCAL statement_timeout='2s'");
       firstLease = issuePlatformTransaction(pgTransaction(first));
       secondLease = issuePlatformTransaction(pgTransaction(second));
@@ -204,16 +206,22 @@ describe("Platform PostgreSQL foundation", () => {
       revokePlatformTransaction(secondLease);
       secondLease = null;
 
-      await expect(setup.query(
-        `INSERT INTO platform.credit_budget_operation_receipt
-         (operation_receipt_ref,site_ref,operation_kind,business_operation_key,request_digest,
-          execution_budget_root_ref,authorization_segment_ref,outcome_kind,result,result_digest,
-          outbox_event_ref,completed_at,parent_allocation_ref,child_allocation_ref,
-          parent_before_revision,parent_after_revision,child_before_revision,child_after_revision,credit_amount)
-         VALUES ($1::uuid,$2,'derive_media_child','null-fence',$3,$4::uuid,NULL,'accepted','{}'::jsonb,$3,
-                 NULL,clock_timestamp(),$5::uuid,$6::uuid,NULL,2,0,1,1)`,
-        [randomUUID(), seed.siteId, "a".repeat(64), seed.rootRef, seed.allocationRef, randomUUID()],
-      )).rejects.toMatchObject({ code: "23514" });
+      await setup.query("BEGIN");
+      await setup.query("SELECT set_config('app.site_id',$1,true)", [seed.siteId]);
+      try {
+        await expect(setup.query(
+          `INSERT INTO platform.credit_budget_operation_receipt
+           (operation_receipt_ref,site_ref,operation_kind,business_operation_key,request_digest,
+            execution_budget_root_ref,authorization_segment_ref,outcome_kind,result,result_digest,
+            outbox_event_ref,completed_at,parent_allocation_ref,child_allocation_ref,
+            parent_before_revision,parent_after_revision,child_before_revision,child_after_revision,credit_amount)
+           VALUES ($1::uuid,$2,'derive_media_child','null-fence',$3,$4::uuid,NULL,'accepted','{}'::jsonb,$3,
+                   NULL,clock_timestamp(),$5::uuid,$6::uuid,NULL,2,0,1,1)`,
+          [randomUUID(), seed.siteId, "a".repeat(64), seed.rootRef, seed.allocationRef, randomUUID()],
+        )).rejects.toMatchObject({ code: "23514" });
+      } finally {
+        await setup.query("ROLLBACK");
+      }
 
       const index = await setup.query<{ predicate: string | null }>(
         `SELECT pg_get_expr(index.indpred,index.indrelid) AS predicate
@@ -1784,6 +1792,11 @@ type CreditConcurrencySeed = Readonly<{
   siteId: string;
   billingAccountId: string;
   creditAccountRef: string;
+  creditProgramRevisionRef: string;
+  creditGrantRef: string;
+  issuanceJournalRef: string;
+  reserveJournalRef: string;
+  ratingPolicyRevisionRef: string;
   holdRef: string;
   rootRef: string;
   allocationRef: string;
@@ -1795,6 +1808,11 @@ function creditConcurrencySeed(): CreditConcurrencySeed {
     siteId: `credit-lock-${suffix}`,
     billingAccountId: `billing-${suffix}`,
     creditAccountRef: randomUUID(),
+    creditProgramRevisionRef: `credit-program-${suffix}`,
+    creditGrantRef: randomUUID(),
+    issuanceJournalRef: randomUUID(),
+    reserveJournalRef: randomUUID(),
+    ratingPolicyRevisionRef: `rating-${suffix}`,
     holdRef: randomUUID(),
     rootRef: randomUUID(),
     allocationRef: randomUUID(),
@@ -1804,6 +1822,7 @@ function creditConcurrencySeed(): CreditConcurrencySeed {
 async function insertCreditConcurrencySeed(client: Client, seed: CreditConcurrencySeed): Promise<void> {
   await client.query("BEGIN");
   try {
+    await client.query("SELECT set_config('app.site_id',$1,true)", [seed.siteId]);
     await client.query("SET CONSTRAINTS ALL DEFERRED");
     await client.query(
       `INSERT INTO platform.authorization_site
@@ -1822,6 +1841,54 @@ async function insertCreditConcurrencySeed(client: Client, seed: CreditConcurren
        VALUES ($1::uuid,$2,$3,'credit_micros','merchant-component','active')`,
       [seed.creditAccountRef, seed.siteId, seed.billingAccountId],
     );
+    const scopePolicy = Object.freeze({
+      version: 1,
+      surfaceRefs: ["media.image"],
+      capabilityKeys: ["image.text_to_image"],
+      agentRefs: [],
+      allowUnattributedAgent: true,
+    });
+    await client.query(
+      `INSERT INTO platform.commerce_credit_program_revision
+       (credit_program_revision_ref,site_ref,program_ref,revision,ux_bucket_class,unit,amount,
+        burn_priority,scope_policy,liability_merchant_account_ref,window_kind,rollover_policy,
+        revision_digest,catalog_epoch,published_at)
+       VALUES ($1,$2,$1,1,'permanent','credit_micros',100,1000,$3::jsonb,
+               'merchant-component','none','none',$4,1,clock_timestamp())`,
+      [seed.creditProgramRevisionRef, seed.siteId, JSON.stringify(scopePolicy), "1".repeat(64)],
+    );
+    await client.query(
+      `INSERT INTO platform.credit_rating_policy_revision
+       (rating_policy_revision_ref,site_ref,unit,policy,policy_digest,state,published_at)
+       VALUES ($1,$2,'credit_micros','{}'::jsonb,$3,'published',clock_timestamp())`,
+      [seed.ratingPolicyRevisionRef, seed.siteId, "2".repeat(64)],
+    );
+    const issuanceEntries = [
+      creditJournalEntry(seed, 0, "debit", "grant_issuance_source", null),
+      creditJournalEntry(seed, 1, "credit", "customer_available", null),
+    ] as const;
+    await client.query(
+      `INSERT INTO platform.credit_journal_transaction
+       (journal_transaction_ref,credit_account_ref,site_ref,unit,business_operation_key,
+        request_digest,operation_kind,expected_entry_count,entries_digest,occurred_at)
+       VALUES ($1::uuid,$2::uuid,$3,'credit_micros',$4,$5,'grant_issue',2,$6,clock_timestamp())`,
+      [seed.issuanceJournalRef, seed.creditAccountRef, seed.siteId,
+        `issue-${seed.creditGrantRef}`, "3".repeat(64), creditJournalDigest(issuanceEntries)],
+    );
+    await client.query(
+      `INSERT INTO platform.credit_grant
+       (credit_grant_id,credit_account_ref,site_ref,billing_account_ref,credit_program_revision_ref,
+        source_type,source_ref,source_window_key,issuance_journal_transaction_ref,ux_bucket_class,
+        unit,liability_merchant_account_ref,original_amount,burn_priority,scope_policy,
+        effective_at,issued_at)
+       VALUES ($1::uuid,$2::uuid,$3,$4,$5,'admin_grant',$8,'',$6::uuid,'permanent',
+               'credit_micros','merchant-component',100,1000,$7::jsonb,
+               transaction_timestamp(),transaction_timestamp())`,
+      [seed.creditGrantRef, seed.creditAccountRef, seed.siteId, seed.billingAccountId,
+        seed.creditProgramRevisionRef, seed.issuanceJournalRef, JSON.stringify(scopePolicy),
+        `admin-${seed.creditGrantRef}`],
+    );
+    await insertCreditJournalEntries(client, seed.issuanceJournalRef, issuanceEntries);
     await client.query(
       `INSERT INTO platform.credit_hold
        (credit_hold_ref,credit_account_ref,site_ref,execution_root_ref,unit,requested_amount,
@@ -1829,15 +1896,36 @@ async function insertCreditConcurrencySeed(client: Client, seed: CreditConcurren
        VALUES ($1::uuid,$2::uuid,$3,$4,'credit_micros',100,100,'open',clock_timestamp()+interval '5 minutes')`,
       [seed.holdRef, seed.creditAccountRef, seed.siteId, `execution-${seed.rootRef}`],
     );
+    const reserveEntries = [
+      creditJournalEntry(seed, 0, "debit", "customer_available", seed.holdRef),
+      creditJournalEntry(seed, 1, "credit", "customer_reserved", seed.holdRef),
+    ] as const;
+    await client.query(
+      `INSERT INTO platform.credit_journal_transaction
+       (journal_transaction_ref,credit_account_ref,site_ref,unit,business_operation_key,
+        request_digest,operation_kind,expected_entry_count,entries_digest,occurred_at)
+       VALUES ($1::uuid,$2::uuid,$3,'credit_micros',$4,$5,'hold_reserve',2,$6,clock_timestamp())`,
+      [seed.reserveJournalRef, seed.creditAccountRef, seed.siteId,
+        `reserve-${seed.holdRef}`, "4".repeat(64), creditJournalDigest(reserveEntries)],
+    );
+    await client.query(
+      `INSERT INTO platform.credit_hold_allocation
+       (credit_hold_ref,credit_grant_id,site_ref,credit_account_ref,unit,
+        reserve_journal_transaction_ref,allocated_amount,allocation_ordinal)
+       VALUES ($1::uuid,$2::uuid,$3,$4::uuid,'credit_micros',$5::uuid,100,0)`,
+      [seed.holdRef, seed.creditGrantRef, seed.siteId, seed.creditAccountRef,
+        seed.reserveJournalRef],
+    );
+    await insertCreditJournalEntries(client, seed.reserveJournalRef, reserveEntries);
     await client.query(
       `INSERT INTO platform.credit_execution_budget_root
        (execution_budget_root_ref,site_ref,execution_root_ref,billing_account_ref,credit_account_ref,
         unit,liability_merchant_account_ref,credit_hold_ref,root_allocation_ref,
         authorization_budget_ref,rating_policy_revision_ref,surface_ref,capability_key,reserved_ceiling,state)
        VALUES ($1::uuid,$2,$3,$4,$5::uuid,'credit_micros','merchant-component',$6::uuid,$7::uuid,
-               'budget-component','rating-component','media.image','image.text_to_image',100,'open')`,
+               'budget-component',$8,'media.image','image.text_to_image',100,'open')`,
       [seed.rootRef, seed.siteId, `execution-${seed.rootRef}`, seed.billingAccountId,
-        seed.creditAccountRef, seed.holdRef, seed.allocationRef],
+        seed.creditAccountRef, seed.holdRef, seed.allocationRef, seed.ratingPolicyRevisionRef],
     );
     await client.query(
       `INSERT INTO platform.credit_budget_allocation
@@ -1861,6 +1949,60 @@ async function insertCreditConcurrencySeed(client: Client, seed: CreditConcurren
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
+  }
+}
+
+type CreditJournalSeedEntry = Readonly<{
+  ordinal: number;
+  siteId: string;
+  creditAccountRef: string;
+  side: "credit" | "debit";
+  accountType: "customer_available" | "customer_reserved" | "grant_issuance_source";
+  amount: "100";
+  creditGrantRef: string;
+  creditHoldRef: string | null;
+}>;
+
+function creditJournalEntry(
+  seed: CreditConcurrencySeed,
+  ordinal: number,
+  side: CreditJournalSeedEntry["side"],
+  accountType: CreditJournalSeedEntry["accountType"],
+  creditHoldRef: string | null,
+): CreditJournalSeedEntry {
+  return Object.freeze({ ordinal, siteId: seed.siteId, creditAccountRef: seed.creditAccountRef,
+    side, accountType, amount: "100", creditGrantRef: seed.creditGrantRef, creditHoldRef });
+}
+
+function creditJournalDigest(entries: readonly CreditJournalSeedEntry[]): string {
+  const canonical = entries.map((entry) => [
+    entry.ordinal,
+    entry.siteId,
+    entry.creditAccountRef,
+    "credit_micros",
+    entry.side,
+    entry.accountType,
+    entry.amount,
+    entry.creditGrantRef,
+    entry.creditHoldRef ?? "",
+  ].join("|")).join("\n");
+  return createHash("sha256").update(canonical, "utf8").digest("hex");
+}
+
+async function insertCreditJournalEntries(
+  client: Client,
+  journalTransactionRef: string,
+  entries: readonly CreditJournalSeedEntry[],
+): Promise<void> {
+  for (const entry of entries) {
+    await client.query(
+      `INSERT INTO platform.credit_journal_entry
+       (journal_transaction_ref,entry_ordinal,site_ref,credit_account_ref,unit,entry_side,
+        account_type,amount,credit_grant_id,credit_hold_ref)
+       VALUES ($1::uuid,$2,$3,$4::uuid,'credit_micros',$5,$6,$7,$8::uuid,$9::uuid)`,
+      [journalTransactionRef, entry.ordinal, entry.siteId, entry.creditAccountRef, entry.side,
+        entry.accountType, entry.amount, entry.creditGrantRef, entry.creditHoldRef],
+    );
   }
 }
 

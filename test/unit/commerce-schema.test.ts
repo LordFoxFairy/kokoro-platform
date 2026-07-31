@@ -135,6 +135,8 @@ describe("Wave 2A Commerce authority schema", () => {
     expect(migration).toContain("CREDIT_JOURNAL_OPERATION_SHAPE_INVALID");
     expect(migration).toContain("CREDIT_GRANT_ISSUANCE_JOURNAL_MISMATCH");
     expect(migration).toContain("CREDIT_HOLD_ALLOCATION_JOURNAL_MISMATCH");
+    expect(migration).toContain("JOIN platform.credit_grant hold_grant");
+    expect(migration).not.toContain("JOIN platform.credit_grant grant_fact");
     expect(migration).not.toMatch(/available_delta|held_delta|consumed_delta/iu);
   });
 
@@ -170,6 +172,10 @@ describe("Wave 2A Commerce authority schema", () => {
     expect(migration).toContain("CREDIT_ALLOCATION_REVISION_CAS_FAILED");
     expect(migration).toContain("CREDIT_ALLOCATION_CHILD_STOCK_MISMATCH");
     expect(migration).toContain("CREDIT_CHILD_ALLOCATION_ORIGIN_INVALID");
+    expect(compactMigration).toContain(
+      "target_allocation_ref := CASE TG_TABLE_NAME WHEN 'credit_allocation_reservation_receipt' THEN (payload->>'child_allocation_ref')::UUID ELSE (payload->>'budget_allocation_ref')::UUID END",
+    );
+    expect(migration).not.toContain("THEN NEW.child_allocation_ref");
     expect(migration).toContain("CREDIT_ALLOCATION_RETURN_CONSERVATION_FAILED");
     expect(migration).toContain("CREDIT_AUTHORIZATION_SEGMENT_COMMIT_STOCK_INVALID");
     expect(migration).toContain("CREDIT_AUTHORIZATION_ROOT_NOT_OPEN");

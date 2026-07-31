@@ -1699,8 +1699,8 @@ BEGIN
          FROM platform.credit_journal_entry entry
          JOIN platform.credit_journal_transaction transaction
            ON transaction.journal_transaction_ref=entry.journal_transaction_ref
-         JOIN platform.credit_grant grant_fact
-           ON grant_fact.credit_grant_id=entry.credit_grant_id
+         JOIN platform.credit_grant hold_grant
+           ON hold_grant.credit_grant_id=entry.credit_grant_id
          WHERE entry.credit_hold_ref=target_hold_ref
            AND transaction.operation_kind='hold_release'
            AND entry.entry_side='credit'
@@ -1714,7 +1714,7 @@ BEGIN
                  AND revoke_transaction.operation_kind='grant_revoke'
                  AND revoke_transaction.occurred_at<=transaction.occurred_at
              ) THEN 'revoked'
-             WHEN grant_fact.expires_at IS NOT NULL AND grant_fact.expires_at<=transaction.occurred_at THEN 'expired'
+             WHEN hold_grant.expires_at IS NOT NULL AND hold_grant.expires_at<=transaction.occurred_at THEN 'expired'
              ELSE 'customer_available'
            END
        ) THEN
@@ -1776,6 +1776,7 @@ END $$;
 CREATE FUNCTION platform.assert_credit_allocation_origin_and_root() RETURNS TRIGGER
 LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
 DECLARE
+  payload JSONB := to_jsonb(NEW);
   target_allocation_ref UUID;
   target_allocation platform.credit_budget_allocation%ROWTYPE;
   root_fact platform.credit_execution_budget_root%ROWTYPE;
@@ -1785,8 +1786,9 @@ DECLARE
   has_cycle BOOLEAN;
 BEGIN
   target_allocation_ref := CASE TG_TABLE_NAME
-    WHEN 'credit_allocation_reservation_receipt' THEN NEW.child_allocation_ref
-    ELSE NEW.budget_allocation_ref
+    WHEN 'credit_allocation_reservation_receipt'
+      THEN (payload->>'child_allocation_ref')::UUID
+    ELSE (payload->>'budget_allocation_ref')::UUID
   END;
   SELECT * INTO target_allocation FROM platform.credit_budget_allocation
   WHERE budget_allocation_ref=target_allocation_ref;
