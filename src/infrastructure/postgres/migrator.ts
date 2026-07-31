@@ -1597,8 +1597,10 @@ const MEMORY_ROLE_AUTHORITY_SQL = `
     WHERE acl.grantee=live."roleOid"
     /* memoryRoleSchemaAuthority */
   ), expected_schema_authority AS (
-    SELECT 'worker'::text AS "roleKind",'platform'::name AS nspname,
-      'USAGE'::text AS privilege_type,false AS is_grantable
+    SELECT * FROM (VALUES
+      ('public'::text,'platform'::name,'USAGE'::text,false),
+      ('worker'::text,'platform'::name,'USAGE'::text,false)
+    ) AS expected("roleKind",nspname,privilege_type,is_grantable)
   ), effective_schema_authority AS (
     SELECT live."roleKind",namespace.nspname,candidate.privilege_type,
       has_schema_privilege(live."roleName",namespace.oid,
@@ -1612,6 +1614,7 @@ const MEMORY_ROLE_AUTHORITY_SQL = `
       expected.is_grantable
     FROM (VALUES
       ('public'::text,'public'::name,'USAGE'::text,false),
+      ('public'::text,'platform'::name,'USAGE'::text,false),
       ('runtime'::text,'public'::name,'USAGE'::text,false),
       ('worker'::text,'public'::name,'USAGE'::text,false),
       ('worker'::text,'platform'::name,'USAGE'::text,false)
@@ -1691,9 +1694,37 @@ const MEMORY_ROLE_AUTHORITY_SQL = `
       to_regprocedure('platform.memory_worker_delete_revision_payload(text,text,text,text,bigint,text,bigint,character)'),
       to_regprocedure('platform.memory_worker_record_purge_receipt(text,text,text,text,text,character,bigint,character)')
     ]) AS oid
+  ), expected_public_routine AS (
+    SELECT unnest(ARRAY[
+      to_regprocedure('platform.memory_public_list_entries_owner(text,text,bigint,text,text,timestamptz)'),
+      to_regprocedure('platform.memory_public_get_entry_owner(text,text,bigint,text,text,timestamptz)'),
+      to_regprocedure('platform.memory_public_list_entry_history_owner(text,text,bigint,text,text,timestamptz)'),
+      to_regprocedure('platform.memory_public_restore_owner(text,text,bigint,text,text,timestamptz)'),
+      to_regprocedure('platform.memory_public_list_entries(text,text,bigint,text,text,bigint,text,text,boolean,timestamptz,text,integer)'),
+      to_regprocedure('platform.memory_public_get_entry(text,text,bigint,text,text,bigint,text)'),
+      to_regprocedure('platform.memory_public_list_entry_history(text,text,bigint,text,text,bigint,text,bigint,integer)'),
+      to_regprocedure('platform.memory_public_get_restorable_revision(text,text,bigint,text,text,bigint,text,text,integer)'),
+      to_regprocedure('platform.memory_public_prepare_remember(text,text,bigint,text,text,character,text,text,text,text)'),
+      to_regprocedure('platform.memory_public_prepare_correct(text,text,bigint,text,text,character,text,text,text,text)'),
+      to_regprocedure('platform.memory_public_prepare_restore(text,text,bigint,text,text,character,text,text,text,text)'),
+      to_regprocedure('platform.memory_public_prepare_prioritize(text,text,bigint,text,text,character,text,text,text,text)'),
+      to_regprocedure('platform.memory_public_prepare_deprioritize(text,text,bigint,text,text,character,text,text,text,text)'),
+      to_regprocedure('platform.memory_public_prepare_forget(text,text,bigint,text,text,character,text,text,text,text)'),
+      to_regprocedure('platform.memory_public_prepare_reset(text,text,bigint,text,text,character,text,text,text,text)'),
+      to_regprocedure('platform.memory_public_commit_remember(jsonb)'),
+      to_regprocedure('platform.memory_public_commit_correct(jsonb)'),
+      to_regprocedure('platform.memory_public_commit_restore(jsonb)'),
+      to_regprocedure('platform.memory_public_commit_prioritize(jsonb)'),
+      to_regprocedure('platform.memory_public_commit_deprioritize(jsonb)'),
+      to_regprocedure('platform.memory_public_commit_forget(jsonb)'),
+      to_regprocedure('platform.memory_public_commit_reset(jsonb)')
+    ]) AS oid
   ), expected_routine_authority AS (
     SELECT 'worker'::text AS "roleKind",oid,'EXECUTE'::text AS privilege_type,
       false AS is_grantable FROM expected_worker_routine
+    UNION ALL
+    SELECT 'public'::text AS "roleKind",oid,'EXECUTE'::text AS privilege_type,
+      false AS is_grantable FROM expected_public_routine
   ), expected_effective_routine_authority AS (
     SELECT "roleKind",oid,privilege_type,is_grantable FROM expected_routine_authority
   ), default_authority AS (

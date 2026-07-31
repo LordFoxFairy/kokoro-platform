@@ -76,6 +76,7 @@ model MemoryEntry {
   currentRevisionRef       String    @map("current_revision_ref")
   state                    String
   category                 String
+  prioritized              Boolean   @default(false)
   featurePolicyRevisionRef String    @map("feature_policy_revision_ref")
   spaceGeneration          BigInt    @map("space_generation")
   learningGeneration       BigInt    @map("learning_generation")
@@ -100,6 +101,9 @@ model MemoryRevision {
   reason                   String
   supersedesRevision       BigInt?  @map("supersedes_revision")
   supersedesRevisionRef    String?  @map("supersedes_revision_ref")
+  restoredFromRevisionRef  String?  @map("restored_from_revision_ref")
+  validFrom                DateTime? @map("valid_from") @db.Timestamptz(6)
+  validTo                  DateTime? @map("valid_to") @db.Timestamptz(6)
   featurePolicyRevisionRef String   @map("feature_policy_revision_ref")
   recordedAt               DateTime @map("recorded_at") @db.Timestamptz(6)
 
@@ -138,6 +142,7 @@ model MemoryProvenance {
   sourceKind              String   @map("source_kind")
   sourceRef               String   @map("source_ref")
   sourceDigest            String   @map("source_digest") @db.Char(64)
+  sourceDigestKeyRevision String?  @map("source_digest_key_revision")
   actorSubjectRef         String   @map("actor_subject_ref")
   actorSubjectGeneration  BigInt   @map("actor_subject_generation")
   actorProjectRef         String?  @map("actor_project_ref")
@@ -165,6 +170,7 @@ model MemoryCommandReceipt {
   commandRef                             String   @map("command_ref")
   operation                              String
   requestDigest                          String   @map("request_digest") @db.Char(64)
+  requestDigestKeyRevision               String?  @map("request_digest_key_revision")
   resultKind                             String   @map("result_kind")
   resultSpaceRef                         String   @map("result_space_ref")
   resultSpaceVersion                     BigInt   @map("result_space_version")
@@ -196,9 +202,17 @@ model MemoryPublicCommandInbox {
   ownerProjectRef        String?   @map("owner_project_ref")
   operation              String
   requestDigest          String    @map("request_digest") @db.Char(64)
+  requestDigestKeyRevision String  @map("request_digest_key_revision")
   state                  String
+  prepareRef             String?   @map("prepare_ref")
+  expectedStateDigest    String?   @map("expected_state_digest") @db.Char(64)
   safeResultKind         String?   @map("safe_result_kind")
   resultRef              String?   @map("result_ref")
+  committedSpaceVersion  BigInt?   @map("committed_space_version")
+  resultEntryRef         String?   @map("result_entry_ref")
+  resultEntryVersion     BigInt?   @map("result_entry_version")
+  resultRevision         BigInt?   @map("result_revision")
+  resultRevisionRef      String?   @map("result_revision_ref")
   createdAt              DateTime  @map("created_at") @db.Timestamptz(6)
   completedAt            DateTime? @map("completed_at") @db.Timestamptz(6)
 

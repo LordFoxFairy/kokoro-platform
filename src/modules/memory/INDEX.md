@@ -7,9 +7,9 @@ owners: ["Platform Memory"]
 # Platform Memory module
 
 Memory owns Site-local MemorySpace, stable MemoryEntry identity, append-only MemoryRevision and MemoryProvenance facts, and
-owner-scoped command receipts. M0 accepts only explicit remember, correct, forget, learning/use pause and resume, and reset
-commands. It does not infer saved memories from conversation history, promote instructions into Memory, or provide search,
-ranking, suggestion, proactive capture, restoration, purge, or background processing.
+owner-scoped command receipts. M0 accepts only explicit remember, correct, restore-as-a-new-revision, priority, forget,
+learning/use pause and resume, and reset commands. It does not infer saved memories from conversation history, promote
+instructions into Memory, or provide search, ranking, suggestion, proactive capture, physical purge, or background processing.
 
 Every command executes inside a caller-supplied Platform transaction. The service revalidates exact current Site, Subject,
 Project membership, membership epoch, authorization epoch, Subject generation, and feature-policy revision facts before reading or
@@ -46,16 +46,27 @@ only inside the `platform` schema; table and sequence defaults and every other o
 postflight never rewrites another owner: it fails closed when an activatable, non-superuser owner with no explicit global
 function-default row can create in a non-system schema visible to a Memory role, because PostgreSQL would otherwise supply that
 owner's implicit `PUBLIC EXECUTE`. Superusers already bypass the runtime authority model, while PostgreSQL's NOLOGIN
-`pg_database_owner` pseudo-role is not an independently activatable object creator. While the feature is off,
-`platform_memory_public` and
-`platform_memory_runtime` receive zero Platform schema, table, sequence, or routine grants. `platform_memory_worker` receives only
+`pg_database_owner` pseudo-role is not an independently activatable object creator. The Task 5 personal owner data plane grants
+`platform_memory_public` Platform schema usage and only 22 operation-specific, fixed-search-path routines. It receives no direct
+table or sequence authority. Its forced-RLS policies are restricted to that exact login, while every routine revalidates the
+current Site, Subject generation, active release and exact feature-policy revision before returning or committing owner data.
+Prepare records bind a keyed, revisioned command fingerprint, a random prepare reference and the exact locked-state digest;
+remember, correct, forget and reset transitions are produced only by `MemoryAuthorityService` and persisted by a CAS-bound
+commit. Restore and priority are explicit extension transitions. Owner reads carry monotonic space versions and sealed snapshots;
+database read routines independently enforce current generation and revocation fences, so forgotten or reset plaintext cannot be
+returned through detail, history, or restore. `platform_memory_runtime` still receives zero Platform schema, table, sequence, or
+routine grants. `platform_memory_worker` receives only
 Platform schema usage and the three fixed-search-path purge routines. Purge claims first terminalize at most 100 exhausted queued
 or expired leased/running jobs, clear their lease material, and then select only a sub-limit candidate so one exhausted job cannot
 starve the queue. All three retain PostgreSQL's shared ambient `public`
-schema `USAGE` only; they receive no `public` schema `CREATE`, object, sequence, or routine authority. Task 5 must introduce the
-real operation-specific public read/write routines, grants, RLS policies, and live owner-fact revalidation in a forward migration;
-the M0.1 owner helper remains migrator-internal and is not a callable product surface.
-No Memory process credential, listener, readiness check, public route, worker composition, or RPC surface is activated yet.
+schema `USAGE` only; they receive no `public` schema `CREATE`, object, sequence, or routine authority.
+
+This Task 5 data plane is deliberately dormant. Platform does not yet own an authoritative per-Site Memory activation projection
+or application port, and the deterministic syntax/common-secret admission baseline is not a production content-classification
+authority. Production composition must inject both an authoritative content classifier and a server-keyed fingerprint provider;
+absence fails closed. Until the activation projection is part of the owner routines, Task 7 must not mount an HTTP route, issue a
+Memory process credential, advertise readiness, or expose this surface. Project Memory, runtime retrieval, physical purge worker,
+import/export execution, and RPC remain feature-off.
 
 Consumers use only `src/modules/memory/index.ts`. Persistence and application ports are public solely to allow a later owner
 composition root to supply the Platform transaction, authorization-facts, and content-protection adapters without moving authority

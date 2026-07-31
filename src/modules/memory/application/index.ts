@@ -1,6 +1,8 @@
 export { MemoryApplicationError } from "./memory-application-error.js";
 export type { MemoryApplicationErrorCode } from "./memory-application-error.js";
 export { MemoryAuthorityService } from "./memory-authority-service.js";
+export { MemoryPublicOwner } from "./memory-public-owner.js";
+export { MemoryPublicReadOwner } from "./memory-public-read-owner.js";
 export { memoryReceiptOwner } from "./memory-authority-ports.js";
 export type {
   MemoryAuthorizationDenialReason,
@@ -14,4 +16,14 @@ export type {
   MemoryPayloadBinding,
   MemoryReceiptClaim,
   MemoryReceiptOwner,
+  MemoryPublicCommand,
+  MemoryPublicCommandResult,
+  MemoryPublicCursor,
+  MemoryPublicCursorCodec,
+  MemoryPublicEntryRecord,
+  MemoryPublicOperation,
+  MemoryPublicRepository,
+  MemoryPublicResolvedOwner,
+  MemoryPublicRevisionRecord,
+  MemoryPublicUnitOfWork,
 } from "./memory-authority-ports.js";

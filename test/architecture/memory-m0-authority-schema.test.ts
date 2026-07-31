@@ -97,11 +97,13 @@ describe("Memory M0 feature-off authority schema", () => {
     expect(migration).not.toMatch(/CREATE POLICY [^\n]+ ON platform\.memory_/u);
     expect(migration).not.toContain("current_setting('app.site_id'");
     expect(memoryIndex).toContain(
-      "`platform_memory_runtime` receive zero Platform schema, table, sequence, or routine grants",
+      "`platform_memory_public` Platform schema usage and only 22 operation-specific",
     );
     expect(memoryIndex).toContain(
-      "Task 5 must introduce the real operation-specific public",
+      "`platform_memory_runtime` still receives zero Platform schema, table, sequence, or",
     );
+    expect(memoryIndex).toContain("This Task 5 data plane is deliberately dormant");
+    expect(memoryIndex).toContain("Task 7 must not mount an HTTP route");
   });
 
   it("maps all owner tables into Prisma without adding an active Memory process surface", () => {

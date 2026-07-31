@@ -326,6 +326,40 @@ describe("MemoryAuthorityService", () => {
       .toMatchObject({ state: "deleted", currentRevision: 2n });
   });
 
+  it("keeps sibling entries correctable after a target-only forget advances the space epoch", async () => {
+    await service.remember(lease.transaction, rememberCommand());
+    await service.remember(lease.transaction, rememberCommand({
+      commandRef: "command-remember-2",
+      expectedSpaceVersion: 1n,
+      entryRef: "memory-entry-2",
+      revisionRef: "memory-revision-entry-2-1",
+      provenanceRef: "memory-provenance-entry-2-1",
+      sourceDigest: "d".repeat(64),
+      recordedAt: "2026-07-30T12:01:00.000Z",
+    }));
+
+    await service.forget(lease.transaction, {
+      commandRef: "command-forget-entry-1",
+      siteRef: "site-alpha", spaceRef: "space-user-1", expectedSpaceVersion: 1n,
+      entryRef: "memory-entry-1", expectedEntryVersion: 1n,
+      featurePolicyRevisionRef: "feature-policy-r7", recordedAt: "2026-07-30T12:02:00.000Z",
+    });
+
+    await expect(service.correct(lease.transaction, {
+      commandRef: "command-correct-entry-2",
+      siteRef: "site-alpha", spaceRef: "space-user-1", expectedSpaceVersion: 2n,
+      entryRef: "memory-entry-2", expectedEntryVersion: 1n, expectedCurrentRevision: 1n,
+      revisionRef: "memory-revision-entry-2-2",
+      provenanceRef: "memory-provenance-entry-2-2",
+      sourceDigest: "e".repeat(64), protectedContent: protectedContent(),
+      featurePolicyRevisionRef: "feature-policy-r7", recordedAt: "2026-07-30T12:03:00.000Z",
+    })).resolves.toMatchObject({
+      kind: "corrected", entryRef: "memory-entry-2", entryVersion: 2n, revision: 2n,
+    });
+    expect(repository.entries.get("site-alpha:space-user-1:memory-entry-2"))
+      .toMatchObject({ state: "active", revocationEpoch: 1n, currentRevision: 2n });
+  });
+
   it("rejects a correction replay once reset makes the entry fence stale", async () => {
     await service.remember(lease.transaction, rememberCommand());
     const command = { commandRef: "command-correct-stale",

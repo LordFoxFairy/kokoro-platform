@@ -17,6 +17,9 @@ import type {
 import type { BaseMemoryScopeBinding, MemoryActorAuthorization, MemoryScopeBinding, MemorySpace } from
   "../domain/memory-space.js";
 import type { ProtectedMemoryContent } from "../domain/protected-memory-content.js";
+import type { MemoryCategory, MemoryRevisionReason } from "../domain/memory-entry.js";
+import type { MemoryCommandFingerprintPort, MemoryContentAdmissionPort, MemoryPublicPersonalContext } from
+  "../domain/memory-public.js";
 
 export type MemoryAuthorizationDenialReason =
   | "site_inactive"
@@ -217,3 +220,134 @@ export function memoryReceiptOwner(binding: MemoryScopeBinding): MemoryReceiptOw
       subjectGeneration: base.subjectGeneration })
     : Object.freeze({ kind: "project", siteRef: base.siteRef, projectRef: base.projectRef });
 }
+
+export type MemoryPublicOperation = "remember" | "correct" | "restore" | "prioritize" |
+  "deprioritize" | "forget" | "reset";
+
+export type MemoryPublicCommand = Readonly<{
+  operation: MemoryPublicOperation;
+  context: MemoryPublicPersonalContext;
+  commandRef: string;
+  requestDigest: string;
+  requestDigestKeyRevision: string;
+  spaceRef: string;
+  entryRef: string | null;
+  revisionRef: string | null;
+  provenanceRef?: string | null;
+  category?: MemoryCategory;
+  protectedContent?: ProtectedMemoryContent;
+  expectedRevision?: number;
+  expectedEntryVersion?: bigint;
+  restoredFromRevisionRef?: string;
+  prioritized?: boolean;
+  validFrom?: string | null;
+  validTo?: string | null;
+  recordedAt: string;
+}>;
+
+export type MemoryPublicCommandResult = Readonly<{
+  kind: "entry" | "restored" | "purge";
+  committedSpaceVersion: bigint;
+  entryRef: string | null;
+  entryVersion?: bigint;
+  revision?: bigint;
+  revisionRef?: string;
+  restoredFromRevisionRef?: string;
+  prioritized?: boolean;
+  replayed?: boolean;
+}>;
+
+export type MemoryPublicResolvedOwner = Readonly<{
+  context: MemoryPublicPersonalContext;
+  spaceRef: string;
+  spaceVersion: bigint;
+}>;
+
+export type MemoryPublicEntryRecord = Readonly<{
+  entryRef: string;
+  entryVersion: bigint;
+  category: MemoryCategory;
+  state: "active" | "revoked_purge_pending" | "purged";
+  prioritized: boolean;
+  revision: bigint;
+  currentRevisionRef: string;
+  reason: MemoryRevisionReason | "imported" | "restored";
+  validFrom: string | null;
+  validTo: string | null;
+  createdAt: string;
+  updatedAt: string;
+  protectedContent: ProtectedMemoryContent | null;
+  sourceKind: "explicit" | "import";
+  sourceState: "current" | "restricted" | "unavailable";
+  safeSourceLabel: string;
+  purgeReceiptRef?: string;
+  revokedAt?: string;
+  purgedAt?: string;
+}>;
+
+export type MemoryPublicRevisionRecord = Readonly<{
+  revision: bigint;
+  revisionRef: string;
+  reason: MemoryRevisionReason | "imported" | "restored";
+  supersedesRevisionRef: string | null;
+  restoredFromRevisionRef: string | null;
+  validFrom: string | null;
+  validTo: string | null;
+  recordedAt: string;
+  protectedContent: ProtectedMemoryContent | null;
+}>;
+
+export interface MemoryPublicRepository {
+  executeCommand(transaction: PlatformTransaction, command: MemoryPublicCommand):
+    Promise<MemoryPublicCommandResult>;
+  resolveOwner(transaction: PlatformTransaction, input: Readonly<{
+    context: MemoryPublicPersonalContext;
+    operation: "list_entries" | "get_entry" | "list_history" | "restore";
+    now: string;
+    candidateSpaceRef: string;
+  }>): Promise<MemoryPublicResolvedOwner | null>;
+  listEntries(transaction: PlatformTransaction, input: Readonly<{
+    owner: MemoryPublicResolvedOwner;
+    category: MemoryCategory | null;
+    source: "explicit" | "import" | null;
+    after: Readonly<{ prioritized: boolean; updatedAt: string; entryRef: string }> | null;
+    limit: number;
+  }>): Promise<readonly MemoryPublicEntryRecord[]>;
+  getEntry(transaction: PlatformTransaction, input: Readonly<{
+    owner: MemoryPublicResolvedOwner; entryRef: string;
+  }>): Promise<MemoryPublicEntryRecord | null>;
+  listHistory(transaction: PlatformTransaction, input: Readonly<{
+    owner: MemoryPublicResolvedOwner; entryRef: string; revisionBefore: bigint | null; limit: number;
+  }>): Promise<Readonly<{ entry: MemoryPublicEntryRecord;
+    revisions: readonly MemoryPublicRevisionRecord[] }> | null>;
+  getRevisionForRestore?(transaction: PlatformTransaction, input: Readonly<{
+    owner: MemoryPublicResolvedOwner; entryRef: string; revisionRef: string; expectedRevision: number;
+  }>): Promise<MemoryPublicRevisionRecord | null>;
+}
+
+export type MemoryPublicCursor = Readonly<{
+  kind: "entries" | "history";
+  context: MemoryPublicPersonalContext;
+  category: MemoryCategory | null;
+  source: "explicit" | "import" | null;
+  order: "priority_updated_entry_desc" | "revision_desc";
+  spaceVersion: bigint;
+  snapshotRef: string;
+  prioritized?: boolean;
+  updatedAt?: string;
+  entryRef: string;
+  revision?: bigint;
+  expiresAt: string;
+}>;
+
+export interface MemoryPublicCursorCodec {
+  encode(cursor: MemoryPublicCursor): string;
+  decode(value: string): MemoryPublicCursor;
+}
+
+export interface MemoryPublicUnitOfWork {
+  execute<Result>(fence: Readonly<{ operation: string }>,
+    work: (transaction: PlatformTransaction) => Promise<Result>): Promise<Result>;
+}
+
+export type { MemoryCommandFingerprintPort, MemoryContentAdmissionPort, MemoryPublicPersonalContext };

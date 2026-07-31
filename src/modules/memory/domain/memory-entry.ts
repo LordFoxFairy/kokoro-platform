@@ -230,7 +230,7 @@ export function forgetMemoryEntry(value: unknown): Readonly<{ space: MemorySpace
   const nextSpace = rehydrateMemorySpace({ ...space, version: incrementMemoryInt8(space.version),
     revocationEpoch: incrementMemoryInt8(space.revocationEpoch), updatedAt: forgottenAt });
   const nextEntry = rehydrateMemoryEntry({ ...entry, version: incrementMemoryInt8(entry.version),
-    revocationEpoch: incrementMemoryInt8(entry.revocationEpoch), state: "deleted",
+    revocationEpoch: nextSpace.revocationEpoch, state: "deleted",
     updatedAt: forgottenAt, deletedAt: forgottenAt });
   return Object.freeze({ space: nextSpace, entry: nextEntry });
 }
@@ -239,7 +239,7 @@ export function assertCurrentEntryFence(space: MemorySpace, entry: MemoryEntry):
   if (entry.featurePolicyRevisionRef !== space.featurePolicyRevisionRef ||
     entry.spaceGeneration !== space.spaceGeneration ||
     entry.learningGeneration !== space.learningGeneration ||
-    entry.revocationEpoch !== space.revocationEpoch) {
+    entry.revocationEpoch > space.revocationEpoch) {
     throw new MemoryDomainError("MEMORY_ENTRY_FENCE_CONFLICT");
   }
 }
