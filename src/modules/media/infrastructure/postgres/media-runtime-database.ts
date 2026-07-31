@@ -70,6 +70,11 @@ implements AgentImageAccessDatabase, MediaRuntimeQueryDatabase, MediaImageUnitOf
               authorization_segment_ref AS "authorizationSegmentRef",
               parent_allocation_ref AS "parentAllocationRef",maximum_credit AS "maximumCredit",
               trust_input_decision_ref AS "trustInputDecisionRef",
+              expected_parent_revision AS "expectedParentRevision",
+              expected_parent_allocation_epoch AS "expectedParentAllocationEpoch",
+              credit_surface_ref AS "creditSurfaceRef",
+              credit_capability_key AS "creditCapabilityKey",
+              credit_agent_ref AS "creditAgentRef",credit_expires_at AS "creditExpiresAt",
               definition_revision_ref AS "definitionRevisionRef",
               model_option_revision_ref AS "modelOptionRevisionRef"
          FROM platform.resolve_media_access($1,$2)`,

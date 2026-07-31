@@ -71,6 +71,7 @@ export class InMemoryArtifactObjectStore implements ArtifactObjectStore {
       byteSize: staged.receipt.byteSize,
       mediaType: staged.receipt.mediaType,
       trustDecisionRef: input.trustDecision.decisionRef,
+      stagedCleanup: Object.freeze({ state: "completed" as const }),
       state: "ready_private",
     });
     this.#ready.set(ready.artifactVersionRef, Object.freeze({ ...staged, receipt: ready }));

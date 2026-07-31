@@ -8,9 +8,9 @@ import {
   PostgresMediaRuntimeDatabase,
   PostgresMediaRuntimeQueryRepository,
   createMediaRuntimeConnectService,
-  type MediaImageCreditAllocationPort,
   type MediaRuntimeConnectService,
 } from "../modules/media/index.js";
+import { NativeMediaImageCreditOwner } from "./media-image-local-credit-owner.js";
 
 export interface MediaRuntimeApplicationComposition {
   readonly application: ImageOperationSubmissionService;
@@ -20,12 +20,11 @@ export interface MediaRuntimeApplicationComposition {
 
 /**
  * Production Agent Media factory. Every stateful adapter is PostgreSQL-backed;
- * Credit remains an explicit owner port so it can be local or RPC without GA
- * learning financial internals.
+ * Credit is fixed to the native same-process transactional owner; it is never
+ * injected as RPC while the Media transaction is open.
  */
 export function createMediaRuntimeApplicationComposition(input: Readonly<{
   database: PostgresMediaRuntimeDatabase;
-  credit: MediaImageCreditAllocationPort;
   inputEncryptionKey: Readonly<{ keyRevisionRef: string; key: Uint8Array }>;
   ownerDigestKey: Uint8Array;
   mediaAccessKey: Uint8Array;
@@ -46,7 +45,7 @@ export function createMediaRuntimeApplicationComposition(input: Readonly<{
     } },
     agentAccess: new PostgresAgentImageAccessOwner({ database: input.database,
       mediaAccessKey: input.mediaAccessKey }),
-    credit: input.credit,
+    credit: new NativeMediaImageCreditOwner(),
     repository,
     inputProtector: new EnvelopeOperationInputProtector({ activeKey: input.inputEncryptionKey }),
     ownerDigestKey: input.ownerDigestKey,

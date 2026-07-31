@@ -46,6 +46,8 @@ export type ArtifactReadyReceipt = Readonly<{
   byteSize: bigint;
   mediaType: "image/png" | "image/jpeg" | "image/webp";
   trustDecisionRef: string;
+  stagedCleanup: Readonly<{ state: "completed" }> |
+    Readonly<{ state: "pending"; stagedObjectRef: string }>;
   state: "ready_private";
 }>;
 

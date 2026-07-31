@@ -10,7 +10,7 @@ export type {
   MediaImageCommandBegin,
   MediaCommandDurableReceipt,
   MediaImageCommandIdentity,
-  MediaImageCreditAllocationPort,
+  MediaImageLocalCreditAllocationOwner,
   MediaImageOperationRecord,
   MediaImageOperationRepository,
   MediaImageUnitOfWork,

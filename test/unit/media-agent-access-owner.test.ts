@@ -63,6 +63,9 @@ function row() {
     authorizationSegmentRef: "00000000-0000-4000-8000-000000000002",
     parentAllocationRef: "00000000-0000-4000-8000-000000000003", maximumCredit: "120",
     trustInputDecisionRef: "site-policy-decision:one",
+    expectedParentRevision: "4", expectedParentAllocationEpoch: "3",
+    creditSurfaceRef: "surface:image", creditCapabilityKey: "image.create",
+    creditAgentRef: "agent:one", creditExpiresAt: "2026-07-31T13:00:00.000Z",
     definitionRevisionRef: "image.text_to_image@v1:revision:1",
     modelOptionRevisionRef: "image-model:revision:7",
   });

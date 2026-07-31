@@ -8,7 +8,7 @@ import {
   ImageOperationSubmissionService,
   InMemoryMediaImageOperationRepository,
   type MediaImageAdmissionOwnerPort,
-  type MediaImageCreditAllocationPort,
+  type MediaImageLocalCreditAllocationOwner,
 } from "../../src/modules/media/application/image-operation-submission.js";
 import {
   CanonicalImageAspectRatio,
@@ -50,10 +50,13 @@ describe("image.text_to_image submission authority", () => {
           parentAllocationRef: "budget:allocation:one",
           maximumCredit: 15n,
           trustInputDecisionRef: "trust-input:allow:one",
+          expectedParentRevision: 1n, expectedParentAllocationEpoch: 1n,
+          consumptionScope: { surfaceRef: "surface:image", capabilityKey: "image.create", agentRef: null },
+          expiresAt: "2026-07-31T13:00:00.000Z",
         };
       }),
     };
-    const credit: MediaImageCreditAllocationPort = {
+    const credit: MediaImageLocalCreditAllocationOwner = {
       deriveChild: vi.fn(async () => {
         events.push("credit");
         return { childAllocationRef: "credit-child:one",
@@ -114,6 +117,9 @@ describe("image.text_to_image submission authority", () => {
         modelOptionRevisionRef: request.modelOptionRevisionRef },
       executionBudgetRootRef: "budget:root:one", parentAllocationRef: "budget:allocation:one",
       maximumCredit: 10n, trustInputDecisionRef: "trust-input:one",
+      expectedParentRevision: 1n, expectedParentAllocationEpoch: 1n,
+      consumptionScope: { surfaceRef: "surface:image", capabilityKey: "image.create", agentRef: null },
+      expiresAt: "2026-07-31T13:00:00.000Z",
     })) };
     const repository = new InMemoryMediaImageOperationRepository();
     const service = serviceWith({ admission, repository });
@@ -143,6 +149,9 @@ describe("image.text_to_image submission authority", () => {
         modelOptionRevisionRef: "image-default:revision:7" },
       executionBudgetRootRef: "budget:root:one", parentAllocationRef: "budget:allocation:one",
       maximumCredit: 10n, trustInputDecisionRef: "trust-input:one",
+      expectedParentRevision: 1n, expectedParentAllocationEpoch: 1n,
+      consumptionScope: { surfaceRef: "surface:image", capabilityKey: "image.create", agentRef: "agent:one" },
+      expiresAt: "2026-07-31T13:00:00.000Z",
     })) };
     let serial = 0;
     const service = new ImageOperationSubmissionService({ admission: {

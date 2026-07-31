@@ -14,6 +14,12 @@ export type ResolvedAgentImageAccessRow = Readonly<{
   parentAllocationRef: string;
   maximumCredit: bigint | string;
   trustInputDecisionRef: string;
+  expectedParentRevision: bigint | string;
+  expectedParentAllocationEpoch: bigint | string;
+  creditSurfaceRef: string;
+  creditCapabilityKey: string;
+  creditAgentRef: string | null;
+  creditExpiresAt: Date | string;
   definitionRevisionRef: string;
   modelOptionRevisionRef: string;
 }>;
@@ -82,10 +88,14 @@ function facts(
 ): MediaImageAdmissionFacts {
   const subjectGeneration = exactPositiveBigInt(row.subjectGeneration);
   const maximumCredit = exactPositiveBigInt(row.maximumCredit);
+  const expectedParentRevision = exactPositiveBigInt(row.expectedParentRevision);
+  const expectedParentAllocationEpoch = exactPositiveBigInt(row.expectedParentAllocationEpoch);
   for (const value of [row.siteRef, row.projectRef, row.sessionRef, row.runRef, row.subjectRef,
     row.configurationRevisionRef, row.executionBudgetRootRef, row.authorizationSegmentRef,
     row.parentAllocationRef, row.trustInputDecisionRef, row.definitionRevisionRef,
-    row.modelOptionRevisionRef]) reference(value);
+    row.modelOptionRevisionRef, row.creditSurfaceRef, row.creditCapabilityKey]) reference(value);
+  if (row.creditAgentRef !== null) reference(row.creditAgentRef);
+  const expiresAt = instant(row.creditExpiresAt);
   const workloadRef = `agent-media-workload:sha256:${createHash("sha256")
     .update("kokoro.platform.media.agent-workload.v1\0")
     .update(lengthFrame(row.runRef))
@@ -107,6 +117,11 @@ function facts(
     parentAllocationRef: row.parentAllocationRef,
     maximumCredit,
     trustInputDecisionRef: row.trustInputDecisionRef,
+    expectedParentRevision,
+    expectedParentAllocationEpoch,
+    consumptionScope: Object.freeze({ surfaceRef: row.creditSurfaceRef,
+      capabilityKey: row.creditCapabilityKey, agentRef: row.creditAgentRef }),
+    expiresAt,
     agentCommandAuthorization: authorization,
   });
 }
@@ -146,4 +161,10 @@ function lengthFrame(value: string): Buffer {
   const length = Buffer.allocUnsafe(4);
   length.writeUInt32BE(bytes.byteLength);
   return Buffer.concat([length, bytes]);
+}
+
+function instant(value: Date | string): string {
+  const parsed = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(parsed.getTime())) throw new Error("MEDIA_ACCESS_ROW_INVALID");
+  return parsed.toISOString();
 }

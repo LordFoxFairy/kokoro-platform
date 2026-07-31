@@ -147,6 +147,15 @@ CREATE TABLE platform.media_command_journal (
     CHECK(projection_reservation_digest ~ '^[a-f0-9]{64}$'),
   authorization_reservation_receipt_ref TEXT NOT NULL,
   authorization_expires_at TIMESTAMPTZ NOT NULL,
+  credit_execution_budget_root_ref UUID NOT NULL,
+  credit_parent_allocation_ref UUID NOT NULL,
+  credit_parent_expected_revision BIGINT NOT NULL CHECK(credit_parent_expected_revision>0),
+  credit_parent_expected_epoch BIGINT NOT NULL CHECK(credit_parent_expected_epoch>0),
+  credit_surface_ref TEXT NOT NULL,
+  credit_capability_key TEXT NOT NULL,
+  credit_agent_ref TEXT,
+  credit_expires_at TIMESTAMPTZ NOT NULL,
+  trust_input_decision_ref TEXT NOT NULL,
   site_ref TEXT NOT NULL,
   subject_ref TEXT NOT NULL,
   subject_generation BIGINT NOT NULL CHECK(subject_generation > 0),
@@ -296,6 +305,8 @@ CREATE TABLE platform.artifact_version (
      'promoting','ready_private','restricted','failed','reconciling','purge_pending','purged')),
   staged_object_ref TEXT,
   ready_object_ref TEXT,
+  staged_cleanup_state TEXT NOT NULL DEFAULT 'not_required'
+    CHECK(staged_cleanup_state IN ('not_required','pending','completed')),
   content_sha256 CHAR(64) CHECK(content_sha256 ~ '^[a-f0-9]{64}$'),
   byte_size BIGINT CHECK(byte_size BETWEEN 1 AND 33554432),
   media_type TEXT CHECK(media_type IN ('image/png','image/jpeg','image/webp')),
@@ -309,7 +320,9 @@ CREATE TABLE platform.artifact_version (
   FOREIGN KEY(artifact_ref,site_ref,subject_ref,subject_generation,project_ref)
     REFERENCES platform.artifact(artifact_ref,site_ref,subject_ref,subject_generation,project_ref),
   CHECK(state<>'ready_private' OR
-    (ready_object_ref IS NOT NULL AND staged_object_ref IS NULL AND content_sha256 IS NOT NULL AND
+    (ready_object_ref IS NOT NULL AND staged_cleanup_state IN ('pending','completed') AND
+     ((staged_cleanup_state='pending' AND staged_object_ref IS NOT NULL) OR
+      (staged_cleanup_state='completed' AND staged_object_ref IS NULL)) AND content_sha256 IS NOT NULL AND
      byte_size IS NOT NULL AND media_type IS NOT NULL AND trust_decision_ref IS NOT NULL AND
      finalization_receipt_ref IS NOT NULL))
 );
@@ -575,6 +588,13 @@ DECLARE
   authority platform.admission_media_access_authorization%ROWTYPE;
   resolved_definition_revision_ref TEXT;
   resolved_model_option_revision_ref TEXT;
+  resolved_parent_allocation_ref UUID;
+  resolved_parent_revision BIGINT;
+  resolved_parent_epoch BIGINT;
+  resolved_credit_surface_ref TEXT;
+  resolved_credit_capability_key TEXT;
+  resolved_credit_agent_ref TEXT;
+  resolved_credit_expires_at TIMESTAMPTZ;
 BEGIN
   PERFORM platform.assert_media_runtime_role('runtime');
   IF p_caller_audience<>'ga.media-runtime' OR p_source<>'agent_runtime' THEN
@@ -586,8 +606,14 @@ BEGIN
      AND item.projection_reservation_digest=p_projection_reservation_digest
      AND item.state='active' AND item.expires_at>statement_timestamp();
   PERFORM set_config('app.site_id',authority.site_id,true);
-  SELECT definition.definition_revision_ref,surface.default_model_option_revision_ref
-    INTO STRICT resolved_definition_revision_ref,resolved_model_option_revision_ref
+  SELECT definition.definition_revision_ref,surface.default_model_option_revision_ref,
+         root.root_allocation_ref,parent.current_revision,parent.current_allocation_epoch,
+         root.surface_ref,root.capability_key,root.agent_ref,
+         LEAST(authority.expires_at,hold.expires_at,segment.expires_at)
+    INTO STRICT resolved_definition_revision_ref,resolved_model_option_revision_ref,
+         resolved_parent_allocation_ref,resolved_parent_revision,resolved_parent_epoch,
+         resolved_credit_surface_ref,resolved_credit_capability_key,resolved_credit_agent_ref,
+         resolved_credit_expires_at
     FROM platform.site_release_media_definition definition
     JOIN platform.site_release_model_catalog_publication publication
       ON publication.site_id=authority.site_id
@@ -601,6 +627,14 @@ BEGIN
       ON segment.authorization_segment_ref=authority.authorization_segment_ref
      AND segment.execution_budget_root_ref=root.execution_budget_root_ref
      AND segment.site_ref=authority.site_id AND segment.state='committed'
+     AND segment.expires_at>statement_timestamp()
+    JOIN platform.credit_budget_allocation parent
+      ON parent.budget_allocation_ref=root.root_allocation_ref
+     AND parent.execution_budget_root_ref=root.execution_budget_root_ref
+     AND parent.site_ref=root.site_ref AND parent.is_root
+    JOIN platform.credit_hold hold
+      ON hold.credit_hold_ref=root.credit_hold_ref AND hold.site_ref=root.site_ref
+     AND hold.state='open' AND hold.expires_at>statement_timestamp()
    WHERE definition.site_ref=authority.site_id
      AND definition.site_release_ref=authority.configuration_revision_id
      AND definition.media_kind='image_text_to_image';
@@ -613,12 +647,20 @@ BEGIN
   INSERT INTO platform.media_command_journal(
     caller_audience,access_authorization_handle_digest,projection_reservation_digest,
     authorization_reservation_receipt_ref,authorization_expires_at,
+    credit_execution_budget_root_ref,credit_parent_allocation_ref,
+    credit_parent_expected_revision,credit_parent_expected_epoch,
+    credit_surface_ref,credit_capability_key,credit_agent_ref,credit_expires_at,
+    trust_input_decision_ref,
     site_ref,subject_ref,subject_generation,project_ref,workload_ref,source,
     definition_revision_ref,model_option_revision_ref,command_ref,
     caller_request_fingerprint,owner_request_digest,state,lease_token_hash
   ) VALUES(
     p_caller_audience,p_handle_digest,p_projection_reservation_digest,
     authority.reservation_receipt_ref,authority.expires_at,
+    authority.execution_budget_root_ref,resolved_parent_allocation_ref,
+    resolved_parent_revision,resolved_parent_epoch,resolved_credit_surface_ref,
+    resolved_credit_capability_key,resolved_credit_agent_ref,resolved_credit_expires_at,
+    authority.input_policy_decision_ref,
     authority.site_id,authority.subject_ref,authority.subject_generation,authority.project_ref,
     p_workload_ref,p_source,resolved_definition_revision_ref,resolved_model_option_revision_ref,p_command_ref,
     p_caller_request_fingerprint,p_owner_request_digest,'processing',p_lease_token_hash
@@ -652,6 +694,15 @@ BEGIN
      prior.owner_request_digest<>p_owner_request_digest OR
      prior.access_authorization_handle_digest<>p_handle_digest OR
      prior.projection_reservation_digest<>p_projection_reservation_digest OR
+     prior.credit_execution_budget_root_ref<>authority.execution_budget_root_ref OR
+     prior.credit_parent_allocation_ref<>resolved_parent_allocation_ref OR
+     prior.credit_parent_expected_revision<>resolved_parent_revision OR
+     prior.credit_parent_expected_epoch<>resolved_parent_epoch OR
+     prior.credit_surface_ref<>resolved_credit_surface_ref OR
+     prior.credit_capability_key<>resolved_credit_capability_key OR
+     prior.credit_agent_ref IS DISTINCT FROM resolved_credit_agent_ref OR
+     prior.credit_expires_at<>resolved_credit_expires_at OR
+     prior.trust_input_decision_ref<>authority.input_policy_decision_ref OR
      ROW(prior.workload_ref,prior.source,prior.definition_revision_ref,prior.model_option_revision_ref)
        IS DISTINCT FROM ROW(p_workload_ref,p_source,p_definition_revision_ref,p_model_option_revision_ref) THEN
     RAISE EXCEPTION 'MEDIA_COMMAND_OWNER_DIGEST_CONFLICT';
@@ -714,15 +765,91 @@ BEGIN
      AND authority.project_ref=journal.project_ref
      AND authority.reservation_receipt_ref=journal.authorization_reservation_receipt_ref
      AND authority.expires_at=journal.authorization_expires_at
+     AND authority.execution_budget_root_ref=journal.credit_execution_budget_root_ref
+     AND authority.input_policy_decision_ref=journal.trust_input_decision_ref
      AND authority.state='active' AND authority.expires_at>statement_timestamp()
    WHERE journal.caller_audience=command_record->>'callerAudience'
      AND journal.command_ref=command_record->>'commandRef'
      AND journal.lease_token_hash=p_lease_token_hash
      AND journal.state='processing'
    FOR UPDATE OF journal;
+  PERFORM set_config('app.site_id',authority_record.site_id,true);
+  PERFORM 1
+    FROM platform.site_release_media_definition definition
+    JOIN platform.site_release_model_catalog_publication publication
+      ON publication.site_id=authority_record.site_id
+     AND publication.site_release_ref=authority_record.configuration_revision_id
+    JOIN platform.site_release_model_catalog_surface surface
+      ON surface.publication_id=publication.publication_id AND surface.surface_id='image'
+     AND surface.default_model_option_revision_ref=journal_record.model_option_revision_ref
+    JOIN platform.credit_execution_budget_root root
+      ON root.execution_budget_root_ref=authority_record.execution_budget_root_ref
+     AND root.site_ref=authority_record.site_id AND root.state='open'
+     AND root.root_allocation_ref=journal_record.credit_parent_allocation_ref
+     AND root.surface_ref=journal_record.credit_surface_ref
+     AND root.capability_key=journal_record.credit_capability_key
+     AND root.agent_ref IS NOT DISTINCT FROM journal_record.credit_agent_ref
+    JOIN platform.credit_budget_allocation parent
+      ON parent.budget_allocation_ref=root.root_allocation_ref
+     AND parent.execution_budget_root_ref=root.execution_budget_root_ref
+     AND parent.site_ref=root.site_ref AND parent.is_root
+    JOIN platform.credit_hold hold
+      ON hold.credit_hold_ref=root.credit_hold_ref AND hold.site_ref=root.site_ref
+     AND hold.state='open' AND hold.expires_at>=journal_record.credit_expires_at
+    JOIN platform.credit_authorization_segment segment
+      ON segment.authorization_segment_ref=authority_record.authorization_segment_ref
+     AND segment.execution_budget_root_ref=root.execution_budget_root_ref
+     AND segment.site_ref=root.site_ref AND segment.state='committed'
+     AND segment.expires_at>=journal_record.credit_expires_at
+    JOIN platform.credit_allocation_reservation_receipt credit_receipt
+      ON credit_receipt.allocation_reservation_receipt_ref=
+           (credit_record->>'allocationReservationReceiptRef')::UUID
+     AND credit_receipt.site_ref=root.site_ref
+     AND credit_receipt.execution_budget_root_ref=root.execution_budget_root_ref
+     AND credit_receipt.parent_allocation_ref=root.root_allocation_ref
+     AND credit_receipt.child_allocation_ref=(credit_record->>'childAllocationRef')::UUID
+     AND credit_receipt.business_operation_key=journal_record.command_ref
+     AND credit_receipt.request_digest=journal_record.owner_request_digest
+     AND credit_receipt.reserved_ceiling=definition.maximum_credit
+     AND credit_receipt.media_operation_ref=operation_record->>'operationRef'
+     AND credit_receipt.audience='media' AND credit_receipt.purpose='media_operation'
+     AND credit_receipt.parent_expected_revision=journal_record.credit_parent_expected_revision
+     AND credit_receipt.parent_resulting_revision=journal_record.credit_parent_expected_revision+1
+     AND credit_receipt.parent_expected_epoch=journal_record.credit_parent_expected_epoch
+     AND credit_receipt.surface_ref=journal_record.credit_surface_ref
+     AND credit_receipt.capability_key=journal_record.credit_capability_key
+     AND credit_receipt.agent_ref IS NOT DISTINCT FROM journal_record.credit_agent_ref
+     AND credit_receipt.expires_at=journal_record.credit_expires_at
+    JOIN platform.credit_budget_allocation child
+      ON child.budget_allocation_ref=credit_receipt.child_allocation_ref
+     AND child.parent_allocation_ref=credit_receipt.parent_allocation_ref
+     AND child.execution_budget_root_ref=credit_receipt.execution_budget_root_ref
+     AND child.site_ref=credit_receipt.site_ref AND NOT child.is_root
+     AND child.audience='media' AND child.purpose='media_operation'
+     AND child.operation_ref=credit_receipt.media_operation_ref
+     AND child.surface_ref=credit_receipt.surface_ref
+     AND child.capability_key=credit_receipt.capability_key
+     AND child.agent_ref IS NOT DISTINCT FROM credit_receipt.agent_ref
+     AND child.expires_at=credit_receipt.expires_at
+     AND child.current_revision=credit_receipt.child_initial_revision
+     AND child.current_allocation_epoch=credit_receipt.child_initial_epoch
+    JOIN platform.credit_budget_allocation_revision child_revision
+      ON child_revision.budget_allocation_ref=child.budget_allocation_ref
+     AND child_revision.revision=child.current_revision
+     AND child_revision.allocation_epoch=credit_receipt.child_initial_epoch
+     AND child_revision.credit_ceiling=credit_receipt.reserved_ceiling
+     AND child_revision.state='active'
+   WHERE definition.site_ref=authority_record.site_id
+     AND definition.site_release_ref=authority_record.configuration_revision_id
+     AND definition.media_kind='image_text_to_image'
+     AND definition.definition_revision_ref=journal_record.definition_revision_ref;
+  IF NOT FOUND THEN RAISE EXCEPTION 'MEDIA_OPERATION_AUTHORITY_STALE'; END IF;
   IF command_record->>'callerAudience'<>'ga.media-runtime' OR journal_record.source<>'agent_runtime' OR
      command_record->>'callerRequestFingerprint'<>journal_record.caller_request_fingerprint OR
      command_record->>'ownerRequestDigest'<>journal_record.owner_request_digest OR
+     credit_record->>'executionBudgetRootRef'<>journal_record.credit_execution_budget_root_ref::TEXT OR
+     credit_record->>'parentAllocationRef'<>journal_record.credit_parent_allocation_ref::TEXT OR
+     p_record->>'trustInputDecisionRef'<>journal_record.trust_input_decision_ref OR
      operation_record->>'definitionRevisionRef'<>journal_record.definition_revision_ref OR
      operation_record->>'modelOptionRevisionRef'<>journal_record.model_option_revision_ref THEN
     RAISE EXCEPTION 'MEDIA_OPERATION_OWNER_BINDING_INVALID';
@@ -757,9 +884,9 @@ BEGIN
     journal_record.subject_generation,journal_record.project_ref,
     protected_input->>'operationInputRevisionRef',journal_record.definition_revision_ref,
     journal_record.model_option_revision_ref,command_record->>'callerRequestFingerprint',
-    command_record->>'ownerRequestDigest',(credit_record->>'executionBudgetRootRef')::UUID,
-    (credit_record->>'parentAllocationRef')::UUID,(credit_record->>'childAllocationRef')::UUID,
-    (credit_record->>'allocationReservationReceiptRef')::UUID,p_record->>'trustInputDecisionRef',
+    command_record->>'ownerRequestDigest',journal_record.credit_execution_budget_root_ref,
+    journal_record.credit_parent_allocation_ref,(credit_record->>'childAllocationRef')::UUID,
+    (credit_record->>'allocationReservationReceiptRef')::UUID,journal_record.trust_input_decision_ref,
     'queued',(operation_record->>'ownerVersion')::BIGINT,
     (p_record->>'createdAt')::TIMESTAMPTZ,(p_record->>'createdAt')::TIMESTAMPTZ
   );
@@ -843,7 +970,10 @@ CREATE FUNCTION platform.resolve_media_access(
   site_ref TEXT,project_ref TEXT,session_ref TEXT,run_ref TEXT,subject_ref TEXT,
   subject_generation BIGINT,configuration_revision_ref TEXT,execution_budget_root_ref UUID,
   authorization_segment_ref UUID,parent_allocation_ref UUID,maximum_credit NUMERIC,
-  trust_input_decision_ref TEXT,definition_revision_ref TEXT,model_option_revision_ref TEXT
+  trust_input_decision_ref TEXT,definition_revision_ref TEXT,model_option_revision_ref TEXT,
+  expected_parent_revision BIGINT,expected_parent_allocation_epoch BIGINT,
+  credit_surface_ref TEXT,credit_capability_key TEXT,credit_agent_ref TEXT,
+  credit_expires_at TIMESTAMPTZ
 )
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path=pg_catalog,platform AS $$
@@ -864,7 +994,10 @@ BEGIN
          authority.subject_ref,authority.subject_generation,authority.configuration_revision_id,
          authority.execution_budget_root_ref,authority.authorization_segment_ref,
          root.root_allocation_ref,definition.maximum_credit,authority.input_policy_decision_ref,
-         definition.definition_revision_ref,surface.default_model_option_revision_ref
+         definition.definition_revision_ref,surface.default_model_option_revision_ref,
+         parent.current_revision,parent.current_allocation_epoch,root.surface_ref,
+         root.capability_key,root.agent_ref,
+         LEAST(authority.expires_at,hold.expires_at,segment.expires_at)
     FROM platform.admission_media_access_authorization authority
     JOIN platform.site_release_media_definition definition
       ON definition.site_ref=authority.site_id
@@ -882,6 +1015,14 @@ BEGIN
       ON segment.authorization_segment_ref=authority.authorization_segment_ref
      AND segment.execution_budget_root_ref=root.execution_budget_root_ref
      AND segment.site_ref=authority.site_id AND segment.state='committed'
+     AND segment.expires_at>statement_timestamp()
+    JOIN platform.credit_budget_allocation parent
+      ON parent.budget_allocation_ref=root.root_allocation_ref
+     AND parent.execution_budget_root_ref=root.execution_budget_root_ref
+     AND parent.site_ref=root.site_ref AND parent.is_root
+    JOIN platform.credit_hold hold
+      ON hold.credit_hold_ref=root.credit_hold_ref AND hold.site_ref=root.site_ref
+     AND hold.state='open' AND hold.expires_at>statement_timestamp()
    WHERE authority.handle_digest=p_handle_digest
      AND authority.projection_reservation_digest=p_projection_reservation_digest
      AND authority.state='active' AND authority.expires_at>statement_timestamp();
@@ -908,7 +1049,8 @@ BEGIN
          receipt.receipt_version,receipt.recorded_at,receipt.command_kind,receipt.outcome
     FROM platform.admission_media_access_authorization authority
     JOIN platform.media_command_journal journal
-      ON journal.site_ref=authority.site_id
+      ON journal.access_authorization_handle_digest=authority.handle_digest
+     AND journal.site_ref=authority.site_id
      AND journal.subject_ref=authority.subject_ref
      AND journal.subject_generation=authority.subject_generation
      AND journal.project_ref=authority.project_ref
@@ -965,7 +1107,17 @@ BEGIN
      AND operation.project_ref=authority.project_ref
      AND operation.operation_ref=p_operation_ref
    WHERE authority.handle_digest=p_handle_digest
-     AND authority.state='active' AND authority.expires_at>statement_timestamp();
+     AND authority.state='active' AND authority.expires_at>statement_timestamp()
+     AND EXISTS (
+       SELECT 1 FROM platform.media_command_journal journal
+        WHERE journal.operation_ref=operation.operation_ref
+          AND journal.site_ref=operation.site_ref
+          AND journal.subject_ref=operation.subject_ref
+          AND journal.subject_generation=operation.subject_generation
+          AND journal.project_ref=operation.project_ref
+          AND journal.access_authorization_handle_digest=authority.handle_digest
+          AND journal.state='committed'
+     );
 END;
 $$;
 REVOKE ALL ON FUNCTION platform.get_agent_media_operation(CHAR,TEXT) FROM PUBLIC;

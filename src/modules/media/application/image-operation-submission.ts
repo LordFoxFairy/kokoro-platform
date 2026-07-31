@@ -49,6 +49,10 @@ export interface MediaImageAdmissionOwnerPort {
     parentAllocationRef: string;
     maximumCredit: bigint;
     trustInputDecisionRef: string;
+    expectedParentRevision: bigint;
+    expectedParentAllocationEpoch: bigint;
+    consumptionScope: Readonly<{ surfaceRef: string; capabilityKey: string; agentRef: string | null }>;
+    expiresAt: string;
   }>>;
 }
 
@@ -58,6 +62,14 @@ export type MediaImageAdmissionFacts = Readonly<{
   parentAllocationRef: string;
   maximumCredit: bigint;
   trustInputDecisionRef: string;
+  expectedParentRevision: bigint;
+  expectedParentAllocationEpoch: bigint;
+  consumptionScope: Readonly<{
+    surfaceRef: string;
+    capabilityKey: string;
+    agentRef: string | null;
+  }>;
+  expiresAt: string;
   agentCommandAuthorization?: Readonly<{
     accessAuthorizationHandleDigest: string;
     projectionReservationDigest: string;
@@ -74,11 +86,20 @@ export interface AgentImageAccessOwnerPort {
   }>, signal: AbortSignal): Promise<MediaImageAdmissionFacts>;
 }
 
-export interface MediaImageCreditAllocationPort {
+/** Same-process Platform Credit owner. Implementations must use the supplied transaction. */
+export interface MediaImageLocalCreditAllocationOwner {
   deriveChild(transaction: PlatformTransaction, input: Readonly<{
     ownerBinding: MediaOperationOwnerBinding;
     executionBudgetRootRef: string;
     parentAllocationRef: string;
+    expectedParentRevision: bigint;
+    expectedParentAllocationEpoch: bigint;
+    consumptionScope: Readonly<{
+      surfaceRef: string;
+      capabilityKey: string;
+      agentRef: string | null;
+    }>;
+    expiresAt: string;
     mediaOperationRef: string;
     commandRef: string;
     ownerRequestDigest: string;
@@ -170,7 +191,7 @@ export class ImageOperationSubmissionService {
   readonly #dependencies: Readonly<{
     admission: MediaImageAdmissionOwnerPort;
     agentAccess?: AgentImageAccessOwnerPort | undefined;
-    credit: MediaImageCreditAllocationPort;
+    credit: MediaImageLocalCreditAllocationOwner;
     repository: MediaImageOperationRepository;
     inputProtector: EnvelopeOperationInputProtector;
     ownerDigestKey: Uint8Array;
@@ -182,7 +203,7 @@ export class ImageOperationSubmissionService {
   constructor(input: Readonly<{
     admission: MediaImageAdmissionOwnerPort;
     agentAccess?: AgentImageAccessOwnerPort | undefined;
-    credit: MediaImageCreditAllocationPort;
+    credit: MediaImageLocalCreditAllocationOwner;
     repository: MediaImageOperationRepository;
     inputProtector: EnvelopeOperationInputProtector;
     ownerDigestKey: Uint8Array;
@@ -361,6 +382,10 @@ export class ImageOperationSubmissionService {
         ownerBinding: admission.ownerBinding,
         executionBudgetRootRef: admission.executionBudgetRootRef,
         parentAllocationRef: admission.parentAllocationRef,
+        expectedParentRevision: admission.expectedParentRevision,
+        expectedParentAllocationEpoch: admission.expectedParentAllocationEpoch,
+        consumptionScope: admission.consumptionScope,
+        expiresAt: admission.expiresAt,
         mediaOperationRef: operationRefValue,
         commandRef: input.commandRef,
         ownerRequestDigest,

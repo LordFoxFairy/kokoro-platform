@@ -93,7 +93,8 @@ export class S3ArtifactObjectStore implements ArtifactObjectStore {
       if (readyPrior.metadata["trust-decision-ref"] !== input.trustDecision.decisionRef) {
         throw new Error("ARTIFACT_TRUST_BINDING_MISMATCH");
       }
-      return readyReceipt(staged, readyKey, input.trustDecision.decisionRef);
+      return readyReceipt(staged, readyKey, input.trustDecision.decisionRef,
+        await this.#cleanupStaged(stagedKey));
     }
     const source = await this.#head(stagedKey);
     if (source === null) throw new Error("ARTIFACT_STAGED_OBJECT_NOT_FOUND");
@@ -134,16 +135,14 @@ export class S3ArtifactObjectStore implements ArtifactObjectStore {
       const raced = await this.#head(readyKey);
       if (raced === null) throw error;
       assertReadyObject(raced, staged, input.trustDecision.decisionRef);
-      return readyReceipt(staged, readyKey, input.trustDecision.decisionRef);
+      return readyReceipt(staged, readyKey, input.trustDecision.decisionRef,
+        await this.#cleanupStaged(stagedKey));
     }
     const promoted = await this.#head(readyKey);
     if (promoted === null) throw new Error("ARTIFACT_PROMOTION_UNCONFIRMED");
     assertReadyObject(promoted, staged, input.trustDecision.decisionRef);
-    await this.dependencies.client.send(new DeleteObjectCommand({
-      Bucket: this.dependencies.bucket,
-      Key: stagedKey,
-    }));
-    return readyReceipt(staged, readyKey, input.trustDecision.decisionRef);
+    return readyReceipt(staged, readyKey, input.trustDecision.decisionRef,
+      await this.#cleanupStaged(stagedKey));
   }
 
   async describeReady(input: Parameters<ArtifactObjectStore["describeReady"]>[0]):
@@ -158,10 +157,19 @@ export class S3ArtifactObjectStore implements ArtifactObjectStore {
     const trustDecisionRef = head.metadata["trust-decision-ref"];
     if (trustDecisionRef === undefined) throw new Error("ARTIFACT_OBJECT_METADATA_INVALID");
     reference(trustDecisionRef);
+    const stagedKey = this.#key("staged", ownerScope, input.artifactRef, input.artifactVersionRef);
+    const staged = await this.#head(stagedKey);
+    if (staged !== null) {
+      assertObject(staged, metadata.contentSha256, metadata.byteSize, metadata.mediaType);
+    }
+    const stagedCleanup: ArtifactReadyReceipt["stagedCleanup"] = staged === null
+      ? Object.freeze({ state: "completed" as const })
+      : Object.freeze({ state: "pending" as const, stagedObjectRef: objectRef(stagedKey) });
     return Object.freeze({ ownerScope, artifactRef: input.artifactRef,
       artifactVersionRef: input.artifactVersionRef, readyObjectRef: objectRef(key),
       contentSha256: metadata.contentSha256, byteSize: BigInt(metadata.byteSize),
       mediaType: metadata.mediaType, trustDecisionRef,
+      stagedCleanup,
       state: "ready_private" as const });
   }
 
@@ -182,16 +190,37 @@ export class S3ArtifactObjectStore implements ArtifactObjectStore {
     const response = await this.dependencies.client.send(new GetObjectCommand({
       Bucket: this.dependencies.bucket,
       Key: key,
+      IfMatch: head.eTag,
       ...(input.range === undefined ? {} : { Range: `bytes=${start}-${endInclusive}` }),
     }), { abortSignal: input.signal });
-    if (response.Body === undefined || response.ContentLength !== expectedBytes) {
+    if (response.Body === undefined || response.ContentLength !== expectedBytes ||
+        response.ETag !== head.eTag || response.ContentType !== head.contentType) {
+      throw new Error("ARTIFACT_OBJECT_RESPONSE_INVALID");
+    }
+    const responseMetadata = Object.freeze({ ...response.Metadata });
+    if (responseMetadata["content-sha256"] !== metadata.contentSha256 ||
+        responseMetadata["byte-size"] !== String(metadata.byteSize) ||
+        responseMetadata["trust-decision-ref"] !== head.metadata["trust-decision-ref"]) {
       throw new Error("ARTIFACT_OBJECT_RESPONSE_INVALID");
     }
     return Object.freeze({
-      body: boundedBody(response.Body, expectedBytes, input.signal),
+      body: boundedBody(response.Body, expectedBytes, input.signal,
+        input.range === undefined ? metadata.contentSha256 : undefined),
       byteSize: metadata.byteSize,
       mediaType: metadata.mediaType,
     });
+  }
+
+  async #cleanupStaged(stagedKey: string): Promise<ArtifactReadyReceipt["stagedCleanup"]> {
+    try {
+      await this.dependencies.client.send(new DeleteObjectCommand({
+        Bucket: this.dependencies.bucket,
+        Key: stagedKey,
+      }));
+      return Object.freeze({ state: "completed" as const });
+    } catch {
+      return Object.freeze({ state: "pending" as const, stagedObjectRef: objectRef(stagedKey) });
+    }
   }
 
   async #head(key: string): Promise<Readonly<{
@@ -242,11 +271,12 @@ function stagedReceipt(
 
 function readyReceipt(
   staged: ArtifactStagedReceipt, key: string, trustDecisionRef: string,
+  stagedCleanup: ArtifactReadyReceipt["stagedCleanup"],
 ): ArtifactReadyReceipt {
   return Object.freeze({ ownerScope: staged.ownerScope, artifactRef: staged.artifactRef,
     artifactVersionRef: staged.artifactVersionRef, readyObjectRef: objectRef(key),
     contentSha256: staged.contentSha256, byteSize: staged.byteSize, mediaType: staged.mediaType,
-    trustDecisionRef, state: "ready_private" as const });
+    trustDecisionRef, stagedCleanup, state: "ready_private" as const });
 }
 
 function objectRef(key: string): string {
@@ -292,17 +322,27 @@ function objectMetadata(object: Readonly<{ contentLength: number; contentType: s
   return Object.freeze({ contentSha256, byteSize, mediaType: object.contentType });
 }
 
-async function* boundedBody(body: unknown, expectedBytes: number, signal: AbortSignal): AsyncGenerator<Uint8Array> {
+async function* boundedBody(
+  body: unknown,
+  expectedBytes: number,
+  signal: AbortSignal,
+  expectedSha256?: string,
+): AsyncGenerator<Uint8Array> {
   if (!asyncIterable(body)) throw new Error("ARTIFACT_OBJECT_BODY_INVALID");
   let received = 0;
+  const digest = expectedSha256 === undefined ? undefined : createHash("sha256");
   for await (const raw of body) {
     if (signal.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
     if (!(raw instanceof Uint8Array)) throw new Error("ARTIFACT_OBJECT_BODY_INVALID");
     received += raw.byteLength;
     if (received > expectedBytes) throw new Error("ARTIFACT_OBJECT_BODY_EXCEEDED");
+    digest?.update(raw);
     yield new Uint8Array(raw);
   }
   if (received !== expectedBytes) throw new Error("ARTIFACT_OBJECT_BODY_TRUNCATED");
+  if (digest !== undefined && digest.digest("hex") !== expectedSha256) {
+    throw new Error("ARTIFACT_OBJECT_BODY_DIGEST_MISMATCH");
+  }
 }
 
 async function collectBoundedBody(body: unknown, expectedBytes: number): Promise<Uint8Array> {

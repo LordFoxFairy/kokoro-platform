@@ -17,6 +17,14 @@ const artifactObjectStore = readFileSync(new URL(
   "../../src/modules/artifact/infrastructure/s3/s3-artifact-object-store.ts",
   import.meta.url,
 ), "utf8");
+const mediaComposition = readFileSync(new URL(
+  "../../src/process/media-runtime-composition.ts",
+  import.meta.url,
+), "utf8");
+const localCreditOwner = readFileSync(new URL(
+  "../../src/process/media-image-local-credit-owner.ts",
+  import.meta.url,
+), "utf8");
 
 describe("Media/Artifact image vertical database boundary", () => {
   it("uses encrypted-only canonical input persistence", () => {
@@ -69,10 +77,23 @@ describe("Media/Artifact image vertical database boundary", () => {
     );
   });
 
+  it("fixes Media child allocation to the native transaction owner in production composition", () => {
+    const signature = mediaComposition.slice(
+      mediaComposition.indexOf("export function createMediaRuntimeApplicationComposition"),
+      mediaComposition.indexOf(">): MediaRuntimeApplicationComposition"),
+    );
+    expect(mediaComposition).toContain("credit: new NativeMediaImageCreditOwner()");
+    expect(signature).not.toContain("\n  credit:");
+    expect(localCreditOwner).toContain("new CreditService");
+    expect(localCreditOwner).toContain("new PostgresCreditAuthorityRepository()");
+    expect(localCreditOwner).not.toMatch(/@connectrpc|\bfetch\s*\(|node:https?|axios/iu);
+  });
+
   it("derives the FORCE-RLS Credit scope from the opaque access pair", () => {
     const resolver = routine("resolve_media_access");
     expect(resolver).toContain("projection_reservation_digest=p_projection_reservation_digest");
     expect(resolver).toContain("PERFORM set_config('app.site_id',resolved_site_ref,true)");
+    expect(resolver).toContain("LEAST(authority.expires_at,hold.expires_at,segment.expires_at)");
     expect(resolver).not.toContain("p_site_ref");
   });
 
@@ -94,6 +115,41 @@ describe("Media/Artifact image vertical database boundary", () => {
     expect(commit).toContain("authority.handle_digest=journal.access_authorization_handle_digest");
     expect(commit).toContain("authority.projection_reservation_digest=journal.projection_reservation_digest");
     expect(commit).toContain("authority.expires_at>statement_timestamp()");
+    expect(commit).toContain("authority.execution_budget_root_ref=journal.credit_execution_budget_root_ref");
+    expect(commit).toContain("authority.input_policy_decision_ref=journal.trust_input_decision_ref");
+    expect(commit).toContain("root.root_allocation_ref=journal_record.credit_parent_allocation_ref");
+    expect(commit).toContain("segment.state='committed'");
+    expect(begin).toContain("LEAST(authority.expires_at,hold.expires_at,segment.expires_at)");
+    expect(commit).toContain("segment.expires_at>=journal_record.credit_expires_at");
+    expect(commit).toContain(
+      "surface.default_model_option_revision_ref=journal_record.model_option_revision_ref",
+    );
+    expect(commit).toContain("credit_record->>'executionBudgetRootRef'<>journal_record.credit_execution_budget_root_ref::TEXT");
+    expect(commit).toContain("p_record->>'trustInputDecisionRef'<>journal_record.trust_input_decision_ref");
+  });
+
+  it("accepts later sibling allocations while proving the exact child reservation fence", () => {
+    const commit = routine("commit_media_image_operation");
+    expect(commit).not.toContain(
+      "parent.current_revision=journal_record.credit_parent_expected_revision+1",
+    );
+    expect(commit).toContain(
+      "credit_receipt.parent_resulting_revision=journal_record.credit_parent_expected_revision+1",
+    );
+    expect(commit).toContain("credit_receipt.parent_expected_epoch=journal_record.credit_parent_expected_epoch");
+    expect(commit).toContain("credit_receipt.business_operation_key=journal_record.command_ref");
+    expect(commit).toContain("credit_receipt.request_digest=journal_record.owner_request_digest");
+    expect(commit).toContain("child.current_revision=credit_receipt.child_initial_revision");
+    expect(commit).toContain("child_revision.allocation_epoch=credit_receipt.child_initial_epoch");
+    expect(commit).toContain("child_revision.state='active'");
+  });
+
+  it("keeps command recovery and operation reads on the exact issuing access handle", () => {
+    const recover = routine("recover_agent_media_command");
+    const get = routine("get_agent_media_operation");
+    expect(recover).toContain("journal.access_authorization_handle_digest=authority.handle_digest");
+    expect(get).toContain("journal.access_authorization_handle_digest=authority.handle_digest");
+    expect(get).toContain("journal.operation_ref=operation.operation_ref");
   });
 
   it("binds the Credit child receipt to the same Media operation and full allocation lineage", () => {

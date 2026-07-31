@@ -16,7 +16,7 @@ export type {
   ImageProviderRequest,
   MediaDefinitionCanonicalizer,
   MediaImageAdmissionOwnerPort,
-  MediaImageCreditAllocationPort,
+  MediaImageLocalCreditAllocationOwner,
   MediaImageCreditSettlementPort,
   MediaImageOperationRecord,
   MediaImageOperationRepository,

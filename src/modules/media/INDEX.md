@@ -46,4 +46,14 @@ worker closure around the existing kernel. Canonical input is stored only as a b
 journals the replaceable provider effect before invocation and makes an operation terminal only after Artifact
 finalization, Trust, usage, Credit and Session projection receipts exist.
 
+Agent image commands are isolated by the exact opaque access-handle digest that issued them; a different run/session handle
+cannot recover or read the operation merely because it resolves to the same subject and project. The command journal freezes
+the resolved Definition, model publication, Trust decision, Credit root/parent, parent revision and epoch, consumption scope,
+and expiry before child allocation. Commit revalidates those owner facts and the durable Credit reservation receipt rather
+than trusting caller JSON.
+
+Media child Credit derivation is a same-process Platform owner operation inside the existing PostgreSQL unit of work. Production
+composition fixes this adapter to the native Credit authority; it cannot inject an HTTP/RPC client or start an independent
+transaction while the Media transaction is open. GA still sees only opaque Platform receipts and references.
+
 Development fakes live under `infrastructure/dev` and advertise `developmentOnly`. They are not production adapters.
