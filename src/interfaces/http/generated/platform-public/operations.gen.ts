@@ -45,18 +45,27 @@ import type {
   ConfirmTotpEnrollmentData,
   ConfirmTotpEnrollmentError,
   ConfirmTotpEnrollmentResponse,
+  CorrectMemoryEntryData,
+  CorrectMemoryEntryError,
+  CorrectMemoryEntryResponse,
   CreateAssetUploadIntentData,
   CreateAssetUploadIntentError,
   CreateAssetUploadIntentResponse,
   CreateIdentitySessionData,
   CreateIdentitySessionError,
   CreateIdentitySessionResponse,
+  DeprioritizeMemoryEntryData,
+  DeprioritizeMemoryEntryError,
+  DeprioritizeMemoryEntryResponse,
   DisableTotpData,
   DisableTotpError,
   DisableTotpResponse,
   ExchangeProductContextData,
   ExchangeProductContextError,
   ExchangeProductContextResponse,
+  ForgetMemoryEntryData,
+  ForgetMemoryEntryError,
+  ForgetMemoryEntryResponse,
   GetArtifactData,
   GetArtifactError,
   GetArtifactResponse,
@@ -78,6 +87,18 @@ import type {
   GetMediaOperationDefinitionResponse,
   GetMediaOperationError,
   GetMediaOperationResponse,
+  GetMemoryEntryData,
+  GetMemoryEntryError,
+  GetMemoryEntryResponse,
+  GetMemoryExportData,
+  GetMemoryExportError,
+  GetMemoryExportResponse,
+  GetMemoryImportData,
+  GetMemoryImportError,
+  GetMemoryImportResponse,
+  GetMemorySettingsData,
+  GetMemorySettingsError,
+  GetMemorySettingsResponse,
   GetPersonalContextData,
   GetPersonalContextError,
   GetPersonalContextResponse,
@@ -120,9 +141,18 @@ import type {
   ListMediaOperationsData,
   ListMediaOperationsError,
   ListMediaOperationsResponse,
+  ListMemoryEntriesData,
+  ListMemoryEntriesError,
+  ListMemoryEntriesResponse,
+  ListMemoryEntryHistoryData,
+  ListMemoryEntryHistoryError,
+  ListMemoryEntryHistoryResponse,
   PreviewRedemptionData,
   PreviewRedemptionError,
   PreviewRedemptionResponse,
+  PrioritizeMemoryEntryData,
+  PrioritizeMemoryEntryError,
+  PrioritizeMemoryEntryResponse,
   QuoteMediaOperationData,
   QuoteMediaOperationError,
   QuoteMediaOperationResponse,
@@ -135,6 +165,9 @@ import type {
   RecoverMediaOperationCommandData,
   RecoverMediaOperationCommandError,
   RecoverMediaOperationCommandResponse,
+  RecoverMemoryCommandData,
+  RecoverMemoryCommandError,
+  RecoverMemoryCommandResponse,
   RecoverRedemptionCommandData,
   RecoverRedemptionCommandError,
   RecoverRedemptionCommandResponse,
@@ -147,9 +180,24 @@ import type {
   RegenerateRecoveryCodesData,
   RegenerateRecoveryCodesError,
   RegenerateRecoveryCodesResponse,
+  RememberMemoryEntryData,
+  RememberMemoryEntryError,
+  RememberMemoryEntryResponse,
+  RequestMemoryExportData,
+  RequestMemoryExportError,
+  RequestMemoryExportResponse,
+  RequestMemoryImportData,
+  RequestMemoryImportError,
+  RequestMemoryImportResponse,
   ResendEmailVerificationData,
   ResendEmailVerificationError,
   ResendEmailVerificationResponse,
+  ResetMemorySpaceData,
+  ResetMemorySpaceError,
+  ResetMemorySpaceResponse,
+  RestoreMemoryEntryRevisionData,
+  RestoreMemoryEntryRevisionError,
+  RestoreMemoryEntryRevisionResponse,
   RevokeArtifactDeliveryAuthorizationData,
   RevokeArtifactDeliveryAuthorizationError,
   RevokeArtifactDeliveryAuthorizationResponse,
@@ -159,6 +207,9 @@ import type {
   SubmitMediaOperationData,
   SubmitMediaOperationError,
   SubmitMediaOperationResponse,
+  UpdateMemorySettingsData,
+  UpdateMemorySettingsError,
+  UpdateMemorySettingsResponse,
 } from './types.gen.js';
 
 import {
@@ -214,6 +265,10 @@ import {
   zConfirmTotpEnrollmentBody,
   zConfirmTotpEnrollmentHeaders,
   zConfirmTotpEnrollmentResponse,
+  zCorrectMemoryEntryBody,
+  zCorrectMemoryEntryHeaders,
+  zCorrectMemoryEntryPath,
+  zCorrectMemoryEntryResponse,
   zCreateAssetUploadIntentBody,
   zCreateAssetUploadIntentHeaders,
   zCreateAssetUploadIntentPath,
@@ -221,12 +276,20 @@ import {
   zCreateIdentitySessionBody,
   zCreateIdentitySessionHeaders,
   zCreateIdentitySessionResponse,
+  zDeprioritizeMemoryEntryBody,
+  zDeprioritizeMemoryEntryHeaders,
+  zDeprioritizeMemoryEntryPath,
+  zDeprioritizeMemoryEntryResponse,
   zDisableTotpBody,
   zDisableTotpHeaders,
   zDisableTotpResponse,
   zExchangeProductContextBody,
   zExchangeProductContextHeaders,
   zExchangeProductContextResponse,
+  zForgetMemoryEntryBody,
+  zForgetMemoryEntryHeaders,
+  zForgetMemoryEntryPath,
+  zForgetMemoryEntryResponse,
   zGetArtifactHeaders,
   zGetArtifactPath,
   zGetArtifactResponse,
@@ -247,6 +310,17 @@ import {
   zGetMediaOperationHeaders,
   zGetMediaOperationPath,
   zGetMediaOperationResponse,
+  zGetMemoryEntryHeaders,
+  zGetMemoryEntryPath,
+  zGetMemoryEntryResponse,
+  zGetMemoryExportHeaders,
+  zGetMemoryExportPath,
+  zGetMemoryExportResponse,
+  zGetMemoryImportHeaders,
+  zGetMemoryImportPath,
+  zGetMemoryImportResponse,
+  zGetMemorySettingsHeaders,
+  zGetMemorySettingsResponse,
   zGetPersonalContextHeaders,
   zGetPersonalContextResponse,
   zGetPublicCommandReceiptHeaders,
@@ -293,9 +367,20 @@ import {
   zListMediaOperationsPath,
   zListMediaOperationsQuery,
   zListMediaOperationsResponse,
+  zListMemoryEntriesHeaders,
+  zListMemoryEntriesQuery,
+  zListMemoryEntriesResponse,
+  zListMemoryEntryHistoryHeaders,
+  zListMemoryEntryHistoryPath,
+  zListMemoryEntryHistoryQuery,
+  zListMemoryEntryHistoryResponse,
   zPreviewRedemptionBody,
   zPreviewRedemptionHeaders,
   zPreviewRedemptionResponse,
+  zPrioritizeMemoryEntryBody,
+  zPrioritizeMemoryEntryHeaders,
+  zPrioritizeMemoryEntryPath,
+  zPrioritizeMemoryEntryResponse,
   zQuoteMediaOperationBody,
   zQuoteMediaOperationHeaders,
   zQuoteMediaOperationPath,
@@ -309,6 +394,9 @@ import {
   zRecoverMediaOperationCommandHeaders,
   zRecoverMediaOperationCommandPath,
   zRecoverMediaOperationCommandResponse,
+  zRecoverMemoryCommandHeaders,
+  zRecoverMemoryCommandPath,
+  zRecoverMemoryCommandResponse,
   zRecoverRedemptionCommandHeaders,
   zRecoverRedemptionCommandResponse,
   zRedeemArtifactDeliveryAuthorizationHeaders,
@@ -320,9 +408,25 @@ import {
   zRegenerateRecoveryCodesBody,
   zRegenerateRecoveryCodesHeaders,
   zRegenerateRecoveryCodesResponse,
+  zRememberMemoryEntryBody,
+  zRememberMemoryEntryHeaders,
+  zRememberMemoryEntryResponse,
+  zRequestMemoryExportBody,
+  zRequestMemoryExportHeaders,
+  zRequestMemoryExportResponse,
+  zRequestMemoryImportBody,
+  zRequestMemoryImportHeaders,
+  zRequestMemoryImportResponse,
   zResendEmailVerificationBody,
   zResendEmailVerificationHeaders,
   zResendEmailVerificationResponse,
+  zResetMemorySpaceBody,
+  zResetMemorySpaceHeaders,
+  zResetMemorySpaceResponse,
+  zRestoreMemoryEntryRevisionBody,
+  zRestoreMemoryEntryRevisionHeaders,
+  zRestoreMemoryEntryRevisionPath,
+  zRestoreMemoryEntryRevisionResponse,
   zRevokeArtifactDeliveryAuthorizationBody,
   zRevokeArtifactDeliveryAuthorizationHeaders,
   zRevokeArtifactDeliveryAuthorizationPath,
@@ -334,6 +438,9 @@ import {
   zSubmitMediaOperationHeaders,
   zSubmitMediaOperationPath,
   zSubmitMediaOperationResponse,
+  zUpdateMemorySettingsBody,
+  zUpdateMemorySettingsHeaders,
+  zUpdateMemorySettingsResponse,
 } from './zod.gen.js';
 
 export interface PlatformPublicOperationDataMap {
@@ -352,10 +459,13 @@ export interface PlatformPublicOperationDataMap {
   readonly "completeSessionMfa": CompleteSessionMfaData;
   readonly "confirmRedemption": ConfirmRedemptionData;
   readonly "confirmTotpEnrollment": ConfirmTotpEnrollmentData;
+  readonly "correctMemoryEntry": CorrectMemoryEntryData;
   readonly "createAssetUploadIntent": CreateAssetUploadIntentData;
   readonly "createIdentitySession": CreateIdentitySessionData;
+  readonly "deprioritizeMemoryEntry": DeprioritizeMemoryEntryData;
   readonly "disableTotp": DisableTotpData;
   readonly "exchangeProductContext": ExchangeProductContextData;
+  readonly "forgetMemoryEntry": ForgetMemoryEntryData;
   readonly "getArtifact": GetArtifactData;
   readonly "getArtifactVersion": GetArtifactVersionData;
   readonly "getAssetUploadStatus": GetAssetUploadStatusData;
@@ -363,6 +473,10 @@ export interface PlatformPublicOperationDataMap {
   readonly "getCreditSummary": GetCreditSummaryData;
   readonly "getMediaOperation": GetMediaOperationData;
   readonly "getMediaOperationDefinition": GetMediaOperationDefinitionData;
+  readonly "getMemoryEntry": GetMemoryEntryData;
+  readonly "getMemoryExport": GetMemoryExportData;
+  readonly "getMemoryImport": GetMemoryImportData;
+  readonly "getMemorySettings": GetMemorySettingsData;
   readonly "getPersonalContext": GetPersonalContextData;
   readonly "getPublicCommandReceipt": GetPublicCommandReceiptData;
   readonly "getRedemptionReceipt": GetRedemptionReceiptData;
@@ -377,19 +491,29 @@ export interface PlatformPublicOperationDataMap {
   readonly "listMediaOperationDefinitions": ListMediaOperationDefinitionsData;
   readonly "listMediaOperationModelOptions": ListMediaOperationModelOptionsData;
   readonly "listMediaOperations": ListMediaOperationsData;
+  readonly "listMemoryEntries": ListMemoryEntriesData;
+  readonly "listMemoryEntryHistory": ListMemoryEntryHistoryData;
   readonly "previewRedemption": PreviewRedemptionData;
+  readonly "prioritizeMemoryEntry": PrioritizeMemoryEntryData;
   readonly "quoteMediaOperation": QuoteMediaOperationData;
   readonly "reauthenticateIdentitySession": ReauthenticateIdentitySessionData;
   readonly "recoverAssetUploadCommand": RecoverAssetUploadCommandData;
   readonly "recoverMediaOperationCommand": RecoverMediaOperationCommandData;
+  readonly "recoverMemoryCommand": RecoverMemoryCommandData;
   readonly "recoverRedemptionCommand": RecoverRedemptionCommandData;
   readonly "redeemArtifactDeliveryAuthorization": RedeemArtifactDeliveryAuthorizationData;
   readonly "refreshIdentitySession": RefreshIdentitySessionData;
   readonly "regenerateRecoveryCodes": RegenerateRecoveryCodesData;
+  readonly "rememberMemoryEntry": RememberMemoryEntryData;
+  readonly "requestMemoryExport": RequestMemoryExportData;
+  readonly "requestMemoryImport": RequestMemoryImportData;
   readonly "resendEmailVerification": ResendEmailVerificationData;
+  readonly "resetMemorySpace": ResetMemorySpaceData;
+  readonly "restoreMemoryEntryRevision": RestoreMemoryEntryRevisionData;
   readonly "revokeArtifactDeliveryAuthorization": RevokeArtifactDeliveryAuthorizationData;
   readonly "revokeIdentitySessions": RevokeIdentitySessionsData;
   readonly "submitMediaOperation": SubmitMediaOperationData;
+  readonly "updateMemorySettings": UpdateMemorySettingsData;
 }
 
 export interface PlatformPublicOperationResponseMap {
@@ -408,10 +532,13 @@ export interface PlatformPublicOperationResponseMap {
   readonly "completeSessionMfa": CompleteSessionMfaResponse;
   readonly "confirmRedemption": ConfirmRedemptionResponse;
   readonly "confirmTotpEnrollment": ConfirmTotpEnrollmentResponse;
+  readonly "correctMemoryEntry": CorrectMemoryEntryResponse;
   readonly "createAssetUploadIntent": CreateAssetUploadIntentResponse;
   readonly "createIdentitySession": CreateIdentitySessionResponse;
+  readonly "deprioritizeMemoryEntry": DeprioritizeMemoryEntryResponse;
   readonly "disableTotp": DisableTotpResponse;
   readonly "exchangeProductContext": ExchangeProductContextResponse;
+  readonly "forgetMemoryEntry": ForgetMemoryEntryResponse;
   readonly "getArtifact": GetArtifactResponse;
   readonly "getArtifactVersion": GetArtifactVersionResponse;
   readonly "getAssetUploadStatus": GetAssetUploadStatusResponse;
@@ -419,6 +546,10 @@ export interface PlatformPublicOperationResponseMap {
   readonly "getCreditSummary": GetCreditSummaryResponse;
   readonly "getMediaOperation": GetMediaOperationResponse;
   readonly "getMediaOperationDefinition": GetMediaOperationDefinitionResponse;
+  readonly "getMemoryEntry": GetMemoryEntryResponse;
+  readonly "getMemoryExport": GetMemoryExportResponse;
+  readonly "getMemoryImport": GetMemoryImportResponse;
+  readonly "getMemorySettings": GetMemorySettingsResponse;
   readonly "getPersonalContext": GetPersonalContextResponse;
   readonly "getPublicCommandReceipt": GetPublicCommandReceiptResponse;
   readonly "getRedemptionReceipt": GetRedemptionReceiptResponse;
@@ -433,19 +564,29 @@ export interface PlatformPublicOperationResponseMap {
   readonly "listMediaOperationDefinitions": ListMediaOperationDefinitionsResponse;
   readonly "listMediaOperationModelOptions": ListMediaOperationModelOptionsResponse;
   readonly "listMediaOperations": ListMediaOperationsResponse;
+  readonly "listMemoryEntries": ListMemoryEntriesResponse;
+  readonly "listMemoryEntryHistory": ListMemoryEntryHistoryResponse;
   readonly "previewRedemption": PreviewRedemptionResponse;
+  readonly "prioritizeMemoryEntry": PrioritizeMemoryEntryResponse;
   readonly "quoteMediaOperation": QuoteMediaOperationResponse;
   readonly "reauthenticateIdentitySession": ReauthenticateIdentitySessionResponse;
   readonly "recoverAssetUploadCommand": RecoverAssetUploadCommandResponse;
   readonly "recoverMediaOperationCommand": RecoverMediaOperationCommandResponse;
+  readonly "recoverMemoryCommand": RecoverMemoryCommandResponse;
   readonly "recoverRedemptionCommand": RecoverRedemptionCommandResponse;
   readonly "redeemArtifactDeliveryAuthorization": RedeemArtifactDeliveryAuthorizationResponse;
   readonly "refreshIdentitySession": RefreshIdentitySessionResponse;
   readonly "regenerateRecoveryCodes": RegenerateRecoveryCodesResponse;
+  readonly "rememberMemoryEntry": RememberMemoryEntryResponse;
+  readonly "requestMemoryExport": RequestMemoryExportResponse;
+  readonly "requestMemoryImport": RequestMemoryImportResponse;
   readonly "resendEmailVerification": ResendEmailVerificationResponse;
+  readonly "resetMemorySpace": ResetMemorySpaceResponse;
+  readonly "restoreMemoryEntryRevision": RestoreMemoryEntryRevisionResponse;
   readonly "revokeArtifactDeliveryAuthorization": RevokeArtifactDeliveryAuthorizationResponse;
   readonly "revokeIdentitySessions": RevokeIdentitySessionsResponse;
   readonly "submitMediaOperation": SubmitMediaOperationResponse;
+  readonly "updateMemorySettings": UpdateMemorySettingsResponse;
 }
 
 export interface PlatformPublicOperationErrorMap {
@@ -464,10 +605,13 @@ export interface PlatformPublicOperationErrorMap {
   readonly "completeSessionMfa": CompleteSessionMfaError;
   readonly "confirmRedemption": ConfirmRedemptionError;
   readonly "confirmTotpEnrollment": ConfirmTotpEnrollmentError;
+  readonly "correctMemoryEntry": CorrectMemoryEntryError;
   readonly "createAssetUploadIntent": CreateAssetUploadIntentError;
   readonly "createIdentitySession": CreateIdentitySessionError;
+  readonly "deprioritizeMemoryEntry": DeprioritizeMemoryEntryError;
   readonly "disableTotp": DisableTotpError;
   readonly "exchangeProductContext": ExchangeProductContextError;
+  readonly "forgetMemoryEntry": ForgetMemoryEntryError;
   readonly "getArtifact": GetArtifactError;
   readonly "getArtifactVersion": GetArtifactVersionError;
   readonly "getAssetUploadStatus": GetAssetUploadStatusError;
@@ -475,6 +619,10 @@ export interface PlatformPublicOperationErrorMap {
   readonly "getCreditSummary": GetCreditSummaryError;
   readonly "getMediaOperation": GetMediaOperationError;
   readonly "getMediaOperationDefinition": GetMediaOperationDefinitionError;
+  readonly "getMemoryEntry": GetMemoryEntryError;
+  readonly "getMemoryExport": GetMemoryExportError;
+  readonly "getMemoryImport": GetMemoryImportError;
+  readonly "getMemorySettings": GetMemorySettingsError;
   readonly "getPersonalContext": GetPersonalContextError;
   readonly "getPublicCommandReceipt": GetPublicCommandReceiptError;
   readonly "getRedemptionReceipt": GetRedemptionReceiptError;
@@ -489,19 +637,29 @@ export interface PlatformPublicOperationErrorMap {
   readonly "listMediaOperationDefinitions": ListMediaOperationDefinitionsError;
   readonly "listMediaOperationModelOptions": ListMediaOperationModelOptionsError;
   readonly "listMediaOperations": ListMediaOperationsError;
+  readonly "listMemoryEntries": ListMemoryEntriesError;
+  readonly "listMemoryEntryHistory": ListMemoryEntryHistoryError;
   readonly "previewRedemption": PreviewRedemptionError;
+  readonly "prioritizeMemoryEntry": PrioritizeMemoryEntryError;
   readonly "quoteMediaOperation": QuoteMediaOperationError;
   readonly "reauthenticateIdentitySession": ReauthenticateIdentitySessionError;
   readonly "recoverAssetUploadCommand": RecoverAssetUploadCommandError;
   readonly "recoverMediaOperationCommand": RecoverMediaOperationCommandError;
+  readonly "recoverMemoryCommand": RecoverMemoryCommandError;
   readonly "recoverRedemptionCommand": RecoverRedemptionCommandError;
   readonly "redeemArtifactDeliveryAuthorization": RedeemArtifactDeliveryAuthorizationError;
   readonly "refreshIdentitySession": RefreshIdentitySessionError;
   readonly "regenerateRecoveryCodes": RegenerateRecoveryCodesError;
+  readonly "rememberMemoryEntry": RememberMemoryEntryError;
+  readonly "requestMemoryExport": RequestMemoryExportError;
+  readonly "requestMemoryImport": RequestMemoryImportError;
   readonly "resendEmailVerification": ResendEmailVerificationError;
+  readonly "resetMemorySpace": ResetMemorySpaceError;
+  readonly "restoreMemoryEntryRevision": RestoreMemoryEntryRevisionError;
   readonly "revokeArtifactDeliveryAuthorization": RevokeArtifactDeliveryAuthorizationError;
   readonly "revokeIdentitySessions": RevokeIdentitySessionsError;
   readonly "submitMediaOperation": SubmitMediaOperationError;
+  readonly "updateMemorySettings": UpdateMemorySettingsError;
 }
 
 export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
@@ -730,6 +888,21 @@ export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
     }),
     responseSchema: zConfirmTotpEnrollmentResponse,
   }),
+  "correctMemoryEntry": Object.freeze({
+    method: "POST",
+    path: "/v1/memory/entries/{entryRef}:correct",
+    mutation: true,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200,202]),
+    requestSchemas: Object.freeze({
+      body: zCorrectMemoryEntryBody,
+      headers: zCorrectMemoryEntryHeaders,
+      path: zCorrectMemoryEntryPath,
+      query: null,
+    }),
+    responseSchema: zCorrectMemoryEntryResponse,
+  }),
   "createAssetUploadIntent": Object.freeze({
     method: "POST",
     path: "/v1/projects/{projectRef}/asset-upload-intents",
@@ -760,6 +933,21 @@ export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
     }),
     responseSchema: zCreateIdentitySessionResponse,
   }),
+  "deprioritizeMemoryEntry": Object.freeze({
+    method: "POST",
+    path: "/v1/memory/entries/{entryRef}:deprioritize",
+    mutation: true,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200,202]),
+    requestSchemas: Object.freeze({
+      body: zDeprioritizeMemoryEntryBody,
+      headers: zDeprioritizeMemoryEntryHeaders,
+      path: zDeprioritizeMemoryEntryPath,
+      query: null,
+    }),
+    responseSchema: zDeprioritizeMemoryEntryResponse,
+  }),
   "disableTotp": Object.freeze({
     method: "POST",
     path: "/v1/identity/totp/disable",
@@ -789,6 +977,21 @@ export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
       query: null,
     }),
     responseSchema: zExchangeProductContextResponse,
+  }),
+  "forgetMemoryEntry": Object.freeze({
+    method: "POST",
+    path: "/v1/memory/entries/{entryRef}:forget",
+    mutation: true,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200,202]),
+    requestSchemas: Object.freeze({
+      body: zForgetMemoryEntryBody,
+      headers: zForgetMemoryEntryHeaders,
+      path: zForgetMemoryEntryPath,
+      query: null,
+    }),
+    responseSchema: zForgetMemoryEntryResponse,
   }),
   "getArtifact": Object.freeze({
     method: "GET",
@@ -894,6 +1097,66 @@ export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
       query: null,
     }),
     responseSchema: zGetMediaOperationDefinitionResponse,
+  }),
+  "getMemoryEntry": Object.freeze({
+    method: "GET",
+    path: "/v1/memory/entries/{entryRef}",
+    mutation: false,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200]),
+    requestSchemas: Object.freeze({
+      body: null,
+      headers: zGetMemoryEntryHeaders,
+      path: zGetMemoryEntryPath,
+      query: null,
+    }),
+    responseSchema: zGetMemoryEntryResponse,
+  }),
+  "getMemoryExport": Object.freeze({
+    method: "GET",
+    path: "/v1/memory/exports/{exportRef}",
+    mutation: false,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200]),
+    requestSchemas: Object.freeze({
+      body: null,
+      headers: zGetMemoryExportHeaders,
+      path: zGetMemoryExportPath,
+      query: null,
+    }),
+    responseSchema: zGetMemoryExportResponse,
+  }),
+  "getMemoryImport": Object.freeze({
+    method: "GET",
+    path: "/v1/memory/imports/{importRef}",
+    mutation: false,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200]),
+    requestSchemas: Object.freeze({
+      body: null,
+      headers: zGetMemoryImportHeaders,
+      path: zGetMemoryImportPath,
+      query: null,
+    }),
+    responseSchema: zGetMemoryImportResponse,
+  }),
+  "getMemorySettings": Object.freeze({
+    method: "GET",
+    path: "/v1/memory/settings",
+    mutation: false,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200]),
+    requestSchemas: Object.freeze({
+      body: null,
+      headers: zGetMemorySettingsHeaders,
+      path: null,
+      query: null,
+    }),
+    responseSchema: zGetMemorySettingsResponse,
   }),
   "getPersonalContext": Object.freeze({
     method: "GET",
@@ -1105,6 +1368,36 @@ export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
     }),
     responseSchema: zListMediaOperationsResponse,
   }),
+  "listMemoryEntries": Object.freeze({
+    method: "GET",
+    path: "/v1/memory/entries",
+    mutation: false,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200]),
+    requestSchemas: Object.freeze({
+      body: null,
+      headers: zListMemoryEntriesHeaders,
+      path: null,
+      query: zListMemoryEntriesQuery,
+    }),
+    responseSchema: zListMemoryEntriesResponse,
+  }),
+  "listMemoryEntryHistory": Object.freeze({
+    method: "GET",
+    path: "/v1/memory/entries/{entryRef}/history",
+    mutation: false,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200]),
+    requestSchemas: Object.freeze({
+      body: null,
+      headers: zListMemoryEntryHistoryHeaders,
+      path: zListMemoryEntryHistoryPath,
+      query: zListMemoryEntryHistoryQuery,
+    }),
+    responseSchema: zListMemoryEntryHistoryResponse,
+  }),
   "previewRedemption": Object.freeze({
     method: "POST",
     path: "/v1/redemptions:preview",
@@ -1119,6 +1412,21 @@ export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
       query: null,
     }),
     responseSchema: zPreviewRedemptionResponse,
+  }),
+  "prioritizeMemoryEntry": Object.freeze({
+    method: "POST",
+    path: "/v1/memory/entries/{entryRef}:prioritize",
+    mutation: true,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200,202]),
+    requestSchemas: Object.freeze({
+      body: zPrioritizeMemoryEntryBody,
+      headers: zPrioritizeMemoryEntryHeaders,
+      path: zPrioritizeMemoryEntryPath,
+      query: null,
+    }),
+    responseSchema: zPrioritizeMemoryEntryResponse,
   }),
   "quoteMediaOperation": Object.freeze({
     method: "POST",
@@ -1180,6 +1488,21 @@ export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
     }),
     responseSchema: zRecoverMediaOperationCommandResponse,
   }),
+  "recoverMemoryCommand": Object.freeze({
+    method: "GET",
+    path: "/v1/memory/commands/{commandId}",
+    mutation: false,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200]),
+    requestSchemas: Object.freeze({
+      body: null,
+      headers: zRecoverMemoryCommandHeaders,
+      path: zRecoverMemoryCommandPath,
+      query: null,
+    }),
+    responseSchema: zRecoverMemoryCommandResponse,
+  }),
   "recoverRedemptionCommand": Object.freeze({
     method: "GET",
     path: "/v1/redemption-commands:recover",
@@ -1240,6 +1563,51 @@ export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
     }),
     responseSchema: zRegenerateRecoveryCodesResponse,
   }),
+  "rememberMemoryEntry": Object.freeze({
+    method: "POST",
+    path: "/v1/memory/entries",
+    mutation: true,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([201,202]),
+    requestSchemas: Object.freeze({
+      body: zRememberMemoryEntryBody,
+      headers: zRememberMemoryEntryHeaders,
+      path: null,
+      query: null,
+    }),
+    responseSchema: zRememberMemoryEntryResponse,
+  }),
+  "requestMemoryExport": Object.freeze({
+    method: "POST",
+    path: "/v1/memory/exports",
+    mutation: true,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([202]),
+    requestSchemas: Object.freeze({
+      body: zRequestMemoryExportBody,
+      headers: zRequestMemoryExportHeaders,
+      path: null,
+      query: null,
+    }),
+    responseSchema: zRequestMemoryExportResponse,
+  }),
+  "requestMemoryImport": Object.freeze({
+    method: "POST",
+    path: "/v1/memory/imports",
+    mutation: true,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([202]),
+    requestSchemas: Object.freeze({
+      body: zRequestMemoryImportBody,
+      headers: zRequestMemoryImportHeaders,
+      path: null,
+      query: null,
+    }),
+    responseSchema: zRequestMemoryImportResponse,
+  }),
   "resendEmailVerification": Object.freeze({
     method: "POST",
     path: "/v1/identity/verifications:resend",
@@ -1254,6 +1622,36 @@ export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
       query: null,
     }),
     responseSchema: zResendEmailVerificationResponse,
+  }),
+  "resetMemorySpace": Object.freeze({
+    method: "POST",
+    path: "/v1/memory:reset",
+    mutation: true,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200,202]),
+    requestSchemas: Object.freeze({
+      body: zResetMemorySpaceBody,
+      headers: zResetMemorySpaceHeaders,
+      path: null,
+      query: null,
+    }),
+    responseSchema: zResetMemorySpaceResponse,
+  }),
+  "restoreMemoryEntryRevision": Object.freeze({
+    method: "POST",
+    path: "/v1/memory/entries/{entryRef}/history/{revisionRef}:restore",
+    mutation: true,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200,202]),
+    requestSchemas: Object.freeze({
+      body: zRestoreMemoryEntryRevisionBody,
+      headers: zRestoreMemoryEntryRevisionHeaders,
+      path: zRestoreMemoryEntryRevisionPath,
+      query: null,
+    }),
+    responseSchema: zRestoreMemoryEntryRevisionResponse,
   }),
   "revokeArtifactDeliveryAuthorization": Object.freeze({
     method: "POST",
@@ -1299,6 +1697,21 @@ export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
       query: null,
     }),
     responseSchema: zSubmitMediaOperationResponse,
+  }),
+  "updateMemorySettings": Object.freeze({
+    method: "PATCH",
+    path: "/v1/memory/settings",
+    mutation: true,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200,202]),
+    requestSchemas: Object.freeze({
+      body: zUpdateMemorySettingsBody,
+      headers: zUpdateMemorySettingsHeaders,
+      path: null,
+      query: null,
+    }),
+    responseSchema: zUpdateMemorySettingsResponse,
   }),
 } as const);
 

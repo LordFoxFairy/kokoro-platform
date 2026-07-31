@@ -412,7 +412,18 @@ export const zErrorCode = z.enum([
     'ARTIFACT_DELIVERY_NOT_ALLOWED',
     'ARTIFACT_DELIVERY_AUTHORIZATION_REJECTED',
     'ARTIFACT_TEMPORARILY_UNAVAILABLE',
-    'ARTIFACT_RANGE_NOT_SATISFIABLE'
+    'ARTIFACT_RANGE_NOT_SATISFIABLE',
+    'MEMORY_INPUT_REJECTED',
+    'MEMORY_SETTINGS_UNAVAILABLE',
+    'MEMORY_ENTRY_NOT_FOUND',
+    'MEMORY_VERSION_CONFLICT',
+    'MEMORY_POLICY_REJECTED',
+    'MEMORY_NOT_RESTORABLE',
+    'MEMORY_PURGE_PENDING',
+    'MEMORY_IMPORT_REJECTED',
+    'MEMORY_EXPORT_UNAVAILABLE',
+    'MEMORY_COMMAND_CONFLICT',
+    'MEMORY_TEMPORARILY_UNAVAILABLE'
 ]);
 
 export const zErrorResponse = z.strictObject({
@@ -561,6 +572,266 @@ export const zMediaSafeFailure = z.strictObject({
 });
 
 /**
+ * Non-bearer Artifact authorization request identity. It is safe to repeat in status and command recovery, grants no byte access, and must be exchanged under the current Site workload and user session for a fresh short-lived Artifact delivery authorization.
+ */
+export const zMemoryArtifactDownloadRequest = z.strictObject({
+    artifactRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    artifactVersionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    deliveryRequestRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    purpose: z.literal('export')
+});
+
+export const zMemoryCategory = z.enum([
+    'profile',
+    'preference',
+    'fact',
+    'project_fact'
+]);
+
+export const zMemoryCommandKind = z.enum([
+    'updateMemorySettings',
+    'rememberMemoryEntry',
+    'correctMemoryEntry',
+    'restoreMemoryEntryRevision',
+    'prioritizeMemoryEntry',
+    'deprioritizeMemoryEntry',
+    'forgetMemoryEntry',
+    'resetMemorySpace',
+    'requestMemoryExport',
+    'requestMemoryImport'
+]);
+
+export const zMemoryCommandCursor = z.strictObject({
+    commandId: z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
+    commandKind: zMemoryCommandKind,
+    receiptRef: z.string().min(3).max(128),
+    receivedAt: z.iso.datetime(),
+    updatedAt: z.iso.datetime()
+});
+
+export const zMemoryCommandPendingResponse = z.strictObject({
+    command: zMemoryCommandCursor,
+    retryAfter: z.iso.datetime(),
+    state: z.enum([
+        'accepted',
+        'executing',
+        'outcome_unknown'
+    ])
+});
+
+export const zMemoryCommandRejection = z.strictObject({
+    code: z.enum([
+        'input_rejected',
+        'version_conflict',
+        'policy_rejected',
+        'not_restorable',
+        'unavailable'
+    ]),
+    retryAfter: z.iso.datetime().nullable(),
+    retryClass: z.enum([
+        'never',
+        'after_delay',
+        'after_user_action'
+    ])
+});
+
+export const zMemoryCommandRejectedResponse = z.strictObject({
+    command: zMemoryCommandCursor,
+    rejection: zMemoryCommandRejection,
+    state: z.literal('rejected')
+});
+
+export const zMemoryCorrectInput = z.strictObject({
+    content: z.string().min(1).max(16384),
+    expectedRevision: z.int().gte(1).lte(2147483647),
+    validFrom: z.iso.datetime().nullable(),
+    validTo: z.iso.datetime().nullable()
+});
+
+export const zMemoryEntryPurgedView = z.strictObject({
+    entryRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    purgeReceiptRef: z.string().min(3).max(128),
+    purgedAt: z.iso.datetime(),
+    state: z.literal('purged')
+});
+
+export const zMemoryEntryRevokedView = z.strictObject({
+    entryRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    purgeReceiptRef: z.string().min(3).max(128),
+    revokedAt: z.iso.datetime(),
+    state: z.literal('revoked_purge_pending')
+});
+
+export const zMemoryExportInput = z.strictObject({
+    format: z.literal('kokoro_memory_export_v1'),
+    includeHistory: z.boolean()
+});
+
+export const zMemoryExportState = z.enum([
+    'queued',
+    'running',
+    'ready',
+    'failed',
+    'expired',
+    'purged'
+]);
+
+export const zMemoryExportStatus = z.strictObject({
+    artifactDownloadRequest: zMemoryArtifactDownloadRequest.nullable(),
+    expiresAt: z.iso.datetime().nullable(),
+    exportRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    failureCode: z.enum([
+        'policy_rejected',
+        'source_unavailable',
+        'temporarily_unavailable'
+    ]).nullable(),
+    format: z.literal('kokoro_memory_export_v1'),
+    requestedAt: z.iso.datetime(),
+    state: zMemoryExportState,
+    updatedAt: z.iso.datetime()
+});
+
+export const zMemoryExportCommandResult = z.strictObject({
+    export: zMemoryExportStatus,
+    resultKind: z.literal('export')
+});
+
+export const zMemoryExportResponse = z.strictObject({
+    export: zMemoryExportStatus
+});
+
+/**
+ * References one currently authorized, quarantined Asset version. Platform obtains the authoritative content identity and quarantine facts directly from Asset; neither is caller input.
+ */
+export const zMemoryImportInput = z.strictObject({
+    assetRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    assetVersionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    conflictPolicy: z.literal('quarantine'),
+    format: z.literal('kokoro_memory_export_v1')
+});
+
+export const zMemoryImportState = z.enum([
+    'queued',
+    'validating',
+    'quarantined',
+    'applying',
+    'completed',
+    'rejected',
+    'failed'
+]);
+
+export const zMemoryImportStatus = z.strictObject({
+    acceptedEntryCount: z.int().gte(0).lte(100000),
+    assetRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    assetVersionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    format: z.literal('kokoro_memory_export_v1'),
+    importRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    rejectedEntryCount: z.int().gte(0).lte(100000),
+    requestedAt: z.iso.datetime(),
+    safeStatusCode: z.enum([
+        'awaiting_review',
+        'invalid_manifest',
+        'policy_rejected',
+        'temporarily_unavailable'
+    ]).nullable(),
+    state: zMemoryImportState,
+    updatedAt: z.iso.datetime()
+});
+
+export const zMemoryImportCommandResult = z.strictObject({
+    import: zMemoryImportStatus,
+    resultKind: z.literal('import')
+});
+
+export const zMemoryImportResponse = z.strictObject({
+    import: zMemoryImportStatus
+});
+
+export const zMemoryNullableRevisionRef = z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/).nullable();
+
+export const zMemoryPurgeState = z.enum(['revoked_purge_pending', 'purged']);
+
+export const zMemoryPurgeCommandResult = z.strictObject({
+    effectiveAt: z.iso.datetime(),
+    entryRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/).nullable(),
+    purgeReceiptRef: z.string().min(3).max(128),
+    purgeScope: z.enum(['entry', 'space']),
+    purgeState: zMemoryPurgeState,
+    resultKind: z.literal('purge')
+});
+
+export const zMemoryRememberInput = z.strictObject({
+    category: zMemoryCategory,
+    content: z.string().min(1).max(16384),
+    validFrom: z.iso.datetime().nullable(),
+    validTo: z.iso.datetime().nullable()
+});
+
+export const zMemoryResetInput = z.strictObject({
+    acknowledgeIrreversiblePurge: z.literal(true)
+});
+
+export const zMemoryRestoreInput = z.strictObject({
+    expectedRevision: z.int().gte(1).lte(2147483647)
+});
+
+export const zMemoryRevisionAvailableView = z.strictObject({
+    content: z.string().min(1).max(16384),
+    reason: z.enum([
+        'explicit',
+        'corrected',
+        'imported',
+        'restored'
+    ]),
+    recordedAt: z.iso.datetime(),
+    restorable: z.boolean(),
+    revision: z.int().gte(1).lte(2147483647),
+    revisionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    state: z.literal('available'),
+    supersedesRevisionRef: zMemoryNullableRevisionRef,
+    validFrom: z.iso.datetime().nullable(),
+    validTo: z.iso.datetime().nullable()
+});
+
+export const zMemoryRevisionPurgedView = z.strictObject({
+    reason: z.enum([
+        'explicit',
+        'corrected',
+        'imported',
+        'restored'
+    ]),
+    recordedAt: z.iso.datetime(),
+    restorable: z.literal(false),
+    revision: z.int().gte(1).lte(2147483647),
+    revisionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    state: z.literal('purged')
+});
+
+export const zMemoryRevisionView = z.discriminatedUnion('state', [
+    zMemoryRevisionAvailableView,
+    zMemoryRevisionPurgedView
+]);
+
+export const zMemorySettingsAxis = z.strictObject({
+    availability: z.literal('available'),
+    effective: z.boolean(),
+    policyReason: z.string().max(256).nullable(),
+    requested: z.boolean()
+});
+
+export const zMemorySourceKind = z.enum(['explicit', 'import']);
+
+export const zMemorySourceSummary = z.strictObject({
+    safeLabel: z.string().min(1).max(160),
+    sourceKind: zMemorySourceKind,
+    state: z.enum([
+        'current',
+        'restricted',
+        'unavailable'
+    ])
+});
+
+/**
  * Returned by an exact idempotent retry after the first one-time delivery was claimed. The previous payload is never replayed; the caller must read the durable receipt and, when offered, start the permitted replacement command with the caller-held receipt recovery capability.
  */
 export const zOneTimeDeliveryUnavailable = z.strictObject({
@@ -611,6 +882,15 @@ export const zArtifactPage = z.strictObject({
 
 export const zMediaOperationDefinitionPage = z.strictObject({
     items: z.array(zOperationDefinition).max(100),
+    pageInfo: zPageInfo
+});
+
+/**
+ * Revisions are append-only. Restoring an available payload always appends a new current revision; it never mutates an existing revision or rewinds the current head.
+ */
+export const zMemoryEntryHistoryPage = z.strictObject({
+    entryRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    items: z.array(zMemoryRevisionView).max(100),
     pageInfo: zPageInfo
 });
 
@@ -1218,6 +1498,114 @@ export const zMediaOperationPage = z.strictObject({
 
 export const zMediaOperationResponse = z.strictObject({
     operation: zMediaOperationView
+});
+
+export const zMemoryEntryActiveView = z.strictObject({
+    category: zMemoryCategory,
+    content: z.string().min(1).max(16384),
+    createdAt: z.iso.datetime(),
+    currentRevisionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    entryRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    entryVersion: zPositiveUint64String,
+    prioritized: z.boolean(),
+    revision: z.int().gte(1).lte(2147483647),
+    scopeKind: z.enum(['user', 'project']),
+    source: zMemorySourceSummary,
+    state: z.literal('active'),
+    updatedAt: z.iso.datetime(),
+    validFrom: z.iso.datetime().nullable(),
+    validTo: z.iso.datetime().nullable()
+});
+
+export const zMemoryEntryPage = z.strictObject({
+    items: z.array(zMemoryEntryActiveView).max(100),
+    pageInfo: zPageInfo
+});
+
+export const zMemoryEntryView = z.discriminatedUnion('state', [
+    zMemoryEntryActiveView,
+    zMemoryEntryRevokedView,
+    zMemoryEntryPurgedView
+]);
+
+export const zMemoryEntryCommandResult = z.strictObject({
+    entry: zMemoryEntryView,
+    resultKind: z.literal('entry')
+});
+
+export const zMemoryEntryResponse = z.strictObject({
+    entry: zMemoryEntryView
+});
+
+export const zMemoryForgetInput = z.strictObject({
+    acknowledgeIrreversiblePurge: z.literal(true),
+    expectedEntryVersion: zPositiveUint64String
+});
+
+export const zMemoryPriorityInput = z.strictObject({
+    expectedEntryVersion: zPositiveUint64String
+});
+
+/**
+ * A restore appends a successor and never mutates the referenced historical revision.
+ */
+export const zMemoryRestoreCommandResult = z.strictObject({
+    entry: zMemoryEntryActiveView,
+    newRevision: z.int().gte(2).lte(2147483647),
+    newRevisionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    restoredFromRevisionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    resultKind: z.literal('restored')
+});
+
+export const zMemorySettings = z.strictObject({
+    automaticLearning: z.strictObject({
+        availability: z.literal('unavailable_until_memory_m3'),
+        effective: z.literal(false),
+        policyReason: z.string().max(256).nullable(),
+        requested: z.literal(false)
+    }),
+    observedAt: z.iso.datetime(),
+    pastChatReference: z.strictObject({
+        availability: z.literal('unavailable_until_session_m1a'),
+        effective: z.literal(false),
+        policyReason: z.string().max(256).nullable(),
+        requested: z.literal(false)
+    }),
+    revision: zPositiveUint64String,
+    savedMemoryUse: zMemorySettingsAxis
+});
+
+export const zMemorySettingsCommandResult = z.strictObject({
+    resultKind: z.literal('settings'),
+    settings: zMemorySettings
+});
+
+export const zMemoryCommandResult = z.discriminatedUnion('resultKind', [
+    zMemoryEntryCommandResult,
+    zMemoryRestoreCommandResult,
+    zMemoryPurgeCommandResult,
+    zMemorySettingsCommandResult,
+    zMemoryExportCommandResult,
+    zMemoryImportCommandResult
+]);
+
+export const zMemoryCommandSucceededResponse = z.strictObject({
+    command: zMemoryCommandCursor,
+    result: zMemoryCommandResult,
+    state: z.literal('succeeded')
+});
+
+export const zMemoryCommandResponse = z.discriminatedUnion('state', [
+    zMemoryCommandPendingResponse.extend({ state: z.literal('accepted') }),
+    zMemoryCommandPendingResponse.extend({ state: z.literal('executing') }),
+    zMemoryCommandPendingResponse.extend({ state: z.literal('outcome_unknown') }),
+    zMemoryCommandSucceededResponse,
+    zMemoryCommandRejectedResponse
+]);
+
+export const zMemorySettingsUpdateInput = z.strictObject({
+    expectedRevision: zPositiveUint64String,
+    savedMemoryUseRequested: z.boolean()
 });
 
 export const zProjectionRevision = z.string().regex(/^(?:0|[1-9][0-9]{0,18})$/);
@@ -2090,6 +2478,20 @@ export const zMediaDefinitionRef = z.string().min(1).max(256).regex(/^[A-Za-z0-9
 
 export const zMediaOperationRef = z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/);
 
+export const zMemoryCategoryFilter = zMemoryCategory;
+
+export const zMemoryCommandId = z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/);
+
+export const zMemoryEntryRef = z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/);
+
+export const zMemoryExportRef = z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/);
+
+export const zMemoryImportRef = z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/);
+
+export const zMemoryRevisionRef = z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/);
+
+export const zMemorySourceFilter = zMemorySourceKind;
+
 /**
  * Opaque owner-bound cursor. Clients must never inspect or synthesize it.
  */
@@ -2133,6 +2535,24 @@ export const zMediaOperationCancelRequest = zMediaOperationCancelInput;
 export const zMediaOperationQuoteRequest = zMediaOperationInput;
 
 export const zMediaOperationSubmitRequest = zMediaOperationInput;
+
+export const zMemoryCorrectRequest = zMemoryCorrectInput;
+
+export const zMemoryExportRequest = zMemoryExportInput;
+
+export const zMemoryForgetRequest = zMemoryForgetInput;
+
+export const zMemoryImportRequest = zMemoryImportInput;
+
+export const zMemoryPriorityRequest = zMemoryPriorityInput;
+
+export const zMemoryRememberRequest = zMemoryRememberInput;
+
+export const zMemoryResetRequest = zMemoryResetInput;
+
+export const zMemoryRestoreRequest = zMemoryRestoreInput;
+
+export const zMemorySettingsUpdateRequest = zMemorySettingsUpdateInput;
 
 export const zOtpRequest = zOtpInput;
 
@@ -2541,6 +2961,262 @@ export const zGetUsageDetailPath = z.strictObject({
  * Rated usage and allocation lineage without provider credentials or GA internals.
  */
 export const zGetUsageDetailResponse = zUsageDetailResponse;
+
+export const zRecoverMemoryCommandHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1')
+});
+
+export const zRecoverMemoryCommandPath = z.strictObject({
+    commandId: z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/)
+});
+
+/**
+ * Durable Memory command state recoverable by the original command identity.
+ */
+export const zRecoverMemoryCommandResponse = zMemoryCommandResponse;
+
+export const zListMemoryEntriesHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1')
+});
+
+export const zListMemoryEntriesQuery = z.strictObject({
+    category: zMemoryCategory.optional(),
+    source: zMemorySourceKind.optional(),
+    cursor: z.string().min(1).max(2048).optional(),
+    limit: z.int().gte(1).lte(100).optional().default(50)
+});
+
+/**
+ * A bounded caller-scoped page of explicit Memory entries.
+ */
+export const zListMemoryEntriesResponse = zMemoryEntryPage;
+
+export const zRememberMemoryEntryBody = zMemoryRememberRequest;
+
+export const zRememberMemoryEntryHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1'),
+    'X-Kokoro-Command-Id': z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
+    'Idempotency-Key': z.string().min(16).max(191),
+    'X-CSRF-Token': z.string().min(32).max(512)
+});
+
+/**
+ * Durable Memory command state recoverable by the original command identity.
+ */
+export const zRememberMemoryEntryResponse = zMemoryCommandResponse;
+
+export const zGetMemoryEntryHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1')
+});
+
+export const zGetMemoryEntryPath = z.strictObject({
+    entryRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)
+});
+
+/**
+ * One current entry projection or a content-free revoked/purged projection.
+ */
+export const zGetMemoryEntryResponse = zMemoryEntryResponse;
+
+export const zListMemoryEntryHistoryHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1')
+});
+
+export const zListMemoryEntryHistoryPath = z.strictObject({
+    entryRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)
+});
+
+export const zListMemoryEntryHistoryQuery = z.strictObject({
+    cursor: z.string().min(1).max(2048).optional(),
+    limit: z.int().gte(1).lte(100).optional().default(50)
+});
+
+/**
+ * A bounded immutable revision page; purged payloads never reappear.
+ */
+export const zListMemoryEntryHistoryResponse = zMemoryEntryHistoryPage;
+
+export const zRestoreMemoryEntryRevisionBody = zMemoryRestoreRequest;
+
+export const zRestoreMemoryEntryRevisionHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1'),
+    'X-Kokoro-Command-Id': z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
+    'Idempotency-Key': z.string().min(16).max(191),
+    'X-CSRF-Token': z.string().min(32).max(512)
+});
+
+export const zRestoreMemoryEntryRevisionPath = z.strictObject({
+    entryRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    revisionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)
+});
+
+/**
+ * Durable Memory command state recoverable by the original command identity.
+ */
+export const zRestoreMemoryEntryRevisionResponse = zMemoryCommandResponse;
+
+export const zCorrectMemoryEntryBody = zMemoryCorrectRequest;
+
+export const zCorrectMemoryEntryHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1'),
+    'X-Kokoro-Command-Id': z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
+    'Idempotency-Key': z.string().min(16).max(191),
+    'X-CSRF-Token': z.string().min(32).max(512)
+});
+
+export const zCorrectMemoryEntryPath = z.strictObject({
+    entryRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)
+});
+
+/**
+ * Durable Memory command state recoverable by the original command identity.
+ */
+export const zCorrectMemoryEntryResponse = zMemoryCommandResponse;
+
+export const zDeprioritizeMemoryEntryBody = zMemoryPriorityRequest;
+
+export const zDeprioritizeMemoryEntryHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1'),
+    'X-Kokoro-Command-Id': z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
+    'Idempotency-Key': z.string().min(16).max(191),
+    'X-CSRF-Token': z.string().min(32).max(512)
+});
+
+export const zDeprioritizeMemoryEntryPath = z.strictObject({
+    entryRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)
+});
+
+/**
+ * Durable Memory command state recoverable by the original command identity.
+ */
+export const zDeprioritizeMemoryEntryResponse = zMemoryCommandResponse;
+
+export const zForgetMemoryEntryBody = zMemoryForgetRequest;
+
+export const zForgetMemoryEntryHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1'),
+    'X-Kokoro-Command-Id': z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
+    'Idempotency-Key': z.string().min(16).max(191),
+    'X-CSRF-Token': z.string().min(32).max(512)
+});
+
+export const zForgetMemoryEntryPath = z.strictObject({
+    entryRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)
+});
+
+/**
+ * Durable Memory command state recoverable by the original command identity.
+ */
+export const zForgetMemoryEntryResponse = zMemoryCommandResponse;
+
+export const zPrioritizeMemoryEntryBody = zMemoryPriorityRequest;
+
+export const zPrioritizeMemoryEntryHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1'),
+    'X-Kokoro-Command-Id': z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
+    'Idempotency-Key': z.string().min(16).max(191),
+    'X-CSRF-Token': z.string().min(32).max(512)
+});
+
+export const zPrioritizeMemoryEntryPath = z.strictObject({
+    entryRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)
+});
+
+/**
+ * Durable Memory command state recoverable by the original command identity.
+ */
+export const zPrioritizeMemoryEntryResponse = zMemoryCommandResponse;
+
+export const zRequestMemoryExportBody = zMemoryExportRequest;
+
+export const zRequestMemoryExportHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1'),
+    'X-Kokoro-Command-Id': z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
+    'Idempotency-Key': z.string().min(16).max(191),
+    'X-CSRF-Token': z.string().min(32).max(512)
+});
+
+/**
+ * Durable Memory command state recoverable by the original command identity.
+ */
+export const zRequestMemoryExportResponse = zMemoryCommandResponse;
+
+export const zGetMemoryExportHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1')
+});
+
+export const zGetMemoryExportPath = z.strictObject({
+    exportRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)
+});
+
+/**
+ * Current asynchronous export status with at most one non-bearer Artifact authorization request.
+ */
+export const zGetMemoryExportResponse = zMemoryExportResponse;
+
+export const zRequestMemoryImportBody = zMemoryImportRequest;
+
+export const zRequestMemoryImportHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1'),
+    'X-Kokoro-Command-Id': z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
+    'Idempotency-Key': z.string().min(16).max(191),
+    'X-CSRF-Token': z.string().min(32).max(512)
+});
+
+/**
+ * Durable Memory command state recoverable by the original command identity.
+ */
+export const zRequestMemoryImportResponse = zMemoryCommandResponse;
+
+export const zGetMemoryImportHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1')
+});
+
+export const zGetMemoryImportPath = z.strictObject({
+    importRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)
+});
+
+/**
+ * Current asynchronous quarantine, validation, and apply status.
+ */
+export const zGetMemoryImportResponse = zMemoryImportResponse;
+
+export const zGetMemorySettingsHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1')
+});
+
+/**
+ * Effective caller-scoped settings with unavailable successor axes marked explicitly.
+ */
+export const zGetMemorySettingsResponse = zMemorySettings;
+
+export const zUpdateMemorySettingsBody = zMemorySettingsUpdateRequest;
+
+export const zUpdateMemorySettingsHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1'),
+    'X-Kokoro-Command-Id': z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
+    'Idempotency-Key': z.string().min(16).max(191),
+    'X-CSRF-Token': z.string().min(32).max(512)
+});
+
+/**
+ * Durable Memory command state recoverable by the original command identity.
+ */
+export const zUpdateMemorySettingsResponse = zMemoryCommandResponse;
+
+export const zResetMemorySpaceBody = zMemoryResetRequest;
+
+export const zResetMemorySpaceHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1'),
+    'X-Kokoro-Command-Id': z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
+    'Idempotency-Key': z.string().min(16).max(191),
+    'X-CSRF-Token': z.string().min(32).max(512)
+});
+
+/**
+ * Durable Memory command state recoverable by the original command identity.
+ */
+export const zResetMemorySpaceResponse = zMemoryCommandResponse;
 
 export const zExchangeProductContextBody = zCommandRequest;
 

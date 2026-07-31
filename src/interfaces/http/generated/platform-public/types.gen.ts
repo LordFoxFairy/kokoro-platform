@@ -524,7 +524,7 @@ export type EmailVerificationTransactionResponse = {
     transaction: EmailVerificationTransaction;
 };
 
-export type ErrorCode = 'INVALID_REQUEST' | 'CONTRACT_VERSION_UNSUPPORTED' | 'AUTHENTICATION_REQUIRED' | 'AUTHENTICATION_FAILED' | 'AUTH_TRANSACTION_EXPIRED' | 'MFA_REQUIRED' | 'FORBIDDEN' | 'NOT_FOUND' | 'CONFLICT' | 'RATE_LIMITED' | 'RISK_UNAVAILABLE' | 'SITE_UNAVAILABLE' | 'OUTCOME_UNKNOWN' | 'INTERNAL_UNAVAILABLE' | 'REDEEM_NOT_ACCEPTED' | 'REDEEM_TEMPORARILY_UNAVAILABLE' | 'IDEMPOTENCY_CONFLICT' | 'ACQUISITION_CHANNEL_DISABLED' | 'ASSET_NOT_ACCEPTED' | 'ASSET_UPLOAD_CONFLICT' | 'ASSET_QUOTA_EXCEEDED' | 'ASSET_TEMPORARILY_UNAVAILABLE' | 'MEDIA_INPUT_REJECTED' | 'MEDIA_CALLER_FINGERPRINT_MISMATCH' | 'MEDIA_DEFINITION_UNAVAILABLE' | 'MEDIA_MODEL_OPTION_UNAVAILABLE' | 'MEDIA_CREDIT_INSUFFICIENT' | 'MEDIA_POLICY_REJECTED' | 'MEDIA_OPERATION_VERSION_CONFLICT' | 'MEDIA_CANCEL_NOT_ACCEPTED' | 'MEDIA_TEMPORARILY_UNAVAILABLE' | 'PAGE_CURSOR_INVALID' | 'ARTIFACT_NOT_AVAILABLE' | 'ARTIFACT_DELIVERY_NOT_ALLOWED' | 'ARTIFACT_DELIVERY_AUTHORIZATION_REJECTED' | 'ARTIFACT_TEMPORARILY_UNAVAILABLE' | 'ARTIFACT_RANGE_NOT_SATISFIABLE';
+export type ErrorCode = 'INVALID_REQUEST' | 'CONTRACT_VERSION_UNSUPPORTED' | 'AUTHENTICATION_REQUIRED' | 'AUTHENTICATION_FAILED' | 'AUTH_TRANSACTION_EXPIRED' | 'MFA_REQUIRED' | 'FORBIDDEN' | 'NOT_FOUND' | 'CONFLICT' | 'RATE_LIMITED' | 'RISK_UNAVAILABLE' | 'SITE_UNAVAILABLE' | 'OUTCOME_UNKNOWN' | 'INTERNAL_UNAVAILABLE' | 'REDEEM_NOT_ACCEPTED' | 'REDEEM_TEMPORARILY_UNAVAILABLE' | 'IDEMPOTENCY_CONFLICT' | 'ACQUISITION_CHANNEL_DISABLED' | 'ASSET_NOT_ACCEPTED' | 'ASSET_UPLOAD_CONFLICT' | 'ASSET_QUOTA_EXCEEDED' | 'ASSET_TEMPORARILY_UNAVAILABLE' | 'MEDIA_INPUT_REJECTED' | 'MEDIA_CALLER_FINGERPRINT_MISMATCH' | 'MEDIA_DEFINITION_UNAVAILABLE' | 'MEDIA_MODEL_OPTION_UNAVAILABLE' | 'MEDIA_CREDIT_INSUFFICIENT' | 'MEDIA_POLICY_REJECTED' | 'MEDIA_OPERATION_VERSION_CONFLICT' | 'MEDIA_CANCEL_NOT_ACCEPTED' | 'MEDIA_TEMPORARILY_UNAVAILABLE' | 'PAGE_CURSOR_INVALID' | 'ARTIFACT_NOT_AVAILABLE' | 'ARTIFACT_DELIVERY_NOT_ALLOWED' | 'ARTIFACT_DELIVERY_AUTHORIZATION_REJECTED' | 'ARTIFACT_TEMPORARILY_UNAVAILABLE' | 'ARTIFACT_RANGE_NOT_SATISFIABLE' | 'MEMORY_INPUT_REJECTED' | 'MEMORY_SETTINGS_UNAVAILABLE' | 'MEMORY_ENTRY_NOT_FOUND' | 'MEMORY_VERSION_CONFLICT' | 'MEMORY_POLICY_REJECTED' | 'MEMORY_NOT_RESTORABLE' | 'MEMORY_PURGE_PENDING' | 'MEMORY_IMPORT_REJECTED' | 'MEMORY_EXPORT_UNAVAILABLE' | 'MEMORY_COMMAND_CONFLICT' | 'MEMORY_TEMPORARILY_UNAVAILABLE';
 
 export type ErrorResponse = {
     code: ErrorCode;
@@ -1050,6 +1050,323 @@ export type MediaSafeFailure = {
     code: 'input_rejected' | 'policy_rejected' | 'credit_rejected' | 'generation_failed' | 'validation_failed' | 'temporarily_unavailable' | 'outcome_unknown' | 'artifact_restricted' | 'artifact_unavailable';
     retryClass: 'never' | 'after_delay' | 'after_user_action' | 'reconcile_receipt';
     safeMessage: string;
+};
+
+/**
+ * Non-bearer Artifact authorization request identity. It is safe to repeat in status and command recovery, grants no byte access, and must be exchanged under the current Site workload and user session for a fresh short-lived Artifact delivery authorization.
+ */
+export type MemoryArtifactDownloadRequest = {
+    artifactRef: string;
+    artifactVersionRef: string;
+    deliveryRequestRef: string;
+    purpose: 'export';
+};
+
+export type MemoryCategory = 'profile' | 'preference' | 'fact' | 'project_fact';
+
+export type MemoryCommandCursor = {
+    commandId: string;
+    commandKind: MemoryCommandKind;
+    receiptRef: string;
+    receivedAt: string;
+    updatedAt: string;
+};
+
+export type MemoryCommandKind = 'updateMemorySettings' | 'rememberMemoryEntry' | 'correctMemoryEntry' | 'restoreMemoryEntryRevision' | 'prioritizeMemoryEntry' | 'deprioritizeMemoryEntry' | 'forgetMemoryEntry' | 'resetMemorySpace' | 'requestMemoryExport' | 'requestMemoryImport';
+
+export type MemoryCommandPendingResponse = {
+    command: MemoryCommandCursor;
+    retryAfter: string;
+    state: 'accepted' | 'executing' | 'outcome_unknown';
+};
+
+export type MemoryCommandRejectedResponse = {
+    command: MemoryCommandCursor;
+    rejection: MemoryCommandRejection;
+    state: 'rejected';
+};
+
+export type MemoryCommandRejection = {
+    code: 'input_rejected' | 'version_conflict' | 'policy_rejected' | 'not_restorable' | 'unavailable';
+    retryAfter: string | null;
+    retryClass: 'never' | 'after_delay' | 'after_user_action';
+};
+
+export type MemoryCommandResponse = ({
+    state: 'accepted' | 'executing' | 'outcome_unknown';
+} & MemoryCommandPendingResponse) | ({
+    state: 'succeeded';
+} & MemoryCommandSucceededResponse) | ({
+    state: 'rejected';
+} & MemoryCommandRejectedResponse);
+
+export type MemoryCommandResult = ({
+    resultKind: 'entry';
+} & MemoryEntryCommandResult) | ({
+    resultKind: 'restored';
+} & MemoryRestoreCommandResult) | ({
+    resultKind: 'purge';
+} & MemoryPurgeCommandResult) | ({
+    resultKind: 'settings';
+} & MemorySettingsCommandResult) | ({
+    resultKind: 'export';
+} & MemoryExportCommandResult) | ({
+    resultKind: 'import';
+} & MemoryImportCommandResult);
+
+export type MemoryCommandSucceededResponse = {
+    command: MemoryCommandCursor;
+    result: MemoryCommandResult;
+    state: 'succeeded';
+};
+
+export type MemoryCorrectInput = {
+    content: string;
+    expectedRevision: number;
+    validFrom: string | null;
+    validTo: string | null;
+};
+
+export type MemoryEntryActiveView = {
+    category: MemoryCategory;
+    content: string;
+    createdAt: string;
+    currentRevisionRef: string;
+    entryRef: string;
+    entryVersion: PositiveUint64String;
+    prioritized: boolean;
+    revision: number;
+    scopeKind: 'user' | 'project';
+    source: MemorySourceSummary;
+    state: 'active';
+    updatedAt: string;
+    validFrom: string | null;
+    validTo: string | null;
+};
+
+export type MemoryEntryCommandResult = {
+    entry: MemoryEntryView;
+    resultKind: 'entry';
+};
+
+/**
+ * Revisions are append-only. Restoring an available payload always appends a new current revision; it never mutates an existing revision or rewinds the current head.
+ */
+export type MemoryEntryHistoryPage = {
+    entryRef: string;
+    items: Array<MemoryRevisionView>;
+    pageInfo: PageInfo;
+};
+
+export type MemoryEntryPage = {
+    items: Array<MemoryEntryActiveView>;
+    pageInfo: PageInfo;
+};
+
+export type MemoryEntryPurgedView = {
+    entryRef: string;
+    purgeReceiptRef: string;
+    purgedAt: string;
+    state: 'purged';
+};
+
+export type MemoryEntryResponse = {
+    entry: MemoryEntryView;
+};
+
+export type MemoryEntryRevokedView = {
+    entryRef: string;
+    purgeReceiptRef: string;
+    revokedAt: string;
+    state: 'revoked_purge_pending';
+};
+
+export type MemoryEntryView = ({
+    state: 'active';
+} & MemoryEntryActiveView) | ({
+    state: 'revoked_purge_pending';
+} & MemoryEntryRevokedView) | ({
+    state: 'purged';
+} & MemoryEntryPurgedView);
+
+export type MemoryExportCommandResult = {
+    export: MemoryExportStatus;
+    resultKind: 'export';
+};
+
+export type MemoryExportInput = {
+    format: 'kokoro_memory_export_v1';
+    includeHistory: boolean;
+};
+
+export type MemoryExportResponse = {
+    export: MemoryExportStatus;
+};
+
+export type MemoryExportState = 'queued' | 'running' | 'ready' | 'failed' | 'expired' | 'purged';
+
+export type MemoryExportStatus = {
+    artifactDownloadRequest: MemoryArtifactDownloadRequest | null;
+    expiresAt: string | null;
+    exportRef: string;
+    failureCode: null | 'policy_rejected' | 'source_unavailable' | 'temporarily_unavailable';
+    format: 'kokoro_memory_export_v1';
+    requestedAt: string;
+    state: MemoryExportState;
+    updatedAt: string;
+};
+
+export type MemoryForgetInput = {
+    acknowledgeIrreversiblePurge: true;
+    expectedEntryVersion: PositiveUint64String;
+};
+
+export type MemoryImportCommandResult = {
+    import: MemoryImportStatus;
+    resultKind: 'import';
+};
+
+/**
+ * References one currently authorized, quarantined Asset version. Platform obtains the authoritative content identity and quarantine facts directly from Asset; neither is caller input.
+ */
+export type MemoryImportInput = {
+    assetRef: string;
+    assetVersionRef: string;
+    conflictPolicy: 'quarantine';
+    format: 'kokoro_memory_export_v1';
+};
+
+export type MemoryImportResponse = {
+    import: MemoryImportStatus;
+};
+
+export type MemoryImportState = 'queued' | 'validating' | 'quarantined' | 'applying' | 'completed' | 'rejected' | 'failed';
+
+export type MemoryImportStatus = {
+    acceptedEntryCount: number;
+    assetRef: string;
+    assetVersionRef: string;
+    format: 'kokoro_memory_export_v1';
+    importRef: string;
+    rejectedEntryCount: number;
+    requestedAt: string;
+    safeStatusCode: null | 'awaiting_review' | 'invalid_manifest' | 'policy_rejected' | 'temporarily_unavailable';
+    state: MemoryImportState;
+    updatedAt: string;
+};
+
+export type MemoryNullableRevisionRef = string | null;
+
+export type MemoryPriorityInput = {
+    expectedEntryVersion: PositiveUint64String;
+};
+
+export type MemoryPurgeCommandResult = {
+    effectiveAt: string;
+    entryRef: string | null;
+    purgeReceiptRef: string;
+    purgeScope: 'entry' | 'space';
+    purgeState: MemoryPurgeState;
+    resultKind: 'purge';
+};
+
+export type MemoryPurgeState = 'revoked_purge_pending' | 'purged';
+
+export type MemoryRememberInput = {
+    category: MemoryCategory;
+    content: string;
+    validFrom: string | null;
+    validTo: string | null;
+};
+
+export type MemoryResetInput = {
+    acknowledgeIrreversiblePurge: true;
+};
+
+/**
+ * A restore appends a successor and never mutates the referenced historical revision.
+ */
+export type MemoryRestoreCommandResult = {
+    entry: MemoryEntryActiveView;
+    newRevision: number;
+    newRevisionRef: string;
+    restoredFromRevisionRef: string;
+    resultKind: 'restored';
+};
+
+export type MemoryRestoreInput = {
+    expectedRevision: number;
+};
+
+export type MemoryRevisionAvailableView = {
+    content: string;
+    reason: 'explicit' | 'corrected' | 'imported' | 'restored';
+    recordedAt: string;
+    restorable: boolean;
+    revision: number;
+    revisionRef: string;
+    state: 'available';
+    supersedesRevisionRef: MemoryNullableRevisionRef;
+    validFrom: string | null;
+    validTo: string | null;
+};
+
+export type MemoryRevisionPurgedView = {
+    reason: 'explicit' | 'corrected' | 'imported' | 'restored';
+    recordedAt: string;
+    restorable: false;
+    revision: number;
+    revisionRef: string;
+    state: 'purged';
+};
+
+export type MemoryRevisionView = ({
+    state: 'available';
+} & MemoryRevisionAvailableView) | ({
+    state: 'purged';
+} & MemoryRevisionPurgedView);
+
+export type MemorySettings = {
+    automaticLearning: {
+        availability: 'unavailable_until_memory_m3';
+        effective: false;
+        policyReason: string | null;
+        requested: false;
+    };
+    observedAt: string;
+    pastChatReference: {
+        availability: 'unavailable_until_session_m1a';
+        effective: false;
+        policyReason: string | null;
+        requested: false;
+    };
+    revision: PositiveUint64String;
+    savedMemoryUse: MemorySettingsAxis;
+};
+
+export type MemorySettingsAxis = {
+    availability: 'available';
+    effective: boolean;
+    policyReason: string | null;
+    requested: boolean;
+};
+
+export type MemorySettingsCommandResult = {
+    resultKind: 'settings';
+    settings: MemorySettings;
+};
+
+export type MemorySettingsUpdateInput = {
+    expectedRevision: PositiveUint64String;
+    savedMemoryUseRequested: boolean;
+};
+
+export type MemorySourceKind = 'explicit' | 'import';
+
+export type MemorySourceSummary = {
+    safeLabel: string;
+    sourceKind: MemorySourceKind;
+    state: 'current' | 'restricted' | 'unavailable';
 };
 
 export type MfaReauthenticationInput = {
@@ -1815,6 +2132,20 @@ export type MediaDefinitionRef = string;
 
 export type MediaOperationRef = string;
 
+export type MemoryCategoryFilter = MemoryCategory;
+
+export type MemoryCommandId = string;
+
+export type MemoryEntryRef = string;
+
+export type MemoryExportRef = string;
+
+export type MemoryImportRef = string;
+
+export type MemoryRevisionRef = string;
+
+export type MemorySourceFilter = MemorySourceKind;
+
 /**
  * Opaque owner-bound cursor. Clients must never inspect or synthesize it.
  */
@@ -1858,6 +2189,24 @@ export type MediaOperationCancelRequest = MediaOperationCancelInput;
 export type MediaOperationQuoteRequest = MediaOperationInput;
 
 export type MediaOperationSubmitRequest = MediaOperationInput;
+
+export type MemoryCorrectRequest = MemoryCorrectInput;
+
+export type MemoryExportRequest = MemoryExportInput;
+
+export type MemoryForgetRequest = MemoryForgetInput;
+
+export type MemoryImportRequest = MemoryImportInput;
+
+export type MemoryPriorityRequest = MemoryPriorityInput;
+
+export type MemoryRememberRequest = MemoryRememberInput;
+
+export type MemoryResetRequest = MemoryResetInput;
+
+export type MemoryRestoreRequest = MemoryRestoreInput;
+
+export type MemorySettingsUpdateRequest = MemorySettingsUpdateInput;
 
 export type OtpRequest = OtpInput;
 
@@ -2794,6 +3143,609 @@ export type GetUsageDetailResponses = {
 };
 
 export type GetUsageDetailResponse = GetUsageDetailResponses[keyof GetUsageDetailResponses];
+
+export type RecoverMemoryCommandData = {
+    body?: never;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+    };
+    path: {
+        commandId: string;
+    };
+    query?: never;
+    url: '/v1/memory/commands/{commandId}';
+};
+
+export type RecoverMemoryCommandErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type RecoverMemoryCommandError = RecoverMemoryCommandErrors[keyof RecoverMemoryCommandErrors];
+
+export type RecoverMemoryCommandResponses = {
+    /**
+     * Durable Memory command state recoverable by the original command identity.
+     */
+    200: MemoryCommandResponse;
+};
+
+export type RecoverMemoryCommandResponse = RecoverMemoryCommandResponses[keyof RecoverMemoryCommandResponses];
+
+export type ListMemoryEntriesData = {
+    body?: never;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+    };
+    path?: never;
+    query?: {
+        category?: MemoryCategory;
+        source?: MemorySourceKind;
+        /**
+         * Opaque owner-bound cursor. Clients must never inspect or synthesize it.
+         */
+        cursor?: string;
+        limit?: number;
+    };
+    url: '/v1/memory/entries';
+};
+
+export type ListMemoryEntriesErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type ListMemoryEntriesError = ListMemoryEntriesErrors[keyof ListMemoryEntriesErrors];
+
+export type ListMemoryEntriesResponses = {
+    /**
+     * A bounded caller-scoped page of explicit Memory entries.
+     */
+    200: MemoryEntryPage;
+};
+
+export type ListMemoryEntriesResponse = ListMemoryEntriesResponses[keyof ListMemoryEntriesResponses];
+
+export type RememberMemoryEntryData = {
+    body: MemoryRememberRequest;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+        /**
+         * Stable caller-generated 128-bit command identity, encoded as lowercase 32-hex or UUIDv7. It must not be derived from Idempotency-Key, password, OTP, or request content. Platform owns a unique workload/Site/caller/command row and rejects the same command id with a different payload using an internal keyed digest; all responses and receipts echo this exact id.
+         */
+        'X-Kokoro-Command-Id': string;
+        'Idempotency-Key': string;
+        'X-CSRF-Token': string;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/memory/entries';
+};
+
+export type RememberMemoryEntryErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type RememberMemoryEntryError = RememberMemoryEntryErrors[keyof RememberMemoryEntryErrors];
+
+export type RememberMemoryEntryResponses = {
+    /**
+     * Durable Memory command state recoverable by the original command identity.
+     */
+    201: MemoryCommandResponse;
+    /**
+     * Durable Memory command state recoverable by the original command identity.
+     */
+    202: MemoryCommandResponse;
+};
+
+export type RememberMemoryEntryResponse = RememberMemoryEntryResponses[keyof RememberMemoryEntryResponses];
+
+export type GetMemoryEntryData = {
+    body?: never;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+    };
+    path: {
+        entryRef: string;
+    };
+    query?: never;
+    url: '/v1/memory/entries/{entryRef}';
+};
+
+export type GetMemoryEntryErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type GetMemoryEntryError = GetMemoryEntryErrors[keyof GetMemoryEntryErrors];
+
+export type GetMemoryEntryResponses = {
+    /**
+     * One current entry projection or a content-free revoked/purged projection.
+     */
+    200: MemoryEntryResponse;
+};
+
+export type GetMemoryEntryResponse = GetMemoryEntryResponses[keyof GetMemoryEntryResponses];
+
+export type ListMemoryEntryHistoryData = {
+    body?: never;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+    };
+    path: {
+        entryRef: string;
+    };
+    query?: {
+        /**
+         * Opaque owner-bound cursor. Clients must never inspect or synthesize it.
+         */
+        cursor?: string;
+        limit?: number;
+    };
+    url: '/v1/memory/entries/{entryRef}/history';
+};
+
+export type ListMemoryEntryHistoryErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type ListMemoryEntryHistoryError = ListMemoryEntryHistoryErrors[keyof ListMemoryEntryHistoryErrors];
+
+export type ListMemoryEntryHistoryResponses = {
+    /**
+     * A bounded immutable revision page; purged payloads never reappear.
+     */
+    200: MemoryEntryHistoryPage;
+};
+
+export type ListMemoryEntryHistoryResponse = ListMemoryEntryHistoryResponses[keyof ListMemoryEntryHistoryResponses];
+
+export type RestoreMemoryEntryRevisionData = {
+    body: MemoryRestoreRequest;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+        /**
+         * Stable caller-generated 128-bit command identity, encoded as lowercase 32-hex or UUIDv7. It must not be derived from Idempotency-Key, password, OTP, or request content. Platform owns a unique workload/Site/caller/command row and rejects the same command id with a different payload using an internal keyed digest; all responses and receipts echo this exact id.
+         */
+        'X-Kokoro-Command-Id': string;
+        'Idempotency-Key': string;
+        'X-CSRF-Token': string;
+    };
+    path: {
+        entryRef: string;
+        revisionRef: string;
+    };
+    query?: never;
+    url: '/v1/memory/entries/{entryRef}/history/{revisionRef}:restore';
+};
+
+export type RestoreMemoryEntryRevisionErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type RestoreMemoryEntryRevisionError = RestoreMemoryEntryRevisionErrors[keyof RestoreMemoryEntryRevisionErrors];
+
+export type RestoreMemoryEntryRevisionResponses = {
+    /**
+     * Durable Memory command state recoverable by the original command identity.
+     */
+    200: MemoryCommandResponse;
+    /**
+     * Durable Memory command state recoverable by the original command identity.
+     */
+    202: MemoryCommandResponse;
+};
+
+export type RestoreMemoryEntryRevisionResponse = RestoreMemoryEntryRevisionResponses[keyof RestoreMemoryEntryRevisionResponses];
+
+export type CorrectMemoryEntryData = {
+    body: MemoryCorrectRequest;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+        /**
+         * Stable caller-generated 128-bit command identity, encoded as lowercase 32-hex or UUIDv7. It must not be derived from Idempotency-Key, password, OTP, or request content. Platform owns a unique workload/Site/caller/command row and rejects the same command id with a different payload using an internal keyed digest; all responses and receipts echo this exact id.
+         */
+        'X-Kokoro-Command-Id': string;
+        'Idempotency-Key': string;
+        'X-CSRF-Token': string;
+    };
+    path: {
+        entryRef: string;
+    };
+    query?: never;
+    url: '/v1/memory/entries/{entryRef}:correct';
+};
+
+export type CorrectMemoryEntryErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type CorrectMemoryEntryError = CorrectMemoryEntryErrors[keyof CorrectMemoryEntryErrors];
+
+export type CorrectMemoryEntryResponses = {
+    /**
+     * Durable Memory command state recoverable by the original command identity.
+     */
+    200: MemoryCommandResponse;
+    /**
+     * Durable Memory command state recoverable by the original command identity.
+     */
+    202: MemoryCommandResponse;
+};
+
+export type CorrectMemoryEntryResponse = CorrectMemoryEntryResponses[keyof CorrectMemoryEntryResponses];
+
+export type DeprioritizeMemoryEntryData = {
+    body: MemoryPriorityRequest;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+        /**
+         * Stable caller-generated 128-bit command identity, encoded as lowercase 32-hex or UUIDv7. It must not be derived from Idempotency-Key, password, OTP, or request content. Platform owns a unique workload/Site/caller/command row and rejects the same command id with a different payload using an internal keyed digest; all responses and receipts echo this exact id.
+         */
+        'X-Kokoro-Command-Id': string;
+        'Idempotency-Key': string;
+        'X-CSRF-Token': string;
+    };
+    path: {
+        entryRef: string;
+    };
+    query?: never;
+    url: '/v1/memory/entries/{entryRef}:deprioritize';
+};
+
+export type DeprioritizeMemoryEntryErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type DeprioritizeMemoryEntryError = DeprioritizeMemoryEntryErrors[keyof DeprioritizeMemoryEntryErrors];
+
+export type DeprioritizeMemoryEntryResponses = {
+    /**
+     * Durable Memory command state recoverable by the original command identity.
+     */
+    200: MemoryCommandResponse;
+    /**
+     * Durable Memory command state recoverable by the original command identity.
+     */
+    202: MemoryCommandResponse;
+};
+
+export type DeprioritizeMemoryEntryResponse = DeprioritizeMemoryEntryResponses[keyof DeprioritizeMemoryEntryResponses];
+
+export type ForgetMemoryEntryData = {
+    body: MemoryForgetRequest;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+        /**
+         * Stable caller-generated 128-bit command identity, encoded as lowercase 32-hex or UUIDv7. It must not be derived from Idempotency-Key, password, OTP, or request content. Platform owns a unique workload/Site/caller/command row and rejects the same command id with a different payload using an internal keyed digest; all responses and receipts echo this exact id.
+         */
+        'X-Kokoro-Command-Id': string;
+        'Idempotency-Key': string;
+        'X-CSRF-Token': string;
+    };
+    path: {
+        entryRef: string;
+    };
+    query?: never;
+    url: '/v1/memory/entries/{entryRef}:forget';
+};
+
+export type ForgetMemoryEntryErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type ForgetMemoryEntryError = ForgetMemoryEntryErrors[keyof ForgetMemoryEntryErrors];
+
+export type ForgetMemoryEntryResponses = {
+    /**
+     * Durable Memory command state recoverable by the original command identity.
+     */
+    200: MemoryCommandResponse;
+    /**
+     * Durable Memory command state recoverable by the original command identity.
+     */
+    202: MemoryCommandResponse;
+};
+
+export type ForgetMemoryEntryResponse = ForgetMemoryEntryResponses[keyof ForgetMemoryEntryResponses];
+
+export type PrioritizeMemoryEntryData = {
+    body: MemoryPriorityRequest;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+        /**
+         * Stable caller-generated 128-bit command identity, encoded as lowercase 32-hex or UUIDv7. It must not be derived from Idempotency-Key, password, OTP, or request content. Platform owns a unique workload/Site/caller/command row and rejects the same command id with a different payload using an internal keyed digest; all responses and receipts echo this exact id.
+         */
+        'X-Kokoro-Command-Id': string;
+        'Idempotency-Key': string;
+        'X-CSRF-Token': string;
+    };
+    path: {
+        entryRef: string;
+    };
+    query?: never;
+    url: '/v1/memory/entries/{entryRef}:prioritize';
+};
+
+export type PrioritizeMemoryEntryErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type PrioritizeMemoryEntryError = PrioritizeMemoryEntryErrors[keyof PrioritizeMemoryEntryErrors];
+
+export type PrioritizeMemoryEntryResponses = {
+    /**
+     * Durable Memory command state recoverable by the original command identity.
+     */
+    200: MemoryCommandResponse;
+    /**
+     * Durable Memory command state recoverable by the original command identity.
+     */
+    202: MemoryCommandResponse;
+};
+
+export type PrioritizeMemoryEntryResponse = PrioritizeMemoryEntryResponses[keyof PrioritizeMemoryEntryResponses];
+
+export type RequestMemoryExportData = {
+    body: MemoryExportRequest;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+        /**
+         * Stable caller-generated 128-bit command identity, encoded as lowercase 32-hex or UUIDv7. It must not be derived from Idempotency-Key, password, OTP, or request content. Platform owns a unique workload/Site/caller/command row and rejects the same command id with a different payload using an internal keyed digest; all responses and receipts echo this exact id.
+         */
+        'X-Kokoro-Command-Id': string;
+        'Idempotency-Key': string;
+        'X-CSRF-Token': string;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/memory/exports';
+};
+
+export type RequestMemoryExportErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type RequestMemoryExportError = RequestMemoryExportErrors[keyof RequestMemoryExportErrors];
+
+export type RequestMemoryExportResponses = {
+    /**
+     * Durable Memory command state recoverable by the original command identity.
+     */
+    202: MemoryCommandResponse;
+};
+
+export type RequestMemoryExportResponse = RequestMemoryExportResponses[keyof RequestMemoryExportResponses];
+
+export type GetMemoryExportData = {
+    body?: never;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+    };
+    path: {
+        exportRef: string;
+    };
+    query?: never;
+    url: '/v1/memory/exports/{exportRef}';
+};
+
+export type GetMemoryExportErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type GetMemoryExportError = GetMemoryExportErrors[keyof GetMemoryExportErrors];
+
+export type GetMemoryExportResponses = {
+    /**
+     * Current asynchronous export status with at most one non-bearer Artifact authorization request.
+     */
+    200: MemoryExportResponse;
+};
+
+export type GetMemoryExportResponse = GetMemoryExportResponses[keyof GetMemoryExportResponses];
+
+export type RequestMemoryImportData = {
+    body: MemoryImportRequest;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+        /**
+         * Stable caller-generated 128-bit command identity, encoded as lowercase 32-hex or UUIDv7. It must not be derived from Idempotency-Key, password, OTP, or request content. Platform owns a unique workload/Site/caller/command row and rejects the same command id with a different payload using an internal keyed digest; all responses and receipts echo this exact id.
+         */
+        'X-Kokoro-Command-Id': string;
+        'Idempotency-Key': string;
+        'X-CSRF-Token': string;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/memory/imports';
+};
+
+export type RequestMemoryImportErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type RequestMemoryImportError = RequestMemoryImportErrors[keyof RequestMemoryImportErrors];
+
+export type RequestMemoryImportResponses = {
+    /**
+     * Durable Memory command state recoverable by the original command identity.
+     */
+    202: MemoryCommandResponse;
+};
+
+export type RequestMemoryImportResponse = RequestMemoryImportResponses[keyof RequestMemoryImportResponses];
+
+export type GetMemoryImportData = {
+    body?: never;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+    };
+    path: {
+        importRef: string;
+    };
+    query?: never;
+    url: '/v1/memory/imports/{importRef}';
+};
+
+export type GetMemoryImportErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type GetMemoryImportError = GetMemoryImportErrors[keyof GetMemoryImportErrors];
+
+export type GetMemoryImportResponses = {
+    /**
+     * Current asynchronous quarantine, validation, and apply status.
+     */
+    200: MemoryImportResponse;
+};
+
+export type GetMemoryImportResponse = GetMemoryImportResponses[keyof GetMemoryImportResponses];
+
+export type GetMemorySettingsData = {
+    body?: never;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/memory/settings';
+};
+
+export type GetMemorySettingsErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type GetMemorySettingsError = GetMemorySettingsErrors[keyof GetMemorySettingsErrors];
+
+export type GetMemorySettingsResponses = {
+    /**
+     * Effective caller-scoped settings with unavailable successor axes marked explicitly.
+     */
+    200: MemorySettings;
+};
+
+export type GetMemorySettingsResponse = GetMemorySettingsResponses[keyof GetMemorySettingsResponses];
+
+export type UpdateMemorySettingsData = {
+    body: MemorySettingsUpdateRequest;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+        /**
+         * Stable caller-generated 128-bit command identity, encoded as lowercase 32-hex or UUIDv7. It must not be derived from Idempotency-Key, password, OTP, or request content. Platform owns a unique workload/Site/caller/command row and rejects the same command id with a different payload using an internal keyed digest; all responses and receipts echo this exact id.
+         */
+        'X-Kokoro-Command-Id': string;
+        'Idempotency-Key': string;
+        'X-CSRF-Token': string;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/memory/settings';
+};
+
+export type UpdateMemorySettingsErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type UpdateMemorySettingsError = UpdateMemorySettingsErrors[keyof UpdateMemorySettingsErrors];
+
+export type UpdateMemorySettingsResponses = {
+    /**
+     * Durable Memory command state recoverable by the original command identity.
+     */
+    200: MemoryCommandResponse;
+    /**
+     * Durable Memory command state recoverable by the original command identity.
+     */
+    202: MemoryCommandResponse;
+};
+
+export type UpdateMemorySettingsResponse = UpdateMemorySettingsResponses[keyof UpdateMemorySettingsResponses];
+
+export type ResetMemorySpaceData = {
+    body: MemoryResetRequest;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+        /**
+         * Stable caller-generated 128-bit command identity, encoded as lowercase 32-hex or UUIDv7. It must not be derived from Idempotency-Key, password, OTP, or request content. Platform owns a unique workload/Site/caller/command row and rejects the same command id with a different payload using an internal keyed digest; all responses and receipts echo this exact id.
+         */
+        'X-Kokoro-Command-Id': string;
+        'Idempotency-Key': string;
+        'X-CSRF-Token': string;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/memory:reset';
+};
+
+export type ResetMemorySpaceErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type ResetMemorySpaceError = ResetMemorySpaceErrors[keyof ResetMemorySpaceErrors];
+
+export type ResetMemorySpaceResponses = {
+    /**
+     * Durable Memory command state recoverable by the original command identity.
+     */
+    200: MemoryCommandResponse;
+    /**
+     * Durable Memory command state recoverable by the original command identity.
+     */
+    202: MemoryCommandResponse;
+};
+
+export type ResetMemorySpaceResponse = ResetMemorySpaceResponses[keyof ResetMemorySpaceResponses];
 
 export type ExchangeProductContextData = {
     body: CommandRequest;
