@@ -106,4 +106,29 @@ describe("PostgresMediaPublicReadRepository", () => {
         .rejects.toThrow("MEDIA_PUBLIC_OPERATION_RECORD_CORRUPT");
     } finally { revokePlatformTransaction(lease); }
   });
+
+  it("rejects control characters in public labels without weakening Unicode text", async () => {
+    const rows = [[{
+      definitionKey: "image.text_to_image@v1", definitionRevisionRef: "image.text_to_image@v1:revision:1",
+      mediaKind: "image_text_to_image", maximumCandidateCount: 4, promptMaximumUtf8Bytes: 32768,
+      supportedAspectRatios: ["square_1_1"], supportedOutputFormats: ["png"],
+      publishedAt: "2026-07-31T00:00:00.000Z",
+      modelOptionCatalogRevisionRef: "surface-model-catalog:image:sha256:catalog",
+    }], [{ definitionRevisionRef: "image.text_to_image@v1:revision:1", position: 0,
+      modelOptionRevisionRef: `model-option:sha256:${"b".repeat(64)}`,
+      optionKey: "image.standard", label: "unsafe\u0000label", description: null,
+      inputModalities: ["text"], outputModalities: ["image"], supportedEfforts: [], badges: [],
+      availability: "available" }]];
+    const lease = issuePlatformTransaction({
+      query: async <Row extends Record<string, unknown>>(): Promise<readonly Row[]> =>
+        (rows.shift() ?? []) as unknown as readonly Row[],
+      execute: async () => 0,
+    });
+    try {
+      await expect(new PostgresMediaPublicReadRepository().listModelOptions(lease.transaction, {
+        authority, definitionRef: "image.text_to_image@v1", positionAfter: null,
+        modelOptionRevisionRefAfter: null, limit: 51,
+      })).rejects.toThrow("MEDIA_PUBLIC_MODEL_OPTION_RECORD_CORRUPT");
+    } finally { revokePlatformTransaction(lease); }
+  });
 });

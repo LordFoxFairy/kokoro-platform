@@ -22,7 +22,7 @@ describe("Media worker production composition", () => {
       usage: { recordAttempt: async () => ({ attemptUsageEvidenceReceiptRef: "usage:one" }) },
       credit: { finalizeBudget: async () => ({ kind: "settled", financialReceiptRef: "financial:one",
         allocationClosureReceiptRef: "allocation-closure:one", actualCost: "80",
-        refundedCredit: "20", unit: "credit" }) },
+        releasedCredit: "20", unit: "credit" }) },
       projection: { publish: async () => ({ projectionReceiptRef: "projection:one" }) },
       receipts: receiptPort(), cleanupRepository: cleanupRepository(),
       cleanup: { cleanupStaged: async () => undefined },

@@ -371,5 +371,10 @@ function parse<Schema extends z.ZodTypeAny>(schema: Schema, value: unknown, code
 }
 
 function safeText(value: string): boolean {
-  return value.trim() === value && !/[\u0000-\u001f\u007f]/u.test(value);
+  if (value.trim() !== value) return false;
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint !== undefined && (codePoint <= 0x1f || codePoint === 0x7f)) return false;
+  }
+  return true;
 }

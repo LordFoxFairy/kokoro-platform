@@ -63,7 +63,7 @@ describe("Media worker runtime PostgreSQL authority", () => {
     expect(migration).toContain("p_step='financial_closure'");
     expect(migration).toContain("operation.credit_unit=p_receipt->>'unit'");
     expect(migration).toMatch(
-      /operation\.credit_reserved_ceiling=\s*\(p_receipt->>'actualCost'\)::NUMERIC\+\s*\(p_receipt->>'refundedCredit'\)::NUMERIC/u,
+      /operation\.credit_reserved_ceiling=\s*\(p_receipt->>'actualCost'\)::NUMERIC\+\s*\(p_receipt->>'releasedCredit'\)::NUMERIC/u,
     );
     expect(migration).toMatch(
       /effect_closure_receipt_ref[\s\S]+financial_receipt_ref[\s\S]+allocation_closure_receipt_ref[\s\S]+terminal_receipt_ref/u,

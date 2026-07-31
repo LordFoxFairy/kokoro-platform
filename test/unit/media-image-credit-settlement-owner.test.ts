@@ -19,7 +19,7 @@ describe("NativeMediaImageCreditSettlementOwner", () => {
         sourceDigest: "c".repeat(64) } })) };
     const finalizer = { finalize: vi.fn(async () => ({ kind: "settled" as const,
       financialReceiptRef: "financial:one", allocationClosureReceiptRef: "allocation:one",
-      usageSettlementReceiptRef: "usage-settlement:one", actualCost: "40", refundedCredit: "60",
+      usageSettlementReceiptRef: "usage-settlement:one", actualCost: "40", releasedCredit: "60",
       unit: "credit" })) };
     const transactionHost = host();
     const leaseAuthority = { assertOwned: vi.fn(async () => undefined) };

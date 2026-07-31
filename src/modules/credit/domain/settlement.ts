@@ -28,6 +28,20 @@ export function planHoldCapture(
     }));
 }
 
+/** Releases only the still-reserved remainder of each original Hold source, in burn order. */
+export function planHoldRelease(
+  allocations: readonly HoldAllocationAvailability[],
+  amount: bigint,
+): readonly HoldSourceCapture[] {
+  if (amount < 0n) throw new Error("CREDIT_SETTLEMENT_AMOUNT_INVALID");
+  return plan(allocations, amount, (allocation) => allocation.allocatedAmount - allocation.netCustomerAmount)
+    .map(({ allocation, amount: sourceAmount }) => Object.freeze({
+      creditGrantId: allocation.creditGrantId,
+      amount: sourceAmount,
+      ordinal: allocation.ordinal,
+    }));
+}
+
 export function planSettlementCorrection(
   allocations: readonly HoldAllocationAvailability[],
   delta: bigint,

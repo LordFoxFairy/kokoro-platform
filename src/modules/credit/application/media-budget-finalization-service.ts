@@ -71,7 +71,7 @@ export type CreditMediaFinancialClosure = Readonly<{
   allocationClosureReceiptRef: string;
   usageSettlementReceiptRef: string;
   actualCost: string;
-  refundedCredit: string;
+  releasedCredit: string;
   unit: string;
 }> | Readonly<{
   kind: "reconciliation_required";
@@ -99,7 +99,7 @@ export interface DirectMediaRootClosureAuthority {
   }>): Promise<Accepted<Readonly<{
     allocationClosureReceiptRef: string;
     capturedAmount: bigint;
-    refundedAmount: bigint;
+    releasedAmount: bigint;
   }>> | Readonly<{ kind: "reconciliation_required" | "conflict" | "not_found" | "invalid_state";
     code?: string; reconciliationReceiptRef?: string }>>;
 }
@@ -232,7 +232,7 @@ export class CreditMediaBudgetFinalizationService {
           `CREDIT_MEDIA_ROOT_CLOSE_${closed.kind.toUpperCase()}`);
       }
       return financial(settlement, closed.value.allocationClosureReceiptRef,
-        closed.value.capturedAmount, closed.value.refundedAmount, input.budget);
+        closed.value.capturedAmount, closed.value.releasedAmount, input.budget);
     }
 
     const current = await this.#dependencies.repository.lockMediaChildAllocation(transaction, {
@@ -285,13 +285,13 @@ function attemptEvidence(budget: CreditMediaBudgetBinding, attempt: CreditMediaA
 }
 
 function financial(settlement: UsageSettlement, allocationClosureReceiptRef: string,
-  capturedAmount: bigint, refundedAmount: bigint, budget: CreditMediaBudgetBinding): CreditMediaFinancialClosure {
-  if (capturedAmount !== settlement.customerAmount || capturedAmount + refundedAmount !== budget.reservedCeiling) {
+  capturedAmount: bigint, releasedAmount: bigint, budget: CreditMediaBudgetBinding): CreditMediaFinancialClosure {
+  if (capturedAmount !== settlement.customerAmount || capturedAmount + releasedAmount !== budget.reservedCeiling) {
     throw new Error("CREDIT_MEDIA_FINANCIAL_CONSERVATION_INVALID");
   }
   return Object.freeze({ kind: "settled" as const, financialReceiptRef: allocationClosureReceiptRef,
     allocationClosureReceiptRef, usageSettlementReceiptRef: settlement.settlementRef,
-    actualCost: capturedAmount.toString(), refundedCredit: refundedAmount.toString(), unit: budget.unit });
+    actualCost: capturedAmount.toString(), releasedCredit: releasedAmount.toString(), unit: budget.unit });
 }
 
 function reconciliation(reconciliationReceiptRef: string, code: string): CreditMediaFinancialClosure {

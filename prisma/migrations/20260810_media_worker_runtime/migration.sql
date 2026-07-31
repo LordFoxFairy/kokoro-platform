@@ -14,7 +14,7 @@ ALTER TABLE platform.media_operation
   ADD COLUMN allocation_closure_receipt_ref TEXT,
   ADD COLUMN usage_settlement_receipt_ref TEXT,
   ADD COLUMN actual_cost NUMERIC(38,0) CHECK(actual_cost IS NULL OR actual_cost>=0),
-  ADD COLUMN refunded_credit NUMERIC(38,0) CHECK(refunded_credit IS NULL OR refunded_credit>=0),
+  ADD COLUMN released_credit NUMERIC(38,0) CHECK(released_credit IS NULL OR released_credit>=0),
   ADD COLUMN terminal_credit_unit TEXT,
   ADD COLUMN gateway_command_receipt_ref TEXT,
   ADD COLUMN gateway_command_receipt_digest CHAR(64)
@@ -59,7 +59,7 @@ ALTER TABLE platform.media_operation
     terminal_receipt_ref IS NULL OR
       (effect_closure_receipt_ref IS NOT NULL AND financial_receipt_ref IS NOT NULL AND
        allocation_closure_receipt_ref IS NOT NULL AND
-       actual_cost IS NOT NULL AND refunded_credit IS NOT NULL AND terminal_credit_unit IS NOT NULL)
+       actual_cost IS NOT NULL AND released_credit IS NOT NULL AND terminal_credit_unit IS NOT NULL)
   );
 
 ALTER TABLE platform.media_candidate
@@ -914,7 +914,7 @@ BEGIN
     IF p_receipt->>'kind'<>'settled' OR p_receipt->>'financialReceiptRef' IS NULL OR
        p_receipt->>'allocationClosureReceiptRef' IS NULL OR
        COALESCE(p_receipt->>'actualCost','') !~ '^(0|[1-9][0-9]{0,37})$' OR
-       COALESCE(p_receipt->>'refundedCredit','') !~ '^(0|[1-9][0-9]{0,37})$' OR
+       COALESCE(p_receipt->>'releasedCredit','') !~ '^(0|[1-9][0-9]{0,37})$' OR
        p_receipt->>'unit' IS NULL THEN
       RAISE EXCEPTION 'MEDIA_FINANCIAL_SETTLEMENT_INVALID';
     END IF;
@@ -922,14 +922,14 @@ BEGIN
      WHERE operation.operation_ref=p_operation_ref
        AND operation.credit_unit=p_receipt->>'unit'
        AND operation.credit_reserved_ceiling=
-         (p_receipt->>'actualCost')::NUMERIC+(p_receipt->>'refundedCredit')::NUMERIC;
+         (p_receipt->>'actualCost')::NUMERIC+(p_receipt->>'releasedCredit')::NUMERIC;
     IF NOT FOUND THEN RAISE EXCEPTION 'MEDIA_FINANCIAL_SETTLEMENT_INVALID'; END IF;
     UPDATE platform.media_operation SET
       financial_receipt_ref=p_receipt->>'financialReceiptRef',
       allocation_closure_receipt_ref=p_receipt->>'allocationClosureReceiptRef',
       usage_settlement_receipt_ref=p_receipt->>'usageSettlementReceiptRef',
       actual_cost=(p_receipt->>'actualCost')::NUMERIC,
-      refunded_credit=(p_receipt->>'refundedCredit')::NUMERIC,
+      released_credit=(p_receipt->>'releasedCredit')::NUMERIC,
       terminal_credit_unit=p_receipt->>'unit'
       WHERE operation_ref=p_operation_ref;
   ELSE
@@ -953,7 +953,7 @@ BEGIN
      p_closure#>>'{receipts,financialReceiptRef}' IS NULL OR
      p_closure#>>'{receipts,allocationClosureReceiptRef}' IS NULL OR
      COALESCE(p_closure#>>'{receipts,actualCost}','') !~ '^(0|[1-9][0-9]{0,37})$' OR
-     COALESCE(p_closure#>>'{receipts,refundedCredit}','') !~ '^(0|[1-9][0-9]{0,37})$' OR
+     COALESCE(p_closure#>>'{receipts,releasedCredit}','') !~ '^(0|[1-9][0-9]{0,37})$' OR
      p_closure#>>'{receipts,creditUnit}' IS NULL OR
      ((p_closure->>'state'='failed') IS DISTINCT FROM
        COALESCE(jsonb_typeof(failure)='object',false)) THEN
@@ -1020,7 +1020,7 @@ BEGIN
      AND operation.financial_receipt_ref=p_closure#>>'{receipts,financialReceiptRef}'
      AND operation.allocation_closure_receipt_ref=p_closure#>>'{receipts,allocationClosureReceiptRef}'
      AND operation.actual_cost=(p_closure#>>'{receipts,actualCost}')::NUMERIC
-     AND operation.refunded_credit=(p_closure#>>'{receipts,refundedCredit}')::NUMERIC
+     AND operation.released_credit=(p_closure#>>'{receipts,releasedCredit}')::NUMERIC
      AND operation.terminal_credit_unit=p_closure#>>'{receipts,creditUnit}'
      AND operation.session_projection_receipt_ref=p_closure#>>'{receipts,projectionReceiptRef}';
   IF NOT FOUND THEN RAISE EXCEPTION 'MEDIA_TERMINAL_FINANCIAL_EVIDENCE_INVALID'; END IF;
@@ -1037,7 +1037,7 @@ BEGIN
     financial_receipt_ref=p_closure#>>'{receipts,financialReceiptRef}',
     allocation_closure_receipt_ref=p_closure#>>'{receipts,allocationClosureReceiptRef}',
     actual_cost=(p_closure#>>'{receipts,actualCost}')::NUMERIC,
-    refunded_credit=(p_closure#>>'{receipts,refundedCredit}')::NUMERIC,
+    released_credit=(p_closure#>>'{receipts,releasedCredit}')::NUMERIC,
     terminal_credit_unit=p_closure#>>'{receipts,creditUnit}',
     session_projection_receipt_ref=p_closure#>>'{receipts,projectionReceiptRef}',
     updated_at=(p_closure->>'completedAt')::TIMESTAMPTZ WHERE operation_ref=p_operation_ref;
@@ -1205,7 +1205,7 @@ ALTER TABLE platform.media_operation ADD CONSTRAINT media_operation_terminal_own
   terminal_receipt_ref IS NULL OR
   (effect_closure_receipt_ref IS NOT NULL AND financial_receipt_ref IS NOT NULL AND
    allocation_closure_receipt_ref IS NOT NULL AND
-   actual_cost IS NOT NULL AND refunded_credit IS NOT NULL AND terminal_credit_unit IS NOT NULL AND
+   actual_cost IS NOT NULL AND released_credit IS NOT NULL AND terminal_credit_unit IS NOT NULL AND
    session_projection_receipt_ref IS NOT NULL AND
    (gateway_command_receipt_ref IS NULL)=(gateway_command_receipt_digest IS NULL) AND
    ((state='canceled' AND gateway_command_receipt_ref IS NULL AND canonical_outcome_evidence_ref IS NULL AND

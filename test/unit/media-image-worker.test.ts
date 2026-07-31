@@ -42,7 +42,7 @@ describe("image.text_to_image worker closure", () => {
       financialReceiptRef: "financial:one",
       allocationClosureReceiptRef: "allocation-closure:one",
       actualCost: "80",
-      refundedCredit: "20",
+      releasedCredit: "20",
       creditUnit: "credit",
       projectionReceiptRef: "projection-receipt:one",
     });
@@ -210,8 +210,8 @@ describe("image.text_to_image worker closure", () => {
   });
 
   it.each([
-    ["unit mismatch", { actualCost: "80", refundedCredit: "20", unit: "other-credit" }],
-    ["non-conserving amounts", { actualCost: "79", refundedCredit: "20", unit: "credit" }],
+    ["unit mismatch", { actualCost: "80", releasedCredit: "20", unit: "other-credit" }],
+    ["non-conserving amounts", { actualCost: "79", releasedCredit: "20", unit: "credit" }],
   ])("rejects a Credit settlement with %s before projection", async (_case, override) => {
     const repository = new InMemoryMediaImageWorkerRepository();
     const projection = vi.fn(async () => ({ projectionReceiptRef: "projection:must-not-run" }));
@@ -234,7 +234,7 @@ describe("image.text_to_image worker closure", () => {
     const checkpoint = Object.freeze({ effectState: "none" as const, cancelState: "none" as const,
       evidence: Object.freeze({ nextEvidenceSequence: 0n, caughtUp: false, facts: Object.freeze([]) }),
       artifacts: Object.freeze([Object.freeze({ candidateOrdinal: 1 })]),
-      financialClosure: Object.freeze({ ...financialSettlement("persisted"), refundedCredit: "19" }) });
+      financialClosure: Object.freeze({ ...financialSettlement("persisted"), releasedCredit: "19" }) });
     const repository = new InMemoryMediaImageWorkerRepository(base, [], checkpoint);
     const projection = vi.fn(async () => ({ projectionReceiptRef: "projection:must-not-run" }));
     const worker = new ImageOperationWorker({ repository,
@@ -255,7 +255,7 @@ describe("image.text_to_image worker closure", () => {
 function financialSettlement(suffix: string) {
   return Object.freeze({ kind: "settled" as const, financialReceiptRef: `financial:${suffix}`,
     allocationClosureReceiptRef: `allocation-closure:${suffix}`, actualCost: "80",
-    refundedCredit: "20", unit: "credit" });
+    releasedCredit: "20", unit: "credit" });
 }
 
 function twoCandidateTask() {

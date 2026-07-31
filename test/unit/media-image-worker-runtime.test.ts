@@ -227,7 +227,7 @@ function commandReceipt(
 function financialSettlement(suffix: string) {
   return Object.freeze({ kind: "settled" as const, financialReceiptRef: `financial:${suffix}`,
     allocationClosureReceiptRef: `allocation-closure:${suffix}`, actualCost: "80",
-    refundedCredit: "20", unit: "credit" });
+    releasedCredit: "20", unit: "credit" });
 }
 
 function terminalView(state: "failed" | "canceled", withUsage: boolean): MediaImageEffectView {

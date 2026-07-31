@@ -23,7 +23,7 @@ describe("CreditMediaBudgetFinalizationService", () => {
         kind: "settled", financialReceiptRef: "allocation-return:one",
         allocationClosureReceiptRef: "allocation-return:one",
         usageSettlementReceiptRef: "00000000-0000-7000-8000-000000000902",
-        actualCost: "40", refundedCredit: "60", unit: "credit",
+        actualCost: "40", releasedCredit: "60", unit: "credit",
       });
       expect(usage.finalizeAttempt).toHaveBeenCalledWith(lease.transaction, expect.objectContaining({
         siteId: "site:one", attemptAuthorizationRef: "00000000-0000-7000-8000-000000000801",
@@ -97,7 +97,7 @@ describe("CreditMediaBudgetFinalizationService", () => {
         rootAllocationEpoch: 1n, authorizationSegmentRef: command.budget.authorizationSegmentRef,
         authorizationSegmentVersion: 2n, reservedCeiling: 100n, unit: "credit",
       }, outcome: "canceled", attempt: undefined })).resolves.toMatchObject({
-        kind: "settled", actualCost: "0", refundedCredit: "100",
+        kind: "settled", actualCost: "0", releasedCredit: "100",
       });
       expect(usage.finalizeAttempt).not.toHaveBeenCalled();
       expect(usage.settleUsageSegment).toHaveBeenCalledWith(lease.transaction,
@@ -159,7 +159,7 @@ function usageOwner() {
 function directCloser() {
   return { close: vi.fn(async (_transaction, input: Readonly<{ settlement: { customerAmount: bigint } }>) => ({
     kind: "accepted" as const, value: { allocationClosureReceiptRef: "direct-close:one",
-      capturedAmount: input.settlement.customerAmount, refundedAmount: 100n - input.settlement.customerAmount },
+      capturedAmount: input.settlement.customerAmount, releasedAmount: 100n - input.settlement.customerAmount },
   })) };
 }
 

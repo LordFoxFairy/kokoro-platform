@@ -411,7 +411,7 @@ export type MediaImageFinancialSettlement = Readonly<{
   allocationClosureReceiptRef: string;
   usageSettlementReceiptRef?: string | undefined;
   actualCost: string;
-  refundedCredit: string;
+  releasedCredit: string;
   unit: string;
 }>;
 
@@ -477,7 +477,7 @@ type MediaImageTerminalClosureBase = Readonly<{
     financialReceiptRef: string;
     allocationClosureReceiptRef: string;
     actualCost: string;
-    refundedCredit: string;
+    releasedCredit: string;
     creditUnit: string;
     projectionReceiptRef: string;
   }>;
@@ -723,7 +723,7 @@ export class ImageOperationWorker {
         effectBudgetCommitRef: task.createEffectCommand.effectBudgetCommitRef,
         financialReceiptRef: financial.financialReceiptRef,
         allocationClosureReceiptRef: financial.allocationClosureReceiptRef,
-        actualCost: financial.actualCost, refundedCredit: financial.refundedCredit,
+        actualCost: financial.actualCost, releasedCredit: financial.releasedCredit,
         creditUnit: financial.unit, projectionReceiptRef }),
       completedAt: this.#date().toISOString() });
     let closure: MediaImageTerminalClosure;
@@ -805,7 +805,7 @@ export class ImageOperationWorker {
         effectBudgetCommitRef: task.createEffectCommand.effectBudgetCommitRef,
         financialReceiptRef: financial.financialReceiptRef,
         allocationClosureReceiptRef: financial.allocationClosureReceiptRef,
-        actualCost: financial.actualCost, refundedCredit: financial.refundedCredit,
+        actualCost: financial.actualCost, releasedCredit: financial.releasedCredit,
         creditUnit: financial.unit, projectionReceiptRef }),
       completedAt: this.#date().toISOString() });
     const closure: MediaImageTerminalClosure = view.state === "failed"
@@ -996,7 +996,7 @@ export class ImageOperationWorker {
         artifactFinalizationReceiptRefs: Object.freeze([]),
         financialReceiptRef: financial.financialReceiptRef,
         allocationClosureReceiptRef: financial.allocationClosureReceiptRef,
-        actualCost: financial.actualCost, refundedCredit: financial.refundedCredit,
+        actualCost: financial.actualCost, releasedCredit: financial.releasedCredit,
         creditUnit: financial.unit, projectionReceiptRef }), completedAt: this.#date().toISOString() }));
     return "canceled";
   }
@@ -1295,8 +1295,8 @@ function requireFinancialSettlement(
   }
   for (const value of [result.financialReceiptRef, result.allocationClosureReceiptRef, result.unit]) reference(value);
   if (!/^(0|[1-9][0-9]{0,37})$/u.test(result.actualCost) ||
-      !/^(0|[1-9][0-9]{0,37})$/u.test(result.refundedCredit) || result.unit !== budget.unit ||
-      BigInt(result.actualCost) + BigInt(result.refundedCredit) !== budget.reservedCeiling) {
+      !/^(0|[1-9][0-9]{0,37})$/u.test(result.releasedCredit) || result.unit !== budget.unit ||
+      BigInt(result.actualCost) + BigInt(result.releasedCredit) !== budget.reservedCeiling) {
     throw new Error("MEDIA_FINANCIAL_SETTLEMENT_INVALID");
   }
   return result;

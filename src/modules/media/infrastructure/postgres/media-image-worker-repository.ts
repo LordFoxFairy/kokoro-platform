@@ -769,9 +769,9 @@ function persistTerminalClosure(closure: MediaImageTerminalClosure): unknown {
 function parseFinancialSettlement(value: unknown): MediaImageFinancialSettlement {
   if (!record(value) || value.kind !== "settled" || typeof value.financialReceiptRef !== "string" ||
       typeof value.allocationClosureReceiptRef !== "string" || typeof value.actualCost !== "string" ||
-      typeof value.refundedCredit !== "string" || typeof value.unit !== "string" ||
+      typeof value.releasedCredit !== "string" || typeof value.unit !== "string" ||
       !/^(0|[1-9][0-9]{0,37})$/u.test(value.actualCost) ||
-      !/^(0|[1-9][0-9]{0,37})$/u.test(value.refundedCredit) ||
+      !/^(0|[1-9][0-9]{0,37})$/u.test(value.releasedCredit) ||
       (value.usageSettlementReceiptRef !== undefined && value.usageSettlementReceiptRef !== null &&
        typeof value.usageSettlementReceiptRef !== "string")) {
     throw new Error("MEDIA_FINANCIAL_SETTLEMENT_INVALID");
@@ -782,7 +782,7 @@ function parseFinancialSettlement(value: unknown): MediaImageFinancialSettlement
   return Object.freeze({ kind: "settled" as const,
     financialReceiptRef: value.financialReceiptRef,
     allocationClosureReceiptRef: value.allocationClosureReceiptRef,
-    actualCost: value.actualCost, refundedCredit: value.refundedCredit, unit: value.unit,
+    actualCost: value.actualCost, releasedCredit: value.releasedCredit, unit: value.unit,
     ...(typeof value.usageSettlementReceiptRef === "string"
       ? { usageSettlementReceiptRef: value.usageSettlementReceiptRef } : {}) });
 }
