@@ -595,6 +595,9 @@ deployables:
       artifactDataPlaneRoleEnvironmentVariable: PLATFORM_DATABASE_ARTIFACT_DATA_PLANE_ROLE
       adminRoleEnvironmentVariable: PLATFORM_DATABASE_ADMIN_ROLE
       modelGatewayRoleEnvironmentVariable: PLATFORM_DATABASE_MODEL_GATEWAY_ROLE
+      memoryPublicRoleEnvironmentVariable: PLATFORM_DATABASE_MEMORY_PUBLIC_ROLE
+      memoryRuntimeRoleEnvironmentVariable: PLATFORM_DATABASE_MEMORY_RUNTIME_ROLE
+      memoryWorkerRoleEnvironmentVariable: PLATFORM_DATABASE_MEMORY_WORKER_ROLE
       expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
       credentialClass: platform-migrator
       permissions: migration-ddl

@@ -32,6 +32,9 @@ export type PlatformProcessRole =
   | "admin-worker"
   | "identity-worker"
   | "model-image-worker"
+  | "memory-public"
+  | "memory-runtime"
+  | "memory-worker"
   | "authorization-maintenance"
   | "admin"
   | "migrator";
@@ -46,6 +49,9 @@ export type PlatformCredentialClass =
   | "admin-worker"
   | "identity-worker"
   | "model-image-worker"
+  | "memory-public"
+  | "memory-runtime"
+  | "memory-worker"
   | "authorization-maintenance"
   | "admin"
   | "migrator";
@@ -96,6 +102,21 @@ const ROLE_DEFAULTS = {
     poolMax: 8,
     credentialClass: "model-image-worker",
     identityEnv: "PLATFORM_DATABASE_MODEL_IMAGE_WORKER_ROLE",
+  },
+  "memory-public": {
+    poolMax: 12,
+    credentialClass: "memory-public",
+    identityEnv: "PLATFORM_DATABASE_MEMORY_PUBLIC_ROLE",
+  },
+  "memory-runtime": {
+    poolMax: 8,
+    credentialClass: "memory-runtime",
+    identityEnv: "PLATFORM_DATABASE_MEMORY_RUNTIME_ROLE",
+  },
+  "memory-worker": {
+    poolMax: 4,
+    credentialClass: "memory-worker",
+    identityEnv: "PLATFORM_DATABASE_MEMORY_WORKER_ROLE",
   },
   "authorization-maintenance": {
     poolMax: 2,

@@ -9,11 +9,18 @@ const MAXIMUM_RESOLVED_SEGMENTS = 64;
 export interface BoundedFileMetadata {
   readonly dev: bigint;
   readonly ino: bigint;
+  readonly uid: bigint;
+  readonly gid: bigint;
   readonly mode: bigint;
   readonly size: bigint;
   readonly ctimeNs: bigint;
   readonly mtimeNs: bigint;
   isFile(): boolean;
+}
+
+export interface BoundedFileProcessIdentity {
+  readonly effectiveUserId: bigint;
+  readonly effectiveGroupId: bigint;
 }
 
 export interface BoundedFileHandle {
@@ -52,6 +59,11 @@ const NODE_FILE_SYSTEM: BoundedFileSystem = Object.freeze({
   },
 });
 
+const NODE_PROCESS_IDENTITY: BoundedFileProcessIdentity = Object.freeze({
+  effectiveUserId: BigInt(process.geteuid?.() ?? -1),
+  effectiveGroupId: BigInt(process.getegid?.() ?? -1),
+});
+
 /**
  * Reads through one no-follow descriptor, caps actual I/O, and verifies stable
  * identity, size, mode, ctime and mtime before and after the read.
@@ -61,8 +73,9 @@ export function readBoundedRegularFile(
   maximumBytes: number,
   invalidCode: string,
   fileSystem: BoundedFileSystem = NODE_FILE_SYSTEM,
+  processIdentity: BoundedFileProcessIdentity = NODE_PROCESS_IDENTITY,
 ): Promise<string> {
-  return readFile(path, maximumBytes, invalidCode, false, fileSystem);
+  return readFile(path, maximumBytes, invalidCode, false, fileSystem, processIdentity);
 }
 
 /** Adds Unix owner-only permission enforcement for private key material. */
@@ -71,8 +84,9 @@ export function readBoundedPrivateFile(
   maximumBytes: number,
   invalidCode: string,
   fileSystem: BoundedFileSystem = NODE_FILE_SYSTEM,
+  processIdentity: BoundedFileProcessIdentity = NODE_PROCESS_IDENTITY,
 ): Promise<string> {
-  return readFile(path, maximumBytes, invalidCode, true, fileSystem);
+  return readFile(path, maximumBytes, invalidCode, true, fileSystem, processIdentity);
 }
 
 /**
@@ -84,15 +98,20 @@ export async function createBoundedFileReaderWithinTrustRoot(
   trustRoot: string,
   invalidCode: string,
   fileSystem: BoundedFileSystem = NODE_FILE_SYSTEM,
+  processIdentity: BoundedFileProcessIdentity = NODE_PROCESS_IDENTITY,
 ): Promise<TrustedRootBoundedFileReader> {
-  if (!isAbsolute(trustRoot) || trustRoot.includes("\0") || !safeCode(invalidCode)) {
+  if (
+    !isAbsolute(trustRoot) || trustRoot.includes("\0") || !safeCode(invalidCode) ||
+    !safeProcessIdentity(processIdentity)
+  ) {
     throw new Error(invalidCode);
   }
   try {
     const rootPath = resolve(trustRoot);
     const rootMetadata = await lstat(rootPath, { bigint: true });
     if (
-      !rootMetadata.isDirectory() || rootMetadata.isSymbolicLink()
+      !rootMetadata.isDirectory() || rootMetadata.isSymbolicLink() ||
+      !safeTrustRootAuthority(rootMetadata, processIdentity)
     ) throw new Error(invalidCode);
     const canonicalRoot = await realpath(rootPath);
     const [rootAfterRealpath, canonicalRootMetadata] = await Promise.all([
@@ -102,10 +121,14 @@ export async function createBoundedFileReaderWithinTrustRoot(
     if (
       !rootAfterRealpath.isDirectory() || rootAfterRealpath.isSymbolicLink() ||
       !canonicalRootMetadata.isDirectory() || canonicalRootMetadata.isSymbolicLink() ||
-      !sameIdentity(rootMetadata, rootAfterRealpath) ||
-      !sameIdentity(rootMetadata, canonicalRootMetadata)
+      !sameTrustRootAuthority(rootMetadata, rootAfterRealpath) ||
+      !sameTrustRootAuthority(rootMetadata, canonicalRootMetadata) ||
+      !safeTrustRootAuthority(rootAfterRealpath, processIdentity) ||
+      !safeTrustRootAuthority(canonicalRootMetadata, processIdentity)
     ) throw new Error(invalidCode);
-    const state = Object.freeze({ rootPath, canonicalRoot, rootMetadata, fileSystem });
+    const state = Object.freeze({
+      rootPath, canonicalRoot, rootMetadata, fileSystem, processIdentity,
+    });
     return Object.freeze({
       readRegular: (path: string, maximumBytes: number, fileInvalidCode: string) =>
         readTrustedFile(state, path, maximumBytes, fileInvalidCode, false),
@@ -121,8 +144,11 @@ async function readTrustedFile(
   trustRoot: Readonly<{
     rootPath: string;
     canonicalRoot: string;
-    rootMetadata: Readonly<{ dev: bigint; ino: bigint }>;
+    rootMetadata: Readonly<{
+      dev: bigint; ino: bigint; uid: bigint; gid: bigint; mode: bigint;
+    }>;
     fileSystem: BoundedFileSystem;
+    processIdentity: BoundedFileProcessIdentity;
   }>,
   path: string,
   maximumBytes: number,
@@ -172,6 +198,7 @@ async function readTrustedFile(
       invalidCode,
       privateMaterial ? "trusted-private" : false,
       validatingFileSystem,
+      trustRoot.processIdentity,
     );
     const finalRealPath = await realpath(requestedPath);
     if (finalRealPath !== finalPath || !contained(trustRoot.canonicalRoot, finalRealPath)) {
@@ -189,7 +216,10 @@ async function assertTrustRootStable(
   trustRoot: Readonly<{
     rootPath: string;
     canonicalRoot: string;
-    rootMetadata: Readonly<{ dev: bigint; ino: bigint }>;
+    rootMetadata: Readonly<{
+      dev: bigint; ino: bigint; uid: bigint; gid: bigint; mode: bigint;
+    }>;
+    processIdentity: BoundedFileProcessIdentity;
   }>,
   invalidCode: string,
 ): Promise<void> {
@@ -200,8 +230,10 @@ async function assertTrustRootStable(
   if (
     !rootPathMetadata.isDirectory() || rootPathMetadata.isSymbolicLink() ||
     !canonicalRootMetadata.isDirectory() || canonicalRootMetadata.isSymbolicLink() ||
-    !sameIdentity(trustRoot.rootMetadata, rootPathMetadata) ||
-    !sameIdentity(trustRoot.rootMetadata, canonicalRootMetadata)
+    !sameTrustRootAuthority(trustRoot.rootMetadata, rootPathMetadata) ||
+    !sameTrustRootAuthority(trustRoot.rootMetadata, canonicalRootMetadata) ||
+    !safeTrustRootAuthority(rootPathMetadata, trustRoot.processIdentity) ||
+    !safeTrustRootAuthority(canonicalRootMetadata, trustRoot.processIdentity)
   ) throw new Error(invalidCode);
 }
 
@@ -280,14 +312,25 @@ function sameIdentity(
 
 function sameSnapshot(
   left: Readonly<{
-    dev: bigint; ino: bigint; size: bigint; mode: bigint; mtimeNs: bigint; ctimeNs: bigint;
+    dev: bigint; ino: bigint; uid: bigint; gid: bigint; size: bigint; mode: bigint;
+    mtimeNs: bigint; ctimeNs: bigint;
   }>,
   right: Readonly<{
-    dev: bigint; ino: bigint; size: bigint; mode: bigint; mtimeNs: bigint; ctimeNs: bigint;
+    dev: bigint; ino: bigint; uid: bigint; gid: bigint; size: bigint; mode: bigint;
+    mtimeNs: bigint; ctimeNs: bigint;
   }>,
 ): boolean {
-  return sameIdentity(left, right) && left.size === right.size && left.mode === right.mode &&
+  return sameIdentity(left, right) && left.uid === right.uid && left.gid === right.gid &&
+    left.size === right.size && left.mode === right.mode &&
     left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs;
+}
+
+function sameTrustRootAuthority(
+  left: Readonly<{ dev: bigint; ino: bigint; uid: bigint; gid: bigint; mode: bigint }>,
+  right: Readonly<{ dev: bigint; ino: bigint; uid: bigint; gid: bigint; mode: bigint }>,
+): boolean {
+  return sameIdentity(left, right) && left.uid === right.uid && left.gid === right.gid &&
+    left.mode === right.mode;
 }
 
 async function readFile(
@@ -296,6 +339,7 @@ async function readFile(
   invalidCode: string,
   privateMaterial: boolean | "trusted-private",
   fileSystem: BoundedFileSystem,
+  processIdentity: BoundedFileProcessIdentity,
 ): Promise<string> {
   let handle: BoundedFileHandle | undefined;
   let value: string | undefined;
@@ -311,7 +355,7 @@ async function readFile(
       fileSystemConstants.O_RDONLY | fileSystemConstants.O_NOFOLLOW,
     );
     const before = await handle.stat();
-    assertMetadata(before, maximumBytes, privateMaterial, invalidCode);
+    assertMetadata(before, maximumBytes, privateMaterial, processIdentity, invalidCode);
 
     const buffer = Buffer.allocUnsafe(maximumBytes + 1);
     let total = 0;
@@ -328,11 +372,9 @@ async function readFile(
     if (total < 1 || total > maximumBytes) throw new Error(invalidCode);
 
     const after = await handle.stat();
-    assertMetadata(after, maximumBytes, privateMaterial, invalidCode);
+    assertMetadata(after, maximumBytes, privateMaterial, processIdentity, invalidCode);
     if (
-      before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size ||
-      before.mode !== after.mode || before.ctimeNs !== after.ctimeNs ||
-      before.mtimeNs !== after.mtimeNs || BigInt(total) !== before.size
+      !sameSnapshot(before, after) || BigInt(total) !== before.size
     ) throw new Error(invalidCode);
     value = new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, total));
   } catch {
@@ -351,14 +393,43 @@ function assertMetadata(
   metadata: BoundedFileMetadata,
   maximumBytes: number,
   privateMaterial: boolean | "trusted-private",
+  processIdentity: BoundedFileProcessIdentity,
   invalidCode: string,
 ): void {
   if (
     !metadata.isFile() || metadata.dev < 0n || metadata.ino < 1n ||
+    metadata.uid < 0n || metadata.gid < 0n || !safeProcessIdentity(processIdentity) ||
     metadata.size < 1n || metadata.size > BigInt(maximumBytes) ||
     metadata.ctimeNs < 0n || metadata.mtimeNs < 0n ||
-    !safeMode(metadata.mode, privateMaterial)
+    !safeMode(metadata.mode, privateMaterial) ||
+    !safePrivateOwnership(metadata, privateMaterial, processIdentity)
   ) throw new Error(invalidCode);
+}
+
+function safePrivateOwnership(
+  metadata: Readonly<{ uid: bigint; gid: bigint; mode: bigint }>,
+  privateMaterial: boolean | "trusted-private",
+  processIdentity: BoundedFileProcessIdentity,
+): boolean {
+  if (!privateMaterial) return true;
+  if (metadata.uid !== 0n && metadata.uid !== processIdentity.effectiveUserId) return false;
+  const groupReadable = (metadata.mode & 0o040n) !== 0n;
+  return !groupReadable || metadata.gid === 0n ||
+    metadata.gid === processIdentity.effectiveGroupId;
+}
+
+function safeTrustRootAuthority(
+  metadata: Readonly<{ uid: bigint; gid: bigint; mode: bigint }>,
+  processIdentity: BoundedFileProcessIdentity,
+): boolean {
+  const permissions = metadata.mode & 0o777n;
+  return metadata.uid >= 0n && metadata.gid >= 0n && safeProcessIdentity(processIdentity) &&
+    (metadata.uid === 0n || metadata.uid === processIdentity.effectiveUserId) &&
+    (permissions & 0o022n) === 0n;
+}
+
+function safeProcessIdentity(identity: BoundedFileProcessIdentity): boolean {
+  return identity.effectiveUserId >= 0n && identity.effectiveGroupId >= 0n;
 }
 
 function safeMode(

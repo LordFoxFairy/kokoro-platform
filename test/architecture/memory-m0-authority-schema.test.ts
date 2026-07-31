@@ -96,7 +96,12 @@ describe("Memory M0 feature-off authority schema", () => {
     expect(migration).not.toContain("CREATE FUNCTION platform.memory_role_identity_is_current");
     expect(migration).not.toMatch(/CREATE POLICY [^\n]+ ON platform\.memory_/u);
     expect(migration).not.toContain("current_setting('app.site_id'");
-    expect(memoryIndex).toContain("`platform_memory_runtime` deliberately receives zero table and routine grants");
+    expect(memoryIndex).toContain(
+      "`platform_memory_runtime` receive zero Platform schema, table, sequence, or routine grants",
+    );
+    expect(memoryIndex).toContain(
+      "Task 5 must introduce the real operation-specific public",
+    );
   });
 
   it("maps all owner tables into Prisma without adding an active Memory process surface", () => {

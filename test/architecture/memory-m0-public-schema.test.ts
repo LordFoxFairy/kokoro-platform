@@ -6,6 +6,14 @@ const migrationPath = join(process.cwd(),
   "prisma/migrations/20260813_memory_m0_public_authority/migration.sql");
 const migration = readFileSync(migrationPath, "utf8");
 const schema = readFileSync(join(process.cwd(), "prisma/schema.prisma"), "utf8");
+const migrator = readFileSync(
+  join(process.cwd(), "src/infrastructure/postgres/migrator.ts"),
+  "utf8",
+);
+const componentTest = readFileSync(
+  join(process.cwd(), "test/component/postgres-foundation.test.ts"),
+  "utf8",
+);
 
 describe("Memory M0.1 public database authority", () => {
   it("keeps revision headers immutable and moves every content byte into one erasable envelope", () => {
@@ -81,18 +89,46 @@ describe("Memory M0.1 public database authority", () => {
     expect(migration).not.toMatch(/GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE|TRUNCATE)[^;]+TO platform_memory_/isu);
   });
 
-  it("exposes only operation-specific definers with exact live owner facts and no GUC authority", () => {
-    for (const routine of ["memory_public_authorize_read", "memory_public_authorize_command",
-      "memory_worker_claim_purge", "memory_worker_delete_revision_payload",
+  it("keeps public and runtime feature-off while exposing only the exact worker purge routines", () => {
+    for (const routine of ["memory_worker_claim_purge", "memory_worker_delete_revision_payload",
       "memory_worker_record_purge_receipt"]) {
       expect(migration).toContain(`CREATE FUNCTION platform.${routine}`);
       expect(migration).toContain(`REVOKE ALL ON FUNCTION platform.${routine}`);
     }
+    expect(migration).not.toContain("memory_public_authorize_read");
+    expect(migration).not.toContain("memory_public_authorize_command");
+    expect(migration).not.toMatch(/GRANT[^;]+TO platform_memory_public/isu);
+    expect(migration).not.toMatch(/GRANT[^;]+TO platform_memory_runtime/isu);
+    expect(migration).not.toContain("memory_space_public_definer");
     expect(migration).toContain("subject_row.subject_generation=p_subject_generation");
     expect(migration).toContain("membership.membership_epoch=p_membership_epoch");
     expect(migration).toContain("membership.authorization_epoch=p_authorization_epoch");
     expect(migration).toContain("release.feature_policy_revision=p_feature_policy_revision_ref");
     expect(migration).not.toContain("current_setting('app.");
     expect(migration).toContain("MEMORY_PUBLIC_OWNER_AUTHORITY_FORBIDDEN");
+  });
+
+  it("makes the central migrator the three-role inventory and postflight authority", () => {
+    for (const environmentName of [
+      "PLATFORM_DATABASE_MEMORY_PUBLIC_ROLE",
+      "PLATFORM_DATABASE_MEMORY_RUNTIME_ROLE",
+      "PLATFORM_DATABASE_MEMORY_WORKER_ROLE",
+    ]) expect(migrator).toContain(environmentName);
+    expect(migrator).toContain("memoryRolePreflight");
+    expect(migrator).toContain("memoryRoleAuthority");
+    expect(migrator).toContain("memory_database_role_identity");
+    for (const ownershipFact of [
+      "ownsAnyDatabase", "ownsAnySchema", "ownsAnyRelation", "ownsAnySequence",
+      "ownsAnyRoutine", "ownsAnyType",
+    ]) expect(migrator).toContain(ownershipFact);
+  });
+
+  it("proves OID drift transactionally without mutating canonical login roles", () => {
+    expect(componentTest).toContain("readMemoryAuthorityInventory");
+    expect(componentTest).toContain("SET LOCAL SESSION AUTHORIZATION platform_memory_worker");
+    expect(componentTest).toContain("authorityInventoryBefore");
+    expect(componentTest).not.toMatch(
+      /(?:ALTER|CREATE|DROP) ROLE (?:platform_memory_|\$\{memoryRoleNames)/u,
+    );
   });
 });

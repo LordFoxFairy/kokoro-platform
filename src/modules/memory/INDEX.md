@@ -34,9 +34,13 @@ retired revisions. Production has no default or development key. Immutable revis
 persisted separately.
 
 PostgreSQL tables are Site-composite and force RLS. M0.1 provisions the exact LOGIN/NOINHERIT/NOBYPASSRLS
-`platform_memory_public`, `platform_memory_runtime`, and `platform_memory_worker` identities and pins their OIDs. Public and worker
-authority is exposed only through operation-specific, fixed-search-path SECURITY DEFINER routines whose RLS policies revalidate
-the exact session role and current owner facts. `platform_memory_runtime` deliberately receives zero table and routine grants.
+`platform_memory_public`, `platform_memory_runtime`, and `platform_memory_worker` identities and pins their OIDs. The central
+Platform migrator qualifies all three identities, ownership and membership inventory before migration, closes their default
+privileges, and verifies the exact OID/ACL authority afterward. While the feature is off, `platform_memory_public` and
+`platform_memory_runtime` receive zero Platform schema, table, sequence, or routine grants. `platform_memory_worker` receives only
+Platform schema usage and the three fixed-search-path purge routines. Task 5 must introduce the real operation-specific public
+read/write routines, grants, RLS policies, and live owner-fact revalidation in a forward migration; the M0.1 owner helper remains
+migrator-internal and is not a callable product surface.
 No Memory process credential, listener, readiness check, public route, worker composition, or RPC surface is activated yet.
 
 Consumers use only `src/modules/memory/index.ts`. Persistence and application ports are public solely to allow a later owner

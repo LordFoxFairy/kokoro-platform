@@ -26,6 +26,12 @@ const identityWorkerUrl =
   "postgresql://platform_identity_worker:secret@localhost:5432/kokoro_platform";
 const modelImageWorkerUrl =
   "postgresql://platform_model_image_worker:secret@localhost:5432/kokoro_platform";
+const memoryPublicUrl =
+  "postgresql://platform_memory_public:secret@localhost:5432/kokoro_platform";
+const memoryRuntimeUrl =
+  "postgresql://platform_memory_runtime:secret@localhost:5432/kokoro_platform";
+const memoryWorkerUrl =
+  "postgresql://platform_memory_worker:secret@localhost:5432/kokoro_platform";
 const authorizationUrl = "postgresql://platform_authorization:secret@localhost:5432/kokoro_platform";
 const assetDataPlaneUrl = "postgresql://platform_asset_data_plane:secret@localhost:5432/kokoro_platform";
 const adminUrl = "postgresql://platform_admin:secret@localhost:5432/kokoro_platform";
@@ -46,6 +52,9 @@ const commonEnvironment = {
   PLATFORM_DATABASE_IDENTITY_WORKER_ROLE: "platform_identity_worker",
   PLATFORM_DATABASE_MODEL_IMAGE_WORKER_ROLE: "platform_model_image_worker",
   PLATFORM_DATABASE_AUTHORIZATION_MAINTENANCE_ROLE: "platform_authorization_maintenance",
+  PLATFORM_DATABASE_MEMORY_PUBLIC_ROLE: "platform_memory_public",
+  PLATFORM_DATABASE_MEMORY_RUNTIME_ROLE: "platform_memory_runtime",
+  PLATFORM_DATABASE_MEMORY_WORKER_ROLE: "platform_memory_worker",
 } as const;
 
 describe("Platform PostgreSQL authority", () => {
@@ -110,6 +119,21 @@ describe("Platform PostgreSQL authority", () => {
       DATABASE_URL_PLATFORM: modelImageWorkerUrl,
       PLATFORM_DATABASE_CREDENTIAL_CLASS: "model-image-worker",
     });
+    const memoryPublic = loadPlatformDatabaseConfig("memory-public", {
+      ...commonEnvironment,
+      DATABASE_URL_PLATFORM: memoryPublicUrl,
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: "memory-public",
+    });
+    const memoryRuntime = loadPlatformDatabaseConfig("memory-runtime", {
+      ...commonEnvironment,
+      DATABASE_URL_PLATFORM: memoryRuntimeUrl,
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: "memory-runtime",
+    });
+    const memoryWorker = loadPlatformDatabaseConfig("memory-worker", {
+      ...commonEnvironment,
+      DATABASE_URL_PLATFORM: memoryWorkerUrl,
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: "memory-worker",
+    });
     const admission = loadPlatformDatabaseConfig("admission", {
       ...commonEnvironment,
       DATABASE_URL_PLATFORM: admissionUrl,
@@ -140,9 +164,12 @@ describe("Platform PostgreSQL authority", () => {
         authorization.expectedDatabaseUser,
         assetDataPlane.expectedDatabaseUser,
         admin.expectedDatabaseUser,
+        memoryPublic.expectedDatabaseUser,
+        memoryRuntime.expectedDatabaseUser,
+        memoryWorker.expectedDatabaseUser,
         api.migratorDatabaseUser,
       ]).size,
-    ).toBe(9);
+    ).toBe(12);
     expect(admission).toMatchObject({
       role: "admission",
       credentialClass: "admission",
@@ -164,6 +191,15 @@ describe("Platform PostgreSQL authority", () => {
       applicationName: "kokoro-platform-model-image-worker",
       pool: { max: 8, connectionTimeoutMs: 5_000 },
     });
+    expect([memoryPublic, memoryRuntime, memoryWorker]).toMatchObject([
+      { role: "memory-public", credentialClass: "memory-public",
+        expectedDatabaseUser: "platform_memory_public" },
+      { role: "memory-runtime", credentialClass: "memory-runtime",
+        expectedDatabaseUser: "platform_memory_runtime" },
+      { role: "memory-worker", credentialClass: "memory-worker",
+        expectedDatabaseUser: "platform_memory_worker" },
+    ]);
+    expect(JSON.stringify([memoryPublic, memoryRuntime, memoryWorker])).not.toContain("secret");
   });
 });
 
@@ -172,11 +208,16 @@ describe("Platform migrator", () => {
     const events: string[] = [];
     const grants: string[] = [];
     let authoritySql = "";
+    let memoryAuthoritySql = "";
     const lockClient: MigrationLockClient = {
       async connect() {
         events.push("connect");
       },
       async query(sql, values) {
+        if (sql.includes("memoryRolePreflight")) {
+          events.push("preflight-memory-roles");
+          return { rows: safeMemoryRoles() };
+        }
         if (sql.includes("singleRuntimeRolePreflight")) {
           const roleName = String(values?.[0]);
           events.push(`preflight-${roleName.replace("platform_", "").replaceAll("_", "-")}`);
@@ -217,6 +258,11 @@ describe("Platform migrator", () => {
         if (sql.includes('AS "roleIdentityAuthorityExact"')) {
           events.push("verify-split-worker-role-identities");
           return { rows: [{ roleIdentityAuthorityExact: true }] };
+        }
+        if (sql.includes("memoryRoleAuthority")) {
+          events.push("verify-memory-role-authority");
+          memoryAuthoritySql = sql;
+          return { rows: [{ memoryRoleAuthorityExact: true }] };
         }
         if (sql.includes("publicRoutineAuthorityClosed")) {
           return { rows: [{ publicRoutineAuthorityClosed: true }] };
@@ -324,7 +370,7 @@ describe("Platform migrator", () => {
       },
     });
 
-    expect(events.slice(0, 13)).toEqual([
+    expect(events.slice(0, 14)).toEqual([
       "connect",
       "preflight-migrator",
       "preflight-runtime-roles",
@@ -337,9 +383,10 @@ describe("Platform migrator", () => {
       "preflight-admin-worker",
       "preflight-identity-worker",
       "preflight-authorization-maintenance",
+      "preflight-memory-roles",
       `SELECT pg_advisory_lock(hashtext($1)):${MIGRATION_ADVISORY_LOCK}`,
     ]);
-    expect(events[13]).toBe("execute");
+    expect(events[14]).toBe("execute");
     expect(grants).toContain(
       "GRANT EXECUTE ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.resolve_admission_model_owner(TEXT, TEXT, TEXT) TO \"platform_admission\"",
     );
@@ -447,6 +494,10 @@ describe("Platform migrator", () => {
     expect(authoritySql).toMatch(
       /runtime_role\.rolname=\$3 AND \([\s\S]+grant_row\.table_name LIKE 'identity\\_%'/u,
     );
+    for (const requiredEvidence of [
+      "has_database_privilege", "'CREATE'", "'TEMPORARY'", "nspname='public'",
+      "relkind='S'", "pg_default_acl", "defaclrole",
+    ]) expect(memoryAuthoritySql).toContain(requiredEvidence);
     for (const expected of [
       "verify-outbox-policies", "persist-outbox-policy-authority", "verify-authority",
       "verify-model-gateway", "verify-asset-data-plane", "verify-platform_commerce_worker",
@@ -454,6 +505,7 @@ describe("Platform migrator", () => {
       "verify-platform_admin_worker", "verify-platform_identity_worker",
       "verify-platform_authorization_maintenance",
       "verify-split-worker-role-identities",
+      "verify-memory-role-authority",
     ]) expect(events).toContain(expected);
     expect(events.slice(-2)).toEqual([
       `SELECT pg_advisory_unlock(hashtext($1)):${MIGRATION_ADVISORY_LOCK}`, "end",
@@ -502,10 +554,47 @@ describe("Platform migrator", () => {
     ).rejects.toThrowError("PLATFORM_RUNTIME_ROLE_PREFLIGHT_FAILED");
   });
 
+  it("fails before migration when a Memory login owns a PostgreSQL object", async () => {
+    let executed = false;
+    const lockClient: MigrationLockClient = {
+      async connect() {},
+      async query(sql, values) {
+        if (sql.includes("server_version_num")) return { rows: [safeMigratorAuthority()] };
+        if (sql.includes("singleRuntimeRolePreflight")) {
+          return { rows: [safeRole(String(values?.[0]))] };
+        }
+        if (sql.includes("isMigratorMember") && !sql.includes("memoryRolePreflight")) {
+          return { rows: [
+            safeRole("platform_api"), safeRole("platform_admission"),
+            safeRole("platform_authorization"), safeRole("platform_admin"),
+          ] };
+        }
+        if (sql.includes("memoryRolePreflight")) {
+          return { rows: safeMemoryRoles().map((role) =>
+            role.roleName === "platform_memory_worker"
+              ? { ...role, ownsAnySequence: true }
+              : role) };
+        }
+        return {};
+      },
+      async end() {},
+    };
+
+    await expect(runPlatformMigrations({
+      environment: migratorEnvironment(),
+      createLockClient: () => lockClient,
+      execute: async () => { executed = true; return 0; },
+    })).rejects.toThrowError("PLATFORM_MEMORY_ROLE_PREFLIGHT_FAILED");
+    expect(executed).toBe(false);
+  });
+
   it("fails closed when a runtime role can access any Platform object beyond marker SELECT", async () => {
     const lockClient: MigrationLockClient = {
       async connect() {},
       async query(sql, values) {
+        if (sql.includes("memoryRolePreflight")) {
+          return { rows: safeMemoryRoles() };
+        }
         if (sql.includes("singleRuntimeRolePreflight")) {
           return { rows: [safeRole(String(values?.[0]))] };
         }
@@ -545,6 +634,9 @@ describe("Platform migrator", () => {
         if (sql.includes('SET "outboxPolicyAuthority"')) {
           return { rows: [{ singleton: true }] };
         }
+        if (sql.includes("memoryRoleAuthority")) {
+          return { rows: [{ memoryRoleAuthorityExact: true }] };
+        }
         if (sql.includes("hasUnexpectedPlatformPrivilege")) {
           return {
             rows: [
@@ -579,6 +671,9 @@ describe("Platform migrator", () => {
       const lockClient: MigrationLockClient = {
         async connect() {},
         async query(sql, values) {
+          if (sql.includes("memoryRolePreflight")) {
+            return { rows: safeMemoryRoles() };
+          }
           if (sql.includes("singleRuntimeRolePreflight")) {
             return { rows: [safeRole(String(values?.[0]))] };
           }
@@ -606,6 +701,9 @@ describe("Platform migrator", () => {
           if (sql.includes("FROM pg_policy policy")) return { rows: outboxPolicyRows() };
           if (sql.includes('SET "outboxPolicyAuthority"')) {
             return { rows: [{ singleton: true }] };
+          }
+          if (sql.includes("memoryRoleAuthority")) {
+            return { rows: [{ memoryRoleAuthorityExact: true }] };
           }
           if (sql.includes("hasUnexpectedPlatformPrivilege")) {
             return { rows: [
@@ -825,6 +923,11 @@ describe("independent deployable roles", () => {
     expect(manifest).toContain("expectedUserEnvironmentVariable: PLATFORM_DATABASE_AUTHORIZATION_ROLE");
     expect(manifest).toContain("credentialClass: platform-admin");
     expect(manifest).toContain("credentialClass: platform-migrator");
+    for (const environmentName of [
+      "PLATFORM_DATABASE_MEMORY_PUBLIC_ROLE",
+      "PLATFORM_DATABASE_MEMORY_RUNTIME_ROLE",
+      "PLATFORM_DATABASE_MEMORY_WORKER_ROLE",
+    ]) expect(manifest).toContain(environmentName);
     expect(manifest).toContain("id: platform-admin-authority-bootstrap");
     expect(manifest).toContain("initial-admin-authority-document");
     expect(manifest).toContain("site-release-certification-verification-keyring");
@@ -846,6 +949,34 @@ function safeRole(roleName: string): Record<string, unknown> {
     isPeerMember: false,
     ownsAnyDatabase: false,
   };
+}
+
+function memoryRoleNames(): Readonly<Record<"public" | "runtime" | "worker", string>> {
+  return Object.freeze({
+    public: "platform_memory_public",
+    runtime: "platform_memory_runtime",
+    worker: "platform_memory_worker",
+  });
+}
+
+function safeMemoryRole(roleName: string): Record<string, unknown> {
+  return {
+    ...safeRole(roleName),
+    canLogin: true,
+    ownsAnySchema: false,
+    ownsAnyRelation: false,
+    ownsAnySequence: false,
+    ownsAnyRoutine: false,
+    ownsAnyType: false,
+    ownsAnyTablespace: false,
+  };
+}
+
+function safeMemoryRoles(): readonly Record<string, unknown>[] {
+  return Object.entries(memoryRoleNames()).map(([roleKind, roleName]) => ({
+    ...safeMemoryRole(roleName),
+    roleKind,
+  }));
 }
 
 function authority(roleName: string): Record<string, unknown> {

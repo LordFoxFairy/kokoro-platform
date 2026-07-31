@@ -117,6 +117,9 @@ jobs:
       PLATFORM_DATABASE_ADMIN_ROLE: platform_admin
       PLATFORM_DATABASE_MODEL_GATEWAY_ROLE: platform_model_gateway
       PLATFORM_DATABASE_MODEL_IMAGE_WORKER_ROLE: platform_model_image_worker
+      PLATFORM_DATABASE_MEMORY_PUBLIC_ROLE: platform_memory_public
+      PLATFORM_DATABASE_MEMORY_RUNTIME_ROLE: platform_memory_runtime
+      PLATFORM_DATABASE_MEMORY_WORKER_ROLE: platform_memory_worker
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

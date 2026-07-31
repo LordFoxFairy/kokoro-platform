@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, open, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, chown, mkdir, mkdtemp, open, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -10,6 +10,19 @@ import {
 } from "../../src/process/secret-files.js";
 
 describe("bounded secret files", () => {
+  it("rejects a group/world-writable trust root", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "kokoro-writable-trust-root-"));
+    try {
+      await chmod(directory, 0o770);
+      await expect(createBoundedFileReaderWithinTrustRoot(
+        directory,
+        "TEST_TRUST_ROOT_INVALID",
+      )).rejects.toThrowError("TEST_TRUST_ROOT_INVALID");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it.each([0o450, 0o540, 0o700, 0o441])(
     "rejects executable or world-accessible trusted private mode %s",
     async (mode) => {
@@ -52,6 +65,8 @@ describe("bounded secret files", () => {
               return {
                 dev: 99n,
                 ino: 100n,
+                uid: BigInt(process.geteuid?.() ?? 0),
+                gid: BigInt(process.getegid?.() ?? 0),
                 mode: 0o100400n,
                 size: 7n,
                 ctimeNs: 1n,
@@ -114,6 +129,44 @@ describe("bounded secret files", () => {
       .rejects.toThrowError("TEST_PRIVATE_INVALID");
   });
 
+  it("rejects private material owned by neither root nor the effective user", async () => {
+    const bytes = Buffer.from("private-key", "utf8");
+    const effectiveUserId = BigInt(process.geteuid?.() ?? 0);
+    const fileSystem: BoundedFileSystem = {
+      async open() {
+        return {
+          async stat() {
+            return {
+              dev: 1n,
+              ino: 2n,
+              uid: effectiveUserId + 1n,
+              gid: BigInt(process.getegid?.() ?? 0),
+              mode: 0o100600n,
+              size: BigInt(bytes.byteLength),
+              ctimeNs: 1n,
+              mtimeNs: 1n,
+              isFile: () => true,
+            };
+          },
+          async read(buffer, offset, length, position) {
+            if (position >= bytes.byteLength) return { bytesRead: 0 };
+            const count = Math.min(length, bytes.byteLength - position);
+            bytes.copy(buffer, offset, position, position + count);
+            return { bytesRead: count };
+          },
+          async close() {},
+        };
+      },
+    };
+
+    await expect(readBoundedPrivateFile(
+      "/run/secrets/private.key",
+      64,
+      "TEST_PRIVATE_INVALID",
+      fileSystem,
+    )).rejects.toThrowError("TEST_PRIVATE_INVALID");
+  });
+
   it("rejects a file replaced or resized between descriptor reads", async () => {
     let statCall = 0;
     const bytes = Buffer.from("trust-root", "utf8");
@@ -125,6 +178,8 @@ describe("bounded secret files", () => {
             return {
               dev: 10n,
               ino: 20n,
+              uid: BigInt(process.geteuid?.() ?? 0),
+              gid: BigInt(process.getegid?.() ?? 0),
               mode: 0o100600n,
               size: BigInt(bytes.byteLength),
               ctimeNs: 100n,
@@ -160,6 +215,8 @@ describe("bounded secret files", () => {
             return {
               dev: 1n,
               ino: 2n,
+              uid: BigInt(process.geteuid?.() ?? 0),
+              gid: BigInt(process.getegid?.() ?? 0),
               mode: 0o100600n,
               size: 4n,
               ctimeNs: 1n,
@@ -202,6 +259,33 @@ describe("bounded secret files", () => {
       await expect(reader.readPrivate(
         join(root, "delivery-hmac.key"), 64, "TEST_PRIVATE_INVALID",
       )).resolves.toBe("private-value");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a group-readable projected secret outside root or the effective group", async () => {
+    const root = await mkdtemp(join(tmpdir(), "kokoro-group-secret-"));
+    try {
+      const path = join(root, "private.key");
+      await writeFile(path, "private-value", { mode: 0o440 });
+      const metadata = await stat(path, { bigint: true });
+      let fileGroup = metadata.gid;
+      if (fileGroup === 0n && (process.geteuid?.() ?? 0) === 0) {
+        fileGroup = 1n;
+        await chown(path, 0, Number(fileGroup));
+      }
+      const reader = await createBoundedFileReaderWithinTrustRoot(
+        root,
+        "TEST_TRUST_ROOT_INVALID",
+        undefined,
+        {
+          effectiveUserId: metadata.uid,
+          effectiveGroupId: fileGroup + 1n,
+        },
+      );
+      await expect(reader.readPrivate(path, 64, "TEST_PRIVATE_INVALID"))
+        .rejects.toThrowError("TEST_PRIVATE_INVALID");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

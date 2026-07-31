@@ -48,6 +48,24 @@ interface SplitWorkerRoles {
   readonly authorizationMaintenance: string;
 }
 
+interface MemoryRoles {
+  readonly public: string;
+  readonly runtime: string;
+  readonly worker: string;
+}
+
+const MEMORY_ROLE_CONTRACT = Object.freeze({
+  public: "platform_memory_public",
+  runtime: "platform_memory_runtime",
+  worker: "platform_memory_worker",
+} as const satisfies MemoryRoles);
+
+const MEMORY_WORKER_ROUTINES = Object.freeze([
+  "platform.memory_worker_claim_purge(text,character,integer)",
+  "platform.memory_worker_delete_revision_payload(text,text,text,text,bigint,text,bigint,character)",
+  "platform.memory_worker_record_purge_receipt(text,text,text,text,text,character,bigint,character)",
+] as const);
+
 const MIGRATOR_ENVIRONMENT_ALLOWLIST = [
   "PATH",
   "HOME",
@@ -118,6 +136,23 @@ export async function runPlatformMigrations(
     environment.PLATFORM_DATABASE_MODEL_GATEWAY_ROLE,
     "PLATFORM_DATABASE_MODEL_GATEWAY_ROLE",
   );
+  const memoryRoles = Object.freeze({
+    public: requireExactRole(
+      environment.PLATFORM_DATABASE_MEMORY_PUBLIC_ROLE,
+      "PLATFORM_DATABASE_MEMORY_PUBLIC_ROLE",
+      MEMORY_ROLE_CONTRACT.public,
+    ),
+    runtime: requireExactRole(
+      environment.PLATFORM_DATABASE_MEMORY_RUNTIME_ROLE,
+      "PLATFORM_DATABASE_MEMORY_RUNTIME_ROLE",
+      MEMORY_ROLE_CONTRACT.runtime,
+    ),
+    worker: requireExactRole(
+      environment.PLATFORM_DATABASE_MEMORY_WORKER_ROLE,
+      "PLATFORM_DATABASE_MEMORY_WORKER_ROLE",
+      MEMORY_ROLE_CONTRACT.worker,
+    ),
+  });
   assertDistinctRoles([
     config.expectedDatabaseUser,
     apiRole,
@@ -128,6 +163,7 @@ export async function runPlatformMigrations(
     ...Object.values(workerRoles),
     adminRole,
     modelGatewayRole,
+    ...Object.values(memoryRoles),
   ]);
 
   const lockClient = (options.createLockClient ?? defaultLockClient)(config.url);
@@ -162,6 +198,7 @@ export async function runPlatformMigrations(
       config.expectedDatabaseUser,
     );
     await assertSplitWorkerRolePreflight(lockClient, workerRoles, config.expectedDatabaseUser);
+    await assertMemoryRolePreflight(lockClient, memoryRoles, config.expectedDatabaseUser);
     await lockClient.query("SELECT pg_advisory_lock(hashtext($1))", [MIGRATION_ADVISORY_LOCK]);
     locked = true;
 
@@ -192,6 +229,12 @@ export async function runPlatformMigrations(
     await grantAssetDataPlanePrivileges(lockClient, assetDataPlaneRole);
     await grantArtifactDataPlanePrivileges(lockClient, artifactDataPlaneRole);
     await grantSplitWorkerPrivileges(lockClient, workerRoles);
+    await configureMemoryRoleAuthority(
+      lockClient,
+      memoryRoles,
+      config.expectedDatabaseUser,
+      config.expectedDatabaseName,
+    );
     await configureOutboxOwnerPolicies(lockClient, {
       migrator: config.expectedDatabaseUser,
       api: apiRole,
@@ -224,6 +267,7 @@ export async function runPlatformMigrations(
     );
     await assertSplitWorkerAuthority(lockClient, workerRoles);
     await assertSplitWorkerRoleIdentityAuthority(lockClient, workerRoles);
+    await assertMemoryRoleAuthority(lockClient, memoryRoles, config.expectedDatabaseUser);
     await assertPublicRoutineAuthority(lockClient, config.expectedDatabaseUser);
   } finally {
     try {
@@ -468,6 +512,82 @@ async function assertSplitWorkerRolePreflight(
       migratorRole,
       `PLATFORM_SPLIT_WORKER_ROLE_PREFLIGHT_FAILED:${key}`,
     );
+  }
+}
+
+async function assertMemoryRolePreflight(
+  client: MigrationLockClient,
+  roles: MemoryRoles,
+  migratorRole: string,
+): Promise<void> {
+  const expected = Object.entries(roles).map(([roleKind, roleName]) => ({ roleKind, roleName }));
+  const result = await client.query(MEMORY_ROLE_PREFLIGHT_SQL, [
+    JSON.stringify(expected),
+    migratorRole,
+  ]);
+  const rows = result.rows ?? [];
+  const exactRows = rows.length === expected.length && expected.every(({ roleKind, roleName }) =>
+    rows.some((row) => row.roleKind === roleKind && row.roleName === roleName));
+  if (!exactRows || rows.some((row) => !safeMemoryRole(row))) {
+    throw new Error("PLATFORM_MEMORY_ROLE_PREFLIGHT_FAILED");
+  }
+}
+
+function safeMemoryRole(role: Readonly<Record<string, unknown>>): boolean {
+  return safeRuntimeRole(role) && role.canLogin === true &&
+    role.ownsAnySchema === false && role.ownsAnyRelation === false &&
+    role.ownsAnySequence === false && role.ownsAnyRoutine === false &&
+    role.ownsAnyType === false && role.ownsAnyTablespace === false;
+}
+
+async function configureMemoryRoleAuthority(
+  client: MigrationLockClient,
+  roles: MemoryRoles,
+  migratorRole: string,
+  databaseName: string,
+): Promise<void> {
+  for (const roleName of Object.values(roles)) {
+    const role = quoteRoleIdentifier(roleName);
+    await client.query(
+      `REVOKE CREATE,TEMPORARY ON DATABASE ${quoteRoleIdentifier(databaseName)} FROM ${role}`,
+    );
+    await client.query(`REVOKE CREATE,USAGE ON SCHEMA public FROM ${role}`);
+    await client.query(`REVOKE ALL ON SCHEMA platform FROM ${role}`);
+    await client.query(`REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA platform FROM ${role}`);
+    await client.query(`REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA platform FROM ${role}`);
+    await client.query(`REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA platform FROM ${role}`);
+    await client.query(
+      `ALTER DEFAULT PRIVILEGES FOR ROLE ${quoteRoleIdentifier(migratorRole)} ` +
+        `IN SCHEMA platform REVOKE ALL ON TABLES FROM ${role}`,
+    );
+    await client.query(
+      `ALTER DEFAULT PRIVILEGES FOR ROLE ${quoteRoleIdentifier(migratorRole)} ` +
+        `IN SCHEMA platform REVOKE ALL ON SEQUENCES FROM ${role}`,
+    );
+    await client.query(
+      `ALTER DEFAULT PRIVILEGES FOR ROLE ${quoteRoleIdentifier(migratorRole)} ` +
+        `IN SCHEMA platform REVOKE ALL ON FUNCTIONS FROM ${role}`,
+    );
+  }
+  const worker = quoteRoleIdentifier(roles.worker);
+  await client.query(`GRANT USAGE ON SCHEMA platform TO ${worker}`);
+  for (const routine of MEMORY_WORKER_ROUTINES) {
+    await client.query(`GRANT EXECUTE ON FUNCTION ${routine} TO ${worker}`);
+  }
+}
+
+async function assertMemoryRoleAuthority(
+  client: MigrationLockClient,
+  roles: MemoryRoles,
+  migratorRole: string,
+): Promise<void> {
+  const expected = Object.entries(roles).map(([roleKind, roleName]) => ({ roleKind, roleName }));
+  const result = await client.query(MEMORY_ROLE_AUTHORITY_SQL, [
+    JSON.stringify(expected),
+    migratorRole,
+  ]);
+  if (result.rows?.length !== 1 || result.rows[0]?.memoryRoleAuthorityExact !== true) {
+    throw new Error("PLATFORM_MEMORY_ROLE_AUTHORITY_INVALID");
   }
 }
 
@@ -1266,6 +1386,188 @@ function canonicalPolicyExpression(value: string): string {
     .replace(/[()]/gu, "")
     .toLowerCase();
 }
+
+const MEMORY_ROLE_PREFLIGHT_SQL = `
+  WITH expected AS (
+    SELECT * FROM jsonb_to_recordset($1::jsonb)
+      AS expected("roleKind" text,"roleName" text)
+  )
+  SELECT expected."roleKind" AS "roleKind",runtime_role.rolname AS "roleName",
+    runtime_role.rolcanlogin AS "canLogin",
+    runtime_role.rolsuper AS "isSuperuser",
+    runtime_role.rolcreatedb AS "canCreateDatabase",
+    runtime_role.rolcreaterole AS "canCreateRole",
+    runtime_role.rolreplication AS "canReplicate",
+    runtime_role.rolbypassrls AS "canBypassRls",
+    runtime_role.rolinherit AS "inheritsPrivileges",
+    EXISTS (SELECT 1 FROM pg_auth_members membership WHERE membership.member=runtime_role.oid)
+      AS "hasAnyMembership",
+    pg_has_role(runtime_role.rolname,$2,'MEMBER') AS "isMigratorMember",
+    EXISTS (SELECT 1 FROM pg_auth_members membership WHERE membership.roleid=runtime_role.oid)
+      AS "isPeerMember",
+    EXISTS (SELECT 1 FROM pg_database database_row WHERE database_row.datdba=runtime_role.oid)
+      AS "ownsAnyDatabase",
+    EXISTS (SELECT 1 FROM pg_namespace namespace WHERE namespace.nspowner=runtime_role.oid)
+      AS "ownsAnySchema",
+    EXISTS (SELECT 1 FROM pg_class relation WHERE relation.relowner=runtime_role.oid)
+      AS "ownsAnyRelation",
+    EXISTS (SELECT 1 FROM pg_class sequence_row
+      WHERE sequence_row.relowner=runtime_role.oid AND sequence_row.relkind='S')
+      AS "ownsAnySequence",
+    EXISTS (SELECT 1 FROM pg_proc routine WHERE routine.proowner=runtime_role.oid)
+      AS "ownsAnyRoutine",
+    EXISTS (SELECT 1 FROM pg_type type_row WHERE type_row.typowner=runtime_role.oid)
+      AS "ownsAnyType",
+    EXISTS (SELECT 1 FROM pg_tablespace tablespace WHERE tablespace.spcowner=runtime_role.oid)
+      AS "ownsAnyTablespace"
+  FROM expected JOIN pg_roles runtime_role ON runtime_role.rolname=expected."roleName"
+  ORDER BY expected."roleKind" /* memoryRolePreflight */`;
+
+const MEMORY_ROLE_AUTHORITY_SQL = `
+  WITH expected AS (
+    SELECT * FROM jsonb_to_recordset($1::jsonb)
+      AS expected("roleKind" text,"roleName" text)
+  ), live AS (
+    SELECT expected."roleKind" AS "roleKind",runtime_role.rolname AS "roleName",
+      runtime_role.oid AS "roleOid",runtime_role.rolcanlogin AS "canLogin",
+      runtime_role.rolsuper AS "isSuperuser",runtime_role.rolcreatedb AS "canCreateDatabase",
+      runtime_role.rolcreaterole AS "canCreateRole",
+      runtime_role.rolreplication AS "canReplicate",
+      runtime_role.rolbypassrls AS "canBypassRls",
+      runtime_role.rolinherit AS "inheritsPrivileges",
+      has_database_privilege(runtime_role.rolname,current_database(),'CREATE')
+        AS "canCreateDatabaseObject",
+      has_database_privilege(runtime_role.rolname,current_database(),'TEMPORARY')
+        AS "canCreateTemporaryObjects",
+      has_schema_privilege(runtime_role.rolname,'public','USAGE') AS "canUsePublicSchema",
+      has_schema_privilege(runtime_role.rolname,'public','CREATE') AS "canCreatePublicSchema",
+      EXISTS (SELECT 1 FROM pg_auth_members membership WHERE membership.member=runtime_role.oid)
+        AS "hasAnyMembership",
+      pg_has_role(runtime_role.rolname,$2,'MEMBER') AS "isMigratorMember",
+      EXISTS (SELECT 1 FROM pg_auth_members membership WHERE membership.roleid=runtime_role.oid)
+        AS "isPeerMember",
+      EXISTS (SELECT 1 FROM pg_database database_row WHERE database_row.datdba=runtime_role.oid)
+        AS "ownsAnyDatabase",
+      EXISTS (SELECT 1 FROM pg_namespace namespace WHERE namespace.nspowner=runtime_role.oid)
+        AS "ownsAnySchema",
+      EXISTS (SELECT 1 FROM pg_class relation WHERE relation.relowner=runtime_role.oid)
+        AS "ownsAnyRelation",
+      EXISTS (SELECT 1 FROM pg_class sequence_row
+        WHERE sequence_row.relowner=runtime_role.oid AND sequence_row.relkind='S')
+        AS "ownsAnySequence",
+      EXISTS (SELECT 1 FROM pg_proc routine WHERE routine.proowner=runtime_role.oid)
+        AS "ownsAnyRoutine",
+      EXISTS (SELECT 1 FROM pg_type type_row WHERE type_row.typowner=runtime_role.oid)
+        AS "ownsAnyType",
+      EXISTS (SELECT 1 FROM pg_tablespace tablespace WHERE tablespace.spcowner=runtime_role.oid)
+        AS "ownsAnyTablespace"
+    FROM expected JOIN pg_roles runtime_role ON runtime_role.rolname=expected."roleName"
+  ), identity_authority AS (
+    SELECT role_kind AS "roleKind",role_name::text AS "roleName",role_oid AS "roleOid"
+    FROM platform.memory_database_role_identity
+  ), schema_authority AS (
+    SELECT live."roleKind",acl.privilege_type AS privilege
+    FROM live JOIN pg_namespace namespace ON namespace.nspname='platform'
+    CROSS JOIN LATERAL aclexplode(namespace.nspacl) acl
+    WHERE acl.grantee=live."roleOid"
+  ), expected_schema_authority AS (
+    SELECT 'worker'::text AS "roleKind",'USAGE'::text AS privilege
+  ), public_schema_authority AS (
+    SELECT live."roleKind",acl.privilege_type AS privilege
+    FROM live JOIN pg_namespace namespace ON namespace.nspname='public'
+    CROSS JOIN LATERAL aclexplode(namespace.nspacl) acl
+    WHERE acl.grantee=live."roleOid"
+  ), relation_authority AS (
+    SELECT live."roleKind",relation.oid,acl.privilege_type AS privilege
+    FROM live JOIN pg_class relation ON relation.relnamespace=to_regnamespace('platform')
+      AND relation.relkind<>'S'
+    CROSS JOIN LATERAL aclexplode(relation.relacl) acl
+    WHERE acl.grantee=live."roleOid"
+  ), sequence_authority AS (
+    SELECT live."roleKind",sequence_row.oid,acl.privilege_type AS privilege
+    FROM live JOIN pg_class sequence_row ON sequence_row.relnamespace=to_regnamespace('platform')
+      AND sequence_row.relkind='S'
+    CROSS JOIN LATERAL aclexplode(sequence_row.relacl) acl
+    WHERE acl.grantee=live."roleOid"
+  ), routine_authority AS (
+    SELECT live."roleKind",routine.oid
+    FROM live JOIN pg_proc routine ON routine.pronamespace=to_regnamespace('platform')
+    CROSS JOIN LATERAL aclexplode(routine.proacl) acl
+    WHERE acl.grantee=live."roleOid" AND acl.privilege_type='EXECUTE'
+  ), expected_worker_routine AS (
+    SELECT unnest(ARRAY[
+      to_regprocedure('platform.memory_worker_claim_purge(text,character,integer)'),
+      to_regprocedure('platform.memory_worker_delete_revision_payload(text,text,text,text,bigint,text,bigint,character)'),
+      to_regprocedure('platform.memory_worker_record_purge_receipt(text,text,text,text,text,character,bigint,character)')
+    ]) AS oid
+  ), expected_routine_authority AS (
+    SELECT 'worker'::text AS "roleKind",oid FROM expected_worker_routine
+  ), migrator_default_authority AS (
+    SELECT live."roleKind",defaults.defaclobjtype,acl.privilege_type
+    FROM pg_default_acl defaults
+    JOIN pg_roles owner ON owner.oid=defaults.defaclrole AND owner.rolname=$2
+    JOIN pg_namespace namespace ON namespace.oid=defaults.defaclnamespace
+      AND namespace.nspname='platform'
+    CROSS JOIN LATERAL aclexplode(defaults.defaclacl) acl
+    JOIN live ON live."roleOid"=acl.grantee
+  )
+  SELECT (
+    (SELECT count(*) FROM live)=3
+    AND NOT EXISTS (
+      SELECT 1 FROM live WHERE NOT "canLogin" OR "isSuperuser" OR "canCreateDatabase"
+        OR "canCreateRole" OR "canReplicate" OR "canBypassRls" OR "inheritsPrivileges"
+        OR "canCreateDatabaseObject" OR "canCreateTemporaryObjects"
+        OR "canUsePublicSchema" OR "canCreatePublicSchema"
+        OR "hasAnyMembership" OR "isMigratorMember" OR "isPeerMember"
+        OR "ownsAnyDatabase" OR "ownsAnySchema" OR "ownsAnyRelation"
+        OR "ownsAnySequence" OR "ownsAnyRoutine" OR "ownsAnyType" OR "ownsAnyTablespace"
+    )
+    AND NOT EXISTS (
+      (SELECT "roleKind","roleName","roleOid" FROM live
+       EXCEPT SELECT "roleKind","roleName","roleOid" FROM identity_authority)
+      UNION ALL
+      (SELECT "roleKind","roleName","roleOid" FROM identity_authority
+       EXCEPT SELECT "roleKind","roleName","roleOid" FROM live)
+    )
+    AND NOT EXISTS (
+      (SELECT * FROM schema_authority EXCEPT SELECT * FROM expected_schema_authority)
+      UNION ALL
+      (SELECT * FROM expected_schema_authority EXCEPT SELECT * FROM schema_authority)
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM public_schema_authority
+    )
+    AND NOT EXISTS (SELECT 1 FROM relation_authority)
+    AND NOT EXISTS (SELECT 1 FROM sequence_authority)
+    AND NOT EXISTS (
+      (SELECT * FROM routine_authority EXCEPT SELECT * FROM expected_routine_authority)
+      UNION ALL
+      (SELECT * FROM expected_routine_authority EXCEPT SELECT * FROM routine_authority)
+    )
+    AND NOT EXISTS (SELECT 1 FROM expected_worker_routine WHERE oid IS NULL)
+    AND NOT EXISTS (SELECT 1 FROM migrator_default_authority)
+    AND NOT EXISTS (
+      SELECT 1 FROM expected_worker_routine expected_routine
+      LEFT JOIN pg_proc routine ON routine.oid=expected_routine.oid
+      LEFT JOIN pg_roles owner ON owner.oid=routine.proowner
+      WHERE routine.oid IS NULL OR owner.rolname<>$2 OR NOT routine.prosecdef
+        OR NOT EXISTS (
+          SELECT 1 FROM unnest(COALESCE(routine.proconfig,ARRAY[]::text[])) setting
+          WHERE replace(setting,' ','')='search_path=pg_catalog,platform'
+        )
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM pg_class relation
+      CROSS JOIN LATERAL aclexplode(relation.relacl) acl
+      WHERE relation.relnamespace=to_regnamespace('platform') AND acl.grantee=0
+    )
+    AND to_regprocedure(
+      'platform.memory_public_authorize_read(text,text,bigint,text,bigint,bigint,text,text)'
+    ) IS NULL
+    AND to_regprocedure(
+      'platform.memory_public_authorize_command(text,text,bigint,text,bigint,bigint,text,text)'
+    ) IS NULL
+  ) AS "memoryRoleAuthorityExact" /* memoryRoleAuthority */`;
 
 const SINGLE_RUNTIME_ROLE_PREFLIGHT_SQL = `
   SELECT runtime_role.rolname AS "roleName",runtime_role.rolsuper AS "isSuperuser",
@@ -3038,6 +3340,12 @@ function requireRole(value: string | undefined, name: string): string {
     throw new Error(`${name}_REQUIRED`);
   }
   return value;
+}
+
+function requireExactRole(value: string | undefined, name: string, expected: string): string {
+  const role = requireRole(value, name);
+  if (role !== expected) throw new Error(`${name}_MUST_EQUAL:${expected}`);
+  return role;
 }
 
 function quoteRoleIdentifier(value: string): string {

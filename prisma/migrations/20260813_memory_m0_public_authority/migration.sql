@@ -325,8 +325,8 @@ REVOKE CREATE,USAGE ON SCHEMA public FROM
   PUBLIC,platform_memory_public,platform_memory_runtime,platform_memory_worker;
 REVOKE CREATE ON SCHEMA platform FROM
   platform_memory_public,platform_memory_runtime,platform_memory_worker;
-REVOKE USAGE ON SCHEMA platform FROM platform_memory_runtime;
-GRANT USAGE ON SCHEMA platform TO platform_memory_public,platform_memory_worker;
+REVOKE USAGE ON SCHEMA platform FROM platform_memory_public,platform_memory_runtime;
+GRANT USAGE ON SCHEMA platform TO platform_memory_worker;
 
 CREATE TABLE platform.memory_database_role_identity (
   role_kind TEXT PRIMARY KEY CHECK (role_kind IN ('public','runtime','worker')),
@@ -393,36 +393,6 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION platform.memory_assert_public_owner_authority(
   TEXT,TEXT,BIGINT,TEXT,BIGINT,BIGINT,TEXT,TEXT) FROM PUBLIC;
-
-CREATE FUNCTION platform.memory_public_authorize_read(
-  p_site_ref TEXT,p_subject_ref TEXT,p_subject_generation BIGINT,p_project_ref TEXT,
-  p_membership_epoch BIGINT,p_authorization_epoch BIGINT,p_space_ref TEXT,
-  p_feature_policy_revision_ref TEXT
-) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$
-BEGIN
-  PERFORM platform.memory_assert_public_owner_authority(p_site_ref,p_subject_ref,
-    p_subject_generation,p_project_ref,p_membership_epoch,p_authorization_epoch,p_space_ref,
-    p_feature_policy_revision_ref);
-END $$;
-REVOKE ALL ON FUNCTION platform.memory_public_authorize_read(
-  TEXT,TEXT,BIGINT,TEXT,BIGINT,BIGINT,TEXT,TEXT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION platform.memory_public_authorize_read(
-  TEXT,TEXT,BIGINT,TEXT,BIGINT,BIGINT,TEXT,TEXT) TO platform_memory_public;
-
-CREATE FUNCTION platform.memory_public_authorize_command(
-  p_site_ref TEXT,p_subject_ref TEXT,p_subject_generation BIGINT,p_project_ref TEXT,
-  p_membership_epoch BIGINT,p_authorization_epoch BIGINT,p_space_ref TEXT,
-  p_feature_policy_revision_ref TEXT
-) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$
-BEGIN
-  PERFORM platform.memory_assert_public_owner_authority(p_site_ref,p_subject_ref,
-    p_subject_generation,p_project_ref,p_membership_epoch,p_authorization_epoch,p_space_ref,
-    p_feature_policy_revision_ref);
-END $$;
-REVOKE ALL ON FUNCTION platform.memory_public_authorize_command(
-  TEXT,TEXT,BIGINT,TEXT,BIGINT,BIGINT,TEXT,TEXT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION platform.memory_public_authorize_command(
-  TEXT,TEXT,BIGINT,TEXT,BIGINT,BIGINT,TEXT,TEXT) TO platform_memory_public;
 
 CREATE FUNCTION platform.memory_worker_claim_purge(
   p_worker_id TEXT,p_lease_token_hash CHAR(64),p_lease_seconds INTEGER
@@ -570,8 +540,6 @@ ALTER TABLE platform.memory_suppression_tombstone FORCE ROW LEVEL SECURITY;
 ALTER TABLE platform.memory_database_role_identity ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform.memory_database_role_identity FORCE ROW LEVEL SECURITY;
 
-CREATE POLICY memory_space_public_definer ON platform.memory_space TO platform_migrator
-  USING (SESSION_USER='platform_memory_public') WITH CHECK (SESSION_USER='platform_memory_public');
 CREATE POLICY memory_role_identity_definer ON platform.memory_database_role_identity
   TO platform_migrator USING (true);
 CREATE POLICY memory_revision_payload_worker_definer ON platform.memory_revision_payload TO platform_migrator
