@@ -46,6 +46,7 @@ export async function createModelGatewayProductionComposition(input: Readonly<{
   environment?: Readonly<Record<string, string | undefined>>;
 }>): Promise<ModelGatewayProductionComposition> {
   const environment = input.environment ?? process.env;
+  assertImageEffectProductionReadiness(environment);
   const [tls, peers, responseKeyRingText, apiKeyText] = await Promise.all([
     loadTls(environment),
     loadPeers(required(environment, "PLATFORM_MODEL_GATEWAY_MTLS_PEERS_FILE")),
@@ -151,6 +152,21 @@ export async function createModelGatewayProductionComposition(input: Readonly<{
     activeProviderEffectCount: () => application.activeDispatchCount(),
     inFlightCount: () => inFlight.size,
   });
+}
+
+export function assertImageEffectProductionReadiness(
+  environment: Readonly<Record<string, string | undefined>>,
+): void {
+  const enabled = environment.PLATFORM_MODEL_IMAGE_EFFECT_ENABLED ?? "false";
+  if (enabled !== "true" && enabled !== "false") {
+    throw new Error("PLATFORM_MODEL_IMAGE_EFFECT_ENABLED_INVALID");
+  }
+  if (enabled === "true") {
+    // The pinned Root effect helper/evidence surface, signed budget materializer, dedicated
+    // output-access owner and certified Provider protocol must all be composed together. Starting a partial surface would
+    // turn bearer hashes/DB rows into false authorization, so production remains deliberately closed.
+    throw new Error("PLATFORM_MODEL_IMAGE_EFFECT_ACTIVATION_INCOMPLETE");
+  }
 }
 
 function authenticate(request: Http2ServerRequest, peers: readonly Peer[]): Peer | null {

@@ -48,6 +48,23 @@ generation use their own product routes and generation adapters; they must not b
 checkpoint, handoff or terminal semantics belong
 here.
 
+Image effects are a separate private Media-to-Gateway owner surface across the module's existing DDD layers; they do not reuse the chat invocation or
+LiteLLM adapter. The application freezes the exact model option/deployment/input/output-slot authorization, atomically consumes a
+signed local budget commit and journals a planned attempt before any Provider I/O. Public recovery and cancellation read only
+stable references, digests and encrypted-envelope metadata. Only the separately authenticated cross-Site image worker may claim a
+lease and briefly unseal source grants; the owned plaintext buffer is zeroized after the certified provider adapter has consumed
+it. Provider events are ordered and digest-idempotent, ambiguity never authorizes a blind retry, and a next attempt requires the
+exact definitely-not-submitted receipt for its predecessor.
+
+This image surface is currently production-disabled and startup fails closed if it is requested. Activation requires all of the
+following Root-owned pieces to be generated and pinned together: known-field Create/Cancel/Attach effect digests, bounded owner
+evidence/output retrieval, signed budget-commit verification/materialization, and a certified Provider protocol/adapter. Platform
+does not synthesize any of those contracts or register a development fake in production.
+
+Evidence reads remain immutable and never mint or return a source/provider bearer. Output delivery requires its own Issue/Recover
+command journal and a bounded read capability stream; that owner is intentionally not approximated by the current effect journal
+or by `GetImageEffectEvidence`.
+
 ## Caller contract
 
 `kokoro.platform.model.v1.ModelGatewayService/StreamModel` and `InvokeModel` accept only the opaque authorization handle, stable call

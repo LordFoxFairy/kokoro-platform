@@ -1,0 +1,119 @@
+import { create } from "@bufbuild/protobuf";
+import { Code, ConnectError } from "@connectrpc/connect";
+import { describe, expect, it, vi } from "vitest";
+import { CreateImageEffectRequestSchema, ImageEffectState } from
+  "../../src/interfaces/connect/generated-model-image-effect/kokoro/platform/model/image/v1/image_effect_pb.js";
+import { createGeneratedImageEffectCommandDigestAuthority, createImageEffectConnectService } from
+  "../../src/modules/model-gateway/interfaces/connect/image-effect-connect-service.js";
+import type { CreateImageEffectCommand, ImageEffectAccessAuthorization } from
+  "../../src/modules/model-gateway/application/image-effect-service.js";
+import { assertImageEffectProductionReadiness } from
+  "../../src/process/model-gateway-composition.js";
+
+const RESULT = Object.freeze({
+  receipt: Object.freeze({ callerCommandRef: "command:one", kind: "create_committed" as const,
+    logicalInvocationRef: "invocation:one", attemptRef: "attempt:one", attemptOrdinal: 1,
+    receiptVersion: 1n, recordedAt: "2026-07-31T12:00:00.000Z", requestDigest: "a".repeat(64),
+    receiptRef: `image-effect-receipt:sha256:${"b".repeat(64)}`, receiptDigest: "b".repeat(64) }),
+  invocation: Object.freeze({ logicalInvocationRef: "invocation:one", modelInvocationCommandRef: "command:one",
+    ownerVersion: 1n, currentAttemptOrdinal: 1, state: "accepted" as const,
+    observedAt: "2026-07-31T12:00:00.000Z" }),
+  replayed: false,
+});
+
+describe("image-effect Connect provider", () => {
+  it("fails production startup closed until Root publishes the required effect authorities", () => {
+    expect(() => assertImageEffectProductionReadiness({ PLATFORM_MODEL_IMAGE_EFFECT_ENABLED: "true" }))
+      .toThrow("PLATFORM_MODEL_IMAGE_EFFECT_ACTIVATION_INCOMPLETE");
+    expect(() => assertImageEffectProductionReadiness({ PLATFORM_MODEL_IMAGE_EFFECT_ENABLED: "false" }))
+      .not.toThrow();
+  });
+
+  it("authorizes the Media workload and maps the stable model-option claim", async () => {
+    const createEffect = vi.fn(async () => RESULT);
+    const service = createImageEffectConnectService({
+      application: {
+        create: createEffect,
+        recover: vi.fn(),
+        get: vi.fn(),
+        requestCancel: vi.fn(),
+        attachNextAttemptAuthorization: vi.fn(),
+      },
+      caller: { resolve: () => ({ identity: "spiffe://kokoro/platform-media-worker" }) },
+      mediaCallerIdentity: "spiffe://kokoro/platform-media-worker",
+    });
+    const request = create(CreateImageEffectRequestSchema, {
+      callerAccessHandle: "h".repeat(32), modelInvocationCommandRef: "command:one",
+      callerRequestFingerprint: "b".repeat(64), definitionRoleRef: "image.text_to_image.v1",
+      modelOptionAuthorizationHandle: "m".repeat(32), operationInputRevisionRef: "input:one",
+      modelOptionRevisionRef: "image-option:one",
+      operationInputRevisionDigest: "c".repeat(64), sourceGrants: [],
+      logicalOutputSlots: [{ candidateRef: "candidate:one", stableOutputSlotRef: "slot:one" }],
+      effectBudgetCommitRef: "budget:one", effectBudgetCommitDigest: "d".repeat(64), attemptOrdinal: 1,
+      trustEffectAllowReceiptRef: "trust:one", trustEffectAllowReceiptDigest: "e".repeat(64),
+    });
+    const response = await service.createImageEffect(request, {} as never);
+    expect(createEffect).toHaveBeenCalledWith(expect.objectContaining({ modelOptionRevisionRef: "image-option:one" }));
+    expect(response.invocation?.state).toBe(ImageEffectState.ACCEPTED);
+  });
+
+  it("rejects any peer other than the exact configured Media identity", async () => {
+    const service = createImageEffectConnectService({
+      application: { create: vi.fn(), recover: vi.fn(), get: vi.fn(), requestCancel: vi.fn(),
+        attachNextAttemptAuthorization: vi.fn() },
+      caller: { resolve: () => ({ identity: "spiffe://kokoro/agent" }) },
+      mediaCallerIdentity: "spiffe://kokoro/platform-media-worker",
+    });
+    await expect(service.getImageEffectByCommand({ callerAccessHandle: "h".repeat(32),
+      modelInvocationCommandRef: "command:one" } as never, {} as never))
+      .rejects.toMatchObject({ code: Code.PermissionDenied } satisfies Partial<ConnectError>);
+  });
+
+  it("uses the Root-generated known-field helper after verified authority and ignores bearer rotation", () => {
+    const digest = createGeneratedImageEffectCommandDigestAuthority();
+    const command = effectCommand();
+    const authorization = effectAuthorization();
+    expect(digest.create(command, authorization)).toBe(
+      digest.create({ ...command, callerAccessHandle: "x".repeat(32),
+        modelOptionAuthorizationHandle: "y".repeat(32),
+        sourceGrants: [{ sourceVersionRef: "source:one", purposeGrantHandle: "z".repeat(32) }] }, authorization),
+    );
+    expect(digest.create({ ...command, modelOptionRevisionRef: "option:two" }, authorization))
+      .not.toBe(digest.create(command, authorization));
+  });
+
+  it("keeps evidence and output-access RPCs authenticated and explicitly fail-closed", async () => {
+    const service = createImageEffectConnectService({
+      application: { create: vi.fn(), recover: vi.fn(), get: vi.fn(), requestCancel: vi.fn(),
+        attachNextAttemptAuthorization: vi.fn() },
+      caller: { resolve: () => ({ identity: "spiffe://kokoro/platform-media-worker" }) },
+      mediaCallerIdentity: "spiffe://kokoro/platform-media-worker",
+    });
+    for (const call of [
+      () => service.getImageEffectEvidence({} as never, {} as never),
+      () => service.issueImageEffectOutputAccess({} as never, {} as never),
+      () => service.recoverImageEffectOutputAccessByCommand({} as never, {} as never),
+    ]) await expect(call()).rejects.toMatchObject({ code: Code.Unimplemented });
+    const stream = service.readImageEffectOutput({} as never, {} as never)[Symbol.asyncIterator]();
+    await expect(stream.next()).rejects.toMatchObject({ code: Code.Unimplemented });
+  });
+});
+
+function effectCommand(): CreateImageEffectCommand {
+  return Object.freeze({ callerAccessHandle: "h".repeat(32), modelInvocationCommandRef: "command:one",
+    callerRequestFingerprint: "a".repeat(64), definitionRoleRef: "image.text_to_image.v1",
+    modelOptionAuthorizationHandle: "m".repeat(32), modelOptionRevisionRef: "option:one",
+    operationInputRevisionRef: "input:one", operationInputRevisionDigest: "b".repeat(64),
+    sourceGrants: [{ sourceVersionRef: "source:one", purposeGrantHandle: "s".repeat(32) }],
+    logicalOutputSlots: [{ candidateRef: "candidate:one", stableOutputSlotRef: "slot:one" }],
+    effectBudgetCommitRef: "budget:one", effectBudgetCommitDigest: "c".repeat(64), attemptOrdinal: 1,
+    trustEffectAllowReceiptRef: "trust:one", trustEffectAllowReceiptDigest: "d".repeat(64) });
+}
+
+function effectAuthorization(): ImageEffectAccessAuthorization {
+  return Object.freeze({ callerAccessHandleDigest: "e".repeat(64), callerIdentity: "media-worker:one",
+    siteId: "site:one", callerAudience: "platform-media-worker", workloadIdentityRef: "spiffe://kokoro/media",
+    environment: "production", region: "us-east-1", authorizationGeneration: 1n, securityEpoch: 1n,
+    accessExpiresAt: "2030-01-01T00:00:00.000Z", sourceGrantClaims: [{ sourceVersionRef: "source:one",
+      purposeGrantHandleDigest: "f".repeat(64), expiresAt: "2030-01-01T00:00:00.000Z" }] });
+}
