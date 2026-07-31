@@ -34,7 +34,10 @@ export type {
   MediaImageReceiptCanonicalizerPort,
   MediaImageSagaCheckpoint,
   MediaImageBudgetOwners,
+  MediaImageCreditBudgetBinding,
   MediaImageCreditSettlementPort,
+  MediaImageFinancialClosure,
+  MediaImageFinancialSettlement,
   MediaImageOperationRecord,
   MediaImageOperationRepository,
   MediaImageSessionProjectionPort,
@@ -61,6 +64,7 @@ export {
   PostgresMediaArtifactCleanupRepository,
   PostgresMediaImageWorkerDatabase,
   PostgresMediaImageWorkerRepository,
+  PostgresMediaImageTypedUsageFactOwner,
 } from "./infrastructure/postgres/index.js";
 
 export {
@@ -84,6 +88,8 @@ export type {
   MediaImageCapabilityOpener,
   MediaImageWorkerDatabase,
   MediaImageWorkerDatabaseConfig,
+  MediaImageTypedUsageFactDatabase,
+  MediaImageTypedUsageFactRow,
   MediaRuntimeQueryDatabase,
   MediaRuntimeDatabaseConfig,
   RecoveredAgentMediaCommand,

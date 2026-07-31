@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { projectImageEffectEvidence, selectImageEffectEvidencePage } from
   "../../src/modules/model-gateway/domain/image-effect-evidence.js";
-import type { ImageEffectProviderObservation } from
+import { imageEffectUsageFactDigest, type ImageEffectProviderObservation } from
   "../../src/modules/model-gateway/domain/image-effect.js";
 
+const USAGE_FACT = Object.freeze({ evidenceKind: "measured" as const,
+  dimensions: Object.freeze([Object.freeze({ dimensionKey: "image", sourceUnit: "output", quantity: 1n })]),
+  attemptOutcome: "succeeded" as const, occurredAt: "2026-07-31T12:01:00.000Z",
+  sourceDigest: "9".repeat(64) });
 const SUCCEEDED = Object.freeze({
   kind: "succeeded",
   eventRef: "provider-event:terminal",
@@ -13,7 +17,8 @@ const SUCCEEDED = Object.freeze({
   outcomeEvidenceRef: "provider-outcome:one",
   outcomeEvidenceDigest: "b".repeat(64),
   usageEvidenceRef: "provider-usage:one",
-  usageEvidenceDigest: "c".repeat(64),
+  usageEvidenceDigest: imageEffectUsageFactDigest(USAGE_FACT),
+  usageFact: USAGE_FACT,
   outputs: [Object.freeze({
     candidateRef: "candidate:one",
     stableOutputSlotRef: "slot:one",
@@ -44,7 +49,7 @@ describe("image-effect evidence owner", () => {
       expect.objectContaining({ evidenceSequence: 5n, ownerVersion: 7n, kind: "outcome",
         evidenceRef: "provider-outcome:one", evidenceDigest: "b".repeat(64) }),
       expect.objectContaining({ evidenceSequence: 6n, ownerVersion: 7n, kind: "usage",
-        evidenceRef: "provider-usage:one", evidenceDigest: "c".repeat(64) }),
+        evidenceRef: "provider-usage:one", evidenceDigest: imageEffectUsageFactDigest(USAGE_FACT) }),
       expect.objectContaining({ evidenceSequence: 7n, ownerVersion: 7n, kind: "output",
         evidenceRef: "image-output:candidate:one", evidenceDigest: "d".repeat(64),
         output: expect.objectContaining({ candidateOrdinal: 1, mediaType: "image/png",

@@ -10,7 +10,7 @@ describe("Media local Credit owner", () => {
   it("maps only owner-frozen facts into the native transactional Credit authority", async () => {
     const deriveChildAllocation = vi.fn(async () =>
       ({ kind: "accepted" as const, value: allocationReceipt() }));
-    const owner = new NativeMediaImageCreditOwner({ deriveChildAllocation });
+    const owner = new NativeMediaImageCreditOwner(childOnlyAuthority(deriveChildAllocation));
     const lease = issuePlatformTransaction({ query: async () => [], execute: async () => 1 });
     try {
       await expect(owner.deriveChild(lease.transaction, {
@@ -36,7 +36,7 @@ describe("Media local Credit owner", () => {
   it("fails closed when the native Credit receipt is not bound to the frozen expiry", async () => {
     const deriveChildAllocation = vi.fn(async () => ({ kind: "accepted" as const,
       value: Object.freeze({ ...allocationReceipt(), expiresAt: "2026-07-31T13:00:01.000Z" }) }));
-    const owner = new NativeMediaImageCreditOwner({ deriveChildAllocation });
+    const owner = new NativeMediaImageCreditOwner(childOnlyAuthority(deriveChildAllocation));
     const lease = issuePlatformTransaction({ query: async () => [], execute: async () => 1 });
     try {
       await expect(owner.deriveChild(lease.transaction, childCommand()))
@@ -44,6 +44,12 @@ describe("Media local Credit owner", () => {
     } finally { revokePlatformTransaction(lease); }
   });
 });
+
+function childOnlyAuthority(deriveChildAllocation: ReturnType<typeof vi.fn>) {
+  return { deriveChildAllocation,
+    reserveRootBudget: vi.fn(async () => { throw new Error("UNREACHABLE"); }),
+    finalizeAuthorizationSegment: vi.fn(async () => { throw new Error("UNREACHABLE"); }) };
+}
 
 function childCommand() {
   return Object.freeze({

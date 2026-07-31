@@ -877,7 +877,8 @@ function terminalEvidencePayload(
     evidenceRef: terminal.outcomeEvidenceRef, evidenceDigest: terminal.outcomeEvidenceDigest })];
   if (terminal.usageEvidenceRef !== undefined && terminal.usageEvidenceDigest !== undefined) {
     facts.push(Object.freeze({ kind: "usage", evidenceRef: terminal.usageEvidenceRef,
-      evidenceDigest: terminal.usageEvidenceDigest }));
+      evidenceDigest: terminal.usageEvidenceDigest,
+      usageFact: persistImageEffectUsageFact(terminal.usageFact!) }));
   }
   for (const output of outputs) {
     facts.push(Object.freeze({ kind: "output", evidenceRef: output.outputEvidenceRef,
@@ -891,6 +892,20 @@ function terminalEvidencePayload(
       }) }));
   }
   return Object.freeze(facts);
+}
+
+function persistImageEffectUsageFact(
+  fact: NonNullable<Extract<ImageEffectProviderObservation, {
+    kind: "succeeded" | "failed" | "canceled" | "outcome_unknown";
+  }>["usageFact"]>,
+): Readonly<Record<string, unknown>> {
+  return Object.freeze({ evidenceKind: fact.evidenceKind, attemptOutcome: fact.attemptOutcome,
+    occurredAt: fact.occurredAt, sourceDigest: fact.sourceDigest,
+    dimensions: Object.freeze(fact.dimensions.map((dimension) => Object.freeze({
+      dimensionKey: dimension.dimensionKey, sourceUnit: dimension.sourceUnit,
+      quantity: dimension.quantity.toString(),
+    }))),
+    ...(fact.unavailableReasonCode === undefined ? {} : { unavailableReasonCode: fact.unavailableReasonCode }) });
 }
 
 function attemptRecordPayload(attempt: ImageEffectAttempt): Readonly<Record<string, unknown>> {

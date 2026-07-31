@@ -5,6 +5,9 @@ import type { MediaChildInvalidStateCode } from "../../domain/credit-domain-erro
 export type ReservedRunBudget = Readonly<{
   executionBudgetRootRef: string;
   creditHoldRef: string;
+  rootAllocationRef: string;
+  rootAllocationRevision: bigint;
+  rootAllocationEpoch: bigint;
   authorizationSegmentRef: string;
   segmentVersion: bigint;
   state: "reserved";

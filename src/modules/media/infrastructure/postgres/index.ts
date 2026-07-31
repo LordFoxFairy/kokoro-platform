@@ -28,6 +28,9 @@ export type {
   MediaImageWorkerPool,
 } from "./media-image-worker-database.js";
 export { PostgresMediaImageWorkerRepository } from "./media-image-worker-repository.js";
+export { PostgresMediaImageTypedUsageFactOwner } from "./media-image-typed-usage-owner.js";
+export type { MediaImageTypedUsageFactDatabase, MediaImageTypedUsageFactRow } from
+  "./media-image-typed-usage-owner.js";
 export type {
   MediaImageCapabilityOpener,
   MediaImageWorkerDatabase,

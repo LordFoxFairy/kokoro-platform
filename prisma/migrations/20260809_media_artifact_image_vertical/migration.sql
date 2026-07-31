@@ -108,6 +108,10 @@ CREATE TABLE platform.media_operation (
   caller_request_fingerprint CHAR(64) NOT NULL CHECK(caller_request_fingerprint ~ '^[a-f0-9]{64}$'),
   owner_request_digest CHAR(64) NOT NULL CHECK(owner_request_digest ~ '^[a-f0-9]{64}$'),
   credit_execution_budget_root_ref UUID NOT NULL,
+  credit_authorization_segment_ref UUID NOT NULL,
+  credit_execution_manifest_ref TEXT NOT NULL,
+  credit_reserved_ceiling NUMERIC(38,0) NOT NULL CHECK(credit_reserved_ceiling>0),
+  credit_unit TEXT NOT NULL,
   credit_parent_allocation_ref UUID NOT NULL,
   credit_child_allocation_ref UUID NOT NULL,
   credit_allocation_receipt_ref UUID NOT NULL,
@@ -797,6 +801,7 @@ BEGIN
      AND root.surface_ref=journal_record.credit_surface_ref
      AND root.capability_key=journal_record.credit_capability_key
      AND root.agent_ref IS NOT DISTINCT FROM journal_record.credit_agent_ref
+     AND root.unit=credit_record->>'unit'
     JOIN platform.credit_budget_allocation parent
       ON parent.budget_allocation_ref=root.root_allocation_ref
      AND parent.execution_budget_root_ref=root.execution_budget_root_ref
@@ -819,6 +824,7 @@ BEGIN
      AND credit_receipt.business_operation_key=journal_record.command_ref
      AND credit_receipt.request_digest=journal_record.owner_request_digest
      AND credit_receipt.reserved_ceiling=definition.maximum_credit
+     AND credit_receipt.reserved_ceiling=(credit_record->>'reservedCeiling')::NUMERIC
      AND credit_receipt.media_operation_ref=operation_record->>'operationRef'
      AND credit_receipt.audience='media' AND credit_receipt.purpose='media_operation'
      AND credit_receipt.parent_expected_revision=journal_record.credit_parent_expected_revision
@@ -856,6 +862,9 @@ BEGIN
      command_record->>'callerRequestFingerprint'<>journal_record.caller_request_fingerprint OR
      command_record->>'ownerRequestDigest'<>journal_record.owner_request_digest OR
      credit_record->>'executionBudgetRootRef'<>journal_record.credit_execution_budget_root_ref::TEXT OR
+     credit_record->>'authorizationSegmentRef'<>authority_record.authorization_segment_ref::TEXT OR
+     credit_record->>'executionManifestRef'<>authority_record.execution_manifest_ref OR
+     credit_record->>'unit' IS NULL OR
      credit_record->>'parentAllocationRef'<>journal_record.credit_parent_allocation_ref::TEXT OR
      p_record->>'trustInputDecisionRef'<>journal_record.trust_input_decision_ref OR
      operation_record->>'definitionRevisionRef'<>journal_record.definition_revision_ref OR
@@ -886,6 +895,7 @@ BEGIN
     operation_input_revision_ref,definition_revision_ref,model_option_revision_ref,
     partial_completion,minimum_ready_candidates,
     caller_request_fingerprint,owner_request_digest,credit_execution_budget_root_ref,
+    credit_authorization_segment_ref,credit_execution_manifest_ref,credit_reserved_ceiling,credit_unit,
     credit_parent_allocation_ref,credit_child_allocation_ref,
     credit_allocation_receipt_ref,trust_input_decision_ref,state,owner_version,created_at,updated_at
   ) VALUES(
@@ -896,6 +906,8 @@ BEGIN
     (p_record#>>'{definitionPolicy,minimumReadyCandidates}')::INTEGER,
     command_record->>'callerRequestFingerprint',
     command_record->>'ownerRequestDigest',journal_record.credit_execution_budget_root_ref,
+    authority_record.authorization_segment_ref,authority_record.execution_manifest_ref,
+    (credit_record->>'reservedCeiling')::NUMERIC,credit_record->>'unit',
     journal_record.credit_parent_allocation_ref,(credit_record->>'childAllocationRef')::UUID,
     (credit_record->>'allocationReservationReceiptRef')::UUID,journal_record.trust_input_decision_ref,
     'queued',(operation_record->>'ownerVersion')::BIGINT,
@@ -980,11 +992,11 @@ CREATE FUNCTION platform.resolve_media_access(
 ) RETURNS TABLE(
   site_ref TEXT,project_ref TEXT,session_ref TEXT,run_ref TEXT,subject_ref TEXT,
   subject_generation BIGINT,configuration_revision_ref TEXT,execution_budget_root_ref UUID,
-  authorization_segment_ref UUID,parent_allocation_ref UUID,maximum_credit NUMERIC,
+  authorization_segment_ref UUID,execution_manifest_ref TEXT,parent_allocation_ref UUID,maximum_credit NUMERIC,
   trust_input_decision_ref TEXT,definition_revision_ref TEXT,model_option_revision_ref TEXT,
   expected_parent_revision BIGINT,expected_parent_allocation_epoch BIGINT,
   credit_surface_ref TEXT,credit_capability_key TEXT,credit_agent_ref TEXT,
-  credit_expires_at TIMESTAMPTZ
+  credit_unit TEXT,credit_expires_at TIMESTAMPTZ
 )
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path=pg_catalog,platform AS $$
@@ -1003,11 +1015,11 @@ BEGIN
   RETURN QUERY
   SELECT authority.site_id,authority.project_ref,authority.session_id,authority.run_id,
          authority.subject_ref,authority.subject_generation,authority.configuration_revision_id,
-         authority.execution_budget_root_ref,authority.authorization_segment_ref,
+         authority.execution_budget_root_ref,authority.authorization_segment_ref,authority.execution_manifest_ref,
          root.root_allocation_ref,definition.maximum_credit,authority.input_policy_decision_ref,
          definition.definition_revision_ref,surface.default_model_option_revision_ref,
          parent.current_revision,parent.current_allocation_epoch,root.surface_ref,
-         root.capability_key,root.agent_ref,
+         root.capability_key,root.agent_ref,root.unit,
          LEAST(authority.expires_at,hold.expires_at,segment.expires_at)
     FROM platform.admission_media_access_authorization authority
     JOIN platform.site_release_media_definition definition

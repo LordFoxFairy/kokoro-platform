@@ -64,6 +64,7 @@ function fakeCredit(): RunBudgetAuthority {
       kind: "accepted" as const,
       value: {
         executionBudgetRootRef: "budget-a", creditHoldRef: "hold-a",
+        rootAllocationRef: "allocation-root-a", rootAllocationRevision: 1n, rootAllocationEpoch: 1n,
         authorizationSegmentRef: "segment-a", segmentVersion: 1n,
         state: "reserved" as const, expiresAt: "2026-07-29T12:05:00.000Z",
       },

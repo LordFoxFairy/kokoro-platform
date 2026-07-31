@@ -59,14 +59,19 @@ export type DirectStudioRootBudgetSource = Readonly<{
   unit: string;
   liabilityMerchantAccountRef: string;
   ratingPolicyRevisionRef: string;
+  authorizationBudgetRef: string;
+  executionManifestRef: string;
 }>;
 
 export type AgentChildBudgetSource = Readonly<{
   kind: "agent_child";
   executionBudgetRootRef: string;
+  authorizationSegmentRef: string;
+  executionManifestRef: string;
   parentAllocationRef: string;
   expectedParentRevision: bigint;
   expectedParentAllocationEpoch: bigint;
+  unit: string;
 }>;
 
 export type DirectStudioMediaImageAdmissionFacts = Readonly<{
@@ -120,7 +125,10 @@ export interface DirectStudioRootBudgetOwner {
     executionBudgetRootRef: string;
     rootHoldRef: string;
     rootAllocationRef: string;
+    rootAllocationRevision: bigint;
+    rootAllocationEpoch: bigint;
     authorizationSegmentRef: string;
+    authorizationSegmentVersion: bigint;
   }>>;
 }
 
@@ -197,16 +205,26 @@ export type MediaImageOperationRecord = Readonly<{
     | Readonly<{
         kind: "direct_root";
         executionBudgetRootRef: string;
+        executionManifestRef: string;
         rootHoldRef: string;
         rootAllocationRef: string;
+        rootAllocationRevision: bigint;
+        rootAllocationEpoch: bigint;
         authorizationSegmentRef: string;
+        authorizationSegmentVersion: bigint;
+        reservedCeiling: bigint;
+        unit: string;
       }>
     | Readonly<{
         kind: "agent_child";
         executionBudgetRootRef: string;
+        authorizationSegmentRef: string;
+        executionManifestRef: string;
         parentAllocationRef: string;
         childAllocationRef: string;
         allocationReservationReceiptRef: string;
+        reservedCeiling: bigint;
+        unit: string;
       }>;
   trustInputDecisionRef: string;
   dispatchOutbox: Readonly<{
@@ -227,7 +245,7 @@ export type MediaImageCommandBegin =
 export type MediaCommandDurableReceipt = Readonly<{
   version: bigint;
   recordedAt: string;
-  commandKind: "create_agent_image_operation";
+  commandKind: "create_agent_image_operation" | "create_direct_studio_image_operation";
   outcome: "submit_outcome_unknown" | "submit_accepted";
 }>;
 
@@ -487,9 +505,12 @@ export class ImageOperationSubmissionService {
               exactCeiling: admission.maximumCredit,
               consumptionScope: admission.consumptionScope,
               expiresAt: admission.expiresAt,
-            }) })
+            }), executionManifestRef: admission.budgetSource.executionManifestRef,
+            reservedCeiling: admission.maximumCredit, unit: admission.budgetSource.unit })
         : Object.freeze({ kind: "agent_child" as const,
             executionBudgetRootRef: admission.budgetSource.executionBudgetRootRef,
+            authorizationSegmentRef: admission.budgetSource.authorizationSegmentRef,
+            executionManifestRef: admission.budgetSource.executionManifestRef,
             parentAllocationRef: admission.budgetSource.parentAllocationRef,
             ...await this.#dependencies.budgets.agentChild.deriveChild(transaction, {
               ownerBinding: admission.ownerBinding,
@@ -503,7 +524,7 @@ export class ImageOperationSubmissionService {
               commandRef: input.commandRef,
               ownerRequestDigest,
               exactCeiling: admission.maximumCredit,
-            }) });
+            }), reservedCeiling: admission.maximumCredit, unit: admission.budgetSource.unit });
       const createdAt = this.#date().toISOString();
       const record = Object.freeze({
         command,
@@ -629,7 +650,8 @@ function assertDirectAdmissionMatchesRequest(
   for (const value of [admission.trustInputDecisionRef, admission.budgetSource.billingAccountRef,
     admission.budgetSource.creditAccountRef, admission.budgetSource.unit,
     admission.budgetSource.liabilityMerchantAccountRef,
-    admission.budgetSource.ratingPolicyRevisionRef]) reference(value);
+    admission.budgetSource.ratingPolicyRevisionRef, admission.budgetSource.authorizationBudgetRef,
+    admission.budgetSource.executionManifestRef]) reference(value);
 }
 
 type DirectStudioRequestAuthority = Readonly<{
@@ -715,11 +737,16 @@ export function deriveMediaAdmissionRequestDigest(input: Readonly<{
     ? [input.admission.budgetSource.kind, input.admission.budgetSource.billingAccountRef,
         input.admission.budgetSource.creditAccountRef, input.admission.budgetSource.unit,
         input.admission.budgetSource.liabilityMerchantAccountRef,
-        input.admission.budgetSource.ratingPolicyRevisionRef]
+        input.admission.budgetSource.ratingPolicyRevisionRef,
+        input.admission.budgetSource.authorizationBudgetRef,
+        input.admission.budgetSource.executionManifestRef]
     : [input.admission.budgetSource.kind, input.admission.budgetSource.executionBudgetRootRef,
+        input.admission.budgetSource.authorizationSegmentRef,
+        input.admission.budgetSource.executionManifestRef,
         input.admission.budgetSource.parentAllocationRef,
         input.admission.budgetSource.expectedParentRevision.toString(),
         input.admission.budgetSource.expectedParentAllocationEpoch.toString(),
+        input.admission.budgetSource.unit,
         input.admission.agentCommandAuthorization.accessAuthorizationHandleDigest,
         input.admission.agentCommandAuthorization.projectionReservationDigest];
   return createHmac("sha256", input.ownerDigestKey)

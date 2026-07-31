@@ -9,7 +9,13 @@ ALTER TABLE platform.media_operation
   ADD COLUMN cancel_command_ref TEXT UNIQUE,
   ADD COLUMN cancel_request_fingerprint CHAR(64)
     CHECK(cancel_request_fingerprint IS NULL OR cancel_request_fingerprint ~ '^[a-f0-9]{64}$'),
-  ADD COLUMN credit_allocation_return_receipt_ref TEXT,
+  ADD COLUMN financial_receipt_ref TEXT,
+  ADD COLUMN effect_closure_receipt_ref TEXT,
+  ADD COLUMN allocation_closure_receipt_ref TEXT,
+  ADD COLUMN usage_settlement_receipt_ref TEXT,
+  ADD COLUMN actual_cost NUMERIC(38,0) CHECK(actual_cost IS NULL OR actual_cost>=0),
+  ADD COLUMN refunded_credit NUMERIC(38,0) CHECK(refunded_credit IS NULL OR refunded_credit>=0),
+  ADD COLUMN terminal_credit_unit TEXT,
   ADD COLUMN gateway_command_receipt_ref TEXT,
   ADD COLUMN gateway_command_receipt_digest CHAR(64)
     CHECK(gateway_command_receipt_digest IS NULL OR gateway_command_receipt_digest ~ '^[a-f0-9]{64}$'),
@@ -50,7 +56,10 @@ ALTER TABLE platform.media_operation
     (state='failed')=(terminal_failure IS NOT NULL)
   ),
   ADD CONSTRAINT media_operation_credit_terminal_gate CHECK(
-    terminal_receipt_ref IS NULL OR credit_allocation_return_receipt_ref IS NOT NULL
+    terminal_receipt_ref IS NULL OR
+      (effect_closure_receipt_ref IS NOT NULL AND financial_receipt_ref IS NOT NULL AND
+       allocation_closure_receipt_ref IS NOT NULL AND
+       actual_cost IS NOT NULL AND refunded_credit IS NOT NULL AND terminal_credit_unit IS NOT NULL)
   );
 
 ALTER TABLE platform.media_candidate
@@ -146,7 +155,7 @@ CREATE TABLE platform.media_gateway_cancel_journal (
 CREATE TABLE platform.media_worker_saga_receipt (
   operation_ref TEXT NOT NULL REFERENCES platform.media_operation(operation_ref),
   step TEXT NOT NULL CHECK(step IN
-    ('artifact_staged','trust_decision','artifact_ready','usage','allocation_return','projection')),
+    ('artifact_staged','trust_decision','artifact_ready','usage','financial_closure','projection')),
   binding_ref TEXT NOT NULL,
   receipt JSONB NOT NULL CHECK(jsonb_typeof(receipt)='object'),
   recorded_at TIMESTAMPTZ NOT NULL DEFAULT statement_timestamp(),
@@ -261,7 +270,11 @@ CREATE FUNCTION platform.claim_media_image_task_v2(
 ) RETURNS TABLE(
   task_ref TEXT,operation_ref TEXT,lease_epoch BIGINT,operation_state TEXT,
   cancel_intent_receipt_ref TEXT,model_invocation_command_ref TEXT,
-  credit_child_allocation_ref UUID,effect_budget_commit_ref TEXT,effect_budget_commit_digest CHAR(64),
+  credit_execution_budget_root_ref UUID,credit_authorization_segment_ref UUID,
+  credit_execution_manifest_ref TEXT,credit_parent_allocation_ref UUID,
+  credit_child_allocation_ref UUID,credit_allocation_receipt_ref UUID,
+  credit_reserved_ceiling NUMERIC,credit_unit TEXT,
+  effect_budget_commit_ref TEXT,effect_budget_commit_digest CHAR(64),
   effect_attempt_ordinal INTEGER,gateway_caller_request_fingerprint CHAR(64),
   gateway_create_effect_digest CHAR(64),definition_role_ref TEXT,
   operation_input_revision_digest CHAR(64),trust_effect_allow_receipt_ref TEXT,
@@ -322,7 +335,10 @@ BEGIN
   )
   SELECT changed.outbox_ref,operation.operation_ref,changed.lease_epoch,operation.state,
          operation.cancel_intent_receipt_ref,candidate_rows.model_invocation_command_ref,
-         operation.credit_child_allocation_ref,operation.effect_budget_commit_ref,
+         operation.credit_execution_budget_root_ref,operation.credit_authorization_segment_ref,
+         operation.credit_execution_manifest_ref,operation.credit_parent_allocation_ref,
+         operation.credit_child_allocation_ref,operation.credit_allocation_receipt_ref,
+         operation.credit_reserved_ceiling,operation.credit_unit,operation.effect_budget_commit_ref,
          operation.effect_budget_commit_digest,operation.effect_attempt_ordinal,
          operation.gateway_caller_request_fingerprint,operation.gateway_create_effect_digest,
          operation.definition_role_ref,operation.operation_input_revision_digest,
@@ -355,11 +371,21 @@ BEGIN
            ),
            'artifacts',candidate_rows.artifact_checkpoints,
            'usageEvidenceReceiptRef',usage.receipt->>'receiptRef',
-           'allocationReturnReceiptRef',allocation_return.receipt->>'receiptRef',
+           'financialClosure',financial_closure.receipt,
            'projectionReceiptRef',projection.receipt->>'receiptRef'
          )
     FROM changed
     JOIN platform.media_operation operation ON operation.operation_ref=changed.operation_ref
+    JOIN platform.credit_allocation_reservation_receipt credit_receipt
+      ON credit_receipt.allocation_reservation_receipt_ref=operation.credit_allocation_receipt_ref
+     AND credit_receipt.site_ref=operation.site_ref
+     AND credit_receipt.execution_budget_root_ref=operation.credit_execution_budget_root_ref
+     AND credit_receipt.parent_allocation_ref=operation.credit_parent_allocation_ref
+     AND credit_receipt.child_allocation_ref=operation.credit_child_allocation_ref
+     AND credit_receipt.media_operation_ref=operation.operation_ref
+    JOIN platform.credit_execution_budget_root credit_root
+      ON credit_root.execution_budget_root_ref=operation.credit_execution_budget_root_ref
+     AND credit_root.site_ref=operation.site_ref
     JOIN platform.media_operation_input_revision input
       ON input.operation_input_revision_ref=operation.operation_input_revision_ref
     JOIN LATERAL (
@@ -402,9 +428,9 @@ BEGIN
     LEFT JOIN platform.media_worker_saga_receipt usage
       ON usage.operation_ref=operation.operation_ref AND usage.step='usage'
      AND usage.binding_ref=operation.operation_ref
-    LEFT JOIN platform.media_worker_saga_receipt allocation_return
-      ON allocation_return.operation_ref=operation.operation_ref AND allocation_return.step='allocation_return'
-     AND allocation_return.binding_ref=operation.operation_ref
+    LEFT JOIN platform.media_worker_saga_receipt financial_closure
+      ON financial_closure.operation_ref=operation.operation_ref AND financial_closure.step='financial_closure'
+     AND financial_closure.binding_ref=operation.operation_ref
     LEFT JOIN platform.media_worker_saga_receipt projection
       ON projection.operation_ref=operation.operation_ref AND projection.step='projection'
      AND projection.binding_ref=operation.operation_ref;
@@ -723,7 +749,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$
 DECLARE existing JSONB;
 BEGIN
   PERFORM platform.assert_media_image_worker_lease(p_task_ref,p_operation_ref,p_lease_epoch,p_lease_token_hash);
-  IF p_step NOT IN ('artifact_staged','trust_decision','artifact_ready','usage','allocation_return','projection') OR
+  IF p_step NOT IN ('artifact_staged','trust_decision','artifact_ready','usage','financial_closure','projection') OR
      jsonb_typeof(p_receipt)<>'object' THEN RAISE EXCEPTION 'MEDIA_SAGA_RECEIPT_INVALID'; END IF;
   INSERT INTO platform.media_worker_saga_receipt(operation_ref,step,binding_ref,receipt)
     VALUES(p_operation_ref,p_step,p_binding_ref,p_receipt) ON CONFLICT DO NOTHING;
@@ -853,8 +879,27 @@ BEGIN
       WHERE operation_ref=p_operation_ref;
     UPDATE platform.media_candidate SET usage_evidence_receipt_ref=p_receipt->>'receiptRef'
       WHERE operation_ref=p_operation_ref;
-  ELSIF p_step='allocation_return' THEN
-    UPDATE platform.media_operation SET credit_allocation_return_receipt_ref=p_receipt->>'receiptRef'
+  ELSIF p_step='financial_closure' THEN
+    IF p_receipt->>'kind'<>'settled' OR p_receipt->>'financialReceiptRef' IS NULL OR
+       p_receipt->>'allocationClosureReceiptRef' IS NULL OR
+       COALESCE(p_receipt->>'actualCost','') !~ '^(0|[1-9][0-9]{0,37})$' OR
+       COALESCE(p_receipt->>'refundedCredit','') !~ '^(0|[1-9][0-9]{0,37})$' OR
+       p_receipt->>'unit' IS NULL THEN
+      RAISE EXCEPTION 'MEDIA_FINANCIAL_SETTLEMENT_INVALID';
+    END IF;
+    PERFORM 1 FROM platform.media_operation operation
+     WHERE operation.operation_ref=p_operation_ref
+       AND operation.credit_unit=p_receipt->>'unit'
+       AND operation.credit_reserved_ceiling=
+         (p_receipt->>'actualCost')::NUMERIC+(p_receipt->>'refundedCredit')::NUMERIC;
+    IF NOT FOUND THEN RAISE EXCEPTION 'MEDIA_FINANCIAL_SETTLEMENT_INVALID'; END IF;
+    UPDATE platform.media_operation SET
+      financial_receipt_ref=p_receipt->>'financialReceiptRef',
+      allocation_closure_receipt_ref=p_receipt->>'allocationClosureReceiptRef',
+      usage_settlement_receipt_ref=p_receipt->>'usageSettlementReceiptRef',
+      actual_cost=(p_receipt->>'actualCost')::NUMERIC,
+      refunded_credit=(p_receipt->>'refundedCredit')::NUMERIC,
+      terminal_credit_unit=p_receipt->>'unit'
       WHERE operation_ref=p_operation_ref;
   ELSE
     UPDATE platform.media_operation SET session_projection_receipt_ref=p_receipt->>'receiptRef'
@@ -873,6 +918,12 @@ BEGIN
   failure=p_closure->'failureCause';
   IF p_closure->>'state' NOT IN ('completed','partial','failed','canceled') OR
      p_closure->>'terminalReceiptRef' IS NULL OR
+     p_closure#>>'{receipts,effectClosureReceiptRef}' IS NULL OR
+     p_closure#>>'{receipts,financialReceiptRef}' IS NULL OR
+     p_closure#>>'{receipts,allocationClosureReceiptRef}' IS NULL OR
+     COALESCE(p_closure#>>'{receipts,actualCost}','') !~ '^(0|[1-9][0-9]{0,37})$' OR
+     COALESCE(p_closure#>>'{receipts,refundedCredit}','') !~ '^(0|[1-9][0-9]{0,37})$' OR
+     p_closure#>>'{receipts,creditUnit}' IS NULL OR
      ((p_closure->>'state'='failed') IS DISTINCT FROM
        COALESCE(jsonb_typeof(failure)='object',false)) THEN
     RAISE EXCEPTION 'MEDIA_TERMINAL_CLOSURE_INVALID';
@@ -933,16 +984,30 @@ BEGIN
   ELSIF p_closure->>'state'='failed' THEN
     RAISE EXCEPTION 'MEDIA_TERMINAL_FAILURE_CAUSE_INVALID';
   END IF;
+  PERFORM 1 FROM platform.media_operation operation
+   WHERE operation.operation_ref=p_operation_ref
+     AND operation.financial_receipt_ref=p_closure#>>'{receipts,financialReceiptRef}'
+     AND operation.allocation_closure_receipt_ref=p_closure#>>'{receipts,allocationClosureReceiptRef}'
+     AND operation.actual_cost=(p_closure#>>'{receipts,actualCost}')::NUMERIC
+     AND operation.refunded_credit=(p_closure#>>'{receipts,refundedCredit}')::NUMERIC
+     AND operation.terminal_credit_unit=p_closure#>>'{receipts,creditUnit}'
+     AND operation.session_projection_receipt_ref=p_closure#>>'{receipts,projectionReceiptRef}';
+  IF NOT FOUND THEN RAISE EXCEPTION 'MEDIA_TERMINAL_FINANCIAL_EVIDENCE_INVALID'; END IF;
   UPDATE platform.media_operation SET state=p_closure->>'state',outcome_class='canonical',
     terminal_receipt_ref=p_closure->>'terminalReceiptRef',
     terminal_failure=failure,
+    effect_closure_receipt_ref=p_closure#>>'{receipts,effectClosureReceiptRef}',
     gateway_command_receipt_ref=p_closure#>>'{receipts,gatewayCommandReceiptRef}',
     gateway_command_receipt_digest=p_closure#>>'{receipts,gatewayCommandReceiptDigest}',
     canonical_outcome_evidence_ref=p_closure#>>'{receipts,canonicalOutcomeEvidenceRef}',
     canonical_outcome_evidence_digest=p_closure#>>'{receipts,canonicalOutcomeEvidenceDigest}',
     usage_evidence_receipt_ref=p_closure#>>'{receipts,usageEvidenceReceiptRef}',
     effect_budget_commit_ref=COALESCE(p_closure#>>'{receipts,effectBudgetCommitRef}',effect_budget_commit_ref),
-    credit_allocation_return_receipt_ref=p_closure#>>'{receipts,allocationReturnReceiptRef}',
+    financial_receipt_ref=p_closure#>>'{receipts,financialReceiptRef}',
+    allocation_closure_receipt_ref=p_closure#>>'{receipts,allocationClosureReceiptRef}',
+    actual_cost=(p_closure#>>'{receipts,actualCost}')::NUMERIC,
+    refunded_credit=(p_closure#>>'{receipts,refundedCredit}')::NUMERIC,
+    terminal_credit_unit=p_closure#>>'{receipts,creditUnit}',
     session_projection_receipt_ref=p_closure#>>'{receipts,projectionReceiptRef}',
     updated_at=(p_closure->>'completedAt')::TIMESTAMPTZ WHERE operation_ref=p_operation_ref;
   UPDATE platform.media_dispatch_outbox SET state='completed',lease_token_hash=NULL,worker_id=NULL,
@@ -1107,7 +1172,10 @@ BEGIN
 END $$;
 ALTER TABLE platform.media_operation ADD CONSTRAINT media_operation_terminal_owner_receipts CHECK(
   terminal_receipt_ref IS NULL OR
-  (credit_allocation_return_receipt_ref IS NOT NULL AND session_projection_receipt_ref IS NOT NULL AND
+  (effect_closure_receipt_ref IS NOT NULL AND financial_receipt_ref IS NOT NULL AND
+   allocation_closure_receipt_ref IS NOT NULL AND
+   actual_cost IS NOT NULL AND refunded_credit IS NOT NULL AND terminal_credit_unit IS NOT NULL AND
+   session_projection_receipt_ref IS NOT NULL AND
    (gateway_command_receipt_ref IS NULL)=(gateway_command_receipt_digest IS NULL) AND
    ((state='canceled' AND gateway_command_receipt_ref IS NULL AND canonical_outcome_evidence_ref IS NULL AND
      canonical_outcome_evidence_digest IS NULL) OR

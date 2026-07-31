@@ -11,6 +11,7 @@ export type ResolvedAgentImageAccessRow = Readonly<{
   configurationRevisionRef: string;
   executionBudgetRootRef: string;
   authorizationSegmentRef: string;
+  executionManifestRef: string;
   parentAllocationRef: string;
   maximumCredit: bigint | string;
   trustInputDecisionRef: string;
@@ -19,6 +20,7 @@ export type ResolvedAgentImageAccessRow = Readonly<{
   creditSurfaceRef: string;
   creditCapabilityKey: string;
   creditAgentRef: string | null;
+  creditUnit: string;
   creditExpiresAt: Date | string;
   definitionRevisionRef: string;
   modelOptionRevisionRef: string;
@@ -92,8 +94,9 @@ function facts(
   const expectedParentAllocationEpoch = exactPositiveBigInt(row.expectedParentAllocationEpoch);
   for (const value of [row.siteRef, row.projectRef, row.sessionRef, row.runRef, row.subjectRef,
     row.configurationRevisionRef, row.executionBudgetRootRef, row.authorizationSegmentRef,
+    row.executionManifestRef,
     row.parentAllocationRef, row.trustInputDecisionRef, row.definitionRevisionRef,
-    row.modelOptionRevisionRef, row.creditSurfaceRef, row.creditCapabilityKey]) reference(value);
+    row.modelOptionRevisionRef, row.creditSurfaceRef, row.creditCapabilityKey, row.creditUnit]) reference(value);
   if (row.creditAgentRef !== null) reference(row.creditAgentRef);
   const expiresAt = instant(row.creditExpiresAt);
   const workloadRef = `agent-media-workload:sha256:${createHash("sha256")
@@ -115,9 +118,11 @@ function facts(
     }),
     budgetSource: Object.freeze({ kind: "agent_child" as const,
       executionBudgetRootRef: row.executionBudgetRootRef,
+      authorizationSegmentRef: row.authorizationSegmentRef,
+      executionManifestRef: row.executionManifestRef,
       parentAllocationRef: row.parentAllocationRef,
       expectedParentRevision,
-      expectedParentAllocationEpoch }),
+      expectedParentAllocationEpoch, unit: row.creditUnit }),
     maximumCredit,
     trustInputDecisionRef: row.trustInputDecisionRef,
     consumptionScope: Object.freeze({ surfaceRef: row.creditSurfaceRef,

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyImageEffectObservation,
   createImageEffectAttempt,
+  imageEffectUsageFactDigest,
   requestImageEffectCancellation,
   type ImageEffectProviderObservation,
 } from "../../src/modules/model-gateway/domain/image-effect.js";
@@ -44,7 +45,8 @@ describe("model image effect domain", () => {
       outcomeEvidenceRef: "provider-evidence:success",
       outcomeEvidenceDigest: DIGEST_A,
       usageEvidenceRef: "usage-evidence:one",
-      usageEvidenceDigest: DIGEST_B,
+      usageEvidenceDigest: imageEffectUsageFactDigest(measuredUsageFact()),
+      usageFact: measuredUsageFact(),
       outputs: [{ candidateRef: "candidate:one", stableOutputSlotRef: "slot:one",
         providerOutputFactRef: "provider-output:one", retrievalGrantHandle: "r".repeat(32),
         mediaType: "image/png", width: 1024, height: 1024, declaredByteSize: 4096n }],
@@ -102,6 +104,46 @@ describe("model image effect domain", () => {
     expect(safe.state).toBe("definitely_not_submitted");
     expect(safe.definitelyNotSubmittedReceiptDigest).toBe(DIGEST_B);
   });
+
+  it("rejects a provider usage digest that does not bind the canonical typed fact", () => {
+    const planned = createImageEffectAttempt({ attemptRef: "image-attempt:one", ordinal: 1,
+      budgetCommitRef: "effect-budget:one", budgetCommitDigest: DIGEST_A,
+      providerOperationKey: "image-provider-operation:one" });
+    const submitted = applyImageEffectObservation(planned, observation({ eventRef: "provider-event:submitted",
+      sequence: 1n, kind: "submitted", providerOperationRef: "provider-operation:one" })).attempt;
+    expect(() => applyImageEffectObservation(submitted, observation({ kind: "succeeded",
+      eventRef: "provider-event:tampered", sequence: 2n, outcomeEvidenceRef: "outcome:one",
+      outcomeEvidenceDigest: DIGEST_A, usageEvidenceRef: "usage:one", usageEvidenceDigest: DIGEST_B,
+      usageFact: measuredUsageFact(), outputs: [{ candidateRef: "candidate:one", stableOutputSlotRef: "slot:one",
+        providerOutputFactRef: "provider-output:one", retrievalGrantHandle: "r".repeat(32),
+        mediaType: "image/png", width: 1, height: 1 }] })))
+      .toThrow("IMAGE_EFFECT_USAGE_EVIDENCE_DIGEST_MISMATCH");
+  });
+
+  it("canonicalizes usage dimensions by code units and rejects keys Credit cannot rate", () => {
+    const base = measuredUsageFact();
+    const first = Object.freeze({ ...base, dimensions: Object.freeze([
+      Object.freeze({ dimensionKey: "z.output", sourceUnit: "unit", quantity: 2n }),
+      Object.freeze({ dimensionKey: "A.input", sourceUnit: "unit", quantity: 1n }),
+    ]) });
+    const second = Object.freeze({ ...first, dimensions: Object.freeze([...first.dimensions].reverse()) });
+    expect(imageEffectUsageFactDigest(first)).toBe(imageEffectUsageFactDigest(second));
+
+    const planned = createImageEffectAttempt({ attemptRef: "attempt:grammar", ordinal: 1,
+      budgetCommitRef: "budget:one", budgetCommitDigest: DIGEST_A, providerOperationKey: "provider:one" });
+    const submitted = applyImageEffectObservation(planned, observation({ kind: "submitted", sequence: 1n,
+      eventRef: "event:submitted", providerOperationRef: "provider:one" })).attempt;
+    const invalid = Object.freeze({ ...base, dimensions: Object.freeze([
+      Object.freeze({ dimensionKey: "image 输出", sourceUnit: "output", quantity: 1n }),
+    ]) });
+    expect(() => applyImageEffectObservation(submitted, observation({ kind: "succeeded", sequence: 2n,
+      eventRef: "event:invalid-usage", outcomeEvidenceRef: "outcome:one", outcomeEvidenceDigest: DIGEST_A,
+      usageEvidenceRef: "usage:one", usageEvidenceDigest: imageEffectUsageFactDigest(invalid),
+      usageFact: invalid, outputs: [{ candidateRef: "candidate:one", stableOutputSlotRef: "slot:one",
+        providerOutputFactRef: "output:one", retrievalGrantHandle: "r".repeat(32),
+        mediaType: "image/png", width: 1, height: 1 }] })))
+      .toThrow("IMAGE_EFFECT_USAGE_FACT_INVALID");
+  });
 });
 
 type ObservationInput<Value> = Value extends ImageEffectProviderObservation
@@ -122,4 +164,11 @@ function observation(
     case "canceled": return Object.freeze({ ...input, ...base });
     case "outcome_unknown": return Object.freeze({ ...input, ...base });
   }
+}
+
+function measuredUsageFact() {
+  return Object.freeze({ evidenceKind: "measured" as const,
+    dimensions: Object.freeze([Object.freeze({ dimensionKey: "image", sourceUnit: "output", quantity: 1n })]),
+    attemptOutcome: "succeeded" as const, occurredAt: "2026-07-31T12:01:00.000Z",
+    sourceDigest: "9".repeat(64) });
 }

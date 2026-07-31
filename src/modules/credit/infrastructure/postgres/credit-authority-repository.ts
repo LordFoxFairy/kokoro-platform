@@ -294,6 +294,9 @@ export class PostgresCreditAuthorityRepository implements CreditAuthorityReposit
     const value: ReservedRunBudget = Object.freeze({
       executionBudgetRootRef: record.executionBudgetRootRef,
       creditHoldRef: record.creditHoldRef,
+      rootAllocationRef: record.rootAllocationRef,
+      rootAllocationRevision: 1n,
+      rootAllocationEpoch: 1n,
       authorizationSegmentRef: record.authorizationSegmentRef,
       segmentVersion: 1n,
       state: "reserved",
@@ -927,10 +930,19 @@ function validateOperationReceiptScope(
 
 function parseReservedRunBudget(value: Record<string, unknown>): ReservedRunBudget {
   strictKeys(value, ["authorizationSegmentRef", "creditHoldRef", "executionBudgetRootRef",
-    "expiresAt", "segmentVersion", "state"]);
+    "expiresAt", "rootAllocationEpoch", "rootAllocationRef", "rootAllocationRevision",
+    "segmentVersion", "state"]);
+  const rootAllocationRevision = positiveBigintField(value, "rootAllocationRevision");
+  const rootAllocationEpoch = positiveBigintField(value, "rootAllocationEpoch");
+  if (rootAllocationRevision !== 1n || rootAllocationEpoch !== 1n) {
+    throw new Error("CREDIT_OPERATION_RECEIPT_CORRUPT");
+  }
   return Object.freeze({
     executionBudgetRootRef: referenceField(value, "executionBudgetRootRef"),
     creditHoldRef: referenceField(value, "creditHoldRef"),
+    rootAllocationRef: referenceField(value, "rootAllocationRef"),
+    rootAllocationRevision: 1n,
+    rootAllocationEpoch: 1n,
     authorizationSegmentRef: referenceField(value, "authorizationSegmentRef"),
     segmentVersion: positiveBigintField(value, "segmentVersion"),
     state: "reserved",

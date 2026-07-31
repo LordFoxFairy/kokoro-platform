@@ -14,6 +14,7 @@ import type {
   MediaImageEphemeralCapability,
   MediaImageEffectPreparation,
   MediaImageEffectView,
+  MediaImageFinancialSettlement,
   MediaImageSagaCheckpoint,
   MediaImageTerminalClosure,
   MediaImageWorkerRepository,
@@ -40,7 +41,14 @@ export type MediaImageWorkerTaskRow = Readonly<{
   operationState: "queued" | "active" | "cancel_requested" | "reconciling" | "finalizing";
   cancelIntentReceiptRef: string | null;
   modelInvocationCommandRef: string;
+  creditExecutionBudgetRootRef: string;
+  creditAuthorizationSegmentRef: string;
+  creditExecutionManifestRef: string;
+  creditParentAllocationRef: string;
   creditChildAllocationRef: string;
+  creditAllocationReceiptRef: string;
+  creditReservedCeiling: bigint | string;
+  creditUnit: string;
   effectBudgetCommitRef: string;
   effectBudgetCommitDigest: string;
   attemptOrdinal: number;
@@ -147,7 +155,7 @@ export interface MediaImageWorkerDatabase {
   }>): Promise<void>;
   recordOutcomeUnknown(input: LeaseFence & Readonly<{ errorCode: string; observedAt: string }>): Promise<void>;
   recordSagaReceipt(input: LeaseFence & Readonly<{
-    step: "artifact_staged" | "trust_decision" | "artifact_ready" | "usage" | "allocation_return" | "projection";
+    step: "artifact_staged" | "trust_decision" | "artifact_ready" | "usage" | "financial_closure" | "projection";
     bindingRef: string;
     receipt: unknown;
   }>): Promise<void>;
@@ -333,9 +341,9 @@ export class PostgresMediaImageWorkerRepository implements MediaImageWorkerRepos
     return this.#recordSaga(task, "usage", task.operationRef, { receiptRef });
   }
 
-  recordAllocationReturn(task: MediaImageWorkerTask, receiptRef: string): Promise<void> {
-    reference(receiptRef, "MEDIA_CREDIT_RETURN_RECEIPT_INVALID");
-    return this.#recordSaga(task, "allocation_return", task.operationRef, { receiptRef });
+  recordFinancialClosure(task: MediaImageWorkerTask, settlement: MediaImageFinancialSettlement): Promise<void> {
+    const financial = parseFinancialSettlement(settlement);
+    return this.#recordSaga(task, "financial_closure", task.operationRef, financial);
   }
 
   recordProjection(task: MediaImageWorkerTask, receiptRef: string): Promise<void> {
@@ -472,7 +480,15 @@ function taskFromRow(
     outputAccessRequestFingerprints: Object.freeze(candidates.map((value) => value.outputAccessRequestFingerprint)),
     ownerScope: Object.freeze({ siteRef: row.siteRef, subjectRef: row.subjectRef,
       subjectGeneration: ownerBinding.subjectGeneration, projectRef: row.projectRef }),
-    creditChildAllocationRef: row.creditChildAllocationRef,
+    creditBudget: Object.freeze({ kind: "agent_child" as const,
+      executionBudgetRootRef: row.creditExecutionBudgetRootRef,
+      authorizationSegmentRef: row.creditAuthorizationSegmentRef,
+      executionManifestRef: row.creditExecutionManifestRef,
+      parentAllocationRef: row.creditParentAllocationRef,
+      childAllocationRef: row.creditChildAllocationRef,
+      allocationReservationReceiptRef: row.creditAllocationReceiptRef,
+      reservedCeiling: integer(row.creditReservedCeiling, "MEDIA_WORKER_CREDIT_BUDGET_INVALID"),
+      unit: requiredRef(row.creditUnit, "MEDIA_WORKER_CREDIT_BUDGET_INVALID") }),
     checkpoint,
     ...(row.cancelIntentReceiptRef === null ? {} : {
       cancelEffectCommand: Object.freeze({ cancelIntentReceiptRef: row.cancelIntentReceiptRef,
@@ -559,7 +575,8 @@ function parseCheckpoint(value: unknown, candidateCount: number): MediaImageSaga
     ...(effectReceipt === undefined ? {} : { effectReceipt }),
     ...(effectView === undefined ? {} : { effectView }),
     ...optionalRef(value, "usageEvidenceReceiptRef"),
-    ...optionalRef(value, "allocationReturnReceiptRef"),
+    ...(value.financialClosure === null || value.financialClosure === undefined
+      ? {} : { financialClosure: parseFinancialSettlement(value.financialClosure) }),
     ...optionalRef(value, "projectionReceiptRef") });
 }
 
@@ -729,6 +746,27 @@ function persistTerminalClosure(closure: MediaImageTerminalClosure): unknown {
     artifactFinalizationReceiptRefs: [...closure.receipts.artifactFinalizationReceiptRefs] } };
 }
 
+function parseFinancialSettlement(value: unknown): MediaImageFinancialSettlement {
+  if (!record(value) || value.kind !== "settled" || typeof value.financialReceiptRef !== "string" ||
+      typeof value.allocationClosureReceiptRef !== "string" || typeof value.actualCost !== "string" ||
+      typeof value.refundedCredit !== "string" || typeof value.unit !== "string" ||
+      !/^(0|[1-9][0-9]{0,37})$/u.test(value.actualCost) ||
+      !/^(0|[1-9][0-9]{0,37})$/u.test(value.refundedCredit) ||
+      (value.usageSettlementReceiptRef !== undefined && value.usageSettlementReceiptRef !== null &&
+       typeof value.usageSettlementReceiptRef !== "string")) {
+    throw new Error("MEDIA_FINANCIAL_SETTLEMENT_INVALID");
+  }
+  for (const candidate of [value.financialReceiptRef, value.allocationClosureReceiptRef, value.unit]) {
+    reference(candidate, "MEDIA_FINANCIAL_SETTLEMENT_INVALID");
+  }
+  return Object.freeze({ kind: "settled" as const,
+    financialReceiptRef: value.financialReceiptRef,
+    allocationClosureReceiptRef: value.allocationClosureReceiptRef,
+    actualCost: value.actualCost, refundedCredit: value.refundedCredit, unit: value.unit,
+    ...(typeof value.usageSettlementReceiptRef === "string"
+      ? { usageSettlementReceiptRef: value.usageSettlementReceiptRef } : {}) });
+}
+
 function parseCandidates(value: unknown): readonly Readonly<{
   candidateRef: string; stableOutputSlotRef: string; artifactRef: string; artifactVersionRef: string;
   outputAccessCommandRef: string; outputAccessRequestFingerprint: string; ordinal: number;
@@ -821,6 +859,10 @@ function instant(value: string, code: string): void {
 }
 function reference(value: string, code: string): void {
   if (value.length < 1 || value.length > 256 || value.trim() !== value) throw new Error(code);
+}
+function requiredRef(value: string, code: string): string {
+  reference(value, code);
+  return value;
 }
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

@@ -58,6 +58,18 @@ describe("Media worker runtime PostgreSQL authority", () => {
     expect(migration).toContain("media_operation_credit_terminal_gate");
   });
 
+  it("binds financial closure to the frozen Credit unit and conserves the reserved ceiling", async () => {
+    const migration = await readFile(migrationPath, "utf8");
+    expect(migration).toContain("p_step='financial_closure'");
+    expect(migration).toContain("operation.credit_unit=p_receipt->>'unit'");
+    expect(migration).toMatch(
+      /operation\.credit_reserved_ceiling=\s*\(p_receipt->>'actualCost'\)::NUMERIC\+\s*\(p_receipt->>'refundedCredit'\)::NUMERIC/u,
+    );
+    expect(migration).toMatch(
+      /effect_closure_receipt_ref[\s\S]+financial_receipt_ref[\s\S]+allocation_closure_receipt_ref[\s\S]+terminal_receipt_ref/u,
+    );
+  });
+
   it("keeps staged cleanup as independently leased retryable owner work", async () => {
     const migration = await readFile(migrationPath, "utf8");
     for (const routine of ["claim_media_artifact_cleanup", "renew_media_artifact_cleanup",

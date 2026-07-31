@@ -45,8 +45,9 @@ describe("image.text_to_image submission authority", () => {
         definitionRevisionRef: request.definitionRevisionRef,
         modelOptionRevisionRef: request.modelOptionRevisionRef },
       budgetSource: { kind: "agent_child", executionBudgetRootRef: "budget:root:one",
+        authorizationSegmentRef: "segment:one", executionManifestRef: "manifest:one",
         parentAllocationRef: "allocation:one", expectedParentRevision: 3n,
-        expectedParentAllocationEpoch: 5n },
+        expectedParentAllocationEpoch: 5n, unit: "credit" },
       maximumCredit: 10n, trustInputDecisionRef: "trust:one",
       consumptionScope: { surfaceRef: "surface:image", capabilityKey: "image.create", agentRef: "agent:one" },
       expiresAt: "2026-07-31T13:00:00.000Z",
@@ -89,7 +90,8 @@ describe("image.text_to_image submission authority", () => {
           budgetSource: { kind: "direct_root" as const,
             billingAccountRef: "billing:one", creditAccountRef: "credit-account:one",
             unit: "credit", liabilityMerchantAccountRef: "merchant:one",
-            ratingPolicyRevisionRef: "rating:one" },
+            ratingPolicyRevisionRef: "rating:one", authorizationBudgetRef: "authorization-budget:one",
+            executionManifestRef: "execution-manifest:one" },
           expiresAt: "2026-07-31T13:00:00.000Z",
         };
       }),
@@ -98,7 +100,9 @@ describe("image.text_to_image submission authority", () => {
       reserveDirectRoot: vi.fn(async () => {
         events.push("credit");
         return { executionBudgetRootRef: "budget:root:one", rootHoldRef: "hold:one",
-          rootAllocationRef: "budget:allocation:one", authorizationSegmentRef: "segment:one" };
+          rootAllocationRef: "budget:allocation:one", rootAllocationRevision: 1n,
+          rootAllocationEpoch: 1n, authorizationSegmentRef: "segment:one",
+          authorizationSegmentVersion: 2n };
       }),
     };
     const agentChild: AgentMediaChildBudgetOwner = {
@@ -137,8 +141,11 @@ describe("image.text_to_image submission authority", () => {
     expect(stored?.plan.candidates).toHaveLength(2);
     expect(stored?.modelInvocationCommandRefs).toHaveLength(1);
     expect(stored?.credit).toEqual({ kind: "direct_root", executionBudgetRootRef: "budget:root:one",
+      executionManifestRef: "execution-manifest:one",
       rootHoldRef: "hold:one", rootAllocationRef: "budget:allocation:one",
-      authorizationSegmentRef: "segment:one" });
+      rootAllocationRevision: 1n, rootAllocationEpoch: 1n,
+      authorizationSegmentRef: "segment:one", authorizationSegmentVersion: 2n,
+      reservedCeiling: 15n, unit: "credit" });
     expect(stored?.dispatchOutbox).toMatchObject({ state: "pending", topic: "media.image.dispatch.v1" });
     expect(JSON.stringify(stored?.protectedInput)).not.toContain("silver fox");
     expect(events).toEqual([
@@ -159,7 +166,8 @@ describe("image.text_to_image submission authority", () => {
       consumptionScope: { surfaceRef: "surface:image", capabilityKey: "image.create", agentRef: null },
       budgetSource: { kind: "direct_root" as const,
         billingAccountRef: "billing:one", creditAccountRef: "credit-account:one",
-        unit: "credit", liabilityMerchantAccountRef: "merchant:one", ratingPolicyRevisionRef: "rating:one" },
+        unit: "credit", liabilityMerchantAccountRef: "merchant:one", ratingPolicyRevisionRef: "rating:one",
+        authorizationBudgetRef: "authorization-budget:one", executionManifestRef: "execution-manifest:one" },
       expiresAt: "2026-07-31T13:00:00.000Z",
     })) };
     const repository = new InMemoryMediaImageOperationRepository();
@@ -189,8 +197,9 @@ describe("image.text_to_image submission authority", () => {
         definitionRevisionRef: "image.text_to_image@v1:revision:1",
         modelOptionRevisionRef: "image-default:revision:7" },
       budgetSource: { kind: "agent_child" as const, executionBudgetRootRef: "budget:root:one",
+        authorizationSegmentRef: "segment:one", executionManifestRef: "manifest:one",
         parentAllocationRef: "budget:allocation:one", expectedParentRevision: 1n,
-        expectedParentAllocationEpoch: 1n },
+        expectedParentAllocationEpoch: 1n, unit: "credit" },
       maximumCredit: 10n, trustInputDecisionRef: "trust-input:one",
       consumptionScope: { surfaceRef: "surface:image", capabilityKey: "image.create", agentRef: "agent:one" },
       expiresAt: "2026-07-31T13:00:00.000Z",
@@ -246,7 +255,8 @@ function serviceWith(input: Readonly<{
     budgets: { kind: "direct_and_agent",
       directRoot: { reserveDirectRoot: async () => ({ executionBudgetRootRef: "budget:root:one",
         rootHoldRef: "hold:one", rootAllocationRef: "budget:allocation:one",
-        authorizationSegmentRef: "segment:one" }) },
+        rootAllocationRevision: 1n, rootAllocationEpoch: 1n,
+        authorizationSegmentRef: "segment:one", authorizationSegmentVersion: 2n }) },
       agentChild: { deriveChild: async () => ({ childAllocationRef: "credit-child:one",
         allocationReservationReceiptRef: "credit-receipt:one" }) } },
     inputProtector: new EnvelopeOperationInputProtector({

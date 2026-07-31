@@ -21,10 +21,8 @@ function ports(events: string[]) {
     }) },
     usage: { recordAttempt: vi.fn(async () => { events.push("usage");
       return { attemptUsageEvidenceReceiptRef: "usage:one" }; }) },
-    credit: { releaseChild: vi.fn(async () => { events.push("credit.release");
-      return { allocationReturnReceiptRef: "credit-return:released" }; }),
-    returnChild: vi.fn(async () => { events.push("credit.return");
-      return { allocationReturnReceiptRef: "credit-return:one" }; }) },
+    credit: { finalizeBudget: vi.fn(async () => { events.push("credit.finalize");
+      return financialSettlement("one"); }) },
     projection: { publish: vi.fn(async (input: { state: string }) => {
       events.push(`projection.${input.state}`); return { projectionReceiptRef: `projection:${input.state}` };
     }) },
@@ -75,7 +73,7 @@ describe("production Media image worker owner boundaries", () => {
     expect(await worker.runOne(new AbortController().signal)).toBe("canceled");
     expect(gateway.invocationCount).toBe(0);
     expect(dependencies.usage.recordAttempt).not.toHaveBeenCalled();
-    expect(dependencies.credit.releaseChild).toHaveBeenCalledOnce();
+    expect(dependencies.credit.finalizeBudget).toHaveBeenCalledOnce();
   });
 
   it("recovers a lost Create response by the original command and never creates twice", async () => {
@@ -224,6 +222,12 @@ function commandReceipt(
       ? { logicalInvocationRef: "image-invocation:one" } : {}),
     receiptVersion: 1n,
     recordedAt: "2099-01-01T00:00:00.000Z" });
+}
+
+function financialSettlement(suffix: string) {
+  return Object.freeze({ kind: "settled" as const, financialReceiptRef: `financial:${suffix}`,
+    allocationClosureReceiptRef: `allocation-closure:${suffix}`, actualCost: "80",
+    refundedCredit: "20", unit: "credit" });
 }
 
 function terminalView(state: "failed" | "canceled", withUsage: boolean): MediaImageEffectView {

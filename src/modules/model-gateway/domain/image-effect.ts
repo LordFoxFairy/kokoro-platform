@@ -29,6 +29,20 @@ export type ImageEffectProviderOutput = Readonly<{
   declaredByteSize?: bigint;
 }>;
 
+/** Certified provider usage normalized before it enters the Model Gateway owner journal. */
+export type ImageEffectUsageFact = Readonly<{
+  evidenceKind: "measured" | "zero" | "unavailable";
+  dimensions: readonly Readonly<{
+    dimensionKey: string;
+    sourceUnit: string;
+    quantity: bigint;
+  }>[];
+  attemptOutcome: "succeeded" | "failed_after_effect" | "canceled_after_effect";
+  occurredAt: string;
+  sourceDigest: string;
+  unavailableReasonCode?: string | undefined;
+}>;
+
 type ObservationBase = Readonly<{
   eventRef: string;
   sequence: bigint;
@@ -53,6 +67,7 @@ export type ImageEffectProviderObservation =
       outcomeEvidenceDigest: string;
       usageEvidenceRef: string;
       usageEvidenceDigest: string;
+      usageFact: ImageEffectUsageFact;
       outputs: readonly ImageEffectProviderOutput[];
     }>)
   | (ObservationBase & Readonly<{
@@ -61,6 +76,7 @@ export type ImageEffectProviderObservation =
       outcomeEvidenceDigest: string;
       usageEvidenceRef?: string;
       usageEvidenceDigest?: string;
+      usageFact?: ImageEffectUsageFact;
     }>);
 
 export type ImageEffectAttempt = Readonly<{
@@ -235,12 +251,17 @@ function validateObservation(observation: ImageEffectProviderObservation): void 
     }>;
     reference(terminal.outcomeEvidenceRef);
     digest(terminal.outcomeEvidenceDigest);
-    if ((terminal.usageEvidenceRef === undefined) !== (terminal.usageEvidenceDigest === undefined)) {
+    if ((terminal.usageEvidenceRef === undefined) !== (terminal.usageEvidenceDigest === undefined) ||
+        (terminal.usageEvidenceRef === undefined) !== (terminal.usageFact === undefined)) {
       throw new Error("IMAGE_EFFECT_USAGE_EVIDENCE_INVALID");
     }
     if (terminal.usageEvidenceRef !== undefined) {
       reference(terminal.usageEvidenceRef);
       digest(terminal.usageEvidenceDigest!);
+      validateUsageFact(terminal.usageFact!, terminal.kind);
+      if (imageEffectUsageFactDigest(terminal.usageFact!) !== terminal.usageEvidenceDigest) {
+        throw new Error("IMAGE_EFFECT_USAGE_EVIDENCE_DIGEST_MISMATCH");
+      }
     }
   }
   if (observation.kind === "succeeded") {
@@ -248,6 +269,68 @@ function validateObservation(observation: ImageEffectProviderObservation): void 
       throw new Error("IMAGE_EFFECT_OUTPUT_EVIDENCE_INVALID");
     }
     snapshotOutputs(observation.outputs);
+  }
+}
+
+function validateUsageFact(
+  fact: ImageEffectUsageFact,
+  terminalKind: "succeeded" | "failed" | "canceled" | "outcome_unknown",
+): void {
+  if (typeof fact !== "object" || fact === null || Array.isArray(fact) ||
+      !["measured", "zero", "unavailable"].includes(fact.evidenceKind) ||
+      !Array.isArray(fact.dimensions) || fact.dimensions.length > 64 ||
+      !["succeeded", "failed_after_effect", "canceled_after_effect"].includes(fact.attemptOutcome)) {
+    throw new Error("IMAGE_EFFECT_USAGE_FACT_INVALID");
+  }
+  instant(fact.occurredAt);
+  digest(fact.sourceDigest);
+  const expectedOutcome = terminalKind === "succeeded" ? "succeeded"
+    : terminalKind === "failed" ? "failed_after_effect"
+      : terminalKind === "canceled" ? "canceled_after_effect" : undefined;
+  if (expectedOutcome === undefined || fact.attemptOutcome !== expectedOutcome ||
+      (fact.evidenceKind === "measured") !== (fact.dimensions.length > 0) ||
+      (fact.evidenceKind === "unavailable") !== (fact.unavailableReasonCode !== undefined)) {
+    throw new Error("IMAGE_EFFECT_USAGE_FACT_INVALID");
+  }
+  const keys = new Set<string>();
+  for (const dimension of fact.dimensions) {
+    if (typeof dimension.dimensionKey !== "string" || typeof dimension.sourceUnit !== "string") {
+      throw new Error("IMAGE_EFFECT_USAGE_FACT_INVALID");
+    }
+    usageKey(dimension.dimensionKey);
+    usageKey(dimension.sourceUnit);
+    if (typeof dimension.quantity !== "bigint" || dimension.quantity < 0n ||
+        dimension.quantity > 99_999_999_999_999_999_999_999_999_999_999_999_999n ||
+        keys.has(dimension.dimensionKey)) {
+      throw new Error("IMAGE_EFFECT_USAGE_FACT_INVALID");
+    }
+    keys.add(dimension.dimensionKey);
+  }
+  if (fact.unavailableReasonCode !== undefined && !/^[A-Z0-9_]{1,128}$/u.test(fact.unavailableReasonCode)) {
+    throw new Error("IMAGE_EFFECT_USAGE_FACT_INVALID");
+  }
+}
+
+export function imageEffectUsageFactDigest(fact: ImageEffectUsageFact): string {
+  const dimensions = [...fact.dimensions]
+    .map((dimension) => Object.freeze({ dimensionKey: dimension.dimensionKey,
+      sourceUnit: dimension.sourceUnit, quantity: dimension.quantity.toString() }))
+    .sort((left, right) => compareCodeUnits(left.dimensionKey, right.dimensionKey) ||
+      compareCodeUnits(left.sourceUnit, right.sourceUnit));
+  const canonical = JSON.stringify({ evidenceKind: fact.evidenceKind, dimensions,
+    attemptOutcome: fact.attemptOutcome, occurredAt: fact.occurredAt, sourceDigest: fact.sourceDigest,
+    unavailableReasonCode: fact.unavailableReasonCode ?? null });
+  return createHash("sha256").update("kokoro.platform.image-effect-usage-fact.v1\0")
+    .update(canonical).digest("hex");
+}
+
+function compareCodeUnits(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function usageKey(value: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/u.test(value)) {
+    throw new Error("IMAGE_EFFECT_USAGE_FACT_INVALID");
   }
 }
 

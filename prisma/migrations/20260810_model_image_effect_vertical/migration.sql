@@ -237,6 +237,7 @@ CREATE TABLE platform.model_image_effect_evidence_ledger (
   evidence_kind TEXT NOT NULL CHECK (evidence_kind IN ('outcome','usage','output')),
   evidence_ref TEXT NOT NULL CHECK (length(evidence_ref) BETWEEN 1 AND 256),
   evidence_digest TEXT NOT NULL CHECK (evidence_digest ~ '^[0-9a-f]{64}$'),
+  usage_fact JSONB,
   candidate_ordinal INTEGER,
   candidate_ref TEXT,
   stable_output_slot_ref TEXT,
@@ -254,6 +255,16 @@ CREATE TABLE platform.model_image_effect_evidence_ledger (
   UNIQUE (logical_invocation_ref,evidence_sequence),
   UNIQUE (logical_invocation_ref,evidence_ref,evidence_digest),
   CHECK ((evidence_kind='output') = (candidate_ordinal IS NOT NULL)),
+  CHECK ((evidence_kind='usage') = (usage_fact IS NOT NULL)),
+  CHECK (usage_fact IS NULL OR
+    CASE WHEN jsonb_typeof(usage_fact)='object' THEN
+      COALESCE(usage_fact->>'evidenceKind','') IN ('measured','zero','unavailable') AND
+      COALESCE(usage_fact->>'attemptOutcome','') IN
+        ('succeeded','failed_after_effect','canceled_after_effect') AND
+      COALESCE(usage_fact->>'sourceDigest','') ~ '^[a-f0-9]{64}$' AND
+      CASE WHEN jsonb_typeof(usage_fact->'dimensions')='array'
+        THEN jsonb_array_length(usage_fact->'dimensions')<=64 ELSE FALSE END
+    ELSE FALSE END),
   CHECK ((evidence_kind='output') = (candidate_ref IS NOT NULL)),
   CHECK ((evidence_kind='output') = (stable_output_slot_ref IS NOT NULL)),
   CHECK ((evidence_kind='output') = (output_evidence_ref IS NOT NULL)),
@@ -737,6 +748,7 @@ DECLARE owned_attempt platform.model_image_effect_attempt%ROWTYPE;
   owned_invocation platform.model_image_effect_invocation%ROWTYPE;
   prior_observation platform.model_image_effect_provider_observation%ROWTYPE;
   next_owner_version BIGINT; next_evidence_sequence BIGINT; evidence_count INTEGER;
+  usage_count INTEGER;
   next_attempt_state TEXT; next_invocation_state TEXT; terminal BOOLEAN;
 BEGIN
   PERFORM platform.assert_model_image_effect_runtime_role('worker');
@@ -791,6 +803,57 @@ BEGIN
      OR jsonb_array_length(requested_outputs)>4 OR evidence_count>6 THEN
     RAISE EXCEPTION 'MODEL_IMAGE_EFFECT_EVIDENCE_SET_INVALID';
   END IF;
+  SELECT count(*)::INTEGER INTO usage_count
+    FROM jsonb_array_elements(requested_evidence) evidence(value)
+   WHERE evidence.value->>'kind'='usage';
+  IF usage_count>1 OR
+     (requested_kind='succeeded' AND usage_count<>1) OR
+     (requested_kind='outcome_unknown' AND usage_count<>0) OR
+     ((requested_attempt->>'usageEvidenceRef' IS NULL)<>
+       (requested_attempt->>'usageEvidenceDigest' IS NULL)) OR
+     ((usage_count=1)<>
+       (requested_attempt->>'usageEvidenceRef' IS NOT NULL AND
+        requested_attempt->>'usageEvidenceDigest' IS NOT NULL)) OR
+     (usage_count=1 AND NOT EXISTS(
+       SELECT 1 FROM jsonb_array_elements(requested_evidence) evidence(value)
+        WHERE evidence.value->>'kind'='usage'
+          AND requested_attempt->>'usageEvidenceRef'=evidence.value->>'evidenceRef'
+          AND requested_attempt->>'usageEvidenceDigest'=evidence.value->>'evidenceDigest'
+     )) THEN RAISE EXCEPTION 'MODEL_IMAGE_EFFECT_USAGE_FACT_INVALID'; END IF;
+  IF EXISTS(
+    SELECT 1 FROM jsonb_array_elements(requested_evidence) evidence(value)
+     WHERE evidence.value->>'kind'='usage' AND
+       (jsonb_typeof(evidence.value->'usageFact') IS DISTINCT FROM 'object' OR
+        COALESCE(evidence.value#>>'{usageFact,evidenceKind}','') NOT IN
+          ('measured','zero','unavailable') OR
+        COALESCE(evidence.value#>>'{usageFact,attemptOutcome}','')<>
+          CASE requested_kind WHEN 'succeeded' THEN 'succeeded'
+            WHEN 'failed' THEN 'failed_after_effect'
+            WHEN 'canceled' THEN 'canceled_after_effect' ELSE '__invalid__' END OR
+        COALESCE(evidence.value#>>'{usageFact,sourceDigest}','') !~ '^[a-f0-9]{64}$' OR
+        jsonb_typeof(evidence.value#>'{usageFact,occurredAt}') IS DISTINCT FROM 'string' OR
+        length(evidence.value#>>'{usageFact,occurredAt}') NOT BETWEEN 1 AND 64 OR
+        jsonb_typeof(evidence.value#>'{usageFact,dimensions}') IS DISTINCT FROM 'array' OR
+        ((evidence.value#>>'{usageFact,evidenceKind}')='unavailable' AND
+          COALESCE(evidence.value#>>'{usageFact,unavailableReasonCode}','') !~ '^[A-Z0-9_]{1,128}$') OR
+        ((evidence.value#>>'{usageFact,evidenceKind}')<>'unavailable' AND
+          (evidence.value->'usageFact') ? 'unavailableReasonCode'))
+  ) THEN RAISE EXCEPTION 'MODEL_IMAGE_EFFECT_USAGE_FACT_INVALID'; END IF;
+  IF EXISTS(
+    SELECT 1 FROM jsonb_array_elements(requested_evidence) evidence(value)
+     WHERE evidence.value->>'kind'='usage' AND
+       (jsonb_array_length(evidence.value#>'{usageFact,dimensions}')>64 OR
+        ((evidence.value#>>'{usageFact,evidenceKind}')='measured')<>
+          (jsonb_array_length(evidence.value#>'{usageFact,dimensions}')>0) OR
+        (SELECT count(*)<>count(DISTINCT dimension.value->>'dimensionKey')
+           FROM jsonb_array_elements(evidence.value#>'{usageFact,dimensions}') AS dimension(value)) OR
+        EXISTS(SELECT 1 FROM jsonb_array_elements(evidence.value#>'{usageFact,dimensions}') AS dimension(value)
+          WHERE COALESCE(dimension.value->>'dimensionKey','') !~
+                  '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$' OR
+            COALESCE(dimension.value->>'sourceUnit','') !~
+                  '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$' OR
+            COALESCE(dimension.value->>'quantity','') !~ '^(0|[1-9][0-9]{0,37})$'))
+  ) THEN RAISE EXCEPTION 'MODEL_IMAGE_EFFECT_USAGE_FACT_INVALID'; END IF;
 
   INSERT INTO platform.model_image_effect_provider_observation
     (site_ref,attempt_ref,provider_event_ref,provider_sequence,observation_kind,observation_digest,observed_at)
@@ -830,12 +893,12 @@ BEGIN
   next_evidence_sequence:=owned_invocation.last_evidence_sequence;
   INSERT INTO platform.model_image_effect_evidence_ledger
     (site_ref,logical_invocation_ref,attempt_ref,evidence_sequence,owner_version,evidence_kind,
-     evidence_ref,evidence_digest,candidate_ordinal,candidate_ref,stable_output_slot_ref,
+     evidence_ref,evidence_digest,usage_fact,candidate_ordinal,candidate_ref,stable_output_slot_ref,
      output_evidence_ref,output_evidence_digest,provider_output_fact_ref,retrieval_grant_handle_digest,
      media_type,width,height,declared_byte_size,recorded_at)
   SELECT owned_invocation.site_ref,requested_invocation_ref,requested_attempt_ref,
     next_evidence_sequence+evidence.ordinality,next_owner_version,evidence.value->>'kind',
-    evidence.value->>'evidenceRef',evidence.value->>'evidenceDigest',
+    evidence.value->>'evidenceRef',evidence.value->>'evidenceDigest',evidence.value->'usageFact',
     (evidence.value->'output'->>'candidateOrdinal')::INTEGER,evidence.value->'output'->>'candidateRef',
     evidence.value->'output'->>'stableOutputSlotRef',evidence.value->'output'->>'outputEvidenceRef',
     evidence.value->'output'->>'outputEvidenceDigest',evidence.value->'output'->>'providerOutputFactRef',

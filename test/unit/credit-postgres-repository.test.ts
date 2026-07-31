@@ -474,6 +474,9 @@ function receiptRow(requestDigest: string) {
   const result = {
     executionBudgetRootRef: "00000000-0000-7000-8000-000000000202",
     creditHoldRef: "00000000-0000-7000-8000-000000000201",
+    rootAllocationRef: "00000000-0000-7000-8000-000000000203",
+    rootAllocationRevision: "1",
+    rootAllocationEpoch: "1",
     authorizationSegmentRef: "00000000-0000-7000-8000-000000000205",
     segmentVersion: "1", state: "reserved", expiresAt: "2026-07-29T00:05:00.000Z",
   };

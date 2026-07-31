@@ -29,6 +29,7 @@ export function artifactPort(events: string[]): MediaImageArtifactPort {
 export function receiptPort(): MediaImageReceiptCanonicalizerPort {
   return {
     artifactFinalization: (receipt) => `artifact-finalization:${receipt.artifactVersionRef}`,
-    terminal: (input) => `media-terminal:${input.state}:${input.operationRef}`,
+    effectClosure: (input) => `media-effect-closure:${input.state}:${input.operationRef}`,
+    finalTerminal: (input) => `media-terminal:${input.state}:${input.operationRef}:${input.financial.financialReceiptRef}`,
   };
 }

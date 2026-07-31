@@ -231,7 +231,7 @@ export type MediaImageSagaCheckpoint = Readonly<{
   }>;
   artifacts: readonly MediaImageArtifactCheckpoint[];
   usageEvidenceReceiptRef?: string | undefined;
-  allocationReturnReceiptRef?: string | undefined;
+  financialClosure?: MediaImageFinancialSettlement | undefined;
   projectionReceiptRef?: string | undefined;
 }>;
 
@@ -252,7 +252,7 @@ export type MediaImageWorkerTask = Readonly<{
   outputAccessCommandRefs: readonly string[];
   outputAccessRequestFingerprints: readonly string[];
   ownerScope: ArtifactOwnerScope;
-  creditChildAllocationRef: string;
+  creditBudget: MediaImageCreditBudgetBinding;
   cancelEffectCommand?: MediaImageCancelEffectCommand | undefined;
   checkpoint: MediaImageSagaCheckpoint;
 }>;
@@ -300,7 +300,7 @@ export interface MediaImageWorkerRepository {
     finalizationReceiptRef: string;
   }>): Promise<void>;
   recordUsage(task: MediaImageWorkerTask, receiptRef: string): Promise<void>;
-  recordAllocationReturn(task: MediaImageWorkerTask, receiptRef: string): Promise<void>;
+  recordFinancialClosure(task: MediaImageWorkerTask, settlement: MediaImageFinancialSettlement): Promise<void>;
   recordProjection(task: MediaImageWorkerTask, receiptRef: string): Promise<void>;
   complete(task: MediaImageWorkerTask, input: MediaImageTerminalClosure): Promise<void>;
   retryOrDeadLetter(task: MediaImageWorkerTask, input: Readonly<{
@@ -357,19 +357,62 @@ export interface MediaImageUsagePort {
 }
 
 export interface MediaImageCreditSettlementPort {
-  releaseChild(input: Readonly<{
+  finalizeBudget(input: Readonly<{
     operationRef: string;
-    childAllocationRef: string;
-    cancelIntentReceiptRef: string;
-    terminalReceiptRef: string;
-  }>): Promise<Readonly<{ allocationReturnReceiptRef: string }>>;
-  returnChild(input: Readonly<{
-    operationRef: string;
-    childAllocationRef: string;
-    terminalReceiptRef: string;
+    budget: MediaImageCreditBudgetBinding;
+    effectClosureReceiptRef: string;
     outcome: "completed" | "partial" | "failed" | "canceled";
-  }>): Promise<Readonly<{ allocationReturnReceiptRef: string }>>;
+    cancelIntentReceiptRef?: string | undefined;
+    usage?: Readonly<{
+      attemptUsageEvidenceReceiptRef: string;
+      canonicalOutcomeEvidence: MediaImageCanonicalEvidenceIdentity;
+      usageEvidence: MediaImageCanonicalEvidenceIdentity;
+      effectBudgetCommitRef: string;
+    }> | undefined;
+  }>): Promise<MediaImageFinancialClosure>;
 }
+
+export type MediaImageCreditBudgetBinding =
+  | Readonly<{
+      kind: "direct_root";
+      executionBudgetRootRef: string;
+      executionManifestRef: string;
+      rootHoldRef: string;
+      rootAllocationRef: string;
+      rootAllocationRevision: bigint;
+      rootAllocationEpoch: bigint;
+      authorizationSegmentRef: string;
+      authorizationSegmentVersion: bigint;
+      reservedCeiling: bigint;
+      unit: string;
+    }>
+  | Readonly<{
+      kind: "agent_child";
+      executionBudgetRootRef: string;
+      authorizationSegmentRef: string;
+      executionManifestRef: string;
+      parentAllocationRef: string;
+      childAllocationRef: string;
+      allocationReservationReceiptRef: string;
+      reservedCeiling: bigint;
+      unit: string;
+    }>;
+
+export type MediaImageFinancialSettlement = Readonly<{
+  kind: "settled";
+  financialReceiptRef: string;
+  allocationClosureReceiptRef: string;
+  usageSettlementReceiptRef?: string | undefined;
+  actualCost: string;
+  refundedCredit: string;
+  unit: string;
+}>;
+
+export type MediaImageFinancialClosure = MediaImageFinancialSettlement | Readonly<{
+  kind: "reconciliation_required";
+  reconciliationReceiptRef: string;
+  code: string;
+}>;
 
 export interface MediaImageSessionProjectionPort {
   publish(input: Readonly<{
@@ -378,16 +421,23 @@ export interface MediaImageSessionProjectionPort {
     state: "completed" | "partial" | "failed" | "canceled";
     artifactVersionRefs: readonly string[];
     terminalReceiptRef: string;
+    financial: MediaImageFinancialSettlement;
   }>, signal: AbortSignal): Promise<Readonly<{ projectionReceiptRef: string }>>;
 }
 
 /** Root-generated canonical receipt helpers. Production composition must fail closed while unavailable. */
 export interface MediaImageReceiptCanonicalizerPort {
   artifactFinalization(receipt: ArtifactReadyReceipt): string;
-  terminal(input: Readonly<{
+  effectClosure(input: Readonly<{
     operationRef: string;
     state: "completed" | "partial" | "failed" | "canceled";
     evidenceRefs: readonly string[];
+  }>): string;
+  finalTerminal(input: Readonly<{
+    operationRef: string;
+    state: "completed" | "partial" | "failed" | "canceled";
+    effectClosureReceiptRef: string;
+    financial: MediaImageFinancialSettlement;
   }>): string;
 }
 
@@ -409,6 +459,7 @@ export type MediaImageGatewayFailureCause = Readonly<{
 type MediaImageTerminalClosureBase = Readonly<{
   terminalReceiptRef: string;
   receipts: Readonly<{
+    effectClosureReceiptRef: string;
     gatewayCommandReceiptRef?: string | undefined;
     gatewayCommandReceiptDigest?: string | undefined;
     canonicalOutcomeEvidenceRef?: string | undefined;
@@ -416,7 +467,11 @@ type MediaImageTerminalClosureBase = Readonly<{
     artifactFinalizationReceiptRefs: readonly string[];
     usageEvidenceReceiptRef?: string | undefined;
     effectBudgetCommitRef?: string | undefined;
-    allocationReturnReceiptRef: string;
+    financialReceiptRef: string;
+    allocationClosureReceiptRef: string;
+    actualCost: string;
+    refundedCredit: string;
+    creditUnit: string;
     projectionReceiptRef: string;
   }>;
   completedAt: string;
@@ -624,34 +679,42 @@ export class ImageOperationWorker {
     }
     const terminalState = mediaImageOutputTerminalState(task.definitionPolicy, readyArtifactVersionRefs.length,
       restrictedOutputs.length);
-    const terminalReceiptRef = this.#dependencies.receipts.terminal({ operationRef: task.operationRef,
+    const effectClosureReceiptRef = this.#dependencies.receipts.effectClosure({ operationRef: task.operationRef,
       state: terminalState, evidenceRefs: [result.receipt.receiptRef, canonicalOutcomeEvidence.ref,
         usageEvidence.ref, ...outputs.map((output) => output.outputEvidenceRef),
         ...restrictedOutputs.map((value) => value.restrictionReceiptRef),
         ...finalizationReceiptRefs, usageReceiptRef, task.createEffectCommand.effectBudgetCommitRef] });
-    const allocationReturnReceiptRef = task.checkpoint.allocationReturnReceiptRef ??
-      (await this.#dependencies.credit.returnChild({ operationRef: task.operationRef,
-        childAllocationRef: task.creditChildAllocationRef, terminalReceiptRef,
-        outcome: terminalState })).allocationReturnReceiptRef;
-    if (task.checkpoint.allocationReturnReceiptRef === undefined) {
-      await this.#dependencies.repository.recordAllocationReturn(task, allocationReturnReceiptRef);
+    const financial = requireFinancialSettlement(task.checkpoint.financialClosure ??
+      await this.#dependencies.credit.finalizeBudget({ operationRef: task.operationRef,
+        budget: task.creditBudget, effectClosureReceiptRef, outcome: terminalState,
+        usage: { attemptUsageEvidenceReceiptRef: usageReceiptRef, canonicalOutcomeEvidence,
+          usageEvidence, effectBudgetCommitRef: task.createEffectCommand.effectBudgetCommitRef } }), task.creditBudget,
+    );
+    if (task.checkpoint.financialClosure === undefined) {
+      await this.#dependencies.repository.recordFinancialClosure(task, financial);
     }
+    const terminalReceiptRef = this.#dependencies.receipts.finalTerminal({ operationRef: task.operationRef,
+      state: terminalState, effectClosureReceiptRef, financial });
     const projectionReceiptRef = task.checkpoint.projectionReceiptRef ??
       (await this.#dependencies.projection.publish({ ownerScope: task.ownerScope,
         operationRef: task.operationRef, state: terminalState, artifactVersionRefs: readyArtifactVersionRefs,
-        terminalReceiptRef }, signal)).projectionReceiptRef;
+        terminalReceiptRef, financial }, signal)).projectionReceiptRef;
     if (task.checkpoint.projectionReceiptRef === undefined) {
       await this.#dependencies.repository.recordProjection(task, projectionReceiptRef);
     }
     const terminalBase = Object.freeze({ terminalReceiptRef,
-      receipts: Object.freeze({ gatewayCommandReceiptRef: result.receipt.receiptRef,
+      receipts: Object.freeze({ effectClosureReceiptRef,
+        gatewayCommandReceiptRef: result.receipt.receiptRef,
         gatewayCommandReceiptDigest: result.receipt.receiptDigest,
         canonicalOutcomeEvidenceRef: canonicalOutcomeEvidence.ref,
         canonicalOutcomeEvidenceDigest: canonicalOutcomeEvidence.digest,
         artifactFinalizationReceiptRefs: Object.freeze(finalizationReceiptRefs),
         usageEvidenceReceiptRef: usageReceiptRef,
         effectBudgetCommitRef: task.createEffectCommand.effectBudgetCommitRef,
-        allocationReturnReceiptRef, projectionReceiptRef }),
+        financialReceiptRef: financial.financialReceiptRef,
+        allocationClosureReceiptRef: financial.allocationClosureReceiptRef,
+        actualCost: financial.actualCost, refundedCredit: financial.refundedCredit,
+        creditUnit: financial.unit, projectionReceiptRef }),
       completedAt: this.#date().toISOString() });
     let closure: MediaImageTerminalClosure;
     if (terminalState === "failed") {
@@ -695,31 +758,42 @@ export class ImageOperationWorker {
       task.createEffectCommand.effectBudgetCommitRef,
       ...(usageEvidence === undefined ? [] : [usageEvidence.ref]),
       ...(usageReceiptRef === undefined ? [] : [usageReceiptRef])];
-    const terminalReceiptRef = this.#dependencies.receipts.terminal({ operationRef: task.operationRef,
+    const effectClosureReceiptRef = this.#dependencies.receipts.effectClosure({ operationRef: task.operationRef,
       state: view.state, evidenceRefs });
-    const allocationReturnReceiptRef = task.checkpoint.allocationReturnReceiptRef ??
-      (await this.#dependencies.credit.returnChild({ operationRef: task.operationRef,
-        childAllocationRef: task.creditChildAllocationRef, terminalReceiptRef,
-        outcome: view.state })).allocationReturnReceiptRef;
-    if (task.checkpoint.allocationReturnReceiptRef === undefined) {
-      await this.#dependencies.repository.recordAllocationReturn(task, allocationReturnReceiptRef);
+    const financial = requireFinancialSettlement(task.checkpoint.financialClosure ??
+      await this.#dependencies.credit.finalizeBudget({ operationRef: task.operationRef,
+        budget: task.creditBudget, effectClosureReceiptRef, outcome: view.state,
+        ...(usageReceiptRef === undefined || usageEvidence === undefined ? {} : { usage: {
+          attemptUsageEvidenceReceiptRef: usageReceiptRef, canonicalOutcomeEvidence,
+          usageEvidence, effectBudgetCommitRef: task.createEffectCommand.effectBudgetCommitRef,
+        } }) }), task.creditBudget,
+    );
+    if (task.checkpoint.financialClosure === undefined) {
+      await this.#dependencies.repository.recordFinancialClosure(task, financial);
     }
+    const terminalReceiptRef = this.#dependencies.receipts.finalTerminal({ operationRef: task.operationRef,
+      state: view.state, effectClosureReceiptRef, financial });
     const projectionReceiptRef = task.checkpoint.projectionReceiptRef ??
       (await this.#dependencies.projection.publish({ ownerScope: task.ownerScope,
-        operationRef: task.operationRef, state: view.state, artifactVersionRefs: [], terminalReceiptRef },
+        operationRef: task.operationRef, state: view.state, artifactVersionRefs: [], terminalReceiptRef,
+        financial },
       signal)).projectionReceiptRef;
     if (task.checkpoint.projectionReceiptRef === undefined) {
       await this.#dependencies.repository.recordProjection(task, projectionReceiptRef);
     }
     const terminalBase = Object.freeze({ terminalReceiptRef,
-      receipts: Object.freeze({ gatewayCommandReceiptRef: commandReceipt.receiptRef,
+      receipts: Object.freeze({ effectClosureReceiptRef,
+        gatewayCommandReceiptRef: commandReceipt.receiptRef,
         gatewayCommandReceiptDigest: commandReceipt.receiptDigest,
         canonicalOutcomeEvidenceRef: canonicalOutcomeEvidence.ref,
         canonicalOutcomeEvidenceDigest: canonicalOutcomeEvidence.digest,
         artifactFinalizationReceiptRefs: Object.freeze([]),
         ...(usageReceiptRef === undefined ? {} : { usageEvidenceReceiptRef: usageReceiptRef }),
         effectBudgetCommitRef: task.createEffectCommand.effectBudgetCommitRef,
-        allocationReturnReceiptRef, projectionReceiptRef }),
+        financialReceiptRef: financial.financialReceiptRef,
+        allocationClosureReceiptRef: financial.allocationClosureReceiptRef,
+        actualCost: financial.actualCost, refundedCredit: financial.refundedCredit,
+        creditUnit: financial.unit, projectionReceiptRef }),
       completedAt: this.#date().toISOString() });
     const closure: MediaImageTerminalClosure = view.state === "failed"
       ? Object.freeze({ ...terminalBase, state: "failed" as const,
@@ -882,25 +956,33 @@ export class ImageOperationWorker {
     cancelIntentReceiptRef: string,
     signal: AbortSignal,
   ): Promise<"canceled"> {
-    const terminalReceiptRef = this.#dependencies.receipts.terminal({ operationRef: task.operationRef,
+    const effectClosureReceiptRef = this.#dependencies.receipts.effectClosure({ operationRef: task.operationRef,
       state: "canceled", evidenceRefs: [cancelIntentReceiptRef] });
-    const allocationReturnReceiptRef = task.checkpoint.allocationReturnReceiptRef ??
-      (await this.#dependencies.credit.releaseChild({ operationRef: task.operationRef,
-        childAllocationRef: task.creditChildAllocationRef, cancelIntentReceiptRef,
-        terminalReceiptRef })).allocationReturnReceiptRef;
-    if (task.checkpoint.allocationReturnReceiptRef === undefined) {
-      await this.#dependencies.repository.recordAllocationReturn(task, allocationReturnReceiptRef);
+    const financial = requireFinancialSettlement(task.checkpoint.financialClosure ??
+      await this.#dependencies.credit.finalizeBudget({ operationRef: task.operationRef,
+        budget: task.creditBudget, effectClosureReceiptRef, outcome: "canceled", cancelIntentReceiptRef }),
+      task.creditBudget,
+    );
+    if (task.checkpoint.financialClosure === undefined) {
+      await this.#dependencies.repository.recordFinancialClosure(task, financial);
     }
+    const terminalReceiptRef = this.#dependencies.receipts.finalTerminal({ operationRef: task.operationRef,
+      state: "canceled", effectClosureReceiptRef, financial });
     const projectionReceiptRef = task.checkpoint.projectionReceiptRef ??
       (await this.#dependencies.projection.publish({ ownerScope: task.ownerScope,
-        operationRef: task.operationRef, state: "canceled", artifactVersionRefs: [], terminalReceiptRef },
+        operationRef: task.operationRef, state: "canceled", artifactVersionRefs: [], terminalReceiptRef,
+        financial },
       signal)).projectionReceiptRef;
     if (task.checkpoint.projectionReceiptRef === undefined) {
       await this.#dependencies.repository.recordProjection(task, projectionReceiptRef);
     }
     await this.#dependencies.repository.complete(task, Object.freeze({ state: "canceled" as const,
-      terminalReceiptRef, receipts: Object.freeze({ artifactFinalizationReceiptRefs: Object.freeze([]),
-        allocationReturnReceiptRef, projectionReceiptRef }), completedAt: this.#date().toISOString() }));
+      terminalReceiptRef, receipts: Object.freeze({ effectClosureReceiptRef,
+        artifactFinalizationReceiptRefs: Object.freeze([]),
+        financialReceiptRef: financial.financialReceiptRef,
+        allocationClosureReceiptRef: financial.allocationClosureReceiptRef,
+        actualCost: financial.actualCost, refundedCredit: financial.refundedCredit,
+        creditUnit: financial.unit, projectionReceiptRef }), completedAt: this.#date().toISOString() }));
     return "canceled";
   }
 
@@ -965,7 +1047,11 @@ export class InMemoryMediaImageWorkerRepository implements MediaImageWorkerRepos
       outputAccessRequestFingerprints: Object.freeze(["f".repeat(64)]),
       ownerScope: Object.freeze({ siteRef: "site:example", subjectRef: "subject:example",
         subjectGeneration: 1n, projectRef: "project:example" }),
-      creditChildAllocationRef: "credit-child:example",
+      creditBudget: Object.freeze({ kind: "agent_child" as const,
+        executionBudgetRootRef: "credit-root:example", authorizationSegmentRef: "credit-segment:example",
+        executionManifestRef: "execution-manifest:example", parentAllocationRef: "credit-parent:example",
+        childAllocationRef: "credit-child:example", allocationReservationReceiptRef: "credit-reservation:example",
+        reservedCeiling: 100n, unit: "credit" }),
     });
   }
 
@@ -1074,9 +1160,9 @@ export class InMemoryMediaImageWorkerRepository implements MediaImageWorkerRepos
     this.#fence(task); this.#events.push("usage.record");
     this.#checkpoint = Object.freeze({ ...this.#checkpoint, usageEvidenceReceiptRef: receiptRef });
   }
-  async recordAllocationReturn(task: MediaImageWorkerTask, receiptRef: string): Promise<void> {
-    this.#fence(task); this.#events.push("credit-return.record");
-    this.#checkpoint = Object.freeze({ ...this.#checkpoint, allocationReturnReceiptRef: receiptRef });
+  async recordFinancialClosure(task: MediaImageWorkerTask, settlement: MediaImageFinancialSettlement): Promise<void> {
+    this.#fence(task); this.#events.push("credit-closure.record");
+    this.#checkpoint = Object.freeze({ ...this.#checkpoint, financialClosure: settlement });
   }
   async recordProjection(task: MediaImageWorkerTask, receiptRef: string): Promise<void> {
     this.#fence(task); this.#events.push("projection.record");
@@ -1143,6 +1229,7 @@ function assertTask(task: MediaImageWorkerTask): void {
       task.outputAccessRequestFingerprints.length !== task.request.candidateCount ||
       task.checkpoint.artifacts.length !== task.request.candidateCount ||
       task.createEffectCommand.logicalOutputSlots.length !== task.request.candidateCount ||
+      !validCreditBudget(task.creditBudget) ||
       new Set(task.candidateRefs).size !== task.candidateRefs.length ||
       new Set(task.stableOutputSlotRefs).size !== task.stableOutputSlotRefs.length ||
       new Set(task.artifactRefs).size !== task.artifactRefs.length ||
@@ -1179,6 +1266,33 @@ function assertTask(task: MediaImageWorkerTask): void {
   for (const grant of task.effectAuthorization.sourceGrants) {
     reference(grant.sourceVersionRef); assertCapability(grant.purposeGrant);
   }
+}
+
+function requireFinancialSettlement(
+  result: MediaImageFinancialClosure,
+  budget: MediaImageCreditBudgetBinding,
+): MediaImageFinancialSettlement {
+  if (result.kind === "reconciliation_required") {
+    reference(result.reconciliationReceiptRef);
+    errorCode(result.code);
+    throw new Error(`MEDIA_CREDIT_RECONCILIATION_REQUIRED:${result.code}`);
+  }
+  for (const value of [result.financialReceiptRef, result.allocationClosureReceiptRef, result.unit]) reference(value);
+  if (!/^(0|[1-9][0-9]{0,37})$/u.test(result.actualCost) ||
+      !/^(0|[1-9][0-9]{0,37})$/u.test(result.refundedCredit) || result.unit !== budget.unit ||
+      BigInt(result.actualCost) + BigInt(result.refundedCredit) !== budget.reservedCeiling) {
+    throw new Error("MEDIA_FINANCIAL_SETTLEMENT_INVALID");
+  }
+  return result;
+}
+
+function validCreditBudget(value: MediaImageCreditBudgetBinding): boolean {
+  if (value.reservedCeiling <= 0n || value.unit.length < 1 || value.unit.length > 256) return false;
+  if (value.kind === "direct_root") {
+    return value.rootAllocationRevision > 0n && value.rootAllocationEpoch > 0n &&
+      value.authorizationSegmentVersion > 0n;
+  }
+  return value.childAllocationRef.length > 0 && value.allocationReservationReceiptRef.length > 0;
 }
 
 function mediaImageOutputTerminalState(

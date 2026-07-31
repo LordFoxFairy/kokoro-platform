@@ -93,7 +93,7 @@ export class PostgresMediaImageOperationRepository implements MediaImageOperatio
       operation: { operationRef: operation.operationRef, ownerVersion: operation.expectedVersion.toString(),
         definitionRevisionRef: binding.definitionRevisionRef,
         modelOptionRevisionRef: binding.modelOptionRevisionRef },
-      credit: record.credit,
+      credit: { ...record.credit, reservedCeiling: record.credit.reservedCeiling.toString() },
       trustInputDecisionRef: record.trustInputDecisionRef,
       modelInvocationCommandRef,
       candidates: record.plan.candidates.map((candidate, index) => ({

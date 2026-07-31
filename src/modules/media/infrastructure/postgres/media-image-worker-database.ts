@@ -4,6 +4,8 @@ import type {
   MediaImageWorkerEffectRow,
   MediaImageWorkerTaskRow,
 } from "./media-image-worker-repository.js";
+import type { MediaImageTypedUsageFactDatabase, MediaImageTypedUsageFactRow } from
+  "./media-image-typed-usage-owner.js";
 
 interface QueryResult<Row extends Record<string, unknown> = Record<string, unknown>> {
   readonly rows: readonly Row[];
@@ -68,12 +70,32 @@ export class PostgresMediaImageWorkerDatabase implements MediaImageWorkerDatabas
     await this.dependencies.pool.query(`SELECT platform.assert_media_runtime_role('worker')`);
   }
 
+  loadMediaImageEffectUsageFact(
+    input: Parameters<MediaImageTypedUsageFactDatabase["loadMediaImageEffectUsageFact"]>[0],
+  ): Promise<readonly MediaImageTypedUsageFactRow[]> {
+    return this.#rows<MediaImageTypedUsageFactRow>(
+      `SELECT attempt_ref AS "attemptRef",usage_evidence_ref AS "usageEvidenceRef",
+              usage_evidence_digest AS "usageEvidenceDigest",usage_fact AS "usageFact",
+              recorded_at AS "recordedAt"
+         FROM platform.load_media_image_effect_usage_fact($1,$2,$3,$4,$5)`,
+      [input.operationRef, input.modelInvocationCommandRef, input.logicalInvocationRef,
+        input.usageEvidenceRef, input.usageEvidenceDigest],
+    );
+  }
+
   claim(input: Parameters<MediaImageWorkerDatabase["claim"]>[0]): Promise<readonly MediaImageWorkerTaskRow[]> {
     return this.#rows<MediaImageWorkerTaskRow>(
       `SELECT task_ref AS "taskRef",operation_ref AS "operationRef",lease_epoch AS "leaseEpoch",
               operation_state AS "operationState",cancel_intent_receipt_ref AS "cancelIntentReceiptRef",
               model_invocation_command_ref AS "modelInvocationCommandRef",
+              credit_execution_budget_root_ref AS "creditExecutionBudgetRootRef",
+              credit_authorization_segment_ref AS "creditAuthorizationSegmentRef",
+              credit_execution_manifest_ref AS "creditExecutionManifestRef",
+              credit_parent_allocation_ref AS "creditParentAllocationRef",
               credit_child_allocation_ref AS "creditChildAllocationRef",
+              credit_allocation_receipt_ref AS "creditAllocationReceiptRef",
+              credit_reserved_ceiling AS "creditReservedCeiling",
+              credit_unit AS "creditUnit",
               effect_budget_commit_ref AS "effectBudgetCommitRef",
               effect_budget_commit_digest AS "effectBudgetCommitDigest",
               effect_attempt_ordinal AS "attemptOrdinal",

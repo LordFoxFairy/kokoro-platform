@@ -7,9 +7,15 @@ import {
 } from "../../src/modules/model-gateway/infrastructure/postgres/image-effect-postgres.js";
 import { issuePlatformTransaction, resolvePlatformTransaction } from
   "../../src/shared/unit-of-work/platform-transaction.js";
+import { imageEffectUsageFactDigest } from
+  "../../src/modules/model-gateway/domain/image-effect.js";
 
 const ACCESS = "h".repeat(32);
 const MODEL = "m".repeat(32);
+const USAGE_FACT = Object.freeze({ evidenceKind: "measured" as const,
+  dimensions: Object.freeze([Object.freeze({ dimensionKey: "image", sourceUnit: "output", quantity: 1n })]),
+  attemptOutcome: "succeeded" as const, occurredAt: "2026-07-31T12:00:00.000Z",
+  sourceDigest: "9".repeat(64) });
 
 describe("Postgres image-effect authority", () => {
   it("resolves opaque access and exact model authorization before setting a Site transaction", async () => {
@@ -160,7 +166,7 @@ describe("Postgres image-effect authority", () => {
       state: "succeeded" as const, cancelRequested: false, lastProviderSequence: 2n,
       providerOperationRef: "provider-operation-ref:one", canonicalOutcomeEvidenceRef: "outcome:one",
       canonicalOutcomeEvidenceDigest: "b".repeat(64), usageEvidenceRef: "usage:one",
-      usageEvidenceDigest: "c".repeat(64), outputs: Object.freeze([{ candidateRef: "candidate:one",
+      usageEvidenceDigest: imageEffectUsageFactDigest(USAGE_FACT), outputs: Object.freeze([{ candidateRef: "candidate:one",
         stableOutputSlotRef: "slot:one", providerOutputFactRef: "provider-output:one",
         retrievalGrantHandleDigest: "d".repeat(64) }]), lateOutcome: false,
       observations: Object.freeze([{ eventRef: "event:submitted", sequence: 1n, digest: "f".repeat(64) },
@@ -170,7 +176,8 @@ describe("Postgres image-effect authority", () => {
       eventRef: "event:succeeded", sequence: 2n, observationDigest: "1".repeat(64),
       observedAt: "2026-07-31T12:00:00.000Z", kind: "succeeded", outcomeEvidenceRef: "outcome:one",
       outcomeEvidenceDigest: "b".repeat(64), usageEvidenceRef: "usage:one",
-      usageEvidenceDigest: "c".repeat(64), outputs: [{ candidateRef: "candidate:one",
+      usageEvidenceDigest: imageEffectUsageFactDigest(USAGE_FACT), usageFact: USAGE_FACT,
+      outputs: [{ candidateRef: "candidate:one",
         stableOutputSlotRef: "slot:one", providerOutputFactRef: "provider-output:one",
         retrievalGrantHandle: "r".repeat(32), mediaType: "image/png", width: 1024, height: 1024,
         declaredByteSize: 4096n }],
@@ -182,6 +189,9 @@ describe("Postgres image-effect authority", () => {
     const outputPayload = String(client.calls[0]?.values[10]);
     expect(outputPayload).toContain("outputEvidenceDigest");
     expect(outputPayload).not.toContain("r".repeat(32));
+    const evidencePayload = String(client.calls[0]?.values[11]);
+    expect(evidencePayload).toContain('"quantity":"1"');
+    expect(evidencePayload).toContain('"sourceDigest":"' + "9".repeat(64) + '"');
     expect(client.released).toBe(true);
   });
 

@@ -32,6 +32,11 @@ describe("CreditService", () => {
       const result = await service.reserveRootBudget(lease.transaction, reserveInput());
 
       expect(result).toMatchObject({ kind: "accepted", value: { state: "reserved" } });
+      expect(result).toMatchObject({ value: {
+        rootAllocationRef: repository.reservation?.rootAllocationRef,
+        rootAllocationRevision: 1n,
+        rootAllocationEpoch: 1n,
+      } });
       expect(repository.reservation?.allocations).toEqual([
         { creditGrantId: "grant-first", amount: 40n, ordinal: 0 },
         { creditGrantId: "grant-late", amount: 20n, ordinal: 1 },
@@ -120,6 +125,7 @@ describe("CreditService", () => {
     repository.operation = {
       kind: "replayed",
       value: { executionBudgetRootRef: "root-existing", creditHoldRef: "hold-existing",
+        rootAllocationRef: "allocation-existing", rootAllocationRevision: 1n, rootAllocationEpoch: 1n,
         authorizationSegmentRef: "segment-existing", segmentVersion: 1n, state: "reserved",
         expiresAt: "2026-07-29T00:05:00.000Z" },
     };
@@ -648,6 +654,7 @@ class RecordingCreditRepository implements CreditAuthorityRepository {
   async createRootBudgetReservation(_transaction: never, record: RootBudgetReservationRecord) {
     this.reservation = record;
     return { kind: "accepted" as const, value: { executionBudgetRootRef: record.executionBudgetRootRef, creditHoldRef: record.creditHoldRef,
+      rootAllocationRef: record.rootAllocationRef, rootAllocationRevision: 1n, rootAllocationEpoch: 1n,
       authorizationSegmentRef: record.authorizationSegmentRef, segmentVersion: 1n, state: "reserved" as const,
       expiresAt: record.expiresAt } };
   }
