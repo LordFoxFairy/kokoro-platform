@@ -205,4 +205,3 @@ export const AssetEligibilityService: GenService<{
   },
 }> = /*@__PURE__*/
   serviceDesc(file_kokoro_platform_asset_v1_asset_eligibility, 0);
-

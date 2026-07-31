@@ -72,6 +72,90 @@ export const zAccountProduct = z.strictObject({
     ])
 });
 
+export const zArtifactAvailability = z.enum([
+    'processing',
+    'ready',
+    'restricted',
+    'unavailable',
+    'deleted'
+]);
+
+export const zArtifactDeliveryAuthorization = z.strictObject({
+    artifactRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    artifactVersionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    audience: z.literal('site-bff.artifact-delivery'),
+    authorizationRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    deliveryCapability: z.string().min(32).max(4096),
+    expiresAt: z.iso.datetime(),
+    issuedAt: z.iso.datetime(),
+    purpose: z.enum([
+        'preview',
+        'download',
+        'export'
+    ])
+});
+
+export const zArtifactDeliveryAuthorizationResponse = z.strictObject({
+    authorization: zArtifactDeliveryAuthorization
+});
+
+export const zArtifactDeliveryRevocationInput = z.strictObject({
+    reason: z.string().max(256).optional()
+});
+
+export const zArtifactDeliveryRevocationReceipt = z.strictObject({
+    authorizationRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    revokedAt: z.iso.datetime(),
+    state: z.enum([
+        'revoked',
+        'already_revoked',
+        'expired'
+    ])
+});
+
+export const zArtifactDeliveryRevocationResponse = z.strictObject({
+    receipt: zArtifactDeliveryRevocationReceipt
+});
+
+export const zArtifactDownloadDeliveryInput = z.strictObject({
+    purpose: z.literal('download'),
+    suggestedFileName: z.string().regex(/^[^\x00-\x1F\x7F\/\\]{1,255}$/).optional()
+});
+
+export const zArtifactExportDeliveryInput = z.strictObject({
+    exportIntentRef: z.string().min(3).max(128),
+    purpose: z.literal('export')
+});
+
+export const zArtifactPreviewDeliveryInput = z.strictObject({
+    purpose: z.literal('preview'),
+    viewportClass: z.enum([
+        'thumbnail',
+        'canvas',
+        'full'
+    ])
+});
+
+export const zArtifactDeliveryAuthorizationInput = z.discriminatedUnion('purpose', [
+    zArtifactPreviewDeliveryInput,
+    zArtifactDownloadDeliveryInput,
+    zArtifactExportDeliveryInput
+]);
+
+export const zArtifactSummary = z.strictObject({
+    artifactRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    availability: zArtifactAvailability,
+    createdAt: z.iso.datetime(),
+    currentArtifactVersionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    mediaClass: z.literal('image'),
+    title: z.string().max(256),
+    updatedAt: z.iso.datetime()
+});
+
+export const zArtifactResponse = z.strictObject({
+    artifact: zArtifactSummary
+});
+
 /**
  * Durable owner command cursor. It deliberately excludes the upload capability and all object-storage facts, so command recovery cannot replay a credential.
  */
@@ -190,38 +274,51 @@ export const zConfirmTotpRecoveryReplacementInput = z.strictObject({
 });
 
 /**
- * Exact non-negative integer amount; encoded as a decimal string to avoid JS precision loss.
+ * Credit-owned exact amount. The integer is a decimal string to avoid JS precision loss.
  */
-export const zCreditAmount = z.string().regex(/^(?:0|[1-9][0-9]{0,37})$/);
+export const zCreditAmount = z.strictObject({
+    amount: z.string().regex(/^(0|[1-9][0-9]{0,39})$/),
+    creditUnit: z.string().min(1).max(64).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,63}$/)
+});
+
+/**
+ * Exact non-negative integer within an enclosing credit-unit scope.
+ */
+export const zCreditDecimalAmount = z.string().regex(/^(0|[1-9][0-9]{0,39})$/);
 
 export const zCreditBucketSummary = z.strictObject({
-    available: zCreditAmount,
+    available: zCreditDecimalAmount,
     bucketClass: z.enum([
         'daily',
         'period',
         'permanent'
     ]),
-    consumed: zCreditAmount,
-    expiredOrReversed: zCreditAmount,
+    consumed: zCreditDecimalAmount,
+    expiredOrReversed: zCreditDecimalAmount,
     grantCount: z.int().gte(0),
-    held: zCreditAmount,
-    issued: zCreditAmount
+    held: zCreditDecimalAmount,
+    issued: zCreditDecimalAmount
+});
+
+export const zCreditEstimate = z.strictObject({
+    amount: zCreditDecimalAmount,
+    creditUnit: z.string().min(1).max(64)
 });
 
 export const zCreditGrantDetail = z.strictObject({
-    available: zCreditAmount,
+    available: zCreditDecimalAmount,
     bucketClass: z.enum([
         'daily',
         'period',
         'permanent'
     ]),
-    consumed: zCreditAmount,
+    consumed: zCreditDecimalAmount,
     creditProgramRevisionRef: z.string().min(1).max(256),
     effectiveAt: z.iso.datetime(),
     expiresAt: z.iso.datetime().nullable(),
     grantId: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),
-    held: zCreditAmount,
-    issued: zCreditAmount,
+    held: zCreditDecimalAmount,
+    issued: zCreditDecimalAmount,
     source: zAcquisitionSourceSummary,
     state: z.enum([
         'active',
@@ -300,7 +397,22 @@ export const zErrorCode = z.enum([
     'ASSET_NOT_ACCEPTED',
     'ASSET_UPLOAD_CONFLICT',
     'ASSET_QUOTA_EXCEEDED',
-    'ASSET_TEMPORARILY_UNAVAILABLE'
+    'ASSET_TEMPORARILY_UNAVAILABLE',
+    'MEDIA_INPUT_REJECTED',
+    'MEDIA_CALLER_FINGERPRINT_MISMATCH',
+    'MEDIA_DEFINITION_UNAVAILABLE',
+    'MEDIA_MODEL_OPTION_UNAVAILABLE',
+    'MEDIA_CREDIT_INSUFFICIENT',
+    'MEDIA_POLICY_REJECTED',
+    'MEDIA_OPERATION_VERSION_CONFLICT',
+    'MEDIA_CANCEL_NOT_ACCEPTED',
+    'MEDIA_TEMPORARILY_UNAVAILABLE',
+    'PAGE_CURSOR_INVALID',
+    'ARTIFACT_NOT_AVAILABLE',
+    'ARTIFACT_DELIVERY_NOT_ALLOWED',
+    'ARTIFACT_DELIVERY_AUTHORIZATION_REJECTED',
+    'ARTIFACT_TEMPORARILY_UNAVAILABLE',
+    'ARTIFACT_RANGE_NOT_SATISFIABLE'
 ]);
 
 export const zErrorResponse = z.strictObject({
@@ -348,9 +460,104 @@ export const zIdentitySessionList = z.strictObject({
     sessions: z.array(zIdentitySession).max(200)
 });
 
+export const zImageAspectRatio = z.enum([
+    'square_1_1',
+    'landscape_4_3',
+    'landscape_16_9',
+    'portrait_3_4',
+    'portrait_9_16'
+]);
+
+export const zImageOutputFormat = z.enum([
+    'png',
+    'jpeg',
+    'webp'
+]);
+
+export const zImageTextToImageOperationDefinition = z.strictObject({
+    definitionKey: z.literal('image.text_to_image@v1'),
+    definitionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    definitionRevisionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    description: z.string().max(1024),
+    kind: z.literal('image_text_to_image'),
+    maximumCandidateCount: z.int().gte(1).lte(4),
+    modelOptionCatalogRevisionRef: z.string().min(1).max(256),
+    promptMaximumUtf8Bytes: z.literal(32768),
+    publishedAt: z.iso.datetime(),
+    supportedAspectRatios: z.array(zImageAspectRatio).min(1).max(5),
+    supportedOutputFormats: z.array(zImageOutputFormat).min(1).max(3),
+    title: z.string().min(1).max(128)
+});
+
+export const zImageTextToImageOperationInput = z.strictObject({
+    aspectRatio: zImageAspectRatio,
+    candidateCount: z.int().gte(1).lte(4),
+    definitionRevisionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    kind: z.literal('image_text_to_image'),
+    modelOptionRevisionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    outputFormat: zImageOutputFormat,
+    promptIntent: z.string().min(1).max(32768)
+});
+
 export const zLocalePolicy = z.strictObject({
     allowedLocales: z.array(z.string().min(2).max(35)).min(1).max(64),
     defaultLocale: z.string().min(2).max(35)
+});
+
+export const zMediaCommandRecoveryAction = z.enum([
+    'get_operation',
+    'recover_command',
+    'contact_support'
+]);
+
+export const zMediaOperationInput = zImageTextToImageOperationInput;
+
+export const zMediaOperationQuote = z.strictObject({
+    definitionRevisionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    estimate: zCreditEstimate,
+    expiresAt: z.iso.datetime(),
+    modelOptionRevisionRef: z.string().min(1).max(256),
+    nonBinding: z.literal(true),
+    quoteRef: z.string().min(3).max(128)
+});
+
+export const zMediaOperationQuoteResponse = z.strictObject({
+    quote: zMediaOperationQuote
+});
+
+export const zMediaOperationState = z.enum([
+    'admission_pending',
+    'authorized',
+    'queued',
+    'active',
+    'finalizing',
+    'cancel_requested',
+    'reconciling',
+    'completed',
+    'partial',
+    'failed',
+    'canceled'
+]);
+
+export const zMediaSafeFailure = z.strictObject({
+    code: z.enum([
+        'input_rejected',
+        'policy_rejected',
+        'credit_rejected',
+        'generation_failed',
+        'validation_failed',
+        'temporarily_unavailable',
+        'outcome_unknown',
+        'artifact_restricted',
+        'artifact_unavailable'
+    ]),
+    retryClass: z.enum([
+        'never',
+        'after_delay',
+        'after_user_action',
+        'reconcile_receipt'
+    ]),
+    safeMessage: z.string().max(512)
 });
 
 /**
@@ -373,6 +580,12 @@ export const zOneTimeRecoveryCodeSetDelivery = z.strictObject({
     requestDigest: z.string().regex(/^[0-9a-f]{64}$/)
 });
 
+export const zOperationDefinition = zImageTextToImageOperationDefinition;
+
+export const zMediaOperationDefinitionResponse = z.strictObject({
+    definition: zOperationDefinition
+});
+
 export const zOtpInput = z.strictObject({
     code: z.string().min(6).max(32),
     reauthenticationProof: z.string().min(32).max(2048)
@@ -384,6 +597,21 @@ export const zOutcomeUnknownPublicCommandReceipt = z.strictObject({
     observedAt: z.iso.datetime(),
     requestDigest: z.string().regex(/^[0-9a-f]{64}$/),
     state: z.literal('outcome_unknown')
+});
+
+export const zPageInfo = z.strictObject({
+    hasMore: z.boolean(),
+    nextCursor: z.string().max(2048).nullable()
+});
+
+export const zArtifactPage = z.strictObject({
+    items: z.array(zArtifactSummary).max(100),
+    pageInfo: zPageInfo
+});
+
+export const zMediaOperationDefinitionPage = z.strictObject({
+    items: z.array(zOperationDefinition).max(100),
+    pageInfo: zPageInfo
 });
 
 export const zPasswordChangeInput = z.strictObject({
@@ -495,6 +723,503 @@ export const zAssetUploadIntentInput = z.strictObject({
     purpose: z.string().min(1).max(128).regex(/^[a-z][a-z0-9._-]{0,127}$/)
 });
 
+export const zCancelMediaCommandAccepted = z.strictObject({
+    commandId: z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
+    operationRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    receiptKind: z.literal('cancel_accepted'),
+    receiptVersion: zPositiveUint64String,
+    recoveryAction: zMediaCommandRecoveryAction,
+    updatedAt: z.iso.datetime()
+});
+
+export const zCancelMediaCommandOutcomeUnknown = z.strictObject({
+    commandId: z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
+    operationRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    receiptKind: z.literal('cancel_outcome_unknown'),
+    receiptVersion: zPositiveUint64String,
+    recoveryAction: zMediaCommandRecoveryAction,
+    safeFailure: zMediaSafeFailure,
+    updatedAt: z.iso.datetime()
+});
+
+export const zCancelMediaCommandReceiptCommon = z.strictObject({
+    commandId: z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
+    receiptVersion: zPositiveUint64String,
+    updatedAt: z.iso.datetime()
+});
+
+export const zCancelMediaCommandRejected = z.strictObject({
+    commandId: z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
+    receiptKind: z.literal('cancel_rejected'),
+    receiptVersion: zPositiveUint64String,
+    safeFailure: zMediaSafeFailure,
+    updatedAt: z.iso.datetime()
+});
+
+export const zCreditCostCommon = z.strictObject({
+    costProjectionRef: z.string().min(1).max(256),
+    freshness: z.enum([
+        'current',
+        'stale',
+        'rebuilding',
+        'unavailable'
+    ]),
+    ownerVersion: zPositiveUint64String
+});
+
+export const zCreditCostCorrected = z.strictObject({
+    amount: zCreditAmount,
+    correctsOwnerVersion: zPositiveUint64String,
+    costProjectionRef: z.string().min(1).max(256),
+    freshness: z.enum([
+        'current',
+        'stale',
+        'rebuilding',
+        'unavailable'
+    ]),
+    ownerVersion: zPositiveUint64String,
+    state: z.literal('corrected')
+});
+
+export const zCreditCostEstimated = z.strictObject({
+    amount: zCreditAmount,
+    costProjectionRef: z.string().min(1).max(256),
+    freshness: z.enum([
+        'current',
+        'stale',
+        'rebuilding',
+        'unavailable'
+    ]),
+    ownerVersion: zPositiveUint64String,
+    state: z.literal('estimated')
+});
+
+export const zCreditCostFinal = z.strictObject({
+    amount: zCreditAmount,
+    costProjectionRef: z.string().min(1).max(256),
+    freshness: z.enum([
+        'current',
+        'stale',
+        'rebuilding',
+        'unavailable'
+    ]),
+    ownerVersion: zPositiveUint64String,
+    state: z.literal('final')
+});
+
+export const zCreditCostPending = z.strictObject({
+    costProjectionRef: z.string().min(1).max(256),
+    freshness: z.enum([
+        'current',
+        'stale',
+        'rebuilding',
+        'unavailable'
+    ]),
+    ownerVersion: zPositiveUint64String,
+    state: z.literal('pending')
+});
+
+export const zCreditCostUnavailable = z.strictObject({
+    costProjectionRef: z.string().min(1).max(256),
+    freshness: z.enum([
+        'current',
+        'stale',
+        'rebuilding',
+        'unavailable'
+    ]),
+    ownerVersion: zPositiveUint64String,
+    safeReason: z.string().max(256),
+    state: z.literal('unavailable')
+});
+
+export const zImageArtifactDisplay = z.strictObject({
+    byteSize: zPositiveUint64String,
+    format: zImageOutputFormat,
+    height: z.int().gte(1).lte(100000),
+    width: z.int().gte(1).lte(100000)
+});
+
+export const zImageArtifactVersionCommon = z.strictObject({
+    artifactRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    artifactVersionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    createdAt: z.iso.datetime(),
+    mediaClass: z.literal('image'),
+    ownerVersion: zPositiveUint64String,
+    sourceArtifactVersionRefs: z.array(z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)).max(16),
+    versionNumber: zPositiveUint64String
+});
+
+export const zImageArtifactVersionDeleted = z.strictObject({
+    artifactRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    artifactVersionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    availability: z.literal('deleted'),
+    createdAt: z.iso.datetime(),
+    mediaClass: z.literal('image'),
+    ownerVersion: zPositiveUint64String,
+    sourceArtifactVersionRefs: z.array(z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)).max(16),
+    versionNumber: zPositiveUint64String
+});
+
+export const zImageArtifactVersionProcessing = z.strictObject({
+    artifactRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    artifactVersionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    availability: z.literal('processing'),
+    createdAt: z.iso.datetime(),
+    mediaClass: z.literal('image'),
+    ownerVersion: zPositiveUint64String,
+    sourceArtifactVersionRefs: z.array(z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)).max(16),
+    versionNumber: zPositiveUint64String
+});
+
+export const zImageArtifactVersionReady = z.strictObject({
+    artifactRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    artifactVersionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    availability: z.literal('ready'),
+    createdAt: z.iso.datetime(),
+    display: zImageArtifactDisplay,
+    mediaClass: z.literal('image'),
+    ownerVersion: zPositiveUint64String,
+    sourceArtifactVersionRefs: z.array(z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)).max(16),
+    versionNumber: zPositiveUint64String
+});
+
+export const zImageArtifactVersionRestricted = z.strictObject({
+    artifactRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    artifactVersionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    availability: z.literal('restricted'),
+    createdAt: z.iso.datetime(),
+    mediaClass: z.literal('image'),
+    ownerVersion: zPositiveUint64String,
+    safeFailure: zMediaSafeFailure,
+    sourceArtifactVersionRefs: z.array(z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)).max(16),
+    versionNumber: zPositiveUint64String
+});
+
+export const zImageArtifactVersionUnavailable = z.strictObject({
+    artifactRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    artifactVersionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    availability: z.literal('unavailable'),
+    createdAt: z.iso.datetime(),
+    mediaClass: z.literal('image'),
+    ownerVersion: zPositiveUint64String,
+    safeFailure: zMediaSafeFailure,
+    sourceArtifactVersionRefs: z.array(z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)).max(16),
+    versionNumber: zPositiveUint64String
+});
+
+export const zArtifactVersion = z.discriminatedUnion('availability', [
+    zImageArtifactVersionProcessing,
+    zImageArtifactVersionReady,
+    zImageArtifactVersionRestricted,
+    zImageArtifactVersionUnavailable,
+    zImageArtifactVersionDeleted
+]);
+
+export const zArtifactVersionPage = z.strictObject({
+    items: z.array(zArtifactVersion).max(100),
+    pageInfo: zPageInfo
+});
+
+export const zArtifactVersionResponse = z.strictObject({
+    version: zArtifactVersion
+});
+
+export const zImageArtifactVersion = z.discriminatedUnion('availability', [
+    zImageArtifactVersionProcessing,
+    zImageArtifactVersionReady,
+    zImageArtifactVersionRestricted,
+    zImageArtifactVersionUnavailable,
+    zImageArtifactVersionDeleted
+]);
+
+export const zMediaCandidateAllocatedView = z.strictObject({
+    candidateRef: z.string().min(1).max(256),
+    ordinal: z.int().gte(0).lte(3),
+    ownerVersion: zPositiveUint64String,
+    state: z.literal('allocated')
+});
+
+export const zMediaCandidateCancelRequestedView = z.strictObject({
+    candidateRef: z.string().min(1).max(256),
+    ordinal: z.int().gte(0).lte(3),
+    ownerVersion: zPositiveUint64String,
+    state: z.literal('cancel_requested')
+});
+
+export const zMediaCandidateCanceledView = z.strictObject({
+    candidateRef: z.string().min(1).max(256),
+    ordinal: z.int().gte(0).lte(3),
+    ownerVersion: zPositiveUint64String,
+    state: z.literal('canceled')
+});
+
+export const zMediaCandidateCommon = z.strictObject({
+    candidateRef: z.string().min(1).max(256),
+    ordinal: z.int().gte(0).lte(3),
+    ownerVersion: zPositiveUint64String
+});
+
+export const zMediaCandidateFailedView = z.strictObject({
+    candidateRef: z.string().min(1).max(256),
+    ordinal: z.int().gte(0).lte(3),
+    ownerVersion: zPositiveUint64String,
+    safeFailure: zMediaSafeFailure,
+    state: z.literal('failed')
+});
+
+export const zMediaCandidateOutputReceivedView = z.strictObject({
+    candidateRef: z.string().min(1).max(256),
+    ordinal: z.int().gte(0).lte(3),
+    ownerVersion: zPositiveUint64String,
+    state: z.literal('output_received')
+});
+
+export const zMediaCandidateProducingView = z.strictObject({
+    candidateRef: z.string().min(1).max(256),
+    ordinal: z.int().gte(0).lte(3),
+    ownerVersion: zPositiveUint64String,
+    state: z.literal('producing')
+});
+
+export const zMediaCandidateReadyView = z.strictObject({
+    artifactRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    artifactVersionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    candidateRef: z.string().min(1).max(256),
+    ordinal: z.int().gte(0).lte(3),
+    ownerVersion: zPositiveUint64String,
+    state: z.literal('ready')
+});
+
+export const zMediaCandidateRestrictedView = z.strictObject({
+    candidateRef: z.string().min(1).max(256),
+    ordinal: z.int().gte(0).lte(3),
+    ownerVersion: zPositiveUint64String,
+    safeFailure: zMediaSafeFailure,
+    state: z.literal('restricted')
+});
+
+export const zMediaCandidateUnknownView = z.strictObject({
+    candidateRef: z.string().min(1).max(256),
+    ordinal: z.int().gte(0).lte(3),
+    ownerVersion: zPositiveUint64String,
+    state: z.literal('unknown')
+});
+
+export const zMediaCandidateValidatingView = z.strictObject({
+    candidateRef: z.string().min(1).max(256),
+    ordinal: z.int().gte(0).lte(3),
+    ownerVersion: zPositiveUint64String,
+    state: z.literal('validating')
+});
+
+export const zMediaCandidateView = z.discriminatedUnion('state', [
+    zMediaCandidateAllocatedView,
+    zMediaCandidateProducingView,
+    zMediaCandidateOutputReceivedView,
+    zMediaCandidateValidatingView,
+    zMediaCandidateReadyView,
+    zMediaCandidateRestrictedView,
+    zMediaCandidateFailedView,
+    zMediaCandidateUnknownView,
+    zMediaCandidateCancelRequestedView,
+    zMediaCandidateCanceledView
+]);
+
+export const zMediaCostProjectionView = z.discriminatedUnion('state', [
+    zCreditCostPending,
+    zCreditCostEstimated,
+    zCreditCostFinal,
+    zCreditCostCorrected,
+    zCreditCostUnavailable
+]);
+
+export const zMediaOperationActiveView = z.strictObject({
+    candidates: z.array(zMediaCandidateView).max(4),
+    costProjection: zMediaCostProjectionView.nullable(),
+    createdAt: z.iso.datetime(),
+    definitionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    definitionRevisionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    modelOptionRevisionRef: z.string().min(1).max(256),
+    operationRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    ownerVersion: zPositiveUint64String,
+    progressBps: z.int().gte(0).lte(10000),
+    state: z.literal('active'),
+    updatedAt: z.iso.datetime()
+});
+
+export const zMediaOperationAdmissionPendingView = z.strictObject({
+    candidates: z.array(zMediaCandidateView).max(4),
+    costProjection: zMediaCostProjectionView.nullable(),
+    createdAt: z.iso.datetime(),
+    definitionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    definitionRevisionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    modelOptionRevisionRef: z.string().min(1).max(256),
+    operationRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    ownerVersion: zPositiveUint64String,
+    progressBps: z.int().gte(0).lte(10000),
+    state: z.literal('admission_pending'),
+    updatedAt: z.iso.datetime()
+});
+
+export const zMediaOperationAuthorizedView = z.strictObject({
+    candidates: z.array(zMediaCandidateView).max(4),
+    costProjection: zMediaCostProjectionView.nullable(),
+    createdAt: z.iso.datetime(),
+    definitionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    definitionRevisionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    modelOptionRevisionRef: z.string().min(1).max(256),
+    operationRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    ownerVersion: zPositiveUint64String,
+    progressBps: z.int().gte(0).lte(10000),
+    state: z.literal('authorized'),
+    updatedAt: z.iso.datetime()
+});
+
+export const zMediaOperationCancelInput = z.strictObject({
+    expectedOwnerVersion: zPositiveUint64String,
+    reason: z.string().max(256).optional()
+});
+
+export const zMediaOperationCancelRequestedView = z.strictObject({
+    candidates: z.array(zMediaCandidateView).max(4),
+    costProjection: zMediaCostProjectionView.nullable(),
+    createdAt: z.iso.datetime(),
+    definitionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    definitionRevisionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    modelOptionRevisionRef: z.string().min(1).max(256),
+    operationRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    ownerVersion: zPositiveUint64String,
+    progressBps: z.int().gte(0).lte(10000),
+    state: z.literal('cancel_requested'),
+    updatedAt: z.iso.datetime()
+});
+
+export const zMediaOperationCanceledView = z.strictObject({
+    candidates: z.array(zMediaCandidateView).max(4),
+    costProjection: zMediaCostProjectionView.nullable(),
+    createdAt: z.iso.datetime(),
+    definitionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    definitionRevisionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    modelOptionRevisionRef: z.string().min(1).max(256),
+    operationRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    outcomeClass: z.enum(['canonical', 'irreconcilable']),
+    ownerVersion: zPositiveUint64String,
+    progressBps: z.int().gte(0).lte(10000),
+    state: z.literal('canceled'),
+    updatedAt: z.iso.datetime()
+});
+
+export const zMediaOperationCompletedView = z.strictObject({
+    candidates: z.array(zMediaCandidateView).max(4),
+    costProjection: zMediaCostProjectionView.nullable(),
+    createdAt: z.iso.datetime(),
+    definitionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    definitionRevisionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    modelOptionRevisionRef: z.string().min(1).max(256),
+    operationRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    outcomeClass: z.enum(['canonical', 'irreconcilable']),
+    ownerVersion: zPositiveUint64String,
+    progressBps: z.int().gte(0).lte(10000),
+    state: z.literal('completed'),
+    updatedAt: z.iso.datetime()
+});
+
+export const zMediaOperationFailedView = z.strictObject({
+    candidates: z.array(zMediaCandidateView).max(4),
+    costProjection: zMediaCostProjectionView.nullable(),
+    createdAt: z.iso.datetime(),
+    definitionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    definitionRevisionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    modelOptionRevisionRef: z.string().min(1).max(256),
+    operationRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    outcomeClass: z.enum(['canonical', 'irreconcilable']),
+    ownerVersion: zPositiveUint64String,
+    progressBps: z.int().gte(0).lte(10000),
+    safeFailure: zMediaSafeFailure,
+    state: z.literal('failed'),
+    updatedAt: z.iso.datetime()
+});
+
+export const zMediaOperationFinalizingView = z.strictObject({
+    candidates: z.array(zMediaCandidateView).max(4),
+    costProjection: zMediaCostProjectionView.nullable(),
+    createdAt: z.iso.datetime(),
+    definitionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    definitionRevisionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    modelOptionRevisionRef: z.string().min(1).max(256),
+    operationRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    ownerVersion: zPositiveUint64String,
+    progressBps: z.int().gte(0).lte(10000),
+    state: z.literal('finalizing'),
+    updatedAt: z.iso.datetime()
+});
+
+export const zMediaOperationPartialView = z.strictObject({
+    candidates: z.array(zMediaCandidateView).max(4),
+    costProjection: zMediaCostProjectionView.nullable(),
+    createdAt: z.iso.datetime(),
+    definitionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    definitionRevisionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    modelOptionRevisionRef: z.string().min(1).max(256),
+    operationRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    outcomeClass: z.enum(['canonical', 'irreconcilable']),
+    ownerVersion: zPositiveUint64String,
+    progressBps: z.int().gte(0).lte(10000),
+    state: z.literal('partial'),
+    updatedAt: z.iso.datetime()
+});
+
+export const zMediaOperationQueuedView = z.strictObject({
+    candidates: z.array(zMediaCandidateView).max(4),
+    costProjection: zMediaCostProjectionView.nullable(),
+    createdAt: z.iso.datetime(),
+    definitionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    definitionRevisionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    modelOptionRevisionRef: z.string().min(1).max(256),
+    operationRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    ownerVersion: zPositiveUint64String,
+    progressBps: z.int().gte(0).lte(10000),
+    state: z.literal('queued'),
+    updatedAt: z.iso.datetime()
+});
+
+export const zMediaOperationReconcilingView = z.strictObject({
+    candidates: z.array(zMediaCandidateView).max(4),
+    costProjection: zMediaCostProjectionView.nullable(),
+    createdAt: z.iso.datetime(),
+    definitionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    definitionRevisionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    modelOptionRevisionRef: z.string().min(1).max(256),
+    operationRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    ownerVersion: zPositiveUint64String,
+    progressBps: z.int().gte(0).lte(10000),
+    state: z.literal('reconciling'),
+    updatedAt: z.iso.datetime()
+});
+
+export const zMediaOperationView = z.discriminatedUnion('state', [
+    zMediaOperationAdmissionPendingView,
+    zMediaOperationAuthorizedView,
+    zMediaOperationQueuedView,
+    zMediaOperationActiveView,
+    zMediaOperationFinalizingView,
+    zMediaOperationCancelRequestedView,
+    zMediaOperationReconcilingView,
+    zMediaOperationCompletedView,
+    zMediaOperationPartialView,
+    zMediaOperationFailedView,
+    zMediaOperationCanceledView
+]);
+
+export const zMediaOperationPage = z.strictObject({
+    items: z.array(zMediaOperationView).max(100),
+    pageInfo: zPageInfo
+});
+
+export const zMediaOperationResponse = z.strictObject({
+    operation: zMediaOperationView
+});
+
 export const zProjectionRevision = z.string().regex(/^(?:0|[1-9][0-9]{0,18})$/);
 
 export const zProjectionFreshness = z.strictObject({
@@ -533,10 +1258,16 @@ export const zPublishedModelOption = z.strictObject({
     description: z.string().max(512).optional(),
     inputModalities: z.array(z.string().regex(/^[a-z][a-z0-9._-]{0,63}$/)).min(1).max(16),
     label: z.string().min(1).max(128),
-    modelOptionRevisionRef: z.string().min(1).max(256),
+    modelOptionRevisionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
     optionKey: z.string().regex(/^[a-z][a-z0-9._-]{1,127}$/),
     outputModalities: z.array(z.string().regex(/^[a-z][a-z0-9._-]{0,63}$/)).min(1).max(16),
     supportedEfforts: z.array(z.string().min(1).max(64)).max(16)
+});
+
+export const zMediaDefinitionModelOptionPage = z.strictObject({
+    definitionRevisionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/),
+    items: z.array(zPublishedModelOption).max(100),
+    pageInfo: zPageInfo
 });
 
 export const zReauthenticationPending = z.strictObject({
@@ -646,7 +1377,7 @@ export const zRedemptionConfirmInput = z.strictObject({
 });
 
 export const zRedemptionCreditPreview = z.strictObject({
-    amount: zCreditAmount,
+    amount: zCreditDecimalAmount,
     bucketClass: z.enum([
         'daily',
         'period',
@@ -952,6 +1683,55 @@ export const zSessionAccessGrantResponse = z.strictObject({
     grant: zSessionAccessGrant
 });
 
+export const zSubmitMediaCommandAccepted = z.strictObject({
+    callerRequestFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+    commandId: z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
+    operationRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    receiptKind: z.literal('submit_accepted'),
+    receiptVersion: zPositiveUint64String,
+    recoveryAction: zMediaCommandRecoveryAction,
+    updatedAt: z.iso.datetime()
+});
+
+export const zSubmitMediaCommandOutcomeUnknown = z.strictObject({
+    callerRequestFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+    commandId: z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
+    receiptKind: z.literal('submit_outcome_unknown'),
+    receiptVersion: zPositiveUint64String,
+    recoveryAction: zMediaCommandRecoveryAction,
+    safeFailure: zMediaSafeFailure,
+    updatedAt: z.iso.datetime()
+});
+
+export const zSubmitMediaCommandReceiptCommon = z.strictObject({
+    commandId: z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
+    receiptVersion: zPositiveUint64String,
+    updatedAt: z.iso.datetime()
+});
+
+export const zSubmitMediaCommandRejected = z.strictObject({
+    callerRequestFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+    commandId: z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
+    receiptKind: z.literal('submit_rejected'),
+    receiptVersion: zPositiveUint64String,
+    safeFailure: zMediaSafeFailure,
+    updatedAt: z.iso.datetime()
+});
+
+export const zMediaOperationCommandReceipt = z.discriminatedUnion('receiptKind', [
+    zSubmitMediaCommandAccepted,
+    zSubmitMediaCommandRejected,
+    zSubmitMediaCommandOutcomeUnknown,
+    zCancelMediaCommandAccepted,
+    zCancelMediaCommandRejected,
+    zCancelMediaCommandOutcomeUnknown
+]);
+
+export const zMediaOperationCommandResponse = z.strictObject({
+    operation: zMediaOperationView.nullable(),
+    receipt: zMediaOperationCommandReceipt
+});
+
 export const zSupersedeReauthenticationProofInput = z.strictObject({
     priorCommandId: z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
     stage: z.literal('supersede')
@@ -1222,17 +2002,17 @@ export const zTrustedAssetGrantResponse = z.strictObject({
 });
 
 export const zUsageCreditAllocation = z.strictObject({
-    amount: zCreditAmount,
+    amount: zCreditDecimalAmount,
     creditGrantId: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),
     journalReceiptRef: z.string().min(1).max(256)
 });
 
 export const zUsageDetail = z.strictObject({
     allocations: z.array(zUsageCreditAllocation).max(256),
-    estimatedAmount: zCreditAmount,
+    estimatedAmount: zCreditDecimalAmount,
     executionBudgetRootRef: z.string().min(1).max(256),
     occurredAt: z.iso.datetime(),
-    ratedAmount: zCreditAmount.nullable(),
+    ratedAmount: zCreditDecimalAmount.nullable(),
     runRef: z.string().min(1).max(256),
     settledAt: z.iso.datetime().nullable(),
     state: z.enum([
@@ -1259,6 +2039,17 @@ export const zVerificationActivationResponse = z.strictObject({
     receipt: zCommandReceipt
 });
 
+/**
+ * One bounded RFC 9110 byte range only. A start/end range and a suffix range are supported; multipart and open-ended ranges are rejected. The requested span must not exceed 8 MiB.
+ */
+export const zArtifactByteRange = z.string().max(64).regex(/^bytes=([0-9]+-[0-9]+|-[1-9][0-9]*)$/);
+
+export const zArtifactDeliveryAuthorizationRef = z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/);
+
+export const zArtifactRef = z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/);
+
+export const zArtifactVersionRef = z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/);
+
 export const zAssetCommandId = z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/);
 
 export const zAssetEligibilityEpoch = zPositiveUint64String;
@@ -1272,6 +2063,11 @@ export const zAssetRef = z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-
 export const zAssetUploadIntentRef = z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/);
 
 export const zAssetVersionRef = z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/);
+
+/**
+ * Lowercase SHA-256 of the versioned, deterministic protobuf caller-intent preimage.
+ */
+export const zCallerRequestFingerprint = z.string().regex(/^[0-9a-f]{64}$/);
 
 export const zCommandId = z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/);
 
@@ -1288,13 +2084,35 @@ export const zCsrfToken = z.string().min(32).max(512);
 
 export const zIdempotencyKey = z.string().min(16).max(191);
 
+export const zMediaCommandId = z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/);
+
+export const zMediaDefinitionRef = z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/);
+
+export const zMediaOperationRef = z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/);
+
+/**
+ * Opaque owner-bound cursor. Clients must never inspect or synthesize it.
+ */
+export const zPageCursor = z.string().min(1).max(2048);
+
+export const zPageLimit = z.int().gte(1).lte(100).default(50);
+
 export const zProjectRef = z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/);
 
 export const zRedemptionId = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 
+/**
+ * Caller-owned non-zero deadline. The generated caller seam requires an AbortSignal and transports this deadline; expiration aborts the upstream stream rather than buffering it.
+ */
+export const zRequestDeadline = z.int().gte(1).lte(30000);
+
 export const zTransactionRef = z.string().min(1).max(128);
 
 export const zUsageId = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+
+export const zArtifactDeliveryAuthorizationRequest = zArtifactDeliveryAuthorizationInput;
+
+export const zArtifactDeliveryRevocationRequest = zArtifactDeliveryRevocationInput;
 
 export const zAssetUploadCompleteRequest = zAssetUploadCompleteInput;
 
@@ -1309,6 +2127,12 @@ export const zEmailChangeCompletionRequest = zEmailChangeCompletionInput;
 export const zEmailChangeStartRequest = zEmailChangeStartInput;
 
 export const zIdentifierRequest = zIdentifierInput;
+
+export const zMediaOperationCancelRequest = zMediaOperationCancelInput;
+
+export const zMediaOperationQuoteRequest = zMediaOperationInput;
+
+export const zMediaOperationSubmitRequest = zMediaOperationInput;
 
 export const zOtpRequest = zOtpInput;
 
@@ -1341,6 +2165,21 @@ export const zTotpConfirmationRequest = zTotpConfirmationInput;
 export const zTotpEnrollmentStartRequest = zTotpEnrollmentStartInput;
 
 export const zTransactionSecretRequest = zTransactionSecretInput;
+
+export const zRedeemArtifactDeliveryAuthorizationHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1'),
+    Range: z.string().max(64).regex(/^bytes=([0-9]+-[0-9]+|-[1-9][0-9]*)$/).optional(),
+    'X-Kokoro-Request-Deadline-Ms': z.int().gte(1).lte(30000)
+});
+
+export const zRedeemArtifactDeliveryAuthorizationPath = z.strictObject({
+    authorizationRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)
+});
+
+/**
+ * Authorized artifact byte stream.
+ */
+export const zRedeemArtifactDeliveryAuthorizationResponse = z.string();
 
 export const zGetPublicCommandReceiptHeaders = z.strictObject({
     'Kokoro-Contract-Version': z.literal('1')
@@ -1717,6 +2556,109 @@ export const zExchangeProductContextHeaders = z.strictObject({
  */
 export const zExchangeProductContextResponse = zProductContextExchangeResponse;
 
+export const zRevokeArtifactDeliveryAuthorizationBody = zArtifactDeliveryRevocationRequest;
+
+export const zRevokeArtifactDeliveryAuthorizationHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1'),
+    'X-Kokoro-Command-Id': z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
+    'Idempotency-Key': z.string().min(16).max(191),
+    'X-CSRF-Token': z.string().min(32).max(512)
+});
+
+export const zRevokeArtifactDeliveryAuthorizationPath = z.strictObject({
+    projectRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    authorizationRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)
+});
+
+/**
+ * Durable revocation state without the bearer capability.
+ */
+export const zRevokeArtifactDeliveryAuthorizationResponse = zArtifactDeliveryRevocationResponse;
+
+export const zListArtifactsHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1')
+});
+
+export const zListArtifactsPath = z.strictObject({
+    projectRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)
+});
+
+export const zListArtifactsQuery = z.strictObject({
+    cursor: z.string().min(1).max(2048).optional(),
+    limit: z.int().gte(1).lte(100).optional().default(50)
+});
+
+/**
+ * A bounded owner-scoped artifact page.
+ */
+export const zListArtifactsResponse = zArtifactPage;
+
+export const zGetArtifactHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1')
+});
+
+export const zGetArtifactPath = z.strictObject({
+    projectRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    artifactRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)
+});
+
+/**
+ * One logical artifact and its current exact version reference.
+ */
+export const zGetArtifactResponse = zArtifactResponse;
+
+export const zListArtifactVersionsHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1')
+});
+
+export const zListArtifactVersionsPath = z.strictObject({
+    projectRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    artifactRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)
+});
+
+export const zListArtifactVersionsQuery = z.strictObject({
+    cursor: z.string().min(1).max(2048).optional(),
+    limit: z.int().gte(1).lte(100).optional().default(50)
+});
+
+/**
+ * A bounded immutable artifact-version page.
+ */
+export const zListArtifactVersionsResponse = zArtifactVersionPage;
+
+export const zGetArtifactVersionHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1')
+});
+
+export const zGetArtifactVersionPath = z.strictObject({
+    projectRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    artifactRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    artifactVersionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)
+});
+
+/**
+ * One immutable artifact version without storage or provider authority.
+ */
+export const zGetArtifactVersionResponse = zArtifactVersionResponse;
+
+export const zIssueArtifactDeliveryAuthorizationBody = zArtifactDeliveryAuthorizationRequest;
+
+export const zIssueArtifactDeliveryAuthorizationHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1'),
+    'X-CSRF-Token': z.string().min(32).max(512)
+});
+
+export const zIssueArtifactDeliveryAuthorizationPath = z.strictObject({
+    projectRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    artifactRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    artifactVersionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)
+});
+
+/**
+ * A newly issued short-lived capability that must never be cached or replayed from a receipt.
+ */
+export const zIssueArtifactDeliveryAuthorizationResponse = zArtifactDeliveryAuthorizationResponse;
+
 export const zRecoverAssetUploadCommandHeaders = z.strictObject({
     'Kokoro-Contract-Version': z.literal('1')
 });
@@ -1802,6 +2744,159 @@ export const zGetTrustedAssetGrantQuery = z.strictObject({
  * A current ready owner projection with no byte or storage authority.
  */
 export const zGetTrustedAssetGrantResponse = zTrustedAssetGrantResponse;
+
+export const zRecoverMediaOperationCommandHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1')
+});
+
+export const zRecoverMediaOperationCommandPath = z.strictObject({
+    projectRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    commandId: z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/)
+});
+
+/**
+ * Durable owner command receipt and current media projection.
+ */
+export const zRecoverMediaOperationCommandResponse = zMediaOperationCommandResponse;
+
+export const zListMediaOperationDefinitionsHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1')
+});
+
+export const zListMediaOperationDefinitionsPath = z.strictObject({
+    projectRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)
+});
+
+export const zListMediaOperationDefinitionsQuery = z.strictObject({
+    cursor: z.string().min(1).max(2048).optional(),
+    limit: z.int().gte(1).lte(100).optional().default(50)
+});
+
+/**
+ * A bounded page of Site-published media definitions.
+ */
+export const zListMediaOperationDefinitionsResponse = zMediaOperationDefinitionPage;
+
+export const zGetMediaOperationDefinitionHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1')
+});
+
+export const zGetMediaOperationDefinitionPath = z.strictObject({
+    projectRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    definitionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/)
+});
+
+/**
+ * One immutable Site-published media definition revision.
+ */
+export const zGetMediaOperationDefinitionResponse = zMediaOperationDefinitionResponse;
+
+export const zListMediaOperationModelOptionsHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1')
+});
+
+export const zListMediaOperationModelOptionsPath = z.strictObject({
+    projectRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    definitionRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/)
+});
+
+export const zListMediaOperationModelOptionsQuery = z.strictObject({
+    cursor: z.string().min(1).max(2048).optional(),
+    limit: z.int().gte(1).lte(100).optional().default(50)
+});
+
+/**
+ * Safe model selector options for one media definition revision.
+ */
+export const zListMediaOperationModelOptionsResponse = zMediaDefinitionModelOptionPage;
+
+export const zQuoteMediaOperationBody = zMediaOperationQuoteRequest;
+
+export const zQuoteMediaOperationHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1'),
+    'X-Kokoro-Command-Id': z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
+    'Idempotency-Key': z.string().min(16).max(191),
+    'X-CSRF-Token': z.string().min(32).max(512)
+});
+
+export const zQuoteMediaOperationPath = z.strictObject({
+    projectRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)
+});
+
+/**
+ * Non-binding cost guidance; no hold or execution capacity is reserved.
+ */
+export const zQuoteMediaOperationResponse = zMediaOperationQuoteResponse;
+
+export const zListMediaOperationsHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1')
+});
+
+export const zListMediaOperationsPath = z.strictObject({
+    projectRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)
+});
+
+export const zListMediaOperationsQuery = z.strictObject({
+    cursor: z.string().min(1).max(2048).optional(),
+    limit: z.int().gte(1).lte(100).optional().default(50)
+});
+
+/**
+ * A bounded owner-scoped media operation page.
+ */
+export const zListMediaOperationsResponse = zMediaOperationPage;
+
+export const zSubmitMediaOperationBody = zMediaOperationSubmitRequest;
+
+export const zSubmitMediaOperationHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1'),
+    'X-Kokoro-Command-Id': z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
+    'Idempotency-Key': z.string().min(16).max(191),
+    'X-CSRF-Token': z.string().min(32).max(512),
+    'X-Kokoro-Caller-Request-Fingerprint': z.string().regex(/^[0-9a-f]{64}$/)
+});
+
+export const zSubmitMediaOperationPath = z.strictObject({
+    projectRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)
+});
+
+/**
+ * Durable owner command receipt and current media projection.
+ */
+export const zSubmitMediaOperationResponse = zMediaOperationCommandResponse;
+
+export const zGetMediaOperationHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1')
+});
+
+export const zGetMediaOperationPath = z.strictObject({
+    projectRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    operationRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)
+});
+
+/**
+ * Current owner-scoped media operation projection.
+ */
+export const zGetMediaOperationResponse = zMediaOperationResponse;
+
+export const zCancelMediaOperationBody = zMediaOperationCancelRequest;
+
+export const zCancelMediaOperationHeaders = z.strictObject({
+    'Kokoro-Contract-Version': z.literal('1'),
+    'X-Kokoro-Command-Id': z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/),
+    'Idempotency-Key': z.string().min(16).max(191),
+    'X-CSRF-Token': z.string().min(32).max(512)
+});
+
+export const zCancelMediaOperationPath = z.strictObject({
+    projectRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    operationRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/)
+});
+
+/**
+ * Durable owner command receipt and current media projection.
+ */
+export const zCancelMediaOperationResponse = zMediaOperationCommandResponse;
 
 export const zRecoverRedemptionCommandHeaders = z.strictObject({
     'Idempotency-Key': z.string().min(16).max(191),

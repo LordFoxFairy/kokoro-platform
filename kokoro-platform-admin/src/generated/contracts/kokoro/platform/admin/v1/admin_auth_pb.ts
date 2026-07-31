@@ -573,4 +573,3 @@ export const AdminAuthService: GenService<{
   },
 }> = /*@__PURE__*/
   serviceDesc(file_kokoro_platform_admin_v1_admin_auth, 0);
-

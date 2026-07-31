@@ -15,6 +15,9 @@ import type {
   BeginTotpEnrollmentData,
   BeginTotpEnrollmentError,
   BeginTotpEnrollmentResponse,
+  CancelMediaOperationData,
+  CancelMediaOperationError,
+  CancelMediaOperationResponse,
   ChangePasswordData,
   ChangePasswordError,
   ChangePasswordResponse,
@@ -54,6 +57,12 @@ import type {
   ExchangeProductContextData,
   ExchangeProductContextError,
   ExchangeProductContextResponse,
+  GetArtifactData,
+  GetArtifactError,
+  GetArtifactResponse,
+  GetArtifactVersionData,
+  GetArtifactVersionError,
+  GetArtifactVersionResponse,
   GetAssetUploadStatusData,
   GetAssetUploadStatusError,
   GetAssetUploadStatusResponse,
@@ -63,6 +72,12 @@ import type {
   GetCreditSummaryData,
   GetCreditSummaryError,
   GetCreditSummaryResponse,
+  GetMediaOperationData,
+  GetMediaOperationDefinitionData,
+  GetMediaOperationDefinitionError,
+  GetMediaOperationDefinitionResponse,
+  GetMediaOperationError,
+  GetMediaOperationResponse,
   GetPersonalContextData,
   GetPersonalContextError,
   GetPersonalContextResponse,
@@ -78,27 +93,54 @@ import type {
   GetUsageDetailData,
   GetUsageDetailError,
   GetUsageDetailResponse,
+  IssueArtifactDeliveryAuthorizationData,
+  IssueArtifactDeliveryAuthorizationError,
+  IssueArtifactDeliveryAuthorizationResponse,
   IssueSessionAccessGrantData,
   IssueSessionAccessGrantError,
   IssueSessionAccessGrantResponse,
   ListAccountProductsData,
   ListAccountProductsError,
   ListAccountProductsResponse,
+  ListArtifactVersionsData,
+  ListArtifactVersionsError,
+  ListArtifactVersionsResponse,
+  ListArtifactsData,
+  ListArtifactsError,
+  ListArtifactsResponse,
   ListIdentitySessionsData,
   ListIdentitySessionsError,
   ListIdentitySessionsResponse,
+  ListMediaOperationDefinitionsData,
+  ListMediaOperationDefinitionsError,
+  ListMediaOperationDefinitionsResponse,
+  ListMediaOperationModelOptionsData,
+  ListMediaOperationModelOptionsError,
+  ListMediaOperationModelOptionsResponse,
+  ListMediaOperationsData,
+  ListMediaOperationsError,
+  ListMediaOperationsResponse,
   PreviewRedemptionData,
   PreviewRedemptionError,
   PreviewRedemptionResponse,
+  QuoteMediaOperationData,
+  QuoteMediaOperationError,
+  QuoteMediaOperationResponse,
   ReauthenticateIdentitySessionData,
   ReauthenticateIdentitySessionError,
   ReauthenticateIdentitySessionResponse,
   RecoverAssetUploadCommandData,
   RecoverAssetUploadCommandError,
   RecoverAssetUploadCommandResponse,
+  RecoverMediaOperationCommandData,
+  RecoverMediaOperationCommandError,
+  RecoverMediaOperationCommandResponse,
   RecoverRedemptionCommandData,
   RecoverRedemptionCommandError,
   RecoverRedemptionCommandResponse,
+  RedeemArtifactDeliveryAuthorizationData,
+  RedeemArtifactDeliveryAuthorizationError,
+  RedeemArtifactDeliveryAuthorizationResponse,
   RefreshIdentitySessionData,
   RefreshIdentitySessionError,
   RefreshIdentitySessionResponse,
@@ -108,9 +150,15 @@ import type {
   ResendEmailVerificationData,
   ResendEmailVerificationError,
   ResendEmailVerificationResponse,
+  RevokeArtifactDeliveryAuthorizationData,
+  RevokeArtifactDeliveryAuthorizationError,
+  RevokeArtifactDeliveryAuthorizationResponse,
   RevokeIdentitySessionsData,
   RevokeIdentitySessionsError,
   RevokeIdentitySessionsResponse,
+  SubmitMediaOperationData,
+  SubmitMediaOperationError,
+  SubmitMediaOperationResponse,
 } from './types.gen.js';
 
 import {
@@ -129,6 +177,10 @@ import {
   zBeginTotpEnrollmentBody,
   zBeginTotpEnrollmentHeaders,
   zBeginTotpEnrollmentResponse,
+  zCancelMediaOperationBody,
+  zCancelMediaOperationHeaders,
+  zCancelMediaOperationPath,
+  zCancelMediaOperationResponse,
   zChangePasswordBody,
   zChangePasswordHeaders,
   zChangePasswordResponse,
@@ -175,6 +227,12 @@ import {
   zExchangeProductContextBody,
   zExchangeProductContextHeaders,
   zExchangeProductContextResponse,
+  zGetArtifactHeaders,
+  zGetArtifactPath,
+  zGetArtifactResponse,
+  zGetArtifactVersionHeaders,
+  zGetArtifactVersionPath,
+  zGetArtifactVersionResponse,
   zGetAssetUploadStatusHeaders,
   zGetAssetUploadStatusPath,
   zGetAssetUploadStatusResponse,
@@ -183,6 +241,12 @@ import {
   zGetCreditGrantResponse,
   zGetCreditSummaryHeaders,
   zGetCreditSummaryResponse,
+  zGetMediaOperationDefinitionHeaders,
+  zGetMediaOperationDefinitionPath,
+  zGetMediaOperationDefinitionResponse,
+  zGetMediaOperationHeaders,
+  zGetMediaOperationPath,
+  zGetMediaOperationResponse,
   zGetPersonalContextHeaders,
   zGetPersonalContextResponse,
   zGetPublicCommandReceiptHeaders,
@@ -198,24 +262,58 @@ import {
   zGetUsageDetailHeaders,
   zGetUsageDetailPath,
   zGetUsageDetailResponse,
+  zIssueArtifactDeliveryAuthorizationBody,
+  zIssueArtifactDeliveryAuthorizationHeaders,
+  zIssueArtifactDeliveryAuthorizationPath,
+  zIssueArtifactDeliveryAuthorizationResponse,
   zIssueSessionAccessGrantBody,
   zIssueSessionAccessGrantHeaders,
   zIssueSessionAccessGrantResponse,
   zListAccountProductsHeaders,
   zListAccountProductsResponse,
+  zListArtifactVersionsHeaders,
+  zListArtifactVersionsPath,
+  zListArtifactVersionsQuery,
+  zListArtifactVersionsResponse,
+  zListArtifactsHeaders,
+  zListArtifactsPath,
+  zListArtifactsQuery,
+  zListArtifactsResponse,
   zListIdentitySessionsHeaders,
   zListIdentitySessionsResponse,
+  zListMediaOperationDefinitionsHeaders,
+  zListMediaOperationDefinitionsPath,
+  zListMediaOperationDefinitionsQuery,
+  zListMediaOperationDefinitionsResponse,
+  zListMediaOperationModelOptionsHeaders,
+  zListMediaOperationModelOptionsPath,
+  zListMediaOperationModelOptionsQuery,
+  zListMediaOperationModelOptionsResponse,
+  zListMediaOperationsHeaders,
+  zListMediaOperationsPath,
+  zListMediaOperationsQuery,
+  zListMediaOperationsResponse,
   zPreviewRedemptionBody,
   zPreviewRedemptionHeaders,
   zPreviewRedemptionResponse,
+  zQuoteMediaOperationBody,
+  zQuoteMediaOperationHeaders,
+  zQuoteMediaOperationPath,
+  zQuoteMediaOperationResponse,
   zReauthenticateIdentitySessionBody,
   zReauthenticateIdentitySessionHeaders,
   zReauthenticateIdentitySessionResponse,
   zRecoverAssetUploadCommandHeaders,
   zRecoverAssetUploadCommandPath,
   zRecoverAssetUploadCommandResponse,
+  zRecoverMediaOperationCommandHeaders,
+  zRecoverMediaOperationCommandPath,
+  zRecoverMediaOperationCommandResponse,
   zRecoverRedemptionCommandHeaders,
   zRecoverRedemptionCommandResponse,
+  zRedeemArtifactDeliveryAuthorizationHeaders,
+  zRedeemArtifactDeliveryAuthorizationPath,
+  zRedeemArtifactDeliveryAuthorizationResponse,
   zRefreshIdentitySessionBody,
   zRefreshIdentitySessionHeaders,
   zRefreshIdentitySessionResponse,
@@ -225,9 +323,17 @@ import {
   zResendEmailVerificationBody,
   zResendEmailVerificationHeaders,
   zResendEmailVerificationResponse,
+  zRevokeArtifactDeliveryAuthorizationBody,
+  zRevokeArtifactDeliveryAuthorizationHeaders,
+  zRevokeArtifactDeliveryAuthorizationPath,
+  zRevokeArtifactDeliveryAuthorizationResponse,
   zRevokeIdentitySessionsBody,
   zRevokeIdentitySessionsHeaders,
   zRevokeIdentitySessionsResponse,
+  zSubmitMediaOperationBody,
+  zSubmitMediaOperationHeaders,
+  zSubmitMediaOperationPath,
+  zSubmitMediaOperationResponse,
 } from './zod.gen.js';
 
 export interface PlatformPublicOperationDataMap {
@@ -236,6 +342,7 @@ export interface PlatformPublicOperationDataMap {
   readonly "beginPasswordReset": BeginPasswordResetData;
   readonly "beginRegistration": BeginRegistrationData;
   readonly "beginTotpEnrollment": BeginTotpEnrollmentData;
+  readonly "cancelMediaOperation": CancelMediaOperationData;
   readonly "changePassword": ChangePasswordData;
   readonly "completeAccountRecovery": CompleteAccountRecoveryData;
   readonly "completeAssetUpload": CompleteAssetUploadData;
@@ -249,25 +356,40 @@ export interface PlatformPublicOperationDataMap {
   readonly "createIdentitySession": CreateIdentitySessionData;
   readonly "disableTotp": DisableTotpData;
   readonly "exchangeProductContext": ExchangeProductContextData;
+  readonly "getArtifact": GetArtifactData;
+  readonly "getArtifactVersion": GetArtifactVersionData;
   readonly "getAssetUploadStatus": GetAssetUploadStatusData;
   readonly "getCreditGrant": GetCreditGrantData;
   readonly "getCreditSummary": GetCreditSummaryData;
+  readonly "getMediaOperation": GetMediaOperationData;
+  readonly "getMediaOperationDefinition": GetMediaOperationDefinitionData;
   readonly "getPersonalContext": GetPersonalContextData;
   readonly "getPublicCommandReceipt": GetPublicCommandReceiptData;
   readonly "getRedemptionReceipt": GetRedemptionReceiptData;
   readonly "getTrustedAssetGrant": GetTrustedAssetGrantData;
   readonly "getUsageDetail": GetUsageDetailData;
+  readonly "issueArtifactDeliveryAuthorization": IssueArtifactDeliveryAuthorizationData;
   readonly "issueSessionAccessGrant": IssueSessionAccessGrantData;
   readonly "listAccountProducts": ListAccountProductsData;
+  readonly "listArtifacts": ListArtifactsData;
+  readonly "listArtifactVersions": ListArtifactVersionsData;
   readonly "listIdentitySessions": ListIdentitySessionsData;
+  readonly "listMediaOperationDefinitions": ListMediaOperationDefinitionsData;
+  readonly "listMediaOperationModelOptions": ListMediaOperationModelOptionsData;
+  readonly "listMediaOperations": ListMediaOperationsData;
   readonly "previewRedemption": PreviewRedemptionData;
+  readonly "quoteMediaOperation": QuoteMediaOperationData;
   readonly "reauthenticateIdentitySession": ReauthenticateIdentitySessionData;
   readonly "recoverAssetUploadCommand": RecoverAssetUploadCommandData;
+  readonly "recoverMediaOperationCommand": RecoverMediaOperationCommandData;
   readonly "recoverRedemptionCommand": RecoverRedemptionCommandData;
+  readonly "redeemArtifactDeliveryAuthorization": RedeemArtifactDeliveryAuthorizationData;
   readonly "refreshIdentitySession": RefreshIdentitySessionData;
   readonly "regenerateRecoveryCodes": RegenerateRecoveryCodesData;
   readonly "resendEmailVerification": ResendEmailVerificationData;
+  readonly "revokeArtifactDeliveryAuthorization": RevokeArtifactDeliveryAuthorizationData;
   readonly "revokeIdentitySessions": RevokeIdentitySessionsData;
+  readonly "submitMediaOperation": SubmitMediaOperationData;
 }
 
 export interface PlatformPublicOperationResponseMap {
@@ -276,6 +398,7 @@ export interface PlatformPublicOperationResponseMap {
   readonly "beginPasswordReset": BeginPasswordResetResponse;
   readonly "beginRegistration": BeginRegistrationResponse;
   readonly "beginTotpEnrollment": BeginTotpEnrollmentResponse;
+  readonly "cancelMediaOperation": CancelMediaOperationResponse;
   readonly "changePassword": ChangePasswordResponse;
   readonly "completeAccountRecovery": CompleteAccountRecoveryResponse;
   readonly "completeAssetUpload": CompleteAssetUploadResponse;
@@ -289,25 +412,40 @@ export interface PlatformPublicOperationResponseMap {
   readonly "createIdentitySession": CreateIdentitySessionResponse;
   readonly "disableTotp": DisableTotpResponse;
   readonly "exchangeProductContext": ExchangeProductContextResponse;
+  readonly "getArtifact": GetArtifactResponse;
+  readonly "getArtifactVersion": GetArtifactVersionResponse;
   readonly "getAssetUploadStatus": GetAssetUploadStatusResponse;
   readonly "getCreditGrant": GetCreditGrantResponse;
   readonly "getCreditSummary": GetCreditSummaryResponse;
+  readonly "getMediaOperation": GetMediaOperationResponse;
+  readonly "getMediaOperationDefinition": GetMediaOperationDefinitionResponse;
   readonly "getPersonalContext": GetPersonalContextResponse;
   readonly "getPublicCommandReceipt": GetPublicCommandReceiptResponse;
   readonly "getRedemptionReceipt": GetRedemptionReceiptResponse;
   readonly "getTrustedAssetGrant": GetTrustedAssetGrantResponse;
   readonly "getUsageDetail": GetUsageDetailResponse;
+  readonly "issueArtifactDeliveryAuthorization": IssueArtifactDeliveryAuthorizationResponse;
   readonly "issueSessionAccessGrant": IssueSessionAccessGrantResponse;
   readonly "listAccountProducts": ListAccountProductsResponse;
+  readonly "listArtifacts": ListArtifactsResponse;
+  readonly "listArtifactVersions": ListArtifactVersionsResponse;
   readonly "listIdentitySessions": ListIdentitySessionsResponse;
+  readonly "listMediaOperationDefinitions": ListMediaOperationDefinitionsResponse;
+  readonly "listMediaOperationModelOptions": ListMediaOperationModelOptionsResponse;
+  readonly "listMediaOperations": ListMediaOperationsResponse;
   readonly "previewRedemption": PreviewRedemptionResponse;
+  readonly "quoteMediaOperation": QuoteMediaOperationResponse;
   readonly "reauthenticateIdentitySession": ReauthenticateIdentitySessionResponse;
   readonly "recoverAssetUploadCommand": RecoverAssetUploadCommandResponse;
+  readonly "recoverMediaOperationCommand": RecoverMediaOperationCommandResponse;
   readonly "recoverRedemptionCommand": RecoverRedemptionCommandResponse;
+  readonly "redeemArtifactDeliveryAuthorization": RedeemArtifactDeliveryAuthorizationResponse;
   readonly "refreshIdentitySession": RefreshIdentitySessionResponse;
   readonly "regenerateRecoveryCodes": RegenerateRecoveryCodesResponse;
   readonly "resendEmailVerification": ResendEmailVerificationResponse;
+  readonly "revokeArtifactDeliveryAuthorization": RevokeArtifactDeliveryAuthorizationResponse;
   readonly "revokeIdentitySessions": RevokeIdentitySessionsResponse;
+  readonly "submitMediaOperation": SubmitMediaOperationResponse;
 }
 
 export interface PlatformPublicOperationErrorMap {
@@ -316,6 +454,7 @@ export interface PlatformPublicOperationErrorMap {
   readonly "beginPasswordReset": BeginPasswordResetError;
   readonly "beginRegistration": BeginRegistrationError;
   readonly "beginTotpEnrollment": BeginTotpEnrollmentError;
+  readonly "cancelMediaOperation": CancelMediaOperationError;
   readonly "changePassword": ChangePasswordError;
   readonly "completeAccountRecovery": CompleteAccountRecoveryError;
   readonly "completeAssetUpload": CompleteAssetUploadError;
@@ -329,25 +468,40 @@ export interface PlatformPublicOperationErrorMap {
   readonly "createIdentitySession": CreateIdentitySessionError;
   readonly "disableTotp": DisableTotpError;
   readonly "exchangeProductContext": ExchangeProductContextError;
+  readonly "getArtifact": GetArtifactError;
+  readonly "getArtifactVersion": GetArtifactVersionError;
   readonly "getAssetUploadStatus": GetAssetUploadStatusError;
   readonly "getCreditGrant": GetCreditGrantError;
   readonly "getCreditSummary": GetCreditSummaryError;
+  readonly "getMediaOperation": GetMediaOperationError;
+  readonly "getMediaOperationDefinition": GetMediaOperationDefinitionError;
   readonly "getPersonalContext": GetPersonalContextError;
   readonly "getPublicCommandReceipt": GetPublicCommandReceiptError;
   readonly "getRedemptionReceipt": GetRedemptionReceiptError;
   readonly "getTrustedAssetGrant": GetTrustedAssetGrantError;
   readonly "getUsageDetail": GetUsageDetailError;
+  readonly "issueArtifactDeliveryAuthorization": IssueArtifactDeliveryAuthorizationError;
   readonly "issueSessionAccessGrant": IssueSessionAccessGrantError;
   readonly "listAccountProducts": ListAccountProductsError;
+  readonly "listArtifacts": ListArtifactsError;
+  readonly "listArtifactVersions": ListArtifactVersionsError;
   readonly "listIdentitySessions": ListIdentitySessionsError;
+  readonly "listMediaOperationDefinitions": ListMediaOperationDefinitionsError;
+  readonly "listMediaOperationModelOptions": ListMediaOperationModelOptionsError;
+  readonly "listMediaOperations": ListMediaOperationsError;
   readonly "previewRedemption": PreviewRedemptionError;
+  readonly "quoteMediaOperation": QuoteMediaOperationError;
   readonly "reauthenticateIdentitySession": ReauthenticateIdentitySessionError;
   readonly "recoverAssetUploadCommand": RecoverAssetUploadCommandError;
+  readonly "recoverMediaOperationCommand": RecoverMediaOperationCommandError;
   readonly "recoverRedemptionCommand": RecoverRedemptionCommandError;
+  readonly "redeemArtifactDeliveryAuthorization": RedeemArtifactDeliveryAuthorizationError;
   readonly "refreshIdentitySession": RefreshIdentitySessionError;
   readonly "regenerateRecoveryCodes": RegenerateRecoveryCodesError;
   readonly "resendEmailVerification": ResendEmailVerificationError;
+  readonly "revokeArtifactDeliveryAuthorization": RevokeArtifactDeliveryAuthorizationError;
   readonly "revokeIdentitySessions": RevokeIdentitySessionsError;
+  readonly "submitMediaOperation": SubmitMediaOperationError;
 }
 
 export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
@@ -425,6 +579,21 @@ export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
       query: null,
     }),
     responseSchema: zBeginTotpEnrollmentResponse,
+  }),
+  "cancelMediaOperation": Object.freeze({
+    method: "POST",
+    path: "/v1/projects/{projectRef}/media-operations/{operationRef}:cancel",
+    mutation: true,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200,202]),
+    requestSchemas: Object.freeze({
+      body: zCancelMediaOperationBody,
+      headers: zCancelMediaOperationHeaders,
+      path: zCancelMediaOperationPath,
+      query: null,
+    }),
+    responseSchema: zCancelMediaOperationResponse,
   }),
   "changePassword": Object.freeze({
     method: "POST",
@@ -621,6 +790,36 @@ export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
     }),
     responseSchema: zExchangeProductContextResponse,
   }),
+  "getArtifact": Object.freeze({
+    method: "GET",
+    path: "/v1/projects/{projectRef}/artifacts/{artifactRef}",
+    mutation: false,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200]),
+    requestSchemas: Object.freeze({
+      body: null,
+      headers: zGetArtifactHeaders,
+      path: zGetArtifactPath,
+      query: null,
+    }),
+    responseSchema: zGetArtifactResponse,
+  }),
+  "getArtifactVersion": Object.freeze({
+    method: "GET",
+    path: "/v1/projects/{projectRef}/artifacts/{artifactRef}/versions/{artifactVersionRef}",
+    mutation: false,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200]),
+    requestSchemas: Object.freeze({
+      body: null,
+      headers: zGetArtifactVersionHeaders,
+      path: zGetArtifactVersionPath,
+      query: null,
+    }),
+    responseSchema: zGetArtifactVersionResponse,
+  }),
   "getAssetUploadStatus": Object.freeze({
     method: "GET",
     path: "/v1/projects/{projectRef}/asset-upload-intents/{intentRef}",
@@ -665,6 +864,36 @@ export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
       query: null,
     }),
     responseSchema: zGetCreditSummaryResponse,
+  }),
+  "getMediaOperation": Object.freeze({
+    method: "GET",
+    path: "/v1/projects/{projectRef}/media-operations/{operationRef}",
+    mutation: false,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200]),
+    requestSchemas: Object.freeze({
+      body: null,
+      headers: zGetMediaOperationHeaders,
+      path: zGetMediaOperationPath,
+      query: null,
+    }),
+    responseSchema: zGetMediaOperationResponse,
+  }),
+  "getMediaOperationDefinition": Object.freeze({
+    method: "GET",
+    path: "/v1/projects/{projectRef}/media-operation-definitions/{definitionRef}",
+    mutation: false,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200]),
+    requestSchemas: Object.freeze({
+      body: null,
+      headers: zGetMediaOperationDefinitionHeaders,
+      path: zGetMediaOperationDefinitionPath,
+      query: null,
+    }),
+    responseSchema: zGetMediaOperationDefinitionResponse,
   }),
   "getPersonalContext": Object.freeze({
     method: "GET",
@@ -741,6 +970,21 @@ export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
     }),
     responseSchema: zGetUsageDetailResponse,
   }),
+  "issueArtifactDeliveryAuthorization": Object.freeze({
+    method: "POST",
+    path: "/v1/projects/{projectRef}/artifacts/{artifactRef}/versions/{artifactVersionRef}/delivery-authorizations",
+    mutation: true,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([201]),
+    requestSchemas: Object.freeze({
+      body: zIssueArtifactDeliveryAuthorizationBody,
+      headers: zIssueArtifactDeliveryAuthorizationHeaders,
+      path: zIssueArtifactDeliveryAuthorizationPath,
+      query: null,
+    }),
+    responseSchema: zIssueArtifactDeliveryAuthorizationResponse,
+  }),
   "issueSessionAccessGrant": Object.freeze({
     method: "POST",
     path: "/v1/session-access-grants",
@@ -771,6 +1015,36 @@ export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
     }),
     responseSchema: zListAccountProductsResponse,
   }),
+  "listArtifacts": Object.freeze({
+    method: "GET",
+    path: "/v1/projects/{projectRef}/artifacts",
+    mutation: false,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200]),
+    requestSchemas: Object.freeze({
+      body: null,
+      headers: zListArtifactsHeaders,
+      path: zListArtifactsPath,
+      query: zListArtifactsQuery,
+    }),
+    responseSchema: zListArtifactsResponse,
+  }),
+  "listArtifactVersions": Object.freeze({
+    method: "GET",
+    path: "/v1/projects/{projectRef}/artifacts/{artifactRef}/versions",
+    mutation: false,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200]),
+    requestSchemas: Object.freeze({
+      body: null,
+      headers: zListArtifactVersionsHeaders,
+      path: zListArtifactVersionsPath,
+      query: zListArtifactVersionsQuery,
+    }),
+    responseSchema: zListArtifactVersionsResponse,
+  }),
   "listIdentitySessions": Object.freeze({
     method: "GET",
     path: "/v1/identity/sessions",
@@ -786,6 +1060,51 @@ export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
     }),
     responseSchema: zListIdentitySessionsResponse,
   }),
+  "listMediaOperationDefinitions": Object.freeze({
+    method: "GET",
+    path: "/v1/projects/{projectRef}/media-operation-definitions",
+    mutation: false,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200]),
+    requestSchemas: Object.freeze({
+      body: null,
+      headers: zListMediaOperationDefinitionsHeaders,
+      path: zListMediaOperationDefinitionsPath,
+      query: zListMediaOperationDefinitionsQuery,
+    }),
+    responseSchema: zListMediaOperationDefinitionsResponse,
+  }),
+  "listMediaOperationModelOptions": Object.freeze({
+    method: "GET",
+    path: "/v1/projects/{projectRef}/media-operation-definitions/{definitionRef}/model-options",
+    mutation: false,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200]),
+    requestSchemas: Object.freeze({
+      body: null,
+      headers: zListMediaOperationModelOptionsHeaders,
+      path: zListMediaOperationModelOptionsPath,
+      query: zListMediaOperationModelOptionsQuery,
+    }),
+    responseSchema: zListMediaOperationModelOptionsResponse,
+  }),
+  "listMediaOperations": Object.freeze({
+    method: "GET",
+    path: "/v1/projects/{projectRef}/media-operations",
+    mutation: false,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200]),
+    requestSchemas: Object.freeze({
+      body: null,
+      headers: zListMediaOperationsHeaders,
+      path: zListMediaOperationsPath,
+      query: zListMediaOperationsQuery,
+    }),
+    responseSchema: zListMediaOperationsResponse,
+  }),
   "previewRedemption": Object.freeze({
     method: "POST",
     path: "/v1/redemptions:preview",
@@ -800,6 +1119,21 @@ export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
       query: null,
     }),
     responseSchema: zPreviewRedemptionResponse,
+  }),
+  "quoteMediaOperation": Object.freeze({
+    method: "POST",
+    path: "/v1/projects/{projectRef}/media-operation-quotes",
+    mutation: true,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200]),
+    requestSchemas: Object.freeze({
+      body: zQuoteMediaOperationBody,
+      headers: zQuoteMediaOperationHeaders,
+      path: zQuoteMediaOperationPath,
+      query: null,
+    }),
+    responseSchema: zQuoteMediaOperationResponse,
   }),
   "reauthenticateIdentitySession": Object.freeze({
     method: "POST",
@@ -831,6 +1165,21 @@ export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
     }),
     responseSchema: zRecoverAssetUploadCommandResponse,
   }),
+  "recoverMediaOperationCommand": Object.freeze({
+    method: "GET",
+    path: "/v1/projects/{projectRef}/media-operation-commands/{commandId}",
+    mutation: false,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200]),
+    requestSchemas: Object.freeze({
+      body: null,
+      headers: zRecoverMediaOperationCommandHeaders,
+      path: zRecoverMediaOperationCommandPath,
+      query: null,
+    }),
+    responseSchema: zRecoverMediaOperationCommandResponse,
+  }),
   "recoverRedemptionCommand": Object.freeze({
     method: "GET",
     path: "/v1/redemption-commands:recover",
@@ -845,6 +1194,21 @@ export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
       query: null,
     }),
     responseSchema: zRecoverRedemptionCommandResponse,
+  }),
+  "redeemArtifactDeliveryAuthorization": Object.freeze({
+    method: "GET",
+    path: "/v1/artifact-delivery-authorizations/{authorizationRef}/content",
+    mutation: false,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ArtifactDeliveryCapability","ProductWorkload"]]),
+    successStatuses: Object.freeze([200,206]),
+    requestSchemas: Object.freeze({
+      body: null,
+      headers: zRedeemArtifactDeliveryAuthorizationHeaders,
+      path: zRedeemArtifactDeliveryAuthorizationPath,
+      query: null,
+    }),
+    responseSchema: zRedeemArtifactDeliveryAuthorizationResponse,
   }),
   "refreshIdentitySession": Object.freeze({
     method: "POST",
@@ -891,6 +1255,21 @@ export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
     }),
     responseSchema: zResendEmailVerificationResponse,
   }),
+  "revokeArtifactDeliveryAuthorization": Object.freeze({
+    method: "POST",
+    path: "/v1/projects/{projectRef}/artifact-delivery-authorizations/{authorizationRef}:revoke",
+    mutation: true,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([200]),
+    requestSchemas: Object.freeze({
+      body: zRevokeArtifactDeliveryAuthorizationBody,
+      headers: zRevokeArtifactDeliveryAuthorizationHeaders,
+      path: zRevokeArtifactDeliveryAuthorizationPath,
+      query: null,
+    }),
+    responseSchema: zRevokeArtifactDeliveryAuthorizationResponse,
+  }),
   "revokeIdentitySessions": Object.freeze({
     method: "POST",
     path: "/v1/identity/sessions:revoke",
@@ -905,6 +1284,21 @@ export const PLATFORM_PUBLIC_OPERATIONS = Object.freeze({
       query: null,
     }),
     responseSchema: zRevokeIdentitySessionsResponse,
+  }),
+  "submitMediaOperation": Object.freeze({
+    method: "POST",
+    path: "/v1/projects/{projectRef}/media-operations",
+    mutation: true,
+    receiptRecovery: "none",
+    securityAlternatives: Object.freeze([["ProductWorkload","UserSession"]]),
+    successStatuses: Object.freeze([201,202]),
+    requestSchemas: Object.freeze({
+      body: zSubmitMediaOperationBody,
+      headers: zSubmitMediaOperationHeaders,
+      path: zSubmitMediaOperationPath,
+      query: null,
+    }),
+    responseSchema: zSubmitMediaOperationResponse,
   }),
 } as const);
 

@@ -1426,4 +1426,3 @@ export const AdmissionService: GenService<{
   },
 }> = /*@__PURE__*/
   serviceDesc(file_kokoro_platform_admission_v1_admission, 0);
-

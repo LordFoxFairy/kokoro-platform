@@ -100,4 +100,3 @@ export enum RetryClass {
  */
 export const RetryClassSchema: GenEnum<RetryClass> = /*@__PURE__*/
   enumDesc(file_kokoro_common_v1_error, 0);
-

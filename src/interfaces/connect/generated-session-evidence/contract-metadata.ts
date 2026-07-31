@@ -3,7 +3,7 @@ export const contractMetadata = Object.freeze({
   schemaId: "kokoro.session.dispatch.v1.DispatchOwnerEvidenceService",
   schemaVersion: 1,
   sourceDigestSha256: "1c1671da4844cb89f6fded47d8bcd971810ca64d80ebe448ba064ca9142387fb",
-  artifactDigestSha256: "f8338ae206a67f5cc9f0c94708e86abbe2f5ca1f7c11d2c4faade836eeed9fd7",
+  artifactDigestSha256: "c2ce559ddb17a720c39469fc408fa1b71be456e8a513c2bd4d467ae30cfec94e",
   sourcePaths: Object.freeze([
     "kokoro/session/dispatch/v1/dispatch_owner_evidence.proto",
   ]),

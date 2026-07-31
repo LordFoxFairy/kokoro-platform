@@ -3,7 +3,7 @@ export const contractMetadata = Object.freeze({
   schemaId: "kokoro.platform.authorization.v2.ScopedSessionAuthorizationService",
   schemaVersion: 2,
   sourceDigestSha256: "4fbb32944e8a11b0e778dd8768b17bb74d143f79aaf2eeb7cad9fece955d4ff3",
-  artifactDigestSha256: "26a59672d5edc52f4be4c057024e2a41d383525205ee3a46ad59fecd3f4fbd57",
+  artifactDigestSha256: "3dee70402fe2e42ecc988b24023f615f12aa1638be5808e44c1527173882c91c",
   sourcePaths: Object.freeze([
     "kokoro/platform/authorization/v2/scoped_session_authorization.proto",
   ]),

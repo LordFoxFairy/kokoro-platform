@@ -69,6 +69,103 @@ export type AcquisitionSourceSummary = {
     sourceRef: string;
 };
 
+export type ArtifactAvailability = 'processing' | 'ready' | 'restricted' | 'unavailable' | 'deleted';
+
+export type ArtifactDeliveryAuthorization = {
+    artifactRef: string;
+    artifactVersionRef: string;
+    audience: 'site-bff.artifact-delivery';
+    authorizationRef: string;
+    deliveryCapability: string;
+    expiresAt: string;
+    issuedAt: string;
+    purpose: 'preview' | 'download' | 'export';
+};
+
+export type ArtifactDeliveryAuthorizationInput = ({
+    purpose: 'preview';
+} & ArtifactPreviewDeliveryInput) | ({
+    purpose: 'download';
+} & ArtifactDownloadDeliveryInput) | ({
+    purpose: 'export';
+} & ArtifactExportDeliveryInput);
+
+export type ArtifactDeliveryAuthorizationResponse = {
+    authorization: ArtifactDeliveryAuthorization;
+};
+
+export type ArtifactDeliveryRevocationInput = {
+    reason?: string;
+};
+
+export type ArtifactDeliveryRevocationReceipt = {
+    authorizationRef: string;
+    revokedAt: string;
+    state: 'revoked' | 'already_revoked' | 'expired';
+};
+
+export type ArtifactDeliveryRevocationResponse = {
+    receipt: ArtifactDeliveryRevocationReceipt;
+};
+
+export type ArtifactDownloadDeliveryInput = {
+    purpose: 'download';
+    /**
+     * Safe filename intent only. Platform emits Content-Disposition using RFC 6266 and RFC 8187; callers must not concatenate this value into a filesystem path or response header.
+     */
+    suggestedFileName?: string;
+};
+
+export type ArtifactExportDeliveryInput = {
+    exportIntentRef: string;
+    purpose: 'export';
+};
+
+export type ArtifactPage = {
+    items: Array<ArtifactSummary>;
+    pageInfo: PageInfo;
+};
+
+export type ArtifactPreviewDeliveryInput = {
+    purpose: 'preview';
+    viewportClass: 'thumbnail' | 'canvas' | 'full';
+};
+
+export type ArtifactResponse = {
+    artifact: ArtifactSummary;
+};
+
+export type ArtifactSummary = {
+    artifactRef: string;
+    availability: ArtifactAvailability;
+    createdAt: string;
+    currentArtifactVersionRef: string;
+    mediaClass: 'image';
+    title: string;
+    updatedAt: string;
+};
+
+export type ArtifactVersion = ({
+    availability: 'processing';
+} & ImageArtifactVersionProcessing) | ({
+    availability: 'ready';
+} & ImageArtifactVersionReady) | ({
+    availability: 'restricted';
+} & ImageArtifactVersionRestricted) | ({
+    availability: 'unavailable';
+} & ImageArtifactVersionUnavailable) | ({
+    availability: 'deleted';
+} & ImageArtifactVersionDeleted);
+
+export type ArtifactVersionPage = {
+    items: Array<ArtifactVersion>;
+    pageInfo: PageInfo;
+};
+
+export type ArtifactVersionResponse = {
+    version: ArtifactVersion;
+};
+
 /**
  * Short-lived credential for one registered upload data plane. The endpoint is a shared service endpoint, never a provider object URL or presigned request.
  */
@@ -162,6 +259,39 @@ export type BeginTotpRecoveryReplacementInput = {
     transactionSecret: string;
 };
 
+export type CancelMediaCommandAccepted = {
+    commandId: string;
+    operationRef: string;
+    receiptKind: 'cancel_accepted';
+    receiptVersion: PositiveUint64String;
+    recoveryAction: MediaCommandRecoveryAction;
+    updatedAt: string;
+};
+
+export type CancelMediaCommandOutcomeUnknown = {
+    commandId: string;
+    operationRef: string;
+    receiptKind: 'cancel_outcome_unknown';
+    receiptVersion: PositiveUint64String;
+    recoveryAction: MediaCommandRecoveryAction;
+    safeFailure: MediaSafeFailure;
+    updatedAt: string;
+};
+
+export type CancelMediaCommandReceiptCommon = {
+    commandId: string;
+    receiptVersion: PositiveUint64String;
+    updatedAt: string;
+};
+
+export type CancelMediaCommandRejected = {
+    commandId: string;
+    receiptKind: 'cancel_rejected';
+    receiptVersion: PositiveUint64String;
+    safeFailure: MediaSafeFailure;
+    updatedAt: string;
+};
+
 export type ChannelChallengeProofInput = {
     challengeRef: string;
     proofSecret: string;
@@ -253,30 +383,89 @@ export type CreateSessionInput = PasswordLoginInput | SupersedeSessionCredential
 export type CreateSessionResponse = AuthPendingResponse | OneTimeSessionCredentialDelivery | OneTimeDeliveryUnavailable;
 
 /**
- * Exact non-negative integer amount; encoded as a decimal string to avoid JS precision loss.
+ * Credit-owned exact amount. The integer is a decimal string to avoid JS precision loss.
  */
-export type CreditAmount = string;
+export type CreditAmount = {
+    amount: string;
+    creditUnit: string;
+};
 
 export type CreditBucketSummary = {
-    available: CreditAmount;
+    available: CreditDecimalAmount;
     bucketClass: 'daily' | 'period' | 'permanent';
-    consumed: CreditAmount;
-    expiredOrReversed: CreditAmount;
+    consumed: CreditDecimalAmount;
+    expiredOrReversed: CreditDecimalAmount;
     grantCount: number;
-    held: CreditAmount;
-    issued: CreditAmount;
+    held: CreditDecimalAmount;
+    issued: CreditDecimalAmount;
+};
+
+export type CreditCostCommon = {
+    costProjectionRef: string;
+    freshness: 'current' | 'stale' | 'rebuilding' | 'unavailable';
+    ownerVersion: PositiveUint64String;
+};
+
+export type CreditCostCorrected = {
+    amount: CreditAmount;
+    correctsOwnerVersion: PositiveUint64String;
+    costProjectionRef: string;
+    freshness: 'current' | 'stale' | 'rebuilding' | 'unavailable';
+    ownerVersion: PositiveUint64String;
+    state: 'corrected';
+};
+
+export type CreditCostEstimated = {
+    amount: CreditAmount;
+    costProjectionRef: string;
+    freshness: 'current' | 'stale' | 'rebuilding' | 'unavailable';
+    ownerVersion: PositiveUint64String;
+    state: 'estimated';
+};
+
+export type CreditCostFinal = {
+    amount: CreditAmount;
+    costProjectionRef: string;
+    freshness: 'current' | 'stale' | 'rebuilding' | 'unavailable';
+    ownerVersion: PositiveUint64String;
+    state: 'final';
+};
+
+export type CreditCostPending = {
+    costProjectionRef: string;
+    freshness: 'current' | 'stale' | 'rebuilding' | 'unavailable';
+    ownerVersion: PositiveUint64String;
+    state: 'pending';
+};
+
+export type CreditCostUnavailable = {
+    costProjectionRef: string;
+    freshness: 'current' | 'stale' | 'rebuilding' | 'unavailable';
+    ownerVersion: PositiveUint64String;
+    safeReason: string;
+    state: 'unavailable';
+};
+
+/**
+ * Exact non-negative integer within an enclosing credit-unit scope.
+ */
+export type CreditDecimalAmount = string;
+
+export type CreditEstimate = {
+    amount: CreditDecimalAmount;
+    creditUnit: string;
 };
 
 export type CreditGrantDetail = {
-    available: CreditAmount;
+    available: CreditDecimalAmount;
     bucketClass: 'daily' | 'period' | 'permanent';
-    consumed: CreditAmount;
+    consumed: CreditDecimalAmount;
     creditProgramRevisionRef: string;
     effectiveAt: string;
     expiresAt: string | null;
     grantId: string;
-    held: CreditAmount;
-    issued: CreditAmount;
+    held: CreditDecimalAmount;
+    issued: CreditDecimalAmount;
     source: AcquisitionSourceSummary;
     state: 'active' | 'exhausted' | 'expired' | 'reversed';
     unit: string;
@@ -335,7 +524,7 @@ export type EmailVerificationTransactionResponse = {
     transaction: EmailVerificationTransaction;
 };
 
-export type ErrorCode = 'INVALID_REQUEST' | 'CONTRACT_VERSION_UNSUPPORTED' | 'AUTHENTICATION_REQUIRED' | 'AUTHENTICATION_FAILED' | 'AUTH_TRANSACTION_EXPIRED' | 'MFA_REQUIRED' | 'FORBIDDEN' | 'NOT_FOUND' | 'CONFLICT' | 'RATE_LIMITED' | 'RISK_UNAVAILABLE' | 'SITE_UNAVAILABLE' | 'OUTCOME_UNKNOWN' | 'INTERNAL_UNAVAILABLE' | 'REDEEM_NOT_ACCEPTED' | 'REDEEM_TEMPORARILY_UNAVAILABLE' | 'IDEMPOTENCY_CONFLICT' | 'ACQUISITION_CHANNEL_DISABLED' | 'ASSET_NOT_ACCEPTED' | 'ASSET_UPLOAD_CONFLICT' | 'ASSET_QUOTA_EXCEEDED' | 'ASSET_TEMPORARILY_UNAVAILABLE';
+export type ErrorCode = 'INVALID_REQUEST' | 'CONTRACT_VERSION_UNSUPPORTED' | 'AUTHENTICATION_REQUIRED' | 'AUTHENTICATION_FAILED' | 'AUTH_TRANSACTION_EXPIRED' | 'MFA_REQUIRED' | 'FORBIDDEN' | 'NOT_FOUND' | 'CONFLICT' | 'RATE_LIMITED' | 'RISK_UNAVAILABLE' | 'SITE_UNAVAILABLE' | 'OUTCOME_UNKNOWN' | 'INTERNAL_UNAVAILABLE' | 'REDEEM_NOT_ACCEPTED' | 'REDEEM_TEMPORARILY_UNAVAILABLE' | 'IDEMPOTENCY_CONFLICT' | 'ACQUISITION_CHANNEL_DISABLED' | 'ASSET_NOT_ACCEPTED' | 'ASSET_UPLOAD_CONFLICT' | 'ASSET_QUOTA_EXCEEDED' | 'ASSET_TEMPORARILY_UNAVAILABLE' | 'MEDIA_INPUT_REJECTED' | 'MEDIA_CALLER_FINGERPRINT_MISMATCH' | 'MEDIA_DEFINITION_UNAVAILABLE' | 'MEDIA_MODEL_OPTION_UNAVAILABLE' | 'MEDIA_CREDIT_INSUFFICIENT' | 'MEDIA_POLICY_REJECTED' | 'MEDIA_OPERATION_VERSION_CONFLICT' | 'MEDIA_CANCEL_NOT_ACCEPTED' | 'MEDIA_TEMPORARILY_UNAVAILABLE' | 'PAGE_CURSOR_INVALID' | 'ARTIFACT_NOT_AVAILABLE' | 'ARTIFACT_DELIVERY_NOT_ALLOWED' | 'ARTIFACT_DELIVERY_AUTHORIZATION_REJECTED' | 'ARTIFACT_TEMPORARILY_UNAVAILABLE' | 'ARTIFACT_RANGE_NOT_SATISFIABLE';
 
 export type ErrorResponse = {
     code: ErrorCode;
@@ -372,9 +561,495 @@ export type IdentitySessionList = {
     sessions: Array<IdentitySession>;
 };
 
+export type ImageArtifactDisplay = {
+    byteSize: PositiveUint64String;
+    format: ImageOutputFormat;
+    height: number;
+    width: number;
+};
+
+export type ImageArtifactVersion = ({
+    availability: 'ImageArtifactVersionProcessing';
+} & ImageArtifactVersionProcessing) | ({
+    availability: 'ImageArtifactVersionReady';
+} & ImageArtifactVersionReady) | ({
+    availability: 'ImageArtifactVersionRestricted';
+} & ImageArtifactVersionRestricted) | ({
+    availability: 'ImageArtifactVersionUnavailable';
+} & ImageArtifactVersionUnavailable) | ({
+    availability: 'ImageArtifactVersionDeleted';
+} & ImageArtifactVersionDeleted);
+
+export type ImageArtifactVersionCommon = {
+    artifactRef: string;
+    artifactVersionRef: string;
+    createdAt: string;
+    mediaClass: 'image';
+    ownerVersion: PositiveUint64String;
+    sourceArtifactVersionRefs: Array<string>;
+    versionNumber: PositiveUint64String;
+};
+
+export type ImageArtifactVersionDeleted = {
+    artifactRef: string;
+    artifactVersionRef: string;
+    availability: 'deleted';
+    createdAt: string;
+    mediaClass: 'image';
+    ownerVersion: PositiveUint64String;
+    sourceArtifactVersionRefs: Array<string>;
+    versionNumber: PositiveUint64String;
+};
+
+export type ImageArtifactVersionProcessing = {
+    artifactRef: string;
+    artifactVersionRef: string;
+    availability: 'processing';
+    createdAt: string;
+    mediaClass: 'image';
+    ownerVersion: PositiveUint64String;
+    sourceArtifactVersionRefs: Array<string>;
+    versionNumber: PositiveUint64String;
+};
+
+export type ImageArtifactVersionReady = {
+    artifactRef: string;
+    artifactVersionRef: string;
+    availability: 'ready';
+    createdAt: string;
+    display: ImageArtifactDisplay;
+    mediaClass: 'image';
+    ownerVersion: PositiveUint64String;
+    sourceArtifactVersionRefs: Array<string>;
+    versionNumber: PositiveUint64String;
+};
+
+export type ImageArtifactVersionRestricted = {
+    artifactRef: string;
+    artifactVersionRef: string;
+    availability: 'restricted';
+    createdAt: string;
+    mediaClass: 'image';
+    ownerVersion: PositiveUint64String;
+    safeFailure: MediaSafeFailure;
+    sourceArtifactVersionRefs: Array<string>;
+    versionNumber: PositiveUint64String;
+};
+
+export type ImageArtifactVersionUnavailable = {
+    artifactRef: string;
+    artifactVersionRef: string;
+    availability: 'unavailable';
+    createdAt: string;
+    mediaClass: 'image';
+    ownerVersion: PositiveUint64String;
+    safeFailure: MediaSafeFailure;
+    sourceArtifactVersionRefs: Array<string>;
+    versionNumber: PositiveUint64String;
+};
+
+export type ImageAspectRatio = 'square_1_1' | 'landscape_4_3' | 'landscape_16_9' | 'portrait_3_4' | 'portrait_9_16';
+
+export type ImageOutputFormat = 'png' | 'jpeg' | 'webp';
+
+export type ImageTextToImageOperationDefinition = {
+    definitionKey: 'image.text_to_image@v1';
+    definitionRef: string;
+    definitionRevisionRef: string;
+    description: string;
+    kind: 'image_text_to_image';
+    maximumCandidateCount: number;
+    modelOptionCatalogRevisionRef: string;
+    promptMaximumUtf8Bytes: 32768;
+    publishedAt: string;
+    supportedAspectRatios: Array<ImageAspectRatio>;
+    supportedOutputFormats: Array<ImageOutputFormat>;
+    title: string;
+};
+
+export type ImageTextToImageOperationInput = {
+    aspectRatio: ImageAspectRatio;
+    candidateCount: number;
+    definitionRevisionRef: string;
+    kind: 'image_text_to_image';
+    modelOptionRevisionRef: string;
+    outputFormat: ImageOutputFormat;
+    promptIntent: string;
+};
+
 export type LocalePolicy = {
     allowedLocales: Array<string>;
     defaultLocale: string;
+};
+
+export type MediaCandidateAllocatedView = {
+    candidateRef: string;
+    ordinal: number;
+    ownerVersion: PositiveUint64String;
+    state: 'allocated';
+};
+
+export type MediaCandidateCancelRequestedView = {
+    candidateRef: string;
+    ordinal: number;
+    ownerVersion: PositiveUint64String;
+    state: 'cancel_requested';
+};
+
+export type MediaCandidateCanceledView = {
+    candidateRef: string;
+    ordinal: number;
+    ownerVersion: PositiveUint64String;
+    state: 'canceled';
+};
+
+export type MediaCandidateCommon = {
+    candidateRef: string;
+    ordinal: number;
+    ownerVersion: PositiveUint64String;
+};
+
+export type MediaCandidateFailedView = {
+    candidateRef: string;
+    ordinal: number;
+    ownerVersion: PositiveUint64String;
+    safeFailure: MediaSafeFailure;
+    state: 'failed';
+};
+
+export type MediaCandidateOutputReceivedView = {
+    candidateRef: string;
+    ordinal: number;
+    ownerVersion: PositiveUint64String;
+    state: 'output_received';
+};
+
+export type MediaCandidateProducingView = {
+    candidateRef: string;
+    ordinal: number;
+    ownerVersion: PositiveUint64String;
+    state: 'producing';
+};
+
+export type MediaCandidateReadyView = {
+    artifactRef: string;
+    artifactVersionRef: string;
+    candidateRef: string;
+    ordinal: number;
+    ownerVersion: PositiveUint64String;
+    state: 'ready';
+};
+
+export type MediaCandidateRestrictedView = {
+    candidateRef: string;
+    ordinal: number;
+    ownerVersion: PositiveUint64String;
+    safeFailure: MediaSafeFailure;
+    state: 'restricted';
+};
+
+export type MediaCandidateUnknownView = {
+    candidateRef: string;
+    ordinal: number;
+    ownerVersion: PositiveUint64String;
+    state: 'unknown';
+};
+
+export type MediaCandidateValidatingView = {
+    candidateRef: string;
+    ordinal: number;
+    ownerVersion: PositiveUint64String;
+    state: 'validating';
+};
+
+export type MediaCandidateView = ({
+    state: 'allocated';
+} & MediaCandidateAllocatedView) | ({
+    state: 'producing';
+} & MediaCandidateProducingView) | ({
+    state: 'output_received';
+} & MediaCandidateOutputReceivedView) | ({
+    state: 'validating';
+} & MediaCandidateValidatingView) | ({
+    state: 'ready';
+} & MediaCandidateReadyView) | ({
+    state: 'restricted';
+} & MediaCandidateRestrictedView) | ({
+    state: 'failed';
+} & MediaCandidateFailedView) | ({
+    state: 'unknown';
+} & MediaCandidateUnknownView) | ({
+    state: 'cancel_requested';
+} & MediaCandidateCancelRequestedView) | ({
+    state: 'canceled';
+} & MediaCandidateCanceledView);
+
+export type MediaCommandRecoveryAction = 'get_operation' | 'recover_command' | 'contact_support';
+
+export type MediaCostProjectionView = ({
+    state: 'pending';
+} & CreditCostPending) | ({
+    state: 'estimated';
+} & CreditCostEstimated) | ({
+    state: 'final';
+} & CreditCostFinal) | ({
+    state: 'corrected';
+} & CreditCostCorrected) | ({
+    state: 'unavailable';
+} & CreditCostUnavailable);
+
+export type MediaDefinitionModelOptionPage = {
+    definitionRevisionRef: string;
+    items: Array<PublishedModelOption>;
+    pageInfo: PageInfo;
+};
+
+export type MediaOperationActiveView = {
+    candidates: Array<MediaCandidateView>;
+    costProjection: MediaCostProjectionView | null;
+    createdAt: string;
+    definitionRef: string;
+    definitionRevisionRef: string;
+    modelOptionRevisionRef: string;
+    operationRef: string;
+    ownerVersion: PositiveUint64String;
+    progressBps: number;
+    state: 'active';
+    updatedAt: string;
+};
+
+export type MediaOperationAdmissionPendingView = {
+    candidates: Array<MediaCandidateView>;
+    costProjection: MediaCostProjectionView | null;
+    createdAt: string;
+    definitionRef: string;
+    definitionRevisionRef: string;
+    modelOptionRevisionRef: string;
+    operationRef: string;
+    ownerVersion: PositiveUint64String;
+    progressBps: number;
+    state: 'admission_pending';
+    updatedAt: string;
+};
+
+export type MediaOperationAuthorizedView = {
+    candidates: Array<MediaCandidateView>;
+    costProjection: MediaCostProjectionView | null;
+    createdAt: string;
+    definitionRef: string;
+    definitionRevisionRef: string;
+    modelOptionRevisionRef: string;
+    operationRef: string;
+    ownerVersion: PositiveUint64String;
+    progressBps: number;
+    state: 'authorized';
+    updatedAt: string;
+};
+
+export type MediaOperationCancelInput = {
+    expectedOwnerVersion: PositiveUint64String;
+    reason?: string;
+};
+
+export type MediaOperationCancelRequestedView = {
+    candidates: Array<MediaCandidateView>;
+    costProjection: MediaCostProjectionView | null;
+    createdAt: string;
+    definitionRef: string;
+    definitionRevisionRef: string;
+    modelOptionRevisionRef: string;
+    operationRef: string;
+    ownerVersion: PositiveUint64String;
+    progressBps: number;
+    state: 'cancel_requested';
+    updatedAt: string;
+};
+
+export type MediaOperationCanceledView = {
+    candidates: Array<MediaCandidateView>;
+    costProjection: MediaCostProjectionView | null;
+    createdAt: string;
+    definitionRef: string;
+    definitionRevisionRef: string;
+    modelOptionRevisionRef: string;
+    operationRef: string;
+    outcomeClass: 'canonical' | 'irreconcilable';
+    ownerVersion: PositiveUint64String;
+    progressBps: number;
+    state: 'canceled';
+    updatedAt: string;
+};
+
+export type MediaOperationCommandReceipt = ({
+    receiptKind: 'submit_accepted';
+} & SubmitMediaCommandAccepted) | ({
+    receiptKind: 'submit_rejected';
+} & SubmitMediaCommandRejected) | ({
+    receiptKind: 'submit_outcome_unknown';
+} & SubmitMediaCommandOutcomeUnknown) | ({
+    receiptKind: 'cancel_accepted';
+} & CancelMediaCommandAccepted) | ({
+    receiptKind: 'cancel_rejected';
+} & CancelMediaCommandRejected) | ({
+    receiptKind: 'cancel_outcome_unknown';
+} & CancelMediaCommandOutcomeUnknown);
+
+export type MediaOperationCommandResponse = {
+    operation: MediaOperationView | null;
+    receipt: MediaOperationCommandReceipt;
+};
+
+export type MediaOperationCompletedView = {
+    candidates: Array<MediaCandidateView>;
+    costProjection: MediaCostProjectionView | null;
+    createdAt: string;
+    definitionRef: string;
+    definitionRevisionRef: string;
+    modelOptionRevisionRef: string;
+    operationRef: string;
+    outcomeClass: 'canonical' | 'irreconcilable';
+    ownerVersion: PositiveUint64String;
+    progressBps: number;
+    state: 'completed';
+    updatedAt: string;
+};
+
+export type MediaOperationDefinitionPage = {
+    items: Array<OperationDefinition>;
+    pageInfo: PageInfo;
+};
+
+export type MediaOperationDefinitionResponse = {
+    definition: OperationDefinition;
+};
+
+export type MediaOperationFailedView = {
+    candidates: Array<MediaCandidateView>;
+    costProjection: MediaCostProjectionView | null;
+    createdAt: string;
+    definitionRef: string;
+    definitionRevisionRef: string;
+    modelOptionRevisionRef: string;
+    operationRef: string;
+    outcomeClass: 'canonical' | 'irreconcilable';
+    ownerVersion: PositiveUint64String;
+    progressBps: number;
+    safeFailure: MediaSafeFailure;
+    state: 'failed';
+    updatedAt: string;
+};
+
+export type MediaOperationFinalizingView = {
+    candidates: Array<MediaCandidateView>;
+    costProjection: MediaCostProjectionView | null;
+    createdAt: string;
+    definitionRef: string;
+    definitionRevisionRef: string;
+    modelOptionRevisionRef: string;
+    operationRef: string;
+    ownerVersion: PositiveUint64String;
+    progressBps: number;
+    state: 'finalizing';
+    updatedAt: string;
+};
+
+export type MediaOperationInput = ImageTextToImageOperationInput;
+
+export type MediaOperationPage = {
+    items: Array<MediaOperationView>;
+    pageInfo: PageInfo;
+};
+
+export type MediaOperationPartialView = {
+    candidates: Array<MediaCandidateView>;
+    costProjection: MediaCostProjectionView | null;
+    createdAt: string;
+    definitionRef: string;
+    definitionRevisionRef: string;
+    modelOptionRevisionRef: string;
+    operationRef: string;
+    outcomeClass: 'canonical' | 'irreconcilable';
+    ownerVersion: PositiveUint64String;
+    progressBps: number;
+    state: 'partial';
+    updatedAt: string;
+};
+
+export type MediaOperationQueuedView = {
+    candidates: Array<MediaCandidateView>;
+    costProjection: MediaCostProjectionView | null;
+    createdAt: string;
+    definitionRef: string;
+    definitionRevisionRef: string;
+    modelOptionRevisionRef: string;
+    operationRef: string;
+    ownerVersion: PositiveUint64String;
+    progressBps: number;
+    state: 'queued';
+    updatedAt: string;
+};
+
+export type MediaOperationQuote = {
+    definitionRevisionRef: string;
+    estimate: CreditEstimate;
+    expiresAt: string;
+    modelOptionRevisionRef: string;
+    nonBinding: true;
+    quoteRef: string;
+};
+
+export type MediaOperationQuoteResponse = {
+    quote: MediaOperationQuote;
+};
+
+export type MediaOperationReconcilingView = {
+    candidates: Array<MediaCandidateView>;
+    costProjection: MediaCostProjectionView | null;
+    createdAt: string;
+    definitionRef: string;
+    definitionRevisionRef: string;
+    modelOptionRevisionRef: string;
+    operationRef: string;
+    ownerVersion: PositiveUint64String;
+    progressBps: number;
+    state: 'reconciling';
+    updatedAt: string;
+};
+
+export type MediaOperationResponse = {
+    operation: MediaOperationView;
+};
+
+export type MediaOperationState = 'admission_pending' | 'authorized' | 'queued' | 'active' | 'finalizing' | 'cancel_requested' | 'reconciling' | 'completed' | 'partial' | 'failed' | 'canceled';
+
+export type MediaOperationView = ({
+    state: 'admission_pending';
+} & MediaOperationAdmissionPendingView) | ({
+    state: 'authorized';
+} & MediaOperationAuthorizedView) | ({
+    state: 'queued';
+} & MediaOperationQueuedView) | ({
+    state: 'active';
+} & MediaOperationActiveView) | ({
+    state: 'finalizing';
+} & MediaOperationFinalizingView) | ({
+    state: 'cancel_requested';
+} & MediaOperationCancelRequestedView) | ({
+    state: 'reconciling';
+} & MediaOperationReconcilingView) | ({
+    state: 'completed';
+} & MediaOperationCompletedView) | ({
+    state: 'partial';
+} & MediaOperationPartialView) | ({
+    state: 'failed';
+} & MediaOperationFailedView) | ({
+    state: 'canceled';
+} & MediaOperationCanceledView);
+
+export type MediaSafeFailure = {
+    code: 'input_rejected' | 'policy_rejected' | 'credit_rejected' | 'generation_failed' | 'validation_failed' | 'temporarily_unavailable' | 'outcome_unknown' | 'artifact_restricted' | 'artifact_unavailable';
+    retryClass: 'never' | 'after_delay' | 'after_user_action' | 'reconcile_receipt';
+    safeMessage: string;
 };
 
 export type MfaReauthenticationInput = {
@@ -442,6 +1117,8 @@ export type OneTimeTotpRecoveryEnrollmentDelivery = {
     transaction: TotpEnrollmentTransaction;
 };
 
+export type OperationDefinition = ImageTextToImageOperationDefinition;
+
 export type OtpInput = {
     code: string;
     reauthenticationProof: string;
@@ -461,6 +1138,11 @@ export type OutcomeUnknownPublicCommandReceipt = {
 export type OutcomeUnknownPublicCommandReceiptResponse = {
     receipt: OutcomeUnknownPublicCommandReceipt;
     reconciliation: PendingCommandReconciliation;
+};
+
+export type PageInfo = {
+    hasMore: boolean;
+    nextCursor: string | null;
 };
 
 export type PasswordChangeInput = {
@@ -688,7 +1370,7 @@ export type RedemptionConfirmInput = {
 };
 
 export type RedemptionCreditPreview = {
-    amount: CreditAmount;
+    amount: CreditDecimalAmount;
     bucketClass: 'daily' | 'period' | 'permanent';
     creditProgramRevisionRef: string;
     expiresAt: string | null;
@@ -915,6 +1597,41 @@ export type SessionGrantWriteAuthorization = {
 
 export type SessionMfaCompletionInput = CompleteSessionMfaInput | SupersedeSessionCredentialDeliveryInput;
 
+export type SubmitMediaCommandAccepted = {
+    callerRequestFingerprint: string;
+    commandId: string;
+    operationRef: string;
+    receiptKind: 'submit_accepted';
+    receiptVersion: PositiveUint64String;
+    recoveryAction: MediaCommandRecoveryAction;
+    updatedAt: string;
+};
+
+export type SubmitMediaCommandOutcomeUnknown = {
+    callerRequestFingerprint: string;
+    commandId: string;
+    receiptKind: 'submit_outcome_unknown';
+    receiptVersion: PositiveUint64String;
+    recoveryAction: MediaCommandRecoveryAction;
+    safeFailure: MediaSafeFailure;
+    updatedAt: string;
+};
+
+export type SubmitMediaCommandReceiptCommon = {
+    commandId: string;
+    receiptVersion: PositiveUint64String;
+    updatedAt: string;
+};
+
+export type SubmitMediaCommandRejected = {
+    callerRequestFingerprint: string;
+    commandId: string;
+    receiptKind: 'submit_rejected';
+    receiptVersion: PositiveUint64String;
+    safeFailure: MediaSafeFailure;
+    updatedAt: string;
+};
+
 export type SupersedeReauthenticationProofInput = {
     priorCommandId: string;
     stage: 'supersede';
@@ -1016,17 +1733,17 @@ export type TrustedAssetGrantResponse = {
 };
 
 export type UsageCreditAllocation = {
-    amount: CreditAmount;
+    amount: CreditDecimalAmount;
     creditGrantId: string;
     journalReceiptRef: string;
 };
 
 export type UsageDetail = {
     allocations: Array<UsageCreditAllocation>;
-    estimatedAmount: CreditAmount;
+    estimatedAmount: CreditDecimalAmount;
     executionBudgetRootRef: string;
     occurredAt: string;
-    ratedAmount: CreditAmount | null;
+    ratedAmount: CreditDecimalAmount | null;
     runRef: string;
     settledAt: string | null;
     state: 'reserved' | 'rated' | 'settled' | 'reversed' | 'reconciliation_required';
@@ -1047,6 +1764,17 @@ export type VerificationActivationResponse = {
     receipt: CommandReceipt;
 };
 
+/**
+ * One bounded RFC 9110 byte range only. A start/end range and a suffix range are supported; multipart and open-ended ranges are rejected. The requested span must not exceed 8 MiB.
+ */
+export type ArtifactByteRange = string;
+
+export type ArtifactDeliveryAuthorizationRef = string;
+
+export type ArtifactRef = string;
+
+export type ArtifactVersionRef = string;
+
 export type AssetCommandId = string;
 
 export type AssetEligibilityEpoch = PositiveUint64String;
@@ -1060,6 +1788,11 @@ export type AssetRef = string;
 export type AssetUploadIntentRef = string;
 
 export type AssetVersionRef = string;
+
+/**
+ * Lowercase SHA-256 of the versioned, deterministic protobuf caller-intent preimage.
+ */
+export type CallerRequestFingerprint = string;
 
 export type CommandId = string;
 
@@ -1076,13 +1809,35 @@ export type CsrfToken = string;
 
 export type IdempotencyKey = string;
 
+export type MediaCommandId = string;
+
+export type MediaDefinitionRef = string;
+
+export type MediaOperationRef = string;
+
+/**
+ * Opaque owner-bound cursor. Clients must never inspect or synthesize it.
+ */
+export type PageCursor = string;
+
+export type PageLimit = number;
+
 export type ProjectRef = string;
 
 export type RedemptionId = string;
 
+/**
+ * Caller-owned non-zero deadline. The generated caller seam requires an AbortSignal and transports this deadline; expiration aborts the upstream stream rather than buffering it.
+ */
+export type RequestDeadline = number;
+
 export type TransactionRef = string;
 
 export type UsageId = string;
+
+export type ArtifactDeliveryAuthorizationRequest = ArtifactDeliveryAuthorizationInput;
+
+export type ArtifactDeliveryRevocationRequest = ArtifactDeliveryRevocationInput;
 
 export type AssetUploadCompleteRequest = AssetUploadCompleteInput;
 
@@ -1097,6 +1852,12 @@ export type EmailChangeCompletionRequest = EmailChangeCompletionInput;
 export type EmailChangeStartRequest = EmailChangeStartInput;
 
 export type IdentifierRequest = IdentifierInput;
+
+export type MediaOperationCancelRequest = MediaOperationCancelInput;
+
+export type MediaOperationQuoteRequest = MediaOperationInput;
+
+export type MediaOperationSubmitRequest = MediaOperationInput;
 
 export type OtpRequest = OtpInput;
 
@@ -1129,6 +1890,52 @@ export type TotpConfirmationRequest = TotpConfirmationInput;
 export type TotpEnrollmentStartRequest = TotpEnrollmentStartInput;
 
 export type TransactionSecretRequest = TransactionSecretInput;
+
+export type RedeemArtifactDeliveryAuthorizationData = {
+    body?: never;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+        /**
+         * One bounded RFC 9110 byte range only. A start/end range and a suffix range are supported; multipart and open-ended ranges are rejected. The requested span must not exceed 8 MiB.
+         */
+        Range?: string;
+        /**
+         * Caller-owned non-zero deadline. The generated caller seam requires an AbortSignal and transports this deadline; expiration aborts the upstream stream rather than buffering it.
+         */
+        'X-Kokoro-Request-Deadline-Ms': number;
+    };
+    path: {
+        authorizationRef: string;
+    };
+    query?: never;
+    url: '/v1/artifact-delivery-authorizations/{authorizationRef}/content';
+};
+
+export type RedeemArtifactDeliveryAuthorizationErrors = {
+    /**
+     * The single byte range is malformed, exceeds 8 MiB, or is not satisfiable.
+     */
+    416: ErrorResponse;
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type RedeemArtifactDeliveryAuthorizationError = RedeemArtifactDeliveryAuthorizationErrors[keyof RedeemArtifactDeliveryAuthorizationErrors];
+
+export type RedeemArtifactDeliveryAuthorizationResponses = {
+    /**
+     * Authorized artifact byte stream.
+     */
+    200: Blob | File;
+    /**
+     * Authorized bounded single byte range.
+     */
+    206: Blob | File;
+};
+
+export type RedeemArtifactDeliveryAuthorizationResponse = RedeemArtifactDeliveryAuthorizationResponses[keyof RedeemArtifactDeliveryAuthorizationResponses];
 
 export type GetPublicCommandReceiptData = {
     body?: never;
@@ -2022,6 +2829,212 @@ export type ExchangeProductContextResponses = {
 
 export type ExchangeProductContextResponse = ExchangeProductContextResponses[keyof ExchangeProductContextResponses];
 
+export type RevokeArtifactDeliveryAuthorizationData = {
+    body: ArtifactDeliveryRevocationRequest;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+        /**
+         * Stable caller-generated 128-bit command identity, encoded as lowercase 32-hex or UUIDv7. It must not be derived from Idempotency-Key, password, OTP, or request content. Platform owns a unique workload/Site/caller/command row and rejects the same command id with a different payload using an internal keyed digest; all responses and receipts echo this exact id.
+         */
+        'X-Kokoro-Command-Id': string;
+        'Idempotency-Key': string;
+        'X-CSRF-Token': string;
+    };
+    path: {
+        projectRef: string;
+        authorizationRef: string;
+    };
+    query?: never;
+    url: '/v1/projects/{projectRef}/artifact-delivery-authorizations/{authorizationRef}:revoke';
+};
+
+export type RevokeArtifactDeliveryAuthorizationErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type RevokeArtifactDeliveryAuthorizationError = RevokeArtifactDeliveryAuthorizationErrors[keyof RevokeArtifactDeliveryAuthorizationErrors];
+
+export type RevokeArtifactDeliveryAuthorizationResponses = {
+    /**
+     * Durable revocation state without the bearer capability.
+     */
+    200: ArtifactDeliveryRevocationResponse;
+};
+
+export type RevokeArtifactDeliveryAuthorizationResponse = RevokeArtifactDeliveryAuthorizationResponses[keyof RevokeArtifactDeliveryAuthorizationResponses];
+
+export type ListArtifactsData = {
+    body?: never;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+    };
+    path: {
+        projectRef: string;
+    };
+    query?: {
+        /**
+         * Opaque owner-bound cursor. Clients must never inspect or synthesize it.
+         */
+        cursor?: string;
+        limit?: number;
+    };
+    url: '/v1/projects/{projectRef}/artifacts';
+};
+
+export type ListArtifactsErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type ListArtifactsError = ListArtifactsErrors[keyof ListArtifactsErrors];
+
+export type ListArtifactsResponses = {
+    /**
+     * A bounded owner-scoped artifact page.
+     */
+    200: ArtifactPage;
+};
+
+export type ListArtifactsResponse = ListArtifactsResponses[keyof ListArtifactsResponses];
+
+export type GetArtifactData = {
+    body?: never;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+    };
+    path: {
+        projectRef: string;
+        artifactRef: string;
+    };
+    query?: never;
+    url: '/v1/projects/{projectRef}/artifacts/{artifactRef}';
+};
+
+export type GetArtifactErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type GetArtifactError = GetArtifactErrors[keyof GetArtifactErrors];
+
+export type GetArtifactResponses = {
+    /**
+     * One logical artifact and its current exact version reference.
+     */
+    200: ArtifactResponse;
+};
+
+export type GetArtifactResponse = GetArtifactResponses[keyof GetArtifactResponses];
+
+export type ListArtifactVersionsData = {
+    body?: never;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+    };
+    path: {
+        projectRef: string;
+        artifactRef: string;
+    };
+    query?: {
+        /**
+         * Opaque owner-bound cursor. Clients must never inspect or synthesize it.
+         */
+        cursor?: string;
+        limit?: number;
+    };
+    url: '/v1/projects/{projectRef}/artifacts/{artifactRef}/versions';
+};
+
+export type ListArtifactVersionsErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type ListArtifactVersionsError = ListArtifactVersionsErrors[keyof ListArtifactVersionsErrors];
+
+export type ListArtifactVersionsResponses = {
+    /**
+     * A bounded immutable artifact-version page.
+     */
+    200: ArtifactVersionPage;
+};
+
+export type ListArtifactVersionsResponse = ListArtifactVersionsResponses[keyof ListArtifactVersionsResponses];
+
+export type GetArtifactVersionData = {
+    body?: never;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+    };
+    path: {
+        projectRef: string;
+        artifactRef: string;
+        artifactVersionRef: string;
+    };
+    query?: never;
+    url: '/v1/projects/{projectRef}/artifacts/{artifactRef}/versions/{artifactVersionRef}';
+};
+
+export type GetArtifactVersionErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type GetArtifactVersionError = GetArtifactVersionErrors[keyof GetArtifactVersionErrors];
+
+export type GetArtifactVersionResponses = {
+    /**
+     * One immutable artifact version without storage or provider authority.
+     */
+    200: ArtifactVersionResponse;
+};
+
+export type GetArtifactVersionResponse = GetArtifactVersionResponses[keyof GetArtifactVersionResponses];
+
+export type IssueArtifactDeliveryAuthorizationData = {
+    body: ArtifactDeliveryAuthorizationRequest;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+        'X-CSRF-Token': string;
+    };
+    path: {
+        projectRef: string;
+        artifactRef: string;
+        artifactVersionRef: string;
+    };
+    query?: never;
+    url: '/v1/projects/{projectRef}/artifacts/{artifactRef}/versions/{artifactVersionRef}/delivery-authorizations';
+};
+
+export type IssueArtifactDeliveryAuthorizationErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type IssueArtifactDeliveryAuthorizationError = IssueArtifactDeliveryAuthorizationErrors[keyof IssueArtifactDeliveryAuthorizationErrors];
+
+export type IssueArtifactDeliveryAuthorizationResponses = {
+    /**
+     * A newly issued short-lived capability that must never be cached or replayed from a receipt.
+     */
+    201: ArtifactDeliveryAuthorizationResponse;
+};
+
+export type IssueArtifactDeliveryAuthorizationResponse = IssueArtifactDeliveryAuthorizationResponses[keyof IssueArtifactDeliveryAuthorizationResponses];
+
 export type RecoverAssetUploadCommandData = {
     body?: never;
     headers: {
@@ -2192,6 +3205,329 @@ export type GetTrustedAssetGrantResponses = {
 };
 
 export type GetTrustedAssetGrantResponse = GetTrustedAssetGrantResponses[keyof GetTrustedAssetGrantResponses];
+
+export type RecoverMediaOperationCommandData = {
+    body?: never;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+    };
+    path: {
+        projectRef: string;
+        commandId: string;
+    };
+    query?: never;
+    url: '/v1/projects/{projectRef}/media-operation-commands/{commandId}';
+};
+
+export type RecoverMediaOperationCommandErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type RecoverMediaOperationCommandError = RecoverMediaOperationCommandErrors[keyof RecoverMediaOperationCommandErrors];
+
+export type RecoverMediaOperationCommandResponses = {
+    /**
+     * Durable owner command receipt and current media projection.
+     */
+    200: MediaOperationCommandResponse;
+};
+
+export type RecoverMediaOperationCommandResponse = RecoverMediaOperationCommandResponses[keyof RecoverMediaOperationCommandResponses];
+
+export type ListMediaOperationDefinitionsData = {
+    body?: never;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+    };
+    path: {
+        projectRef: string;
+    };
+    query?: {
+        /**
+         * Opaque owner-bound cursor. Clients must never inspect or synthesize it.
+         */
+        cursor?: string;
+        limit?: number;
+    };
+    url: '/v1/projects/{projectRef}/media-operation-definitions';
+};
+
+export type ListMediaOperationDefinitionsErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type ListMediaOperationDefinitionsError = ListMediaOperationDefinitionsErrors[keyof ListMediaOperationDefinitionsErrors];
+
+export type ListMediaOperationDefinitionsResponses = {
+    /**
+     * A bounded page of Site-published media definitions.
+     */
+    200: MediaOperationDefinitionPage;
+};
+
+export type ListMediaOperationDefinitionsResponse = ListMediaOperationDefinitionsResponses[keyof ListMediaOperationDefinitionsResponses];
+
+export type GetMediaOperationDefinitionData = {
+    body?: never;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+    };
+    path: {
+        projectRef: string;
+        definitionRef: string;
+    };
+    query?: never;
+    url: '/v1/projects/{projectRef}/media-operation-definitions/{definitionRef}';
+};
+
+export type GetMediaOperationDefinitionErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type GetMediaOperationDefinitionError = GetMediaOperationDefinitionErrors[keyof GetMediaOperationDefinitionErrors];
+
+export type GetMediaOperationDefinitionResponses = {
+    /**
+     * One immutable Site-published media definition revision.
+     */
+    200: MediaOperationDefinitionResponse;
+};
+
+export type GetMediaOperationDefinitionResponse = GetMediaOperationDefinitionResponses[keyof GetMediaOperationDefinitionResponses];
+
+export type ListMediaOperationModelOptionsData = {
+    body?: never;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+    };
+    path: {
+        projectRef: string;
+        definitionRef: string;
+    };
+    query?: {
+        /**
+         * Opaque owner-bound cursor. Clients must never inspect or synthesize it.
+         */
+        cursor?: string;
+        limit?: number;
+    };
+    url: '/v1/projects/{projectRef}/media-operation-definitions/{definitionRef}/model-options';
+};
+
+export type ListMediaOperationModelOptionsErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type ListMediaOperationModelOptionsError = ListMediaOperationModelOptionsErrors[keyof ListMediaOperationModelOptionsErrors];
+
+export type ListMediaOperationModelOptionsResponses = {
+    /**
+     * Safe model selector options for one media definition revision.
+     */
+    200: MediaDefinitionModelOptionPage;
+};
+
+export type ListMediaOperationModelOptionsResponse = ListMediaOperationModelOptionsResponses[keyof ListMediaOperationModelOptionsResponses];
+
+export type QuoteMediaOperationData = {
+    body: MediaOperationQuoteRequest;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+        /**
+         * Stable caller-generated 128-bit command identity, encoded as lowercase 32-hex or UUIDv7. It must not be derived from Idempotency-Key, password, OTP, or request content. Platform owns a unique workload/Site/caller/command row and rejects the same command id with a different payload using an internal keyed digest; all responses and receipts echo this exact id.
+         */
+        'X-Kokoro-Command-Id': string;
+        'Idempotency-Key': string;
+        'X-CSRF-Token': string;
+    };
+    path: {
+        projectRef: string;
+    };
+    query?: never;
+    url: '/v1/projects/{projectRef}/media-operation-quotes';
+};
+
+export type QuoteMediaOperationErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type QuoteMediaOperationError = QuoteMediaOperationErrors[keyof QuoteMediaOperationErrors];
+
+export type QuoteMediaOperationResponses = {
+    /**
+     * Non-binding cost guidance; no hold or execution capacity is reserved.
+     */
+    200: MediaOperationQuoteResponse;
+};
+
+export type QuoteMediaOperationResponse = QuoteMediaOperationResponses[keyof QuoteMediaOperationResponses];
+
+export type ListMediaOperationsData = {
+    body?: never;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+    };
+    path: {
+        projectRef: string;
+    };
+    query?: {
+        /**
+         * Opaque owner-bound cursor. Clients must never inspect or synthesize it.
+         */
+        cursor?: string;
+        limit?: number;
+    };
+    url: '/v1/projects/{projectRef}/media-operations';
+};
+
+export type ListMediaOperationsErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type ListMediaOperationsError = ListMediaOperationsErrors[keyof ListMediaOperationsErrors];
+
+export type ListMediaOperationsResponses = {
+    /**
+     * A bounded owner-scoped media operation page.
+     */
+    200: MediaOperationPage;
+};
+
+export type ListMediaOperationsResponse = ListMediaOperationsResponses[keyof ListMediaOperationsResponses];
+
+export type SubmitMediaOperationData = {
+    body: MediaOperationSubmitRequest;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+        /**
+         * Stable caller-generated 128-bit command identity, encoded as lowercase 32-hex or UUIDv7. It must not be derived from Idempotency-Key, password, OTP, or request content. Platform owns a unique workload/Site/caller/command row and rejects the same command id with a different payload using an internal keyed digest; all responses and receipts echo this exact id.
+         */
+        'X-Kokoro-Command-Id': string;
+        'Idempotency-Key': string;
+        'X-CSRF-Token': string;
+        /**
+         * Lowercase SHA-256 of the versioned, deterministic protobuf caller-intent preimage.
+         */
+        'X-Kokoro-Caller-Request-Fingerprint': string;
+    };
+    path: {
+        projectRef: string;
+    };
+    query?: never;
+    url: '/v1/projects/{projectRef}/media-operations';
+};
+
+export type SubmitMediaOperationErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type SubmitMediaOperationError = SubmitMediaOperationErrors[keyof SubmitMediaOperationErrors];
+
+export type SubmitMediaOperationResponses = {
+    /**
+     * Durable owner command receipt and current media projection.
+     */
+    201: MediaOperationCommandResponse;
+    /**
+     * Durable owner command receipt and current media projection.
+     */
+    202: MediaOperationCommandResponse;
+};
+
+export type SubmitMediaOperationResponse = SubmitMediaOperationResponses[keyof SubmitMediaOperationResponses];
+
+export type GetMediaOperationData = {
+    body?: never;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+    };
+    path: {
+        projectRef: string;
+        operationRef: string;
+    };
+    query?: never;
+    url: '/v1/projects/{projectRef}/media-operations/{operationRef}';
+};
+
+export type GetMediaOperationErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type GetMediaOperationError = GetMediaOperationErrors[keyof GetMediaOperationErrors];
+
+export type GetMediaOperationResponses = {
+    /**
+     * Current owner-scoped media operation projection.
+     */
+    200: MediaOperationResponse;
+};
+
+export type GetMediaOperationResponse = GetMediaOperationResponses[keyof GetMediaOperationResponses];
+
+export type CancelMediaOperationData = {
+    body: MediaOperationCancelRequest;
+    headers: {
+        'Kokoro-Contract-Version': '1';
+        /**
+         * Stable caller-generated 128-bit command identity, encoded as lowercase 32-hex or UUIDv7. It must not be derived from Idempotency-Key, password, OTP, or request content. Platform owns a unique workload/Site/caller/command row and rejects the same command id with a different payload using an internal keyed digest; all responses and receipts echo this exact id.
+         */
+        'X-Kokoro-Command-Id': string;
+        'Idempotency-Key': string;
+        'X-CSRF-Token': string;
+    };
+    path: {
+        projectRef: string;
+        operationRef: string;
+    };
+    query?: never;
+    url: '/v1/projects/{projectRef}/media-operations/{operationRef}:cancel';
+};
+
+export type CancelMediaOperationErrors = {
+    /**
+     * Stable, non-disclosing Platform error.
+     */
+    default: ErrorResponse;
+};
+
+export type CancelMediaOperationError = CancelMediaOperationErrors[keyof CancelMediaOperationErrors];
+
+export type CancelMediaOperationResponses = {
+    /**
+     * Durable owner command receipt and current media projection.
+     */
+    200: MediaOperationCommandResponse;
+    /**
+     * Durable owner command receipt and current media projection.
+     */
+    202: MediaOperationCommandResponse;
+};
+
+export type CancelMediaOperationResponse = CancelMediaOperationResponses[keyof CancelMediaOperationResponses];
 
 export type RecoverRedemptionCommandData = {
     body?: never;

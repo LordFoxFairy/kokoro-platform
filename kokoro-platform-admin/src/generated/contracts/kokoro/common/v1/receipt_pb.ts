@@ -146,4 +146,3 @@ export enum CommandReceiptState {
  */
 export const CommandReceiptStateSchema: GenEnum<CommandReceiptState> = /*@__PURE__*/
   enumDesc(file_kokoro_common_v1_receipt, 1);
-

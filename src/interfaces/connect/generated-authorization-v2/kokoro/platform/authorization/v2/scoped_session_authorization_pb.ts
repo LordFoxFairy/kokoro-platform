@@ -1154,4 +1154,3 @@ export const ScopedSessionAuthorizationService: GenService<{
   },
 }> = /*@__PURE__*/
   serviceDesc(file_kokoro_platform_authorization_v2_scoped_session_authorization, 0);
-

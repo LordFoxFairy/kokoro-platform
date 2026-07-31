@@ -290,4 +290,3 @@ export const SessionAdmissionOwnerService: GenService<{
   },
 }> = /*@__PURE__*/
   serviceDesc(file_kokoro_session_admission_v1_session_admission_owner, 0);
-
