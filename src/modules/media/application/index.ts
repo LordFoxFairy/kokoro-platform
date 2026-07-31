@@ -1,16 +1,20 @@
 export type { MediaDefinitionCanonicalizer } from "./contracts/index.js";
 export {
+  deriveMediaAdmissionRequestDigest,
   ImageOperationSubmissionService,
   InMemoryMediaImageOperationRepository,
 } from "./image-operation-submission.js";
 export type {
+  AgentMediaChildBudgetOwner,
   AgentImageAccessOwnerPort,
+  DirectStudioMediaImageAdmissionFacts,
+  DirectStudioRootBudgetOwner,
+  MediaImageBudgetOwners,
   MediaImageAdmissionFacts,
   MediaImageAdmissionOwnerPort,
   MediaImageCommandBegin,
   MediaCommandDurableReceipt,
   MediaImageCommandIdentity,
-  MediaImageLocalCreditAllocationOwner,
   MediaImageOperationRecord,
   MediaImageOperationRepository,
   MediaImageUnitOfWork,
@@ -56,7 +60,9 @@ export type {
   MediaArtifactStagedCleanupPort,
 } from "./media-artifact-cleanup-worker.js";
 export type {
+  DirectStudioOwnerAuthority,
   MediaOperationOwnerBinding,
   MediaOperationSource,
+  MediaOperationTransactionScope,
   ProtectedOperationInputRevision,
 } from "./operation-input-protection.js";

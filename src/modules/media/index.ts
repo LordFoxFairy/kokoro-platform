@@ -1,4 +1,5 @@
 export {
+  deriveMediaAdmissionRequestDigest,
   deriveMediaOwnerRequestDigest,
   EnvelopeOperationInputProtector,
   ImageOperationSubmissionService,
@@ -9,10 +10,14 @@ export {
   MediaArtifactCleanupWorker,
 } from "./application/index.js";
 export type {
+  AgentMediaChildBudgetOwner,
   AgentImageAccessOwnerPort,
   MediaArtifactCleanupRepository,
   MediaArtifactCleanupTask,
   MediaArtifactStagedCleanupPort,
+  DirectStudioMediaImageAdmissionFacts,
+  DirectStudioOwnerAuthority,
+  DirectStudioRootBudgetOwner,
   ImageOutputTrustPort,
   MediaDefinitionCanonicalizer,
   MediaImageArtifactCheckpoint,
@@ -28,7 +33,7 @@ export type {
   MediaImageRequest,
   MediaImageReceiptCanonicalizerPort,
   MediaImageSagaCheckpoint,
-  MediaImageLocalCreditAllocationOwner,
+  MediaImageBudgetOwners,
   MediaImageCreditSettlementPort,
   MediaImageOperationRecord,
   MediaImageOperationRepository,
@@ -40,6 +45,7 @@ export type {
   MediaImageWorkerTask,
   MediaOperationOwnerBinding,
   MediaOperationSource,
+  MediaOperationTransactionScope,
   ProtectedOperationInputRevision,
 } from "./application/index.js";
 
@@ -56,6 +62,15 @@ export {
   PostgresMediaImageWorkerDatabase,
   PostgresMediaImageWorkerRepository,
 } from "./infrastructure/postgres/index.js";
+
+export {
+  createMediaPublicOperations,
+  MEDIA_PUBLIC_OPERATION_IDS,
+} from "./interfaces/http/index.js";
+export type {
+  MediaPublicOperationId,
+  MediaPublicOperationOwner,
+} from "./interfaces/http/index.js";
 
 export { createMediaRuntimeConnectService } from "./interfaces/connect/index.js";
 export type {

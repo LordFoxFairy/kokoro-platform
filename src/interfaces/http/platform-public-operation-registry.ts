@@ -22,6 +22,7 @@ export type PlatformPublicOperationExecution<Id extends PlatformPublicOperationI
   path: RuntimeSchemaOutput<OperationDefinition<Id>["requestSchemas"]["path"]>;
   query: RuntimeSchemaOutput<OperationDefinition<Id>["requestSchemas"]["query"]>;
   receiptRecoveryCapability: string | null;
+  signal: AbortSignal;
 }>;
 
 export interface PlatformPublicOperationDescriptor<Id extends PlatformPublicOperationId = PlatformPublicOperationId> {

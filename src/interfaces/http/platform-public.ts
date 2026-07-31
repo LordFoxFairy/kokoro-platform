@@ -72,13 +72,18 @@ export function createPlatformPublicHttpHandler(input: Readonly<{
       }
       const matched = registry.match(request.method, target.pathname);
       if (matched === null) return false;
+      const requestAbort = new AbortController();
+      const abortRequest = () => requestAbort.abort(new Error("PLATFORM_PUBLIC_REQUEST_ABORTED"));
+      request.once("aborted", abortRequest);
       response.setHeader("x-request-id", requestId);
       response.setHeader("cache-control", "no-store");
       response.setHeader("x-content-type-options", "nosniff");
       try {
         const workload = input.workloads.authenticate(request, matched.descriptor.operationId);
         const now = instant(clock());
-        const headers = parseOptional(matched.definition.requestSchemas.headers, requestHeaders(request));
+        const headers = parseOptional(matched.definition.requestSchemas.headers,
+          platformPublicRequestHeaders(matched.definition.requestSchemas.headers as HeaderRuntimeSchema,
+            request.headers));
         const body = matched.definition.requestSchemas.body === null
           ? null
           : requestValue(matched.definition.requestSchemas.body as RuntimeSchema, await readJsonBody(request));
@@ -108,7 +113,7 @@ export function createPlatformPublicHttpHandler(input: Readonly<{
         const execution = {
           operationId: matched.descriptor.operationId,
           workload, session, context, headers, body, path: pathParameters, query,
-          receiptRecoveryCapability,
+          receiptRecoveryCapability, signal: requestAbort.signal,
         } as PlatformPublicOperationExecution<PlatformPublicOperationId>;
         const result = await matched.descriptor.execute(execution);
         const responseBody = requestValue(matched.definition.responseSchema as RuntimeSchema, result);
@@ -121,6 +126,8 @@ export function createPlatformPublicHttpHandler(input: Readonly<{
       } catch (error) {
         sendProblem(response, platformPublicSafeProblem(error, requestId, correlationId));
         return true;
+      } finally {
+        request.off("aborted", abortRequest);
       }
     },
   });
@@ -181,17 +188,38 @@ function noQuery(query: Readonly<Record<string, string>>): null {
   return null;
 }
 
-const PUBLIC_HEADER_NAMES = Object.freeze([
-  "Kokoro-Contract-Version", "X-Kokoro-Command-Id", "Idempotency-Key", "X-CSRF-Token",
-] as const);
+interface HeaderRuntimeSchema extends RuntimeSchema {
+  readonly shape: Readonly<Record<string, Readonly<{
+    safeParse(value: unknown): Readonly<{ success: boolean; data?: unknown }>;
+  }>>>;
+}
 
-function requestHeaders(request: IncomingMessage): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const name of PUBLIC_HEADER_NAMES) {
-    const value = request.headers[name.toLowerCase()];
-    if (typeof value === "string") result[name] = value;
+/** Extracts only generated contract headers and performs narrow wire-to-schema scalar coercion. */
+export function platformPublicRequestHeaders(
+  schema: HeaderRuntimeSchema,
+  headers: Readonly<Record<string, string | readonly string[] | undefined>>,
+): Readonly<Record<string, unknown>> {
+  const result: Record<string, unknown> = {};
+  for (const [contractName, fieldSchema] of Object.entries(schema.shape)) {
+    const wireValue = headers[contractName.toLowerCase()];
+    if (typeof wireValue !== "string") continue;
+    const direct = fieldSchema.safeParse(wireValue);
+    if (direct.success) {
+      result[contractName] = direct.data;
+      continue;
+    }
+    if (/^(?:0|[1-9][0-9]{0,15})$/u.test(wireValue)) {
+      const numeric = Number(wireValue);
+      const coerced = fieldSchema.safeParse(numeric);
+      if (Number.isSafeInteger(numeric) && coerced.success) {
+        result[contractName] = coerced.data;
+        continue;
+      }
+    }
+    // Preserve invalid wire text so the generated strict object emits a uniform invalid-request result.
+    result[contractName] = wireValue;
   }
-  return result;
+  return Object.freeze(result);
 }
 
 function header(request: IncomingMessage, name: string): string | undefined {

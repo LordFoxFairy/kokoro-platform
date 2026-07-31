@@ -37,8 +37,8 @@ export class PostgresMediaImageOperationRepository implements MediaImageOperatio
     }>,
   ): Promise<MediaImageCommandBegin> {
     const sql = resolvePlatformTransaction(transaction);
+    if (command.source !== "agent_runtime") throw new Error("MEDIA_AGENT_COMMAND_AUTHORIZATION_REQUIRED");
     const authorization = command.agentCommandAuthorization;
-    if (authorization === undefined) throw new Error("MEDIA_AGENT_COMMAND_AUTHORIZATION_REQUIRED");
     const leaseToken = randomBytes(32).toString("base64url");
     const rows = await sql.query<BeginRow>(
       `SELECT outcome,operation_ref AS "operationRef",
@@ -76,6 +76,9 @@ export class PostgresMediaImageOperationRepository implements MediaImageOperatio
   ): Promise<MediaCommandDurableReceipt> {
     const sql = resolvePlatformTransaction(transaction);
     const binding = record.ownerBinding;
+    if (binding.source !== "agent_runtime" || record.credit.kind !== "agent_child") {
+      throw new Error("MEDIA_DIRECT_STUDIO_REPOSITORY_REQUIRED");
+    }
     const operation = record.plan.operation;
     const modelInvocationCommandRef = record.modelInvocationCommandRefs[0];
     if (modelInvocationCommandRef === undefined || record.artifactRefs.length !== record.plan.candidates.length ||

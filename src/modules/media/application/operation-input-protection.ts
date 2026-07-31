@@ -15,16 +15,39 @@ const WRAP_AAD_DOMAIN = "kokoro.platform.media.operation-input.dek-wrap.v1\0";
 
 export type MediaOperationSource = "direct_studio" | "agent_runtime";
 
-export type MediaOperationOwnerBinding = Readonly<{
+export type DirectStudioOwnerAuthority = Readonly<{
+  siteReleaseRef: string;
+  siteSecurityEpoch: bigint;
+  policyEpoch: bigint;
+  workloadBindingEpoch: bigint;
+  identitySessionRef: string;
+  identitySessionEpoch: bigint;
+  restrictionEpoch: bigint;
+  membershipEpoch: bigint;
+  authorizationEpoch: bigint;
+}>;
+
+export type MediaOperationTransactionScope = Readonly<{
   siteRef: string;
   subjectRef: string;
   subjectGeneration: bigint;
   projectRef: string;
+}>;
+
+type MediaOperationOwnerBindingBase = MediaOperationTransactionScope & Readonly<{
   workloadRef: string;
-  source: MediaOperationSource;
   definitionRevisionRef: string;
   modelOptionRevisionRef: string;
 }>;
+
+export type MediaOperationOwnerBinding =
+  | Readonly<MediaOperationOwnerBindingBase & {
+      source: "direct_studio";
+      authority: DirectStudioOwnerAuthority;
+    }>
+  | Readonly<MediaOperationOwnerBindingBase & {
+      source: "agent_runtime";
+    }>;
 
 export type ProtectedOperationInputRevision = Readonly<{
   operationInputRevisionRef: string;
@@ -152,17 +175,7 @@ export function deriveMediaOwnerRequestDigest(input: Readonly<{
   const binding = snapshotOwnerBinding(input.ownerBinding);
   return Object.freeze({
     ownerRequestDigest: createHmac("sha256", input.ownerDigestKey)
-      .update(frame([
-        DIGEST_DOMAIN,
-        binding.siteRef,
-        binding.subjectRef,
-        binding.subjectGeneration.toString(),
-        binding.projectRef,
-        binding.workloadRef,
-        binding.source,
-        binding.definitionRevisionRef,
-        binding.modelOptionRevisionRef,
-      ]))
+      .update(frame([DIGEST_DOMAIN, ...ownerBindingFrame(binding)]))
       .update(input.canonicalBytes)
       .digest("hex"),
   });
@@ -170,8 +183,10 @@ export function deriveMediaOwnerRequestDigest(input: Readonly<{
 
 function snapshotOwnerBinding(input: MediaOperationOwnerBinding): MediaOperationOwnerBinding {
   const descriptors = Object.getOwnPropertyDescriptors(input);
+  const source = descriptors.source?.value;
   const keys = ["definitionRevisionRef", "modelOptionRevisionRef", "projectRef", "siteRef", "source",
-    "subjectGeneration", "subjectRef", "workloadRef"];
+    "subjectGeneration", "subjectRef", "workloadRef",
+    ...(source === "direct_studio" ? ["authority"] : [])].sort();
   if (Object.getPrototypeOf(input) !== Object.prototype ||
       JSON.stringify(Object.keys(descriptors).sort()) !== JSON.stringify(keys)) {
     throw new Error("MEDIA_OWNER_BINDING_INVALID");
@@ -190,16 +205,18 @@ function snapshotOwnerBinding(input: MediaOperationOwnerBinding): MediaOperation
       (value.source !== "direct_studio" && value.source !== "agent_runtime")) {
     throw new Error("MEDIA_OWNER_BINDING_INVALID");
   }
-  return Object.freeze({
+  const base = {
     siteRef: value.siteRef as string,
     subjectRef: value.subjectRef as string,
     subjectGeneration: value.subjectGeneration,
     projectRef: value.projectRef as string,
     workloadRef: value.workloadRef as string,
-    source: value.source,
     definitionRevisionRef: value.definitionRevisionRef as string,
     modelOptionRevisionRef: value.modelOptionRevisionRef as string,
-  });
+  } as const;
+  if (value.source === "agent_runtime") return Object.freeze({ ...base, source: "agent_runtime" as const });
+  return Object.freeze({ ...base, source: "direct_studio" as const,
+    authority: snapshotDirectAuthority(value.authority) });
 }
 
 function snapshotProtectedInput(
@@ -217,18 +234,56 @@ function snapshotProtectedInput(
 }
 
 function inputAad(operationInputRevisionRef: string, binding: MediaOperationOwnerBinding): Buffer {
-  return frame([
-    INPUT_AAD_DOMAIN,
-    operationInputRevisionRef,
-    binding.siteRef,
-    binding.subjectRef,
-    binding.subjectGeneration.toString(),
-    binding.projectRef,
-    binding.workloadRef,
-    binding.source,
-    binding.definitionRevisionRef,
-    binding.modelOptionRevisionRef,
-  ]);
+  return frame([INPUT_AAD_DOMAIN, operationInputRevisionRef, ...ownerBindingFrame(binding)]);
+}
+
+function ownerBindingFrame(binding: MediaOperationOwnerBinding): readonly string[] {
+  const base = [binding.siteRef, binding.subjectRef, binding.subjectGeneration.toString(),
+    binding.projectRef, binding.workloadRef, binding.source, binding.definitionRevisionRef,
+    binding.modelOptionRevisionRef];
+  if (binding.source === "agent_runtime") return base;
+  const authority = binding.authority;
+  return [...base, authority.siteReleaseRef, authority.siteSecurityEpoch.toString(),
+    authority.policyEpoch.toString(), authority.workloadBindingEpoch.toString(),
+    authority.identitySessionRef, authority.identitySessionEpoch.toString(),
+    authority.restrictionEpoch.toString(), authority.membershipEpoch.toString(),
+    authority.authorizationEpoch.toString()];
+}
+
+function snapshotDirectAuthority(input: unknown): DirectStudioOwnerAuthority {
+  if (typeof input !== "object" || input === null || Object.getPrototypeOf(input) !== Object.prototype) {
+    throw new Error("MEDIA_OWNER_BINDING_INVALID");
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(input);
+  const keys = ["authorizationEpoch", "identitySessionEpoch", "identitySessionRef", "membershipEpoch",
+    "policyEpoch", "restrictionEpoch", "siteReleaseRef", "siteSecurityEpoch", "workloadBindingEpoch"];
+  if (JSON.stringify(Object.keys(descriptors).sort()) !== JSON.stringify(keys)) {
+    throw new Error("MEDIA_OWNER_BINDING_INVALID");
+  }
+  for (const key of keys) {
+    if (!("value" in descriptors[key]!)) throw new Error("MEDIA_OWNER_BINDING_INVALID");
+  }
+  const value = Object.fromEntries(keys.map((key) => [key, descriptors[key]!.value])) as
+    Record<string, unknown>;
+  assertReference(value.siteReleaseRef, "MEDIA_OWNER_BINDING_INVALID");
+  assertReference(value.identitySessionRef, "MEDIA_OWNER_BINDING_INVALID");
+  for (const key of ["siteSecurityEpoch", "policyEpoch", "workloadBindingEpoch", "identitySessionEpoch",
+    "restrictionEpoch", "membershipEpoch", "authorizationEpoch"] as const) {
+    if (typeof value[key] !== "bigint" || value[key] < 1n || value[key] > 9_223_372_036_854_775_807n) {
+      throw new Error("MEDIA_OWNER_BINDING_INVALID");
+    }
+  }
+  return Object.freeze({
+    siteReleaseRef: value.siteReleaseRef as string,
+    siteSecurityEpoch: value.siteSecurityEpoch as bigint,
+    policyEpoch: value.policyEpoch as bigint,
+    workloadBindingEpoch: value.workloadBindingEpoch as bigint,
+    identitySessionRef: value.identitySessionRef as string,
+    identitySessionEpoch: value.identitySessionEpoch as bigint,
+    restrictionEpoch: value.restrictionEpoch as bigint,
+    membershipEpoch: value.membershipEpoch as bigint,
+    authorizationEpoch: value.authorizationEpoch as bigint,
+  });
 }
 
 function encryptGcm(key: Uint8Array, iv: Uint8Array, aad: Uint8Array, plaintext: Uint8Array): Readonly<{

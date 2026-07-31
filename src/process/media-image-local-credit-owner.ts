@@ -3,14 +3,14 @@ import type { RunBudgetAuthority } from
   "../modules/credit/application/contracts/run-budget-authority.js";
 import { PostgresCreditAuthorityRepository } from
   "../modules/credit/infrastructure/postgres/credit-authority-repository.js";
-import type { MediaImageLocalCreditAllocationOwner } from
+import type { AgentMediaChildBudgetOwner } from
   "../modules/media/application/index.js";
 
 /**
  * Composition-root bridge between Media's owner port and native Platform Credit.
  * It opens no transport and reuses the Media unit-of-work transaction.
  */
-export class NativeMediaImageCreditOwner implements MediaImageLocalCreditAllocationOwner {
+export class NativeMediaImageCreditOwner implements AgentMediaChildBudgetOwner {
   constructor(
     private readonly authority: Pick<RunBudgetAuthority, "deriveChildAllocation"> = new CreditService({
       repository: new PostgresCreditAuthorityRepository(),
@@ -18,9 +18,9 @@ export class NativeMediaImageCreditOwner implements MediaImageLocalCreditAllocat
   ) {}
 
   async deriveChild(
-    transaction: Parameters<MediaImageLocalCreditAllocationOwner["deriveChild"]>[0],
-    input: Parameters<MediaImageLocalCreditAllocationOwner["deriveChild"]>[1],
-  ): ReturnType<MediaImageLocalCreditAllocationOwner["deriveChild"]> {
+    transaction: Parameters<AgentMediaChildBudgetOwner["deriveChild"]>[0],
+    input: Parameters<AgentMediaChildBudgetOwner["deriveChild"]>[1],
+  ): ReturnType<AgentMediaChildBudgetOwner["deriveChild"]> {
     const outcome = await this.authority.deriveChildAllocation(transaction, {
       siteId: input.ownerBinding.siteRef,
       executionBudgetRootRef: input.executionBudgetRootRef,

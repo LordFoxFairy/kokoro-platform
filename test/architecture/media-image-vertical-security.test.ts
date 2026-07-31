@@ -82,8 +82,9 @@ describe("Media/Artifact image vertical database boundary", () => {
       mediaComposition.indexOf("export function createMediaRuntimeApplicationComposition"),
       mediaComposition.indexOf(">): MediaRuntimeApplicationComposition"),
     );
-    expect(mediaComposition).toContain("credit: new NativeMediaImageCreditOwner()");
-    expect(signature).not.toContain("\n  credit:");
+    expect(mediaComposition).toContain('budgets: Object.freeze({ kind: "agent_only" as const,');
+    expect(mediaComposition).toContain("agentChild: new NativeMediaImageCreditOwner()");
+    expect(signature).not.toContain("\n  budgets:");
     expect(localCreditOwner).toContain("new CreditService");
     expect(localCreditOwner).toContain("new PostgresCreditAuthorityRepository()");
     expect(localCreditOwner).not.toMatch(/@connectrpc|\bfetch\s*\(|node:https?|axios/iu);

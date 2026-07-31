@@ -69,4 +69,12 @@ Media child Credit derivation is a same-process Platform owner operation inside 
 composition fixes this adapter to the native Credit authority; it cannot inject an HTTP/RPC client or start an independent
 transaction while the Media transaction is open. GA still sees only opaque Platform receipts and references.
 
+Direct Studio begins with only the verified request's owner transaction scope. Inside that transaction, Admission must lock and
+return a complete owner binding containing SiteRelease, Site security/policy/workload, Identity session/restriction, membership,
+and authorization epochs. The command digest and encrypted input binding are computed only after that revalidation and also bind
+Trust, exact Credit source/ceiling/scope/expiry, and owner-issued handle digests. Direct root reservation and Agent child derivation
+are closed, distinct budget-owner capabilities; the Agent runtime composition cannot activate the Direct surface. The generated
+public descriptor factory requires all nine Media operations before registration. Production Direct activation remains unavailable
+until real Trust admission, root Credit reservation, and Direct command repository owners are supplied in the same unit of work.
+
 Development fakes live under `infrastructure/dev` and advertise `developmentOnly`. They are not production adapters.

@@ -34,8 +34,10 @@ describe("PostgresAgentImageAccessOwner", () => {
         .update("kokoro.platform.media-projection-reservation-handle.v1\0")
         .update(frame(input.mediaProjectionReservationHandle)).digest("hex"),
     });
-    expect(resolved).toMatchObject({ executionBudgetRootRef: "00000000-0000-4000-8000-000000000001",
-      parentAllocationRef: "00000000-0000-4000-8000-000000000003", maximumCredit: 120n,
+    expect(resolved).toMatchObject({ budgetSource: { kind: "agent_child",
+      executionBudgetRootRef: "00000000-0000-4000-8000-000000000001",
+      parentAllocationRef: "00000000-0000-4000-8000-000000000003",
+      expectedParentRevision: 4n, expectedParentAllocationEpoch: 3n }, maximumCredit: 120n,
       trustInputDecisionRef: "site-policy-decision:one",
       ownerBinding: { siteRef: "site:one", projectRef: "project:one", subjectGeneration: 3n,
         source: "agent_runtime", definitionRevisionRef: "image.text_to_image@v1:revision:1",

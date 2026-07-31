@@ -15,6 +15,10 @@ const binding: MediaOperationOwnerBinding = Object.freeze({
   source: "direct_studio",
   definitionRevisionRef: "image.text_to_image@v1/revision:1",
   modelOptionRevisionRef: "image-option:revision:1",
+  authority: Object.freeze({ siteReleaseRef: "release:one", siteSecurityEpoch: 7n,
+    policyEpoch: 11n, workloadBindingEpoch: 3n, identitySessionRef: "identity-session:one",
+    identitySessionEpoch: 5n, restrictionEpoch: 13n, membershipEpoch: 17n,
+    authorizationEpoch: 19n }),
 });
 
 describe("Media OperationInputRevision protection", () => {

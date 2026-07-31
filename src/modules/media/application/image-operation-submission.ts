@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { create, toBinary } from "@bufbuild/protobuf";
 import {
   AgentImageSubmissionFingerprintInputV1Schema,
@@ -15,6 +15,7 @@ import {
   mediaCallerRequestFingerprintSha256,
 } from "../../../interfaces/http/generated/platform-public/media-canonical.js";
 import type { PlatformTransaction } from "../../../shared/unit-of-work/index.js";
+import type { VerifiedRequestSecurityContext } from "../../../shared/security-context/index.js";
 import {
   createMediaOperationPlan,
   transitionMediaOperation,
@@ -31,49 +32,67 @@ import {
 } from "../domain/references.js";
 import {
   deriveMediaOwnerRequestDigest,
+  type DirectStudioOwnerAuthority,
   type EnvelopeOperationInputProtector,
   type MediaOperationOwnerBinding,
+  type MediaOperationTransactionScope,
   type ProtectedOperationInputRevision,
 } from "./operation-input-protection.js";
 
 const FINGERPRINT = /^[0-9a-f]{64}$/u;
+const ADMISSION_DIGEST_DOMAIN = "kokoro.platform.media.admission-request-digest.v1\0";
 
 export interface MediaImageAdmissionOwnerPort {
-  resolveDirectStudio(input: Readonly<{
-    caller: Readonly<{ sessionGrant: string }>;
+  resolveDirectStudio(transaction: PlatformTransaction, input: Readonly<{
+    context: VerifiedRequestSecurityContext;
     commandRef: string;
     request: CanonicalMediaOperationInputV1;
-  }>, signal: AbortSignal): Promise<Readonly<{
-    ownerBinding: MediaOperationOwnerBinding;
-    executionBudgetRootRef: string;
-    parentAllocationRef: string;
-    maximumCredit: bigint;
-    trustInputDecisionRef: string;
-    expectedParentRevision: bigint;
-    expectedParentAllocationEpoch: bigint;
-    consumptionScope: Readonly<{ surfaceRef: string; capabilityKey: string; agentRef: string | null }>;
-    expiresAt: string;
-  }>>;
+  }>, signal: AbortSignal): Promise<DirectStudioMediaImageAdmissionFacts>;
 }
 
-export type MediaImageAdmissionFacts = Readonly<{
-  ownerBinding: MediaOperationOwnerBinding;
+export type DirectStudioAuthorityFence = DirectStudioOwnerAuthority;
+
+export type DirectStudioRootBudgetSource = Readonly<{
+  kind: "direct_root";
+  billingAccountRef: string;
+  creditAccountRef: string;
+  unit: string;
+  liabilityMerchantAccountRef: string;
+  ratingPolicyRevisionRef: string;
+}>;
+
+export type AgentChildBudgetSource = Readonly<{
+  kind: "agent_child";
   executionBudgetRootRef: string;
   parentAllocationRef: string;
-  maximumCredit: bigint;
-  trustInputDecisionRef: string;
   expectedParentRevision: bigint;
   expectedParentAllocationEpoch: bigint;
+}>;
+
+export type DirectStudioMediaImageAdmissionFacts = Readonly<{
+    ownerBinding: Extract<MediaOperationOwnerBinding, { source: "direct_studio" }>;
+    maximumCredit: bigint;
+    trustInputDecisionRef: string;
+    consumptionScope: Readonly<{ surfaceRef: string; capabilityKey: string; agentRef: string | null }>;
+    budgetSource: DirectStudioRootBudgetSource;
+    expiresAt: string;
+}>;
+
+export type MediaImageAdmissionFacts = Readonly<{
+  ownerBinding: Extract<MediaOperationOwnerBinding, { source: "agent_runtime" }>;
+  budgetSource: AgentChildBudgetSource;
+  maximumCredit: bigint;
+  trustInputDecisionRef: string;
   consumptionScope: Readonly<{
     surfaceRef: string;
     capabilityKey: string;
     agentRef: string | null;
   }>;
   expiresAt: string;
-  agentCommandAuthorization?: Readonly<{
+  agentCommandAuthorization: Readonly<{
     accessAuthorizationHandleDigest: string;
     projectionReservationDigest: string;
-  }> | undefined;
+  }>;
 }>;
 
 export interface AgentImageAccessOwnerPort {
@@ -86,10 +105,29 @@ export interface AgentImageAccessOwnerPort {
   }>, signal: AbortSignal): Promise<MediaImageAdmissionFacts>;
 }
 
-/** Same-process Platform Credit owner. Implementations must use the supplied transaction. */
-export interface MediaImageLocalCreditAllocationOwner {
+/** Same-process Platform Credit root owner. Implementations must use the supplied transaction. */
+export interface DirectStudioRootBudgetOwner {
+  reserveDirectRoot(transaction: PlatformTransaction, input: Readonly<{
+    ownerBinding: Extract<MediaOperationOwnerBinding, { source: "direct_studio" }>;
+    budgetSource: DirectStudioRootBudgetSource;
+    mediaOperationRef: string;
+    commandRef: string;
+    ownerRequestDigest: string;
+    exactCeiling: bigint;
+    consumptionScope: DirectStudioMediaImageAdmissionFacts["consumptionScope"];
+    expiresAt: string;
+  }>): Promise<Readonly<{
+    executionBudgetRootRef: string;
+    rootHoldRef: string;
+    rootAllocationRef: string;
+    authorizationSegmentRef: string;
+  }>>;
+}
+
+/** Same-process Platform Credit child owner. Implementations must use the supplied transaction. */
+export interface AgentMediaChildBudgetOwner {
   deriveChild(transaction: PlatformTransaction, input: Readonly<{
-    ownerBinding: MediaOperationOwnerBinding;
+    ownerBinding: Extract<MediaOperationOwnerBinding, { source: "agent_runtime" }>;
     executionBudgetRootRef: string;
     parentAllocationRef: string;
     expectedParentRevision: bigint;
@@ -110,22 +148,35 @@ export interface MediaImageLocalCreditAllocationOwner {
   }>>;
 }
 
-export type MediaImageCommandIdentity = Readonly<{
+export type MediaImageBudgetOwners =
+  | Readonly<{ kind: "agent_only"; agentChild: AgentMediaChildBudgetOwner }>
+  | Readonly<{ kind: "direct_and_agent"; directRoot: DirectStudioRootBudgetOwner;
+      agentChild: AgentMediaChildBudgetOwner }>;
+
+type MediaImageCommandIdentityBase = Readonly<{
   callerAudience: string;
   siteRef: string;
   subjectRef: string;
   subjectGeneration: bigint;
   projectRef: string;
   workloadRef: string;
-  source: "direct_studio" | "agent_runtime";
   definitionRevisionRef: string;
   modelOptionRevisionRef: string;
   commandRef: string;
-  agentCommandAuthorization?: Readonly<{
-    accessAuthorizationHandleDigest: string;
-    projectionReservationDigest: string;
-  }> | undefined;
 }>;
+
+export type MediaImageCommandIdentity =
+  | Readonly<MediaImageCommandIdentityBase & {
+      source: "direct_studio";
+      directStudioAuthority: DirectStudioOwnerAuthority;
+    }>
+  | Readonly<MediaImageCommandIdentityBase & {
+      source: "agent_runtime";
+      agentCommandAuthorization: Readonly<{
+        accessAuthorizationHandleDigest: string;
+        projectionReservationDigest: string;
+      }>;
+    }>;
 
 export type MediaImageOperationRecord = Readonly<{
   command: MediaImageCommandIdentity & Readonly<{
@@ -142,12 +193,21 @@ export type MediaImageOperationRecord = Readonly<{
   modelInvocationCommandRefs: readonly string[];
   artifactRefs: readonly string[];
   artifactVersionRefs: readonly string[];
-  credit: Readonly<{
-    executionBudgetRootRef: string;
-    parentAllocationRef: string;
-    childAllocationRef: string;
-    allocationReservationReceiptRef: string;
-  }>;
+  credit:
+    | Readonly<{
+        kind: "direct_root";
+        executionBudgetRootRef: string;
+        rootHoldRef: string;
+        rootAllocationRef: string;
+        authorizationSegmentRef: string;
+      }>
+    | Readonly<{
+        kind: "agent_child";
+        executionBudgetRootRef: string;
+        parentAllocationRef: string;
+        childAllocationRef: string;
+        allocationReservationReceiptRef: string;
+      }>;
   trustInputDecisionRef: string;
   dispatchOutbox: Readonly<{
     outboxRef: string;
@@ -182,7 +242,7 @@ export interface MediaImageOperationRepository {
 
 export interface MediaImageUnitOfWork {
   execute<Result>(
-    binding: MediaOperationOwnerBinding,
+    scope: MediaOperationTransactionScope,
     work: (transaction: PlatformTransaction) => Promise<Result>,
   ): Promise<Result>;
 }
@@ -195,7 +255,7 @@ export class ImageOperationSubmissionService {
   readonly #dependencies: Readonly<{
     admission: MediaImageAdmissionOwnerPort;
     agentAccess?: AgentImageAccessOwnerPort | undefined;
-    credit: MediaImageLocalCreditAllocationOwner;
+    budgets: MediaImageBudgetOwners;
     repository: MediaImageOperationRepository;
     inputProtector: EnvelopeOperationInputProtector;
     ownerDigestKey: Uint8Array;
@@ -207,7 +267,7 @@ export class ImageOperationSubmissionService {
   constructor(input: Readonly<{
     admission: MediaImageAdmissionOwnerPort;
     agentAccess?: AgentImageAccessOwnerPort | undefined;
-    credit: MediaImageLocalCreditAllocationOwner;
+    budgets: MediaImageBudgetOwners;
     repository: MediaImageOperationRepository;
     inputProtector: EnvelopeOperationInputProtector;
     ownerDigestKey: Uint8Array;
@@ -224,8 +284,7 @@ export class ImageOperationSubmissionService {
   }
 
   async submitDirectStudio(input: Readonly<{
-    caller: Readonly<{ sessionGrant: string }>;
-    callerAudience: string;
+    context: VerifiedRequestSecurityContext;
     commandRef: string;
     callerRequestFingerprint: string;
     request: CanonicalMediaOperationInputV1;
@@ -236,7 +295,6 @@ export class ImageOperationSubmissionService {
     callerRequestFingerprint: string;
     receipt: MediaCommandDurableReceipt;
   }>> {
-    reference(input.callerAudience);
     reference(input.commandRef);
     if (!FINGERPRINT.test(input.callerRequestFingerprint)) {
       throw new Error("MEDIA_CALLER_FINGERPRINT_INVALID");
@@ -246,14 +304,26 @@ export class ImageOperationSubmissionService {
     if (!digestEqual(recomputedFingerprint, input.callerRequestFingerprint)) {
       throw new Error("MEDIA_CALLER_FINGERPRINT_MISMATCH");
     }
-    const admission = await this.#dependencies.admission.resolveDirectStudio({
-      caller: input.caller,
-      commandRef: input.commandRef,
-      request: input.request,
-    }, boundedSignal(input.signal, 5_000));
-    assertAdmissionMatchesRequest(admission, input.request);
-    return this.#submitOwned({ callerAudience: input.callerAudience, commandRef: input.commandRef,
-      callerRequestFingerprint: recomputedFingerprint, request: input.request, canonicalBytes, admission });
+    const requestAuthority = directStudioRequestAuthority(input.context, this.#date().toISOString());
+    if (this.#dependencies.budgets.kind !== "direct_and_agent") {
+      throw new Error("MEDIA_DIRECT_ROOT_BUDGET_OWNER_REQUIRED");
+    }
+    return this.#dependencies.unitOfWork.execute(requestAuthority.scope, async (transaction) => {
+      const admission = await this.#dependencies.admission.resolveDirectStudio(transaction, {
+        context: input.context,
+        commandRef: input.commandRef,
+        request: input.request,
+      }, boundedSignal(input.signal, 5_000));
+      assertDirectAdmissionMatchesRequest(admission, requestAuthority, input.request);
+      return this.#submitOwnedInTransaction(transaction, {
+        callerAudience: input.context.audience,
+        commandRef: input.commandRef,
+        callerRequestFingerprint: recomputedFingerprint,
+        request: input.request,
+        canonicalBytes,
+        admission,
+      });
+    });
   }
 
   async submitAgentImage(input: Readonly<{
@@ -312,30 +382,54 @@ export class ImageOperationSubmissionService {
     callerRequestFingerprint: string;
     receipt: MediaCommandDurableReceipt;
   }>> {
+    return this.#dependencies.unitOfWork.execute(input.admission.ownerBinding, (transaction) =>
+      this.#submitOwnedInTransaction(transaction, input));
+  }
+
+  async #submitOwnedInTransaction(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      callerAudience: string;
+      commandRef: string;
+      callerRequestFingerprint: string;
+      request: CanonicalMediaOperationInputV1;
+      canonicalBytes: Uint8Array;
+      admission: MediaImageAdmissionFacts | DirectStudioMediaImageAdmissionFacts;
+    }>,
+  ): Promise<Readonly<{
+    kind: "created" | "replayed";
+    operationRef: string;
+    callerRequestFingerprint: string;
+    receipt: MediaCommandDurableReceipt;
+  }>> {
     const admission = input.admission;
     const canonicalBytes = input.canonicalBytes;
-    const ownerRequestDigest = deriveMediaOwnerRequestDigest({
+    const ownerRequestDigest = deriveMediaAdmissionRequestDigest({
       ownerDigestKey: this.#dependencies.ownerDigestKey,
       canonicalBytes,
-      ownerBinding: admission.ownerBinding,
-    }).ownerRequestDigest;
-    const command = Object.freeze({
+      admission,
+    });
+    const commandBase = {
       callerAudience: input.callerAudience,
       siteRef: admission.ownerBinding.siteRef,
       subjectRef: admission.ownerBinding.subjectRef,
       subjectGeneration: admission.ownerBinding.subjectGeneration,
       projectRef: admission.ownerBinding.projectRef,
       workloadRef: admission.ownerBinding.workloadRef,
-      source: admission.ownerBinding.source,
       definitionRevisionRef: admission.ownerBinding.definitionRevisionRef,
       modelOptionRevisionRef: admission.ownerBinding.modelOptionRevisionRef,
       commandRef: input.commandRef,
       callerRequestFingerprint: input.callerRequestFingerprint,
       ownerRequestDigest,
-      ...(admission.agentCommandAuthorization === undefined
-        ? {} : { agentCommandAuthorization: admission.agentCommandAuthorization }),
-    });
-    return this.#dependencies.unitOfWork.execute(admission.ownerBinding, async (transaction) => {
+    } as const;
+    const command: MediaImageCommandIdentity & Readonly<{
+      callerRequestFingerprint: string;
+      ownerRequestDigest: string;
+    }> = isDirectStudioAdmission(admission)
+      ? Object.freeze({ ...commandBase, source: "direct_studio" as const,
+          directStudioAuthority: admission.ownerBinding.authority })
+      : Object.freeze({ ...commandBase, source: "agent_runtime" as const,
+          agentCommandAuthorization: admission.agentCommandAuthorization });
       const begun = await this.#dependencies.repository.begin(transaction, command);
       if (begun.kind === "replayed") return begun;
       const operationRefValue = this.#dependencies.reference("media-operation");
@@ -382,19 +476,34 @@ export class ImageOperationSubmissionService {
         ownerBinding: admission.ownerBinding,
         canonicalBytes,
       });
-      const credit = await this.#dependencies.credit.deriveChild(transaction, {
-        ownerBinding: admission.ownerBinding,
-        executionBudgetRootRef: admission.executionBudgetRootRef,
-        parentAllocationRef: admission.parentAllocationRef,
-        expectedParentRevision: admission.expectedParentRevision,
-        expectedParentAllocationEpoch: admission.expectedParentAllocationEpoch,
-        consumptionScope: admission.consumptionScope,
-        expiresAt: admission.expiresAt,
-        mediaOperationRef: operationRefValue,
-        commandRef: input.commandRef,
-        ownerRequestDigest,
-        exactCeiling: admission.maximumCredit,
-      });
+      const credit = isDirectStudioAdmission(admission)
+        ? Object.freeze({ kind: "direct_root" as const,
+            ...await directRootOwner(this.#dependencies.budgets).reserveDirectRoot(transaction, {
+              ownerBinding: admission.ownerBinding,
+              budgetSource: admission.budgetSource,
+              mediaOperationRef: operationRefValue,
+              commandRef: input.commandRef,
+              ownerRequestDigest,
+              exactCeiling: admission.maximumCredit,
+              consumptionScope: admission.consumptionScope,
+              expiresAt: admission.expiresAt,
+            }) })
+        : Object.freeze({ kind: "agent_child" as const,
+            executionBudgetRootRef: admission.budgetSource.executionBudgetRootRef,
+            parentAllocationRef: admission.budgetSource.parentAllocationRef,
+            ...await this.#dependencies.budgets.agentChild.deriveChild(transaction, {
+              ownerBinding: admission.ownerBinding,
+              executionBudgetRootRef: admission.budgetSource.executionBudgetRootRef,
+              parentAllocationRef: admission.budgetSource.parentAllocationRef,
+              expectedParentRevision: admission.budgetSource.expectedParentRevision,
+              expectedParentAllocationEpoch: admission.budgetSource.expectedParentAllocationEpoch,
+              consumptionScope: admission.consumptionScope,
+              expiresAt: admission.expiresAt,
+              mediaOperationRef: operationRefValue,
+              commandRef: input.commandRef,
+              ownerRequestDigest,
+              exactCeiling: admission.maximumCredit,
+            }) });
       const createdAt = this.#date().toISOString();
       const record = Object.freeze({
         command,
@@ -406,8 +515,7 @@ export class ImageOperationSubmissionService {
         modelInvocationCommandRefs: Object.freeze([modelInvocationCommandRef]),
         artifactRefs: Object.freeze(candidates.map((item) => item.artifactRef)),
         artifactVersionRefs: Object.freeze(candidates.map((item) => item.artifactVersionRef)),
-        credit: Object.freeze({ executionBudgetRootRef: admission.executionBudgetRootRef,
-          parentAllocationRef: admission.parentAllocationRef, ...credit }),
+        credit,
         trustInputDecisionRef: admission.trustInputDecisionRef,
         dispatchOutbox: Object.freeze({
           outboxRef: this.#dependencies.reference("media-dispatch-outbox"),
@@ -421,7 +529,6 @@ export class ImageOperationSubmissionService {
       const receipt = await this.#dependencies.repository.complete(transaction, begun.leaseToken, record);
       return Object.freeze({ kind: "created" as const, operationRef: operationRefValue,
         callerRequestFingerprint: input.callerRequestFingerprint, receipt });
-    });
   }
 
   #date(): Date {
@@ -495,18 +602,146 @@ function commandKey(command: MediaImageCommandIdentity): string {
     .map((value) => `${Buffer.byteLength(value)}:${value}`).join("|");
 }
 
-function assertAdmissionMatchesRequest(
+function assertDirectAdmissionMatchesRequest(
   admission: Awaited<ReturnType<MediaImageAdmissionOwnerPort["resolveDirectStudio"]>>,
+  requestAuthority: DirectStudioRequestAuthority,
   request: CanonicalMediaOperationInputV1,
 ): void {
+  const binding = admission.ownerBinding;
+  const authority = binding.authority;
   if (admission.ownerBinding.source !== "direct_studio" ||
       admission.ownerBinding.definitionRevisionRef !== request.definitionRevisionRef ||
       admission.ownerBinding.modelOptionRevisionRef !== request.modelOptionRevisionRef ||
-      admission.maximumCredit < 1n) {
+      admission.maximumCredit < 1n ||
+      !sameTransactionScope(binding, requestAuthority.scope) ||
+      binding.workloadRef !== requestAuthority.workloadRef ||
+      authority.siteReleaseRef !== requestAuthority.authority.siteReleaseRef ||
+      authority.siteSecurityEpoch !== requestAuthority.authority.siteSecurityEpoch ||
+      authority.policyEpoch !== requestAuthority.authority.policyEpoch ||
+      authority.workloadBindingEpoch !== requestAuthority.authority.workloadBindingEpoch ||
+      authority.identitySessionRef !== requestAuthority.authority.identitySessionRef ||
+      authority.identitySessionEpoch !== requestAuthority.authority.identitySessionEpoch ||
+      authority.restrictionEpoch !== requestAuthority.authority.restrictionEpoch ||
+      authority.membershipEpoch < 1n || authority.authorizationEpoch < 1n ||
+      admission.budgetSource.kind !== "direct_root") {
     throw new Error("MEDIA_ADMISSION_OWNER_BINDING_INVALID");
   }
-  for (const value of [admission.executionBudgetRootRef, admission.parentAllocationRef,
-    admission.trustInputDecisionRef]) reference(value);
+  for (const value of [admission.trustInputDecisionRef, admission.budgetSource.billingAccountRef,
+    admission.budgetSource.creditAccountRef, admission.budgetSource.unit,
+    admission.budgetSource.liabilityMerchantAccountRef,
+    admission.budgetSource.ratingPolicyRevisionRef]) reference(value);
+}
+
+type DirectStudioRequestAuthority = Readonly<{
+  scope: MediaOperationTransactionScope;
+  workloadRef: string;
+  authority: Omit<DirectStudioOwnerAuthority, "membershipEpoch" | "authorizationEpoch">;
+}>;
+
+function directStudioRequestAuthority(
+  context: VerifiedRequestSecurityContext,
+  now: string,
+): DirectStudioRequestAuthority {
+  const observedAt = Date.parse(now);
+  const issuedAt = Date.parse(context.issuedAt);
+  const expiresAt = Date.parse(context.expiresAt);
+  if (!Number.isFinite(observedAt) || !Number.isFinite(issuedAt) || !Number.isFinite(expiresAt) ||
+      issuedAt > observedAt || expiresAt <= observedAt) {
+    throw new Error("MEDIA_DIRECT_STUDIO_CONTEXT_INVALID");
+  }
+  const caller = context.trustedCaller;
+  const actor = context.actor;
+  if (caller.kind !== "site_product" || caller.siteId === undefined ||
+      caller.siteReleaseRef === undefined || caller.siteSecurityEpoch === undefined ||
+      actor.kind !== "user" || actor.sessionId === undefined || actor.sessionEpoch === undefined ||
+      actor.restrictionEpoch === undefined || context.target.projectId === null ||
+      context.target.siteId !== caller.siteId || context.target.purpose !== "submitMediaOperation" ||
+      !context.target.scopes.includes("submitMediaOperation")) {
+    throw new Error("MEDIA_DIRECT_STUDIO_CONTEXT_INVALID");
+  }
+  return Object.freeze({
+    scope: Object.freeze({
+      siteRef: caller.siteId,
+      subjectRef: actor.subjectId,
+      subjectGeneration: positiveEpoch(actor.subjectGeneration),
+      projectRef: context.target.projectId,
+    }),
+    workloadRef: caller.workloadIdentityId,
+    authority: Object.freeze({
+      siteReleaseRef: caller.siteReleaseRef,
+      siteSecurityEpoch: positiveEpoch(caller.siteSecurityEpoch),
+      policyEpoch: positiveEpoch(context.policyEpoch),
+      workloadBindingEpoch: positiveEpoch(caller.bindingEpoch),
+      identitySessionRef: actor.sessionId,
+      identitySessionEpoch: positiveEpoch(actor.sessionEpoch),
+      restrictionEpoch: positiveEpoch(actor.restrictionEpoch),
+    }),
+  });
+}
+
+function positiveEpoch(value: string): bigint {
+  if (!/^[1-9][0-9]{0,18}$/u.test(value)) throw new Error("MEDIA_DIRECT_STUDIO_CONTEXT_INVALID");
+  const parsed = BigInt(value);
+  if (parsed > 9_223_372_036_854_775_807n) throw new Error("MEDIA_DIRECT_STUDIO_CONTEXT_INVALID");
+  return parsed;
+}
+
+function sameTransactionScope(left: MediaOperationTransactionScope, right: MediaOperationTransactionScope): boolean {
+  return left.siteRef === right.siteRef && left.subjectRef === right.subjectRef &&
+    left.subjectGeneration === right.subjectGeneration && left.projectRef === right.projectRef;
+}
+
+function isDirectStudioAdmission(
+  input: MediaImageAdmissionFacts | DirectStudioMediaImageAdmissionFacts,
+): input is DirectStudioMediaImageAdmissionFacts {
+  return input.ownerBinding.source === "direct_studio";
+}
+
+export function deriveMediaAdmissionRequestDigest(input: Readonly<{
+  ownerDigestKey: Uint8Array;
+  canonicalBytes: Uint8Array;
+  admission: MediaImageAdmissionFacts | DirectStudioMediaImageAdmissionFacts;
+}>): string {
+  const ownerInputDigest = deriveMediaOwnerRequestDigest({
+    ownerDigestKey: input.ownerDigestKey,
+    canonicalBytes: input.canonicalBytes,
+    ownerBinding: input.admission.ownerBinding,
+  }).ownerRequestDigest;
+  const common = [ownerInputDigest, input.admission.trustInputDecisionRef,
+    input.admission.maximumCredit.toString(), input.admission.consumptionScope.surfaceRef,
+    input.admission.consumptionScope.capabilityKey, input.admission.consumptionScope.agentRef ?? "",
+    input.admission.expiresAt];
+  const facts = isDirectStudioAdmission(input.admission)
+    ? [input.admission.budgetSource.kind, input.admission.budgetSource.billingAccountRef,
+        input.admission.budgetSource.creditAccountRef, input.admission.budgetSource.unit,
+        input.admission.budgetSource.liabilityMerchantAccountRef,
+        input.admission.budgetSource.ratingPolicyRevisionRef]
+    : [input.admission.budgetSource.kind, input.admission.budgetSource.executionBudgetRootRef,
+        input.admission.budgetSource.parentAllocationRef,
+        input.admission.budgetSource.expectedParentRevision.toString(),
+        input.admission.budgetSource.expectedParentAllocationEpoch.toString(),
+        input.admission.agentCommandAuthorization.accessAuthorizationHandleDigest,
+        input.admission.agentCommandAuthorization.projectionReservationDigest];
+  return createHmac("sha256", input.ownerDigestKey)
+    .update(ADMISSION_DIGEST_DOMAIN)
+    .update(frameDigestParts([...common, ...facts]))
+    .digest("hex");
+}
+
+function frameDigestParts(parts: readonly string[]): Buffer {
+  const buffers = parts.map((part) => Buffer.from(part, "utf8"));
+  const output: Buffer[] = [];
+  for (const value of buffers) {
+    const size = Buffer.allocUnsafe(4);
+    size.writeUInt32BE(value.byteLength);
+    output.push(size, value);
+  }
+  return Buffer.concat(output);
+}
+
+function directRootOwner(budgets: MediaImageBudgetOwners): DirectStudioRootBudgetOwner {
+  if (budgets.kind !== "direct_and_agent") throw new Error("MEDIA_DIRECT_ROOT_BUDGET_OWNER_REQUIRED");
+  return budgets.directRoot;
 }
 
 function digestEqual(left: string, right: string): boolean {
