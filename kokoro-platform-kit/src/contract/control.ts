@@ -54,6 +54,14 @@ export const permissionsSchema = z
   .strict()
 export type Permissions = z.infer<typeof permissionsSchema>
 
+export const mediaRuntimeGrantSchema = z
+  .object({
+    media_access_handle: z.string().min(32).max(8192).refine((value) => value.trim() === value),
+    media_projection_reservation_handle: z.string().min(32).max(8192).refine((value) => value.trim() === value),
+  })
+  .strict()
+export type MediaRuntimeGrant = z.infer<typeof mediaRuntimeGrantSchema>
+
 export const runtimeConfigSchema = z
   .object({
     agent_catalog_ref: z.string().min(1).max(256).refine((value) => value.trim() === value),
@@ -66,6 +74,7 @@ export const runtimeConfigSchema = z
     subagents: z.array(z.string().min(1)),
     backend: z.enum(["state", "local_shell", "docker", "e2b", "custom"]),
     permissions: permissionsSchema,
+    media: mediaRuntimeGrantSchema.optional(),
   })
   .strict()
 export type RuntimeConfig = z.infer<typeof runtimeConfigSchema>
