@@ -51,7 +51,9 @@ describe("Session Admission owner Connect client", () => {
           return create(VerifyPrepareOwnerResponseSchema, {
             outcome: {
               case: "verified",
-              value: create(SessionAdmissionPrepareOwnerVerifiedSchema, { threadId: "thread-a" }),
+              value: create(SessionAdmissionPrepareOwnerVerifiedSchema, {
+                threadId: "thread-a", assistantMessageId: "assistant-a",
+              }),
             },
           });
         },
@@ -60,7 +62,7 @@ describe("Session Admission owner Connect client", () => {
 
     await expect(client.resolve(prepare, new AbortController().signal)).resolves.toEqual({
       kind: "resolved",
-      value: { threadId: "thread-a" },
+      value: { threadId: "thread-a", assistantMessageId: "assistant-a" },
     });
     expect(request).toMatchObject({
       siteId: "site-a", projectRef: "project-a", sessionId: "session-a", launchId: "launch-a",

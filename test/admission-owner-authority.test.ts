@@ -20,6 +20,7 @@ import {
 import type { PlatformTransaction } from "../src/shared/unit-of-work/index.js";
 
 const now = new Date("2026-07-29T12:00:00.000Z");
+const mediaProjectionRecoveryKey = new Uint8Array(32).fill(9);
 const caller = Object.freeze({
   identity: "spiffe://kokoro/session",
   environment: "production",
@@ -100,6 +101,17 @@ function ports(events: string[] = []): PlatformAdmissionOwnerPorts {
         kind: "resolved" as const,
         value: { namespace: "opaque-namespace", sessionExecutionBindingRef: "binding-1" },
       };
+    }) },
+    mediaProjection: { issueReservation: vi.fn(async () => {
+      events.push("media-projection.rpc");
+      return { kind: "resolved" as const,
+        value: { mediaProjectionReservationHandle: "projection-reservation:" + "p".repeat(32),
+          expiresAt: "2026-07-29T12:04:00.000Z", reservationReceiptRef: "reservation-receipt:one" } };
+    }) },
+    mediaAccess: { reserve: vi.fn(async () => {
+      events.push("media-access.reserve");
+      return { kind: "resolved" as const,
+        value: { mediaAccessHandle: "media-access:" + "m".repeat(32) } };
     }) },
     site: { resolve: vi.fn(async () => {
       events.push("site");
@@ -253,11 +265,13 @@ describe("Platform Admission owner authority", () => {
       model: _model,
       sessionGrant: _sessionGrant,
       executionBinding: _executionBinding,
+      mediaAccess: _mediaAccess,
       ...ownerPorts
     } = dependencies;
     const authority = createPlatformAdmissionOwnerAuthority({
       database: { internalTransaction },
       ownerPorts,
+      mediaAccessKey: new Uint8Array(32).fill(7),
       clock: () => now,
     });
 
@@ -284,6 +298,7 @@ describe("Platform Admission owner authority", () => {
 
     expect(() => createPlatformAdmissionOwnerAuthority({
       database: { internalTransaction: vi.fn() },
+      mediaAccessKey: new Uint8Array(32).fill(7),
       ownerPorts: ownerPorts as unknown as Omit<
         PlatformAdmissionOwnerPorts,
         "unitOfWork" | "lifecycle" | "site" | "model" | "runtimePolicy" | "capability" |
@@ -296,7 +311,8 @@ describe("Platform Admission owner authority", () => {
   it("resolves every Platform owner in one local UoW and freezes one complete GA request", async () => {
     const events: string[] = [];
     const dependencies = ports(events);
-    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies, clock: () => now });
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
 
     const decision = await authority.prepareRun({
       caller,
@@ -369,6 +385,50 @@ describe("Platform Admission owner authority", () => {
     ]);
   });
 
+  it("issues Session projection outside local transactions and seals both opaque Media handles into runtime", async () => {
+    const events: string[] = [];
+    const dependencies = ports(events);
+    vi.mocked(dependencies.session.resolve).mockImplementation(async () => {
+      events.push("session");
+      return { kind: "resolved", value: { threadId: "session-1", assistantMessageId: "assistant-1" } };
+    });
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+    const effect = prepareEffect();
+    effect.sessionProjectionAuthorizationHandle = "session-projection-authorization:" + "s".repeat(32);
+
+    const decision = await authority.prepareRun({ caller, siteId: "site-1", commandId: "command-media",
+      requestDigest: "f".repeat(64), effect });
+
+    expect(decision.kind).toBe("accepted");
+    if (decision.kind !== "accepted") throw new Error("unexpected decision");
+    expect(decision.ownerFacts.runtime.media).toEqual({
+      media_access_handle: "media-access:" + "m".repeat(32),
+      media_projection_reservation_handle: "projection-reservation:" + "p".repeat(32),
+    });
+    expect(dependencies.mediaProjection.issueReservation).toHaveBeenCalledWith(expect.objectContaining({
+      sessionProjectionAuthorizationHandle: effect.sessionProjectionAuthorizationHandle,
+      sessionId: "session-1", runId: "run-1", assistantMessageId: "assistant-1",
+      subjectGeneration: 1n, maximumSlots: 16,
+      projectionCommandRef: expect.stringMatching(/^media-projection-command:sha256:/u),
+      projectionCommandRecoveryCapability: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u),
+    }), expect.any(AbortSignal));
+    expect(events).toEqual([
+      "session",
+      "tx.begin", "site", "session-grant", "tx.end",
+      "media-projection.rpc",
+      "tx.begin", "site", "session-grant", "runtime-policy", "model", "capability",
+      "assets", "execution-binding", "media-access.reserve", "budget.reserve", "lifecycle.prepare", "tx.end",
+    ]);
+
+    const firstRecoveryCapability = vi.mocked(dependencies.mediaProjection.issueReservation)
+      .mock.calls[0]?.[0].projectionCommandRecoveryCapability;
+    await authority.prepareRun({ caller, siteId: "site-1", commandId: "command-media",
+      requestDigest: "f".repeat(64), effect });
+    expect(vi.mocked(dependencies.mediaProjection.issueReservation)
+      .mock.calls[1]?.[0].projectionCommandRecoveryCapability).toBe(firstRecoveryCapability);
+  });
+
   it("verifies Session finalize receipts outside the DB transaction before the local CAS", async () => {
     const events: string[] = [];
     const dependencies = ports(events);
@@ -379,7 +439,8 @@ describe("Platform Admission owner authority", () => {
       events.push("lifecycle.commit");
       return { ...record, state: "committed" as const, segmentVersion: record.segmentVersion + 1n };
     });
-    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies, clock: () => now });
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
 
     const decision = await authority.finalizeRunAuthorization({
       caller,
@@ -413,7 +474,8 @@ describe("Platform Admission owner authority", () => {
   it("reads owner state, verifies Session no-dispatch evidence outside the DB transaction, then releases atomically", async () => {
     const events: string[] = [];
     const dependencies = ports(events);
-    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies, clock: () => now });
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
     const evidenceRef = `session-dispatch-evidence:v1:${"b".repeat(64)}`;
 
     const decision = await authority.releaseRunAuthorization({
@@ -455,7 +517,8 @@ describe("Platform Admission owner authority", () => {
     } as const;
     vi.mocked(dependencies.lifecycle.read).mockResolvedValue(committedRecord);
     vi.mocked(dependencies.lifecycle.lock).mockResolvedValue(committedRecord);
-    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies, clock: () => now });
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
 
     const decision = await authority.finalizeRunAuthorization({
       caller,
@@ -492,7 +555,8 @@ describe("Platform Admission owner authority", () => {
       state: "released",
       expiresAt: "2026-07-29T12:04:00.000Z",
     });
-    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies, clock: () => now });
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
 
     const decision = await authority.releaseRunAuthorization({
       caller,

@@ -23,6 +23,8 @@ export type ArtifactVersionState =
   | "purged";
 
 export type ArtifactStagedReceipt = Readonly<{
+  ownerScope: ArtifactOwnerScope;
+  artifactRef: string;
   artifactVersionRef: string;
   stagedObjectRef: string;
   contentSha256: string;
@@ -36,6 +38,8 @@ export type ArtifactTrustDecision =
   | Readonly<{ kind: "restrict"; decisionRef: string; contentSha256: string; reasonCode: string }>;
 
 export type ArtifactReadyReceipt = Readonly<{
+  ownerScope: ArtifactOwnerScope;
+  artifactRef: string;
   artifactVersionRef: string;
   readyObjectRef: string;
   contentSha256: string;

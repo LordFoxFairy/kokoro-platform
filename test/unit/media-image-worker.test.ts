@@ -21,6 +21,7 @@ describe("image.text_to_image worker closure", () => {
       request: { promptIntent: "fox", aspectRatio: "square_1_1", candidateCount: 1,
         outputFormat: "png", modelOptionRevisionRef: "image-option:revision:1" },
       candidateRefs: ["media-candidate:one"],
+      artifactRefs: ["artifact:one"],
       artifactVersionRefs: ["artifact-version:one"],
       ownerScope: { siteRef: "site:one", subjectRef: "subject:one", subjectGeneration: 1n,
         projectRef: "project:one" },
@@ -58,6 +59,14 @@ describe("image.text_to_image worker closure", () => {
     ]);
     expect(await worker.runOne(new AbortController().signal)).toBe("idle");
     expect(provider.invocationCount).toBe(1);
+    const output = (await provider.createOrRecover({ commandRef: "magic:one",
+      request: InMemoryMediaImageWorkerRepository.exampleTask().request,
+      signal: new AbortController().signal })).outputs[0]!;
+    expect(output.mediaType).toBe("image/png");
+    expect([...output.bytes.slice(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+    await expect(provider.createOrRecover({ commandRef: "jpeg:unsupported",
+      request: { ...InMemoryMediaImageWorkerRepository.exampleTask().request, outputFormat: "jpeg" },
+      signal: new AbortController().signal })).rejects.toThrow("DEVELOPMENT_IMAGE_FORMAT_UNSUPPORTED");
   });
 
   it("recovers a journaled provider outcome without repeating the provider effect", async () => {

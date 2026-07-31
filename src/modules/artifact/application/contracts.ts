@@ -8,6 +8,8 @@ import type {
 
 export interface ArtifactObjectStore {
   stage(input: Readonly<{
+    ownerScope: ArtifactOwnerScope;
+    artifactRef: string;
     artifactVersionRef: string;
     bytes: Uint8Array;
     mediaType: "image/png" | "image/jpeg" | "image/webp";
@@ -16,8 +18,14 @@ export interface ArtifactObjectStore {
     stagedReceipt: ArtifactStagedReceipt;
     trustDecision: ArtifactTrustDecision;
   }>): Promise<ArtifactReadyReceipt>;
-  describeReady(artifactVersionRef: string): Promise<ArtifactReadyReceipt | null>;
+  describeReady(input: Readonly<{
+    ownerScope: ArtifactOwnerScope;
+    artifactRef: string;
+    artifactVersionRef: string;
+  }>): Promise<ArtifactReadyReceipt | null>;
   openReady(input: Readonly<{
+    ownerScope: ArtifactOwnerScope;
+    artifactRef: string;
     artifactVersionRef: string;
     range?: ArtifactByteRange | undefined;
     signal: AbortSignal;

@@ -28,7 +28,8 @@ export class DeterministicDevelopmentImageProviderAdapter implements ImageProvid
     if (prior !== undefined) return prior;
     this.#events.push("provider.create-or-recover");
     this.invocationCount += 1;
-    const mediaType = mediaTypeFor(input.request.outputFormat);
+    if (input.request.outputFormat !== "png") throw new Error("DEVELOPMENT_IMAGE_FORMAT_UNSUPPORTED");
+    const mediaType = "image/png" as const;
     const outputs = Array.from({ length: input.request.candidateCount }, (_, index) => Object.freeze({
       candidateOrdinal: index + 1,
       bytes: new Uint8Array(ONE_PIXEL_PNG),
@@ -47,11 +48,4 @@ export class DeterministicDevelopmentImageProviderAdapter implements ImageProvid
     this.#outcomes.set(digest, outcome);
     return outcome;
   }
-}
-
-function mediaTypeFor(format: "png" | "jpeg" | "webp"):
-"image/png" | "image/jpeg" | "image/webp" {
-  if (format === "png") return "image/png";
-  if (format === "jpeg") return "image/jpeg";
-  return "image/webp";
 }

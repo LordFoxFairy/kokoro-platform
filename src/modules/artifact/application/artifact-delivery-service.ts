@@ -59,7 +59,8 @@ export class ArtifactDeliveryService {
     if (!Number.isSafeInteger(input.ttlMs) || input.ttlMs < 1 || input.ttlMs > MAXIMUM_DELIVERY_TTL_MS) {
       throw new Error("ARTIFACT_DELIVERY_TTL_INVALID");
     }
-    if (await this.#objectStore.describeReady(input.artifactVersionRef) === null) {
+    if (await this.#objectStore.describeReady({ ownerScope, artifactRef: input.artifactRef,
+      artifactVersionRef: input.artifactVersionRef }) === null) {
       throw new Error("ARTIFACT_VERSION_NOT_READY");
     }
     const issuedAtDate = this.#date();
@@ -87,6 +88,7 @@ export class ArtifactDeliveryService {
   }
 
   async redeem(input: Readonly<{
+    authorizationRef: string;
     deliveryCapability: string;
     ownerScope: ArtifactOwnerScope;
     audience: "site-bff.artifact-delivery";
@@ -109,8 +111,12 @@ export class ArtifactDeliveryService {
     const suppliedDigest = Buffer.from(match[2]!, "hex");
     const expectedDigest = Buffer.from(this.#sign(token), "hex");
     if (!timingSafeEqual(suppliedDigest, expectedDigest)) throw new Error("ARTIFACT_DELIVERY_CAPABILITY_INVALID");
+    reference(input.authorizationRef);
     const authorization = await this.#repository.findByCapabilityDigest(match[2]!);
     if (authorization === null) throw new Error("ARTIFACT_DELIVERY_CAPABILITY_INVALID");
+    if (authorization.authorizationRef !== input.authorizationRef) {
+      throw new Error("ARTIFACT_DELIVERY_AUTHORIZATION_MISMATCH");
+    }
     if (authorization.audience !== input.audience) throw new Error("ARTIFACT_DELIVERY_AUDIENCE_MISMATCH");
     if (!sameArtifactOwnerScope(authorization.ownerScope, snapshotArtifactOwnerScope(input.ownerScope))) {
       throw new Error("ARTIFACT_DELIVERY_SCOPE_MISMATCH");
@@ -119,11 +125,13 @@ export class ArtifactDeliveryService {
     if (Date.parse(authorization.expiresAt) <= this.#date().getTime()) {
       throw new Error("ARTIFACT_DELIVERY_EXPIRED");
     }
-    const ready = await this.#objectStore.describeReady(authorization.artifactVersionRef);
+    const ready = await this.#objectStore.describeReady({ ownerScope: authorization.ownerScope,
+      artifactRef: authorization.artifactRef, artifactVersionRef: authorization.artifactVersionRef });
     if (ready === null) throw new Error("ARTIFACT_VERSION_NOT_READY");
     const byteSize = safeNumber(ready.byteSize);
     const range = parseArtifactByteRange(input.rangeHeader, byteSize);
-    const opened = await this.#objectStore.openReady({ artifactVersionRef: authorization.artifactVersionRef,
+    const opened = await this.#objectStore.openReady({ ownerScope: authorization.ownerScope,
+      artifactRef: authorization.artifactRef, artifactVersionRef: authorization.artifactVersionRef,
       ...(range === undefined ? {} : { range }), signal: input.signal });
     const contentLength = range === undefined ? opened.byteSize : range.endInclusive - range.start + 1;
     return Object.freeze({

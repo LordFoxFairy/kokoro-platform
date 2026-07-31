@@ -7,6 +7,9 @@ import type {
   ArtifactTrustDecision,
 } from "../../artifact/index.js";
 
+export const MAXIMUM_BUFFERED_IMAGE_OUTPUT_BYTES = 16 * 1024 * 1024;
+export const MAXIMUM_BUFFERED_IMAGE_OUTCOME_BYTES = 32 * 1024 * 1024;
+
 export type ImageProviderRequest = Readonly<{
   promptIntent: string;
   aspectRatio: "square_1_1" | "landscape_4_3" | "landscape_16_9" | "portrait_3_4" | "portrait_9_16";
@@ -45,6 +48,7 @@ export type MediaImageWorkerTask = Readonly<{
   modelInvocationCommandRef: string;
   request: ImageProviderRequest;
   candidateRefs: readonly string[];
+  artifactRefs: readonly string[];
   artifactVersionRefs: readonly string[];
   ownerScope: ArtifactOwnerScope;
   creditChildAllocationRef: string;
@@ -156,7 +160,9 @@ export class ImageOperationWorker {
     const finalizationReceiptRefs: string[] = [];
     for (const output of outcome.outputs) {
       const artifactVersionRef = task.artifactVersionRefs[output.candidateOrdinal - 1]!;
-      const staged = await this.#dependencies.artifact.stage({ artifactVersionRef,
+      const artifactRef = task.artifactRefs[output.candidateOrdinal - 1]!;
+      const staged = await this.#dependencies.artifact.stage({ ownerScope: task.ownerScope,
+        artifactRef, artifactVersionRef,
         bytes: output.bytes, mediaType: output.mediaType });
       await this.#dependencies.repository.recordArtifactStaged(task, staged);
       const trustDecision = await this.#dependencies.trust.evaluate({
@@ -268,6 +274,7 @@ export class InMemoryMediaImageWorkerRepository implements MediaImageWorkerRepos
       request: Object.freeze({ promptIntent: "fox", aspectRatio: "square_1_1", candidateCount: 1,
         outputFormat: "png", modelOptionRevisionRef: "image-option:example" }),
       candidateRefs: Object.freeze(["media-candidate:example"]),
+      artifactRefs: Object.freeze(["artifact:example"]),
       artifactVersionRefs: Object.freeze(["artifact-version:example"]),
       ownerScope: Object.freeze({ siteRef: "site:example", subjectRef: "subject:example",
         subjectGeneration: 1n, projectRef: "project:example" }),
@@ -335,18 +342,23 @@ function digestProviderRequest(commandRef: string, request: ImageProviderRequest
 
 function assertTask(task: MediaImageWorkerTask): void {
   if (task.leaseEpoch < 1n || task.candidateRefs.length !== task.request.candidateCount ||
+      task.artifactRefs.length !== task.request.candidateCount ||
       task.artifactVersionRefs.length !== task.request.candidateCount ||
       new Set(task.candidateRefs).size !== task.candidateRefs.length ||
+      new Set(task.artifactRefs).size !== task.artifactRefs.length ||
       new Set(task.artifactVersionRefs).size !== task.artifactVersionRefs.length) {
     throw new Error("MEDIA_WORKER_TASK_INVALID");
   }
 }
 
 function assertOutcome(task: MediaImageWorkerTask, outcome: ImageProviderOutcome): void {
+  const totalBytes = outcome.outputs.reduce((total, output) => total + output.bytes.byteLength, 0);
   if (outcome.outputs.length !== task.request.candidateCount || outcome.providerUsage.quantity < 1n ||
       outcome.providerUsage.unit !== "image" ||
+      totalBytes > MAXIMUM_BUFFERED_IMAGE_OUTCOME_BYTES ||
       outcome.outputs.some((output, index) => output.candidateOrdinal !== index + 1 ||
-        output.bytes.byteLength < 1 || output.width < 1 || output.height < 1)) {
+        output.bytes.byteLength < 1 || output.bytes.byteLength > MAXIMUM_BUFFERED_IMAGE_OUTPUT_BYTES ||
+        output.width < 1 || output.height < 1)) {
     throw new Error("MEDIA_PROVIDER_OUTCOME_INVALID");
   }
 }

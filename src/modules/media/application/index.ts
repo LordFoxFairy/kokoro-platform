@@ -4,6 +4,8 @@ export {
   InMemoryMediaImageOperationRepository,
 } from "./image-operation-submission.js";
 export type {
+  AgentImageAccessOwnerPort,
+  MediaImageAdmissionFacts,
   MediaImageAdmissionOwnerPort,
   MediaImageCommandBegin,
   MediaImageCommandIdentity,
@@ -15,6 +17,8 @@ export type {
 export {
   ImageOperationWorker,
   InMemoryMediaImageWorkerRepository,
+  MAXIMUM_BUFFERED_IMAGE_OUTCOME_BYTES,
+  MAXIMUM_BUFFERED_IMAGE_OUTPUT_BYTES,
 } from "./image-operation-worker.js";
 export type {
   ImageOutputTrustPort,

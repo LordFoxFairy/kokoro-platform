@@ -70,6 +70,9 @@ test("PostgreSQL CI provisions isolated non-superuser roles", async () => {
     "platform_authorization_maintenance",
     "platform_admin",
     "platform_model_gateway",
+    "platform_media_public",
+    "platform_media_runtime",
+    "platform_media_worker",
   ];
   for (const role of roles) {
     assert.match(source, new RegExp(`CREATE ROLE ${role}\\b`, "u"));

@@ -1,6 +1,7 @@
 import { createAgentExecutionEvidenceClient } from "../interfaces/connect/agent-execution-evidence-client.js";
 import { createSessionDispatchOwnerEvidenceClient } from "../interfaces/connect/dispatch-owner-evidence-client.js";
 import { createSessionAdmissionOwnerClient } from "../interfaces/connect/session-admission-owner-client.js";
+import { createSessionMediaProjectionClient } from "../interfaces/connect/session-media-projection-client.js";
 import type { AdmissionProductionOwnerPorts } from "./admission-composition.js";
 import { readBoundedPrivateFile, readBoundedRegularFile } from "./secret-files.js";
 
@@ -92,6 +93,7 @@ export async function createAdmissionProductionOwnerPorts(input: Readonly<{
   const configuration = await loadAdmissionOutboundOwnerConfiguration(input);
   return Object.freeze({
     session: createSessionAdmissionOwnerClient(configuration.session),
+    mediaProjection: createSessionMediaProjectionClient(configuration.session),
     dispatchEvidence: createSessionDispatchOwnerEvidenceClient(configuration.session),
     executionEvidence: createAgentExecutionEvidenceClient(configuration.agent),
   });

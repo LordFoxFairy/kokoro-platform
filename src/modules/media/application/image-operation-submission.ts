@@ -1,4 +1,13 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
+import { create, toBinary } from "@bufbuild/protobuf";
+import {
+  AgentImageSubmissionFingerprintInputV1Schema,
+  type AgentImageIntentV1,
+} from "../../../interfaces/connect/generated-media-runtime/kokoro/platform/media/v1/media_runtime_pb.js";
+import {
+  CanonicalImageAspectRatio,
+  CanonicalImageOutputFormat,
+} from "../../../interfaces/connect/generated-media-runtime/kokoro/platform/media/v1/media_canonical_pb.js";
 import type { CanonicalMediaOperationInputV1 } from
   "../../../interfaces/http/generated/platform-public/media-canonical.js";
 import {
@@ -6,7 +15,12 @@ import {
   mediaCallerRequestFingerprintSha256,
 } from "../../../interfaces/http/generated/platform-public/media-canonical.js";
 import type { PlatformTransaction } from "../../../shared/unit-of-work/index.js";
-import { createMediaOperationPlan, type MediaOperationPlan } from "../domain/media-operation.js";
+import {
+  createMediaOperationPlan,
+  transitionMediaOperation,
+  transitionMediaStep,
+  type MediaOperationPlan,
+} from "../domain/media-operation.js";
 import { compiledOperationDefinitionRevision } from "../domain/operation-definition.js";
 import {
   mediaCandidateRef,
@@ -38,6 +52,24 @@ export interface MediaImageAdmissionOwnerPort {
   }>>;
 }
 
+export type MediaImageAdmissionFacts = Readonly<{
+  ownerBinding: MediaOperationOwnerBinding;
+  executionBudgetRootRef: string;
+  parentAllocationRef: string;
+  maximumCredit: bigint;
+  trustInputDecisionRef: string;
+}>;
+
+export interface AgentImageAccessOwnerPort {
+  resolveAgentImage(input: Readonly<{
+    mediaAccessHandle: string;
+    mediaProjectionReservationHandle: string;
+    stableOutputSlotRef: string;
+    agentMediaCommandRef: string;
+    imageIntent: AgentImageIntentV1;
+  }>, signal: AbortSignal): Promise<MediaImageAdmissionFacts>;
+}
+
 export interface MediaImageCreditAllocationPort {
   deriveChild(transaction: PlatformTransaction, input: Readonly<{
     ownerBinding: MediaOperationOwnerBinding;
@@ -57,6 +89,8 @@ export type MediaImageCommandIdentity = Readonly<{
   callerAudience: string;
   siteRef: string;
   subjectRef: string;
+  subjectGeneration: bigint;
+  projectRef: string;
   commandRef: string;
 }>;
 
@@ -69,6 +103,8 @@ export type MediaImageOperationRecord = Readonly<{
   protectedInput: ProtectedOperationInputRevision;
   plan: MediaOperationPlan;
   modelInvocationCommandRefs: readonly string[];
+  artifactRefs: readonly string[];
+  artifactVersionRefs: readonly string[];
   credit: Readonly<{
     childAllocationRef: string;
     allocationReservationReceiptRef: string;
@@ -104,11 +140,13 @@ export interface MediaImageUnitOfWork {
 }
 
 type MediaImageReferenceKind = "media-operation" | "media-input-revision" | "media-step" |
-  "media-candidate" | "model-invocation-command" | "media-dispatch-outbox";
+  "media-candidate" | "model-invocation-command" | "artifact" | "artifact-version" |
+  "media-dispatch-outbox";
 
 export class ImageOperationSubmissionService {
   readonly #dependencies: Readonly<{
     admission: MediaImageAdmissionOwnerPort;
+    agentAccess?: AgentImageAccessOwnerPort | undefined;
     credit: MediaImageCreditAllocationPort;
     repository: MediaImageOperationRepository;
     inputProtector: EnvelopeOperationInputProtector;
@@ -120,6 +158,7 @@ export class ImageOperationSubmissionService {
 
   constructor(input: Readonly<{
     admission: MediaImageAdmissionOwnerPort;
+    agentAccess?: AgentImageAccessOwnerPort | undefined;
     credit: MediaImageCreditAllocationPort;
     repository: MediaImageOperationRepository;
     inputProtector: EnvelopeOperationInputProtector;
@@ -142,6 +181,7 @@ export class ImageOperationSubmissionService {
     commandRef: string;
     callerRequestFingerprint: string;
     request: CanonicalMediaOperationInputV1;
+    signal: AbortSignal;
   }>): Promise<Readonly<{
     kind: "created" | "replayed";
     operationRef: string;
@@ -161,8 +201,68 @@ export class ImageOperationSubmissionService {
       caller: input.caller,
       commandRef: input.commandRef,
       request: input.request,
-    }, AbortSignal.timeout(5_000));
+    }, boundedSignal(input.signal, 5_000));
     assertAdmissionMatchesRequest(admission, input.request);
+    return this.#submitOwned({ callerAudience: input.callerAudience, commandRef: input.commandRef,
+      callerRequestFingerprint: recomputedFingerprint, request: input.request, canonicalBytes, admission });
+  }
+
+  async submitAgentImage(input: Readonly<{
+    mediaAccessHandle: string;
+    mediaProjectionReservationHandle: string;
+    stableOutputSlotRef: string;
+    agentMediaCommandRef: string;
+    callerRequestFingerprint: string;
+    imageIntent: AgentImageIntentV1;
+    signal: AbortSignal;
+  }>): Promise<Readonly<{
+    kind: "created" | "replayed";
+    operationRef: string;
+    callerRequestFingerprint: string;
+  }>> {
+    const agentAccess = this.#dependencies.agentAccess;
+    if (agentAccess === undefined) throw new Error("MEDIA_AGENT_ACCESS_OWNER_REQUIRED");
+    opaqueHandle(input.mediaAccessHandle);
+    opaqueHandle(input.mediaProjectionReservationHandle);
+    for (const value of [input.stableOutputSlotRef, input.agentMediaCommandRef]) reference(value, 8192);
+    if (!FINGERPRINT.test(input.callerRequestFingerprint)) throw new Error("MEDIA_CALLER_FINGERPRINT_INVALID");
+    const recomputedFingerprint = agentImageCallerRequestFingerprint({
+      stableOutputSlotRef: input.stableOutputSlotRef,
+      imageIntent: input.imageIntent,
+    });
+    if (!digestEqual(recomputedFingerprint, input.callerRequestFingerprint)) {
+      throw new Error("MEDIA_CALLER_FINGERPRINT_MISMATCH");
+    }
+    const admission = await agentAccess.resolveAgentImage({
+      mediaAccessHandle: input.mediaAccessHandle,
+      mediaProjectionReservationHandle: input.mediaProjectionReservationHandle,
+      stableOutputSlotRef: input.stableOutputSlotRef,
+      agentMediaCommandRef: input.agentMediaCommandRef,
+      imageIntent: input.imageIntent,
+    }, boundedSignal(input.signal, 5_000));
+    if (admission.ownerBinding.source !== "agent_runtime") {
+      throw new Error("MEDIA_ADMISSION_OWNER_BINDING_INVALID");
+    }
+    const request = canonicalRequestFromAgentIntent(input.imageIntent, admission);
+    const canonicalBytes = canonicalMediaOperationInputV1Bytes(request);
+    return this.#submitOwned({ callerAudience: "ga.media-runtime", commandRef: input.agentMediaCommandRef,
+      callerRequestFingerprint: recomputedFingerprint, request, canonicalBytes, admission });
+  }
+
+  #submitOwned(input: Readonly<{
+    callerAudience: string;
+    commandRef: string;
+    callerRequestFingerprint: string;
+    request: CanonicalMediaOperationInputV1;
+    canonicalBytes: Uint8Array;
+    admission: MediaImageAdmissionFacts;
+  }>): Promise<Readonly<{
+    kind: "created" | "replayed";
+    operationRef: string;
+    callerRequestFingerprint: string;
+  }>> {
+    const admission = input.admission;
+    const canonicalBytes = input.canonicalBytes;
     const ownerRequestDigest = deriveMediaOwnerRequestDigest({
       ownerDigestKey: this.#dependencies.ownerDigestKey,
       canonicalBytes,
@@ -172,8 +272,10 @@ export class ImageOperationSubmissionService {
       callerAudience: input.callerAudience,
       siteRef: admission.ownerBinding.siteRef,
       subjectRef: admission.ownerBinding.subjectRef,
+      subjectGeneration: admission.ownerBinding.subjectGeneration,
+      projectRef: admission.ownerBinding.projectRef,
       commandRef: input.commandRef,
-      callerRequestFingerprint: recomputedFingerprint,
+      callerRequestFingerprint: input.callerRequestFingerprint,
       ownerRequestDigest,
     });
     return this.#dependencies.unitOfWork.execute(admission.ownerBinding, async (transaction) => {
@@ -182,10 +284,12 @@ export class ImageOperationSubmissionService {
       const operationRefValue = this.#dependencies.reference("media-operation");
       const inputRevisionRefValue = this.#dependencies.reference("media-input-revision");
       const stepRefValue = this.#dependencies.reference("media-step");
+      const modelInvocationCommandRef = this.#dependencies.reference("model-invocation-command");
       const candidates = Array.from({ length: input.request.candidateCount }, (_, index) => ({
         outputSlot: `image-${index + 1}`,
         candidateRef: this.#dependencies.reference("media-candidate"),
-        modelInvocationCommandRef: this.#dependencies.reference("model-invocation-command"),
+        artifactRef: this.#dependencies.reference("artifact"),
+        artifactVersionRef: this.#dependencies.reference("artifact-version"),
       }));
       const definition = compiledOperationDefinitionRevision({
         definitionRevisionRef: operationDefinitionRevisionRef(input.request.definitionRevisionRef),
@@ -197,13 +301,24 @@ export class ImageOperationSubmissionService {
             required: index === 0,
           })) }],
       });
-      const plan = createMediaOperationPlan({
+      const allocatedPlan = createMediaOperationPlan({
         operationRef: mediaOperationRef(operationRefValue),
         operationInputRevisionRef: operationInputRevisionRef(inputRevisionRefValue),
         definition,
         steps: [{ definitionStepKey: "generate", stepRef: mediaStepRef(stepRefValue) }],
         candidates: candidates.map((candidate) => ({ definitionStepKey: "generate",
           outputSlot: candidate.outputSlot, candidateRef: mediaCandidateRef(candidate.candidateRef) })),
+      });
+      const authorizedOperation = transitionMediaOperation({ operation: allocatedPlan.operation,
+        expectedVersion: 1n, nextState: Object.freeze({ kind: "authorized" as const }) });
+      const queuedOperation = transitionMediaOperation({ operation: authorizedOperation,
+        expectedVersion: 2n, nextState: Object.freeze({ kind: "queued" as const }) });
+      const plan: MediaOperationPlan = Object.freeze({
+        operation: queuedOperation,
+        steps: Object.freeze(allocatedPlan.steps.map((step) => transitionMediaStep({
+          step, expectedVersion: 1n, nextState: Object.freeze({ kind: "ready" as const }),
+        }))),
+        candidates: allocatedPlan.candidates,
       });
       const protectedInput = this.#dependencies.inputProtector.protect({
         operationInputRevisionRef: inputRevisionRefValue,
@@ -225,7 +340,9 @@ export class ImageOperationSubmissionService {
         ownerBinding: admission.ownerBinding,
         protectedInput,
         plan,
-        modelInvocationCommandRefs: Object.freeze(candidates.map((item) => item.modelInvocationCommandRef)),
+        modelInvocationCommandRefs: Object.freeze([modelInvocationCommandRef]),
+        artifactRefs: Object.freeze(candidates.map((item) => item.artifactRef)),
+        artifactVersionRefs: Object.freeze(candidates.map((item) => item.artifactVersionRef)),
         credit: Object.freeze({ ...credit }),
         trustInputDecisionRef: admission.trustInputDecisionRef,
         dispatchOutbox: Object.freeze({
@@ -239,7 +356,7 @@ export class ImageOperationSubmissionService {
       });
       await this.#dependencies.repository.complete(transaction, begun.leaseToken, record);
       return Object.freeze({ kind: "created" as const, operationRef: operationRefValue,
-        callerRequestFingerprint: recomputedFingerprint });
+        callerRequestFingerprint: input.callerRequestFingerprint });
     });
   }
 
@@ -297,7 +414,8 @@ export class InMemoryMediaImageOperationRepository implements MediaImageOperatio
 }
 
 function commandKey(command: MediaImageCommandIdentity): string {
-  return [command.callerAudience, command.siteRef, command.subjectRef, command.commandRef]
+  return [command.callerAudience, command.siteRef, command.subjectRef,
+    command.subjectGeneration.toString(), command.projectRef, command.commandRef]
     .map((value) => `${Buffer.byteLength(value)}:${value}`).join("|");
 }
 
@@ -321,10 +439,72 @@ function digestEqual(left: string, right: string): boolean {
   return leftBytes.byteLength === rightBytes.byteLength && timingSafeEqual(leftBytes, rightBytes);
 }
 
-function reference(value: string): void {
-  if (value.length < 1 || value.length > 256 || value.trim() !== value || hasControlCharacter(value)) {
+export function agentImageCallerRequestFingerprint(input: Readonly<{
+  stableOutputSlotRef: string;
+  imageIntent: AgentImageIntentV1;
+}>): string {
+  const payload = create(AgentImageSubmissionFingerprintInputV1Schema, {
+    stableOutputSlotRef: input.stableOutputSlotRef,
+    imageIntent: input.imageIntent,
+  });
+  return createHash("sha256")
+    .update("kokoro.platform.media.agent-image-submit.v1\0")
+    .update(toBinary(AgentImageSubmissionFingerprintInputV1Schema, payload, { writeUnknownFields: false }))
+    .digest("hex");
+}
+
+function canonicalRequestFromAgentIntent(
+  intent: AgentImageIntentV1,
+  admission: MediaImageAdmissionFacts,
+): CanonicalMediaOperationInputV1 {
+  const aspectRatio = aspectRatioName(intent.aspectRatio);
+  const outputFormat = outputFormatName(intent.outputFormat);
+  if (!Number.isInteger(intent.candidateCount) || intent.candidateCount < 1 || intent.candidateCount > 4) {
+    throw new Error("MEDIA_AGENT_IMAGE_INTENT_INVALID");
+  }
+  return Object.freeze({
+    contractMajor: 1,
+    definitionRevisionRef: admission.ownerBinding.definitionRevisionRef,
+    kind: "image_text_to_image",
+    promptIntent: intent.promptIntent,
+    aspectRatio,
+    candidateCount: intent.candidateCount as 1 | 2 | 3 | 4,
+    modelOptionRevisionRef: admission.ownerBinding.modelOptionRevisionRef,
+    outputFormat,
+  });
+}
+
+function aspectRatioName(value: CanonicalImageAspectRatio): CanonicalMediaOperationInputV1["aspectRatio"] {
+  if (value === CanonicalImageAspectRatio.SQUARE_1_1) return "square_1_1";
+  if (value === CanonicalImageAspectRatio.LANDSCAPE_4_3) return "landscape_4_3";
+  if (value === CanonicalImageAspectRatio.LANDSCAPE_16_9) return "landscape_16_9";
+  if (value === CanonicalImageAspectRatio.PORTRAIT_3_4) return "portrait_3_4";
+  if (value === CanonicalImageAspectRatio.PORTRAIT_9_16) return "portrait_9_16";
+  throw new Error("MEDIA_AGENT_IMAGE_INTENT_INVALID");
+}
+
+function outputFormatName(value: CanonicalImageOutputFormat): CanonicalMediaOperationInputV1["outputFormat"] {
+  if (value === CanonicalImageOutputFormat.PNG) return "png";
+  if (value === CanonicalImageOutputFormat.JPEG) return "jpeg";
+  if (value === CanonicalImageOutputFormat.WEBP) return "webp";
+  throw new Error("MEDIA_AGENT_IMAGE_INTENT_INVALID");
+}
+
+function reference(value: string, maximum = 256): void {
+  if (value.length < 1 || value.length > maximum || value.trim() !== value || hasControlCharacter(value)) {
     throw new Error("MEDIA_REFERENCE_INVALID");
   }
+}
+
+function opaqueHandle(value: string): void {
+  if (value.length < 32 || value.length > 8192 || value.trim() !== value || hasControlCharacter(value)) {
+    throw new Error("MEDIA_OPAQUE_HANDLE_INVALID");
+  }
+}
+
+function boundedSignal(caller: AbortSignal, timeoutMs: number): AbortSignal {
+  if (caller.aborted) throw caller.reason ?? new DOMException("Aborted", "AbortError");
+  return AbortSignal.any([caller, AbortSignal.timeout(timeoutMs)]);
 }
 
 function hasControlCharacter(value: string): boolean {

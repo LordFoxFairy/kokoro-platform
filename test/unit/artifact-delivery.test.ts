@@ -17,6 +17,8 @@ describe("Artifact staged/finalized delivery", () => {
   it("promotes exact staged bytes only after a matching trust decision", async () => {
     const store = new InMemoryArtifactObjectStore();
     const staged = await store.stage({
+      ownerScope: scope,
+      artifactRef: "artifact:one",
       artifactVersionRef: "artifact-version:one",
       bytes: new TextEncoder().encode("image-bytes"),
       mediaType: "image/png",
@@ -37,7 +39,8 @@ describe("Artifact staged/finalized delivery", () => {
   it("issues a short-lived scope-bound capability and streams one bounded range", async () => {
     const clock = vi.fn(() => new Date("2026-07-31T12:00:00.000Z"));
     const store = new InMemoryArtifactObjectStore();
-    const staged = await store.stage({ artifactVersionRef: "artifact-version:one",
+    const staged = await store.stage({ ownerScope: scope, artifactRef: "artifact:one",
+      artifactVersionRef: "artifact-version:one",
       bytes: new TextEncoder().encode("0123456789"), mediaType: "image/png" });
     await store.promote({ stagedReceipt: staged,
       trustDecision: { kind: "allow", decisionRef: "trust:one", contentSha256: staged.contentSha256 } });
@@ -60,6 +63,7 @@ describe("Artifact staged/finalized delivery", () => {
     expect(issued.deliveryCapability).not.toContain("artifact-version:one");
 
     const response = await service.redeem({
+      authorizationRef: issued.authorizationRef,
       deliveryCapability: issued.deliveryCapability,
       ownerScope: scope,
       audience: "site-bff.artifact-delivery",
@@ -76,7 +80,8 @@ describe("Artifact staged/finalized delivery", () => {
   it("fails closed for wrong scope, expired/revoked capability, and multi-range requests", async () => {
     const now = new Date("2026-07-31T12:00:00.000Z");
     const store = new InMemoryArtifactObjectStore();
-    const staged = await store.stage({ artifactVersionRef: "artifact-version:one",
+    const staged = await store.stage({ ownerScope: scope, artifactRef: "artifact:one",
+      artifactVersionRef: "artifact-version:one",
       bytes: new Uint8Array(16), mediaType: "image/png" });
     await store.promote({ stagedReceipt: staged,
       trustDecision: { kind: "allow", decisionRef: "trust:one", contentSha256: staged.contentSha256 } });
@@ -88,15 +93,42 @@ describe("Artifact staged/finalized delivery", () => {
       audience: "site-bff.artifact-delivery", ttlMs: 1_000 });
 
     await expect(service.redeem({ deliveryCapability: issued.deliveryCapability,
+      authorizationRef: issued.authorizationRef,
       ownerScope: { ...scope, subjectGeneration: 5n }, audience: "site-bff.artifact-delivery",
       signal: new AbortController().signal })).rejects.toThrow("ARTIFACT_DELIVERY_SCOPE_MISMATCH");
     await expect(service.redeem({ deliveryCapability: issued.deliveryCapability, ownerScope: scope,
+      authorizationRef: issued.authorizationRef,
       audience: "site-bff.artifact-delivery", rangeHeader: "bytes=0-1,4-5",
       signal: new AbortController().signal })).rejects.toThrow("ARTIFACT_RANGE_MULTIPLE_UNSUPPORTED");
     expect((await service.revoke({ authorizationRef: issued.authorizationRef,
       ownerScope: scope })).state).toBe("revoked");
     await expect(service.redeem({ deliveryCapability: issued.deliveryCapability, ownerScope: scope,
+      authorizationRef: issued.authorizationRef,
       audience: "site-bff.artifact-delivery", signal: new AbortController().signal }))
       .rejects.toThrow("ARTIFACT_DELIVERY_REVOKED");
+  });
+
+  it("binds issuance and redemption to exact owner, Artifact, version and path authorization ref", async () => {
+    const store = new InMemoryArtifactObjectStore();
+    const staged = await store.stage({ ownerScope: scope, artifactRef: "artifact:one",
+      artifactVersionRef: "artifact-version:one", bytes: new Uint8Array([1, 2, 3]), mediaType: "image/png" });
+    await store.promote({ stagedReceipt: staged,
+      trustDecision: { kind: "allow", decisionRef: "trust:one", contentSha256: staged.contentSha256 } });
+    const service = new ArtifactDeliveryService({
+      repository: new InMemoryArtifactDeliveryAuthorizationRepository(), objectStore: store,
+      capabilityKey: randomBytes(32), reference: () => "authorization:one",
+    });
+
+    await expect(service.issue({ ownerScope: scope, artifactRef: "artifact:other",
+      artifactVersionRef: "artifact-version:one", purpose: "preview",
+      audience: "site-bff.artifact-delivery", ttlMs: 1_000 }))
+      .rejects.toThrow("ARTIFACT_VERSION_NOT_READY");
+    const issued = await service.issue({ ownerScope: scope, artifactRef: "artifact:one",
+      artifactVersionRef: "artifact-version:one", purpose: "preview",
+      audience: "site-bff.artifact-delivery", ttlMs: 1_000 });
+    await expect(service.redeem({ authorizationRef: "authorization:wrong",
+      deliveryCapability: issued.deliveryCapability, ownerScope: scope,
+      audience: "site-bff.artifact-delivery", signal: new AbortController().signal }))
+      .rejects.toThrow("ARTIFACT_DELIVERY_AUTHORIZATION_MISMATCH");
   });
 });

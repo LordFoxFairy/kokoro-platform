@@ -96,10 +96,12 @@ export function createSessionAdmissionOwnerClientForTransport(
           throw invalidResponse();
         }
         if (response.outcome.case === "verified") {
-          if (!reference(response.outcome.value.threadId, 128)) throw invalidResponse();
+          if (!reference(response.outcome.value.threadId, 128) ||
+              !reference(response.outcome.value.assistantMessageId, 128)) throw invalidResponse();
           return Object.freeze({
             kind: "resolved" as const,
-            value: Object.freeze({ threadId: response.outcome.value.threadId }),
+            value: Object.freeze({ threadId: response.outcome.value.threadId,
+              assistantMessageId: response.outcome.value.assistantMessageId }),
           });
         }
         return mapNonVerified(response.outcome);

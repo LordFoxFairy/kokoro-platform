@@ -27,6 +27,8 @@ import { PostgresAdmissionLifecycleOwner } from "../modules/admission/infrastruc
 import { PostgresAdmissionModelOwner } from "../modules/admission/infrastructure/postgres/admission-model-owner.js";
 import { PostgresAdmissionExecutionBindingOwner } from "../modules/admission/infrastructure/postgres/admission-execution-binding-owner.js";
 import { PostgresAdmissionSessionGrantOwner } from "../modules/admission/infrastructure/postgres/admission-session-grant-owner.js";
+import { PostgresAdmissionMediaAccessOwner } from
+  "../modules/admission/infrastructure/postgres/admission-media-access-owner.js";
 import {
   PostgresAdmissionAssetOwner,
   PostgresAdmissionBudgetOwner,
@@ -127,7 +129,7 @@ export interface AdmissionProductionComposition {
 export type AdmissionProductionOwnerPorts = Omit<
   PlatformAdmissionOwnerPorts,
   "unitOfWork" | "lifecycle" | "site" | "model" | "runtimePolicy" | "capability" |
-  "assets" | "budget" | "sessionGrant" | "executionBinding"
+  "assets" | "budget" | "sessionGrant" | "executionBinding" | "mediaAccess"
 >;
 
 /**
@@ -138,6 +140,7 @@ export type AdmissionProductionOwnerPorts = Omit<
 export function createPlatformAdmissionOwnerAuthority(input: Readonly<{
   database: Pick<PlatformTransactionalDatabaseClient, "internalTransaction">;
   ownerPorts: AdmissionProductionOwnerPorts;
+  mediaAccessKey: Uint8Array;
   clock?: () => Date;
 }>): PlatformAdmissionOwnerAuthority {
   const ports: PlatformAdmissionOwnerPorts = {
@@ -148,6 +151,7 @@ export function createPlatformAdmissionOwnerAuthority(input: Readonly<{
     capability: new PostgresAdmissionCapabilityOwner(),
     sessionGrant: new PostgresAdmissionSessionGrantOwner(),
     executionBinding: new PostgresAdmissionExecutionBindingOwner(),
+    mediaAccess: new PostgresAdmissionMediaAccessOwner(input.mediaAccessKey),
     assets: new PostgresAdmissionAssetOwner(),
     budget: new PostgresAdmissionBudgetOwner(),
     lifecycle: new PostgresAdmissionLifecycleOwner(),
@@ -168,6 +172,7 @@ export function createPlatformAdmissionOwnerAuthority(input: Readonly<{
   assertPlatformAdmissionOwnerPorts(ports);
   return new PlatformAdmissionOwnerAuthority({
     ports,
+    mediaProjectionRecoveryKey: input.mediaAccessKey,
     ...(input.clock === undefined ? {} : { clock: input.clock }),
   });
 }
@@ -232,7 +237,7 @@ export async function createAdmissionProductionComposition(input: Readonly<{
   clock?: () => Date;
 }>): Promise<AdmissionProductionComposition> {
   const environment = input.environment ?? process.env;
-  const [tls, peerRegistry, gaRunRequestDraftSealer, capabilityProjectionVerifier] = await Promise.all([
+  const [tls, peerRegistry, gaRunRequestDraftSealer, capabilityProjectionVerifier, mediaAccessKey] = await Promise.all([
     loadAdmissionTls(environment),
     loadAdmissionPeers(
       required(environment, "PLATFORM_ADMISSION_MTLS_PEERS_FILE"),
@@ -247,6 +252,9 @@ export async function createAdmissionProductionComposition(input: Readonly<{
     loadCapabilityProjectionVerifier(
       required(environment, "PLATFORM_CAPABILITY_PROJECTION_HUB_PUBLIC_KEY_RING_FILE"),
     ),
+    loadAdmissionMediaAccessKey(
+      required(environment, "PLATFORM_ADMISSION_MEDIA_ACCESS_HMAC_KEY_FILE"),
+    ),
   ]);
   const sessionCallerIdentity = required(environment, "PLATFORM_ASSET_ELIGIBILITY_SESSION_CALLER_SAN_URI");
   if (!peerRegistry.some((peer) => peer.identity === sessionCallerIdentity)) {
@@ -260,6 +268,7 @@ export async function createAdmissionProductionComposition(input: Readonly<{
   const authority = createPlatformAdmissionOwnerAuthority({
     database: input.database,
     ownerPorts: input.ownerPorts,
+    mediaAccessKey,
     ...(input.clock === undefined ? {} : { clock: input.clock }),
   });
   const application = createAdmissionApplicationComposition({
@@ -335,6 +344,12 @@ export async function createAdmissionProductionComposition(input: Readonly<{
     handler,
     createServer: (listener: AdmissionRequestListener) => createSecureServer(tls, listener),
   });
+}
+
+async function loadAdmissionMediaAccessKey(path: string): Promise<Uint8Array> {
+  const value = (await readBoundedPrivateFile(path, 256, "PLATFORM_ADMISSION_MEDIA_ACCESS_KEY_INVALID")).trim();
+  if (!/^[0-9a-f]{64}$/u.test(value)) throw new Error("PLATFORM_ADMISSION_MEDIA_ACCESS_KEY_INVALID");
+  return new Uint8Array(Buffer.from(value, "hex"));
 }
 
 async function loadCapabilityProjectionVerifier(path: string) {

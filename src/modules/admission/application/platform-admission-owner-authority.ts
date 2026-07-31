@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { create, type MessageInitShape } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import type { Backend, Permissions, SkillGrant, McpGrant } from "@kokoro/platform-kit";
@@ -61,7 +61,10 @@ export interface AdmissionSessionOwnerPort {
       requestDigest: string;
     }>,
     signal: AbortSignal,
-  ): Promise<AdmissionOwnerResolution<Readonly<{ threadId: string }>>>;
+  ): Promise<AdmissionOwnerResolution<Readonly<{
+    threadId: string;
+    assistantMessageId?: string | undefined;
+  }>>>;
   verifyFinalizeReceipts(
     input: Readonly<{
       siteId: string;
@@ -93,6 +96,43 @@ export interface AdmissionExecutionBindingOwnerPort {
     namespace: string;
     sessionExecutionBindingRef: string;
   }>>>;
+}
+
+/** Session-owned reservation RPC. This port is always invoked outside a Platform DB transaction. */
+export interface AdmissionMediaProjectionOwnerPort {
+  issueReservation(input: Readonly<{
+    sessionProjectionAuthorizationHandle: string;
+    sessionId: string;
+    runId: string;
+    assistantMessageId: string;
+    subjectGeneration: bigint;
+    maximumSlots: 16;
+    projectionCommandRef: string;
+    projectionCommandRecoveryCapability: string;
+  }>, signal: AbortSignal): Promise<AdmissionOwnerResolution<Readonly<{
+    mediaProjectionReservationHandle: string;
+    expiresAt: string;
+    reservationReceiptRef: string;
+  }>>>;
+}
+
+/** Platform-owned access authority. Implementations store only a keyed handle digest. */
+export interface AdmissionMediaAccessOwnerPort {
+  reserve(transaction: PlatformTransaction, input: Readonly<{
+    siteId: string;
+    projectRef: string;
+    sessionId: string;
+    runId: string;
+    commandId: string;
+    requestDigest: string;
+    configurationRevisionId: string;
+    subjectRef: string;
+    subjectGeneration: bigint;
+    mediaProjectionReservationHandle: string;
+    reservationReceiptRef: string;
+    inputPolicyDecisionRef: string;
+    maximumExpiresAt: string;
+  }>): Promise<AdmissionOwnerResolution<Readonly<{ mediaAccessHandle: string }>>>;
 }
 
 export interface AdmissionSessionGrantOwnerPort {
@@ -359,6 +399,8 @@ export interface PlatformAdmissionOwnerPorts {
   readonly session: AdmissionSessionOwnerPort;
   readonly sessionGrant: AdmissionSessionGrantOwnerPort;
   readonly executionBinding: AdmissionExecutionBindingOwnerPort;
+  readonly mediaProjection: AdmissionMediaProjectionOwnerPort;
+  readonly mediaAccess: AdmissionMediaAccessOwnerPort;
   readonly site: AdmissionSiteOwnerPort;
   readonly runtimePolicy: AdmissionRuntimePolicyOwnerPort;
   readonly model: AdmissionModelOwnerPort;
@@ -373,10 +415,19 @@ export interface PlatformAdmissionOwnerPorts {
 export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority {
   readonly #ports: PlatformAdmissionOwnerPorts;
   readonly #clock: () => Date;
+  readonly #mediaProjectionRecoveryKey: Buffer;
 
-  constructor(input: Readonly<{ ports: PlatformAdmissionOwnerPorts; clock?: () => Date }>) {
+  constructor(input: Readonly<{
+    ports: PlatformAdmissionOwnerPorts;
+    mediaProjectionRecoveryKey: Uint8Array;
+    clock?: () => Date;
+  }>) {
     assertPlatformAdmissionOwnerPorts(input.ports);
+    if (input.mediaProjectionRecoveryKey.byteLength !== 32) {
+      throw new Error("ADMISSION_MEDIA_PROJECTION_RECOVERY_KEY_INVALID");
+    }
     this.#ports = input.ports;
+    this.#mediaProjectionRecoveryKey = Buffer.from(input.mediaProjectionRecoveryKey);
     this.#clock = input.clock ?? (() => new Date());
   }
 
@@ -394,6 +445,26 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
       requestDigest: command.requestDigest,
     }, AbortSignal.timeout(5_000));
     if (session.kind !== "resolved") return session;
+    const mediaPreflight = command.effect.sessionProjectionAuthorizationHandle === ""
+      ? undefined
+      : await this.#resolveMediaPreflight(command);
+    if (mediaPreflight !== undefined && mediaPreflight.kind !== "resolved") return mediaPreflight;
+    const mediaReservation = mediaPreflight === undefined
+      ? undefined
+      : await this.#ports.mediaProjection.issueReservation({
+          sessionProjectionAuthorizationHandle: command.effect.sessionProjectionAuthorizationHandle,
+          sessionId: command.effect.sessionId,
+          runId: command.effect.proposedRunId,
+          assistantMessageId: requiredAssistantMessageId(session.value.assistantMessageId),
+          subjectGeneration: mediaPreflight.value.subjectGeneration,
+          maximumSlots: 16,
+          projectionCommandRef: projectionCommandRef(command),
+          projectionCommandRecoveryCapability: projectionRecoveryCapability(
+            this.#mediaProjectionRecoveryKey,
+            command,
+          ),
+        }, AbortSignal.timeout(5_000));
+    if (mediaReservation !== undefined && mediaReservation.kind !== "resolved") return mediaReservation;
     return this.#ports.unitOfWork.execute(command, async (transaction) => {
       const site = await this.#ports.site.resolve(transaction, {
         siteId: command.siteId,
@@ -412,6 +483,9 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         region: command.caller.region,
       });
       if (sessionGrant.kind !== "resolved") return sessionGrant;
+      if (mediaPreflight !== undefined) {
+        assertMediaPreflight(mediaPreflight.value, site.value, sessionGrant.value);
+      }
       const runtimePolicy = await this.#ports.runtimePolicy.resolve(transaction, {
         siteId: command.siteId,
         projectRef: command.effect.projectRef,
@@ -456,6 +530,24 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         configurationRevisionId: site.value.configurationRevisionId,
       });
       if (executionBinding.kind !== "resolved") return executionBinding;
+      const mediaAccess = mediaReservation === undefined
+        ? undefined
+        : await this.#ports.mediaAccess.reserve(transaction, {
+            siteId: command.siteId,
+            projectRef: command.effect.projectRef,
+            sessionId: command.effect.sessionId,
+            runId: command.effect.proposedRunId,
+            commandId: command.commandId,
+            requestDigest: command.requestDigest,
+            configurationRevisionId: site.value.configurationRevisionId,
+            subjectRef: sessionGrant.value.subjectRef,
+            subjectGeneration: sessionGrant.value.subjectGeneration,
+            mediaProjectionReservationHandle: mediaReservation.value.mediaProjectionReservationHandle,
+            reservationReceiptRef: mediaReservation.value.reservationReceiptRef,
+            inputPolicyDecisionRef: site.value.policyDecisionRef,
+            maximumExpiresAt: mediaReservation.value.expiresAt,
+          });
+      if (mediaAccess !== undefined && mediaAccess.kind !== "resolved") return mediaAccess;
       const ownerFacts: VerifiedGaRunRequestOwnerFacts = {
         kind: "run.request",
         run_id: command.effect.proposedRunId,
@@ -485,6 +577,10 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
           subagents: [...capability.value.subagents],
           backend: runtimePolicy.value.backend,
           permissions: { ...runtimePolicy.value.permissions },
+          ...(mediaAccess === undefined || mediaReservation === undefined ? {} : { media: {
+            media_access_handle: mediaAccess.value.mediaAccessHandle,
+            media_projection_reservation_handle: mediaReservation.value.mediaProjectionReservationHandle,
+          } }),
         },
         context: {
           namespace: executionBinding.value.namespace,
@@ -574,6 +670,39 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
             prepared,
             prerequisiteRefs: Object.freeze([...capability.value.prerequisiteRefs]),
           };
+    });
+  }
+
+  async #resolveMediaPreflight(
+    command: Parameters<AdmissionOwnerAuthority["prepareRun"]>[0],
+  ): Promise<AdmissionOwnerResolution<Readonly<{
+    configurationRevisionId: string;
+    subjectRef: string;
+    subjectGeneration: bigint;
+  }>>> {
+    return this.#ports.unitOfWork.execute(command, async (transaction) => {
+      const site = await this.#ports.site.resolve(transaction, {
+        siteId: command.siteId,
+        projectRef: command.effect.projectRef,
+        locale: command.effect.clientIntent!.locale,
+      });
+      if (site.kind !== "resolved") return site;
+      const sessionGrant = await this.#ports.sessionGrant.resolve(transaction, {
+        siteId: command.siteId,
+        projectRef: command.effect.projectRef,
+        sessionId: command.effect.sessionId,
+        runId: command.effect.proposedRunId,
+        configurationRevisionId: site.value.configurationRevisionId,
+        credential: command.effect.sessionAccessGrant,
+        environment: command.caller.environment,
+        region: command.caller.region,
+      });
+      if (sessionGrant.kind !== "resolved") return sessionGrant;
+      return Object.freeze({ kind: "resolved" as const, value: Object.freeze({
+        configurationRevisionId: site.value.configurationRevisionId,
+        subjectRef: sessionGrant.value.subjectRef,
+        subjectGeneration: sessionGrant.value.subjectGeneration,
+      }) });
     });
   }
 
@@ -806,6 +935,8 @@ export function assertPlatformAdmissionOwnerPorts(
     typeof candidate.session.verifyFinalizeReceipts !== "function" ||
     typeof candidate.sessionGrant?.resolve !== "function" ||
     typeof candidate.executionBinding?.resolve !== "function" ||
+    typeof candidate.mediaProjection?.issueReservation !== "function" ||
+    typeof candidate.mediaAccess?.reserve !== "function" ||
     typeof candidate.site?.resolve !== "function" ||
     typeof candidate.runtimePolicy?.resolve !== "function" ||
     typeof candidate.model?.resolve !== "function" ||
@@ -826,6 +957,45 @@ export function assertPlatformAdmissionOwnerPorts(
     typeof candidate.dispatchEvidence?.get !== "function" ||
     typeof candidate.executionEvidence?.resolve !== "function"
   ) throw new Error("PLATFORM_ADMISSION_OWNER_PORTS_REQUIRED");
+}
+
+function requiredAssistantMessageId(value: string | undefined): string {
+  if (value === undefined || value.length < 1 || value.length > 128 || value.trim() !== value) {
+    throw new Error("ADMISSION_MEDIA_ASSISTANT_MESSAGE_ID_REQUIRED");
+  }
+  return value;
+}
+
+function projectionCommandRef(command: AdmissionAuthorityCommand): string {
+  return `media-projection-command:sha256:${createHash("sha256")
+    .update("kokoro.platform.admission.media-projection-command.v1\0")
+    .update(command.siteId).update("\0")
+    .update(command.commandId).update("\0")
+    .update(command.requestDigest).digest("hex")}`;
+}
+
+function projectionRecoveryCapability(key: Buffer, command: AdmissionAuthorityCommand): string {
+  const digest = createHmac("sha256", key)
+    .update("kokoro.platform.admission.media-projection-recovery-capability.v1\0");
+  for (const value of [command.siteId, command.commandId, command.requestDigest]) {
+    const bytes = Buffer.from(value, "utf8");
+    const length = Buffer.allocUnsafe(4);
+    length.writeUInt32BE(bytes.byteLength);
+    digest.update(length).update(bytes);
+  }
+  return digest.digest("base64url");
+}
+
+function assertMediaPreflight(
+  preflight: Readonly<{ configurationRevisionId: string; subjectRef: string; subjectGeneration: bigint }>,
+  site: Readonly<{ configurationRevisionId: string }>,
+  sessionGrant: Readonly<{ subjectRef: string; subjectGeneration: bigint }>,
+): void {
+  if (preflight.configurationRevisionId !== site.configurationRevisionId ||
+      preflight.subjectRef !== sessionGrant.subjectRef ||
+      preflight.subjectGeneration !== sessionGrant.subjectGeneration) {
+    throw new Error("ADMISSION_MEDIA_PREFLIGHT_CHANGED");
+  }
 }
 
 function modelAuthorizationHandle(input: Readonly<{

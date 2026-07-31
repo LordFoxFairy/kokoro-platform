@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   AdmissionAuthorizationRecord,
   AdmissionAuthorizationState,
@@ -72,7 +73,7 @@ export class PostgresAdmissionLifecycleOwner implements AdmissionLifecycleOwnerP
       [input.siteId, input.manifestRef, input.manifestDigest, input.effect.sessionId,
         input.effect.launchId, input.effect.proposedRunId, input.commandId, input.requestDigest,
         input.effect.triggerMessageId, input.sessionExecutionBindingRef,
-        input.effect.modelOptionRevisionRef, canonicalJson(input.ownerFacts.runtime),
+        input.effect.modelOptionRevisionRef, canonicalRuntimeForPersistence(input.ownerFacts.runtime),
         input.executionBudgetRootRef, input.rootHoldRef, input.authorizationSegmentRef,
         input.segmentVersion.toString(), input.expiresAt, input.maximumExpiresAt,
         input.capabilitySnapshotRef, input.configurationRevisionId,
@@ -98,6 +99,20 @@ export class PostgresAdmissionLifecycleOwner implements AdmissionLifecycleOwnerP
     );
     if (projected !== 1) {
       throw new Error("ADMISSION_MODEL_GATEWAY_AUTHORIZATION_CONFLICT");
+    }
+    if (input.ownerFacts.runtime.media !== undefined) {
+      const mediaChanged = await sql.execute(
+        `UPDATE platform.admission_media_access_authorization
+            SET execution_manifest_ref=$1,execution_budget_root_ref=$2,root_hold_ref=$3,
+                authorization_segment_ref=$4,expires_at=$5::timestamptz,updated_at=now()
+          WHERE handle_digest=$6 AND site_id=$7 AND session_id=$8 AND run_id=$9
+            AND state='reserved' AND execution_manifest_ref IS NULL`,
+        [input.manifestRef, input.executionBudgetRootRef, input.rootHoldRef,
+          input.authorizationSegmentRef, input.expiresAt,
+          createHash("sha256").update(input.ownerFacts.runtime.media.media_access_handle).digest("hex"),
+          input.siteId, input.effect.sessionId, input.effect.proposedRunId],
+      );
+      if (mediaChanged !== 1) throw new Error("ADMISSION_MEDIA_ACCESS_BINDING_CONFLICT");
     }
     const record = await findManifest(transaction, {
       siteId: input.siteId,
@@ -200,6 +215,15 @@ async function transition(
       throw new Error("ADMISSION_MODEL_GATEWAY_AUTHORIZATION_CAS_LOST");
     }
   }
+  const mediaState = state === "committed" ? "active" : state === "expired" ? "expired" : "revoked";
+  await sql.execute(
+    `UPDATE platform.admission_media_access_authorization
+        SET state=$1,updated_at=now()
+      WHERE site_id=$2 AND execution_manifest_ref=$3
+        AND (($1='active' AND state='reserved') OR
+             ($1<>'active' AND state IN ('reserved','active')))`,
+    [mediaState, prior.siteId, prior.manifestRef],
+  );
   const next = await findManifest(transaction, prior, true);
   if (
     next === null || next.state !== state || next.segmentVersion !== prior.segmentVersion + 1n ||
@@ -270,6 +294,12 @@ function canonicalJson(value: unknown): string {
     .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
     .map(([key, child]) => `${JSON.stringify(key)}:${canonicalJson(child)}`)
     .join(",")}}`;
+}
+
+function canonicalRuntimeForPersistence(
+  runtime: Parameters<AdmissionLifecycleOwnerPort["prepare"]>[1]["ownerFacts"]["runtime"],
+): string {
+  return canonicalJson(Object.fromEntries(Object.entries(runtime).filter(([key]) => key !== "media")));
 }
 
 function bindingDigestFromRef(value: string): string {

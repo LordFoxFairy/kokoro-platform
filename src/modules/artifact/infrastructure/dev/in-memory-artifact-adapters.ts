@@ -8,6 +8,7 @@ import type {
   ArtifactReadyReceipt,
   ArtifactStagedReceipt,
 } from "../../domain/artifact.js";
+import { sameArtifactOwnerScope, snapshotArtifactOwnerScope } from "../../domain/artifact.js";
 
 type StoredObject = Readonly<{
   bytes: Uint8Array;
@@ -22,6 +23,8 @@ export class InMemoryArtifactObjectStore implements ArtifactObjectStore {
   readonly #ready = new Map<string, StoredObject>();
 
   async stage(input: Parameters<ArtifactObjectStore["stage"]>[0]): Promise<ArtifactStagedReceipt> {
+    const ownerScope = snapshotArtifactOwnerScope(input.ownerScope);
+    reference(input.artifactRef);
     reference(input.artifactVersionRef);
     if (input.bytes.byteLength < 1 || input.bytes.byteLength > 32 * 1024 * 1024) {
       throw new Error("ARTIFACT_STAGE_SIZE_INVALID");
@@ -35,6 +38,8 @@ export class InMemoryArtifactObjectStore implements ArtifactObjectStore {
       throw new Error("ARTIFACT_ALREADY_PROMOTED");
     }
     const receipt: ArtifactStagedReceipt = Object.freeze({
+      ownerScope,
+      artifactRef: input.artifactRef,
       artifactVersionRef: input.artifactVersionRef,
       stagedObjectRef: `staged:sha256:${contentSha256}`,
       contentSha256,
@@ -49,6 +54,8 @@ export class InMemoryArtifactObjectStore implements ArtifactObjectStore {
   async promote(input: Parameters<ArtifactObjectStore["promote"]>[0]): Promise<ArtifactReadyReceipt> {
     const staged = this.#staged.get(input.stagedReceipt.artifactVersionRef);
     if (staged === undefined || staged.receipt.state !== "staged" ||
+        staged.receipt.artifactRef !== input.stagedReceipt.artifactRef ||
+        !sameArtifactOwnerScope(staged.receipt.ownerScope, input.stagedReceipt.ownerScope) ||
         staged.receipt.stagedObjectRef !== input.stagedReceipt.stagedObjectRef ||
         staged.receipt.contentSha256 !== input.stagedReceipt.contentSha256 ||
         input.trustDecision.contentSha256 !== staged.receipt.contentSha256) {
@@ -56,6 +63,8 @@ export class InMemoryArtifactObjectStore implements ArtifactObjectStore {
     }
     if (input.trustDecision.kind !== "allow") throw new Error("ARTIFACT_OUTPUT_RESTRICTED");
     const ready: ArtifactReadyReceipt = Object.freeze({
+      ownerScope: staged.receipt.ownerScope,
+      artifactRef: staged.receipt.artifactRef,
       artifactVersionRef: input.stagedReceipt.artifactVersionRef,
       readyObjectRef: `ready:sha256:${staged.receipt.contentSha256}`,
       contentSha256: staged.receipt.contentSha256,
@@ -69,14 +78,21 @@ export class InMemoryArtifactObjectStore implements ArtifactObjectStore {
     return ready;
   }
 
-  async describeReady(artifactVersionRef: string): Promise<ArtifactReadyReceipt | null> {
-    const stored = this.#ready.get(artifactVersionRef);
-    return stored?.receipt.state === "ready_private" ? stored.receipt : null;
+  async describeReady(input: Parameters<ArtifactObjectStore["describeReady"]>[0]):
+  Promise<ArtifactReadyReceipt | null> {
+    const stored = this.#ready.get(input.artifactVersionRef);
+    return stored?.receipt.state === "ready_private" &&
+      stored.receipt.artifactRef === input.artifactRef &&
+      sameArtifactOwnerScope(stored.receipt.ownerScope, input.ownerScope) ? stored.receipt : null;
   }
 
   async openReady(input: Parameters<ArtifactObjectStore["openReady"]>[0]) {
     const stored = this.#ready.get(input.artifactVersionRef);
-    if (stored === undefined || stored.receipt.state !== "ready_private") throw new Error("ARTIFACT_VERSION_NOT_READY");
+    if (stored === undefined || stored.receipt.state !== "ready_private" ||
+        stored.receipt.artifactRef !== input.artifactRef ||
+        !sameArtifactOwnerScope(stored.receipt.ownerScope, input.ownerScope)) {
+      throw new Error("ARTIFACT_VERSION_NOT_READY");
+    }
     const start = input.range?.start ?? 0;
     const endExclusive = (input.range?.endInclusive ?? stored.bytes.byteLength - 1) + 1;
     const bytes = stored.bytes.slice(start, endExclusive);

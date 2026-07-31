@@ -5,8 +5,11 @@ export {
   ImageOperationWorker,
   InMemoryMediaImageOperationRepository,
   InMemoryMediaImageWorkerRepository,
+  MAXIMUM_BUFFERED_IMAGE_OUTCOME_BYTES,
+  MAXIMUM_BUFFERED_IMAGE_OUTPUT_BYTES,
 } from "./application/index.js";
 export type {
+  AgentImageAccessOwnerPort,
   ImageOutputTrustPort,
   ImageProviderAdapter,
   ImageProviderOutcome,
@@ -27,6 +30,30 @@ export type {
   MediaOperationSource,
   ProtectedOperationInputRevision,
 } from "./application/index.js";
+
+export {
+  createPostgresMediaRuntimeDatabase,
+  loadMediaRuntimeDatabaseConfig,
+  PostgresAgentImageAccessOwner,
+  PostgresMediaImageOperationRepository,
+  PostgresMediaRuntimeQueryRepository,
+  PostgresMediaRuntimeDatabase,
+} from "./infrastructure/postgres/index.js";
+
+export { createMediaRuntimeConnectService } from "./interfaces/connect/index.js";
+export type {
+  MediaRuntimeConnectService,
+  VerifiedMediaRuntimeCallerResolver,
+} from "./interfaces/connect/index.js";
+export type {
+  AgentImageAccessDatabase,
+  MediaRuntimeQueryDatabase,
+  MediaRuntimeDatabaseConfig,
+  RecoveredAgentMediaCommand,
+  ResolvedAgentImageAccessRow,
+  StoredAgentMediaCandidateView,
+  StoredAgentMediaOperationView,
+} from "./infrastructure/postgres/index.js";
 
 export { canonicalMediaRequest } from "./domain/canonical-media-request.js";
 export type { CanonicalMediaRequest } from "./domain/canonical-media-request.js";

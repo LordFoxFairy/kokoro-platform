@@ -6,6 +6,7 @@ const platformModules = [
   "admin",
   "admin-control",
   "admission",
+  "artifact",
   "asset",
   "authorization",
   "commerce",

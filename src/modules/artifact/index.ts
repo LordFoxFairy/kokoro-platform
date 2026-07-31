@@ -23,3 +23,4 @@ export {
   InMemoryArtifactDeliveryAuthorizationRepository,
   InMemoryArtifactObjectStore,
 } from "./infrastructure/dev/in-memory-artifact-adapters.js";
+export { S3ArtifactObjectStore } from "./infrastructure/s3/index.js";
