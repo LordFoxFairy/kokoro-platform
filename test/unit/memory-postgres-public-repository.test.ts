@@ -50,7 +50,9 @@ describe("PostgresMemoryPublicRepository", () => {
       },
     };
     lease = issuePlatformTransaction(sql);
-    repository = new PostgresMemoryPublicRepository();
+    repository = new PostgresMemoryPublicRepository({ issue: async () => ({
+      keyRevision: "memory-transition-r1", digest: "f".repeat(64),
+    }) });
   });
 
   afterEach(() => revokePlatformTransaction(lease));
@@ -104,6 +106,35 @@ describe("PostgresMemoryPublicRepository", () => {
       expect(sql).toContain(`platform.memory_public_commit_${operation}`);
     }
     expect(sql).not.toMatch(/platform\.memory_public_authorize_(?:read|command)/u);
+  });
+
+  it("rejects unknown decoder fields and accepts canonical null-free command results", async () => {
+    rows = [{ result: { spaceRef: "space-user-1", spaceVersion: "7", unexpected: true } }];
+    await expect(repository.resolveOwner(lease.transaction, { context,
+      operation: "get_entry", candidateSpaceRef: "space-user-1",
+      now: "2026-07-31T12:00:00.000Z" })).rejects.toThrow();
+
+    rows = [{ result: { entryRef: "entry-1", entryVersion: "1", category: "fact",
+      state: "active", prioritized: false, revision: "1", currentRevisionRef: "revision-1",
+      reason: "explicit", validFrom: null, validTo: null,
+      createdAt: "2026-07-31T12:00:00+00:00", updatedAt: "2026-07-31T12:00:00+00:00",
+      protectedContent: null, sourceKind: "explicit", sourceState: "current",
+      safeSourceLabel: "Saved by you", unexpected: true } }];
+    await expect(repository.getEntry(lease.transaction, { owner: { context,
+      spaceRef: "space-user-1", spaceVersion: 7n }, entryRef: "entry-1" })).rejects.toThrow();
+  });
+
+  it("normalizes PostgreSQL timestamps and omits absent optional result fields", async () => {
+    rows = [{ result: { entryRef: "entry-1", entryVersion: "1", category: "fact",
+      state: "active", prioritized: false, revision: "1", currentRevisionRef: "revision-1",
+      reason: "explicit", validFrom: null, validTo: null,
+      createdAt: "2026-07-31T12:00:00+00:00", updatedAt: "2026-07-31T12:00:00+00:00",
+      protectedContent: null, sourceKind: "explicit", sourceState: "current",
+      safeSourceLabel: "Saved by you" } }];
+    await expect(repository.getEntry(lease.transaction, { owner: { context,
+      spaceRef: "space-user-1", spaceVersion: 7n }, entryRef: "entry-1" })).resolves.toMatchObject({
+      createdAt: "2026-07-31T12:00:00.000Z", updatedAt: "2026-07-31T12:00:00.000Z",
+    });
   });
 
   it("publishes only operation-specific fixed-search-path routines to the pinned public role", () => {

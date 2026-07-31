@@ -5,7 +5,8 @@ import { MemoryApplicationError } from "../application/memory-application-error.
 import { MemoryAuthorityService } from "../application/memory-authority-service.js";
 import type { MemoryAuthorizationFactsPort, MemoryAuthorityRepository, MemoryCommandReceiptIdentity,
   MemoryCommandResult, MemoryPublicCommand, MemoryPublicCommandResult, MemoryPublicEntryRecord,
-  MemoryPublicRepository, MemoryPublicResolvedOwner, MemoryPublicRevisionRecord } from
+  MemoryPublicRecoveryIdentity, MemoryPublicRecoveryResult, MemoryPublicRepository,
+  MemoryPublicResolvedOwner, MemoryPublicRevisionRecord, MemoryTransitionAuthorityPort } from
   "../application/memory-authority-ports.js";
 import { rehydrateMemoryEntry, type MemoryEntry, type RememberedMemory } from
   "../domain/memory-entry.js";
@@ -33,6 +34,25 @@ const COMMIT_ROUTINE = Object.freeze({
 
 /** Dedicated public adapter. Every statement invokes one operation-specific, fixed-shape routine. */
 export class PostgresMemoryPublicRepository implements MemoryPublicRepository {
+  constructor(private readonly transitionAuthority: MemoryTransitionAuthorityPort) {}
+  async recoverCommand(transaction: PlatformTransaction, identity: MemoryPublicRecoveryIdentity):
+    Promise<MemoryPublicRecoveryResult> {
+    const decision = await prepareCommand(transaction, identity);
+    if (decision.decision === "digest_conflict") {
+      return typeof decision.requestDigestKeyRevision === "string"
+        ? Object.freeze({ kind: "digest_mismatch" as const,
+          requestDigestKeyRevision: string(decision.requestDigestKeyRevision,
+            "MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT") })
+        : Object.freeze({ kind: "digest_mismatch" as const,
+          requestDigestKeyRevision: identity.requestDigestKeyRevision });
+    }
+    if (decision.decision === "replay") {
+      return Object.freeze({ kind: "replay" as const, result: commandResult(decision, true) });
+    }
+    if (decision.decision !== "claimed") throw corrupt("MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT");
+    return Object.freeze({ kind: "continue" as const });
+  }
+
   async resolveOwner(transaction: PlatformTransaction,
     input: Parameters<MemoryPublicRepository["resolveOwner"]>[1]):
     Promise<MemoryPublicResolvedOwner | null> {
@@ -110,15 +130,7 @@ export class PostgresMemoryPublicRepository implements MemoryPublicRepository {
   async executeCommand(transaction: PlatformTransaction, command: MemoryPublicCommand):
     Promise<MemoryPublicCommandResult> {
     const sql = resolvePlatformTransaction(transaction);
-    const prepareRows = await sql.query<Record<string, unknown>>(
-      `SELECT platform.${PREPARE_ROUTINE[command.operation]}($1,$2,$3::bigint,$4,$5,$6,$7,$8,$9,$10) AS result`,
-      ownerValues(command.context, [command.commandRef, command.requestDigest,
-        command.requestDigestKeyRevision, command.spaceRef, command.entryRef, command.revisionRef]),
-    );
-    const prepared = oneResult(prepareRows, "MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT") ??
-      prepareRows[0] ?? null;
-    if (prepared === null) throw new MemoryApplicationError("MEMORY_PUBLIC_NOT_AVAILABLE");
-    const decision = object(prepared, "MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT");
+    const decision = await prepareCommand(transaction, command);
     if (decision.decision === "digest_conflict") {
       throw new MemoryApplicationError("MEMORY_COMMAND_DIGEST_CONFLICT");
     }
@@ -126,12 +138,19 @@ export class PostgresMemoryPublicRepository implements MemoryPublicRepository {
     if (decision.decision !== "claimed") throw corrupt("MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT");
     const core = command.operation === "remember" || command.operation === "correct" ||
       command.operation === "forget" || command.operation === "reset";
-    const commitPayload = core
+    const unsignedCommitPayload = core
       ? await validatedCoreCommitPayload(transaction, command, decision)
       : Object.freeze({ command: commandJson(command),
         prepareRef: string(decision.prepareRef, "MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT"),
         expectedStateDigest: string(decision.expectedStateDigest,
           "MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT") });
+    const canonicalPayload = canonicalJson(unsignedCommitPayload);
+    const authority = await this.transitionAuthority.issue({ canonicalPayload });
+    if (!/^[A-Za-z0-9_-]{3,128}$/u.test(authority.keyRevision) ||
+      !/^[a-f0-9]{64}$/u.test(authority.digest)) throw corrupt("MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT");
+    const commitPayload = Object.freeze({ ...unsignedCommitPayload, authority: Object.freeze({
+      keyRevision: authority.keyRevision, canonicalPayload, digest: authority.digest,
+    }) });
     const commitRows = await sql.query<Record<string, unknown>>(
       `SELECT platform.${COMMIT_ROUTINE[command.operation]}($1::jsonb) AS result`,
       [JSON.stringify(commitPayload)],
@@ -140,6 +159,22 @@ export class PostgresMemoryPublicRepository implements MemoryPublicRepository {
       Object.freeze({ ...decision, decision: "committed" });
     return commandResult(object(committed, "MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT"), false, command);
   }
+}
+
+async function prepareCommand(transaction: PlatformTransaction, identity: MemoryPublicRecoveryIdentity) {
+  const sql = resolvePlatformTransaction(transaction);
+  const prepareRows = await sql.query<Record<string, unknown>>(
+    `SELECT platform.${PREPARE_ROUTINE[identity.operation]}($1,$2,$3::bigint,$4,$5,$6,$7,$8,$9,$10) AS result`,
+    ownerValues(identity.context, [identity.commandRef, identity.requestDigest,
+      identity.requestDigestKeyRevision, identity.spaceRef, identity.entryRef, identity.revisionRef]),
+  );
+  const prepared = oneResult(prepareRows, "MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT") ??
+    prepareRows[0] ?? null;
+  if (prepared === null) throw new MemoryApplicationError("MEMORY_PUBLIC_NOT_AVAILABLE");
+  return exactObject(prepared, ["decision", "kind", "spaceRef", "spaceVersion", "persisted",
+    "entryRef", "revisionRef", "prepareRef", "expectedStateDigest", "spaceState", "entryState",
+    "committedSpaceVersion", "entryVersion", "revision", "restoredFromRevisionRef", "prioritized",
+    "requestDigestKeyRevision"] as const, "MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT");
 }
 
 async function validatedCoreCommitPayload(transaction: PlatformTransaction, command: MemoryPublicCommand,
@@ -299,13 +334,17 @@ function ownerValues(context: MemoryPublicResolvedOwner["context"], tail: readon
 
 function ownerRecord(context: MemoryPublicResolvedOwner["context"], value: unknown):
   MemoryPublicResolvedOwner {
-  const row = object(value, "MEMORY_PUBLIC_OWNER_RECORD_CORRUPT");
+  const row = exactObject(value, ["spaceRef", "spaceVersion", "persisted"] as const,
+    "MEMORY_PUBLIC_OWNER_RECORD_CORRUPT");
   return Object.freeze({ context, spaceRef: string(row.spaceRef, "MEMORY_PUBLIC_OWNER_RECORD_CORRUPT"),
     spaceVersion: positive(row.spaceVersion, "MEMORY_PUBLIC_OWNER_RECORD_CORRUPT") });
 }
 
 function entryRecord(value: unknown): MemoryPublicEntryRecord {
-  const row = object(value, "MEMORY_PUBLIC_ENTRY_RECORD_CORRUPT");
+  const row = exactObject(value, ["entryRef", "entryVersion", "category", "state", "prioritized",
+    "revision", "currentRevisionRef", "reason", "validFrom", "validTo", "createdAt", "updatedAt",
+    "protectedContent", "sourceKind", "sourceState", "safeSourceLabel", "purgeReceiptRef",
+    "revokedAt", "purgedAt"] as const, "MEMORY_PUBLIC_ENTRY_RECORD_CORRUPT");
   const state = enumeration(row.state, ["active", "revoked_purge_pending", "purged"] as const,
     "MEMORY_PUBLIC_ENTRY_RECORD_CORRUPT");
   const protectedContent = row.protectedContent === null || row.protectedContent === undefined
@@ -318,21 +357,25 @@ function entryRecord(value: unknown): MemoryPublicEntryRecord {
     revision: boundedRevision(row.revision, "MEMORY_PUBLIC_ENTRY_RECORD_CORRUPT"),
     currentRevisionRef: string(row.currentRevisionRef, "MEMORY_PUBLIC_ENTRY_RECORD_CORRUPT"),
     reason: enumeration(row.reason, ["explicit", "corrected", "imported", "restored"] as const,
-      "MEMORY_PUBLIC_ENTRY_RECORD_CORRUPT"), validFrom: nullableString(row.validFrom),
-    validTo: nullableString(row.validTo), createdAt: string(row.createdAt,
-      "MEMORY_PUBLIC_ENTRY_RECORD_CORRUPT"), updatedAt: string(row.updatedAt,
+      "MEMORY_PUBLIC_ENTRY_RECORD_CORRUPT"), validFrom: nullableInstant(row.validFrom),
+    validTo: nullableInstant(row.validTo), createdAt: instant(row.createdAt,
+      "MEMORY_PUBLIC_ENTRY_RECORD_CORRUPT"), updatedAt: instant(row.updatedAt,
       "MEMORY_PUBLIC_ENTRY_RECORD_CORRUPT"), protectedContent,
     sourceKind: enumeration(row.sourceKind, ["explicit", "import"] as const,
       "MEMORY_PUBLIC_ENTRY_RECORD_CORRUPT"), sourceState: enumeration(row.sourceState,
       ["current", "restricted", "unavailable"] as const, "MEMORY_PUBLIC_ENTRY_RECORD_CORRUPT"),
     safeSourceLabel: string(row.safeSourceLabel, "MEMORY_PUBLIC_ENTRY_RECORD_CORRUPT"),
     ...(typeof row.purgeReceiptRef === "string" ? { purgeReceiptRef: row.purgeReceiptRef } : {}),
-    ...(typeof row.revokedAt === "string" ? { revokedAt: row.revokedAt } : {}),
-    ...(typeof row.purgedAt === "string" ? { purgedAt: row.purgedAt } : {}) });
+    ...(typeof row.revokedAt === "string" ? { revokedAt: instant(row.revokedAt,
+      "MEMORY_PUBLIC_ENTRY_RECORD_CORRUPT") } : {}),
+    ...(typeof row.purgedAt === "string" ? { purgedAt: instant(row.purgedAt,
+      "MEMORY_PUBLIC_ENTRY_RECORD_CORRUPT") } : {}) });
 }
 
 function revisionRecord(value: unknown): MemoryPublicRevisionRecord {
-  const row = object(value, "MEMORY_PUBLIC_HISTORY_RECORD_CORRUPT");
+  const row = exactObject(value, ["revision", "revisionRef", "reason", "supersedesRevisionRef",
+    "restoredFromRevisionRef", "validFrom", "validTo", "recordedAt", "protectedContent"] as const,
+    "MEMORY_PUBLIC_HISTORY_RECORD_CORRUPT");
   return Object.freeze({ revision: boundedRevision(row.revision,
     "MEMORY_PUBLIC_HISTORY_RECORD_CORRUPT"),
     revisionRef: string(row.revisionRef, "MEMORY_PUBLIC_HISTORY_RECORD_CORRUPT"),
@@ -340,14 +383,15 @@ function revisionRecord(value: unknown): MemoryPublicRevisionRecord {
       "MEMORY_PUBLIC_HISTORY_RECORD_CORRUPT"),
     supersedesRevisionRef: nullableString(row.supersedesRevisionRef),
     restoredFromRevisionRef: nullableString(row.restoredFromRevisionRef),
-    validFrom: nullableString(row.validFrom), validTo: nullableString(row.validTo),
-    recordedAt: string(row.recordedAt, "MEMORY_PUBLIC_HISTORY_RECORD_CORRUPT"),
+    validFrom: nullableInstant(row.validFrom), validTo: nullableInstant(row.validTo),
+    recordedAt: instant(row.recordedAt, "MEMORY_PUBLIC_HISTORY_RECORD_CORRUPT"),
     protectedContent: row.protectedContent === null || row.protectedContent === undefined
       ? null : protectedRecord(row.protectedContent) });
 }
 
 function protectedRecord(value: unknown) {
-  const row = object(value, "MEMORY_PUBLIC_PROTECTED_CONTENT_CORRUPT");
+  const row = exactObject(value, ["envelopeVersion", "keyRevision", "nonce", "ciphertext",
+    "authenticationTag", "aadDigest"] as const, "MEMORY_PUBLIC_PROTECTED_CONTENT_CORRUPT");
   return createProtectedMemoryContent({ envelopeVersion: row.envelopeVersion,
     keyRevision: row.keyRevision, nonce: bytes(row.nonce), ciphertext: bytes(row.ciphertext),
     authenticationTag: bytes(row.authenticationTag), aadDigest: row.aadDigest });
@@ -355,6 +399,9 @@ function protectedRecord(value: unknown) {
 
 function commandResult(row: Readonly<Record<string, unknown>>, replayed: boolean,
   fallback?: MemoryPublicCommand): MemoryPublicCommandResult {
+  row = exactObject(row, ["decision", "kind", "spaceRef", "committedSpaceVersion", "spaceVersion",
+    "entryRef", "entryVersion", "revision", "revisionRef", "restoredFromRevisionRef",
+    "prioritized", "changed"] as const, "MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT");
   const storedKind = enumeration(row.kind, ["entry", "restored", "purge"] as const,
     "MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT");
   const expectedKind = fallback === undefined ? storedKind : fallback.operation === "restore" ? "restored"
@@ -364,9 +411,9 @@ function commandResult(row: Readonly<Record<string, unknown>>, replayed: boolean
     "MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT");
   const entryRef = nullableString(row.entryRef ?? fallback?.entryRef ?? null);
   return Object.freeze({ kind: storedKind, committedSpaceVersion: committed, entryRef,
-    ...(row.entryVersion === undefined ? {} : { entryVersion: positive(row.entryVersion,
+    ...(row.entryVersion === undefined || row.entryVersion === null ? {} : { entryVersion: positive(row.entryVersion,
       "MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT") }),
-    ...(row.revision === undefined ? {} : { revision: boundedRevision(row.revision,
+    ...(row.revision === undefined || row.revision === null ? {} : { revision: boundedRevision(row.revision,
       "MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT") }),
     ...(typeof row.revisionRef === "string" ? { revisionRef: row.revisionRef } :
       fallback?.revisionRef === null || fallback?.revisionRef === undefined ? {} :
@@ -476,6 +523,21 @@ function commandJson(command: MemoryPublicCommand): Readonly<Record<string, unkn
   ...(protectedContent === undefined ? {} : { protectedContent: serializeProtected(protectedContent) }) });
 }
 
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value === "boolean" || typeof value === "string") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw corrupt("MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT");
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (typeof value !== "object" || value === null) throw corrupt("MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT");
+  const record = value as Readonly<Record<string, unknown>>;
+  return `{${Object.keys(record).filter((key) => record[key] !== undefined).sort().map((key) =>
+    `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`;
+}
+
 function oneResult(rows: readonly Record<string, unknown>[], code: string): unknown | null {
   if (rows.length === 0) return null;
   if (rows.length !== 1) throw corrupt(code);
@@ -485,6 +547,13 @@ function object(value: unknown, code: string): Readonly<Record<string, unknown>>
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw corrupt(code);
   return value as Readonly<Record<string, unknown>>;
 }
+function exactObject<const Keys extends readonly string[]>(value: unknown, allowed: Keys, code: string):
+  Readonly<Record<Keys[number], unknown>> {
+  const record = object(value, code);
+  const allowedSet = new Set<string>(allowed);
+  if (Object.keys(record).some((key) => !allowedSet.has(key))) throw corrupt(code);
+  return record as Readonly<Record<Keys[number], unknown>>;
+}
 function string(value: unknown, code: string): string {
   if (typeof value !== "string" || value.length < 1 || /[\0\r\n]/u.test(value)) throw corrupt(code);
   return value;
@@ -492,6 +561,15 @@ function string(value: unknown, code: string): string {
 function nullableString(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   return string(value, "MEMORY_PUBLIC_RECORD_CORRUPT");
+}
+function instant(value: unknown, code: string): string {
+  const text = string(value, code);
+  const parsed = new Date(text);
+  if (!Number.isFinite(parsed.getTime())) throw corrupt(code);
+  return parsed.toISOString();
+}
+function nullableInstant(value: unknown): string | null {
+  return value === null || value === undefined ? null : instant(value, "MEMORY_PUBLIC_RECORD_CORRUPT");
 }
 function positive(value: unknown, code: string): bigint {
   const result = typeof value === "bigint" ? value : typeof value === "string" && /^[1-9][0-9]*$/u.test(value)

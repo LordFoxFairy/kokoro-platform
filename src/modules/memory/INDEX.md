@@ -16,9 +16,11 @@ Project membership, membership epoch, authorization epoch, Subject generation, a
 mutating authority. User-owned and Project-owned spaces are distinct; a Project bucket is identified only by Site and Project, so
 it remains shared across current members rather than becoming creator-owned. The current member's Subject generation, membership
 epoch, and authorization epoch are command evidence recorded in provenance and receipts, never bucket identity. Agent-product
-spaces carry an immutable copy of their parent User or Project binding and cannot become a Workspace authority surface. Replay is
-owner-scoped and returns only a closed,
-non-secret result after current authorization succeeds; command-reference reuse with another canonical payload fails closed.
+spaces carry an immutable copy of their parent User or Project binding and cannot become a Workspace authority surface. Completed
+command recovery runs before mutable admission, key access, owner reads, or current-release checks so a retry remains deterministic
+after dependency or release drift. Recovery is still bound to the exact Site, Subject, Subject generation, operation and original
+fingerprint-key revision, and returns only a closed, content-free result. Command-reference reuse with another canonical payload
+fails closed.
 The authority service never accepts a caller-supplied request digest. It computes a versioned, operation-separated SHA-256
 digest over each command's fixed canonical fields; protected bytes contribute only key/envelope metadata, length, and a
 ciphertext digest.
@@ -50,11 +52,16 @@ owner's implicit `PUBLIC EXECUTE`. Superusers already bypass the runtime authori
 `platform_memory_public` Platform schema usage and only 22 operation-specific, fixed-search-path routines. It receives no direct
 table or sequence authority. Its forced-RLS policies are restricted to that exact login, while every routine revalidates the
 current Site, Subject generation, active release and exact feature-policy revision before returning or committing owner data.
-Prepare records bind a keyed, revisioned command fingerprint, a random prepare reference and the exact locked-state digest;
-remember, correct, forget and reset transitions are produced only by `MemoryAuthorityService` and persisted by a CAS-bound
-commit. Restore and priority are explicit extension transitions. Owner reads carry monotonic space versions and sealed snapshots;
-database read routines independently enforce current generation and revocation fences, so forgotten or reset plaintext cannot be
-returned through detail, history, or restore. `platform_memory_runtime` still receives zero Platform schema, table, sequence, or
+Prepare records bind a keyed, revisioned command fingerprint, a random prepare reference and the exact locked-state digest.
+Remember, correct, forget and reset transitions are produced only by `MemoryAuthorityService`; every commit is bound to the full
+canonical command/transition proposal by a domain-separated HMAC authority receipt, then independently checked against the live
+state digest inside PostgreSQL before persistence. The verifier key-ring is private to the owner functions, and `pgcrypto` lives
+in a dedicated schema with no runtime-role or `PUBLIC` authority. Restore and priority are explicit database-computed extension
+transitions under the same receipt and CAS boundary. JSON results use closed decoders and canonical UTC instants. Owner reads carry
+monotonic space versions and sealed snapshots; database read routines independently enforce current generation and revocation
+fences. Forget/reset synchronously create a deterministic purge manifest and expose only a content-free
+`revoked_purge_pending`/`purged` tombstone, so revoked plaintext cannot be returned through detail, history, or restore while the
+physical deletion worker remains feature-off. `platform_memory_runtime` still receives zero Platform schema, table, sequence, or
 routine grants. `platform_memory_worker` receives only
 Platform schema usage and the three fixed-search-path purge routines. Purge claims first terminalize at most 100 exhausted queued
 or expired leased/running jobs, clear their lease material, and then select only a sub-limit candidate so one exhausted job cannot
@@ -63,8 +70,9 @@ schema `USAGE` only; they receive no `public` schema `CREATE`, object, sequence,
 
 This Task 5 data plane is deliberately dormant. Platform does not yet own an authoritative per-Site Memory activation projection
 or application port, and the deterministic syntax/common-secret admission baseline is not a production content-classification
-authority. Production composition must inject both an authoritative content classifier and a server-keyed fingerprint provider;
-absence fails closed. Until the activation projection is part of the owner routines, Task 7 must not mount an HTTP route, issue a
+authority. Production composition must inject an authoritative content classifier, a server-keyed fingerprint provider, and the
+transition-authority key revision shared with the database verifier; absence fails closed. Until the activation projection is part
+of the owner routines, Task 7 must not mount an HTTP route, issue a
 Memory process credential, advertise readiness, or expose this surface. Project Memory, runtime retrieval, physical purge worker,
 import/export execution, and RPC remain feature-off.
 

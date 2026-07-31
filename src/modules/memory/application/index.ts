@@ -22,8 +22,11 @@ export type {
   MemoryPublicCursorCodec,
   MemoryPublicEntryRecord,
   MemoryPublicOperation,
+  MemoryPublicRecoveryIdentity,
+  MemoryPublicRecoveryResult,
   MemoryPublicRepository,
   MemoryPublicResolvedOwner,
   MemoryPublicRevisionRecord,
   MemoryPublicUnitOfWork,
+  MemoryTransitionAuthorityPort,
 } from "./memory-authority-ports.js";

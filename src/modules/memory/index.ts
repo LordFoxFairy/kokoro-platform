@@ -20,10 +20,13 @@ export type {
   MemoryPublicCursorCodec,
   MemoryPublicEntryRecord,
   MemoryPublicOperation,
+  MemoryPublicRecoveryIdentity,
+  MemoryPublicRecoveryResult,
   MemoryPublicRepository,
   MemoryPublicResolvedOwner,
   MemoryPublicRevisionRecord,
   MemoryPublicUnitOfWork,
+  MemoryTransitionAuthorityPort,
 } from "./application/index.js";
 
 export { MemoryDomainError } from "./domain/memory-error.js";
@@ -118,6 +121,8 @@ export {
 } from "./domain/memory-references.js";
 export { createMemoryContentProtector, parseMemoryContentKeyRing } from
   "./infrastructure/crypto/memory-content-protector.js";
+export { createMemoryTransitionAuthority } from
+  "./infrastructure/crypto/memory-transition-authority.js";
 export type { MemoryContentKeyRing } from
   "./infrastructure/crypto/memory-content-protector.js";
 

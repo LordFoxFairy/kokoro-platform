@@ -257,6 +257,22 @@ export type MemoryPublicCommandResult = Readonly<{
   replayed?: boolean;
 }>;
 
+export type MemoryPublicRecoveryIdentity = Readonly<{
+  operation: MemoryPublicOperation;
+  context: MemoryPublicPersonalContext;
+  commandRef: string;
+  requestDigest: string;
+  requestDigestKeyRevision: string;
+  spaceRef: string;
+  entryRef: string | null;
+  revisionRef: string | null;
+}>;
+
+export type MemoryPublicRecoveryResult =
+  | Readonly<{ kind: "continue" }>
+  | Readonly<{ kind: "digest_mismatch"; requestDigestKeyRevision: string }>
+  | Readonly<{ kind: "replay"; result: MemoryPublicCommandResult }>;
+
 export type MemoryPublicResolvedOwner = Readonly<{
   context: MemoryPublicPersonalContext;
   spaceRef: string;
@@ -298,6 +314,8 @@ export type MemoryPublicRevisionRecord = Readonly<{
 }>;
 
 export interface MemoryPublicRepository {
+  recoverCommand(transaction: PlatformTransaction, identity: MemoryPublicRecoveryIdentity):
+    Promise<MemoryPublicRecoveryResult>;
   executeCommand(transaction: PlatformTransaction, command: MemoryPublicCommand):
     Promise<MemoryPublicCommandResult>;
   resolveOwner(transaction: PlatformTransaction, input: Readonly<{
@@ -348,6 +366,13 @@ export interface MemoryPublicCursorCodec {
 export interface MemoryPublicUnitOfWork {
   execute<Result>(fence: Readonly<{ operation: string }>,
     work: (transaction: PlatformTransaction) => Promise<Result>): Promise<Result>;
+}
+
+export interface MemoryTransitionAuthorityPort {
+  issue(input: Readonly<{ canonicalPayload: string }>): Promise<Readonly<{
+    keyRevision: string;
+    digest: string;
+  }>>;
 }
 
 export type { MemoryCommandFingerprintPort, MemoryContentAdmissionPort, MemoryPublicPersonalContext };

@@ -75,7 +75,7 @@ export type MemoryCommandFingerprintInput = Readonly<{ operation: string;
 
 export interface MemoryCommandFingerprintPort {
   /** Uses a server-keyed, Memory-command-specific purpose key; never plain SHA over content. */
-  fingerprint(input: MemoryCommandFingerprintInput): Promise<Readonly<{
+  fingerprint(input: MemoryCommandFingerprintInput, keyRevision?: string): Promise<Readonly<{
     keyRevision: string; digest: string;
   }>>;
 }

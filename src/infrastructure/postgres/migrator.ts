@@ -68,6 +68,31 @@ const MEMORY_WORKER_ROUTINES = Object.freeze([
   "platform.memory_worker_record_purge_receipt(text,text,text,text,text,character,bigint,character)",
 ] as const);
 
+const MEMORY_PUBLIC_ROUTINES = Object.freeze([
+  "platform.memory_public_list_entries_owner(text,text,bigint,text,text,timestamptz)",
+  "platform.memory_public_get_entry_owner(text,text,bigint,text,text,timestamptz)",
+  "platform.memory_public_list_entry_history_owner(text,text,bigint,text,text,timestamptz)",
+  "platform.memory_public_restore_owner(text,text,bigint,text,text,timestamptz)",
+  "platform.memory_public_list_entries(text,text,bigint,text,text,bigint,text,text,boolean,timestamptz,text,integer)",
+  "platform.memory_public_get_entry(text,text,bigint,text,text,bigint,text)",
+  "platform.memory_public_list_entry_history(text,text,bigint,text,text,bigint,text,bigint,integer)",
+  "platform.memory_public_get_restorable_revision(text,text,bigint,text,text,bigint,text,text,integer)",
+  "platform.memory_public_prepare_remember(text,text,bigint,text,text,character,text,text,text,text)",
+  "platform.memory_public_prepare_correct(text,text,bigint,text,text,character,text,text,text,text)",
+  "platform.memory_public_prepare_restore(text,text,bigint,text,text,character,text,text,text,text)",
+  "platform.memory_public_prepare_prioritize(text,text,bigint,text,text,character,text,text,text,text)",
+  "platform.memory_public_prepare_deprioritize(text,text,bigint,text,text,character,text,text,text,text)",
+  "platform.memory_public_prepare_forget(text,text,bigint,text,text,character,text,text,text,text)",
+  "platform.memory_public_prepare_reset(text,text,bigint,text,text,character,text,text,text,text)",
+  "platform.memory_public_commit_remember(jsonb)",
+  "platform.memory_public_commit_correct(jsonb)",
+  "platform.memory_public_commit_restore(jsonb)",
+  "platform.memory_public_commit_prioritize(jsonb)",
+  "platform.memory_public_commit_deprioritize(jsonb)",
+  "platform.memory_public_commit_forget(jsonb)",
+  "platform.memory_public_commit_reset(jsonb)",
+] as const);
+
 const MIGRATOR_ENVIRONMENT_ALLOWLIST = [
   "PATH",
   "HOME",
@@ -627,6 +652,11 @@ async function configureMemoryRoleAuthority(
   await client.query(`GRANT USAGE ON SCHEMA platform TO ${worker}`);
   for (const routine of MEMORY_WORKER_ROUTINES) {
     await client.query(`GRANT EXECUTE ON FUNCTION ${routine} TO ${worker}`);
+  }
+  const publicRole = quoteRoleIdentifier(roles.public);
+  await client.query(`GRANT USAGE ON SCHEMA platform TO ${publicRole}`);
+  for (const routine of MEMORY_PUBLIC_ROUTINES) {
+    await client.query(`GRANT EXECUTE ON FUNCTION ${routine} TO ${publicRole}`);
   }
 }
 
@@ -1493,7 +1523,7 @@ const MEMORY_ROLE_IDENTITY_TABLE_PREFLIGHT_SQL = `
         'memory_revision_payload','memory_public_command_inbox','memory_import_job',
         'memory_export_job','memory_purge_participant_manifest','memory_purge_job',
         'memory_purge_revision_target','memory_purge_participant_receipt',
-        'memory_suppression_tombstone'
+        'memory_suppression_tombstone','memory_transition_authority_key'
       ])
     ) OR EXISTS (
       SELECT 1 FROM pg_proc routine

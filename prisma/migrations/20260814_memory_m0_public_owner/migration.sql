@@ -2,6 +2,14 @@ SET statement_timeout = '30s';
 SET lock_timeout = '5s';
 SET idle_in_transaction_session_timeout = '30s';
 
+-- Transition receipts are verified inside PostgreSQL before any caller-supplied
+-- state can be committed. Keep the cryptographic primitive outside the public
+-- application schema so no runtime role can discover or invoke it directly.
+CREATE SCHEMA memory_crypto AUTHORIZATION CURRENT_USER;
+REVOKE ALL ON SCHEMA memory_crypto FROM PUBLIC;
+CREATE EXTENSION pgcrypto WITH SCHEMA memory_crypto;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA memory_crypto FROM PUBLIC;
+
 ALTER TABLE platform.memory_entry
   ADD COLUMN prioritized BOOLEAN NOT NULL DEFAULT false,
   ADD CONSTRAINT memory_entry_public_revision_bound_check
@@ -193,11 +201,21 @@ ALTER TABLE platform.memory_public_command_inbox
   ADD COLUMN result_entry_version BIGINT CHECK (result_entry_version>0),
   ADD COLUMN result_revision BIGINT CHECK (result_revision>0),
   ADD COLUMN result_revision_ref TEXT,
+  ADD COLUMN result_restored_from_revision_ref TEXT,
+  ADD COLUMN result_prioritized BOOLEAN,
+  ADD COLUMN authority_key_revision TEXT,
+  ADD COLUMN authority_payload_digest CHAR(64)
+    CHECK (authority_payload_digest IS NULL OR authority_payload_digest ~ '^[a-f0-9]{64}$'),
   ADD CONSTRAINT memory_public_inbox_revision_bound_check
     CHECK (result_revision IS NULL OR result_revision<=2147483647),
   ADD CONSTRAINT memory_public_command_completion_shape_check CHECK (
-    (state='completed' AND committed_space_version IS NOT NULL AND safe_result_kind IS NOT NULL)
-    OR (state<>'completed' AND committed_space_version IS NULL)
+    (state='completed' AND committed_space_version IS NOT NULL AND safe_result_kind IS NOT NULL
+      AND authority_key_revision IS NOT NULL AND authority_payload_digest IS NOT NULL)
+    OR (state<>'completed' AND committed_space_version IS NULL AND safe_result_kind IS NULL
+      AND result_ref IS NULL AND result_entry_ref IS NULL AND result_entry_version IS NULL
+      AND result_revision IS NULL AND result_revision_ref IS NULL
+      AND result_restored_from_revision_ref IS NULL AND result_prioritized IS NULL
+      AND authority_key_revision IS NULL AND authority_payload_digest IS NULL)
   ),
   ADD CONSTRAINT memory_public_command_prepare_shape_check CHECK (
     (state='accepted' AND prepare_ref IS NOT NULL AND expected_state_digest IS NOT NULL)
@@ -209,7 +227,79 @@ ALTER TABLE platform.memory_public_command_inbox
     OR (operation IN ('forget','reset') AND safe_result_kind='purge')
     OR (operation IN ('update_settings','request_import','request_export'))
     OR (state<>'completed' AND safe_result_kind IS NULL)
+  ),
+  ADD CONSTRAINT memory_public_command_result_shape_check CHECK (
+    state<>'completed' OR
+    (operation IN ('remember','correct') AND safe_result_kind='entry'
+      AND result_entry_ref IS NOT NULL AND result_entry_version IS NOT NULL
+      AND result_revision IS NOT NULL AND result_revision_ref IS NOT NULL
+      AND result_restored_from_revision_ref IS NULL AND result_prioritized IS NULL)
+    OR (operation='restore' AND safe_result_kind='restored'
+      AND result_entry_ref IS NOT NULL AND result_entry_version IS NOT NULL
+      AND result_revision IS NOT NULL AND result_revision_ref IS NOT NULL
+      AND result_restored_from_revision_ref IS NOT NULL AND result_prioritized IS NULL)
+    OR (operation IN ('prioritize','deprioritize') AND safe_result_kind='entry'
+      AND result_entry_ref IS NOT NULL AND result_entry_version IS NOT NULL
+      AND result_revision IS NULL AND result_revision_ref IS NULL
+      AND result_restored_from_revision_ref IS NULL AND result_prioritized IS NOT NULL)
+    OR (operation='forget' AND safe_result_kind='purge'
+      AND result_entry_ref IS NOT NULL AND result_entry_version IS NOT NULL
+      AND result_revision IS NULL AND result_revision_ref IS NULL
+      AND result_restored_from_revision_ref IS NULL AND result_prioritized IS NULL)
+    OR (operation='reset' AND safe_result_kind='purge'
+      AND result_entry_ref IS NULL AND result_entry_version IS NULL
+      AND result_revision IS NULL AND result_revision_ref IS NULL
+      AND result_restored_from_revision_ref IS NULL AND result_prioritized IS NULL)
   );
+
+CREATE TABLE platform.memory_transition_authority_key (
+  key_revision TEXT PRIMARY KEY
+    CHECK (key_revision ~ '^[A-Za-z0-9_-]{3,128}$'),
+  hmac_key BYTEA NOT NULL CHECK (octet_length(hmac_key)=32),
+  state TEXT NOT NULL CHECK (state IN ('active','verify_only')),
+  created_at TIMESTAMPTZ NOT NULL
+);
+CREATE UNIQUE INDEX memory_transition_one_active_key_idx
+  ON platform.memory_transition_authority_key(state) WHERE state='active';
+REVOKE ALL ON TABLE platform.memory_transition_authority_key FROM PUBLIC;
+
+CREATE FUNCTION platform.memory_public_verify_authority_internal(p_payload JSONB)
+RETURNS JSONB LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
+DECLARE authority JSONB:=p_payload->'authority'; unsigned_payload JSONB:=p_payload-'authority';
+  canonical_payload TEXT; v_key_revision TEXT; supplied_digest TEXT; authority_key BYTEA;
+  member_count INTEGER;
+BEGIN
+  IF jsonb_typeof(p_payload) IS DISTINCT FROM 'object'
+    OR jsonb_typeof(authority) IS DISTINCT FROM 'object' THEN
+    RAISE EXCEPTION 'MEMORY_PUBLIC_AUTHORITY_INVALID';
+  END IF;
+  SELECT count(*) INTO member_count FROM jsonb_object_keys(authority);
+  IF member_count<>3 OR NOT authority ?& ARRAY['keyRevision','canonicalPayload','digest']
+    OR jsonb_typeof(authority->'keyRevision') IS DISTINCT FROM 'string'
+    OR jsonb_typeof(authority->'canonicalPayload') IS DISTINCT FROM 'string'
+    OR jsonb_typeof(authority->'digest') IS DISTINCT FROM 'string' THEN
+    RAISE EXCEPTION 'MEMORY_PUBLIC_AUTHORITY_INVALID';
+  END IF;
+  v_key_revision:=authority->>'keyRevision'; canonical_payload:=authority->>'canonicalPayload';
+  supplied_digest:=authority->>'digest';
+  IF supplied_digest !~ '^[a-f0-9]{64}$' OR length(canonical_payload)>131072
+    OR canonical_payload::JSONB IS DISTINCT FROM unsigned_payload THEN
+    RAISE EXCEPTION 'MEMORY_PUBLIC_AUTHORITY_INVALID';
+  END IF;
+  SELECT key.hmac_key INTO authority_key FROM platform.memory_transition_authority_key key
+   WHERE key.key_revision=v_key_revision AND key.state IN ('active','verify_only');
+  IF authority_key IS NULL OR encode(memory_crypto.hmac(
+    convert_to('kokoro.memory.transition.v1','UTF8')
+      ||decode('00','hex')||convert_to(canonical_payload,'UTF8'),
+    authority_key,'sha256'::TEXT),'hex')
+    IS DISTINCT FROM supplied_digest THEN
+    RAISE EXCEPTION 'MEMORY_PUBLIC_AUTHORITY_INVALID';
+  END IF;
+  RETURN jsonb_build_object('keyRevision',v_key_revision,'payloadDigest',supplied_digest);
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION 'MEMORY_PUBLIC_AUTHORITY_INVALID';
+END $$;
+REVOKE ALL ON FUNCTION platform.memory_public_verify_authority_internal(JSONB) FROM PUBLIC;
 
 CREATE FUNCTION platform.memory_public_personal_owner_internal(
   p_site_ref TEXT,p_subject_ref TEXT,p_subject_generation BIGINT,
@@ -275,7 +365,8 @@ SELECT jsonb_build_object('spaceRef',space.space_ref,'binding',jsonb_build_objec
   'revocationEpoch',space.revocation_epoch::TEXT,
   'minimumLearnableSourceOriginSequence',space.minimum_learnable_source_origin_seq::TEXT,
   'learningState',space.learning_state,'useState',space.use_state,'state',space.state,
-  'createdAt',space.created_at,'updatedAt',space.updated_at)
+  'createdAt',to_char(space.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+  'updatedAt',to_char(space.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
 FROM platform.memory_space space WHERE space.site_ref=p_site_ref AND space.space_ref=p_space_ref
   AND space.scope_kind='user'
 $$;
@@ -292,7 +383,10 @@ SELECT jsonb_build_object('siteRef',entry.site_ref,'spaceRef',entry.space_ref,
   'spaceGeneration',entry.space_generation::TEXT,
   'learningGeneration',entry.learning_generation::TEXT,
   'revocationEpoch',entry.revocation_epoch::TEXT,
-  'createdAt',entry.created_at,'updatedAt',entry.updated_at,'deletedAt',entry.deleted_at)
+  'createdAt',to_char(entry.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+  'updatedAt',to_char(entry.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+  'deletedAt',CASE WHEN entry.deleted_at IS NULL THEN NULL ELSE
+    to_char(entry.deleted_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END)
 FROM platform.memory_entry entry WHERE entry.site_ref=p_site_ref
  AND entry.space_ref=p_space_ref AND entry.entry_ref=p_entry_ref
 $$;
@@ -314,8 +408,6 @@ BEGIN
     OR length(p_request_digest_key_revision) NOT BETWEEN 3 AND 128 THEN
     RAISE EXCEPTION 'MEMORY_PUBLIC_COMMAND_INVALID';
   END IF;
-  owner_result:=platform.memory_public_personal_owner_internal(p_site_ref,p_subject_ref,
-    p_subject_generation,p_feature_policy_revision_ref,p_space_ref);
   PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
     concat_ws(E'\x1f',p_site_ref,p_subject_ref,p_subject_generation::TEXT,p_command_ref),
     5570193304977555316));
@@ -325,22 +417,29 @@ BEGIN
   IF FOUND THEN
     IF inbox_row.owner_scope_kind<>'user' OR inbox_row.owner_subject_ref<>p_subject_ref
       OR inbox_row.owner_subject_generation<>p_subject_generation
-      OR inbox_row.owner_project_ref IS NOT NULL OR inbox_row.operation<>p_operation
-      OR inbox_row.request_digest<>p_request_digest
-      OR inbox_row.request_digest_key_revision<>p_request_digest_key_revision THEN
+      OR inbox_row.owner_project_ref IS NOT NULL OR inbox_row.operation<>p_operation THEN
       RETURN jsonb_build_object('decision','digest_conflict');
     END IF;
+    IF inbox_row.request_digest<>p_request_digest
+      OR inbox_row.request_digest_key_revision<>p_request_digest_key_revision THEN
+      RETURN jsonb_build_object('decision','digest_conflict',
+        'requestDigestKeyRevision',inbox_row.request_digest_key_revision);
+    END IF;
     IF inbox_row.state='completed' THEN
-      RETURN jsonb_build_object('decision','replay','kind',inbox_row.safe_result_kind,
-        'spaceRef',owner_result->>'spaceRef',
+      RETURN jsonb_strip_nulls(jsonb_build_object('decision','replay','kind',inbox_row.safe_result_kind,
+        'spaceRef',p_space_ref,
         'committedSpaceVersion',inbox_row.committed_space_version::TEXT,
         'entryRef',inbox_row.result_entry_ref,
         'entryVersion',inbox_row.result_entry_version::TEXT,
         'revision',inbox_row.result_revision::TEXT,
-        'revisionRef',inbox_row.result_revision_ref);
+        'revisionRef',inbox_row.result_revision_ref,
+        'restoredFromRevisionRef',inbox_row.result_restored_from_revision_ref,
+        'prioritized',inbox_row.result_prioritized));
     END IF;
     IF inbox_row.state<>'accepted' THEN RETURN jsonb_build_object('decision','outcome_unknown'); END IF;
   END IF;
+  owner_result:=platform.memory_public_personal_owner_internal(p_site_ref,p_subject_ref,
+    p_subject_generation,p_feature_policy_revision_ref,p_space_ref);
   space_state:=platform.memory_public_space_state_internal(p_site_ref,p_space_ref);
   entry_state:=CASE WHEN p_operation IN ('correct','restore','prioritize','deprioritize','forget')
     THEN platform.memory_public_entry_state_internal(p_site_ref,p_space_ref,p_entry_ref) ELSE NULL END;
@@ -369,21 +468,40 @@ REVOKE ALL ON FUNCTION platform.memory_public_prepare_command_internal(
 CREATE FUNCTION platform.memory_public_entry_json(
   p_site_ref TEXT,p_space_ref TEXT,p_entry_ref TEXT
 ) RETURNS JSONB LANGUAGE sql STABLE SET search_path=pg_catalog,platform AS $$
-SELECT jsonb_build_object(
+SELECT jsonb_strip_nulls(jsonb_build_object(
   'entryRef',entry.entry_ref,'entryVersion',entry.version::TEXT,
   'category',entry.category,
-  'state',CASE WHEN entry.state='active' THEN 'active' ELSE 'revoked_purge_pending' END,
+  'state',CASE WHEN entry.state='active'
+      AND entry.feature_policy_revision_ref=space.feature_policy_revision_ref
+      AND entry.space_generation=space.space_generation
+      AND entry.learning_generation=space.learning_generation
+      AND entry.revocation_epoch<=space.revocation_epoch THEN 'active'
+    WHEN purge.state='completed' THEN 'purged' ELSE 'revoked_purge_pending' END,
   'prioritized',entry.prioritized,'revision',entry.current_revision::TEXT,
   'currentRevisionRef',entry.current_revision_ref,'reason',revision.reason,
-  'validFrom',revision.valid_from,'validTo',revision.valid_to,
-  'createdAt',entry.created_at,'updatedAt',entry.updated_at,
-  'protectedContent',CASE WHEN payload.revision_ref IS NULL THEN NULL ELSE jsonb_build_object(
+  'validFrom',CASE WHEN revision.valid_from IS NULL THEN NULL ELSE
+    to_char(revision.valid_from AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END,
+  'validTo',CASE WHEN revision.valid_to IS NULL THEN NULL ELSE
+    to_char(revision.valid_to AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END,
+  'createdAt',to_char(entry.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+  'updatedAt',to_char(entry.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+  'protectedContent',CASE WHEN entry.state<>'active'
+      OR entry.feature_policy_revision_ref<>space.feature_policy_revision_ref
+      OR entry.space_generation<>space.space_generation
+      OR entry.learning_generation<>space.learning_generation
+      OR entry.revocation_epoch>space.revocation_epoch OR payload.revision_ref IS NULL THEN NULL
+    ELSE jsonb_build_object(
     'envelopeVersion',payload.envelope_version,'keyRevision',payload.protection_key_revision,
     'nonce',encode(payload.nonce,'base64'),'ciphertext',encode(payload.protected_ciphertext,'base64'),
     'authenticationTag',encode(payload.authentication_tag,'base64'),'aadDigest',payload.aad_digest) END,
   'sourceKind',CASE WHEN provenance.source_kind='authenticated_user_command' THEN 'explicit' ELSE 'import' END,
   'sourceState','current','safeSourceLabel',
-    CASE WHEN provenance.source_kind='authenticated_user_command' THEN 'Saved by you' ELSE 'Imported memory' END)
+    CASE WHEN provenance.source_kind='authenticated_user_command' THEN 'Saved by you' ELSE 'Imported memory' END,
+  'purgeReceiptRef',purge.purge_job_ref,
+  'revokedAt',CASE WHEN purge.state IS DISTINCT FROM 'completed' THEN
+    to_char(purge.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') ELSE NULL END,
+  'purgedAt',CASE WHEN purge.state='completed' THEN
+    to_char(purge.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') ELSE NULL END))
 FROM platform.memory_entry entry
 JOIN platform.memory_space space ON space.site_ref=entry.site_ref
  AND space.space_ref=entry.space_ref
@@ -397,12 +515,17 @@ LEFT JOIN LATERAL (SELECT source_kind FROM platform.memory_provenance provenance
   WHERE provenance_row.site_ref=revision.site_ref AND provenance_row.space_ref=revision.space_ref
     AND provenance_row.entry_ref=revision.entry_ref AND provenance_row.revision=revision.revision
   ORDER BY provenance_row.provenance_ref LIMIT 1) provenance ON true
+LEFT JOIN LATERAL (SELECT job.purge_job_ref,job.state,job.created_at,job.updated_at
+  FROM platform.memory_purge_job job
+  WHERE job.site_ref=entry.site_ref AND job.space_ref=entry.space_ref
+    AND (job.entry_ref=entry.entry_ref OR job.entry_ref IS NULL)
+  ORDER BY job.created_at DESC,job.purge_job_ref DESC LIMIT 1) purge ON true
 WHERE entry.site_ref=p_site_ref AND entry.space_ref=p_space_ref AND entry.entry_ref=p_entry_ref
- AND entry.state='active' AND space.state='active'
- AND entry.feature_policy_revision_ref=space.feature_policy_revision_ref
- AND entry.space_generation=space.space_generation
- AND entry.learning_generation=space.learning_generation
- AND entry.revocation_epoch<=space.revocation_epoch
+ AND space.state='active' AND ((entry.state='active'
+   AND entry.feature_policy_revision_ref=space.feature_policy_revision_ref
+   AND entry.space_generation=space.space_generation
+   AND entry.learning_generation=space.learning_generation
+   AND entry.revocation_epoch<=space.revocation_epoch) OR purge.purge_job_ref IS NOT NULL)
 $$;
 REVOKE ALL ON FUNCTION platform.memory_public_entry_json(TEXT,TEXT,TEXT) FROM PUBLIC;
 
@@ -412,7 +535,11 @@ CREATE FUNCTION platform.memory_public_revision_json(
 SELECT jsonb_build_object('revision',revision.revision::TEXT,'revisionRef',revision.revision_ref,
   'reason',revision.reason,'supersedesRevisionRef',revision.supersedes_revision_ref,
   'restoredFromRevisionRef',revision.restored_from_revision_ref,
-  'validFrom',revision.valid_from,'validTo',revision.valid_to,'recordedAt',revision.recorded_at,
+  'validFrom',CASE WHEN revision.valid_from IS NULL THEN NULL ELSE
+    to_char(revision.valid_from AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END,
+  'validTo',CASE WHEN revision.valid_to IS NULL THEN NULL ELSE
+    to_char(revision.valid_to AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END,
+  'recordedAt',to_char(revision.recorded_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
   'protectedContent',CASE WHEN payload.revision_ref IS NULL THEN NULL ELSE jsonb_build_object(
     'envelopeVersion',payload.envelope_version,'keyRevision',payload.protection_key_revision,
     'nonce',encode(payload.nonce,'base64'),'ciphertext',encode(payload.protected_ciphertext,'base64'),
@@ -452,9 +579,11 @@ DECLARE
   v_expected_state_digest CHAR(64):=p_payload->>'expectedStateDigest';
   v_space platform.memory_space%ROWTYPE; v_entry platform.memory_entry%ROWTYPE;
   v_space_state JSONB; v_entry_state JSONB; v_live_digest CHAR(64);
-  v_now TIMESTAMPTZ:=statement_timestamp(); v_receipt_kind TEXT; v_safe_kind TEXT;
+  v_now TIMESTAMPTZ:=(v_command->>'recordedAt')::TIMESTAMPTZ;
+  v_receipt_kind TEXT; v_safe_kind TEXT;
   v_result_entry_version BIGINT; v_result_revision BIGINT; v_committed BIGINT;
   v_changed BOOLEAN:=true; v_target_revision BIGINT;
+  v_authority JSONB;
 BEGIN
   IF p_operation NOT IN ('restore','prioritize','deprioritize')
     OR v_command->>'operation'<>p_operation OR jsonb_typeof(v_context)<>'object' THEN
@@ -471,6 +600,7 @@ BEGIN
      AND inbox.prepare_ref=v_prepare_ref AND inbox.expected_state_digest=v_expected_state_digest
    FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'MEMORY_PUBLIC_COMMAND_FENCE_INVALID'; END IF;
+  v_authority:=platform.memory_public_verify_authority_internal(p_payload);
   SELECT * INTO v_space FROM platform.memory_space space
    WHERE space.site_ref=v_site_ref AND space.space_ref=v_space_ref FOR UPDATE;
   SELECT * INTO v_entry FROM platform.memory_entry entry
@@ -568,16 +698,22 @@ BEGIN
     result_ref=v_entry_ref,committed_space_version=v_committed,result_entry_ref=v_entry_ref,
     result_entry_version=v_result_entry_version,result_revision=v_result_revision,
     result_revision_ref=CASE WHEN p_operation='restore' THEN v_revision_ref ELSE NULL END,
+    result_restored_from_revision_ref=CASE WHEN p_operation='restore'
+      THEN v_command->>'restoredFromRevisionRef' ELSE NULL END,
+    result_prioritized=CASE WHEN p_operation IN ('prioritize','deprioritize')
+      THEN p_operation='prioritize' ELSE NULL END,
+    authority_key_revision=v_authority->>'keyRevision',
+    authority_payload_digest=v_authority->>'payloadDigest',
     completed_at=v_now
    WHERE site_ref=v_site_ref AND command_ref=v_command_ref;
-  RETURN jsonb_build_object('decision','committed','kind',v_safe_kind,
+  RETURN jsonb_strip_nulls(jsonb_build_object('decision','committed','kind',v_safe_kind,
     'committedSpaceVersion',v_committed::TEXT,'entryRef',v_entry_ref,
     'entryVersion',v_result_entry_version::TEXT,'revision',v_result_revision::TEXT,
     'revisionRef',CASE WHEN p_operation='restore' THEN v_revision_ref ELSE NULL END,
     'restoredFromRevisionRef',CASE WHEN p_operation='restore'
       THEN v_command->>'restoredFromRevisionRef' ELSE NULL END,
     'prioritized',CASE WHEN p_operation IN ('prioritize','deprioritize')
-      THEN p_operation='prioritize' ELSE NULL END,'changed',v_changed);
+      THEN p_operation='prioritize' ELSE NULL END,'changed',v_changed));
 END $$;
 REVOKE ALL ON FUNCTION platform.memory_public_commit_extension_internal(TEXT,JSONB) FROM PUBLIC;
 
@@ -601,6 +737,8 @@ DECLARE
   v_remembered JSONB; v_entry JSONB; v_revision JSONB; v_provenance JSONB; v_protected JSONB;
   v_result JSONB:=v_transition->'result'; v_committed BIGINT;
   v_safe_kind TEXT; v_receipt_kind TEXT; v_updated BIGINT;
+  v_authority JSONB;
+  v_purge_job_ref TEXT; v_target_count BIGINT; v_target_digest CHAR(64);
 BEGIN
   IF p_operation NOT IN ('remember','correct','forget','reset')
     OR v_command->>'operation' IS DISTINCT FROM p_operation
@@ -620,6 +758,7 @@ BEGIN
      AND inbox.prepare_ref=v_prepare_ref
      AND inbox.expected_state_digest=v_expected_state_digest FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'MEMORY_PUBLIC_COMMAND_FENCE_INVALID'; END IF;
+  v_authority:=platform.memory_public_verify_authority_internal(p_payload);
 
   v_space_state:=platform.memory_public_space_state_internal(v_site_ref,v_space_ref);
   v_entry_state:=CASE WHEN p_operation IN ('correct','forget')
@@ -818,6 +957,43 @@ BEGIN
     END IF;
   END IF;
 
+  IF p_operation IN ('forget','reset') THEN
+    v_purge_job_ref:='memory-purge:'||encode(sha256(convert_to(v_site_ref||E'\x1f'||
+      v_command_ref,'UTF8')),'hex');
+    SELECT count(*)::BIGINT,encode(sha256(convert_to(COALESCE(string_agg(
+      target.entry_ref||E'\x1f'||target.revision::TEXT||E'\x1f'||target.revision_ref,
+      E'\x1e' ORDER BY target.entry_ref,target.revision),''),'UTF8')),'hex')
+      INTO v_target_count,v_target_digest
+      FROM platform.memory_revision target
+     WHERE target.site_ref=v_site_ref AND target.space_ref=v_space_ref
+       AND (p_operation='reset' OR target.entry_ref=v_entry_ref);
+    INSERT INTO platform.memory_purge_job(site_ref,purge_job_ref,command_ref,space_ref,entry_ref,
+      space_generation,learning_generation,revocation_epoch,frozen_manifest_version,
+      revision_target_count,revision_target_manifest_digest,ingress_cutoff,materialization_cutoff,
+      state,next_attempt_at,created_at,updated_at)
+    VALUES (v_site_ref,v_purge_job_ref,v_command_ref,v_space_ref,
+      CASE WHEN p_operation='forget' THEN v_entry_ref ELSE NULL END,
+      (v_transition->'space'->>'spaceGeneration')::BIGINT,
+      (v_transition->'space'->>'learningGeneration')::BIGINT,
+      (v_transition->'space'->>'revocationEpoch')::BIGINT,1,v_target_count,v_target_digest,0,0,
+      'queued',(v_command->>'recordedAt')::TIMESTAMPTZ,
+      (v_command->>'recordedAt')::TIMESTAMPTZ,(v_command->>'recordedAt')::TIMESTAMPTZ);
+    INSERT INTO platform.memory_purge_revision_target(site_ref,purge_job_ref,target_ordinal,
+      space_ref,entry_ref,revision,revision_ref,space_generation,learning_generation,
+      revocation_epoch,targeted_at)
+    SELECT target.site_ref,v_purge_job_ref,row_number() OVER (
+      ORDER BY target.entry_ref,target.revision)-1,target.space_ref,target.entry_ref,
+      target.revision,target.revision_ref,
+      (v_transition->'space'->>'spaceGeneration')::BIGINT,
+      (v_transition->'space'->>'learningGeneration')::BIGINT,
+      (v_transition->'space'->>'revocationEpoch')::BIGINT,
+      (v_command->>'recordedAt')::TIMESTAMPTZ
+      FROM platform.memory_revision target
+     WHERE target.site_ref=v_site_ref AND target.space_ref=v_space_ref
+       AND (p_operation='reset' OR target.entry_ref=v_entry_ref)
+     ORDER BY target.entry_ref,target.revision;
+  END IF;
+
   v_receipt_kind:=v_result->>'kind';
   v_safe_kind:=CASE WHEN p_operation IN ('forget','reset') THEN 'purge' ELSE 'entry' END;
   INSERT INTO platform.memory_command_receipt(site_ref,owner_scope_kind,owner_subject_ref,
@@ -840,12 +1016,15 @@ BEGIN
     result_ref=COALESCE(v_result->>'entryRef',v_space_ref),committed_space_version=v_committed,
     result_entry_ref=v_result->>'entryRef',result_entry_version=(v_result->>'entryVersion')::BIGINT,
     result_revision=(v_result->>'revision')::BIGINT,result_revision_ref=v_result->>'revisionRef',
+    result_restored_from_revision_ref=NULL,result_prioritized=NULL,
+    authority_key_revision=v_authority->>'keyRevision',
+    authority_payload_digest=v_authority->>'payloadDigest',
     completed_at=statement_timestamp()
    WHERE site_ref=v_site_ref AND command_ref=v_command_ref;
-  RETURN jsonb_build_object('decision','committed','kind',v_safe_kind,
+  RETURN jsonb_strip_nulls(jsonb_build_object('decision','committed','kind',v_safe_kind,
     'committedSpaceVersion',v_committed::TEXT,'entryRef',v_result->>'entryRef',
     'entryVersion',v_result->>'entryVersion','revision',v_result->>'revision',
-    'revisionRef',v_result->>'revisionRef');
+    'revisionRef',v_result->>'revisionRef'));
 END $$;
 REVOKE ALL ON FUNCTION platform.memory_public_commit_validated_core_internal(TEXT,JSONB) FROM PUBLIC;
 
@@ -920,6 +1099,9 @@ BEGIN
   END IF;
   entry_result:=platform.memory_public_entry_json($1,$5,$7);
   IF entry_result IS NULL THEN RETURN NULL; END IF;
+  IF entry_result->>'state'<>'active' THEN
+    RETURN jsonb_build_object('entry',entry_result,'revisions','[]'::JSONB);
+  END IF;
   SELECT COALESCE(jsonb_agg(platform.memory_public_revision_json(revision.site_ref,
     revision.space_ref,revision.entry_ref,revision.revision) ORDER BY revision.revision DESC),'[]')
     INTO revisions_result FROM (SELECT candidate.* FROM platform.memory_revision candidate
@@ -1056,6 +1238,12 @@ CREATE POLICY memory_command_receipt_public_definer ON platform.memory_command_r
   USING (SESSION_USER='platform_memory_public') WITH CHECK (SESSION_USER='platform_memory_public');
 CREATE POLICY memory_public_inbox_public_definer ON platform.memory_public_command_inbox TO platform_migrator
   USING (SESSION_USER='platform_memory_public') WITH CHECK (SESSION_USER='platform_memory_public');
+CREATE POLICY memory_purge_job_public_select_definer ON platform.memory_purge_job
+  FOR SELECT TO platform_migrator USING (SESSION_USER='platform_memory_public');
+CREATE POLICY memory_purge_job_public_insert_definer ON platform.memory_purge_job
+  FOR INSERT TO platform_migrator WITH CHECK (SESSION_USER='platform_memory_public');
+CREATE POLICY memory_purge_target_public_insert_definer ON platform.memory_purge_revision_target
+  FOR INSERT TO platform_migrator WITH CHECK (SESSION_USER='platform_memory_public');
 
 GRANT USAGE ON SCHEMA platform TO platform_memory_public;
 
@@ -1066,3 +1254,4 @@ REVOKE ALL ON TABLE platform.memory_revision_payload FROM platform_memory_public
 REVOKE ALL ON TABLE platform.memory_provenance FROM platform_memory_public;
 REVOKE ALL ON TABLE platform.memory_command_receipt FROM platform_memory_public;
 REVOKE ALL ON TABLE platform.memory_public_command_inbox FROM platform_memory_public;
+REVOKE ALL ON TABLE platform.memory_transition_authority_key FROM platform_memory_public;

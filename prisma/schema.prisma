@@ -213,6 +213,10 @@ model MemoryPublicCommandInbox {
   resultEntryVersion     BigInt?   @map("result_entry_version")
   resultRevision         BigInt?   @map("result_revision")
   resultRevisionRef      String?   @map("result_revision_ref")
+  resultRestoredFromRevisionRef String? @map("result_restored_from_revision_ref")
+  resultPrioritized      Boolean?  @map("result_prioritized")
+  authorityKeyRevision   String?   @map("authority_key_revision")
+  authorityPayloadDigest String?   @map("authority_payload_digest") @db.Char(64)
   createdAt              DateTime  @map("created_at") @db.Timestamptz(6)
   completedAt            DateTime? @map("completed_at") @db.Timestamptz(6)
 
@@ -375,6 +379,16 @@ model MemoryDatabaseRoleIdentity {
   roleOid  Int    @unique @map("role_oid") @db.Oid
 
   @@map("memory_database_role_identity")
+  @@schema("platform")
+}
+
+model MemoryTransitionAuthorityKey {
+  keyRevision String   @id @map("key_revision")
+  hmacKey     Bytes    @map("hmac_key")
+  state       String
+  createdAt   DateTime @map("created_at") @db.Timestamptz(6)
+
+  @@map("memory_transition_authority_key")
   @@schema("platform")
 }
 

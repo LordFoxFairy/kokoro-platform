@@ -1,7 +1,8 @@
 import { TextEncoder } from "node:util";
 import { MemoryApplicationError } from "./memory-application-error.js";
 import type { MemoryContentProtectionPort, MemoryPublicCommand, MemoryPublicCommandResult,
-  MemoryPublicRepository, MemoryPublicUnitOfWork } from "./memory-authority-ports.js";
+  MemoryPublicOperation, MemoryPublicRepository, MemoryPublicUnitOfWork } from
+  "./memory-authority-ports.js";
 import { memoryEntryRef, memoryRevisionRef, memorySpaceRef } from "../domain/memory-references.js";
 import { memoryPublicDerivedRef, memoryPublicPersonalContext,
   type MemoryCommandFingerprintPort, type MemoryContentAdmissionPort,
@@ -23,12 +24,16 @@ export class MemoryPublicOwner {
     validFrom: string | null; validTo: string | null }>): Promise<MemoryPublicCommandResult> {
     const context = personal(input.context);
     const validity = temporalValidity(input.validFrom, input.validTo);
-    const content = await this.#admit(input.category, input.content);
     const entryRef = memoryPublicDerivedRef("entry", context, input.commandRef);
     const revisionRef = memoryPublicDerivedRef("revision", context, input.commandRef);
     const spaceRef = memoryPublicDerivedRef("space", context, "owner");
-    const fingerprint = await this.#fingerprint("remember", { category: input.category,
-      content: input.content, validFrom: validity.validFrom, validTo: validity.validTo });
+    const fields = { category: input.category, content: input.content,
+      validFrom: validity.validFrom, validTo: validity.validTo } as const;
+    const recovered = await this.#recover("remember", context, input.commandRef, spaceRef,
+      entryRef, revisionRef, fields);
+    if (recovered.result !== null) return recovered.result;
+    const fingerprint = recovered.fingerprint;
+    const content = await this.#admit(input.category, input.content);
     const protectedContent = await this.dependencies.protector.protect({ binding: {
       siteRef: context.siteRef, spaceRef: memorySpaceRef(spaceRef),
       entryRef: memoryEntryRef(entryRef), revisionRef: memoryRevisionRef(revisionRef),
@@ -48,16 +53,19 @@ export class MemoryPublicOwner {
     const context = personal(input.context);
     const expectedRevision = boundedRevision(input.expectedRevision);
     const validity = temporalValidity(input.validFrom, input.validTo);
+    const revisionRef = memoryPublicDerivedRef("revision", context, input.commandRef);
+    const spaceRef = memoryPublicDerivedRef("space", context, "owner");
+    const fields = { entryRef: input.entryRef, expectedRevision, content: input.content,
+      validFrom: validity.validFrom, validTo: validity.validTo } as const;
+    const recovered = await this.#recover("correct", context, input.commandRef, spaceRef,
+      input.entryRef, revisionRef, fields);
+    if (recovered.result !== null) return recovered.result;
+    const fingerprint = recovered.fingerprint;
     const current = await this.#currentEntry(context, input.entryRef);
     if (current.entry.revision !== BigInt(expectedRevision)) {
       throw new MemoryApplicationError("MEMORY_PUBLIC_VERSION_CONFLICT");
     }
     const content = await this.#admit(current.entry.category, input.content);
-    const revisionRef = memoryPublicDerivedRef("revision", context, input.commandRef);
-    const spaceRef = memoryPublicDerivedRef("space", context, "owner");
-    const fingerprint = await this.#fingerprint("correct", { entryRef: input.entryRef,
-      expectedRevision, content: input.content,
-      validFrom: validity.validFrom, validTo: validity.validTo });
     const protectedContent = await this.dependencies.protector.protect({ binding: {
       siteRef: context.siteRef, spaceRef: memorySpaceRef(spaceRef),
       entryRef: memoryEntryRef(input.entryRef), revisionRef: memoryRevisionRef(revisionRef),
@@ -75,6 +83,14 @@ export class MemoryPublicOwner {
     Promise<MemoryPublicCommandResult> {
     const context = personal(input.context);
     const expectedRevision = boundedRevision(input.expectedRevision);
+    const nextRevisionRef = memoryPublicDerivedRef("revision", context, input.commandRef);
+    const candidateSpaceRef = memoryPublicDerivedRef("space", context, "owner");
+    const fields = { entryRef: input.entryRef, revisionRef: input.revisionRef,
+      expectedRevision } as const;
+    const recovered = await this.#recover("restore", context, input.commandRef, candidateSpaceRef,
+      input.entryRef, nextRevisionRef, fields);
+    if (recovered.result !== null) return recovered.result;
+    const fingerprint = recovered.fingerprint;
     const { owner, entry, historical } = await this.#restoreSource(context, input.entryRef,
       input.revisionRef, expectedRevision);
     if (historical.protectedContent === null) {
@@ -88,16 +104,12 @@ export class MemoryPublicOwner {
       }, protectedContent: historical.protectedContent });
       const text = new TextDecoder("utf-8", { fatal: true }).decode(plaintext);
       await this.#admit(entry.category, text);
-      const nextRevisionRef = memoryPublicDerivedRef("revision", context, input.commandRef);
       protectedContent = await this.dependencies.protector.protect({ binding: {
         siteRef: context.siteRef, spaceRef: memorySpaceRef(owner.spaceRef),
         entryRef: memoryEntryRef(input.entryRef), revisionRef: memoryRevisionRef(nextRevisionRef),
       }, plaintext: new TextEncoder().encode(text) });
     }
-    const nextRevisionRef = memoryPublicDerivedRef("revision", context, input.commandRef);
     const validity = temporalValidity(historical.validFrom, historical.validTo);
-    const fingerprint = await this.#fingerprint("restore", { entryRef: input.entryRef,
-      revisionRef: input.revisionRef, expectedRevision });
     return this.#execute({ operation: "restore", context, commandRef: input.commandRef,
       requestDigest: fingerprint.digest, requestDigestKeyRevision: fingerprint.keyRevision,
       spaceRef: owner.spaceRef, entryRef: input.entryRef, revisionRef: nextRevisionRef,
@@ -112,10 +124,15 @@ export class MemoryPublicOwner {
     Promise<MemoryPublicCommandResult> {
     const context = personal(input.context);
     const spaceRef = memoryPublicDerivedRef("space", context, "owner");
-    const fingerprint = await this.#fingerprint("priority", {
+    const fields = {
       entryRef: input.entryRef, expectedEntryVersion: input.expectedEntryVersion,
-      prioritized: input.prioritized });
-    return this.#execute({ operation: input.prioritized ? "prioritize" : "deprioritize", context,
+      prioritized: input.prioritized } as const;
+    const operation = input.prioritized ? "prioritize" : "deprioritize";
+    const recovered = await this.#recover(operation, context, input.commandRef, spaceRef,
+      input.entryRef, null, fields, "priority");
+    if (recovered.result !== null) return recovered.result;
+    const fingerprint = recovered.fingerprint;
+    return this.#execute({ operation, context,
       commandRef: input.commandRef, requestDigest: fingerprint.digest,
       requestDigestKeyRevision: fingerprint.keyRevision,
       spaceRef, entryRef: input.entryRef, revisionRef: null,
@@ -127,8 +144,12 @@ export class MemoryPublicOwner {
     entryRef: string; expectedEntryVersion: bigint }>): Promise<MemoryPublicCommandResult> {
     const context = personal(input.context);
     const spaceRef = memoryPublicDerivedRef("space", context, "owner");
-    const fingerprint = await this.#fingerprint("forget", { entryRef: input.entryRef,
-      expectedEntryVersion: input.expectedEntryVersion });
+    const fields = { entryRef: input.entryRef,
+      expectedEntryVersion: input.expectedEntryVersion } as const;
+    const recovered = await this.#recover("forget", context, input.commandRef, spaceRef,
+      input.entryRef, null, fields);
+    if (recovered.result !== null) return recovered.result;
+    const fingerprint = recovered.fingerprint;
     return this.#execute({ operation: "forget", context, commandRef: input.commandRef,
       requestDigest: fingerprint.digest, requestDigestKeyRevision: fingerprint.keyRevision,
       spaceRef, entryRef: input.entryRef,
@@ -139,7 +160,10 @@ export class MemoryPublicOwner {
     Promise<MemoryPublicCommandResult> {
     const context = personal(input.context);
     const spaceRef = memoryPublicDerivedRef("space", context, "owner");
-    const fingerprint = await this.#fingerprint("reset", {});
+    const recovered = await this.#recover("reset", context, input.commandRef, spaceRef,
+      null, null, {});
+    if (recovered.result !== null) return recovered.result;
+    const fingerprint = recovered.fingerprint;
     return this.#execute({ operation: "reset", context, commandRef: input.commandRef,
       requestDigest: fingerprint.digest, requestDigestKeyRevision: fingerprint.keyRevision,
       spaceRef, entryRef: null, revisionRef: null,
@@ -149,6 +173,35 @@ export class MemoryPublicOwner {
   async #execute(command: MemoryPublicCommand): Promise<MemoryPublicCommandResult> {
     return this.dependencies.unitOfWork.execute({ operation: `memory.${command.operation}` },
       (transaction) => this.dependencies.repository.executeCommand(transaction, command));
+  }
+
+  async #recover(operation: MemoryPublicOperation, context: MemoryPublicPersonalContext,
+    commandRef: string, spaceRef: string, entryRef: string | null, revisionRef: string | null,
+    fields: Readonly<Record<string, string | number | bigint | boolean | null>>,
+    fingerprintOperation: string = operation): Promise<Readonly<{
+      fingerprint: Readonly<{ keyRevision: string; digest: string }>;
+      result: MemoryPublicCommandResult | null;
+    }>> {
+    let fingerprint = await this.#fingerprint(fingerprintOperation, fields);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const recovered = await this.dependencies.unitOfWork.execute(
+        { operation: `memory.${operation}.recover` },
+        (transaction) => this.dependencies.repository.recoverCommand(transaction, {
+          operation, context, commandRef, requestDigest: fingerprint.digest,
+          requestDigestKeyRevision: fingerprint.keyRevision, spaceRef, entryRef, revisionRef,
+        }));
+      if (recovered.kind === "continue") return Object.freeze({ fingerprint, result: null });
+      if (recovered.kind === "replay") {
+        return Object.freeze({ fingerprint,
+          result: Object.freeze({ ...recovered.result, replayed: true }) });
+      }
+      if (attempt !== 0 || recovered.requestDigestKeyRevision === fingerprint.keyRevision) {
+        throw new MemoryApplicationError("MEMORY_COMMAND_DIGEST_CONFLICT");
+      }
+      fingerprint = await this.#fingerprint(fingerprintOperation, fields,
+        recovered.requestDigestKeyRevision);
+    }
+    throw new MemoryApplicationError("MEMORY_COMMAND_DIGEST_CONFLICT");
   }
 
   async #currentEntry(context: MemoryPublicPersonalContext, entryRef: string) {
@@ -199,8 +252,12 @@ export class MemoryPublicOwner {
   }
 
   async #fingerprint(operation: string,
-    fields: Readonly<Record<string, string | number | bigint | boolean | null>>) {
-    const value = await this.dependencies.fingerprints.fingerprint({ operation, fields });
+    fields: Readonly<Record<string, string | number | bigint | boolean | null>>,
+    keyRevision?: string) {
+    const value = await this.dependencies.fingerprints.fingerprint({ operation, fields }, keyRevision);
+    if (keyRevision !== undefined && value.keyRevision !== keyRevision) {
+      throw new MemoryApplicationError("MEMORY_COMMAND_DIGEST_CONFLICT");
+    }
     if (typeof value.keyRevision !== "string" || value.keyRevision.length < 3 ||
       value.keyRevision.length > 128 || !/^[a-f0-9]{64}$/u.test(value.digest)) {
       throw new MemoryApplicationError("MEMORY_PERSISTENCE_CONFLICT");

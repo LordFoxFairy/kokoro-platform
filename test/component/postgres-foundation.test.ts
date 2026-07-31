@@ -326,8 +326,8 @@ describe("Platform PostgreSQL foundation", () => {
       );
       expect(privileges.rows).toEqual([
         { role_name: memoryRoleNames.public, public_schema_usage: true,
-          public_schema_create: false, platform_schema_usage: false,
-          platform_schema_create: false, relation_acl_count: "0", routine_acl_count: "0" },
+          public_schema_create: false, platform_schema_usage: true,
+          platform_schema_create: false, relation_acl_count: "0", routine_acl_count: "22" },
         { role_name: memoryRoleNames.runtime, public_schema_usage: true,
           public_schema_create: false, platform_schema_usage: false,
           platform_schema_create: false, relation_acl_count: "0", routine_acl_count: "0" },
@@ -393,9 +393,11 @@ describe("Platform PostgreSQL foundation", () => {
       await bootstrap.query(
         `INSERT INTO platform.memory_public_command_inbox
            (site_ref,command_ref,owner_scope_kind,owner_subject_ref,owner_subject_generation,
-            operation,request_digest,state,created_at)
-         VALUES ($1,$2,'user',$3,1,'reset',$4,'accepted',statement_timestamp())`,
-        [siteRef, purgeCommandRef, subjectRef, "c".repeat(64)],
+            operation,request_digest,request_digest_key_revision,state,prepare_ref,
+            expected_state_digest,created_at)
+         VALUES ($1,$2,'user',$3,1,'reset',$4,'memory-command-hmac-r1','accepted',
+           'foundation-purge-prepare',$5,statement_timestamp())`,
+        [siteRef, purgeCommandRef, subjectRef, "c".repeat(64), "e".repeat(64)],
       );
       for (const [commandRef, digest] of [
         [exhaustedPurgeCommandRef, "8".repeat(64)],
@@ -404,9 +406,11 @@ describe("Platform PostgreSQL foundation", () => {
         await bootstrap.query(
           `INSERT INTO platform.memory_public_command_inbox
              (site_ref,command_ref,owner_scope_kind,owner_subject_ref,owner_subject_generation,
-              operation,request_digest,state,created_at)
-           VALUES ($1,$2,'user',$3,1,'reset',$4,'accepted',statement_timestamp())`,
-          [siteRef, commandRef, subjectRef, digest],
+              operation,request_digest,request_digest_key_revision,state,prepare_ref,
+              expected_state_digest,created_at)
+           VALUES ($1,$2,'user',$3,1,'reset',$4,'memory-command-hmac-r1','accepted',
+             'foundation-exhausted-prepare',$5,statement_timestamp())`,
+          [siteRef, commandRef, subjectRef, digest, "f".repeat(64)],
         );
       }
       await bootstrap.query(
