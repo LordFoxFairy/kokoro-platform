@@ -37,6 +37,9 @@ CREATE ROLE platform_admin
 CREATE ROLE platform_model_gateway
   LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS
   PASSWORD 'platform-model-gateway-ci';
+CREATE ROLE platform_model_image_worker
+  LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS
+  PASSWORD 'platform-model-image-worker-ci';
 CREATE ROLE platform_media_public
   LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS
   PASSWORD 'platform-media-public-ci';
@@ -63,6 +66,7 @@ GRANT CONNECT ON DATABASE kokoro_test_platform TO
   platform_authorization_maintenance,
   platform_admin,
   platform_model_gateway,
+  platform_model_image_worker,
   platform_media_public,
   platform_media_runtime,
   platform_media_worker;

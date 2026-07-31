@@ -1,7 +1,7 @@
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
-import { CreateImageEffectRequestSchema, ImageEffectState } from
+import { CreateImageEffectRequestSchema, ImageEffectReceiptKind, ImageEffectState } from
   "../../src/interfaces/connect/generated-model-image-effect/kokoro/platform/model/image/v1/image_effect_pb.js";
 import { createGeneratedImageEffectCommandDigestAuthority, createImageEffectConnectService } from
   "../../src/modules/model-gateway/interfaces/connect/image-effect-connect-service.js";
@@ -119,15 +119,59 @@ describe("image-effect Connect provider", () => {
     expect((await service.getImageEffectEvidence({ callerAccessHandle: "h".repeat(32),
       logicalInvocationRef: "invocation:one", afterEvidenceSequence: 0n, limit: 8 } as never,
     context)).caughtUp).toBe(true);
-    expect((await service.issueImageEffectOutputAccess({ callerAccessHandle: "h".repeat(32),
+    const issued = await service.issueImageEffectOutputAccess({ callerAccessHandle: "h".repeat(32),
       outputAccessCommandRef: "output-command:one", logicalInvocationRef: "invocation:one",
       outputEvidenceRef: "output:one", outputEvidenceDigest: "c".repeat(64),
-      callerRequestFingerprint: "e".repeat(64) } as never, context)).outputAccess?.sourceAccessHandle)
-      .toBe("kimg1.token");
+      callerRequestFingerprint: "e".repeat(64) } as never, context);
+    expect(issued.receipt?.kind).toBe(ImageEffectReceiptKind.OUTPUT_ACCESS_ISSUED);
+    expect(issued.outputAccess?.sourceAccessHandle).toBe("kimg1.token");
     const frames = service.readImageEffectOutput({ sourceAccessHandle: "kimg1.token",
       outputEvidenceRef: "output:one", outputEvidenceDigest: "c".repeat(64), offset: 0n,
       maxBytes: 1024 } as never, context);
     expect((await frames[Symbol.asyncIterator]().next()).value?.nextOffset).toBe(2n);
+  });
+
+  it.each([
+    ["create_committed", ImageEffectReceiptKind.CREATE_COMMITTED, true],
+    ["definitely_not_submitted", ImageEffectReceiptKind.DEFINITELY_NOT_SUBMITTED, true],
+    ["attempt_authorization_attached", ImageEffectReceiptKind.ATTEMPT_AUTHORIZATION_ATTACHED, true],
+    ["cancel_intent_committed", ImageEffectReceiptKind.CANCEL_INTENT_COMMITTED, true],
+    ["rejected", ImageEffectReceiptKind.REJECTED, false],
+    ["outcome_unknown", ImageEffectReceiptKind.OUTCOME_UNKNOWN, false],
+  ] as const)("maps %s without falling through to output access", async (kind, wireKind, carriesInvocation) => {
+    const recover = vi.fn(async () => Object.freeze({ ...RESULT,
+      receipt: Object.freeze({ ...RESULT.receipt, kind }) }));
+    const service = createImageEffectConnectService({
+      application: { create: vi.fn(), recover, get: vi.fn(), requestCancel: vi.fn(),
+        attachNextAttemptAuthorization: vi.fn() },
+      caller: { resolve: () => ({ identity: "spiffe://kokoro/platform-media-worker" }) },
+      mediaCallerIdentity: "spiffe://kokoro/platform-media-worker",
+    });
+    const response = await service.recoverImageEffectByCommand({ callerAccessHandle: "h".repeat(32),
+      callerCommandRef: "command:one" } as never, {} as never);
+    expect(response.receipt?.kind).toBe(wireKind);
+    expect(response.invocation !== undefined).toBe(carriesInvocation);
+  });
+
+  it("fails closed when an output adapter tries to masquerade a command receipt as output access", async () => {
+    const malformed = Object.freeze({ receipt: RESULT.receipt, outputAccess: Object.freeze({
+      outputEvidenceRef: "output:one", outputEvidenceDigest: "c".repeat(64),
+      sourceAccessHandle: "kimg1.token", sourceAccessExpiresAt: "2030-01-01T00:00:00.000Z",
+      maxReadableBytes: 4096n }), replayed: false });
+    const service = createImageEffectConnectService({
+      application: { create: vi.fn(), recover: vi.fn(), get: vi.fn(), requestCancel: vi.fn(),
+        attachNextAttemptAuthorization: vi.fn() },
+      output: { issue: vi.fn(async () => malformed as never), recover: vi.fn(),
+        read: async function* () { yield undefined as never; } },
+      caller: { resolve: () => ({ identity: "spiffe://kokoro/platform-media-worker" }) },
+      mediaCallerIdentity: "spiffe://kokoro/platform-media-worker",
+    });
+
+    await expect(service.issueImageEffectOutputAccess({ callerAccessHandle: "h".repeat(32),
+      outputAccessCommandRef: "output-command:one", logicalInvocationRef: "invocation:one",
+      outputEvidenceRef: "output:one", outputEvidenceDigest: "c".repeat(64),
+      callerRequestFingerprint: "e".repeat(64) } as never, {} as never))
+      .rejects.toMatchObject({ code: Code.Unavailable });
   });
 });
 

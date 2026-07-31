@@ -308,7 +308,7 @@ function axes(authorization: ImageEffectAccessAuthorization): VerifiedModelImage
 }
 
 function resultMessage(result: ImageEffectCommandResult) {
-  return { receipt: create(ImageEffectCommandReceiptSchema, {
+  const receipt = create(ImageEffectCommandReceiptSchema, {
     callerCommandRef: result.receipt.callerCommandRef,
     kind: receiptKind(result.receipt.kind),
     logicalInvocationRef: result.receipt.logicalInvocationRef,
@@ -319,10 +319,16 @@ function resultMessage(result: ImageEffectCommandResult) {
     receiptRef: result.receipt.receiptRef,
     receiptDigest: result.receipt.receiptDigest,
     requestDigest: result.receipt.requestDigest,
-  }), invocation: mapView(result.invocation) };
+  });
+  return result.receipt.kind === "rejected" || result.receipt.kind === "outcome_unknown"
+    ? { receipt }
+    : { receipt, invocation: mapView(result.invocation) };
 }
 
 function outputAccessMessage(result: ImageEffectOutputAccessResult) {
+  if (result.receipt.kind !== "output_access_issued") {
+    throw new Error("IMAGE_EFFECT_OUTPUT_ACCESS_RECEIPT_KIND_CORRUPT");
+  }
   return { receipt: mapReceipt(result.receipt), outputAccess: {
     outputEvidenceRef: result.outputAccess.outputEvidenceRef,
     outputEvidenceDigest: result.outputAccess.outputEvidenceDigest,
@@ -392,13 +398,18 @@ function state(value: ImageEffectView["state"]): ImageEffectState {
 }
 
 function receiptKind(value: ImageEffectCommandResult["receipt"]["kind"]): ImageEffectReceiptKind {
-  return value === "create_committed"
-    ? ImageEffectReceiptKind.CREATE_COMMITTED
-    : value === "attempt_authorization_attached"
-      ? ImageEffectReceiptKind.ATTEMPT_AUTHORIZATION_ATTACHED
-      : value === "cancel_intent_committed"
-        ? ImageEffectReceiptKind.CANCEL_INTENT_COMMITTED
-        : ImageEffectReceiptKind.OUTPUT_ACCESS_ISSUED;
+  const values = {
+    create_committed: ImageEffectReceiptKind.CREATE_COMMITTED,
+    definitely_not_submitted: ImageEffectReceiptKind.DEFINITELY_NOT_SUBMITTED,
+    attempt_authorization_attached: ImageEffectReceiptKind.ATTEMPT_AUTHORIZATION_ATTACHED,
+    cancel_intent_committed: ImageEffectReceiptKind.CANCEL_INTENT_COMMITTED,
+    rejected: ImageEffectReceiptKind.REJECTED,
+    outcome_unknown: ImageEffectReceiptKind.OUTCOME_UNKNOWN,
+    output_access_issued: ImageEffectReceiptKind.OUTPUT_ACCESS_ISSUED,
+  } satisfies Readonly<Record<ImageEffectCommandResult["receipt"]["kind"], ImageEffectReceiptKind>>;
+  const mapped = values[value];
+  if (mapped === undefined) throw new Error("IMAGE_EFFECT_RECEIPT_KIND_CORRUPT");
+  return mapped;
 }
 
 async function safe<Result>(work: () => Promise<Result>): Promise<Result> {

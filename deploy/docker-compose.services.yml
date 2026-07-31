@@ -24,6 +24,7 @@ services:
       PLATFORM_DATABASE_ASSET_WORKER_ROLE: ${PLATFORM_DATABASE_ASSET_WORKER_ROLE:-platform_asset_worker}
       PLATFORM_DATABASE_ADMIN_WORKER_ROLE: ${PLATFORM_DATABASE_ADMIN_WORKER_ROLE:-platform_admin_worker}
       PLATFORM_DATABASE_IDENTITY_WORKER_ROLE: ${PLATFORM_DATABASE_IDENTITY_WORKER_ROLE:-platform_identity_worker}
+      PLATFORM_DATABASE_MODEL_IMAGE_WORKER_ROLE: ${PLATFORM_DATABASE_MODEL_IMAGE_WORKER_ROLE:-platform_model_image_worker}
       PLATFORM_DATABASE_AUTHORIZATION_MAINTENANCE_ROLE: ${PLATFORM_DATABASE_AUTHORIZATION_MAINTENANCE_ROLE:-platform_authorization_maintenance}
       PLATFORM_DATABASE_ADMIN_ROLE: ${PLATFORM_DATABASE_ADMIN_ROLE:-platform_admin}
 
@@ -137,6 +138,32 @@ services:
       PLATFORM_OUTBOX_DELIVERY_TIMEOUT_MS: ${PLATFORM_OUTBOX_DELIVERY_TIMEOUT_MS:-10000}
     volumes:
       - ${PLATFORM_COMMERCE_OUTBOX_DELIVERY_SECRET_FILE:?required}:/run/secrets/kokoro/commerce-worker/delivery-hmac.key:ro
+    healthcheck:
+      test: ["CMD", "node", "--input-type=module", "--eval", "fetch(`http://127.0.0.1:$${process.env.PLATFORM_WORKER_HEALTH_PORT}/health/ready`).then(response=>{if(!response.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  platform-model-image-worker:
+    <<: *platform-service
+    profiles: [model-image-worker]
+    environment:
+      KOKORO_SERVICE_PACKAGE: platform-model-image-worker
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: model-image-worker
+      DATABASE_URL_PLATFORM: ${DATABASE_URL_PLATFORM_MODEL_IMAGE_WORKER:?required}
+      PLATFORM_DATABASE_EXPECTED_DATABASE: ${PLATFORM_DATABASE_EXPECTED_DATABASE:-kokoro_platform}
+      PLATFORM_DATABASE_MIGRATOR_ROLE: ${PLATFORM_DATABASE_MIGRATOR_ROLE:-platform_migrator}
+      PLATFORM_DATABASE_MODEL_IMAGE_WORKER_ROLE: ${PLATFORM_DATABASE_MODEL_IMAGE_WORKER_ROLE:-platform_model_image_worker}
+      PLATFORM_WORKER_ID: ${PLATFORM_MODEL_IMAGE_WORKER_ID:?required}
+      PLATFORM_WORKER_HEALTH_PORT: ${PLATFORM_MODEL_IMAGE_WORKER_HEALTH_PORT:-4190}
+      PLATFORM_MODEL_IMAGE_WORKER_SECRET_TRUST_ROOT: /run/secrets/kokoro/model-image-worker
+      PLATFORM_MODEL_IMAGE_WORKER_PROVIDER_REGISTRY_FILE: /run/secrets/kokoro/model-image-worker/providers.json
+      PLATFORM_MODEL_IMAGE_WORKER_RESPONSE_KEY_RING_FILE: /run/secrets/kokoro/model-image-worker/response-keys.json
+      PLATFORM_MODEL_IMAGE_WORKER_LEASE_MILLISECONDS: ${PLATFORM_MODEL_IMAGE_WORKER_LEASE_MILLISECONDS:-30000}
+    volumes:
+      - ${PLATFORM_MODEL_IMAGE_WORKER_PROVIDER_REGISTRY_FILE:?required}:/run/secrets/kokoro/model-image-worker/providers.json:ro
+      - ${PLATFORM_MODEL_IMAGE_WORKER_RESPONSE_KEY_RING_FILE:?required}:/run/secrets/kokoro/model-image-worker/response-keys.json:ro
     healthcheck:
       test: ["CMD", "node", "--input-type=module", "--eval", "fetch(`http://127.0.0.1:$${process.env.PLATFORM_WORKER_HEALTH_PORT}/health/ready`).then(response=>{if(!response.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 10s

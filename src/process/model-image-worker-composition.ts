@@ -42,12 +42,14 @@ export function createModelImageWorkerProductionComposition(input: Readonly<{
   const composition: ModelImageWorkerProductionComposition = {
     runOneCycle: async ({ signal }) => { if (claiming) await worker.runOne(signal); },
     stopClaiming: async () => { claiming = false; },
-    returnLeases: async () => undefined,
+    returnLeases: async (reason) => { await repository.returnOwnedLeases(reason, input.workerId); },
   };
   return Object.freeze(composition);
 }
 
 /** Production stays closed until a certified provider package is independently released and pinned. */
-export function loadModelImageWorkerProductionAdapters(): never {
+export function loadModelImageWorkerProductionAdapters(
+  _environment: Readonly<Record<string, string | undefined>> = process.env,
+): ModelImageWorkerProductionAdapters {
   throw new Error("PLATFORM_MODEL_IMAGE_WORKER_CERTIFIED_PROVIDER_NOT_CONFIGURED");
 }

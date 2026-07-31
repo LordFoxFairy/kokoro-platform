@@ -7,6 +7,7 @@ import {
   PLATFORM_AUTHORIZATION_MAINTENANCE_DEPLOYMENT_CONTRACT,
   PLATFORM_COMMERCE_WORKER_DEPLOYMENT_CONTRACT,
   PLATFORM_IDENTITY_WORKER_DEPLOYMENT_CONTRACT,
+  PLATFORM_MODEL_IMAGE_WORKER_DEPLOYMENT_CONTRACT,
   PLATFORM_SITE_WORKER_DEPLOYMENT_CONTRACT,
   resolveProcessDeploymentEnvironment,
   type ProcessDeploymentContract,
@@ -24,6 +25,7 @@ interface DeploymentManifest {
 interface ComposeManifest {
   readonly services: Readonly<Record<string, Readonly<{
     environment: Readonly<Record<string, unknown>>;
+    profiles?: readonly string[];
     healthcheck?: Readonly<{ test?: readonly string[] }>;
   }>>>;
 }
@@ -32,15 +34,18 @@ interface KubernetesResource {
   readonly kind: string;
   readonly metadata?: Readonly<{ name: string }>;
   readonly items?: readonly KubernetesResource[];
-  readonly spec?: Readonly<{ template?: Readonly<{ spec?: Readonly<{
-    terminationGracePeriodSeconds?: number;
-    containers?: readonly Readonly<{
-      name: string;
-      startupProbe?: Readonly<{ httpGet?: Readonly<{ path?: string }> }>;
-      livenessProbe?: Readonly<{ httpGet?: Readonly<{ path?: string }> }>;
-      readinessProbe?: Readonly<{ httpGet?: Readonly<{ path?: string }> }>;
-    }>[];
-  }> }> }>;
+  readonly spec?: Readonly<{
+    replicas?: number;
+    template?: Readonly<{ spec?: Readonly<{
+      terminationGracePeriodSeconds?: number;
+      containers?: readonly Readonly<{
+        name: string;
+        startupProbe?: Readonly<{ httpGet?: Readonly<{ path?: string }> }>;
+        livenessProbe?: Readonly<{ httpGet?: Readonly<{ path?: string }> }>;
+        readinessProbe?: Readonly<{ httpGet?: Readonly<{ path?: string }> }>;
+      }>[];
+    }> }>;
+  }>;
 }
 
 describe("Platform worker deployment parity", () => {
@@ -70,10 +75,12 @@ describe("Platform worker deployment parity", () => {
   });
 
   it("runs every owner worker independently and leaves worker.ts as lifecycle-only", async () => {
-    const [entrypoint, lifecycleKernel, identityWorker, dockerfile, kubernetes] = await Promise.all([
+    const [entrypoint, lifecycleKernel, identityWorker, modelImageWorker, dockerfile, kubernetes] =
+      await Promise.all([
       readFile("deploy/docker/runtime-entrypoint.mjs", "utf8"),
       readFile("src/process/worker.ts", "utf8"),
       readFile("src/process/identity-worker.ts", "utf8"),
+      readFile("src/process/model-image-worker.ts", "utf8"),
       readFile("deploy/docker/Dockerfile", "utf8"),
       readFile("deploy/k8s/platform-services.example.yaml", "utf8"),
     ]);
@@ -81,20 +88,24 @@ describe("Platform worker deployment parity", () => {
     expect(entrypoint).toContain("identity-worker.js");
     expect(dockerfile).toContain("COPY --chown=node:node --from=build /app/dist ./dist");
     expect(identityWorker).toContain("createIdentityOutboxWorkerProductionComposition");
+    expect(modelImageWorker).toContain("createModelImageWorkerProductionComposition");
+    expect(modelImageWorker).toContain("assert_model_image_effect_runtime_role('worker')");
+    expect(modelImageWorker).toContain("loadModelImageWorkerProductionAdapters(environment)");
     expect(lifecycleKernel).not.toContain("ProductionComposition");
     expect(lifecycleKernel).not.toContain("runPlatformWorkerMain");
     expect(lifecycleKernel).not.toContain("PLATFORM_AGGREGATE_WORKER_REMOVED");
     expect(entrypoint).not.toContain('"platform-worker":');
     expect(entrypoint).not.toContain("../../dist/src/process/worker.js");
     for (const name of ["platform-commerce-worker", "platform-site-worker", "platform-asset-worker",
-      "platform-admin-worker", "platform-identity-worker", "platform-authorization-maintenance"]) {
+      "platform-admin-worker", "platform-identity-worker", "platform-model-image-worker",
+      "platform-authorization-maintenance"]) {
       expect(entrypoint).toContain(`"${name}"`);
     }
     const resources = parseAllDocuments(kubernetes)
       .map((document) => document.toJSON() as KubernetesResource)
       .flatMap((resource) => resource.kind === "List" ? resource.items ?? [] : [resource]);
     for (const name of ["platform-commerce-worker", "platform-site-worker", "platform-asset-worker",
-      "platform-admin-worker", "platform-identity-worker"]) {
+      "platform-admin-worker", "platform-identity-worker", "platform-model-image-worker"]) {
       const deployment = resources.find((resource) =>
         resource.kind === "Deployment" && resource.metadata?.name === name);
       expect(deployment, name).toBeDefined();
@@ -105,6 +116,9 @@ describe("Platform worker deployment parity", () => {
       expect(container?.livenessProbe?.httpGet?.path).toBe("/health/live");
       expect(container?.readinessProbe?.httpGet?.path).toBe("/health/ready");
     }
+    const modelImageDeployment = resources.find((resource) =>
+      resource.kind === "Deployment" && resource.metadata?.name === "platform-model-image-worker");
+    expect(modelImageDeployment?.spec?.replicas).toBe(0);
   });
 
   it("gives each worker an exact environment and a Compose readiness healthcheck", async () => {
@@ -113,6 +127,7 @@ describe("Platform worker deployment parity", () => {
       readFile("deploy/k8s/platform-services.example.yaml", "utf8"),
     ]);
     const compose = parse(composeSource) as ComposeManifest;
+    expect(compose.services["platform-model-image-worker"]?.profiles).toEqual(["model-image-worker"]);
     for (const contract of POLLING_WORKER_CONTRACTS) {
       const service = compose.services[contract.id];
       expect(service?.healthcheck?.test?.join(" ")).toContain("/health/ready");
@@ -143,6 +158,7 @@ const POLLING_WORKER_CONTRACTS = Object.freeze([
   PLATFORM_ASSET_WORKER_DEPLOYMENT_CONTRACT,
   PLATFORM_ADMIN_WORKER_DEPLOYMENT_CONTRACT,
   PLATFORM_IDENTITY_WORKER_DEPLOYMENT_CONTRACT,
+  PLATFORM_MODEL_IMAGE_WORKER_DEPLOYMENT_CONTRACT,
 ] as const);
 
 const WORKER_CONTRACTS = Object.freeze([

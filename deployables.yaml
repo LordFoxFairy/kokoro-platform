@@ -365,6 +365,40 @@ deployables:
     runbookOwner: platform
     releaseOwner: platform
 
+  - id: platform-model-image-worker
+    command: node --conditions=kokoro-runtime deploy/docker/runtime-entrypoint.mjs
+    selectorEnvironment: KOKORO_SERVICE_PACKAGE=platform-model-image-worker
+    processRole: model-image-worker
+    database:
+      environmentVariable: DATABASE_URL_PLATFORM
+      expectedUserEnvironmentVariable: PLATFORM_DATABASE_MODEL_IMAGE_WORKER_ROLE
+      migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
+      expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
+      credentialClass: model-image-worker
+      permissions: fenced-model-image-effect-owner-only
+      ddl: forbidden
+    inboundContracts: []
+    activationAuthorized: false
+    runtimeTraffic: false
+    requiredEnvironment:
+      [DATABASE_URL_PLATFORM, PLATFORM_DATABASE_CREDENTIAL_CLASS,
+       PLATFORM_DATABASE_EXPECTED_DATABASE, PLATFORM_DATABASE_MIGRATOR_ROLE,
+       PLATFORM_DATABASE_MODEL_IMAGE_WORKER_ROLE, PLATFORM_WORKER_ID,
+       PLATFORM_MODEL_IMAGE_WORKER_SECRET_TRUST_ROOT,
+       PLATFORM_MODEL_IMAGE_WORKER_PROVIDER_REGISTRY_FILE,
+       PLATFORM_MODEL_IMAGE_WORKER_RESPONSE_KEY_RING_FILE]
+    outboundContracts: [certified-image-provider-effects-v1]
+    secretClasses:
+      [platform-model-image-worker-database, model-image-provider-registry,
+       model-image-provider-credentials, model-image-response-keyring]
+    audience: platform-model-image-worker
+    scalingKey: model-image-effect-dispatch-lag
+    readiness: process-state
+    drain: stop-model-image-claim-then-return-owned-leases
+    sloOwner: platform-model
+    runbookOwner: platform-model
+    releaseOwner: platform
+
   - id: platform-authorization
     command: node --conditions=kokoro-runtime deploy/docker/runtime-entrypoint.mjs
     selectorEnvironment: KOKORO_SERVICE_PACKAGE=platform-authorization

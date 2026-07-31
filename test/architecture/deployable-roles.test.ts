@@ -24,6 +24,8 @@ const commerceWorkerUrl =
   "postgresql://platform_commerce_worker:secret@localhost:5432/kokoro_platform";
 const identityWorkerUrl =
   "postgresql://platform_identity_worker:secret@localhost:5432/kokoro_platform";
+const modelImageWorkerUrl =
+  "postgresql://platform_model_image_worker:secret@localhost:5432/kokoro_platform";
 const authorizationUrl = "postgresql://platform_authorization:secret@localhost:5432/kokoro_platform";
 const assetDataPlaneUrl = "postgresql://platform_asset_data_plane:secret@localhost:5432/kokoro_platform";
 const adminUrl = "postgresql://platform_admin:secret@localhost:5432/kokoro_platform";
@@ -41,6 +43,7 @@ const commonEnvironment = {
   PLATFORM_DATABASE_ASSET_WORKER_ROLE: "platform_asset_worker",
   PLATFORM_DATABASE_ADMIN_WORKER_ROLE: "platform_admin_worker",
   PLATFORM_DATABASE_IDENTITY_WORKER_ROLE: "platform_identity_worker",
+  PLATFORM_DATABASE_MODEL_IMAGE_WORKER_ROLE: "platform_model_image_worker",
   PLATFORM_DATABASE_AUTHORIZATION_MAINTENANCE_ROLE: "platform_authorization_maintenance",
 } as const;
 
@@ -101,6 +104,11 @@ describe("Platform PostgreSQL authority", () => {
       DATABASE_URL_PLATFORM: identityWorkerUrl,
       PLATFORM_DATABASE_CREDENTIAL_CLASS: "identity-worker",
     });
+    const modelImageWorker = loadPlatformDatabaseConfig("model-image-worker", {
+      ...commonEnvironment,
+      DATABASE_URL_PLATFORM: modelImageWorkerUrl,
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: "model-image-worker",
+    });
     const admission = loadPlatformDatabaseConfig("admission", {
       ...commonEnvironment,
       DATABASE_URL_PLATFORM: admissionUrl,
@@ -127,12 +135,13 @@ describe("Platform PostgreSQL authority", () => {
         admission.expectedDatabaseUser,
         commerceWorker.expectedDatabaseUser,
         identityWorker.expectedDatabaseUser,
+        modelImageWorker.expectedDatabaseUser,
         authorization.expectedDatabaseUser,
         assetDataPlane.expectedDatabaseUser,
         admin.expectedDatabaseUser,
         api.migratorDatabaseUser,
       ]).size,
-    ).toBe(8);
+    ).toBe(9);
     expect(admission).toMatchObject({
       role: "admission",
       credentialClass: "admission",
@@ -146,6 +155,13 @@ describe("Platform PostgreSQL authority", () => {
       expectedDatabaseUser: "platform_identity_worker",
       applicationName: "kokoro-platform-identity-worker",
       pool: { max: 4, connectionTimeoutMs: 5_000 },
+    });
+    expect(modelImageWorker).toMatchObject({
+      role: "model-image-worker",
+      credentialClass: "model-image-worker",
+      expectedDatabaseUser: "platform_model_image_worker",
+      applicationName: "kokoro-platform-model-image-worker",
+      pool: { max: 8, connectionTimeoutMs: 5_000 },
     });
   });
 });
@@ -751,7 +767,7 @@ describe("independent deployable roles", () => {
   it("publishes executable image selectors and distinct database roles", async () => {
     const manifest = await readFile(resolve("deployables.yaml"), "utf8");
     const entrypoint = await readFile(resolve("deploy/docker/runtime-entrypoint.mjs"), "utf8");
-    for (const role of ["platform-api", "platform-admission", "platform-authorization", "platform-asset-data-plane", "platform-model-gateway", "platform-commerce-worker", "platform-site-worker", "platform-asset-worker", "platform-admin-worker", "platform-identity-worker", "platform-authorization-maintenance", "platform-admin", "platform-hub-connect", "platform-migrator"]) {
+    for (const role of ["platform-api", "platform-admission", "platform-authorization", "platform-asset-data-plane", "platform-model-gateway", "platform-commerce-worker", "platform-site-worker", "platform-asset-worker", "platform-admin-worker", "platform-identity-worker", "platform-model-image-worker", "platform-authorization-maintenance", "platform-admin", "platform-hub-connect", "platform-migrator"]) {
       expect(manifest).toContain(`KOKORO_SERVICE_PACKAGE=${role}`);
       expect(entrypoint).toContain(`"${role}"`);
     }
@@ -762,6 +778,7 @@ describe("independent deployable roles", () => {
       "declaredInboundContracts: [platform-admission-connect, platform-asset-eligibility-connect]",
     );
     for (const role of ["commerce-worker", "site-worker", "asset-worker", "admin-worker",
+      "model-image-worker",
       "authorization-maintenance"]) expect(manifest).toContain(`credentialClass: ${role}`);
     expect(manifest).toContain("credentialClass: platform-identity-worker");
     expect(manifest).toContain(
@@ -770,6 +787,10 @@ describe("independent deployable roles", () => {
     expect(manifest).toContain("identity-verification-delivery-https");
     expect(manifest).toContain("identity-audit-digest-key");
     expect(manifest).toContain("identity-delivery-hmac-key");
+    expect(manifest).toContain(
+      "expectedUserEnvironmentVariable: PLATFORM_DATABASE_MODEL_IMAGE_WORKER_ROLE",
+    );
+    expect(manifest).toContain("certified-image-provider-effects-v1");
     expect(manifest).toContain("credentialClass: platform-model-gateway");
     expect(manifest).toContain("expectedUserEnvironmentVariable: PLATFORM_DATABASE_MODEL_GATEWAY_ROLE");
     expect(manifest).toContain("platform-model-gateway-reconciliation-https");

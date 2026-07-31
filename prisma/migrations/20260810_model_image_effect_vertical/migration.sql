@@ -893,6 +893,46 @@ END $$;
 REVOKE ALL ON FUNCTION platform.dead_letter_model_image_effect_before_provider_io(TEXT,TEXT,BIGINT,TEXT)
   FROM PUBLIC;
 
+CREATE FUNCTION platform.return_model_image_effect_dispatch_leases(
+  requested_owner_ref TEXT,requested_error_code TEXT
+) RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$
+DECLARE owned RECORD; returned_count INTEGER:=0; changed_count INTEGER;
+BEGIN
+  PERFORM platform.assert_model_image_effect_runtime_role('worker');
+  IF length(requested_owner_ref) NOT BETWEEN 1 AND 128
+     OR requested_error_code !~ '^[A-Z0-9_]{1,128}$' THEN
+    RAISE EXCEPTION 'MODEL_IMAGE_EFFECT_LEASE_RETURN_INVALID';
+  END IF;
+  FOR owned IN
+    SELECT queue.attempt_ref,queue.dispatch_fence
+      FROM platform.model_image_effect_dispatch_queue queue
+      JOIN platform.model_image_effect_attempt attempt ON attempt.attempt_ref=queue.attempt_ref
+     WHERE queue.state='leased' AND queue.dispatch_owner_ref=requested_owner_ref
+       AND attempt.dispatch_owner_ref=requested_owner_ref
+       AND attempt.dispatch_fence=queue.dispatch_fence
+     ORDER BY queue.attempt_ref FOR UPDATE OF queue,attempt
+  LOOP
+    UPDATE platform.model_image_effect_dispatch_queue queue
+       SET state='queued',available_at=statement_timestamp(),dispatch_owner_ref=NULL,
+           dispatch_lease_expires_at=NULL,last_error_code=requested_error_code,
+           updated_at=statement_timestamp()
+     WHERE queue.attempt_ref=owned.attempt_ref AND queue.state='leased'
+       AND queue.dispatch_owner_ref=requested_owner_ref AND queue.dispatch_fence=owned.dispatch_fence;
+    GET DIAGNOSTICS changed_count=ROW_COUNT;
+    IF changed_count<>1 THEN RAISE EXCEPTION 'MODEL_IMAGE_EFFECT_QUEUE_LEASE_RETURN_INCONSISTENT'; END IF;
+    UPDATE platform.model_image_effect_attempt attempt
+       SET dispatch_owner_ref=NULL,dispatch_lease_expires_at=NULL,heartbeat_at=statement_timestamp(),
+           updated_at=statement_timestamp()
+     WHERE attempt.attempt_ref=owned.attempt_ref AND attempt.dispatch_owner_ref=requested_owner_ref
+       AND attempt.dispatch_fence=owned.dispatch_fence;
+    GET DIAGNOSTICS changed_count=ROW_COUNT;
+    IF changed_count<>1 THEN RAISE EXCEPTION 'MODEL_IMAGE_EFFECT_ATTEMPT_LEASE_RETURN_INCONSISTENT'; END IF;
+    returned_count:=returned_count+1;
+  END LOOP;
+  RETURN returned_count;
+END $$;
+REVOKE ALL ON FUNCTION platform.return_model_image_effect_dispatch_leases(TEXT,TEXT) FROM PUBLIC;
+
 CREATE FUNCTION platform.guard_model_image_attempt_transition() RETURNS trigger
 LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
 BEGIN
@@ -1030,7 +1070,8 @@ GRANT EXECUTE ON FUNCTION platform.claim_model_image_effect_dispatch(TEXT,INTEGE
   platform.load_model_image_effect_dispatch_context(TEXT,TEXT,BIGINT),
   platform.record_model_image_effect_observation(
     TEXT,TEXT,TEXT,BIGINT,TEXT,BIGINT,TEXT,TEXT,TIMESTAMPTZ,JSONB,JSONB,JSONB,TEXT,JSONB,TEXT),
-  platform.dead_letter_model_image_effect_before_provider_io(TEXT,TEXT,BIGINT,TEXT)
+  platform.dead_letter_model_image_effect_before_provider_io(TEXT,TEXT,BIGINT,TEXT),
+  platform.return_model_image_effect_dispatch_leases(TEXT,TEXT)
   TO platform_model_image_worker;
 
 REVOKE CREATE ON SCHEMA platform FROM platform_model_gateway,platform_model_image_worker;

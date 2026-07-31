@@ -31,6 +31,7 @@ export type PlatformProcessRole =
   | "asset-worker"
   | "admin-worker"
   | "identity-worker"
+  | "model-image-worker"
   | "authorization-maintenance"
   | "admin"
   | "migrator";
@@ -44,6 +45,7 @@ export type PlatformCredentialClass =
   | "asset-worker"
   | "admin-worker"
   | "identity-worker"
+  | "model-image-worker"
   | "authorization-maintenance"
   | "admin"
   | "migrator";
@@ -89,6 +91,11 @@ const ROLE_DEFAULTS = {
     poolMax: 4,
     credentialClass: "identity-worker",
     identityEnv: "PLATFORM_DATABASE_IDENTITY_WORKER_ROLE",
+  },
+  "model-image-worker": {
+    poolMax: 8,
+    credentialClass: "model-image-worker",
+    identityEnv: "PLATFORM_DATABASE_MODEL_IMAGE_WORKER_ROLE",
   },
   "authorization-maintenance": {
     poolMax: 2,

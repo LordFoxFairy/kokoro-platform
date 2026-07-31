@@ -37,6 +37,8 @@ const requiredEntries = Object.freeze([
   "dist/src/process/asset-data-plane.js",
   "dist/src/process/authorization.js",
   "dist/src/process/model-gateway.js",
+  "dist/src/process/model-image-worker.js",
+  "dist/src/process/model-image-worker-composition.js",
   "dist/src/process/worker.js",
   "dist/src/process/identity-worker.js",
   "dist/src/process/media-worker.js",

@@ -44,7 +44,7 @@ export type ImageEffectOutputAccessRecord = Readonly<{
   callerAccessHandleDigest: string;
   outputAccessCommandRef: string;
   requestDigest: string;
-  receipt: ImageEffectCommandReceiptRecord;
+  receipt: ImageEffectCommandReceiptRecord & Readonly<{ kind: "output_access_issued" }>;
   claims: ImageEffectOutputAccessClaims;
   sourceAccessHandleDigest: string;
   recoveryEnvelope: ImageEffectSealedRecoveryEnvelope;
@@ -88,7 +88,7 @@ export interface ImageEffectOutputSourceReader {
 }
 
 export type ImageEffectOutputAccessResult = Readonly<{
-  receipt: ImageEffectCommandReceiptRecord;
+  receipt: ImageEffectCommandReceiptRecord & Readonly<{ kind: "output_access_issued" }>;
   outputAccess: Readonly<{
     outputEvidenceRef: string;
     outputEvidenceDigest: string;

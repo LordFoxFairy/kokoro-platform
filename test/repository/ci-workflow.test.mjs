@@ -70,6 +70,7 @@ test("PostgreSQL CI provisions isolated non-superuser roles", async () => {
     "platform_authorization_maintenance",
     "platform_admin",
     "platform_model_gateway",
+    "platform_model_image_worker",
     "platform_media_public",
     "platform_media_runtime",
     "platform_media_worker",

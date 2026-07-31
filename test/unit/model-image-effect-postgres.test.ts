@@ -184,6 +184,21 @@ describe("Postgres image-effect authority", () => {
     expect(outputPayload).not.toContain("r".repeat(32));
     expect(client.released).toBe(true);
   });
+
+  it("returns every exact worker-owned lease with a fenced database routine during drain", async () => {
+    const client = new WorkerClient();
+    const worker = new PostgresImageEffectWorkerRepository({
+      pool: { connect: async () => client, end: async () => undefined },
+      secretProtector: { seal: () => { throw new Error("unused"); },
+        unseal: () => { throw new Error("unused"); } },
+      outputIdentity: () => { throw new Error("unused"); },
+    });
+    expect(await worker.returnOwnedLeases("shutdown-deadline", "worker:one")).toBe(2);
+    expect(client.calls[0]).toEqual(expect.objectContaining({
+      text: expect.stringContaining("return_model_image_effect_dispatch_leases"),
+      values: ["worker:one", "IMAGE_EFFECT_WORKER_SHUTDOWN_DEADLINE"],
+    }));
+  });
 });
 
 class Client {
@@ -226,6 +241,9 @@ class WorkerClient {
   released = false;
   async query(text: string, values: readonly unknown[] = []) {
     this.calls.push({ text, values });
+    if (text.includes("return_model_image_effect_dispatch_leases")) {
+      return { rows: [{ returnedCount: "2" }], rowCount: 1 };
+    }
     return { rows: [{ persisted: true, replayed: false }], rowCount: 1 };
   }
   release() { this.released = true; }

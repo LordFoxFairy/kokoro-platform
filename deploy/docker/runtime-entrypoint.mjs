@@ -37,6 +37,10 @@ const serviceEntries = Object.freeze({
     module: "../../dist/src/process/media-worker.js",
     start: "runPlatformMediaWorkerMain",
   },
+  "platform-model-image-worker": {
+    module: "../../dist/src/process/model-image-worker.js",
+    start: "runPlatformModelImageWorkerMain",
+  },
   "platform-authorization-maintenance": {
     module: "../../dist/src/process/authorization-maintenance.js",
     start: "runPlatformAuthorizationMaintenanceMain",

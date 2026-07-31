@@ -6,7 +6,8 @@ export interface ProcessDeploymentContract {
     | "platform-admin-worker"
     | "platform-identity-worker"
     | "platform-authorization-maintenance"
-    | "platform-media-worker";
+    | "platform-media-worker"
+    | "platform-model-image-worker";
   readonly environment: Readonly<{
     required: readonly string[];
     optional: readonly string[];
@@ -137,6 +138,24 @@ export const PLATFORM_MEDIA_WORKER_DEPLOYMENT_CONTRACT = contract({
     "session-media-projection-connectrpc"],
   secretClasses: ["platform-media-worker-database", "media-operation-input-keyring",
     "media-effect-capability-keyring", "artifact-storage-route-registry"],
+});
+
+export const PLATFORM_MODEL_IMAGE_WORKER_DEPLOYMENT_CONTRACT = contract({
+  id: "platform-model-image-worker",
+  environment: {
+    required: [
+      ...DATABASE_ENVIRONMENT,
+      "PLATFORM_DATABASE_MODEL_IMAGE_WORKER_ROLE",
+      "PLATFORM_WORKER_ID",
+      "PLATFORM_MODEL_IMAGE_WORKER_SECRET_TRUST_ROOT",
+      "PLATFORM_MODEL_IMAGE_WORKER_PROVIDER_REGISTRY_FILE",
+      "PLATFORM_MODEL_IMAGE_WORKER_RESPONSE_KEY_RING_FILE",
+    ],
+    optional: ["PLATFORM_MODEL_IMAGE_WORKER_LEASE_MILLISECONDS", "PLATFORM_WORKER_HEALTH_PORT"],
+  },
+  outboundContracts: ["certified-image-provider-effects-v1"],
+  secretClasses: ["platform-model-image-worker-database", "model-image-provider-registry",
+    "model-image-provider-credentials", "model-image-response-keyring"],
 });
 
 export function resolveProcessDeploymentEnvironment(

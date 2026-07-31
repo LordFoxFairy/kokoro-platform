@@ -8,6 +8,7 @@ export type DedicatedWorkerDatabaseRole =
   | "site-worker"
   | "asset-worker"
   | "admin-worker"
+  | "model-image-worker"
   | "authorization-maintenance";
 
 /** Shared typed entry point for independently deployed worker database credentials. */

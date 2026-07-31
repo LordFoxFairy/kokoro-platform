@@ -37,8 +37,11 @@ export type ImageEffectAccessAuthorization = Readonly<{
 export type ImageEffectCommandKind = "create" | "cancel" | "attach_attempt" | "output_access";
 export type ImageEffectReceiptKind =
   | "create_committed"
+  | "definitely_not_submitted"
   | "attempt_authorization_attached"
   | "cancel_intent_committed"
+  | "rejected"
+  | "outcome_unknown"
   | "output_access_issued";
 
 export type ImageEffectCommandReceiptRecord = Readonly<{

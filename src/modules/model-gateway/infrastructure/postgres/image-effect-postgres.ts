@@ -620,6 +620,23 @@ export class PostgresImageEffectWorkerRepository implements ImageEffectWorkerRep
     });
   }
 
+  async returnOwnedLeases(reason: "shutdown" | "shutdown-deadline" | "stop-claim-failed",
+    dispatchOwnerRef: string): Promise<number> {
+    text(dispatchOwnerRef);
+    const errorCode = reason === "shutdown" ? "IMAGE_EFFECT_WORKER_SHUTDOWN"
+      : reason === "shutdown-deadline" ? "IMAGE_EFFECT_WORKER_SHUTDOWN_DEADLINE"
+        : "IMAGE_EFFECT_WORKER_STOP_CLAIM_FAILED";
+    return this.#withClient(async (client) => {
+      const result = await client.query(
+        `SELECT platform.return_model_image_effect_dispatch_leases($1,$2) AS "returnedCount"`,
+        [dispatchOwnerRef, errorCode],
+      );
+      const count = nonnegative(single(result.rows, "IMAGE_EFFECT_LEASE_RETURN_CORRUPT").returnedCount);
+      if (count > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("IMAGE_EFFECT_LEASE_RETURN_CORRUPT");
+      return Number(count);
+    });
+  }
+
   #protectOutputs(
     claim: ImageEffectDispatchClaim,
     attempt: ImageEffectAttempt,

@@ -229,6 +229,56 @@ items:
 
   - apiVersion: apps/v1
     kind: Deployment
+    metadata: { name: platform-model-image-worker }
+    spec:
+      replicas: 0 # Activation remains fail-closed until a certified provider adapter release is pinned.
+      selector: { matchLabels: { app: platform-model-image-worker } }
+      template:
+        metadata: { labels: { app: platform-model-image-worker } }
+        spec:
+          terminationGracePeriodSeconds: 30
+          securityContext: { runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000 }
+          containers:
+            - name: platform-model-image-worker
+              image: ghcr.io/lordfoxfairy/kokoro-platform:RELEASE_DIGEST
+              env:
+                - { name: KOKORO_SERVICE_PACKAGE, value: platform-model-image-worker }
+                - { name: PLATFORM_DATABASE_CREDENTIAL_CLASS, value: model-image-worker }
+                - { name: PLATFORM_WORKER_HEALTH_PORT, value: "4190" }
+                - { name: PLATFORM_MODEL_IMAGE_WORKER_SECRET_TRUST_ROOT, value: /run/secrets/kokoro/model-image-worker }
+                - { name: PLATFORM_MODEL_IMAGE_WORKER_PROVIDER_REGISTRY_FILE, value: /run/secrets/kokoro/model-image-worker/providers.json }
+                - { name: PLATFORM_MODEL_IMAGE_WORKER_RESPONSE_KEY_RING_FILE, value: /run/secrets/kokoro/model-image-worker/response-keys.json }
+                - name: DATABASE_URL_PLATFORM
+                  valueFrom: { secretKeyRef: { name: platform-model-image-worker-database, key: DATABASE_URL_PLATFORM } }
+                - name: PLATFORM_DATABASE_EXPECTED_DATABASE
+                  valueFrom: { configMapKeyRef: { name: platform-runtime, key: PLATFORM_DATABASE_EXPECTED_DATABASE } }
+                - name: PLATFORM_DATABASE_MIGRATOR_ROLE
+                  valueFrom: { configMapKeyRef: { name: platform-runtime, key: PLATFORM_DATABASE_MIGRATOR_ROLE } }
+                - name: PLATFORM_DATABASE_MODEL_IMAGE_WORKER_ROLE
+                  valueFrom: { configMapKeyRef: { name: platform-runtime, key: PLATFORM_DATABASE_MODEL_IMAGE_WORKER_ROLE } }
+                - name: PLATFORM_WORKER_ID
+                  valueFrom: { fieldRef: { fieldPath: metadata.uid } }
+              ports: [{ name: health, containerPort: 4190, protocol: TCP }]
+              startupProbe: { httpGet: { path: /health/live, port: health }, periodSeconds: 2, failureThreshold: 30 }
+              readinessProbe: { httpGet: { path: /health/ready, port: health }, periodSeconds: 2, failureThreshold: 1 }
+              livenessProbe: { httpGet: { path: /health/live, port: health }, periodSeconds: 10, failureThreshold: 3 }
+              volumeMounts:
+                - { name: model-image-worker-secrets, mountPath: /run/secrets/kokoro/model-image-worker, readOnly: true }
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
+          volumes:
+            - name: model-image-worker-secrets
+              projected:
+                defaultMode: 0440
+                sources:
+                  - secret: { name: model-image-provider-registry }
+                  - secret: { name: model-image-provider-credentials }
+                  - secret: { name: model-image-response-keyring }
+
+  - apiVersion: apps/v1
+    kind: Deployment
     metadata: { name: platform-site-worker }
     spec:
       replicas: 2

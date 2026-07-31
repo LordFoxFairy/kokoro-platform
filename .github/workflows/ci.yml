@@ -95,6 +95,7 @@ jobs:
       DATABASE_URL_PLATFORM_AUTHORIZATION_MAINTENANCE_TEST: postgresql://platform_authorization_maintenance:platform-authorization-maintenance-ci@127.0.0.1:5432/kokoro_test_platform
       DATABASE_URL_PLATFORM_ADMIN_TEST: postgresql://platform_admin:platform-admin-ci@127.0.0.1:5432/kokoro_test_platform
       DATABASE_URL_PLATFORM_MODEL_GATEWAY_TEST: postgresql://platform_model_gateway:platform-model-gateway-ci@127.0.0.1:5432/kokoro_test_platform
+      DATABASE_URL_PLATFORM_MODEL_IMAGE_WORKER_TEST: postgresql://platform_model_image_worker:platform-model-image-worker-ci@127.0.0.1:5432/kokoro_test_platform
       PLATFORM_DATABASE_CREDENTIAL_CLASS: migrator
       PLATFORM_DATABASE_EXPECTED_DATABASE: kokoro_test_platform
       PLATFORM_DATABASE_MIGRATOR_ROLE: platform_migrator
@@ -110,6 +111,7 @@ jobs:
       PLATFORM_DATABASE_AUTHORIZATION_MAINTENANCE_ROLE: platform_authorization_maintenance
       PLATFORM_DATABASE_ADMIN_ROLE: platform_admin
       PLATFORM_DATABASE_MODEL_GATEWAY_ROLE: platform_model_gateway
+      PLATFORM_DATABASE_MODEL_IMAGE_WORKER_ROLE: platform_model_image_worker
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
