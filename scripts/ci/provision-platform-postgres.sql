@@ -52,6 +52,15 @@ CREATE ROLE platform_media_runtime
 CREATE ROLE platform_media_worker
   LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS
   PASSWORD 'platform-media-worker-ci';
+CREATE ROLE platform_memory_public
+  LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS
+  PASSWORD 'platform-memory-public-ci';
+CREATE ROLE platform_memory_runtime
+  LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS
+  PASSWORD 'platform-memory-runtime-ci';
+CREATE ROLE platform_memory_worker
+  LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS
+  PASSWORD 'platform-memory-worker-ci';
 
 CREATE DATABASE kokoro_test_platform OWNER platform_migrator;
 REVOKE ALL ON DATABASE kokoro_test_platform FROM PUBLIC;
@@ -73,4 +82,7 @@ GRANT CONNECT ON DATABASE kokoro_test_platform TO
   platform_model_image_worker,
   platform_media_public,
   platform_media_runtime,
-  platform_media_worker;
+  platform_media_worker,
+  platform_memory_public,
+  platform_memory_runtime,
+  platform_memory_worker;

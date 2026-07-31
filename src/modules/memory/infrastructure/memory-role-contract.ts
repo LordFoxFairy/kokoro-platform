@@ -5,15 +5,15 @@ export type MemoryDeploymentType =
   | "platform-memory-worker";
 
 export const MEMORY_DATABASE_ROLE_CONTRACTS = Object.freeze([
-  Object.freeze({ roleKind: "memory_public", futureLoginRole: "platform_memory_public" }),
-  Object.freeze({ roleKind: "memory_runtime", futureLoginRole: "platform_memory_runtime" }),
-  Object.freeze({ roleKind: "memory_worker", futureLoginRole: "platform_memory_worker" }),
+  Object.freeze({ roleKind: "memory_public", loginRole: "platform_memory_public" }),
+  Object.freeze({ roleKind: "memory_runtime", loginRole: "platform_memory_runtime" }),
+  Object.freeze({ roleKind: "memory_worker", loginRole: "platform_memory_worker" }),
 ] as const satisfies readonly Readonly<{
   roleKind: MemoryDatabaseRoleKind;
-  futureLoginRole: string;
+  loginRole: string;
 }>[]);
 
-/** Dormant deployment identities only; no process, listener, readiness, or credential is composed in M0. */
+/** Database logins exist; process credentials, listeners, readiness and composition remain inactive. */
 export const MEMORY_DEPLOYMENT_TYPES = Object.freeze([
   "platform-api",
   "platform-memory-runtime",

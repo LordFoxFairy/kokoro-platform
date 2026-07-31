@@ -30,10 +30,11 @@ factory. Its hidden, token-gated implementation validates and copies twice, keep
 runtime surface, and binds them to an explicit key revision and envelope digest. The module defines a protection port but deliberately ships no protector adapter,
 key handling, plaintext persistence path, or decryption capability.
 
-PostgreSQL tables are Site-composite and force RLS without any business-role policy. The dormant `memory_public`,
-`memory_runtime`, and `memory_worker` role kinds are only reserved names: adding grants alone cannot make Memory owner tables accessible.
-A future activation migration must introduce operation- and scope-fenced routines and their policies explicitly. M0 creates no
-roles, registry rows, grants, runtime process, worker, route, or RPC surface; the feature remains off by default.
+PostgreSQL tables are Site-composite and force RLS. M0.1 provisions the exact LOGIN/NOINHERIT/NOBYPASSRLS
+`platform_memory_public`, `platform_memory_runtime`, and `platform_memory_worker` identities and pins their OIDs. Public and worker
+authority is exposed only through operation-specific, fixed-search-path SECURITY DEFINER routines whose RLS policies revalidate
+the exact session role and current owner facts. `platform_memory_runtime` deliberately receives zero table and routine grants.
+No Memory process credential, listener, readiness check, public route, worker composition, or RPC surface is activated yet.
 
 Consumers use only `src/modules/memory/index.ts`. Persistence and application ports are public solely to allow a later owner
 composition root to supply the Platform transaction, authorization-facts, and content-protection adapters without moving authority

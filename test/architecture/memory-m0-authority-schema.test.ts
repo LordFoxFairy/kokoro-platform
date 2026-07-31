@@ -78,11 +78,11 @@ describe("Memory M0 feature-off authority schema", () => {
     expect(migration).not.toContain("result JSONB");
   });
 
-  it("registers dormant role kinds without creating roles, authority rows, grants, or a platform_api escape", () => {
+  it("keeps the original kernel role reservation free of activation or a platform_api escape", () => {
     expect(MEMORY_DATABASE_ROLE_CONTRACTS).toEqual([
-      { roleKind: "memory_public", futureLoginRole: "platform_memory_public" },
-      { roleKind: "memory_runtime", futureLoginRole: "platform_memory_runtime" },
-      { roleKind: "memory_worker", futureLoginRole: "platform_memory_worker" },
+      { roleKind: "memory_public", loginRole: "platform_memory_public" },
+      { roleKind: "memory_runtime", loginRole: "platform_memory_runtime" },
+      { roleKind: "memory_worker", loginRole: "platform_memory_worker" },
     ]);
     expect(MEMORY_DEPLOYMENT_TYPES).toEqual([
       "platform-api", "platform-memory-runtime", "platform-memory-worker",
@@ -96,7 +96,7 @@ describe("Memory M0 feature-off authority schema", () => {
     expect(migration).not.toContain("CREATE FUNCTION platform.memory_role_identity_is_current");
     expect(migration).not.toMatch(/CREATE POLICY [^\n]+ ON platform\.memory_/u);
     expect(migration).not.toContain("current_setting('app.site_id'");
-    expect(memoryIndex).toContain("adding grants alone cannot make Memory owner tables accessible");
+    expect(memoryIndex).toContain("`platform_memory_runtime` deliberately receives zero table and routine grants");
   });
 
   it("maps all owner tables into Prisma without adding an active Memory process surface", () => {

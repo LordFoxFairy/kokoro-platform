@@ -76,6 +76,16 @@ const adminDatabaseUrl = requireLeasedDatabaseUrl(process.env.DATABASE_URL_PLATF
 const modelGatewayDatabaseUrl = requireLeasedDatabaseUrl(
   process.env.DATABASE_URL_PLATFORM_MODEL_GATEWAY_TEST,
 );
+const memoryDatabaseUrls = Object.freeze({
+  public: requireLeasedDatabaseUrl(process.env.DATABASE_URL_PLATFORM_MEMORY_PUBLIC_TEST),
+  runtime: requireLeasedDatabaseUrl(process.env.DATABASE_URL_PLATFORM_MEMORY_RUNTIME_TEST),
+  worker: requireLeasedDatabaseUrl(process.env.DATABASE_URL_PLATFORM_MEMORY_WORKER_TEST),
+});
+const memoryRoleNames = Object.freeze({
+  public: "platform_memory_public",
+  runtime: "platform_memory_runtime",
+  worker: "platform_memory_worker",
+});
 const migratorUser = decodeURIComponent(new URL(migratorDatabaseUrl).username);
 const apiUser = decodeURIComponent(new URL(apiDatabaseUrl).username);
 const authorizationUser = requireRole(process.env.PLATFORM_DATABASE_AUTHORIZATION_ROLE);
@@ -152,6 +162,451 @@ describe("Platform PostgreSQL foundation", () => {
       Object.values(workerDatabases ?? {}).map((client) => client.disconnect()),
     );
     await modelGatewayDatabase?.disconnect();
+  });
+
+  it("enforces memory public role authority", async () => {
+    const suffix = randomUUID();
+    const siteRef = `memory-site-${suffix}`;
+    const releaseRef = `memory-release-${suffix}`;
+    const subjectRef = `memory-subject-${suffix}`;
+    const projectRef = `memory-project-${suffix}`;
+    const userSpaceRef = `memory-user-space-${suffix}`;
+    const projectSpaceRef = `memory-project-space-${suffix}`;
+    const featurePolicyRef = `memory-policy-${suffix}`;
+    const executionSpaceRef = `memory-execution-${suffix}`;
+    const purgeCommandRef = `memory-purge-command-${suffix}`;
+    const purgeJobRef = `memory-purge-job-${suffix}`;
+    const targetEntryRef = `memory-target-entry-${suffix}`;
+    const targetRevisionRef = `memory-target-revision-${suffix}`;
+    const postCutoffEntryRef = `memory-post-cutoff-entry-${suffix}`;
+    const postCutoffRevisionRef = `memory-post-cutoff-revision-${suffix}`;
+    const renamedPublicRole = `${memoryRoleNames.public}_renamed`;
+    const bootstrap = new Client({ connectionString: bootstrapDatabaseUrl });
+    let publicClient = new Client({ connectionString: memoryDatabaseUrls.public });
+    const runtimeClient = new Client({ connectionString: memoryDatabaseUrls.runtime });
+    const workerClient = new Client({ connectionString: memoryDatabaseUrls.worker });
+    const neighborClient = new Client({ connectionString: apiDatabaseUrl });
+    await Promise.all([
+      bootstrap.connect(), publicClient.connect(), runtimeClient.connect(), workerClient.connect(),
+      neighborClient.connect(),
+    ]);
+
+    const authorize = (client: Client, values: readonly unknown[]) => client.query(
+      `SELECT platform.memory_public_authorize_read(
+         $1::text,$2::text,$3::bigint,$4::text,$5::bigint,$6::bigint,$7::text,$8::text)`,
+      values as unknown[],
+    );
+    const userAuthority = [siteRef, subjectRef, "1", null, null, null, userSpaceRef,
+      featurePolicyRef] as const;
+    const projectAuthority = [siteRef, subjectRef, "1", projectRef, "7", "11", projectSpaceRef,
+      featurePolicyRef] as const;
+
+    try {
+      await bootstrap.query(
+        `INSERT INTO platform.authorization_site
+           (site_ref,state,security_epoch,policy_epoch,revocation_epoch)
+         VALUES ($1,'active',1,1,1)`,
+        [siteRef],
+      );
+      await bootstrap.query(
+        `INSERT INTO platform.authorization_site_release
+           (release_ref,site_ref,state,web_artifact_digest,enabled_surface_ids,
+            feature_policy_revision,model_option_catalog_ref,agent_catalog_ref,
+            identity_issuer_label,identity_auth_strength_policy_revision,locale_policy)
+         VALUES ($1,$2,'active',$3,'[]'::jsonb,$4,$5,$6,$7,$8,'{}'::jsonb)`,
+        [releaseRef, siteRef, "a".repeat(64), featurePolicyRef, `models-${suffix}`,
+          `agents-${suffix}`, "Kokoro", "identity-v1"],
+      );
+      await bootstrap.query(
+        `INSERT INTO platform.authorization_subject
+           (subject_ref,site_ref,display_name,state,subject_generation,restriction_epoch)
+         VALUES ($1,$2,'Memory subject','active',1,1)`,
+        [subjectRef, siteRef],
+      );
+      await bootstrap.query("BEGIN");
+      await bootstrap.query("SET CONSTRAINTS ALL DEFERRED");
+      await bootstrap.query(
+        `INSERT INTO platform.authorization_project
+           (project_ref,site_ref,workspace_ref,execution_space_ref,display_name,state)
+         VALUES ($1,$2,$3,$4,'Memory project','active')`,
+        [projectRef, siteRef, `workspace-${suffix}`, executionSpaceRef],
+      );
+      await bootstrap.query(
+        `INSERT INTO platform.identity_execution_space
+           (site_ref,execution_space_ref,project_ref,execution_namespace,state,security_epoch)
+         VALUES ($1,$2,$3,$4,'active',1)`,
+        [siteRef, executionSpaceRef, projectRef,
+          `memory-component-${suffix.replaceAll("-", "")}`],
+      );
+      await bootstrap.query("COMMIT");
+      await bootstrap.query(
+        `INSERT INTO platform.authorization_project_membership
+           (project_ref,subject_ref,state,membership_epoch,authorization_epoch,is_default)
+         VALUES ($1,$2,'active',7,11,false)`,
+        [projectRef, subjectRef],
+      );
+      await bootstrap.query(
+        `INSERT INTO platform.memory_space
+           (site_ref,space_ref,scope_kind,subject_ref,subject_generation,project_ref,
+            feature_policy_revision_ref,version,space_generation,learning_generation,
+            revocation_epoch,minimum_learnable_source_origin_seq,learning_state,use_state,state,
+            created_at,updated_at)
+         VALUES
+           ($1,$2,'user',$3,1,NULL,$5,1,1,1,1,0,'active','active','active',
+             statement_timestamp(),statement_timestamp()),
+           ($1,$4,'project',NULL,NULL,$6,$5,1,1,1,1,0,'active','active','active',
+             statement_timestamp(),statement_timestamp())`,
+        [siteRef, userSpaceRef, subjectRef, projectSpaceRef, featurePolicyRef, projectRef],
+      );
+
+      const roleFacts = await bootstrap.query<{
+        role_name: string; can_login: boolean; inherits: boolean; bypasses_rls: boolean;
+        is_superuser: boolean; can_create_database: boolean; can_create_role: boolean;
+        can_replicate: boolean; can_create_objects: boolean; can_create_temporary: boolean;
+        has_membership: boolean; has_members: boolean; owns_database: boolean;
+        owns_schema: boolean; owns_relation: boolean; owns_routine: boolean;
+        owns_type: boolean;
+      }>(
+        `SELECT role_row.rolname AS role_name,role_row.rolcanlogin AS can_login,
+                role_row.rolinherit AS inherits,role_row.rolbypassrls AS bypasses_rls,
+                role_row.rolsuper AS is_superuser,role_row.rolcreatedb AS can_create_database,
+                role_row.rolcreaterole AS can_create_role,role_row.rolreplication AS can_replicate,
+                has_database_privilege(role_row.rolname,current_database(),'CREATE')
+                  AS can_create_objects,
+                has_database_privilege(role_row.rolname,current_database(),'TEMPORARY')
+                  AS can_create_temporary,
+                EXISTS (SELECT 1 FROM pg_auth_members member WHERE member.member=role_row.oid)
+                  AS has_membership,
+                EXISTS (SELECT 1 FROM pg_auth_members member WHERE member.roleid=role_row.oid)
+                  AS has_members,
+                EXISTS (SELECT 1 FROM pg_database db WHERE db.datdba=role_row.oid)
+                  AS owns_database,
+                EXISTS (SELECT 1 FROM pg_namespace ns WHERE ns.nspowner=role_row.oid)
+                  AS owns_schema,
+                EXISTS (SELECT 1 FROM pg_class relation WHERE relation.relowner=role_row.oid)
+                  AS owns_relation,
+                EXISTS (SELECT 1 FROM pg_proc routine WHERE routine.proowner=role_row.oid)
+                  AS owns_routine,
+                EXISTS (SELECT 1 FROM pg_type type_row WHERE type_row.typowner=role_row.oid)
+                  AS owns_type
+           FROM pg_roles role_row WHERE role_row.rolname=ANY($1::text[])
+          ORDER BY role_row.rolname`,
+        [Object.values(memoryRoleNames)],
+      );
+      expect(roleFacts.rows).toHaveLength(3);
+      for (const row of roleFacts.rows) {
+        expect(row).toMatchObject({ can_login: true, inherits: false, bypasses_rls: false,
+          is_superuser: false, can_create_database: false, can_create_role: false,
+          can_replicate: false, can_create_objects: false, can_create_temporary: false,
+          has_membership: false, has_members: false, owns_database: false, owns_schema: false,
+          owns_relation: false, owns_routine: false, owns_type: false });
+      }
+
+      const privileges = await bootstrap.query<{
+        role_name: string; public_schema_usage: boolean; public_schema_create: boolean;
+        platform_schema_usage: boolean; read_authorize: boolean; command_authorize: boolean;
+        claim_purge: boolean; delete_payload: boolean; record_receipt: boolean;
+      }>(
+        `SELECT role_row.rolname AS role_name,
+                has_schema_privilege(role_row.rolname,'public','USAGE') AS public_schema_usage,
+                has_schema_privilege(role_row.rolname,'public','CREATE') AS public_schema_create,
+                has_schema_privilege(role_row.rolname,'platform','USAGE') AS platform_schema_usage,
+                has_function_privilege(role_row.rolname,
+                  'platform.memory_public_authorize_read(text,text,bigint,text,bigint,bigint,text,text)',
+                  'EXECUTE') AS read_authorize,
+                has_function_privilege(role_row.rolname,
+                  'platform.memory_public_authorize_command(text,text,bigint,text,bigint,bigint,text,text)',
+                  'EXECUTE') AS command_authorize,
+                has_function_privilege(role_row.rolname,
+                  'platform.memory_worker_claim_purge(text,character,integer)','EXECUTE')
+                  AS claim_purge,
+                has_function_privilege(role_row.rolname,
+                  'platform.memory_worker_delete_revision_payload(text,text,text,text,bigint,text,bigint,character)',
+                  'EXECUTE') AS delete_payload,
+                has_function_privilege(role_row.rolname,
+                  'platform.memory_worker_record_purge_receipt(text,text,text,text,text,character,bigint,character)',
+                  'EXECUTE') AS record_receipt
+           FROM pg_roles role_row WHERE role_row.rolname=ANY($1::text[])
+          ORDER BY role_row.rolname`,
+        [Object.values(memoryRoleNames)],
+      );
+      expect(privileges.rows).toEqual([
+        { role_name: memoryRoleNames.public, public_schema_usage: false,
+          public_schema_create: false, platform_schema_usage: true, read_authorize: true,
+          command_authorize: true, claim_purge: false, delete_payload: false,
+          record_receipt: false },
+        { role_name: memoryRoleNames.runtime, public_schema_usage: false,
+          public_schema_create: false, platform_schema_usage: false, read_authorize: false,
+          command_authorize: false, claim_purge: false, delete_payload: false,
+          record_receipt: false },
+        { role_name: memoryRoleNames.worker, public_schema_usage: false,
+          public_schema_create: false, platform_schema_usage: true, read_authorize: false,
+          command_authorize: false, claim_purge: true, delete_payload: true,
+          record_receipt: true },
+      ]);
+
+      for (const client of [publicClient, runtimeClient, workerClient]) {
+        await expect(client.query("SELECT site_ref FROM platform.memory_space LIMIT 1"))
+          .rejects.toMatchObject({ code: "42501" });
+      }
+      await expect(publicClient.query("SET ROLE platform_migrator"))
+        .rejects.toMatchObject({ code: "42501" });
+      await expect(authorize(publicClient, userAuthority)).resolves.toMatchObject({ rowCount: 1 });
+      await expect(authorize(publicClient, projectAuthority)).resolves.toMatchObject({ rowCount: 1 });
+      await expect(authorize(publicClient,
+        [siteRef, subjectRef, "2", null, null, null, userSpaceRef, featurePolicyRef]))
+        .rejects.toThrow("MEMORY_PUBLIC_OWNER_AUTHORITY_FORBIDDEN");
+      await expect(authorize(publicClient,
+        [siteRef, subjectRef, "1", projectRef, "8", "11", projectSpaceRef, featurePolicyRef]))
+        .rejects.toThrow("MEMORY_PUBLIC_OWNER_AUTHORITY_FORBIDDEN");
+      await expect(authorize(publicClient,
+        [siteRef, subjectRef, "1", projectRef, "7", "12", projectSpaceRef, featurePolicyRef]))
+        .rejects.toThrow("MEMORY_PUBLIC_OWNER_AUTHORITY_FORBIDDEN");
+
+      await neighborClient.query(
+        `SELECT set_config('app.site_id',$1,false),
+                set_config('app.subject_id',$2,false),
+                set_config('app.subject_generation','1',false)`,
+        [siteRef, subjectRef],
+      );
+      await expect(authorize(neighborClient, userAuthority)).rejects.toMatchObject({ code: "42501" });
+      const publicExecute = await bootstrap.query<{ public_execute_count: string }>(
+        `SELECT count(*)::text AS public_execute_count FROM pg_proc routine
+           JOIN pg_namespace namespace ON namespace.oid=routine.pronamespace
+          CROSS JOIN LATERAL aclexplode(COALESCE(
+            routine.proacl,acldefault('f',routine.proowner))) acl
+          WHERE namespace.nspname='platform' AND routine.proname LIKE 'memory_%'
+            AND acl.grantee=0 AND acl.privilege_type='EXECUTE'`,
+      );
+      expect(publicExecute.rows).toEqual([{ public_execute_count: "0" }]);
+
+      await bootstrap.query("BEGIN");
+      await bootstrap.query("SET CONSTRAINTS ALL DEFERRED");
+      for (const [entryRef, revisionRef] of [
+        [targetEntryRef, targetRevisionRef], [postCutoffEntryRef, postCutoffRevisionRef],
+      ] as const) {
+        await bootstrap.query(
+          `INSERT INTO platform.memory_entry
+             (site_ref,space_ref,entry_ref,version,current_revision,current_revision_ref,state,
+              category,feature_policy_revision_ref,space_generation,learning_generation,
+              revocation_epoch,created_at,updated_at)
+           VALUES ($1,$2,$3,1,1,$4,'active','fact',$5,1,1,1,
+             statement_timestamp(),statement_timestamp())`,
+          [siteRef, userSpaceRef, entryRef, revisionRef, featurePolicyRef],
+        );
+        await bootstrap.query(
+          `INSERT INTO platform.memory_revision
+             (site_ref,space_ref,entry_ref,revision,revision_ref,reason,supersedes_revision,
+              supersedes_revision_ref,feature_policy_revision_ref,recorded_at)
+           VALUES ($1,$2,$3,1,$4,'explicit',NULL,NULL,$5,statement_timestamp())`,
+          [siteRef, userSpaceRef, entryRef, revisionRef, featurePolicyRef],
+        );
+        await bootstrap.query(
+          `INSERT INTO platform.memory_revision_payload
+             (site_ref,space_ref,entry_ref,revision,revision_ref,envelope_version,
+              protection_key_revision,nonce,protected_ciphertext,authentication_tag,aad_digest,
+              protected_at)
+           VALUES ($1,$2,$3,1,$4,1,'memory-key-v1',$5::bytea,$6::bytea,$7::bytea,$8,
+             statement_timestamp())`,
+          [siteRef, userSpaceRef, entryRef, revisionRef, Buffer.alloc(12, 1),
+            Buffer.from([1, 2, 3]), Buffer.alloc(16, 2), "b".repeat(64)],
+        );
+      }
+      await bootstrap.query(
+        `INSERT INTO platform.memory_public_command_inbox
+           (site_ref,command_ref,owner_scope_kind,owner_subject_ref,owner_subject_generation,
+            operation,request_digest,state,created_at)
+         VALUES ($1,$2,'user',$3,1,'reset',$4,'accepted',statement_timestamp())`,
+        [siteRef, purgeCommandRef, subjectRef, "c".repeat(64)],
+      );
+      await bootstrap.query(
+        `INSERT INTO platform.memory_purge_job
+           (site_ref,purge_job_ref,command_ref,space_ref,entry_ref,space_generation,
+            learning_generation,revocation_epoch,frozen_manifest_version,revision_target_count,
+            revision_target_manifest_digest,ingress_cutoff,materialization_cutoff,state,
+            next_attempt_at,created_at,updated_at)
+         VALUES ($1,$2,$3,$4,NULL,1,1,1,1,1,$5,0,0,'queued',statement_timestamp(),
+           statement_timestamp(),statement_timestamp())`,
+        [siteRef, purgeJobRef, purgeCommandRef, userSpaceRef, "d".repeat(64)],
+      );
+      await bootstrap.query(
+        `INSERT INTO platform.memory_purge_revision_target
+           (site_ref,purge_job_ref,target_ordinal,space_ref,entry_ref,revision,revision_ref,
+            space_generation,learning_generation,revocation_epoch,targeted_at)
+         VALUES ($1,$2,0,$3,$4,1,$5,1,1,1,statement_timestamp())`,
+        [siteRef, purgeJobRef, userSpaceRef, targetEntryRef, targetRevisionRef],
+      );
+      await bootstrap.query("COMMIT");
+
+      const leaseTokenHash = "e".repeat(64);
+      await expect(workerClient.query(
+        "SELECT * FROM platform.memory_worker_claim_purge($1,$2::char(64),60)",
+        ["memory-worker-component", leaseTokenHash],
+      )).resolves.toMatchObject({ rows: [{ site_ref: siteRef, purge_job_ref: purgeJobRef,
+        lease_epoch: "1" }] });
+      await expect(workerClient.query(
+        `SELECT platform.memory_worker_record_purge_receipt(
+          $1,$2,'revision_payload','completed',$3,$4::char(64),1,$5::char(64))`,
+        [siteRef, purgeJobRef, `premature-${suffix}`, "f".repeat(64), leaseTokenHash],
+      )).rejects.toThrow("MEMORY_PURGE_REVISION_TARGETS_INCOMPLETE");
+      await expect(workerClient.query(
+        `SELECT platform.memory_worker_delete_revision_payload(
+          $1,$2,$3,$4,1,$5,1,$6::char(64)) AS outcome`,
+        [purgeJobRef, siteRef, userSpaceRef, postCutoffEntryRef, postCutoffRevisionRef,
+          leaseTokenHash],
+      )).rejects.toThrow("MEMORY_PURGE_TARGET_FORBIDDEN");
+      const deleteValues = [purgeJobRef, siteRef, userSpaceRef, targetEntryRef,
+        targetRevisionRef, leaseTokenHash];
+      await expect(workerClient.query(
+        `SELECT platform.memory_worker_delete_revision_payload(
+          $1,$2,$3,$4,1,$5,1,$6::char(64)) AS outcome`, deleteValues,
+      )).resolves.toMatchObject({ rows: [{ outcome: "deleted" }] });
+      await expect(workerClient.query(
+        `SELECT platform.memory_worker_delete_revision_payload(
+          $1,$2,$3,$4,1,$5,1,$6::char(64)) AS outcome`, deleteValues,
+      )).resolves.toMatchObject({ rows: [{ outcome: "already_deleted" }] });
+      await expect(workerClient.query(
+        `SELECT platform.memory_worker_record_purge_receipt(
+          $1,$2,'revision_payload','completed',$3,$4::char(64),1,$5::char(64))`,
+        [siteRef, purgeJobRef, `receipt-${suffix}`, "1".repeat(64), leaseTokenHash],
+      )).resolves.toMatchObject({ rowCount: 1 });
+
+      await bootstrap.query(`ALTER ROLE ${memoryRoleNames.public} RENAME TO ${renamedPublicRole}`);
+      try {
+        await expect(authorize(publicClient, userAuthority))
+          .rejects.toThrow("MEMORY_DATABASE_ROLE_FORBIDDEN");
+      } finally {
+        await bootstrap.query(`ALTER ROLE ${renamedPublicRole} RENAME TO ${memoryRoleNames.public}`);
+      }
+      await expect(authorize(publicClient, userAuthority)).resolves.toMatchObject({ rowCount: 1 });
+
+      await publicClient.end();
+      await bootstrap.query(
+        `DROP POLICY memory_space_public_definer ON platform.memory_space;
+         REVOKE EXECUTE ON FUNCTION platform.memory_public_authorize_read(
+           TEXT,TEXT,BIGINT,TEXT,BIGINT,BIGINT,TEXT,TEXT) FROM platform_memory_public;
+         REVOKE EXECUTE ON FUNCTION platform.memory_public_authorize_command(
+           TEXT,TEXT,BIGINT,TEXT,BIGINT,BIGINT,TEXT,TEXT) FROM platform_memory_public;
+         REVOKE USAGE ON SCHEMA platform FROM platform_memory_public;
+         REVOKE CONNECT ON DATABASE ${quoteIdentifier(databaseName)} FROM platform_memory_public;
+         DROP ROLE platform_memory_public;
+         CREATE ROLE platform_memory_public
+           LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS
+           PASSWORD 'platform-memory-public-ci';
+         GRANT CONNECT ON DATABASE ${quoteIdentifier(databaseName)} TO platform_memory_public;
+         GRANT USAGE ON SCHEMA platform TO platform_memory_public;
+         CREATE POLICY memory_space_public_definer ON platform.memory_space TO platform_migrator
+           USING (SESSION_USER='platform_memory_public')
+           WITH CHECK (SESSION_USER='platform_memory_public');
+         GRANT EXECUTE ON FUNCTION platform.memory_public_authorize_read(
+           TEXT,TEXT,BIGINT,TEXT,BIGINT,BIGINT,TEXT,TEXT) TO platform_memory_public;
+         GRANT EXECUTE ON FUNCTION platform.memory_public_authorize_command(
+           TEXT,TEXT,BIGINT,TEXT,BIGINT,BIGINT,TEXT,TEXT) TO platform_memory_public`,
+      );
+      publicClient = new Client({ connectionString: memoryDatabaseUrls.public });
+      await publicClient.connect();
+      await expect(authorize(publicClient, userAuthority))
+        .rejects.toThrow("MEMORY_DATABASE_ROLE_FORBIDDEN");
+      await bootstrap.query(
+        `UPDATE platform.memory_database_role_identity
+            SET role_oid=(SELECT oid FROM pg_roles WHERE rolname='platform_memory_public')
+          WHERE role_kind='public'`,
+      );
+      await expect(authorize(publicClient, userAuthority)).resolves.toMatchObject({ rowCount: 1 });
+    } finally {
+      try {
+        await bootstrap.query("ROLLBACK");
+        await restoreMemoryPublicRoleAuthority(bootstrap, renamedPublicRole);
+        await bootstrap.query("BEGIN");
+        await bootstrap.query("SET CONSTRAINTS ALL DEFERRED");
+        await bootstrap.query("SET LOCAL session_replication_role='replica'");
+        await bootstrap.query(
+          "DELETE FROM platform.memory_purge_participant_receipt WHERE site_ref=$1",
+          [siteRef],
+        );
+        await bootstrap.query(
+          "DELETE FROM platform.memory_purge_revision_target WHERE site_ref=$1",
+          [siteRef],
+        );
+        await bootstrap.query("DELETE FROM platform.memory_purge_job WHERE site_ref=$1", [siteRef]);
+        await bootstrap.query(
+          "DELETE FROM platform.memory_public_command_inbox WHERE site_ref=$1",
+          [siteRef],
+        );
+        await bootstrap.query("DELETE FROM platform.memory_revision_payload WHERE site_ref=$1", [
+          siteRef,
+        ]);
+        await bootstrap.query("DELETE FROM platform.memory_provenance WHERE site_ref=$1", [
+          siteRef,
+        ]);
+        await bootstrap.query("DELETE FROM platform.memory_command_receipt WHERE site_ref=$1", [
+          siteRef,
+        ]);
+        await bootstrap.query("DELETE FROM platform.memory_entry WHERE site_ref=$1", [siteRef]);
+        await bootstrap.query("DELETE FROM platform.memory_revision WHERE site_ref=$1", [siteRef]);
+        await bootstrap.query("DELETE FROM platform.memory_space WHERE site_ref=$1", [siteRef]);
+        await bootstrap.query(
+          `DELETE FROM platform.authorization_project_membership
+            WHERE project_ref=$1 AND subject_ref=$2`,
+          [projectRef, subjectRef],
+        );
+        await bootstrap.query(
+          "DELETE FROM platform.identity_execution_space WHERE execution_space_ref=$1",
+          [executionSpaceRef],
+        );
+        await bootstrap.query("DELETE FROM platform.authorization_project WHERE project_ref=$1", [
+          projectRef,
+        ]);
+        await bootstrap.query("DELETE FROM platform.authorization_subject WHERE subject_ref=$1", [
+          subjectRef,
+        ]);
+        await bootstrap.query(
+          "DELETE FROM platform.authorization_site_release WHERE release_ref=$1",
+          [releaseRef],
+        );
+        await bootstrap.query("DELETE FROM platform.authorization_site WHERE site_ref=$1", [
+          siteRef,
+        ]);
+        await bootstrap.query("COMMIT");
+        const inventory = await bootstrap.query<{
+          remaining: string;
+          renamed_role: boolean;
+          public_oid_current: boolean;
+        }>(
+          `SELECT (
+             (SELECT count(*) FROM platform.memory_space WHERE site_ref=$1)+
+             (SELECT count(*) FROM platform.memory_entry WHERE site_ref=$1)+
+             (SELECT count(*) FROM platform.memory_revision WHERE site_ref=$1)+
+             (SELECT count(*) FROM platform.memory_revision_payload WHERE site_ref=$1)+
+             (SELECT count(*) FROM platform.memory_public_command_inbox WHERE site_ref=$1)+
+             (SELECT count(*) FROM platform.memory_purge_job WHERE site_ref=$1)+
+             (SELECT count(*) FROM platform.memory_purge_revision_target WHERE site_ref=$1)+
+             (SELECT count(*) FROM platform.memory_purge_participant_receipt WHERE site_ref=$1)+
+             (SELECT count(*) FROM platform.authorization_site WHERE site_ref=$1)
+           )::text AS remaining,
+           EXISTS (SELECT 1 FROM pg_roles WHERE rolname=$2) AS renamed_role,
+           (SELECT role_oid=(SELECT oid FROM pg_roles WHERE rolname='platform_memory_public')
+              FROM platform.memory_database_role_identity WHERE role_kind='public')
+             AS public_oid_current`,
+          [siteRef, renamedPublicRole],
+        );
+        expect(inventory.rows).toEqual([
+          {
+            remaining: "0",
+            renamed_role: false,
+            public_oid_current: true,
+          },
+        ]);
+      } finally {
+        await Promise.allSettled([
+          bootstrap.end(),
+          publicClient.end(),
+          runtimeClient.end(),
+          workerClient.end(),
+          neighborClient.end(),
+        ]);
+      }
+    }
   });
 
   it("rejects digest-incoherent direct root UUID and decimal spellings before persistence", async () => {
@@ -2190,6 +2645,78 @@ async function ensureLoginOnlyTestRole(
 ): Promise<void> {
   const role = await client.query("SELECT 1 FROM pg_roles WHERE rolname=$1", [roleName]);
   if (role.rowCount === 0) await createLoginOnlyTestRole(client, roleName, password);
+}
+
+async function restoreMemoryPublicRoleAuthority(
+  client: Client,
+  renamedRoleName: string,
+): Promise<void> {
+  const expectedRoleName = memoryRoleNames.public;
+  const roles = await client.query<{ rolname: string }>(
+    "SELECT rolname FROM pg_roles WHERE rolname=ANY($1::text[]) ORDER BY rolname",
+    [[expectedRoleName, renamedRoleName]],
+  );
+  const presentRoles = new Set(roles.rows.map(({ rolname }) => rolname));
+  if (presentRoles.has(expectedRoleName) && presentRoles.has(renamedRoleName)) {
+    throw new Error("MEMORY_PUBLIC_ROLE_RESTORE_AMBIGUOUS");
+  }
+  if (!presentRoles.has(expectedRoleName) && presentRoles.has(renamedRoleName)) {
+    await client.query(
+      `ALTER ROLE ${quoteIdentifier(renamedRoleName)} RENAME TO ` +
+        quoteIdentifier(expectedRoleName),
+    );
+  } else if (!presentRoles.has(expectedRoleName)) {
+    await createLoginOnlyTestRole(client, expectedRoleName, "platform-memory-public-ci");
+  }
+
+  const role = quoteIdentifier(expectedRoleName);
+  await client.query(
+    `ALTER ROLE ${role} LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE ` +
+      `NOREPLICATION NOBYPASSRLS PASSWORD 'platform-memory-public-ci'; ` +
+      `REVOKE ALL PRIVILEGES ON DATABASE ${quoteIdentifier(databaseName)} FROM ${role}; ` +
+      `GRANT CONNECT ON DATABASE ${quoteIdentifier(databaseName)} TO ${role}; ` +
+      `REVOKE ALL PRIVILEGES ON SCHEMA public,platform FROM ${role}; ` +
+      `REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA platform FROM ${role}; ` +
+      `REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA platform FROM ${role}; ` +
+      `REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA platform FROM ${role}; ` +
+      `GRANT USAGE ON SCHEMA platform TO ${role}`,
+  );
+  const policy = await client.query(
+    `SELECT 1 FROM pg_policy policy
+       JOIN pg_class relation ON relation.oid=policy.polrelid
+       JOIN pg_namespace namespace ON namespace.oid=relation.relnamespace
+      WHERE namespace.nspname='platform' AND relation.relname='memory_space'
+        AND policy.polname='memory_space_public_definer'`,
+  );
+  if (policy.rowCount === 0) {
+    await client.query(
+      `CREATE POLICY memory_space_public_definer ON platform.memory_space TO platform_migrator ` +
+        `USING (SESSION_USER='platform_memory_public') ` +
+        `WITH CHECK (SESSION_USER='platform_memory_public')`,
+    );
+  } else {
+    await client.query(
+      `ALTER POLICY memory_space_public_definer ON platform.memory_space TO platform_migrator ` +
+        `USING (SESSION_USER='platform_memory_public') ` +
+        `WITH CHECK (SESSION_USER='platform_memory_public')`,
+    );
+  }
+  await client.query(
+    `GRANT EXECUTE ON FUNCTION platform.memory_public_authorize_read(
+       TEXT,TEXT,BIGINT,TEXT,BIGINT,BIGINT,TEXT,TEXT) TO ${role};
+     GRANT EXECUTE ON FUNCTION platform.memory_public_authorize_command(
+       TEXT,TEXT,BIGINT,TEXT,BIGINT,BIGINT,TEXT,TEXT) TO ${role}`,
+  );
+  await client.query(
+    `UPDATE platform.memory_database_role_identity
+        SET role_oid=(SELECT oid FROM pg_roles WHERE rolname=$1)
+      WHERE role_kind='public'`,
+    [expectedRoleName],
+  );
+  const renamedRole = await client.query("SELECT 1 FROM pg_roles WHERE rolname=$1", [
+    renamedRoleName,
+  ]);
+  if (renamedRole.rowCount !== 0) throw new Error("MEMORY_PUBLIC_ROLE_RESTORE_INCOMPLETE");
 }
 
 async function restoreExactWorkerAcl(
