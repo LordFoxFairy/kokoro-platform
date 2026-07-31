@@ -23,6 +23,10 @@ export type ImageEffectProviderOutput = Readonly<{
   stableOutputSlotRef: string;
   providerOutputFactRef: string;
   retrievalGrantHandle: string;
+  mediaType: "image/png" | "image/jpeg" | "image/webp";
+  width: number;
+  height: number;
+  declaredByteSize?: bigint;
 }>;
 
 type ObservationBase = Readonly<{
@@ -254,6 +258,12 @@ function snapshotOutputs(outputs: readonly ImageEffectProviderOutput[]): readonl
     reference(output.candidateRef);
     reference(output.stableOutputSlotRef);
     reference(output.providerOutputFactRef);
+    if (!["image/png", "image/jpeg", "image/webp"].includes(output.mediaType) ||
+        !Number.isInteger(output.width) || output.width < 1 || output.width > 65_535 ||
+        !Number.isInteger(output.height) || output.height < 1 || output.height > 65_535 ||
+        (output.declaredByteSize !== undefined && output.declaredByteSize < 1n)) {
+      throw new Error("IMAGE_EFFECT_OUTPUT_EVIDENCE_INVALID");
+    }
     if (output.retrievalGrantHandle.length < 32 || output.retrievalGrantHandle.length > 8192 ||
         /[\0\r\n]/u.test(output.retrievalGrantHandle) || candidates.has(output.candidateRef) ||
         slots.has(output.stableOutputSlotRef)) {

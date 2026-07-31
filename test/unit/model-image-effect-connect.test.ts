@@ -97,6 +97,38 @@ describe("image-effect Connect provider", () => {
     const stream = service.readImageEffectOutput({} as never, {} as never)[Symbol.asyncIterator]();
     await expect(stream.next()).rejects.toMatchObject({ code: Code.Unimplemented });
   });
+
+  it("maps the activated evidence, output capability recovery and bounded stream owner RPCs", async () => {
+    const outputResult = Object.freeze({ receipt: Object.freeze({ ...RESULT.receipt,
+      kind: "output_access_issued" as const }), outputAccess: Object.freeze({
+      outputEvidenceRef: "output:one", outputEvidenceDigest: "c".repeat(64),
+      sourceAccessHandle: "kimg1.token", sourceAccessExpiresAt: "2030-01-01T00:00:00.000Z",
+      maxReadableBytes: 4096n }), replayed: false });
+    const service = createImageEffectConnectService({
+      application: { create: vi.fn(), recover: vi.fn(), get: vi.fn(), requestCancel: vi.fn(),
+        attachNextAttemptAuthorization: vi.fn() },
+      evidence: { get: vi.fn(async () => ({ invocation: RESULT.invocation, evidenceFacts: [],
+        nextEvidenceSequence: 0n, caughtUp: true })) },
+      output: { issue: vi.fn(async () => outputResult), recover: vi.fn(async () => outputResult),
+        read: async function* () { yield { offset: 0n, data: new Uint8Array([1, 2]), nextOffset: 2n,
+          eof: true, chunkSha256: "d".repeat(64) }; } },
+      caller: { resolve: () => ({ identity: "spiffe://kokoro/platform-media-worker" }) },
+      mediaCallerIdentity: "spiffe://kokoro/platform-media-worker",
+    });
+    const context = { signal: new AbortController().signal } as never;
+    expect((await service.getImageEffectEvidence({ callerAccessHandle: "h".repeat(32),
+      logicalInvocationRef: "invocation:one", afterEvidenceSequence: 0n, limit: 8 } as never,
+    context)).caughtUp).toBe(true);
+    expect((await service.issueImageEffectOutputAccess({ callerAccessHandle: "h".repeat(32),
+      outputAccessCommandRef: "output-command:one", logicalInvocationRef: "invocation:one",
+      outputEvidenceRef: "output:one", outputEvidenceDigest: "c".repeat(64),
+      callerRequestFingerprint: "e".repeat(64) } as never, context)).outputAccess?.sourceAccessHandle)
+      .toBe("kimg1.token");
+    const frames = service.readImageEffectOutput({ sourceAccessHandle: "kimg1.token",
+      outputEvidenceRef: "output:one", outputEvidenceDigest: "c".repeat(64), offset: 0n,
+      maxBytes: 1024 } as never, context);
+    expect((await frames[Symbol.asyncIterator]().next()).value?.nextOffset).toBe(2n);
+  });
 });
 
 function effectCommand(): CreateImageEffectCommand {

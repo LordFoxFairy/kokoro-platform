@@ -11,6 +11,7 @@ export type ImageEffectDispatchSourceGrant = Readonly<{
 }>;
 
 export type ImageEffectDispatchClaim = Readonly<{
+  siteId: string;
   attemptRef: string;
   logicalInvocationRef: string;
   dispatchOwnerRef: string;

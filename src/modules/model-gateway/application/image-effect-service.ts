@@ -34,11 +34,12 @@ export type ImageEffectAccessAuthorization = Readonly<{
   }>;
 }>;
 
-export type ImageEffectCommandKind = "create" | "cancel" | "attach_attempt";
+export type ImageEffectCommandKind = "create" | "cancel" | "attach_attempt" | "output_access";
 export type ImageEffectReceiptKind =
   | "create_committed"
   | "attempt_authorization_attached"
-  | "cancel_intent_committed";
+  | "cancel_intent_committed"
+  | "output_access_issued";
 
 export type ImageEffectCommandReceiptRecord = Readonly<{
   callerCommandRef: string;
@@ -105,7 +106,8 @@ export type ImageEffectInvocation = Readonly<{
 export interface ImageEffectUnitOfWork {
   execute<Result>(
     scope: Readonly<{
-      operation: "create" | "recover" | "get" | "cancel" | "attach";
+      operation: "create" | "recover" | "get" | "cancel" | "attach" | "evidence" |
+        "issue_output" | "recover_output";
       callerAccessHandle: string;
       modelOptionAuthorizationHandle?: string;
       sourceGrants?: readonly Readonly<{ sourceVersionRef: string; purposeGrantHandle: string }>[];
@@ -179,6 +181,11 @@ export interface ImageEffectCommandDigestAuthority {
     nextAttemptOrdinal: number;
     effectBudgetCommitRef: string;
     effectBudgetCommitDigest: string;
+  }>, authorization: ImageEffectAccessAuthorization): string;
+  issueOutput(input: Readonly<{
+    logicalInvocationRef: string;
+    outputEvidenceRef: string;
+    outputEvidenceDigest: string;
   }>, authorization: ImageEffectAccessAuthorization): string;
   receipt(input: Readonly<{
     callerCommandRef: string;

@@ -17,6 +17,8 @@ describe("Model Gateway image effect authority schema", () => {
       "model_image_effect_attempt",
       "model_image_effect_provider_observation",
       "model_image_effect_output_evidence",
+      "model_image_effect_evidence_ledger",
+      "model_image_effect_output_access",
       "model_image_effect_dispatch_queue",
       "model_image_effect_outbox",
     ]) expect(migration).toContain(`CREATE TABLE platform.${table}`);
@@ -28,6 +30,10 @@ describe("Model Gateway image effect authority schema", () => {
     expect(migration).toContain("provider_operation_key TEXT NOT NULL UNIQUE");
     expect(migration).toContain("UNIQUE (attempt_ref,provider_sequence)");
     expect(migration).toContain("UNIQUE (attempt_ref,provider_event_ref)");
+    expect(migration).toContain("UNIQUE (logical_invocation_ref,evidence_sequence)");
+    expect(migration).toContain("record_model_image_effect_observation");
+    expect(migration).toContain("last_evidence_sequence");
+    expect(migration).toContain("guard_model_image_effect_evidence_append_only");
     expect(migration).toContain("FOR UPDATE SKIP LOCKED");
     expect(migration).toContain("SECURITY DEFINER");
     expect(migration).toContain("FORCE ROW LEVEL SECURITY");

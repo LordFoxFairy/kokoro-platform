@@ -3,6 +3,7 @@ import {
   PostgresImageEffectAuthority,
   PostgresImageEffectDispatchSecretLoader,
   PostgresImageEffectRepository,
+  PostgresImageEffectWorkerRepository,
 } from "../../src/modules/model-gateway/infrastructure/postgres/image-effect-postgres.js";
 import { issuePlatformTransaction, resolvePlatformTransaction } from
   "../../src/shared/unit-of-work/platform-transaction.js";
@@ -140,6 +141,49 @@ describe("Postgres image-effect authority", () => {
     expect(client.calls[0]?.values).toEqual(["attempt:one", "worker:one", "7"]);
     expect(client.released).toBe(true);
   });
+
+  it("records the canonical terminal observation, sealed outputs and one owner revision atomically", async () => {
+    const client = new WorkerClient();
+    const worker = new PostgresImageEffectWorkerRepository({
+      pool: { connect: async () => client, end: async () => undefined },
+      secretProtector: {
+        seal: () => Object.freeze({ algorithm: "A256GCM", keyRevision: "test", nonce: "nonce",
+          ciphertext: "ciphertext", authenticationTag: "tag" }),
+        unseal: () => { throw new Error("unused"); },
+      },
+      outputIdentity: () => Object.freeze({ outputEvidenceRef: "output:one",
+        outputEvidenceDigest: "e".repeat(64) }),
+      reference: () => "event:owner",
+    });
+    const attempt = Object.freeze({ attemptRef: "attempt:one", ordinal: 1, budgetCommitRef: "budget:one",
+      budgetCommitDigest: "a".repeat(64), providerOperationKey: "provider-operation:one",
+      state: "succeeded" as const, cancelRequested: false, lastProviderSequence: 2n,
+      providerOperationRef: "provider-operation-ref:one", canonicalOutcomeEvidenceRef: "outcome:one",
+      canonicalOutcomeEvidenceDigest: "b".repeat(64), usageEvidenceRef: "usage:one",
+      usageEvidenceDigest: "c".repeat(64), outputs: Object.freeze([{ candidateRef: "candidate:one",
+        stableOutputSlotRef: "slot:one", providerOutputFactRef: "provider-output:one",
+        retrievalGrantHandleDigest: "d".repeat(64) }]), lateOutcome: false,
+      observations: Object.freeze([{ eventRef: "event:submitted", sequence: 1n, digest: "f".repeat(64) },
+        { eventRef: "event:succeeded", sequence: 2n, digest: "1".repeat(64) }]) });
+    const persisted = await worker.recordObservation({ siteId: "site:one", attemptRef: "attempt:one",
+      logicalInvocationRef: "invocation:one", dispatchOwnerRef: "worker:one", dispatchFence: 7n }, {
+      eventRef: "event:succeeded", sequence: 2n, observationDigest: "1".repeat(64),
+      observedAt: "2026-07-31T12:00:00.000Z", kind: "succeeded", outcomeEvidenceRef: "outcome:one",
+      outcomeEvidenceDigest: "b".repeat(64), usageEvidenceRef: "usage:one",
+      usageEvidenceDigest: "c".repeat(64), outputs: [{ candidateRef: "candidate:one",
+        stableOutputSlotRef: "slot:one", providerOutputFactRef: "provider-output:one",
+        retrievalGrantHandle: "r".repeat(32), mediaType: "image/png", width: 1024, height: 1024,
+        declaredByteSize: 4096n }],
+    }, attempt);
+    expect(persisted).toEqual(attempt);
+    expect(client.calls).toHaveLength(1);
+    expect(client.calls[0]?.text).toContain("record_model_image_effect_observation");
+    expect(client.calls[0]?.text).not.toContain("UPDATE platform.model_image_effect_invocation");
+    const outputPayload = String(client.calls[0]?.values[10]);
+    expect(outputPayload).toContain("outputEvidenceDigest");
+    expect(outputPayload).not.toContain("r".repeat(32));
+    expect(client.released).toBe(true);
+  });
 });
 
 class Client {
@@ -173,6 +217,16 @@ class SecretClient {
     return { rows: [{ siteId: "site:one", logicalInvocationRef: "invocation:one",
       operationInputRevisionRef: "input:one", sourceGrants: { algorithm: "A256GCM", keyRevision: "test",
         nonce: "nonce", ciphertext: "ciphertext", authenticationTag: "tag" } }], rowCount: 1 };
+  }
+  release() { this.released = true; }
+}
+
+class WorkerClient {
+  readonly calls: Array<{ text: string; values: readonly unknown[] }> = [];
+  released = false;
+  async query(text: string, values: readonly unknown[] = []) {
+    this.calls.push({ text, values });
+    return { rows: [{ persisted: true, replayed: false }], rowCount: 1 };
   }
   release() { this.released = true; }
 }

@@ -46,7 +46,8 @@ describe("model image effect domain", () => {
       usageEvidenceRef: "usage-evidence:one",
       usageEvidenceDigest: DIGEST_B,
       outputs: [{ candidateRef: "candidate:one", stableOutputSlotRef: "slot:one",
-        providerOutputFactRef: "provider-output:one", retrievalGrantHandle: "r".repeat(32) }],
+        providerOutputFactRef: "provider-output:one", retrievalGrantHandle: "r".repeat(32),
+        mediaType: "image/png", width: 1024, height: 1024, declaredByteSize: 4096n }],
     }));
     expect(late.attempt.state).toBe("succeeded");
     expect(late.attempt.lateOutcome).toBe(true);

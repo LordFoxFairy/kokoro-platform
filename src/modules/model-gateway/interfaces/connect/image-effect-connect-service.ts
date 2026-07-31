@@ -1,4 +1,5 @@
-import { create } from "@bufbuild/protobuf";
+import { create, toBinary } from "@bufbuild/protobuf";
+import { createHash } from "node:crypto";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError, type HandlerContext, type ServiceImpl } from "@connectrpc/connect";
 import {
@@ -8,11 +9,19 @@ import {
   CreateImageEffectEffectSchema,
   CreateImageEffectResponseSchema,
   GetImageEffectByCommandResponseSchema,
+  GetImageEffectEvidenceResponseSchema,
+  ImageEffectEvidenceFactSchema,
+  ImageEffectEvidenceKind,
+  ImageEffectOutputEvidenceSchema,
   ImageEffectCommandReceiptSchema,
   ImageEffectReceiptKind,
   ImageEffectState,
   ImageEffectV1Service,
   ImageEffectViewSchema,
+  IssueImageEffectOutputAccessEffectSchema,
+  IssueImageEffectOutputAccessResponseSchema,
+  ReadImageEffectOutputResponseSchema,
+  RecoverImageEffectOutputAccessByCommandResponseSchema,
   RecoverImageEffectByCommandResponseSchema,
   RequestCancelImageEffectResponseSchema,
   RequestCancelImageEffectEffectSchema,
@@ -25,12 +34,20 @@ import type {
   ImageEffectService,
   ImageEffectView,
 } from "../../application/image-effect-service.js";
+import type { ImageEffectEvidenceService } from "../../application/image-effect-evidence-service.js";
+import type {
+  ImageEffectOutputAccessResult,
+  ImageEffectOutputService,
+} from "../../application/image-effect-output-service.js";
+import type { ImageEffectEvidenceFact } from "../../domain/image-effect-evidence.js";
+import type { ImageEffectOutputEvidenceIdentityAuthority } from "../../domain/image-effect-evidence.js";
 import type { VerifiedModelGatewayCallerResolver } from "./model-gateway-connect-service.js";
 import {
   attachNextAttemptAuthorizationRequestDigest,
   createImageEffectRequestDigest,
   imageEffectCommandReceiptDigest,
   imageEffectCommandReceiptRef,
+  issueImageEffectOutputAccessRequestDigest,
   requestCancelImageEffectRequestDigest,
   type VerifiedModelImageEffectCommandAxes,
 } from "../../../../interfaces/connect/generated-model-image-effect/command-envelope-digest.js";
@@ -40,6 +57,8 @@ export type ImageEffectConnectService = ServiceImpl<typeof ImageEffectV1Service>
 export function createImageEffectConnectService(input: Readonly<{
   application: Pick<ImageEffectService, "create" | "recover" | "get" | "requestCancel" |
     "attachNextAttemptAuthorization">;
+  evidence?: Pick<ImageEffectEvidenceService, "get">;
+  output?: Pick<ImageEffectOutputService, "issue" | "recover" | "read">;
   caller: VerifiedModelGatewayCallerResolver;
   mediaCallerIdentity: string;
 }>): ImageEffectConnectService {
@@ -97,17 +116,38 @@ export function createImageEffectConnectService(input: Readonly<{
       });
       return create(GetImageEffectByCommandResponseSchema, { invocation: mapView(invocation) });
     }),
-    getImageEffectEvidence: (_request, context) => safe(async () => {
+    getImageEffectEvidence: (request, context) => safe(async () => {
       authorize(context);
-      throw new ConnectError("image effect evidence owner not activated", Code.Unimplemented);
+      if (input.evidence === undefined) {
+        throw new ConnectError("image effect evidence owner not activated", Code.Unimplemented);
+      }
+      const page = await input.evidence.get({ callerAccessHandle: request.callerAccessHandle,
+        logicalInvocationRef: request.logicalInvocationRef,
+        afterEvidenceSequence: request.afterEvidenceSequence, limit: request.limit });
+      return create(GetImageEffectEvidenceResponseSchema, { invocation: mapView(page.invocation),
+        evidenceFacts: page.evidenceFacts.map(mapEvidenceFact),
+        nextEvidenceSequence: page.nextEvidenceSequence, caughtUp: page.caughtUp });
     }),
-    issueImageEffectOutputAccess: (_request, context) => safe(async () => {
+    issueImageEffectOutputAccess: (request, context) => safe(async () => {
       authorize(context);
-      throw new ConnectError("image effect output access owner not activated", Code.Unimplemented);
+      if (input.output === undefined) {
+        throw new ConnectError("image effect output access owner not activated", Code.Unimplemented);
+      }
+      const result = await input.output.issue({ callerAccessHandle: request.callerAccessHandle,
+        outputAccessCommandRef: request.outputAccessCommandRef,
+        logicalInvocationRef: request.logicalInvocationRef, outputEvidenceRef: request.outputEvidenceRef,
+        outputEvidenceDigest: request.outputEvidenceDigest,
+        callerRequestFingerprint: request.callerRequestFingerprint });
+      return create(IssueImageEffectOutputAccessResponseSchema, outputAccessMessage(result));
     }),
-    recoverImageEffectOutputAccessByCommand: (_request, context) => safe(async () => {
+    recoverImageEffectOutputAccessByCommand: (request, context) => safe(async () => {
       authorize(context);
-      throw new ConnectError("image effect output access owner not activated", Code.Unimplemented);
+      if (input.output === undefined) {
+        throw new ConnectError("image effect output access owner not activated", Code.Unimplemented);
+      }
+      const result = await input.output.recover({ callerAccessHandle: request.callerAccessHandle,
+        outputAccessCommandRef: request.outputAccessCommandRef });
+      return create(RecoverImageEffectOutputAccessByCommandResponseSchema, outputAccessMessage(result));
     }),
     requestCancelImageEffect: (request, context) => safe(async () => {
       authorize(context);
@@ -136,9 +176,12 @@ export function createImageEffectConnectService(input: Readonly<{
       });
       return create(AttachNextAttemptAuthorizationResponseSchema, resultMessage(result));
     }),
-    readImageEffectOutput: (_request, context) => {
+    readImageEffectOutput: (request, context) => {
       authorize(context);
-      return failClosedStream(new ConnectError("image effect output data plane not activated", Code.Unimplemented));
+      if (input.output === undefined) {
+        return failClosedStream(new ConnectError("image effect output data plane not activated", Code.Unimplemented));
+      }
+      return readOutput(input.output, request, context.signal);
     },
   };
 }
@@ -151,6 +194,19 @@ function failClosedStream<Output>(error: ConnectError): AsyncIterable<Output> {
       });
     },
   });
+}
+
+async function* readOutput(
+  output: Pick<ImageEffectOutputService, "read">,
+  request: Readonly<{ sourceAccessHandle: string; outputEvidenceRef: string;
+    outputEvidenceDigest: string; offset: bigint; maxBytes: number }>,
+  signal: AbortSignal,
+) {
+  try {
+    for await (const frame of output.read({ ...request, signal })) {
+      yield create(ReadImageEffectOutputResponseSchema, frame);
+    }
+  } catch (error) { throw connectError(error); }
 }
 
 export function createGeneratedImageEffectCommandDigestAuthority(): ImageEffectCommandDigestAuthority {
@@ -191,6 +247,13 @@ export function createGeneratedImageEffectCommandDigestAuthority(): ImageEffectC
       return attachNextAttemptAuthorizationRequestDigest(
         create(AttachNextAttemptAuthorizationEffectSchema, input), axes(authorization));
     },
+    issueOutput(
+      input: Parameters<ImageEffectCommandDigestAuthority["issueOutput"]>[0],
+      authorization: ImageEffectAccessAuthorization,
+    ) {
+      return issueImageEffectOutputAccessRequestDigest(
+        create(IssueImageEffectOutputAccessEffectSchema, input), axes(authorization));
+    },
     receipt(input: Parameters<ImageEffectCommandDigestAuthority["receipt"]>[0]) {
       const record = create(CanonicalImageEffectCommandReceiptV1Schema, {
         callerCommandRef: input.callerCommandRef,
@@ -208,6 +271,27 @@ export function createGeneratedImageEffectCommandDigestAuthority(): ImageEffectC
       });
     },
   });
+}
+
+export function createGeneratedImageEffectOutputEvidenceIdentityAuthority():
+ImageEffectOutputEvidenceIdentityAuthority {
+  return (output, context) => {
+    const record = create(ImageEffectOutputEvidenceSchema, {
+      candidateOrdinal: context.candidateOrdinal, candidateRef: output.candidateRef,
+      stableOutputSlotRef: output.stableOutputSlotRef,
+      outputEvidenceRef: `image-effect-output:${context.logicalInvocationRef}:${context.attemptRef}:` +
+        context.candidateOrdinal,
+      outputEvidenceDigest: "0".repeat(64), mediaType: output.mediaType, width: output.width,
+      height: output.height,
+      ...(output.declaredByteSize === undefined ? {} : { declaredByteSize: output.declaredByteSize }),
+    });
+    const digest = createHash("sha256")
+      .update("kokoro.platform.model.image.v1.ImageEffectOutputEvidence\0", "utf8")
+      .update(toBinary(ImageEffectOutputEvidenceSchema, record))
+      .digest("hex");
+    return Object.freeze({ outputEvidenceRef: `image-effect-output:sha256:${digest}`,
+      outputEvidenceDigest: digest });
+  };
 }
 
 function axes(authorization: ImageEffectAccessAuthorization): VerifiedModelImageEffectCommandAxes {
@@ -236,6 +320,40 @@ function resultMessage(result: ImageEffectCommandResult) {
     receiptDigest: result.receipt.receiptDigest,
     requestDigest: result.receipt.requestDigest,
   }), invocation: mapView(result.invocation) };
+}
+
+function outputAccessMessage(result: ImageEffectOutputAccessResult) {
+  return { receipt: mapReceipt(result.receipt), outputAccess: {
+    outputEvidenceRef: result.outputAccess.outputEvidenceRef,
+    outputEvidenceDigest: result.outputAccess.outputEvidenceDigest,
+    sourceAccessHandle: result.outputAccess.sourceAccessHandle,
+    sourceAccessExpiresAt: timestampFromDate(new Date(result.outputAccess.sourceAccessExpiresAt)),
+    maxReadableBytes: result.outputAccess.maxReadableBytes,
+  } };
+}
+
+function mapReceipt(receipt: ImageEffectCommandResult["receipt"]) {
+  return create(ImageEffectCommandReceiptSchema, {
+    callerCommandRef: receipt.callerCommandRef, kind: receiptKind(receipt.kind),
+    logicalInvocationRef: receipt.logicalInvocationRef, attemptRef: receipt.attemptRef,
+    attemptOrdinal: receipt.attemptOrdinal, receiptVersion: receipt.receiptVersion,
+    recordedAt: timestampFromDate(new Date(receipt.recordedAt)), receiptRef: receipt.receiptRef,
+    receiptDigest: receipt.receiptDigest, requestDigest: receipt.requestDigest,
+  });
+}
+
+function mapEvidenceFact(fact: ImageEffectEvidenceFact) {
+  return create(ImageEffectEvidenceFactSchema, { evidenceSequence: fact.evidenceSequence,
+    kind: fact.kind === "outcome" ? ImageEffectEvidenceKind.OUTCOME
+      : fact.kind === "usage" ? ImageEffectEvidenceKind.USAGE : ImageEffectEvidenceKind.OUTPUT,
+    evidenceRef: fact.evidenceRef, evidenceDigest: fact.evidenceDigest,
+    ...(fact.output === undefined ? {} : { output: create(ImageEffectOutputEvidenceSchema, {
+      candidateOrdinal: fact.output.candidateOrdinal, candidateRef: fact.output.candidateRef,
+      stableOutputSlotRef: fact.output.stableOutputSlotRef, outputEvidenceRef: fact.output.outputEvidenceRef,
+      outputEvidenceDigest: fact.output.outputEvidenceDigest, mediaType: fact.output.mediaType,
+      width: fact.output.width, height: fact.output.height,
+      ...(fact.output.declaredByteSize === undefined ? {} : { declaredByteSize: fact.output.declaredByteSize }),
+    }) }), recordedAt: timestampFromDate(new Date(fact.recordedAt)) });
 }
 
 function mapView(view: ImageEffectView) {
@@ -278,7 +396,9 @@ function receiptKind(value: ImageEffectCommandResult["receipt"]["kind"]): ImageE
     ? ImageEffectReceiptKind.CREATE_COMMITTED
     : value === "attempt_authorization_attached"
       ? ImageEffectReceiptKind.ATTEMPT_AUTHORIZATION_ATTACHED
-      : ImageEffectReceiptKind.CANCEL_INTENT_COMMITTED;
+      : value === "cancel_intent_committed"
+        ? ImageEffectReceiptKind.CANCEL_INTENT_COMMITTED
+        : ImageEffectReceiptKind.OUTPUT_ACCESS_ISSUED;
 }
 
 async function safe<Result>(work: () => Promise<Result>): Promise<Result> {

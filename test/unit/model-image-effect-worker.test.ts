@@ -14,7 +14,8 @@ const OBSERVATIONS: readonly ImageEffectProviderObservation[] = [
     outcomeEvidenceDigest: "c".repeat(64), usageEvidenceRef: "usage:one",
     usageEvidenceDigest: "d".repeat(64), outputs: [{ candidateRef: "candidate:one",
       stableOutputSlotRef: "slot:one", providerOutputFactRef: "output:one",
-      retrievalGrantHandle: "r".repeat(32) }] },
+      retrievalGrantHandle: "r".repeat(32), mediaType: "image/png", width: 1024, height: 1024,
+      declaredByteSize: 4096n }] },
 ];
 
 describe("image-effect dispatch worker", () => {
@@ -31,7 +32,7 @@ describe("image-effect dispatch worker", () => {
       observations: stream(OBSERVATIONS.slice(1)) }));
     const worker = new ImageEffectDispatchWorker({
       repository: {
-        claim: async () => ({ attemptRef: "attempt:one", logicalInvocationRef: "invocation:one",
+        claim: async () => ({ siteId: "site:one", attemptRef: "attempt:one", logicalInvocationRef: "invocation:one",
           dispatchOwnerRef: "worker:one", dispatchFence: 3n }),
         load: async () => ({ siteId: "site:one", logicalInvocationRef: "invocation:one",
           definitionRoleRef: "image.text_to_image.v1", modelOptionRevisionRef: "option:one",
@@ -144,7 +145,7 @@ describe("image-effect dispatch worker", () => {
 
 function repositoryFor(attempt: ImageEffectAttempt) {
   return {
-    claim: async () => ({ attemptRef: "attempt:one", logicalInvocationRef: "invocation:one",
+    claim: async () => ({ siteId: "site:one", attemptRef: "attempt:one", logicalInvocationRef: "invocation:one",
       dispatchOwnerRef: "worker:one", dispatchFence: 3n }),
     load: async () => ({ siteId: "site:one", logicalInvocationRef: "invocation:one",
       definitionRoleRef: "image.text_to_image.v1", modelOptionRevisionRef: "option:one",

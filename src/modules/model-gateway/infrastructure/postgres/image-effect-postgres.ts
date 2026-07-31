@@ -15,8 +15,26 @@ import type {
   ImageEffectRepository,
   ImageEffectUnitOfWork,
 } from "../../application/image-effect-service.js";
-import type { ImageEffectAttempt } from "../../domain/image-effect.js";
-import type { ImageEffectDispatchSourceGrant } from "../../application/image-effect-worker.js";
+import {
+  applyImageEffectObservation,
+  type ImageEffectAttempt,
+  type ImageEffectProviderObservation,
+  type ImageEffectProviderOutput,
+} from "../../domain/image-effect.js";
+import type { ImageEffectOutputEvidenceIdentityAuthority } from "../../domain/image-effect-evidence.js";
+import type {
+  ImageEffectDispatchClaim,
+  ImageEffectDispatchContext,
+  ImageEffectDispatchSourceGrant,
+  ImageEffectWorkerRepository,
+} from "../../application/image-effect-worker.js";
+import type { ImageEffectEvidenceRepository } from "../../application/image-effect-evidence-service.js";
+import type {
+  ImageEffectOutputAccessClaims,
+  ImageEffectOutputAccessRecord,
+  ImageEffectOutputEvidenceRecord,
+  ImageEffectOutputRepository,
+} from "../../application/image-effect-output-service.js";
 
 interface QueryResult<Row extends Record<string, unknown> = Record<string, unknown>> {
   readonly rows: readonly Row[];
@@ -452,6 +470,494 @@ export class PostgresImageEffectDispatchSecretLoader {
   }
 }
 
+export class PostgresImageEffectWorkerRepository implements ImageEffectWorkerRepository {
+  readonly #reference: () => string;
+  readonly #clock: () => Date;
+
+  constructor(private readonly dependencies: Readonly<{
+    pool: ImageEffectPool;
+    secretProtector: ImageEffectSecretProtector;
+    outputIdentity: ImageEffectOutputEvidenceIdentityAuthority;
+    reference?: () => string;
+    clock?: () => Date;
+  }>) {
+    this.#reference = dependencies.reference ?? (() => randomUUID());
+    this.#clock = dependencies.clock ?? (() => new Date());
+  }
+
+  async claim(input: Readonly<{
+    dispatchOwnerRef: string;
+    leaseMilliseconds: number;
+  }>): Promise<ImageEffectDispatchClaim | null> {
+    text(input.dispatchOwnerRef);
+    if (!Number.isInteger(input.leaseMilliseconds) || input.leaseMilliseconds < 1_000 ||
+        input.leaseMilliseconds > 300_000) throw new Error("IMAGE_EFFECT_DISPATCH_LEASE_INVALID");
+    return this.#withClient(async (client) => {
+      const result = await client.query(
+        `SELECT site_ref AS "siteId",attempt_ref AS "attemptRef",
+                logical_invocation_ref AS "logicalInvocationRef",dispatch_fence AS "dispatchFence"
+           FROM platform.claim_model_image_effect_dispatch($1,$2)`,
+        [input.dispatchOwnerRef, input.leaseMilliseconds],
+      );
+      if (result.rows.length === 0) return null;
+      const row = single(result.rows, "IMAGE_EFFECT_DISPATCH_CLAIM_CORRUPT");
+      return Object.freeze({ siteId: text(row.siteId), attemptRef: text(row.attemptRef),
+        logicalInvocationRef: text(row.logicalInvocationRef), dispatchOwnerRef: input.dispatchOwnerRef,
+        dispatchFence: positive(row.dispatchFence) });
+    });
+  }
+
+  async load(claim: ImageEffectDispatchClaim): Promise<ImageEffectDispatchContext> {
+    assertClaim(claim);
+    return this.#withClient(async (client) => {
+      const result = await client.query(
+        `SELECT context FROM platform.load_model_image_effect_dispatch_context($1,$2,$3)`,
+        [claim.attemptRef, claim.dispatchOwnerRef, claim.dispatchFence.toString()],
+      );
+      const row = single(result.rows, "IMAGE_EFFECT_DISPATCH_FENCE_LOST");
+      const context = jsonObject(row.context, "IMAGE_EFFECT_DISPATCH_CONTEXT_CORRUPT");
+      if (context.siteId !== claim.siteId || context.logicalInvocationRef !== claim.logicalInvocationRef) {
+        throw new Error("IMAGE_EFFECT_DISPATCH_CONTEXT_CORRUPT");
+      }
+      return mapWorkerContext(context);
+    });
+  }
+
+  async heartbeat(claim: ImageEffectDispatchClaim, leaseMilliseconds: number): Promise<boolean> {
+    assertClaim(claim);
+    if (!Number.isInteger(leaseMilliseconds) || leaseMilliseconds < 1_000 || leaseMilliseconds > 300_000) {
+      throw new Error("IMAGE_EFFECT_DISPATCH_LEASE_INVALID");
+    }
+    return this.#withClient(async (client) => {
+      const result = await client.query(
+        `SELECT platform.heartbeat_model_image_effect_dispatch($1,$2,$3,$4) AS alive`,
+        [claim.attemptRef, claim.dispatchOwnerRef, claim.dispatchFence.toString(), leaseMilliseconds],
+      );
+      const row = single(result.rows, "IMAGE_EFFECT_DISPATCH_HEARTBEAT_CORRUPT");
+      return boolean(row.alive);
+    });
+  }
+
+  async recordObservation(
+    claim: ImageEffectDispatchClaim,
+    observation: ImageEffectProviderObservation,
+    attempt: ImageEffectAttempt,
+  ): Promise<ImageEffectAttempt | null> {
+    assertClaim(claim);
+    if (attempt.attemptRef !== claim.attemptRef ||
+        attempt.lastProviderSequence !== observation.sequence) {
+      throw new Error("IMAGE_EFFECT_DISPATCH_OBSERVATION_INVALID");
+    }
+    const outputPayload = observation.kind === "succeeded"
+      ? this.#protectOutputs(claim, attempt, observation.outputs)
+      : Object.freeze([]);
+    const evidencePayload = terminalEvidencePayload(observation, outputPayload);
+    const attemptPayload = canonical(attemptRecordPayload(attempt));
+    const outputs = canonical(outputPayload);
+    const evidence = canonical(evidencePayload);
+    const outboxPayload = canonical({ logicalInvocationRef: claim.logicalInvocationRef,
+      attemptRef: claim.attemptRef, attemptOrdinal: attempt.ordinal, state: attempt.state,
+      providerSequence: observation.sequence.toString(), observedAt: observation.observedAt });
+    return this.#withClient(async (client) => {
+      const result = await client.query(
+        `SELECT persisted,replayed FROM platform.record_model_image_effect_observation(
+          $1,$2,$3,$4,$5,$6,$7,$8,$9::timestamptz,$10::jsonb,$11::jsonb,$12::jsonb,$13,$14::jsonb,$15)`,
+        [claim.attemptRef, claim.logicalInvocationRef, claim.dispatchOwnerRef,
+          claim.dispatchFence.toString(), observation.eventRef, observation.sequence.toString(),
+          observation.kind, observation.observationDigest, observation.observedAt, attemptPayload,
+          outputs, evidence, this.#validReference(this.#reference()), outboxPayload, sha256(outboxPayload)],
+      );
+      if (result.rows.length === 0) return null;
+      const row = single(result.rows, "IMAGE_EFFECT_OBSERVATION_PERSISTENCE_CORRUPT");
+      if (!boolean(row.persisted)) return null;
+      boolean(row.replayed);
+      return attempt;
+    });
+  }
+
+  async recordStartAmbiguity(
+    claim: ImageEffectDispatchClaim,
+    errorCode: string,
+  ): Promise<ImageEffectAttempt | null> {
+    const context = await this.load(claim);
+    if (context.attempt.state !== "planned") throw new Error("IMAGE_EFFECT_START_AMBIGUITY_STATE_INVALID");
+    const observedAt = this.#now();
+    const core = { kind: "submission_unknown" as const, eventRef: this.#validReference(this.#reference()),
+      sequence: context.attempt.lastProviderSequence + 1n, observedAt };
+    const observation = Object.freeze({ ...core,
+      observationDigest: sha256(canonical({ ...core, sequence: core.sequence.toString(), errorCode })) });
+    const attempt = applyImageEffectObservation(context.attempt, observation).attempt;
+    return this.recordObservation(claim, observation, attempt);
+  }
+
+  async recordStreamAmbiguity(
+    claim: ImageEffectDispatchClaim,
+    errorCode: string,
+  ): Promise<ImageEffectAttempt | null> {
+    const context = await this.load(claim);
+    const observedAt = this.#now();
+    const eventRef = this.#validReference(this.#reference());
+    const outcomeEvidenceRef = this.#validReference(`image-effect-outcome-unknown:${this.#reference()}`);
+    const outcomeEvidenceDigest = sha256(canonical({ eventRef, errorCode, observedAt,
+      attemptRef: claim.attemptRef }));
+    const observation: ImageEffectProviderObservation = Object.freeze({ kind: "outcome_unknown", eventRef,
+      sequence: context.attempt.lastProviderSequence + 1n, observationDigest: sha256(canonical({ eventRef,
+        errorCode, observedAt, outcomeEvidenceRef, outcomeEvidenceDigest })), observedAt,
+      outcomeEvidenceRef, outcomeEvidenceDigest });
+    const attempt = applyImageEffectObservation(context.attempt, observation).attempt;
+    return this.recordObservation(claim, observation, attempt);
+  }
+
+  async deadLetterBeforeProviderIo(claim: ImageEffectDispatchClaim, errorCode: string): Promise<boolean> {
+    assertClaim(claim);
+    if (!/^[A-Z0-9_]{1,128}$/u.test(errorCode)) throw new Error("IMAGE_EFFECT_ERROR_CODE_INVALID");
+    return this.#withClient(async (client) => {
+      const result = await client.query(
+        `SELECT platform.dead_letter_model_image_effect_before_provider_io($1,$2,$3,$4) AS changed`,
+        [claim.attemptRef, claim.dispatchOwnerRef, claim.dispatchFence.toString(), errorCode],
+      );
+      return boolean(single(result.rows, "IMAGE_EFFECT_DEAD_LETTER_CORRUPT").changed);
+    });
+  }
+
+  #protectOutputs(
+    claim: ImageEffectDispatchClaim,
+    attempt: ImageEffectAttempt,
+    outputs: readonly ImageEffectProviderOutput[],
+  ): readonly ProtectedOutputPayload[] {
+    return Object.freeze(outputs.map((output, index) => {
+      const candidateOrdinal = index + 1;
+      const identity = this.dependencies.outputIdentity(output, {
+        logicalInvocationRef: claim.logicalInvocationRef,
+        attemptRef: claim.attemptRef,
+        candidateOrdinal,
+      });
+      const plaintext = new TextEncoder().encode(output.retrievalGrantHandle);
+      let envelope: ModelGatewayResponseEnvelope;
+      try {
+        envelope = this.dependencies.secretProtector.seal(plaintext, {
+          siteId: claim.siteId,
+          logicalInvocationRef: claim.logicalInvocationRef,
+          purpose: "retrieval-grant",
+          bindingRef: imageEffectOutputSecretBinding(output.candidateRef, output.stableOutputSlotRef,
+            output.providerOutputFactRef),
+        });
+      } finally {
+        plaintext.fill(0);
+      }
+      return Object.freeze({ candidateOrdinal, candidateRef: output.candidateRef,
+        stableOutputSlotRef: output.stableOutputSlotRef, providerOutputFactRef: output.providerOutputFactRef,
+        retrievalGrantHandleDigest: sha256(output.retrievalGrantHandle), retrievalGrantEnvelope: envelope,
+        outputEvidenceRef: identity.outputEvidenceRef, outputEvidenceDigest: identity.outputEvidenceDigest,
+        mediaType: output.mediaType, width: output.width, height: output.height,
+        ...(output.declaredByteSize === undefined ? {} : { declaredByteSize: output.declaredByteSize.toString() }) });
+    }));
+  }
+
+  async #withClient<Result>(work: (client: ImageEffectPoolClient) => Promise<Result>): Promise<Result> {
+    const client = await this.dependencies.pool.connect();
+    try { return await work(client); }
+    finally { client.release(); }
+  }
+
+  #validReference(value: string): string { text(value); return value; }
+  #now(): string {
+    const now = this.#clock();
+    if (!Number.isFinite(now.getTime())) throw new Error("IMAGE_EFFECT_CLOCK_INVALID");
+    return now.toISOString();
+  }
+}
+
+export class PostgresImageEffectEvidenceRepository implements ImageEffectEvidenceRepository {
+  async readPage(
+    transaction: PlatformTransaction,
+    input: Parameters<ImageEffectEvidenceRepository["readPage"]>[1],
+  ): ReturnType<ImageEffectEvidenceRepository["readPage"]> {
+    const sql = resolvePlatformTransaction(transaction);
+    const invocationRows = await sql.query<Record<string, unknown>>(
+      `SELECT invocation.logical_invocation_ref AS "logicalInvocationRef",
+              invocation.model_invocation_command_ref AS "modelInvocationCommandRef",
+              invocation.owner_version AS "ownerVersion",
+              invocation.last_evidence_sequence AS "lastEvidenceSequence",
+              invocation.state,invocation.current_attempt_ordinal AS "currentAttemptOrdinal",
+              invocation.updated_at AS "observedAt",
+              attempt.canonical_outcome_evidence_ref AS "canonicalOutcomeEvidenceRef",
+              attempt.canonical_outcome_evidence_digest AS "canonicalOutcomeEvidenceDigest",
+              attempt.usage_evidence_ref AS "usageEvidenceRef",
+              attempt.usage_evidence_digest AS "usageEvidenceDigest"
+         FROM platform.model_image_effect_invocation invocation
+         JOIN platform.model_image_effect_attempt attempt
+           ON attempt.logical_invocation_ref=invocation.logical_invocation_ref
+          AND attempt.attempt_ordinal=invocation.current_attempt_ordinal
+        WHERE invocation.caller_identity=$1 AND invocation.logical_invocation_ref=$2
+        FOR SHARE OF invocation,attempt`,
+      [input.callerIdentity, input.logicalInvocationRef],
+    );
+    if (invocationRows.length === 0) return null;
+    const invocation = single(invocationRows, "IMAGE_EFFECT_EVIDENCE_INVOCATION_CORRUPT");
+    const factRows = await sql.query<Record<string, unknown>>(
+      `SELECT ledger.logical_invocation_ref AS "logicalInvocationRef",ledger.attempt_ref AS "attemptRef",
+              ledger.evidence_sequence AS "evidenceSequence",ledger.owner_version AS "ownerVersion",
+              ledger.evidence_kind AS kind,ledger.evidence_ref AS "evidenceRef",
+              ledger.evidence_digest AS "evidenceDigest",ledger.recorded_at AS "recordedAt",
+              ledger.candidate_ordinal AS "candidateOrdinal",ledger.candidate_ref AS "candidateRef",
+              ledger.stable_output_slot_ref AS "stableOutputSlotRef",
+              ledger.output_evidence_ref AS "outputEvidenceRef",
+              ledger.output_evidence_digest AS "outputEvidenceDigest",
+              ledger.provider_output_fact_ref AS "providerOutputFactRef",
+              ledger.retrieval_grant_handle_digest AS "retrievalGrantHandleDigest",
+              ledger.media_type AS "mediaType",ledger.width,ledger.height,
+              ledger.declared_byte_size AS "declaredByteSize"
+         FROM platform.model_image_effect_evidence_ledger ledger
+        WHERE ledger.logical_invocation_ref=$1 AND ledger.evidence_sequence>$2
+        ORDER BY ledger.evidence_sequence LIMIT $3`,
+      [input.logicalInvocationRef, input.afterEvidenceSequence.toString(), input.limit],
+    );
+    const optional = (value: unknown): string | undefined => value === null || value === undefined
+      ? undefined : text(value);
+    const optionalDigest = (value: unknown): string | undefined => value === null || value === undefined
+      ? undefined : hex(value);
+    const facts = Object.freeze(factRows.map((row) => {
+      const kind = enumValue(row.kind, ["outcome", "usage", "output"] as const);
+      return Object.freeze({ logicalInvocationRef: text(row.logicalInvocationRef),
+        attemptRef: text(row.attemptRef), evidenceSequence: positive(row.evidenceSequence),
+        ownerVersion: positive(row.ownerVersion), kind, evidenceRef: text(row.evidenceRef),
+        evidenceDigest: hex(row.evidenceDigest), recordedAt: instant(row.recordedAt),
+        ...(kind !== "output" ? {} : { output: Object.freeze({ candidateOrdinal: integer(row.candidateOrdinal),
+          candidateRef: text(row.candidateRef), stableOutputSlotRef: text(row.stableOutputSlotRef),
+          outputEvidenceRef: text(row.outputEvidenceRef), outputEvidenceDigest: hex(row.outputEvidenceDigest),
+          providerOutputFactRef: text(row.providerOutputFactRef),
+          retrievalGrantHandleDigest: hex(row.retrievalGrantHandleDigest),
+          mediaType: enumValue(row.mediaType, ["image/png", "image/jpeg", "image/webp"] as const),
+          width: integer(row.width), height: integer(row.height),
+          ...(row.declaredByteSize === null || row.declaredByteSize === undefined
+            ? {} : { declaredByteSize: positive(row.declaredByteSize) }) }) }) });
+    }));
+    const canonicalOutcomeEvidenceRef = optional(invocation.canonicalOutcomeEvidenceRef);
+    const canonicalOutcomeEvidenceDigest = optionalDigest(invocation.canonicalOutcomeEvidenceDigest);
+    const usageEvidenceRef = optional(invocation.usageEvidenceRef);
+    const usageEvidenceDigest = optionalDigest(invocation.usageEvidenceDigest);
+    return Object.freeze({ invocation: Object.freeze({ logicalInvocationRef: text(invocation.logicalInvocationRef),
+      modelInvocationCommandRef: text(invocation.modelInvocationCommandRef),
+      ownerVersion: positive(invocation.ownerVersion), currentAttemptOrdinal: integer(invocation.currentAttemptOrdinal),
+      state: enumValue(invocation.state, ["accepted", "submitted", "definitely_not_submitted",
+        "submission_unknown", "running", "succeeded", "failed", "cancel_requested", "canceled",
+        "outcome_unknown"] as const),
+      ...(canonicalOutcomeEvidenceRef === undefined ? {} : { canonicalOutcomeEvidenceRef }),
+      ...(canonicalOutcomeEvidenceDigest === undefined ? {} : { canonicalOutcomeEvidenceDigest }),
+      ...(usageEvidenceRef === undefined ? {} : { usageEvidenceRef }),
+      ...(usageEvidenceDigest === undefined ? {} : { usageEvidenceDigest }),
+      observedAt: instant(invocation.observedAt) }),
+    ownerHighWatermark: nonnegative(invocation.lastEvidenceSequence), facts });
+  }
+}
+
+export class PostgresImageEffectOutputRepository implements ImageEffectOutputRepository {
+  constructor(private readonly dependencies: Readonly<{ pool: ImageEffectPool }>) {}
+
+  async lockCommand(transaction: PlatformTransaction, input: Readonly<{
+    callerIdentity: string;
+    outputAccessCommandRef: string;
+  }>): Promise<ImageEffectOutputAccessRecord | null> {
+    const rows = await resolvePlatformTransaction(transaction).query<Record<string, unknown>>(
+      `${OUTPUT_ACCESS_SELECT} WHERE access.caller_identity=$1 AND access.output_access_command_ref=$2 FOR UPDATE`,
+      [input.callerIdentity, input.outputAccessCommandRef],
+    );
+    return rows.length === 0 ? null : mapOutputAccess(single(rows, "IMAGE_EFFECT_OUTPUT_ACCESS_CORRUPT"));
+  }
+
+  async lockEvidence(transaction: PlatformTransaction, input: Readonly<{
+    callerIdentity: string;
+    logicalInvocationRef: string;
+    outputEvidenceRef: string;
+  }>): Promise<ImageEffectOutputEvidenceRecord | null> {
+    const rows = await resolvePlatformTransaction(transaction).query<Record<string, unknown>>(
+      `SELECT output.attempt_ref AS "attemptRef",attempt.attempt_ordinal AS "attemptOrdinal",
+              attempt.logical_invocation_ref AS "logicalInvocationRef",
+              output.output_evidence_ref AS "outputEvidenceRef",
+              output.output_evidence_digest AS "outputEvidenceDigest",
+              output.declared_byte_size AS "declaredByteSize",
+              output.provider_output_fact_ref AS "providerOutputFactRef"
+         FROM platform.model_image_effect_output_evidence output
+         JOIN platform.model_image_effect_attempt attempt ON attempt.attempt_ref=output.attempt_ref
+         JOIN platform.model_image_effect_invocation invocation
+           ON invocation.logical_invocation_ref=attempt.logical_invocation_ref
+        WHERE invocation.caller_identity=$1 AND invocation.logical_invocation_ref=$2
+          AND output.output_evidence_ref=$3 FOR SHARE OF output,attempt,invocation`,
+      [input.callerIdentity, input.logicalInvocationRef, input.outputEvidenceRef],
+    );
+    return rows.length === 0 ? null : mapOutputEvidence(single(rows, "IMAGE_EFFECT_OUTPUT_EVIDENCE_CORRUPT"));
+  }
+
+  async create(transaction: PlatformTransaction, record: ImageEffectOutputAccessRecord): Promise<void> {
+    one(await resolvePlatformTransaction(transaction).execute(
+      `INSERT INTO platform.model_image_effect_output_access
+       (site_ref,caller_identity,caller_access_handle_digest,output_access_command_ref,request_digest,
+        logical_invocation_ref,output_evidence_ref,output_evidence_digest,attempt_ref,attempt_ordinal,
+        capability_ref,audience,max_readable_bytes,expires_at,security_epoch,source_access_handle_digest,
+        recovery_envelope,receipt_version,recorded_at,receipt_ref,receipt_digest)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::timestamptz,$15,$16,$17::jsonb,
+         $18,$19::timestamptz,$20,$21)`,
+      [record.siteId, record.callerIdentity, record.callerAccessHandleDigest, record.outputAccessCommandRef,
+        record.requestDigest, record.claims.logicalInvocationRef, record.claims.outputEvidenceRef,
+        record.claims.outputEvidenceDigest, record.receipt.attemptRef, record.receipt.attemptOrdinal,
+        record.claims.capabilityRef, record.claims.audience, record.claims.maxReadableBytes.toString(),
+        record.claims.expiresAt, record.claims.securityEpoch.toString(), record.sourceAccessHandleDigest,
+        canonical(record.recoveryEnvelope), record.receipt.receiptVersion.toString(), record.receipt.recordedAt,
+        record.receipt.receiptRef, record.receipt.receiptDigest],
+    ), "IMAGE_EFFECT_OUTPUT_ACCESS_INSERT_FAILED");
+  }
+
+  async authorizeRead(input: Readonly<{
+    sourceAccessHandleDigest: string;
+    claims: ImageEffectOutputAccessClaims;
+    now: string;
+  }>): Promise<ImageEffectOutputEvidenceRecord | null> {
+    const client = await this.dependencies.pool.connect();
+    try {
+      const result = await client.query(
+        `SELECT attempt_ref AS "attemptRef",attempt_ordinal AS "attemptOrdinal",
+                logical_invocation_ref AS "logicalInvocationRef",output_evidence_ref AS "outputEvidenceRef",
+                output_evidence_digest AS "outputEvidenceDigest",declared_byte_size AS "declaredByteSize",
+                provider_output_fact_ref AS "providerOutputFactRef"
+           FROM platform.authorize_model_image_effect_output_read($1,$2,$3,$4,$5,$6,$7,$8::timestamptz)`,
+        [input.sourceAccessHandleDigest, input.claims.capabilityRef, input.claims.siteId,
+          input.claims.callerIdentity, input.claims.outputEvidenceRef, input.claims.outputEvidenceDigest,
+          input.claims.securityEpoch.toString(), input.now],
+      );
+      return result.rows.length === 0 ? null
+        : mapOutputEvidence(single(result.rows, "IMAGE_EFFECT_OUTPUT_AUTHORIZATION_CORRUPT"));
+    } finally { client.release(); }
+  }
+}
+
+type ProtectedOutputPayload = Readonly<{
+  candidateOrdinal: number;
+  candidateRef: string;
+  stableOutputSlotRef: string;
+  providerOutputFactRef: string;
+  retrievalGrantHandleDigest: string;
+  retrievalGrantEnvelope: ModelGatewayResponseEnvelope;
+  outputEvidenceRef: string;
+  outputEvidenceDigest: string;
+  mediaType: ImageEffectProviderOutput["mediaType"];
+  width: number;
+  height: number;
+  declaredByteSize?: string;
+}>;
+
+function terminalEvidencePayload(
+  observation: ImageEffectProviderObservation,
+  outputs: readonly ProtectedOutputPayload[],
+): readonly Readonly<Record<string, unknown>>[] {
+  if (!["succeeded", "failed", "canceled", "outcome_unknown"].includes(observation.kind)) {
+    return Object.freeze([]);
+  }
+  const terminal = observation as Extract<ImageEffectProviderObservation, {
+    kind: "succeeded" | "failed" | "canceled" | "outcome_unknown";
+  }>;
+  const facts: Array<Readonly<Record<string, unknown>>> = [Object.freeze({ kind: "outcome",
+    evidenceRef: terminal.outcomeEvidenceRef, evidenceDigest: terminal.outcomeEvidenceDigest })];
+  if (terminal.usageEvidenceRef !== undefined && terminal.usageEvidenceDigest !== undefined) {
+    facts.push(Object.freeze({ kind: "usage", evidenceRef: terminal.usageEvidenceRef,
+      evidenceDigest: terminal.usageEvidenceDigest }));
+  }
+  for (const output of outputs) {
+    facts.push(Object.freeze({ kind: "output", evidenceRef: output.outputEvidenceRef,
+      evidenceDigest: output.outputEvidenceDigest, output: Object.freeze({
+        candidateOrdinal: output.candidateOrdinal, candidateRef: output.candidateRef,
+        stableOutputSlotRef: output.stableOutputSlotRef, outputEvidenceRef: output.outputEvidenceRef,
+        outputEvidenceDigest: output.outputEvidenceDigest, providerOutputFactRef: output.providerOutputFactRef,
+        retrievalGrantHandleDigest: output.retrievalGrantHandleDigest, mediaType: output.mediaType,
+        width: output.width, height: output.height,
+        ...(output.declaredByteSize === undefined ? {} : { declaredByteSize: output.declaredByteSize }),
+      }) }));
+  }
+  return Object.freeze(facts);
+}
+
+function attemptRecordPayload(attempt: ImageEffectAttempt): Readonly<Record<string, unknown>> {
+  return Object.freeze({ attemptRef: attempt.attemptRef, ordinal: attempt.ordinal,
+    state: attempt.state, cancelRequested: attempt.cancelRequested,
+    lastProviderSequence: attempt.lastProviderSequence.toString(),
+    providerOperationRef: attempt.providerOperationRef ?? null,
+    definitelyNotSubmittedReceiptRef: attempt.definitelyNotSubmittedReceiptRef ?? null,
+    definitelyNotSubmittedReceiptDigest: attempt.definitelyNotSubmittedReceiptDigest ?? null,
+    canonicalOutcomeEvidenceRef: attempt.canonicalOutcomeEvidenceRef ?? null,
+    canonicalOutcomeEvidenceDigest: attempt.canonicalOutcomeEvidenceDigest ?? null,
+    usageEvidenceRef: attempt.usageEvidenceRef ?? null,
+    usageEvidenceDigest: attempt.usageEvidenceDigest ?? null,
+    lateOutcome: attempt.lateOutcome });
+}
+
+function assertClaim(claim: ImageEffectDispatchClaim): void {
+  [claim.siteId, claim.attemptRef, claim.logicalInvocationRef, claim.dispatchOwnerRef].forEach(text);
+  if (claim.dispatchFence < 1n) throw new Error("IMAGE_EFFECT_DISPATCH_FENCE_INVALID");
+}
+
+function mapWorkerContext(value: Record<string, unknown>): ImageEffectDispatchContext {
+  const attemptValue = jsonObject(value.attempt, "IMAGE_EFFECT_DISPATCH_CONTEXT_CORRUPT");
+  const observationsValue = jsonArray(attemptValue.observations, "IMAGE_EFFECT_DISPATCH_CONTEXT_CORRUPT");
+  const outputsValue = jsonArray(attemptValue.outputs, "IMAGE_EFFECT_DISPATCH_CONTEXT_CORRUPT");
+  const attempt: ImageEffectAttempt = Object.freeze({
+    attemptRef: text(attemptValue.attemptRef), ordinal: integer(attemptValue.ordinal),
+    budgetCommitRef: text(attemptValue.budgetCommitRef), budgetCommitDigest: hex(attemptValue.budgetCommitDigest),
+    providerOperationKey: text(attemptValue.providerOperationKey),
+    state: enumValue(attemptValue.state, ["planned", "definitely_not_submitted", "submitted",
+      "submission_unknown", "running", "succeeded", "failed", "canceled", "outcome_unknown"] as const),
+    cancelRequested: boolean(attemptValue.cancelRequested),
+    lastProviderSequence: nonnegative(attemptValue.lastProviderSequence),
+    ...(attemptValue.providerOperationRef === null || attemptValue.providerOperationRef === undefined
+      ? {} : { providerOperationRef: text(attemptValue.providerOperationRef) }),
+    ...(attemptValue.definitelyNotSubmittedReceiptRef === null ||
+      attemptValue.definitelyNotSubmittedReceiptRef === undefined
+      ? {} : { definitelyNotSubmittedReceiptRef: text(attemptValue.definitelyNotSubmittedReceiptRef) }),
+    ...(attemptValue.definitelyNotSubmittedReceiptDigest === null ||
+      attemptValue.definitelyNotSubmittedReceiptDigest === undefined
+      ? {} : { definitelyNotSubmittedReceiptDigest: hex(attemptValue.definitelyNotSubmittedReceiptDigest) }),
+    ...(attemptValue.canonicalOutcomeEvidenceRef === null ||
+      attemptValue.canonicalOutcomeEvidenceRef === undefined
+      ? {} : { canonicalOutcomeEvidenceRef: text(attemptValue.canonicalOutcomeEvidenceRef) }),
+    ...(attemptValue.canonicalOutcomeEvidenceDigest === null ||
+      attemptValue.canonicalOutcomeEvidenceDigest === undefined
+      ? {} : { canonicalOutcomeEvidenceDigest: hex(attemptValue.canonicalOutcomeEvidenceDigest) }),
+    ...(attemptValue.usageEvidenceRef === null || attemptValue.usageEvidenceRef === undefined
+      ? {} : { usageEvidenceRef: text(attemptValue.usageEvidenceRef) }),
+    ...(attemptValue.usageEvidenceDigest === null || attemptValue.usageEvidenceDigest === undefined
+      ? {} : { usageEvidenceDigest: hex(attemptValue.usageEvidenceDigest) }),
+    outputs: Object.freeze(outputsValue.map((entry) => {
+      const output = jsonObject(entry, "IMAGE_EFFECT_DISPATCH_CONTEXT_CORRUPT");
+      return Object.freeze({ candidateRef: text(output.candidateRef),
+        stableOutputSlotRef: text(output.stableOutputSlotRef),
+        providerOutputFactRef: text(output.providerOutputFactRef),
+        retrievalGrantHandleDigest: hex(output.retrievalGrantHandleDigest) });
+    })),
+    lateOutcome: boolean(attemptValue.lateOutcome),
+    observations: Object.freeze(observationsValue.map((entry) => {
+      const observation = jsonObject(entry, "IMAGE_EFFECT_DISPATCH_CONTEXT_CORRUPT");
+      return Object.freeze({ eventRef: text(observation.eventRef), digest: hex(observation.digest),
+        sequence: nonnegative(observation.sequence) });
+    })),
+  });
+  return Object.freeze({ siteId: text(value.siteId), logicalInvocationRef: text(value.logicalInvocationRef),
+    definitionRoleRef: text(value.definitionRoleRef), modelOptionRevisionRef: text(value.modelOptionRevisionRef),
+    deploymentRef: text(value.deploymentRef), adapterKind: text(value.adapterKind),
+    providerModel: text(value.providerModel), operationInputRevisionRef: text(value.operationInputRevisionRef),
+    operationInputRevisionDigest: hex(value.operationInputRevisionDigest),
+    sourceGrantRefs: referenceArray(value.sourceGrantRefs, "IMAGE_EFFECT_DISPATCH_CONTEXT_CORRUPT", 16),
+    logicalOutputSlots: outputSlotArray(value.logicalOutputSlots), attempt });
+}
+
+function jsonObject(value: unknown, code: string): Record<string, unknown> {
+  if (!object(value)) throw new Error(code);
+  return value;
+}
+
+function jsonArray(value: unknown, code: string): readonly unknown[] {
+  if (!Array.isArray(value)) throw new Error(code);
+  return value;
+}
+
 interface CommandRow extends Record<string, unknown> {
   siteId: unknown; callerIdentity: unknown; callerAccessHandleDigest: unknown; callerCommandRef: unknown;
   commandKind: unknown; ownerCommandDigest: unknown; callerRequestFingerprint: unknown;
@@ -486,6 +992,51 @@ interface ObservationRow extends Record<string, unknown> {
 interface OutputRow extends Record<string, unknown> {
   attemptRef: unknown; candidateRef: unknown; stableOutputSlotRef: unknown;
   providerOutputFactRef: unknown; retrievalGrantHandleDigest: unknown; retrievalGrantEnvelope: unknown;
+}
+
+const OUTPUT_ACCESS_SELECT = `SELECT access.site_ref AS "siteId",
+  access.caller_identity AS "callerIdentity",
+  access.caller_access_handle_digest AS "callerAccessHandleDigest",
+  access.output_access_command_ref AS "outputAccessCommandRef",access.request_digest AS "requestDigest",
+  access.logical_invocation_ref AS "logicalInvocationRef",access.output_evidence_ref AS "outputEvidenceRef",
+  access.output_evidence_digest AS "outputEvidenceDigest",access.attempt_ref AS "attemptRef",
+  access.attempt_ordinal AS "attemptOrdinal",access.capability_ref AS "capabilityRef",access.audience,
+  access.max_readable_bytes AS "maxReadableBytes",access.expires_at AS "expiresAt",
+  access.security_epoch AS "securityEpoch",access.source_access_handle_digest AS "sourceAccessHandleDigest",
+  access.recovery_envelope AS "recoveryEnvelope",access.receipt_version AS "receiptVersion",
+  access.recorded_at AS "recordedAt",access.receipt_ref AS "receiptRef",
+  access.receipt_digest AS "receiptDigest" FROM platform.model_image_effect_output_access access`;
+
+function mapOutputEvidence(row: Record<string, unknown>): ImageEffectOutputEvidenceRecord {
+  return Object.freeze({ logicalInvocationRef: text(row.logicalInvocationRef), attemptRef: text(row.attemptRef),
+    attemptOrdinal: integer(row.attemptOrdinal), outputEvidenceRef: text(row.outputEvidenceRef),
+    outputEvidenceDigest: hex(row.outputEvidenceDigest), providerOutputFactRef: text(row.providerOutputFactRef),
+    ...(row.declaredByteSize === null || row.declaredByteSize === undefined
+      ? {} : { declaredByteSize: positive(row.declaredByteSize) }) });
+}
+
+function mapOutputAccess(row: Record<string, unknown>): ImageEffectOutputAccessRecord {
+  const audience = text(row.audience);
+  if (audience !== "platform-media-worker") throw new Error("IMAGE_EFFECT_OUTPUT_ACCESS_CORRUPT");
+  const callerIdentity = text(row.callerIdentity);
+  const outputAccessCommandRef = text(row.outputAccessCommandRef);
+  const requestDigest = hex(row.requestDigest);
+  const logicalInvocationRef = text(row.logicalInvocationRef);
+  const attemptRef = text(row.attemptRef);
+  const attemptOrdinal = integer(row.attemptOrdinal);
+  const recordedAt = instant(row.recordedAt);
+  const recoveryEnvelope = responseEnvelope(row.recoveryEnvelope);
+  return Object.freeze({ siteId: text(row.siteId), callerIdentity,
+    callerAccessHandleDigest: hex(row.callerAccessHandleDigest), outputAccessCommandRef, requestDigest,
+    receipt: Object.freeze({ callerCommandRef: outputAccessCommandRef, requestDigest,
+      kind: "output_access_issued", logicalInvocationRef, attemptRef, attemptOrdinal,
+      receiptVersion: positive(row.receiptVersion), recordedAt, receiptRef: text(row.receiptRef),
+      receiptDigest: hex(row.receiptDigest) }),
+    claims: Object.freeze({ capabilityRef: text(row.capabilityRef), siteId: text(row.siteId), callerIdentity,
+      audience: "platform-media-worker", logicalInvocationRef, outputEvidenceRef: text(row.outputEvidenceRef),
+      outputEvidenceDigest: hex(row.outputEvidenceDigest), maxReadableBytes: positive(row.maxReadableBytes),
+      expiresAt: instant(row.expiresAt), securityEpoch: positive(row.securityEpoch) }),
+    sourceAccessHandleDigest: hex(row.sourceAccessHandleDigest), recoveryEnvelope });
 }
 
 const INVOCATION_SELECT = `SELECT invocation.logical_invocation_ref AS "logicalInvocationRef",
