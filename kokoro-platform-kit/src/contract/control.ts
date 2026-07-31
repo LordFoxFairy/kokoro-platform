@@ -44,14 +44,6 @@ export const mcpGrantSchema = z
   .strict()
 export type McpGrant = z.infer<typeof mcpGrantSchema>
 
-export const mediaRuntimeGrantSchema = z
-  .object({
-    media_access_handle: z.string().min(1).max(256).refine((value) => value.trim() === value),
-    media_projection_reservation_handle: z.string().min(1).max(256).refine((value) => value.trim() === value),
-  })
-  .strict()
-export type MediaRuntimeGrant = z.infer<typeof mediaRuntimeGrantSchema>
-
 export const permissionsSchema = z
   .object({
     approval_tools: z.array(z.string().min(1)),
