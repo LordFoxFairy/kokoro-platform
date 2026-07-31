@@ -64,6 +64,8 @@ export type DerivedMediaChildAllocation = Readonly<{
   parentRevisionAfter: bigint;
   parentAllocationEpoch: bigint;
   childAllocationRef: string;
+  childAuthorizationSegmentRef: string;
+  childAuthorizationSegmentVersion: 1n;
   childRevisionBefore: 0n;
   childRevisionAfter: 1n;
   childAllocationEpoch: 1n;
@@ -156,6 +158,7 @@ export interface RunBudgetAuthority {
     businessOperationKey: string;
     requestDigest: string;
     exactCeiling: bigint;
+    executionManifestRef: string;
     audience: MediaChildAllocationAudience;
     purpose: MediaChildAllocationPurpose;
     consumptionScope: CreditConsumptionScope;

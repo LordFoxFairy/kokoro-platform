@@ -39,9 +39,12 @@ function taskRow(): MediaImageWorkerTaskRow {
     creditExecutionBudgetRootRef: "00000000-0000-7000-8000-000000000010",
     creditAuthorizationSegmentRef: "00000000-0000-7000-8000-000000000013",
     creditExecutionManifestRef: "execution-manifest:one",
+    creditBudgetKind: "agent_child",
     creditParentAllocationRef: "00000000-0000-7000-8000-000000000011",
     creditChildAllocationRef: "00000000-0000-7000-8000-000000000001",
     creditAllocationReceiptRef: "00000000-0000-7000-8000-000000000012",
+    creditRootHoldRef: null, creditRootAllocationRef: null, creditRootAllocationRevision: null,
+    creditRootAllocationEpoch: null, creditAuthorizationSegmentVersion: "2",
     creditReservedCeiling: "120", creditUnit: "credit",
     effectBudgetCommitRef: "effect-budget-commit:one", effectBudgetCommitDigest: "d".repeat(64),
     attemptOrdinal: 1, gatewayCallerRequestFingerprint: "a".repeat(64),
@@ -59,6 +62,9 @@ function taskRow(): MediaImageWorkerTaskRow {
     projectRef: binding.projectRef, workloadRef: binding.workloadRef, source: binding.source,
     definitionRevisionRef: binding.definitionRevisionRef,
     modelOptionRevisionRef: binding.modelOptionRevisionRef,
+    siteReleaseRef: null, siteSecurityEpoch: null, policyEpoch: null, workloadBindingEpoch: null,
+    identitySessionRef: null, identitySessionEpoch: null, restrictionEpoch: null,
+    membershipEpoch: null, authorizationEpoch: null,
     operationInputRevisionRef: protectedInput.operationInputRevisionRef,
     keyRevisionRef: protectedInput.keyRevisionRef,
     ciphertext: Buffer.from(protectedInput.ciphertextBase64, "base64"),
@@ -162,16 +168,41 @@ describe("Postgres Media image worker repository", () => {
       leaseMs: 30_000 })).rejects.toThrow("MEDIA_INPUT_AUTHENTICATION_FAILED");
   });
 
-  it("rejects Direct Studio rows until the worker projection carries its complete authority fence", async () => {
+  it("opens Direct Studio rows only with their complete frozen owner and root-budget authority", async () => {
     const database = new FakeDatabase();
-    database.claimResult = [{ ...taskRow(), source: "direct_studio" }];
+    const authority = Object.freeze({ siteReleaseRef: "site-release:one", siteSecurityEpoch: 2n,
+      policyEpoch: 3n, workloadBindingEpoch: 4n, identitySessionRef: "identity-session:one",
+      identitySessionEpoch: 5n, restrictionEpoch: 6n, membershipEpoch: 7n, authorizationEpoch: 8n });
+    const directBinding: MediaOperationOwnerBinding = Object.freeze({ ...binding, source: "direct_studio" as const,
+      authority });
+    const directInput = new EnvelopeOperationInputProtector({ activeKey: {
+      keyRevisionRef: "media-kek:one", key,
+    } }).protect({ operationInputRevisionRef: "media-input:one", ownerBinding: directBinding,
+      canonicalBytes: canonicalMediaOperationInputV1Bytes(request) });
+    database.claimResult = [{ ...taskRow(), source: "direct_studio", creditBudgetKind: "direct_root",
+      creditParentAllocationRef: null, creditChildAllocationRef: null, creditAllocationReceiptRef: null,
+      creditRootHoldRef: "00000000-0000-7000-8000-000000000014",
+      creditRootAllocationRef: "00000000-0000-7000-8000-000000000015",
+      creditRootAllocationRevision: "2", creditRootAllocationEpoch: "3",
+      creditAuthorizationSegmentVersion: "4", siteReleaseRef: authority.siteReleaseRef,
+      siteSecurityEpoch: authority.siteSecurityEpoch, policyEpoch: authority.policyEpoch,
+      workloadBindingEpoch: authority.workloadBindingEpoch, identitySessionRef: authority.identitySessionRef,
+      identitySessionEpoch: authority.identitySessionEpoch, restrictionEpoch: authority.restrictionEpoch,
+      membershipEpoch: authority.membershipEpoch, authorizationEpoch: authority.authorizationEpoch,
+      ciphertext: Buffer.from(directInput.ciphertextBase64, "base64"),
+      contentIv: Buffer.from(directInput.contentIvBase64, "base64"),
+      contentTag: Buffer.from(directInput.contentTagBase64, "base64"),
+      wrappedDek: Buffer.from(directInput.wrappedDekBase64, "base64"),
+      wrapIv: Buffer.from(directInput.wrapIvBase64, "base64"),
+      wrapTag: Buffer.from(directInput.wrapTagBase64, "base64") }];
     const repository = new PostgresMediaImageWorkerRepository({ database,
       inputProtector: new EnvelopeOperationInputProtector({ activeKey: { keyRevisionRef: "media-kek:one", key } }),
       capabilityOpener: opener,
       leaseToken: () => "lease-token-that-never-enters-postgres" });
 
     await expect(repository.claim({ workerId: "worker:one", now: "2026-07-31T00:00:00.000Z",
-      leaseMs: 30_000 })).rejects.toThrow("MEDIA_WORKER_OWNER_BINDING_UNSUPPORTED");
+      leaseMs: 30_000 })).resolves.toMatchObject({ creditBudget: { kind: "direct_root",
+        rootAllocationRevision: 2n, rootAllocationEpoch: 3n, authorizationSegmentVersion: 4n } });
   });
 
   it("fails closed when the owner-frozen Definition policy is absent", async () => {

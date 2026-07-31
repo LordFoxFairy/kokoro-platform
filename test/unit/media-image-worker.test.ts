@@ -51,6 +51,12 @@ describe("image.text_to_image worker closure", () => {
     expect(events).toContain("usage.record");
     expect(effectClosure.mock.invocationCallOrder[0]).toBeLessThan(finalTerminal.mock.invocationCallOrder[0]!);
     expect(credit.finalizeBudget).toHaveBeenCalledWith(expect.objectContaining({
+      siteId: "site:example",
+      taskRef: "media-task:example",
+      leaseEpoch: 1n,
+      leaseToken: expect.any(String),
+      modelInvocationCommandRef: "model-invocation-command:example",
+      logicalInvocationRef: expect.stringMatching(/^image-invocation:/u),
       effectClosureReceiptRef: "media-effect-closure:completed:media-operation:example",
     }));
     expect(finalTerminal).toHaveBeenCalledWith(expect.objectContaining({
@@ -179,6 +185,9 @@ describe("image.text_to_image worker closure", () => {
 
     expect(await worker.runOne(new AbortController().signal)).toBe("completed");
     expect(finalizeBudget).toHaveBeenCalledWith(expect.objectContaining({ budget: directBudget,
+      siteId: "site:example", taskRef: "media-task:example", leaseEpoch: 1n,
+      modelInvocationCommandRef: "model-invocation-command:example",
+      logicalInvocationRef: expect.stringMatching(/^image-invocation:/u),
       outcome: "completed", usage: expect.objectContaining({ attemptUsageEvidenceReceiptRef: "usage:direct" }) }));
   });
 

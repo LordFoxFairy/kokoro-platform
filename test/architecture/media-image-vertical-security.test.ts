@@ -25,6 +25,14 @@ const localCreditOwner = readFileSync(new URL(
   "../../src/process/media-image-local-credit-owner.ts",
   import.meta.url,
 ), "utf8");
+const typedUsageMigration = readFileSync(new URL(
+  "../../prisma/migrations/20260811_media_image_typed_usage_materializer/migration.sql",
+  import.meta.url,
+), "utf8");
+const workerDatabase = readFileSync(new URL(
+  "../../src/modules/media/infrastructure/postgres/media-image-worker-database.ts",
+  import.meta.url,
+), "utf8");
 
 describe("Media/Artifact image vertical database boundary", () => {
   it("uses encrypted-only canonical input persistence", () => {
@@ -66,9 +74,11 @@ describe("Media/Artifact image vertical database boundary", () => {
     expect(migration).toContain("REVOKE CREATE ON SCHEMA platform FROM platform_media_public,platform_media_runtime,platform_media_worker");
   });
 
-  it("keeps the Agent submit adapter function-only", () => {
+  it("keeps both submit adapters function-only", () => {
     expect(submitRepository).toContain("platform.begin_media_image_command");
     expect(submitRepository).toContain("platform.commit_media_image_operation");
+    expect(submitRepository).toContain("platform.begin_direct_media_image_command");
+    expect(submitRepository).toContain("platform.commit_direct_media_image_operation");
     expect(submitRepository).not.toMatch(
       /\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+platform\.(?:media_|artifact)/iu,
     );
@@ -129,6 +139,16 @@ describe("Media/Artifact image vertical database boundary", () => {
     expect(commit).toContain("p_record->>'trustInputDecisionRef'<>journal_record.trust_input_decision_ref");
   });
 
+  it("loads composite command authorities with PostgreSQL-valid row assignment", () => {
+    const commit = routine("commit_media_image_operation");
+    expect(commit).not.toMatch(
+      /SELECT\s+journal\s*,\s*authority\s+INTO\s+STRICT\s+journal_record\s*,\s*authority_record/iu,
+    );
+    expect(commit).toContain("SELECT journal.* INTO STRICT journal_record");
+    expect(commit).toContain("SELECT authority.* INTO STRICT authority_record");
+    expect(commit).toContain("FOR SHARE OF authority");
+  });
+
   it("accepts later sibling allocations while proving the exact child reservation fence", () => {
     const commit = routine("commit_media_image_operation");
     expect(commit).not.toContain(
@@ -140,7 +160,7 @@ describe("Media/Artifact image vertical database boundary", () => {
     expect(commit).toContain("credit_receipt.parent_expected_epoch=journal_record.credit_parent_expected_epoch");
     expect(commit).toContain("credit_receipt.business_operation_key=journal_record.command_ref");
     expect(commit).toContain("credit_receipt.request_digest=journal_record.owner_request_digest");
-    expect(commit).toContain("child.current_revision=credit_receipt.child_initial_revision");
+    expect(commit).toContain("child.current_revision=child_segment.committed_to_allocation_revision");
     expect(commit).toContain("child_revision.allocation_epoch=credit_receipt.child_initial_epoch");
     expect(commit).toContain("child_revision.state='active'");
   });
@@ -156,13 +176,66 @@ describe("Media/Artifact image vertical database boundary", () => {
   it("binds the Credit child receipt to the same Media operation and full allocation lineage", () => {
     const operation = table("media_operation");
     expect(migration).toMatch(
-      /UNIQUE\(allocation_reservation_receipt_ref,site_ref,execution_budget_root_ref,\s*parent_allocation_ref,child_allocation_ref,media_operation_ref\)/u,
+      /UNIQUE\(allocation_reservation_receipt_ref,site_ref,execution_budget_root_ref,\s*parent_allocation_ref,child_allocation_ref,child_authorization_segment_ref,media_operation_ref\)/u,
     );
     expect(operation).toContain("credit_execution_budget_root_ref UUID NOT NULL");
-    expect(operation).toContain("credit_parent_allocation_ref UUID NOT NULL");
+    expect(operation).toContain("credit_budget_kind TEXT NOT NULL");
+    expect(operation).toContain("credit_parent_allocation_ref UUID");
+    expect(operation).toContain("credit_root_hold_ref UUID");
+    expect(operation).toContain("credit_budget_kind='agent_child' AND credit_parent_allocation_ref IS NOT NULL");
+    expect(operation).toContain("credit_budget_kind='direct_root' AND credit_parent_allocation_ref IS NULL");
     expect(operation).toMatch(
-      /FOREIGN KEY\(credit_allocation_receipt_ref,site_ref,credit_execution_budget_root_ref,\s*credit_parent_allocation_ref,credit_child_allocation_ref,operation_ref\)/u,
+      /FOREIGN KEY\(credit_allocation_receipt_ref,site_ref,credit_execution_budget_root_ref,\s*credit_parent_allocation_ref,credit_child_allocation_ref,credit_authorization_segment_ref,operation_ref\)/u,
     );
+  });
+
+  it("materializes image usage only through the exact pre-authorized Credit attempt identity", () => {
+    expect(typedUsageMigration).toContain("JOIN platform.credit_usage_attempt_intent intent");
+    expect(typedUsageMigration).toContain(
+      "PERFORM platform.assert_media_image_worker_lease(p_task_ref,p_operation_ref,p_lease_epoch,p_lease_token_hash)",
+    );
+    expect(typedUsageMigration).toContain(
+      "intent.attempt_authorization_ref=attempt.attempt_authorization_ref",
+    );
+    expect(typedUsageMigration).toContain(
+      "intent.authorization_segment_ref=operation.credit_authorization_segment_ref",
+    );
+    expect(typedUsageMigration).toContain(
+      "intent.execution_manifest_ref=operation.credit_execution_manifest_ref",
+    );
+    expect(typedUsageMigration).toContain("intent.attempt_ref=ledger.attempt_ref");
+    expect(typedUsageMigration).toContain("intent.logical_effect_ref=invocation.logical_invocation_ref");
+    expect(typedUsageMigration).toContain("attempt.attempt_authorization_fence_epoch");
+    expect(typedUsageMigration).toContain("intent.producer_kind='model_gateway'");
+    for (const alias of ["authorizationSegmentRef", "executionManifestRef", "producerKind",
+      "producerContext", "producerGeneration", "logicalEffectRef"]) {
+      expect(workerDatabase).toContain(`AS "${alias}"`);
+    }
+  });
+
+  it("allows an exact empty closure only for the canceled-before-effect path", () => {
+    expect(typedUsageMigration).toContain(
+      "DROP CONSTRAINT credit_usage_segment_closure_expected_evidence_count_check",
+    );
+    expect(typedUsageMigration).toContain("expected_evidence_count BETWEEN 0 AND 4096");
+  });
+
+  it("freezes the full Direct Studio authority and root budget before dispatch", () => {
+    const journal = table("media_direct_command_journal");
+    const begin = routine("begin_direct_media_image_command");
+    const commit = routine("commit_direct_media_image_operation");
+    for (const field of ["site_release_ref", "site_security_epoch", "policy_epoch", "workload_binding_epoch",
+      "identity_session_ref", "identity_session_epoch", "restriction_epoch", "membership_epoch",
+      "authorization_epoch"]) {
+      expect(journal).toContain(field);
+    }
+    expect(begin).toContain("FOR SHARE OF site,release,binding,subject,identity,project,membership");
+    expect(commit).toContain("p_record#>>'{credit,kind}'<>'direct_root'");
+    expect(commit).toContain("JOIN platform.credit_execution_budget_root root");
+    expect(commit).toContain("JOIN platform.credit_authorization_segment segment");
+    expect(commit).toContain("FOR SHARE OF site,auth_release,binding,subject,identity,project,membership,definition");
+    expect(migration).toContain("CREATE TRIGGER media_direct_command_receipt_immutable");
+    expect(migration).toContain("REVOKE ALL ON FUNCTION platform.commit_direct_media_image_operation(JSONB,CHAR)");
   });
 
   it("never extends the Session-owned media projection reservation expiry", () => {

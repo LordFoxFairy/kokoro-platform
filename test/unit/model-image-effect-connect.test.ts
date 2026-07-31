@@ -17,6 +17,9 @@ const RESULT = Object.freeze({
     receiptRef: `image-effect-receipt:sha256:${"b".repeat(64)}`, receiptDigest: "b".repeat(64) }),
   invocation: Object.freeze({ logicalInvocationRef: "invocation:one", modelInvocationCommandRef: "command:one",
     ownerVersion: 1n, currentAttemptOrdinal: 1, state: "accepted" as const,
+    attemptAuthorizationRef: "00000000-0000-7000-8000-000000000111",
+    attemptAuthorizationFenceEpoch: 1n,
+    attemptAuthorizationDigest: "7".repeat(64),
     observedAt: "2026-07-31T12:00:00.000Z" }),
   replayed: false,
 });

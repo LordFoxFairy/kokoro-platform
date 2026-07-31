@@ -18,6 +18,8 @@ const HANDLE = "h".repeat(32);
 const ROTATED_HANDLE = "x".repeat(32);
 const MODEL_HANDLE = "m".repeat(32);
 const DIGEST_AUTHORITY = createGeneratedImageEffectCommandDigestAuthority();
+const ATTEMPT_AUTHORIZATION_REF = "00000000-0000-7000-8000-000000000111";
+const ATTEMPT_AUTHORIZATION_DIGEST = "7".repeat(64);
 
 describe("ImageEffectService", () => {
   it("commits the exact budget before persisting a provider-dispatchable attempt and replays without a second commit", async () => {
@@ -28,6 +30,8 @@ describe("ImageEffectService", () => {
         events.push("budget.consume");
         return { kind: "accepted", effectBudgetCommitRef: input.effectBudgetCommitRef,
           effectBudgetCommitDigest: input.effectBudgetCommitDigest, attemptOrdinal: input.attemptOrdinal,
+          attemptAuthorizationRef: ATTEMPT_AUTHORIZATION_REF, attemptAuthorizationFenceEpoch: 1n,
+          attemptAuthorizationDigest: ATTEMPT_AUTHORIZATION_DIGEST,
           expiresAt: "2026-08-01T12:00:00.000Z" } as const;
       }),
     };
@@ -36,6 +40,8 @@ describe("ImageEffectService", () => {
     expect(first.replayed).toBe(false);
     expect(first.invocation.currentAttemptOrdinal).toBe(1);
     expect(first.invocation.state).toBe("accepted");
+    expect(first.invocation).toMatchObject({ attemptAuthorizationRef: ATTEMPT_AUTHORIZATION_REF,
+      attemptAuthorizationFenceEpoch: 1n, attemptAuthorizationDigest: ATTEMPT_AUTHORIZATION_DIGEST });
     expect(first.receipt.requestDigest).toBe(createCommand().callerRequestFingerprint);
     expect(first.receipt.receiptRef).toBe(`image-effect-receipt:sha256:${first.receipt.receiptDigest}`);
     expect(events).toEqual(["budget.consume", "repository.create"]);
@@ -52,6 +58,8 @@ describe("ImageEffectService", () => {
       effectBudgetCommitRef: input.effectBudgetCommitRef,
       effectBudgetCommitDigest: input.effectBudgetCommitDigest,
       attemptOrdinal: input.attemptOrdinal,
+      attemptAuthorizationRef: ATTEMPT_AUTHORIZATION_REF, attemptAuthorizationFenceEpoch: 1n,
+      attemptAuthorizationDigest: ATTEMPT_AUTHORIZATION_DIGEST,
       expiresAt: "2026-08-01T12:00:00.000Z",
     })) };
     const service = serviceWith(repository, budget);
@@ -68,6 +76,8 @@ describe("ImageEffectService", () => {
       effectBudgetCommitRef: input.effectBudgetCommitRef,
       effectBudgetCommitDigest: input.effectBudgetCommitDigest,
       attemptOrdinal: input.attemptOrdinal,
+      attemptAuthorizationRef: ATTEMPT_AUTHORIZATION_REF, attemptAuthorizationFenceEpoch: 1n,
+      attemptAuthorizationDigest: ATTEMPT_AUTHORIZATION_DIGEST,
       expiresAt: "2026-08-01T12:00:00.000Z",
     })) };
     const service = serviceWith(repository, budget);
@@ -84,6 +94,8 @@ describe("ImageEffectService", () => {
       effectBudgetCommitRef: input.effectBudgetCommitRef,
       effectBudgetCommitDigest: input.effectBudgetCommitDigest,
       attemptOrdinal: input.attemptOrdinal,
+      attemptAuthorizationRef: ATTEMPT_AUTHORIZATION_REF, attemptAuthorizationFenceEpoch: 1n,
+      attemptAuthorizationDigest: ATTEMPT_AUTHORIZATION_DIGEST,
       expiresAt: "2026-08-01T12:00:00.000Z",
     })) };
     const service = serviceWith(repository, budget, (scope) => authorizationFor(
@@ -136,6 +148,8 @@ describe("ImageEffectService", () => {
     const service = serviceWith(repository, { consume: async (_transaction, input) => ({
       kind: "accepted", effectBudgetCommitRef: input.effectBudgetCommitRef,
       effectBudgetCommitDigest: input.effectBudgetCommitDigest, attemptOrdinal: input.attemptOrdinal,
+      attemptAuthorizationRef: ATTEMPT_AUTHORIZATION_REF, attemptAuthorizationFenceEpoch: 1n,
+      attemptAuthorizationDigest: ATTEMPT_AUTHORIZATION_DIGEST,
       expiresAt: "2026-08-01T12:00:00.000Z",
     }) });
     const created = await service.create(createCommand());
@@ -156,6 +170,8 @@ describe("ImageEffectService", () => {
     const service = serviceWith(repository, { consume: async (_transaction, input) => ({
       kind: "accepted", effectBudgetCommitRef: input.effectBudgetCommitRef,
       effectBudgetCommitDigest: input.effectBudgetCommitDigest, attemptOrdinal: input.attemptOrdinal,
+      attemptAuthorizationRef: ATTEMPT_AUTHORIZATION_REF, attemptAuthorizationFenceEpoch: 1n,
+      attemptAuthorizationDigest: ATTEMPT_AUTHORIZATION_DIGEST,
       expiresAt: "2026-08-01T12:00:00.000Z",
     }) });
     await service.create(createCommand());

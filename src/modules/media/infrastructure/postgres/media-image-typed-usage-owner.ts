@@ -3,6 +3,15 @@ import { imageEffectUsageFactDigest, type ImageEffectUsageFact } from
 
 export type MediaImageTypedUsageFactRow = Readonly<{
   attemptRef: string;
+  attemptAuthorizationRef: string;
+  attemptAuthorizationFenceEpoch: bigint | string;
+  attemptAuthorizationDigest: string;
+  authorizationSegmentRef: string;
+  executionManifestRef: string;
+  producerKind: "model_gateway";
+  producerContext: string;
+  producerGeneration: bigint | string;
+  logicalEffectRef: string;
   usageEvidenceRef: string;
   usageEvidenceDigest: string;
   usageFact: unknown;
@@ -11,7 +20,10 @@ export type MediaImageTypedUsageFactRow = Readonly<{
 
 export interface MediaImageTypedUsageFactDatabase {
   loadMediaImageEffectUsageFact(input: Readonly<{
+    taskRef: string;
     operationRef: string;
+    leaseEpoch: bigint;
+    leaseTokenHash: string;
     modelInvocationCommandRef: string;
     logicalInvocationRef: string;
     usageEvidenceRef: string;
@@ -24,29 +36,51 @@ export class PostgresMediaImageTypedUsageFactOwner {
   constructor(private readonly database: MediaImageTypedUsageFactDatabase) {}
 
   async loadCertified(input: Parameters<MediaImageTypedUsageFactDatabase["loadMediaImageEffectUsageFact"]>[0]):
-  Promise<Readonly<{ kind: "available"; attemptRef: string; fact: ImageEffectUsageFact }> |
-    Readonly<{ kind: "reconciliation_required"; code: "TYPED_USAGE_FACT_UNAVAILABLE" }>> {
-    for (const value of [input.operationRef, input.modelInvocationCommandRef, input.logicalInvocationRef,
+  Promise<Readonly<{ kind: "available"; attemptRef: string; attemptAuthorizationRef: string;
+      attemptAuthorizationFenceEpoch: bigint; attemptAuthorizationDigest: string;
+      authorizationSegmentRef: string; executionManifestRef: string; producerKind: "model_gateway";
+      producerContext: string; producerGeneration: bigint; logicalEffectRef: string;
+      fact: ImageEffectUsageFact }> |
+    Readonly<{ kind: "reconciliation_required"; code: "TYPED_USAGE_FACT_UNAVAILABLE" |
+      "TYPED_USAGE_FACT_AMBIGUOUS" }>> {
+    for (const value of [input.taskRef, input.operationRef, input.modelInvocationCommandRef, input.logicalInvocationRef,
       input.usageEvidenceRef]) reference(value);
+    if (input.leaseEpoch <= 0n) throw new Error("MEDIA_TYPED_USAGE_FACT_INVALID");
+    digest(input.leaseTokenHash);
     digest(input.usageEvidenceDigest);
     const rows = await this.database.loadMediaImageEffectUsageFact(input);
     if (rows.length === 0) {
       return Object.freeze({ kind: "reconciliation_required" as const,
         code: "TYPED_USAGE_FACT_UNAVAILABLE" as const });
     }
-    if (rows.length !== 1) throw new Error("MEDIA_TYPED_USAGE_FACT_AMBIGUOUS");
+    if (rows.length !== 1) return Object.freeze({ kind: "reconciliation_required" as const,
+      code: "TYPED_USAGE_FACT_AMBIGUOUS" as const });
     const row = rows[0]!;
     if (row.usageEvidenceRef !== input.usageEvidenceRef ||
         row.usageEvidenceDigest !== input.usageEvidenceDigest) {
       throw new Error("MEDIA_TYPED_USAGE_FACT_BINDING_INVALID");
     }
     reference(row.attemptRef);
+    reference(row.attemptAuthorizationRef);
+    reference(row.authorizationSegmentRef);
+    reference(row.executionManifestRef);
+    reference(row.producerContext);
+    reference(row.logicalEffectRef);
+    if (row.producerKind !== "model_gateway") throw new Error("MEDIA_TYPED_USAGE_FACT_BINDING_INVALID");
+    const attemptAuthorizationFenceEpoch = positive(row.attemptAuthorizationFenceEpoch);
+    const producerGeneration = positive(row.producerGeneration);
+    digest(row.attemptAuthorizationDigest);
     instant(row.recordedAt);
     const fact = parseFact(row.usageFact);
     if (imageEffectUsageFactDigest(fact) !== row.usageEvidenceDigest) {
       throw new Error("MEDIA_TYPED_USAGE_FACT_DIGEST_MISMATCH");
     }
-    return Object.freeze({ kind: "available" as const, attemptRef: row.attemptRef, fact });
+    return Object.freeze({ kind: "available" as const, attemptRef: row.attemptRef,
+      attemptAuthorizationRef: row.attemptAuthorizationRef, attemptAuthorizationFenceEpoch,
+      attemptAuthorizationDigest: row.attemptAuthorizationDigest,
+      authorizationSegmentRef: row.authorizationSegmentRef, executionManifestRef: row.executionManifestRef,
+      producerKind: row.producerKind, producerContext: row.producerContext, producerGeneration,
+      logicalEffectRef: row.logicalEffectRef, fact });
   }
 }
 
@@ -103,4 +137,10 @@ function instant(value: Date | string): string {
   const parsed = value instanceof Date ? value : new Date(value);
   if (!Number.isFinite(parsed.getTime())) throw new Error("MEDIA_TYPED_USAGE_FACT_INVALID");
   return parsed.toISOString();
+}
+function positive(value: bigint | string): bigint {
+  const parsed = typeof value === "bigint" ? value
+    : /^(0|[1-9][0-9]*)$/u.test(value) ? BigInt(value) : 0n;
+  if (parsed < 1n) throw new Error("MEDIA_TYPED_USAGE_FACT_INVALID");
+  return parsed;
 }

@@ -16,6 +16,7 @@ describe("Media child receipt codec", () => {
       allocationReservationReceiptRef: "reservation-1", executionBudgetRootRef: UUID_ROOT,
       parentAllocationRef: UUID_PARENT, parentRevisionBefore: 3n, parentRevisionAfter: 4n,
       parentAllocationEpoch: 2n, childAllocationRef: UUID_CHILD, childRevisionBefore: 0n,
+      childAuthorizationSegmentRef: UUID_SEGMENT, childAuthorizationSegmentVersion: 1n,
       childRevisionAfter: 1n, childAllocationEpoch: 1n, mediaOperationRef: "media-1",
       reservedCeiling: 30n, audience: "media", purpose: "media_operation",
       consumptionScope: { surfaceRef: "media.image", capabilityKey: "image.text_to_image", agentRef: null },
@@ -45,6 +46,7 @@ describe("Media child receipt codec", () => {
       allocationReservationReceiptRef: "reservation-1", executionBudgetRootRef: UUID_ROOT,
       parentAllocationRef: UUID_PARENT, parentRevisionBefore: 3n, parentRevisionAfter: 4n,
       parentAllocationEpoch: 2n, childAllocationRef: UUID_CHILD, childRevisionBefore: 0n as const,
+      childAuthorizationSegmentRef: UUID_SEGMENT, childAuthorizationSegmentVersion: 1n as const,
       childRevisionAfter: 1n as const, childAllocationEpoch: 1n as const, mediaOperationRef: "media-1",
       reservedCeiling: 30n, audience: "media" as const, purpose: "media_operation" as const,
       consumptionScope: { surfaceRef: "media.image", capabilityKey: "image.text_to_image", agentRef: null },
@@ -69,3 +71,4 @@ const NOW = "2026-07-29T00:00:00.000Z";
 const UUID_ROOT = "00000000-0000-7000-8000-000000000202";
 const UUID_PARENT = "00000000-0000-7000-8000-000000000203";
 const UUID_CHILD = "00000000-0000-7000-8000-000000000301";
+const UUID_SEGMENT = "00000000-0000-7000-8000-000000000305";

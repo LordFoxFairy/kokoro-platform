@@ -358,7 +358,13 @@ export interface MediaImageUsagePort {
 
 export interface MediaImageCreditSettlementPort {
   finalizeBudget(input: Readonly<{
+    siteId: string;
+    taskRef: string;
+    leaseEpoch: bigint;
+    leaseToken: string;
     operationRef: string;
+    modelInvocationCommandRef: string;
+    logicalInvocationRef?: string | undefined;
     budget: MediaImageCreditBudgetBinding;
     effectClosureReceiptRef: string;
     outcome: "completed" | "partial" | "failed" | "canceled";
@@ -390,6 +396,7 @@ export type MediaImageCreditBudgetBinding =
       kind: "agent_child";
       executionBudgetRootRef: string;
       authorizationSegmentRef: string;
+      authorizationSegmentVersion: bigint;
       executionManifestRef: string;
       parentAllocationRef: string;
       childAllocationRef: string;
@@ -686,6 +693,9 @@ export class ImageOperationWorker {
         ...finalizationReceiptRefs, usageReceiptRef, task.createEffectCommand.effectBudgetCommitRef] });
     const financial = requireFinancialSettlement(task.checkpoint.financialClosure ??
       await this.#dependencies.credit.finalizeBudget({ operationRef: task.operationRef,
+        siteId: task.ownerScope.siteRef, taskRef: task.taskRef, leaseEpoch: task.leaseEpoch,
+        leaseToken: task.leaseToken, modelInvocationCommandRef: task.modelInvocationCommandRef,
+        logicalInvocationRef: view.logicalInvocationRef,
         budget: task.creditBudget, effectClosureReceiptRef, outcome: terminalState,
         usage: { attemptUsageEvidenceReceiptRef: usageReceiptRef, canonicalOutcomeEvidence,
           usageEvidence, effectBudgetCommitRef: task.createEffectCommand.effectBudgetCommitRef } }), task.creditBudget,
@@ -762,6 +772,9 @@ export class ImageOperationWorker {
       state: view.state, evidenceRefs });
     const financial = requireFinancialSettlement(task.checkpoint.financialClosure ??
       await this.#dependencies.credit.finalizeBudget({ operationRef: task.operationRef,
+        siteId: task.ownerScope.siteRef, taskRef: task.taskRef, leaseEpoch: task.leaseEpoch,
+        leaseToken: task.leaseToken, modelInvocationCommandRef: task.modelInvocationCommandRef,
+        logicalInvocationRef: view.logicalInvocationRef,
         budget: task.creditBudget, effectClosureReceiptRef, outcome: view.state,
         ...(usageReceiptRef === undefined || usageEvidence === undefined ? {} : { usage: {
           attemptUsageEvidenceReceiptRef: usageReceiptRef, canonicalOutcomeEvidence,
@@ -960,6 +973,8 @@ export class ImageOperationWorker {
       state: "canceled", evidenceRefs: [cancelIntentReceiptRef] });
     const financial = requireFinancialSettlement(task.checkpoint.financialClosure ??
       await this.#dependencies.credit.finalizeBudget({ operationRef: task.operationRef,
+        siteId: task.ownerScope.siteRef, taskRef: task.taskRef, leaseEpoch: task.leaseEpoch,
+        leaseToken: task.leaseToken, modelInvocationCommandRef: task.modelInvocationCommandRef,
         budget: task.creditBudget, effectClosureReceiptRef, outcome: "canceled", cancelIntentReceiptRef }),
       task.creditBudget,
     );
@@ -1049,6 +1064,7 @@ export class InMemoryMediaImageWorkerRepository implements MediaImageWorkerRepos
         subjectGeneration: 1n, projectRef: "project:example" }),
       creditBudget: Object.freeze({ kind: "agent_child" as const,
         executionBudgetRootRef: "credit-root:example", authorizationSegmentRef: "credit-segment:example",
+        authorizationSegmentVersion: 2n,
         executionManifestRef: "execution-manifest:example", parentAllocationRef: "credit-parent:example",
         childAllocationRef: "credit-child:example", allocationReservationReceiptRef: "credit-reservation:example",
         reservedCeiling: 100n, unit: "credit" }),

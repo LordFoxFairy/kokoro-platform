@@ -135,9 +135,12 @@ describe("Credit Media child allocation authority schema", () => {
 
   it("documents only the current Media integration and child event routing facts", async () => {
     const index = await readFile(new URL("../../src/modules/credit/INDEX.md", import.meta.url), "utf8");
-    expect(index).toContain("current pure Media domain kernel is not wired");
+    expect(index).toContain("wired into Media image submission through the native same-transaction owner");
+    expect(index).toContain("direct-root terminal authority and its production");
+    expect(index).toContain("remain fail-closed launch blockers");
     expect(index).toContain("do not emit an outbox event because no routed consumer exists");
     expect(index).not.toContain("Media callers consume the typed");
+    expect(index).not.toContain("current pure Media domain kernel is not wired");
   });
 
   it("keeps Credit canonical ordering independent of process locale", async () => {

@@ -9,6 +9,11 @@ import {
 
 const DIGEST_A = "a".repeat(64);
 const DIGEST_B = "b".repeat(64);
+const ATTEMPT_AUTHORIZATION = Object.freeze({
+  attemptAuthorizationRef: "00000000-0000-7000-8000-000000000111",
+  attemptAuthorizationFenceEpoch: 1n,
+  attemptAuthorizationDigest: "7".repeat(64),
+});
 
 describe("model image effect domain", () => {
   it("keeps cancellation as intent and accepts a late success after an unknown outcome", () => {
@@ -17,6 +22,7 @@ describe("model image effect domain", () => {
       ordinal: 1,
       budgetCommitRef: "effect-budget:one",
       budgetCommitDigest: DIGEST_A,
+      ...ATTEMPT_AUTHORIZATION,
       providerOperationKey: "image-provider-operation:one",
     });
     const submitted = applyImageEffectObservation(attempt, observation({
@@ -61,6 +67,7 @@ describe("model image effect domain", () => {
       ordinal: 1,
       budgetCommitRef: "effect-budget:one",
       budgetCommitDigest: DIGEST_A,
+      ...ATTEMPT_AUTHORIZATION,
       providerOperationKey: "image-provider-operation:one",
     });
     const submittedEvent = observation({
@@ -92,6 +99,7 @@ describe("model image effect domain", () => {
       ordinal: 1,
       budgetCommitRef: "effect-budget:one",
       budgetCommitDigest: DIGEST_A,
+      ...ATTEMPT_AUTHORIZATION,
       providerOperationKey: "image-provider-operation:one",
     });
     const safe = applyImageEffectObservation(attempt, observation({
@@ -108,6 +116,7 @@ describe("model image effect domain", () => {
   it("rejects a provider usage digest that does not bind the canonical typed fact", () => {
     const planned = createImageEffectAttempt({ attemptRef: "image-attempt:one", ordinal: 1,
       budgetCommitRef: "effect-budget:one", budgetCommitDigest: DIGEST_A,
+      ...ATTEMPT_AUTHORIZATION,
       providerOperationKey: "image-provider-operation:one" });
     const submitted = applyImageEffectObservation(planned, observation({ eventRef: "provider-event:submitted",
       sequence: 1n, kind: "submitted", providerOperationRef: "provider-operation:one" })).attempt;
@@ -130,7 +139,8 @@ describe("model image effect domain", () => {
     expect(imageEffectUsageFactDigest(first)).toBe(imageEffectUsageFactDigest(second));
 
     const planned = createImageEffectAttempt({ attemptRef: "attempt:grammar", ordinal: 1,
-      budgetCommitRef: "budget:one", budgetCommitDigest: DIGEST_A, providerOperationKey: "provider:one" });
+      budgetCommitRef: "budget:one", budgetCommitDigest: DIGEST_A, ...ATTEMPT_AUTHORIZATION,
+      providerOperationKey: "provider:one" });
     const submitted = applyImageEffectObservation(planned, observation({ kind: "submitted", sequence: 1n,
       eventRef: "event:submitted", providerOperationRef: "provider:one" })).attempt;
     const invalid = Object.freeze({ ...base, dimensions: Object.freeze([

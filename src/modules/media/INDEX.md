@@ -48,15 +48,16 @@ Create/RecoverByCommand/GetByCommand/GetEvidence/RequestCancel. The owner View n
 durably advances the immutable `uint64 evidence_sequence` cursor and persists exact outcome/usage/output ref+digest facts.
 Output access is issued/recovered by a preallocated command bound to the logical invocation and output evidence, then consumed
 by Artifact through the bounded `ReadImageEffectOutput` stream. The worker resumes Artifact staged/Trust/ready, usage,
-Credit return and Session projection from immutable saga receipts. Started and outcome-unknown effects recover by exact
+Agent-child Credit return and Session projection from immutable saga receipts. Direct-root Credit terminalization remains
+fail-closed until its dedicated owner is production-composed. Started and outcome-unknown effects recover by exact
 command identity; definitely-not-submitted work cannot continue until a distinct planner materializes a new attempt command,
 ordinal and EffectBudgetCommit. Root-generated request fingerprints/digests and every Create axis are pre-materialized in the
 operation transaction; the worker verifies them and never hashes rotating bearer bytes. Caller, model-option and source-grant
 bearer handles remain sealed at rest and are zeroized after use.
 
 `platform-media-worker` also owns a separately leased staged-object cleanup activity. Its deployment inventory remains
-inactive until the Root-generated Gateway, image-output data plane, Session projection, capability-envelope and canonical receipt
-contracts listed in `docs/platform/media-worker-launch-blockers.md` are available; startup fails closed rather than using a
+inactive until every generated contract and Credit authority listed in `docs/platform/media-worker-launch-blockers.md` is
+available; startup fails closed rather than using a
 development adapter.
 
 Agent image commands are isolated by the exact opaque access-handle digest that issued them; a different run/session handle
@@ -75,6 +76,6 @@ and authorization epochs. The command digest and encrypted input binding are com
 Trust, exact Credit source/ceiling/scope/expiry, and owner-issued handle digests. Direct root reservation and Agent child derivation
 are closed, distinct budget-owner capabilities; the Agent runtime composition cannot activate the Direct surface. The generated
 public descriptor factory requires all nine Media operations before registration. Production Direct activation remains unavailable
-until real Trust admission, root Credit reservation, and Direct command repository owners are supplied in the same unit of work.
+until real Trust admission and every P0 launch authority is supplied in the same unit of work.
 
 Development fakes live under `infrastructure/dev` and advertise `developmentOnly`. They are not production adapters.

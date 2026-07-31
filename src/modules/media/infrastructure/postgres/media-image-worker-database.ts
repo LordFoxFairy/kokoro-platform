@@ -59,7 +59,7 @@ export class PostgresMediaImageWorkerDatabase implements MediaImageWorkerDatabas
         row.canCreateDatabase !== false || row.canCreateRole !== false || row.canReplicate !== false ||
         row.canBypassRls !== false || row.hasAnyMembership !== false || row.isMigratorMember !== false ||
         row.hasAnyMediaTableAccess !== false || row.canExecuteClaim !== true || row.canExecuteSaga !== true ||
-        row.canExecuteEvidence !== true) {
+        row.canExecuteEvidence !== true || row.canExecuteTypedUsage !== true) {
       throw new Error("MEDIA_WORKER_DATABASE_ROLE_INVALID");
     }
     await this.dependencies.pool.query(`SELECT platform.assert_media_runtime_role('worker')`);
@@ -70,15 +70,29 @@ export class PostgresMediaImageWorkerDatabase implements MediaImageWorkerDatabas
     await this.dependencies.pool.query(`SELECT platform.assert_media_runtime_role('worker')`);
   }
 
+  async assertOwned(input: Readonly<{ taskRef: string; operationRef: string; leaseEpoch: bigint;
+    leaseTokenHash: string }>): Promise<void> {
+    await this.#void(`SELECT platform.assert_media_image_worker_lease($1,$2,$3,$4)`,
+      [input.taskRef, input.operationRef, input.leaseEpoch.toString(), input.leaseTokenHash]);
+  }
+
   loadMediaImageEffectUsageFact(
     input: Parameters<MediaImageTypedUsageFactDatabase["loadMediaImageEffectUsageFact"]>[0],
   ): Promise<readonly MediaImageTypedUsageFactRow[]> {
     return this.#rows<MediaImageTypedUsageFactRow>(
-      `SELECT attempt_ref AS "attemptRef",usage_evidence_ref AS "usageEvidenceRef",
+      `SELECT attempt_ref AS "attemptRef",attempt_authorization_ref AS "attemptAuthorizationRef",
+              attempt_authorization_fence_epoch AS "attemptAuthorizationFenceEpoch",
+              attempt_authorization_digest AS "attemptAuthorizationDigest",
+              authorization_segment_ref AS "authorizationSegmentRef",
+              execution_manifest_ref AS "executionManifestRef",
+              producer_kind AS "producerKind",producer_context AS "producerContext",
+              producer_generation AS "producerGeneration",logical_effect_ref AS "logicalEffectRef",
+              usage_evidence_ref AS "usageEvidenceRef",
               usage_evidence_digest AS "usageEvidenceDigest",usage_fact AS "usageFact",
               recorded_at AS "recordedAt"
-         FROM platform.load_media_image_effect_usage_fact($1,$2,$3,$4,$5)`,
-      [input.operationRef, input.modelInvocationCommandRef, input.logicalInvocationRef,
+         FROM platform.load_media_image_effect_usage_fact($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [input.taskRef, input.operationRef, input.leaseEpoch.toString(), input.leaseTokenHash,
+        input.modelInvocationCommandRef, input.logicalInvocationRef,
         input.usageEvidenceRef, input.usageEvidenceDigest],
     );
   }
@@ -91,9 +105,15 @@ export class PostgresMediaImageWorkerDatabase implements MediaImageWorkerDatabas
               credit_execution_budget_root_ref AS "creditExecutionBudgetRootRef",
               credit_authorization_segment_ref AS "creditAuthorizationSegmentRef",
               credit_execution_manifest_ref AS "creditExecutionManifestRef",
+              credit_budget_kind AS "creditBudgetKind",
               credit_parent_allocation_ref AS "creditParentAllocationRef",
               credit_child_allocation_ref AS "creditChildAllocationRef",
               credit_allocation_receipt_ref AS "creditAllocationReceiptRef",
+              credit_root_hold_ref AS "creditRootHoldRef",
+              credit_root_allocation_ref AS "creditRootAllocationRef",
+              credit_root_allocation_revision AS "creditRootAllocationRevision",
+              credit_root_allocation_epoch AS "creditRootAllocationEpoch",
+              credit_authorization_segment_version AS "creditAuthorizationSegmentVersion",
               credit_reserved_ceiling AS "creditReservedCeiling",
               credit_unit AS "creditUnit",
               effect_budget_commit_ref AS "effectBudgetCommitRef",
@@ -118,6 +138,11 @@ export class PostgresMediaImageWorkerDatabase implements MediaImageWorkerDatabas
               project_ref AS "projectRef",workload_ref AS "workloadRef",source,
               definition_revision_ref AS "definitionRevisionRef",
               model_option_revision_ref AS "modelOptionRevisionRef",
+              site_release_ref AS "siteReleaseRef",site_security_epoch AS "siteSecurityEpoch",
+              policy_epoch AS "policyEpoch",workload_binding_epoch AS "workloadBindingEpoch",
+              identity_session_ref AS "identitySessionRef",identity_session_epoch AS "identitySessionEpoch",
+              restriction_epoch AS "restrictionEpoch",membership_epoch AS "membershipEpoch",
+              authorization_epoch AS "authorizationEpoch",
               operation_input_revision_ref AS "operationInputRevisionRef",key_revision_ref AS "keyRevisionRef",
               ciphertext,content_iv AS "contentIv",content_tag AS "contentTag",wrapped_dek AS "wrappedDek",
               wrap_iv AS "wrapIv",wrap_tag AS "wrapTag",plaintext_bytes AS "plaintextBytes",candidates,
@@ -344,6 +369,9 @@ SELECT current_user AS "currentUser",current_database() AS "currentDatabase",
        has_function_privilege(current_user,
          'platform.record_media_image_gateway_evidence_page(text,text,bigint,character,text,numeric,numeric,boolean,jsonb,jsonb,timestamp with time zone)','EXECUTE')
          AS "canExecuteEvidence",
+       has_function_privilege(current_user,
+         'platform.load_media_image_effect_usage_fact(text,text,bigint,character,text,text,text,character)','EXECUTE')
+         AS "canExecuteTypedUsage",
        EXISTS(SELECT 1 FROM information_schema.tables owned
                WHERE owned.table_schema='platform' AND owned.table_name LIKE 'media_%'
                  AND (has_table_privilege(current_user,format('%I.%I',owned.table_schema,owned.table_name),'SELECT') OR

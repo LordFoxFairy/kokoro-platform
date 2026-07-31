@@ -69,6 +69,7 @@ export function parseDerivedMediaChildReceipt(
   const row = dataObject(value);
   strictKeys(row, [
     "allocationReservationReceiptRef", "audience", "childAllocationEpoch", "childAllocationRef",
+    "childAuthorizationSegmentRef", "childAuthorizationSegmentVersion",
     "childRevisionAfter", "childRevisionBefore", "consumptionScope", "executionBudgetRootRef",
     "expiresAt", "mediaOperationRef", "observedAt", "parentAllocationEpoch", "parentAllocationRef",
     "parentRevisionAfter", "parentRevisionBefore", "purpose", "receiptDigest", "reservedCeiling", "state",
@@ -89,6 +90,9 @@ export function parseDerivedMediaChildReceipt(
     parentRevisionAfter,
     parentAllocationEpoch: positiveInt8(row, "parentAllocationEpoch"),
     childAllocationRef: reference(row, "childAllocationRef"),
+    childAuthorizationSegmentRef: reference(row, "childAuthorizationSegmentRef"),
+    childAuthorizationSegmentVersion: positiveInt8(row, "childAuthorizationSegmentVersion") === 1n
+      ? 1n : corrupt(),
     childRevisionBefore: 0n,
     childRevisionAfter: 1n,
     childAllocationEpoch: 1n,

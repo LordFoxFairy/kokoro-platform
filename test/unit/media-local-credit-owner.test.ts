@@ -23,8 +23,11 @@ describe("Media local Credit owner", () => {
         consumptionScope: { surfaceRef: "surface:image", capabilityKey: "image.create", agentRef: "agent:one" },
         expiresAt: "2026-07-31T13:00:00.000Z", mediaOperationRef: "media-operation:one",
         commandRef: "command:one", ownerRequestDigest: "a".repeat(64), exactCeiling: 9n,
+        executionManifestRef: "manifest:one",
       })).resolves.toEqual({ childAllocationRef: "child:one",
-        allocationReservationReceiptRef: "receipt:one" });
+        allocationReservationReceiptRef: "receipt:one",
+        authorizationSegmentRef: "00000000-0000-7000-8000-000000000333",
+        authorizationSegmentVersion: 2n });
       expect(deriveChildAllocation).toHaveBeenCalledWith(lease.transaction, expect.objectContaining({
         siteId: "site:one", expectedParentRevision: 4n, expectedParentAllocationEpoch: 3n,
         audience: "media", purpose: "media_operation", businessOperationKey: "command:one",
@@ -48,7 +51,10 @@ describe("Media local Credit owner", () => {
 function childOnlyAuthority(deriveChildAllocation: ReturnType<typeof vi.fn>) {
   return { deriveChildAllocation,
     reserveRootBudget: vi.fn(async () => { throw new Error("UNREACHABLE"); }),
-    finalizeAuthorizationSegment: vi.fn(async () => { throw new Error("UNREACHABLE"); }) };
+    finalizeAuthorizationSegment: vi.fn(async () => ({ kind: "accepted" as const, value: {
+      authorizationSegmentRef: "00000000-0000-7000-8000-000000000333",
+      segmentVersion: 2n, state: "committed" as const, observedAt: "2026-07-31T12:00:00.000Z",
+    } })) };
 }
 
 function childCommand() {
@@ -63,12 +69,15 @@ function childCommand() {
       agentRef: "agent:one" }),
     expiresAt: "2026-07-31T13:00:00.000Z", mediaOperationRef: "media-operation:one",
     commandRef: "command:one", ownerRequestDigest: "a".repeat(64), exactCeiling: 9n,
+    executionManifestRef: "manifest:one",
   });
 }
 
 function allocationReceipt(): DerivedMediaChildAllocation {
   return Object.freeze({
     allocationReservationReceiptRef: "receipt:one", childAllocationRef: "child:one",
+    childAuthorizationSegmentRef: "00000000-0000-7000-8000-000000000333",
+    childAuthorizationSegmentVersion: 1n,
     executionBudgetRootRef: "11111111-1111-4111-8111-111111111111",
     parentAllocationRef: "22222222-2222-4222-8222-222222222222",
     receiptDigest: "b".repeat(64), parentRevisionBefore: 4n, parentRevisionAfter: 5n,

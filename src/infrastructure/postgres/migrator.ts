@@ -1812,6 +1812,10 @@ const ADMISSION_RELATIONS = [
   "admission_capability_catalog_snapshot",
   "admission_media_access_authorization",
 ] as const;
+const MEDIA_CONTROL_ADMIN_RELATIONS = [
+  "media_operation_definition_revision",
+  "site_release_media_definition",
+] as const;
 const CREDIT_USAGE_RELATIONS = [
   "credit_rating_policy_revision",
   "credit_rating_snapshot",
@@ -1887,6 +1891,7 @@ const ADMISSION_INSERT_RELATIONS = [
   "credit_usage_reconciliation",
   "credit_usage_command_receipt",
   "model_gateway_execution_authorization",
+  "admission_media_access_authorization",
 ] as const;
 const ADMISSION_UPDATE_RELATIONS = [
   "admission_command",
@@ -1897,6 +1902,7 @@ const ADMISSION_UPDATE_RELATIONS = [
   "credit_execution_budget_root",
   "credit_authorization_segment",
   "model_gateway_execution_authorization",
+  "admission_media_access_authorization",
 ] as const;
 const ASSET_TABLES = ASSET_RELATIONS.map((name) => `platform.${name}`).join(", ");
 const ASSET_API_TABLES = ASSET_API_MUTABLE_RELATIONS.map((name) => `platform.${name}`).join(", ");
@@ -1933,6 +1939,7 @@ const ADMISSION_INSERT_RELATIONS_SQL = sqlLiterals(ADMISSION_INSERT_RELATIONS);
 const ADMISSION_UPDATE_RELATIONS_SQL = sqlLiterals(ADMISSION_UPDATE_RELATIONS);
 const CREDIT_USAGE_RELATIONS_SQL = sqlLiterals(CREDIT_USAGE_RELATIONS);
 const MODEL_GATEWAY_ADMISSION_RELATIONS_SQL = sqlLiterals(MODEL_GATEWAY_ADMISSION_RELATIONS);
+const MEDIA_CONTROL_ADMIN_RELATIONS_SQL = sqlLiterals(MEDIA_CONTROL_ADMIN_RELATIONS);
 
 const SITE_TABLES = [
   "platform.site",
@@ -2611,7 +2618,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                ${ASSET_RELATIONS_SQL},
                ${CREDIT_USAGE_RELATIONS_SQL},
                ${MODEL_GATEWAY_ADMISSION_RELATIONS_SQL},
-               'media_operation_definition_revision','site_release_media_definition'
+               ${MEDIA_CONTROL_ADMIN_RELATIONS_SQL}
                ]) AND (
                  (candidate.relname LIKE 'model\\_%' ESCAPE '\\'
                    AND candidate.relname<>'model_gateway_execution_authorization' AND (
@@ -2675,7 +2682,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                ${ASSET_RELATIONS_SQL},
                ${CREDIT_USAGE_RELATIONS_SQL},
                ${MODEL_GATEWAY_ADMISSION_RELATIONS_SQL},
-               'media_operation_definition_revision','site_release_media_definition'
+               ${MEDIA_CONTROL_ADMIN_RELATIONS_SQL}
                ]) AND (
                  (runtime_role.rolname = $2 AND (
                    has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
@@ -2706,6 +2713,11 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                     OR (runtime_role.rolname=$5 AND
                       candidate.relname=ANY(ARRAY['site','site_release']))
                  ))
+                 OR
+                 ((has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
+                  OR has_any_column_privilege(runtime_role.rolname,candidate.oid,'SELECT'))
+                  AND candidate.relname = ANY(ARRAY[${MEDIA_CONTROL_ADMIN_RELATIONS_SQL}])
+                  AND runtime_role.rolname <> $4)
                  OR
                  ((has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
                    OR has_any_column_privilege(runtime_role.rolname,candidate.oid,'SELECT'))

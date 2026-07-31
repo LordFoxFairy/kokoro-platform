@@ -57,7 +57,9 @@ describe("Postgres image-effect authority", () => {
   it("consumes the local signed budget fence with an exact canonical slot digest", async () => {
     const transaction = transactionHarness((text) => text.includes("consume_model_image_effect_budget_commit")
       ? [{ effectBudgetCommitRef: "budget:one", effectBudgetCommitDigest: "a".repeat(64),
-          attemptOrdinal: 1, expiresAt: "2030-01-01T00:00:00.000Z", replayed: false }]
+          attemptOrdinal: 1, attemptAuthorizationRef: "00000000-0000-7000-8000-000000000111",
+          attemptAuthorizationFenceEpoch: "1", attemptAuthorizationDigest: "7".repeat(64),
+          expiresAt: "2030-01-01T00:00:00.000Z", replayed: false }]
       : []);
     const authority = new PostgresImageEffectAuthority({ pool: { connect: async () => { throw new Error("unused"); },
       end: async () => undefined } });
@@ -72,6 +74,8 @@ describe("Postgres image-effect authority", () => {
       ownerCommandDigest: "c".repeat(64),
     });
     expect(outcome.kind).toBe("accepted");
+    expect(outcome).toMatchObject({ attemptAuthorizationRef: "00000000-0000-7000-8000-000000000111",
+      attemptAuthorizationFenceEpoch: 1n, attemptAuthorizationDigest: "7".repeat(64) });
     expect(transaction.calls[0]?.text).toContain("consume_model_image_effect_budget_commit");
     expect(transaction.calls[0]?.values[10]).toMatch(/^[0-9a-f]{64}$/u);
   });
@@ -108,7 +112,11 @@ describe("Postgres image-effect authority", () => {
         sourceGrantRefs: [], logicalOutputSlots: [{ candidateRef: "candidate:one", stableOutputSlotRef: "slot:one" }],
         trustEffectAllowReceiptRef: "trust:one", trustEffectAllowReceiptDigest: "f".repeat(64),
         attempts: [{ attemptRef: "attempt:one", ordinal: 1, budgetCommitRef: "budget:one",
-          budgetCommitDigest: "a".repeat(64), providerOperationKey: "provider-operation:one", state: "planned",
+          budgetCommitDigest: "a".repeat(64),
+          attemptAuthorizationRef: "00000000-0000-7000-8000-000000000111",
+          attemptAuthorizationFenceEpoch: 1n,
+          attemptAuthorizationDigest: "7".repeat(64),
+          providerOperationKey: "provider-operation:one", state: "planned",
           cancelRequested: false, lastProviderSequence: 0n, outputs: [], lateOutcome: false, observations: [] }],
         createdAt: "2026-07-31T12:00:00.000Z", updatedAt: "2026-07-31T12:00:00.000Z",
       },
@@ -162,7 +170,10 @@ describe("Postgres image-effect authority", () => {
       reference: () => "event:owner",
     });
     const attempt = Object.freeze({ attemptRef: "attempt:one", ordinal: 1, budgetCommitRef: "budget:one",
-      budgetCommitDigest: "a".repeat(64), providerOperationKey: "provider-operation:one",
+      budgetCommitDigest: "a".repeat(64),
+      attemptAuthorizationRef: "00000000-0000-7000-8000-000000000111",
+      attemptAuthorizationFenceEpoch: 1n, providerOperationKey: "provider-operation:one",
+      attemptAuthorizationDigest: "7".repeat(64),
       state: "succeeded" as const, cancelRequested: false, lastProviderSequence: 2n,
       providerOperationRef: "provider-operation-ref:one", canonicalOutcomeEvidenceRef: "outcome:one",
       canonicalOutcomeEvidenceDigest: "b".repeat(64), usageEvidenceRef: "usage:one",

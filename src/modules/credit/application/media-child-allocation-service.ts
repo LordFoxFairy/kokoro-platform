@@ -96,6 +96,7 @@ export class MediaChildAllocationService {
     }
     const occurredAt = now.toISOString();
     const childAllocationRef = this.dependencies.reference("budget-allocation", now.getTime());
+    const childAuthorizationSegmentRef = this.dependencies.reference("authorization-segment", now.getTime());
     const receipt = buildDerivedMediaChildReceipt(Object.freeze({
       allocationReservationReceiptRef: this.dependencies.reference("allocation-reservation-receipt", now.getTime()),
       executionBudgetRootRef: input.executionBudgetRootRef,
@@ -104,6 +105,8 @@ export class MediaChildAllocationService {
       parentRevisionAfter: revisions.parent.revision,
       parentAllocationEpoch: current.allocation.allocationEpoch,
       childAllocationRef,
+      childAuthorizationSegmentRef,
+      childAuthorizationSegmentVersion: 1n as const,
       childRevisionBefore: 0n as const,
       childRevisionAfter: 1n as const,
       childAllocationEpoch: 1n as const,
@@ -129,6 +132,8 @@ export class MediaChildAllocationService {
       executionBudgetRootRef: input.executionBudgetRootRef,
       parentAllocationRef: input.parentAllocationRef,
       childAllocationRef,
+      childAuthorizationSegmentRef,
+      executionManifestRef: input.executionManifestRef,
       mediaOperationRef: input.mediaOperationRef,
       audience: input.audience,
       purpose: input.purpose,

@@ -216,6 +216,22 @@ CREATE POLICY media_worker_dead_letter_definer ON platform.media_worker_dead_let
 CREATE POLICY media_artifact_cleanup_dead_letter_definer ON platform.media_artifact_cleanup_dead_letter
   TO platform_migrator USING(SESSION_USER='platform_media_worker')
   WITH CHECK(SESSION_USER='platform_media_worker');
+CREATE POLICY media_operation_worker_definer ON platform.media_operation
+  TO platform_migrator USING(SESSION_USER='platform_media_worker')
+  WITH CHECK(SESSION_USER='platform_media_worker');
+CREATE POLICY media_input_worker_definer ON platform.media_operation_input_revision
+  TO platform_migrator USING(SESSION_USER='platform_media_worker');
+CREATE POLICY media_candidate_worker_definer ON platform.media_candidate
+  TO platform_migrator USING(SESSION_USER='platform_media_worker')
+  WITH CHECK(SESSION_USER='platform_media_worker');
+CREATE POLICY media_direct_command_journal_worker_definer ON platform.media_direct_command_journal
+  TO platform_migrator USING(SESSION_USER='platform_media_worker');
+CREATE POLICY artifact_worker_definer ON platform.artifact
+  TO platform_migrator USING(SESSION_USER='platform_media_worker')
+  WITH CHECK(SESSION_USER='platform_media_worker');
+CREATE POLICY artifact_version_worker_definer ON platform.artifact_version
+  TO platform_migrator USING(SESSION_USER='platform_media_worker')
+  WITH CHECK(SESSION_USER='platform_media_worker');
 
 CREATE FUNCTION platform.reject_media_worker_receipt_mutation() RETURNS TRIGGER
 LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
@@ -271,8 +287,10 @@ CREATE FUNCTION platform.claim_media_image_task_v2(
   task_ref TEXT,operation_ref TEXT,lease_epoch BIGINT,operation_state TEXT,
   cancel_intent_receipt_ref TEXT,model_invocation_command_ref TEXT,
   credit_execution_budget_root_ref UUID,credit_authorization_segment_ref UUID,
-  credit_execution_manifest_ref TEXT,credit_parent_allocation_ref UUID,
+  credit_execution_manifest_ref TEXT,credit_budget_kind TEXT,credit_parent_allocation_ref UUID,
   credit_child_allocation_ref UUID,credit_allocation_receipt_ref UUID,
+  credit_root_hold_ref UUID,credit_root_allocation_ref UUID,credit_root_allocation_revision BIGINT,
+  credit_root_allocation_epoch BIGINT,credit_authorization_segment_version BIGINT,
   credit_reserved_ceiling NUMERIC,credit_unit TEXT,
   effect_budget_commit_ref TEXT,effect_budget_commit_digest CHAR(64),
   effect_attempt_ordinal INTEGER,gateway_caller_request_fingerprint CHAR(64),
@@ -285,6 +303,9 @@ CREATE FUNCTION platform.claim_media_image_task_v2(
   model_option_authorization_expires_at TIMESTAMPTZ,model_option_authorization_binding_ref TEXT,
   site_ref TEXT,subject_ref TEXT,subject_generation BIGINT,project_ref TEXT,workload_ref TEXT,
   source TEXT,definition_revision_ref TEXT,model_option_revision_ref TEXT,
+  site_release_ref TEXT,site_security_epoch BIGINT,policy_epoch BIGINT,workload_binding_epoch BIGINT,
+  identity_session_ref TEXT,identity_session_epoch BIGINT,restriction_epoch BIGINT,
+  membership_epoch BIGINT,authorization_epoch BIGINT,
   operation_input_revision_ref TEXT,key_revision_ref TEXT,ciphertext BYTEA,content_iv BYTEA,
   content_tag BYTEA,wrapped_dek BYTEA,wrap_iv BYTEA,wrap_tag BYTEA,plaintext_bytes INTEGER,
   candidates JSONB,cancel_command_ref TEXT,cancel_request_fingerprint CHAR(64),saga_checkpoint JSONB
@@ -336,8 +357,12 @@ BEGIN
   SELECT changed.outbox_ref,operation.operation_ref,changed.lease_epoch,operation.state,
          operation.cancel_intent_receipt_ref,candidate_rows.model_invocation_command_ref,
          operation.credit_execution_budget_root_ref,operation.credit_authorization_segment_ref,
-         operation.credit_execution_manifest_ref,operation.credit_parent_allocation_ref,
+         operation.credit_execution_manifest_ref,operation.credit_budget_kind,
+         operation.credit_parent_allocation_ref,
          operation.credit_child_allocation_ref,operation.credit_allocation_receipt_ref,
+         operation.credit_root_hold_ref,operation.credit_root_allocation_ref,
+         operation.credit_root_allocation_revision,operation.credit_root_allocation_epoch,
+         operation.credit_authorization_segment_version,
          operation.credit_reserved_ceiling,operation.credit_unit,operation.effect_budget_commit_ref,
          operation.effect_budget_commit_digest,operation.effect_attempt_ordinal,
          operation.gateway_caller_request_fingerprint,operation.gateway_create_effect_digest,
@@ -350,6 +375,10 @@ BEGIN
          operation.model_option_authorization_binding_ref,operation.site_ref,operation.subject_ref,
          operation.subject_generation,operation.project_ref,input.workload_ref,input.source,
          operation.definition_revision_ref,operation.model_option_revision_ref,
+         direct_journal.site_release_ref,direct_journal.site_security_epoch,direct_journal.policy_epoch,
+         direct_journal.workload_binding_epoch,direct_journal.identity_session_ref,
+         direct_journal.identity_session_epoch,direct_journal.restriction_epoch,
+         direct_journal.membership_epoch,direct_journal.authorization_epoch,
          input.operation_input_revision_ref,input.key_revision_ref,input.ciphertext,input.content_iv,
          input.content_tag,input.wrapped_dek,input.wrap_iv,input.wrap_tag,input.plaintext_bytes,
          candidate_rows.candidates,operation.cancel_command_ref,operation.cancel_request_fingerprint,
@@ -376,16 +405,14 @@ BEGIN
          )
     FROM changed
     JOIN platform.media_operation operation ON operation.operation_ref=changed.operation_ref
-    JOIN platform.credit_allocation_reservation_receipt credit_receipt
-      ON credit_receipt.allocation_reservation_receipt_ref=operation.credit_allocation_receipt_ref
-     AND credit_receipt.site_ref=operation.site_ref
-     AND credit_receipt.execution_budget_root_ref=operation.credit_execution_budget_root_ref
-     AND credit_receipt.parent_allocation_ref=operation.credit_parent_allocation_ref
-     AND credit_receipt.child_allocation_ref=operation.credit_child_allocation_ref
-     AND credit_receipt.media_operation_ref=operation.operation_ref
-    JOIN platform.credit_execution_budget_root credit_root
-      ON credit_root.execution_budget_root_ref=operation.credit_execution_budget_root_ref
-     AND credit_root.site_ref=operation.site_ref
+    LEFT JOIN platform.media_direct_command_journal direct_journal
+      ON direct_journal.operation_ref=operation.operation_ref
+     AND direct_journal.site_ref=operation.site_ref
+     AND direct_journal.subject_ref=operation.subject_ref
+     AND direct_journal.subject_generation=operation.subject_generation
+     AND direct_journal.project_ref=operation.project_ref
+     AND direct_journal.state='committed'
+     AND operation.credit_budget_kind='direct_root'
     JOIN platform.media_operation_input_revision input
       ON input.operation_input_revision_ref=operation.operation_input_revision_ref
     JOIN LATERAL (
@@ -433,7 +460,11 @@ BEGIN
      AND financial_closure.binding_ref=operation.operation_ref
     LEFT JOIN platform.media_worker_saga_receipt projection
       ON projection.operation_ref=operation.operation_ref AND projection.step='projection'
-     AND projection.binding_ref=operation.operation_ref;
+     AND projection.binding_ref=operation.operation_ref
+   WHERE (operation.credit_budget_kind='agent_child' AND input.source='agent_runtime' AND
+          operation.credit_allocation_receipt_ref IS NOT NULL AND direct_journal.operation_ref IS NULL)
+      OR (operation.credit_budget_kind='direct_root' AND input.source='direct_studio' AND
+          operation.credit_allocation_receipt_ref IS NULL AND direct_journal.operation_ref IS NOT NULL);
 END;
 $$;
 

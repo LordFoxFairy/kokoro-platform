@@ -127,6 +127,7 @@ export type StoredParentAllocation = Readonly<{
   creditHoldRef: string;
   creditHoldState: StoredSegmentAllocation["creditHoldState"];
   creditHoldExpiresAt: string;
+  ratingPolicyRevisionRef: string;
   parentAllocationRef: string;
   isRoot: boolean;
   audience: CreditAllocationAudience;
@@ -148,6 +149,8 @@ export type StoredMediaChildAllocation = Readonly<{
   parentAllocationRef: string;
   parentAllocation: BudgetAllocationRevision;
   childAllocationRef: string;
+  childAuthorizationSegmentRef: string;
+  executionManifestRef: string;
   childAudience: "media";
   childPurpose: "media_operation";
   mediaOperationRef: string;
@@ -179,7 +182,9 @@ export type MediaChildAllocationReservationRecord = Readonly<{
   executionBudgetRootRef: string;
   parentAllocationRef: string;
   childAllocationRef: string;
+  childAuthorizationSegmentRef: string;
   mediaOperationRef: string;
+  executionManifestRef: string;
   audience: "media";
   purpose: "media_operation";
   consumptionScope: CreditConsumptionScope;

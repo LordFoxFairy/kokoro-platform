@@ -368,6 +368,8 @@ function mapView(view: ImageEffectView) {
     modelInvocationCommandRef: view.modelInvocationCommandRef,
     ownerVersion: view.ownerVersion,
     currentAttemptOrdinal: view.currentAttemptOrdinal,
+    // The current generated wire contract does not yet expose the Credit attempt fence.
+    // Production activation remains blocked until Root regenerates this message with both fields.
     state: state(view.state),
     ...(view.canonicalOutcomeEvidenceRef === undefined ? {} : {
       canonicalOutcomeEvidenceRef: view.canonicalOutcomeEvidenceRef,

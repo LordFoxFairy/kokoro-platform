@@ -12,7 +12,7 @@ export function snapshotChildDerivation(input: unknown): DeriveMediaChildCommand
   const value = snapshotDataObject(input, [
     "siteId", "executionBudgetRootRef", "parentAllocationRef", "expectedParentRevision",
     "expectedParentAllocationEpoch", "mediaOperationRef", "businessOperationKey", "requestDigest",
-    "exactCeiling", "audience", "purpose", "consumptionScope", "expiresAt",
+    "exactCeiling", "executionManifestRef", "audience", "purpose", "consumptionScope", "expiresAt",
   ], "CREDIT_CHILD_COMMAND_INVALID");
   const command = Object.freeze({
     siteId: stringValue(value.siteId, "CREDIT_REFERENCE_INVALID"),
@@ -26,6 +26,7 @@ export function snapshotChildDerivation(input: unknown): DeriveMediaChildCommand
     businessOperationKey: stringValue(value.businessOperationKey, "CREDIT_REFERENCE_INVALID"),
     requestDigest: stringValue(value.requestDigest, "CREDIT_REQUEST_DIGEST_INVALID"),
     exactCeiling: bigintValue(value.exactCeiling, "CREDIT_CHILD_CEILING_INVALID"),
+    executionManifestRef: stringValue(value.executionManifestRef, "CREDIT_REFERENCE_INVALID"),
     audience: mediaAudience(value.audience),
     purpose: mediaPurpose(value.purpose),
     consumptionScope: snapshotConsumptionScope(value.consumptionScope),
@@ -65,7 +66,8 @@ export function snapshotChildReturn(input: unknown): ReturnMediaChildCommand {
 }
 
 function validateChildDerivation(input: DeriveMediaChildCommand): void {
-  [input.siteId, input.mediaOperationRef, input.businessOperationKey].forEach(strictReference);
+  [input.siteId, input.mediaOperationRef, input.businessOperationKey,
+    input.executionManifestRef].forEach(strictReference);
   uuidReference(input.executionBudgetRootRef);
   uuidReference(input.parentAllocationRef);
   validateConsumptionScope(input.consumptionScope);

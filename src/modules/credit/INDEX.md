@@ -22,8 +22,14 @@ or any pre-existing allocation reservation/return receipts with
 `CREDIT_MEDIA_CHILD_MIGRATION_REQUIRES_FRESH_DATA`; development data must be reset. There is deliberately no legacy migration,
 backfill, reason recovery, row deletion, or temporary immutable-trigger disable path.
 
-The typed `RunBudgetAuthority` port is ready for planned Media integration; the current pure Media domain kernel is not wired to it.
-That boundary keeps future Media callers from writing Credit tables. The Postgres repository reuses the branded
+The typed `RunBudgetAuthority` is wired into Media image submission through the native same-transaction owner. Direct Studio
+reserves and commits its root Segment; an Agent operation derives its exact child allocation and then commits a distinct
+child-owned Segment. Media never writes Credit tables. At terminalization, Credit resolves only pre-issued attempt authority,
+rates the exact certified evidence set and returns the Agent child through fresh parent/child revision and epoch fences. Missing or
+ambiguous usage enters reconciliation rather than being priced as zero. The direct-root terminal authority and its production
+composition remain fail-closed launch blockers; see `docs/platform/media-worker-launch-blockers.md`.
+
+The Postgres repository reuses the branded
 `PlatformTransaction`, existing allocation lineage/conservation triggers, reservation/return receipt tables, and local operation
 receipts. Child allocation commands do not emit an outbox event because no routed consumer exists for those events. The repository
 performs no network I/O and creates no Media balance, ledger, job, generation, or queue authority. Persisted allocation and command

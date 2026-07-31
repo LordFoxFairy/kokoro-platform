@@ -402,13 +402,16 @@ describe("Platform migrator", () => {
     )?.[0];
     expect(columnInsertAuthority).toContain("runtime_role.rolname = $5");
     expect(columnInsertAuthority).toContain("'admission_command'");
+    expect(columnInsertAuthority).toContain("'admission_media_access_authorization'");
     expect(columnUpdateAuthority).toContain("runtime_role.rolname = $5");
     expect(columnUpdateAuthority).toContain("'admission_execution_manifest'");
+    expect(columnUpdateAuthority).toContain("'admission_media_access_authorization'");
     const admissionSelectFence = authoritySql.match(
       /runtime_role\.rolname=\$5 AND \([\s\S]*?'SELECT'[\s\S]*?candidate\.relname <> ALL\(ARRAY\[[\s\S]*?'credit_authorization_segment'[\s\S]*?\]\)\)/u,
     )?.[0];
     expect(admissionSelectFence).toContain("'authorization_session_access_grant'");
     expect(admissionSelectFence).toContain("'asset_eligibility_projection'");
+    expect(admissionSelectFence).toContain("'admission_media_access_authorization'");
     const relationInventories = [
       authoritySql.match(/candidate\.relname <> ALL\(ARRAY\[([\s\S]*?)\]\) AND/u)?.[1],
       authoritySql.match(/candidate\.relname = ANY\(ARRAY\[([\s\S]*?)\]\) AND \(/u)?.[1],
@@ -417,12 +420,28 @@ describe("Platform migrator", () => {
     expect(relationInventories.every((inventory) =>
       inventory?.includes("'commerce_catalog_epoch_authority'") === true,
     )).toBe(true);
+    for (const mediaRelation of [
+      "'admission_media_access_authorization'",
+      "'media_operation_definition_revision'",
+      "'site_release_media_definition'",
+    ]) {
+      expect(relationInventories.every((inventory) =>
+        inventory?.includes(mediaRelation) === true,
+      )).toBe(true);
+    }
     const adminRelationAllowlists = [...authoritySql.matchAll(
-      /runtime_role\.rolname = \$4 AND candidate\.relname = ANY\(ARRAY\[([\s\S]*?)\]\)\)/gu,
+      /runtime_role\.rolname = \$4\s+AND candidate\.relname = ANY\(ARRAY\[([\s\S]*?)\]\)\)/gu,
     )].map((match) => match[1]);
     expect(adminRelationAllowlists.filter((allowlist) =>
       allowlist?.includes("'commerce_catalog_epoch_authority'") === true,
     )).toHaveLength(2);
+    expect(adminRelationAllowlists.filter((allowlist) =>
+      allowlist?.includes("'site_release_media_definition'") === true,
+    )).toHaveLength(2);
+    const mediaAdminSelectFence = authoritySql.match(
+      /candidate\.relname = ANY\(ARRAY\[[^\]]*'media_operation_definition_revision'[^\]]*\]\)\s+AND runtime_role\.rolname <> \$4/u,
+    )?.[0];
+    expect(mediaAdminSelectFence).toContain("'site_release_media_definition'");
     expect(authoritySql).toContain('AS "canReadCommerceCatalogEpoch"');
     expect(authoritySql).toContain('AS "canUpdateCommerceCatalogEpoch"');
     expect(authoritySql).toMatch(

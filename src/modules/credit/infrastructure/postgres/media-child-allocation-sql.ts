@@ -5,6 +5,7 @@ SELECT allocation.site_ref AS "siteId",allocation.billing_account_ref AS "billin
        allocation.execution_budget_root_ref AS "executionBudgetRootRef",
        root.state AS "executionBudgetRootState",root.credit_hold_ref AS "creditHoldRef",
        hold.state AS "creditHoldState",hold.expires_at AS "creditHoldExpiresAt",
+       root.rating_policy_revision_ref AS "ratingPolicyRevisionRef",
        allocation.budget_allocation_ref AS "parentAllocationRef",allocation.is_root AS "isRoot",
        allocation.audience,
        COALESCE((SELECT sum(segment.maximum_amount)
@@ -50,6 +51,8 @@ SELECT child.site_ref AS "siteId",child.billing_account_ref AS "billingAccountId
        parent_revision.returned_to_parent_cumulative::text AS "parentReturnedToParentCumulative",
        parent_revision.state AS "parentAllocationState",
        child.budget_allocation_ref AS "childAllocationRef",child.audience AS "childAudience",
+       child_segment.authorization_segment_ref AS "childAuthorizationSegmentRef",
+       child_segment.execution_manifest_ref AS "executionManifestRef",
        child.purpose AS "childPurpose",child.operation_ref AS "mediaOperationRef",
        child.surface_ref AS "surfaceRef",child.capability_key AS "capabilityKey",
        child.agent_ref AS "agentRef",child.expires_at AS "expiresAt",
@@ -99,6 +102,10 @@ JOIN platform.credit_execution_budget_root root
   ON root.execution_budget_root_ref=child.execution_budget_root_ref AND root.site_ref=child.site_ref
 JOIN platform.credit_hold hold
   ON hold.credit_hold_ref=root.credit_hold_ref AND hold.site_ref=root.site_ref
+JOIN platform.credit_authorization_segment child_segment
+  ON child_segment.site_ref=child.site_ref
+ AND child_segment.execution_budget_root_ref=child.execution_budget_root_ref
+ AND child_segment.budget_allocation_ref=child.budget_allocation_ref
 LEFT JOIN LATERAL (
   SELECT receipt.result,receipt.result_digest AS "priorReturnResultDigest",
          receipt.operation_kind AS "priorReturnOperationKind",

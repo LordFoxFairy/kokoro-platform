@@ -44,9 +44,15 @@ export type MediaImageWorkerTaskRow = Readonly<{
   creditExecutionBudgetRootRef: string;
   creditAuthorizationSegmentRef: string;
   creditExecutionManifestRef: string;
-  creditParentAllocationRef: string;
-  creditChildAllocationRef: string;
-  creditAllocationReceiptRef: string;
+  creditBudgetKind: "direct_root" | "agent_child";
+  creditParentAllocationRef: string | null;
+  creditChildAllocationRef: string | null;
+  creditAllocationReceiptRef: string | null;
+  creditRootHoldRef: string | null;
+  creditRootAllocationRef: string | null;
+  creditRootAllocationRevision: bigint | string | null;
+  creditRootAllocationEpoch: bigint | string | null;
+  creditAuthorizationSegmentVersion: bigint | string | null;
   creditReservedCeiling: bigint | string;
   creditUnit: string;
   effectBudgetCommitRef: string;
@@ -75,6 +81,15 @@ export type MediaImageWorkerTaskRow = Readonly<{
   source: string;
   definitionRevisionRef: string;
   modelOptionRevisionRef: string;
+  siteReleaseRef: string | null;
+  siteSecurityEpoch: bigint | string | null;
+  policyEpoch: bigint | string | null;
+  workloadBindingEpoch: bigint | string | null;
+  identitySessionRef: string | null;
+  identitySessionEpoch: bigint | string | null;
+  restrictionEpoch: bigint | string | null;
+  membershipEpoch: bigint | string | null;
+  authorizationEpoch: bigint | string | null;
   operationInputRevisionRef: string;
   keyRevisionRef: string;
   ciphertext: Uint8Array;
@@ -389,13 +404,26 @@ function taskFromRow(
   capabilityOpener: MediaImageCapabilityOpener,
   nowMs: number,
 ): MediaImageWorkerTask {
-  // The active worker projection is produced only by the Agent command owner. Direct Studio
-  // remains fail-closed until its journal persists the complete DirectStudioOwnerAuthority.
-  if (row.source !== "agent_runtime") throw new Error("MEDIA_WORKER_OWNER_BINDING_UNSUPPORTED");
-  const ownerBinding: MediaOperationOwnerBinding = Object.freeze({ siteRef: row.siteRef,
+  if (row.source !== "agent_runtime" && row.source !== "direct_studio") {
+    throw new Error("MEDIA_WORKER_OWNER_BINDING_UNSUPPORTED");
+  }
+  const ownerBase = { siteRef: row.siteRef,
     subjectRef: row.subjectRef, subjectGeneration: integer(row.subjectGeneration, "MEDIA_WORKER_TASK_INVALID"),
-    projectRef: row.projectRef, workloadRef: row.workloadRef, source: "agent_runtime",
-    definitionRevisionRef: row.definitionRevisionRef, modelOptionRevisionRef: row.modelOptionRevisionRef });
+    projectRef: row.projectRef, workloadRef: row.workloadRef,
+    definitionRevisionRef: row.definitionRevisionRef, modelOptionRevisionRef: row.modelOptionRevisionRef } as const;
+  const ownerBinding: MediaOperationOwnerBinding = row.source === "agent_runtime"
+    ? Object.freeze({ ...ownerBase, source: "agent_runtime" as const })
+    : Object.freeze({ ...ownerBase, source: "direct_studio" as const, authority: Object.freeze({
+        siteReleaseRef: requiredNullableRef(row.siteReleaseRef, "MEDIA_WORKER_DIRECT_AUTHORITY_INVALID"),
+        siteSecurityEpoch: nullableInteger(row.siteSecurityEpoch, "MEDIA_WORKER_DIRECT_AUTHORITY_INVALID"),
+        policyEpoch: nullableInteger(row.policyEpoch, "MEDIA_WORKER_DIRECT_AUTHORITY_INVALID"),
+        workloadBindingEpoch: nullableInteger(row.workloadBindingEpoch, "MEDIA_WORKER_DIRECT_AUTHORITY_INVALID"),
+        identitySessionRef: requiredNullableRef(row.identitySessionRef, "MEDIA_WORKER_DIRECT_AUTHORITY_INVALID"),
+        identitySessionEpoch: nullableInteger(row.identitySessionEpoch, "MEDIA_WORKER_DIRECT_AUTHORITY_INVALID"),
+        restrictionEpoch: nullableInteger(row.restrictionEpoch, "MEDIA_WORKER_DIRECT_AUTHORITY_INVALID"),
+        membershipEpoch: nullableInteger(row.membershipEpoch, "MEDIA_WORKER_DIRECT_AUTHORITY_INVALID"),
+        authorizationEpoch: nullableInteger(row.authorizationEpoch, "MEDIA_WORKER_DIRECT_AUTHORITY_INVALID"),
+      }) });
   const protectedInput: ProtectedOperationInputRevision = Object.freeze({
     operationInputRevisionRef: row.operationInputRevisionRef,
     encryptionAlgorithm: "AES-256-GCM-envelope-v1" as const,
@@ -480,15 +508,7 @@ function taskFromRow(
     outputAccessRequestFingerprints: Object.freeze(candidates.map((value) => value.outputAccessRequestFingerprint)),
     ownerScope: Object.freeze({ siteRef: row.siteRef, subjectRef: row.subjectRef,
       subjectGeneration: ownerBinding.subjectGeneration, projectRef: row.projectRef }),
-    creditBudget: Object.freeze({ kind: "agent_child" as const,
-      executionBudgetRootRef: row.creditExecutionBudgetRootRef,
-      authorizationSegmentRef: row.creditAuthorizationSegmentRef,
-      executionManifestRef: row.creditExecutionManifestRef,
-      parentAllocationRef: row.creditParentAllocationRef,
-      childAllocationRef: row.creditChildAllocationRef,
-      allocationReservationReceiptRef: row.creditAllocationReceiptRef,
-      reservedCeiling: integer(row.creditReservedCeiling, "MEDIA_WORKER_CREDIT_BUDGET_INVALID"),
-      unit: requiredRef(row.creditUnit, "MEDIA_WORKER_CREDIT_BUDGET_INVALID") }),
+    creditBudget: creditBudget(row),
     checkpoint,
     ...(row.cancelIntentReceiptRef === null ? {} : {
       cancelEffectCommand: Object.freeze({ cancelIntentReceiptRef: row.cancelIntentReceiptRef,
@@ -803,6 +823,43 @@ function parseSourceGrants(value: unknown): readonly Readonly<{
   }));
 }
 
+function creditBudget(row: MediaImageWorkerTaskRow): MediaImageWorkerTask["creditBudget"] {
+  const base = { executionBudgetRootRef: requiredRef(row.creditExecutionBudgetRootRef,
+    "MEDIA_WORKER_CREDIT_BUDGET_INVALID"),
+  authorizationSegmentRef: requiredRef(row.creditAuthorizationSegmentRef, "MEDIA_WORKER_CREDIT_BUDGET_INVALID"),
+  executionManifestRef: requiredRef(row.creditExecutionManifestRef, "MEDIA_WORKER_CREDIT_BUDGET_INVALID"),
+  reservedCeiling: integer(row.creditReservedCeiling, "MEDIA_WORKER_CREDIT_BUDGET_INVALID"),
+  unit: requiredRef(row.creditUnit, "MEDIA_WORKER_CREDIT_BUDGET_INVALID") } as const;
+  if (row.creditBudgetKind === "agent_child") {
+    if (row.source !== "agent_runtime" || row.creditRootHoldRef !== null ||
+        row.creditRootAllocationRef !== null || row.creditRootAllocationRevision !== null ||
+        row.creditRootAllocationEpoch !== null || row.creditAuthorizationSegmentVersion === null) {
+      throw new Error("MEDIA_WORKER_CREDIT_BUDGET_INVALID");
+    }
+    return Object.freeze({ ...base, kind: "agent_child" as const,
+      parentAllocationRef: requiredNullableRef(row.creditParentAllocationRef,
+        "MEDIA_WORKER_CREDIT_BUDGET_INVALID"),
+      childAllocationRef: requiredNullableRef(row.creditChildAllocationRef,
+        "MEDIA_WORKER_CREDIT_BUDGET_INVALID"),
+      allocationReservationReceiptRef: requiredNullableRef(row.creditAllocationReceiptRef,
+        "MEDIA_WORKER_CREDIT_BUDGET_INVALID"),
+      authorizationSegmentVersion: nullableInteger(row.creditAuthorizationSegmentVersion,
+        "MEDIA_WORKER_CREDIT_BUDGET_INVALID") });
+  }
+  if (row.creditBudgetKind !== "direct_root" || row.source !== "direct_studio" ||
+      row.creditParentAllocationRef !== null || row.creditChildAllocationRef !== null ||
+      row.creditAllocationReceiptRef !== null) {
+    throw new Error("MEDIA_WORKER_CREDIT_BUDGET_INVALID");
+  }
+  return Object.freeze({ ...base, kind: "direct_root" as const,
+    rootHoldRef: requiredNullableRef(row.creditRootHoldRef, "MEDIA_WORKER_CREDIT_BUDGET_INVALID"),
+    rootAllocationRef: requiredNullableRef(row.creditRootAllocationRef, "MEDIA_WORKER_CREDIT_BUDGET_INVALID"),
+    rootAllocationRevision: nullableInteger(row.creditRootAllocationRevision, "MEDIA_WORKER_CREDIT_BUDGET_INVALID"),
+    rootAllocationEpoch: nullableInteger(row.creditRootAllocationEpoch, "MEDIA_WORKER_CREDIT_BUDGET_INVALID"),
+    authorizationSegmentVersion: nullableInteger(row.creditAuthorizationSegmentVersion,
+      "MEDIA_WORKER_CREDIT_BUDGET_INVALID") });
+}
+
 function requiredNullableRef(value: string | null, code: string): string {
   if (value === null) throw new Error(code); reference(value, code); return value;
 }
@@ -849,6 +906,10 @@ function errorCode(value: string): void {
 function integer(value: bigint | string, code: string): bigint {
   let parsed: bigint; try { parsed = BigInt(value); } catch { throw new Error(code); }
   if (parsed < 1n || parsed > 9_223_372_036_854_775_807n) throw new Error(code); return parsed;
+}
+function nullableInteger(value: bigint | string | null, code: string): bigint {
+  if (value === null) throw new Error(code);
+  return integer(value, code);
 }
 function unsignedInteger(value: bigint | string, code: string): bigint {
   let parsed: bigint; try { parsed = BigInt(value); } catch { throw new Error(code); }

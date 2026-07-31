@@ -212,7 +212,8 @@ describe("image.text_to_image submission authority", () => {
     }, agentAccess, repository,
     budgets: { kind: "agent_only", agentChild: {
       deriveChild: async () => ({ childAllocationRef: "credit-child:one",
-        allocationReservationReceiptRef: "credit-receipt:one" }) } },
+        allocationReservationReceiptRef: "credit-receipt:one",
+        authorizationSegmentRef: "credit-child-segment:one", authorizationSegmentVersion: 2n }) } },
     inputProtector: new EnvelopeOperationInputProtector({ activeKey: {
       keyRevisionRef: "media-kek:revision:1", key: randomBytes(32),
     } }), ownerDigestKey: randomBytes(32), reference: (kind) => `${kind}:${++serial}`,
@@ -258,7 +259,8 @@ function serviceWith(input: Readonly<{
         rootAllocationRevision: 1n, rootAllocationEpoch: 1n,
         authorizationSegmentRef: "segment:one", authorizationSegmentVersion: 2n }) },
       agentChild: { deriveChild: async () => ({ childAllocationRef: "credit-child:one",
-        allocationReservationReceiptRef: "credit-receipt:one" }) } },
+        allocationReservationReceiptRef: "credit-receipt:one",
+        authorizationSegmentRef: "credit-child-segment:one", authorizationSegmentVersion: 2n }) } },
     inputProtector: new EnvelopeOperationInputProtector({
       activeKey: { keyRevisionRef: "media-kek:revision:1", key: randomBytes(32) },
     }),

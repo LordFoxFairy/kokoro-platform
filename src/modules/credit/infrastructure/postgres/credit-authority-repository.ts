@@ -479,15 +479,31 @@ export class PostgresCreditAuthorityRepository implements CreditAuthorityReposit
     }, record.childAllocation, record.childAllocation.terminalReceiptDigest,
     record.childAllocation.parentAppliedRevision);
     await exactlyOne(sql.execute(
+      `INSERT INTO platform.credit_authorization_segment
+       (authorization_segment_ref,site_ref,execution_budget_root_ref,budget_allocation_ref,credit_hold_ref,
+        billing_account_ref,credit_account_ref,unit,liability_merchant_account_ref,execution_manifest_ref,
+        rating_policy_revision_ref,business_operation_key,request_digest,maximum_amount,allocation_epoch,
+        prepared_against_allocation_revision,state,expires_at,created_at,updated_at)
+       VALUES ($1::uuid,$2,$3::uuid,$4::uuid,$5::uuid,$6,$7::uuid,$8,$9,$10,$11,$12,$13,$14::numeric,
+               1,1,'reserved',$15::timestamptz,$16::timestamptz,$16::timestamptz)`,
+      [record.childAuthorizationSegmentRef, record.siteId, record.executionBudgetRootRef,
+        record.childAllocationRef, record.parent.creditHoldRef, record.parent.billingAccountId,
+        record.parent.creditAccountId, record.parent.unit, record.parent.liabilityMerchantAccountId,
+        record.executionManifestRef, record.parent.ratingPolicyRevisionRef,
+        `media-child-segment:${record.mediaOperationRef}`, record.operation.requestDigest,
+        record.receipt.reservedCeiling.toString(), record.expiresAt, record.occurredAt],
+    ), "CREDIT_MEDIA_CHILD_SEGMENT_PERSIST_FAILED");
+    await exactlyOne(sql.execute(
       `INSERT INTO platform.credit_allocation_reservation_receipt
        (allocation_reservation_receipt_ref,site_ref,execution_budget_root_ref,parent_allocation_ref,
         child_allocation_ref,business_operation_key,request_digest,reserved_ceiling,
         parent_expected_revision,parent_resulting_revision,child_initial_revision,receipt_digest,
         parent_expected_epoch,child_initial_epoch,media_operation_ref,audience,purpose,surface_ref,
-        capability_key,agent_ref,expires_at,created_at)
+        capability_key,agent_ref,expires_at,created_at,child_authorization_segment_ref,
+        child_authorization_segment_version)
        VALUES ($1::uuid,$2,$3::uuid,$4::uuid,$5::uuid,$6,$7,$8::numeric,$9::bigint,$10::bigint,
                $11::bigint,$12,$13::bigint,$14::bigint,$15,'media','media_operation',$16,$17,$18,
-               $19::timestamptz,$20::timestamptz)`,
+               $19::timestamptz,$20::timestamptz,$21::uuid,$22::bigint)`,
       [record.receipt.allocationReservationReceiptRef, record.siteId,
         record.executionBudgetRootRef, record.parentAllocationRef, record.childAllocationRef,
         record.operation.businessOperationKey, record.operation.requestDigest,
@@ -496,7 +512,8 @@ export class PostgresCreditAuthorityRepository implements CreditAuthorityReposit
         record.receipt.receiptDigest, record.receipt.parentAllocationEpoch.toString(),
         record.receipt.childAllocationEpoch.toString(), record.mediaOperationRef,
         record.consumptionScope.surfaceRef, record.consumptionScope.capabilityKey,
-        record.consumptionScope.agentRef, record.expiresAt, record.occurredAt],
+        record.consumptionScope.agentRef, record.expiresAt, record.occurredAt,
+        record.childAuthorizationSegmentRef, record.receipt.childAuthorizationSegmentVersion.toString()],
     ), "CREDIT_MEDIA_CHILD_RESERVATION_RECEIPT_PERSIST_FAILED");
     await this.#writeChildEvidence(transaction, record.operationReceiptRef,
       record.operation, record.receipt, null, record.occurredAt);

@@ -150,9 +150,12 @@ export interface AgentMediaChildBudgetOwner {
     commandRef: string;
     ownerRequestDigest: string;
     exactCeiling: bigint;
+    executionManifestRef: string;
   }>): Promise<Readonly<{
     childAllocationRef: string;
     allocationReservationReceiptRef: string;
+    authorizationSegmentRef: string;
+    authorizationSegmentVersion: bigint;
   }>>;
 }
 
@@ -219,6 +222,7 @@ export type MediaImageOperationRecord = Readonly<{
         kind: "agent_child";
         executionBudgetRootRef: string;
         authorizationSegmentRef: string;
+        authorizationSegmentVersion: bigint;
         executionManifestRef: string;
         parentAllocationRef: string;
         childAllocationRef: string;
@@ -509,7 +513,6 @@ export class ImageOperationSubmissionService {
             reservedCeiling: admission.maximumCredit, unit: admission.budgetSource.unit })
         : Object.freeze({ kind: "agent_child" as const,
             executionBudgetRootRef: admission.budgetSource.executionBudgetRootRef,
-            authorizationSegmentRef: admission.budgetSource.authorizationSegmentRef,
             executionManifestRef: admission.budgetSource.executionManifestRef,
             parentAllocationRef: admission.budgetSource.parentAllocationRef,
             ...await this.#dependencies.budgets.agentChild.deriveChild(transaction, {
@@ -524,6 +527,7 @@ export class ImageOperationSubmissionService {
               commandRef: input.commandRef,
               ownerRequestDigest,
               exactCeiling: admission.maximumCredit,
+              executionManifestRef: admission.budgetSource.executionManifestRef,
             }), reservedCeiling: admission.maximumCredit, unit: admission.budgetSource.unit });
       const createdAt = this.#date().toISOString();
       const record = Object.freeze({

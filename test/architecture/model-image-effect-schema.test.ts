@@ -27,6 +27,9 @@ describe("Model Gateway image effect authority schema", () => {
     expect(migration).toContain("receipt_ref ~ '^image-effect-receipt:sha256:");
     expect(migration).toContain("UNIQUE (logical_invocation_ref,attempt_ordinal)");
     expect(migration).toContain("effect_budget_commit_ref TEXT NOT NULL UNIQUE");
+    expect(migration).toMatch(
+      /FOREIGN KEY \(effect_budget_commit_ref,effect_budget_commit_digest,attempt_authorization_ref,[\s\S]+attempt_authorization_digest\) REFERENCES[\s\S]+model_image_effect_budget_commit/u,
+    );
     expect(migration).toContain("provider_operation_key TEXT NOT NULL UNIQUE");
     expect(migration).toContain("UNIQUE (attempt_ref,provider_sequence)");
     expect(migration).toContain("UNIQUE (attempt_ref,provider_event_ref)");

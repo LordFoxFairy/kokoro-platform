@@ -84,6 +84,10 @@ export type ImageEffectAttempt = Readonly<{
   ordinal: number;
   budgetCommitRef: string;
   budgetCommitDigest: string;
+  /** Credit-owner authorization created before any provider effect is dispatchable. */
+  attemptAuthorizationRef: string;
+  attemptAuthorizationFenceEpoch: bigint;
+  attemptAuthorizationDigest: string;
   providerOperationKey: string;
   state: ImageEffectAttemptState;
   cancelRequested: boolean;
@@ -105,12 +109,18 @@ export function createImageEffectAttempt(input: Readonly<{
   ordinal: number;
   budgetCommitRef: string;
   budgetCommitDigest: string;
+  attemptAuthorizationRef: string;
+  attemptAuthorizationFenceEpoch: bigint;
+  attemptAuthorizationDigest: string;
   providerOperationKey: string;
 }>): ImageEffectAttempt {
   reference(input.attemptRef);
   positiveOrdinal(input.ordinal);
   reference(input.budgetCommitRef);
   digest(input.budgetCommitDigest);
+  reference(input.attemptAuthorizationRef);
+  if (input.attemptAuthorizationFenceEpoch < 1n) throw new Error("IMAGE_EFFECT_ATTEMPT_AUTHORIZATION_INVALID");
+  digest(input.attemptAuthorizationDigest);
   reference(input.providerOperationKey);
   return Object.freeze({
     ...input,
@@ -227,6 +237,9 @@ function validateAttempt(attempt: ImageEffectAttempt): void {
   positiveOrdinal(attempt.ordinal);
   reference(attempt.budgetCommitRef);
   digest(attempt.budgetCommitDigest);
+  reference(attempt.attemptAuthorizationRef);
+  if (attempt.attemptAuthorizationFenceEpoch < 1n) throw new Error("IMAGE_EFFECT_ATTEMPT_AUTHORIZATION_INVALID");
+  digest(attempt.attemptAuthorizationDigest);
   reference(attempt.providerOperationKey);
   if (attempt.lastProviderSequence < 0n || attempt.observations.length > 4096) {
     throw new Error("IMAGE_EFFECT_ATTEMPT_INVALID");

@@ -12,6 +12,11 @@ const USAGE_FACT = Object.freeze({ evidenceKind: "measured" as const,
   dimensions: Object.freeze([Object.freeze({ dimensionKey: "image", sourceUnit: "output", quantity: 1n })]),
   attemptOutcome: "succeeded" as const, occurredAt: "2026-07-31T12:01:00.000Z",
   sourceDigest: "9".repeat(64) });
+const ATTEMPT_AUTHORIZATION = Object.freeze({
+  attemptAuthorizationRef: "00000000-0000-7000-8000-000000000111",
+  attemptAuthorizationFenceEpoch: 1n,
+  attemptAuthorizationDigest: "7".repeat(64),
+});
 const OBSERVATIONS: readonly ImageEffectProviderObservation[] = [
   SUBMITTED_OBSERVATION,
   { kind: "succeeded", eventRef: "event:two", sequence: 2n, observationDigest: "b".repeat(64),
@@ -28,6 +33,7 @@ describe("image-effect dispatch worker", () => {
   it("starts Provider I/O through a certified adapter and commits every fenced observation", async () => {
     const attempt = createImageEffectAttempt({ attemptRef: "attempt:one", ordinal: 1,
       budgetCommitRef: "budget:one", budgetCommitDigest: "e".repeat(64),
+      ...ATTEMPT_AUTHORIZATION,
       providerOperationKey: "provider-key:one" });
     const record = vi.fn(async (
       _claim: ImageEffectDispatchClaim,
@@ -80,6 +86,7 @@ describe("image-effect dispatch worker", () => {
   it("records submission-unknown ownership when begin throws after crossing the Provider boundary", async () => {
     const attempt = createImageEffectAttempt({ attemptRef: "attempt:one", ordinal: 1,
       budgetCommitRef: "budget:one", budgetCommitDigest: "e".repeat(64),
+      ...ATTEMPT_AUTHORIZATION,
       providerOperationKey: "provider-key:one" });
     const startUnknown = vi.fn(async () => ({ ...attempt, state: "submission_unknown" as const }));
     const deadLetter = vi.fn(async () => true);
@@ -101,6 +108,7 @@ describe("image-effect dispatch worker", () => {
   it("does not mutate owner state after the dispatch signal is already aborted", async () => {
     const attempt = createImageEffectAttempt({ attemptRef: "attempt:one", ordinal: 1,
       budgetCommitRef: "budget:one", budgetCommitDigest: "e".repeat(64),
+      ...ATTEMPT_AUTHORIZATION,
       providerOperationKey: "provider-key:one" });
     const repository = repositoryFor(attempt);
     const begin = vi.fn();
@@ -122,6 +130,7 @@ describe("image-effect dispatch worker", () => {
   it("durably records start ambiguity when ordinary shutdown aborts begin after Provider I/O starts", async () => {
     const attempt = createImageEffectAttempt({ attemptRef: "attempt:one", ordinal: 1,
       budgetCommitRef: "budget:one", budgetCommitDigest: "e".repeat(64),
+      ...ATTEMPT_AUTHORIZATION,
       providerOperationKey: "provider-key:one" });
     const repository = repositoryFor(attempt);
     let notifyStarted!: () => void;

@@ -166,7 +166,11 @@ export class PostgresImageEffectAuthority implements ImageEffectUnitOfWork, Imag
     const rows = await resolvePlatformTransaction(transaction).query<BudgetRow>(
       `SELECT effect_budget_commit_ref AS "effectBudgetCommitRef",
               effect_budget_commit_digest AS "effectBudgetCommitDigest",
-              attempt_ordinal AS "attemptOrdinal",expires_at AS "expiresAt",replayed
+              attempt_ordinal AS "attemptOrdinal",
+              attempt_authorization_ref AS "attemptAuthorizationRef",
+              attempt_authorization_fence_epoch AS "attemptAuthorizationFenceEpoch",
+              attempt_authorization_digest AS "attemptAuthorizationDigest",
+              expires_at AS "expiresAt",replayed
          FROM platform.consume_model_image_effect_budget_commit(
            $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
       [input.siteId, input.callerIdentity, input.effectBudgetCommitRef,
@@ -188,6 +192,9 @@ export class PostgresImageEffectAuthority implements ImageEffectUnitOfWork, Imag
       effectBudgetCommitRef: row.effectBudgetCommitRef,
       effectBudgetCommitDigest: row.effectBudgetCommitDigest,
       attemptOrdinal: input.attemptOrdinal,
+      attemptAuthorizationRef: text(row.attemptAuthorizationRef),
+      attemptAuthorizationFenceEpoch: positive(row.attemptAuthorizationFenceEpoch),
+      attemptAuthorizationDigest: hex(row.attemptAuthorizationDigest),
       expiresAt,
     });
   }
@@ -197,6 +204,9 @@ interface BudgetRow extends Record<string, unknown> {
   effectBudgetCommitRef: unknown;
   effectBudgetCommitDigest: unknown;
   attemptOrdinal: unknown;
+  attemptAuthorizationRef: unknown;
+  attemptAuthorizationFenceEpoch: unknown;
+  attemptAuthorizationDigest: unknown;
   expiresAt: unknown;
   replayed: unknown;
 }
@@ -375,11 +385,14 @@ export class PostgresImageEffectRepository implements ImageEffectRepository {
     one(await sql.execute(
       `INSERT INTO platform.model_image_effect_attempt
        (attempt_ref,logical_invocation_ref,site_ref,attempt_ordinal,effect_budget_commit_ref,
-        effect_budget_commit_digest,provider_operation_key,state,cancel_requested,last_provider_sequence,
+        effect_budget_commit_digest,attempt_authorization_ref,attempt_authorization_fence_epoch,
+        attempt_authorization_digest,provider_operation_key,state,cancel_requested,last_provider_sequence,
         late_outcome,created_at,updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::timestamptz,$13::timestamptz)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7::uuid,$8::bigint,$9,$10,$11,$12,$13,$14,$15::timestamptz,$16::timestamptz)`,
       [attempt.attemptRef, invocation.logicalInvocationRef, invocation.siteId, attempt.ordinal,
-        attempt.budgetCommitRef, attempt.budgetCommitDigest, attempt.providerOperationKey,
+        attempt.budgetCommitRef, attempt.budgetCommitDigest, attempt.attemptAuthorizationRef,
+        attempt.attemptAuthorizationFenceEpoch.toString(), attempt.attemptAuthorizationDigest,
+        attempt.providerOperationKey,
         attempt.state, attempt.cancelRequested, attempt.lastProviderSequence.toString(), attempt.lateOutcome,
         invocation.updatedAt, invocation.updatedAt],
     ), "IMAGE_EFFECT_ATTEMPT_INSERT_FAILED");
@@ -698,6 +711,9 @@ export class PostgresImageEffectEvidenceRepository implements ImageEffectEvidenc
               invocation.last_evidence_sequence AS "lastEvidenceSequence",
               invocation.state,invocation.current_attempt_ordinal AS "currentAttemptOrdinal",
               invocation.updated_at AS "observedAt",
+              attempt.attempt_authorization_ref AS "attemptAuthorizationRef",
+              attempt.attempt_authorization_fence_epoch AS "attemptAuthorizationFenceEpoch",
+              attempt.attempt_authorization_digest AS "attemptAuthorizationDigest",
               attempt.canonical_outcome_evidence_ref AS "canonicalOutcomeEvidenceRef",
               attempt.canonical_outcome_evidence_digest AS "canonicalOutcomeEvidenceDigest",
               attempt.usage_evidence_ref AS "usageEvidenceRef",
@@ -757,6 +773,9 @@ export class PostgresImageEffectEvidenceRepository implements ImageEffectEvidenc
     return Object.freeze({ invocation: Object.freeze({ logicalInvocationRef: text(invocation.logicalInvocationRef),
       modelInvocationCommandRef: text(invocation.modelInvocationCommandRef),
       ownerVersion: positive(invocation.ownerVersion), currentAttemptOrdinal: integer(invocation.currentAttemptOrdinal),
+      attemptAuthorizationRef: text(invocation.attemptAuthorizationRef),
+      attemptAuthorizationFenceEpoch: positive(invocation.attemptAuthorizationFenceEpoch),
+      attemptAuthorizationDigest: hex(invocation.attemptAuthorizationDigest),
       state: enumValue(invocation.state, ["accepted", "submitted", "definitely_not_submitted",
         "submission_unknown", "running", "succeeded", "failed", "cancel_requested", "canceled",
         "outcome_unknown"] as const),
@@ -934,6 +953,9 @@ function mapWorkerContext(value: Record<string, unknown>): ImageEffectDispatchCo
   const attempt: ImageEffectAttempt = Object.freeze({
     attemptRef: text(attemptValue.attemptRef), ordinal: integer(attemptValue.ordinal),
     budgetCommitRef: text(attemptValue.budgetCommitRef), budgetCommitDigest: hex(attemptValue.budgetCommitDigest),
+    attemptAuthorizationRef: text(attemptValue.attemptAuthorizationRef),
+    attemptAuthorizationFenceEpoch: positive(attemptValue.attemptAuthorizationFenceEpoch),
+    attemptAuthorizationDigest: hex(attemptValue.attemptAuthorizationDigest),
     providerOperationKey: text(attemptValue.providerOperationKey),
     state: enumValue(attemptValue.state, ["planned", "definitely_not_submitted", "submitted",
       "submission_unknown", "running", "succeeded", "failed", "canceled", "outcome_unknown"] as const),
@@ -1010,6 +1032,8 @@ interface InvocationRow extends Record<string, unknown> {
 
 interface AttemptRow extends Record<string, unknown> {
   attemptRef: unknown; ordinal: unknown; budgetCommitRef: unknown; budgetCommitDigest: unknown;
+  attemptAuthorizationRef: unknown; attemptAuthorizationFenceEpoch: unknown;
+  attemptAuthorizationDigest: unknown;
   providerOperationKey: unknown; state: unknown; cancelRequested: unknown; lastProviderSequence: unknown;
   providerOperationRef: unknown; definitelyNotSubmittedReceiptRef: unknown;
   definitelyNotSubmittedReceiptDigest: unknown; canonicalOutcomeEvidenceRef: unknown;
@@ -1094,6 +1118,9 @@ const INVOCATION_SELECT = `SELECT invocation.logical_invocation_ref AS "logicalI
 const ATTEMPT_SELECT = `SELECT attempt.attempt_ref AS "attemptRef",attempt.attempt_ordinal AS ordinal,
   attempt.effect_budget_commit_ref AS "budgetCommitRef",
   attempt.effect_budget_commit_digest AS "budgetCommitDigest",
+  attempt.attempt_authorization_ref AS "attemptAuthorizationRef",
+  attempt.attempt_authorization_fence_epoch AS "attemptAuthorizationFenceEpoch",
+  attempt.attempt_authorization_digest AS "attemptAuthorizationDigest",
   attempt.provider_operation_key AS "providerOperationKey",attempt.state,
   attempt.cancel_requested AS "cancelRequested",attempt.last_provider_sequence AS "lastProviderSequence",
   attempt.provider_operation_ref AS "providerOperationRef",
@@ -1248,7 +1275,11 @@ function mapAttempt(
   }));
   return Object.freeze({
     attemptRef, ordinal: integer(row.ordinal), budgetCommitRef: text(row.budgetCommitRef),
-    budgetCommitDigest: hex(row.budgetCommitDigest), providerOperationKey: text(row.providerOperationKey),
+    budgetCommitDigest: hex(row.budgetCommitDigest),
+    attemptAuthorizationRef: text(row.attemptAuthorizationRef),
+    attemptAuthorizationFenceEpoch: positive(row.attemptAuthorizationFenceEpoch),
+    attemptAuthorizationDigest: hex(row.attemptAuthorizationDigest),
+    providerOperationKey: text(row.providerOperationKey),
     state: enumValue(row.state, ["planned", "definitely_not_submitted", "submitted", "submission_unknown",
       "running", "succeeded", "failed", "canceled", "outcome_unknown"] as const),
     cancelRequested: boolean(row.cancelRequested), lastProviderSequence: nonnegative(row.lastProviderSequence),

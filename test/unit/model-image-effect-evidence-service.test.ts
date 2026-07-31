@@ -25,6 +25,9 @@ const VIEW: ImageEffectView = Object.freeze({
   modelInvocationCommandRef: "command:one",
   ownerVersion: 7n,
   currentAttemptOrdinal: 1,
+  attemptAuthorizationRef: "00000000-0000-7000-8000-000000000111",
+  attemptAuthorizationFenceEpoch: 1n,
+  attemptAuthorizationDigest: "7".repeat(64),
   state: "succeeded",
   observedAt: "2026-07-31T12:00:00.000Z",
 });

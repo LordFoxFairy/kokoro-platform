@@ -67,6 +67,9 @@ CREATE TABLE platform.model_image_effect_budget_commit (
   operation_input_revision_digest TEXT NOT NULL CHECK (operation_input_revision_digest ~ '^[0-9a-f]{64}$'),
   logical_output_slots JSONB NOT NULL CHECK (jsonb_typeof(logical_output_slots)='array'),
   logical_output_slots_digest TEXT NOT NULL CHECK (logical_output_slots_digest ~ '^[0-9a-f]{64}$'),
+  attempt_authorization_ref UUID NOT NULL UNIQUE REFERENCES platform.credit_usage_attempt_intent(attempt_authorization_ref),
+  attempt_authorization_fence_epoch BIGINT NOT NULL CHECK (attempt_authorization_fence_epoch>0),
+  attempt_authorization_digest CHAR(64) NOT NULL CHECK (attempt_authorization_digest ~ '^[0-9a-f]{64}$'),
   issuer_key_revision TEXT NOT NULL CHECK (length(issuer_key_revision) BETWEEN 1 AND 128),
   signed_receipt_envelope BYTEA NOT NULL CHECK (octet_length(signed_receipt_envelope) BETWEEN 64 AND 65536),
   signed_receipt_digest TEXT NOT NULL CHECK (signed_receipt_digest ~ '^[0-9a-f]{64}$'),
@@ -80,6 +83,8 @@ CREATE TABLE platform.model_image_effect_budget_commit (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (effect_budget_commit_ref,effect_budget_commit_digest),
+  UNIQUE (effect_budget_commit_ref,effect_budget_commit_digest,attempt_authorization_ref,
+    attempt_authorization_fence_epoch,attempt_authorization_digest),
   CHECK ((state='consumed') = (consumed_logical_invocation_ref IS NOT NULL)),
   CHECK ((state='consumed') = (consumed_attempt_ref IS NOT NULL)),
   CHECK ((state='consumed') = (consumed_owner_command_digest IS NOT NULL)),
@@ -132,6 +137,9 @@ CREATE TABLE platform.model_image_effect_attempt (
   attempt_ordinal INTEGER NOT NULL CHECK (attempt_ordinal BETWEEN 1 AND 64),
   effect_budget_commit_ref TEXT NOT NULL UNIQUE,
   effect_budget_commit_digest TEXT NOT NULL CHECK (effect_budget_commit_digest ~ '^[0-9a-f]{64}$'),
+  attempt_authorization_ref UUID NOT NULL UNIQUE,
+  attempt_authorization_fence_epoch BIGINT NOT NULL CHECK (attempt_authorization_fence_epoch>0),
+  attempt_authorization_digest CHAR(64) NOT NULL CHECK (attempt_authorization_digest ~ '^[0-9a-f]{64}$'),
   provider_operation_key TEXT NOT NULL UNIQUE CHECK (length(provider_operation_key) BETWEEN 1 AND 256),
   state TEXT NOT NULL CHECK (state IN (
     'planned','definitely_not_submitted','submitted','submission_unknown','running',
@@ -157,6 +165,12 @@ CREATE TABLE platform.model_image_effect_attempt (
   UNIQUE (logical_invocation_ref,attempt_ordinal),
   FOREIGN KEY (effect_budget_commit_ref,effect_budget_commit_digest) REFERENCES
     platform.model_image_effect_budget_commit(effect_budget_commit_ref,effect_budget_commit_digest),
+  FOREIGN KEY (effect_budget_commit_ref,effect_budget_commit_digest,attempt_authorization_ref,
+    attempt_authorization_fence_epoch,attempt_authorization_digest) REFERENCES
+    platform.model_image_effect_budget_commit(effect_budget_commit_ref,effect_budget_commit_digest,
+      attempt_authorization_ref,attempt_authorization_fence_epoch,attempt_authorization_digest),
+  FOREIGN KEY (attempt_authorization_ref) REFERENCES
+    platform.credit_usage_attempt_intent(attempt_authorization_ref),
   CHECK ((state='definitely_not_submitted') = (definitely_not_submitted_receipt_ref IS NOT NULL)),
   CHECK ((state='definitely_not_submitted') = (definitely_not_submitted_receipt_digest IS NOT NULL)),
   CHECK ((dispatch_owner_ref IS NULL) = (dispatch_lease_expires_at IS NULL)),
@@ -524,6 +538,9 @@ CREATE FUNCTION platform.consume_model_image_effect_budget_commit(
   effect_budget_commit_ref TEXT,
   effect_budget_commit_digest TEXT,
   attempt_ordinal INTEGER,
+  attempt_authorization_ref UUID,
+  attempt_authorization_fence_epoch BIGINT,
+  attempt_authorization_digest CHAR(64),
   expires_at TIMESTAMPTZ,
   replayed BOOLEAN
 ) LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$
@@ -546,13 +563,16 @@ BEGIN
      AND budget.state='verified_available' AND budget.expires_at>statement_timestamp();
   IF FOUND THEN
     RETURN QUERY SELECT requested_commit_ref,requested_commit_digest,requested_attempt_ordinal,
+      budget.attempt_authorization_ref,budget.attempt_authorization_fence_epoch,
+      budget.attempt_authorization_digest,
       budget.expires_at,FALSE FROM platform.model_image_effect_budget_commit budget
       WHERE budget.effect_budget_commit_ref=requested_commit_ref;
     RETURN;
   END IF;
   RETURN QUERY
     SELECT budget.effect_budget_commit_ref,budget.effect_budget_commit_digest,budget.attempt_ordinal,
-           budget.expires_at,TRUE
+           budget.attempt_authorization_ref,budget.attempt_authorization_fence_epoch,
+           budget.attempt_authorization_digest,budget.expires_at,TRUE
       FROM platform.model_image_effect_budget_commit budget
      WHERE budget.effect_budget_commit_ref=requested_commit_ref
        AND budget.effect_budget_commit_digest=requested_commit_digest
@@ -701,6 +721,9 @@ BEGIN
       'ordinal',attempt.attempt_ordinal,
       'budgetCommitRef',attempt.effect_budget_commit_ref,
       'budgetCommitDigest',attempt.effect_budget_commit_digest,
+      'attemptAuthorizationRef',attempt.attempt_authorization_ref,
+      'attemptAuthorizationFenceEpoch',attempt.attempt_authorization_fence_epoch::TEXT,
+      'attemptAuthorizationDigest',attempt.attempt_authorization_digest,
       'providerOperationKey',attempt.provider_operation_key,
       'state',attempt.state,
       'cancelRequested',attempt.cancel_requested,

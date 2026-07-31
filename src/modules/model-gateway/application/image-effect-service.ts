@@ -125,6 +125,9 @@ export type ImageEffectBudgetCommitOutcome =
       effectBudgetCommitRef: string;
       effectBudgetCommitDigest: string;
       attemptOrdinal: number;
+      attemptAuthorizationRef: string;
+      attemptAuthorizationFenceEpoch: bigint;
+      attemptAuthorizationDigest: string;
       expiresAt: string;
     }>
   | Readonly<{ kind: "rejected"; code: string }>;
@@ -225,6 +228,9 @@ export type ImageEffectView = Readonly<{
   modelInvocationCommandRef: string;
   ownerVersion: bigint;
   currentAttemptOrdinal: number;
+  attemptAuthorizationRef: string;
+  attemptAuthorizationFenceEpoch: bigint;
+  attemptAuthorizationDigest: string;
   state: ImageEffectInvocationState;
   canonicalOutcomeEvidenceRef?: string;
   canonicalOutcomeEvidenceDigest?: string;
@@ -281,20 +287,23 @@ export class ImageEffectService {
       const now = this.#now().toISOString();
       const logicalInvocationRef = this.#validReference(this.#reference("image-invocation"));
       const attemptRef = this.#validReference(this.#reference("image-attempt"));
-      const attempt = createImageEffectAttempt({
-        attemptRef,
-        ordinal: 1,
-        budgetCommitRef: input.effectBudgetCommitRef,
-        budgetCommitDigest: input.effectBudgetCommitDigest,
-        providerOperationKey: this.#validReference(this.#reference("image-provider-operation")),
-      });
-      await this.#commitBudget(transaction, authorization, input, modelOption, {
+      const budget = await this.#commitBudget(transaction, authorization, input, modelOption, {
         ownerCommandDigest,
         logicalInvocationRef,
         attemptRef,
         attemptOrdinal: 1,
         effectBudgetCommitRef: input.effectBudgetCommitRef,
         effectBudgetCommitDigest: input.effectBudgetCommitDigest,
+      });
+      const attempt = createImageEffectAttempt({
+        attemptRef,
+        ordinal: 1,
+        budgetCommitRef: input.effectBudgetCommitRef,
+        budgetCommitDigest: input.effectBudgetCommitDigest,
+        attemptAuthorizationRef: budget.attemptAuthorizationRef,
+        attemptAuthorizationFenceEpoch: budget.attemptAuthorizationFenceEpoch,
+        attemptAuthorizationDigest: budget.attemptAuthorizationDigest,
+        providerOperationKey: this.#validReference(this.#reference("image-provider-operation")),
       });
       const invocation: ImageEffectInvocation = Object.freeze({
         siteId: authorization.siteId,
@@ -489,14 +498,7 @@ export class ImageEffectService {
         throw new Error("IMAGE_EFFECT_PREVIOUS_ATTEMPT_NOT_SAFE");
       }
       const attemptRef = this.#validReference(this.#reference("image-attempt"));
-      const attempt = createImageEffectAttempt({
-        attemptRef,
-        ordinal: input.nextAttemptOrdinal,
-        budgetCommitRef: input.effectBudgetCommitRef,
-        budgetCommitDigest: input.effectBudgetCommitDigest,
-        providerOperationKey: this.#validReference(this.#reference("image-provider-operation")),
-      });
-      await this.#commitBudget(transaction, authorization, current, Object.freeze({
+      const budget = await this.#commitBudget(transaction, authorization, current, Object.freeze({
         authorizationHandleDigest: current.modelOptionAuthorizationHandleDigest,
         modelOptionRevisionRef: current.modelOptionRevisionRef,
         definitionRoleRef: current.definitionRoleRef,
@@ -511,6 +513,16 @@ export class ImageEffectService {
         attemptOrdinal: input.nextAttemptOrdinal,
         effectBudgetCommitRef: input.effectBudgetCommitRef,
         effectBudgetCommitDigest: input.effectBudgetCommitDigest,
+      });
+      const attempt = createImageEffectAttempt({
+        attemptRef,
+        ordinal: input.nextAttemptOrdinal,
+        budgetCommitRef: input.effectBudgetCommitRef,
+        budgetCommitDigest: input.effectBudgetCommitDigest,
+        attemptAuthorizationRef: budget.attemptAuthorizationRef,
+        attemptAuthorizationFenceEpoch: budget.attemptAuthorizationFenceEpoch,
+        attemptAuthorizationDigest: budget.attemptAuthorizationDigest,
+        providerOperationKey: this.#validReference(this.#reference("image-provider-operation")),
       });
       const now = this.#now().toISOString();
       const invocation: ImageEffectInvocation = Object.freeze({
@@ -550,7 +562,7 @@ export class ImageEffectService {
       effectBudgetCommitRef: string;
       effectBudgetCommitDigest: string;
     }>,
-  ): Promise<void> {
+  ): Promise<Extract<ImageEffectBudgetCommitOutcome, { kind: "accepted" | "replayed" }>> {
     const outcome = await this.dependencies.budget.consume(transaction, {
       siteId: authorization.siteId,
       callerIdentity: authorization.callerIdentity,
@@ -571,9 +583,13 @@ export class ImageEffectService {
     if (outcome.effectBudgetCommitRef !== input.effectBudgetCommitRef ||
         outcome.effectBudgetCommitDigest !== input.effectBudgetCommitDigest ||
         outcome.attemptOrdinal !== input.attemptOrdinal ||
+        !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/u.test(outcome.attemptAuthorizationRef) ||
+        outcome.attemptAuthorizationFenceEpoch < 1n ||
+        !/^[a-f0-9]{64}$/u.test(outcome.attemptAuthorizationDigest) ||
         Date.parse(outcome.expiresAt) <= this.#now().getTime()) {
       throw new Error("IMAGE_EFFECT_BUDGET_RECEIPT_INVALID");
     }
+    return outcome;
   }
 
   async #requiredInvocation(
@@ -733,6 +749,9 @@ function view(invocation: ImageEffectInvocation): ImageEffectView {
     modelInvocationCommandRef: invocation.modelInvocationCommandRef,
     ownerVersion: invocation.ownerVersion,
     currentAttemptOrdinal: attempt.ordinal,
+    attemptAuthorizationRef: attempt.attemptAuthorizationRef,
+    attemptAuthorizationFenceEpoch: attempt.attemptAuthorizationFenceEpoch,
+    attemptAuthorizationDigest: attempt.attemptAuthorizationDigest,
     state,
     ...(attempt.canonicalOutcomeEvidenceRef === undefined
       ? {}

@@ -92,6 +92,7 @@ export class NativeMediaImageCreditOwner implements AgentMediaChildBudgetOwner, 
       businessOperationKey: input.commandRef,
       requestDigest: input.ownerRequestDigest,
       exactCeiling: input.exactCeiling,
+      executionManifestRef: input.executionManifestRef,
       audience: "media",
       purpose: "media_operation",
       consumptionScope: input.consumptionScope,
@@ -114,8 +115,27 @@ export class NativeMediaImageCreditOwner implements AgentMediaChildBudgetOwner, 
         !sameScope(value.consumptionScope, input.consumptionScope)) {
       throw new Error("MEDIA_CREDIT_CHILD_RECEIPT_INVALID");
     }
+    const committed = await this.authority.finalizeAuthorizationSegment(transaction, {
+      siteId: input.ownerBinding.siteRef,
+      authorizationSegmentRef: value.childAuthorizationSegmentRef,
+      executionManifestRef: input.executionManifestRef,
+      expectedSegmentVersion: value.childAuthorizationSegmentVersion,
+      businessOperationKey: childCommitOperationKey(input.commandRef, value.childAuthorizationSegmentRef),
+      requestDigest: childCommitRequestDigest(input.ownerRequestDigest,
+        value.childAuthorizationSegmentRef, input.executionManifestRef),
+    });
+    if (committed.kind !== "accepted" && committed.kind !== "replayed") {
+      throw new Error(`MEDIA_CREDIT_CHILD_FINALIZE_${committed.kind.toUpperCase()}`);
+    }
+    if (committed.value.state !== "committed" ||
+        committed.value.authorizationSegmentRef !== value.childAuthorizationSegmentRef ||
+        committed.value.segmentVersion !== value.childAuthorizationSegmentVersion + 1n) {
+      throw new Error("MEDIA_CREDIT_CHILD_FINALIZE_RECEIPT_INVALID");
+    }
     return Object.freeze({ childAllocationRef: value.childAllocationRef,
-      allocationReservationReceiptRef: value.allocationReservationReceiptRef });
+      allocationReservationReceiptRef: value.allocationReservationReceiptRef,
+      authorizationSegmentRef: value.childAuthorizationSegmentRef,
+      authorizationSegmentVersion: committed.value.segmentVersion });
   }
 }
 
@@ -126,6 +146,23 @@ function rootCommitOperationKey(commandRef: string, authorizationSegmentRef: str
     .update("\0")
     .update(authorizationSegmentRef)
     .digest("hex")}`;
+}
+
+function childCommitOperationKey(commandRef: string, authorizationSegmentRef: string): string {
+  return `media-child-segment:${createHash("sha256")
+    .update("kokoro.platform.media.child-segment-operation.v1\0")
+    .update(commandRef).update("\0").update(authorizationSegmentRef).digest("hex")}`;
+}
+
+function childCommitRequestDigest(
+  ownerRequestDigest: string,
+  authorizationSegmentRef: string,
+  executionManifestRef: string,
+): string {
+  return createHash("sha256")
+    .update("kokoro.platform.media.child-segment-request.v1\0")
+    .update(ownerRequestDigest).update("\0").update(authorizationSegmentRef)
+    .update("\0").update(executionManifestRef).digest("hex");
 }
 
 function rootCommitRequestDigest(

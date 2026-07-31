@@ -14,6 +14,24 @@ class FakePool {
 }
 
 describe("Postgres Media image worker database", () => {
+  it("refuses startup unless the function-only role can load the exact typed usage fact", async () => {
+    const pool = new FakePool();
+    const database = new PostgresMediaImageWorkerDatabase({ pool, expectedDatabaseUser: "platform_media_worker",
+      expectedDatabaseName: "kokoro", migratorDatabaseUser: "platform_migrator", maxAttempts: 10 });
+    const identity = { currentUser: "platform_media_worker", currentDatabase: "kokoro",
+      databaseOwner: "platform_migrator", isSuperuser: false, canCreateDatabase: false, canCreateRole: false,
+      canReplicate: false, canBypassRls: false, hasAnyMembership: false, isMigratorMember: false,
+      hasAnyMediaTableAccess: false, canExecuteClaim: true, canExecuteSaga: true, canExecuteEvidence: true };
+
+    pool.rows = [identity];
+    await expect(database.connect()).rejects.toThrow("MEDIA_WORKER_DATABASE_ROLE_INVALID");
+
+    pool.rows = [{ ...identity, canExecuteTypedUsage: true }];
+    await expect(database.connect()).resolves.toBeUndefined();
+    expect(pool.calls[0]?.sql).toContain("platform.load_media_image_effect_usage_fact");
+    expect(pool.calls.at(-1)?.sql).toContain("platform.assert_media_runtime_role('worker')");
+  });
+
   it("uses only function calls with the exact lease fence", async () => {
     const pool = new FakePool();
     const database = new PostgresMediaImageWorkerDatabase({ pool, expectedDatabaseUser: "platform_media_worker",
