@@ -12,6 +12,7 @@ const platformModules = [
   "credit",
   "identity",
   "media",
+  "memory",
   "model-control",
   "model-gateway",
   "policy",

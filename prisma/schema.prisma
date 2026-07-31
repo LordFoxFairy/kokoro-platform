@@ -35,6 +35,142 @@ model RuntimeRoleIdentityAuthority {
   @@schema("platform")
 }
 
+model MemorySpace {
+  siteRef                         String   @map("site_ref")
+  spaceRef                        String   @map("space_ref")
+  scopeKind                       String   @map("scope_kind")
+  parentSpaceRef                  String?  @map("parent_space_ref")
+  parentSpaceGeneration           BigInt?  @map("parent_space_generation")
+  parentLearningGeneration        BigInt?  @map("parent_learning_generation")
+  parentRevocationEpoch           BigInt?  @map("parent_revocation_epoch")
+  subjectRef                      String?  @map("subject_ref")
+  subjectGeneration               BigInt?  @map("subject_generation")
+  projectRef                      String?  @map("project_ref")
+  agentOptionRef                   String?  @map("agent_option_ref")
+  productSurfaceRef                String?  @map("product_surface_ref")
+  featurePolicyRevisionRef         String   @map("feature_policy_revision_ref")
+  version                         BigInt
+  spaceGeneration                 BigInt   @map("space_generation")
+  learningGeneration              BigInt   @map("learning_generation")
+  revocationEpoch                 BigInt   @map("revocation_epoch")
+  minimumLearnableSourceOriginSeq BigInt   @map("minimum_learnable_source_origin_seq")
+  learningState                   String   @map("learning_state")
+  useState                        String   @map("use_state")
+  state                           String
+  createdAt                       DateTime @map("created_at") @db.Timestamptz(6)
+  updatedAt                       DateTime @map("updated_at") @db.Timestamptz(6)
+
+  @@id([siteRef, spaceRef])
+  @@index([siteRef, subjectRef, subjectGeneration, scopeKind, state])
+  @@index([siteRef, projectRef, scopeKind, state])
+  @@map("memory_space")
+  @@schema("platform")
+}
+
+model MemoryEntry {
+  siteRef                  String    @map("site_ref")
+  spaceRef                 String    @map("space_ref")
+  entryRef                 String    @map("entry_ref")
+  version                  BigInt
+  currentRevision          BigInt    @map("current_revision")
+  currentRevisionRef       String    @map("current_revision_ref")
+  state                    String
+  category                 String
+  featurePolicyRevisionRef String    @map("feature_policy_revision_ref")
+  spaceGeneration          BigInt    @map("space_generation")
+  learningGeneration       BigInt    @map("learning_generation")
+  revocationEpoch          BigInt    @map("revocation_epoch")
+  createdAt                DateTime  @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime  @map("updated_at") @db.Timestamptz(6)
+  deletedAt                DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  @@id([siteRef, spaceRef, entryRef])
+  @@unique([siteRef, entryRef])
+  @@index([siteRef, spaceRef, state, currentRevision])
+  @@map("memory_entry")
+  @@schema("platform")
+}
+
+model MemoryRevision {
+  siteRef                  String   @map("site_ref")
+  spaceRef                 String   @map("space_ref")
+  entryRef                 String   @map("entry_ref")
+  revision                 BigInt
+  revisionRef              String   @map("revision_ref")
+  protectedCiphertext      Bytes?   @map("protected_ciphertext")
+  protectionKeyRevision    String?  @map("protection_key_revision")
+  envelopeDigest           String?  @map("envelope_digest") @db.Char(64)
+  reason                   String
+  supersedesRevision       BigInt?  @map("supersedes_revision")
+  supersedesRevisionRef    String?  @map("supersedes_revision_ref")
+  featurePolicyRevisionRef String   @map("feature_policy_revision_ref")
+  recordedAt               DateTime @map("recorded_at") @db.Timestamptz(6)
+
+  @@id([siteRef, spaceRef, entryRef, revision])
+  @@unique([siteRef, revisionRef])
+  @@map("memory_revision")
+  @@schema("platform")
+}
+
+model MemoryProvenance {
+  siteRef       String   @map("site_ref")
+  spaceRef      String   @map("space_ref")
+  entryRef      String   @map("entry_ref")
+  revision      BigInt
+  revisionRef   String   @map("revision_ref")
+  provenanceRef String   @map("provenance_ref")
+  sourceKind    String   @map("source_kind")
+  sourceRef     String   @map("source_ref")
+  sourceDigest  String   @map("source_digest") @db.Char(64)
+  actorSubjectRef         String   @map("actor_subject_ref")
+  actorSubjectGeneration  BigInt   @map("actor_subject_generation")
+  actorProjectRef          String?  @map("actor_project_ref")
+  actorMembershipEpoch     BigInt?  @map("actor_membership_epoch")
+  actorAuthorizationEpoch  BigInt?  @map("actor_authorization_epoch")
+  recordedAt    DateTime @map("recorded_at") @db.Timestamptz(6)
+
+  @@id([siteRef, spaceRef, entryRef, revision, provenanceRef])
+  @@unique([siteRef, provenanceRef])
+  @@map("memory_provenance")
+  @@schema("platform")
+}
+
+model MemoryCommandReceipt {
+  receiptId                    BigInt   @id @default(autoincrement()) @map("receipt_id")
+  siteRef                      String   @map("site_ref")
+  ownerScopeKind               String   @map("owner_scope_kind")
+  ownerSubjectRef              String?  @map("owner_subject_ref")
+  ownerSubjectGeneration       BigInt?  @map("owner_subject_generation")
+  ownerProjectRef              String?  @map("owner_project_ref")
+  callerSubjectRef             String   @map("caller_subject_ref")
+  callerSubjectGeneration      BigInt   @map("caller_subject_generation")
+  callerMembershipEpoch        BigInt?  @map("caller_membership_epoch")
+  callerAuthorizationEpoch     BigInt?  @map("caller_authorization_epoch")
+  commandRef                   String   @map("command_ref")
+  operation                    String
+  requestDigest                String   @map("request_digest") @db.Char(64)
+  resultKind                   String   @map("result_kind")
+  resultSpaceRef               String   @map("result_space_ref")
+  resultSpaceVersion           BigInt   @map("result_space_version")
+  resultEntryRef               String?  @map("result_entry_ref")
+  resultEntryVersion           BigInt?  @map("result_entry_version")
+  resultRevisionRef            String?  @map("result_revision_ref")
+  resultRevision               BigInt?  @map("result_revision")
+  resultSpaceGeneration        BigInt?  @map("result_space_generation")
+  resultLearningGeneration     BigInt?  @map("result_learning_generation")
+  resultRevocationEpoch        BigInt?  @map("result_revocation_epoch")
+  resultMinimumSourceOriginSeq BigInt?  @map("result_minimum_source_origin_seq")
+  resultLearningState          String?  @map("result_learning_state")
+  resultUseState               String?  @map("result_use_state")
+  resultPreviousFeaturePolicyRevisionRef String? @map("result_previous_feature_policy_revision_ref")
+  resultFeaturePolicyRevisionRef String? @map("result_feature_policy_revision_ref")
+  recordedAt                   DateTime @map("recorded_at") @db.Timestamptz(6)
+
+  @@index([siteRef, ownerScopeKind, ownerSubjectRef, ownerSubjectGeneration, ownerProjectRef, recordedAt])
+  @@map("memory_command_receipt")
+  @@schema("platform")
+}
+
 model CommandReceipt {
   commandId      String   @id @map("command_id")
   environment    String
