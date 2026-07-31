@@ -86,6 +86,7 @@ export class PostgresMediaImageOperationRepository implements MediaImageOperatio
       owner: { ...binding, subjectGeneration: binding.subjectGeneration.toString() },
       command: { ...record.command, subjectGeneration: record.command.subjectGeneration.toString() },
       protectedInput: record.protectedInput,
+      definitionPolicy: record.definitionPolicy,
       operation: { operationRef: operation.operationRef, ownerVersion: operation.expectedVersion.toString(),
         definitionRevisionRef: binding.definitionRevisionRef,
         modelOptionRevisionRef: binding.modelOptionRevisionRef },

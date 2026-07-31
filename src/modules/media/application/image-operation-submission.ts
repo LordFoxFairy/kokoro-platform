@@ -134,6 +134,10 @@ export type MediaImageOperationRecord = Readonly<{
   }>;
   ownerBinding: MediaOperationOwnerBinding;
   protectedInput: ProtectedOperationInputRevision;
+  definitionPolicy: Readonly<{
+    partialCompletion: "allowed" | "forbidden";
+    minimumReadyCandidates: number;
+  }>;
   plan: MediaOperationPlan;
   modelInvocationCommandRefs: readonly string[];
   artifactRefs: readonly string[];
@@ -396,6 +400,8 @@ export class ImageOperationSubmissionService {
         command,
         ownerBinding: admission.ownerBinding,
         protectedInput,
+        definitionPolicy: Object.freeze({ partialCompletion: definition.partialCompletion,
+          minimumReadyCandidates: definition.minimumReadyCandidates }),
         plan,
         modelInvocationCommandRefs: Object.freeze([modelInvocationCommandRef]),
         artifactRefs: Object.freeze(candidates.map((item) => item.artifactRef)),

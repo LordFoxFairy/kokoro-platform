@@ -15,6 +15,11 @@ export type MediaImageRequest = Readonly<{
   modelOptionRevisionRef: string;
 }>;
 
+export type MediaImageDefinitionPolicy = Readonly<{
+  partialCompletion: "allowed" | "forbidden";
+  minimumReadyCandidates: number;
+}>;
+
 export type MediaImageEffectAuthorization = Readonly<{
   callerAccess: MediaImageEphemeralCapability;
   modelOptionAuthorization: MediaImageEphemeralCapability;
@@ -237,6 +242,7 @@ export type MediaImageWorkerTask = Readonly<{
   operationRef: string;
   modelInvocationCommandRef: string;
   request: MediaImageRequest;
+  definitionPolicy: MediaImageDefinitionPolicy;
   createEffectCommand: MediaImageCreateEffectCommand;
   effectAuthorization: MediaImageEffectAuthorization;
   candidateRefs: readonly string[];
@@ -361,7 +367,7 @@ export interface MediaImageCreditSettlementPort {
     operationRef: string;
     childAllocationRef: string;
     terminalReceiptRef: string;
-    outcome: "completed" | "failed" | "canceled";
+    outcome: "completed" | "partial" | "failed" | "canceled";
   }>): Promise<Readonly<{ allocationReturnReceiptRef: string }>>;
 }
 
@@ -369,7 +375,7 @@ export interface MediaImageSessionProjectionPort {
   publish(input: Readonly<{
     ownerScope: ArtifactOwnerScope;
     operationRef: string;
-    state: "completed" | "failed" | "canceled";
+    state: "completed" | "partial" | "failed" | "canceled";
     artifactVersionRefs: readonly string[];
     terminalReceiptRef: string;
   }>, signal: AbortSignal): Promise<Readonly<{ projectionReceiptRef: string }>>;
@@ -380,13 +386,27 @@ export interface MediaImageReceiptCanonicalizerPort {
   artifactFinalization(receipt: ArtifactReadyReceipt): string;
   terminal(input: Readonly<{
     operationRef: string;
-    state: "completed" | "failed" | "canceled";
+    state: "completed" | "partial" | "failed" | "canceled";
     evidenceRefs: readonly string[];
   }>): string;
 }
 
-export type MediaImageTerminalClosure = Readonly<{
-  state: "completed" | "failed" | "canceled";
+export type MediaImageRestrictionFailureCause = Readonly<{
+  kind: "minimum_ready_candidates_not_met" | "partial_completion_forbidden";
+  candidateRef: string;
+  outputEvidenceRef: string;
+  outputEvidenceDigest: string;
+  restrictionReceiptRef: string;
+}>;
+
+export type MediaImageGatewayFailureCause = Readonly<{
+  kind: "gateway_effect_failed";
+  logicalInvocationRef: string;
+  canonicalOutcomeEvidenceRef: string;
+  canonicalOutcomeEvidenceDigest: string;
+}>;
+
+type MediaImageTerminalClosureBase = Readonly<{
   terminalReceiptRef: string;
   receipts: Readonly<{
     gatewayCommandReceiptRef?: string | undefined;
@@ -402,7 +422,17 @@ export type MediaImageTerminalClosure = Readonly<{
   completedAt: string;
 }>;
 
-type WorkerCycleResult = "idle" | "completed" | "failed" | "canceled" | "reconciling" | "dead_letter";
+export type MediaImageTerminalClosure =
+  | (MediaImageTerminalClosureBase & Readonly<{
+      state: "completed" | "partial" | "canceled";
+      failureCause?: never;
+    }>)
+  | (MediaImageTerminalClosureBase & Readonly<{
+      state: "failed";
+      failureCause: MediaImageRestrictionFailureCause | MediaImageGatewayFailureCause;
+    }>);
+
+type WorkerCycleResult = "idle" | "completed" | "partial" | "failed" | "canceled" | "reconciling" | "dead_letter";
 
 export class ImageOperationWorker {
   readonly #dependencies: Readonly<{
@@ -507,7 +537,10 @@ export class ImageOperationWorker {
     }
   }
 
-  async #executeTask(task: MediaImageWorkerTask, signal: AbortSignal): Promise<"completed" | "failed" | "canceled"> {
+  async #executeTask(
+    task: MediaImageWorkerTask,
+    signal: AbortSignal,
+  ): Promise<"completed" | "partial" | "failed" | "canceled"> {
     const createEffectDigest = task.createEffectCommand.createEffectDigest;
     let result = await this.#resolveEffect(task, createEffectDigest, signal);
     let view = await this.#resolveOwnerView(task, createEffectDigest, result, signal);
@@ -527,6 +560,11 @@ export class ImageOperationWorker {
     const outputs = terminalOutputEvidence(task, view, evidence.facts);
     const checkpoints = new Map(task.checkpoint.artifacts.map((value) => [value.candidateOrdinal, value]));
     const finalizationReceiptRefs: string[] = [];
+    const readyArtifactVersionRefs: string[] = [];
+    const restrictedOutputs: Array<Readonly<{
+      output: MediaImageEffectOutputEvidence;
+      restrictionReceiptRef: string;
+    }>> = [];
     for (const output of outputs) {
       const ordinal = output.candidateOrdinal;
       const checkpoint = checkpoints.get(ordinal);
@@ -551,6 +589,10 @@ export class ImageOperationWorker {
       if (checkpoint?.trustDecision === undefined) {
         await this.#dependencies.repository.recordTrustDecision(task, { artifactVersionRef, decision: trustDecision });
       }
+      if (trustDecision.kind === "restrict") {
+        restrictedOutputs.push(Object.freeze({ output, restrictionReceiptRef: trustDecision.decisionRef }));
+        continue;
+      }
       const ready = checkpoint?.readyReceipt ?? await this.#dependencies.artifact.promote({
         stagedReceipt: staged, trustDecision,
       });
@@ -561,6 +603,7 @@ export class ImageOperationWorker {
           finalizationReceiptRef: finalizationRef });
       }
       finalizationReceiptRefs.push(finalizationRef);
+      readyArtifactVersionRefs.push(artifactVersionRef);
     }
 
     const canonicalOutcomeEvidence = requiredEvidence(view.canonicalOutcomeEvidence,
@@ -579,34 +622,48 @@ export class ImageOperationWorker {
     if (task.checkpoint.usageEvidenceReceiptRef === undefined) {
       await this.#dependencies.repository.recordUsage(task, usageReceiptRef);
     }
+    const terminalState = mediaImageOutputTerminalState(task.definitionPolicy, readyArtifactVersionRefs.length,
+      restrictedOutputs.length);
     const terminalReceiptRef = this.#dependencies.receipts.terminal({ operationRef: task.operationRef,
-      state: "completed", evidenceRefs: [result.receipt.receiptRef, canonicalOutcomeEvidence.ref,
+      state: terminalState, evidenceRefs: [result.receipt.receiptRef, canonicalOutcomeEvidence.ref,
         usageEvidence.ref, ...outputs.map((output) => output.outputEvidenceRef),
+        ...restrictedOutputs.map((value) => value.restrictionReceiptRef),
         ...finalizationReceiptRefs, usageReceiptRef, task.createEffectCommand.effectBudgetCommitRef] });
     const allocationReturnReceiptRef = task.checkpoint.allocationReturnReceiptRef ??
       (await this.#dependencies.credit.returnChild({ operationRef: task.operationRef,
         childAllocationRef: task.creditChildAllocationRef, terminalReceiptRef,
-        outcome: "completed" })).allocationReturnReceiptRef;
+        outcome: terminalState })).allocationReturnReceiptRef;
     if (task.checkpoint.allocationReturnReceiptRef === undefined) {
       await this.#dependencies.repository.recordAllocationReturn(task, allocationReturnReceiptRef);
     }
     const projectionReceiptRef = task.checkpoint.projectionReceiptRef ??
       (await this.#dependencies.projection.publish({ ownerScope: task.ownerScope,
-        operationRef: task.operationRef, state: "completed", artifactVersionRefs: task.artifactVersionRefs,
+        operationRef: task.operationRef, state: terminalState, artifactVersionRefs: readyArtifactVersionRefs,
         terminalReceiptRef }, signal)).projectionReceiptRef;
     if (task.checkpoint.projectionReceiptRef === undefined) {
       await this.#dependencies.repository.recordProjection(task, projectionReceiptRef);
     }
-    await this.#dependencies.repository.complete(task, Object.freeze({ state: "completed" as const,
-      terminalReceiptRef, receipts: Object.freeze({ gatewayCommandReceiptRef: result.receipt.receiptRef,
+    const terminalBase = Object.freeze({ terminalReceiptRef,
+      receipts: Object.freeze({ gatewayCommandReceiptRef: result.receipt.receiptRef,
         gatewayCommandReceiptDigest: result.receipt.receiptDigest,
         canonicalOutcomeEvidenceRef: canonicalOutcomeEvidence.ref,
         canonicalOutcomeEvidenceDigest: canonicalOutcomeEvidence.digest,
         artifactFinalizationReceiptRefs: Object.freeze(finalizationReceiptRefs),
         usageEvidenceReceiptRef: usageReceiptRef,
         effectBudgetCommitRef: task.createEffectCommand.effectBudgetCommitRef,
-        allocationReturnReceiptRef, projectionReceiptRef }), completedAt: this.#date().toISOString() }));
-    return "completed";
+        allocationReturnReceiptRef, projectionReceiptRef }),
+      completedAt: this.#date().toISOString() });
+    let closure: MediaImageTerminalClosure;
+    if (terminalState === "failed") {
+      const restricted = restrictedOutputs[0];
+      if (restricted === undefined) throw new Error("MEDIA_RESTRICTION_EVIDENCE_REQUIRED");
+      closure = Object.freeze({ ...terminalBase, state: terminalState,
+        failureCause: mediaImageRestrictionFailureCause(task, restricted, readyArtifactVersionRefs.length) });
+    } else {
+      closure = Object.freeze({ ...terminalBase, state: terminalState });
+    }
+    await this.#dependencies.repository.complete(task, closure);
+    return terminalState;
   }
 
   async #closeGatewayTerminal(
@@ -654,15 +711,24 @@ export class ImageOperationWorker {
     if (task.checkpoint.projectionReceiptRef === undefined) {
       await this.#dependencies.repository.recordProjection(task, projectionReceiptRef);
     }
-    await this.#dependencies.repository.complete(task, Object.freeze({ state: view.state,
-      terminalReceiptRef, receipts: Object.freeze({ gatewayCommandReceiptRef: commandReceipt.receiptRef,
+    const terminalBase = Object.freeze({ terminalReceiptRef,
+      receipts: Object.freeze({ gatewayCommandReceiptRef: commandReceipt.receiptRef,
         gatewayCommandReceiptDigest: commandReceipt.receiptDigest,
         canonicalOutcomeEvidenceRef: canonicalOutcomeEvidence.ref,
         canonicalOutcomeEvidenceDigest: canonicalOutcomeEvidence.digest,
         artifactFinalizationReceiptRefs: Object.freeze([]),
         ...(usageReceiptRef === undefined ? {} : { usageEvidenceReceiptRef: usageReceiptRef }),
         effectBudgetCommitRef: task.createEffectCommand.effectBudgetCommitRef,
-        allocationReturnReceiptRef, projectionReceiptRef }), completedAt: this.#date().toISOString() }));
+        allocationReturnReceiptRef, projectionReceiptRef }),
+      completedAt: this.#date().toISOString() });
+    const closure: MediaImageTerminalClosure = view.state === "failed"
+      ? Object.freeze({ ...terminalBase, state: "failed" as const,
+        failureCause: Object.freeze({ kind: "gateway_effect_failed" as const,
+        logicalInvocationRef: view.logicalInvocationRef,
+        canonicalOutcomeEvidenceRef: canonicalOutcomeEvidence.ref,
+        canonicalOutcomeEvidenceDigest: canonicalOutcomeEvidence.digest }) })
+      : Object.freeze({ ...terminalBase, state: "canceled" as const });
+    await this.#dependencies.repository.complete(task, closure);
     return view.state;
   }
 
@@ -852,7 +918,7 @@ export class InMemoryMediaImageWorkerRepository implements MediaImageWorkerRepos
   readonly #events: string[];
   #claimed = false;
   #cancelEffectCommand: MediaImageCancelEffectCommand | undefined;
-  #operationState: "queued" | "reconciling" | "completed" | "canceled" = "queued";
+  #operationState: "queued" | "reconciling" | "completed" | "partial" | "failed" | "canceled" = "queued";
   #outboxState: "pending" | "leased" | "completed" | "dead_letter" = "pending";
   #attemptCount = 0;
   #deadLetterCode: string | undefined;
@@ -878,6 +944,7 @@ export class InMemoryMediaImageWorkerRepository implements MediaImageWorkerRepos
       modelInvocationCommandRef: "model-invocation-command:example",
       request: Object.freeze({ promptIntent: "fox", aspectRatio: "square_1_1", candidateCount: 1,
         outputFormat: "png", modelOptionRevisionRef: "image-option:example" }),
+      definitionPolicy: Object.freeze({ partialCompletion: "forbidden" as const, minimumReadyCandidates: 1 }),
       createEffectCommand: Object.freeze({ callerRequestFingerprint: "a".repeat(64),
         createEffectDigest: "a".repeat(64), definitionRoleRef: "image-role:example",
         operationInputRevisionRef: "media-input-revision:example",
@@ -1017,7 +1084,7 @@ export class InMemoryMediaImageWorkerRepository implements MediaImageWorkerRepos
   }
   async complete(task: MediaImageWorkerTask, input: MediaImageTerminalClosure): Promise<void> {
     this.#fence(task); this.#events.push("complete"); this.#terminal = input; this.#claimed = false;
-    this.#operationState = input.state === "canceled" ? "canceled" : "completed"; this.#outboxState = "completed";
+    this.#operationState = input.state; this.#outboxState = "completed";
   }
   async retryOrDeadLetter(task: MediaImageWorkerTask, input: Readonly<{ errorCode: string }>) {
     this.#fence(task);
@@ -1084,7 +1151,12 @@ function assertTask(task: MediaImageWorkerTask): void {
       task.outputAccessRequestFingerprints.some((value) => !digestPattern(value)) ||
       task.createEffectCommand.logicalOutputSlots.some((slot, index) =>
         slot.candidateOrdinal !== index + 1 || slot.candidateRef !== task.candidateRefs[index] ||
-        slot.stableOutputSlotRef !== task.stableOutputSlotRefs[index])) {
+        slot.stableOutputSlotRef !== task.stableOutputSlotRefs[index]) ||
+      (task.definitionPolicy.partialCompletion !== "allowed" &&
+       task.definitionPolicy.partialCompletion !== "forbidden") ||
+      !Number.isInteger(task.definitionPolicy.minimumReadyCandidates) ||
+      task.definitionPolicy.minimumReadyCandidates < 1 ||
+      task.definitionPolicy.minimumReadyCandidates > task.request.candidateCount) {
     throw new Error("MEDIA_WORKER_TASK_INVALID");
   }
   const command = task.createEffectCommand;
@@ -1107,6 +1179,32 @@ function assertTask(task: MediaImageWorkerTask): void {
   for (const grant of task.effectAuthorization.sourceGrants) {
     reference(grant.sourceVersionRef); assertCapability(grant.purposeGrant);
   }
+}
+
+function mediaImageOutputTerminalState(
+  policy: MediaImageDefinitionPolicy,
+  readyCount: number,
+  restrictedCount: number,
+): "completed" | "partial" | "failed" {
+  if (restrictedCount === 0) return "completed";
+  if (readyCount >= policy.minimumReadyCandidates && policy.partialCompletion === "allowed") return "partial";
+  return "failed";
+}
+
+function mediaImageRestrictionFailureCause(
+  task: MediaImageWorkerTask,
+  restricted: Readonly<{ output: MediaImageEffectOutputEvidence; restrictionReceiptRef: string }>,
+  readyCount: number,
+): MediaImageRestrictionFailureCause {
+  return Object.freeze({
+    kind: readyCount < task.definitionPolicy.minimumReadyCandidates
+      ? "minimum_ready_candidates_not_met" as const
+      : "partial_completion_forbidden" as const,
+    candidateRef: restricted.output.candidateRef,
+    outputEvidenceRef: restricted.output.outputEvidenceRef,
+    outputEvidenceDigest: restricted.output.outputEvidenceDigest,
+    restrictionReceiptRef: restricted.restrictionReceiptRef,
+  });
 }
 
 function assertEffectView(task: MediaImageWorkerTask, view: MediaImageEffectView): void {

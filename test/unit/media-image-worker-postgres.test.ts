@@ -66,6 +66,7 @@ function taskRow(): MediaImageWorkerTaskRow {
       outputAccessRequestFingerprint: "f".repeat(64), ordinal: 1 }],
     cancelCommandRef: null, cancelRequestFingerprint: null,
     sagaCheckpoint: { effectState: "none", cancelState: "none",
+      definitionPolicy: { partialCompletion: "forbidden", minimumReadyCandidates: 1 },
       evidence: { nextEvidenceSequence: "0", caughtUp: false, facts: [] },
       artifacts: [{ candidateOrdinal: 1 }] },
   };
@@ -116,7 +117,8 @@ describe("Postgres Media image worker repository", () => {
     expect(task).toMatchObject({ taskRef: "media-dispatch:one", operationRef: "media-operation:one",
       leaseEpoch: 3n, leaseToken: "lease-token-that-never-enters-postgres", request: {
         promptIntent: "silver fox", candidateCount: 1, outputFormat: "png",
-      }, createEffectCommand: { effectBudgetCommitRef: "effect-budget-commit:one", attemptOrdinal: 1,
+      }, definitionPolicy: { partialCompletion: "forbidden", minimumReadyCandidates: 1 },
+      createEffectCommand: { effectBudgetCommitRef: "effect-budget-commit:one", attemptOrdinal: 1,
         callerRequestFingerprint: "a".repeat(64), createEffectDigest: "a".repeat(64) } });
     expect(database.calls[0]?.input).toMatchObject({ workerId: "worker:one", leaseSeconds: 30,
       leaseTokenHash: createHash("sha256").update("lease-token-that-never-enters-postgres").digest("hex") });
@@ -151,5 +153,20 @@ describe("Postgres Media image worker repository", () => {
 
     await expect(repository.claim({ workerId: "worker:one", now: "2026-07-31T00:00:00.000Z",
       leaseMs: 30_000 })).rejects.toThrow("MEDIA_INPUT_AUTHENTICATION_FAILED");
+  });
+
+  it("fails closed when the owner-frozen Definition policy is absent", async () => {
+    const database = new FakeDatabase();
+    const row = taskRow();
+    database.claimResult = [{ ...row, sagaCheckpoint: {
+      ...(row.sagaCheckpoint as Record<string, unknown>), definitionPolicy: undefined,
+    } }];
+    const repository = new PostgresMediaImageWorkerRepository({ database,
+      inputProtector: new EnvelopeOperationInputProtector({ activeKey: { keyRevisionRef: "media-kek:one", key } }),
+      capabilityOpener: opener,
+      leaseToken: () => "lease-token-that-never-enters-postgres" });
+
+    await expect(repository.claim({ workerId: "worker:one", now: "2026-07-31T00:00:00.000Z",
+      leaseMs: 30_000 })).rejects.toThrow("MEDIA_DEFINITION_POLICY_INVALID");
   });
 });

@@ -415,6 +415,7 @@ function taskFromRow(
     throw new Error("MEDIA_EFFECT_AUTHORIZATION_MISSING");
   }
   const checkpoint = parseCheckpoint(row.sagaCheckpoint, candidates.length);
+  const definitionPolicy = parseDefinitionPolicy(row.sagaCheckpoint, candidates.length);
   const callerAccess = openCapability(capabilityOpener, row, "caller-access", nowMs);
   let modelOptionAuthorization: MediaImageEphemeralCapability;
   try {
@@ -444,6 +445,7 @@ function taskFromRow(
       candidateCount: canonical.spec.value.candidateCount as 1 | 2 | 3 | 4,
       outputFormat: outputFormat(canonical.spec.value.outputFormat),
       modelOptionRevisionRef: canonical.spec.value.modelOptionRevisionRef }),
+    definitionPolicy,
     createEffectCommand: Object.freeze({ callerRequestFingerprint: row.gatewayCallerRequestFingerprint,
       createEffectDigest: row.gatewayCreateEffectDigest, definitionRoleRef: row.definitionRoleRef,
       operationInputRevisionRef: row.operationInputRevisionRef,
@@ -475,6 +477,22 @@ function taskFromRow(
         callerRequestFingerprint: requiredNullableDigest(row.cancelRequestFingerprint,
           "MEDIA_CANCEL_COMMAND_MISSING") }),
     }) });
+}
+
+function parseDefinitionPolicy(value: unknown, candidateCount: number) {
+  if (!record(value) || !record(value.definitionPolicy) ||
+      (value.definitionPolicy.partialCompletion !== "allowed" &&
+       value.definitionPolicy.partialCompletion !== "forbidden") ||
+      typeof value.definitionPolicy.minimumReadyCandidates !== "number" ||
+      !Number.isInteger(value.definitionPolicy.minimumReadyCandidates) ||
+      value.definitionPolicy.minimumReadyCandidates < 1 ||
+      value.definitionPolicy.minimumReadyCandidates > candidateCount) {
+    throw new Error("MEDIA_DEFINITION_POLICY_INVALID");
+  }
+  return Object.freeze({
+    partialCompletion: value.definitionPolicy.partialCompletion,
+    minimumReadyCandidates: value.definitionPolicy.minimumReadyCandidates,
+  });
 }
 
 function openCapability(

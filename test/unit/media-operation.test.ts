@@ -595,6 +595,43 @@ describe("Media state transitions", () => {
     expect(complete.state.kind).toBe("completed");
   });
 
+  it("keeps an optional Trust-restricted candidate visible to the partial reducer", () => {
+    const definition = operationDefinition();
+    const plan = operationPlan(definition);
+    const finalizing = finalizingOperation(plan);
+    const ready = readyCandidate(plan.candidates[0]!);
+    const restricted = restrictedCandidate(plan.candidates[1]!, "trust-restriction:optional");
+
+    const terminal = reduceMediaOperationTerminal({ operation: finalizing,
+      expectedVersion: finalizing.expectedVersion,
+      terminalReceiptRef: mediaReceiptRef("terminal:restricted:partial"),
+      closure: terminalClosure(definition, [completedStep(plan.steps[0]!)], [ready, restricted]),
+    });
+
+    expect(terminal.state).toMatchObject({ kind: "partial", outcomeClass: "canonical" });
+  });
+
+  it("fails below Definition minimum-ready with exact restricted Candidate evidence", () => {
+    const definition = compiledOperationDefinitionRevision({
+      ...operationDefinition(), minimumReadyCandidates: 2,
+    });
+    const plan = operationPlan(definition);
+    const finalizing = finalizingOperation(plan);
+    const ready = readyCandidate(plan.candidates[0]!);
+    const restricted = restrictedCandidate(plan.candidates[1]!, "trust-restriction:minimum");
+
+    const terminal = reduceMediaOperationTerminal({ operation: finalizing,
+      expectedVersion: finalizing.expectedVersion,
+      terminalReceiptRef: mediaReceiptRef("terminal:restricted:minimum"),
+      closure: terminalClosure(definition, [completedStep(plan.steps[0]!)], [ready, restricted]),
+    });
+
+    expect(terminal.state).toMatchObject({ kind: "failed", outcomeClass: "canonical", cause: {
+      kind: "minimum_ready_candidates_not_met", candidateRef: restricted.candidateRef,
+      candidateState: "restricted", evidenceReceiptRef: "trust-restriction:minimum",
+    } });
+  });
+
   it("makes Step and Candidate reconciliation explicit and terminal children immutable", () => {
     const plan = operationPlan();
     const ready = transitionMediaStep({ step: plan.steps[0]!, expectedVersion: 1n,
@@ -1166,6 +1203,13 @@ function failedCandidate(candidate: MediaCandidate): MediaCandidate {
     nextState: { kind: "failed", providerOutputFactRef: providerOutputFactRef("output-fact:01"),
       failureCause: "provider_output_invalid",
       failureReceiptRef: mediaReceiptRef(`candidate-failed:${candidate.candidateRef}`) } });
+}
+
+function restrictedCandidate(candidate: MediaCandidate, restrictionReceiptRef: string): MediaCandidate {
+  const validating = validatingCandidate(candidate);
+  return transitionMediaCandidate({ candidate: validating, expectedVersion: validating.expectedVersion,
+    nextState: { kind: "restricted", providerOutputFactRef: providerOutputFactRef("output-fact:01"),
+      restrictionReceiptRef: mediaReceiptRef(restrictionReceiptRef) } });
 }
 
 function gatewayFailedCandidate(candidate: MediaCandidate): MediaCandidate {

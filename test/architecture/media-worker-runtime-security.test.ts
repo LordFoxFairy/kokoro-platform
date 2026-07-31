@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 const migrationPath = "prisma/migrations/20260810_media_worker_runtime/migration.sql";
+const operationMigrationPath = "prisma/migrations/20260809_media_artifact_image_vertical/migration.sql";
 
 describe("Media worker runtime PostgreSQL authority", () => {
   it("uses reclaimable SKIP LOCKED leases with exact epoch and capability fences", async () => {
@@ -37,6 +38,24 @@ describe("Media worker runtime PostgreSQL authority", () => {
     expect(migration).toContain("model_option_authorization_capability_envelope");
     expect(migration).toContain("gateway_create_effect_digest=operation.gateway_caller_request_fingerprint");
     expect(migration).not.toContain("provider_effect_ref");
+  });
+
+  it("persists Trust restriction as exact Candidate evidence without an Artifact ready reference", async () => {
+    const migration = await readFile(migrationPath, "utf8");
+    const operationMigration = await readFile(operationMigrationPath, "utf8");
+    expect(operationMigration).toMatch(/media_operation[\s\S]+partial_completion TEXT NOT NULL/u);
+    expect(operationMigration).toMatch(/media_operation[\s\S]+minimum_ready_candidates INTEGER NOT NULL/u);
+    expect(migration).toContain("partial_completion");
+    expect(migration).toContain("minimum_ready_candidates");
+    expect(migration).toMatch(
+      /'definitionPolicy'[\s\S]+operation\.partial_completion[\s\S]+operation\.minimum_ready_candidates/u,
+    );
+    expect(migration).toContain("restriction_receipt_ref");
+    expect(migration).toMatch(/p_step='trust_decision'[\s\S]+p_receipt->>'kind'='restrict'[\s\S]+state='restricted'/u);
+    expect(migration).toMatch(/ready_object_ref=CASE WHEN p_receipt->>'kind'='restrict' THEN NULL/u);
+    expect(migration).toContain("terminal_failure");
+    expect(migration).toMatch(/candidate\.gateway_output_evidence_ref=failure->>'outputEvidenceRef'/u);
+    expect(migration).toContain("media_operation_credit_terminal_gate");
   });
 
   it("keeps staged cleanup as independently leased retryable owner work", async () => {

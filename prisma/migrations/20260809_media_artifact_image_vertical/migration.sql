@@ -103,6 +103,8 @@ CREATE TABLE platform.media_operation (
   operation_input_revision_ref TEXT NOT NULL UNIQUE,
   definition_revision_ref TEXT NOT NULL,
   model_option_revision_ref TEXT NOT NULL,
+  partial_completion TEXT NOT NULL CHECK(partial_completion IN ('allowed','forbidden')),
+  minimum_ready_candidates INTEGER NOT NULL CHECK(minimum_ready_candidates BETWEEN 1 AND 4),
   caller_request_fingerprint CHAR(64) NOT NULL CHECK(caller_request_fingerprint ~ '^[a-f0-9]{64}$'),
   owner_request_digest CHAR(64) NOT NULL CHECK(owner_request_digest ~ '^[a-f0-9]{64}$'),
   credit_execution_budget_root_ref UUID NOT NULL,
@@ -744,11 +746,17 @@ BEGIN
   IF jsonb_typeof(p_record)<>'object' OR jsonb_typeof(p_record->'owner')<>'object' OR
      jsonb_typeof(p_record->'command')<>'object' OR
      jsonb_typeof(p_record->'protectedInput')<>'object' OR
+     jsonb_typeof(p_record->'definitionPolicy')<>'object' OR
      jsonb_typeof(p_record->'operation')<>'object' OR
      jsonb_typeof(p_record->'credit')<>'object' OR
      jsonb_typeof(p_record->'outbox')<>'object' OR
      jsonb_typeof(p_record->'candidates')<>'array' OR
-     jsonb_array_length(p_record->'candidates') NOT BETWEEN 1 AND 4 THEN
+     jsonb_array_length(p_record->'candidates') NOT BETWEEN 1 AND 4 OR
+     p_record#>>'{definitionPolicy,partialCompletion}' IS NULL OR
+     p_record#>>'{definitionPolicy,partialCompletion}' NOT IN ('allowed','forbidden') OR
+     jsonb_typeof(p_record#>'{definitionPolicy,minimumReadyCandidates}') IS DISTINCT FROM 'number' OR
+     (p_record#>>'{definitionPolicy,minimumReadyCandidates}')::INTEGER NOT BETWEEN 1 AND
+       jsonb_array_length(p_record->'candidates') THEN
     RAISE EXCEPTION 'MEDIA_OPERATION_RECORD_INVALID';
   END IF;
   owner:=p_record->'owner'; command_record:=p_record->'command';
@@ -876,6 +884,7 @@ BEGIN
   INSERT INTO platform.media_operation(
     operation_ref,site_ref,subject_ref,subject_generation,project_ref,
     operation_input_revision_ref,definition_revision_ref,model_option_revision_ref,
+    partial_completion,minimum_ready_candidates,
     caller_request_fingerprint,owner_request_digest,credit_execution_budget_root_ref,
     credit_parent_allocation_ref,credit_child_allocation_ref,
     credit_allocation_receipt_ref,trust_input_decision_ref,state,owner_version,created_at,updated_at
@@ -883,7 +892,9 @@ BEGIN
     operation_record->>'operationRef',journal_record.site_ref,journal_record.subject_ref,
     journal_record.subject_generation,journal_record.project_ref,
     protected_input->>'operationInputRevisionRef',journal_record.definition_revision_ref,
-    journal_record.model_option_revision_ref,command_record->>'callerRequestFingerprint',
+    journal_record.model_option_revision_ref,p_record#>>'{definitionPolicy,partialCompletion}',
+    (p_record#>>'{definitionPolicy,minimumReadyCandidates}')::INTEGER,
+    command_record->>'callerRequestFingerprint',
     command_record->>'ownerRequestDigest',journal_record.credit_execution_budget_root_ref,
     journal_record.credit_parent_allocation_ref,(credit_record->>'childAllocationRef')::UUID,
     (credit_record->>'allocationReservationReceiptRef')::UUID,journal_record.trust_input_decision_ref,

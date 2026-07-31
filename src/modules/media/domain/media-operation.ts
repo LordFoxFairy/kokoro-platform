@@ -559,7 +559,8 @@ function completionReady(closure: MediaOperationClosure): boolean {
       const candidate = closure.candidates.find((value) =>
         value.definitionStepKey === definitionStep.definitionStepKey && value.outputSlot === slot.outputSlot);
       return !slot.required || candidate?.state.kind === "ready";
-    })) && readyCandidateCount(closure.candidates) >= closure.definition.minimumReadyCandidates;
+    })) && closure.candidates.every((candidate) => candidate.state.kind !== "restricted") &&
+    readyCandidateCount(closure.candidates) >= closure.definition.minimumReadyCandidates;
 }
 
 function partialReady(closure: MediaOperationClosure): boolean {

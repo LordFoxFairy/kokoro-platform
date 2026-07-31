@@ -43,6 +43,16 @@ ALTER TABLE platform.media_operation
   ADD COLUMN model_option_authorization_expires_at TIMESTAMPTZ,
   ADD COLUMN model_option_authorization_binding_ref TEXT;
 
+ALTER TABLE platform.media_operation
+  ADD COLUMN terminal_failure JSONB
+    CHECK(terminal_failure IS NULL OR jsonb_typeof(terminal_failure)='object'),
+  ADD CONSTRAINT media_operation_terminal_failure_shape CHECK(
+    (state='failed')=(terminal_failure IS NOT NULL)
+  ),
+  ADD CONSTRAINT media_operation_credit_terminal_gate CHECK(
+    terminal_receipt_ref IS NULL OR credit_allocation_return_receipt_ref IS NOT NULL
+  );
+
 ALTER TABLE platform.media_candidate
   ADD COLUMN stable_output_slot_ref TEXT UNIQUE,
   ADD COLUMN gateway_output_evidence_ref TEXT UNIQUE,
@@ -53,7 +63,15 @@ ALTER TABLE platform.media_candidate
     CHECK(output_access_request_fingerprint IS NULL OR output_access_request_fingerprint ~ '^[a-f0-9]{64}$'),
   ADD COLUMN artifact_finalization_receipt_ref TEXT,
   ADD COLUMN trust_decision_ref TEXT,
+  ADD COLUMN restriction_receipt_ref TEXT,
   ADD COLUMN usage_evidence_receipt_ref TEXT;
+
+ALTER TABLE platform.artifact_version
+  ADD CONSTRAINT artifact_restricted_has_no_ready_object CHECK(
+    state<>'restricted' OR
+    (ready_object_ref IS NULL AND finalization_receipt_ref IS NULL AND trust_decision_ref IS NOT NULL AND
+     content_sha256 IS NOT NULL AND byte_size IS NOT NULL AND media_type IS NOT NULL)
+  );
 
 ALTER TABLE platform.media_dispatch_outbox
   ADD COLUMN last_error_code TEXT,
@@ -325,6 +343,10 @@ BEGIN
            'effectView',effect.owner_result->'invocation',
            'cancelState',COALESCE(cancel_effect.state,'none'),
            'cancelResult',cancel_effect.owner_result,
+           'definitionPolicy',jsonb_build_object(
+             'partialCompletion',operation.partial_completion,
+             'minimumReadyCandidates',operation.minimum_ready_candidates
+           ),
            'evidence',jsonb_build_object(
              'logicalInvocationRef',effect.owner_result#>>'{invocation,logicalInvocationRef}',
              'nextEvidenceSequence',COALESCE(effect.next_evidence_sequence,0)::TEXT,
@@ -566,6 +588,28 @@ BEGIN
         VALUES(p_operation_ref,p_logical_invocation_ref,expected,fact->>'kind',fact->>'evidenceRef',
           fact->>'evidenceDigest',fact,(fact->>'recordedAt')::TIMESTAMPTZ);
     END IF;
+    IF fact->>'kind'='output' THEN
+      IF fact->>'candidateRef' IS NULL OR fact->>'stableOutputSlotRef' IS NULL OR
+         fact->>'candidateOrdinal' IS NULL OR fact->>'candidateOrdinal' !~ '^[1-9][0-9]*$' OR
+         fact->>'outputEvidenceRef' IS NULL OR fact->>'outputEvidenceDigest' IS NULL OR
+         fact->>'outputEvidenceRef'<>fact->>'evidenceRef' OR
+         fact->>'outputEvidenceDigest'<>fact->>'evidenceDigest' THEN
+        RAISE EXCEPTION 'MEDIA_GATEWAY_OUTPUT_EVIDENCE_INVALID';
+      END IF;
+      UPDATE platform.media_candidate candidate
+         SET gateway_output_evidence_ref=fact->>'outputEvidenceRef',
+             gateway_output_evidence_digest=fact->>'outputEvidenceDigest',
+             state=CASE WHEN candidate.state IN ('allocated','producing')
+                        THEN 'output_received' ELSE candidate.state END
+       WHERE candidate.operation_ref=p_operation_ref
+         AND candidate.candidate_ref=fact->>'candidateRef'
+         AND candidate.stable_output_slot_ref=fact->>'stableOutputSlotRef'
+         AND candidate.ordinal=(fact->>'candidateOrdinal')::INTEGER
+         AND (candidate.gateway_output_evidence_ref IS NULL OR
+              (candidate.gateway_output_evidence_ref=fact->>'outputEvidenceRef' AND
+               candidate.gateway_output_evidence_digest=fact->>'outputEvidenceDigest'));
+      IF NOT FOUND THEN RAISE EXCEPTION 'MEDIA_GATEWAY_OUTPUT_EVIDENCE_CONFLICT'; END IF;
+    END IF;
     expected=expected+1;
   END LOOP;
   IF p_next_evidence_sequence<>expected-1 OR
@@ -687,24 +731,123 @@ BEGIN
    WHERE operation_ref=p_operation_ref AND step=p_step AND binding_ref=p_binding_ref;
   IF existing IS DISTINCT FROM p_receipt THEN RAISE EXCEPTION 'MEDIA_SAGA_RECEIPT_CONFLICT'; END IF;
   IF p_step='artifact_staged' THEN
-    UPDATE platform.artifact_version SET state='staged',staged_object_ref=p_receipt->>'stagedObjectRef',
+    IF p_receipt->>'state' IS DISTINCT FROM 'staged' OR p_receipt->>'artifactRef' IS NULL OR
+       p_receipt->>'artifactVersionRef' IS NULL OR p_receipt->>'stagedObjectRef' IS NULL OR
+       p_receipt->>'contentSha256' IS NULL OR p_receipt->>'contentSha256' !~ '^[a-f0-9]{64}$' OR
+       p_receipt->>'byteSize' IS NULL OR p_receipt->>'mediaType' IS NULL OR p_receipt->>'mediaType' NOT IN
+         ('image/png','image/jpeg','image/webp') THEN
+      RAISE EXCEPTION 'MEDIA_ARTIFACT_STAGED_RECEIPT_INVALID';
+    END IF;
+    UPDATE platform.artifact_version version
+       SET state='staged',staged_object_ref=p_receipt->>'stagedObjectRef',
       content_sha256=p_receipt->>'contentSha256',byte_size=(p_receipt->>'byteSize')::BIGINT,
-      media_type=p_receipt->>'mediaType' WHERE artifact_version_ref=p_binding_ref;
+      media_type=p_receipt->>'mediaType',updated_at=statement_timestamp()
+      FROM platform.media_candidate candidate
+     WHERE version.artifact_version_ref=p_binding_ref
+       AND p_receipt->>'artifactVersionRef'=p_binding_ref
+       AND p_receipt->>'artifactRef'=version.artifact_ref
+       AND version.state IN ('reserved','retrieving','staged')
+       AND candidate.operation_ref=p_operation_ref
+       AND candidate.artifact_version_ref=version.artifact_version_ref
+       AND candidate.gateway_output_evidence_ref IS NOT NULL
+       AND candidate.gateway_output_evidence_digest IS NOT NULL;
+    IF NOT FOUND THEN RAISE EXCEPTION 'MEDIA_ARTIFACT_STAGED_BINDING_INVALID'; END IF;
     UPDATE platform.media_candidate SET state='validating'
-      WHERE operation_ref=p_operation_ref AND artifact_version_ref=p_binding_ref;
+      WHERE operation_ref=p_operation_ref AND artifact_version_ref=p_binding_ref
+        AND state IN ('allocated','producing','output_received','validating')
+        AND gateway_output_evidence_ref IS NOT NULL AND gateway_output_evidence_digest IS NOT NULL;
+    IF NOT FOUND THEN RAISE EXCEPTION 'MEDIA_ARTIFACT_STAGED_BINDING_INVALID'; END IF;
   ELSIF p_step='trust_decision' THEN
-    UPDATE platform.media_candidate SET trust_decision_ref=p_receipt->>'decisionRef'
-      WHERE operation_ref=p_operation_ref AND artifact_version_ref=p_binding_ref;
+    IF p_receipt->>'kind' IS NULL OR p_receipt->>'kind' NOT IN ('allow','restrict') OR
+       p_receipt->>'decisionRef' IS NULL OR
+       p_receipt->>'contentSha256' !~ '^[a-f0-9]{64}$' OR
+       (p_receipt->>'kind'='restrict' AND p_receipt->>'reasonCode' IS NULL) THEN
+      RAISE EXCEPTION 'MEDIA_TRUST_DECISION_INVALID';
+    END IF;
+    UPDATE platform.artifact_version version
+       SET state=CASE WHEN p_receipt->>'kind'='restrict' THEN 'restricted' ELSE 'validating' END,
+           trust_decision_ref=p_receipt->>'decisionRef',
+           ready_object_ref=CASE WHEN p_receipt->>'kind'='restrict' THEN NULL ELSE ready_object_ref END,
+           finalization_receipt_ref=CASE WHEN p_receipt->>'kind'='restrict'
+                                        THEN NULL ELSE finalization_receipt_ref END,
+           staged_cleanup_state=CASE WHEN p_receipt->>'kind'='restrict'
+                                     THEN 'pending' ELSE staged_cleanup_state END,
+           updated_at=statement_timestamp()
+      FROM platform.media_candidate candidate
+     WHERE version.artifact_version_ref=p_binding_ref
+       AND candidate.operation_ref=p_operation_ref
+       AND candidate.artifact_version_ref=version.artifact_version_ref
+       AND version.state IN ('staged','validating')
+       AND version.content_sha256=p_receipt->>'contentSha256'
+       AND candidate.gateway_output_evidence_ref IS NOT NULL
+       AND candidate.gateway_output_evidence_digest IS NOT NULL;
+    IF NOT FOUND THEN
+      PERFORM 1 FROM platform.artifact_version version
+       WHERE p_receipt->>'kind'='restrict' AND version.artifact_version_ref=p_binding_ref
+         AND version.state='restricted' AND version.ready_object_ref IS NULL
+         AND version.finalization_receipt_ref IS NULL
+         AND version.content_sha256=p_receipt->>'contentSha256'
+         AND version.trust_decision_ref=p_receipt->>'decisionRef';
+      IF NOT FOUND THEN RAISE EXCEPTION 'MEDIA_TRUST_DECISION_BINDING_INVALID'; END IF;
+    END IF;
+    UPDATE platform.media_candidate candidate
+       SET state=CASE WHEN p_receipt->>'kind'='restrict' THEN 'restricted' ELSE 'validating' END,
+           trust_decision_ref=p_receipt->>'decisionRef',
+           restriction_receipt_ref=CASE WHEN p_receipt->>'kind'='restrict'
+                                        THEN p_receipt->>'decisionRef' ELSE NULL END
+     WHERE candidate.operation_ref=p_operation_ref AND candidate.artifact_version_ref=p_binding_ref
+       AND candidate.state='validating'
+       AND candidate.gateway_output_evidence_ref IS NOT NULL
+       AND candidate.gateway_output_evidence_digest IS NOT NULL;
+    IF NOT FOUND THEN
+      PERFORM 1 FROM platform.media_candidate candidate
+       WHERE p_receipt->>'kind'='restrict' AND candidate.operation_ref=p_operation_ref
+         AND candidate.artifact_version_ref=p_binding_ref AND candidate.state='restricted'
+         AND candidate.trust_decision_ref=p_receipt->>'decisionRef'
+         AND candidate.restriction_receipt_ref=p_receipt->>'decisionRef'
+         AND candidate.gateway_output_evidence_ref IS NOT NULL
+         AND candidate.gateway_output_evidence_digest IS NOT NULL;
+      IF NOT FOUND THEN RAISE EXCEPTION 'MEDIA_TRUST_DECISION_BINDING_INVALID'; END IF;
+    END IF;
   ELSIF p_step='artifact_ready' THEN
+    IF p_receipt->>'state' IS DISTINCT FROM 'ready_private' OR p_receipt->>'readyObjectRef' IS NULL OR
+       p_receipt->>'contentSha256' IS NULL OR p_receipt->>'contentSha256' !~ '^[a-f0-9]{64}$' OR
+       p_receipt->>'trustDecisionRef' IS NULL OR p_receipt->>'finalizationReceiptRef' IS NULL OR
+       p_receipt#>>'{stagedCleanup,state}' IS NULL OR
+       p_receipt#>>'{stagedCleanup,state}' NOT IN ('pending','completed') THEN
+      RAISE EXCEPTION 'MEDIA_ARTIFACT_READY_RECEIPT_INVALID';
+    END IF;
     UPDATE platform.artifact_version SET state='ready_private',ready_object_ref=p_receipt->>'readyObjectRef',
       trust_decision_ref=p_receipt->>'trustDecisionRef',
       finalization_receipt_ref=p_receipt->>'finalizationReceiptRef',
       staged_cleanup_state=p_receipt#>>'{stagedCleanup,state}',
-      staged_object_ref=CASE WHEN p_receipt#>>'{stagedCleanup,state}'='completed' THEN NULL ELSE staged_object_ref END
-      WHERE artifact_version_ref=p_binding_ref;
+      staged_object_ref=CASE WHEN p_receipt#>>'{stagedCleanup,state}'='completed' THEN NULL ELSE staged_object_ref END,
+      updated_at=statement_timestamp()
+      WHERE artifact_version_ref=p_binding_ref AND state='validating'
+        AND ready_object_ref IS NULL AND content_sha256=p_receipt->>'contentSha256'
+        AND trust_decision_ref=p_receipt->>'trustDecisionRef';
+    IF NOT FOUND THEN
+      PERFORM 1 FROM platform.artifact_version version
+       WHERE version.artifact_version_ref=p_binding_ref AND version.state='ready_private'
+         AND version.ready_object_ref=p_receipt->>'readyObjectRef'
+         AND version.content_sha256=p_receipt->>'contentSha256'
+         AND version.trust_decision_ref=p_receipt->>'trustDecisionRef'
+         AND version.finalization_receipt_ref=p_receipt->>'finalizationReceiptRef';
+      IF NOT FOUND THEN RAISE EXCEPTION 'MEDIA_ARTIFACT_READY_BINDING_INVALID'; END IF;
+    END IF;
     UPDATE platform.media_candidate SET state='ready',
       artifact_finalization_receipt_ref=p_receipt->>'finalizationReceiptRef'
-      WHERE operation_ref=p_operation_ref AND artifact_version_ref=p_binding_ref;
+      WHERE operation_ref=p_operation_ref AND artifact_version_ref=p_binding_ref
+        AND state='validating' AND restriction_receipt_ref IS NULL
+        AND trust_decision_ref=p_receipt->>'trustDecisionRef';
+    IF NOT FOUND THEN
+      PERFORM 1 FROM platform.media_candidate candidate
+       WHERE candidate.operation_ref=p_operation_ref AND candidate.artifact_version_ref=p_binding_ref
+         AND candidate.state='ready' AND candidate.restriction_receipt_ref IS NULL
+         AND candidate.trust_decision_ref=p_receipt->>'trustDecisionRef'
+         AND candidate.artifact_finalization_receipt_ref=p_receipt->>'finalizationReceiptRef';
+      IF NOT FOUND THEN RAISE EXCEPTION 'MEDIA_ARTIFACT_READY_BINDING_INVALID'; END IF;
+    END IF;
   ELSIF p_step='usage' THEN
     UPDATE platform.media_operation SET usage_evidence_receipt_ref=p_receipt->>'receiptRef'
       WHERE operation_ref=p_operation_ref;
@@ -724,12 +867,75 @@ CREATE FUNCTION platform.complete_media_image_task(
   p_task_ref TEXT,p_operation_ref TEXT,p_lease_epoch BIGINT,p_lease_token_hash CHAR(64),p_closure JSONB
 ) RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$
+DECLARE failure JSONB;
 BEGIN
   PERFORM platform.assert_media_image_worker_lease(p_task_ref,p_operation_ref,p_lease_epoch,p_lease_token_hash);
-  IF p_closure->>'state' NOT IN ('completed','failed','canceled') OR
-     p_closure->>'terminalReceiptRef' IS NULL THEN RAISE EXCEPTION 'MEDIA_TERMINAL_CLOSURE_INVALID'; END IF;
+  failure=p_closure->'failureCause';
+  IF p_closure->>'state' NOT IN ('completed','partial','failed','canceled') OR
+     p_closure->>'terminalReceiptRef' IS NULL OR
+     ((p_closure->>'state'='failed') IS DISTINCT FROM
+       COALESCE(jsonb_typeof(failure)='object',false)) THEN
+    RAISE EXCEPTION 'MEDIA_TERMINAL_CLOSURE_INVALID';
+  END IF;
+  IF p_closure->>'state'='completed' AND EXISTS(
+    SELECT 1 FROM platform.media_candidate candidate
+     WHERE candidate.operation_ref=p_operation_ref AND candidate.state<>'ready'
+  ) THEN
+    RAISE EXCEPTION 'MEDIA_TERMINAL_CLOSURE_INVALID';
+  END IF;
+  IF p_closure->>'state'='partial' AND NOT EXISTS(
+    SELECT 1 FROM platform.media_operation operation
+     WHERE operation.operation_ref=p_operation_ref AND operation.partial_completion='allowed'
+       AND (SELECT count(*) FROM platform.media_candidate ready
+             WHERE ready.operation_ref=operation.operation_ref AND ready.state='ready')>=
+           operation.minimum_ready_candidates
+       AND EXISTS(SELECT 1 FROM platform.media_candidate restricted
+                   WHERE restricted.operation_ref=operation.operation_ref
+                     AND restricted.state='restricted')
+  ) THEN
+    RAISE EXCEPTION 'MEDIA_TERMINAL_CLOSURE_INVALID';
+  END IF;
+  IF p_closure->>'state'='failed' AND failure->>'kind' IN
+       ('minimum_ready_candidates_not_met','partial_completion_forbidden') THEN
+    PERFORM 1 FROM platform.media_candidate candidate
+     WHERE candidate.operation_ref=p_operation_ref
+       AND candidate.candidate_ref=failure->>'candidateRef'
+       AND candidate.state='restricted'
+       AND candidate.gateway_output_evidence_ref=failure->>'outputEvidenceRef'
+       AND candidate.gateway_output_evidence_digest=failure->>'outputEvidenceDigest'
+       AND candidate.restriction_receipt_ref=failure->>'restrictionReceiptRef';
+    IF NOT FOUND THEN RAISE EXCEPTION 'MEDIA_TERMINAL_FAILURE_EVIDENCE_INVALID'; END IF;
+    IF failure->>'kind'='minimum_ready_candidates_not_met' AND NOT EXISTS(
+      SELECT 1 FROM platform.media_operation operation
+       WHERE operation.operation_ref=p_operation_ref AND
+         (SELECT count(*) FROM platform.media_candidate ready
+           WHERE ready.operation_ref=operation.operation_ref AND ready.state='ready')<
+         operation.minimum_ready_candidates
+    ) THEN RAISE EXCEPTION 'MEDIA_TERMINAL_FAILURE_CAUSE_INVALID'; END IF;
+    IF failure->>'kind'='partial_completion_forbidden' AND NOT EXISTS(
+      SELECT 1 FROM platform.media_operation operation
+       WHERE operation.operation_ref=p_operation_ref AND operation.partial_completion='forbidden' AND
+         (SELECT count(*) FROM platform.media_candidate ready
+           WHERE ready.operation_ref=operation.operation_ref AND ready.state='ready')>=
+         operation.minimum_ready_candidates
+    ) THEN RAISE EXCEPTION 'MEDIA_TERMINAL_FAILURE_CAUSE_INVALID'; END IF;
+  ELSIF p_closure->>'state'='failed' AND failure->>'kind'='gateway_effect_failed' THEN
+    PERFORM 1 FROM platform.media_gateway_effect_journal journal
+      JOIN platform.media_gateway_effect_evidence evidence
+        ON evidence.operation_ref=journal.operation_ref
+       AND evidence.logical_invocation_ref=failure->>'logicalInvocationRef'
+       AND evidence.kind='outcome'
+       AND evidence.evidence_ref=failure->>'canonicalOutcomeEvidenceRef'
+       AND evidence.evidence_digest=failure->>'canonicalOutcomeEvidenceDigest'
+     WHERE journal.operation_ref=p_operation_ref
+       AND journal.owner_result#>>'{invocation,state}'='failed';
+    IF NOT FOUND THEN RAISE EXCEPTION 'MEDIA_TERMINAL_FAILURE_EVIDENCE_INVALID'; END IF;
+  ELSIF p_closure->>'state'='failed' THEN
+    RAISE EXCEPTION 'MEDIA_TERMINAL_FAILURE_CAUSE_INVALID';
+  END IF;
   UPDATE platform.media_operation SET state=p_closure->>'state',outcome_class='canonical',
     terminal_receipt_ref=p_closure->>'terminalReceiptRef',
+    terminal_failure=failure,
     gateway_command_receipt_ref=p_closure#>>'{receipts,gatewayCommandReceiptRef}',
     gateway_command_receipt_digest=p_closure#>>'{receipts,gatewayCommandReceiptDigest}',
     canonical_outcome_evidence_ref=p_closure#>>'{receipts,canonicalOutcomeEvidenceRef}',
