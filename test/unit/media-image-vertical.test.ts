@@ -1,0 +1,140 @@
+import { randomBytes } from "node:crypto";
+import { describe, expect, it, vi } from "vitest";
+import { issuePlatformTransaction, revokePlatformTransaction } from
+  "../../src/shared/unit-of-work/platform-transaction.js";
+import {
+  ImageOperationSubmissionService,
+  InMemoryMediaImageOperationRepository,
+  type MediaImageAdmissionOwnerPort,
+  type MediaImageCreditAllocationPort,
+} from "../../src/modules/media/application/image-operation-submission.js";
+import { EnvelopeOperationInputProtector } from
+  "../../src/modules/media/application/operation-input-protection.js";
+import { mediaCallerRequestFingerprintSha256 } from
+  "../../src/interfaces/http/generated/platform-public/media-canonical.js";
+
+const request = Object.freeze({
+  contractMajor: 1 as const,
+  definitionRevisionRef: "image.text_to_image@v1:revision:1",
+  kind: "image_text_to_image" as const,
+  promptIntent: "a silver fox",
+  aspectRatio: "square_1_1" as const,
+  candidateCount: 2 as const,
+  modelOptionRevisionRef: "image-option:revision:1",
+  outputFormat: "png" as const,
+});
+
+describe("image.text_to_image submission authority", () => {
+  it("persists one encrypted plan, child Credit receipt and dispatch outbox, then replays exactly", async () => {
+    const events: string[] = [];
+    const repository = new InMemoryMediaImageOperationRepository();
+    const admission: MediaImageAdmissionOwnerPort = {
+      resolveDirectStudio: vi.fn(async () => {
+        events.push("admission");
+        return {
+          ownerBinding: {
+            siteRef: "site:one", subjectRef: "subject:one", subjectGeneration: 2n,
+            projectRef: "project:one", workloadRef: "studio:web", source: "direct_studio" as const,
+            definitionRevisionRef: request.definitionRevisionRef,
+            modelOptionRevisionRef: request.modelOptionRevisionRef,
+          },
+          executionBudgetRootRef: "budget:root:one",
+          parentAllocationRef: "budget:allocation:one",
+          maximumCredit: 15n,
+          trustInputDecisionRef: "trust-input:allow:one",
+        };
+      }),
+    };
+    const credit: MediaImageCreditAllocationPort = {
+      deriveChild: vi.fn(async () => {
+        events.push("credit");
+        return { childAllocationRef: "credit-child:one",
+          allocationReservationReceiptRef: "credit-child-receipt:one" };
+      }),
+    };
+    let serial = 0;
+    const service = new ImageOperationSubmissionService({
+      admission,
+      credit,
+      repository,
+      inputProtector: new EnvelopeOperationInputProtector({
+        activeKey: { keyRevisionRef: "media-kek:revision:1", key: randomBytes(32) },
+      }),
+      ownerDigestKey: randomBytes(32),
+      reference: (kind) => `${kind}:${++serial}`,
+      unitOfWork: { execute: async (_binding, work) => {
+        events.push("tx.begin");
+        const lease = issuePlatformTransaction({ query: async () => [], execute: async () => 1 });
+        try { return await work(lease.transaction); } finally { revokePlatformTransaction(lease); events.push("tx.end"); }
+      } },
+      clock: () => new Date("2026-07-31T12:00:00.000Z"),
+    });
+    const callerRequestFingerprint = await mediaCallerRequestFingerprintSha256(request);
+    const command = { callerAudience: "site-bff.media", commandRef: "command:one",
+      callerRequestFingerprint, request } as const;
+
+    const first = await service.submitDirectStudio({ caller: { sessionGrant: "opaque-session-grant" }, ...command });
+    const replay = await service.submitDirectStudio({ caller: { sessionGrant: "opaque-session-grant" }, ...command });
+
+    expect(first.kind).toBe("created");
+    expect(replay).toEqual({ kind: "replayed", operationRef: first.operationRef,
+      callerRequestFingerprint });
+    const stored = repository.inspect(first.operationRef);
+    expect(stored?.plan.candidates).toHaveLength(2);
+    expect(stored?.modelInvocationCommandRefs).toHaveLength(2);
+    expect(stored?.credit).toEqual({ childAllocationRef: "credit-child:one",
+      allocationReservationReceiptRef: "credit-child-receipt:one" });
+    expect(stored?.dispatchOutbox).toMatchObject({ state: "pending", topic: "media.image.dispatch.v1" });
+    expect(JSON.stringify(stored?.protectedInput)).not.toContain("silver fox");
+    expect(events).toEqual([
+      "admission", "tx.begin", "credit", "tx.end",
+      "admission", "tx.begin", "tx.end",
+    ]);
+  });
+
+  it("rejects a false caller fingerprint before Admission and owner-bound command reuse after Admission", async () => {
+    let projectRef = "project:one";
+    const admission: MediaImageAdmissionOwnerPort = { resolveDirectStudio: vi.fn(async () => ({
+      ownerBinding: { siteRef: "site:one", subjectRef: "subject:one", subjectGeneration: 1n,
+        projectRef, workloadRef: "studio:web", source: "direct_studio" as const,
+        definitionRevisionRef: request.definitionRevisionRef,
+        modelOptionRevisionRef: request.modelOptionRevisionRef },
+      executionBudgetRootRef: "budget:root:one", parentAllocationRef: "budget:allocation:one",
+      maximumCredit: 10n, trustInputDecisionRef: "trust-input:one",
+    })) };
+    const repository = new InMemoryMediaImageOperationRepository();
+    const service = serviceWith({ admission, repository });
+    await expect(service.submitDirectStudio({ caller: { sessionGrant: "grant" },
+      callerAudience: "site-bff.media", commandRef: "command:false", callerRequestFingerprint: "0".repeat(64),
+      request })).rejects.toThrow("MEDIA_CALLER_FINGERPRINT_MISMATCH");
+    expect(admission.resolveDirectStudio).not.toHaveBeenCalled();
+
+    const fingerprint = await mediaCallerRequestFingerprintSha256(request);
+    await service.submitDirectStudio({ caller: { sessionGrant: "grant" }, callerAudience: "site-bff.media",
+      commandRef: "command:bound", callerRequestFingerprint: fingerprint, request });
+    projectRef = "project:other";
+    await expect(service.submitDirectStudio({ caller: { sessionGrant: "grant" },
+      callerAudience: "site-bff.media", commandRef: "command:bound", callerRequestFingerprint: fingerprint,
+      request })).rejects.toThrow("MEDIA_COMMAND_OWNER_DIGEST_CONFLICT");
+  });
+});
+
+function serviceWith(input: Readonly<{
+  admission: MediaImageAdmissionOwnerPort;
+  repository: InMemoryMediaImageOperationRepository;
+}>): ImageOperationSubmissionService {
+  let serial = 0;
+  return new ImageOperationSubmissionService({
+    ...input,
+    credit: { deriveChild: async () => ({ childAllocationRef: "credit-child:one",
+      allocationReservationReceiptRef: "credit-receipt:one" }) },
+    inputProtector: new EnvelopeOperationInputProtector({
+      activeKey: { keyRevisionRef: "media-kek:revision:1", key: randomBytes(32) },
+    }),
+    ownerDigestKey: randomBytes(32), reference: (kind) => `${kind}:${++serial}`,
+    unitOfWork: { execute: async (_binding, work) => {
+      const lease = issuePlatformTransaction({ query: async () => [], execute: async () => 1 });
+      try { return await work(lease.transaction); } finally { revokePlatformTransaction(lease); }
+    } },
+  });
+}

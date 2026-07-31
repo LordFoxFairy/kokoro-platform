@@ -1,4 +1,32 @@
-export type { MediaDefinitionCanonicalizer } from "./application/index.js";
+export {
+  deriveMediaOwnerRequestDigest,
+  EnvelopeOperationInputProtector,
+  ImageOperationSubmissionService,
+  ImageOperationWorker,
+  InMemoryMediaImageOperationRepository,
+  InMemoryMediaImageWorkerRepository,
+} from "./application/index.js";
+export type {
+  ImageOutputTrustPort,
+  ImageProviderAdapter,
+  ImageProviderOutcome,
+  ImageProviderRequest,
+  MediaDefinitionCanonicalizer,
+  MediaImageAdmissionOwnerPort,
+  MediaImageCreditAllocationPort,
+  MediaImageCreditSettlementPort,
+  MediaImageOperationRecord,
+  MediaImageOperationRepository,
+  MediaImageSessionProjectionPort,
+  MediaImageTerminalClosure,
+  MediaImageUnitOfWork,
+  MediaImageUsagePort,
+  MediaImageWorkerRepository,
+  MediaImageWorkerTask,
+  MediaOperationOwnerBinding,
+  MediaOperationSource,
+  ProtectedOperationInputRevision,
+} from "./application/index.js";
 
 export { canonicalMediaRequest } from "./domain/canonical-media-request.js";
 export type { CanonicalMediaRequest } from "./domain/canonical-media-request.js";

@@ -39,5 +39,11 @@ golden corpus.
 
 Consumers use only `src/modules/media/index.ts`. That public barrel exposes validating reference/Definition/canonical factories,
 the state-machine commands, necessary public types, and persistence rehydrators; descriptor helpers, brands, vocabulary predicates,
-and reducer internals remain private. Until owner infrastructure lands, this module exposes no database schema, RPC/HTTP handler,
-Provider adapter, worker, or runtime capability.
+and reducer internals remain private.
+The image-first application vertical adds a command-journaled Direct Studio submission service and an explicitly leased
+worker closure around the existing kernel. Canonical input is stored only as a bounded envelope-encrypted
+`OperationInputRevision`; caller SHA-256 fingerprints remain distinct from the Platform owner-keyed digest. The worker
+journals the replaceable provider effect before invocation and makes an operation terminal only after Artifact
+finalization, Trust, usage, Credit and Session projection receipts exist.
+
+Development fakes live under `infrastructure/dev` and advertise `developmentOnly`. They are not production adapters.
