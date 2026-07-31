@@ -154,6 +154,41 @@ describe("Platform PostgreSQL foundation", () => {
     await modelGatewayDatabase?.disconnect();
   });
 
+  it("rejects digest-incoherent direct root UUID and decimal spellings before persistence", async () => {
+    const bootstrap = new Client({ connectionString: bootstrapDatabaseUrl });
+    await bootstrap.connect();
+    try {
+      const closure = directRootCanonicalPayload("closure");
+      const closureCommand = closure.command as Record<string, unknown>;
+      const closureBudget = closureCommand.budget as Record<string, unknown>;
+      closureBudget.executionBudgetRootRef = "00000000-0000-7000-8000-0000000000AA";
+      await expect(bootstrap.query(
+        "SELECT platform.commit_direct_media_root_closure($1::jsonb)",
+        [JSON.stringify(closure)],
+      )).rejects.toThrow("CREDIT_DIRECT_ROOT_CANONICAL_VALUE_INVALID");
+
+      const reconciliation = directRootCanonicalPayload("reconciliation");
+      const reconciliationCommand = reconciliation.command as Record<string, unknown>;
+      const reconciliationBudget = reconciliationCommand.budget as Record<string, unknown>;
+      reconciliationBudget.reservedCeiling = "1e2";
+      await expect(bootstrap.query(
+        "SELECT platform.mark_direct_media_root_reconciliation($1::jsonb)",
+        [JSON.stringify(reconciliation)],
+      )).rejects.toThrow("CREDIT_DIRECT_ROOT_CANONICAL_VALUE_INVALID");
+
+      const { rows } = await bootstrap.query<{ closure_count: string; reconciliation_count: string }>(
+        `SELECT
+           (SELECT count(*)::text FROM platform.credit_direct_media_root_closure_receipt
+             WHERE business_operation_key='canonical-regression:one') AS closure_count,
+           (SELECT count(*)::text FROM platform.credit_direct_media_root_reconciliation
+             WHERE business_operation_key='canonical-regression:one') AS reconciliation_count`,
+      );
+      expect(rows[0]).toEqual({ closure_count: "0", reconciliation_count: "0" });
+    } finally {
+      await bootstrap.end();
+    }
+  });
+
   it("enforces Artifact owner-query RLS and exact data-plane role OID/routine authority", async () => {
     const suffix = randomUUID();
     const siteRef = `artifact-site-${suffix}`;
@@ -2189,6 +2224,74 @@ function requireLeasedDatabaseUrl(value: string | undefined): string {
     throw new Error("DATABASE_URL_PLATFORM_TEST_MUST_BE_LEASED");
   }
   return value;
+}
+
+function directRootCanonicalPayload(kind: "closure" | "reconciliation"): Record<string, unknown> {
+  const identity = {
+    siteId: "site:canonical-regression", operationRef: "media:canonical-regression",
+    businessOperationKey: "canonical-regression:one", requestDigest: "a".repeat(64),
+    workerLease: { taskRef: "task:canonical-regression", leaseEpoch: "1",
+      leaseTokenHash: "b".repeat(64) },
+  };
+  const budget = {
+    executionBudgetRootRef: "00000000-0000-7000-8000-000000000001",
+    executionManifestRef: "manifest:canonical-regression",
+    rootHoldRef: "00000000-0000-7000-8000-000000000002",
+    rootAllocationRef: "00000000-0000-7000-8000-000000000003",
+    rootAllocationRevision: "1", rootAllocationEpoch: "1",
+    authorizationSegmentRef: "00000000-0000-7000-8000-000000000004",
+    authorizationSegmentVersion: "1", reservedCeiling: "100", unit: "credit_micros",
+  };
+  const settlement = {
+    settlementRef: "00000000-0000-7000-8000-000000000005",
+    authorizationSegmentRef: "00000000-0000-7000-8000-000000000004",
+    closureRef: "00000000-0000-7000-8000-000000000006",
+    closureRevision: "1", state: "settled", customerAmount: "25",
+    platformExposureAmount: "0",
+  };
+  const command = { effectClosureReceiptRef: "effect:canonical-regression",
+    outcome: "completed", budget, settlement };
+  if (kind === "reconciliation") return { identity, command,
+    authority: {
+      executionBudgetRootRef: budget.executionBudgetRootRef,
+      rootAllocationRef: budget.rootAllocationRef, rootHoldRef: budget.rootHoldRef,
+      authorizationSegmentRef: budget.authorizationSegmentRef,
+      settlementRef: settlement.settlementRef, executionManifestRef: budget.executionManifestRef,
+      rootAllocationRevision: "1", rootAllocationEpoch: "1", authorizationSegmentVersion: "1",
+      reservedCeiling: "100", unit: "credit_micros", expectedRootState: "open",
+      expectedRootVersion: "1", expectedHoldState: "open", expectedHoldFenceEpoch: "1",
+      expectedAllocationState: "active", expectedAllocationRevision: "1",
+      expectedAllocationEpoch: "1",
+    },
+    result: {
+      reconciliationReceiptRef: "00000000-0000-7000-8000-000000000007",
+      reconciliationAllocationRevisionRef: "00000000-0000-7000-8000-000000000008",
+      code: "CREDIT_DIRECT_ROOT_RATING_MISMATCH", observedAt: "2026-08-12T12:00:00.000Z",
+    },
+  };
+  return { identity, command, result: {
+    allocation: { revision: "2", allocationEpoch: "2", creditCeiling: "100",
+      unassignedStock: "0", activeChildReservedStock: "0", committedStock: "0",
+      capturedCumulative: "25", returnedToParentCumulative: "75", state: "terminal" },
+    allocationRevisionRef: "00000000-0000-7000-8000-000000000008",
+    rootState: "settled", rootVersion: "2", holdState: "settled", holdFenceEpoch: "2",
+    capturedAmount: "25", releasedAmount: "75", releases: [],
+    releaseJournalTransactionRef: null, releaseEntriesDigest: null,
+    receipt: {
+      allocationClosureReceiptRef: "00000000-0000-7000-8000-000000000007",
+      siteId: identity.siteId, operationRef: identity.operationRef,
+      businessOperationKey: identity.businessOperationKey, requestDigest: identity.requestDigest,
+      effectClosureReceiptRef: command.effectClosureReceiptRef,
+      settlementRef: settlement.settlementRef, executionBudgetRootRef: budget.executionBudgetRootRef,
+      rootAllocationRef: budget.rootAllocationRef, rootHoldRef: budget.rootHoldRef,
+      capturedAmount: "25", releasedAmount: "75", unit: "credit_micros",
+      outcome: "completed", executionManifestRef: budget.executionManifestRef,
+      authorizationSegmentRef: budget.authorizationSegmentRef, authorizationSegmentVersion: "1",
+      settlementClosureRef: settlement.closureRef, settlementClosureRevision: "1",
+      platformExposureAmount: "0", ratingSnapshotRef: "00000000-0000-7000-8000-000000000009",
+      receiptDigest: "c".repeat(64), recordedAt: "2026-08-12T12:00:00.000Z",
+    },
+  } };
 }
 
 function workerRoleEnvironmentName(role: PlatformWorkerAuthorityRole): string {

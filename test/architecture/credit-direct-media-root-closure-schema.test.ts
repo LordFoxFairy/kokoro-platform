@@ -58,6 +58,30 @@ describe("Credit direct Media root closure schema", () => {
     expect(migration).toContain("CREDIT_DIRECT_ROOT_HOLD_SOURCE_MISMATCH");
   });
 
+  it("looks up closure and reconciliation as one exclusive durable outcome", async () => {
+    const migration = await readFile(migrationPath, "utf8");
+    const lookup = migration.slice(
+      migration.indexOf("CREATE FUNCTION platform.find_direct_media_root_closure"),
+      migration.indexOf("CREATE FUNCTION platform.lock_direct_media_root_closure"),
+    );
+    expect(lookup).toContain("credit_direct_media_root_closure_receipt");
+    expect(lookup).toContain("credit_direct_media_root_reconciliation");
+    expect(lookup).toContain("reconciliationReceiptRef");
+    expect(lookup).toContain("reconciliation_required");
+    expect(lookup).toContain("CREDIT_DIRECT_ROOT_OUTCOME_EXCLUSIVITY_VIOLATION");
+  });
+
+  it("rejects non-canonical digest-bound scalar text before any UUID or numeric cast", async () => {
+    const migration = await readFile(migrationPath, "utf8");
+    expect(migration).toContain("credit_direct_root_is_canonical_uuid");
+    expect(migration).toContain("credit_direct_root_is_canonical_positive_bigint");
+    expect(migration).toContain("credit_direct_root_is_canonical_nonnegative_amount");
+    expect(migration).toContain("CREDIT_DIRECT_ROOT_CANONICAL_VALUE_INVALID");
+    expect(migration).toMatch(/parsed::TEXT\s*=\s*value/u);
+    expect(migration).toMatch(/\^\(0\|\[1-9\]\[0-9\]\*\)\$/u);
+    expect(migration).not.toMatch(/\[eE\]/u);
+  });
+
   it("locks and revalidates every financial fence before terminal mutation", async () => {
     const migration = await readFile(migrationPath, "utf8");
     expect(migration).toMatch(/FOR UPDATE OF (?:operation,)?root,hold,allocation,revision,segment,settlement/iu);

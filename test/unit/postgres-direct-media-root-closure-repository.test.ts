@@ -6,6 +6,26 @@ import { issuePlatformTransaction, revokePlatformTransaction } from
 import type { PlatformSqlTransaction } from "../../src/shared/unit-of-work/platform-transaction.js";
 
 describe("PostgreSQL Direct Media root closure adapter", () => {
+  it("maps an exact durable reconciliation lookup without mistaking its receipt for an allocation revision", async () => {
+    const reconciliationReceiptRef = "00000000-0000-7000-8000-000000000100";
+    const query = vi.fn(async () => [{ result: {
+      kind: "reconciliation_required",
+      reconciliationReceiptRef,
+      code: "CREDIT_DIRECT_ROOT_RATING_MISMATCH",
+    } }]);
+    const lease = issuePlatformTransaction({ query: query as unknown as PlatformSqlTransaction["query"],
+      execute: async () => 0 });
+    const repository = new PostgresDirectMediaRootClosureRepository();
+    try {
+      await expect(repository.findClosure(lease.transaction, {
+        siteId: "site:one", operationRef: "media:one",
+        businessOperationKey: "close:one", requestDigest: "a".repeat(64),
+        workerLease: { taskRef: "task:one", leaseEpoch: 7n, leaseTokenHash: "b".repeat(64) },
+      })).resolves.toEqual({ kind: "reconciliation_required", reconciliationReceiptRef,
+        code: "CREDIT_DIRECT_ROOT_RATING_MISMATCH" });
+    } finally { revokePlatformTransaction(lease); }
+  });
+
   it("uses only the exact worker-to-Credit definer routines", async () => {
     const query = vi.fn(async (statement: string) => statement.includes("find_direct_media_root_closure")
       ? [{ result: { kind: "none" } }] : [{ result: null }]);

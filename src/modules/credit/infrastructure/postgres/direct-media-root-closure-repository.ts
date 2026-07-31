@@ -26,6 +26,8 @@ export class PostgresDirectMediaRootClosureRepository implements DirectMediaRoot
     const kind = text(row.kind, "CREDIT_DIRECT_ROOT_LOOKUP_INVALID");
     if (kind === "none") return Object.freeze({ kind });
     if (kind === "conflict") return Object.freeze({ kind, code: "REQUEST_DIGEST_CONFLICT" as const });
+    if (kind === "reconciliation_required") return Object.freeze({ kind,
+      reconciliationReceiptRef: text(row.reconciliationReceiptRef), code: text(row.code) });
     if (kind !== "replayed") throw new Error("CREDIT_DIRECT_ROOT_LOOKUP_INVALID");
     return Object.freeze({ kind, value: receipt(row.value) });
   }

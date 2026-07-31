@@ -98,6 +98,78 @@ describe("Credit direct Media root closure", () => {
     } finally { revokePlatformTransaction(lease); }
   });
 
+  it("replays the exact reconciliation outcome after the accepted response is lost", async () => {
+    const expected = Object.freeze({
+      kind: "reconciliation_required" as const,
+      reconciliationReceiptRef: stableReference("reconciliation", command().businessOperationKey),
+      code: "CREDIT_DIRECT_ROOT_RATING_MISMATCH",
+    });
+    let persisted = false;
+    const base = fakeRepository({ ...openRoot(), settlement: {
+      ...openRoot().settlement, customerAmount: 24n,
+    } });
+    const repository = {
+      ...base,
+      findClosure: vi.fn(async () => persisted
+        ? expected
+        : { kind: "none" as const }),
+      markReconciliationRequired: vi.fn(async () => { persisted = true; }),
+    } as unknown as DirectMediaRootClosureRepository;
+    const service = new DirectMediaRootClosureService({ repository,
+      clock: () => new Date("2026-08-12T12:00:00.000Z"), reference: stableReference });
+    const lease = transactionLease();
+    try {
+      const baseCommand = command();
+      const input = withRequestDigest({ ...baseCommand,
+        settlement: { ...baseCommand.settlement, customerAmount: 24n } });
+      await expect(service.close(lease.transaction, input)).resolves.toEqual(expected);
+      await expect(service.close(lease.transaction, input)).resolves.toEqual(expected);
+      expect(repository.lockRootClosure).toHaveBeenCalledOnce();
+      expect(repository.markReconciliationRequired).toHaveBeenCalledOnce();
+    } finally { revokePlatformTransaction(lease); }
+  });
+
+  it("returns a reconciliation winner discovered after the authority lock race", async () => {
+    const expected = Object.freeze({
+      kind: "reconciliation_required" as const,
+      reconciliationReceiptRef: stableReference("reconciliation", command().businessOperationKey),
+      code: "CREDIT_DIRECT_ROOT_RATING_MISMATCH",
+    });
+    let lookups = 0;
+    const base = fakeRepository(openRoot());
+    const repository = {
+      ...base,
+      findClosure: vi.fn(async () => ++lookups === 1 ? { kind: "none" as const } : expected),
+    } as unknown as DirectMediaRootClosureRepository;
+    const service = new DirectMediaRootClosureService({ repository,
+      clock: () => new Date("2026-08-12T12:00:00.000Z"), reference: stableReference });
+    const lease = transactionLease();
+    try {
+      await expect(service.close(lease.transaction, command())).resolves.toEqual(expected);
+      expect(repository.lockRootClosure).toHaveBeenCalledOnce();
+      expect(repository.persistClosure).not.toHaveBeenCalled();
+      expect(repository.markReconciliationRequired).not.toHaveBeenCalled();
+    } finally { revokePlatformTransaction(lease); }
+  });
+
+  it("keeps an outcome identity or digest collision as a conflict before locking", async () => {
+    const base = fakeRepository(openRoot());
+    const repository = {
+      ...base,
+      findClosure: vi.fn(async () => ({ kind: "conflict" as const,
+        code: "REQUEST_DIGEST_CONFLICT" as const })),
+    };
+    const service = new DirectMediaRootClosureService({ repository,
+      clock: () => new Date("2026-08-12T12:00:00.000Z"), reference: stableReference });
+    const lease = transactionLease();
+    try {
+      await expect(service.close(lease.transaction, command())).resolves.toEqual({
+        kind: "conflict", code: "REQUEST_DIGEST_CONFLICT",
+      });
+      expect(repository.lockRootClosure).not.toHaveBeenCalled();
+    } finally { revokePlatformTransaction(lease); }
+  });
+
   it("does not manufacture an empty journal when the Hold is fully captured", async () => {
     const current = openRoot();
     const repository = fakeRepository({ ...current,

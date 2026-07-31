@@ -193,8 +193,9 @@ function closureScopeError(current: StoredDirectMediaRootClosure, input: Closure
 
 function closureOutcome(input:
   | Readonly<{ kind: "conflict"; code: "REQUEST_DIGEST_CONFLICT" }>
+  | Readonly<{ kind: "reconciliation_required"; reconciliationReceiptRef: string; code: string }>
   | Readonly<{ kind: "accepted" | "replayed"; value: DirectMediaRootClosureReceipt }>) {
-  if (input.kind === "conflict") return input;
+  if (input.kind === "conflict" || input.kind === "reconciliation_required") return input;
   return Object.freeze({ kind: input.kind, value: Object.freeze({
     allocationClosureReceiptRef: input.value.allocationClosureReceiptRef,
     capturedAmount: input.value.capturedAmount,

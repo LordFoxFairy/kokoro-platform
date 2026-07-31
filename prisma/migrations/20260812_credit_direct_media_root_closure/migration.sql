@@ -137,6 +137,197 @@ LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,platform AS $$
 $$;
 REVOKE ALL ON FUNCTION platform.credit_direct_root_json_exact_keys(JSONB,TEXT[]) FROM PUBLIC;
 
+CREATE FUNCTION platform.credit_direct_root_is_canonical_uuid(value TEXT)
+RETURNS BOOLEAN
+LANGUAGE plpgsql IMMUTABLE SET search_path=pg_catalog,platform AS $$
+DECLARE parsed UUID;
+BEGIN
+  IF value IS NULL OR value !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+    RETURN FALSE;
+  END IF;
+  BEGIN parsed := value::UUID;
+  EXCEPTION WHEN invalid_text_representation THEN RETURN FALSE;
+  END;
+  RETURN parsed::TEXT=value;
+END $$;
+REVOKE ALL ON FUNCTION platform.credit_direct_root_is_canonical_uuid(TEXT) FROM PUBLIC;
+
+CREATE FUNCTION platform.credit_direct_root_is_canonical_positive_bigint(value TEXT)
+RETURNS BOOLEAN
+LANGUAGE plpgsql IMMUTABLE SET search_path=pg_catalog,platform AS $$
+DECLARE parsed BIGINT;
+BEGIN
+  IF value IS NULL OR value !~ '^[1-9][0-9]*$' THEN RETURN FALSE; END IF;
+  BEGIN parsed := value::BIGINT;
+  EXCEPTION WHEN numeric_value_out_of_range OR invalid_text_representation THEN RETURN FALSE;
+  END;
+  RETURN parsed::TEXT=value;
+END $$;
+REVOKE ALL ON FUNCTION platform.credit_direct_root_is_canonical_positive_bigint(TEXT) FROM PUBLIC;
+
+CREATE FUNCTION platform.credit_direct_root_is_canonical_nonnegative_amount(value TEXT)
+RETURNS BOOLEAN
+LANGUAGE plpgsql IMMUTABLE SET search_path=pg_catalog,platform AS $$
+DECLARE parsed NUMERIC(38,0);
+BEGIN
+  IF value IS NULL OR value !~ '^(0|[1-9][0-9]*)$' THEN RETURN FALSE; END IF;
+  BEGIN parsed := value::NUMERIC(38,0);
+  EXCEPTION WHEN numeric_value_out_of_range OR invalid_text_representation THEN RETURN FALSE;
+  END;
+  RETURN parsed::TEXT=value;
+END $$;
+REVOKE ALL ON FUNCTION platform.credit_direct_root_is_canonical_nonnegative_amount(TEXT) FROM PUBLIC;
+
+CREATE FUNCTION platform.credit_direct_root_commit_values_canonical(p_record JSONB)
+RETURNS BOOLEAN
+LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,platform AS $$
+  SELECT COALESCE(
+    platform.credit_direct_root_is_canonical_positive_bigint(
+      p_record#>>'{identity,workerLease,leaseEpoch}')
+    AND platform.credit_direct_root_is_canonical_uuid(
+      p_record#>>'{command,budget,executionBudgetRootRef}')
+    AND platform.credit_direct_root_is_canonical_uuid(p_record#>>'{command,budget,rootHoldRef}')
+    AND platform.credit_direct_root_is_canonical_uuid(p_record#>>'{command,budget,rootAllocationRef}')
+    AND platform.credit_direct_root_is_canonical_uuid(
+      p_record#>>'{command,budget,authorizationSegmentRef}')
+    AND platform.credit_direct_root_is_canonical_positive_bigint(
+      p_record#>>'{command,budget,rootAllocationRevision}')
+    AND platform.credit_direct_root_is_canonical_positive_bigint(
+      p_record#>>'{command,budget,rootAllocationEpoch}')
+    AND platform.credit_direct_root_is_canonical_positive_bigint(
+      p_record#>>'{command,budget,authorizationSegmentVersion}')
+    AND platform.credit_direct_root_is_canonical_nonnegative_amount(
+      p_record#>>'{command,budget,reservedCeiling}')
+    AND p_record#>>'{command,budget,reservedCeiling}'<>'0'
+    AND platform.credit_direct_root_is_canonical_uuid(p_record#>>'{command,settlement,settlementRef}')
+    AND platform.credit_direct_root_is_canonical_uuid(
+      p_record#>>'{command,settlement,authorizationSegmentRef}')
+    AND platform.credit_direct_root_is_canonical_uuid(p_record#>>'{command,settlement,closureRef}')
+    AND platform.credit_direct_root_is_canonical_positive_bigint(
+      p_record#>>'{command,settlement,closureRevision}')
+    AND platform.credit_direct_root_is_canonical_nonnegative_amount(
+      p_record#>>'{command,settlement,customerAmount}')
+    AND platform.credit_direct_root_is_canonical_nonnegative_amount(
+      p_record#>>'{command,settlement,platformExposureAmount}')
+    AND platform.credit_direct_root_is_canonical_positive_bigint(p_record#>>'{result,allocation,revision}')
+    AND platform.credit_direct_root_is_canonical_positive_bigint(
+      p_record#>>'{result,allocation,allocationEpoch}')
+    AND platform.credit_direct_root_is_canonical_nonnegative_amount(
+      p_record#>>'{result,allocation,creditCeiling}')
+    AND p_record#>>'{result,allocation,creditCeiling}'<>'0'
+    AND platform.credit_direct_root_is_canonical_nonnegative_amount(
+      p_record#>>'{result,allocation,unassignedStock}')
+    AND platform.credit_direct_root_is_canonical_nonnegative_amount(
+      p_record#>>'{result,allocation,activeChildReservedStock}')
+    AND platform.credit_direct_root_is_canonical_nonnegative_amount(
+      p_record#>>'{result,allocation,committedStock}')
+    AND platform.credit_direct_root_is_canonical_nonnegative_amount(
+      p_record#>>'{result,allocation,capturedCumulative}')
+    AND platform.credit_direct_root_is_canonical_nonnegative_amount(
+      p_record#>>'{result,allocation,returnedToParentCumulative}')
+    AND platform.credit_direct_root_is_canonical_uuid(p_record#>>'{result,allocationRevisionRef}')
+    AND platform.credit_direct_root_is_canonical_positive_bigint(p_record#>>'{result,rootVersion}')
+    AND platform.credit_direct_root_is_canonical_positive_bigint(p_record#>>'{result,holdFenceEpoch}')
+    AND platform.credit_direct_root_is_canonical_nonnegative_amount(p_record#>>'{result,capturedAmount}')
+    AND platform.credit_direct_root_is_canonical_nonnegative_amount(p_record#>>'{result,releasedAmount}')
+    AND (p_record#>>'{result,releaseJournalTransactionRef}' IS NULL
+      OR platform.credit_direct_root_is_canonical_uuid(p_record#>>'{result,releaseJournalTransactionRef}'))
+    AND (p_record#>>'{result,releaseEntriesDigest}' IS NULL
+      OR p_record#>>'{result,releaseEntriesDigest}' ~ '^[a-f0-9]{64}$')
+    AND platform.credit_direct_root_is_canonical_uuid(
+      p_record#>>'{result,receipt,allocationClosureReceiptRef}')
+    AND platform.credit_direct_root_is_canonical_uuid(p_record#>>'{result,receipt,settlementRef}')
+    AND platform.credit_direct_root_is_canonical_uuid(
+      p_record#>>'{result,receipt,executionBudgetRootRef}')
+    AND platform.credit_direct_root_is_canonical_uuid(p_record#>>'{result,receipt,rootAllocationRef}')
+    AND platform.credit_direct_root_is_canonical_uuid(p_record#>>'{result,receipt,rootHoldRef}')
+    AND platform.credit_direct_root_is_canonical_uuid(
+      p_record#>>'{result,receipt,authorizationSegmentRef}')
+    AND platform.credit_direct_root_is_canonical_positive_bigint(
+      p_record#>>'{result,receipt,authorizationSegmentVersion}')
+    AND platform.credit_direct_root_is_canonical_uuid(
+      p_record#>>'{result,receipt,settlementClosureRef}')
+    AND platform.credit_direct_root_is_canonical_positive_bigint(
+      p_record#>>'{result,receipt,settlementClosureRevision}')
+    AND platform.credit_direct_root_is_canonical_nonnegative_amount(
+      p_record#>>'{result,receipt,platformExposureAmount}')
+    AND platform.credit_direct_root_is_canonical_uuid(p_record#>>'{result,receipt,ratingSnapshotRef}')
+    AND platform.credit_direct_root_is_canonical_nonnegative_amount(
+      p_record#>>'{result,receipt,capturedAmount}')
+    AND platform.credit_direct_root_is_canonical_nonnegative_amount(
+      p_record#>>'{result,receipt,releasedAmount}')
+    AND p_record#>>'{result,receipt,receiptDigest}' ~ '^[a-f0-9]{64}$'
+  ,FALSE)
+$$;
+REVOKE ALL ON FUNCTION platform.credit_direct_root_commit_values_canonical(JSONB) FROM PUBLIC;
+
+CREATE FUNCTION platform.credit_direct_root_reconciliation_values_canonical(p_record JSONB)
+RETURNS BOOLEAN
+LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,platform AS $$
+  SELECT COALESCE(
+    platform.credit_direct_root_is_canonical_positive_bigint(
+      p_record#>>'{identity,workerLease,leaseEpoch}')
+    AND platform.credit_direct_root_is_canonical_uuid(
+      p_record#>>'{command,budget,executionBudgetRootRef}')
+    AND platform.credit_direct_root_is_canonical_uuid(p_record#>>'{command,budget,rootHoldRef}')
+    AND platform.credit_direct_root_is_canonical_uuid(p_record#>>'{command,budget,rootAllocationRef}')
+    AND platform.credit_direct_root_is_canonical_uuid(
+      p_record#>>'{command,budget,authorizationSegmentRef}')
+    AND platform.credit_direct_root_is_canonical_positive_bigint(
+      p_record#>>'{command,budget,rootAllocationRevision}')
+    AND platform.credit_direct_root_is_canonical_positive_bigint(
+      p_record#>>'{command,budget,rootAllocationEpoch}')
+    AND platform.credit_direct_root_is_canonical_positive_bigint(
+      p_record#>>'{command,budget,authorizationSegmentVersion}')
+    AND platform.credit_direct_root_is_canonical_nonnegative_amount(
+      p_record#>>'{command,budget,reservedCeiling}')
+    AND p_record#>>'{command,budget,reservedCeiling}'<>'0'
+    AND platform.credit_direct_root_is_canonical_uuid(p_record#>>'{command,settlement,settlementRef}')
+    AND platform.credit_direct_root_is_canonical_uuid(
+      p_record#>>'{command,settlement,authorizationSegmentRef}')
+    AND platform.credit_direct_root_is_canonical_uuid(p_record#>>'{command,settlement,closureRef}')
+    AND platform.credit_direct_root_is_canonical_positive_bigint(
+      p_record#>>'{command,settlement,closureRevision}')
+    AND platform.credit_direct_root_is_canonical_nonnegative_amount(
+      p_record#>>'{command,settlement,customerAmount}')
+    AND platform.credit_direct_root_is_canonical_nonnegative_amount(
+      p_record#>>'{command,settlement,platformExposureAmount}')
+    AND platform.credit_direct_root_is_canonical_uuid(p_record#>>'{authority,executionBudgetRootRef}')
+    AND platform.credit_direct_root_is_canonical_uuid(p_record#>>'{authority,rootAllocationRef}')
+    AND platform.credit_direct_root_is_canonical_uuid(p_record#>>'{authority,rootHoldRef}')
+    AND platform.credit_direct_root_is_canonical_uuid(p_record#>>'{authority,authorizationSegmentRef}')
+    AND platform.credit_direct_root_is_canonical_uuid(p_record#>>'{authority,settlementRef}')
+    AND platform.credit_direct_root_is_canonical_positive_bigint(
+      p_record#>>'{authority,rootAllocationRevision}')
+    AND platform.credit_direct_root_is_canonical_positive_bigint(
+      p_record#>>'{authority,rootAllocationEpoch}')
+    AND platform.credit_direct_root_is_canonical_positive_bigint(
+      p_record#>>'{authority,authorizationSegmentVersion}')
+    AND platform.credit_direct_root_is_canonical_nonnegative_amount(
+      p_record#>>'{authority,reservedCeiling}')
+    AND p_record#>>'{authority,reservedCeiling}'<>'0'
+    AND platform.credit_direct_root_is_canonical_positive_bigint(p_record#>>'{authority,expectedRootVersion}')
+    AND platform.credit_direct_root_is_canonical_positive_bigint(
+      p_record#>>'{authority,expectedHoldFenceEpoch}')
+    AND platform.credit_direct_root_is_canonical_positive_bigint(
+      p_record#>>'{authority,expectedAllocationRevision}')
+    AND platform.credit_direct_root_is_canonical_positive_bigint(
+      p_record#>>'{authority,expectedAllocationEpoch}')
+    AND platform.credit_direct_root_is_canonical_uuid(p_record#>>'{result,reconciliationReceiptRef}')
+    AND platform.credit_direct_root_is_canonical_uuid(
+      p_record#>>'{result,reconciliationAllocationRevisionRef}')
+  ,FALSE)
+$$;
+REVOKE ALL ON FUNCTION platform.credit_direct_root_reconciliation_values_canonical(JSONB) FROM PUBLIC;
+
+CREATE FUNCTION platform.credit_direct_root_lock_outcome(p_site_ref TEXT,p_operation_ref TEXT)
+RETURNS VOID
+LANGUAGE sql SET search_path=pg_catalog,platform AS $$
+  SELECT pg_advisory_xact_lock(hashtextextended(
+    'kokoro.credit.direct-media-root.outcome.v1'||chr(0)||p_site_ref||chr(0)||p_operation_ref,0))
+$$;
+REVOKE ALL ON FUNCTION platform.credit_direct_root_lock_outcome(TEXT,TEXT) FROM PUBLIC;
+
 CREATE FUNCTION platform.credit_direct_root_framed_digest(VARIADIC p_values TEXT[])
 RETURNS CHAR(64)
 LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,platform AS $$
@@ -180,17 +371,43 @@ CREATE FUNCTION platform.find_direct_media_root_closure(
   p_task_ref TEXT,p_lease_epoch BIGINT,p_lease_token_hash CHAR(64)
 ) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$
-DECLARE prior platform.credit_direct_media_root_closure_receipt%ROWTYPE;
+DECLARE closure_prior platform.credit_direct_media_root_closure_receipt%ROWTYPE;
+  reconciliation_prior platform.credit_direct_media_root_reconciliation%ROWTYPE;
+  closure_found BOOLEAN; reconciliation_found BOOLEAN;
 BEGIN
   PERFORM platform.assert_media_image_worker_lease(
     p_task_ref,p_media_operation_ref,p_lease_epoch,p_lease_token_hash);
-  SELECT * INTO prior FROM platform.credit_direct_media_root_closure_receipt
+  SELECT * INTO closure_prior FROM platform.credit_direct_media_root_closure_receipt
    WHERE site_ref=p_site_ref
      AND (business_operation_key=p_business_operation_key OR media_operation_ref=p_media_operation_ref);
-  IF NOT FOUND THEN RETURN jsonb_build_object('kind','none'); END IF;
-  IF prior.business_operation_key<>p_business_operation_key OR prior.media_operation_ref<>p_media_operation_ref
-    OR prior.request_digest<>p_request_digest THEN RETURN jsonb_build_object('kind','conflict'); END IF;
-  RETURN jsonb_build_object('kind','replayed','value',platform.direct_media_root_closure_receipt_json(prior));
+  closure_found := FOUND;
+  SELECT * INTO reconciliation_prior FROM platform.credit_direct_media_root_reconciliation
+   WHERE site_ref=p_site_ref
+     AND (business_operation_key=p_business_operation_key OR media_operation_ref=p_media_operation_ref);
+  reconciliation_found := FOUND;
+  IF closure_found AND reconciliation_found THEN
+    RAISE EXCEPTION 'CREDIT_DIRECT_ROOT_OUTCOME_EXCLUSIVITY_VIOLATION';
+  END IF;
+  IF closure_found THEN
+    IF closure_prior.business_operation_key<>p_business_operation_key
+      OR closure_prior.media_operation_ref<>p_media_operation_ref
+      OR closure_prior.request_digest<>p_request_digest THEN
+      RETURN jsonb_build_object('kind','conflict');
+    END IF;
+    RETURN jsonb_build_object('kind','replayed','value',
+      platform.direct_media_root_closure_receipt_json(closure_prior));
+  END IF;
+  IF reconciliation_found THEN
+    IF reconciliation_prior.business_operation_key<>p_business_operation_key
+      OR reconciliation_prior.media_operation_ref<>p_media_operation_ref
+      OR reconciliation_prior.request_digest<>p_request_digest THEN
+      RETURN jsonb_build_object('kind','conflict');
+    END IF;
+    RETURN jsonb_build_object('kind','reconciliation_required',
+      'reconciliationReceiptRef',reconciliation_prior.reconciliation_receipt_ref::TEXT,
+      'code',reconciliation_prior.code);
+  END IF;
+  RETURN jsonb_build_object('kind','none');
 END $$;
 REVOKE ALL ON FUNCTION platform.find_direct_media_root_closure(
   TEXT,TEXT,TEXT,CHAR,TEXT,BIGINT,CHAR) FROM PUBLIC;
@@ -209,6 +426,7 @@ DECLARE context RECORD; sources JSONB; open_children BIGINT; open_segments BIGIN
 BEGIN
   PERFORM platform.assert_media_image_worker_lease(
     p_task_ref,p_operation_ref,p_lease_epoch,p_lease_token_hash);
+  PERFORM platform.credit_direct_root_lock_outcome(p_site_ref,p_operation_ref);
   SELECT root.state AS root_state,root.aggregate_version,root.billing_account_ref,
          root.credit_account_ref,root.liability_merchant_account_ref,
          hold.state AS hold_state,hold.fence_epoch,hold.reserved_amount,hold.captured_amount,
@@ -371,6 +589,9 @@ BEGIN
       'settlementClosureRevision','platformExposureAmount','ratingSnapshotRef','receiptDigest','recordedAt']) THEN
     RAISE EXCEPTION 'CREDIT_DIRECT_ROOT_COMMAND_SHAPE_INVALID';
   END IF;
+  IF NOT platform.credit_direct_root_commit_values_canonical(p_record) THEN
+    RAISE EXCEPTION 'CREDIT_DIRECT_ROOT_CANONICAL_VALUE_INVALID';
+  END IF;
   identity := p_record->'identity'; worker_lease := identity->'workerLease'; command := p_record->'command';
   budget := command->'budget'; settlement := command->'settlement'; result := p_record->'result';
   allocation := result->'allocation'; receipt := result->'receipt';
@@ -391,12 +612,19 @@ BEGIN
   END IF;
   FOR release IN SELECT value FROM jsonb_array_elements(result->'releases') LOOP
     IF NOT platform.credit_direct_root_json_exact_keys(release,ARRAY['creditGrantId','ordinal','amount'])
-      OR (release->>'ordinal')::INTEGER<0 OR (release->>'amount')::NUMERIC<=0 THEN
+      OR NOT platform.credit_direct_root_is_canonical_uuid(release->>'creditGrantId')
+      OR NOT platform.credit_direct_root_is_canonical_nonnegative_amount(release->>'ordinal')
+      OR NOT platform.credit_direct_root_is_canonical_nonnegative_amount(release->>'amount')
+      OR release->>'amount'='0' THEN
+      RAISE EXCEPTION 'CREDIT_DIRECT_ROOT_CANONICAL_VALUE_INVALID';
+    END IF;
+    IF (release->>'ordinal')::NUMERIC>2147483647 OR (release->>'amount')::NUMERIC<=0 THEN
       RAISE EXCEPTION 'CREDIT_DIRECT_ROOT_RELEASE_SOURCE_INVALID';
     END IF;
   END LOOP;
   PERFORM platform.assert_media_image_worker_lease(worker_lease->>'taskRef',identity->>'operationRef',
     (worker_lease->>'leaseEpoch')::BIGINT,worker_lease->>'leaseTokenHash');
+  PERFORM platform.credit_direct_root_lock_outcome(identity->>'siteId',identity->>'operationRef');
   expected_request_digest := platform.credit_direct_root_framed_digest(VARIADIC ARRAY[
     'kokoro.platform.credit.direct-media-root.request.v1',identity->>'siteId',identity->>'operationRef',
     budget->>'executionBudgetRootRef',budget->>'executionManifestRef',budget->>'rootHoldRef',
@@ -420,6 +648,12 @@ BEGIN
       RETURN jsonb_build_object('kind','conflict');
     END IF;
     RETURN jsonb_build_object('kind','replayed','value',platform.direct_media_root_closure_receipt_json(prior));
+  END IF;
+  IF EXISTS (SELECT 1 FROM platform.credit_direct_media_root_reconciliation
+    WHERE site_ref=identity->>'siteId'
+      AND (business_operation_key=identity->>'businessOperationKey'
+        OR media_operation_ref=identity->>'operationRef')) THEN
+    RETURN jsonb_build_object('kind','conflict');
   END IF;
   context := platform.lock_direct_media_root_closure(
     identity->>'siteId',identity->>'operationRef',(budget->>'executionBudgetRootRef')::UUID,
@@ -689,6 +923,9 @@ BEGIN
       'reconciliationReceiptRef','reconciliationAllocationRevisionRef','code','observedAt']) THEN
     RAISE EXCEPTION 'CREDIT_DIRECT_ROOT_RECONCILIATION_SHAPE_INVALID';
   END IF;
+  IF NOT platform.credit_direct_root_reconciliation_values_canonical(p_record) THEN
+    RAISE EXCEPTION 'CREDIT_DIRECT_ROOT_CANONICAL_VALUE_INVALID';
+  END IF;
   identity := p_record->'identity'; worker_lease := identity->'workerLease'; command := p_record->'command';
   budget := command->'budget'; settlement := command->'settlement'; authority := p_record->'authority';
   result := p_record->'result';
@@ -711,6 +948,7 @@ BEGIN
   END IF;
   PERFORM platform.assert_media_image_worker_lease(worker_lease->>'taskRef',identity->>'operationRef',
     (worker_lease->>'leaseEpoch')::BIGINT,worker_lease->>'leaseTokenHash');
+  PERFORM platform.credit_direct_root_lock_outcome(identity->>'siteId',identity->>'operationRef');
   expected_request_digest := platform.credit_direct_root_framed_digest(VARIADIC ARRAY[
     'kokoro.platform.credit.direct-media-root.request.v1',identity->>'siteId',identity->>'operationRef',
     budget->>'executionBudgetRootRef',budget->>'executionManifestRef',budget->>'rootHoldRef',
@@ -734,6 +972,12 @@ BEGIN
       RAISE EXCEPTION 'CREDIT_DIRECT_ROOT_RECONCILIATION_CONFLICT';
     END IF;
     RETURN jsonb_build_object('kind','replayed');
+  END IF;
+  IF EXISTS (SELECT 1 FROM platform.credit_direct_media_root_closure_receipt
+    WHERE site_ref=identity->>'siteId'
+      AND (business_operation_key=identity->>'businessOperationKey'
+        OR media_operation_ref=identity->>'operationRef')) THEN
+    RAISE EXCEPTION 'CREDIT_DIRECT_ROOT_OUTCOME_CONFLICT';
   END IF;
   context := platform.lock_direct_media_root_closure(
     identity->>'siteId',identity->>'operationRef',(authority->>'executionBudgetRootRef')::UUID,

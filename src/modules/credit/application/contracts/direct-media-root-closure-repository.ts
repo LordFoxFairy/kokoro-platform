@@ -127,6 +127,11 @@ export type DirectMediaRootClosureRecord = Readonly<{
 export type DirectMediaRootClosureLookup =
   | Readonly<{ kind: "none" }>
   | Readonly<{ kind: "conflict"; code: "REQUEST_DIGEST_CONFLICT" }>
+  | Readonly<{
+      kind: "reconciliation_required";
+      reconciliationReceiptRef: string;
+      code: string;
+    }>
   | Readonly<{ kind: "replayed"; value: DirectMediaRootClosureReceipt }>;
 
 export interface DirectMediaRootClosureRepository {
