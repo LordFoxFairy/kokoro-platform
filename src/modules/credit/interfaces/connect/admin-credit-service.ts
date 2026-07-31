@@ -398,8 +398,9 @@ function resolve(resolver: AdminQueryResolver, context: AuthenticatedOperatorQue
 function filterBinding(scope: string, kind: string, filters: Readonly<Record<string, string | null>>): string {
   return createHash("sha256").update("kokoro.admin-credit-page.v1").update("\0").update(scope)
     .update("\0").update(kind).update("\0").update(JSON.stringify(Object.fromEntries(
-      Object.entries(filters).sort(([left], [right]) => left.localeCompare(right))))).digest("hex");
+      Object.entries(filters).sort(([left], [right]) => compareCodeUnits(left, right))))).digest("hex");
 }
+function compareCodeUnits(left: string, right: string): number { return left < right ? -1 : left > right ? 1 : 0; }
 function requireCursor(cursor: Readonly<Record<string, string>>, keys: readonly string[], kind: string): void {
   if (cursor.kind !== kind || Object.keys(cursor).sort().join(",") !== [...keys].sort().join(",")) {
     throw new Error("ADMIN_CREDIT_PAGE_TOKEN_INVALID");

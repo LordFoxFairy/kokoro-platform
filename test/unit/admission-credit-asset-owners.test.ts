@@ -83,6 +83,8 @@ function fakeCredit(): RunBudgetAuthority {
       value: { authorizationSegmentRef: "segment-a", segmentVersion: 2n,
         state: "reconciliation_required" as const, observedAt: "2026-07-29T12:01:00.000Z" },
     })),
+    deriveChildAllocation: vi.fn(async () => ({ kind: "not_found" as const })),
+    returnChildAllocation: vi.fn(async () => ({ kind: "not_found" as const })),
   };
 }
 

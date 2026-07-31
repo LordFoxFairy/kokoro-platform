@@ -1,9 +1,20 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import type { RootBudgetReservationRecord, StoredSegmentAllocation } from
+import type {
+  MediaChildAllocationReservationRecord,
+  MediaChildAllocationReturnRecord,
+  RootBudgetReservationRecord,
+  StoredMediaChildAllocation,
+  StoredParentAllocation,
+  StoredSegmentAllocation,
+} from
   "../../src/modules/credit/application/contracts/credit-authority-repository.js";
 import { PostgresCreditAuthorityRepository } from
   "../../src/modules/credit/infrastructure/postgres/credit-authority-repository.js";
+import {
+  buildDerivedMediaChildReceipt,
+  buildReturnedMediaChildReceipt,
+} from "../../src/modules/credit/application/media-child-receipt-codec.js";
 import { issuePlatformTransaction, revokePlatformTransaction } from
   "../../src/shared/unit-of-work/platform-transaction.js";
 
@@ -147,6 +158,251 @@ describe("PostgresCreditAuthorityRepository", () => {
       revokePlatformTransaction(lease);
     }
   });
+
+  it("uses the global allocation-root-hold order before locking and fresh-loading a settlement segment", async () => {
+    const sql = new RecordingSql();
+    sql.segmentRows = [segmentRow()];
+    const lease = issuePlatformTransaction(sql);
+    try {
+      await expect(postgresRepository().lockSegmentAllocation(lease.transaction, {
+        siteId: "site-1",
+        authorizationSegmentRef: "00000000-0000-7000-8000-000000000205",
+      })).resolves.toMatchObject({
+        budgetAllocationRef: "00000000-0000-7000-8000-000000000203",
+        allocation: { revision: 1n },
+        segment: { aggregateVersion: 1n },
+      });
+      expect(sql.reads.map((read) => read.statement.match(/\/\* ([^*]+) \*\//u)?.[1])).toEqual([
+        "credit-segment-lineage-read",
+        "credit-financial-allocation-lock",
+        "credit-financial-root-lock",
+        "credit-financial-hold-lock",
+        "credit-segment-fresh-load",
+      ]);
+      expect(sql.reads.at(-1)?.statement).toContain("FOR UPDATE OF segment");
+      expect(sql.reads.at(-1)?.statement).not.toContain("FOR UPDATE OF segment,allocation,root,hold");
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("locks the exact Site/root/parent lineage and rejects corrupt persisted allocation revisions", async () => {
+    const sql = new RecordingSql();
+    sql.parentRows = [parentRow()];
+    const lease = issuePlatformTransaction(sql);
+    try {
+      const repository = postgresRepository();
+      await expect(repository.lockParentAllocation(lease.transaction, {
+        siteId: "site-1",
+        executionBudgetRootRef: "00000000-0000-7000-8000-000000000202",
+        parentAllocationRef: "00000000-0000-7000-8000-000000000203",
+      })).resolves.toMatchObject({
+        parentAllocationRef: "00000000-0000-7000-8000-000000000203",
+        allocation: { revision: 3n, unassignedStock: 100n },
+      });
+      const [allocationLock, rootLock, holdLock, freshLoad] = sql.reads;
+      expect(allocationLock?.statement).toContain("credit-financial-allocation-lock");
+      expect(allocationLock?.statement).toContain("FOR UPDATE OF allocation");
+      expect(allocationLock?.statement).toContain("ORDER BY allocation.budget_allocation_ref");
+      expect(allocationLock?.statement).not.toMatch(/\bJOIN\b|current_revision|credit_budget_allocation_revision|receipt/iu);
+      expect(rootLock?.statement).toContain("credit-financial-root-lock");
+      expect(rootLock?.statement).toContain("FOR UPDATE OF root");
+      expect(holdLock?.statement).toContain("credit-financial-hold-lock");
+      expect(holdLock?.statement).toContain("FOR UPDATE OF hold");
+      expect(freshLoad?.statement).toContain("credit-parent-allocation-fresh-load");
+      expect(freshLoad?.statement).toContain("revision.revision=allocation.current_revision");
+      expect(freshLoad?.statement).not.toContain("FOR UPDATE");
+      expect(allocationLock?.values).toEqual([
+        "site-1",
+        "00000000-0000-7000-8000-000000000202",
+        ["00000000-0000-7000-8000-000000000203"],
+      ]);
+      expect(freshLoad?.values).toEqual([
+        "site-1",
+        "00000000-0000-7000-8000-000000000202",
+        "00000000-0000-7000-8000-000000000203",
+      ]);
+
+      sql.parentRows = [{ ...parentRow(), revision: "4", unassignedStock: "70",
+        activeChildReservedStock: "30" }];
+      await expect(repository.lockParentAllocation(lease.transaction, {
+        siteId: "site-1",
+        executionBudgetRootRef: "00000000-0000-7000-8000-000000000202",
+        parentAllocationRef: "00000000-0000-7000-8000-000000000203",
+      })).resolves.toMatchObject({ allocation: { revision: 4n, unassignedStock: 70n } });
+
+      sql.parentRows = [{ ...parentRow(), unassignedStock: "99" }];
+      await expect(repository.lockParentAllocation(lease.transaction, {
+        siteId: "site-1",
+        executionBudgetRootRef: "00000000-0000-7000-8000-000000000202",
+        parentAllocationRef: "00000000-0000-7000-8000-000000000203",
+      })).rejects.toThrow("CREDIT_ALLOCATION_CONSERVATION_VIOLATION");
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("atomically writes parent/child revisions, reservation receipt, and exact operation receipt", async () => {
+    const sql = new RecordingSql();
+    sql.queryResults.push([]);
+    const lease = issuePlatformTransaction(sql);
+    try {
+      const result = await postgresRepository().createMediaChildAllocation(
+        lease.transaction,
+        childReservationRecord(),
+      );
+      expect(result).toMatchObject({ kind: "accepted", value: { state: "active" } });
+      expect(sql.writeSql()).toMatch(
+        /credit_budget_allocation_revision[\s\S]+credit_budget_allocation[\s\S]+credit_budget_allocation_revision[\s\S]+credit_allocation_reservation_receipt[\s\S]+credit_budget_operation_receipt/u,
+      );
+      expect(sql.writeSql()).not.toContain("INSERT INTO platform.outbox_event");
+      expect(sql.writeSql()).toContain("'media'");
+      expect(sql.writeSql()).toContain("parent_before_revision,parent_after_revision");
+      expect(sql.writeSql()).toContain("child_before_revision,child_after_revision");
+      expect(sql.writeSql()).toContain("credit_amount");
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("locks parent and Media child together and atomically writes terminal return authority", async () => {
+    const sql = new RecordingSql();
+    sql.childRows = [childRow()];
+    const lease = issuePlatformTransaction(sql);
+    try {
+      const repository = postgresRepository();
+      await expect(repository.lockMediaChildAllocation(lease.transaction, {
+        siteId: "site-1",
+        executionBudgetRootRef: "00000000-0000-7000-8000-000000000202",
+        parentAllocationRef: "00000000-0000-7000-8000-000000000203",
+        childAllocationRef: "00000000-0000-7000-8000-000000000301",
+      })).resolves.toMatchObject({
+        parentAllocation: { revision: 4n },
+        childAllocation: { revision: 2n, capturedCumulative: 10n },
+      });
+      const [allocationLock, rootLock, holdLock, freshLoad] = sql.reads;
+      expect(allocationLock?.statement).toContain("credit-financial-allocation-lock");
+      expect(allocationLock?.statement).toContain("ORDER BY allocation.budget_allocation_ref");
+      expect(allocationLock?.statement).toContain("FOR UPDATE OF allocation");
+      expect(allocationLock?.statement).not.toMatch(/\bJOIN\b|current_revision|credit_budget_allocation_revision|receipt/iu);
+      expect(rootLock?.statement).toContain("credit-financial-root-lock");
+      expect(holdLock?.statement).toContain("credit-financial-hold-lock");
+      expect(freshLoad?.statement).toContain("credit-media-child-allocation-fresh-load");
+      expect(freshLoad?.statement).toContain("prior_return.result AS \"priorReturnResult\"");
+      expect(freshLoad?.statement).not.toContain("FOR UPDATE");
+      expect(allocationLock?.values).toEqual([
+        "site-1",
+        "00000000-0000-7000-8000-000000000202",
+        ["00000000-0000-7000-8000-000000000203", "00000000-0000-7000-8000-000000000301"],
+      ]);
+
+      sql.queryResults.push([]);
+      const result = await repository.closeMediaChildAllocation(
+        lease.transaction,
+        childReturnRecord(),
+      );
+      expect(result).toMatchObject({ kind: "accepted", value: { state: "terminal" } });
+      expect(sql.writeSql()).toMatch(
+        /credit_budget_allocation_revision[\s\S]+credit_budget_allocation_revision[\s\S]+credit_allocation_return_receipt[\s\S]+credit_budget_operation_receipt/u,
+      );
+      expect(sql.writeSql()).not.toContain("INSERT INTO platform.outbox_event");
+      expect(sql.writeSql()).toContain("owner_closure_evidence_ref");
+      expect(sql.writeSql()).toContain("captured_amount");
+      expect(sql.writeSql()).toContain("owner_closure_outcome");
+      expect(sql.writeSql()).toContain("root_state_at_return");
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("strictly rehydrates child operation receipts and rejects extra persisted result keys", async () => {
+    const sql = new RecordingSql();
+    sql.queryResults.push([childOperationReceiptRow()]);
+    const lease = issuePlatformTransaction(sql);
+    try {
+      const repository = postgresRepository();
+      const identity = { siteId: "site-1", operationKind: "derive_media_child" as const,
+        businessOperationKey: "derive:media-operation-1", requestDigest: "b".repeat(64) };
+      await expect(repository.findOperationReceipt(lease.transaction, identity)).resolves.toMatchObject({
+        kind: "replayed", value: { state: "active", reservedCeiling: 30n },
+      });
+
+      const corrupt = childOperationReceiptRow({ invented: true });
+      sql.queryResults.push([corrupt]);
+      await expect(repository.findOperationReceipt(lease.transaction, identity))
+        .rejects.toThrow("CREDIT_OPERATION_RECEIPT_CORRUPT");
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("fails closed when a terminal child's prior return receipt digest or stored scope is tampered", async () => {
+    const sql = new RecordingSql();
+    const lease = issuePlatformTransaction(sql);
+    try {
+      const repository = postgresRepository();
+      sql.childRows = [terminalChildRow({ priorReturnResultDigest: "0".repeat(64) })];
+      await expect(repository.lockMediaChildAllocation(lease.transaction, {
+        siteId: "site-1",
+        executionBudgetRootRef: "00000000-0000-7000-8000-000000000202",
+        parentAllocationRef: "00000000-0000-7000-8000-000000000203",
+        childAllocationRef: "00000000-0000-7000-8000-000000000301",
+      })).rejects.toThrow("CREDIT_MEDIA_CHILD_RETURN_RECEIPT_DIGEST_MISMATCH");
+
+      sql.childRows = [terminalChildRow({
+        priorReturnChildAllocationRef: "00000000-0000-7000-8000-000000000399",
+      })];
+      await expect(repository.lockMediaChildAllocation(lease.transaction, {
+        siteId: "site-1",
+        executionBudgetRootRef: "00000000-0000-7000-8000-000000000202",
+        parentAllocationRef: "00000000-0000-7000-8000-000000000203",
+        childAllocationRef: "00000000-0000-7000-8000-000000000301",
+      })).rejects.toThrow("CREDIT_MEDIA_CHILD_RETURN_RECEIPT_SCOPE_MISMATCH");
+
+      sql.childRows = [terminalChildRow({}, {
+        reason: "canceled_before_effect",
+        ownerClosureEvidence: { ...returnedReceipt().ownerClosureEvidence, outcome: "partial" },
+      })];
+      await expect(repository.lockMediaChildAllocation(lease.transaction, {
+        siteId: "site-1",
+        executionBudgetRootRef: "00000000-0000-7000-8000-000000000202",
+        parentAllocationRef: "00000000-0000-7000-8000-000000000203",
+        childAllocationRef: "00000000-0000-7000-8000-000000000301",
+      })).rejects.toThrow("CREDIT_OPERATION_RECEIPT_CORRUPT");
+      expect(sql.readSql()).toContain("receipt.result_digest AS \"priorReturnResultDigest\"");
+      expect(sql.readSql()).toContain("receipt.operation_kind AS \"priorReturnOperationKind\"");
+      expect(sql.readSql()).toContain("receipt.request_digest AS \"priorReturnRequestDigest\"");
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("fresh-loads a winner's terminal head and return receipt after waiting for ordered base locks", async () => {
+    const sql = new RecordingSql();
+    sql.childRows = [terminalChildRow()];
+    const lease = issuePlatformTransaction(sql);
+    try {
+      await expect(postgresRepository().lockMediaChildAllocation(lease.transaction, {
+        siteId: "site-1",
+        executionBudgetRootRef: "00000000-0000-7000-8000-000000000202",
+        parentAllocationRef: "00000000-0000-7000-8000-000000000203",
+        childAllocationRef: "00000000-0000-7000-8000-000000000301",
+      })).resolves.toMatchObject({
+        parentAllocation: { revision: 5n },
+        childAllocation: { revision: 3n, allocationEpoch: 2n, state: "terminal" },
+        priorReturn: {
+          operation: { operationKind: "return_media_child", businessOperationKey: "return:media-operation-1" },
+          value: { state: "terminal", childRevisionAfter: 3n },
+        },
+      });
+      expect(sql.reads[0]?.statement).toContain("credit-financial-allocation-lock");
+      expect(sql.reads[1]?.statement).toContain("credit-financial-root-lock");
+      expect(sql.reads[2]?.statement).toContain("credit-financial-hold-lock");
+      expect(sql.reads[3]?.statement).toContain("credit-media-child-allocation-fresh-load");
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
 });
 
 const NOW = "2026-07-29T00:00:00.000Z";
@@ -157,10 +413,38 @@ class RecordingSql {
   readonly queryResults: (readonly Record<string, unknown>[])[] = [];
   accountRows: readonly Record<string, unknown>[] = [];
   grantRows: readonly Record<string, unknown>[] = [];
+  parentRows: readonly Record<string, unknown>[] = [];
+  childRows: readonly Record<string, unknown>[] = [];
+  segmentRows: readonly Record<string, unknown>[] = [];
+  parentLockRows: readonly Record<string, unknown>[] = [{
+    allocationRef: "00000000-0000-7000-8000-000000000203",
+  }];
+  childLockRows: readonly Record<string, unknown>[] = [
+    { allocationRef: "00000000-0000-7000-8000-000000000203" },
+    { allocationRef: "00000000-0000-7000-8000-000000000301" },
+  ];
   zeroChangeFragment: string | null = null;
 
   async query<Row extends Record<string, unknown>>(statement: string, values?: readonly unknown[]): Promise<readonly Row[]> {
     this.reads.push(values === undefined ? { statement } : { statement, values });
+    if (statement.includes("credit-financial-allocation-lock")) {
+      const refs = values?.[2];
+      return (Array.isArray(refs) && refs.length === 2 ? this.childLockRows : this.parentLockRows) as readonly Row[];
+    }
+    if (statement.includes("credit-financial-root-lock")) return [{
+      creditHoldRef: "00000000-0000-7000-8000-000000000201",
+    }] as unknown as readonly Row[];
+    if (statement.includes("credit-financial-hold-lock")) return [{
+      creditHoldRef: "00000000-0000-7000-8000-000000000201",
+    }] as unknown as readonly Row[];
+    if (statement.includes("credit-segment-lineage-read")) return [{
+      executionBudgetRootRef: "00000000-0000-7000-8000-000000000202",
+      budgetAllocationRef: "00000000-0000-7000-8000-000000000203",
+      creditHoldRef: "00000000-0000-7000-8000-000000000201",
+    }] as unknown as readonly Row[];
+    if (statement.includes("credit-segment-fresh-load")) return this.segmentRows as readonly Row[];
+    if (statement.includes("credit-parent-allocation-fresh-load")) return this.parentRows as readonly Row[];
+    if (statement.includes("credit-media-child-allocation-fresh-load")) return this.childRows as readonly Row[];
     if (statement.includes("credit_budget_operation_receipt")) {
       return (this.queryResults.shift() ?? []) as readonly Row[];
     }
@@ -194,7 +478,13 @@ function receiptRow(requestDigest: string) {
     segmentVersion: "1", state: "reserved", expiresAt: "2026-07-29T00:05:00.000Z",
   };
   return { requestDigest, outcomeKind: "accepted", result,
-    resultDigest: createHash("sha256").update(canonical(result)).digest("hex") };
+    resultDigest: createHash("sha256").update(canonical(result)).digest("hex"),
+    executionBudgetRootRef: result.executionBudgetRootRef,
+    authorizationSegmentRef: result.authorizationSegmentRef,
+    parentAllocationRef: null, childAllocationRef: null,
+    parentBeforeRevision: null, parentAfterRevision: null,
+    childBeforeRevision: null, childAfterRevision: null,
+    creditAmount: null, ownerClosureEvidenceRef: null };
 }
 
 function canonical(value: unknown): string {
@@ -263,4 +553,250 @@ function storedSegment(state: "committed" | "released" | "reconciliation_require
       resolutionRef: state === "released" ? "no-dispatch-1" : state === "reconciliation_required" ? "unknown-1" : null,
       committedAt: committed ? NOW : null, settledAt: null, releasedAt: state === "released" ? NOW : null },
   };
+}
+
+function segmentRow(): Record<string, unknown> {
+  return {
+    siteId: "site-1", billingAccountId: "billing-1",
+    creditAccountId: "00000000-0000-7000-8000-000000000001", unit: "credit_micros",
+    liabilityMerchantAccountId: "merchant-1", ratingPolicyRevisionRef: "rating-1",
+    executionBudgetRootRef: "00000000-0000-7000-8000-000000000202",
+    executionBudgetRootState: "open", executionBudgetRootVersion: "1",
+    creditHoldRef: "00000000-0000-7000-8000-000000000201",
+    creditHoldState: "open", creditHoldFenceEpoch: "1",
+    budgetAllocationRef: "00000000-0000-7000-8000-000000000203",
+    authorizationSegmentRef: "00000000-0000-7000-8000-000000000205",
+    executionManifestRef: "manifest-1", surfaceRef: "general.chat",
+    capabilityKey: "general.chat.message", agentRef: null,
+    expiresAt: "2026-07-29T00:05:00.000Z", revision: "1", allocationEpoch: "1",
+    creditCeiling: "60", unassignedStock: "60", activeChildReservedStock: "0",
+    committedStock: "0", capturedCumulative: "0", returnedToParentCumulative: "0",
+    allocationState: "active", segmentState: "reserved", maximumAmount: "25",
+    segmentAllocationEpoch: "1", preparedAgainstAllocationRevision: "1",
+    committedFromAllocationRevision: null, committedToAllocationRevision: null,
+    aggregateVersion: "1", fenceEpoch: "1", resolutionKind: null, resolutionRef: null,
+    committedAt: null, settledAt: null, releasedAt: null,
+  };
+}
+
+function storedParentAllocation(): StoredParentAllocation {
+  return {
+    siteId: "site-1", billingAccountId: "billing-1",
+    creditAccountId: "00000000-0000-7000-8000-000000000001", unit: "credit_micros",
+    liabilityMerchantAccountId: "merchant-1",
+    executionBudgetRootRef: "00000000-0000-7000-8000-000000000202",
+    executionBudgetRootState: "open", creditHoldRef: "00000000-0000-7000-8000-000000000201",
+    creditHoldState: "open", creditHoldExpiresAt: "2026-07-29T00:05:00.000Z",
+    parentAllocationRef: "00000000-0000-7000-8000-000000000203",
+    isRoot: true, audience: "root", reservedSegmentStock: 0n,
+    allocation: { revision: 3n, allocationEpoch: 2n, creditCeiling: 100n,
+      unassignedStock: 100n, activeChildReservedStock: 0n, committedStock: 0n,
+      capturedCumulative: 0n, returnedToParentCumulative: 0n, state: "active" },
+  };
+}
+
+function childReservationRecord(): MediaChildAllocationReservationRecord {
+  const parent = storedParentAllocation();
+  const receipt = derivedReceipt();
+  return {
+    operation: { siteId: "site-1", operationKind: "derive_media_child",
+      businessOperationKey: "derive:media-operation-1", requestDigest: "b".repeat(64) },
+    parent,
+    parentAllocation: { ...parent.allocation, revision: 4n, unassignedStock: 70n,
+      activeChildReservedStock: 30n },
+    childAllocation: { revision: 1n, allocationEpoch: 1n, creditCeiling: 30n,
+      unassignedStock: 30n, activeChildReservedStock: 0n, committedStock: 0n,
+      capturedCumulative: 0n, returnedToParentCumulative: 0n, state: "active",
+      terminalReceiptDigest: null, parentAppliedRevision: null },
+    childAllocationRevisionRef: "00000000-0000-7000-8000-000000000302",
+    parentAllocationRevisionRef: "00000000-0000-7000-8000-000000000303",
+    operationReceiptRef: "00000000-0000-7000-8000-000000000304",
+    receipt,
+    siteId: "site-1",
+    executionBudgetRootRef: parent.executionBudgetRootRef,
+    parentAllocationRef: parent.parentAllocationRef,
+    childAllocationRef: receipt.childAllocationRef,
+    mediaOperationRef: receipt.mediaOperationRef,
+    audience: "media",
+    purpose: "media_operation",
+    consumptionScope: receipt.consumptionScope,
+    expiresAt: receipt.expiresAt,
+    occurredAt: NOW,
+  };
+}
+
+function storedMediaChildAllocation(): StoredMediaChildAllocation {
+  return {
+    siteId: "site-1", billingAccountId: "billing-1",
+    creditAccountId: "00000000-0000-7000-8000-000000000001", unit: "credit_micros",
+    liabilityMerchantAccountId: "merchant-1",
+    executionBudgetRootRef: "00000000-0000-7000-8000-000000000202",
+    executionBudgetRootState: "open", creditHoldRef: "00000000-0000-7000-8000-000000000201",
+    creditHoldState: "open", creditHoldExpiresAt: "2026-07-29T00:05:00.000Z",
+    parentAllocationRef: "00000000-0000-7000-8000-000000000203",
+    parentAllocation: { revision: 4n, allocationEpoch: 2n, creditCeiling: 100n,
+      unassignedStock: 70n, activeChildReservedStock: 30n, committedStock: 0n,
+      capturedCumulative: 0n, returnedToParentCumulative: 0n, state: "active" },
+    childAllocationRef: "00000000-0000-7000-8000-000000000301",
+    childAudience: "media", childPurpose: "media_operation", mediaOperationRef: "media-operation-1",
+    consumptionScope: { surfaceRef: "media.image", capabilityKey: "image.text_to_image", agentRef: null },
+    expiresAt: "2026-07-29T00:04:00.000Z",
+    childAllocation: { revision: 2n, allocationEpoch: 1n, creditCeiling: 30n,
+      unassignedStock: 20n, activeChildReservedStock: 0n, committedStock: 0n,
+      capturedCumulative: 10n, returnedToParentCumulative: 0n, state: "active",
+      terminalReceiptDigest: null, parentAppliedRevision: null },
+    authorizationClosure: { reserved: 0n, committed: 0n, ratingPending: 0n,
+      reconciliationRequired: 0n },
+    priorReturn: null,
+  };
+}
+
+function childReturnRecord(): MediaChildAllocationReturnRecord {
+  const current = storedMediaChildAllocation();
+  const receipt = returnedReceipt();
+  return {
+    operation: { siteId: "site-1", operationKind: "return_media_child",
+      businessOperationKey: "return:media-operation-1", requestDigest: "d".repeat(64) },
+    current,
+    parentAllocation: { ...current.parentAllocation, revision: 5n, unassignedStock: 90n,
+      activeChildReservedStock: 0n, capturedCumulative: 10n },
+    childAllocation: { ...current.childAllocation, revision: 3n, allocationEpoch: 2n,
+      unassignedStock: 0n, returnedToParentCumulative: 20n, state: "terminal",
+      terminalReceiptDigest: receipt.receiptDigest, parentAppliedRevision: 5n },
+    childAllocationRevisionRef: "00000000-0000-7000-8000-000000000306",
+    parentAllocationRevisionRef: "00000000-0000-7000-8000-000000000307",
+    operationReceiptRef: "00000000-0000-7000-8000-000000000308",
+    receipt,
+    occurredAt: NOW,
+  };
+}
+
+function derivedReceipt() {
+  return buildDerivedMediaChildReceipt({
+    allocationReservationReceiptRef: "00000000-0000-7000-8000-000000000310",
+    executionBudgetRootRef: "00000000-0000-7000-8000-000000000202",
+    parentAllocationRef: "00000000-0000-7000-8000-000000000203",
+    parentRevisionBefore: 3n, parentRevisionAfter: 4n, parentAllocationEpoch: 2n,
+    childAllocationRef: "00000000-0000-7000-8000-000000000301",
+    childRevisionBefore: 0n as const, childRevisionAfter: 1n as const, childAllocationEpoch: 1n as const,
+    mediaOperationRef: "media-operation-1", reservedCeiling: 30n,
+    audience: "media" as const, purpose: "media_operation" as const,
+    consumptionScope: { surfaceRef: "media.image", capabilityKey: "image.text_to_image", agentRef: null },
+    expiresAt: "2026-07-29T00:04:00.000Z", state: "active" as const, observedAt: NOW,
+  }, { siteId: "site-1", operationKind: "derive_media_child",
+    businessOperationKey: "derive:media-operation-1", requestDigest: "b".repeat(64) });
+}
+
+function returnedReceipt() {
+  return buildReturnedMediaChildReceipt({
+    allocationReturnReceiptRef: "00000000-0000-7000-8000-000000000311",
+    executionBudgetRootRef: "00000000-0000-7000-8000-000000000202",
+    parentAllocationRef: "00000000-0000-7000-8000-000000000203",
+    childAllocationRef: "00000000-0000-7000-8000-000000000301",
+    parentRevisionBefore: 4n, parentRevisionAfter: 5n, parentAllocationEpoch: 2n,
+    childRevisionBefore: 2n, childRevisionAfter: 3n,
+    childAllocationEpochBefore: 1n, childAllocationEpochAfter: 2n,
+    mediaOperationRef: "media-operation-1", returnedAmount: 20n, capturedAmount: 10n,
+    reason: "completed" as const, rootStateAtReturn: "open" as const,
+    ownerClosureEvidence: { kind: "media_operation_terminal" as const,
+      mediaOperationRef: "media-operation-1", terminalReceiptRef: "terminal-receipt-1",
+      outcome: "completed" as const },
+    state: "terminal" as const, observedAt: NOW,
+  }, { siteId: "site-1", operationKind: "return_media_child",
+    businessOperationKey: "return:media-operation-1", requestDigest: "d".repeat(64) });
+}
+
+function parentRow() {
+  return {
+    siteId: "site-1", billingAccountId: "billing-1",
+    creditAccountId: "00000000-0000-7000-8000-000000000001", unit: "credit_micros",
+    liabilityMerchantAccountId: "merchant-1",
+    executionBudgetRootRef: "00000000-0000-7000-8000-000000000202",
+    executionBudgetRootState: "open", creditHoldRef: "00000000-0000-7000-8000-000000000201",
+    creditHoldState: "open", creditHoldExpiresAt: NOW,
+    parentAllocationRef: "00000000-0000-7000-8000-000000000203",
+    isRoot: true, audience: "root", reservedSegmentStock: "0",
+    revision: "3", allocationEpoch: "2", creditCeiling: "100", unassignedStock: "100",
+    activeChildReservedStock: "0", committedStock: "0", capturedCumulative: "0",
+    returnedToParentCumulative: "0", allocationState: "active",
+  };
+}
+
+function childRow() {
+  return {
+    ...parentRow(),
+    parentRevision: "4", parentAllocationEpoch: "2", parentCreditCeiling: "100",
+    parentUnassignedStock: "70", parentActiveChildReservedStock: "30",
+    parentCommittedStock: "0", parentCapturedCumulative: "0",
+    parentReturnedToParentCumulative: "0", parentAllocationState: "active",
+    childAllocationRef: "00000000-0000-7000-8000-000000000301",
+    childAudience: "media", childPurpose: "media_operation", mediaOperationRef: "media-operation-1",
+    surfaceRef: "media.image", capabilityKey: "image.text_to_image", agentRef: null,
+    expiresAt: "2026-07-29T00:04:00.000Z",
+    childRevision: "2", childAllocationEpoch: "1", childCreditCeiling: "30",
+    childUnassignedStock: "20", childActiveChildReservedStock: "0", childCommittedStock: "0",
+    childCapturedCumulative: "10", childReturnedToParentCumulative: "0", childAllocationState: "active",
+    terminalReceiptDigest: null, parentAppliedRevision: null,
+    reservedAuthorizationCount: "0", committedAuthorizationCount: "0", ratingPendingCount: "0",
+    reconciliationRequiredCount: "0", priorReturnResult: null,
+    priorReturnResultDigest: null, priorReturnOperationKind: null,
+    priorReturnBusinessOperationKey: null, priorReturnRequestDigest: null,
+    priorReturnExecutionBudgetRootRef: null, priorReturnAuthorizationSegmentRef: null,
+    priorReturnParentAllocationRef: null, priorReturnChildAllocationRef: null,
+    priorReturnParentBeforeRevision: null, priorReturnParentAfterRevision: null,
+    priorReturnChildBeforeRevision: null, priorReturnChildAfterRevision: null,
+    priorReturnCreditAmount: null, priorReturnOwnerClosureEvidenceRef: null,
+  };
+}
+
+function terminalChildRow(
+  overrides: Readonly<Record<string, unknown>> = {},
+  resultOverrides: Readonly<Record<string, unknown>> = {},
+) {
+  const result = { ...returnedReceipt(), parentRevisionBefore: "4", parentRevisionAfter: "5",
+    parentAllocationEpoch: "2", childRevisionBefore: "2", childRevisionAfter: "3",
+    childAllocationEpochBefore: "1", childAllocationEpochAfter: "2", returnedAmount: "20",
+    capturedAmount: "10", ...resultOverrides };
+  return {
+    ...childRow(),
+    parentRevision: "5", parentUnassignedStock: "90", parentActiveChildReservedStock: "0",
+    parentCapturedCumulative: "10",
+    childRevision: "3", childAllocationEpoch: "2", childUnassignedStock: "0",
+    childReturnedToParentCumulative: "20", childAllocationState: "terminal",
+    terminalReceiptDigest: returnedReceipt().receiptDigest, parentAppliedRevision: "5",
+    priorReturnResult: result,
+    priorReturnResultDigest: createHash("sha256").update(canonical(result)).digest("hex"),
+    priorReturnOperationKind: "return_media_child",
+    priorReturnBusinessOperationKey: "return:media-operation-1",
+    priorReturnRequestDigest: "d".repeat(64),
+    priorReturnExecutionBudgetRootRef: result.executionBudgetRootRef,
+    priorReturnAuthorizationSegmentRef: null,
+    priorReturnParentAllocationRef: result.parentAllocationRef,
+    priorReturnChildAllocationRef: result.childAllocationRef,
+    priorReturnParentBeforeRevision: result.parentRevisionBefore,
+    priorReturnParentAfterRevision: result.parentRevisionAfter,
+    priorReturnChildBeforeRevision: result.childRevisionBefore,
+    priorReturnChildAfterRevision: result.childRevisionAfter,
+    priorReturnCreditAmount: result.returnedAmount,
+    priorReturnOwnerClosureEvidenceRef: result.ownerClosureEvidence.terminalReceiptRef,
+    ...overrides,
+  };
+}
+
+function childOperationReceiptRow(extra: Readonly<Record<string, unknown>> = {}) {
+  const result = { ...derivedReceipt(), parentRevisionBefore: "3", parentRevisionAfter: "4",
+    parentAllocationEpoch: "2", childRevisionBefore: "0", childRevisionAfter: "1",
+    childAllocationEpoch: "1", reservedCeiling: "30", ...extra };
+  return { requestDigest: "b".repeat(64), outcomeKind: "accepted", result,
+    resultDigest: createHash("sha256").update(canonical(result)).digest("hex"),
+    executionBudgetRootRef: result.executionBudgetRootRef,
+    authorizationSegmentRef: null,
+    parentAllocationRef: result.parentAllocationRef,
+    childAllocationRef: result.childAllocationRef,
+    parentBeforeRevision: result.parentRevisionBefore,
+    parentAfterRevision: result.parentRevisionAfter,
+    childBeforeRevision: result.childRevisionBefore,
+    childAfterRevision: result.childRevisionAfter,
+    creditAmount: result.reservedCeiling,
+    ownerClosureEvidenceRef: null };
 }

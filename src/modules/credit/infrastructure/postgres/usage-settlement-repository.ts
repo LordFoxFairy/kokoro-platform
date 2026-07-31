@@ -534,12 +534,16 @@ async function insertClosure(
       record.closedAt],
   ), "CREDIT_USAGE_CLOSURE_PERSIST_FAILED");
   for (const [index, evidence] of [...record.evidenceSet]
-    .sort((left, right) => left.evidenceRef.localeCompare(right.evidenceRef)).entries()) await one(sql.execute(
+    .sort((left, right) => compareCodeUnits(left.evidenceRef, right.evidenceRef)).entries()) await one(sql.execute(
     `INSERT INTO platform.credit_usage_closure_evidence
      (closure_ref,site_ref,authorization_segment_ref,evidence_ref,evidence_ordinal)
      VALUES ($1::uuid,$2,$3::uuid,$4::uuid,$5)`,
     [closureRef, record.context.siteId, record.context.authorizationSegmentRef, evidence.evidenceRef, index],
   ), "CREDIT_USAGE_CLOSURE_EVIDENCE_PERSIST_FAILED");
+}
+
+function compareCodeUnits(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 async function updateSegment(

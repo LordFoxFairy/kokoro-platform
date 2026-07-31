@@ -6,6 +6,7 @@ import {
   reconcileUnknownAuthorizationSegment,
   releaseReservedAuthorizationSegment,
 } from "../domain/allocation.js";
+import { CreditDomainError, type CreditDomainErrorCode } from "../domain/credit-domain-error.js";
 import type {
   CreditAuthorityRepository,
   CreditOperationIdentity,
@@ -13,15 +14,18 @@ import type {
   StoredSegmentAllocation,
 } from "./contracts/credit-authority-repository.js";
 import type {
+  CreditConsumptionScope,
   RunBudgetAuthority,
   ReservedRunBudget,
   SegmentCommand,
   SegmentMutationResult,
 } from "./contracts/run-budget-authority.js";
+import { MediaChildAllocationService } from "./media-child-allocation-service.js";
 
 export class CreditService implements RunBudgetAuthority {
   readonly #clock: () => Date;
   readonly #reference: (kind: CreditReferenceKind, now: number) => string;
+  readonly #mediaChild: MediaChildAllocationService;
 
   constructor(private readonly dependencies: Readonly<{
     repository: CreditAuthorityRepository;
@@ -30,6 +34,11 @@ export class CreditService implements RunBudgetAuthority {
   }>) {
     this.#clock = dependencies.clock ?? (() => new Date());
     this.#reference = dependencies.reference ?? (() => randomUUID());
+    this.#mediaChild = new MediaChildAllocationService({
+      repository: dependencies.repository,
+      clock: this.#clock,
+      reference: this.#reference,
+    });
   }
 
   async reserveRootBudget(
@@ -63,7 +72,9 @@ export class CreditService implements RunBudgetAuthority {
     try {
       allocations = planGrantReservation(grants, input.rootCeiling);
     } catch (error) {
-      if (errorCode(error) === "CREDIT_INSUFFICIENT_AVAILABLE") return { kind: "insufficient_credit" };
+      if (error instanceof CreditDomainError && error.code === "CREDIT_INSUFFICIENT_AVAILABLE") {
+        return { kind: "insufficient_credit" };
+      }
       throw error;
     }
     return this.dependencies.repository.createRootBudgetReservation(transaction, {
@@ -165,6 +176,20 @@ export class CreditService implements RunBudgetAuthority {
     }
   }
 
+  deriveChildAllocation(
+    transaction: PlatformTransaction,
+    input: Parameters<RunBudgetAuthority["deriveChildAllocation"]>[1],
+  ): ReturnType<RunBudgetAuthority["deriveChildAllocation"]> {
+    return this.#mediaChild.derive(transaction, input);
+  }
+
+  returnChildAllocation(
+    transaction: PlatformTransaction,
+    input: Parameters<RunBudgetAuthority["returnChildAllocation"]>[1],
+  ): ReturnType<RunBudgetAuthority["returnChildAllocation"]> {
+    return this.#mediaChild.return(transaction, input);
+  }
+
   async #priorSegmentOperation(transaction: PlatformTransaction, operation: CreditOperationIdentity): Promise<
     | Readonly<{ kind: "replayed"; value: SegmentMutationResult }>
     | Readonly<{ kind: "conflict"; code: "REQUEST_DIGEST_CONFLICT" }>
@@ -180,9 +205,8 @@ export class CreditService implements RunBudgetAuthority {
   async #load(transaction: PlatformTransaction, input: SegmentCommand, operation: CreditOperationIdentity): Promise<
     | Readonly<{ kind: "loaded"; value: StoredSegmentAllocation }>
     | Readonly<{ kind: "replayed"; value: SegmentMutationResult }>
-    | Readonly<{ kind: "conflict"; code: "REQUEST_DIGEST_CONFLICT" }>
+    | Readonly<{ kind: "conflict"; code: "REQUEST_DIGEST_CONFLICT" | "VERSION_CONFLICT" }>
     | Readonly<{ kind: "not_found" }>
-    | Readonly<{ kind: "conflict"; code: "VERSION_CONFLICT" }>
     | Readonly<{ kind: "invalid_state"; code: string }>
   > {
     const current = await this.dependencies.repository.lockSegmentAllocation(transaction, {
@@ -208,49 +232,49 @@ function validateReservation(input: Parameters<RunBudgetAuthority["reserveRootBu
     input.liabilityMerchantAccountId, input.executionRootId, input.authorizationBudgetRef,
     input.ratingPolicyRevisionRef, input.executionManifestRef, input.businessOperationKey]
     .forEach((value) => text(value));
-  if (!/^[a-f0-9]{64}$/u.test(input.requestDigest)) throw new Error("CREDIT_REQUEST_DIGEST_INVALID");
+  if (!DIGEST.test(input.requestDigest)) throw new CreditDomainError("CREDIT_REQUEST_DIGEST_INVALID");
   if (input.rootCeiling <= 0n || input.segmentMaximum <= 0n || input.segmentMaximum > input.rootCeiling) {
-    throw new Error("CREDIT_RESERVATION_AMOUNT_INVALID");
+    throw new CreditDomainError("CREDIT_RESERVATION_AMOUNT_INVALID");
   }
   instant(input.expiresAt);
 }
 
-function validateConsumptionScope(scope: Parameters<RunBudgetAuthority["reserveRootBudget"]>[1]["consumptionScope"]): void {
+function validateConsumptionScope(scope: CreditConsumptionScope): void {
   const key = /^[a-z0-9][a-z0-9._:-]{0,255}$/u;
   const reference = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/u;
   if (!key.test(scope.surfaceRef) || !key.test(scope.capabilityKey) ||
-    (scope.agentRef !== null && !reference.test(scope.agentRef))) {
-    throw new Error("CREDIT_CONSUMPTION_SCOPE_INVALID");
+      (scope.agentRef !== null && !reference.test(scope.agentRef))) {
+    throw new CreditDomainError("CREDIT_CONSUMPTION_SCOPE_INVALID");
   }
 }
 
 function validateSegmentCommand(input: SegmentCommand): void {
   [input.siteId, input.authorizationSegmentRef, input.executionManifestRef, input.businessOperationKey]
     .forEach((value) => text(value));
-  if (!/^[a-f0-9]{64}$/u.test(input.requestDigest)) throw new Error("CREDIT_REQUEST_DIGEST_INVALID");
-  if (input.expectedSegmentVersion <= 0n) throw new Error("CREDIT_SEGMENT_VERSION_INVALID");
+  if (!DIGEST.test(input.requestDigest)) throw new CreditDomainError("CREDIT_REQUEST_DIGEST_INVALID");
+  if (input.expectedSegmentVersion <= 0n || input.expectedSegmentVersion > POSTGRES_INT8_MAX) {
+    throw new CreditDomainError("CREDIT_SEGMENT_VERSION_INVALID");
+  }
 }
 
-function operationIdentity(
-  operationKind: CreditOperationIdentity["operationKind"],
+function operationIdentity<const Kind extends CreditOperationIdentity["operationKind"]>(
+  operationKind: Kind,
   input: Readonly<{ siteId: string; businessOperationKey: string; requestDigest: string }>,
-): CreditOperationIdentity {
+): Readonly<CreditOperationIdentity & { operationKind: Kind }> {
   return Object.freeze({ operationKind, siteId: input.siteId,
     businessOperationKey: input.businessOperationKey, requestDigest: input.requestDigest });
 }
 
-function expectedError(action: () => void): string | null {
-  try { action(); return null; } catch (error) { return errorCode(error); }
+function expectedError(action: () => void): CreditDomainErrorCode | null {
+  try { action(); return null; } catch (error) {
+    if (error instanceof CreditDomainError) return error.code;
+    throw error;
+  }
 }
 
-function domainOutcome(error: unknown): Readonly<{ kind: "invalid_state"; code: string }> {
-  const code = errorCode(error);
-  if (code.startsWith("CREDIT_")) return { kind: "invalid_state", code };
+function domainOutcome(error: unknown): Readonly<{ kind: "invalid_state"; code: CreditDomainErrorCode }> {
+  if (error instanceof CreditDomainError) return { kind: "invalid_state", code: error.code };
   throw error;
-}
-
-function errorCode(error: unknown): string {
-  return error instanceof Error ? error.message : "CREDIT_UNKNOWN_ERROR";
 }
 
 function isReservedRunBudget(value: unknown): value is ReservedRunBudget {
@@ -265,17 +289,33 @@ function isSegmentMutationResult(value: unknown): value is SegmentMutationResult
 }
 
 function text(value: string): void {
-  if (value.length < 1 || value.length > 256) throw new Error("CREDIT_REFERENCE_INVALID");
+  if (value.length < 1 || value.length > 256 || hasMalformedUtf16(value)) {
+    throw new CreditDomainError("CREDIT_REFERENCE_INVALID");
+  }
+}
+
+function hasMalformedUtf16(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return true;
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) return true;
+  }
+  return false;
 }
 
 function instant(value: string): void {
-  if (!Number.isFinite(Date.parse(value))) throw new Error("CREDIT_INSTANT_INVALID");
+  if (!Number.isFinite(Date.parse(value))) throw new CreditDomainError("CREDIT_INSTANT_INVALID");
 }
-
-const MAX_RESERVATION_TTL_MS = 15 * 60 * 1_000;
 
 function validReservationWindow(expiresAt: string, now: Date): boolean {
   const expiry = Date.parse(expiresAt);
   const authorityNow = now.getTime();
   return expiry > authorityNow && expiry <= authorityNow + MAX_RESERVATION_TTL_MS;
 }
+
+const MAX_RESERVATION_TTL_MS = 15 * 60 * 1_000;
+const POSTGRES_INT8_MAX = 9_223_372_036_854_775_807n;
+const DIGEST = /^[a-f0-9]{64}$/u;

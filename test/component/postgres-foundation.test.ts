@@ -10,6 +10,13 @@ import {
   type PlatformWorkerAuthorityRole,
 } from "../../src/infrastructure/postgres/client.js";
 import { runPlatformMigrations } from "../../src/infrastructure/postgres/migrator.js";
+import { lockCreditFinancialAuthority } from
+  "../../src/modules/credit/infrastructure/postgres/credit-financial-lock.js";
+import {
+  issuePlatformTransaction,
+  revokePlatformTransaction,
+  type PlatformSqlTransaction,
+} from "../../src/shared/unit-of-work/platform-transaction.js";
 import {
   canonicalRelationAuthority,
   SPLIT_WORKER_EXACT_AUTHORITY_SQL,
@@ -163,6 +170,65 @@ describe("Platform PostgreSQL foundation", () => {
     expect(result.rows).toEqual([
       { schema_name: "platform", table_name: "platform_foundation", schema_version: 1 },
     ]);
+  });
+
+  it("serializes Media child authority in allocation-root-hold order and closes NULL receipt fences", async () => {
+    const seed = creditConcurrencySeed();
+    const setup = new Client({ connectionString: migratorDatabaseUrl });
+    const first = new Client({ connectionString: migratorDatabaseUrl });
+    const second = new Client({ connectionString: migratorDatabaseUrl });
+    const observer = new Client({ connectionString: migratorDatabaseUrl });
+    await Promise.all([setup.connect(), first.connect(), second.connect(), observer.connect()]);
+    let firstLease: ReturnType<typeof issuePlatformTransaction> | null = null;
+    let secondLease: ReturnType<typeof issuePlatformTransaction> | null = null;
+    try {
+      await insertCreditConcurrencySeed(setup, seed);
+      const secondPid = await second.query<{ pid: number }>("SELECT pg_backend_pid() AS pid");
+      await first.query("BEGIN");
+      await second.query("BEGIN");
+      await second.query("SET LOCAL statement_timeout='2s'");
+      firstLease = issuePlatformTransaction(pgTransaction(first));
+      secondLease = issuePlatformTransaction(pgTransaction(second));
+      const input = { siteId: seed.siteId, executionBudgetRootRef: seed.rootRef,
+        allocationRefs: [seed.allocationRef] };
+      await expect(lockCreditFinancialAuthority(firstLease.transaction, input)).resolves.toEqual({
+        creditHoldRef: seed.holdRef,
+      });
+      const waiting = lockCreditFinancialAuthority(secondLease.transaction, input);
+      await expect(waitForPostgresLock(observer, secondPid.rows[0]?.pid)).resolves.toBe(true);
+      await first.query("COMMIT");
+      revokePlatformTransaction(firstLease);
+      firstLease = null;
+      await expect(waiting).resolves.toEqual({ creditHoldRef: seed.holdRef });
+      await second.query("COMMIT");
+      revokePlatformTransaction(secondLease);
+      secondLease = null;
+
+      await expect(setup.query(
+        `INSERT INTO platform.credit_budget_operation_receipt
+         (operation_receipt_ref,site_ref,operation_kind,business_operation_key,request_digest,
+          execution_budget_root_ref,authorization_segment_ref,outcome_kind,result,result_digest,
+          outbox_event_ref,completed_at,parent_allocation_ref,child_allocation_ref,
+          parent_before_revision,parent_after_revision,child_before_revision,child_after_revision,credit_amount)
+         VALUES ($1::uuid,$2,'derive_media_child','null-fence',$3,$4::uuid,NULL,'accepted','{}'::jsonb,$3,
+                 NULL,clock_timestamp(),$5::uuid,$6::uuid,NULL,2,0,1,1)`,
+        [randomUUID(), seed.siteId, "a".repeat(64), seed.rootRef, seed.allocationRef, randomUUID()],
+      )).rejects.toMatchObject({ code: "23514" });
+
+      const index = await setup.query<{ predicate: string | null }>(
+        `SELECT pg_get_expr(index.indpred,index.indrelid) AS predicate
+         FROM pg_index AS index
+         JOIN pg_class AS relation ON relation.oid=index.indexrelid
+         WHERE relation.relname='credit_budget_operation_receipt_return_child_latest_idx'`,
+      );
+      expect(index.rows).toHaveLength(1);
+      expect(index.rows[0]?.predicate).toContain("return_media_child");
+    } finally {
+      if (firstLease !== null) revokePlatformTransaction(firstLease);
+      if (secondLease !== null) revokePlatformTransaction(secondLease);
+      await Promise.allSettled([first.query("ROLLBACK"), second.query("ROLLBACK")]);
+      await Promise.allSettled([setup.end(), first.end(), second.end(), observer.end()]);
+    }
   });
 
   it("enforces statement, lock, idle transaction, and isolation settings", async () => {
@@ -1712,6 +1778,114 @@ function platformMigrationEnvironment(): Readonly<Record<string, string | undefi
     PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
     PATH: process.env.PATH,
   };
+}
+
+type CreditConcurrencySeed = Readonly<{
+  siteId: string;
+  billingAccountId: string;
+  creditAccountRef: string;
+  holdRef: string;
+  rootRef: string;
+  allocationRef: string;
+}>;
+
+function creditConcurrencySeed(): CreditConcurrencySeed {
+  const suffix = randomUUID();
+  return Object.freeze({
+    siteId: `credit-lock-${suffix}`,
+    billingAccountId: `billing-${suffix}`,
+    creditAccountRef: randomUUID(),
+    holdRef: randomUUID(),
+    rootRef: randomUUID(),
+    allocationRef: randomUUID(),
+  });
+}
+
+async function insertCreditConcurrencySeed(client: Client, seed: CreditConcurrencySeed): Promise<void> {
+  await client.query("BEGIN");
+  try {
+    await client.query("SET CONSTRAINTS ALL DEFERRED");
+    await client.query(
+      `INSERT INTO platform.authorization_site
+       (site_ref,state,security_epoch,policy_epoch,revocation_epoch)
+       VALUES ($1,'active',1,1,1)`,
+      [seed.siteId],
+    );
+    await client.query(
+      `INSERT INTO platform.commerce_billing_account(billing_account_ref,site_ref,state)
+       VALUES ($1,$2,'active')`,
+      [seed.billingAccountId, seed.siteId],
+    );
+    await client.query(
+      `INSERT INTO platform.credit_account
+       (credit_account_ref,site_ref,billing_account_ref,unit,liability_merchant_account_ref,state)
+       VALUES ($1::uuid,$2,$3,'credit_micros','merchant-component','active')`,
+      [seed.creditAccountRef, seed.siteId, seed.billingAccountId],
+    );
+    await client.query(
+      `INSERT INTO platform.credit_hold
+       (credit_hold_ref,credit_account_ref,site_ref,execution_root_ref,unit,requested_amount,
+        reserved_amount,state,expires_at)
+       VALUES ($1::uuid,$2::uuid,$3,$4,'credit_micros',100,100,'open',clock_timestamp()+interval '5 minutes')`,
+      [seed.holdRef, seed.creditAccountRef, seed.siteId, `execution-${seed.rootRef}`],
+    );
+    await client.query(
+      `INSERT INTO platform.credit_execution_budget_root
+       (execution_budget_root_ref,site_ref,execution_root_ref,billing_account_ref,credit_account_ref,
+        unit,liability_merchant_account_ref,credit_hold_ref,root_allocation_ref,
+        authorization_budget_ref,rating_policy_revision_ref,surface_ref,capability_key,reserved_ceiling,state)
+       VALUES ($1::uuid,$2,$3,$4,$5::uuid,'credit_micros','merchant-component',$6::uuid,$7::uuid,
+               'budget-component','rating-component','media.image','image.text_to_image',100,'open')`,
+      [seed.rootRef, seed.siteId, `execution-${seed.rootRef}`, seed.billingAccountId,
+        seed.creditAccountRef, seed.holdRef, seed.allocationRef],
+    );
+    await client.query(
+      `INSERT INTO platform.credit_budget_allocation
+       (budget_allocation_ref,execution_budget_root_ref,site_ref,billing_account_ref,credit_account_ref,
+        unit,liability_merchant_account_ref,parent_allocation_ref,is_root,audience,purpose)
+       VALUES ($1::uuid,$2::uuid,$3,$4,$5::uuid,'credit_micros','merchant-component',NULL,TRUE,'root','execution_root')`,
+      [seed.allocationRef, seed.rootRef, seed.siteId, seed.billingAccountId, seed.creditAccountRef],
+    );
+    await client.query(
+      `INSERT INTO platform.credit_budget_allocation_revision
+       (allocation_revision_ref,budget_allocation_ref,execution_budget_root_ref,site_ref,billing_account_ref,
+        credit_account_ref,unit,liability_merchant_account_ref,revision,allocation_epoch,credit_ceiling,
+        unassigned_stock,active_child_reserved_stock,committed_stock,captured_cumulative,
+        returned_to_parent_cumulative,state)
+       VALUES ($1::uuid,$2::uuid,$3::uuid,$4,$5,$6::uuid,'credit_micros','merchant-component',
+               1,1,100,100,0,0,0,0,'active')`,
+      [randomUUID(), seed.allocationRef, seed.rootRef, seed.siteId, seed.billingAccountId,
+        seed.creditAccountRef],
+    );
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
+}
+
+function pgTransaction(client: Client): PlatformSqlTransaction {
+  return {
+    async query<Row extends Record<string, unknown>>(statement: string, values?: readonly unknown[]) {
+      return (await client.query<Row>(statement, values as unknown[] | undefined)).rows;
+    },
+    async execute(statement: string, values?: readonly unknown[]) {
+      return (await client.query(statement, values as unknown[] | undefined)).rowCount ?? 0;
+    },
+  };
+}
+
+async function waitForPostgresLock(client: Client, pid: number | undefined): Promise<boolean> {
+  if (pid === undefined) return false;
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const state = await client.query<{ wait_event_type: string | null }>(
+      "SELECT wait_event_type FROM pg_stat_activity WHERE pid=$1",
+      [pid],
+    );
+    if (state.rows[0]?.wait_event_type === "Lock") return true;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return false;
 }
 
 function createWorkerDatabaseClient(

@@ -36,6 +36,7 @@
     "test:identity": "vitest run test/unit/identity-*.test.ts test/unit/platform-worker-identity.test.ts test/unit/secret-files.test.ts",
     "test:security": "vitest run test/security/*.test.ts",
     "test:component:postgres": "vitest run test/component/postgres-foundation.test.ts --no-file-parallelism",
+    "test:component:credit-media-child-concurrency": "vitest run test/component/postgres-foundation.test.ts --no-file-parallelism -t 'serializes Media child authority'",
     "test": "pnpm run test:repository && pnpm run test:platform && pnpm run test:platform-api-runtime && pnpm run test:admin-control && pnpm run test:identity && pnpm run test:security && pnpm -r test",
     "test:integration": "pnpm --filter @kokoro/hub test:integration",
     "build:runtime": "pnpm run db:generate && tsc -p tsconfig.runtime.json && pnpm -r --if-present build:runtime",

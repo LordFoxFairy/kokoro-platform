@@ -163,7 +163,7 @@ export function rateSegmentUsage(
   }
   const attemptKey = (evidence: AttemptUsageEvidence) =>
     `${evidence.producerKind}\u0000${evidence.producerContext}\u0000${evidence.producerGeneration}\u0000${evidence.attemptRef}`;
-  const ordered = [...evidenceSet].sort((left, right) => attemptKey(left).localeCompare(attemptKey(right)));
+  const ordered = [...evidenceSet].sort((left, right) => compareCodeUnits(attemptKey(left), attemptKey(right)));
   if (new Set(ordered.map(attemptKey)).size !== ordered.length) {
     throw new Error("CREDIT_USAGE_ATTEMPT_DUPLICATE");
   }
@@ -195,6 +195,10 @@ export function rateSegmentUsage(
     policyRatedAmount,
     attemptRatings: Object.freeze(attemptRatings),
   });
+}
+
+function compareCodeUnits(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function rateUnboundedAttempt(
