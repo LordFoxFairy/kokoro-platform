@@ -88,11 +88,14 @@ describe("image.text_to_image submission authority", () => {
 
     expect(first.kind).toBe("created");
     expect(replay).toEqual({ kind: "replayed", operationRef: first.operationRef,
-      callerRequestFingerprint });
+      callerRequestFingerprint, receipt: first.receipt });
+    expect(first.receipt).toEqual({ version: 2n, recordedAt: "2026-07-31T12:00:00.000Z",
+      commandKind: "create_agent_image_operation", outcome: "submit_accepted" });
     const stored = repository.inspect(first.operationRef);
     expect(stored?.plan.candidates).toHaveLength(2);
     expect(stored?.modelInvocationCommandRefs).toHaveLength(1);
-    expect(stored?.credit).toEqual({ childAllocationRef: "credit-child:one",
+    expect(stored?.credit).toEqual({ executionBudgetRootRef: "budget:root:one",
+      parentAllocationRef: "budget:allocation:one", childAllocationRef: "credit-child:one",
       allocationReservationReceiptRef: "credit-child-receipt:one" });
     expect(stored?.dispatchOutbox).toMatchObject({ state: "pending", topic: "media.image.dispatch.v1" });
     expect(JSON.stringify(stored?.protectedInput)).not.toContain("silver fox");

@@ -19,8 +19,16 @@ export type StoredAgentMediaOperationView = Readonly<{
 
 export type RecoveredAgentMediaCommand =
   | Readonly<{ kind: "not_found" }>
-  | Readonly<{ kind: "processing"; callerRequestFingerprint: string }>
-  | Readonly<{ kind: "committed"; callerRequestFingerprint: string; operationRef: string }>;
+  | Readonly<{ kind: "processing"; callerRequestFingerprint: string; receipt: RecoveredMediaCommandReceipt }>
+  | Readonly<{ kind: "committed"; callerRequestFingerprint: string; operationRef: string;
+    receipt: RecoveredMediaCommandReceipt }>;
+
+export type RecoveredMediaCommandReceipt = Readonly<{
+  version: bigint;
+  recordedAt: string;
+  commandKind: "create_agent_image_operation";
+  outcome: "submit_outcome_unknown" | "submit_accepted";
+}>;
 
 export interface MediaRuntimeQueryDatabase {
   recoverAgentMediaCommand(input: Readonly<{
@@ -31,6 +39,10 @@ export interface MediaRuntimeQueryDatabase {
     commandState: "processing" | "committed";
     callerRequestFingerprint: string;
     operationRef: string | null;
+    receiptVersion: bigint | string;
+    receiptRecordedAt: Date | string;
+    receiptKind: string;
+    receiptOutcome: string;
   }>[]>;
   getAgentMediaOperation(input: Readonly<{
     handleDigest: string;
@@ -71,16 +83,19 @@ export class PostgresMediaRuntimeQueryRepository {
     if (rows.length !== 1) throw new Error("MEDIA_COMMAND_IDENTITY_AMBIGUOUS");
     const row = rows[0]!;
     fingerprint(row.callerRequestFingerprint);
+    const receipt = recoveredReceipt(row);
     if (row.commandState === "processing" && row.operationRef === null) {
+      if (receipt.outcome !== "submit_outcome_unknown") throw new Error("MEDIA_COMMAND_ROW_INVALID");
       return Object.freeze({ kind: "processing" as const,
-        callerRequestFingerprint: row.callerRequestFingerprint });
+        callerRequestFingerprint: row.callerRequestFingerprint, receipt });
     }
     if (row.commandState !== "committed" || row.operationRef === null) {
       throw new Error("MEDIA_COMMAND_ROW_INVALID");
     }
+    if (receipt.outcome !== "submit_accepted") throw new Error("MEDIA_COMMAND_ROW_INVALID");
     reference(row.operationRef);
     return Object.freeze({ kind: "committed" as const,
-      callerRequestFingerprint: row.callerRequestFingerprint, operationRef: row.operationRef });
+      callerRequestFingerprint: row.callerRequestFingerprint, operationRef: row.operationRef, receipt });
   }
 
   async get(input: Readonly<{
@@ -118,6 +133,21 @@ export class PostgresMediaRuntimeQueryRepository {
       candidates: Object.freeze(candidates),
     });
   }
+}
+
+function recoveredReceipt(row: Readonly<{
+  receiptVersion: bigint | string;
+  receiptRecordedAt: Date | string;
+  receiptKind: string;
+  receiptOutcome: string;
+}>): RecoveredMediaCommandReceipt {
+  const version = positiveBigint(row.receiptVersion);
+  const recordedAt = instant(row.receiptRecordedAt);
+  if (row.receiptKind !== "create_agent_image_operation" ||
+      (row.receiptOutcome !== "submit_outcome_unknown" && row.receiptOutcome !== "submit_accepted")) {
+    throw new Error("MEDIA_COMMAND_ROW_INVALID");
+  }
+  return Object.freeze({ version, recordedAt, commandKind: row.receiptKind, outcome: row.receiptOutcome });
 }
 
 function outcomeClass(value: string): "canonical" | "irreconcilable" {

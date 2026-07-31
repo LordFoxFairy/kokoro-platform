@@ -53,22 +53,32 @@ export class PostgresAgentImageAccessOwner implements AgentImageAccessOwnerPort 
     opaqueHandle(input.mediaProjectionReservationHandle);
     reference(input.stableOutputSlotRef, 8192);
     reference(input.agentMediaCommandRef, 8192);
-    const rows = await this.dependencies.database.resolveAgentImageAccess({
-      handleDigest: createHash("sha256").update(input.mediaAccessHandle).digest("hex"),
-      projectionReservationDigest: createHmac("sha256", this.#key)
+    const accessAuthorizationHandleDigest = createHash("sha256")
+      .update(input.mediaAccessHandle).digest("hex");
+    const projectionReservationDigest = createHmac("sha256", this.#key)
         .update("kokoro.platform.media-projection-reservation-handle.v1\0")
         .update(lengthFrame(input.mediaProjectionReservationHandle))
-        .digest("hex"),
+        .digest("hex");
+    const rows = await this.dependencies.database.resolveAgentImageAccess({
+      handleDigest: accessAuthorizationHandleDigest,
+      projectionReservationDigest,
     });
     if (signal.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
     if (rows.length !== 1) throw new Error("MEDIA_ACCESS_DENIED");
-    return facts(rows[0]!, input);
+    return facts(rows[0]!, input, Object.freeze({
+      accessAuthorizationHandleDigest,
+      projectionReservationDigest,
+    }));
   }
 }
 
 function facts(
   row: ResolvedAgentImageAccessRow,
   input: Parameters<AgentImageAccessOwnerPort["resolveAgentImage"]>[0],
+  authorization: Readonly<{
+    accessAuthorizationHandleDigest: string;
+    projectionReservationDigest: string;
+  }>,
 ): MediaImageAdmissionFacts {
   const subjectGeneration = exactPositiveBigInt(row.subjectGeneration);
   const maximumCredit = exactPositiveBigInt(row.maximumCredit);
@@ -97,6 +107,7 @@ function facts(
     parentAllocationRef: row.parentAllocationRef,
     maximumCredit,
     trustInputDecisionRef: row.trustInputDecisionRef,
+    agentCommandAuthorization: authorization,
   });
 }
 

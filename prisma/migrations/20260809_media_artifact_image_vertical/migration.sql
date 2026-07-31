@@ -91,7 +91,8 @@ CREATE TABLE platform.media_operation_input_revision (
 
 ALTER TABLE platform.credit_allocation_reservation_receipt
   ADD CONSTRAINT credit_media_receipt_exact_owner_unique
-  UNIQUE(allocation_reservation_receipt_ref,site_ref,child_allocation_ref);
+  UNIQUE(allocation_reservation_receipt_ref,site_ref,execution_budget_root_ref,
+    parent_allocation_ref,child_allocation_ref,media_operation_ref);
 
 CREATE TABLE platform.media_operation (
   operation_ref TEXT PRIMARY KEY,
@@ -104,6 +105,8 @@ CREATE TABLE platform.media_operation (
   model_option_revision_ref TEXT NOT NULL,
   caller_request_fingerprint CHAR(64) NOT NULL CHECK(caller_request_fingerprint ~ '^[a-f0-9]{64}$'),
   owner_request_digest CHAR(64) NOT NULL CHECK(owner_request_digest ~ '^[a-f0-9]{64}$'),
+  credit_execution_budget_root_ref UUID NOT NULL,
+  credit_parent_allocation_ref UUID NOT NULL,
   credit_child_allocation_ref UUID NOT NULL,
   credit_allocation_receipt_ref UUID NOT NULL,
   trust_input_decision_ref TEXT NOT NULL,
@@ -123,9 +126,11 @@ CREATE TABLE platform.media_operation (
     REFERENCES platform.media_operation_input_revision(
       operation_input_revision_ref,site_ref,subject_ref,subject_generation,project_ref
     ),
-  FOREIGN KEY(credit_allocation_receipt_ref,site_ref,credit_child_allocation_ref)
+  FOREIGN KEY(credit_allocation_receipt_ref,site_ref,credit_execution_budget_root_ref,
+      credit_parent_allocation_ref,credit_child_allocation_ref,operation_ref)
     REFERENCES platform.credit_allocation_reservation_receipt(
-      allocation_reservation_receipt_ref,site_ref,child_allocation_ref
+      allocation_reservation_receipt_ref,site_ref,execution_budget_root_ref,
+      parent_allocation_ref,child_allocation_ref,media_operation_ref
     ),
   CHECK((state IN ('completed','partial','failed','canceled')) = (terminal_receipt_ref IS NOT NULL)),
   CHECK((state IN ('completed','partial','failed','canceled')) = (outcome_class IS NOT NULL)),
@@ -136,10 +141,20 @@ CREATE TABLE platform.media_operation (
 
 CREATE TABLE platform.media_command_journal (
   caller_audience TEXT NOT NULL,
+  access_authorization_handle_digest CHAR(64) NOT NULL
+    REFERENCES platform.admission_media_access_authorization(handle_digest),
+  projection_reservation_digest CHAR(64) NOT NULL
+    CHECK(projection_reservation_digest ~ '^[a-f0-9]{64}$'),
+  authorization_reservation_receipt_ref TEXT NOT NULL,
+  authorization_expires_at TIMESTAMPTZ NOT NULL,
   site_ref TEXT NOT NULL,
   subject_ref TEXT NOT NULL,
   subject_generation BIGINT NOT NULL CHECK(subject_generation > 0),
   project_ref TEXT NOT NULL,
+  workload_ref TEXT NOT NULL,
+  source TEXT NOT NULL CHECK(source='agent_runtime'),
+  definition_revision_ref TEXT NOT NULL,
+  model_option_revision_ref TEXT NOT NULL,
   command_ref TEXT NOT NULL,
   caller_request_fingerprint CHAR(64) NOT NULL CHECK(caller_request_fingerprint ~ '^[a-f0-9]{64}$'),
   owner_request_digest CHAR(64) NOT NULL CHECK(owner_request_digest ~ '^[a-f0-9]{64}$'),
@@ -153,6 +168,40 @@ CREATE TABLE platform.media_command_journal (
   CHECK((state='processing' AND operation_ref IS NULL) OR
         (state='committed' AND operation_ref IS NOT NULL))
 );
+
+CREATE TABLE platform.media_command_receipt (
+  caller_audience TEXT NOT NULL,
+  site_ref TEXT NOT NULL,
+  subject_ref TEXT NOT NULL,
+  subject_generation BIGINT NOT NULL CHECK(subject_generation > 0),
+  project_ref TEXT NOT NULL,
+  command_ref TEXT NOT NULL,
+  receipt_version BIGINT NOT NULL CHECK(receipt_version > 0),
+  recorded_at TIMESTAMPTZ NOT NULL,
+  command_kind TEXT NOT NULL CHECK(command_kind='create_agent_image_operation'),
+  outcome TEXT NOT NULL CHECK(outcome IN ('submit_outcome_unknown','submit_accepted')),
+  operation_ref TEXT,
+  PRIMARY KEY(caller_audience,site_ref,subject_ref,subject_generation,project_ref,command_ref,receipt_version),
+  FOREIGN KEY(caller_audience,site_ref,subject_ref,subject_generation,project_ref,command_ref)
+    REFERENCES platform.media_command_journal(
+      caller_audience,site_ref,subject_ref,subject_generation,project_ref,command_ref
+    ),
+  FOREIGN KEY(operation_ref,site_ref,subject_ref,subject_generation,project_ref)
+    REFERENCES platform.media_operation(operation_ref,site_ref,subject_ref,subject_generation,project_ref),
+  CHECK((outcome='submit_outcome_unknown' AND receipt_version=1 AND operation_ref IS NULL) OR
+        (outcome='submit_accepted' AND receipt_version=2 AND operation_ref IS NOT NULL))
+);
+
+CREATE FUNCTION platform.reject_media_command_receipt_mutation() RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
+BEGIN
+  RAISE EXCEPTION 'MEDIA_COMMAND_RECEIPT_IMMUTABLE' USING ERRCODE='23000';
+END;
+$$;
+CREATE TRIGGER media_command_receipt_immutable
+  BEFORE UPDATE OR DELETE ON platform.media_command_receipt
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_media_command_receipt_mutation();
+REVOKE ALL ON FUNCTION platform.reject_media_command_receipt_mutation() FROM PUBLIC;
 
 CREATE TABLE platform.media_candidate (
   candidate_ref TEXT PRIMARY KEY,
@@ -323,6 +372,8 @@ ALTER TABLE platform.media_operation ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform.media_operation FORCE ROW LEVEL SECURITY;
 ALTER TABLE platform.media_command_journal ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform.media_command_journal FORCE ROW LEVEL SECURITY;
+ALTER TABLE platform.media_command_receipt ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.media_command_receipt FORCE ROW LEVEL SECURITY;
 ALTER TABLE platform.media_candidate ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform.media_candidate FORCE ROW LEVEL SECURITY;
 ALTER TABLE platform.media_dispatch_outbox ENABLE ROW LEVEL SECURITY;
@@ -393,6 +444,10 @@ CREATE POLICY media_command_journal_runtime_definer ON platform.media_command_jo
   TO platform_migrator
   USING(SESSION_USER='platform_media_runtime')
   WITH CHECK(SESSION_USER='platform_media_runtime');
+CREATE POLICY media_command_receipt_runtime_definer ON platform.media_command_receipt
+  TO platform_migrator
+  USING(SESSION_USER='platform_media_runtime')
+  WITH CHECK(SESSION_USER='platform_media_runtime');
 CREATE POLICY media_candidate_runtime_definer ON platform.media_candidate
   TO platform_migrator
   USING(SESSION_USER='platform_media_runtime')
@@ -444,6 +499,7 @@ REVOKE ALL ON TABLE
   platform.media_operation_input_revision,
   platform.media_operation,
   platform.media_command_journal,
+  platform.media_command_receipt,
   platform.media_candidate,
   platform.media_dispatch_outbox,
   platform.media_provider_effect_journal,
@@ -503,28 +559,89 @@ GRANT EXECUTE ON FUNCTION platform.assert_media_runtime_role(TEXT)
   TO platform_media_runtime,platform_media_worker;
 
 CREATE FUNCTION platform.begin_media_image_command(
-  p_caller_audience TEXT,p_site_ref TEXT,p_subject_ref TEXT,p_subject_generation BIGINT,
-  p_project_ref TEXT,p_command_ref TEXT,p_caller_request_fingerprint CHAR(64),
+  p_caller_audience TEXT,p_handle_digest CHAR(64),p_projection_reservation_digest CHAR(64),
+  p_site_ref TEXT,p_subject_ref TEXT,p_subject_generation BIGINT,p_project_ref TEXT,
+  p_workload_ref TEXT,p_source TEXT,p_definition_revision_ref TEXT,p_model_option_revision_ref TEXT,
+  p_command_ref TEXT,p_caller_request_fingerprint CHAR(64),
   p_owner_request_digest CHAR(64),p_lease_token_hash CHAR(64)
-) RETURNS TABLE(outcome TEXT,operation_ref TEXT,caller_request_fingerprint CHAR(64))
+) RETURNS TABLE(
+  outcome TEXT,operation_ref TEXT,caller_request_fingerprint CHAR(64),
+  receipt_version BIGINT,receipt_recorded_at TIMESTAMPTZ,receipt_kind TEXT,receipt_outcome TEXT
+)
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path=pg_catalog,platform AS $$
-DECLARE prior platform.media_command_journal%ROWTYPE;
+DECLARE
+  prior platform.media_command_journal%ROWTYPE;
+  authority platform.admission_media_access_authorization%ROWTYPE;
+  resolved_definition_revision_ref TEXT;
+  resolved_model_option_revision_ref TEXT;
 BEGIN
   PERFORM platform.assert_media_runtime_role('runtime');
-  IF p_caller_audience NOT IN ('ga.media-runtime','site-bff.media') THEN
+  IF p_caller_audience<>'ga.media-runtime' OR p_source<>'agent_runtime' THEN
     RAISE EXCEPTION 'MEDIA_RUNTIME_CALLER_AUDIENCE_FORBIDDEN';
   END IF;
+  SELECT item.* INTO STRICT authority
+    FROM platform.admission_media_access_authorization item
+   WHERE item.handle_digest=p_handle_digest
+     AND item.projection_reservation_digest=p_projection_reservation_digest
+     AND item.state='active' AND item.expires_at>statement_timestamp();
+  PERFORM set_config('app.site_id',authority.site_id,true);
+  SELECT definition.definition_revision_ref,surface.default_model_option_revision_ref
+    INTO STRICT resolved_definition_revision_ref,resolved_model_option_revision_ref
+    FROM platform.site_release_media_definition definition
+    JOIN platform.site_release_model_catalog_publication publication
+      ON publication.site_id=authority.site_id
+     AND publication.site_release_ref=authority.configuration_revision_id
+    JOIN platform.site_release_model_catalog_surface surface
+      ON surface.publication_id=publication.publication_id AND surface.surface_id='image'
+    JOIN platform.credit_execution_budget_root root
+      ON root.execution_budget_root_ref=authority.execution_budget_root_ref
+     AND root.site_ref=authority.site_id AND root.state='open'
+    JOIN platform.credit_authorization_segment segment
+      ON segment.authorization_segment_ref=authority.authorization_segment_ref
+     AND segment.execution_budget_root_ref=root.execution_budget_root_ref
+     AND segment.site_ref=authority.site_id AND segment.state='committed'
+   WHERE definition.site_ref=authority.site_id
+     AND definition.site_release_ref=authority.configuration_revision_id
+     AND definition.media_kind='image_text_to_image';
+  IF ROW(p_site_ref,p_subject_ref,p_subject_generation,p_project_ref,
+         p_definition_revision_ref,p_model_option_revision_ref)
+     IS DISTINCT FROM ROW(authority.site_id,authority.subject_ref,authority.subject_generation,
+         authority.project_ref,resolved_definition_revision_ref,resolved_model_option_revision_ref) THEN
+    RAISE EXCEPTION 'MEDIA_ACCESS_OWNER_BINDING_INVALID';
+  END IF;
   INSERT INTO platform.media_command_journal(
-    caller_audience,site_ref,subject_ref,subject_generation,project_ref,command_ref,
+    caller_audience,access_authorization_handle_digest,projection_reservation_digest,
+    authorization_reservation_receipt_ref,authorization_expires_at,
+    site_ref,subject_ref,subject_generation,project_ref,workload_ref,source,
+    definition_revision_ref,model_option_revision_ref,command_ref,
     caller_request_fingerprint,owner_request_digest,state,lease_token_hash
   ) VALUES(
-    p_caller_audience,p_site_ref,p_subject_ref,p_subject_generation,p_project_ref,p_command_ref,
+    p_caller_audience,p_handle_digest,p_projection_reservation_digest,
+    authority.reservation_receipt_ref,authority.expires_at,
+    authority.site_id,authority.subject_ref,authority.subject_generation,authority.project_ref,
+    p_workload_ref,p_source,resolved_definition_revision_ref,resolved_model_option_revision_ref,p_command_ref,
     p_caller_request_fingerprint,p_owner_request_digest,'processing',p_lease_token_hash
   ) ON CONFLICT (caller_audience,site_ref,subject_ref,subject_generation,project_ref,command_ref)
     DO NOTHING;
   IF FOUND THEN
-    RETURN QUERY SELECT 'started'::TEXT,NULL::TEXT,p_caller_request_fingerprint;
+    INSERT INTO platform.media_command_receipt(
+      caller_audience,site_ref,subject_ref,subject_generation,project_ref,command_ref,
+      receipt_version,recorded_at,command_kind,outcome
+    ) VALUES(
+      p_caller_audience,authority.site_id,authority.subject_ref,authority.subject_generation,
+      authority.project_ref,p_command_ref,1,statement_timestamp(),
+      'create_agent_image_operation','submit_outcome_unknown'
+    );
+    RETURN QUERY
+    SELECT 'started'::TEXT,NULL::TEXT,p_caller_request_fingerprint,receipt.receipt_version,
+           receipt.recorded_at,receipt.command_kind,receipt.outcome
+      FROM platform.media_command_receipt receipt
+     WHERE receipt.caller_audience=p_caller_audience AND receipt.site_ref=authority.site_id
+       AND receipt.subject_ref=authority.subject_ref
+       AND receipt.subject_generation=authority.subject_generation
+       AND receipt.project_ref=authority.project_ref AND receipt.command_ref=p_command_ref
+       AND receipt.receipt_version=1;
     RETURN;
   END IF;
   SELECT * INTO STRICT prior FROM platform.media_command_journal journal
@@ -532,28 +649,44 @@ BEGIN
      AND journal.subject_ref=p_subject_ref AND journal.subject_generation=p_subject_generation
      AND journal.project_ref=p_project_ref AND journal.command_ref=p_command_ref FOR UPDATE;
   IF prior.caller_request_fingerprint<>p_caller_request_fingerprint OR
-     prior.owner_request_digest<>p_owner_request_digest THEN
+     prior.owner_request_digest<>p_owner_request_digest OR
+     prior.access_authorization_handle_digest<>p_handle_digest OR
+     prior.projection_reservation_digest<>p_projection_reservation_digest OR
+     ROW(prior.workload_ref,prior.source,prior.definition_revision_ref,prior.model_option_revision_ref)
+       IS DISTINCT FROM ROW(p_workload_ref,p_source,p_definition_revision_ref,p_model_option_revision_ref) THEN
     RAISE EXCEPTION 'MEDIA_COMMAND_OWNER_DIGEST_CONFLICT';
   END IF;
   IF prior.state='processing' THEN RAISE EXCEPTION 'MEDIA_COMMAND_PENDING'; END IF;
-  RETURN QUERY SELECT 'replayed'::TEXT,prior.operation_ref,prior.caller_request_fingerprint;
+  RETURN QUERY
+  SELECT 'replayed'::TEXT,prior.operation_ref,prior.caller_request_fingerprint,
+         receipt.receipt_version,receipt.recorded_at,receipt.command_kind,receipt.outcome
+    FROM platform.media_command_receipt receipt
+   WHERE receipt.caller_audience=prior.caller_audience AND receipt.site_ref=prior.site_ref
+     AND receipt.subject_ref=prior.subject_ref AND receipt.subject_generation=prior.subject_generation
+     AND receipt.project_ref=prior.project_ref AND receipt.command_ref=prior.command_ref
+   ORDER BY receipt.receipt_version DESC LIMIT 1;
 END;
 $$;
 REVOKE ALL ON FUNCTION platform.begin_media_image_command(
-  TEXT,TEXT,TEXT,BIGINT,TEXT,TEXT,CHAR,CHAR,CHAR
+  TEXT,CHAR,CHAR,TEXT,TEXT,BIGINT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,CHAR,CHAR,CHAR
 ) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION platform.begin_media_image_command(
-  TEXT,TEXT,TEXT,BIGINT,TEXT,TEXT,CHAR,CHAR,CHAR
+  TEXT,CHAR,CHAR,TEXT,TEXT,BIGINT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,CHAR,CHAR,CHAR
 ) TO platform_media_runtime;
 
 CREATE FUNCTION platform.commit_media_image_operation(
   p_record JSONB,p_lease_token_hash CHAR(64)
-) RETURNS VOID
+) RETURNS TABLE(
+  operation_ref TEXT,caller_request_fingerprint CHAR(64),receipt_version BIGINT,
+  receipt_recorded_at TIMESTAMPTZ,receipt_kind TEXT,receipt_outcome TEXT
+)
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path=pg_catalog,platform AS $$
 DECLARE
   owner JSONB; command_record JSONB; protected_input JSONB; operation_record JSONB;
   credit_record JSONB; outbox_record JSONB; candidate JSONB; candidate_ordinal BIGINT;
+  journal_record platform.media_command_journal%ROWTYPE;
+  authority_record platform.admission_media_access_authorization%ROWTYPE;
   changed INTEGER;
 BEGIN
   PERFORM platform.assert_media_runtime_role('runtime');
@@ -570,14 +703,28 @@ BEGIN
   owner:=p_record->'owner'; command_record:=p_record->'command';
   protected_input:=p_record->'protectedInput'; operation_record:=p_record->'operation';
   credit_record:=p_record->'credit'; outbox_record:=p_record->'outbox';
-  IF (command_record->>'callerAudience',owner->>'source') NOT IN
-       (('ga.media-runtime','agent_runtime'),('site-bff.media','direct_studio')) OR
-     command_record->>'siteRef'<>owner->>'siteRef' OR
-     command_record->>'subjectRef'<>owner->>'subjectRef' OR
-     command_record->>'subjectGeneration'<>owner->>'subjectGeneration' OR
-     command_record->>'projectRef'<>owner->>'projectRef' OR
-     operation_record->>'definitionRevisionRef'<>owner->>'definitionRevisionRef' OR
-     operation_record->>'modelOptionRevisionRef'<>owner->>'modelOptionRevisionRef' THEN
+  SELECT journal,authority INTO STRICT journal_record,authority_record
+    FROM platform.media_command_journal journal
+    JOIN platform.admission_media_access_authorization authority
+      ON authority.handle_digest=journal.access_authorization_handle_digest
+     AND authority.projection_reservation_digest=journal.projection_reservation_digest
+     AND authority.site_id=journal.site_ref
+     AND authority.subject_ref=journal.subject_ref
+     AND authority.subject_generation=journal.subject_generation
+     AND authority.project_ref=journal.project_ref
+     AND authority.reservation_receipt_ref=journal.authorization_reservation_receipt_ref
+     AND authority.expires_at=journal.authorization_expires_at
+     AND authority.state='active' AND authority.expires_at>statement_timestamp()
+   WHERE journal.caller_audience=command_record->>'callerAudience'
+     AND journal.command_ref=command_record->>'commandRef'
+     AND journal.lease_token_hash=p_lease_token_hash
+     AND journal.state='processing'
+   FOR UPDATE OF journal;
+  IF command_record->>'callerAudience'<>'ga.media-runtime' OR journal_record.source<>'agent_runtime' OR
+     command_record->>'callerRequestFingerprint'<>journal_record.caller_request_fingerprint OR
+     command_record->>'ownerRequestDigest'<>journal_record.owner_request_digest OR
+     operation_record->>'definitionRevisionRef'<>journal_record.definition_revision_ref OR
+     operation_record->>'modelOptionRevisionRef'<>journal_record.model_option_revision_ref THEN
     RAISE EXCEPTION 'MEDIA_OPERATION_OWNER_BINDING_INVALID';
   END IF;
 
@@ -587,9 +734,9 @@ BEGIN
     key_revision_ref,ciphertext,content_iv,content_tag,wrapped_dek,wrap_iv,wrap_tag,
     plaintext_bytes,created_at
   ) VALUES(
-    protected_input->>'operationInputRevisionRef',owner->>'siteRef',owner->>'subjectRef',
-    (owner->>'subjectGeneration')::BIGINT,owner->>'projectRef',owner->>'workloadRef',
-    owner->>'source',owner->>'definitionRevisionRef',owner->>'modelOptionRevisionRef',
+    protected_input->>'operationInputRevisionRef',journal_record.site_ref,journal_record.subject_ref,
+    journal_record.subject_generation,journal_record.project_ref,journal_record.workload_ref,
+    journal_record.source,journal_record.definition_revision_ref,journal_record.model_option_revision_ref,
     protected_input->>'encryptionAlgorithm',protected_input->>'keyRevisionRef',
     decode(protected_input->>'ciphertextBase64','base64'),
     decode(protected_input->>'contentIvBase64','base64'),
@@ -602,14 +749,16 @@ BEGIN
   INSERT INTO platform.media_operation(
     operation_ref,site_ref,subject_ref,subject_generation,project_ref,
     operation_input_revision_ref,definition_revision_ref,model_option_revision_ref,
-    caller_request_fingerprint,owner_request_digest,credit_child_allocation_ref,
+    caller_request_fingerprint,owner_request_digest,credit_execution_budget_root_ref,
+    credit_parent_allocation_ref,credit_child_allocation_ref,
     credit_allocation_receipt_ref,trust_input_decision_ref,state,owner_version,created_at,updated_at
   ) VALUES(
-    operation_record->>'operationRef',owner->>'siteRef',owner->>'subjectRef',
-    (owner->>'subjectGeneration')::BIGINT,owner->>'projectRef',
-    protected_input->>'operationInputRevisionRef',owner->>'definitionRevisionRef',
-    owner->>'modelOptionRevisionRef',command_record->>'callerRequestFingerprint',
-    command_record->>'ownerRequestDigest',(credit_record->>'childAllocationRef')::UUID,
+    operation_record->>'operationRef',journal_record.site_ref,journal_record.subject_ref,
+    journal_record.subject_generation,journal_record.project_ref,
+    protected_input->>'operationInputRevisionRef',journal_record.definition_revision_ref,
+    journal_record.model_option_revision_ref,command_record->>'callerRequestFingerprint',
+    command_record->>'ownerRequestDigest',(credit_record->>'executionBudgetRootRef')::UUID,
+    (credit_record->>'parentAllocationRef')::UUID,(credit_record->>'childAllocationRef')::UUID,
     (credit_record->>'allocationReservationReceiptRef')::UUID,p_record->>'trustInputDecisionRef',
     'queued',(operation_record->>'ownerVersion')::BIGINT,
     (p_record->>'createdAt')::TIMESTAMPTZ,(p_record->>'createdAt')::TIMESTAMPTZ
@@ -621,8 +770,8 @@ BEGIN
       artifact_ref,site_ref,subject_ref,subject_generation,project_ref,media_class,
       current_artifact_version_ref,created_at,updated_at
     ) VALUES(
-      candidate->>'artifactRef',owner->>'siteRef',owner->>'subjectRef',
-      (owner->>'subjectGeneration')::BIGINT,owner->>'projectRef','image',
+      candidate->>'artifactRef',journal_record.site_ref,journal_record.subject_ref,
+      journal_record.subject_generation,journal_record.project_ref,'image',
       candidate->>'artifactVersionRef',(p_record->>'createdAt')::TIMESTAMPTZ,
       (p_record->>'createdAt')::TIMESTAMPTZ
     );
@@ -630,8 +779,8 @@ BEGIN
       artifact_version_ref,artifact_ref,site_ref,subject_ref,subject_generation,project_ref,
       state,owner_version,created_at,updated_at
     ) VALUES(
-      candidate->>'artifactVersionRef',candidate->>'artifactRef',owner->>'siteRef',
-      owner->>'subjectRef',(owner->>'subjectGeneration')::BIGINT,owner->>'projectRef',
+      candidate->>'artifactVersionRef',candidate->>'artifactRef',journal_record.site_ref,
+      journal_record.subject_ref,journal_record.subject_generation,journal_record.project_ref,
       'reserved',1,(p_record->>'createdAt')::TIMESTAMPTZ,(p_record->>'createdAt')::TIMESTAMPTZ
     );
     INSERT INTO platform.media_candidate(
@@ -639,8 +788,8 @@ BEGIN
       definition_step_key,output_slot,ordinal,required,model_invocation_command_ref,
       artifact_ref,artifact_version_ref,state,owner_version
     ) VALUES(
-      candidate->>'candidateRef',operation_record->>'operationRef',owner->>'siteRef',
-      owner->>'subjectRef',(owner->>'subjectGeneration')::BIGINT,owner->>'projectRef',
+      candidate->>'candidateRef',operation_record->>'operationRef',journal_record.site_ref,
+      journal_record.subject_ref,journal_record.subject_generation,journal_record.project_ref,
       candidate->>'definitionStepKey',candidate->>'outputSlot',candidate_ordinal,
       (candidate->>'required')::BOOLEAN,p_record->>'modelInvocationCommandRef',
       candidate->>'artifactRef',candidate->>'artifactVersionRef','allocated',
@@ -650,21 +799,39 @@ BEGIN
   INSERT INTO platform.media_dispatch_outbox(
     outbox_ref,site_ref,subject_ref,subject_generation,project_ref,operation_ref,topic,state,occurred_at
   ) VALUES(
-    outbox_record->>'outboxRef',owner->>'siteRef',owner->>'subjectRef',
-    (owner->>'subjectGeneration')::BIGINT,owner->>'projectRef',operation_record->>'operationRef',
+    outbox_record->>'outboxRef',journal_record.site_ref,journal_record.subject_ref,
+    journal_record.subject_generation,journal_record.project_ref,operation_record->>'operationRef',
     outbox_record->>'topic','pending',(outbox_record->>'occurredAt')::TIMESTAMPTZ
   );
   UPDATE platform.media_command_journal journal SET state='committed',
     operation_ref=operation_record->>'operationRef'
    WHERE journal.caller_audience=command_record->>'callerAudience'
-     AND journal.site_ref=owner->>'siteRef' AND journal.subject_ref=owner->>'subjectRef'
-     AND journal.subject_generation=(owner->>'subjectGeneration')::BIGINT
-     AND journal.project_ref=owner->>'projectRef' AND journal.command_ref=command_record->>'commandRef'
+     AND journal.site_ref=journal_record.site_ref AND journal.subject_ref=journal_record.subject_ref
+     AND journal.subject_generation=journal_record.subject_generation
+     AND journal.project_ref=journal_record.project_ref AND journal.command_ref=command_record->>'commandRef'
      AND journal.caller_request_fingerprint=command_record->>'callerRequestFingerprint'
      AND journal.owner_request_digest=command_record->>'ownerRequestDigest'
      AND journal.state='processing' AND journal.lease_token_hash=p_lease_token_hash;
   GET DIAGNOSTICS changed=ROW_COUNT;
   IF changed<>1 THEN RAISE EXCEPTION 'MEDIA_COMMAND_LEASE_LOST'; END IF;
+  INSERT INTO platform.media_command_receipt(
+    caller_audience,site_ref,subject_ref,subject_generation,project_ref,command_ref,
+    receipt_version,recorded_at,command_kind,outcome,operation_ref
+  ) VALUES(
+    journal_record.caller_audience,journal_record.site_ref,journal_record.subject_ref,
+    journal_record.subject_generation,journal_record.project_ref,journal_record.command_ref,
+    2,statement_timestamp(),'create_agent_image_operation','submit_accepted',
+    operation_record->>'operationRef'
+  );
+  RETURN QUERY
+  SELECT receipt.operation_ref,journal_record.caller_request_fingerprint,receipt.receipt_version,
+         receipt.recorded_at,receipt.command_kind,receipt.outcome
+    FROM platform.media_command_receipt receipt
+   WHERE receipt.caller_audience=journal_record.caller_audience
+     AND receipt.site_ref=journal_record.site_ref AND receipt.subject_ref=journal_record.subject_ref
+     AND receipt.subject_generation=journal_record.subject_generation
+     AND receipt.project_ref=journal_record.project_ref AND receipt.command_ref=journal_record.command_ref
+     AND receipt.receipt_version=2;
 END;
 $$;
 REVOKE ALL ON FUNCTION platform.commit_media_image_operation(JSONB,CHAR) FROM PUBLIC;
@@ -726,7 +893,8 @@ GRANT EXECUTE ON FUNCTION platform.resolve_media_access(CHAR,CHAR) TO platform_m
 CREATE FUNCTION platform.recover_agent_media_command(
   p_handle_digest CHAR(64),p_caller_audience TEXT,p_command_ref TEXT
 ) RETURNS TABLE(
-  command_state TEXT,caller_request_fingerprint CHAR(64),operation_ref TEXT
+  command_state TEXT,caller_request_fingerprint CHAR(64),operation_ref TEXT,
+  receipt_version BIGINT,receipt_recorded_at TIMESTAMPTZ,receipt_kind TEXT,receipt_outcome TEXT
 )
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path=pg_catalog,platform AS $$
@@ -736,7 +904,8 @@ BEGIN
     RAISE EXCEPTION 'MEDIA_RUNTIME_CALLER_AUDIENCE_FORBIDDEN';
   END IF;
   RETURN QUERY
-  SELECT journal.state,journal.caller_request_fingerprint,journal.operation_ref
+  SELECT journal.state,journal.caller_request_fingerprint,journal.operation_ref,
+         receipt.receipt_version,receipt.recorded_at,receipt.command_kind,receipt.outcome
     FROM platform.admission_media_access_authorization authority
     JOIN platform.media_command_journal journal
       ON journal.site_ref=authority.site_id
@@ -745,6 +914,14 @@ BEGIN
      AND journal.project_ref=authority.project_ref
      AND journal.caller_audience=p_caller_audience
      AND journal.command_ref=p_command_ref
+    JOIN LATERAL (
+      SELECT item.receipt_version,item.recorded_at,item.command_kind,item.outcome
+        FROM platform.media_command_receipt item
+       WHERE item.caller_audience=journal.caller_audience AND item.site_ref=journal.site_ref
+         AND item.subject_ref=journal.subject_ref AND item.subject_generation=journal.subject_generation
+         AND item.project_ref=journal.project_ref AND item.command_ref=journal.command_ref
+       ORDER BY item.receipt_version DESC LIMIT 1
+    ) receipt ON true
    WHERE authority.handle_digest=p_handle_digest
      AND authority.state='active' AND authority.expires_at>statement_timestamp();
 END;

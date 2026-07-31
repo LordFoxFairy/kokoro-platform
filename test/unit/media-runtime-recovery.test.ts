@@ -26,15 +26,23 @@ describe("Agent Media recovery", () => {
       .resolves.toEqual({ kind: "not_found" });
     database.recoverAgentMediaCommand.mockResolvedValueOnce([{
       commandState: "processing", callerRequestFingerprint: fingerprint, operationRef: null,
+      receiptVersion: 1n, receiptRecordedAt: "2026-07-31T11:59:59.000Z",
+      receiptKind: "create_agent_image_operation", receiptOutcome: "submit_outcome_unknown",
     }]);
     await expect(query.recoverByCommand({ mediaAccessHandle: access, commandRef }))
-      .resolves.toEqual({ kind: "processing", callerRequestFingerprint: fingerprint });
+      .resolves.toEqual({ kind: "processing", callerRequestFingerprint: fingerprint,
+        receipt: { version: 1n, recordedAt: "2026-07-31T11:59:59.000Z",
+          commandKind: "create_agent_image_operation", outcome: "submit_outcome_unknown" } });
     database.recoverAgentMediaCommand.mockResolvedValueOnce([{
       commandState: "committed", callerRequestFingerprint: fingerprint, operationRef: "media-operation:one",
+      receiptVersion: 2n, receiptRecordedAt: "2026-07-31T12:00:00.000Z",
+      receiptKind: "create_agent_image_operation", receiptOutcome: "submit_accepted",
     }]);
     await expect(query.recoverByCommand({ mediaAccessHandle: access, commandRef }))
       .resolves.toEqual({ kind: "committed", callerRequestFingerprint: fingerprint,
-        operationRef: "media-operation:one" });
+        operationRef: "media-operation:one", receipt: { version: 2n,
+          recordedAt: "2026-07-31T12:00:00.000Z",
+          commandKind: "create_agent_image_operation", outcome: "submit_accepted" } });
   });
 
   it("returns rejected-without-view for not-found and unknown-without-view for processing", async () => {
@@ -53,10 +61,37 @@ describe("Agent Media recovery", () => {
     expect(missing.receipt?.outcome?.case).toBe("submitRejected");
     expect(missing.operation).toBeUndefined();
     query.recoverByCommand.mockResolvedValueOnce({ kind: "processing",
-      callerRequestFingerprint: fingerprint });
+      callerRequestFingerprint: fingerprint, receipt: { version: 1n,
+        recordedAt: "2026-07-31T11:59:59.000Z",
+        commandKind: "create_agent_image_operation", outcome: "submit_outcome_unknown" } });
     const processing = await service.recoverMediaOperationByCommand(request, context);
     expect(processing.receipt?.outcome?.case).toBe("submitOutcomeUnknown");
     expect(processing.operation).toBeUndefined();
     expect(query.get).not.toHaveBeenCalled();
+  });
+
+  it("replays the exact durable accepted receipt instead of recomputing time or version", async () => {
+    const query = { recoverByCommand: vi.fn(), get: vi.fn() };
+    const service = createMediaRuntimeConnectService({
+      application: { submitAgentImage: vi.fn() }, query,
+      caller: { resolve: () => ({ identity: "spiffe://kokoro/ga" }) },
+      agentCallerIdentity: "spiffe://kokoro/ga", clock: () => new Date("2026-08-01T12:00:00.000Z"),
+    });
+    query.recoverByCommand.mockResolvedValueOnce({
+      kind: "committed", callerRequestFingerprint: fingerprint, operationRef: "media-operation:one",
+      receipt: { version: 2n, recordedAt: "2026-07-31T12:00:00.000Z",
+        commandKind: "create_agent_image_operation", outcome: "submit_accepted" },
+    });
+    query.get.mockResolvedValueOnce({ mediaOperationHandle: "media_handle_v1.operation",
+      operationRef: "media-operation:one", ownerVersion: 1n, state: "queued",
+      observedAt: "2026-07-31T12:00:00.000Z", candidates: [] });
+    const response = await service.recoverMediaOperationByCommand(
+      create(RecoverMediaOperationByCommandRequestSchema, {
+        mediaAccessHandle: access, mediaCommandRef: commandRef,
+      }),
+      { signal: new AbortController().signal } as HandlerContext,
+    );
+    expect(response.receipt?.outcome?.value?.receiptVersion).toBe(2n);
+    expect(response.receipt?.outcome?.value?.recordedAt?.seconds).toBe(1_785_499_200n);
   });
 });

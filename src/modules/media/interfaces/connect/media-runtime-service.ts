@@ -75,8 +75,8 @@ export function createMediaRuntimeConnectService(input: Readonly<{
               mediaCommandRef: request.agentMediaCommandRef,
               callerRequestFingerprint: result.callerRequestFingerprint,
               operationRef: result.operationRef,
-              receiptVersion: 1n,
-              recordedAt: timestampFromDate(instant(clock())),
+              receiptVersion: result.receipt.version,
+              recordedAt: timestampFromDate(storedInstant(result.receipt.recordedAt)),
               recoveryAction: MediaCommandRecoveryAction.GET_OPERATION,
             }),
           } }),
@@ -105,7 +105,6 @@ export function createMediaRuntimeConnectService(input: Readonly<{
       if (VALIDATOR.validate(RecoverMediaOperationByCommandRequestSchema, request).kind !== "valid") {
         throw new ConnectError("media recovery request invalid", Code.InvalidArgument);
       }
-      const recordedAt = timestampFromDate(instant(clock()));
       const recovered = await input.query.recoverByCommand({
         mediaAccessHandle: request.mediaAccessHandle,
         commandRef: request.mediaCommandRef,
@@ -120,7 +119,7 @@ export function createMediaRuntimeConnectService(input: Readonly<{
               error: create(MediaRuntimeErrorSchema, { code: MediaRuntimeErrorCode.OPERATION_NOT_FOUND,
                 safeMessage: "media command not found" }),
               receiptVersion: 1n,
-              recordedAt,
+              recordedAt: timestampFromDate(instant(clock())),
             }),
           } }),
         });
@@ -134,8 +133,8 @@ export function createMediaRuntimeConnectService(input: Readonly<{
               callerRequestFingerprint: recovered.callerRequestFingerprint,
               error: create(MediaRuntimeErrorSchema, { code: MediaRuntimeErrorCode.OUTCOME_UNKNOWN,
                 safeMessage: "media command outcome is not yet known" }),
-              receiptVersion: 1n,
-              recordedAt,
+              receiptVersion: recovered.receipt.version,
+              recordedAt: timestampFromDate(storedInstant(recovered.receipt.recordedAt)),
               recoveryAction: MediaCommandRecoveryAction.RECOVER_COMMAND,
             }),
           } }),
@@ -151,8 +150,8 @@ export function createMediaRuntimeConnectService(input: Readonly<{
             mediaCommandRef: request.mediaCommandRef,
             callerRequestFingerprint: recovered.callerRequestFingerprint,
             operationRef: recovered.operationRef,
-            receiptVersion: 1n,
-            recordedAt,
+            receiptVersion: recovered.receipt.version,
+            recordedAt: timestampFromDate(storedInstant(recovered.receipt.recordedAt)),
             recoveryAction: MediaCommandRecoveryAction.GET_OPERATION,
           }),
         } }),
@@ -209,6 +208,10 @@ function connectError(error: unknown, signal: AbortSignal): ConnectError {
 function instant(value: Date): Date {
   if (!Number.isFinite(value.getTime())) throw new Error("MEDIA_RUNTIME_CLOCK_INVALID");
   return value;
+}
+
+function storedInstant(value: string): Date {
+  return instant(new Date(value));
 }
 
 function unimplemented(message: string): never {

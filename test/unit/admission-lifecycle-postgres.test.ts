@@ -53,6 +53,7 @@ class LifecycleSql implements PlatformSqlTransaction {
       this.projectionState = values[0] as "revoked" | "expired";
       return 1;
     }
+    if (statement.startsWith("UPDATE platform.admission_media_access_authorization")) return 0;
     if (statement.startsWith("UPDATE platform.admission_execution_manifest")) {
       if (this.manifest === undefined || this.manifest.state !== values[6] || this.manifest.segmentVersion !== values[7]) {
         return 0;

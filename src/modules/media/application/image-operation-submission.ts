@@ -58,6 +58,10 @@ export type MediaImageAdmissionFacts = Readonly<{
   parentAllocationRef: string;
   maximumCredit: bigint;
   trustInputDecisionRef: string;
+  agentCommandAuthorization?: Readonly<{
+    accessAuthorizationHandleDigest: string;
+    projectionReservationDigest: string;
+  }> | undefined;
 }>;
 
 export interface AgentImageAccessOwnerPort {
@@ -91,7 +95,15 @@ export type MediaImageCommandIdentity = Readonly<{
   subjectRef: string;
   subjectGeneration: bigint;
   projectRef: string;
+  workloadRef: string;
+  source: "direct_studio" | "agent_runtime";
+  definitionRevisionRef: string;
+  modelOptionRevisionRef: string;
   commandRef: string;
+  agentCommandAuthorization?: Readonly<{
+    accessAuthorizationHandleDigest: string;
+    projectionReservationDigest: string;
+  }> | undefined;
 }>;
 
 export type MediaImageOperationRecord = Readonly<{
@@ -106,6 +118,8 @@ export type MediaImageOperationRecord = Readonly<{
   artifactRefs: readonly string[];
   artifactVersionRefs: readonly string[];
   credit: Readonly<{
+    executionBudgetRootRef: string;
+    parentAllocationRef: string;
     childAllocationRef: string;
     allocationReservationReceiptRef: string;
   }>;
@@ -121,15 +135,24 @@ export type MediaImageOperationRecord = Readonly<{
 }>;
 
 export type MediaImageCommandBegin =
-  | Readonly<{ kind: "started"; leaseToken: string }>
-  | Readonly<{ kind: "replayed"; operationRef: string; callerRequestFingerprint: string }>;
+  | Readonly<{ kind: "started"; leaseToken: string; receipt: MediaCommandDurableReceipt }>
+  | Readonly<{ kind: "replayed"; operationRef: string; callerRequestFingerprint: string;
+    receipt: MediaCommandDurableReceipt }>;
+
+export type MediaCommandDurableReceipt = Readonly<{
+  version: bigint;
+  recordedAt: string;
+  commandKind: "create_agent_image_operation";
+  outcome: "submit_outcome_unknown" | "submit_accepted";
+}>;
 
 export interface MediaImageOperationRepository {
   begin(transaction: PlatformTransaction, command: MediaImageCommandIdentity & Readonly<{
     callerRequestFingerprint: string;
     ownerRequestDigest: string;
   }>): Promise<MediaImageCommandBegin>;
-  complete(transaction: PlatformTransaction, leaseToken: string, record: MediaImageOperationRecord): Promise<void>;
+  complete(transaction: PlatformTransaction, leaseToken: string,
+    record: MediaImageOperationRecord): Promise<MediaCommandDurableReceipt>;
 }
 
 export interface MediaImageUnitOfWork {
@@ -186,6 +209,7 @@ export class ImageOperationSubmissionService {
     kind: "created" | "replayed";
     operationRef: string;
     callerRequestFingerprint: string;
+    receipt: MediaCommandDurableReceipt;
   }>> {
     reference(input.callerAudience);
     reference(input.commandRef);
@@ -219,6 +243,7 @@ export class ImageOperationSubmissionService {
     kind: "created" | "replayed";
     operationRef: string;
     callerRequestFingerprint: string;
+    receipt: MediaCommandDurableReceipt;
   }>> {
     const agentAccess = this.#dependencies.agentAccess;
     if (agentAccess === undefined) throw new Error("MEDIA_AGENT_ACCESS_OWNER_REQUIRED");
@@ -260,6 +285,7 @@ export class ImageOperationSubmissionService {
     kind: "created" | "replayed";
     operationRef: string;
     callerRequestFingerprint: string;
+    receipt: MediaCommandDurableReceipt;
   }>> {
     const admission = input.admission;
     const canonicalBytes = input.canonicalBytes;
@@ -274,9 +300,15 @@ export class ImageOperationSubmissionService {
       subjectRef: admission.ownerBinding.subjectRef,
       subjectGeneration: admission.ownerBinding.subjectGeneration,
       projectRef: admission.ownerBinding.projectRef,
+      workloadRef: admission.ownerBinding.workloadRef,
+      source: admission.ownerBinding.source,
+      definitionRevisionRef: admission.ownerBinding.definitionRevisionRef,
+      modelOptionRevisionRef: admission.ownerBinding.modelOptionRevisionRef,
       commandRef: input.commandRef,
       callerRequestFingerprint: input.callerRequestFingerprint,
       ownerRequestDigest,
+      ...(admission.agentCommandAuthorization === undefined
+        ? {} : { agentCommandAuthorization: admission.agentCommandAuthorization }),
     });
     return this.#dependencies.unitOfWork.execute(admission.ownerBinding, async (transaction) => {
       const begun = await this.#dependencies.repository.begin(transaction, command);
@@ -343,7 +375,8 @@ export class ImageOperationSubmissionService {
         modelInvocationCommandRefs: Object.freeze([modelInvocationCommandRef]),
         artifactRefs: Object.freeze(candidates.map((item) => item.artifactRef)),
         artifactVersionRefs: Object.freeze(candidates.map((item) => item.artifactVersionRef)),
-        credit: Object.freeze({ ...credit }),
+        credit: Object.freeze({ executionBudgetRootRef: admission.executionBudgetRootRef,
+          parentAllocationRef: admission.parentAllocationRef, ...credit }),
         trustInputDecisionRef: admission.trustInputDecisionRef,
         dispatchOutbox: Object.freeze({
           outboxRef: this.#dependencies.reference("media-dispatch-outbox"),
@@ -354,9 +387,9 @@ export class ImageOperationSubmissionService {
         }),
         createdAt,
       });
-      await this.#dependencies.repository.complete(transaction, begun.leaseToken, record);
+      const receipt = await this.#dependencies.repository.complete(transaction, begun.leaseToken, record);
       return Object.freeze({ kind: "created" as const, operationRef: operationRefValue,
-        callerRequestFingerprint: input.callerRequestFingerprint });
+        callerRequestFingerprint: input.callerRequestFingerprint, receipt });
     });
   }
 
@@ -375,6 +408,7 @@ export class InMemoryMediaImageOperationRepository implements MediaImageOperatio
     ownerRequestDigest: string;
     leaseToken: string;
     operationRef?: string | undefined;
+    receipt: MediaCommandDurableReceipt;
   }>>();
   readonly #records = new Map<string, MediaImageOperationRecord>();
   #serial = 0;
@@ -389,12 +423,13 @@ export class InMemoryMediaImageOperationRepository implements MediaImageOperatio
       }
       if (prior.operationRef === undefined) throw new Error("MEDIA_COMMAND_PENDING");
       return Object.freeze({ kind: "replayed" as const, operationRef: prior.operationRef,
-        callerRequestFingerprint: prior.callerRequestFingerprint });
+        callerRequestFingerprint: prior.callerRequestFingerprint, receipt: prior.receipt });
     }
     const leaseToken = `media-command-lease:${++this.#serial}`;
+    const receipt = durableReceipt(1n, "1970-01-01T00:00:00.000Z", "submit_outcome_unknown");
     this.#commands.set(key, Object.freeze({ callerRequestFingerprint: command.callerRequestFingerprint,
-      ownerRequestDigest: command.ownerRequestDigest, leaseToken }));
-    return Object.freeze({ kind: "started" as const, leaseToken });
+      ownerRequestDigest: command.ownerRequestDigest, leaseToken, receipt }));
+    return Object.freeze({ kind: "started" as const, leaseToken, receipt });
   }
 
   async complete(_transaction: PlatformTransaction, leaseToken: string, record: MediaImageOperationRecord) {
@@ -404,13 +439,23 @@ export class InMemoryMediaImageOperationRepository implements MediaImageOperatio
       throw new Error("MEDIA_COMMAND_LEASE_LOST");
     }
     const operationRefValue = record.plan.operation.operationRef;
+    const receipt = durableReceipt(2n, record.createdAt, "submit_accepted");
     this.#records.set(operationRefValue, record);
-    this.#commands.set(key, Object.freeze({ ...pending, operationRef: operationRefValue }));
+    this.#commands.set(key, Object.freeze({ ...pending, operationRef: operationRefValue, receipt }));
+    return receipt;
   }
 
   inspect(operationRefValue: string): MediaImageOperationRecord | undefined {
     return this.#records.get(operationRefValue);
   }
+}
+
+function durableReceipt(
+  version: bigint,
+  recordedAt: string,
+  outcome: MediaCommandDurableReceipt["outcome"],
+): MediaCommandDurableReceipt {
+  return Object.freeze({ version, recordedAt, commandKind: "create_agent_image_operation" as const, outcome });
 }
 
 function commandKey(command: MediaImageCommandIdentity): string {

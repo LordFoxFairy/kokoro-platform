@@ -102,9 +102,9 @@ export class PostgresAdmissionLifecycleOwner implements AdmissionLifecycleOwnerP
     }
     if (input.ownerFacts.runtime.media !== undefined) {
       const mediaChanged = await sql.execute(
-        `UPDATE platform.admission_media_access_authorization
+         `UPDATE platform.admission_media_access_authorization
             SET execution_manifest_ref=$1,execution_budget_root_ref=$2,root_hold_ref=$3,
-                authorization_segment_ref=$4,expires_at=$5::timestamptz,updated_at=now()
+                authorization_segment_ref=$4,expires_at=LEAST(expires_at,$5::timestamptz),updated_at=now()
           WHERE handle_digest=$6 AND site_id=$7 AND session_id=$8 AND run_id=$9
             AND state='reserved' AND execution_manifest_ref IS NULL`,
         [input.manifestRef, input.executionBudgetRootRef, input.rootHoldRef,

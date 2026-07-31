@@ -8,6 +8,7 @@ export type {
   MediaImageAdmissionFacts,
   MediaImageAdmissionOwnerPort,
   MediaImageCommandBegin,
+  MediaCommandDurableReceipt,
   MediaImageCommandIdentity,
   MediaImageCreditAllocationPort,
   MediaImageOperationRecord,

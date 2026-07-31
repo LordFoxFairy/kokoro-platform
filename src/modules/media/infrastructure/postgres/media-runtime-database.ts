@@ -81,7 +81,9 @@ implements AgentImageAccessDatabase, MediaRuntimeQueryDatabase, MediaImageUnitOf
     return this.#query<Awaited<ReturnType<MediaRuntimeQueryDatabase["recoverAgentMediaCommand"]>>[number]>(
       `SELECT command_state AS "commandState",
               caller_request_fingerprint AS "callerRequestFingerprint",
-              operation_ref AS "operationRef"
+              operation_ref AS "operationRef",receipt_version AS "receiptVersion",
+              receipt_recorded_at AS "receiptRecordedAt",receipt_kind AS "receiptKind",
+              receipt_outcome AS "receiptOutcome"
          FROM platform.recover_agent_media_command($1,$2,$3)`,
       [input.handleDigest, input.callerAudience, input.commandRef],
     );
@@ -229,7 +231,7 @@ SELECT current_user AS "currentUser",current_database() AS "currentDatabase",own
        has_schema_privilege(current_user,'platform','USAGE') AS "canUseSchema",
        has_function_privilege(current_user,'platform.assert_media_runtime_role(text)','EXECUTE') AS "canExecuteAssert",
        has_function_privilege(current_user,'platform.resolve_media_access(character,character)','EXECUTE') AS "canExecuteResolve",
-       has_function_privilege(current_user,'platform.begin_media_image_command(text,text,text,bigint,text,text,character,character,character)','EXECUTE') AS "canExecuteBegin",
+       has_function_privilege(current_user,'platform.begin_media_image_command(text,character,character,text,text,bigint,text,text,text,text,text,text,character,character,character)','EXECUTE') AS "canExecuteBegin",
        has_function_privilege(current_user,'platform.commit_media_image_operation(jsonb,character)','EXECUTE') AS "canExecuteCommit",
        has_function_privilege(current_user,'platform.recover_agent_media_command(character,text,text)','EXECUTE') AS "canExecuteRecover",
        has_function_privilege(current_user,'platform.get_agent_media_operation(character,text)','EXECUTE') AS "canExecuteGet",
@@ -241,6 +243,7 @@ SELECT current_user AS "currentUser",current_database() AS "currentDatabase",own
              'platform.media_operation_input_revision',
              'platform.media_operation',
              'platform.media_command_journal',
+             'platform.media_command_receipt',
              'platform.media_candidate',
              'platform.media_dispatch_outbox',
              'platform.media_provider_effect_journal',

@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import {
-  CopyObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
@@ -43,7 +42,12 @@ export class S3ArtifactObjectStore implements ArtifactObjectStore {
     const contentSha256 = createHash("sha256").update(input.bytes).digest("hex");
     const stagedKey = this.#key("staged", ownerScope, input.artifactRef, input.artifactVersionRef);
     const readyKey = this.#key("ready", ownerScope, input.artifactRef, input.artifactVersionRef);
-    if (await this.#head(readyKey) !== null) throw new Error("ARTIFACT_ALREADY_PROMOTED");
+    const ready = await this.#head(readyKey);
+    if (ready !== null) {
+      assertObject(ready, contentSha256, input.bytes.byteLength, input.mediaType);
+      return stagedReceipt(ownerScope, input.artifactRef, input.artifactVersionRef,
+        stagedKey, contentSha256, input.bytes.byteLength, input.mediaType);
+    }
     const prior = await this.#head(stagedKey);
     if (prior !== null) {
       assertObject(prior, contentSha256, input.bytes.byteLength, input.mediaType);
@@ -94,24 +98,47 @@ export class S3ArtifactObjectStore implements ArtifactObjectStore {
     const source = await this.#head(stagedKey);
     if (source === null) throw new Error("ARTIFACT_STAGED_OBJECT_NOT_FOUND");
     assertObject(source, staged.contentSha256, Number(staged.byteSize), staged.mediaType);
-    await this.dependencies.client.send(new CopyObjectCommand({
-      Bucket: this.dependencies.bucket,
-      Key: readyKey,
-      CopySource: `${this.dependencies.bucket}/${stagedKey}`,
-      CopySourceIfMatch: source.eTag,
-      ContentType: staged.mediaType,
-      MetadataDirective: "REPLACE",
-      Metadata: { "content-sha256": staged.contentSha256,
-        "byte-size": staged.byteSize.toString(),
-        "trust-decision-ref": input.trustDecision.decisionRef },
-      ServerSideEncryption: "AES256",
-    }));
+    let fetched;
+    try {
+      fetched = await this.dependencies.client.send(new GetObjectCommand({
+        Bucket: this.dependencies.bucket,
+        Key: stagedKey,
+        IfMatch: source.eTag,
+      }));
+    } catch (error) {
+      if (preconditionFailed(error)) throw new Error("ARTIFACT_PROMOTION_SOURCE_CHANGED");
+      throw error;
+    }
+    if (fetched.Body === undefined || fetched.ContentLength !== Number(staged.byteSize)) {
+      throw new Error("ARTIFACT_PROMOTION_SOURCE_CHANGED");
+    }
+    const bytes = await collectBoundedBody(fetched.Body, Number(staged.byteSize));
+    if (createHash("sha256").update(bytes).digest("hex") !== staged.contentSha256) {
+      throw new Error("ARTIFACT_PROMOTION_SOURCE_CHANGED");
+    }
+    try {
+      await this.dependencies.client.send(new PutObjectCommand({
+        Bucket: this.dependencies.bucket,
+        Key: readyKey,
+        Body: bytes,
+        ContentLength: bytes.byteLength,
+        ContentType: staged.mediaType,
+        ChecksumSHA256: Buffer.from(staged.contentSha256, "hex").toString("base64"),
+        IfNoneMatch: "*",
+        Metadata: { "content-sha256": staged.contentSha256,
+          "byte-size": staged.byteSize.toString(),
+          "trust-decision-ref": input.trustDecision.decisionRef },
+        ServerSideEncryption: "AES256",
+      }));
+    } catch (error) {
+      const raced = await this.#head(readyKey);
+      if (raced === null) throw error;
+      assertReadyObject(raced, staged, input.trustDecision.decisionRef);
+      return readyReceipt(staged, readyKey, input.trustDecision.decisionRef);
+    }
     const promoted = await this.#head(readyKey);
     if (promoted === null) throw new Error("ARTIFACT_PROMOTION_UNCONFIRMED");
-    assertObject(promoted, staged.contentSha256, Number(staged.byteSize), staged.mediaType);
-    if (promoted.metadata["trust-decision-ref"] !== input.trustDecision.decisionRef) {
-      throw new Error("ARTIFACT_PROMOTION_UNCONFIRMED");
-    }
+    assertReadyObject(promoted, staged, input.trustDecision.decisionRef);
     await this.dependencies.client.send(new DeleteObjectCommand({
       Bucket: this.dependencies.bucket,
       Key: stagedKey,
@@ -238,6 +265,18 @@ function assertObject(
       object.metadata["byte-size"] !== String(byteSize)) throw new Error("ARTIFACT_STAGE_CONFLICT");
 }
 
+function assertReadyObject(
+  object: Readonly<{ contentLength: number; contentType: string;
+    metadata: Readonly<Record<string, string | undefined>> }>,
+  staged: ArtifactStagedReceipt,
+  trustDecisionRef: string,
+): void {
+  assertObject(object, staged.contentSha256, Number(staged.byteSize), staged.mediaType);
+  if (object.metadata["trust-decision-ref"] !== trustDecisionRef) {
+    throw new Error("ARTIFACT_TRUST_BINDING_MISMATCH");
+  }
+}
+
 function objectMetadata(object: Readonly<{ contentLength: number; contentType: string;
   metadata: Readonly<Record<string, string | undefined>> }>): Readonly<{
   contentSha256: string;
@@ -266,6 +305,26 @@ async function* boundedBody(body: unknown, expectedBytes: number, signal: AbortS
   if (received !== expectedBytes) throw new Error("ARTIFACT_OBJECT_BODY_TRUNCATED");
 }
 
+async function collectBoundedBody(body: unknown, expectedBytes: number): Promise<Uint8Array> {
+  if (!asyncIterable(body)) throw new Error("ARTIFACT_OBJECT_BODY_INVALID");
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  for await (const raw of body) {
+    if (!(raw instanceof Uint8Array)) throw new Error("ARTIFACT_OBJECT_BODY_INVALID");
+    received += raw.byteLength;
+    if (received > expectedBytes) throw new Error("ARTIFACT_OBJECT_BODY_EXCEEDED");
+    chunks.push(new Uint8Array(raw));
+  }
+  if (received !== expectedBytes) throw new Error("ARTIFACT_OBJECT_BODY_TRUNCATED");
+  const value = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    value.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return value;
+}
+
 function asyncIterable(value: unknown): value is AsyncIterable<Uint8Array> {
   return typeof value === "object" && value !== null && Symbol.asyncIterator in value;
 }
@@ -278,6 +337,12 @@ function notFound(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
   const value = error as Readonly<{ name?: unknown; $metadata?: Readonly<{ httpStatusCode?: unknown }> }>;
   return value.name === "NotFound" || value.name === "NoSuchKey" || value.$metadata?.httpStatusCode === 404;
+}
+
+function preconditionFailed(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const value = error as Readonly<{ name?: unknown; $metadata?: Readonly<{ httpStatusCode?: unknown }> }>;
+  return value.name === "PreconditionFailed" || value.$metadata?.httpStatusCode === 412;
 }
 
 function reference(value: string): void {
