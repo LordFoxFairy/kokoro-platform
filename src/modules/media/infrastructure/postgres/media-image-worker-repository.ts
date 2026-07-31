@@ -64,7 +64,7 @@ export type MediaImageWorkerTaskRow = Readonly<{
   subjectGeneration: bigint | string;
   projectRef: string;
   workloadRef: string;
-  source: "direct_studio" | "agent_runtime";
+  source: string;
   definitionRevisionRef: string;
   modelOptionRevisionRef: string;
   operationInputRevisionRef: string;
@@ -381,9 +381,12 @@ function taskFromRow(
   capabilityOpener: MediaImageCapabilityOpener,
   nowMs: number,
 ): MediaImageWorkerTask {
+  // The active worker projection is produced only by the Agent command owner. Direct Studio
+  // remains fail-closed until its journal persists the complete DirectStudioOwnerAuthority.
+  if (row.source !== "agent_runtime") throw new Error("MEDIA_WORKER_OWNER_BINDING_UNSUPPORTED");
   const ownerBinding: MediaOperationOwnerBinding = Object.freeze({ siteRef: row.siteRef,
     subjectRef: row.subjectRef, subjectGeneration: integer(row.subjectGeneration, "MEDIA_WORKER_TASK_INVALID"),
-    projectRef: row.projectRef, workloadRef: row.workloadRef, source: row.source,
+    projectRef: row.projectRef, workloadRef: row.workloadRef, source: "agent_runtime",
     definitionRevisionRef: row.definitionRevisionRef, modelOptionRevisionRef: row.modelOptionRevisionRef });
   const protectedInput: ProtectedOperationInputRevision = Object.freeze({
     operationInputRevisionRef: row.operationInputRevisionRef,

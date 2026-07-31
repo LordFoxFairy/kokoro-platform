@@ -155,6 +155,18 @@ describe("Postgres Media image worker repository", () => {
       leaseMs: 30_000 })).rejects.toThrow("MEDIA_INPUT_AUTHENTICATION_FAILED");
   });
 
+  it("rejects Direct Studio rows until the worker projection carries its complete authority fence", async () => {
+    const database = new FakeDatabase();
+    database.claimResult = [{ ...taskRow(), source: "direct_studio" }];
+    const repository = new PostgresMediaImageWorkerRepository({ database,
+      inputProtector: new EnvelopeOperationInputProtector({ activeKey: { keyRevisionRef: "media-kek:one", key } }),
+      capabilityOpener: opener,
+      leaseToken: () => "lease-token-that-never-enters-postgres" });
+
+    await expect(repository.claim({ workerId: "worker:one", now: "2026-07-31T00:00:00.000Z",
+      leaseMs: 30_000 })).rejects.toThrow("MEDIA_WORKER_OWNER_BINDING_UNSUPPORTED");
+  });
+
   it("fails closed when the owner-frozen Definition policy is absent", async () => {
     const database = new FakeDatabase();
     const row = taskRow();
