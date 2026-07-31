@@ -678,30 +678,6 @@ export const zMemoryExportState = z.enum([
     'purged'
 ]);
 
-export const zMemoryExportStatus = z.strictObject({
-    artifactDownloadRequest: zMemoryArtifactDownloadRequest.nullable(),
-    expiresAt: z.iso.datetime().nullable(),
-    exportRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
-    failureCode: z.enum([
-        'policy_rejected',
-        'source_unavailable',
-        'temporarily_unavailable'
-    ]).nullable(),
-    format: z.literal('kokoro_memory_export_v1'),
-    requestedAt: z.iso.datetime(),
-    state: zMemoryExportState,
-    updatedAt: z.iso.datetime()
-});
-
-export const zMemoryExportCommandResult = z.strictObject({
-    export: zMemoryExportStatus,
-    resultKind: z.literal('export')
-});
-
-export const zMemoryExportResponse = z.strictObject({
-    export: zMemoryExportStatus
-});
-
 /**
  * References one currently authorized, quarantined Asset version. Platform obtains the authoritative content identity and quarantine facts directly from Asset; neither is caller input.
  */
@@ -721,33 +697,6 @@ export const zMemoryImportState = z.enum([
     'rejected',
     'failed'
 ]);
-
-export const zMemoryImportStatus = z.strictObject({
-    acceptedEntryCount: z.int().gte(0).lte(100000),
-    assetRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
-    assetVersionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
-    format: z.literal('kokoro_memory_export_v1'),
-    importRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
-    rejectedEntryCount: z.int().gte(0).lte(100000),
-    requestedAt: z.iso.datetime(),
-    safeStatusCode: z.enum([
-        'awaiting_review',
-        'invalid_manifest',
-        'policy_rejected',
-        'temporarily_unavailable'
-    ]).nullable(),
-    state: zMemoryImportState,
-    updatedAt: z.iso.datetime()
-});
-
-export const zMemoryImportCommandResult = z.strictObject({
-    import: zMemoryImportStatus,
-    resultKind: z.literal('import')
-});
-
-export const zMemoryImportResponse = z.strictObject({
-    import: zMemoryImportStatus
-});
 
 export const zMemoryNullableRevisionRef = z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/).nullable();
 
@@ -884,15 +833,6 @@ export const zArtifactPage = z.strictObject({
 
 export const zMediaOperationDefinitionPage = z.strictObject({
     items: z.array(zOperationDefinition).max(100),
-    pageInfo: zPageInfo
-});
-
-/**
- * Revisions are append-only. Restoring an available payload always appends a new current revision; it never mutates an existing revision or rewinds the current head.
- */
-export const zMemoryEntryHistoryPage = z.strictObject({
-    entryRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
-    items: z.array(zMemoryRevisionView).max(100),
     pageInfo: zPageInfo
 });
 
@@ -1538,9 +1478,69 @@ export const zMemoryEntryResponse = z.strictObject({
     observedSpaceVersion: zPositiveUint64String
 });
 
+/**
+ * statusVersion starts at one and increases on every persisted change to this public status projection. For one exportRef, a lower version is stale and must never replace a higher one; a replay at the same version is byte-equivalent. State transitions are restricted to the declared directed graph, so ready, expired, failed, or purged cannot regress to active work.
+ */
+export const zMemoryExportStatus = z.strictObject({
+    artifactDownloadRequest: zMemoryArtifactDownloadRequest.nullable(),
+    expiresAt: z.iso.datetime().nullable(),
+    exportRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    failureCode: z.enum([
+        'policy_rejected',
+        'source_unavailable',
+        'temporarily_unavailable'
+    ]).nullable(),
+    format: z.literal('kokoro_memory_export_v1'),
+    requestedAt: z.iso.datetime(),
+    state: zMemoryExportState,
+    statusVersion: zPositiveUint64String,
+    updatedAt: z.iso.datetime()
+});
+
+export const zMemoryExportCommandResult = z.strictObject({
+    export: zMemoryExportStatus,
+    resultKind: z.literal('export')
+});
+
+export const zMemoryExportResponse = z.strictObject({
+    export: zMemoryExportStatus
+});
+
 export const zMemoryForgetInput = z.strictObject({
     acknowledgeIrreversiblePurge: z.literal(true),
     expectedEntryVersion: zPositiveUint64String
+});
+
+/**
+ * statusVersion starts at one and increases on every persisted change to this public status projection. For one importRef, a lower version is stale and must never replace a higher one; a replay at the same version is byte-equivalent. State transitions are restricted to the declared directed graph. completed is terminal and carries the exact resultingSpaceVersion committed by the apply transaction; every other state carries null.
+ */
+export const zMemoryImportStatus = z.strictObject({
+    acceptedEntryCount: z.int().gte(0).lte(100000),
+    assetRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    assetVersionRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    format: z.literal('kokoro_memory_export_v1'),
+    importRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    rejectedEntryCount: z.int().gte(0).lte(100000),
+    requestedAt: z.iso.datetime(),
+    resultingSpaceVersion: zPositiveUint64String.nullable(),
+    safeStatusCode: z.enum([
+        'awaiting_review',
+        'invalid_manifest',
+        'policy_rejected',
+        'temporarily_unavailable'
+    ]).nullable(),
+    state: zMemoryImportState,
+    statusVersion: zPositiveUint64String,
+    updatedAt: z.iso.datetime()
+});
+
+export const zMemoryImportCommandResult = z.strictObject({
+    import: zMemoryImportStatus,
+    resultKind: z.literal('import')
+});
+
+export const zMemoryImportResponse = z.strictObject({
+    import: zMemoryImportStatus
 });
 
 /**
@@ -1549,6 +1549,16 @@ export const zMemoryForgetInput = z.strictObject({
 export const zMemoryOwnerSnapshot = z.strictObject({
     snapshotRef: z.string().min(3).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,255}$/),
     spaceVersion: zPositiveUint64String
+});
+
+/**
+ * Revision identities and lineage are append-only, while the public availability of revision payloads may still change after forget, reset, or purge. The first page creates ownerSnapshot and every continuation returns the identical snapshotRef and spaceVersion. If the owner version changed, the cursor is rejected instead of returning an older plaintext projection. Restoring an available payload always appends a new current revision; it never mutates an existing revision or rewinds the current head.
+ */
+export const zMemoryEntryHistoryPage = z.strictObject({
+    entryRef: z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/),
+    items: z.array(zMemoryRevisionView).max(100),
+    ownerSnapshot: zMemoryOwnerSnapshot,
+    pageInfo: zPageInfo
 });
 
 /**

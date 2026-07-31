@@ -1160,11 +1160,12 @@ export type MemoryEntryCommandResult = {
 };
 
 /**
- * Revisions are append-only. Restoring an available payload always appends a new current revision; it never mutates an existing revision or rewinds the current head.
+ * Revision identities and lineage are append-only, while the public availability of revision payloads may still change after forget, reset, or purge. The first page creates ownerSnapshot and every continuation returns the identical snapshotRef and spaceVersion. If the owner version changed, the cursor is rejected instead of returning an older plaintext projection. Restoring an available payload always appends a new current revision; it never mutates an existing revision or rewinds the current head.
  */
 export type MemoryEntryHistoryPage = {
     entryRef: string;
     items: Array<MemoryRevisionView>;
+    ownerSnapshot: MemoryOwnerSnapshot;
     pageInfo: PageInfo;
 };
 
@@ -1226,6 +1227,9 @@ export type MemoryExportResponse = {
 
 export type MemoryExportState = 'queued' | 'running' | 'ready' | 'failed' | 'expired' | 'purged';
 
+/**
+ * statusVersion starts at one and increases on every persisted change to this public status projection. For one exportRef, a lower version is stale and must never replace a higher one; a replay at the same version is byte-equivalent. State transitions are restricted to the declared directed graph, so ready, expired, failed, or purged cannot regress to active work.
+ */
 export type MemoryExportStatus = {
     artifactDownloadRequest: MemoryArtifactDownloadRequest | null;
     expiresAt: string | null;
@@ -1234,6 +1238,7 @@ export type MemoryExportStatus = {
     format: 'kokoro_memory_export_v1';
     requestedAt: string;
     state: MemoryExportState;
+    statusVersion: PositiveUint64String;
     updatedAt: string;
 };
 
@@ -1263,6 +1268,9 @@ export type MemoryImportResponse = {
 
 export type MemoryImportState = 'queued' | 'validating' | 'quarantined' | 'applying' | 'completed' | 'rejected' | 'failed';
 
+/**
+ * statusVersion starts at one and increases on every persisted change to this public status projection. For one importRef, a lower version is stale and must never replace a higher one; a replay at the same version is byte-equivalent. State transitions are restricted to the declared directed graph. completed is terminal and carries the exact resultingSpaceVersion committed by the apply transaction; every other state carries null.
+ */
 export type MemoryImportStatus = {
     acceptedEntryCount: number;
     assetRef: string;
@@ -1271,8 +1279,13 @@ export type MemoryImportStatus = {
     importRef: string;
     rejectedEntryCount: number;
     requestedAt: string;
+    /**
+     * Exact owner space version committed by a completed import, including a zero-entry completion. Null for every non-completed state.
+     */
+    resultingSpaceVersion: PositiveUint64String | null;
     safeStatusCode: null | 'awaiting_review' | 'invalid_manifest' | 'policy_rejected' | 'temporarily_unavailable';
     state: MemoryImportState;
+    statusVersion: PositiveUint64String;
     updatedAt: string;
 };
 
