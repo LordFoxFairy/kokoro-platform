@@ -214,6 +214,9 @@ describe("Platform migrator", () => {
         events.push("connect");
       },
       async query(sql, values) {
+        if (sql.includes("memoryRoleIdentityTablePreflight")) {
+          return { rows: [{ identityTableExists: false }] };
+        }
         if (sql.includes("memoryRolePreflight")) {
           events.push("preflight-memory-roles");
           return { rows: safeMemoryRoles() };
@@ -495,7 +498,8 @@ describe("Platform migrator", () => {
       /runtime_role\.rolname=\$3 AND \([\s\S]+grant_row\.table_name LIKE 'identity\\_%'/u,
     );
     for (const requiredEvidence of [
-      "has_database_privilege", "'CREATE'", "'TEMPORARY'", "nspname='public'",
+      "has_database_privilege", "'CREATE'", "'TEMPORARY'",
+      "has_schema_privilege(runtime_role.rolname,'public','USAGE')",
       "relkind='S'", "pg_default_acl", "defaclrole",
     ]) expect(memoryAuthoritySql).toContain(requiredEvidence);
     for (const expected of [
@@ -559,6 +563,9 @@ describe("Platform migrator", () => {
     const lockClient: MigrationLockClient = {
       async connect() {},
       async query(sql, values) {
+        if (sql.includes("memoryRoleIdentityTablePreflight")) {
+          return { rows: [{ identityTableExists: false }] };
+        }
         if (sql.includes("server_version_num")) return { rows: [safeMigratorAuthority()] };
         if (sql.includes("singleRuntimeRolePreflight")) {
           return { rows: [safeRole(String(values?.[0]))] };
@@ -592,6 +599,9 @@ describe("Platform migrator", () => {
     const lockClient: MigrationLockClient = {
       async connect() {},
       async query(sql, values) {
+        if (sql.includes("memoryRoleIdentityTablePreflight")) {
+          return { rows: [{ identityTableExists: false }] };
+        }
         if (sql.includes("memoryRolePreflight")) {
           return { rows: safeMemoryRoles() };
         }
@@ -671,6 +681,9 @@ describe("Platform migrator", () => {
       const lockClient: MigrationLockClient = {
         async connect() {},
         async query(sql, values) {
+          if (sql.includes("memoryRoleIdentityTablePreflight")) {
+            return { rows: [{ identityTableExists: false }] };
+          }
           if (sql.includes("memoryRolePreflight")) {
             return { rows: safeMemoryRoles() };
           }

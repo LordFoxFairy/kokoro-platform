@@ -321,13 +321,13 @@ describe("Platform PostgreSQL foundation", () => {
         [Object.values(memoryRoleNames)],
       );
       expect(privileges.rows).toEqual([
-        { role_name: memoryRoleNames.public, public_schema_usage: false,
+        { role_name: memoryRoleNames.public, public_schema_usage: true,
           public_schema_create: false, platform_schema_usage: false,
           platform_schema_create: false, relation_acl_count: "0", routine_acl_count: "0" },
-        { role_name: memoryRoleNames.runtime, public_schema_usage: false,
+        { role_name: memoryRoleNames.runtime, public_schema_usage: true,
           public_schema_create: false, platform_schema_usage: false,
           platform_schema_create: false, relation_acl_count: "0", routine_acl_count: "0" },
-        { role_name: memoryRoleNames.worker, public_schema_usage: false,
+        { role_name: memoryRoleNames.worker, public_schema_usage: true,
           public_schema_create: false, platform_schema_usage: true,
           platform_schema_create: false, relation_acl_count: "0", routine_acl_count: "3" },
       ]);
@@ -450,6 +450,109 @@ describe("Platform PostgreSQL foundation", () => {
           $1,$2,'revision_payload','completed',$3,$4::char(64),1,$5::char(64))`,
         [siteRef, purgeJobRef, `receipt-${suffix}`, "1".repeat(64), leaseTokenHash],
       )).resolves.toMatchObject({ rowCount: 1 });
+
+      const pinnedPreflightClient = new Client({ connectionString: migratorDatabaseUrl });
+      await pinnedPreflightClient.connect();
+      let migrationExecuted = false;
+      try {
+        await pinnedPreflightClient.query("BEGIN");
+        await pinnedPreflightClient.query(
+          `UPDATE platform.memory_database_role_identity
+              SET role_oid=(SELECT oid FROM pg_roles WHERE rolname=$1)
+            WHERE role_kind='worker'`,
+          [apiUser],
+        );
+        await expect(runPlatformMigrations({
+          environment: platformMigrationEnvironment(),
+          createLockClient: () => ({
+            connect: async () => undefined,
+            query: (sql, values) => pinnedPreflightClient.query(sql, values as unknown[]),
+            end: async () => undefined,
+          }),
+          execute: async () => {
+            migrationExecuted = true;
+            return 0;
+          },
+        })).rejects.toThrow("PLATFORM_MEMORY_ROLE_IDENTITY_PREFLIGHT_FAILED");
+        expect(migrationExecuted).toBe(false);
+      } finally {
+        await pinnedPreflightClient.query("ROLLBACK");
+        await pinnedPreflightClient.end();
+      }
+
+      const databaseGrantClient = new Client({ connectionString: migratorDatabaseUrl });
+      await databaseGrantClient.connect();
+      try {
+        await databaseGrantClient.query("BEGIN");
+        await databaseGrantClient.query(
+          `GRANT CONNECT ON DATABASE ${quoteIdentifier(databaseName)} ` +
+            "TO platform_memory_public WITH GRANT OPTION",
+        );
+        await expect(runPlatformMigrations({
+          environment: platformMigrationEnvironment(),
+          createLockClient: () => ({
+            connect: async () => undefined,
+            query: (sql, values) => databaseGrantClient.query(sql, values as unknown[]),
+            end: async () => undefined,
+          }),
+          execute: async () => 0,
+        })).rejects.toThrow("PLATFORM_MEMORY_ROLE_AUTHORITY_INVALID");
+      } finally {
+        await databaseGrantClient.query("ROLLBACK");
+        await databaseGrantClient.end();
+      }
+
+      const exactAuthorityClient = new Client({ connectionString: migratorDatabaseUrl });
+      await exactAuthorityClient.connect();
+      const probeSchema = `memory_authority_probe_${suffix.replaceAll("-", "")}`;
+      try {
+        await exactAuthorityClient.query("BEGIN");
+        await exactAuthorityClient.query(`CREATE SCHEMA ${quoteIdentifier(probeSchema)}`);
+        await exactAuthorityClient.query(
+          `CREATE TABLE ${quoteIdentifier(probeSchema)}.probe_table(id BIGINT)`,
+        );
+        await exactAuthorityClient.query(
+          `CREATE SEQUENCE ${quoteIdentifier(probeSchema)}.probe_sequence`,
+        );
+        await exactAuthorityClient.query(
+          `CREATE FUNCTION ${quoteIdentifier(probeSchema)}.probe_routine() RETURNS BIGINT ` +
+            "LANGUAGE SQL AS 'SELECT 1::bigint'",
+        );
+        await exactAuthorityClient.query(
+          `REVOKE ALL ON FUNCTION ${quoteIdentifier(probeSchema)}.probe_routine() FROM PUBLIC`,
+        );
+        await exactAuthorityClient.query(
+          `GRANT USAGE ON SCHEMA ${quoteIdentifier(probeSchema)} TO platform_memory_public`,
+        );
+        await exactAuthorityClient.query(
+          `GRANT SELECT ON TABLE ${quoteIdentifier(probeSchema)}.probe_table ` +
+            "TO platform_memory_public",
+        );
+        await exactAuthorityClient.query(
+          `GRANT USAGE ON SEQUENCE ${quoteIdentifier(probeSchema)}.probe_sequence ` +
+            "TO platform_memory_runtime",
+        );
+        await exactAuthorityClient.query(
+          `GRANT EXECUTE ON FUNCTION ${quoteIdentifier(probeSchema)}.probe_routine() ` +
+            "TO platform_memory_worker WITH GRANT OPTION",
+        );
+        await exactAuthorityClient.query(
+          `ALTER DEFAULT PRIVILEGES IN SCHEMA ${quoteIdentifier(probeSchema)} ` +
+            "GRANT SELECT ON TABLES TO platform_memory_runtime",
+        );
+        await expect(runPlatformMigrations({
+          environment: platformMigrationEnvironment(),
+          createLockClient: () => ({
+            connect: async () => undefined,
+            query: (sql, values) => exactAuthorityClient.query(sql, values as unknown[]),
+            end: async () => undefined,
+          }),
+          execute: async () => 0,
+        })).rejects.toThrow("PLATFORM_MEMORY_ROLE_AUTHORITY_INVALID");
+      } finally {
+        await exactAuthorityClient.query("ROLLBACK");
+        await exactAuthorityClient.end();
+      }
 
       const oidMismatchReceiptRef = `memory-oid-mismatch-${suffix}`;
       await bootstrap.query("BEGIN");

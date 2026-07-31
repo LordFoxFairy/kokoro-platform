@@ -21,6 +21,7 @@ export interface BoundedFileMetadata {
 export interface BoundedFileProcessIdentity {
   readonly effectiveUserId: bigint;
   readonly effectiveGroupId: bigint;
+  readonly supplementalGroupIds: readonly bigint[];
 }
 
 export interface BoundedFileHandle {
@@ -62,6 +63,10 @@ const NODE_FILE_SYSTEM: BoundedFileSystem = Object.freeze({
 const NODE_PROCESS_IDENTITY: BoundedFileProcessIdentity = Object.freeze({
   effectiveUserId: BigInt(process.geteuid?.() ?? -1),
   effectiveGroupId: BigInt(process.getegid?.() ?? -1),
+  supplementalGroupIds: Object.freeze(
+    [...new Set((process.getgroups?.() ?? []).map((groupId) => BigInt(groupId)))]
+      .sort((left, right) => left < right ? -1 : left > right ? 1 : 0),
+  ),
 });
 
 /**
@@ -415,7 +420,8 @@ function safePrivateOwnership(
   if (metadata.uid !== 0n && metadata.uid !== processIdentity.effectiveUserId) return false;
   const groupReadable = (metadata.mode & 0o040n) !== 0n;
   return !groupReadable || metadata.gid === 0n ||
-    metadata.gid === processIdentity.effectiveGroupId;
+    metadata.gid === processIdentity.effectiveGroupId ||
+    processIdentity.supplementalGroupIds.includes(metadata.gid);
 }
 
 function safeTrustRootAuthority(
@@ -429,7 +435,10 @@ function safeTrustRootAuthority(
 }
 
 function safeProcessIdentity(identity: BoundedFileProcessIdentity): boolean {
-  return identity.effectiveUserId >= 0n && identity.effectiveGroupId >= 0n;
+  return identity.effectiveUserId >= 0n && identity.effectiveGroupId >= 0n &&
+    Array.isArray(identity.supplementalGroupIds) &&
+    identity.supplementalGroupIds.every((groupId) => typeof groupId === "bigint" && groupId >= 0n) &&
+    new Set(identity.supplementalGroupIds).size === identity.supplementalGroupIds.length;
 }
 
 function safeMode(

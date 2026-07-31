@@ -322,7 +322,7 @@ BEGIN
     ||'platform_memory_public,platform_memory_runtime,platform_memory_worker',current_database());
 END $$;
 REVOKE CREATE,USAGE ON SCHEMA public FROM
-  PUBLIC,platform_memory_public,platform_memory_runtime,platform_memory_worker;
+  platform_memory_public,platform_memory_runtime,platform_memory_worker;
 REVOKE CREATE ON SCHEMA platform FROM
   platform_memory_public,platform_memory_runtime,platform_memory_worker;
 REVOKE USAGE ON SCHEMA platform FROM platform_memory_public,platform_memory_runtime;

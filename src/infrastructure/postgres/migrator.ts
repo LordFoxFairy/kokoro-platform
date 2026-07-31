@@ -201,6 +201,7 @@ export async function runPlatformMigrations(
     await assertMemoryRolePreflight(lockClient, memoryRoles, config.expectedDatabaseUser);
     await lockClient.query("SELECT pg_advisory_lock(hashtext($1))", [MIGRATION_ADVISORY_LOCK]);
     locked = true;
+    await assertMemoryRolePinnedIdentityPreflight(lockClient, memoryRoles);
 
     const exitCode = await execute(
       process.execPath,
@@ -533,6 +534,25 @@ async function assertMemoryRolePreflight(
   }
 }
 
+async function assertMemoryRolePinnedIdentityPreflight(
+  client: MigrationLockClient,
+  roles: MemoryRoles,
+): Promise<void> {
+  const table = await client.query(MEMORY_ROLE_IDENTITY_TABLE_PREFLIGHT_SQL);
+  if (table.rows?.length !== 1) {
+    throw new Error("PLATFORM_MEMORY_ROLE_IDENTITY_PREFLIGHT_FAILED");
+  }
+  if (table.rows[0]?.identityTableExists !== true) return;
+
+  const expected = Object.entries(roles).map(([roleKind, roleName]) => ({ roleKind, roleName }));
+  const identity = await client.query(MEMORY_ROLE_IDENTITY_PREFLIGHT_SQL, [
+    JSON.stringify(expected),
+  ]);
+  if (identity.rows?.length !== 1 || identity.rows[0]?.memoryRoleIdentityExact !== true) {
+    throw new Error("PLATFORM_MEMORY_ROLE_IDENTITY_PREFLIGHT_FAILED");
+  }
+}
+
 function safeMemoryRole(role: Readonly<Record<string, unknown>>): boolean {
   return safeRuntimeRole(role) && role.canLogin === true &&
     role.ownsAnySchema === false && role.ownsAnyRelation === false &&
@@ -556,6 +576,18 @@ async function configureMemoryRoleAuthority(
     await client.query(`REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA platform FROM ${role}`);
     await client.query(`REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA platform FROM ${role}`);
     await client.query(`REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA platform FROM ${role}`);
+    await client.query(
+      `ALTER DEFAULT PRIVILEGES FOR ROLE ${quoteRoleIdentifier(migratorRole)} ` +
+        `REVOKE ALL ON TABLES FROM ${role}`,
+    );
+    await client.query(
+      `ALTER DEFAULT PRIVILEGES FOR ROLE ${quoteRoleIdentifier(migratorRole)} ` +
+        `REVOKE ALL ON SEQUENCES FROM ${role}`,
+    );
+    await client.query(
+      `ALTER DEFAULT PRIVILEGES FOR ROLE ${quoteRoleIdentifier(migratorRole)} ` +
+        `REVOKE ALL ON FUNCTIONS FROM ${role}`,
+    );
     await client.query(
       `ALTER DEFAULT PRIVILEGES FOR ROLE ${quoteRoleIdentifier(migratorRole)} ` +
         `IN SCHEMA platform REVOKE ALL ON TABLES FROM ${role}`,
@@ -1423,6 +1455,26 @@ const MEMORY_ROLE_PREFLIGHT_SQL = `
   FROM expected JOIN pg_roles runtime_role ON runtime_role.rolname=expected."roleName"
   ORDER BY expected."roleKind" /* memoryRolePreflight */`;
 
+const MEMORY_ROLE_IDENTITY_TABLE_PREFLIGHT_SQL = `
+  SELECT to_regclass('platform.memory_database_role_identity') IS NOT NULL
+    AS "identityTableExists" /* memoryRoleIdentityTablePreflight */`;
+
+const MEMORY_ROLE_IDENTITY_PREFLIGHT_SQL = `
+  WITH expected AS (
+    SELECT expected."roleKind",expected."roleName",runtime_role.oid AS "roleOid"
+    FROM jsonb_to_recordset($1::jsonb) AS expected("roleKind" text,"roleName" text)
+    JOIN pg_roles runtime_role ON runtime_role.rolname=expected."roleName"
+  ), actual AS (
+    SELECT role_kind AS "roleKind",role_name::text AS "roleName",role_oid AS "roleOid"
+    FROM platform.memory_database_role_identity
+  )
+  SELECT NOT EXISTS (
+    (SELECT * FROM expected EXCEPT SELECT * FROM actual)
+    UNION ALL
+    (SELECT * FROM actual EXCEPT SELECT * FROM expected)
+  ) AND (SELECT count(*) FROM expected)=3 AND (SELECT count(*) FROM actual)=3
+    AS "memoryRoleIdentityExact" /* memoryRoleIdentityPreflight */`;
+
 const MEMORY_ROLE_AUTHORITY_SQL = `
   WITH expected AS (
     SELECT * FROM jsonb_to_recordset($1::jsonb)
@@ -1435,10 +1487,18 @@ const MEMORY_ROLE_AUTHORITY_SQL = `
       runtime_role.rolreplication AS "canReplicate",
       runtime_role.rolbypassrls AS "canBypassRls",
       runtime_role.rolinherit AS "inheritsPrivileges",
+      has_database_privilege(runtime_role.rolname,current_database(),'CONNECT')
+        AS "canConnectDatabase",
       has_database_privilege(runtime_role.rolname,current_database(),'CREATE')
         AS "canCreateDatabaseObject",
       has_database_privilege(runtime_role.rolname,current_database(),'TEMPORARY')
         AS "canCreateTemporaryObjects",
+      has_database_privilege(runtime_role.rolname,current_database(),'CONNECT WITH GRANT OPTION')
+        AS "canGrantConnectDatabase",
+      has_database_privilege(runtime_role.rolname,current_database(),'CREATE WITH GRANT OPTION')
+        AS "canGrantCreateDatabaseObject",
+      has_database_privilege(runtime_role.rolname,current_database(),'TEMPORARY WITH GRANT OPTION')
+        AS "canGrantTemporaryObjects",
       has_schema_privilege(runtime_role.rolname,'public','USAGE') AS "canUsePublicSchema",
       has_schema_privilege(runtime_role.rolname,'public','CREATE') AS "canCreatePublicSchema",
       EXISTS (SELECT 1 FROM pg_auth_members membership WHERE membership.member=runtime_role.oid)
@@ -1462,38 +1522,116 @@ const MEMORY_ROLE_AUTHORITY_SQL = `
       EXISTS (SELECT 1 FROM pg_tablespace tablespace WHERE tablespace.spcowner=runtime_role.oid)
         AS "ownsAnyTablespace"
     FROM expected JOIN pg_roles runtime_role ON runtime_role.rolname=expected."roleName"
+  ), non_system_schema AS (
+    SELECT namespace.oid,namespace.nspname,namespace.nspacl,namespace.nspowner
+    FROM pg_namespace namespace
+    WHERE namespace.nspname NOT IN ('pg_catalog','information_schema')
+      AND namespace.nspname !~ '^pg_(?:toast|temp)(?:_|$)'
   ), identity_authority AS (
     SELECT role_kind AS "roleKind",role_name::text AS "roleName",role_oid AS "roleOid"
     FROM platform.memory_database_role_identity
+  ), database_direct_authority AS (
+    SELECT live."roleKind",acl.privilege_type,acl.is_grantable
+    FROM live JOIN pg_database database_row ON database_row.datname=current_database()
+    CROSS JOIN LATERAL aclexplode(database_row.datacl) acl
+    WHERE acl.grantee=live."roleOid"
+      AND (acl.privilege_type<>'CONNECT' OR acl.is_grantable)
+    /* memoryRoleDatabaseAuthority */
   ), schema_authority AS (
-    SELECT live."roleKind",acl.privilege_type AS privilege
-    FROM live JOIN pg_namespace namespace ON namespace.nspname='platform'
+    SELECT live."roleKind",namespace.nspname,acl.privilege_type,acl.is_grantable
+    FROM live CROSS JOIN non_system_schema namespace
     CROSS JOIN LATERAL aclexplode(namespace.nspacl) acl
     WHERE acl.grantee=live."roleOid"
+    /* memoryRoleSchemaAuthority */
   ), expected_schema_authority AS (
-    SELECT 'worker'::text AS "roleKind",'USAGE'::text AS privilege
-  ), public_schema_authority AS (
-    SELECT live."roleKind",acl.privilege_type AS privilege
-    FROM live JOIN pg_namespace namespace ON namespace.nspname='public'
-    CROSS JOIN LATERAL aclexplode(namespace.nspacl) acl
-    WHERE acl.grantee=live."roleOid"
+    SELECT 'worker'::text AS "roleKind",'platform'::name AS nspname,
+      'USAGE'::text AS privilege_type,false AS is_grantable
+  ), effective_schema_authority AS (
+    SELECT live."roleKind",namespace.nspname,candidate.privilege_type,
+      has_schema_privilege(live."roleName",namespace.oid,
+        candidate.privilege_type||' WITH GRANT OPTION') AS is_grantable
+    FROM live CROSS JOIN non_system_schema namespace
+    CROSS JOIN LATERAL (VALUES ('USAGE'::text),('CREATE'::text))
+      AS candidate(privilege_type)
+    WHERE has_schema_privilege(live."roleName",namespace.oid,candidate.privilege_type)
+  ), expected_effective_schema_authority AS (
+    SELECT expected."roleKind",expected.nspname,expected.privilege_type,
+      expected.is_grantable
+    FROM (VALUES
+      ('public'::text,'public'::name,'USAGE'::text,false),
+      ('runtime'::text,'public'::name,'USAGE'::text,false),
+      ('worker'::text,'public'::name,'USAGE'::text,false),
+      ('worker'::text,'platform'::name,'USAGE'::text,false)
+    ) AS expected("roleKind",nspname,privilege_type,is_grantable)
   ), relation_authority AS (
-    SELECT live."roleKind",relation.oid,acl.privilege_type AS privilege
-    FROM live JOIN pg_class relation ON relation.relnamespace=to_regnamespace('platform')
-      AND relation.relkind<>'S'
+    SELECT live."roleKind",relation.oid,acl.privilege_type,acl.is_grantable
+    FROM live JOIN pg_class relation ON relation.relkind IN ('r','p','v','m','f')
+    JOIN non_system_schema namespace ON namespace.oid=relation.relnamespace
     CROSS JOIN LATERAL aclexplode(relation.relacl) acl
     WHERE acl.grantee=live."roleOid"
+    UNION ALL
+    SELECT live."roleKind",relation.oid,acl.privilege_type,acl.is_grantable
+    FROM live JOIN pg_class relation ON relation.relkind IN ('r','p','v','m','f')
+    JOIN non_system_schema namespace ON namespace.oid=relation.relnamespace
+    JOIN pg_attribute attribute ON attribute.attrelid=relation.oid
+      AND attribute.attnum>0 AND NOT attribute.attisdropped
+    CROSS JOIN LATERAL aclexplode(attribute.attacl) acl
+    WHERE acl.grantee=live."roleOid"
+    /* memoryRoleRelationAuthority */
+  ), effective_relation_authority AS (
+    SELECT live."roleKind",relation.oid,candidate.privilege_type,candidate.column_level,
+      CASE WHEN candidate.column_level
+        THEN has_any_column_privilege(live."roleName",relation.oid,
+          candidate.privilege_type||' WITH GRANT OPTION')
+        ELSE has_table_privilege(live."roleName",relation.oid,
+          candidate.privilege_type||' WITH GRANT OPTION')
+      END AS is_grantable
+    FROM live JOIN pg_class relation ON relation.relkind IN ('r','p','v','m','f')
+    JOIN non_system_schema namespace ON namespace.oid=relation.relnamespace
+    CROSS JOIN LATERAL (VALUES
+      ('SELECT'::text,false),('INSERT'::text,false),('UPDATE'::text,false),
+      ('DELETE'::text,false),('TRUNCATE'::text,false),('REFERENCES'::text,false),
+      ('TRIGGER'::text,false),('MAINTAIN'::text,false),
+      ('SELECT'::text,true),('INSERT'::text,true),('UPDATE'::text,true),
+      ('REFERENCES'::text,true)
+    ) AS candidate(privilege_type,column_level)
+    WHERE has_schema_privilege(live."roleName",namespace.oid,'USAGE') AND
+      CASE WHEN candidate.column_level
+        THEN has_any_column_privilege(live."roleName",relation.oid,candidate.privilege_type)
+        ELSE has_table_privilege(live."roleName",relation.oid,candidate.privilege_type)
+      END
   ), sequence_authority AS (
-    SELECT live."roleKind",sequence_row.oid,acl.privilege_type AS privilege
-    FROM live JOIN pg_class sequence_row ON sequence_row.relnamespace=to_regnamespace('platform')
-      AND sequence_row.relkind='S'
+    SELECT live."roleKind",sequence_row.oid,acl.privilege_type,acl.is_grantable
+    FROM live JOIN pg_class sequence_row ON sequence_row.relkind='S'
+    JOIN non_system_schema namespace ON namespace.oid=sequence_row.relnamespace
     CROSS JOIN LATERAL aclexplode(sequence_row.relacl) acl
     WHERE acl.grantee=live."roleOid"
+    /* memoryRoleSequenceAuthority */
+  ), effective_sequence_authority AS (
+    SELECT live."roleKind",sequence_row.oid,candidate.privilege_type,
+      has_sequence_privilege(live."roleName",sequence_row.oid,
+        candidate.privilege_type||' WITH GRANT OPTION') AS is_grantable
+    FROM live JOIN pg_class sequence_row ON sequence_row.relkind='S'
+    JOIN non_system_schema namespace ON namespace.oid=sequence_row.relnamespace
+    CROSS JOIN LATERAL (VALUES ('USAGE'::text),('SELECT'::text),('UPDATE'::text))
+      AS candidate(privilege_type)
+    WHERE has_schema_privilege(live."roleName",namespace.oid,'USAGE')
+      AND has_sequence_privilege(live."roleName",sequence_row.oid,candidate.privilege_type)
   ), routine_authority AS (
-    SELECT live."roleKind",routine.oid
-    FROM live JOIN pg_proc routine ON routine.pronamespace=to_regnamespace('platform')
+    SELECT live."roleKind",routine.oid,acl.privilege_type,acl.is_grantable
+    FROM live JOIN pg_proc routine ON true
+    JOIN non_system_schema namespace ON namespace.oid=routine.pronamespace
     CROSS JOIN LATERAL aclexplode(routine.proacl) acl
     WHERE acl.grantee=live."roleOid" AND acl.privilege_type='EXECUTE'
+    /* memoryRoleRoutineAuthority */
+  ), effective_routine_authority AS (
+    SELECT live."roleKind",routine.oid,'EXECUTE'::text AS privilege_type,
+      has_function_privilege(live."roleName",routine.oid,'EXECUTE WITH GRANT OPTION')
+        AS is_grantable
+    FROM live JOIN pg_proc routine ON true
+    JOIN non_system_schema namespace ON namespace.oid=routine.pronamespace
+    WHERE has_schema_privilege(live."roleName",namespace.oid,'USAGE')
+      AND has_function_privilege(live."roleName",routine.oid,'EXECUTE')
   ), expected_worker_routine AS (
     SELECT unnest(ARRAY[
       to_regprocedure('platform.memory_worker_claim_purge(text,character,integer)'),
@@ -1501,26 +1639,38 @@ const MEMORY_ROLE_AUTHORITY_SQL = `
       to_regprocedure('platform.memory_worker_record_purge_receipt(text,text,text,text,text,character,bigint,character)')
     ]) AS oid
   ), expected_routine_authority AS (
-    SELECT 'worker'::text AS "roleKind",oid FROM expected_worker_routine
-  ), migrator_default_authority AS (
-    SELECT live."roleKind",defaults.defaclobjtype,acl.privilege_type
+    SELECT 'worker'::text AS "roleKind",oid,'EXECUTE'::text AS privilege_type,
+      false AS is_grantable FROM expected_worker_routine
+  ), expected_effective_routine_authority AS (
+    SELECT "roleKind",oid,privilege_type,is_grantable FROM expected_routine_authority
+  ), default_authority AS (
+    SELECT live."roleKind",owner.rolname,
+      CASE WHEN defaults.defaclnamespace IS NULL THEN NULL ELSE namespace.nspname END AS nspname,
+      defaults.defaclobjtype,acl.privilege_type,acl.is_grantable,
+      defaults.defaclnamespace IS NULL AS global_default
     FROM pg_default_acl defaults
-    JOIN pg_roles owner ON owner.oid=defaults.defaclrole AND owner.rolname=$2
-    JOIN pg_namespace namespace ON namespace.oid=defaults.defaclnamespace
-      AND namespace.nspname='platform'
+    JOIN pg_roles owner ON owner.oid=defaults.defaclrole
+    LEFT JOIN pg_namespace namespace ON namespace.oid=defaults.defaclnamespace
     CROSS JOIN LATERAL aclexplode(defaults.defaclacl) acl
     JOIN live ON live."roleOid"=acl.grantee
+    /* memoryRoleDefaultAuthority */
   )
   SELECT (
     (SELECT count(*) FROM live)=3
     AND NOT EXISTS (
-      SELECT 1 FROM live WHERE NOT "canLogin" OR "isSuperuser" OR "canCreateDatabase"
+      SELECT 1 FROM live WHERE NOT "canLogin" OR NOT "canConnectDatabase"
+        OR "isSuperuser" OR "canCreateDatabase"
         OR "canCreateRole" OR "canReplicate" OR "canBypassRls" OR "inheritsPrivileges"
         OR "canCreateDatabaseObject" OR "canCreateTemporaryObjects"
-        OR "canUsePublicSchema" OR "canCreatePublicSchema"
+        OR "canGrantConnectDatabase" OR "canGrantCreateDatabaseObject"
+        OR "canGrantTemporaryObjects"
+        OR NOT "canUsePublicSchema" OR "canCreatePublicSchema"
         OR "hasAnyMembership" OR "isMigratorMember" OR "isPeerMember"
         OR "ownsAnyDatabase" OR "ownsAnySchema" OR "ownsAnyRelation"
         OR "ownsAnySequence" OR "ownsAnyRoutine" OR "ownsAnyType" OR "ownsAnyTablespace"
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM database_direct_authority
     )
     AND NOT EXISTS (
       (SELECT "roleKind","roleName","roleOid" FROM live
@@ -1535,17 +1685,30 @@ const MEMORY_ROLE_AUTHORITY_SQL = `
       (SELECT * FROM expected_schema_authority EXCEPT SELECT * FROM schema_authority)
     )
     AND NOT EXISTS (
-      SELECT 1 FROM public_schema_authority
+      (SELECT * FROM effective_schema_authority
+       EXCEPT SELECT * FROM expected_effective_schema_authority)
+      UNION ALL
+      (SELECT * FROM expected_effective_schema_authority
+       EXCEPT SELECT * FROM effective_schema_authority)
     )
     AND NOT EXISTS (SELECT 1 FROM relation_authority)
+    AND NOT EXISTS (SELECT 1 FROM effective_relation_authority)
     AND NOT EXISTS (SELECT 1 FROM sequence_authority)
+    AND NOT EXISTS (SELECT 1 FROM effective_sequence_authority)
     AND NOT EXISTS (
       (SELECT * FROM routine_authority EXCEPT SELECT * FROM expected_routine_authority)
       UNION ALL
       (SELECT * FROM expected_routine_authority EXCEPT SELECT * FROM routine_authority)
     )
+    AND NOT EXISTS (
+      (SELECT * FROM effective_routine_authority
+       EXCEPT SELECT * FROM expected_effective_routine_authority)
+      UNION ALL
+      (SELECT * FROM expected_effective_routine_authority
+       EXCEPT SELECT * FROM effective_routine_authority)
+    )
     AND NOT EXISTS (SELECT 1 FROM expected_worker_routine WHERE oid IS NULL)
-    AND NOT EXISTS (SELECT 1 FROM migrator_default_authority)
+    AND NOT EXISTS (SELECT 1 FROM default_authority)
     AND NOT EXISTS (
       SELECT 1 FROM expected_worker_routine expected_routine
       LEFT JOIN pg_proc routine ON routine.oid=expected_routine.oid

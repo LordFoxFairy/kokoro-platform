@@ -38,9 +38,10 @@ PostgreSQL tables are Site-composite and force RLS. M0.1 provisions the exact LO
 Platform migrator qualifies all three identities, ownership and membership inventory before migration, closes their default
 privileges, and verifies the exact OID/ACL authority afterward. While the feature is off, `platform_memory_public` and
 `platform_memory_runtime` receive zero Platform schema, table, sequence, or routine grants. `platform_memory_worker` receives only
-Platform schema usage and the three fixed-search-path purge routines. Task 5 must introduce the real operation-specific public
-read/write routines, grants, RLS policies, and live owner-fact revalidation in a forward migration; the M0.1 owner helper remains
-migrator-internal and is not a callable product surface.
+Platform schema usage and the three fixed-search-path purge routines. All three retain PostgreSQL's shared ambient `public`
+schema `USAGE` only; they receive no `public` schema `CREATE`, object, sequence, or routine authority. Task 5 must introduce the
+real operation-specific public read/write routines, grants, RLS policies, and live owner-fact revalidation in a forward migration;
+the M0.1 owner helper remains migrator-internal and is not a callable product surface.
 No Memory process credential, listener, readiness check, public route, worker composition, or RPC surface is activated yet.
 
 Consumers use only `src/modules/memory/index.ts`. Persistence and application ports are public solely to allow a later owner

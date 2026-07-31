@@ -23,6 +23,27 @@ describe("bounded secret files", () => {
     }
   });
 
+  it.each([
+    ["negative", [-1n]],
+    ["duplicate", [7n, 7n]],
+  ] as const)("rejects %s supplemental process groups", async (_label, supplementalGroupIds) => {
+    const directory = await mkdtemp(join(tmpdir(), "kokoro-invalid-process-groups-"));
+    try {
+      await expect(createBoundedFileReaderWithinTrustRoot(
+        directory,
+        "TEST_TRUST_ROOT_INVALID",
+        undefined,
+        {
+          effectiveUserId: BigInt(process.geteuid?.() ?? 0),
+          effectiveGroupId: BigInt(process.getegid?.() ?? 0),
+          supplementalGroupIds,
+        },
+      )).rejects.toThrowError("TEST_TRUST_ROOT_INVALID");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it.each([0o450, 0o540, 0o700, 0o441])(
     "rejects executable or world-accessible trusted private mode %s",
     async (mode) => {
@@ -282,10 +303,24 @@ describe("bounded secret files", () => {
         {
           effectiveUserId: metadata.uid,
           effectiveGroupId: fileGroup + 1n,
+          supplementalGroupIds: [],
         },
       );
       await expect(reader.readPrivate(path, 64, "TEST_PRIVATE_INVALID"))
         .rejects.toThrowError("TEST_PRIVATE_INVALID");
+
+      const fsGroupReader = await createBoundedFileReaderWithinTrustRoot(
+        root,
+        "TEST_TRUST_ROOT_INVALID",
+        undefined,
+        {
+          effectiveUserId: metadata.uid,
+          effectiveGroupId: fileGroup + 1n,
+          supplementalGroupIds: [fileGroup],
+        },
+      );
+      await expect(fsGroupReader.readPrivate(path, 64, "TEST_PRIVATE_INVALID"))
+        .resolves.toBe("private-value");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

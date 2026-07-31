@@ -85,6 +85,9 @@ describe("Memory M0.1 public database authority", () => {
     expect(migration).toContain("SESSION_USER<>expected_name::TEXT");
     expect(migration).toContain("REVOKE CREATE,TEMPORARY ON DATABASE");
     expect(migration).toContain("REVOKE CREATE,USAGE ON SCHEMA public FROM");
+    expect(migration).not.toMatch(
+      /REVOKE\s+CREATE\s*,\s*USAGE\s+ON\s+SCHEMA\s+public\s+FROM\s+PUBLIC/iu,
+    );
     expect(migration).not.toMatch(/GRANT EXECUTE[^;]+TO platform_memory_runtime/isu);
     expect(migration).not.toMatch(/GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE|TRUNCATE)[^;]+TO platform_memory_/isu);
   });
@@ -121,6 +124,39 @@ describe("Memory M0.1 public database authority", () => {
       "ownsAnyDatabase", "ownsAnySchema", "ownsAnyRelation", "ownsAnySequence",
       "ownsAnyRoutine", "ownsAnyType",
     ]) expect(migrator).toContain(ownershipFact);
+  });
+
+  it("checks an existing pinned OID inventory after locking but before migration execution", () => {
+    const lockIndex = migrator.indexOf("pg_advisory_lock");
+    const pinnedPreflightIndex = migrator.indexOf("assertMemoryRolePinnedIdentityPreflight");
+    const executeIndex = migrator.indexOf("const exitCode = await execute");
+    expect(lockIndex).toBeGreaterThan(-1);
+    expect(pinnedPreflightIndex).toBeGreaterThan(lockIndex);
+    expect(executeIndex).toBeGreaterThan(pinnedPreflightIndex);
+    expect(migrator).toContain("memoryRoleIdentityTablePreflight");
+    expect(migrator).toContain("memoryRoleIdentityPreflight");
+    expect(migrator).toContain("PLATFORM_MEMORY_ROLE_IDENTITY_PREFLIGHT_FAILED");
+  });
+
+  it("audits exact direct and effective feature-off authority across non-system schemas", () => {
+    for (const marker of [
+      "memoryRoleDatabaseAuthority",
+      "memoryRoleSchemaAuthority",
+      "memoryRoleRelationAuthority",
+      "memoryRoleSequenceAuthority",
+      "memoryRoleRoutineAuthority",
+      "memoryRoleDefaultAuthority",
+    ]) expect(migrator).toContain(marker);
+    expect(migrator).toContain("has_any_column_privilege");
+    expect(migrator).toContain("has_sequence_privilege");
+    expect(migrator).toContain("has_function_privilege");
+    expect(migrator).toContain("defaults.defaclnamespace IS NULL");
+    expect(migrator).toContain("acl.is_grantable");
+    expect(migrator).toContain("'public'::text,'public'::name,'USAGE'::text,false");
+    expect(migrator).toContain('OR NOT "canUsePublicSchema" OR "canCreatePublicSchema"');
+    expect(migrator).toContain("WITH GRANT OPTION");
+    expect(migrator).toContain("canGrantConnectDatabase");
+    expect(migrator).toContain("namespace.nspname !~ '^pg_(?:toast|temp)(?:_|$)'");
   });
 
   it("proves OID drift transactionally without mutating canonical login roles", () => {
