@@ -300,6 +300,43 @@ deployables:
     runbookOwner: platform-identity
     releaseOwner: platform
 
+  - id: platform-media-worker
+    command: node --conditions=kokoro-runtime deploy/docker/runtime-entrypoint.mjs
+    selectorEnvironment: KOKORO_SERVICE_PACKAGE=platform-media-worker
+    processRole: media-worker
+    database:
+      environmentVariable: DATABASE_URL_PLATFORM
+      expectedUserEnvironmentVariable: PLATFORM_DATABASE_MEDIA_WORKER_ROLE
+      migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
+      expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
+      credentialClass: media-worker
+      permissions: media-worker-function-only
+      ddl: forbidden
+    inboundContracts: []
+    activationAuthorized: false
+    runtimeTraffic: false
+    requiredEnvironment:
+      [DATABASE_URL_PLATFORM, PLATFORM_DATABASE_CREDENTIAL_CLASS,
+       PLATFORM_DATABASE_EXPECTED_DATABASE, PLATFORM_DATABASE_MIGRATOR_ROLE,
+       PLATFORM_DATABASE_MEDIA_WORKER_ROLE, PLATFORM_WORKER_ID,
+       PLATFORM_MEDIA_WORKER_SECRET_TRUST_ROOT, PLATFORM_MEDIA_INPUT_KEY_RING_FILE,
+       PLATFORM_MEDIA_CAPABILITY_KEY_RING_FILE, PLATFORM_ARTIFACT_STORAGE_ROUTE_FILE,
+       PLATFORM_MODEL_GATEWAY_IMAGE_ENDPOINT,
+       PLATFORM_SESSION_PROJECTION_ENDPOINT]
+    outboundContracts:
+      [model-gateway-image-effect-connectrpc, s3-object-api,
+       session-media-projection-connectrpc]
+    secretClasses:
+      [platform-media-worker-database, media-operation-input-keyring,
+       media-effect-capability-keyring, artifact-storage-route-registry]
+    audience: platform-media-worker
+    scalingKey: media-dispatch-and-cleanup-lag
+    readiness: process-state
+    drain: stop-media-claims-then-return-leases
+    sloOwner: platform-media
+    runbookOwner: platform-media
+    releaseOwner: platform
+
   - id: platform-model-gateway
     command: node --conditions=kokoro-runtime deploy/docker/runtime-entrypoint.mjs
     selectorEnvironment: KOKORO_SERVICE_PACKAGE=platform-model-gateway

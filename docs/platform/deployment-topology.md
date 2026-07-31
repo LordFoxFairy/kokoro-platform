@@ -19,6 +19,7 @@ accepts a module path.
 | `platform-asset-worker` | PostgreSQL Asset worker role | upload completion, scanning, promotion and exact cleanup |
 | `platform-admin-worker` | PostgreSQL Admin worker role | privileged command execution and terminalization |
 | `platform-identity-worker` | PostgreSQL Identity worker role | Identity-only outbox delivery and local namespace allocation |
+| `platform-media-worker` | PostgreSQL Media worker role | Inactive inventory: durable image-effect orchestration and staged cleanup; launch blocked pending Root generated contracts |
 | `platform-authorization-maintenance` | PostgreSQL Authorization maintenance role | scheduled retention with advisory-lock exclusion |
 | `platform-admin` | PostgreSQL Admin role | typed privileged control plane |
 | `@kokoro/hub` | Mongo/S3 | skill/MCP HTTP management surface |

@@ -28,6 +28,7 @@
     "start:asset-worker": "node dist/src/process/asset-worker.js",
     "start:admin-worker": "node dist/src/process/admin-worker.js",
     "start:identity-worker": "node dist/src/process/identity-worker.js",
+    "start:media-worker": "node dist/src/process/media-worker.js",
     "start:authorization-maintenance": "node dist/src/process/authorization-maintenance.js",
     "test:repository": "node --test test/repository/*.test.mjs",
     "test:platform": "vitest run test/*.test.ts test/architecture/*.test.ts",

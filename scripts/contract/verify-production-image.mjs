@@ -39,6 +39,7 @@ const requiredEntries = Object.freeze([
   "dist/src/process/model-gateway.js",
   "dist/src/process/worker.js",
   "dist/src/process/identity-worker.js",
+  "dist/src/process/media-worker.js",
   "dist/src/process/worker-health-server.js",
   "dist/src/process/worker-deployment-contract.js",
   "prisma/schema.prisma",

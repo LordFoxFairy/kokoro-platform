@@ -18,6 +18,12 @@ export interface ArtifactObjectStore {
     stagedReceipt: ArtifactStagedReceipt;
     trustDecision: ArtifactTrustDecision;
   }>): Promise<ArtifactReadyReceipt>;
+  cleanupStaged(input: Readonly<{
+    ownerScope: ArtifactOwnerScope;
+    artifactRef: string;
+    artifactVersionRef: string;
+    stagedObjectRef: string;
+  }>, signal: AbortSignal): Promise<void>;
   describeReady(input: Readonly<{
     ownerScope: ArtifactOwnerScope;
     artifactRef: string;

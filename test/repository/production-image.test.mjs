@@ -29,6 +29,7 @@ const required = Object.freeze([
   "dist/src/process/model-gateway.js",
   "dist/src/process/worker.js",
   "dist/src/process/identity-worker.js",
+  "dist/src/process/media-worker.js",
   "dist/src/process/worker-health-server.js",
   "dist/src/process/worker-deployment-contract.js",
   "prisma/schema.prisma",
@@ -79,6 +80,7 @@ test("runtime entrypoint exposes only PostgreSQL Platform processes and Hub", as
     "platform-authorization", "platform-model-gateway", "platform-commerce-worker",
     "platform-site-worker", "platform-asset-worker", "platform-admin-worker",
     "platform-identity-worker", "platform-authorization-maintenance", "platform-migrator",
+    "platform-media-worker",
     "@kokoro/hub",
     "platform-hub-connect",
   ]) assert.match(entrypoint, new RegExp(`"${role}"`, "u"));

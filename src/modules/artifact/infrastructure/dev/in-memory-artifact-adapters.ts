@@ -79,6 +79,18 @@ export class InMemoryArtifactObjectStore implements ArtifactObjectStore {
     return ready;
   }
 
+  async cleanupStaged(input: Parameters<ArtifactObjectStore["cleanupStaged"]>[0], signal: AbortSignal): Promise<void> {
+    if (signal.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
+    const staged = this.#staged.get(input.artifactVersionRef);
+    if (staged === undefined) return;
+    if (staged.receipt.state !== "staged" || staged.receipt.artifactRef !== input.artifactRef ||
+        staged.receipt.stagedObjectRef !== input.stagedObjectRef ||
+        !sameArtifactOwnerScope(staged.receipt.ownerScope, input.ownerScope)) {
+      throw new Error("ARTIFACT_STAGED_CLEANUP_BINDING_MISMATCH");
+    }
+    this.#staged.delete(input.artifactVersionRef);
+  }
+
   async describeReady(input: Parameters<ArtifactObjectStore["describeReady"]>[0]):
   Promise<ArtifactReadyReceipt | null> {
     const stored = this.#ready.get(input.artifactVersionRef);

@@ -43,8 +43,21 @@ and reducer internals remain private.
 The image-first application vertical adds a command-journaled Direct Studio submission service and an explicitly leased
 worker closure around the existing kernel. Canonical input is stored only as a bounded envelope-encrypted
 `OperationInputRevision`; caller SHA-256 fingerprints remain distinct from the Platform owner-keyed digest. The worker
-journals the replaceable provider effect before invocation and makes an operation terminal only after Artifact
-finalization, Trust, usage, Credit and Session projection receipts exist.
+never invokes a provider. It drives the typed Model Gateway image-effect owner through
+Create/RecoverByCommand/GetByCommand/GetEvidence/RequestCancel. The owner View never carries output details: the worker
+durably advances the immutable `uint64 evidence_sequence` cursor and persists exact outcome/usage/output ref+digest facts.
+Output access is issued/recovered by a preallocated command bound to the logical invocation and output evidence, then consumed
+by Artifact through the bounded `ReadImageEffectOutput` stream. The worker resumes Artifact staged/Trust/ready, usage,
+Credit return and Session projection from immutable saga receipts. Started and outcome-unknown effects recover by exact
+command identity; definitely-not-submitted work cannot continue until a distinct planner materializes a new attempt command,
+ordinal and EffectBudgetCommit. Root-generated request fingerprints/digests and every Create axis are pre-materialized in the
+operation transaction; the worker verifies them and never hashes rotating bearer bytes. Caller, model-option and source-grant
+bearer handles remain sealed at rest and are zeroized after use.
+
+`platform-media-worker` also owns a separately leased staged-object cleanup activity. Its deployment inventory remains
+inactive until the Root-generated Gateway, image-output data plane, Session projection, capability-envelope and canonical receipt
+contracts listed in `docs/platform/media-worker-launch-blockers.md` are available; startup fails closed rather than using a
+development adapter.
 
 Agent image commands are isolated by the exact opaque access-handle digest that issued them; a different run/session handle
 cannot recover or read the operation merely because it resolves to the same subject and project. The command journal freezes

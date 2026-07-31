@@ -211,6 +211,25 @@ export class S3ArtifactObjectStore implements ArtifactObjectStore {
     });
   }
 
+  async cleanupStaged(input: Parameters<ArtifactObjectStore["cleanupStaged"]>[0], signal: AbortSignal): Promise<void> {
+    if (signal.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
+    const ownerScope = snapshotArtifactOwnerScope(input.ownerScope);
+    reference(input.artifactRef); reference(input.artifactVersionRef);
+    const stagedKey = this.#key("staged", ownerScope, input.artifactRef, input.artifactVersionRef);
+    if (input.stagedObjectRef !== objectRef(stagedKey)) {
+      throw new Error("ARTIFACT_STAGED_CLEANUP_BINDING_MISMATCH");
+    }
+    try {
+      await this.dependencies.client.send(new DeleteObjectCommand({
+        Bucket: this.dependencies.bucket, Key: stagedKey,
+      }), { abortSignal: signal });
+    } catch (error) {
+      if (await this.#head(stagedKey) !== null) throw error;
+      return;
+    }
+    if (await this.#head(stagedKey) !== null) throw new Error("ARTIFACT_STAGED_CLEANUP_UNCONFIRMED");
+  }
+
   async #cleanupStaged(stagedKey: string): Promise<ArtifactReadyReceipt["stagedCleanup"]> {
     try {
       await this.dependencies.client.send(new DeleteObjectCommand({

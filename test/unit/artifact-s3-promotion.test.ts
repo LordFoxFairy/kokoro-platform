@@ -124,6 +124,28 @@ describe("S3 Artifact immutable promotion", () => {
     expect(send.mock.calls[1]?.[0]).toBeInstanceOf(HeadObjectCommand);
   });
 
+  it("deletes and confirms the exact owner-bound staged object during cleanup replay", async () => {
+    const send = vi.fn().mockResolvedValueOnce({}).mockRejectedValueOnce(notFound());
+    const store = new S3ArtifactObjectStore({ client: { send } as never, bucket: "artifact-bucket" });
+    const staged = stagedWithObjectRef();
+
+    await expect(store.cleanupStaged({ ownerScope: staged.ownerScope, artifactRef: staged.artifactRef,
+      artifactVersionRef: staged.artifactVersionRef, stagedObjectRef: staged.stagedObjectRef,
+    }, new AbortController().signal)).resolves.toBeUndefined();
+    expect(send.mock.calls[0]?.[0]).toBeInstanceOf(DeleteObjectCommand);
+    expect(send.mock.calls[1]?.[0]).toBeInstanceOf(HeadObjectCommand);
+  });
+
+  it("refuses staged cleanup when the opaque object receipt is not exactly bound", async () => {
+    const send = vi.fn();
+    const store = new S3ArtifactObjectStore({ client: { send } as never, bucket: "artifact-bucket" });
+    const staged = stagedWithObjectRef();
+    await expect(store.cleanupStaged({ ownerScope: staged.ownerScope, artifactRef: staged.artifactRef,
+      artifactVersionRef: staged.artifactVersionRef, stagedObjectRef: "artifact-object:wrong",
+    }, new AbortController().signal)).rejects.toThrow("ARTIFACT_STAGED_CLEANUP_BINDING_MISMATCH");
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("conditionally opens the exact ready etag and validates response identity", async () => {
     const send = vi.fn()
       .mockResolvedValueOnce(head(true))

@@ -18,15 +18,27 @@ export type {
 export {
   ImageOperationWorker,
   InMemoryMediaImageWorkerRepository,
-  MAXIMUM_BUFFERED_IMAGE_OUTCOME_BYTES,
-  MAXIMUM_BUFFERED_IMAGE_OUTPUT_BYTES,
+  MediaImageEffectError,
 } from "./image-operation-worker.js";
 export type {
   ImageOutputTrustPort,
-  ImageProviderAdapter,
-  ImageProviderOutcome,
-  ImageProviderRequest,
+  MediaImageArtifactCheckpoint,
+  MediaImageArtifactPort,
   MediaImageCreditSettlementPort,
+  MediaImageEffectAuthorization,
+  MediaImageEffectCommandReceipt,
+  MediaImageEffectCommandResult,
+  MediaImageEffectEvidenceFact,
+  MediaImageEffectEvidencePage,
+  MediaImageEphemeralCapability,
+  MediaImageEffectErrorDisposition,
+  MediaImageEffectOutputEvidence,
+  MediaImageEffectPort,
+  MediaImageEffectPreparation,
+  MediaImageEffectView,
+  MediaImageRequest,
+  MediaImageReceiptCanonicalizerPort,
+  MediaImageSagaCheckpoint,
   MediaImageSessionProjectionPort,
   MediaImageTerminalClosure,
   MediaImageUsagePort,
@@ -37,6 +49,12 @@ export {
   deriveMediaOwnerRequestDigest,
   EnvelopeOperationInputProtector,
 } from "./operation-input-protection.js";
+export { MediaArtifactCleanupWorker } from "./media-artifact-cleanup-worker.js";
+export type {
+  MediaArtifactCleanupRepository,
+  MediaArtifactCleanupTask,
+  MediaArtifactStagedCleanupPort,
+} from "./media-artifact-cleanup-worker.js";
 export type {
   MediaOperationOwnerBinding,
   MediaOperationSource,

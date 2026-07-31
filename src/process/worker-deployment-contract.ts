@@ -5,7 +5,8 @@ export interface ProcessDeploymentContract {
     | "platform-asset-worker"
     | "platform-admin-worker"
     | "platform-identity-worker"
-    | "platform-authorization-maintenance";
+    | "platform-authorization-maintenance"
+    | "platform-media-worker";
   readonly environment: Readonly<{
     required: readonly string[];
     optional: readonly string[];
@@ -117,6 +118,25 @@ export const PLATFORM_IDENTITY_WORKER_DEPLOYMENT_CONTRACT = contract({
     "identity-audit-digest-key",
     "identity-delivery-hmac-key",
   ],
+});
+
+/** Inventory contract only. Activation remains blocked by docs/platform/media-worker-launch-blockers.md. */
+export const PLATFORM_MEDIA_WORKER_DEPLOYMENT_CONTRACT = contract({
+  id: "platform-media-worker",
+  environment: {
+    required: [...DATABASE_ENVIRONMENT, "PLATFORM_DATABASE_MEDIA_WORKER_ROLE", "PLATFORM_WORKER_ID",
+      "PLATFORM_MEDIA_WORKER_SECRET_TRUST_ROOT", "PLATFORM_MEDIA_INPUT_KEY_RING_FILE",
+      "PLATFORM_MEDIA_CAPABILITY_KEY_RING_FILE", "PLATFORM_ARTIFACT_STORAGE_ROUTE_FILE",
+      "PLATFORM_MODEL_GATEWAY_IMAGE_ENDPOINT",
+      "PLATFORM_SESSION_PROJECTION_ENDPOINT"],
+    optional: ["PLATFORM_MEDIA_WORKER_MAX_ATTEMPTS", "PLATFORM_MEDIA_WORKER_LEASE_SECONDS",
+      "PLATFORM_MODEL_GATEWAY_IMAGE_TIMEOUT_MS", "PLATFORM_SESSION_PROJECTION_TIMEOUT_MS",
+      "PLATFORM_WORKER_HEALTH_PORT"],
+  },
+  outboundContracts: ["model-gateway-image-effect-connectrpc", "s3-object-api",
+    "session-media-projection-connectrpc"],
+  secretClasses: ["platform-media-worker-database", "media-operation-input-keyring",
+    "media-effect-capability-keyring", "artifact-storage-route-registry"],
 });
 
 export function resolveProcessDeploymentEnvironment(
