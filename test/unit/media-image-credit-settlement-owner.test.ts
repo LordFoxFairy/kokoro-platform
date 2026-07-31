@@ -34,7 +34,10 @@ describe("NativeMediaImageCreditSettlementOwner", () => {
     expect(transactionHost.execute).toHaveBeenCalledWith({ siteId: "site:one",
       operation: "credit.media-image.finalize" }, expect.any(Function));
     expect(finalizer.finalize).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
-      siteId: "site:one", operationRef: "media:one", attempt: expect.objectContaining({
+      siteId: "site:one", operationRef: "media:one",
+      workerLease: { taskRef: "task:one", leaseEpoch: 3n,
+        leaseTokenHash: createHash("sha256").update("lease:secret").digest("hex") },
+      attempt: expect.objectContaining({
         attemptAuthorizationRef: "00000000-0000-7000-8000-000000000801",
         usageEvidenceRef: "usage:one", logicalEffectRef: "logical:one",
       }),

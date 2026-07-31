@@ -74,7 +74,9 @@ export class NativeMediaImageCreditSettlementOwner implements MediaImageCreditSe
     return this.dependencies.transactionHost.execute({ siteId: input.siteId,
       operation: "credit.media-image.finalize" }, (transaction) =>
       this.dependencies.finalizer.finalize(transaction, {
-        siteId: input.siteId, operationRef: input.operationRef, budget: input.budget,
+        siteId: input.siteId, operationRef: input.operationRef,
+        workerLease: Object.freeze({ taskRef: input.taskRef, leaseEpoch: input.leaseEpoch,
+          leaseTokenHash }), budget: input.budget,
         effectClosureReceiptRef: input.effectClosureReceiptRef, outcome: input.outcome,
         ...(attempt === undefined ? {} : { attempt }),
       }));

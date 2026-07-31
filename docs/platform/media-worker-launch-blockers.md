@@ -29,7 +29,9 @@ process intentionally fails before opening PostgreSQL until all seven production
    allocation and root, capture the rated amount, release the exact remainder to the original Hold sources, write a
    balanced journal and an idempotent closure receipt, and move ambiguous states to reconciliation. Until that owner is
    composed, public Studio direct-root operations remain unavailable; an injected mock or a partial Hold update is not
-   a launch substitute.
+   a launch substitute. The Credit owner, worker-lease-fenced definer routines, immutable receipts and reconciliation path
+   are implemented. This blocker now refers to the still-missing production worker construction and upstream canonical
+   effect/outcome authorities, not to another Credit mutation design.
 
 `AttachNextAttemptAuthorization` requires a separate durable next-attempt materializer owned by Media/Credit/Model:
 a new attempt command,
@@ -41,8 +43,9 @@ The landed Credit-owned finalizer resolves one exact immutable Model Gateway usa
 finalizes its pre-issued attempt, settles the exact authorization Segment, and returns an Agent Media child allocation
 using fresh parent/child revision and epoch fences. A canceled-before-effect operation may close an empty evidence set;
 every other terminal outcome requires a certified attempt fact. Usage-unavailable or ambiguous authority enters
-reconciliation and never invents zero usage. Direct-root closure is deliberately only a required owner port until blocker
-7 is implemented.
+reconciliation and never invents zero usage. Direct-root closure now has a native Credit implementation, but it remains
+unconstructed in the production Media worker while the other listed contracts are unavailable; its presence does not authorize
+Studio activation.
 
 The current application composition accepts only production adapters, rejects every `developmentOnly`
 adapter, and can resume Gateway, Artifact staged/Trust/ready, usage, child Credit return, and Session projection from

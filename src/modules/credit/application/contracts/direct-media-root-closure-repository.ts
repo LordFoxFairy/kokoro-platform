@@ -7,6 +7,7 @@ export type DirectMediaRootClosureIdentity = Readonly<{
   operationRef: string;
   businessOperationKey: string;
   requestDigest: string;
+  workerLease: Readonly<{ taskRef: string; leaseEpoch: bigint; leaseTokenHash: string }>;
 }>;
 
 export type DirectMediaRootClosureReceipt = Readonly<{
@@ -23,6 +24,14 @@ export type DirectMediaRootClosureReceipt = Readonly<{
   capturedAmount: bigint;
   releasedAmount: bigint;
   unit: string;
+  outcome: "completed" | "partial" | "failed" | "canceled";
+  executionManifestRef: string;
+  authorizationSegmentRef: string;
+  authorizationSegmentVersion: bigint;
+  settlementClosureRef: string;
+  settlementClosureRevision: bigint;
+  platformExposureAmount: bigint;
+  ratingSnapshotRef: string;
   receiptDigest: string;
   recordedAt: string;
 }>;
@@ -43,6 +52,14 @@ export type StoredDirectMediaRootClosure = Readonly<{
   holdCapturedAmount: bigint;
   holdReleasedAmount: bigint;
   rootAllocationRef: string;
+  operationBudget: Readonly<{
+    executionManifestRef: string;
+    rootAllocationRevision: bigint;
+    rootAllocationEpoch: bigint;
+    authorizationSegmentVersion: bigint;
+    reservedCeiling: bigint;
+    unit: string;
+  }>;
   allocation: BudgetAllocationRevision;
   openChildCount: bigint;
   openSegmentCount: bigint;
@@ -55,9 +72,38 @@ export type StoredDirectMediaRootClosure = Readonly<{
     creditHoldRef: string;
     unit: string;
     customerAmount: bigint;
+    closureRef: string;
+    closureRevision: bigint;
+    platformExposureAmount: bigint;
     ratingSnapshotRef: string;
   }>;
   holdAllocations: readonly HoldAllocationAvailability[];
+}>;
+
+export type DirectMediaRootClosureCommand = Readonly<{
+  effectClosureReceiptRef: string;
+  outcome: "completed" | "partial" | "failed" | "canceled";
+  budget: Readonly<{
+    executionBudgetRootRef: string;
+    executionManifestRef: string;
+    rootHoldRef: string;
+    rootAllocationRef: string;
+    rootAllocationRevision: bigint;
+    rootAllocationEpoch: bigint;
+    authorizationSegmentRef: string;
+    authorizationSegmentVersion: bigint;
+    reservedCeiling: bigint;
+    unit: string;
+  }>;
+  settlement: Readonly<{
+    settlementRef: string;
+    authorizationSegmentRef: string;
+    closureRef: string;
+    closureRevision: bigint;
+    state: "settled";
+    customerAmount: bigint;
+    platformExposureAmount: bigint;
+  }>;
 }>;
 
 export type DirectMediaRootClosureRecord = Readonly<{
@@ -74,6 +120,7 @@ export type DirectMediaRootClosureRecord = Readonly<{
   releases: readonly Readonly<{ creditGrantId: string; ordinal: number; amount: bigint }>[];
   releaseJournalTransactionRef: string | null;
   releaseEntriesDigest: string | null;
+  command: DirectMediaRootClosureCommand;
   receipt: DirectMediaRootClosureReceipt;
 }>;
 
@@ -95,6 +142,13 @@ export interface DirectMediaRootClosureRepository {
     rootHoldRef: string;
     authorizationSegmentRef: string;
     settlementRef: string;
+    executionManifestRef: string;
+    rootAllocationRevision: bigint;
+    rootAllocationEpoch: bigint;
+    authorizationSegmentVersion: bigint;
+    reservedCeiling: bigint;
+    unit: string;
+    workerLease: DirectMediaRootClosureIdentity["workerLease"];
   }>): Promise<StoredDirectMediaRootClosure | null>;
   persistClosure(transaction: PlatformTransaction, record: DirectMediaRootClosureRecord): Promise<
     | Readonly<{ kind: "accepted" | "replayed"; value: DirectMediaRootClosureReceipt }>
@@ -103,6 +157,9 @@ export interface DirectMediaRootClosureRepository {
   markReconciliationRequired(transaction: PlatformTransaction, input: Readonly<{
     current: StoredDirectMediaRootClosure;
     reconciliationReceiptRef: string;
+    reconciliationAllocationRevisionRef: string;
+    workerLease: DirectMediaRootClosureIdentity["workerLease"];
+    command: DirectMediaRootClosureCommand;
     businessOperationKey: string;
     requestDigest: string;
     code: string;

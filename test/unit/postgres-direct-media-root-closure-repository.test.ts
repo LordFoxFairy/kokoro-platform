@@ -16,6 +16,7 @@ describe("PostgreSQL Direct Media root closure adapter", () => {
       await expect(repository.findClosure(lease.transaction, {
         siteId: "site:one", operationRef: "media:one",
         businessOperationKey: "close:one", requestDigest: "a".repeat(64),
+        workerLease: { taskRef: "task:one", leaseEpoch: 7n, leaseTokenHash: "b".repeat(64) },
       })).resolves.toEqual({ kind: "none" });
       await repository.lockRootClosure(lease.transaction, {
         siteId: "site:one", operationRef: "media:one",
@@ -24,6 +25,10 @@ describe("PostgreSQL Direct Media root closure adapter", () => {
         rootHoldRef: "00000000-0000-7000-8000-000000000003",
         authorizationSegmentRef: "00000000-0000-7000-8000-000000000004",
         settlementRef: "00000000-0000-7000-8000-000000000005",
+        executionManifestRef: "manifest:one", rootAllocationRevision: 2n,
+        rootAllocationEpoch: 1n, authorizationSegmentVersion: 5n,
+        reservedCeiling: 100n, unit: "credit_micros",
+        workerLease: { taskRef: "task:one", leaseEpoch: 7n, leaseTokenHash: "b".repeat(64) },
       });
       expect(query).toHaveBeenCalledTimes(2);
       for (const [statement] of query.mock.calls) {

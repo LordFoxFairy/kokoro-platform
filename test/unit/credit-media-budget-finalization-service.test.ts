@@ -103,6 +103,9 @@ describe("CreditMediaBudgetFinalizationService", () => {
       expect(usage.settleUsageSegment).toHaveBeenCalledWith(lease.transaction,
         expect.objectContaining({ evidenceRefs: [] }));
       expect(directRoot.close).toHaveBeenCalledOnce();
+      expect(directRoot.close).toHaveBeenCalledWith(lease.transaction, expect.objectContaining({
+        workerLease: command.workerLease,
+      }));
     } finally { revokePlatformTransaction(lease); }
   });
 
@@ -174,6 +177,7 @@ function references() {
 function childCommand(fact: Record<string, unknown> = {}) {
   return {
     siteId: "site:one", operationRef: "media:one", effectClosureReceiptRef: "effect-closure:one",
+    workerLease: { taskRef: "task:one", leaseEpoch: 7n, leaseTokenHash: "d".repeat(64) },
     outcome: "completed" as const,
     budget: { kind: "agent_child" as const,
       executionBudgetRootRef: "00000000-0000-7000-8000-000000000010",

@@ -27,7 +27,12 @@ reserves and commits its root Segment; an Agent operation derives its exact chil
 child-owned Segment. Media never writes Credit tables. At terminalization, Credit resolves only pre-issued attempt authority,
 rates the exact certified evidence set and returns the Agent child through fresh parent/child revision and epoch fences. Missing or
 ambiguous usage enters reconciliation rather than being priced as zero. The direct-root terminal authority and its production
-composition remain fail-closed launch blockers; see `docs/platform/media-worker-launch-blockers.md`.
+composition, including canonical upstream evidence, remain fail-closed launch blockers; see
+`docs/platform/media-worker-launch-blockers.md`. The implemented direct-root
+owner accepts only a live Media task lease, locks authoritative Media/Rating/Credit facts, verifies the frozen admission budget and
+evolved settlement closure separately, and closes the root through closed bounded definer commands. PostgreSQL independently
+recomputes request, closure-receipt and release-journal digests; reconciliation cannot regress terminal facts or reuse a receipt UUID
+as an allocation revision UUID.
 
 The Postgres repository reuses the branded
 `PlatformTransaction`, existing allocation lineage/conservation triggers, reservation/return receipt tables, and local operation
