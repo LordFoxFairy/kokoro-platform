@@ -86,6 +86,10 @@ const memoryRoleNames = Object.freeze({
   runtime: "platform_memory_runtime",
   worker: "platform_memory_worker",
 });
+// This single test deliberately exercises the complete feature-off authority chain:
+// role/ACL inspection, denied callers, purge work, and migration preflight probes.
+// Keep a finite integration budget instead of Vitest's unit-test default.
+const MEMORY_FEATURE_OFF_AUTHORITY_TEST_TIMEOUT_MS = 60_000;
 const migratorUser = decodeURIComponent(new URL(migratorDatabaseUrl).username);
 const apiUser = decodeURIComponent(new URL(apiDatabaseUrl).username);
 const authorizationUser = requireRole(process.env.PLATFORM_DATABASE_AUTHORIZATION_ROLE);
@@ -870,7 +874,7 @@ describe("Platform PostgreSQL foundation", () => {
         ]);
       }
     }
-  });
+  }, MEMORY_FEATURE_OFF_AUTHORITY_TEST_TIMEOUT_MS);
 
   it("rejects digest-incoherent direct root UUID and decimal spellings before persistence", async () => {
     const bootstrap = new Client({ connectionString: bootstrapDatabaseUrl });
