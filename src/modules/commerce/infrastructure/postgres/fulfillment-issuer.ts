@@ -161,6 +161,7 @@ export class PostgresFulfillmentIssuer implements FulfillmentIssuer<PostgresFulf
             amount: output.amount,
             burnPriority: output.burnPriority,
             scopePolicy: output.scopePolicy,
+            acquiredAt: materialization.effectAt,
             effectiveAt: materialization.effectAt,
             expiresAt,
           }));

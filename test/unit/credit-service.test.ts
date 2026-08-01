@@ -23,8 +23,12 @@ describe("CreditService", () => {
   it("plans an exact root reservation before asking the repository to persist authority facts", async () => {
     const repository = new RecordingCreditRepository();
     repository.grants = [
-      { creditGrantId: "grant-late", availableAmount: 70n, expiresAt: null, burnPriority: 10, issuedAt: "2026-01-01T00:00:00.000Z" },
-      { creditGrantId: "grant-first", availableAmount: 40n, expiresAt: "2026-08-01T00:00:00.000Z", burnPriority: 10, issuedAt: "2026-01-01T00:00:00.000Z" },
+      { creditGrantId: "grant-period", availableAmount: 70n, bucketClass: "period",
+        expiresAt: "2026-08-01T00:00:00.000Z", burnPriority: 1,
+        acquiredAt: "2026-01-01T00:00:00.000Z" },
+      { creditGrantId: "grant-daily", availableAmount: 40n, bucketClass: "daily",
+        expiresAt: "2026-08-10T00:00:00.000Z", burnPriority: 100,
+        acquiredAt: "2026-01-02T00:00:00.000Z" },
     ];
     const service = creditService(repository);
     const lease = transactionLease();
@@ -38,8 +42,8 @@ describe("CreditService", () => {
         rootAllocationEpoch: 1n,
       } });
       expect(repository.reservation?.allocations).toEqual([
-        { creditGrantId: "grant-first", amount: 40n, ordinal: 0 },
-        { creditGrantId: "grant-late", amount: 20n, ordinal: 1 },
+        { creditGrantId: "grant-daily", amount: 40n, ordinal: 0 },
+        { creditGrantId: "grant-period", amount: 20n, ordinal: 1 },
       ]);
       expect(repository.reservation?.rootCeiling).toBe(60n);
       expect(repository.reservation?.segmentMaximum).toBe(25n);
@@ -54,7 +58,8 @@ describe("CreditService", () => {
   it("does not persist a partial Hold when full reservation is unavailable", async () => {
     const repository = new RecordingCreditRepository();
     repository.grants = [
-      { creditGrantId: "grant", availableAmount: 59n, expiresAt: null, burnPriority: 10, issuedAt: "2026-01-01T00:00:00.000Z" },
+      { creditGrantId: "grant", availableAmount: 59n, bucketClass: "permanent",
+        expiresAt: null, burnPriority: 10, acquiredAt: "2026-01-01T00:00:00.000Z" },
     ];
     const lease = transactionLease();
     try {
@@ -199,8 +204,8 @@ describe("CreditService", () => {
 
   it("uses CSPRNG UUID references by default", async () => {
     const repository = new RecordingCreditRepository();
-    repository.grants = [{ creditGrantId: "grant", availableAmount: 60n, expiresAt: null,
-      burnPriority: 10, issuedAt: "2026-01-01T00:00:00.000Z" }];
+    repository.grants = [{ creditGrantId: "grant", availableAmount: 60n, bucketClass: "permanent",
+      expiresAt: null, burnPriority: 10, acquiredAt: "2026-01-01T00:00:00.000Z" }];
     const lease = transactionLease();
     try {
       await new CreditService({ repository, clock: () => new Date("2026-07-29T00:00:00.000Z") })

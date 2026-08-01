@@ -186,6 +186,7 @@ function grant() {
       agentRefs: [],
       allowUnattributedAgent: true,
     },
+    acquiredAt: "2026-07-29T01:00:00.000Z",
     effectiveAt: "2026-07-29T01:00:00.000Z",
     expiresAt: null,
   } as const;

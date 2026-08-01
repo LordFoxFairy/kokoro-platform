@@ -139,7 +139,8 @@ function creditIssue(output: FulfillmentOutputDefinition, identity: ReturnType<t
     creditProgramRevisionDigest: output.creditProgramRevisionDigest!, sourceType,
     sourceRef: `${source.idempotencyKey}:credits:1`, businessOperationKey: `fulfillment:${source.idempotencyKey}:credits:1`,
     bucketClass: output.bucketClass!, amount: output.amount!, burnPriority: output.burnPriority!,
-    scopePolicy: output.scopePolicy!, effectiveAt: "2026-07-29T01:00:00.000Z", expiresAt: null } as const;
+    scopePolicy: output.scopePolicy!, acquiredAt: "2026-07-29T01:00:00.000Z",
+    effectiveAt: "2026-07-29T01:00:00.000Z", expiresAt: null } as const;
 }
 
 function referenceFactory() {

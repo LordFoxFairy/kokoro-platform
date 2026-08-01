@@ -12,10 +12,12 @@ describe("Credit allocation conservation", () => {
   it("reserves the full requested amount in canonical Grant burn order without partial success", () => {
     const plan = planGrantReservation(
       [
-        grant("permanent", 20n, null, 10, "2026-01-01T00:00:00.000Z"),
-        grant("late", 30n, "2026-09-01T00:00:00.000Z", 10, "2026-01-01T00:00:00.000Z"),
-        grant("early-low-priority", 40n, "2026-08-01T00:00:00.000Z", 20, "2026-01-01T00:00:00.000Z"),
-        grant("early-high-priority", 25n, "2026-08-01T00:00:00.000Z", 10, "2026-01-02T00:00:00.000Z"),
+        grant("permanent", 20n, "permanent", null, 10, "2026-01-01T00:00:00.000Z"),
+        grant("late", 30n, "period", "2026-09-01T00:00:00.000Z", 10, "2026-01-01T00:00:00.000Z"),
+        grant("early-low-priority", 40n, "daily", "2026-08-01T00:00:00.000Z", 20,
+          "2026-01-01T00:00:00.000Z"),
+        grant("early-high-priority", 25n, "daily", "2026-08-01T00:00:00.000Z", 10,
+          "2026-01-02T00:00:00.000Z"),
       ],
       80n,
     );
@@ -25,7 +27,9 @@ describe("Credit allocation conservation", () => {
       { creditGrantId: "early-low-priority", amount: 40n, ordinal: 1 },
       { creditGrantId: "late", amount: 15n, ordinal: 2 },
     ]);
-    expect(() => planGrantReservation([grant("only", 9n, null, 1, "2026-01-01T00:00:00.000Z")], 10n))
+    expect(() => planGrantReservation([
+      grant("only", 9n, "permanent", null, 1, "2026-01-01T00:00:00.000Z"),
+    ], 10n))
       .toThrowError("CREDIT_INSUFFICIENT_AVAILABLE");
   });
 
@@ -87,11 +91,12 @@ describe("Credit allocation conservation", () => {
 function grant(
   creditGrantId: string,
   availableAmount: bigint,
+  bucketClass: "daily" | "period" | "permanent",
   expiresAt: string | null,
   burnPriority: number,
-  issuedAt: string,
+  acquiredAt: string,
 ) {
-  return { creditGrantId, availableAmount, expiresAt, burnPriority, issuedAt };
+  return { creditGrantId, availableAmount, bucketClass, expiresAt, burnPriority, acquiredAt };
 }
 
 function revision(input: Readonly<{ ceiling: bigint; unassigned: bigint }>): BudgetAllocationRevision {

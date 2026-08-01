@@ -3,9 +3,10 @@ import { CreditDomainError, type CreditDomainErrorCode } from "./credit-domain-e
 export type GrantAvailability = Readonly<{
   creditGrantId: string;
   availableAmount: bigint;
+  bucketClass: "daily" | "period" | "permanent";
   expiresAt: string | null;
   burnPriority: number;
-  issuedAt: string;
+  acquiredAt: string;
 }>;
 
 export type PlannedHoldAllocation = Readonly<{
@@ -394,17 +395,22 @@ function validateGrant(grant: GrantAvailability): GrantAvailability {
   if (grant.availableAmount < 0n || !Number.isSafeInteger(grant.burnPriority)) {
     throw new CreditDomainError("CREDIT_GRANT_AVAILABILITY_INVALID");
   }
+  if (!(grant.bucketClass in BUCKET_RANK)) {
+    throw new CreditDomainError("CREDIT_GRANT_AVAILABILITY_INVALID");
+  }
   if (grant.expiresAt !== null) instant(grant.expiresAt);
-  instant(grant.issuedAt);
+  instant(grant.acquiredAt);
   return grant;
 }
 
 function compareGrantBurnOrder(left: GrantAvailability, right: GrantAvailability): number {
+  const bucket = BUCKET_RANK[left.bucketClass] - BUCKET_RANK[right.bucketClass];
+  if (bucket !== 0) return bucket;
   if (left.expiresAt === null && right.expiresAt !== null) return 1;
   if (left.expiresAt !== null && right.expiresAt === null) return -1;
   if (left.expiresAt !== right.expiresAt) return compareCodeUnits(left.expiresAt ?? "", right.expiresAt ?? "");
   if (left.burnPriority !== right.burnPriority) return left.burnPriority - right.burnPriority;
-  if (left.issuedAt !== right.issuedAt) return compareCodeUnits(left.issuedAt, right.issuedAt);
+  if (left.acquiredAt !== right.acquiredAt) return compareCodeUnits(left.acquiredAt, right.acquiredAt);
   return compareCodeUnits(left.creditGrantId, right.creditGrantId);
 }
 
@@ -440,5 +446,6 @@ const ALLOCATION_STATES = new Set<string>([
   "terminal",
   "reconciliation_required",
 ]);
+const BUCKET_RANK = Object.freeze({ daily: 0, period: 1, permanent: 2 } as const);
 const DIGEST = /^[a-f0-9]{64}$/u;
 const POSTGRES_INT8_MAX = 9_223_372_036_854_775_807n;

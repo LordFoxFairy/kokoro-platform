@@ -51,6 +51,7 @@ export type CreditGrantIssue = Readonly<{
   amount: string;
   burnPriority: number;
   scopePolicy: CreditGrantScopePolicy;
+  acquiredAt: string;
   effectiveAt: string;
   expiresAt: string | null;
 }>;

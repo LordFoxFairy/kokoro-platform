@@ -135,14 +135,15 @@ export class PostgresCreditGrantIssuer implements CreditGrantIssuancePort {
          (credit_grant_id,credit_account_ref,site_ref,billing_account_ref,credit_program_revision_ref,
           credit_program_revision,credit_program_revision_digest,
           source_type,source_ref,issuance_journal_transaction_ref,ux_bucket_class,unit,
-          liability_merchant_account_ref,original_amount,burn_priority,scope_policy,effective_at,expires_at,issued_at)
+          liability_merchant_account_ref,original_amount,burn_priority,scope_policy,effective_at,expires_at,
+          acquired_at,issued_at)
          VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6::bigint,$7,$8,$9,$10::uuid,$11,$12,$13,$14::numeric,$15,$16::jsonb,
-                 $17::timestamptz,$18::timestamptz,$17::timestamptz)`,
+                 $17::timestamptz,$18::timestamptz,$19::timestamptz,$19::timestamptz)`,
         [creditGrantRef, account.creditAccountId, grant.account.siteId, grant.account.billingAccountId,
           grant.creditProgramRevisionRef, grant.creditProgramRevision, grant.creditProgramRevisionDigest,
           grant.sourceType, grant.sourceRef, journalTransactionRef, grant.bucketClass,
           grant.account.unit, grant.account.liabilityMerchantAccountId, grant.amount, grant.burnPriority,
-          JSON.stringify(grant.scopePolicy), grant.effectiveAt, grant.expiresAt],
+          JSON.stringify(grant.scopePolicy), grant.effectiveAt, grant.expiresAt, grant.acquiredAt],
       );
       if (created !== 1) throw new Error("CREDIT_GRANT_CREATE_FAILED");
       await recordGrantIssueJournal(sql, {
@@ -201,8 +202,10 @@ function validateGrant(grant: CreditGrantIssue): CreditGrantIssue {
     throw new Error("CREDIT_GRANT_BUCKET_INVALID");
   }
   const effectiveAt = Date.parse(grant.effectiveAt);
+  const acquiredAt = Date.parse(grant.acquiredAt);
   const expiresAt = grant.expiresAt === null ? null : Date.parse(grant.expiresAt);
-  if (!Number.isFinite(effectiveAt) || (expiresAt !== null && (!Number.isFinite(expiresAt) || expiresAt <= effectiveAt))) {
+  if (!Number.isFinite(effectiveAt) || !Number.isFinite(acquiredAt) || acquiredAt > effectiveAt ||
+      (expiresAt !== null && (!Number.isFinite(expiresAt) || expiresAt <= effectiveAt))) {
     throw new Error("CREDIT_GRANT_EFFECTIVE_WINDOW_INVALID");
   }
   if ((grant.bucketClass === "permanent") !== (grant.expiresAt === null)) {

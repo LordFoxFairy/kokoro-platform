@@ -74,7 +74,8 @@ describe("PostgresCreditAuthorityRepository", () => {
     sql.accountRows = [{ creditAccountId: "00000000-0000-7000-8000-000000000001",
       state: "active", aggregateVersion: 1n }];
     sql.grantRows = [{ creditGrantId: "00000000-0000-7000-8000-000000000101",
-      availableAmount: "60", expiresAt: null, burnPriority: 10, issuedAt: NOW }];
+      availableAmount: "60", bucketClass: "permanent", expiresAt: null,
+      burnPriority: 10, acquiredAt: NOW }];
     const lease = issuePlatformTransaction(sql);
     try {
       const result = await postgresRepository().lockGrantAvailability(lease.transaction, {

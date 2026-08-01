@@ -42,9 +42,10 @@ type ReceiptRow = Record<string, unknown>;
 type GrantRow = Record<string, unknown> & {
   creditGrantId: string;
   availableAmount: string;
+  bucketClass: "daily" | "period" | "permanent";
   expiresAt: Date | string | null;
   burnPriority: number;
-  issuedAt: Date | string;
+  acquiredAt: Date | string;
 };
 
 type SegmentRow = Record<string, unknown> & {
@@ -161,8 +162,9 @@ export class PostgresCreditAuthorityRepository implements CreditAuthorityReposit
     const rows = await sql.query<GrantRow>(
       `SELECT grant_fact.credit_grant_id AS "creditGrantId",
               balance.available_amount::text AS "availableAmount",
+              grant_fact.ux_bucket_class AS "bucketClass",
               grant_fact.expires_at AS "expiresAt",grant_fact.burn_priority AS "burnPriority",
-              grant_fact.issued_at AS "issuedAt"
+              grant_fact.acquired_at AS "acquiredAt"
        FROM platform.credit_grant grant_fact
        CROSS JOIN LATERAL (
          SELECT COALESCE(sum(CASE entry.entry_side WHEN 'credit' THEN entry.amount ELSE -entry.amount END),0)
@@ -180,8 +182,9 @@ export class PostgresCreditAuthorityRepository implements CreditAuthorityReposit
          AND (($7::text IS NULL AND grant_fact.scope_policy->>'allowUnattributedAgent'='true')
            OR ($7::text IS NOT NULL AND grant_fact.scope_policy->'agentRefs' ? $7))
          AND balance.available_amount>0
-       ORDER BY grant_fact.expires_at ASC NULLS LAST,grant_fact.burn_priority ASC,
-                grant_fact.issued_at ASC,grant_fact.credit_grant_id ASC
+       ORDER BY CASE grant_fact.ux_bucket_class WHEN 'daily' THEN 1 WHEN 'period' THEN 2 ELSE 3 END,
+                grant_fact.expires_at ASC NULLS LAST,grant_fact.burn_priority ASC,
+                grant_fact.acquired_at ASC,grant_fact.credit_grant_id ASC
        FOR UPDATE OF grant_fact`,
       [input.siteId, input.creditAccountId, input.unit, input.effectiveAt,
         input.consumptionScope.surfaceRef, input.consumptionScope.capabilityKey,
@@ -190,9 +193,10 @@ export class PostgresCreditAuthorityRepository implements CreditAuthorityReposit
     return Object.freeze(rows.map((row) => Object.freeze({
       creditGrantId: row.creditGrantId,
       availableAmount: BigInt(row.availableAmount),
+      bucketClass: row.bucketClass,
       expiresAt: nullableInstant(row.expiresAt),
       burnPriority: row.burnPriority,
-      issuedAt: instant(row.issuedAt),
+      acquiredAt: instant(row.acquiredAt),
     })));
   }
 

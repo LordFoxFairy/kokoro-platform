@@ -254,7 +254,7 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
               sourceRef: `${source.idempotencyKey}:${output.outputLineId}:${occurrence}`,
               businessOperationKey: `fulfillment:${source.idempotencyKey}:${output.outputLineId}:${occurrence}`,
               bucketClass: output.bucketClass, amount: output.amount, burnPriority: output.burnPriority,
-              scopePolicy: output.scopePolicy, effectiveAt: effectAt,
+              scopePolicy: output.scopePolicy, acquiredAt: effectAt, effectiveAt: effectAt,
               expiresAt: expiry(effectAt, output.creditExpiresAfterSeconds) });
           })),
       });
