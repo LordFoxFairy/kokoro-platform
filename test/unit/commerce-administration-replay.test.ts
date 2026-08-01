@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { PostgresCommerceAdministrationRepository } from
   "../../src/modules/commerce/infrastructure/postgres/commerce-administration-repository.js";
+import { PostgresCreditGrantProgram } from
+  "../../src/modules/credit/infrastructure/postgres/credit-grant-program.js";
 import { issuePlatformTransaction, revokePlatformTransaction, type PlatformTransaction } from
   "../../src/shared/unit-of-work/platform-transaction.js";
 import { commerceCanonicalJson } from "../../src/modules/commerce/domain/canonical-json.js";
@@ -76,7 +78,7 @@ describe("Admin Commerce durable replay", () => {
       },
     });
     try {
-      await expect(invoke(new PostgresCommerceAdministrationRepository(), lease.transaction, input))
+      await expect(invoke(new PostgresCommerceAdministrationRepository(new PostgresCreditGrantProgram()), lease.transaction, input))
         .rejects.toThrow("COMMERCE_ADMIN_RECEIPT_CORRUPT");
       expect(statements.filter((statement) => statement.includes("FROM platform.command_receipt"))).toHaveLength(1);
     } finally { revokePlatformTransaction(lease); }
@@ -96,7 +98,7 @@ describe("Admin Commerce durable replay", () => {
       },
     });
     try {
-      await expect(invoke(new PostgresCommerceAdministrationRepository(), lease.transaction, input))
+      await expect(invoke(new PostgresCommerceAdministrationRepository(new PostgresCreditGrantProgram()), lease.transaction, input))
         .resolves.toMatchObject({ kind: "replayed", command: input.command,
           recordedAt: "2026-07-30T03:00:00.000Z", result: durableResult });
       expect(statements.filter((statement) => statement.includes("FROM platform.command_receipt"))).toHaveLength(1);

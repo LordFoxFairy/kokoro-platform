@@ -79,7 +79,7 @@ describe("Wave 2A Commerce authority schema", () => {
     const epochColumns = migration.match(/catalog_epoch BIGINT NOT NULL CHECK\(catalog_epoch > 0\)/gu) ?? [];
     expect(epochColumns).toHaveLength(7);
     expect(migration).toContain("INSERT INTO platform.commerce_catalog_epoch_authority(singleton,current_epoch)");
-    for (const index of ["commerce_credit_program_catalog_page_idx",
+    for (const index of ["credit_grant_program_catalog_page_idx",
       "commerce_entitlement_template_catalog_page_idx", "commerce_product_version_catalog_page_idx",
       "commerce_redemption_program_catalog_page_idx", "commerce_code_batch_catalog_page_idx"]) {
       expect(migration).toContain(`CREATE INDEX ${index}`);

@@ -59,7 +59,7 @@ describe("PostgresCommerceRepository", () => {
     const lease = issuePlatformTransaction({ query: async () => [], execute: async (statement) => { statements.push(statement); return 1; } });
     try {
       await expect(new PostgresCommerceRepository().recordExpectedOutputPlan(lease.transaction, "00000000-0000-7000-8000-000000000001", [
-        { outputLineId: "first", ordinal: 1, cardinality: 1, templateRevision: "v1", outputKind: "credit_grant", disposition: "required" },
+        { outputLineId: "first", ordinal: 2, cardinality: 1, templateRevision: "v1", outputKind: "credit_grant", disposition: "required" },
       ])).rejects.toThrow("OUTPUT_ORDINAL_NOT_CONTINUOUS");
       expect(statements).toEqual([]);
     } finally { revokePlatformTransaction(lease); }

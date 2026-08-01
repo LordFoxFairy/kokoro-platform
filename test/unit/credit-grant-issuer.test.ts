@@ -24,53 +24,22 @@ describe("PostgresCreditGrantIssuer", () => {
     });
     const issuer = new PostgresCreditGrantIssuer({ reference: () => references.shift()! });
     try {
-      const preparation = await issuer.prepareAccounts(lease.transaction, {
-        accounts: [{
-          siteId: "site-1",
-          billingAccountId: "billing-1",
-          unit: "credit",
-          liabilityMerchantAccountId: "merchant-1",
-        }],
-      });
+      const preparation = await issuer.prepareIssuance(lease.transaction, { commandId: "command-1", grants: [grant()] });
       expect(preparation.kind).toBe("ready");
       if (preparation.kind !== "ready") throw new Error("test preparation rejected");
 
-      const receipts = await issuer.issueGrants(lease.transaction, {
+      const receipts = await issuer.issuePrepared(lease.transaction, {
         preparation: preparation.preparation,
-        commandId: "command-1",
-        grants: [{
-          account: {
-            siteId: "site-1",
-            billingAccountId: "billing-1",
-            unit: "credit",
-            liabilityMerchantAccountId: "merchant-1",
-          },
-          outputLineId: "credits",
-          occurrence: 1,
-          creditProgramRevisionRef: "credit-v1",
-          sourceType: "redemption",
-          sourceRef: "fulfillment-key:credits:1",
-          businessOperationKey: "fulfillment:fulfillment-key:credits:1",
-          bucketClass: "permanent",
-          amount: "100",
-          burnPriority: 100,
-          scopePolicy: {
-            version: 1,
-            surfaceRefs: ["general.chat"],
-            capabilityKeys: ["general.chat.message"],
-            agentRefs: [],
-            allowUnattributedAgent: true,
-          },
-          effectiveAt: "2026-07-29T01:00:00.000Z",
-          expiresAt: null,
-        }],
       });
 
       expect(receipts).toEqual([{
         outputLineId: "credits",
+        outputOrdinal: 1,
         occurrence: 1,
         creditProgramRevisionRef: "credit-v1",
         creditGrantRef: "00000000-0000-7000-8000-000000000101",
+        outputVersion: 1,
+        outputDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
       }]);
       const sql = statements.map(({ statement }) => statement).join("\n");
       expect(sql).toMatch(/pg_advisory_xact_lock[\s\S]+FROM platform\.credit_account[\s\S]+FOR UPDATE/u);
@@ -94,14 +63,9 @@ describe("PostgresCreditGrantIssuer", () => {
       execute: async () => 1,
     });
     try {
-      await expect(new PostgresCreditGrantIssuer().prepareAccounts(lease.transaction, {
-        accounts: [{
-          siteId: "site-1",
-          billingAccountId: "billing-1",
-          unit: "credit",
-          liabilityMerchantAccountId: "merchant-1",
-        }],
-      })).resolves.toEqual({ kind: "unavailable", reason: `credit_account_${state}` });
+      await expect(new PostgresCreditGrantIssuer().prepareIssuance(lease.transaction,
+        { commandId: "command-1", grants: [grant()] }))
+        .resolves.toEqual({ kind: "unavailable", reason: `credit_account_${state}` });
     } finally {
       revokePlatformTransaction(lease);
     }
@@ -116,10 +80,7 @@ describe("PostgresCreditGrantIssuer", () => {
     });
     const issuer = new PostgresCreditGrantIssuer();
     try {
-      const preparation = await issuer.prepareAccounts(lease.transaction, { accounts: [account()] });
-      if (preparation.kind !== "ready") throw new Error("test preparation rejected");
-      await expect(issuer.issueGrants(lease.transaction, {
-        preparation: preparation.preparation,
+      await expect(issuer.prepareIssuance(lease.transaction, {
         commandId: "command-1",
         grants: [{ ...grant(), scopePolicy: {
           version: 1,
@@ -147,10 +108,7 @@ describe("PostgresCreditGrantIssuer", () => {
     });
     const issuer = new PostgresCreditGrantIssuer();
     try {
-      const preparation = await issuer.prepareAccounts(lease.transaction, { accounts: [account()] });
-      if (preparation.kind !== "ready") throw new Error("test preparation rejected");
-      await expect(issuer.issueGrants(lease.transaction, {
-        preparation: preparation.preparation,
+      await expect(issuer.prepareIssuance(lease.transaction, {
         commandId: "command-1",
         grants: [{ ...grant(), ...override } as never],
       })).rejects.toThrowError(code);
@@ -165,12 +123,10 @@ describe("PostgresCreditGrantIssuer", () => {
     const first = issuePlatformTransaction({ query: async () => [], execute: async () => 1 });
     const second = issuePlatformTransaction({ query: async () => [], execute: async () => 1 });
     try {
-      const preparation = await issuer.prepareAccounts(first.transaction, { accounts: [account()] });
+      const preparation = await issuer.prepareIssuance(first.transaction, { commandId: "command-1", grants: [grant()] });
       if (preparation.kind !== "ready") throw new Error("test preparation rejected");
-      await expect(issuer.issueGrants(second.transaction, {
+      await expect(issuer.issuePrepared(second.transaction, {
         preparation: preparation.preparation,
-        commandId: "command-1",
-        grants: [grant()],
       })).rejects.toThrowError("CREDIT_GRANT_PREPARATION_INVALID");
     } finally {
       revokePlatformTransaction(first);
@@ -187,11 +143,11 @@ describe("PostgresCreditGrantIssuer", () => {
     const issuer = new PostgresCreditGrantIssuer({ reference: () => references.shift()! });
     const lease = issuePlatformTransaction({ query: async () => [], execute: async () => 1 });
     try {
-      const preparation = await issuer.prepareAccounts(lease.transaction, { accounts: [account()] });
+      const preparation = await issuer.prepareIssuance(lease.transaction, { commandId: "command-1", grants: [grant()] });
       if (preparation.kind !== "ready") throw new Error("test preparation rejected");
-      const command = { preparation: preparation.preparation, commandId: "command-1", grants: [grant()] } as const;
-      await expect(issuer.issueGrants(lease.transaction, command)).resolves.toHaveLength(1);
-      await expect(issuer.issueGrants(lease.transaction, command))
+      const command = { preparation: preparation.preparation } as const;
+      await expect(issuer.issuePrepared(lease.transaction, command)).resolves.toHaveLength(1);
+      await expect(issuer.issuePrepared(lease.transaction, command))
         .rejects.toThrowError("CREDIT_GRANT_PREPARATION_CONSUMED");
     } finally {
       revokePlatformTransaction(lease);
@@ -212,6 +168,7 @@ function grant() {
   return {
     account: account(),
     outputLineId: "credits",
+    outputOrdinal: 1,
     occurrence: 1,
     creditProgramRevisionRef: "credit-v1",
     sourceType: "redemption",

@@ -203,7 +203,7 @@ BEGIN
   RETURN TRUE;
 END $$;
 
-CREATE TABLE platform.commerce_credit_program_revision (
+CREATE TABLE platform.credit_grant_program_revision (
   credit_program_revision_ref TEXT PRIMARY KEY CHECK(length(credit_program_revision_ref) BETWEEN 1 AND 256),
   site_ref TEXT NOT NULL REFERENCES platform.authorization_site(site_ref),
   program_ref TEXT NOT NULL CHECK(length(program_ref) BETWEEN 1 AND 256),
@@ -238,8 +238,8 @@ CREATE TABLE platform.commerce_credit_program_revision (
       AND expires_after_seconds IS NOT NULL)
   )
 );
-CREATE INDEX commerce_credit_program_catalog_page_idx
-  ON platform.commerce_credit_program_revision(site_ref,credit_program_revision_ref,catalog_epoch);
+CREATE INDEX credit_grant_program_catalog_page_idx
+  ON platform.credit_grant_program_revision(site_ref,credit_program_revision_ref,catalog_epoch);
 
 CREATE TABLE platform.commerce_entitlement_template_revision (
   entitlement_template_revision_ref TEXT PRIMARY KEY CHECK(length(entitlement_template_revision_ref) BETWEEN 1 AND 256),
@@ -278,12 +278,14 @@ CREATE TABLE platform.commerce_fulfillment_program_output (
   fulfillment_program_revision_ref TEXT NOT NULL,
   site_ref TEXT NOT NULL,
   output_line_id TEXT NOT NULL CHECK(length(output_line_id) BETWEEN 1 AND 128),
-  ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
-  cardinality INTEGER NOT NULL CHECK(cardinality BETWEEN 1 AND 100),
+  ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 1 AND 32),
+  cardinality INTEGER NOT NULL CHECK(cardinality BETWEEN 1 AND 32),
   output_kind TEXT NOT NULL CHECK(output_kind IN ('subscription_term','entitlement_grant','credit_grant')),
   plan_version_ref TEXT,
   entitlement_template_revision_ref TEXT,
   credit_program_revision_ref TEXT,
+  credit_program_revision_version BIGINT,
+  credit_program_revision_digest CHAR(64),
   PRIMARY KEY(fulfillment_program_revision_ref,output_line_id),
   UNIQUE(fulfillment_program_revision_ref,ordinal),
   FOREIGN KEY(fulfillment_program_revision_ref,site_ref)
@@ -292,12 +294,14 @@ CREATE TABLE platform.commerce_fulfillment_program_output (
     REFERENCES platform.commerce_catalog_plan_version(plan_version_ref,site_ref),
   FOREIGN KEY(entitlement_template_revision_ref,site_ref)
     REFERENCES platform.commerce_entitlement_template_revision(entitlement_template_revision_ref,site_ref),
-  FOREIGN KEY(credit_program_revision_ref,site_ref)
-    REFERENCES platform.commerce_credit_program_revision(credit_program_revision_ref,site_ref),
   CHECK(
-    (output_kind='subscription_term' AND plan_version_ref IS NOT NULL AND entitlement_template_revision_ref IS NULL AND credit_program_revision_ref IS NULL)
-    OR (output_kind='entitlement_grant' AND plan_version_ref IS NULL AND entitlement_template_revision_ref IS NOT NULL AND credit_program_revision_ref IS NULL)
-    OR (output_kind='credit_grant' AND plan_version_ref IS NULL AND entitlement_template_revision_ref IS NULL AND credit_program_revision_ref IS NOT NULL)
+    (output_kind='subscription_term' AND plan_version_ref IS NOT NULL AND entitlement_template_revision_ref IS NULL
+      AND credit_program_revision_ref IS NULL AND credit_program_revision_version IS NULL AND credit_program_revision_digest IS NULL)
+    OR (output_kind='entitlement_grant' AND plan_version_ref IS NULL AND entitlement_template_revision_ref IS NOT NULL
+      AND credit_program_revision_ref IS NULL AND credit_program_revision_version IS NULL AND credit_program_revision_digest IS NULL)
+    OR (output_kind='credit_grant' AND plan_version_ref IS NULL AND entitlement_template_revision_ref IS NULL
+      AND credit_program_revision_ref IS NOT NULL AND credit_program_revision_version > 0
+      AND credit_program_revision_digest ~ '^[a-f0-9]{64}$')
   )
 );
 ALTER TABLE platform.commerce_fulfillment_program_output
@@ -704,7 +708,7 @@ CREATE TABLE platform.credit_grant (
       credit_account_ref,site_ref,billing_account_ref,unit,liability_merchant_account_ref
     ),
   FOREIGN KEY(credit_program_revision_ref,site_ref)
-    REFERENCES platform.commerce_credit_program_revision(credit_program_revision_ref,site_ref),
+    REFERENCES platform.credit_grant_program_revision(credit_program_revision_ref,site_ref),
   CHECK((ux_bucket_class='permanent' AND expires_at IS NULL) OR (ux_bucket_class<>'permanent' AND expires_at IS NOT NULL)),
   CHECK(expires_at IS NULL OR expires_at > effective_at)
 );
@@ -725,7 +729,7 @@ CREATE TABLE platform.credit_program_window_acquisition (
   UNIQUE(site_ref,credit_program_revision_ref,subject_ref,subject_generation,window_key),
   UNIQUE(site_ref,fulfillment_ref),
   FOREIGN KEY(credit_program_revision_ref,site_ref)
-    REFERENCES platform.commerce_credit_program_revision(credit_program_revision_ref,site_ref),
+    REFERENCES platform.credit_grant_program_revision(credit_program_revision_ref,site_ref),
   FOREIGN KEY(subject_ref,site_ref) REFERENCES platform.authorization_subject(subject_ref,site_ref),
   FOREIGN KEY(billing_account_ref,site_ref)
     REFERENCES platform.commerce_billing_account(billing_account_ref,site_ref)
@@ -1198,14 +1202,14 @@ ALTER TABLE platform.credit_program_window_acquisition
 CREATE TABLE platform.commerce_fulfillment_output_plan (
   fulfillment_id UUID NOT NULL REFERENCES platform.commerce_fulfillment_transaction(fulfillment_id),
   output_line_id TEXT NOT NULL CHECK (length(output_line_id) BETWEEN 1 AND 128),
-  ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
-  cardinality INTEGER NOT NULL CHECK (cardinality BETWEEN 0 AND 100),
+  ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 1 AND 32),
+  cardinality INTEGER NOT NULL CHECK (cardinality BETWEEN 0 AND 32),
   template_revision TEXT NOT NULL CHECK (length(template_revision) BETWEEN 1 AND 256),
   output_kind TEXT NOT NULL CHECK (output_kind IN ('subscription','subscription_term','entitlement_grant','credit_grant')),
   disposition TEXT NOT NULL CHECK (disposition IN ('required','optional','forbidden')),
   PRIMARY KEY(fulfillment_id,output_line_id),
   UNIQUE(fulfillment_id,ordinal),
-  UNIQUE(fulfillment_id,output_line_id,cardinality,template_revision,output_kind),
+  UNIQUE(fulfillment_id,output_line_id,ordinal,cardinality,template_revision,output_kind),
   CHECK (
     (disposition='forbidden' AND cardinality=0)
     OR (disposition IN ('required','optional') AND cardinality > 0)
@@ -1215,18 +1219,21 @@ CREATE TABLE platform.commerce_fulfillment_output_plan (
 CREATE TABLE platform.commerce_fulfillment_actual_output (
   fulfillment_id UUID NOT NULL,
   output_line_id TEXT NOT NULL,
+  output_ordinal INTEGER NOT NULL CHECK(output_ordinal BETWEEN 1 AND 32),
   occurrence INTEGER NOT NULL,
   cardinality INTEGER NOT NULL,
   template_revision TEXT NOT NULL,
   output_kind TEXT NOT NULL,
   output_ref TEXT NOT NULL CHECK (length(output_ref) BETWEEN 1 AND 256),
+  output_version BIGINT NOT NULL CHECK(output_version=1),
+  output_digest CHAR(64) NOT NULL CHECK(output_digest ~ '^[a-f0-9]{64}$'),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY(fulfillment_id,output_line_id,occurrence),
-  UNIQUE(fulfillment_id,output_kind,output_ref),
+  UNIQUE(fulfillment_id,output_kind,output_ref,output_version,output_digest),
   CHECK (occurrence BETWEEN 1 AND cardinality),
-  FOREIGN KEY(fulfillment_id,output_line_id,cardinality,template_revision,output_kind)
+  FOREIGN KEY(fulfillment_id,output_line_id,output_ordinal,cardinality,template_revision,output_kind)
     REFERENCES platform.commerce_fulfillment_output_plan(
-      fulfillment_id,output_line_id,cardinality,template_revision,output_kind
+      fulfillment_id,output_line_id,ordinal,cardinality,template_revision,output_kind
     )
 );
 
@@ -1266,7 +1273,7 @@ BEGIN
     INTO line_count,min_ordinal,max_ordinal
   FROM platform.commerce_fulfillment_output_plan
   WHERE fulfillment_id=NEW.fulfillment_id;
-  IF line_count < 1 OR min_ordinal <> 0 OR max_ordinal <> line_count-1 THEN
+  IF line_count < 1 OR line_count > 32 OR min_ordinal <> 1 OR max_ordinal <> line_count THEN
     RAISE EXCEPTION 'OUTPUT_ORDINAL_NOT_CONTINUOUS' USING ERRCODE='23514';
   END IF;
   RETURN NULL;
@@ -1399,10 +1406,16 @@ BEGIN
          COALESCE(sum(amount) FILTER (WHERE entry_side='debit'),0),
          COALESCE(sum(amount) FILTER (WHERE entry_side='credit'),0),
          encode(sha256(convert_to(string_agg(
-           concat_ws('|',entry_ordinal::TEXT,site_ref,credit_account_ref::TEXT,unit,
-             entry_side,account_type,amount::TEXT,credit_grant_id::TEXT,
-             COALESCE(credit_hold_ref::TEXT,'')),
-           E'\n' ORDER BY entry_ordinal
+           octet_length(entry_ordinal::TEXT)::TEXT || ':' || entry_ordinal::TEXT ||
+           octet_length(site_ref)::TEXT || ':' || site_ref ||
+           octet_length(credit_account_ref::TEXT)::TEXT || ':' || credit_account_ref::TEXT ||
+           octet_length(unit)::TEXT || ':' || unit ||
+           octet_length(entry_side)::TEXT || ':' || entry_side ||
+           octet_length(account_type)::TEXT || ':' || account_type ||
+           octet_length(amount::TEXT)::TEXT || ':' || amount::TEXT ||
+           octet_length(credit_grant_id::TEXT)::TEXT || ':' || credit_grant_id::TEXT ||
+           octet_length(COALESCE(credit_hold_ref::TEXT,''))::TEXT || ':' || COALESCE(credit_hold_ref::TEXT,''),
+           '' ORDER BY entry_ordinal
          ),'UTF8')),'hex')
     INTO actual_count,min_ordinal,max_ordinal,debit_total,credit_total,actual_digest
   FROM platform.credit_journal_entry
@@ -1526,7 +1539,7 @@ DECLARE
   target_grant_id UUID := NULLIF(payload->>'credit_grant_id','')::UUID;
   target_hold_ref UUID := NULLIF(payload->>'credit_hold_ref','')::UUID;
   grant_fact platform.credit_grant%ROWTYPE;
-  program_fact platform.commerce_credit_program_revision%ROWTYPE;
+  program_fact platform.credit_grant_program_revision%ROWTYPE;
   hold_fact platform.credit_hold%ROWTYPE;
   allocation_fact platform.credit_hold_allocation%ROWTYPE;
   issue_debit NUMERIC(38,0);
@@ -1549,7 +1562,7 @@ BEGIN
   IF target_grant_id IS NOT NULL THEN
     SELECT * INTO grant_fact FROM platform.credit_grant
     WHERE credit_grant_id=target_grant_id;
-    SELECT * INTO program_fact FROM platform.commerce_credit_program_revision
+    SELECT * INTO program_fact FROM platform.credit_grant_program_revision
     WHERE credit_program_revision_ref=grant_fact.credit_program_revision_ref;
     SELECT operation_kind INTO linked_operation_kind
     FROM platform.credit_journal_transaction
@@ -2161,8 +2174,8 @@ CREATE TRIGGER commerce_actual_output_immutable
 CREATE TRIGGER commerce_plan_version_immutable
   BEFORE UPDATE OR DELETE ON platform.commerce_catalog_plan_version
   FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
-CREATE TRIGGER commerce_credit_program_revision_immutable
-  BEFORE UPDATE OR DELETE ON platform.commerce_credit_program_revision
+CREATE TRIGGER credit_grant_program_revision_immutable
+  BEFORE UPDATE OR DELETE ON platform.credit_grant_program_revision
   FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
 CREATE TRIGGER commerce_entitlement_template_revision_immutable
   BEFORE UPDATE OR DELETE ON platform.commerce_entitlement_template_revision
@@ -2346,7 +2359,7 @@ REVOKE ALL ON
   platform.commerce_catalog_product,
   platform.commerce_catalog_plan,
   platform.commerce_catalog_plan_version,
-  platform.commerce_credit_program_revision,
+  platform.credit_grant_program_revision,
   platform.commerce_entitlement_template_revision,
   platform.commerce_fulfillment_program_revision,
   platform.commerce_fulfillment_program_output,

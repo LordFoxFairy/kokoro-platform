@@ -76,6 +76,8 @@ import { createAdminCreditConnectService } from
   "../modules/credit/interfaces/connect/admin-credit-service.js";
 import { PostgresAdminCreditReader } from
   "../modules/credit/infrastructure/postgres/admin-credit-reader.js";
+import { PostgresCreditGrantProgramAdministrationReader } from
+  "../modules/credit/infrastructure/postgres/grant-program-administration-reader.js";
 import { readBoundedPrivateFile, readBoundedRegularFile } from "./secret-files.js";
 import { createPlatformSiteAdminComposition } from "./site-admin-composition.js";
 import { createSessionAuthorizationEventSigner } from
@@ -212,7 +214,8 @@ export async function createAdminProductionComposition(input: Readonly<{
   });
   const commerceService = createAdminCommerceConnectService({
     resolver, owner: commerceOwner.commerce,
-    reader: new PostgresCommerceAdministrationReader(input.database), cursors,
+    reader: new PostgresCommerceAdministrationReader(input.database,
+      new PostgresCreditGrantProgramAdministrationReader(input.database)), cursors,
     ...(input.clock === undefined ? {} : { clock: input.clock }),
   });
   const creditService = createAdminCreditConnectService({

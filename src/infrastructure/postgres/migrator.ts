@@ -2302,7 +2302,7 @@ async function grantFoundationPrivileges(
         `GRANT UPDATE ON TABLE platform.admin_approval, platform.admin_post_effect_review, platform.admin_oidc_transaction, platform.admin_operator_session, platform.admin_step_up_transaction TO ${identifier}`,
       );
       await client.query(
-        `GRANT INSERT ON TABLE platform.commerce_command, platform.commerce_catalog_product, platform.commerce_catalog_plan, platform.commerce_catalog_plan_version, platform.commerce_credit_program_revision, platform.commerce_entitlement_template_revision, platform.commerce_fulfillment_program_revision, platform.commerce_fulfillment_program_output, platform.commerce_catalog_product_version, platform.commerce_redemption_program_revision, platform.commerce_redemption_program_availability, platform.commerce_code_batch, platform.commerce_redeem_code, platform.commerce_code_batch_approval, platform.commerce_code_secret_export, platform.commerce_audit_entry TO ${identifier}`,
+        `GRANT INSERT ON TABLE platform.commerce_command, platform.commerce_catalog_product, platform.commerce_catalog_plan, platform.commerce_catalog_plan_version, platform.credit_grant_program_revision, platform.commerce_entitlement_template_revision, platform.commerce_fulfillment_program_revision, platform.commerce_fulfillment_program_output, platform.commerce_catalog_product_version, platform.commerce_redemption_program_revision, platform.commerce_redemption_program_availability, platform.commerce_code_batch, platform.commerce_redeem_code, platform.commerce_code_batch_approval, platform.commerce_code_secret_export, platform.commerce_audit_entry TO ${identifier}`,
       );
       await client.query(
         `GRANT UPDATE ON TABLE platform.commerce_catalog_epoch_authority, platform.commerce_catalog_product, platform.commerce_catalog_plan, platform.commerce_code_batch, platform.commerce_redemption_program_availability TO ${identifier}`,
@@ -2354,7 +2354,7 @@ const COMMERCE_TABLES = [
   "platform.commerce_catalog_product",
   "platform.commerce_catalog_plan",
   "platform.commerce_catalog_plan_version",
-  "platform.commerce_credit_program_revision",
+  "platform.credit_grant_program_revision",
   "platform.commerce_entitlement_template_revision",
   "platform.commerce_fulfillment_program_revision",
   "platform.commerce_fulfillment_program_output",
@@ -3063,7 +3063,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            AND has_table_privilege(runtime_role.rolname, 'platform.authorization_product_binding', 'SELECT')
            AND (has_table_privilege(runtime_role.rolname, 'platform.commerce_billing_account', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.commerce_billing_account', 'INSERT') AND has_table_privilege(runtime_role.rolname, 'platform.commerce_billing_account', 'UPDATE'))
            AND (has_table_privilege(runtime_role.rolname, 'platform.commerce_billing_account_membership', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.commerce_billing_account_membership', 'INSERT') AND has_table_privilege(runtime_role.rolname, 'platform.commerce_billing_account_membership', 'UPDATE'))
-           AND (has_table_privilege(runtime_role.rolname, 'platform.commerce_credit_program_revision', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.commerce_credit_program_revision', 'INSERT'))
+           AND (has_table_privilege(runtime_role.rolname, 'platform.credit_grant_program_revision', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.credit_grant_program_revision', 'INSERT'))
            AND (has_table_privilege(runtime_role.rolname, 'platform.commerce_entitlement_template_revision', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.commerce_entitlement_template_revision', 'INSERT'))
            AND (has_table_privilege(runtime_role.rolname, 'platform.site', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.site', 'INSERT'))
            AND has_any_column_privilege(runtime_role.rolname, 'platform.site', 'UPDATE')
@@ -3300,7 +3300,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                'commerce_fulfillment_transaction','commerce_fulfillment_output_plan',
                'commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry',
                'commerce_catalog_product','commerce_catalog_plan','commerce_catalog_plan_version',
-               'commerce_credit_program_revision','commerce_entitlement_template_revision',
+               'credit_grant_program_revision','commerce_entitlement_template_revision',
                'commerce_fulfillment_program_revision','commerce_fulfillment_program_output',
                'commerce_catalog_product_version','commerce_redemption_program_revision',
                'commerce_redemption_program_availability','commerce_subscription','commerce_subscription_term',
@@ -3364,7 +3364,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                'commerce_fulfillment_transaction','commerce_fulfillment_output_plan',
                'commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry',
                'commerce_catalog_product','commerce_catalog_plan','commerce_catalog_plan_version',
-               'commerce_credit_program_revision','commerce_entitlement_template_revision',
+               'credit_grant_program_revision','commerce_entitlement_template_revision',
                'commerce_fulfillment_program_revision','commerce_fulfillment_program_output',
                'commerce_catalog_product_version','commerce_redemption_program_revision',
                'commerce_redemption_program_availability','commerce_subscription','commerce_subscription_term',
@@ -3495,7 +3495,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                    OR (runtime_role.rolname = $4 AND candidate.relname = ANY(ARRAY[
                      'command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership',
                      'commerce_command','commerce_catalog_product','commerce_catalog_plan','commerce_catalog_plan_version',
-                     'commerce_credit_program_revision','commerce_entitlement_template_revision',
+                     'credit_grant_program_revision','commerce_entitlement_template_revision',
                      'commerce_fulfillment_program_revision','commerce_fulfillment_program_output','commerce_catalog_product_version',
                      'commerce_redemption_program_revision','commerce_redemption_program_availability',
                      'commerce_code_batch','commerce_redeem_code','commerce_code_batch_approval',
@@ -3588,7 +3588,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                    OR (runtime_role.rolname = $4 AND candidate.relname = ANY(ARRAY[
                      'command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership',
                      'commerce_command','commerce_catalog_product','commerce_catalog_plan','commerce_catalog_plan_version',
-                     'commerce_credit_program_revision','commerce_entitlement_template_revision',
+                     'credit_grant_program_revision','commerce_entitlement_template_revision',
                      'commerce_fulfillment_program_revision','commerce_fulfillment_program_output','commerce_catalog_product_version',
                      'commerce_redemption_program_revision','commerce_redemption_program_availability',
                      'commerce_code_batch','commerce_redeem_code','commerce_code_batch_approval',

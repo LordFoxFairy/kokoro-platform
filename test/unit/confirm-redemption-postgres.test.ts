@@ -15,6 +15,8 @@ import {
   "../../src/modules/commerce/domain/redemption-preview.js";
 import { CommerceLockSequence } from "../../src/workflows/commerce/lock-order.js";
 import { commerceCanonicalJson } from "../../src/modules/commerce/domain/canonical-json.js";
+import type { CreditGrantProgramPort } from
+  "../../src/modules/credit/application/contracts/grant-program.js";
 
 describe("PostgresRedemptionConfirmationRepository", () => {
   it("rejects an expired Preview before any claim or fulfillment mutation", async () => {
@@ -289,6 +291,7 @@ describe("PostgresRedemptionConfirmationRepository", () => {
   });
 
   it("rebuilds a fulfilled receipt from immutable Redemption and fulfillment outputs", async () => {
+    const output = entitlementReceipt();
     const lease = issuePlatformTransaction({
       query: async (statement) => {
         if (statement.includes("FROM platform.command_receipt receipt")) return [{
@@ -300,17 +303,14 @@ describe("PostgresRedemptionConfirmationRepository", () => {
           commandId: confirmationInput().commandId,
           redemptionId: "00000000-0000-7000-8000-000000000301",
           fulfillmentRef: "00000000-0000-7000-8000-000000000302",
-          outputSetDigest: outputSetDigest([{ kind: "entitlement_grant", outputLineId: "entitlement",
-            resourceRef: "00000000-0000-7000-8000-000000000303", templateRevisionRef: "entitlement-v1" }]),
+          outputSetDigest: outputSetDigest([output]),
+          fulfillmentIdempotencyKey: "redeem:command-1",
           planRef: null, planVersionRef: null,
           productRef: "product-1", productVersionRef: "product-v1",
           redeemedAt: new Date("2026-07-29T01:00:00.000Z"), safeCodeFingerprint: "CODE-0123456789ABCDEF",
           state: "fulfilled", stateObservedAt: new Date("2026-07-29T01:00:00.000Z"),
         }] as never;
-        if (statement.includes("FROM platform.commerce_fulfillment_actual_output actual")) return [{
-          kind: "entitlement_grant", outputLineId: "entitlement",
-          resourceRef: "00000000-0000-7000-8000-000000000303", templateRevisionRef: "entitlement-v1",
-        }] as never;
+        if (statement.includes("FROM platform.commerce_fulfillment_actual_output actual")) return [output] as never;
         if (statement.includes("FROM platform.commerce_redemption_reversal")) return [];
         return [];
       },
@@ -360,8 +360,7 @@ describe("PostgresRedemptionConfirmationRepository", () => {
 
   it("loads a receipt by Redemption id with actor ownership and canonical output ordering", async () => {
     const statements: string[] = [];
-    const output = { kind: "entitlement_grant" as const, outputLineId: "entitlement",
-      resourceRef: "00000000-0000-7000-8000-000000000303", templateRevisionRef: "entitlement-v1" };
+    const output = entitlementReceipt();
     const lease = issuePlatformTransaction({
       query: async (statement) => {
         statements.push(statement);
@@ -369,7 +368,8 @@ describe("PostgresRedemptionConfirmationRepository", () => {
           commandId: confirmationInput().commandId,
           redemptionId: "00000000-0000-7000-8000-000000000301",
           fulfillmentRef: "00000000-0000-7000-8000-000000000302",
-          outputSetDigest: outputSetDigest([output]), planRef: null, planVersionRef: null,
+          outputSetDigest: outputSetDigest([output]), fulfillmentIdempotencyKey: "redeem:command-1",
+          planRef: null, planVersionRef: null,
           productRef: "product-1", productVersionRef: "product-v1",
           redeemedAt: new Date("2026-07-29T01:00:00.000Z"), safeCodeFingerprint: "CODE-0123456789ABCDEF",
           state: "fulfilled", stateObservedAt: new Date("2026-07-29T01:00:00.000Z"),
@@ -515,10 +515,13 @@ describe("PostgresRedemptionConfirmationRepository", () => {
 });
 
 function confirmationRepository(
-  dependencies: Omit<ConstructorParameters<typeof PostgresRedemptionConfirmationRepository>[0], "creditGrants"> = {},
+  dependencies: Omit<ConstructorParameters<typeof PostgresRedemptionConfirmationRepository>[0],
+    "creditGrants" | "creditPrograms" | "creditCorrections"> = {},
 ) {
   return new PostgresRedemptionConfirmationRepository({
     creditGrants: new PostgresCreditGrantIssuer(),
+    creditPrograms: creditPrograms(),
+    creditCorrections: { listCorrectionRefs: async () => Object.freeze([]) },
     ...dependencies,
   });
 }
@@ -590,8 +593,9 @@ function validPreviewRow(
 
 function entitlementOutput() {
   return {
-    outputLineId: "entitlement", outputKind: "entitlement_grant" as const, ordinal: 0, cardinality: 1,
-    planVersionRef: null, creditProgramRevisionRef: null, bucketClass: null, unit: null, amount: null,
+    outputLineId: "entitlement", outputKind: "entitlement_grant" as const, ordinal: 1, cardinality: 1,
+    planVersionRef: null, creditProgramRevisionRef: null, creditProgramRevisionVersion: null,
+    creditProgramRevisionDigest: null, bucketClass: null, unit: null, amount: null,
     creditExpiresAfterSeconds: null, entitlementTemplateRevisionRef: "entitlement-v1",
     capabilityKey: "chat.basic", safeLabel: "Chat", entitlementExpiresAfterSeconds: null,
   };
@@ -599,8 +603,9 @@ function entitlementOutput() {
 
 function creditOutput() {
   return {
-    outputLineId: "credits", outputKind: "credit_grant" as const, ordinal: 0, cardinality: 1,
-    planVersionRef: null, creditProgramRevisionRef: "credit-v1", bucketClass: "permanent" as const,
+    outputLineId: "credits", outputKind: "credit_grant" as const, ordinal: 1, cardinality: 1,
+    planVersionRef: null, creditProgramRevisionRef: "credit-v1", creditProgramRevisionVersion: 1n,
+    creditProgramRevisionDigest: "c".repeat(64), bucketClass: "permanent" as const,
     unit: "credit", amount: "100", creditExpiresAfterSeconds: null,
     liabilityMerchantAccountId: "merchant-1", burnPriority: 100, scopePolicy: {
       version: 1, surfaceRefs: ["general.chat"], capabilityKeys: ["general.chat.message"],
@@ -613,12 +618,43 @@ function creditOutput() {
 
 function subscriptionOutput() {
   return {
-    outputLineId: "term", outputKind: "subscription_term" as const, ordinal: 0, cardinality: 1,
-    planVersionRef: "plan-v1", creditProgramRevisionRef: null, bucketClass: null,
+    outputLineId: "term", outputKind: "subscription_term" as const, ordinal: 1, cardinality: 1,
+    planVersionRef: "plan-v1", creditProgramRevisionRef: null, creditProgramRevisionVersion: null,
+    creditProgramRevisionDigest: null, bucketClass: null,
     unit: null, amount: null, creditExpiresAfterSeconds: null,
     liabilityMerchantAccountId: null, burnPriority: null, scopePolicy: null,
     entitlementTemplateRevisionRef: null, capabilityKey: null, safeLabel: null,
     entitlementExpiresAfterSeconds: null,
+  };
+}
+
+function creditPrograms(): CreditGrantProgramPort {
+  return {
+    resolveTargets: async (_transaction, input) => input.targets.map((target) => Object.freeze({
+      ...target,
+      bucketClass: "permanent" as const,
+      unit: "credit",
+      amount: "100",
+      expiresAfterSeconds: null,
+      liabilityMerchantAccountId: "merchant-1",
+      burnPriority: 100,
+      scopePolicy: Object.freeze({ version: 1 as const, surfaceRefs: ["general.chat"],
+        capabilityKeys: ["general.chat.message"], agentRefs: [], allowUnattributedAgent: true }),
+    })),
+    resolveRefs: async (_transaction, input) => input.revisionRefs.map((revisionRef) => Object.freeze({
+      revisionRef,
+      revision: 1n,
+      revisionDigest: "c".repeat(64),
+      bucketClass: "permanent" as const,
+      unit: "credit",
+      amount: "100",
+      expiresAfterSeconds: null,
+      liabilityMerchantAccountId: "merchant-1",
+      burnPriority: 100,
+      scopePolicy: Object.freeze({ version: 1 as const, surfaceRefs: ["general.chat"],
+        capabilityKeys: ["general.chat.message"], agentRefs: [], allowUnattributedAgent: true }),
+    })),
+    publishRevision: async () => undefined,
   };
 }
 
@@ -653,6 +689,15 @@ function noOpCommerce() {
   };
 }
 
-function outputSetDigest(outputs: readonly Record<string, string>[]): string {
+function outputSetDigest(outputs: readonly Record<string, unknown>[]): string {
   return createHash("sha256").update(commerceCanonicalJson({ version: 1, outputs }), "utf8").digest("hex");
+}
+
+function entitlementReceipt() {
+  const commitment = { kind: "entitlement_grant" as const, outputLineId: "entitlement",
+    outputOrdinal: 1, occurrence: 1, resourceRef: "00000000-0000-7000-8000-000000000303",
+    templateRevisionRef: "entitlement-v1", outputVersion: 1 as const };
+  return Object.freeze({ ...commitment, outputDigest: createHash("sha256").update(commerceCanonicalJson({
+    version: 1, ...commitment,
+  }), "utf8").digest("hex") });
 }

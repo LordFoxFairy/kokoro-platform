@@ -27,11 +27,14 @@ import {
 } from "../../domain/redemption-preview.js";
 import { commerceCanonicalJson } from "../../domain/canonical-json.js";
 import type { FulfillmentOutputLine } from "../../domain/output-line.js";
+import { createFulfillmentSourceIdentity } from "../../domain/fulfillment-source.js";
 import type { CommerceLockSequence } from "../../../../workflows/commerce/lock-order.js";
 import type {
   CreditGrantIssuancePort,
-  PreparedCreditGrantAccounts,
+  PreparedCreditGrantIssuance,
 } from "../../../credit/application/contracts/grant-issuance.js";
+import type { CreditGrantProgramPort } from "../../../credit/application/contracts/grant-program.js";
+import type { CreditSourceCorrectionPort } from "../../../credit/application/contracts/source-correction.js";
 
 type PreviewConfirmationRow = Record<string, unknown> & {
   previewRef: string;
@@ -84,6 +87,8 @@ type CommerceFulfillmentWriter = Pick<CommerceRepository,
 
 type Dependencies = Readonly<{
   creditGrants: CreditGrantIssuancePort;
+  creditPrograms: CreditGrantProgramPort;
+  creditCorrections: CreditSourceCorrectionPort;
   commerce?: CommerceFulfillmentWriter;
   outbox?: Pick<OutboxRepository, "enqueue">;
   reference?: (purpose: string, ordinal: number, now: number) => string;
@@ -110,18 +115,23 @@ type RedemptionReceiptRow = Record<string, unknown> & {
   safeCodeFingerprint: string;
   state: "fulfilled" | "reversed" | "reconciliation_required";
   stateObservedAt: Date | string;
+  fulfillmentIdempotencyKey: string;
 };
 
 export class PostgresRedemptionConfirmationRepository implements RedemptionConfirmationRepository {
   readonly #commerce: CommerceFulfillmentWriter;
   readonly #fulfillment: FulfillmentService<PostgresFulfillmentMaterialization>;
   readonly #creditGrants: CreditGrantIssuancePort;
+  readonly #creditPrograms: CreditGrantProgramPort;
+  readonly #creditCorrections: CreditSourceCorrectionPort;
   readonly #outbox: Pick<OutboxRepository, "enqueue">;
   readonly #reference: NonNullable<Dependencies["reference"]>;
 
   constructor(dependencies: Dependencies) {
     this.#commerce = dependencies.commerce ?? new PostgresCommerceRepository();
     this.#creditGrants = dependencies.creditGrants;
+    this.#creditPrograms = dependencies.creditPrograms;
+    this.#creditCorrections = dependencies.creditCorrections;
     this.#fulfillment = createPostgresFulfillmentService(this.#commerce, this.#creditGrants);
     this.#outbox = dependencies.outbox ?? new OutboxRepository();
     this.#reference = dependencies.reference ?? ((_purpose, _ordinal, now) => uuidV7(now));
@@ -189,10 +199,11 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
     ]);
     const account = accounts[0];
     if (account === undefined || accounts.length !== 1) return rejected();
-    const outputs = await sql.query<OutputRow>(OUTPUT_FOR_CONFIRM_SQL, [
+    const storedOutputs = await sql.query<OutputRow>(OUTPUT_FOR_CONFIRM_SQL, [
       preview.fulfillmentProgramRevisionRef,
       input.siteId,
     ]);
+    const outputs = await resolveCreditOutputs(this.#creditPrograms, transaction, input.siteId, storedOutputs);
     if (!outputsMatchPreview(outputs, preview, safeTerms)) return rejected();
     let subscription: PreparedFulfillmentSubscription | null = null;
     if (safeTerms.term.action !== "none") {
@@ -216,23 +227,38 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
       });
       locks.enter("term_allocation");
     }
-    let creditGrantPreparation: PreparedCreditGrantAccounts | null = null;
+    const effectRows = await sql.query<Record<string, unknown> & { effectAt: Date | string }>(
+      `SELECT clock_timestamp() AS "effectAt"`,
+    );
+    const effectAt = effectRows.length === 1 && effectRows[0] !== undefined ? instant(effectRows[0].effectAt) : null;
+    if (effectAt === null) return rejected();
+    let creditGrantPreparation: PreparedCreditGrantIssuance | null = null;
     if (outputs.some((output) => output.outputKind === "credit_grant")) {
       locks.enter("credit_account");
-      const prepared = await this.#creditGrants.prepareAccounts(transaction, {
-        accounts: outputs.filter((output) => output.outputKind === "credit_grant").map((output) =>
-          fulfillmentCreditAccountIdentity(input.siteId, preview.billingAccountId, output)),
+      const source = createFulfillmentSourceIdentity({ siteId: input.siteId, sourceType: "redemption",
+        sourceRef: preview.codeRef, purpose: "acquisition", cycleKey: "once" });
+      const prepared = await this.#creditGrants.prepareIssuance(transaction, {
+        commandId: input.commandId,
+        grants: outputs.flatMap((output) => output.outputKind !== "credit_grant" ? [] :
+          Array.from({ length: output.cardinality }, (_, index) => {
+            if (output.creditProgramRevisionRef === null || output.bucketClass === null || output.amount === null ||
+                output.burnPriority === null || output.scopePolicy === null) throw new Error("REDEMPTION_OUTPUT_INVALID");
+            const occurrence = index + 1;
+            return Object.freeze({ account: fulfillmentCreditAccountIdentity(input.siteId, preview.billingAccountId, output),
+              outputLineId: output.outputLineId, outputOrdinal: output.ordinal, occurrence,
+              creditProgramRevisionRef: output.creditProgramRevisionRef, sourceType: "redemption" as const,
+              sourceRef: `${source.idempotencyKey}:${output.outputLineId}:${occurrence}`,
+              businessOperationKey: `fulfillment:${source.idempotencyKey}:${output.outputLineId}:${occurrence}`,
+              bucketClass: output.bucketClass, amount: output.amount, burnPriority: output.burnPriority,
+              scopePolicy: output.scopePolicy, effectiveAt: effectAt,
+              expiresAt: expiry(effectAt, output.creditExpiresAfterSeconds) });
+          })),
       });
       if (prepared.kind === "unavailable") return rejected();
       creditGrantPreparation = prepared.preparation;
     }
 
-    const effectRows = await sql.query<Record<string, unknown> & { effectAt: Date | string }>(
-      `SELECT clock_timestamp() AS "effectAt"`,
-    );
-    const effectAt = effectRows.length === 1 && effectRows[0] !== undefined ? instant(effectRows[0].effectAt) : null;
-    if (effectAt === null ||
-      !matchesConfirmationEffect(preview, effectAt) ||
+    if (!matchesConfirmationEffect(preview, effectAt) ||
       !programMatches(program, preview, safeTerms, effectAt) ||
       !planMatches(catalogPlan, safeTerms) ||
       batch.state !== "active" || batch.redemptionProgramRevisionRef !== preview.redemptionProgramRevisionRef ||
@@ -413,7 +439,7 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
     ]);
     const command = commands[0];
     if (command === undefined || commands.length !== 1) return null;
-    return loadConfirmation(sql, command, input.siteId);
+    return loadConfirmation(transaction, this.#creditCorrections, command, input.siteId);
   }
 
   async findConfirmationByIdempotencyKey(
@@ -426,7 +452,7 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
     ]);
     const command = commands[0];
     if (command === undefined || commands.length !== 1) return null;
-    const confirmation = await loadConfirmation(sql, command, input.siteId);
+    const confirmation = await loadConfirmation(transaction, this.#creditCorrections, command, input.siteId);
     return confirmation === null ? null : Object.freeze({
       commandId: command.commandId,
       requestDigest: command.requestDigest,
@@ -438,7 +464,7 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
     transaction: Parameters<RedemptionConfirmationRepository["findRedemptionReceipt"]>[0],
     input: Parameters<RedemptionConfirmationRepository["findRedemptionReceipt"]>[1],
   ): ReturnType<RedemptionConfirmationRepository["findRedemptionReceipt"]> {
-    return loadReceipt(resolvePlatformTransaction(transaction), REDEMPTION_RECEIPT_BY_ID_SQL, [
+    return loadReceipt(transaction, this.#creditCorrections, REDEMPTION_RECEIPT_BY_ID_SQL, [
       input.redemptionId, input.siteId, input.subjectId, input.subjectGeneration,
     ], input.siteId);
   }
@@ -446,7 +472,8 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
 }
 
 async function loadConfirmation(
-  sql: ReturnType<typeof resolvePlatformTransaction>,
+  transaction: Parameters<RedemptionConfirmationRepository["findConfirmationByCommand"]>[0],
+  creditCorrections: CreditSourceCorrectionPort,
   command: ConfirmationCommandRow,
   siteId: string,
 ): Promise<StoredRedemptionConfirmation | null> {
@@ -463,7 +490,8 @@ async function loadConfirmation(
     commandReceivedAt,
     commandUpdatedAt,
   });
-  const receipt = await loadReceipt(sql, REDEMPTION_RECEIPT_SQL, [command.commandId, siteId], siteId);
+  const receipt = await loadReceipt(transaction, creditCorrections, REDEMPTION_RECEIPT_SQL,
+    [command.commandId, siteId], siteId);
   return receipt === null ? null : Object.freeze({
     state: "succeeded" as const,
     receipt: Object.freeze({ ...receipt, commandReceivedAt, commandUpdatedAt }),
@@ -471,11 +499,13 @@ async function loadConfirmation(
 }
 
 async function loadReceipt(
-  sql: ReturnType<typeof resolvePlatformTransaction>,
+  transaction: Parameters<RedemptionConfirmationRepository["findRedemptionReceipt"]>[0],
+  creditCorrections: CreditSourceCorrectionPort,
   statement: string,
   values: readonly unknown[],
   siteId: string,
 ): Promise<RedemptionReceiptRecord | null> {
+  const sql = resolvePlatformTransaction(transaction);
   const redemptions = await sql.query<RedemptionReceiptRow>(statement, values);
   const redemption = redemptions[0];
   if (redemption === undefined || redemptions.length !== 1) return null;
@@ -483,19 +513,33 @@ async function loadReceipt(
     REDEMPTION_OUTPUT_RECEIPT_SQL,
     [redemption.fulfillmentRef],
   );
-  const outputs = Object.freeze(storedOutputs.map((output) => Object.freeze({
-    kind: output.kind,
-    outputLineId: output.outputLineId,
-    resourceRef: output.resourceRef,
-    templateRevisionRef: output.templateRevisionRef,
-  })));
+  const outputs = Object.freeze(storedOutputs.map((output) => {
+    const commitment = Object.freeze({ kind: output.kind, outputLineId: output.outputLineId,
+      outputOrdinal: Number(output.outputOrdinal), occurrence: Number(output.occurrence),
+      resourceRef: output.resourceRef, templateRevisionRef: output.templateRevisionRef,
+      outputVersion: Number(output.outputVersion) as 1, outputDigest: output.outputDigest });
+    if (!Number.isInteger(commitment.outputOrdinal) || commitment.outputOrdinal < 1 ||
+        !Number.isInteger(commitment.occurrence) || commitment.occurrence < 1 || commitment.outputVersion !== 1 ||
+        digest({ version: 1, kind: commitment.kind, outputLineId: commitment.outputLineId,
+          outputOrdinal: commitment.outputOrdinal, occurrence: commitment.occurrence,
+          resourceRef: commitment.resourceRef, templateRevisionRef: commitment.templateRevisionRef,
+          outputVersion: commitment.outputVersion }) !== commitment.outputDigest) {
+      throw new Error("REDEMPTION_OUTPUT_COMMITMENT_INVALID");
+    }
+    return commitment;
+  }));
   if (digest({ version: 1, outputs }) !== redemption.outputSetDigest) {
     throw new Error("REDEMPTION_OUTPUT_SET_DIGEST_MISMATCH");
   }
-  const reversals = await sql.query<Record<string, unknown> & { reversalRef: string }>(
+  const commerceCorrections = await sql.query<Record<string, unknown> & { reversalRef: string }>(
     REDEMPTION_REVERSAL_RECEIPT_SQL,
-    [redemption.redemptionId, siteId],
+    [redemption.fulfillmentIdempotencyKey, siteId],
   );
+  const creditCorrectionsRefs = await creditCorrections.listCorrectionRefs(transaction, {
+    siteId, sourceType: "redemption", sourceRefPrefix: redemption.fulfillmentIdempotencyKey,
+  });
+  const reversals = [...new Set([...commerceCorrections.map((row) => row.reversalRef), ...creditCorrectionsRefs])]
+    .sort((left, right) => left.localeCompare(right, "en"));
   return Object.freeze({
     commandId: redemption.commandId,
     redemptionId: redemption.redemptionId,
@@ -510,7 +554,7 @@ async function loadReceipt(
     safeCodeFingerprint: redemption.safeCodeFingerprint,
     state: redemption.state,
     stateObservedAt: instant(redemption.stateObservedAt),
-    reversalRefs: Object.freeze(reversals.map((row) => row.reversalRef)),
+    reversalRefs: Object.freeze(reversals),
   });
 }
 
@@ -593,7 +637,7 @@ function outputsMatchPreview(
   const actualEntitlements: string[] = [];
   let subscriptionTerms = 0;
   for (const [index, output] of outputs.entries()) {
-    if (output.ordinal !== index || !Number.isInteger(output.cardinality) || output.cardinality < 1 || output.cardinality > 100) {
+    if (output.ordinal !== index + 1 || !Number.isInteger(output.cardinality) || output.cardinality < 1 || output.cardinality > 32) {
       return false;
     }
     for (let occurrence = 0; occurrence < output.cardinality; occurrence += 1) {
@@ -625,6 +669,36 @@ function outputsMatchPreview(
   return sameStrings(expectedCredits, actualCredits.sort()) &&
     sameStrings(expectedEntitlements, actualEntitlements.sort()) &&
     (safeTerms.term.action === "none" ? subscriptionTerms === 0 : subscriptionTerms === 1);
+}
+
+async function resolveCreditOutputs(port: CreditGrantProgramPort,
+  transaction: Parameters<RedemptionConfirmationRepository["confirmRedemption"]>[0], siteId: string,
+  outputs: readonly OutputRow[]): Promise<readonly OutputRow[]> {
+  const targets = new Map<string, { revisionRef: string; revision: bigint; revisionDigest: string }>();
+  for (const output of outputs) {
+    if (output.outputKind !== "credit_grant") continue;
+    if (output.creditProgramRevisionRef === null || output.creditProgramRevisionVersion === null ||
+        output.creditProgramRevisionDigest === null) throw new Error("REDEMPTION_OUTPUT_INVALID");
+    const target = { revisionRef: output.creditProgramRevisionRef, revision: BigInt(output.creditProgramRevisionVersion),
+      revisionDigest: output.creditProgramRevisionDigest };
+    const prior = targets.get(target.revisionRef);
+    if (prior !== undefined && (prior.revision !== target.revision || prior.revisionDigest !== target.revisionDigest)) {
+      throw new Error("REDEMPTION_OUTPUT_INVALID");
+    }
+    targets.set(target.revisionRef, target);
+  }
+  if (targets.size === 0) return outputs;
+  const programs = await port.resolveTargets(transaction, { siteId, targets: [...targets.values()] });
+  const byRef = new Map(programs.map((program) => [program.revisionRef, program]));
+  return Object.freeze(outputs.map((output) => {
+    if (output.outputKind !== "credit_grant") return output;
+    const program = byRef.get(output.creditProgramRevisionRef!);
+    if (program === undefined) throw new Error("REDEMPTION_OUTPUT_INVALID");
+    return Object.freeze({ ...output, bucketClass: program.bucketClass, unit: program.unit, amount: program.amount,
+      creditExpiresAfterSeconds: program.expiresAfterSeconds,
+      liabilityMerchantAccountId: program.liabilityMerchantAccountId, burnPriority: program.burnPriority,
+      scopePolicy: program.scopePolicy });
+  }));
 }
 
 function resolveSubscriptionTerm(
@@ -803,20 +877,18 @@ const OUTPUT_FOR_CONFIRM_SQL = `
   SELECT output.output_line_id AS "outputLineId",output.output_kind AS "outputKind",
          output.ordinal,output.cardinality,output.plan_version_ref AS "planVersionRef",
          output.credit_program_revision_ref AS "creditProgramRevisionRef",
-         credit.ux_bucket_class AS "bucketClass",credit.unit,credit.amount::text AS amount,
-         credit.expires_after_seconds AS "creditExpiresAfterSeconds",
-         credit.liability_merchant_account_ref AS "liabilityMerchantAccountId",
-         credit.burn_priority AS "burnPriority",credit.scope_policy AS "scopePolicy",
+         output.credit_program_revision_version AS "creditProgramRevisionVersion",
+         output.credit_program_revision_digest AS "creditProgramRevisionDigest",
+         NULL::text AS "bucketClass",NULL::text AS unit,NULL::text AS amount,
+         NULL::bigint AS "creditExpiresAfterSeconds",NULL::text AS "liabilityMerchantAccountId",
+         NULL::integer AS "burnPriority",NULL::jsonb AS "scopePolicy",
          output.entitlement_template_revision_ref AS "entitlementTemplateRevisionRef",
          entitlement.capability_key AS "capabilityKey",entitlement.safe_label AS "safeLabel",
          entitlement.expires_after_seconds AS "entitlementExpiresAfterSeconds"
   FROM platform.commerce_fulfillment_program_output output
-  LEFT JOIN platform.commerce_credit_program_revision credit
-    ON credit.credit_program_revision_ref=output.credit_program_revision_ref AND credit.site_ref=$2
   LEFT JOIN platform.commerce_entitlement_template_revision entitlement
     ON entitlement.entitlement_template_revision_ref=output.entitlement_template_revision_ref AND entitlement.site_ref=$2
   WHERE output.fulfillment_program_revision_ref=$1 AND output.site_ref=$2
-    AND (output.output_kind<>'credit_grant' OR credit.credit_program_revision_ref IS NOT NULL)
     AND (output.output_kind<>'entitlement_grant' OR entitlement.entitlement_template_revision_ref IS NOT NULL)
   ORDER BY output.ordinal`;
 
@@ -841,6 +913,7 @@ const CONFIRMATION_BY_IDEMPOTENCY_SQL = `
 const REDEMPTION_RECEIPT_SQL = `
   SELECT redemption.command_id AS "commandId",redemption.redemption_id AS "redemptionId",
          redemption.fulfillment_ref AS "fulfillmentRef",fulfillment.output_set_digest AS "outputSetDigest",
+         fulfillment.idempotency_key AS "fulfillmentIdempotencyKey",
          product_version.plan_version_ref AS "planVersionRef",plan_version.plan_ref AS "planRef",
          product_version.product_ref AS "productRef",product_version.product_version_ref AS "productVersionRef",
          redemption.redeemed_at AS "redeemedAt",redemption.safe_code_fingerprint AS "safeCodeFingerprint",
@@ -859,6 +932,7 @@ const REDEMPTION_RECEIPT_SQL = `
 const REDEMPTION_RECEIPT_BY_ID_SQL = `
   SELECT redemption.command_id AS "commandId",redemption.redemption_id AS "redemptionId",
          redemption.fulfillment_ref AS "fulfillmentRef",fulfillment.output_set_digest AS "outputSetDigest",
+         fulfillment.idempotency_key AS "fulfillmentIdempotencyKey",
          product_version.plan_version_ref AS "planVersionRef",plan_version.plan_ref AS "planRef",
          product_version.product_ref AS "productRef",product_version.product_version_ref AS "productVersionRef",
          redemption.redeemed_at AS "redeemedAt",redemption.safe_code_fingerprint AS "safeCodeFingerprint",
@@ -879,7 +953,9 @@ const REDEMPTION_RECEIPT_BY_ID_SQL = `
 
 const REDEMPTION_OUTPUT_RECEIPT_SQL = `
   SELECT actual.output_kind AS kind,actual.output_line_id AS "outputLineId",
-         actual.output_ref AS "resourceRef",actual.template_revision AS "templateRevisionRef"
+         actual.output_ordinal AS "outputOrdinal",actual.occurrence,
+         actual.output_ref AS "resourceRef",actual.template_revision AS "templateRevisionRef",
+         actual.output_version AS "outputVersion",actual.output_digest AS "outputDigest"
   FROM platform.commerce_fulfillment_actual_output actual
   JOIN platform.commerce_fulfillment_output_plan expected
     ON expected.fulfillment_id=actual.fulfillment_id AND expected.output_line_id=actual.output_line_id
@@ -887,35 +963,19 @@ const REDEMPTION_OUTPUT_RECEIPT_SQL = `
   ORDER BY expected.ordinal,actual.occurrence`;
 
 const REDEMPTION_REVERSAL_RECEIPT_SQL = `
-  WITH fulfillment_source AS (
-    SELECT fulfillment.idempotency_key
-    FROM platform.commerce_redemption redemption
-    JOIN platform.commerce_fulfillment_transaction fulfillment
-      ON fulfillment.fulfillment_id=redemption.fulfillment_ref AND fulfillment.site_ref=redemption.site_ref
-    WHERE redemption.redemption_id=$1::uuid AND redemption.site_ref=$2
-  )
   SELECT reversal_ref AS "reversalRef" FROM (
     SELECT revocation.term_revocation_ref::text AS reversal_ref
     FROM platform.commerce_subscription_term term
     JOIN platform.commerce_subscription_term_revocation revocation
       ON revocation.subscription_term_ref=term.subscription_term_ref AND revocation.site_ref=term.site_ref
     WHERE term.site_ref=$2 AND term.source_type='redemption'
-      AND term.source_ref LIKE (SELECT idempotency_key || ':%' FROM fulfillment_source)
+      AND strpos(term.source_ref,$1 || ':')=1
     UNION ALL
     SELECT revocation.entitlement_revocation_ref::text AS reversal_ref
     FROM platform.commerce_entitlement_grant entitlement
     JOIN platform.commerce_entitlement_revocation revocation
       ON revocation.entitlement_grant_ref=entitlement.entitlement_grant_ref AND revocation.site_ref=entitlement.site_ref
     WHERE entitlement.site_ref=$2 AND entitlement.source_type='redemption'
-      AND entitlement.source_ref LIKE (SELECT idempotency_key || ':%' FROM fulfillment_source)
-    UNION ALL
-    SELECT DISTINCT journal.journal_transaction_ref::text AS reversal_ref
-    FROM platform.credit_grant grant_fact
-    JOIN platform.credit_journal_entry entry ON entry.credit_grant_id=grant_fact.credit_grant_id
-    JOIN platform.credit_journal_transaction journal
-      ON journal.journal_transaction_ref=entry.journal_transaction_ref AND journal.site_ref=grant_fact.site_ref
-    WHERE grant_fact.site_ref=$2 AND grant_fact.source_type='redemption'
-      AND grant_fact.source_ref LIKE (SELECT idempotency_key || ':%' FROM fulfillment_source)
-      AND journal.operation_kind IN ('grant_revoke','reversal')
+      AND strpos(entitlement.source_ref,$1 || ':')=1
   ) reversal
   ORDER BY reversal_ref`;

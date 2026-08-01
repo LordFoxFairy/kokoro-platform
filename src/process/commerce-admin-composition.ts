@@ -3,6 +3,7 @@ import { CommerceAdministrationService } from "../modules/commerce/application/s
 import { PostgresCommerceAdministrationRepository } from "../modules/commerce/infrastructure/postgres/commerce-administration-repository.js";
 import { PlatformUnitOfWork } from "../shared/unit-of-work/index.js";
 import { loadRedemptionSecretCodec } from "./platform-public-composition.js";
+import { PostgresCreditGrantProgram } from "../modules/credit/infrastructure/postgres/credit-grant-program.js";
 
 export interface CommerceAdministrationComposition {
   readonly commerce: CommerceAdministrationService;
@@ -22,7 +23,7 @@ export async function createCommerceAdministrationComposition(input: Readonly<{
   return Object.freeze({
     commerce: new CommerceAdministrationService({
       unitOfWork: new PlatformUnitOfWork(input.database),
-      repository: new PostgresCommerceAdministrationRepository(),
+      repository: new PostgresCommerceAdministrationRepository(new PostgresCreditGrantProgram()),
       codes,
     }),
   });

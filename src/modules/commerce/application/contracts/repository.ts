@@ -24,8 +24,12 @@ export interface CommerceTerminalOutcome {
 export type FulfillmentOutputReceipt = Readonly<{
   kind: "subscription_term" | "entitlement_grant" | "credit_grant";
   outputLineId: string;
+  outputOrdinal: number;
+  occurrence: number;
   resourceRef: string;
   templateRevisionRef: string;
+  outputVersion: 1;
+  outputDigest: string;
 }>;
 
 export type FulfillmentReceipt = Readonly<{

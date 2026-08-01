@@ -5,6 +5,8 @@ import type { AdminQueryPermit } from
   "../../src/modules/admin/interfaces/connect/admin-query-service.js";
 import { issuePlatformTransaction, revokePlatformTransaction } from
   "../../src/shared/unit-of-work/platform-transaction.js";
+import { PostgresCreditGrantProgramAdministrationReader } from
+  "../../src/modules/credit/infrastructure/postgres/grant-program-administration-reader.js";
 
 describe("PostgresCommerceAdministrationReader", () => {
   it("observes a committed catalog epoch and an independent database clock", async () => {
@@ -13,9 +15,11 @@ describe("PostgresCommerceAdministrationReader", () => {
       statements.push(statement);
       return [{ watermark: "41", observedAt: new Date("2026-07-30T02:00:00.000Z") }] as never;
     } });
-    const reader = new PostgresCommerceAdministrationReader({
+    const host = {
       adminQueryTransaction: async (_permit, work) => work(lease.transaction),
-    });
+    } as ConstructorParameters<typeof PostgresCommerceAdministrationReader>[0];
+    const reader = new PostgresCommerceAdministrationReader(host,
+      new PostgresCreditGrantProgramAdministrationReader(host));
     try {
       await expect(reader.observeCatalog(permit("commerce.credit-program.read")))
         .resolves.toEqual({ watermark: "41", observedAt: "2026-07-30T02:00:00.000Z" });
@@ -37,15 +41,17 @@ describe("PostgresCommerceAdministrationReader", () => {
         revisionDigest: "a".repeat(64),
         publishedAt: new Date("2026-07-30T01:00:00.000Z") }] as never;
     } });
-    const reader = new PostgresCommerceAdministrationReader({
+    const host = {
       adminQueryTransaction: async (_permit, work) => work(lease.transaction),
-    });
+    } as ConstructorParameters<typeof PostgresCommerceAdministrationReader>[0];
+    const reader = new PostgresCommerceAdministrationReader(host,
+      new PostgresCreditGrantProgramAdministrationReader(host));
     try {
       await expect(reader.getCreditProgramRevision(permit("commerce.credit-program.read"),
         "site-1", "credits-v1")).resolves.toMatchObject({
         siteId: "site-1", amount: "1000", scopePolicy: { version: 1 }, publishedAt: "2026-07-30T01:00:00.000Z",
       });
-      expect(statements[0]).toContain("FROM platform.commerce_credit_program_revision");
+      expect(statements[0]).toContain("FROM platform.credit_grant_program_revision");
       expect(() => reader.getCreditProgramRevision(permit("commerce.credit-program.read"),
         "site-2", "credits-v1")).toThrow("ADMIN_SITE_SCOPE_DENIED");
       expect(statements).toHaveLength(1);
@@ -61,9 +67,11 @@ describe("PostgresCommerceAdministrationReader", () => {
         safeLabel: "Premium chat", expiresAfterSeconds: "3600", revisionDigest: "b".repeat(64),
         publishedAt: "2026-07-30T01:00:00.000Z" }] as never;
     } });
-    const reader = new PostgresCommerceAdministrationReader({
+    const host = {
       adminQueryTransaction: async (_permit, work) => work(lease.transaction),
-    });
+    } as ConstructorParameters<typeof PostgresCommerceAdministrationReader>[0];
+    const reader = new PostgresCommerceAdministrationReader(host,
+      new PostgresCreditGrantProgramAdministrationReader(host));
     try {
       await expect(reader.listEntitlementTemplateRevisions(permit("commerce.entitlement-template.read"), {
         siteId: "site-1", afterRef: null, watermark: "41", limit: 10,
@@ -83,9 +91,11 @@ describe("PostgresCommerceAdministrationReader", () => {
       const watermark = BigInt(String(parameters?.[2]));
       return writerCommitted && writerEpoch <= watermark ? [{ entitlementTemplateRevisionRef: "late-v1" }] as never : [];
     } });
-    const reader = new PostgresCommerceAdministrationReader({
+    const host = {
       adminQueryTransaction: async (_permit, work) => work(lease.transaction),
-    });
+    } as ConstructorParameters<typeof PostgresCommerceAdministrationReader>[0];
+    const reader = new PostgresCommerceAdministrationReader(host,
+      new PostgresCreditGrantProgramAdministrationReader(host));
     try {
       const firstPage = await reader.observeCatalog(permit("commerce.entitlement-template.read"));
       writerCommitted = true;
@@ -99,9 +109,11 @@ describe("PostgresCommerceAdministrationReader", () => {
 
   it.each(["-1", "01", "9223372036854775808", "2026-07-30T02:00:00.000Z"])(
     "rejects a non-canonical catalog watermark (%s)", (watermark) => {
-      const reader = new PostgresCommerceAdministrationReader({ adminQueryTransaction: async () => {
+      const host = { adminQueryTransaction: async () => {
         throw new Error("MUST_NOT_OPEN_TRANSACTION");
-      } });
+      } } as ConstructorParameters<typeof PostgresCommerceAdministrationReader>[0];
+      const reader = new PostgresCommerceAdministrationReader(host,
+        new PostgresCreditGrantProgramAdministrationReader(host));
       expect(() => reader.listOffers(permit("commerce.offer.read"), {
         siteId: "site-1", afterRef: null, watermark, limit: 10,
       })).toThrow("COMMERCE_ADMIN_PAGE_INVALID");

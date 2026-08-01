@@ -29,7 +29,8 @@ describe("PostgresFulfillmentIssuer", () => {
     });
     const creditGrants = new PostgresCreditGrantIssuer({ reference: referenceFactory() });
     try {
-      const preparation = await creditGrants.prepareAccounts(lease.transaction, { accounts: [identity] });
+      const preparation = await creditGrants.prepareIssuance(lease.transaction,
+        { commandId: "0123456789abcdef0123456789abcdef", grants: [creditIssue(output, identity, "payment")] });
       if (preparation.kind !== "ready") throw new Error("test preparation rejected");
       await new PostgresFulfillmentIssuer(creditGrants).issue(lease.transaction, {
         fulfillmentId: "00000000-0000-7000-8000-000000000001",
@@ -73,17 +74,21 @@ describe("PostgresFulfillmentIssuer", () => {
     const lease = issuePlatformTransaction({ query: async () => [], execute: async () => 1 });
     const preparationOwner = new PostgresCreditGrantIssuer();
     try {
-      const preparation = await preparationOwner.prepareAccounts(lease.transaction, { accounts: [identity] });
+      const preparation = await preparationOwner.prepareIssuance(lease.transaction,
+        { commandId: "0123456789abcdef0123456789abcdef", grants: [creditIssue(output, identity, "redemption")] });
       if (preparation.kind !== "ready") throw new Error("test preparation rejected");
       const duplicateReceipt = Object.freeze({
         outputLineId: "credits",
+        outputOrdinal: 1,
         occurrence: 1,
         creditProgramRevisionRef: "credit-v1",
         creditGrantRef: "00000000-0000-7000-8000-000000000021" as never,
+        outputVersion: 1 as const,
+        outputDigest: "d".repeat(64),
       });
       const creditGrants: CreditGrantIssuancePort = {
-        prepareAccounts: async () => preparation,
-        issueGrants: async () => [duplicateReceipt, duplicateReceipt],
+        prepareIssuance: async () => preparation,
+        issuePrepared: async () => [duplicateReceipt, duplicateReceipt],
       };
       await expect(new PostgresFulfillmentIssuer(creditGrants).issue(lease.transaction, {
         fulfillmentId: "00000000-0000-7000-8000-000000000001",
@@ -108,8 +113,9 @@ describe("PostgresFulfillmentIssuer", () => {
 
 function creditOutput(): FulfillmentOutputDefinition {
   return Object.freeze({
-    outputLineId: "credits", outputKind: "credit_grant", ordinal: 0, cardinality: 1,
+    outputLineId: "credits", outputKind: "credit_grant", ordinal: 1, cardinality: 1,
     planVersionRef: null, creditProgramRevisionRef: "credit-v1", bucketClass: "permanent",
+    creditProgramRevisionVersion: 1n, creditProgramRevisionDigest: "c".repeat(64),
     unit: "credit", amount: "100", creditExpiresAfterSeconds: null,
     liabilityMerchantAccountId: "merchant-a", burnPriority: 100,
     scopePolicy: { version: 1 as const, surfaceRefs: ["general.chat"], capabilityKeys: ["general.chat.message"],
@@ -117,6 +123,17 @@ function creditOutput(): FulfillmentOutputDefinition {
     entitlementTemplateRevisionRef: null, capabilityKey: null, safeLabel: null,
     entitlementExpiresAfterSeconds: null,
   });
+}
+
+function creditIssue(output: FulfillmentOutputDefinition, identity: ReturnType<typeof fulfillmentCreditAccountIdentity>,
+  sourceType: "redemption" | "payment") {
+  const source = createFulfillmentSourceIdentity({ siteId: "site-a", sourceType,
+    sourceRef: sourceType === "payment" ? "payment-settlement-1" : "code-1", purpose: "acquisition", cycleKey: "once" });
+  return { account: identity, outputLineId: output.outputLineId, outputOrdinal: output.ordinal, occurrence: 1,
+    creditProgramRevisionRef: output.creditProgramRevisionRef!, sourceType,
+    sourceRef: `${source.idempotencyKey}:credits:1`, businessOperationKey: `fulfillment:${source.idempotencyKey}:credits:1`,
+    bucketClass: output.bucketClass!, amount: output.amount!, burnPriority: output.burnPriority!,
+    scopePolicy: output.scopePolicy!, effectiveAt: "2026-07-29T01:00:00.000Z", expiresAt: null } as const;
 }
 
 function referenceFactory() {

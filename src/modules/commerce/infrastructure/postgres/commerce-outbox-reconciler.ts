@@ -12,6 +12,8 @@ import { resolvePlatformTransaction, type PlatformTransaction } from
   "../../../../shared/unit-of-work/platform-transaction.js";
 import { SingleFlightLeaseHeartbeat } from
   "../../../../shared/outbox-inbox/lease-heartbeat.js";
+import type { CreditOutboxProjectionPort } from
+  "../../../credit/application/contracts/commerce-projection.js";
 
 type CommerceFulfillmentEvent = Readonly<{
   version: 1;
@@ -46,6 +48,7 @@ export class HmacHttpOutboxDeliveryTransport extends SharedHmacHttpOutboxDeliver
 }
 
 export class PostgresCommerceOutboxProjection implements CommerceOutboxProjection {
+  constructor(private readonly credit: CreditOutboxProjectionPort) {}
   async assertDeliverable(transaction: PlatformTransaction, event: ClaimedOutboxEvent): Promise<void> {
     if (event.owner === "commerce") {
       const payload = fulfillmentEvent(event);
@@ -55,7 +58,7 @@ export class PostgresCommerceOutboxProjection implements CommerceOutboxProjectio
     if (event.owner === "credit") {
       const payload = creditEvent(event);
       await bindSite(transaction, payload.siteId);
-      return this.#assertCredit(transaction, payload);
+      return this.credit.assertDeliverable(transaction, payload);
     }
     throw new Error("OUTBOX_OWNER_UNSUPPORTED");
   }
@@ -79,28 +82,6 @@ export class PostgresCommerceOutboxProjection implements CommerceOutboxProjectio
       instant(row.redeemedAt) !== event.redeemedAt) throw new Error("COMMERCE_OUTBOX_PROJECTION_MISMATCH");
   }
 
-  async #assertCredit(
-    transaction: PlatformTransaction,
-    event: ReturnType<typeof creditEvent>,
-  ): Promise<void> {
-    const rows = await resolvePlatformTransaction(transaction).query<Record<string, unknown> & {
-      result: unknown;
-      resultDigest: string;
-    }>(
-      `SELECT receipt.result,receipt.result_digest AS "resultDigest"
-       FROM platform.credit_budget_operation_receipt receipt
-       JOIN platform.credit_authorization_segment segment
-         ON segment.authorization_segment_ref=receipt.authorization_segment_ref
-        AND segment.site_ref=receipt.site_ref
-       WHERE receipt.outbox_event_ref=$1::uuid AND receipt.site_ref=$2
-         AND receipt.authorization_segment_ref=$3::uuid AND receipt.operation_kind=$4`,
-      [event.eventId, event.siteId, event.authorizationSegmentRef, event.operationKind],
-    );
-    const row = rows[0];
-    if (row === undefined || rows.length !== 1 || row.resultDigest !== digest(event.result) ||
-      commerceCanonicalJson(row.result as Parameters<typeof commerceCanonicalJson>[0]) !==
-        commerceCanonicalJson(event.result)) throw new Error("CREDIT_OUTBOX_PROJECTION_MISMATCH");
-  }
 }
 
 export interface CommerceOutboxReconciliationRuntime {
@@ -119,7 +100,7 @@ export function createCommerceOutboxReconciliationCycle(input: Readonly<{
   transport: OutboxDeliveryTransport;
   outbox?: Pick<OutboxRepository,
     "claim" | "complete" | "retryOrDeadLetter" | "renewLease" | "releaseOwnedLeases">;
-  projection?: CommerceOutboxProjection;
+  projection: CommerceOutboxProjection;
   workerId: string;
   batchSize?: number;
   leaseSeconds?: number;
@@ -130,7 +111,7 @@ export function createCommerceOutboxReconciliationCycle(input: Readonly<{
   leaseToken?: () => string;
 }>): CommerceOutboxReconciliationRuntime {
   const outbox = input.outbox ?? new OutboxRepository();
-  const projection = input.projection ?? new PostgresCommerceOutboxProjection();
+  const projection = input.projection;
   const batchSize = input.batchSize ?? 25;
   const leaseSeconds = input.leaseSeconds ?? 30;
   const maxAttempts = input.maxAttempts ?? 10;
@@ -292,7 +273,7 @@ function creditEvent(event: ClaimedOutboxEvent) {
   if (event.owner !== "credit" || !/^credit\.(reserve_root|finalize_segment|release_segment|reconcile_segment)\.v1$/u.test(event.eventType) ||
     digest(event.payload) !== event.payloadDigest || !isRecord(event.payload) ||
     !sameKeys(event.payload, ["operationKind", "siteId", "result"]) || !text(event.payload.siteId) ||
-    !text(event.payload.operationKind) || !isRecord(event.payload.result)) throw new Error("CREDIT_OUTBOX_EVENT_INVALID");
+    !creditOperation(event.payload.operationKind) || !isRecord(event.payload.result)) throw new Error("CREDIT_OUTBOX_EVENT_INVALID");
   const authorizationSegmentRef = event.payload.result.authorizationSegmentRef;
   if (!text(authorizationSegmentRef) || event.aggregateId !== authorizationSegmentRef ||
     event.eventType !== `credit.${event.payload.operationKind}.v1`) throw new Error("CREDIT_OUTBOX_EVENT_INVALID");
@@ -309,6 +290,9 @@ function retryDelayMs(attempt: number): number { return Math.min(60_000, 1_000 *
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function sameKeys(value: Record<string, unknown>, keys: readonly string[]): boolean { return Object.keys(value).sort().join("\0") === [...keys].sort().join("\0"); }
 function text(value: unknown): value is string { return typeof value === "string" && value.length >= 1 && value.length <= 256; }
+function creditOperation(value: unknown): value is "reserve_root" | "finalize_segment" | "release_segment" | "reconcile_segment" {
+  return typeof value === "string" && ["reserve_root", "finalize_segment", "release_segment", "reconcile_segment"].includes(value);
+}
 function isLeaseLost(error: unknown): boolean {
   return error instanceof Error && error.message === "OUTBOX_LEASE_LOST";
 }

@@ -19,7 +19,7 @@ describe("Platform module boundaries", () => {
     expect(violations).toEqual([]);
   });
 
-  it("keeps Commerce out of sibling infrastructure and Credit-owned mutations", async () => {
+  it("keeps Commerce out of sibling infrastructure and every Credit-owned physical table", async () => {
     const root = join(process.cwd(), "src");
     const commerceRoot = join(root, "modules", "commerce");
     const violations: string[] = [];
@@ -34,8 +34,8 @@ describe("Platform module boundaries", () => {
           violations.push(`${path}: imports Credit infrastructure`);
         }
       }
-      if (/\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+platform\.credit_/iu.test(source)) {
-        violations.push(`${path}: mutates a Credit-owned table`);
+      if (/platform\.credit_/u.test(source)) {
+        violations.push(`${path}: accesses a Credit-owned table`);
       }
     }
     expect(violations).toEqual([]);

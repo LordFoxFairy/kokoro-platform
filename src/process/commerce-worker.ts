@@ -3,6 +3,10 @@ import { pathToFileURL } from "node:url";
 import { createPlatformDatabaseClient } from "../infrastructure/postgres/client.js";
 import { createCommerceOutboxReconciliationCycle, HmacHttpOutboxDeliveryTransport } from
   "../modules/commerce/infrastructure/postgres/commerce-outbox-reconciler.js";
+import { PostgresCommerceOutboxProjection } from
+  "../modules/commerce/infrastructure/postgres/commerce-outbox-reconciler.js";
+import { PostgresCreditOutboxProjection } from
+  "../modules/credit/infrastructure/postgres/commerce-outbox-projection.js";
 import { createBoundedFileReaderWithinTrustRoot } from "./secret-files.js";
 import { loadDedicatedWorkerDatabaseConfig } from "./dedicated-worker-database.js";
 import { loadPlatformWorkerId } from "./worker.js";
@@ -22,6 +26,7 @@ export async function runPlatformCommerceWorkerMain(): Promise<void> {
     "PLATFORM_COMMERCE_OUTBOX_DELIVERY_SECRET_FILE_INVALID",
   )).trim();
   const commerce = createCommerceOutboxReconciliationCycle({ database,
+    projection: new PostgresCommerceOutboxProjection(new PostgresCreditOutboxProjection()),
     transport: new HmacHttpOutboxDeliveryTransport({
       endpoint: required(environment, "PLATFORM_OUTBOX_DELIVERY_ENDPOINT"),
       keyId: required(environment, "PLATFORM_OUTBOX_DELIVERY_KEY_ID"), secretBase64,

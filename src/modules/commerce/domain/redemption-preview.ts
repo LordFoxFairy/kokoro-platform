@@ -75,6 +75,8 @@ export interface PublishedFulfillmentOutputLine {
   readonly planVersionRef: string | null;
   readonly entitlementTemplateRevisionRef: string | null;
   readonly creditProgramRevisionRef: string | null;
+  readonly creditProgramRevisionVersion: bigint | null;
+  readonly creditProgramRevisionDigest: string | null;
 }
 
 export function publishedFulfillmentOutputPlanDigest(input: Readonly<{
@@ -94,6 +96,8 @@ export function publishedFulfillmentOutputPlanDigest(input: Readonly<{
       planVersionRef: line.planVersionRef,
       entitlementTemplateRevisionRef: line.entitlementTemplateRevisionRef,
       creditProgramRevisionRef: line.creditProgramRevisionRef,
+      creditProgramRevisionVersion: line.creditProgramRevisionVersion?.toString() ?? null,
+      creditProgramRevisionDigest: line.creditProgramRevisionDigest,
     })),
   }), "utf8").digest("hex");
 }

@@ -5,6 +5,7 @@ import type { CommerceAdministrationRepository } from "../../src/modules/commerc
 import { issuePlatformTransaction, revokePlatformTransaction } from "../../src/shared/unit-of-work/platform-transaction.js";
 import type { VerifiedRequestSecurityContext } from "../../src/shared/security-context/index.js";
 import { PostgresCommerceAdministrationRepository } from "../../src/modules/commerce/infrastructure/postgres/commerce-administration-repository.js";
+import { PostgresCreditGrantProgram } from "../../src/modules/credit/infrastructure/postgres/credit-grant-program.js";
 import { commerceCanonicalJson } from "../../src/modules/commerce/domain/canonical-json.js";
 
 describe("CommerceAdministrationService", () => {
@@ -101,7 +102,7 @@ describe("CommerceAdministrationService", () => {
         throw new Error("MUST_NOT_ALLOCATE_OR_WRITE");
       } });
     try {
-      await expect(new PostgresCommerceAdministrationRepository().publishCreditProgramRevision(
+      await expect(new PostgresCommerceAdministrationRepository(new PostgresCreditGrantProgram()).publishCreditProgramRevision(
         lease.transaction, { siteId: "site-1", subjectId: "operator-maker", subjectGeneration: "1",
           command: identity, creditProgramRevisionRef: "daily-v1", programRef: "daily", revision: "1",
           uxBucketClass: "daily", unit: "kokoro-credit", amount: "25", burnPriority: 100,
@@ -180,9 +181,9 @@ describe("CommerceAdministrationService", () => {
         fulfillmentProgramRevisionRef: "credits-fulfillment-v1", fulfillmentProgramRef: "credits-fulfillment",
         fulfillmentProgramRevision: "1", legalTermRefs: ["terms-v1"],
         outputs: [
-          { outputLineId: "credits", ordinal: 0, cardinality: 1, outputKind: "credit_grant",
+          { outputLineId: "credits", ordinal: 1, cardinality: 1, outputKind: "credit_grant",
             targetRevisionRef: "credits-program-v1" },
-          { outputLineId: "bonus", ordinal: 1, cardinality: 1, outputKind: "entitlement_grant",
+          { outputLineId: "bonus", ordinal: 2, cardinality: 1, outputKind: "entitlement_grant",
             targetRevisionRef: "bonus-template-v1" },
         ],
       })).resolves.toMatchObject({ kind: "committed", productVersionRef: "credits-v1" });
@@ -257,7 +258,7 @@ describe("CommerceAdministrationService", () => {
       execute: async (statement) => statement.includes("commerce_code_batch_approval") ? 0 : 1,
     });
     try {
-      await expect(new PostgresCommerceAdministrationRepository().approveBatch(lease.transaction, {
+      await expect(new PostgresCommerceAdministrationRepository(new PostgresCreditGrantProgram()).approveBatch(lease.transaction, {
         siteId: "site-1", subjectId: "operator-maker", subjectGeneration: "1",
         batchRef: "00000000-0000-7000-8000-000000000111", approvalDigest: "b".repeat(64),
         command: { commandId: "00000000-0000-7000-8000-000000000203", environment: "production", region: "us-east-1",
@@ -290,7 +291,7 @@ describe("CommerceAdministrationService", () => {
         return 1; },
     });
     try {
-      await expect(new PostgresCommerceAdministrationRepository().publishCreditProgramRevision(lease.transaction, {
+      await expect(new PostgresCommerceAdministrationRepository(new PostgresCreditGrantProgram()).publishCreditProgramRevision(lease.transaction, {
         siteId: "site-1", subjectId: "operator-maker", subjectGeneration: "1", command: identity,
         creditProgramRevisionRef: "credits-program-v1", programRef: "credits-program", revision: "1",
         uxBucketClass: "permanent", unit: "kokoro-credit", amount: "1000", burnPriority: 1000,
@@ -302,7 +303,7 @@ describe("CommerceAdministrationService", () => {
       })).resolves.toMatchObject({ kind: "committed", result: {
         publishedAt: "2026-07-30T01:00:00.000Z" } });
       expect(statements.some((statement) => statement.includes(
-        "INSERT INTO platform.commerce_credit_program_revision"))).toBe(true);
+        "INSERT INTO platform.credit_grant_program_revision"))).toBe(true);
       expect(statements.some((statement) => statement.includes(
         "UPDATE platform.commerce_catalog_epoch_authority"))).toBe(true);
       expect(statements.some((statement) => statement.includes(
@@ -334,7 +335,7 @@ describe("CommerceAdministrationService", () => {
       execute: async (statement) => { statements.push(statement); return 0; },
     });
     try {
-      await expect(new PostgresCommerceAdministrationRepository().publishCreditProgramRevision(
+      await expect(new PostgresCommerceAdministrationRepository(new PostgresCreditGrantProgram()).publishCreditProgramRevision(
         lease.transaction, {
           siteId: "site-1", subjectId: "operator-maker", subjectGeneration: "1", command: identity,
           creditProgramRevisionRef: "credits-program-v1", programRef: "credits-program", revision: "1",

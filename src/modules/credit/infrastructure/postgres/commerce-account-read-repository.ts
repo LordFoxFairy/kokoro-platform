@@ -10,7 +10,7 @@ import type {
 } from "../../../../interfaces/http/generated/platform-public/types.gen.js";
 import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
 import type { AccountReadIdentity, AccountReadRepository } from
-  "../../application/contracts/account-read-repository.js";
+  "../../../commerce/application/contracts/account-read-repository.js";
 
 const ACCOUNT_CTE = `account AS (
   SELECT membership.billing_account_ref
@@ -75,8 +75,10 @@ export class PostgresAccountReadRepository implements AccountReadRepository {
       }));
       units.set(row.unit, buckets);
     }
-    const summaries: CreditUnitSummary[] = [...units].sort(([a], [b]) => a.localeCompare(b)).map(([unit, buckets]) => ({
-      unit, buckets: [...buckets.values()].sort((a, b) => a.bucketClass.localeCompare(b.bucketClass)),
+    const summaries: CreditUnitSummary[] = [...units].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+      .map(([unit, buckets]) => ({
+      unit, buckets: [...buckets.values()].sort((a, b) =>
+        a.bucketClass < b.bucketClass ? -1 : a.bucketClass > b.bucketClass ? 1 : 0),
     }));
     return Object.freeze({ activeHoldCount: metadata.activeHoldCount, freshness: freshness(metadata), units: summaries });
   }

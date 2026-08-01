@@ -3,9 +3,11 @@ import { CommandReceiptRepository, type CommandReceipt, type JsonValue } from ".
 import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
 import { commerceCanonicalJson } from "../../domain/canonical-json.js";
 import type { CommerceAdministrationRepository, CommerceAdminActor } from "../../application/contracts/commerce-administration-repository.js";
+import type { CreditGrantProgramPort } from "../../../credit/application/contracts/grant-program.js";
 
 export class PostgresCommerceAdministrationRepository implements CommerceAdministrationRepository {
-  constructor(private readonly receipts = new CommandReceiptRepository()) {}
+  constructor(private readonly creditPrograms: CreditGrantProgramPort,
+    private readonly receipts = new CommandReceiptRepository()) {}
 
   async publishCreditProgramRevision(
     transaction: Parameters<CommerceAdministrationRepository["publishCreditProgramRevision"]>[0],
@@ -18,19 +20,14 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
     const catalogEpoch = await allocateCatalogEpoch(sql);
     const occurredAt = await databaseNow(transaction);
     await command(sql, input, occurredAt);
-    await exactlyOne(sql.execute(
-      `INSERT INTO platform.commerce_credit_program_revision
-       (credit_program_revision_ref,site_ref,program_ref,revision,ux_bucket_class,unit,amount,
-        burn_priority,scope_policy,liability_merchant_account_ref,window_kind,rollover_policy,
-        calendar_zone,window_anchor,expires_after_seconds,revision_digest,catalog_epoch,published_at)
-       VALUES ($1,$2,$3,$4::bigint,$5,$6,$7::numeric,$8,$9::jsonb,$10,$11,$12,$13,$14,$15::bigint,$16,$17::bigint,$18::timestamptz)`,
-      [input.creditProgramRevisionRef, input.siteId, input.programRef, input.revision,
-        input.uxBucketClass, input.unit, input.amount, input.burnPriority,
-        JSON.stringify(input.scopePolicy), input.liabilityMerchantAccountRef, input.windowKind,
-        input.rolloverPolicy, input.calendarZone, input.windowAnchor, input.expiresAfterSeconds,
-        input.revisionDigest, catalogEpoch, occurredAt],
-    ), "COMMERCE_CREDIT_PROGRAM_PERSIST_FAILED");
-    await audit(sql, input, "commerce.credit_program.published", input.revisionDigest, occurredAt);
+    await this.creditPrograms.publishRevision(transaction, { siteId: input.siteId,
+      revisionRef: input.creditProgramRevisionRef, programRef: input.programRef, revision: BigInt(input.revision),
+      bucketClass: input.uxBucketClass, unit: input.unit, amount: input.amount, burnPriority: input.burnPriority,
+      scopePolicy: input.scopePolicy, liabilityMerchantAccountId: input.liabilityMerchantAccountRef,
+      windowKind: input.windowKind, rolloverPolicy: input.rolloverPolicy, calendarZone: input.calendarZone,
+      windowAnchor: input.windowAnchor, expiresAfterSeconds: input.expiresAfterSeconds === null ? null : BigInt(input.expiresAfterSeconds),
+      revisionDigest: input.revisionDigest, catalogEpoch: BigInt(catalogEpoch), publishedAt: occurredAt });
+    await audit(sql, input, "credit.grant_program.published", input.revisionDigest, occurredAt);
     const receipt = await complete(this.receipts, transaction, input.command, {
       creditProgramRevisionRef: input.creditProgramRevisionRef,
       revisionDigest: input.revisionDigest, publishedAt: occurredAt,
@@ -103,20 +100,31 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
       [input.fulfillmentProgramRevisionRef, input.siteId, input.fulfillmentProgramRef,
         input.fulfillmentProgramRevision, input.outputPlanDigest, catalogEpoch, occurredAt],
     ), "COMMERCE_FULFILLMENT_PROGRAM_PERSIST_FAILED");
+    const creditRefs = [...new Set(input.outputs.filter((output) => output.outputKind === "credit_grant")
+      .map((output) => output.targetRevisionRef))];
+    const creditPrograms = creditRefs.length === 0 ? [] : await this.creditPrograms.resolveRefs(transaction,
+      { siteId: input.siteId, revisionRefs: creditRefs });
+    const creditByRef = new Map(creditPrograms.map((program) => [program.revisionRef, program]));
     await exactlyCount(sql.execute(
       `INSERT INTO platform.commerce_fulfillment_program_output
        (fulfillment_program_revision_ref,site_ref,output_line_id,ordinal,cardinality,output_kind,
-        plan_version_ref,entitlement_template_revision_ref,credit_program_revision_ref)
+        plan_version_ref,entitlement_template_revision_ref,credit_program_revision_ref,
+        credit_program_revision_version,credit_program_revision_digest)
        SELECT $1,$2,value.output_line_id,value.ordinal,value.cardinality,value.output_kind,
          CASE WHEN value.output_kind='subscription_term' THEN value.target_revision_ref END,
          CASE WHEN value.output_kind='entitlement_grant' THEN value.target_revision_ref END,
-         CASE WHEN value.output_kind='credit_grant' THEN value.target_revision_ref END
+         CASE WHEN value.output_kind='credit_grant' THEN value.target_revision_ref END,
+         CASE WHEN value.output_kind='credit_grant' THEN value.target_revision_version END,
+         CASE WHEN value.output_kind='credit_grant' THEN value.target_revision_digest END
        FROM jsonb_to_recordset($3::jsonb) AS value(
-         output_line_id TEXT,ordinal INTEGER,cardinality INTEGER,output_kind TEXT,target_revision_ref TEXT
+         output_line_id TEXT,ordinal INTEGER,cardinality INTEGER,output_kind TEXT,target_revision_ref TEXT,
+         target_revision_version BIGINT,target_revision_digest TEXT
        )`,
       [input.fulfillmentProgramRevisionRef, input.siteId, JSON.stringify(input.outputs.map((output) => ({
         output_line_id: output.outputLineId, ordinal: output.ordinal, cardinality: output.cardinality,
         output_kind: output.outputKind, target_revision_ref: output.targetRevisionRef,
+        target_revision_version: creditByRef.get(output.targetRevisionRef)?.revision.toString() ?? null,
+        target_revision_digest: creditByRef.get(output.targetRevisionRef)?.revisionDigest ?? null,
       })))],
     ), input.outputs.length, "COMMERCE_FULFILLMENT_OUTPUTS_PERSIST_FAILED");
     await exactlyOne(sql.execute(

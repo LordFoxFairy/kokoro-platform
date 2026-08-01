@@ -1891,8 +1891,12 @@ export const zRedemptionOutputRef = z.strictObject({
         'credit_grant'
     ]),
     outputLineId: z.string().min(1).max(128),
+    outputOrdinal: z.number().int().gte(1).lte(32),
+    occurrence: z.number().int().gte(1).lte(32),
     resourceRef: z.string().min(1).max(256),
-    templateRevisionRef: z.string().min(1).max(256)
+    templateRevisionRef: z.string().min(1).max(256),
+    outputVersion: z.literal(1),
+    outputDigest: z.string().regex(/^[0-9a-f]{64}$/)
 });
 
 /**

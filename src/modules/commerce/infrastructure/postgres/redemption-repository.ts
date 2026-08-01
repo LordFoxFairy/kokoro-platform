@@ -8,6 +8,7 @@ import {
   type RedemptionSafeTerms,
   type StoredRedemptionPreview,
 } from "../../domain/redemption-preview.js";
+import type { CreditGrantProgramPort } from "../../../credit/application/contracts/grant-program.js";
 
 type CandidateRow = Record<string, unknown> & {
   codeRef: string;
@@ -39,6 +40,8 @@ type OutputRow = Record<string, unknown> & {
   cardinality: number;
   planVersionRef: string | null;
   creditProgramRevisionRef: string | null;
+  creditProgramRevisionVersion: bigint | null;
+  creditProgramRevisionDigest: string | null;
   bucketClass: "daily" | "period" | "permanent" | null;
   unit: string | null;
   amount: string | null;
@@ -74,6 +77,7 @@ type PreviewRow = Record<string, unknown> & {
 };
 
 export class PostgresRedemptionRepository implements RedemptionRepository {
+  constructor(private readonly creditPrograms: CreditGrantProgramPort) {}
   async resolvePreviewCandidate(
     transaction: Parameters<RedemptionRepository["resolvePreviewCandidate"]>[0],
     input: Parameters<RedemptionRepository["resolvePreviewCandidate"]>[1],
@@ -94,7 +98,8 @@ export class PostgresRedemptionRepository implements RedemptionRepository {
     const row = rows[0];
     if (row === undefined) return null;
     if (rows.length !== 1) throw new Error("REDEMPTION_CODE_LOOKUP_AMBIGUOUS");
-    const outputRows = await sql.query<OutputRow>(OUTPUT_SQL, [row.fulfillmentProgramRevisionRef, input.siteId]);
+    const storedOutputs = await sql.query<OutputRow>(OUTPUT_SQL, [row.fulfillmentProgramRevisionRef, input.siteId]);
+    const outputRows = await resolveCreditOutputs(this.creditPrograms, transaction, input.siteId, storedOutputs);
     const computedOutputPlanDigest = publishedFulfillmentOutputPlanDigest({
       siteId: input.siteId,
       fulfillmentProgramRevisionRef: row.fulfillmentProgramRevisionRef,
@@ -204,7 +209,7 @@ function terms(row: CandidateRow, outputs: readonly OutputRow[], now: string): R
   const entitlements: RedemptionSafeTerms["entitlements"] = [];
   let subscriptionTermCount = 0;
   outputs.forEach((output, index) => {
-    if (output.ordinal !== index || !Number.isInteger(output.cardinality) || output.cardinality < 1 || output.cardinality > 100) {
+    if (output.ordinal !== index + 1 || !Number.isInteger(output.cardinality) || output.cardinality < 1 || output.cardinality > 32) {
       throw new Error("REDEMPTION_PROGRAM_OUTPUT_INVALID");
     }
     if (output.outputKind === "credit_grant") {
@@ -269,6 +274,34 @@ function terms(row: CandidateRow, outputs: readonly OutputRow[], now: string): R
   });
   if (!isSupportedRedemptionSafeTerms(safeTerms)) throw new RedemptionPolicyError();
   return safeTerms;
+}
+
+async function resolveCreditOutputs(port: CreditGrantProgramPort,
+  transaction: Parameters<RedemptionRepository["resolvePreviewCandidate"]>[0], siteId: string,
+  outputs: readonly OutputRow[]): Promise<readonly OutputRow[]> {
+  const creditOutputs = outputs.filter((output) => output.outputKind === "credit_grant");
+  if (creditOutputs.length === 0) return outputs;
+  const targets = new Map<string, { revisionRef: string; revision: bigint; revisionDigest: string }>();
+  for (const output of creditOutputs) {
+    if (output.creditProgramRevisionRef === null || output.creditProgramRevisionVersion === null ||
+        output.creditProgramRevisionDigest === null) throw new Error("REDEMPTION_PROGRAM_OUTPUT_INVALID");
+    const target = { revisionRef: output.creditProgramRevisionRef, revision: BigInt(output.creditProgramRevisionVersion),
+      revisionDigest: output.creditProgramRevisionDigest };
+    const prior = targets.get(target.revisionRef);
+    if (prior !== undefined && (prior.revision !== target.revision || prior.revisionDigest !== target.revisionDigest)) {
+      throw new Error("REDEMPTION_PROGRAM_OUTPUT_INVALID");
+    }
+    targets.set(target.revisionRef, target);
+  }
+  const programs = await port.resolveTargets(transaction, { siteId, targets: [...targets.values()] });
+  const byRef = new Map(programs.map((program) => [program.revisionRef, program]));
+  return Object.freeze(outputs.map((output) => {
+    if (output.outputKind !== "credit_grant") return output;
+    const program = byRef.get(output.creditProgramRevisionRef!);
+    if (program === undefined) throw new Error("REDEMPTION_PROGRAM_OUTPUT_INVALID");
+    return Object.freeze({ ...output, bucketClass: program.bucketClass, unit: program.unit, amount: program.amount,
+      creditExpiresAfterSeconds: program.expiresAfterSeconds });
+  }));
 }
 
 function expiry(now: string, seconds: bigint | null): string | null {
@@ -361,19 +394,17 @@ const OUTPUT_SQL = `
   SELECT output.output_line_id AS "outputLineId",output.output_kind AS "outputKind",
          output.ordinal,output.cardinality,output.plan_version_ref AS "planVersionRef",
          output.credit_program_revision_ref AS "creditProgramRevisionRef",
-         credit.ux_bucket_class AS "bucketClass",credit.unit,credit.amount::text AS amount,
-         credit.expires_after_seconds AS "creditExpiresAfterSeconds",
+         output.credit_program_revision_version AS "creditProgramRevisionVersion",
+         output.credit_program_revision_digest AS "creditProgramRevisionDigest",
+         NULL::text AS "bucketClass",NULL::text AS unit,NULL::text AS amount,
+         NULL::bigint AS "creditExpiresAfterSeconds",
          output.entitlement_template_revision_ref AS "entitlementTemplateRevisionRef",
          entitlement.capability_key AS "capabilityKey",entitlement.safe_label AS "safeLabel",
          entitlement.expires_after_seconds AS "entitlementExpiresAfterSeconds"
   FROM platform.commerce_fulfillment_program_output output
-  LEFT JOIN platform.commerce_credit_program_revision credit
-    ON credit.credit_program_revision_ref=output.credit_program_revision_ref
-      AND credit.site_ref=$2
   LEFT JOIN platform.commerce_entitlement_template_revision entitlement
     ON entitlement.entitlement_template_revision_ref=output.entitlement_template_revision_ref
       AND entitlement.site_ref=$2
   WHERE output.fulfillment_program_revision_ref=$1 AND output.site_ref=$2
-    AND (output.output_kind<>'credit_grant' OR credit.credit_program_revision_ref IS NOT NULL)
     AND (output.output_kind<>'entitlement_grant' OR entitlement.entitlement_template_revision_ref IS NOT NULL)
   ORDER BY output.ordinal`;

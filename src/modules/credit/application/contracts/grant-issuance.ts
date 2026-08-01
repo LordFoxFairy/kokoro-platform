@@ -22,13 +22,15 @@ export type CreditGrantScopePolicy = Readonly<{
 
 export type CreditGrantSourceType = "redemption" | "payment" | "admin_grant" | "program_window";
 
-export type PreparedCreditGrantAccounts = Readonly<{
+export type PreparedCreditGrantIssuance = Readonly<{
   [preparedCreditGrantAccountsBrand]: true;
   accountCount: number;
+  grantCount: number;
+  intentDigest: string;
 }>;
 
-export type PrepareCreditGrantAccountsResult =
-  | Readonly<{ kind: "ready"; preparation: PreparedCreditGrantAccounts }>
+export type PrepareCreditGrantIssuanceResult =
+  | Readonly<{ kind: "ready"; preparation: PreparedCreditGrantIssuance }>
   | Readonly<{
     kind: "unavailable";
     reason: "credit_account_suspended" | "credit_account_closed";
@@ -37,6 +39,7 @@ export type PrepareCreditGrantAccountsResult =
 export type CreditGrantIssue = Readonly<{
   account: CreditGrantAccountIdentity;
   outputLineId: string;
+  outputOrdinal: number;
   occurrence: number;
   creditProgramRevisionRef: string;
   sourceType: CreditGrantSourceType;
@@ -52,23 +55,27 @@ export type CreditGrantIssue = Readonly<{
 
 export type CreditGrantIssueReceipt = Readonly<{
   outputLineId: string;
+  outputOrdinal: number;
   occurrence: number;
   creditProgramRevisionRef: string;
   creditGrantRef: CreditGrantRef;
+  outputVersion: 1;
+  outputDigest: string;
 }>;
 
 export interface CreditGrantIssuancePort {
-  prepareAccounts(
-    transaction: PlatformTransaction,
-    input: Readonly<{ accounts: readonly CreditGrantAccountIdentity[] }>,
-  ): Promise<PrepareCreditGrantAccountsResult>;
-
-  issueGrants(
+  prepareIssuance(
     transaction: PlatformTransaction,
     input: Readonly<{
-      preparation: PreparedCreditGrantAccounts;
       commandId: string;
       grants: readonly CreditGrantIssue[];
+    }>,
+  ): Promise<PrepareCreditGrantIssuanceResult>;
+
+  issuePrepared(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      preparation: PreparedCreditGrantIssuance;
     }>,
   ): Promise<readonly CreditGrantIssueReceipt[]>;
 }

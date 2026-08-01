@@ -345,11 +345,14 @@ function validatePlanVersion(value: Readonly<{ planRef: string; planVersionRef: 
 }
 function validateOutputs(values: readonly Readonly<{ outputLineId: string; ordinal: number; cardinality: number;
   outputKind: "subscription_term" | "entitlement_grant" | "credit_grant"; targetRevisionRef: string }>[]) {
-  if (values.length < 1 || values.length > 100) throw new Error("COMMERCE_OFFER_OUTPUTS_INVALID");
+  if (values.length < 1 || values.length > 32 ||
+      values.reduce((total, value) => total + value.cardinality, 0) > 32) {
+    throw new Error("COMMERCE_OFFER_OUTPUTS_INVALID");
+  }
   const lineIds = new Set<string>();
   return Object.freeze(values.map((value, index) => {
-    if (value.ordinal !== index || lineIds.has(value.outputLineId) || !Number.isInteger(value.cardinality) ||
-      value.cardinality < 1 || value.cardinality > 100 ||
+    if (value.ordinal !== index + 1 || lineIds.has(value.outputLineId) || !Number.isInteger(value.cardinality) ||
+      value.cardinality < 1 || value.cardinality > 32 ||
       (value.outputKind === "subscription_term" && value.cardinality !== 1)) {
       throw new Error("COMMERCE_OFFER_OUTPUT_INVALID");
     }

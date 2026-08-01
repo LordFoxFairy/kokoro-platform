@@ -5,7 +5,7 @@ import type {
   CreditGrantIssueReceipt,
   CreditGrantIssuancePort,
   CreditGrantRef,
-  PreparedCreditGrantAccounts,
+  PreparedCreditGrantIssuance,
 } from "../../application/contracts/grant-issuance.js";
 import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
@@ -21,6 +21,9 @@ type PreparedState = {
     identity: CreditGrantAccountIdentity;
     account: LockedCreditAccount | null;
   }>>;
+  commandId: string;
+  grants: readonly CreditGrantIssue[];
+  intentDigest: string;
   consumed: boolean;
 };
 
@@ -28,21 +31,33 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const POSITIVE_DECIMAL = /^[1-9][0-9]{0,37}$/u;
 
 export class PostgresCreditGrantIssuer implements CreditGrantIssuancePort {
-  readonly #prepared = new WeakMap<PreparedCreditGrantAccounts, PreparedState>();
+  readonly #prepared = new WeakMap<PreparedCreditGrantIssuance, PreparedState>();
   readonly #reference: () => string;
 
   constructor(dependencies: Readonly<{ reference?: () => string }> = {}) {
     this.#reference = dependencies.reference ?? randomUUID;
   }
 
-  async prepareAccounts(
-    transaction: Parameters<CreditGrantIssuancePort["prepareAccounts"]>[0],
-    input: Parameters<CreditGrantIssuancePort["prepareAccounts"]>[1],
-  ): ReturnType<CreditGrantIssuancePort["prepareAccounts"]> {
+  async prepareIssuance(
+    transaction: Parameters<CreditGrantIssuancePort["prepareIssuance"]>[0],
+    input: Parameters<CreditGrantIssuancePort["prepareIssuance"]>[1],
+  ): ReturnType<CreditGrantIssuancePort["prepareIssuance"]> {
+    bounded(input.commandId, 128, "CREDIT_GRANT_COMMAND_INVALID");
+    if (input.grants.length < 1 || input.grants.length > 32) throw new Error("CREDIT_GRANT_INTENT_SIZE_INVALID");
+    const grants = Object.freeze(input.grants.map(validateGrant).sort(compareGrantIdentity));
     const identities = new Map<string, CreditGrantAccountIdentity>();
-    for (const identity of input.accounts) {
-      validateIdentity(identity);
-      identities.set(creditAccountAdvisoryKey(identity), Object.freeze({ ...identity }));
+    const sourceRefs = new Set<string>();
+    const operationKeys = new Set<string>();
+    const outputIdentities = new Set<string>();
+    for (const grant of grants) {
+      const identity = grant.account;
+      identities.set(creditAccountAdvisoryKey(identity), identity);
+      const outputIdentity = `${grant.outputLineId}\u0000${grant.outputOrdinal}\u0000${grant.occurrence}`;
+      if (sourceRefs.has(`${grant.sourceType}:${grant.sourceRef}`) || operationKeys.has(grant.businessOperationKey) ||
+          outputIdentities.has(outputIdentity)) throw new Error("CREDIT_GRANT_IDEMPOTENCY_KEY_DUPLICATED");
+      sourceRefs.add(`${grant.sourceType}:${grant.sourceRef}`);
+      operationKeys.add(grant.businessOperationKey);
+      outputIdentities.add(outputIdentity);
     }
     const accounts = new Map<string, PreparedState["accounts"] extends Map<string, infer Value> ? Value : never>();
     for (const key of [...identities.keys()].sort(compareCanonical)) {
@@ -53,33 +68,24 @@ export class PostgresCreditGrantIssuer implements CreditGrantIssuancePort {
       }
       accounts.set(key, Object.freeze({ identity, account }));
     }
-    const preparation = Object.freeze({ accountCount: accounts.size }) as PreparedCreditGrantAccounts;
-    this.#prepared.set(preparation, { transaction, accounts, consumed: false });
+    const intentDigest = issuanceIntentDigest(input.commandId, grants);
+    const preparation = Object.freeze({ accountCount: accounts.size, grantCount: grants.length,
+      intentDigest }) as PreparedCreditGrantIssuance;
+    this.#prepared.set(preparation, { transaction, accounts, commandId: input.commandId, grants, intentDigest, consumed: false });
     return Object.freeze({ kind: "ready" as const, preparation });
   }
 
-  async issueGrants(
-    transaction: Parameters<CreditGrantIssuancePort["issueGrants"]>[0],
-    input: Parameters<CreditGrantIssuancePort["issueGrants"]>[1],
-  ): ReturnType<CreditGrantIssuancePort["issueGrants"]> {
+  async issuePrepared(
+    transaction: Parameters<CreditGrantIssuancePort["issuePrepared"]>[0],
+    input: Parameters<CreditGrantIssuancePort["issuePrepared"]>[1],
+  ): ReturnType<CreditGrantIssuancePort["issuePrepared"]> {
     const prepared = this.#prepared.get(input.preparation);
     if (prepared === undefined || prepared.transaction !== transaction) {
       throw new Error("CREDIT_GRANT_PREPARATION_INVALID");
     }
     if (prepared.consumed) throw new Error("CREDIT_GRANT_PREPARATION_CONSUMED");
-    const grants = input.grants.map(validateGrant);
-    const sourceRefs = new Set<string>();
-    const operationKeys = new Set<string>();
-    for (const grant of grants) {
-      if (!prepared.accounts.has(creditAccountAdvisoryKey(grant.account))) {
-        throw new Error("CREDIT_GRANT_ACCOUNT_NOT_PREPARED");
-      }
-      if (sourceRefs.has(`${grant.sourceType}:${grant.sourceRef}`) || operationKeys.has(grant.businessOperationKey)) {
-        throw new Error("CREDIT_GRANT_IDEMPOTENCY_KEY_DUPLICATED");
-      }
-      sourceRefs.add(`${grant.sourceType}:${grant.sourceRef}`);
-      operationKeys.add(grant.businessOperationKey);
-    }
+    if (input.preparation.intentDigest !== prepared.intentDigest || input.preparation.grantCount !== prepared.grants.length ||
+        input.preparation.accountCount !== prepared.accounts.size) throw new Error("CREDIT_GRANT_PREPARATION_INVALID");
     prepared.consumed = true;
 
     const sql = resolvePlatformTransaction(transaction);
@@ -102,7 +108,7 @@ export class PostgresCreditGrantIssuer implements CreditGrantIssuancePort {
     }
 
     const receipts: CreditGrantIssueReceipt[] = [];
-    for (const grant of grants) {
+    for (const grant of prepared.grants) {
       const account = prepared.accounts.get(creditAccountAdvisoryKey(grant.account))?.account;
       if (account === undefined || account === null || account.state !== "active") {
         throw new Error("CREDIT_GRANT_ACCOUNT_AUTHORITY_MISSING");
@@ -128,16 +134,19 @@ export class PostgresCreditGrantIssuer implements CreditGrantIssuancePort {
         siteId: grant.account.siteId,
         unit: grant.account.unit,
         businessOperationKey: grant.businessOperationKey,
-        commandId: input.commandId,
+        commandId: prepared.commandId,
         creditGrantRef,
         amount: grant.amount,
         occurredAt: grant.effectiveAt,
       });
       receipts.push(Object.freeze({
         outputLineId: grant.outputLineId,
+        outputOrdinal: grant.outputOrdinal,
         occurrence: grant.occurrence,
         creditProgramRevisionRef: grant.creditProgramRevisionRef,
         creditGrantRef,
+        outputVersion: 1 as const,
+        outputDigest: creditGrantOutputDigest({ creditGrantRef, grant }),
       }));
     }
     return Object.freeze(receipts);
@@ -158,6 +167,9 @@ function validateGrant(grant: CreditGrantIssue): CreditGrantIssue {
   bounded(grant.sourceRef, 256, "CREDIT_GRANT_SOURCE_REF_INVALID");
   bounded(grant.businessOperationKey, 256, "CREDIT_GRANT_OPERATION_KEY_INVALID");
   if (!Number.isSafeInteger(grant.occurrence) || grant.occurrence < 1) throw new Error("CREDIT_GRANT_OCCURRENCE_INVALID");
+  if (!Number.isSafeInteger(grant.outputOrdinal) || grant.outputOrdinal < 1 || grant.outputOrdinal > 32) {
+    throw new Error("CREDIT_GRANT_OUTPUT_ORDINAL_INVALID");
+  }
   if (!Number.isInteger(grant.burnPriority) || grant.burnPriority < -2_147_483_648 ||
       grant.burnPriority > 2_147_483_647) {
     throw new Error("CREDIT_GRANT_BURN_PRIORITY_INVALID");
@@ -246,7 +258,7 @@ async function recordGrantIssueJournal(
     input.amount,
     input.creditGrantRef,
     "",
-  ].join("|")).join("\n"), "utf8").digest("hex");
+  ].map((field) => lengthDelimited(String(field))).join("")).join(""), "utf8").digest("hex");
   const requestDigest = sha256(canonicalJson({
     version: 1,
     operationKind: "grant_issue",
@@ -298,6 +310,26 @@ function canonicalJson(value: unknown): string {
     return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`).join(",")}}`;
   }
   throw new Error("CREDIT_GRANT_CANONICAL_JSON_INVALID");
+}
+
+function lengthDelimited(value: string): string {
+  return `${Buffer.byteLength(value, "utf8")}:${value}`;
+}
+
+function issuanceIntentDigest(commandId: string, grants: readonly CreditGrantIssue[]): string {
+  return sha256(canonicalJson({ version: 1, commandId, grants }));
+}
+
+function creditGrantOutputDigest(input: Readonly<{ creditGrantRef: CreditGrantRef; grant: CreditGrantIssue }>): string {
+  return sha256(canonicalJson({ version: 1, kind: "credit_grant", outputLineId: input.grant.outputLineId,
+    outputOrdinal: input.grant.outputOrdinal, occurrence: input.grant.occurrence,
+    resourceRef: input.creditGrantRef, templateRevisionRef: input.grant.creditProgramRevisionRef,
+    outputVersion: 1 }));
+}
+
+function compareGrantIdentity(left: CreditGrantIssue, right: CreditGrantIssue): number {
+  return left.outputOrdinal - right.outputOrdinal || left.occurrence - right.occurrence ||
+    compareCanonical(left.outputLineId, right.outputLineId);
 }
 
 function compareCanonical(left: string, right: string): number {

@@ -12,10 +12,13 @@ export interface FulfillmentOutputLine {
 
 export interface ActualFulfillmentOutput {
   readonly outputLineId: string;
+  readonly outputOrdinal: number;
   readonly occurrence: number;
   readonly templateRevision: string;
   readonly outputKind: FulfillmentOutputKind;
   readonly outputRef: string;
+  readonly outputVersion: 1;
+  readonly outputDigest: string;
 }
 
 export interface FulfillmentOutputIdentity {
@@ -29,15 +32,17 @@ export interface FulfillmentOutputIdentity {
 }
 
 export function compileFulfillmentOutputPlan(input: readonly FulfillmentOutputLine[]): readonly FulfillmentOutputLine[] {
-  if (input.length < 1 || input.length > 256) throw new Error("OUTPUT_PLAN_SIZE_INVALID");
+  if (input.length < 1 || input.length > 32 || input.reduce((sum, line) => sum + line.cardinality, 0) > 32) {
+    throw new Error("OUTPUT_PLAN_SIZE_INVALID");
+  }
   const ids = new Set<string>();
   const result = input.map((line, index) => {
     if (line.outputLineId.length < 1 || line.outputLineId.length > 128 || ids.has(line.outputLineId)) {
       throw new Error(ids.has(line.outputLineId) ? "OUTPUT_LINE_ID_DUPLICATE" : "OUTPUT_LINE_ID_INVALID");
     }
     ids.add(line.outputLineId);
-    if (line.ordinal !== index) throw new Error("OUTPUT_ORDINAL_NOT_CONTINUOUS");
-    if (!Number.isInteger(line.cardinality) || line.cardinality < 0 || line.cardinality > 100) {
+    if (line.ordinal !== index + 1) throw new Error("OUTPUT_ORDINAL_NOT_CONTINUOUS");
+    if (!Number.isInteger(line.cardinality) || line.cardinality < 0 || line.cardinality > 32) {
       throw new Error("OUTPUT_CARDINALITY_INVALID");
     }
     if (line.disposition === "forbidden" && line.cardinality !== 0) throw new Error("FORBIDDEN_OUTPUT_CARDINALITY_INVALID");
@@ -56,13 +61,15 @@ export function validateActualOutputSet(
   const identities = new Set<string>();
   const counts = new Map<string, number>();
   for (const item of actual) {
-    if (item.outputRef.length < 1 || item.outputRef.length > 256 || [...item.outputRef].some((character) => character.codePointAt(0)! < 32)) {
+    if (item.outputRef.length < 1 || item.outputRef.length > 256 || [...item.outputRef].some((character) => character.codePointAt(0)! < 32) ||
+        item.outputVersion !== 1 || !/^[a-f0-9]{64}$/u.test(item.outputDigest)) {
       throw new Error("ACTUAL_OUTPUT_REF_INVALID");
     }
     const line = byId.get(item.outputLineId);
     if (!line) throw new Error("UNDECLARED_OUTPUT_PRESENT");
     if (line.disposition === "forbidden") throw new Error("FORBIDDEN_OUTPUT_PRESENT");
-    if (item.outputKind !== line.outputKind || item.templateRevision !== line.templateRevision) throw new Error("OUTPUT_TEMPLATE_MISMATCH");
+    if (item.outputKind !== line.outputKind || item.templateRevision !== line.templateRevision ||
+        item.outputOrdinal !== line.ordinal) throw new Error("OUTPUT_TEMPLATE_MISMATCH");
     if (!Number.isInteger(item.occurrence) || item.occurrence < 1 || item.occurrence > line.cardinality) throw new Error("OUTPUT_OCCURRENCE_INVALID");
     const identity = `${item.outputLineId}\u0000${item.occurrence}`;
     if (identities.has(identity)) throw new Error("ACTUAL_OUTPUT_IDENTITY_DUPLICATE");

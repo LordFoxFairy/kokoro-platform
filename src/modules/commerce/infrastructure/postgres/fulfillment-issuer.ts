@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   FulfillmentService,
   type FulfillmentIssuer,
@@ -5,12 +6,13 @@ import {
   type FulfillmentRepositoryPort,
 } from "../../application/services/fulfillment.js";
 import type { ActualFulfillmentOutput } from "../../domain/output-line.js";
+import { commerceCanonicalJson } from "../../domain/canonical-json.js";
 import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
 import type {
   CreditGrantAccountIdentity,
   CreditGrantIssue,
   CreditGrantIssuancePort,
-  PreparedCreditGrantAccounts,
+  PreparedCreditGrantIssuance,
 } from "../../../credit/application/contracts/grant-issuance.js";
 
 export type FulfillmentOutputDefinition = Readonly<{
@@ -20,6 +22,8 @@ export type FulfillmentOutputDefinition = Readonly<{
   cardinality: number;
   planVersionRef: string | null;
   creditProgramRevisionRef: string | null;
+  creditProgramRevisionVersion: bigint | null;
+  creditProgramRevisionDigest: string | null;
   bucketClass: "daily" | "period" | "permanent" | null;
   unit: string | null;
   amount: string | null;
@@ -51,7 +55,7 @@ export type PostgresFulfillmentMaterialization = Readonly<{
   effectAt: string;
   outputs: readonly FulfillmentOutputDefinition[];
   nextRef: (purpose: string) => string;
-  creditGrantPreparation: PreparedCreditGrantAccounts | null;
+  creditGrantPreparation: PreparedCreditGrantIssuance | null;
   subscription: PreparedFulfillmentSubscription | null;
   subscriptionTerm: Readonly<{ startsAt: string; endsAt: string }> | null;
   stackingScope: string | null;
@@ -127,10 +131,10 @@ export class PostgresFulfillmentIssuer implements FulfillmentIssuer<PostgresFulf
           );
           ordered.push(Object.freeze({
             kind: "materialized" as const,
-            receipt: Object.freeze({ kind: "entitlement_grant", outputLineId: output.outputLineId,
-              resourceRef: outputRef, templateRevisionRef: output.entitlementTemplateRevisionRef }),
-            actual: Object.freeze({ outputLineId: output.outputLineId, occurrence,
-              templateRevision: output.entitlementTemplateRevisionRef, outputKind: "entitlement_grant", outputRef }),
+            receipt: outputCommitment("entitlement_grant", output, occurrence, outputRef,
+              output.entitlementTemplateRevisionRef),
+            actual: actualCommitment("entitlement_grant", output, occurrence, outputRef,
+              output.entitlementTemplateRevisionRef),
           }));
         } else if (output.outputKind === "credit_grant") {
           if (output.creditProgramRevisionRef === null || output.bucketClass === null || output.unit === null ||
@@ -143,6 +147,7 @@ export class PostgresFulfillmentIssuer implements FulfillmentIssuer<PostgresFulf
           creditIssues.push(Object.freeze({
             account: fulfillmentCreditAccountIdentity(materialization.siteId, context.billingAccountId, output),
             outputLineId: output.outputLineId,
+            outputOrdinal: output.ordinal,
             occurrence,
             creditProgramRevisionRef: output.creditProgramRevisionRef,
             sourceType: context.source.sourceType,
@@ -175,10 +180,8 @@ export class PostgresFulfillmentIssuer implements FulfillmentIssuer<PostgresFulf
           if (created !== 1) throw new Error("FULFILLMENT_SUBSCRIPTION_TERM_CREATE_FAILED");
           ordered.push(Object.freeze({
             kind: "materialized" as const,
-            receipt: Object.freeze({ kind: "subscription_term", outputLineId: output.outputLineId,
-              resourceRef: outputRef, templateRevisionRef: output.planVersionRef }),
-            actual: Object.freeze({ outputLineId: output.outputLineId, occurrence,
-              templateRevision: output.planVersionRef, outputKind: "subscription_term", outputRef }),
+            receipt: outputCommitment("subscription_term", output, occurrence, outputRef, output.planVersionRef),
+            actual: actualCommitment("subscription_term", output, occurrence, outputRef, output.planVersionRef),
           }));
         }
       }
@@ -186,17 +189,17 @@ export class PostgresFulfillmentIssuer implements FulfillmentIssuer<PostgresFulf
     if ((creditIssues.length === 0) !== (materialization.creditGrantPreparation === null)) {
       throw new Error("FULFILLMENT_CREDIT_GRANT_PREPARATION_MISMATCH");
     }
-    const creditReceipts = creditIssues.length === 0 ? [] : await this.creditGrants.issueGrants(transaction, {
+    const creditReceipts = creditIssues.length === 0 ? [] : await this.creditGrants.issuePrepared(transaction, {
       preparation: materialization.creditGrantPreparation!,
-      commandId: context.commandId,
-      grants: Object.freeze(creditIssues),
     });
     if (creditReceipts.length !== creditIssues.length) {
       throw new Error("FULFILLMENT_CREDIT_GRANT_RECEIPT_INVALID");
     }
     const creditByOccurrence = new Map<string, (typeof creditReceipts)[number]>();
+    const expectedCreditOrdinals = new Map(creditIssues.map((issue) =>
+      [`${issue.outputLineId}:${issue.occurrence}`, issue.outputOrdinal] as const));
     for (const receipt of creditReceipts) {
-      const key = `${receipt.outputLineId}:${receipt.occurrence}`;
+      const key = `${receipt.outputOrdinal}:${receipt.outputLineId}:${receipt.occurrence}`;
       if (creditByOccurrence.has(key)) throw new Error("FULFILLMENT_CREDIT_GRANT_RECEIPT_INVALID");
       creditByOccurrence.set(key, receipt);
     }
@@ -208,15 +211,20 @@ export class PostgresFulfillmentIssuer implements FulfillmentIssuer<PostgresFulf
         actual.push(output.actual);
         continue;
       }
-      const receipt = creditByOccurrence.get(`${output.outputLineId}:${output.occurrence}`);
+      const expectedOrdinal = expectedCreditOrdinals.get(`${output.outputLineId}:${output.occurrence}`);
+      const receipt = expectedOrdinal === undefined ? undefined :
+        creditByOccurrence.get(`${expectedOrdinal}:${output.outputLineId}:${output.occurrence}`);
       if (receipt === undefined || receipt.creditProgramRevisionRef !== output.creditProgramRevisionRef) {
         throw new Error("FULFILLMENT_CREDIT_GRANT_RECEIPT_INVALID");
       }
       outputs.push(Object.freeze({ kind: "credit_grant", outputLineId: output.outputLineId,
-        resourceRef: receipt.creditGrantRef, templateRevisionRef: output.creditProgramRevisionRef }));
-      actual.push(Object.freeze({ outputLineId: output.outputLineId, occurrence: output.occurrence,
-        templateRevision: output.creditProgramRevisionRef, outputKind: "credit_grant",
-        outputRef: receipt.creditGrantRef }));
+        outputOrdinal: receipt.outputOrdinal, occurrence: output.occurrence, resourceRef: receipt.creditGrantRef,
+        templateRevisionRef: output.creditProgramRevisionRef, outputVersion: receipt.outputVersion,
+        outputDigest: receipt.outputDigest }));
+      actual.push(Object.freeze({ outputLineId: output.outputLineId, outputOrdinal: receipt.outputOrdinal,
+        occurrence: output.occurrence, templateRevision: output.creditProgramRevisionRef,
+        outputKind: "credit_grant", outputRef: receipt.creditGrantRef,
+        outputVersion: receipt.outputVersion, outputDigest: receipt.outputDigest }));
     }
     return Object.freeze({ outputs, actual });
   }
@@ -256,4 +264,35 @@ function expiry(start: string, seconds: bigint | null): string | null {
   const value = BigInt(Date.parse(start)) + seconds * 1000n;
   if (value > 8_640_000_000_000_000n) throw new Error("FULFILLMENT_EXPIRY_INVALID");
   return new Date(Number(value)).toISOString();
+}
+
+function outputCommitment(
+  kind: "subscription_term" | "entitlement_grant",
+  output: FulfillmentOutputDefinition,
+  occurrence: number,
+  resourceRef: string,
+  templateRevisionRef: string,
+): FulfillmentOutputReceipt {
+  const outputVersion = 1 as const;
+  const outputDigest = digest({ version: 1, kind, outputLineId: output.outputLineId,
+    outputOrdinal: output.ordinal, occurrence, resourceRef, templateRevisionRef, outputVersion });
+  return Object.freeze({ kind, outputLineId: output.outputLineId, outputOrdinal: output.ordinal, occurrence,
+    resourceRef, templateRevisionRef, outputVersion, outputDigest });
+}
+
+function actualCommitment(
+  outputKind: "subscription_term" | "entitlement_grant",
+  output: FulfillmentOutputDefinition,
+  occurrence: number,
+  outputRef: string,
+  templateRevision: string,
+): ActualFulfillmentOutput {
+  const receipt = outputCommitment(outputKind, output, occurrence, outputRef, templateRevision);
+  return Object.freeze({ outputLineId: receipt.outputLineId, outputOrdinal: receipt.outputOrdinal,
+    occurrence: receipt.occurrence, templateRevision, outputKind, outputRef,
+    outputVersion: receipt.outputVersion, outputDigest: receipt.outputDigest });
+}
+
+function digest(value: Parameters<typeof commerceCanonicalJson>[0]): string {
+  return createHash("sha256").update(commerceCanonicalJson(value), "utf8").digest("hex");
 }

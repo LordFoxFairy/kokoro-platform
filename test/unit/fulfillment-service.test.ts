@@ -28,15 +28,22 @@ describe("FulfillmentService", () => {
             outputs: [{
               kind: "credit_grant" as const,
               outputLineId: "credits",
+              outputOrdinal: 1,
+              occurrence: 1,
               resourceRef: "grant-1",
               templateRevisionRef: "credits-v1",
+              outputVersion: 1 as const,
+              outputDigest: "e".repeat(64),
             }],
             actual: [{
               outputLineId: "credits",
+              outputOrdinal: 1,
               occurrence: 1,
               templateRevision: "credits-v1",
               outputKind: "credit_grant" as const,
               outputRef: "grant-1",
+              outputVersion: 1 as const,
+              outputDigest: "e".repeat(64),
             }],
           };
         },
@@ -61,7 +68,8 @@ describe("FulfillmentService", () => {
       outputSetDigest,
       resultDigest,
       outputs: Object.freeze([{ kind: "credit_grant" as const, outputLineId: "credits",
-        resourceRef: "grant-9", templateRevisionRef: "credits-v1" }]),
+        outputOrdinal: 1, occurrence: 1, resourceRef: "grant-9", templateRevisionRef: "credits-v1",
+        outputVersion: 1 as const, outputDigest: "e".repeat(64) }]),
     });
     const service = new FulfillmentService({
       repository: {
@@ -107,7 +115,7 @@ function input(overrides: Readonly<{
     outputPlanDigest,
     acquisitionSnapshotDigest,
     pricingSnapshotRef: overrides.pricingSnapshotRef,
-    outputPlan: [{ outputLineId: "credits", ordinal: 0, cardinality: 1,
+    outputPlan: [{ outputLineId: "credits", ordinal: 1, cardinality: 1,
       templateRevision: "credits-v1", outputKind: "credit_grant" as const, disposition: "required" as const }],
     materialization: Object.freeze({ kind: "test" as const }),
   };

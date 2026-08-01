@@ -4,8 +4,12 @@ import type { CommerceLockSequence } from "../../../../workflows/commerce/lock-o
 export type RedemptionOutputReceipt = Readonly<{
   kind: "subscription_term" | "entitlement_grant" | "credit_grant";
   outputLineId: string;
+  outputOrdinal: number;
+  occurrence: number;
   resourceRef: string;
   templateRevisionRef: string;
+  outputVersion: 1;
+  outputDigest: string;
 }>;
 
 export type StoredRedemptionReceipt = Readonly<{

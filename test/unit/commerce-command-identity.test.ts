@@ -37,25 +37,25 @@ describe("Commerce command and output truth", () => {
 
   it("requires immutable line ids, continuous ordinals and valid disposition cardinality", () => {
     const plan = compileFulfillmentOutputPlan([
-      line("subscription", 0, "required", 1),
-      line("credit", 1, "optional", 2),
-      line("term", 2, "forbidden", 0),
+      line("subscription", 1, "required", 1),
+      line("credit", 2, "optional", 2),
+      line("term", 3, "forbidden", 0),
     ]);
 
     expect(plan.map((item) => item.outputLineId)).toEqual(["subscription", "credit", "term"]);
-    expect(() => compileFulfillmentOutputPlan([line("a", 0, "required", 1), line("b", 2, "required", 1)])).toThrow(
+    expect(() => compileFulfillmentOutputPlan([line("a", 1, "required", 1), line("b", 3, "required", 1)])).toThrow(
       "OUTPUT_ORDINAL_NOT_CONTINUOUS",
     );
-    expect(() => compileFulfillmentOutputPlan([line("a", 0, "forbidden", 1)])).toThrow(
+    expect(() => compileFulfillmentOutputPlan([line("a", 1, "forbidden", 1)])).toThrow(
       "FORBIDDEN_OUTPUT_CARDINALITY_INVALID",
     );
   });
 
   it("validates the actual output multiset exactly", () => {
     const plan = compileFulfillmentOutputPlan([
-      line("subscription", 0, "required", 1),
-      line("credit", 1, "optional", 2),
-      line("term", 2, "forbidden", 0),
+      line("subscription", 1, "required", 1),
+      line("credit", 2, "optional", 2),
+      line("term", 3, "forbidden", 0),
     ]);
     const actual = [
       actualLine("subscription", 1, "subscription"),
@@ -85,5 +85,7 @@ function line(
 }
 
 function actualLine(outputLineId: string, occurrence: number, outputKind: "subscription" | "subscription_term" | "credit_grant") {
-  return { outputLineId, occurrence, outputKind, templateRevision: `${outputLineId}:v1`, outputRef: `${outputLineId}-${occurrence}` };
+  const outputOrdinal = outputLineId === "subscription" ? 1 : outputLineId === "credit" ? 2 : 3;
+  return { outputLineId, outputOrdinal, occurrence, outputKind, templateRevision: `${outputLineId}:v1`,
+    outputRef: `${outputLineId}-${occurrence}`, outputVersion: 1 as const, outputDigest: "a".repeat(64) };
 }

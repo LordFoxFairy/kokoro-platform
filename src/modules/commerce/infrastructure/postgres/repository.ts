@@ -113,8 +113,12 @@ export class PostgresCommerceRepository implements CommerceRepository {
         outputs: Object.freeze(outputRows.map((output) => Object.freeze({
           kind: output.kind,
           outputLineId: output.outputLineId,
+          outputOrdinal: output.outputOrdinal,
+          occurrence: output.occurrence,
           resourceRef: output.resourceRef,
           templateRevisionRef: output.templateRevisionRef,
+          outputVersion: output.outputVersion,
+          outputDigest: output.outputDigest,
         }))),
       }),
     });
@@ -140,9 +144,11 @@ export class PostgresCommerceRepository implements CommerceRepository {
       const cardinality = planById.get(output.outputLineId)!.cardinality;
       await sql.execute(
         `INSERT INTO platform.commerce_fulfillment_actual_output
-         (fulfillment_id,output_line_id,occurrence,cardinality,template_revision,output_kind,output_ref)
-         VALUES ($1::uuid,$2,$3,$4,$5,$6,$7)`,
-        [fulfillmentId, output.outputLineId, output.occurrence, cardinality, output.templateRevision, output.outputKind, output.outputRef],
+         (fulfillment_id,output_line_id,output_ordinal,occurrence,cardinality,template_revision,output_kind,output_ref,
+          output_version,output_digest)
+         VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [fulfillmentId, output.outputLineId, output.outputOrdinal, output.occurrence, cardinality,
+          output.templateRevision, output.outputKind, output.outputRef, output.outputVersion, output.outputDigest],
       );
     }
   }
@@ -225,8 +231,9 @@ const FULFILLMENT_BY_IDEMPOTENCY_SQL = `
   FOR UPDATE`;
 
 const FULFILLMENT_OUTPUT_RECEIPT_SQL = `
-  SELECT actual.output_kind AS kind,actual.output_line_id AS "outputLineId",
-         actual.output_ref AS "resourceRef",actual.template_revision AS "templateRevisionRef"
+  SELECT actual.output_kind AS kind,actual.output_line_id AS "outputLineId",actual.output_ordinal AS "outputOrdinal",
+         actual.occurrence,actual.output_ref AS "resourceRef",actual.template_revision AS "templateRevisionRef",
+         actual.output_version AS "outputVersion",actual.output_digest AS "outputDigest"
   FROM platform.commerce_fulfillment_actual_output actual
   JOIN platform.commerce_fulfillment_output_plan expected
     ON expected.fulfillment_id=actual.fulfillment_id AND expected.output_line_id=actual.output_line_id
