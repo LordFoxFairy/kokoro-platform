@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package kokoro.platform.publication.v1;
+
+import "buf/validate/validate.proto";
+
+// Identifies one exact canonical Root-contract document. The revision is an
+// owner sequence; the digest is over canonical payload bytes and is never
+// inferred from the ref string.
+message ImmutableContractRevisionBinding {
+  string ref = 1 [(buf.validate.field).string = {
+    min_len: 3
+    max_len: 256
+  }];
+  uint64 revision = 2 [(buf.validate.field).uint64 = {gte: 1}];
+  string digest = 3 [(buf.validate.field).string = {pattern: "^sha256:[0-9a-f]{64}$"}];
+}
+
+// The authorization epoch is a mutable revocation fence and is deliberately
+// separate from the immutable candidate version and digest.
+message CandidateAuthorityBinding {
+  string candidate_ref = 1 [(buf.validate.field).string = {
+    min_len: 3
+    max_len: 256
+  }];
+  uint64 candidate_version = 2 [(buf.validate.field).uint64 = {gte: 1}];
+  uint64 candidate_authorization_epoch = 3 [(buf.validate.field).uint64 = {gte: 1}];
+  string candidate_digest = 4 [(buf.validate.field).string = {pattern: "^sha256:[0-9a-f]{64}$"}];
+}

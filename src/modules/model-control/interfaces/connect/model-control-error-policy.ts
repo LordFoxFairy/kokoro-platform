@@ -1,36 +1,17 @@
-export const ADMIN_UNAUTHENTICATED_ERROR_CODES = Object.freeze([
-  "ADMIN_SESSION_UNAUTHENTICATED",
-  "ADMIN_SESSION_INVALID",
-  "ADMIN_SESSION_AUTHORITY_MISMATCH",
-  "ADMIN_SESSION_SECURITY_EPOCH_STALE",
-  "ADMIN_OPERATOR_AUTHORITY_INVALID",
-  "ADMIN_OPERATOR_ATTESTATION_MISMATCH",
-  "ADMIN_VERIFIED_PEER_REQUIRED",
-  "ADMIN_SESSION_CREDENTIAL_REQUIRED",
-  "ADMIN_SESSION_CREDENTIAL_INVALID",
-] as const);
+import {
+  ADMIN_PERMISSION_DENIED_ERROR_CODES,
+  ADMIN_REQUEST_INVALID_ERROR_CODES,
+  ADMIN_STEP_UP_REQUIRED_ERROR_CODES,
+  ADMIN_UNAUTHENTICATED_ERROR_CODES,
+  classifyAdminConnectError,
+} from "../../../admin/interfaces/connect/admin-connect-error-policy.js";
 
-export const ADMIN_PERMISSION_DENIED_ERROR_CODES = Object.freeze([
-  "ADMIN_PERMISSION_DENIED",
-  "ADMIN_SCOPE_DEPLOYMENT_MISMATCH",
-  "ADMIN_STEP_UP_REQUIRED",
-  "ADMIN_SELF_ESCALATION_DENIED",
-  "ADMIN_SITE_SCOPE_INVALID",
-  "ADMIN_SITE_SCOPE_DENIED",
-  "ADMIN_GLOBAL_SCOPE_INVALID",
-  "ADMIN_GLOBAL_SCOPE_DENIED",
-  "ADMIN_BREAKGLASS_SCOPE_INVALID",
-  "ADMIN_BREAKGLASS_SCOPE_DENIED",
-  "ADMIN_BREAKGLASS_TARGET_DENIED",
-  "ADMIN_WORKLOAD_AXIS_MISMATCH",
-] as const);
-
-export const ADMIN_REQUEST_INVALID_ERROR_CODES = Object.freeze([
-  "ADMIN_STEP_UP_TARGET_REQUIRED",
-  "ADMIN_SCOPE_REQUIRED",
-  "ADMIN_BREAKGLASS_EXPIRY_REQUIRED",
-  "ADMIN_REQUEST_ID_INVALID",
-] as const);
+export {
+  ADMIN_PERMISSION_DENIED_ERROR_CODES,
+  ADMIN_REQUEST_INVALID_ERROR_CODES,
+  ADMIN_STEP_UP_REQUIRED_ERROR_CODES,
+  ADMIN_UNAUTHENTICATED_ERROR_CODES,
+};
 
 export const MODEL_CONTROL_CONTRACTED_INVALID_CODES = Object.freeze([
   "ADMIN_PAGE_TOKEN_INVALID",
@@ -93,14 +74,17 @@ export const MODEL_CONTROL_INTERNAL_INVARIANT_CODES = Object.freeze([
 export type ModelControlErrorClassification =
   | "adminSessionUnauthenticated"
   | "adminPermissionDenied"
+  | "adminStepUpRequired"
   | "invalidRequest"
   | "internal";
 
 export function classifyModelControlError(error: unknown): ModelControlErrorClassification {
   const code = error instanceof Error ? error.message : "";
-  if (contains(ADMIN_UNAUTHENTICATED_ERROR_CODES, code)) return "adminSessionUnauthenticated";
-  if (contains(ADMIN_PERMISSION_DENIED_ERROR_CODES, code)) return "adminPermissionDenied";
-  if (contains(ADMIN_REQUEST_INVALID_ERROR_CODES, code) ||
+  const admin = classifyAdminConnectError(error);
+  if (admin === "unauthenticated") return "adminSessionUnauthenticated";
+  if (admin === "permissionDenied") return "adminPermissionDenied";
+  if (admin === "stepUpRequired") return "adminStepUpRequired";
+  if (admin === "invalidRequest" ||
       contains(MODEL_CONTROL_REQUEST_INVALID_CODES, code)) return "invalidRequest";
   return "internal";
 }

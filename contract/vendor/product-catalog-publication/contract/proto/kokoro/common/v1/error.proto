@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package kokoro.common.v1;
+
+import "buf/validate/validate.proto";
+
+enum RetryClass {
+  RETRY_CLASS_UNSPECIFIED = 0;
+  RETRY_CLASS_NEVER = 1;
+  RETRY_CLASS_AFTER_DELAY = 2;
+  RETRY_CLASS_SAME_IDENTITY = 3;
+  RETRY_CLASS_RECONCILE_RECEIPT = 4;
+}
+
+message KokoroErrorDetail {
+  string domain_code = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  RetryClass retry_class = 2 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+  string request_id = 3 [(buf.validate.field).string.max_len = 128];
+  string correlation_id = 4 [(buf.validate.field).string.max_len = 128];
+  string safe_message = 5 [(buf.validate.field).string.max_len = 512];
+  optional uint32 retry_after_seconds = 6;
+  optional string receipt_ref = 7 [(buf.validate.field).string.max_len = 256];
+  optional string required_contract_version = 8 [(buf.validate.field).string.max_len = 64];
+}

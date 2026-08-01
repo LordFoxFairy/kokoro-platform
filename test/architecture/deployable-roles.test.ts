@@ -422,6 +422,12 @@ describe("Platform migrator", () => {
       sql.endsWith('TO "platform_admin"'),
     )).toBe(true);
     expect(grants.some((sql) =>
+      sql.includes("platform.product_catalog_publication_receipt") &&
+      sql.endsWith('TO "platform_admin"'),
+    )).toBe(true);
+    expect(authoritySql).toContain("product_catalog_publication_receipt");
+    expect(authoritySql).toContain('AS "hasRequiredProductCatalogPrivileges"');
+    expect(grants.some((sql) =>
       sql.startsWith("GRANT INSERT ON TABLE platform.admission_command") &&
       sql.endsWith('TO "platform_admission"'),
     )).toBe(true);

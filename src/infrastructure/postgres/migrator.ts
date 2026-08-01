@@ -2281,7 +2281,7 @@ async function grantFoundationPrivileges(
       await client.query(`GRANT SELECT ON TABLE ${ASSET_TABLES} TO ${identifier}`);
       await client.query(`GRANT SELECT ON TABLE ${MODEL_ADMIN_READ_TABLES} TO ${identifier}`);
       await client.query(
-        `GRANT SELECT, INSERT ON TABLE platform.product_surface_catalog_revision, platform.launch_product_profile_revision, platform.product_catalog_publication_audit TO ${identifier}`,
+        `GRANT SELECT, INSERT ON TABLE platform.product_surface_catalog_revision, platform.launch_product_profile_revision, platform.product_catalog_publication_audit, platform.product_catalog_publication_receipt TO ${identifier}`,
       );
       await client.query(
         `GRANT SELECT ON TABLE platform.product_catalog_publication_head TO ${identifier}`,
@@ -2725,6 +2725,7 @@ const PLATFORM_RUNTIME_TABLES = [
   "platform.product_surface_catalog_revision",
   "platform.launch_product_profile_revision",
   "platform.product_catalog_publication_audit",
+  "platform.product_catalog_publication_receipt",
   SITE_TABLES,
   AUTHORIZATION_TABLES,
   IDENTITY_TABLES,
@@ -3245,11 +3246,15 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            AND has_table_privilege(runtime_role.rolname,'platform.product_catalog_publication_audit','SELECT')
            AND has_table_privilege(runtime_role.rolname,'platform.product_catalog_publication_audit','INSERT')
            AND NOT has_table_privilege(runtime_role.rolname,'platform.product_catalog_publication_audit','UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+           AND has_table_privilege(runtime_role.rolname,'platform.product_catalog_publication_receipt','SELECT')
+           AND has_table_privilege(runtime_role.rolname,'platform.product_catalog_publication_receipt','INSERT')
+           AND NOT has_table_privilege(runtime_role.rolname,'platform.product_catalog_publication_receipt','UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
          ELSE
            NOT has_table_privilege(runtime_role.rolname,'platform.product_catalog_publication_head','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
            AND NOT has_table_privilege(runtime_role.rolname,'platform.product_surface_catalog_revision','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
            AND NOT has_table_privilege(runtime_role.rolname,'platform.launch_product_profile_revision','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
            AND NOT has_table_privilege(runtime_role.rolname,'platform.product_catalog_publication_audit','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+           AND NOT has_table_privilege(runtime_role.rolname,'platform.product_catalog_publication_receipt','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
          END AS "hasRequiredProductCatalogPrivileges"
          ,(has_column_privilege(runtime_role.rolname,'platform.model_inventory_import','canonical_payload','SELECT')
            OR has_column_privilege(runtime_role.rolname,'platform.model_provider_snapshot','secret_ref','SELECT'))
@@ -3279,7 +3284,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                'site_release_model_catalog_publication',
                'site_release_model_catalog_surface','site_release_model_catalog_option'
                ,'product_catalog_publication_head','product_surface_catalog_revision',
-               'launch_product_profile_revision','product_catalog_publication_audit'
+               'launch_product_profile_revision','product_catalog_publication_audit',
+               'product_catalog_publication_receipt'
                ,'identity_account','identity_password_credential','identity_login_identifier',
                'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
                'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',

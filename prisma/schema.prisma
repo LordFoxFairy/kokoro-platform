@@ -14,7 +14,7 @@ datasource db {
 
 model ProductCatalogPublicationHead {
   publicationKind String   @id @map("publication_kind")
-  headRevision   BigInt   @map("head_revision")
+  headRevision   Decimal  @map("head_revision") @db.Decimal(20, 0)
   headRef        String?  @map("head_ref")
   headDigest     String?  @map("head_digest") @db.Char(71)
   updatedAt      DateTime @map("updated_at") @db.Timestamptz(6)
@@ -25,7 +25,7 @@ model ProductCatalogPublicationHead {
 
 model ProductSurfaceCatalogRevision {
   catalogRevisionRef String   @map("catalog_revision_ref")
-  revision           BigInt
+  revision           Decimal  @db.Decimal(20, 0)
   digest             String   @db.Char(71)
   canonicalPayload   Json     @map("canonical_payload")
   canonicalBytes     Bytes    @map("canonical_bytes")
@@ -41,12 +41,12 @@ model ProductSurfaceCatalogRevision {
 
 model LaunchProductProfileRevision {
   profileRevisionRef String   @map("profile_revision_ref")
-  revision           BigInt
+  revision           Decimal  @db.Decimal(20, 0)
   digest             String   @db.Char(71)
   canonicalPayload   Json     @map("canonical_payload")
   canonicalBytes     Bytes    @map("canonical_bytes")
   catalogRevisionRef String   @map("catalog_revision_ref")
-  catalogRevision    BigInt   @map("catalog_revision")
+  catalogRevision    Decimal  @map("catalog_revision") @db.Decimal(20, 0)
   catalogDigest      String   @map("catalog_digest") @db.Char(71)
   targetSiteKindRef  String   @map("target_site_kind_ref")
   publishedAt        DateTime @map("published_at") @db.Timestamptz(6)
@@ -65,12 +65,12 @@ model ProductCatalogPublicationAudit {
   commandId            String   @id @map("command_id")
   operation            String
   revisionRef          String   @map("revision_ref")
-  revision             BigInt
+  revision             Decimal  @db.Decimal(20, 0)
   digest               String   @db.Char(71)
   catalogRevisionRef   String?  @map("catalog_revision_ref")
-  catalogRevision      BigInt?  @map("catalog_revision")
+  catalogRevision      Decimal? @map("catalog_revision") @db.Decimal(20, 0)
   catalogDigest        String?  @map("catalog_digest") @db.Char(71)
-  expectedHeadRevision BigInt   @map("expected_head_revision")
+  expectedHeadRevision Decimal  @map("expected_head_revision") @db.Decimal(20, 0)
   reason               String
   actorSubjectId       String   @map("actor_subject_id")
   environment          String
@@ -79,6 +79,28 @@ model ProductCatalogPublicationAudit {
   recordedAt           DateTime @map("recorded_at") @db.Timestamptz(6)
 
   @@map("product_catalog_publication_audit")
+  @@schema("platform")
+}
+
+model ProductCatalogPublicationReceipt {
+  commandId           String   @id @map("command_id")
+  operation           String
+  environment         String
+  region              String
+  callerIdentity      String   @map("caller_identity")
+  idempotencyKey      String   @map("idempotency_key")
+  requestDigest       String   @map("request_digest") @db.Char(64)
+  revisionRef         String   @map("revision_ref")
+  revision            Decimal  @db.Decimal(20, 0)
+  digest              String   @db.Char(71)
+  catalogRevisionRef  String?  @map("catalog_revision_ref")
+  catalogRevision     Decimal? @map("catalog_revision") @db.Decimal(20, 0)
+  catalogDigest       String?  @map("catalog_digest") @db.Char(71)
+  publicationReplayed Boolean  @map("publication_replayed")
+  recordedAt          DateTime @map("recorded_at") @db.Timestamptz(6)
+
+  @@unique([environment, callerIdentity, operation, idempotencyKey])
+  @@map("product_catalog_publication_receipt")
   @@schema("platform")
 }
 

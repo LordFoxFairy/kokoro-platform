@@ -14,11 +14,22 @@ grant, exact operation permission, phishing-resistant step-up, canonical command
 and durable command receipt. Same-process Admin composition calls the application port inside a
 Platform UoW; it never self-RPCs and never leaks Site lifecycle commands into this owner.
 
-Root JSON Schemas are checked in as generated mirrors with frozen schema IDs, source SHA-256 and
-artifact SHA-256. Ajv owns shape validation; hand-written domain code owns graph, ownership, product,
-surface and journey closure. Canonical I-JSON admission is byte-for-byte, NFC, safe-integer, bounded
-by bytes/depth/node count, and digest-bound. Published revisions and audits are immutable; only the
-two global CAS heads are mutable.
+Exact Root-commit source blobs for both JSON Schemas and all five dependent publication Protos are
+vendored with one executable provenance manifest. Standalone generation reads only the vendor,
+always verifies every source SHA-256, regenerates the JSON targets, and binds the Proto source
+aggregate to the generated artifact digest. Explicit Root verification uses only `git show` and
+requires every committed blob to equal the vendor. Generated targets never act as their own source.
+Ajv owns shape validation; hand-written domain code owns graph, ownership, product, surface and
+journey closure. Canonical I-JSON admission is byte-for-byte, NFC, safe-integer, bounded by
+bytes/depth/node count, and digest-bound.
+
+All wire `uint64` publication/head fields persist as PostgreSQL `NUMERIC(20,0)` and Prisma
+`Decimal(20,0)`, with text-to-`bigint` conversion at the repository boundary. Values through
+`2^64-1` remain exact; PostgreSQL signed `BIGINT` is forbidden for this bounded context.
+Published revisions, owner receipts and audits are append-only; only the two global CAS heads are
+mutable. A Product-owned durable receipt cross-checks the immutable revision and audit before replay.
+The generic mutable command receipt coordinates begin/outcome only and is never sufficient proof of
+successful publication.
 
 The Root wire contract currently carries only an immutable binding, not its canonical bytes.
 Production therefore defaults to `UnavailableProductPublicationDocumentResolver` and fails closed.
@@ -29,6 +40,8 @@ P0 contract follow-up: add a Root-owned typed/signed artifact admission or stagi
 producer identity, schema ID, canonical bytes and digest. Do not replace it with an Admin payload,
 filesystem convention, inferred ref, or in-memory production adapter.
 
-Durable replay reads a completed receipt before touching the external document source, then repeats
-the identity/digest fence in the mutation transaction. This preserves successful retry recovery
-during source outages without holding database locks across remote resolution.
+Durable replay reads a completed owner attestation before touching the external document source,
+then repeats the identity/digest fence in the mutation transaction. This preserves successful retry
+recovery during source outages without holding database locks across remote resolution. The shared
+Admin Connect error policy publishes stable authentication, permission and step-up statuses; all
+unclassified internal failures are returned as a masked Internal response.

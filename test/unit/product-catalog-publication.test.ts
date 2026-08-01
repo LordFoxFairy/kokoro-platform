@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { ProductCatalogPublicationService } from
   "../../src/modules/product-catalog/application/services/product-catalog-publication-service.js";
@@ -6,6 +7,12 @@ import type { ProductCatalogPublicationJournal } from
   "../../src/modules/product-catalog/application/contracts/product-catalog-publication-journal.js";
 import type { ProductCatalogPublicationRepository } from
   "../../src/modules/product-catalog/application/contracts/product-catalog-publication-repository.js";
+import { createProductPublicationCommand } from
+  "../../src/modules/product-catalog/application/product-publication-command.js";
+import { PostgresProductCatalogPublicationJournal } from
+  "../../src/modules/product-catalog/infrastructure/postgres/product-catalog-publication-journal.js";
+import { PostgresProductCatalogPublicationRepository } from
+  "../../src/modules/product-catalog/infrastructure/postgres/product-catalog-publication-repository.js";
 import {
   canonicalDigest,
   canonicalJson,
@@ -63,6 +70,107 @@ describe("Product Catalog publication authority", () => {
       parsedDocument: value,
       digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
     })).toThrow("PRODUCT_PUBLICATION_IJSON_COMPLEXITY_EXCEEDED");
+  });
+
+  it.each([
+    9_223_372_036_854_775_808n,
+    18_446_744_073_709_551_615n,
+  ])("preserves uint64 revision %s beyond PostgreSQL bigint", async (revision) => {
+    const document = { ...catalogDocument(), revision: revision.toString() };
+    const resolved = source(document);
+    const binding = Object.freeze({ ref: document.catalogRevisionRef, revision,
+      digest: resolved.digest });
+    expect(resolveProductSurfaceCatalogRevision(binding, resolved).binding.revision).toBe(revision);
+
+    const queries: Readonly<{ text: string; values: readonly unknown[] }>[] = [];
+    const lease = issuePlatformTransaction({
+      query: async <Row extends Record<string, unknown>>(text: string, values = []) => {
+        queries.push({ text, values });
+        return (text.includes("product_catalog_publication_head")
+          ? [{ headRevision: revision.toString() }] : []) as unknown as readonly Row[];
+      },
+      execute: async () => 0,
+    });
+    try {
+      const snapshot = await new PostgresProductCatalogPublicationRepository()
+        .loadCatalogStateForUpdate(lease.transaction, binding);
+      expect(snapshot.headRevision).toBe(revision);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+    expect(queries[1]).toMatchObject({ values: [binding.ref, revision.toString()] });
+    expect(queries[1]!.text).toContain("$2::numeric(20,0)");
+  });
+
+  it("uses NUMERIC(20,0) for every Product publication uint64 persistence column", () => {
+    const migration = readFileSync(new URL(
+      "../../prisma/migrations/20260815_product_catalog_publication/migration.sql",
+      import.meta.url,
+    ), "utf8");
+    const repository = readFileSync(new URL(
+      "../../src/modules/product-catalog/infrastructure/postgres/product-catalog-publication-repository.ts",
+      import.meta.url,
+    ), "utf8");
+    expect(migration).not.toMatch(/\bBIGINT\b/u);
+    expect(migration.match(/NUMERIC\(20,0\)/gu)?.length).toBeGreaterThanOrEqual(9);
+    expect(repository).not.toContain("::bigint");
+    expect(repository.match(/::numeric\(20,0\)/gu)?.length).toBeGreaterThanOrEqual(10);
+  });
+
+  it("requires the owner attestation, immutable audit, and immutable revision for replay", async () => {
+    const context = await adminContext();
+    const binding = Object.freeze({ ref: "catalog.main", revision: 1n,
+      digest: `sha256:${"a".repeat(64)}` });
+    const command = createProductPublicationCommand({
+      commandId: "00000000-0000-4000-8000-000000000011",
+      requestDigest: "b".repeat(64), operation: "product.catalog.publish", binding,
+      expectedHeadRevision: 0n, reason: "release catalog",
+    }, context);
+    const row = attestationRow(command);
+    const lease = issuePlatformTransaction({ query: async <Row extends Record<string, unknown>>(
+      text: string,
+    ) => {
+      expect(text).toContain("product_catalog_publication_receipt receipt");
+      expect(text).toContain("product_catalog_publication_audit audit");
+      expect(text).toContain("product_surface_catalog_revision catalog");
+      return [row] as unknown as readonly Row[];
+    }, execute: async () => 0 });
+    try {
+      await expect(new PostgresProductCatalogPublicationJournal()
+        .findSucceeded(lease.transaction, command)).resolves.toMatchObject({
+          binding, publicationReplayed: false, recordedAt: "2026-08-01T00:00:01.000Z",
+        });
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("rejects a generic succeeded command that lacks an owner publication attestation", async () => {
+    const context = await adminContext();
+    const binding = Object.freeze({ ref: "catalog.main", revision: 1n,
+      digest: `sha256:${"a".repeat(64)}` });
+    const command = createProductPublicationCommand({
+      commandId: "00000000-0000-4000-8000-000000000012",
+      requestDigest: "c".repeat(64), operation: "product.catalog.publish", binding,
+      expectedHeadRevision: 0n, reason: "release catalog",
+    }, context);
+    const journal = new PostgresProductCatalogPublicationJournal({
+      begin: async () => ({
+        commandId: command.commandId, environment: command.security.environment,
+        region: command.security.region, callerIdentity: command.security.callerIdentity,
+        operation: command.operation, idempotencyKey: command.idempotencyKey,
+        requestDigest: command.requestDigest, state: "succeeded", result: {},
+        resultDigest: "d".repeat(64), recordedAt: "2026-08-01T00:00:01.000Z",
+      }),
+      recordOutcome: async () => { throw new Error("unexpected record outcome"); },
+    });
+    const lease = issuePlatformTransaction({ query: async () => [], execute: async () => 0 });
+    try {
+      await expect(journal.begin(lease.transaction, command))
+        .rejects.toThrow("PRODUCT_PUBLICATION_OWNER_RECEIPT_MISSING");
+    } finally {
+      revokePlatformTransaction(lease);
+    }
   });
 
   it("recovers a completed command without consulting the external document source", async () => {
@@ -224,4 +332,23 @@ async function adminContext() {
     expectedAudience: caller.audience, expectedEnvironment: caller.environment,
     expectedRegion: caller.region, callerVerifier: { verify: async () => caller },
   });
+}
+
+function attestationRow(command: ReturnType<typeof createProductPublicationCommand>) {
+  return {
+    commandId: command.commandId, operation: command.operation,
+    environment: command.security.environment, region: command.security.region,
+    callerIdentity: command.security.callerIdentity, idempotencyKey: command.idempotencyKey,
+    requestDigest: command.requestDigest, revisionRef: command.binding.ref,
+    revision: command.binding.revision.toString(), digest: command.binding.digest,
+    catalogRevisionRef: null, catalogRevision: null, catalogDigest: null,
+    publicationReplayed: false, recordedAt: "2026-08-01T00:00:01.000Z",
+    auditOperation: command.operation, auditRevisionRef: command.binding.ref,
+    auditRevision: command.binding.revision.toString(), auditDigest: command.binding.digest,
+    auditCatalogRevisionRef: null, auditCatalogRevision: null, auditCatalogDigest: null,
+    auditExpectedHeadRevision: command.expectedHeadRevision.toString(), auditReason: command.reason,
+    auditActorSubjectId: command.security.actorSubjectId,
+    auditEnvironment: command.security.environment, auditRegion: command.security.region,
+    auditReplayed: false, catalogRevisionPresent: true, profileRevisionPresent: false,
+  };
 }

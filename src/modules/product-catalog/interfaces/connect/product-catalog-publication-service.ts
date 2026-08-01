@@ -1,6 +1,8 @@
 import { create } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError, type HandlerContext, type ServiceImpl } from "@connectrpc/connect";
+import { KokoroErrorDetailSchema, RetryClass } from
+  "../../../../interfaces/connect/generated-product-catalog-publication/kokoro/common/v1/error_pb.js";
 import {
   CommandDigestAlgorithmV2,
   CommandIdentityV2Schema,
@@ -27,6 +29,8 @@ import type { VerifiedRequestSecurityContext } from "../../../../shared/security
 import type { ProductCatalogPublicationAdministration } from
   "../../application/services/product-catalog-publication-service.js";
 import type { ImmutableRevisionBinding } from "../../domain/product-publication.js";
+import { stableAdminConnectError } from
+  "../../../admin/interfaces/connect/admin-connect-error-policy.js";
 
 export type ProductCatalogPublicationConnectService =
   ServiceImpl<typeof ProductCatalogPublicationDescriptor>;
@@ -161,18 +165,73 @@ function required<Value>(value: Value | undefined, code: string): Value {
   return value;
 }
 
-function mapError(error: unknown): unknown {
-  if (error instanceof ConnectError) return error;
+function mapError(error: unknown): ConnectError {
+  const admin = stableAdminConnectError(error);
+  if (admin !== null) return safeError(admin.code, admin.domainCode, admin.safeMessage, error);
   const message = error instanceof Error ? error.message : "PRODUCT_PUBLICATION_INTERNAL_FAILURE";
   if (message === "PRODUCT_PUBLICATION_DOCUMENT_SOURCE_UNAVAILABLE") {
-    return new ConnectError("immutable publication source unavailable", Code.Unimplemented);
+    return safeError(Code.Unimplemented, "product.publication.source_unavailable",
+      "Immutable publication source is unavailable", error);
+  }
+  if (message.startsWith("PRODUCT_PUBLICATION_OWNER_") ||
+      message.startsWith("PRODUCT_PUBLICATION_PERSISTED_") ||
+      message.startsWith("PRODUCT_PUBLICATION_AUDIT_") ||
+      message === "PRODUCT_PUBLICATION_RECEIPT_TIME_INVALID" ||
+      message === "PRODUCT_PUBLICATION_HEAD_MISSING" ||
+      message === "PRODUCT_PUBLICATION_INTERNAL_FAILURE") {
+    return safeError(Code.Internal, "product.publication.internal",
+      "Product publication request failed", error);
+  }
+  if (message === "PRODUCT_PUBLICATION_ADMIN_WORKLOAD_REQUIRED" ||
+      message === "PRODUCT_PUBLICATION_GLOBAL_OPERATOR_REQUIRED" ||
+      message === "PRODUCT_PUBLICATION_SECURITY_SCOPE_INVALID") {
+    return safeError(Code.PermissionDenied, "product.publication.permission_denied",
+      "Product publication is not permitted", error);
+  }
+  if (message === "PRODUCT_PUBLICATION_COMMAND_TERMINAL") {
+    return safeError(Code.FailedPrecondition, "product.publication.command_terminal",
+      "Product publication command is already terminal", error);
   }
   if (message.endsWith("_HEAD_CONFLICT") || message.endsWith("_REVISION_SEQUENCE_INVALID") ||
       message.includes("_CLOSURE_") || message.endsWith("_CATALOG_NOT_FOUND")) {
-    return new ConnectError(message, Code.FailedPrecondition);
+    return safeError(Code.FailedPrecondition, "product.publication.precondition_failed",
+      "Product publication precondition failed", error);
   }
-  if (message.endsWith("_REVISION_CONFLICT")) return new ConnectError(message, Code.AlreadyExists);
+  if (message.endsWith("_REVISION_CONFLICT") ||
+      (error instanceof ConnectError && error.code === Code.AlreadyExists)) {
+    return safeError(Code.AlreadyExists, "product.publication.conflict",
+      "Product publication conflicts with an existing revision or command", error);
+  }
   if (message.startsWith("PRODUCT_") || message.startsWith("LAUNCH_") ||
-      message.startsWith("command_envelope_")) return new ConnectError(message, Code.InvalidArgument);
-  return error;
+      message.startsWith("command_envelope_")) {
+    return safeError(Code.InvalidArgument, "product.publication.invalid_request",
+      "Invalid product publication request", error);
+  }
+  if (error instanceof ConnectError && error.code === Code.Canceled) {
+    return safeError(Code.Canceled, "product.publication.canceled",
+      "Product publication request was canceled", error);
+  }
+  if (error instanceof ConnectError && error.code === Code.DeadlineExceeded) {
+    return safeError(Code.DeadlineExceeded, "product.publication.deadline_exceeded",
+      "Product publication deadline exceeded", error, RetryClass.RECONCILE_RECEIPT);
+  }
+  if (error instanceof ConnectError && error.code === Code.Unavailable) {
+    return safeError(Code.Unavailable, "product.publication.unavailable",
+      "Product publication is unavailable", error, RetryClass.RECONCILE_RECEIPT);
+  }
+  return safeError(Code.Internal, "product.publication.internal",
+    "Product publication request failed", error);
+}
+
+function safeError(
+  code: Code,
+  domainCode: string,
+  safeMessage: string,
+  cause: unknown,
+  retryClass = RetryClass.NEVER,
+): ConnectError {
+  return new ConnectError(safeMessage, code, undefined, [{
+    desc: KokoroErrorDetailSchema,
+    value: create(KokoroErrorDetailSchema, { domainCode, safeMessage, retryClass }),
+  }], cause);
 }

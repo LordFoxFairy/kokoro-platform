@@ -38,6 +38,9 @@ Product Catalog publication owns global immutable Product/Surface and product-le
 revisions. Its provider code is mounted but remains contract-only and fail-closed because the current
 Root wire supplies only immutable bindings, not authenticated canonical document bytes. It must not
 receive runtime traffic until the Root-owned signed bundle resolver and compatibility evidence exist.
+Its checked-in vendor contains the exact committed Root JSON Schema and Proto source blobs plus
+executable source/artifact provenance; owner-scoped append-only attestations, not the shared mutable
+command receipt alone, authorize replay. Publication `uint64` values use exact `NUMERIC(20,0)` storage.
 
 Artifact metadata, capability issuance and revocation stay on the generated JSON control plane. Capability redemption uses a
 dedicated non-JSON streaming handler and independently selectable `platform-artifact-data-plane` process. That process pins the

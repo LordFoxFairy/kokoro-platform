@@ -10,6 +10,7 @@ import { MODEL_CONTROL_ADMIN_ERRORS } from
 import {
   ADMIN_PERMISSION_DENIED_ERROR_CODES,
   ADMIN_REQUEST_INVALID_ERROR_CODES,
+  ADMIN_STEP_UP_REQUIRED_ERROR_CODES,
   ADMIN_UNAUTHENTICATED_ERROR_CODES,
   classifyModelControlError,
   MODEL_CONTROL_CONTRACTED_INVALID_CODES,
@@ -708,7 +709,8 @@ describe("ModelControl Connect provider", () => {
     ), "utf8");
     const emitted = new Set([...source.matchAll(/"(ADMIN_[A-Z0-9_]+)"/gu)].map((match) => match[1]!));
     const classified: ReadonlySet<string> = new Set<string>([...ADMIN_UNAUTHENTICATED_ERROR_CODES,
-      ...ADMIN_PERMISSION_DENIED_ERROR_CODES, ...MODEL_CONTROL_INTERNAL_INVARIANT_CODES]);
+      ...ADMIN_PERMISSION_DENIED_ERROR_CODES, ...ADMIN_STEP_UP_REQUIRED_ERROR_CODES,
+      ...MODEL_CONTROL_INTERNAL_INVARIANT_CODES]);
 
     expect([...emitted].filter((code) => !classified.has(code)).sort()).toEqual([]);
     for (const code of ADMIN_UNAUTHENTICATED_ERROR_CODES) {
@@ -716,6 +718,9 @@ describe("ModelControl Connect provider", () => {
     }
     for (const code of ADMIN_PERMISSION_DENIED_ERROR_CODES) {
       expect(classifyModelControlError(new Error(code))).toBe("adminPermissionDenied");
+    }
+    for (const code of ADMIN_STEP_UP_REQUIRED_ERROR_CODES) {
+      expect(classifyModelControlError(new Error(code))).toBe("adminStepUpRequired");
     }
     expect(classifyModelControlError(new Error("ADMIN_AUTHORIZATION_TIME_INVALID"))).toBe("internal");
   });
@@ -727,7 +732,8 @@ describe("ModelControl Connect provider", () => {
     ), "utf8");
     const emitted = new Set([...source.matchAll(/"(ADMIN_[A-Z0-9_]+)"/gu)].map((match) => match[1]!));
     const classified: ReadonlySet<string> = new Set<string>([...ADMIN_UNAUTHENTICATED_ERROR_CODES,
-      ...ADMIN_PERMISSION_DENIED_ERROR_CODES, ...ADMIN_REQUEST_INVALID_ERROR_CODES]);
+      ...ADMIN_PERMISSION_DENIED_ERROR_CODES, ...ADMIN_STEP_UP_REQUIRED_ERROR_CODES,
+      ...ADMIN_REQUEST_INVALID_ERROR_CODES]);
 
     expect([...emitted].filter((code) => !classified.has(code)).sort()).toEqual([]);
     for (const code of ADMIN_REQUEST_INVALID_ERROR_CODES) {

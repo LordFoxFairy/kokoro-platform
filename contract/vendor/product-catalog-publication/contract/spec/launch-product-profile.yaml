@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.kokoro.dev/launch-product-profile/v1",
+  "title": "Kokoro Published Launch Product Profile Revision v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["contract", "schemaRevision", "profileRevisionRef", "revision", "state", "targetSiteKindRef", "productSurfaceCatalog", "enabledSurfaceRefs", "journeyClosure", "shellRequirementRefs", "policies", "reviewApprovalRefs", "publishedAt"],
+  "properties": {
+    "contract": {"const": "kokoro.launch-product-profile.v1"}, "schemaRevision": {"const": "1"},
+    "profileRevisionRef": {"$ref": "#/$defs/ref"}, "revision": {"$ref": "#/$defs/decimal"}, "state": {"const": "published"},
+    "targetSiteKindRef": {"$ref": "#/$defs/ref"}, "productSurfaceCatalog": {"$ref": "#/$defs/digestRef"},
+    "enabledSurfaceRefs": {"$ref": "#/$defs/nonEmptyRefSet"}, "journeyClosure": {"$ref": "#/$defs/journeyClosure"},
+    "shellRequirementRefs": {"$ref": "#/$defs/nonEmptyRefSet"}, "policies": {"$ref": "#/$defs/policies"},
+    "reviewApprovalRefs": {"$ref": "#/$defs/nonEmptyRefSet"}, "publishedAt": {"$ref": "#/$defs/timestamp"}
+  },
+  "$defs": {
+    "ref": {"type": "string", "minLength": 3, "maxLength": 200, "pattern": "^[a-z][a-z0-9]*(?:[._/-][a-z0-9]+)+$"},
+    "decimal": {"type": "string", "pattern": "^(?:0|[1-9][0-9]*)$", "maxLength": 39},
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "timestamp": {"type": "string", "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z$"},
+    "digestRef": {"type": "object", "additionalProperties": false, "required": ["ref", "digest"], "properties": {"ref": {"$ref": "#/$defs/ref"}, "digest": {"$ref": "#/$defs/digest"}}},
+    "nonEmptyRefSet": {"type": "array", "minItems": 1, "maxItems": 512, "uniqueItems": true, "items": {"$ref": "#/$defs/ref"}},
+    "journey": {"type": "object", "additionalProperties": false, "required": ["journeyRef", "revision"], "properties": {"journeyRef": {"$ref": "#/$defs/ref"}, "revision": {"$ref": "#/$defs/decimal"}}},
+    "journeyClosure": {"type": "object", "additionalProperties": false, "required": ["journeys", "digest"], "properties": {"journeys": {"type": "array", "minItems": 1, "maxItems": 512, "items": {"$ref": "#/$defs/journey"}}, "digest": {"$ref": "#/$defs/digest"}}},
+    "policies": {
+      "type": "object", "additionalProperties": false,
+      "required": ["assortmentPolicyRef", "modelPolicyRef", "agentPolicyRef", "capabilityPolicyRef", "authMethodPolicyRevisionRef", "salesPolicyRevisionRef", "contentPolicyProfileRef", "localeAccessibilityBaselineRef", "metricTargetRevisionRef", "supportTierRevisionRef", "operatorCommandMatrixRevisionRef", "certificationPolicyRef"],
+      "properties": {
+        "assortmentPolicyRef": {"$ref": "#/$defs/ref"}, "modelPolicyRef": {"$ref": "#/$defs/ref"}, "agentPolicyRef": {"$ref": "#/$defs/ref"}, "capabilityPolicyRef": {"$ref": "#/$defs/ref"},
+        "authMethodPolicyRevisionRef": {"$ref": "#/$defs/ref"}, "salesPolicyRevisionRef": {"$ref": "#/$defs/ref"}, "contentPolicyProfileRef": {"$ref": "#/$defs/ref"},
+        "localeAccessibilityBaselineRef": {"$ref": "#/$defs/ref"}, "metricTargetRevisionRef": {"$ref": "#/$defs/ref"}, "supportTierRevisionRef": {"$ref": "#/$defs/ref"},
+        "operatorCommandMatrixRevisionRef": {"$ref": "#/$defs/ref"}, "certificationPolicyRef": {"$ref": "#/$defs/ref"}
+      }
+    }
+  }
+}

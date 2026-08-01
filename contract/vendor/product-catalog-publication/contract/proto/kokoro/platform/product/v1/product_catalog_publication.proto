@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package kokoro.platform.product.v1;
+
+import "buf/validate/validate.proto";
+import "kokoro/common/v2/command_envelope.proto";
+import "kokoro/platform/admin/v2/admin_shared.proto";
+import "kokoro/platform/publication/v1/publication_common.proto";
+
+// ProductCatalogPublicationService owns global Product/Surface catalog and
+// product-level LaunchProfile publication. It never accepts Site-specific
+// candidate, build, evidence, certification, or activation effects.
+service ProductCatalogPublicationService {
+  rpc PublishProductSurfaceCatalog(PublishProductSurfaceCatalogRequest) returns (PublishProductSurfaceCatalogResponse) {}
+  rpc PublishLaunchProductProfile(PublishLaunchProductProfileRequest) returns (PublishLaunchProductProfileResponse) {}
+}
+
+message PublishProductSurfaceCatalogEffect {
+  kokoro.platform.publication.v1.ImmutableContractRevisionBinding catalog_revision = 1 [(buf.validate.field).required = true];
+  uint64 expected_catalog_head_revision = 2;
+  string reason = 3 [(buf.validate.field).string = {
+    min_len: 3
+    max_len: 512
+  }];
+}
+
+message PublishProductSurfaceCatalogRequest {
+  kokoro.platform.admin.v2.AuthenticatedOperatorCommandContext context = 1 [(buf.validate.field).required = true];
+  PublishProductSurfaceCatalogEffect effect = 2 [(buf.validate.field).required = true];
+}
+
+message PublishProductSurfaceCatalogResponse {
+  kokoro.platform.publication.v1.ImmutableContractRevisionBinding catalog_revision = 1 [(buf.validate.field).required = true];
+  bool replayed = 2;
+  kokoro.common.v2.CommandReceiptV2 receipt = 3 [(buf.validate.field).required = true];
+}
+
+message PublishLaunchProductProfileEffect {
+  kokoro.platform.publication.v1.ImmutableContractRevisionBinding profile_revision = 1 [(buf.validate.field).required = true];
+  kokoro.platform.publication.v1.ImmutableContractRevisionBinding product_surface_catalog = 2 [(buf.validate.field).required = true];
+  uint64 expected_profile_head_revision = 3;
+  string reason = 4 [(buf.validate.field).string = {
+    min_len: 3
+    max_len: 512
+  }];
+}
+
+message PublishLaunchProductProfileRequest {
+  kokoro.platform.admin.v2.AuthenticatedOperatorCommandContext context = 1 [(buf.validate.field).required = true];
+  PublishLaunchProductProfileEffect effect = 2 [(buf.validate.field).required = true];
+}
+
+message PublishLaunchProductProfileResponse {
+  kokoro.platform.publication.v1.ImmutableContractRevisionBinding profile_revision = 1 [(buf.validate.field).required = true];
+  bool replayed = 2;
+  kokoro.common.v2.CommandReceiptV2 receipt = 3 [(buf.validate.field).required = true];
+}

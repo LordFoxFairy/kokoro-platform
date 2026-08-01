@@ -37,7 +37,7 @@ export class PostgresProductCatalogPublicationRepository
       `SELECT catalog_revision_ref AS ref, revision::text, digest,
               canonical_payload AS "canonicalPayload", canonical_bytes AS "canonicalBytes"
        FROM platform.product_surface_catalog_revision
-       WHERE catalog_revision_ref=$1 AND revision=$2::bigint`,
+       WHERE catalog_revision_ref=$1 AND revision=$2::numeric(20,0)`,
       [binding.ref, binding.revision.toString()],
     );
     return Object.freeze({ headRevision: head, existing: rows[0] === undefined
@@ -56,7 +56,7 @@ export class PostgresProductCatalogPublicationRepository
               catalog_revision_ref AS "catalogRevisionRef",catalog_revision::text AS "catalogRevision",
               catalog_digest AS "catalogDigest"
        FROM platform.launch_product_profile_revision
-       WHERE profile_revision_ref=$1 AND revision=$2::bigint`,
+       WHERE profile_revision_ref=$1 AND revision=$2::numeric(20,0)`,
       [binding.ref, binding.revision.toString()],
     );
     return Object.freeze({ headRevision: head, existing: rows[0] === undefined
@@ -71,7 +71,7 @@ export class PostgresProductCatalogPublicationRepository
       `SELECT catalog_revision_ref AS ref, revision::text, digest,
               canonical_payload AS "canonicalPayload", canonical_bytes AS "canonicalBytes"
        FROM platform.product_surface_catalog_revision
-       WHERE catalog_revision_ref=$1 AND revision=$2::bigint AND digest=$3`,
+       WHERE catalog_revision_ref=$1 AND revision=$2::numeric(20,0) AND digest=$3`,
       [binding.ref, binding.revision.toString(), binding.digest],
     );
     return rows[0] === undefined ? null : catalogRevision(rows[0]);
@@ -86,7 +86,7 @@ export class PostgresProductCatalogPublicationRepository
     await sql.execute(
       `INSERT INTO platform.product_surface_catalog_revision
        (catalog_revision_ref,revision,digest,canonical_payload,canonical_bytes,published_at,published_by,command_id)
-       VALUES ($1,$2::bigint,$3,$4::jsonb,$5,$6::timestamptz,$7,$8)`,
+       VALUES ($1,$2::numeric(20,0),$3,$4::jsonb,$5,$6::timestamptz,$7,$8)`,
       [revision.binding.ref, revision.binding.revision.toString(), revision.binding.digest,
         JSON.stringify(revision.document), revision.canonicalBytes, revision.publishedAt,
         audit.actorSubjectId, audit.commandId],
@@ -106,7 +106,7 @@ export class PostgresProductCatalogPublicationRepository
        (profile_revision_ref,revision,digest,canonical_payload,canonical_bytes,
         catalog_revision_ref,catalog_revision,catalog_digest,target_site_kind_ref,
         published_at,published_by,command_id)
-       VALUES ($1,$2::bigint,$3,$4::jsonb,$5,$6,$7::bigint,$8,$9,$10::timestamptz,$11,$12)`,
+       VALUES ($1,$2::numeric(20,0),$3,$4::jsonb,$5,$6,$7::numeric(20,0),$8,$9,$10::timestamptz,$11,$12)`,
       [revision.binding.ref, revision.binding.revision.toString(), revision.binding.digest,
         JSON.stringify(revision.document), revision.canonicalBytes,
         revision.productSurfaceCatalog.ref, revision.productSurfaceCatalog.revision.toString(),
@@ -148,8 +148,8 @@ async function advanceHead(
 ): Promise<void> {
   const changed = await sql.execute(
     `UPDATE platform.product_catalog_publication_head
-     SET head_revision=$1::bigint,head_ref=$2,head_digest=$3,updated_at=clock_timestamp()
-     WHERE publication_kind=$4 AND head_revision=$5::bigint`,
+     SET head_revision=$1::numeric(20,0),head_ref=$2,head_digest=$3,updated_at=clock_timestamp()
+     WHERE publication_kind=$4 AND head_revision=$5::numeric(20,0)`,
     [binding.revision.toString(), binding.ref, binding.digest, kind, expected.toString()],
   );
   if (changed !== 1) throw new Error("PRODUCT_PUBLICATION_HEAD_CONFLICT");
@@ -165,7 +165,8 @@ async function recordAudit(
     `INSERT INTO platform.product_catalog_publication_audit
      (command_id,operation,revision_ref,revision,digest,catalog_revision_ref,catalog_revision,
       catalog_digest,expected_head_revision,reason,actor_subject_id,environment,region,replayed)
-     VALUES ($1,$2,$3,$4::bigint,$5,$6,$7::bigint,$8,$9::bigint,$10,$11,$12,$13,$14)
+     VALUES ($1,$2,$3,$4::numeric(20,0),$5,$6,$7::numeric(20,0),$8,
+             $9::numeric(20,0),$10,$11,$12,$13,$14)
      ON CONFLICT (command_id) DO NOTHING`,
     [audit.commandId, audit.operation, binding.ref, binding.revision.toString(), binding.digest,
       catalog?.ref ?? null, catalog?.revision.toString() ?? null, catalog?.digest ?? null,

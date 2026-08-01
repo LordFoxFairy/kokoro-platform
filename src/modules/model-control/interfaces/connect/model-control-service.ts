@@ -560,6 +560,11 @@ function modelControlConnectError(error: unknown, requestId: string, receiptRef:
   if (classification === "adminSessionUnauthenticated" || classification === "adminPermissionDenied") {
     return contractedModelError(classification, requestId, error);
   }
+  if (classification === "adminStepUpRequired") {
+    return detailedModelError(Code.FailedPrecondition, "admin.step_up_required",
+      "Fresh phishing-resistant authentication is required", RetryClass.NEVER,
+      requestId, undefined, error);
+  }
   if (classification === "invalidRequest") {
     return detailedModelError(Code.InvalidArgument, "model.control.invalid_request",
       "Invalid model control request", RetryClass.NEVER, requestId, undefined, error);
