@@ -96,7 +96,7 @@ BEGIN
          NEW.capability_snapshot_ref,NEW.configuration_revision_id,NEW.attachment_refs,NEW.created_at) THEN
     RAISE EXCEPTION 'ADMISSION_EXECUTION_MANIFEST_IMMUTABLE';
   END IF;
-  IF NEW.segment_version <> OLD.segment_version + 1 THEN
+  IF NEW.segment_version <= OLD.segment_version THEN
     RAISE EXCEPTION 'ADMISSION_EXECUTION_MANIFEST_VERSION_INVALID';
   END IF;
   IF OLD.state IN ('released','expired','settled') OR

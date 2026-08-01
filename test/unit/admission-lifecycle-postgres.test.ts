@@ -167,12 +167,27 @@ describe("Postgres Admission lifecycle owner", () => {
     try {
       const lifecycle = new PostgresAdmissionLifecycleOwner();
       const prepared = await lifecycle.prepare(lease.transaction, prepareInput);
-      const committed = await lifecycle.commit(lease.transaction, prepared);
+      const committed = await lifecycle.commit(lease.transaction, prepared, 2n);
 
       expect(committed).toMatchObject({ state: "committed", segmentVersion: 2n });
-      await expect(lifecycle.commit(lease.transaction, prepared)).rejects.toThrow(
+      await expect(lifecycle.commit(lease.transaction, prepared, 2n)).rejects.toThrow(
         "ADMISSION_LIFECYCLE_CAS_LOST",
       );
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("persists the Credit-owned settlement version without inventing a local increment", async () => {
+    const sql = new LifecycleSql();
+    sql.binding = bindingRow();
+    const lease = issuePlatformTransaction(sql);
+    try {
+      const lifecycle = new PostgresAdmissionLifecycleOwner();
+      const prepared = await lifecycle.prepare(lease.transaction, prepareInput);
+      const committed = await lifecycle.commit(lease.transaction, prepared, 2n);
+      const settled = await lifecycle.settle(lease.transaction, committed, 4n);
+      expect(settled).toMatchObject({ state: "settled", segmentVersion: 4n });
     } finally {
       revokePlatformTransaction(lease);
     }
@@ -185,7 +200,7 @@ describe("Postgres Admission lifecycle owner", () => {
     try {
       const lifecycle = new PostgresAdmissionLifecycleOwner();
       const prepared = await lifecycle.prepare(lease.transaction, prepareInput);
-      await lifecycle.expire(lease.transaction, prepared);
+      await lifecycle.expire(lease.transaction, prepared, 2n);
       expect(sql.projectionState).toBe("expired");
     } finally {
       revokePlatformTransaction(lease);

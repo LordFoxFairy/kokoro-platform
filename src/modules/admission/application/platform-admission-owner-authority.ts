@@ -272,7 +272,7 @@ export interface AdmissionBudgetOwnerPort {
       siteId: string; rootHoldRef: string; authorizationSegmentRef: string;
       manifestRef: string; expectedSegmentVersion: bigint; commandId: string; requestDigest: string;
     }>,
-  ): Promise<void>;
+  ): Promise<Readonly<{ segmentVersion: bigint }>>;
   releaseRoot(
     transaction: PlatformTransaction,
     input: Readonly<{
@@ -280,7 +280,7 @@ export interface AdmissionBudgetOwnerPort {
       manifestRef: string; expectedSegmentVersion: bigint; commandId: string; requestDigest: string;
       noDispatchEvidenceRef: string;
     }>,
-  ): Promise<void>;
+  ): Promise<Readonly<{ segmentVersion: bigint }>>;
   reconcileRoot(
     transaction: PlatformTransaction,
     input: Readonly<{
@@ -291,11 +291,13 @@ export interface AdmissionBudgetOwnerPort {
       expectedSegmentVersion: bigint;
       commandId: string;
       requestDigest: string;
+      outcomeUnknownEvidenceRef?: string | undefined;
       terminalEvidenceRef?: string | undefined;
     }>,
   ): Promise<
     | Readonly<{
         kind: "settled";
+        segmentVersion: bigint;
         settlement: Readonly<{
           settlementRef: string;
           closureRef: string;
@@ -305,7 +307,7 @@ export interface AdmissionBudgetOwnerPort {
           usageEvidenceRefs: readonly string[];
         }>;
       }>
-    | Readonly<{ kind: "reconciliation_required" }>
+    | Readonly<{ kind: "reconciliation_required"; segmentVersion: bigint }>
   >;
 }
 
@@ -361,18 +363,23 @@ export interface AdmissionLifecycleOwnerPort {
     transaction: PlatformTransaction,
     input: Readonly<{ siteId: string; manifestRef: string; authorizationSegmentRef: string }>,
   ): Promise<AdmissionAuthorizationRecord | null>;
-  commit(transaction: PlatformTransaction, record: AdmissionAuthorizationRecord): Promise<AdmissionAuthorizationRecord>;
-  expire(transaction: PlatformTransaction, record: AdmissionAuthorizationRecord): Promise<AdmissionAuthorizationRecord>;
+  commit(transaction: PlatformTransaction, record: AdmissionAuthorizationRecord,
+    authoritativeSegmentVersion: bigint): Promise<AdmissionAuthorizationRecord>;
+  expire(transaction: PlatformTransaction, record: AdmissionAuthorizationRecord,
+    authoritativeSegmentVersion: bigint): Promise<AdmissionAuthorizationRecord>;
   release(
     transaction: PlatformTransaction,
     record: AdmissionAuthorizationRecord,
     evidence: DispatchOwnerEvidence,
+    authoritativeSegmentVersion: bigint,
   ): Promise<AdmissionAuthorizationRecord>;
   requireReconciliation(
     transaction: PlatformTransaction,
     record: AdmissionAuthorizationRecord,
+    authoritativeSegmentVersion: bigint,
   ): Promise<AdmissionAuthorizationRecord>;
-  settle(transaction: PlatformTransaction, record: AdmissionAuthorizationRecord): Promise<AdmissionAuthorizationRecord>;
+  settle(transaction: PlatformTransaction, record: AdmissionAuthorizationRecord,
+    authoritativeSegmentVersion: bigint): Promise<AdmissionAuthorizationRecord>;
 }
 
 export type AdmissionExecutionEvidence =
@@ -739,7 +746,7 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
       assertExpectedSegmentVersion(record, command.effect.expectedSegmentVersion);
       if (record.state !== "reserved") return denied("ADMISSION_AUTHORIZATION_NOT_FINALIZABLE");
       if (Date.parse(record.expiresAt) <= this.#now()) {
-        await this.#ports.budget.releaseRoot(transaction, {
+        const credit = await this.#ports.budget.releaseRoot(transaction, {
           siteId: command.siteId,
           rootHoldRef: record.rootHoldRef,
           authorizationSegmentRef: record.authorizationSegmentRef,
@@ -750,10 +757,10 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
           requestDigest: command.requestDigest,
           noDispatchEvidenceRef: `admission-expiry:${record.manifestDigest}`,
         });
-        await this.#ports.lifecycle.expire(transaction, record);
+        await this.#ports.lifecycle.expire(transaction, record, credit.segmentVersion);
         return { kind: "expired", expired: { expiredAt: timestampFromDate(this.#date()) } };
       }
-      await this.#ports.budget.commitRoot(transaction, {
+      const credit = await this.#ports.budget.commitRoot(transaction, {
         siteId: command.siteId,
         rootHoldRef: record.rootHoldRef,
         authorizationSegmentRef: record.authorizationSegmentRef,
@@ -762,8 +769,8 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         commandId: command.commandId,
         requestDigest: command.requestDigest,
       });
-      const changed = await this.#ports.lifecycle.commit(transaction, record);
-      assertTransition(changed, record, "committed");
+      const changed = await this.#ports.lifecycle.commit(transaction, record, credit.segmentVersion);
+      assertTransition(changed, record, "committed", credit.segmentVersion);
       return committed(changed, this.#date());
     });
   }
@@ -804,7 +811,7 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
       assertSameAuthorization(locked, observed);
       if (locked.state === "released") return alreadyReleased(locked, this.#date());
       if (locked.state !== "reserved") return notReleasable("ADMISSION_AUTHORIZATION_ALREADY_EFFECTFUL");
-      await this.#ports.budget.releaseRoot(transaction, {
+      const credit = await this.#ports.budget.releaseRoot(transaction, {
         siteId: command.siteId,
         rootHoldRef: locked.rootHoldRef,
         authorizationSegmentRef: locked.authorizationSegmentRef,
@@ -815,8 +822,9 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         requestDigest: command.requestDigest,
         noDispatchEvidenceRef: evidence.evidenceRef,
       });
-      const changed = await this.#ports.lifecycle.release(transaction, locked, evidence);
-      assertTransition(changed, locked, "released");
+      const changed = await this.#ports.lifecycle.release(transaction, locked, evidence,
+        credit.segmentVersion);
+      assertTransition(changed, locked, "released", credit.segmentVersion);
       return released(changed, this.#date());
     });
   }
@@ -828,7 +836,7 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
       this.#ports.lifecycle.read(transaction, lifecycleLookup(command)));
     if (observed === null) throw new Error("ADMISSION_AUTHORIZATION_NOT_FOUND");
     assertLifecycleIdentity(observed, command.siteId, command.effect);
-    if (observed.segmentVersion === command.effect.expectedSegmentVersion + 1n) {
+    if (observed.segmentVersion > command.effect.expectedSegmentVersion) {
       if (observed.state === "released") {
         return reconciliation("released_no_effect", observed, this.#date());
       }
@@ -899,8 +907,9 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
           terminalEvidenceRef: executionEvidence.terminalEvidenceRef,
         });
         const changed = budget.kind === "settled"
-          ? await this.#ports.lifecycle.settle(transaction, locked)
-          : await this.#ports.lifecycle.requireReconciliation(transaction, locked);
+          ? await this.#ports.lifecycle.settle(transaction, locked, budget.segmentVersion)
+          : await this.#ports.lifecycle.requireReconciliation(transaction, locked,
+              budget.segmentVersion);
         return reconciliation(
           budget.kind === "settled" ? "settled" : "reconciliation_required",
           changed,
@@ -909,7 +918,23 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
           budget.kind === "settled" ? budget.settlement : undefined,
         );
       }
-      const changed = await this.#ports.lifecycle.requireReconciliation(transaction, locked);
+      if (dispatchEvidence === undefined) {
+        throw new Error("ADMISSION_RECONCILIATION_OWNER_EVIDENCE_REQUIRED");
+      }
+      const budget = await this.#ports.budget.reconcileRoot(transaction, {
+        siteId: command.siteId,
+        rootHoldRef: locked.rootHoldRef,
+        authorizationSegmentRef: locked.authorizationSegmentRef,
+        manifestRef: locked.manifestRef,
+        expectedSegmentVersion: locked.segmentVersion,
+        commandId: command.commandId,
+        requestDigest: command.requestDigest,
+        outcomeUnknownEvidenceRef: dispatchEvidence.evidenceRef,
+      });
+      const changed = budget.kind === "settled"
+        ? await this.#ports.lifecycle.settle(transaction, locked, budget.segmentVersion)
+        : await this.#ports.lifecycle.requireReconciliation(transaction, locked,
+            budget.segmentVersion);
       return reconciliation("reconciliation_required", changed, this.#date());
     });
   }
@@ -1113,11 +1138,13 @@ function assertTransition(
   changed: AdmissionAuthorizationRecord,
   prior: AdmissionAuthorizationRecord,
   state: AdmissionAuthorizationState,
+  authoritativeSegmentVersion: bigint,
 ): void {
   if (
     changed.siteId !== prior.siteId || changed.authorizationSegmentRef !== prior.authorizationSegmentRef ||
     changed.manifestRef !== prior.manifestRef || changed.state !== state ||
-    changed.segmentVersion !== prior.segmentVersion + 1n
+    changed.segmentVersion !== authoritativeSegmentVersion ||
+    changed.segmentVersion <= prior.segmentVersion
   ) throw new Error("ADMISSION_AUTHORIZATION_TRANSITION_INVALID");
 }
 

@@ -138,33 +138,38 @@ export class PostgresAdmissionLifecycleOwner implements AdmissionLifecycleOwnerP
     return findManifest(transaction, input, true);
   }
 
-  commit(transaction: PlatformTransaction, record: AdmissionAuthorizationRecord) {
-    return transition(transaction, record, "committed");
+  commit(transaction: PlatformTransaction, record: AdmissionAuthorizationRecord,
+    authoritativeSegmentVersion: bigint) {
+    return transition(transaction, record, "committed", authoritativeSegmentVersion);
   }
 
-  expire(transaction: PlatformTransaction, record: AdmissionAuthorizationRecord) {
-    return transition(transaction, record, "expired");
+  expire(transaction: PlatformTransaction, record: AdmissionAuthorizationRecord,
+    authoritativeSegmentVersion: bigint) {
+    return transition(transaction, record, "expired", authoritativeSegmentVersion);
   }
 
   release(
     transaction: PlatformTransaction,
     record: AdmissionAuthorizationRecord,
     evidence: Parameters<AdmissionLifecycleOwnerPort["release"]>[2],
+    authoritativeSegmentVersion: bigint,
   ) {
     if (
       evidence.siteId !== record.siteId ||
       evidence.authorizationSegmentRef !== record.authorizationSegmentRef ||
       evidence.authorizationSegmentVersion !== record.segmentVersion.toString()
     ) throw new Error("ADMISSION_LIFECYCLE_EVIDENCE_MISMATCH");
-    return transition(transaction, record, "released", evidence.evidenceRef);
+    return transition(transaction, record, "released", authoritativeSegmentVersion, evidence.evidenceRef);
   }
 
-  requireReconciliation(transaction: PlatformTransaction, record: AdmissionAuthorizationRecord) {
-    return transition(transaction, record, "reconciliation_required");
+  requireReconciliation(transaction: PlatformTransaction, record: AdmissionAuthorizationRecord,
+    authoritativeSegmentVersion: bigint) {
+    return transition(transaction, record, "reconciliation_required", authoritativeSegmentVersion);
   }
 
-  settle(transaction: PlatformTransaction, record: AdmissionAuthorizationRecord) {
-    return transition(transaction, record, "settled");
+  settle(transaction: PlatformTransaction, record: AdmissionAuthorizationRecord,
+    authoritativeSegmentVersion: bigint) {
+    return transition(transaction, record, "settled", authoritativeSegmentVersion);
   }
 }
 
@@ -186,15 +191,19 @@ async function transition(
   transaction: PlatformTransaction,
   prior: AdmissionAuthorizationRecord,
   state: Exclude<AdmissionAuthorizationState, "reserved">,
+  authoritativeSegmentVersion: bigint,
   resolutionRef?: string,
 ): Promise<AdmissionAuthorizationRecord> {
+  if (authoritativeSegmentVersion <= prior.segmentVersion) {
+    throw new Error("ADMISSION_LIFECYCLE_AUTHORITY_VERSION_INVALID");
+  }
   const sql = resolvePlatformTransaction(transaction);
   const changed = await sql.execute(
     `UPDATE platform.admission_execution_manifest
      SET state=$1,segment_version=$2,resolution_ref=$3,updated_at=now()
      WHERE site_id=$4 AND manifest_ref=$5 AND authorization_segment_ref=$6
        AND state=$7 AND segment_version=$8`,
-    [state, (prior.segmentVersion + 1n).toString(), resolutionRef ?? null,
+    [state, authoritativeSegmentVersion.toString(), resolutionRef ?? null,
       prior.siteId, prior.manifestRef, prior.authorizationSegmentRef, prior.state,
       prior.segmentVersion.toString()],
   );
@@ -226,7 +235,7 @@ async function transition(
   );
   const next = await findManifest(transaction, prior, true);
   if (
-    next === null || next.state !== state || next.segmentVersion !== prior.segmentVersion + 1n ||
+    next === null || next.state !== state || next.segmentVersion !== authoritativeSegmentVersion ||
     !sameIdentity(next, prior)
   ) throw new Error("ADMISSION_LIFECYCLE_TRANSITION_INVALID");
   return next;

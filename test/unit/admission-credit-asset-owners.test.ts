@@ -26,6 +26,11 @@ const profile = {
 
 class OwnerSql implements PlatformSqlTransaction {
   readonly calls: Array<Readonly<{ statement: string; values: readonly unknown[] }>> = [];
+  #segmentAuthorityIndex = 0;
+  constructor(private readonly segmentAuthorities: readonly Readonly<{ state: string; segmentVersion: string }>[] = [
+    Object.freeze({ state: "committed", segmentVersion: "1" }),
+    Object.freeze({ state: "settled", segmentVersion: "4" }),
+  ]) {}
   async query<Row extends Record<string, unknown>>(
     statement: string,
     values: readonly unknown[] = [],
@@ -52,6 +57,12 @@ class OwnerSql implements PlatformSqlTransaction {
       ratingSnapshotRef: "44444444-4444-4444-8444-444444444444",
     }] as unknown as Row[];
     if (statement.includes("set_config('app.subject_id'")) return [];
+    if (statement.includes("aggregate_version::text")) {
+      const authority = this.segmentAuthorities[Math.min(this.#segmentAuthorityIndex,
+        this.segmentAuthorities.length - 1)];
+      this.#segmentAuthorityIndex += 1;
+      return [authority] as unknown as Row[];
+    }
     if (statement.includes("credit_authorization_segment")) return [{ matched: true }] as unknown as Row[];
     throw new Error(`unexpected query: ${statement}`);
   }
@@ -79,9 +90,9 @@ function fakeCredit(): RunBudgetAuthority {
       value: { authorizationSegmentRef: "segment-a", segmentVersion: 2n,
         state: "released" as const, observedAt: "2026-07-29T12:01:00.000Z" },
     })),
-    reconcileAuthorizationSegment: vi.fn(async () => ({
+    reconcileAuthorizationSegment: vi.fn(async (_transaction, input) => ({
       kind: "reconciliation_required" as const,
-      value: { authorizationSegmentRef: "segment-a", segmentVersion: 2n,
+      value: { authorizationSegmentRef: "segment-a", segmentVersion: input.expectedSegmentVersion + 1n,
         state: "reconciliation_required" as const, observedAt: "2026-07-29T12:01:00.000Z" },
     })),
     deriveChildAllocation: vi.fn(async () => ({ kind: "not_found" as const })),
@@ -153,9 +164,13 @@ describe("native Admission Credit and Asset owners", () => {
         ...base, reasonCode: "CANCELED", noDispatchEvidenceRef: "no-dispatch-a",
       });
       await expect(owner.reconcileRoot(lease.transaction, {
+        ...base, outcomeUnknownEvidenceRef: "dispatch-unknown-a",
+      })).resolves.toEqual({ kind: "reconciliation_required", segmentVersion: 2n });
+      await expect(owner.reconcileRoot(lease.transaction, {
         ...base, terminalEvidenceRef: "terminal-a",
       })).resolves.toEqual({
         kind: "settled",
+        segmentVersion: 4n,
         settlement: {
           settlementRef: "22222222-2222-4222-8222-222222222222",
           closureRef: "33333333-3333-4333-8333-333333333333",
@@ -168,6 +183,9 @@ describe("native Admission Credit and Asset owners", () => {
       expect(credit.finalizeAuthorizationSegment).toHaveBeenCalledOnce();
       expect(credit.releaseAuthorizationSegment).toHaveBeenCalledWith(lease.transaction,
         expect.objectContaining({ noDispatchEvidenceRef: "no-dispatch-a" }));
+      expect(credit.reconcileAuthorizationSegment).toHaveBeenCalledWith(lease.transaction,
+        expect.objectContaining({ ownerEvidence: { kind: "outcome_unknown",
+          evidenceRef: "dispatch-unknown-a" } }));
       expect(usageSettlement.settleUsageSegment).toHaveBeenCalledWith(
         lease.transaction,
         expect.objectContaining({
@@ -175,6 +193,49 @@ describe("native Admission Credit and Asset owners", () => {
           executionManifestRef: "manifest-a",
         }),
       );
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("persists Credit reconciliation when terminal usage is not yet finalizable", async () => {
+    const lease = issuePlatformTransaction(new OwnerSql());
+    const credit = fakeCredit();
+    const owner = new PostgresAdmissionBudgetOwner(credit, {
+      settleUsageSegment: vi.fn(async () => ({ kind: "invalid_state" as const,
+        code: "CREDIT_USAGE_ATTEMPTS_NOT_FINALIZED" })),
+    });
+    try {
+      await expect(owner.reconcileRoot(lease.transaction, {
+        siteId: "site-a", rootHoldRef: "hold-a", authorizationSegmentRef: "segment-a",
+        manifestRef: "manifest-a", expectedSegmentVersion: 1n, commandId: "command-a",
+        requestDigest: "d".repeat(64), terminalEvidenceRef: "terminal-a",
+      })).resolves.toEqual({ kind: "reconciliation_required", segmentVersion: 2n });
+      expect(credit.reconcileAuthorizationSegment).toHaveBeenCalledWith(lease.transaction,
+        expect.objectContaining({ ownerEvidence: { kind: "outcome_unknown",
+          evidenceRef: "terminal-a" } }));
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("reconciles from the locked Credit version when Admission observes an older mirror", async () => {
+    const lease = issuePlatformTransaction(new OwnerSql([
+      { state: "rating_pending", segmentVersion: "3" },
+    ]));
+    const credit = fakeCredit();
+    const owner = new PostgresAdmissionBudgetOwner(credit, {
+      settleUsageSegment: vi.fn(async () => ({ kind: "invalid_state" as const,
+        code: "CREDIT_USAGE_ATTEMPTS_NOT_FINALIZED" })),
+    });
+    try {
+      await expect(owner.reconcileRoot(lease.transaction, {
+        siteId: "site-a", rootHoldRef: "hold-a", authorizationSegmentRef: "segment-a",
+        manifestRef: "manifest-a", expectedSegmentVersion: 2n, commandId: "command-a",
+        requestDigest: "d".repeat(64), terminalEvidenceRef: "terminal-a",
+      })).resolves.toEqual({ kind: "reconciliation_required", segmentVersion: 4n });
+      expect(credit.reconcileAuthorizationSegment).toHaveBeenCalledWith(lease.transaction,
+        expect.objectContaining({ expectedSegmentVersion: 3n }));
     } finally {
       revokePlatformTransaction(lease);
     }

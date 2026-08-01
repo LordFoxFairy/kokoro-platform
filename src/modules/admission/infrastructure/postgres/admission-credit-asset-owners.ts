@@ -53,6 +53,11 @@ interface SettlementProjectionRow extends Record<string, unknown> {
   readonly ratingSnapshotRef: unknown;
 }
 
+interface SegmentAuthorityRow extends Record<string, unknown> {
+  readonly state: unknown;
+  readonly segmentVersion: unknown;
+}
+
 type ReserveResolution = Awaited<ReturnType<AdmissionBudgetOwnerPort["reserveRoot"]>>;
 
 /** Adapts Admission orchestration to the sole native W2A RunBudgetAuthority. */
@@ -163,21 +168,22 @@ export class PostgresAdmissionBudgetOwner implements AdmissionBudgetOwnerPort {
   async commitRoot(
     transaction: Parameters<AdmissionBudgetOwnerPort["commitRoot"]>[0],
     input: Parameters<AdmissionBudgetOwnerPort["commitRoot"]>[1],
-  ): Promise<void> {
+  ): Promise<Readonly<{ segmentVersion: bigint }>> {
     await assertCreditIdentity(transaction, input);
-    requireSegmentOutcome(
+    const value = requireSegmentOutcome(
       await this.authority.finalizeAuthorizationSegment(transaction, segmentCommand(input)),
       input,
       "committed",
     );
+    return Object.freeze({ segmentVersion: value.segmentVersion });
   }
 
   async releaseRoot(
     transaction: Parameters<AdmissionBudgetOwnerPort["releaseRoot"]>[0],
     input: Parameters<AdmissionBudgetOwnerPort["releaseRoot"]>[1],
-  ): Promise<void> {
+  ): Promise<Readonly<{ segmentVersion: bigint }>> {
     await assertCreditIdentity(transaction, input);
-    requireSegmentOutcome(
+    const value = requireSegmentOutcome(
       await this.authority.releaseAuthorizationSegment(transaction, {
         ...segmentCommand(input),
         noDispatchEvidenceRef: input.noDispatchEvidenceRef,
@@ -185,6 +191,7 @@ export class PostgresAdmissionBudgetOwner implements AdmissionBudgetOwnerPort {
       input,
       "released",
     );
+    return Object.freeze({ segmentVersion: value.segmentVersion });
   }
 
   async reconcileRoot(
@@ -192,7 +199,14 @@ export class PostgresAdmissionBudgetOwner implements AdmissionBudgetOwnerPort {
     input: Parameters<AdmissionBudgetOwnerPort["reconcileRoot"]>[1],
   ): ReturnType<AdmissionBudgetOwnerPort["reconcileRoot"]> {
     await assertCreditIdentity(transaction, input);
-    if (input.terminalEvidenceRef === undefined) return Object.freeze({ kind: "reconciliation_required" });
+    if (input.terminalEvidenceRef === undefined) {
+      if (input.outcomeUnknownEvidenceRef === undefined) {
+        throw new Error("ADMISSION_CREDIT_RECONCILIATION_EVIDENCE_REQUIRED");
+      }
+      const segmentVersion = await requireCreditReconciliation(transaction, this.authority, input,
+        input.outcomeUnknownEvidenceRef);
+      return Object.freeze({ kind: "reconciliation_required" as const, segmentVersion });
+    }
     const sql = resolvePlatformTransaction(transaction);
     const [evidenceRows, priorRows] = await Promise.all([
       sql.query<UsageEvidenceRefRow>(
@@ -285,8 +299,11 @@ export class PostgresAdmissionBudgetOwner implements AdmissionBudgetOwnerPort {
         !ownerRef(settlement.ratingSnapshotRef) || typeof settlement.ratedAmount !== "string" ||
         !/^(0|[1-9][0-9]*)$/u.test(settlement.ratedAmount)
       ) throw new Error("ADMISSION_USAGE_SETTLEMENT_CORRUPT");
+      const authority = await loadSegmentAuthority(transaction, input);
+      if (authority.state !== "settled") throw new Error("ADMISSION_USAGE_SEGMENT_NOT_SETTLED");
       return Object.freeze({
         kind: "settled",
+        segmentVersion: authority.segmentVersion,
         settlement: Object.freeze({
           settlementRef: settlement.settlementRef,
           closureRef: settlement.closureRef,
@@ -297,10 +314,19 @@ export class PostgresAdmissionBudgetOwner implements AdmissionBudgetOwnerPort {
         }),
       });
     }
-    if (
-      outcome.kind === "reconciliation_required" ||
-      (outcome.kind === "invalid_state" && outcome.code === "CREDIT_USAGE_ATTEMPTS_NOT_FINALIZED")
-    ) return Object.freeze({ kind: "reconciliation_required" });
+    if (outcome.kind === "reconciliation_required") {
+      const authority = await loadSegmentAuthority(transaction, input);
+      if (authority.state !== "reconciliation_required") {
+        throw new Error("ADMISSION_USAGE_RECONCILIATION_NOT_PERSISTED");
+      }
+      return Object.freeze({ kind: "reconciliation_required" as const,
+        segmentVersion: authority.segmentVersion });
+    }
+    if (outcome.kind === "invalid_state" && outcome.code === "CREDIT_USAGE_ATTEMPTS_NOT_FINALIZED") {
+      const segmentVersion = await requireCreditReconciliation(transaction, this.authority, input,
+        input.terminalEvidenceRef);
+      return Object.freeze({ kind: "reconciliation_required" as const, segmentVersion });
+    }
     const code = outcome.kind === "invalid_state" || outcome.kind === "conflict"
       ? outcome.code
       : "CREDIT_USAGE_CONTEXT_NOT_FOUND";
@@ -398,13 +424,52 @@ function requireSegmentOutcome(
   outcome: CreditAuthorityOutcome<SegmentMutationResult>,
   input: Readonly<{ authorizationSegmentRef: string; expectedSegmentVersion: bigint }>,
   expectedState: SegmentMutationResult["state"],
-): void {
+): SegmentMutationResult {
   if (
     (outcome.kind !== "accepted" && outcome.kind !== "replayed" && outcome.kind !== "reconciliation_required") ||
     outcome.value.authorizationSegmentRef !== input.authorizationSegmentRef ||
     outcome.value.segmentVersion !== input.expectedSegmentVersion + 1n ||
     outcome.value.state !== expectedState
   ) throw new Error(`ADMISSION_CREDIT_SEGMENT_${outcome.kind.toUpperCase()}`);
+  return outcome.value;
+}
+
+async function requireCreditReconciliation(
+  transaction: Parameters<AdmissionBudgetOwnerPort["reconcileRoot"]>[0],
+  authority: RunBudgetAuthority,
+  input: Parameters<AdmissionBudgetOwnerPort["reconcileRoot"]>[1],
+  evidenceRef: string,
+): Promise<bigint> {
+  const current = await loadSegmentAuthority(transaction, input);
+  if (current.state === "reconciliation_required") return current.segmentVersion;
+  const outcome = await authority.reconcileAuthorizationSegment(transaction, {
+    ...segmentCommand(input),
+    expectedSegmentVersion: current.segmentVersion,
+    ownerEvidence: Object.freeze({ kind: "outcome_unknown" as const, evidenceRef }),
+  });
+  return requireSegmentOutcome(outcome, {
+    authorizationSegmentRef: input.authorizationSegmentRef,
+    expectedSegmentVersion: current.segmentVersion,
+  }, "reconciliation_required").segmentVersion;
+}
+
+async function loadSegmentAuthority(
+  transaction: Parameters<AdmissionBudgetOwnerPort["reconcileRoot"]>[0],
+  input: Readonly<{ siteId: string; authorizationSegmentRef: string }>,
+): Promise<Readonly<{ state: string; segmentVersion: bigint }>> {
+  const rows = await resolvePlatformTransaction(transaction).query<SegmentAuthorityRow>(
+    `SELECT state,aggregate_version::text AS "segmentVersion"
+       FROM platform.credit_authorization_segment
+      WHERE site_ref=$1 AND authorization_segment_ref=$2::uuid
+      FOR UPDATE`,
+    [input.siteId, input.authorizationSegmentRef],
+  );
+  const row = only(rows, "ADMISSION_CREDIT_SEGMENT_AMBIGUOUS");
+  if (row === undefined || typeof row.state !== "string" ||
+      typeof row.segmentVersion !== "string" || !/^[1-9][0-9]*$/u.test(row.segmentVersion)) {
+    throw new Error("ADMISSION_CREDIT_SEGMENT_CORRUPT");
+  }
+  return Object.freeze({ state: row.state, segmentVersion: BigInt(row.segmentVersion) });
 }
 
 function only<Row>(rows: readonly Row[], code: string): Row | undefined {

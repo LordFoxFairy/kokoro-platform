@@ -6,6 +6,7 @@ import {
   FinalizeRunAuthorizationEffectSchema,
   OpaqueExecutionContextIntentSchema,
   PrepareRunEffectSchema,
+  ReconcileRunAuthorizationEffectSchema,
   ReleaseRunAuthorizationEffectSchema,
 } from "../src/interfaces/connect/generated/kokoro/platform/admission/v1/admission_pb.js";
 import {
@@ -180,9 +181,10 @@ function ports(events: string[] = []): PlatformAdmissionOwnerPorts {
           },
         };
       }),
-      commitRoot: vi.fn(async () => undefined),
-      releaseRoot: vi.fn(async () => { events.push("budget.release") }),
-      reconcileRoot: vi.fn(async () => ({ kind: "reconciliation_required" as const })),
+      commitRoot: vi.fn(async () => ({ segmentVersion: 2n })),
+      releaseRoot: vi.fn(async () => { events.push("budget.release"); return { segmentVersion: 2n } }),
+      reconcileRoot: vi.fn(async () => ({ kind: "reconciliation_required" as const,
+        segmentVersion: 2n })),
     },
     lifecycle: {
       prepare: vi.fn(async (_transaction, input) => {
@@ -434,6 +436,7 @@ describe("Platform Admission owner authority", () => {
     const dependencies = ports(events);
     vi.mocked(dependencies.budget.commitRoot).mockImplementation(async () => {
       events.push("budget.commit");
+      return { segmentVersion: 2n };
     });
     vi.mocked(dependencies.lifecycle.commit).mockImplementation(async (_transaction, record) => {
       events.push("lifecycle.commit");
@@ -575,5 +578,39 @@ describe("Platform Admission owner authority", () => {
     expect(decision.kind).toBe("already_released");
     expect(dependencies.dispatchEvidence.get).not.toHaveBeenCalled();
     expect(dependencies.budget.releaseRoot).not.toHaveBeenCalled();
+  });
+
+  it("advances outcome-unknown reconciliation through Credit before Admission", async () => {
+    const dependencies = ports();
+    vi.mocked(dependencies.dispatchEvidence.get).mockResolvedValue({
+      kind: "found",
+      evidence: {
+        evidenceRef: "dispatch-unknown-1", evidenceVersion: "1", kind: "outcome_unknown",
+        siteId: "site-1", sessionId: "session-1", dispatchId: "dispatch-1",
+        launchId: "launch-1", runId: "run-1", authorizationSegmentRef: "segment-1",
+        authorizationSegmentVersion: "1", leaseGeneration: "1", payloadSha256: "c".repeat(64),
+        recordedAt: now.toISOString(),
+      },
+    });
+    vi.mocked(dependencies.lifecycle.requireReconciliation).mockImplementation(
+      async (_transaction, record, segmentVersion) => ({ ...record,
+        state: "reconciliation_required" as const, segmentVersion }),
+    );
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+
+    const decision = await authority.reconcileRunAuthorization({ caller, siteId: "site-1",
+      commandId: "command-reconcile", requestDigest: "e".repeat(64),
+      effect: create(ReconcileRunAuthorizationEffectSchema, {
+        manifestRef: "manifest-1", authorizationSegmentRef: "segment-1",
+        expectedSegmentVersion: 1n, sessionDispatchReceiptRef: "dispatch-unknown-1",
+      }) });
+
+    expect(decision.kind).toBe("reconciliation_required");
+    expect(dependencies.budget.reconcileRoot).toHaveBeenCalledWith(expect.anything(),
+      expect.objectContaining({ outcomeUnknownEvidenceRef: "dispatch-unknown-1" }));
+    expect(dependencies.lifecycle.requireReconciliation).toHaveBeenCalledWith(
+      expect.anything(), expect.anything(), 2n,
+    );
   });
 });
