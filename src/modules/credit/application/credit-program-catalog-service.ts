@@ -3,13 +3,14 @@ import type { VerifiedRequestSecurityContext } from "../../../shared/security-co
 import type { PlatformUnitOfWork } from "../../../shared/unit-of-work/index.js";
 import type { CreditProgramCatalogRepository,
   CreditProgramPublicationOutcome } from "./contracts/credit-program-catalog.js";
-import { defineCreditProgramRevision, type CreditProgramDefinition } from
+import { defineCreditProgramRevision, type CanonicalCreditProgramDefinition } from
   "../domain/credit-program-catalog.js";
 
 export class CreditProgramCatalogService {
   constructor(private readonly dependencies: Readonly<{
     unitOfWork: Pick<PlatformUnitOfWork, "execute">;
     repository: CreditProgramCatalogRepository;
+    decodeDefinitionBytes: (bytes: Uint8Array) => CanonicalCreditProgramDefinition;
     clock?: () => string;
   }>) {}
 
@@ -20,7 +21,6 @@ export class CreditProgramCatalogService {
     programRef: string;
     revision: bigint;
     expectedVersion: bigint;
-    definition: CreditProgramDefinition;
     definitionBytes: Uint8Array;
     reason: string;
   }>, context: VerifiedRequestSecurityContext): Promise<CreditProgramPublicationOutcome> {
@@ -37,7 +37,7 @@ export class CreditProgramCatalogService {
     const operation = "credit.program.publish" as const;
     const candidate = defineCreditProgramRevision({
       programRef: input.programRef, revision: input.revision, expectedVersion: input.expectedVersion,
-      definition: input.definition, definitionBytes: input.definitionBytes,
+      canonicalDefinition: this.dependencies.decodeDefinitionBytes(input.definitionBytes),
       publishedAt: (this.dependencies.clock ?? (() => new Date().toISOString()))(),
     });
     const command = Object.freeze({

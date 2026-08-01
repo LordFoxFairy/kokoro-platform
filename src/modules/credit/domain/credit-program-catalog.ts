@@ -35,6 +35,39 @@ export interface CreditProgramDefinition {
   readonly accountingPolicyRef: string;
 }
 
+/**
+ * A single canonical fact: validated domain rules decoded from the exact
+ * known-field protobuf bytes whose digest is published and persisted.
+ */
+export class CanonicalCreditProgramDefinition {
+  readonly #definitionBytes: Uint8Array;
+
+  private constructor(
+    readonly definition: CreditProgramDefinition,
+    definitionBytes: Uint8Array,
+  ) {
+    this.#definitionBytes = new Uint8Array(definitionBytes);
+  }
+
+  get definitionBytes(): Uint8Array {
+    return new Uint8Array(this.#definitionBytes);
+  }
+
+  static fromBytes(
+    bytes: Uint8Array,
+    decodeCanonicalBytes: (value: Uint8Array) => CreditProgramDefinition,
+  ): CanonicalCreditProgramDefinition {
+    if (!(bytes instanceof Uint8Array) || bytes.byteLength < 1) {
+      throw new Error("CREDIT_PROGRAM_DEFINITION_BYTES_INVALID");
+    }
+    const decodingCopy = new Uint8Array(bytes);
+    const definition = validateDefinition(decodeCanonicalBytes(decodingCopy));
+    const canonical = new CanonicalCreditProgramDefinition(definition, bytes);
+    Object.freeze(canonical);
+    return canonical;
+  }
+}
+
 export interface CreditProgramRevisionTarget {
   readonly programRef: string;
   readonly revision: bigint;
@@ -79,8 +112,7 @@ export function defineCreditProgramRevision(input: Readonly<{
   programRef: string;
   revision: bigint;
   expectedVersion: bigint;
-  definition: CreditProgramDefinition;
-  definitionBytes: Uint8Array;
+  canonicalDefinition: CanonicalCreditProgramDefinition;
   publishedAt: string;
 }>): PublishedCreditProgramRevision {
   if (!/^credit-program:[a-z][a-z0-9._-]{1,127}$/u.test(input.programRef)) {
@@ -91,16 +123,16 @@ export function defineCreditProgramRevision(input: Readonly<{
   if (input.revision !== input.expectedVersion + 1n) {
     throw new Error("CREDIT_PROGRAM_REVISION_SEQUENCE_INVALID");
   }
-  const definition = validateDefinition(input.definition);
-  if (!(input.definitionBytes instanceof Uint8Array) || input.definitionBytes.byteLength < 1) {
-    throw new Error("CREDIT_PROGRAM_DEFINITION_BYTES_INVALID");
+  if (!(input.canonicalDefinition instanceof CanonicalCreditProgramDefinition)) {
+    throw new Error("CREDIT_PROGRAM_CANONICAL_DEFINITION_REQUIRED");
   }
+  const { definition, definitionBytes } = input.canonicalDefinition;
   const publishedAt = instant(input.publishedAt);
-  const revisionDigest = `sha256:${createHash("sha256").update(input.definitionBytes).digest("hex")}`;
+  const revisionDigest = `sha256:${createHash("sha256").update(definitionBytes).digest("hex")}`;
   return Object.freeze({
     target: Object.freeze({ programRef: input.programRef, revision: input.revision, revisionDigest }),
     definition,
-    definitionBytes: new Uint8Array(input.definitionBytes),
+    definitionBytes: new Uint8Array(definitionBytes),
     exposure: "inert",
     publishedAt,
   });
@@ -192,9 +224,8 @@ function refs(value: readonly string[], required: boolean, pattern: RegExp): rea
 }
 
 function ianaZone(value: string): boolean {
-  if (value.length < 1 || value.length > 128) return false;
-  try { new Intl.DateTimeFormat("en-US", { timeZone: value }).format(0); return true; }
-  catch { return false; }
+  return value.length >= 1 && value.length <= 128 &&
+    /^(?:UTC|[A-Za-z][A-Za-z0-9._+-]*(?:\/[A-Za-z][A-Za-z0-9._+-]*)+)$/u.test(value);
 }
 
 function positive(value: bigint, code: string): void {

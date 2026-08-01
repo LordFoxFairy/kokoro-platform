@@ -6,7 +6,7 @@ import type { CreditProgramCatalogRepository, CreditProgramPublicationCommand } 
 import { advanceCreditProgramCatalogSnapshot, defineCreditProgramRevision,
   type PublishedCreditProgramRevision } from
   "../../domain/credit-program-catalog.js";
-import { creditProgramDefinitionFromBytes } from "../protobuf/credit-program-codec.js";
+import { canonicalCreditProgramDefinitionFromBytes } from "../protobuf/credit-program-codec.js";
 
 interface HeadRow extends Record<string, unknown> { currentRevision: string }
 interface SnapshotRow extends Record<string, unknown> { currentEpoch: string; snapshotDigest: string }
@@ -32,6 +32,7 @@ export class PostgresCreditProgramCatalog implements CreditProgramCatalogReposit
     }
     if (receipt.state !== "pending") throw new Error("CREDIT_PROGRAM_COMMAND_NOT_RETRYABLE");
     const sql = resolvePlatformTransaction(transaction);
+    await assertDatabaseCalendarZones(sql, candidate);
     await sql.execute(`INSERT INTO platform.credit_program_head(program_ref) VALUES ($1)
       ON CONFLICT (program_ref) DO NOTHING`, [candidate.target.programRef]);
     const heads = await sql.query<HeadRow>(`SELECT current_revision::text AS "currentRevision"
@@ -116,8 +117,9 @@ async function loadExact(transaction: Parameters<CreditProgramCatalogRepository[
   const row = rows[0];
   if (row === undefined) throw new Error("CREDIT_PROGRAM_REPLAY_REVISION_MISSING");
   const revision = defineCreditProgramRevision({ programRef: row.programRef, revision: BigInt(row.revision),
-    expectedVersion: BigInt(row.revision) - 1n, definition: creditProgramDefinitionFromBytes(row.definitionBytes),
-    definitionBytes: row.definitionBytes, publishedAt: new Date(row.publishedAt).toISOString() });
+    expectedVersion: BigInt(row.revision) - 1n,
+    canonicalDefinition: canonicalCreditProgramDefinitionFromBytes(row.definitionBytes),
+    publishedAt: new Date(row.publishedAt).toISOString() });
   if (revision.target.revisionDigest !== row.revisionDigest) throw new Error("CREDIT_PROGRAM_PERSISTED_DIGEST_INVALID");
   return revision;
 }
@@ -137,4 +139,22 @@ function exactlyOne(value: number, code: string): void { if (value !== 1) throw 
 function requiredInstant(value: string | undefined): string {
   if (value === undefined || !Number.isFinite(Date.parse(value))) throw new Error("CREDIT_PROGRAM_RECEIPT_TIME_INVALID");
   return new Date(value).toISOString();
+}
+
+async function assertDatabaseCalendarZones(
+  sql: ReturnType<typeof resolvePlatformTransaction>,
+  candidate: PublishedCreditProgramRevision,
+): Promise<void> {
+  const zones = [...new Set(candidate.definition.grants.flatMap((grant) =>
+    grant.window.kind === "daily" ? [grant.window.calendarZone] : []))];
+  if (zones.length === 0) return;
+  const rows = await sql.query<{ valid: boolean }>(`SELECT NOT EXISTS (
+      SELECT 1 FROM unnest($1::text[]) AS requested(name)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_timezone_names AS known WHERE known.name=requested.name
+      )
+    ) AS valid`, [zones]);
+  if (rows.length !== 1 || rows[0]?.valid !== true) {
+    throw new Error("CREDIT_PROGRAM_CALENDAR_ZONE_INVALID");
+  }
 }

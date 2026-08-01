@@ -6,6 +6,8 @@ import { PostgresCreditProgramCatalog } from
   "../modules/credit/infrastructure/postgres/credit-program-catalog.js";
 import { PostgresCreditProgramCatalogReader } from
   "../modules/credit/infrastructure/postgres/credit-program-catalog-reader.js";
+import { canonicalCreditProgramDefinitionFromBytes } from
+  "../modules/credit/infrastructure/protobuf/credit-program-codec.js";
 import type { CreditProgramCatalogReader, CreditProgramCatalogReadTransactionHost } from
   "../modules/credit/application/contracts/credit-program-catalog-reader.js";
 
@@ -25,6 +27,7 @@ export function createCreditOwnerComposition(input: Readonly<{
     programCatalog: new CreditProgramCatalogService({
       unitOfWork,
       repository: new PostgresCreditProgramCatalog(),
+      decodeDefinitionBytes: canonicalCreditProgramDefinitionFromBytes,
       ...(input.clock === undefined ? {} : { clock: input.clock }),
     }),
     programCatalogReader: new PostgresCreditProgramCatalogReader(input.queryHost),

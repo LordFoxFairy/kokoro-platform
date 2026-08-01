@@ -9,7 +9,8 @@ import {
   CreditProgramRolloverPolicy,
   type CreditProgramDefinition as WireDefinition,
 } from "../../../../interfaces/connect/generated-admin-credit/kokoro/platform/credit/v1/credit_catalog_pb.js";
-import { validateDefinition, type CreditProgramBucket, type CreditProgramDefinition,
+import { CanonicalCreditProgramDefinition, validateDefinition,
+  type CreditProgramBucket, type CreditProgramDefinition,
   type PublishedCreditProgramRevision } from "../../domain/credit-program-catalog.js";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 
@@ -34,13 +35,23 @@ export function creditProgramDefinitionFromWire(value: WireDefinition): Readonly
     allowNegativeBalance: canonical.allowNegativeBalance as false,
     accountingPolicyRef: canonical.accountingPolicyRef });
   return Object.freeze({ definition,
-    definitionBytes: toBinary(CreditProgramDefinitionSchema, definitionToWire(definition),
-      { writeUnknownFields: false }) });
+    definitionBytes: encodeCreditProgramDefinition(definition) });
 }
 
 export function creditProgramDefinitionFromBytes(bytes: Uint8Array): CreditProgramDefinition {
-  return creditProgramDefinitionFromWire(fromBinary(CreditProgramDefinitionSchema, bytes,
-    { readUnknownFields: false })).definition;
+  return canonicalCreditProgramDefinitionFromBytes(bytes).definition;
+}
+
+export function canonicalCreditProgramDefinitionFromBytes(
+  bytes: Uint8Array,
+): CanonicalCreditProgramDefinition {
+  return CanonicalCreditProgramDefinition.fromBytes(bytes, decodeCanonicalDefinitionBytes);
+}
+
+export function encodeCreditProgramDefinition(value: CreditProgramDefinition): Uint8Array {
+  const definition = validateDefinition(value);
+  return toBinary(CreditProgramDefinitionSchema, definitionToWire(definition),
+    { writeUnknownFields: false });
 }
 
 export function definitionToWire(value: CreditProgramDefinition) {
@@ -104,4 +115,27 @@ function durationSeconds(value: Readonly<{ seconds: bigint; nanos: number }>): b
 function required<Value>(value: Value | undefined): Value {
   if (value === undefined) throw new Error("CREDIT_PROGRAM_REQUIRED_FIELD_MISSING");
   return value;
+}
+
+function decodeCanonicalDefinitionBytes(bytes: Uint8Array): CreditProgramDefinition {
+  let wire: WireDefinition;
+  try {
+    wire = fromBinary(CreditProgramDefinitionSchema, bytes, { readUnknownFields: false });
+  } catch {
+    throw new Error("CREDIT_PROGRAM_DEFINITION_BYTES_INVALID");
+  }
+  const decoded = creditProgramDefinitionFromWire(wire);
+  if (!sameBytes(bytes, decoded.definitionBytes)) {
+    throw new Error("CREDIT_PROGRAM_DEFINITION_BYTES_NON_CANONICAL");
+  }
+  return decoded.definition;
+}
+
+function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.byteLength !== right.byteLength) return false;
+  let difference = 0;
+  for (let index = 0; index < left.byteLength; index += 1) {
+    difference |= (left[index] ?? 0) ^ (right[index] ?? 0);
+  }
+  return difference === 0;
 }

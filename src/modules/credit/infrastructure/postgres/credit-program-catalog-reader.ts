@@ -3,7 +3,7 @@ import type { CreditProgramCatalogReader, CreditProgramCatalogSnapshot,
   CreditProgramCatalogReadPermit, CreditProgramCatalogReadTransactionHost } from
   "../../application/contracts/credit-program-catalog-reader.js";
 import { defineCreditProgramRevision } from "../../domain/credit-program-catalog.js";
-import { creditProgramDefinitionFromBytes } from "../protobuf/credit-program-codec.js";
+import { canonicalCreditProgramDefinitionFromBytes } from "../protobuf/credit-program-codec.js";
 
 interface RevisionRow extends Record<string, unknown> {
   programRef: string; revision: string; revisionDigest: string; definitionBytes: Uint8Array;
@@ -93,8 +93,9 @@ function projection() {
 }
 function revision(row: RevisionRow) {
   const value = defineCreditProgramRevision({ programRef: row.programRef, revision: BigInt(row.revision),
-    expectedVersion: BigInt(row.revision) - 1n, definition: creditProgramDefinitionFromBytes(row.definitionBytes),
-    definitionBytes: row.definitionBytes, publishedAt: new Date(row.publishedAt).toISOString() });
+    expectedVersion: BigInt(row.revision) - 1n,
+    canonicalDefinition: canonicalCreditProgramDefinitionFromBytes(row.definitionBytes),
+    publishedAt: new Date(row.publishedAt).toISOString() });
   if (value.target.revisionDigest !== row.revisionDigest) throw new Error("CREDIT_PROGRAM_PERSISTED_DIGEST_INVALID");
   return value;
 }
