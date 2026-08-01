@@ -11,12 +11,17 @@ Platform through HTTP/RPC and never exposes a Prisma client to application code.
   fence at the BillingAccount node in the shared lock DAG.
 - Fulfillment transaction, frozen expected output lines, actual output occurrences, generic outbox links, and append-only audit entries
   commit in one `PlatformUnitOfWork`.
-- `FulfillmentService` plus the source-neutral `PostgresFulfillmentIssuer` are the only issuance authority. Redemption and Payment
+- `FulfillmentService` plus the source-neutral `PostgresFulfillmentIssuer` are the Commerce issuance authority. Redemption and Payment
   settlement are acquisition adapters: they
   submit a Site-scoped source identity plus immutable product/plan/offering/program/output-plan/acquisition snapshots. The service
   derives the sole SHA-256 idempotency fence from Site + source type + source ref + purpose + cycle and replays the stored receipt
   without issuing SubscriptionTerms, EntitlementGrants, or CreditGrants again. Payment sources additionally require a frozen pricing
   snapshot reference before the owner accepts them.
+- Commerce owns SubscriptionTerm and EntitlementGrant persistence. CreditGrant issuance crosses only the Credit application-owned
+  `CreditGrantIssuancePort` with the same branded `PlatformTransaction`: Commerce prepares the exact account authority before claiming
+  acquisition facts, then Credit atomically owns CreditAccount, CreditGrant and Journal SQL. Commerce must not import Credit
+  infrastructure or mutate `platform.credit_*` tables. The opaque preparation capability is transaction-bound and one-shot, and the
+  returned Credit receipt multiset must exactly match the frozen fulfillment output plan.
 - The database rejects non-contiguous output plans, output mutation, illegal fulfillment transitions, and successful fulfillment whose
   actual multiset does not exactly satisfy the frozen plan.
 

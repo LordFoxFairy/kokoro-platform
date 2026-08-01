@@ -8,16 +8,18 @@ import { verifyRequestSecurityContext } from "../../src/shared/security-context/
 describe("CommerceCommandFence", () => {
   it("claims the idempotency identity before effect authorization and every business lock", async () => {
     const calls: string[] = [];
+    const transactions: unknown[] = [];
     const repository = {
-      claimCommand: async () => { calls.push("identity"); return { disposition: "execute", commandId: "0123456789abcdef0123456789abcdef" }; },
-      completeCommand: async () => { calls.push("result"); },
+      claimCommand: async (transaction: unknown) => { transactions.push(transaction); calls.push("identity"); return { disposition: "execute", commandId: "0123456789abcdef0123456789abcdef" }; },
+      completeCommand: async (transaction: unknown) => { transactions.push(transaction); calls.push("result"); },
     } as unknown as CommerceRepository;
     const fence = new CommerceCommandFence(unitOfWork(), repository, async () => {
       calls.push("effect-auth");
       return { siteId: "site-1", releaseRef: "release-1", subjectId: "user-1" };
     });
 
-    await fence.execute({ context: await context(), identity: identity() }, async ({ locks }) => {
+    await fence.execute({ context: await context(), identity: identity() }, async ({ transaction, locks }) => {
+      transactions.push(transaction);
       locks.enter("program_availability");
       calls.push("program-lock");
       locks.enter("billing_account");
@@ -26,6 +28,7 @@ describe("CommerceCommandFence", () => {
     });
 
     expect(calls).toEqual(["identity", "effect-auth", "program-lock", "account-lock", "result"]);
+    expect(new Set(transactions).size).toBe(1);
   });
 
   it("returns a terminal replay without effect authorization or business work", async () => {

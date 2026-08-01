@@ -63,6 +63,7 @@ import { createCommercePublicOperations, COMMERCE_PUBLIC_OPERATION_IDS } from ".
 import { RedemptionQueryService } from "../modules/commerce/application/services/redemption-query.js";
 import { ConfirmRedemptionService } from "../modules/commerce/application/services/confirm-redemption.js";
 import { PostgresRedemptionConfirmationRepository } from "../modules/commerce/infrastructure/postgres/redemption-confirmation-repository.js";
+import { PostgresCreditGrantIssuer } from "../modules/credit/infrastructure/postgres/credit-grant-issuer.js";
 import { AccountReadService } from "../modules/commerce/application/services/account-read.js";
 import { PostgresAccountReadRepository } from "../modules/commerce/infrastructure/postgres/account-read-repository.js";
 import { PostgresAssetUploadRepository } from "../modules/asset/infrastructure/postgres/asset-upload-repository.js";
@@ -246,7 +247,10 @@ export async function createPlatformPublicProductionComposition(
   const identityOperations = createIdentityPublicOperations(identity, identitySecurityManagement);
   const redemptionRepository = new PostgresRedemptionRepository();
   const commerceRepository = new PostgresCommerceRepository();
-  const redemptionConfirmationRepository = new PostgresRedemptionConfirmationRepository({ commerce: commerceRepository });
+  const redemptionConfirmationRepository = new PostgresRedemptionConfirmationRepository({
+    commerce: commerceRepository,
+    creditGrants: new PostgresCreditGrantIssuer(),
+  });
   const commerceFence = new CommerceCommandFence(
     unitOfWork,
     commerceRepository,

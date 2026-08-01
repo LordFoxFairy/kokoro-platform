@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { PostgresRedemptionConfirmationRepository } from
   "../../src/modules/commerce/infrastructure/postgres/redemption-confirmation-repository.js";
+import { PostgresCreditGrantIssuer } from
+  "../../src/modules/credit/infrastructure/postgres/credit-grant-issuer.js";
 import { issuePlatformTransaction, revokePlatformTransaction, type PlatformSqlTransaction } from
   "../../src/shared/unit-of-work/platform-transaction.js";
 import {
@@ -29,7 +31,7 @@ describe("PostgresRedemptionConfirmationRepository", () => {
     };
     const lease = issuePlatformTransaction(sql);
     try {
-      await expect(new PostgresRedemptionConfirmationRepository().confirmRedemption(
+      await expect(confirmationRepository().confirmRedemption(
         lease.transaction,
         confirmationInput(),
         new CommerceLockSequence(),
@@ -51,7 +53,7 @@ describe("PostgresRedemptionConfirmationRepository", () => {
       execute: async (statement) => { statements.push(statement); return 1; },
     });
     try {
-      await expect(new PostgresRedemptionConfirmationRepository().confirmRedemption(
+      await expect(confirmationRepository().confirmRedemption(
         lease.transaction, confirmationInput(), new CommerceLockSequence(),
       )).resolves.toEqual({ kind: "rejected", code: "REDEEM_NOT_ACCEPTED" });
       expect(statements.filter((statement) => /^\s*(?:INSERT|UPDATE|DELETE)\b/u.test(statement))).toEqual([]);
@@ -84,7 +86,7 @@ describe("PostgresRedemptionConfirmationRepository", () => {
       },
       execute: async (statement) => { statements.push(statement); return 1; },
     });
-    const repository = new PostgresRedemptionConfirmationRepository({
+    const repository = confirmationRepository({
       commerce: {
         claimFulfillment: async (_transaction, claim) => {
           commerceCalls.push("start");
@@ -159,7 +161,7 @@ describe("PostgresRedemptionConfirmationRepository", () => {
         return 1;
       },
     });
-    const repository = new PostgresRedemptionConfirmationRepository({
+    const repository = confirmationRepository({
       commerce: noOpCommerce(), outbox: { enqueue: async () => undefined }, reference: referenceFactory(),
     });
     try {
@@ -177,6 +179,7 @@ describe("PostgresRedemptionConfirmationRepository", () => {
       expect(joined).toContain("INSERT INTO platform.credit_journal_entry");
       expect(joined).toContain("grant_issuance_source");
       expect(joined).toContain("customer_available");
+      expect(joined).toMatch(/UPDATE platform\.commerce_redeem_code[\s\S]+INSERT INTO platform\.credit_grant[\s\S]+INSERT INTO platform\.credit_journal_transaction/u);
       const grantInsert = executions.find(({ statement }) => statement.includes("INSERT INTO platform.credit_grant"))!;
       expect(grantInsert.values[14]).toBe("2026-07-29T01:00:00.000Z");
       expect(grantInsert.values[15]).toBeNull();
@@ -206,7 +209,7 @@ describe("PostgresRedemptionConfirmationRepository", () => {
         execute: async (statement) => { statements.push(statement); return 1; },
       });
       try {
-        await expect(new PostgresRedemptionConfirmationRepository().confirmRedemption(
+        await expect(confirmationRepository().confirmRedemption(
           lease.transaction, confirmationInput(), new CommerceLockSequence(),
         )).resolves.toEqual({ kind: "rejected", code: "REDEEM_NOT_ACCEPTED" });
         expect(statements).toHaveLength(1);
@@ -248,7 +251,7 @@ describe("PostgresRedemptionConfirmationRepository", () => {
       },
       execute: async (statement) => { statements.push(statement); return 1; },
     });
-    const repository = new PostgresRedemptionConfirmationRepository({
+    const repository = confirmationRepository({
       commerce: noOpCommerce(), outbox: { enqueue: async () => undefined }, reference: referenceFactory(),
     });
     try {
@@ -276,7 +279,7 @@ describe("PostgresRedemptionConfirmationRepository", () => {
       execute: async () => 0,
     });
     try {
-      await expect(new PostgresRedemptionConfirmationRepository().findConfirmationByCommand(
+      await expect(confirmationRepository().findConfirmationByCommand(
         lease.transaction, commandLookup(),
       )).resolves.toEqual({ state: "failed", commandReceivedAt: "2026-07-29T00:59:58.000Z",
         commandUpdatedAt: "2026-07-29T00:59:59.000Z", code: "REDEEM_NOT_ACCEPTED" });
@@ -314,7 +317,7 @@ describe("PostgresRedemptionConfirmationRepository", () => {
       execute: async () => 0,
     });
     try {
-      await expect(new PostgresRedemptionConfirmationRepository().findConfirmationByCommand(
+      await expect(confirmationRepository().findConfirmationByCommand(
         lease.transaction, commandLookup(),
       )).resolves.toMatchObject({ state: "succeeded", receipt: {
         commandUpdatedAt: "2026-07-29T01:00:01.000Z", state: "fulfilled",
@@ -340,7 +343,7 @@ describe("PostgresRedemptionConfirmationRepository", () => {
       execute: async () => 0,
     });
     try {
-      await expect(new PostgresRedemptionConfirmationRepository().findConfirmationByIdempotencyKey(
+      await expect(confirmationRepository().findConfirmationByIdempotencyKey(
         lease.transaction,
         { siteId: "site-1", subjectId: "subject-1", subjectGeneration: "2", idempotencyKey: "confirm-1" },
       )).resolves.toEqual({
@@ -377,7 +380,7 @@ describe("PostgresRedemptionConfirmationRepository", () => {
       execute: async () => 0,
     });
     try {
-      await expect(new PostgresRedemptionConfirmationRepository().findRedemptionReceipt(
+      await expect(confirmationRepository().findRedemptionReceipt(
         lease.transaction,
         { siteId: "site-1", subjectId: "subject-1", subjectGeneration: "2",
           redemptionId: "00000000-0000-7000-8000-000000000301" },
@@ -411,7 +414,7 @@ describe("PostgresRedemptionConfirmationRepository", () => {
       execute: async (statement) => { statements.push(statement); return 1; },
     });
     try {
-      await expect(new PostgresRedemptionConfirmationRepository({
+      await expect(confirmationRepository({
         commerce: noOpCommerce(), outbox: { enqueue: async () => undefined }, reference: referenceFactory(),
       }).confirmRedemption(lease.transaction, confirmationInput(), new CommerceLockSequence()))
         .resolves.toEqual({ kind: "rejected", code: "REDEEM_NOT_ACCEPTED" });
@@ -453,7 +456,7 @@ describe("PostgresRedemptionConfirmationRepository", () => {
       execute: async (statement) => { statements.push(statement); return 1; },
     });
     try {
-      await expect(new PostgresRedemptionConfirmationRepository({
+      await expect(confirmationRepository({
         commerce: noOpCommerce(), outbox: { enqueue: async () => undefined }, reference: referenceFactory(),
       }).confirmRedemption(lease.transaction, confirmationInput(), new CommerceLockSequence()))
         .resolves.toEqual({ kind: "rejected", code: "REDEEM_NOT_ACCEPTED" });
@@ -500,7 +503,7 @@ describe("PostgresRedemptionConfirmationRepository", () => {
       execute: async (statement) => { statements.push(statement); return 1; },
     });
     try {
-      await expect(new PostgresRedemptionConfirmationRepository({
+      await expect(confirmationRepository({
         commerce: noOpCommerce(), outbox: { enqueue: async () => undefined }, reference: referenceFactory(),
       }).confirmRedemption(lease.transaction, confirmationInput(), new CommerceLockSequence()))
         .resolves.toEqual({ kind: "rejected", code: "REDEEM_NOT_ACCEPTED" });
@@ -510,6 +513,15 @@ describe("PostgresRedemptionConfirmationRepository", () => {
     }
   });
 });
+
+function confirmationRepository(
+  dependencies: Omit<ConstructorParameters<typeof PostgresRedemptionConfirmationRepository>[0], "creditGrants"> = {},
+) {
+  return new PostgresRedemptionConfirmationRepository({
+    creditGrants: new PostgresCreditGrantIssuer(),
+    ...dependencies,
+  });
+}
 
 function confirmationInput() {
   return {

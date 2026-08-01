@@ -15,7 +15,6 @@ import {
   fulfillmentCreditAccountIdentity,
   type FulfillmentOutputDefinition,
   type PostgresFulfillmentMaterialization,
-  type PreparedFulfillmentCreditAccount,
   type PreparedFulfillmentSubscription,
 } from "./fulfillment-issuer.js";
 import {
@@ -29,10 +28,10 @@ import {
 import { commerceCanonicalJson } from "../../domain/canonical-json.js";
 import type { FulfillmentOutputLine } from "../../domain/output-line.js";
 import type { CommerceLockSequence } from "../../../../workflows/commerce/lock-order.js";
-import {
-  creditAccountAdvisoryKey,
-  lockCreditAccountAuthority,
-} from "../../../credit/infrastructure/postgres/credit-account-lock.js";
+import type {
+  CreditGrantIssuancePort,
+  PreparedCreditGrantAccounts,
+} from "../../../credit/application/contracts/grant-issuance.js";
 
 type PreviewConfirmationRow = Record<string, unknown> & {
   previewRef: string;
@@ -84,9 +83,10 @@ type CommerceFulfillmentWriter = Pick<CommerceRepository,
   "completeFulfillment" | "linkOutboxEvent" | "recordAudit">;
 
 type Dependencies = Readonly<{
-  commerce: CommerceFulfillmentWriter;
-  outbox: Pick<OutboxRepository, "enqueue">;
-  reference: (purpose: string, ordinal: number, now: number) => string;
+  creditGrants: CreditGrantIssuancePort;
+  commerce?: CommerceFulfillmentWriter;
+  outbox?: Pick<OutboxRepository, "enqueue">;
+  reference?: (purpose: string, ordinal: number, now: number) => string;
 }>;
 
 type ConfirmationCommandRow = Record<string, unknown> & {
@@ -115,12 +115,14 @@ type RedemptionReceiptRow = Record<string, unknown> & {
 export class PostgresRedemptionConfirmationRepository implements RedemptionConfirmationRepository {
   readonly #commerce: CommerceFulfillmentWriter;
   readonly #fulfillment: FulfillmentService<PostgresFulfillmentMaterialization>;
+  readonly #creditGrants: CreditGrantIssuancePort;
   readonly #outbox: Pick<OutboxRepository, "enqueue">;
-  readonly #reference: Dependencies["reference"];
+  readonly #reference: NonNullable<Dependencies["reference"]>;
 
-  constructor(dependencies: Partial<Dependencies> = {}) {
+  constructor(dependencies: Dependencies) {
     this.#commerce = dependencies.commerce ?? new PostgresCommerceRepository();
-    this.#fulfillment = createPostgresFulfillmentService(this.#commerce);
+    this.#creditGrants = dependencies.creditGrants;
+    this.#fulfillment = createPostgresFulfillmentService(this.#commerce, this.#creditGrants);
     this.#outbox = dependencies.outbox ?? new OutboxRepository();
     this.#reference = dependencies.reference ?? ((_purpose, _ordinal, now) => uuidV7(now));
   }
@@ -214,14 +216,15 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
       });
       locks.enter("term_allocation");
     }
-    let creditAccounts = new Map<string, PreparedFulfillmentCreditAccount>();
+    let creditGrantPreparation: PreparedCreditGrantAccounts | null = null;
     if (outputs.some((output) => output.outputKind === "credit_grant")) {
       locks.enter("credit_account");
-      creditAccounts = await this.#lockCreditAccounts(transaction, outputs, input.siteId, preview.billingAccountId);
-      if ([...creditAccounts.values()].some(({ account: creditAccount }) =>
-        creditAccount !== null && creditAccount.state !== "active")) {
-        return rejected();
-      }
+      const prepared = await this.#creditGrants.prepareAccounts(transaction, {
+        accounts: outputs.filter((output) => output.outputKind === "credit_grant").map((output) =>
+          fulfillmentCreditAccountIdentity(input.siteId, preview.billingAccountId, output)),
+      });
+      if (prepared.kind === "unavailable") return rejected();
+      creditGrantPreparation = prepared.preparation;
     }
 
     const effectRows = await sql.query<Record<string, unknown> & { effectAt: Date | string }>(
@@ -273,7 +276,7 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
     const nextRef = (purpose: string) => this.#reference(purpose, referenceOrdinal++, Date.parse(effectAt));
     const redemptionId = nextRef("redemption");
     const fulfillmentId = nextRef("fulfillment");
-    if (creditAccounts.size > 0) locks.enter("credit_grant");
+    if (creditGrantPreparation !== null) locks.enter("credit_grant");
     const inserted = await sql.execute(
       `INSERT INTO platform.commerce_redemption
        (redemption_id,command_id,site_ref,billing_account_ref,code_ref,batch_ref,
@@ -314,7 +317,7 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
         effectAt,
         outputs,
         nextRef,
-        creditAccounts,
+        creditGrantPreparation,
         subscription,
         subscriptionTerm,
         stackingScope: program.stackingScope,
@@ -440,26 +443,6 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
     ], input.siteId);
   }
 
-  async #lockCreditAccounts(
-    transaction: Parameters<RedemptionConfirmationRepository["confirmRedemption"]>[0],
-    outputs: readonly OutputRow[],
-    siteId: string,
-    billingAccountId: string,
-  ): Promise<Map<string, PreparedFulfillmentCreditAccount>> {
-    const identities = new Map<string, PreparedFulfillmentCreditAccount["identity"]>();
-    for (const output of outputs) {
-      if (output.outputKind !== "credit_grant") continue;
-      if (output.unit === null || output.liabilityMerchantAccountId === null) throw new Error("REDEMPTION_OUTPUT_INVALID");
-      const identity = fulfillmentCreditAccountIdentity(siteId, billingAccountId, output);
-      identities.set(creditAccountAdvisoryKey(identity), identity);
-    }
-    const locked = new Map<string, PreparedFulfillmentCreditAccount>();
-    for (const key of [...identities.keys()].sort((a, b) => a.localeCompare(b, "en"))) {
-      const identity = identities.get(key)!;
-      locked.set(key, Object.freeze({ identity, account: await lockCreditAccountAuthority(transaction, identity) }));
-    }
-    return locked;
-  }
 }
 
 async function loadConfirmation(

@@ -1,5 +1,5 @@
 import { readFile, readdir } from "node:fs/promises";
-import { extname, join, relative } from "node:path";
+import { dirname, extname, join, normalize, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("Platform module boundaries", () => {
@@ -14,6 +14,28 @@ describe("Platform module boundaries", () => {
       }
       if (/src\/modules\/[^/]+\/infrastructure/u.test(source) && path.includes("modules/")) {
         violations.push(path);
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  it("keeps Commerce out of sibling infrastructure and Credit-owned mutations", async () => {
+    const root = join(process.cwd(), "src");
+    const commerceRoot = join(root, "modules", "commerce");
+    const violations: string[] = [];
+    for (const file of await files(commerceRoot)) {
+      const source = await readFile(file, "utf8");
+      const path = relative(root, file);
+      for (const specifier of source.matchAll(/from\s+["']([^"']+)["']/gu)) {
+        const imported = specifier[1];
+        if (imported === undefined || !imported.startsWith(".")) continue;
+        const target = normalize(resolve(dirname(file), imported));
+        if (target.includes(`${join("modules", "credit", "infrastructure")}${process.platform === "win32" ? "\\" : "/"}`)) {
+          violations.push(`${path}: imports Credit infrastructure`);
+        }
+      }
+      if (/\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+platform\.credit_/iu.test(source)) {
+        violations.push(`${path}: mutates a Credit-owned table`);
       }
     }
     expect(violations).toEqual([]);

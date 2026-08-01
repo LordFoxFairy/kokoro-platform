@@ -3,6 +3,13 @@
 Credit owns Grant, append-only Journal, Hold/allocation and Usage/Rating authority. It does not expose mutable balance
 adjustment APIs through its Admin read plane.
 
+`application/contracts/grant-issuance.ts` is the sole same-process grant issuance port for sibling bounded contexts. Its PostgreSQL
+adapter locks the natural CreditAccount identity, returns a closed ready/unavailable result, and binds every ready capability to one
+`PlatformTransaction` and one issuance. It alone creates CreditAccount, CreditGrant and the balanced issuance Journal. Scope policy
+is revalidated and snapshotted at this owner boundary, and malformed, duplicate, empty-attribution or oversized policy dimensions
+fail before any Credit mutation. Fulfillment replay is fenced by the caller's durable fulfillment receipt before this port is entered;
+the adapter never treats a unique-constraint violation as idempotent replay.
+
 `CreditService` is also the only authority for deriving and returning a Media child allocation inside an existing GA execution
 budget root. `deriveChildAllocation` locks the exact Site/root/root-allocation head, fences the expected revision and epoch, protects
 already-reserved Segment capacity, and atomically moves exact stock from parent `unassignedStock` to
