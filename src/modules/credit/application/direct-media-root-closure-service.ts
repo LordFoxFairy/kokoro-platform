@@ -9,8 +9,11 @@ import type {
   DirectMediaRootClosureRepository,
   StoredDirectMediaRootClosure,
 } from "./contracts/direct-media-root-closure-repository.js";
-import { rehydrateBudgetAllocationRevision } from "../domain/allocation.js";
-import { planHoldRelease } from "../domain/settlement.js";
+import {
+  ExecutionRootClosureAuthority,
+  type ExecutionRootClosureCode,
+  type StoredExecutionRootClosure,
+} from "./execution-root-closure-authority.js";
 
 type ClosureInput = Parameters<DirectMediaRootClosureAuthority["close"]>[1];
 type ReferenceKind = "direct-root-closure" | "allocation-revision" | "release-journal" |
@@ -20,6 +23,7 @@ type ReferenceKind = "direct-root-closure" | "allocation-revision" | "release-jo
 export class DirectMediaRootClosureService implements DirectMediaRootClosureAuthority {
   readonly #clock: () => Date;
   readonly #reference: (kind: ReferenceKind, stableSeed: string) => string;
+  readonly #rootClosure = new ExecutionRootClosureAuthority();
 
   constructor(private readonly dependencies: Readonly<{
     repository: DirectMediaRootClosureRepository;
@@ -53,46 +57,20 @@ export class DirectMediaRootClosureService implements DirectMediaRootClosureAuth
     const raced = await this.dependencies.repository.findClosure(transaction, identity);
     if (raced.kind !== "none") return closureOutcome(raced);
     if (current === null) return Object.freeze({ kind: "not_found" as const });
-    if (current.rootState !== "open" || current.holdState !== "open" || current.allocation.state !== "active") {
-      return Object.freeze({ kind: "invalid_state" as const, code: "CREDIT_DIRECT_ROOT_NOT_OPEN" });
+    const decision = this.#rootClosure.decide(toStoredExecutionRoot(current), {
+      siteId: input.siteId,
+      sourceRef: input.operationRef,
+      budget: input.budget,
+      settlement: input.settlement,
+    });
+    if (decision.kind === "invalid_state") {
+      return Object.freeze({ kind: "invalid_state" as const, code: directMediaCode(decision.code) });
     }
-    const scopeError = closureScopeError(current, input);
-    if (scopeError !== null) return this.#reconcile(transaction, current, input, scopeError);
-    const pending = pendingCode(current);
-    if (pending !== null) return Object.freeze({ kind: "invalid_state" as const, code: pending });
-    if (current.rootVersion === POSTGRES_INT8_MAX || current.holdFenceEpoch === POSTGRES_INT8_MAX ||
-        current.allocation.revision === POSTGRES_INT8_MAX ||
-        current.allocation.allocationEpoch === POSTGRES_INT8_MAX) {
-      return Object.freeze({ kind: "invalid_state" as const, code: "CREDIT_DIRECT_ROOT_FENCE_EXHAUSTED" });
+    if (decision.kind === "reconciliation_required") {
+      return this.#reconcile(transaction, current, input, directMediaCode(decision.code));
     }
-    const releasedAmount = current.allocation.unassignedStock;
-    const capturedAmount = current.allocation.capturedCumulative;
-    if (capturedAmount !== input.settlement.customerAmount ||
-        capturedAmount !== current.settlement.customerAmount || capturedAmount !== current.holdCapturedAmount ||
-        capturedAmount + releasedAmount !== input.budget.reservedCeiling ||
-        current.holdCapturedAmount + current.holdReleasedAmount + releasedAmount !== current.holdReservedAmount) {
-      return this.#reconcile(transaction, current, input, "CREDIT_DIRECT_ROOT_RATING_MISMATCH");
-    }
-    const holdAllocated = current.holdAllocations.reduce((total, source) => total + source.allocatedAmount, 0n);
-    const holdCaptured = current.holdAllocations.reduce((total, source) => total + source.netCustomerAmount, 0n);
-    if (holdAllocated !== current.holdReservedAmount || holdCaptured !== capturedAmount) {
-      return this.#reconcile(transaction, current, input, "CREDIT_DIRECT_ROOT_HOLD_SOURCE_MISMATCH");
-    }
-    let releases;
-    try { releases = planHoldRelease(current.holdAllocations, releasedAmount); } catch {
-      return this.#reconcile(transaction, current, input, "CREDIT_DIRECT_ROOT_HOLD_SOURCE_MISMATCH");
-    }
-    if (releases.reduce((total, release) => total + release.amount, 0n) !== releasedAmount) {
-      return this.#reconcile(transaction, current, input, "CREDIT_DIRECT_ROOT_HOLD_SOURCE_MISMATCH");
-    }
-    const allocation = rehydrateBudgetAllocationRevision(Object.freeze({
-      ...current.allocation,
-      revision: current.allocation.revision + 1n,
-      allocationEpoch: current.allocation.allocationEpoch + 1n,
-      unassignedStock: 0n,
-      returnedToParentCumulative: current.allocation.returnedToParentCumulative + releasedAmount,
-      state: "terminal" as const,
-    }));
+    const { allocation, rootState, rootVersion, holdState, holdFenceEpoch,
+      capturedAmount, releasedAmount, releases } = decision.value;
     const recordedAt = now(this.#clock());
     const receiptRef = this.#reference("direct-root-closure", input.businessOperationKey);
     const receiptBase = Object.freeze({ allocationClosureReceiptRef: receiptRef,
@@ -116,9 +94,7 @@ export class DirectMediaRootClosureService implements DirectMediaRootClosureAuth
     return closureOutcome(await this.dependencies.repository.persistClosure(transaction, Object.freeze({
       identity, current, allocation,
       allocationRevisionRef: this.#reference("allocation-revision", input.businessOperationKey),
-      rootState: "settled" as const, rootVersion: current.rootVersion + 1n,
-      holdState: capturedAmount === 0n ? "released" as const : "settled" as const,
-      holdFenceEpoch: current.holdFenceEpoch + 1n, capturedAmount, releasedAmount,
+      rootState, rootVersion, holdState, holdFenceEpoch, capturedAmount, releasedAmount,
       releases,
       releaseJournalTransactionRef: releasedAmount === 0n ? null
         : this.#reference("release-journal", input.businessOperationKey),
@@ -165,32 +141,6 @@ function closureCommand(input: ClosureInput) {
       platformExposureAmount: input.settlement.platformExposureAmount }) });
 }
 
-function closureScopeError(current: StoredDirectMediaRootClosure, input: ClosureInput): string | null {
-  const budget = input.budget;
-  const settlement = current.settlement;
-  const operationBudget = current.operationBudget;
-  if (current.siteId !== input.siteId || current.operationRef !== input.operationRef ||
-      current.executionBudgetRootRef !== budget.executionBudgetRootRef ||
-      current.creditHoldRef !== budget.rootHoldRef || current.rootAllocationRef !== budget.rootAllocationRef ||
-      current.allocation.creditCeiling !== budget.reservedCeiling || current.holdReservedAmount !== budget.reservedCeiling ||
-      operationBudget.executionManifestRef !== budget.executionManifestRef ||
-      operationBudget.rootAllocationRevision !== budget.rootAllocationRevision ||
-      operationBudget.rootAllocationEpoch !== budget.rootAllocationEpoch ||
-      operationBudget.authorizationSegmentVersion !== budget.authorizationSegmentVersion ||
-      operationBudget.reservedCeiling !== budget.reservedCeiling || operationBudget.unit !== budget.unit ||
-      settlement.settlementRef !== input.settlement.settlementRef ||
-      settlement.authorizationSegmentRef !== budget.authorizationSegmentRef ||
-      settlement.executionBudgetRootRef !== budget.executionBudgetRootRef ||
-      settlement.budgetAllocationRef !== budget.rootAllocationRef || settlement.creditHoldRef !== budget.rootHoldRef ||
-      settlement.unit !== budget.unit || settlement.closureRef !== input.settlement.closureRef ||
-      settlement.closureRevision !== input.settlement.closureRevision ||
-      settlement.customerAmount !== input.settlement.customerAmount ||
-      settlement.platformExposureAmount !== input.settlement.platformExposureAmount) {
-    return "CREDIT_DIRECT_ROOT_AUTHORITY_MISMATCH";
-  }
-  return null;
-}
-
 function closureOutcome(input:
   | Readonly<{ kind: "conflict"; code: "REQUEST_DIGEST_CONFLICT" }>
   | Readonly<{ kind: "reconciliation_required"; reconciliationReceiptRef: string; code: string }>
@@ -201,17 +151,6 @@ function closureOutcome(input:
     capturedAmount: input.value.capturedAmount,
     releasedAmount: input.value.releasedAmount,
   }) });
-}
-
-function pendingCode(current: StoredDirectMediaRootClosure): string | null {
-  if (current.openChildCount !== 0n || current.allocation.activeChildReservedStock !== 0n) {
-    return "CREDIT_DIRECT_ROOT_CHILD_PENDING";
-  }
-  if (current.openSegmentCount !== 0n || current.allocation.committedStock !== 0n) {
-    return "CREDIT_DIRECT_ROOT_SEGMENT_PENDING";
-  }
-  if (current.openAttemptCount !== 0n) return "CREDIT_DIRECT_ROOT_ATTEMPT_PENDING";
-  return null;
 }
 
 function validateInput(input: ClosureInput): void {
@@ -282,4 +221,42 @@ function reference(value: string): void {
 function digest(value: string): void {
   if (!/^[a-f0-9]{64}$/u.test(value)) throw new Error("CREDIT_DIRECT_ROOT_DIGEST_INVALID");
 }
-const POSTGRES_INT8_MAX = 9_223_372_036_854_775_807n;
+
+function toStoredExecutionRoot(current: StoredDirectMediaRootClosure): StoredExecutionRootClosure {
+  return Object.freeze({
+    siteId: current.siteId,
+    sourceRef: current.operationRef,
+    executionBudgetRootRef: current.executionBudgetRootRef,
+    rootState: current.rootState,
+    rootVersion: current.rootVersion,
+    creditHoldRef: current.creditHoldRef,
+    holdState: current.holdState,
+    holdFenceEpoch: current.holdFenceEpoch,
+    holdReservedAmount: current.holdReservedAmount,
+    holdCapturedAmount: current.holdCapturedAmount,
+    holdReleasedAmount: current.holdReleasedAmount,
+    rootAllocationRef: current.rootAllocationRef,
+    sourceBudget: current.operationBudget,
+    allocation: current.allocation,
+    openChildCount: current.openChildCount,
+    openSegmentCount: current.openSegmentCount,
+    openAttemptCount: current.openAttemptCount,
+    settlement: current.settlement,
+    holdAllocations: current.holdAllocations,
+  });
+}
+
+const DIRECT_MEDIA_CODES: Readonly<Record<ExecutionRootClosureCode, string>> = Object.freeze({
+  ROOT_NOT_OPEN: "CREDIT_DIRECT_ROOT_NOT_OPEN",
+  SOURCE_AUTHORITY_MISMATCH: "CREDIT_DIRECT_ROOT_AUTHORITY_MISMATCH",
+  CHILD_PENDING: "CREDIT_DIRECT_ROOT_CHILD_PENDING",
+  SEGMENT_PENDING: "CREDIT_DIRECT_ROOT_SEGMENT_PENDING",
+  ATTEMPT_PENDING: "CREDIT_DIRECT_ROOT_ATTEMPT_PENDING",
+  FENCE_EXHAUSTED: "CREDIT_DIRECT_ROOT_FENCE_EXHAUSTED",
+  RATING_MISMATCH: "CREDIT_DIRECT_ROOT_RATING_MISMATCH",
+  HOLD_SOURCE_MISMATCH: "CREDIT_DIRECT_ROOT_HOLD_SOURCE_MISMATCH",
+});
+
+function directMediaCode(code: ExecutionRootClosureCode): string {
+  return DIRECT_MEDIA_CODES[code];
+}

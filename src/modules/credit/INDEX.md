@@ -41,6 +41,11 @@ evolved settlement closure separately, and closes the root through closed bounde
 recomputes request, closure-receipt and release-journal digests; reconciliation cannot regress terminal facts or reuse a receipt UUID
 as an allocation revision UUID.
 
+`ExecutionRootClosureAuthority` is the source-neutral Credit policy for terminal root, root-allocation and Hold conservation.
+It decides from locked Credit and Rating facts only: source-specific terminal proof, receipt encoding and database fencing stay in
+adapters. The Media adapter maps that one decision into its existing worker-lease and security-definer protocol; it does not own a
+second release planner. Agent/Admission integration must use this same authority rather than introduce another financial mutation.
+
 The Postgres repository reuses the branded
 `PlatformTransaction`, existing allocation lineage/conservation triggers, reservation/return receipt tables, and local operation
 receipts. Child allocation commands do not emit an outbox event because no routed consumer exists for those events. The repository

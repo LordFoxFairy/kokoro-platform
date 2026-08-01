@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { DirectMediaRootClosureService } from
   "../../src/modules/credit/application/direct-media-root-closure-service.js";
+import { ExecutionRootClosureAuthority } from
+  "../../src/modules/credit/application/execution-root-closure-authority.js";
 import { deriveDirectMediaRootClosureRequestDigest, type DirectMediaRootClosureAuthority } from
   "../../src/modules/credit/application/media-budget-finalization-service.js";
 import type {
@@ -303,6 +305,40 @@ describe("Credit direct Media root closure", () => {
         .rejects.toThrow("CREDIT_DIRECT_ROOT_REQUEST_DIGEST_INVALID");
       expect(repository.findClosure).not.toHaveBeenCalled();
     } finally { revokePlatformTransaction(lease); }
+  });
+
+  it("plans the same conserved closure for a non-Media terminal source", () => {
+    const media = openRoot();
+    const decision = new ExecutionRootClosureAuthority().decide({
+      siteId: media.siteId,
+      sourceRef: "agent-run:one",
+      executionBudgetRootRef: media.executionBudgetRootRef,
+      rootState: media.rootState,
+      rootVersion: media.rootVersion,
+      creditHoldRef: media.creditHoldRef,
+      holdState: media.holdState,
+      holdFenceEpoch: media.holdFenceEpoch,
+      holdReservedAmount: media.holdReservedAmount,
+      holdCapturedAmount: media.holdCapturedAmount,
+      holdReleasedAmount: media.holdReleasedAmount,
+      rootAllocationRef: media.rootAllocationRef,
+      sourceBudget: media.operationBudget,
+      allocation: media.allocation,
+      openChildCount: media.openChildCount,
+      openSegmentCount: media.openSegmentCount,
+      openAttemptCount: media.openAttemptCount,
+      settlement: media.settlement,
+      holdAllocations: media.holdAllocations,
+    }, {
+      siteId: media.siteId,
+      sourceRef: "agent-run:one",
+      budget: command().budget,
+      settlement: command().settlement,
+    });
+    expect(decision).toMatchObject({ kind: "ready", value: {
+      rootState: "settled", holdState: "settled", capturedAmount: 25n, releasedAmount: 75n,
+      allocation: { state: "terminal", unassignedStock: 0n },
+    } });
   });
 });
 
