@@ -32,12 +32,6 @@ export type {
   ArtifactVersionState,
 } from "./domain/artifact.js";
 export {
-  InMemoryArtifactDeliveryAuthorizationRepository,
-  InMemoryArtifactDeliveryAuditRepository,
-  InMemoryArtifactObjectStore,
-} from "./infrastructure/dev/in-memory-artifact-adapters.js";
-
-export {
   ARTIFACT_PUBLIC_OPERATION_IDS,
   createArtifactPublicApplicationOperations,
   createArtifactPublicOperations,

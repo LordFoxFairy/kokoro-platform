@@ -3,11 +3,13 @@ import { describe, expect, it } from "vitest";
 import {
   ArtifactDeliveryService,
   ArtifactDeliveryCapabilityCodec,
+  type ArtifactObjectStore,
+} from "../../src/modules/artifact/index.js";
+import {
   InMemoryArtifactDeliveryAuditRepository,
   InMemoryArtifactDeliveryAuthorizationRepository,
   InMemoryArtifactObjectStore,
-  type ArtifactObjectStore,
-} from "../../src/modules/artifact/index.js";
+} from "../../src/modules/artifact/infrastructure/dev/in-memory-artifact-adapters.js";
 
 const ownerScope = Object.freeze({
   siteRef: "site:one", subjectRef: "subject:one", subjectGeneration: 3n, projectRef: "project:one",

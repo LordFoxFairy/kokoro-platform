@@ -3,10 +3,12 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ArtifactDeliveryService,
   ArtifactDeliveryCapabilityCodec,
+} from "../../src/modules/artifact/index.js";
+import {
   InMemoryArtifactDeliveryAuditRepository,
   InMemoryArtifactDeliveryAuthorizationRepository,
   InMemoryArtifactObjectStore,
-} from "../../src/modules/artifact/index.js";
+} from "../../src/modules/artifact/infrastructure/dev/in-memory-artifact-adapters.js";
 
 const scope = Object.freeze({
   siteRef: "site:one",

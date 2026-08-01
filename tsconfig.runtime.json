@@ -16,5 +16,8 @@
     "src/process/**/*.ts",
     "prisma.config.ts"
   ],
-  "exclude": ["**/*.test.ts"]
+  "exclude": [
+    "**/*.test.ts",
+    "src/modules/**/infrastructure/dev/**/*.ts"
+  ]
 }

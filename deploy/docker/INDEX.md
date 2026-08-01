@@ -25,7 +25,8 @@ The image owns no data; runtime modules own schemas/migrations and external stor
 ## Runtime and security
 The multi-stage build installs full dependencies only in the build stage, compiles each runnable package, installs production dependencies in an isolated stage, and assembles a non-root runtime image without source or test trees. A build-time verifier rejects development toolchains such as TypeScript, tsx, Vitest, Vite, and ESLint from the final image. The fixed runtime entrypoint maps `KOKORO_SERVICE_PACKAGE` only to known compiled service entries; it does not evaluate arbitrary module paths. `@kokoro/hub` and `platform-hub-connect` select distinct compiled Hub HTTP and Connect mains from the same artifact.
 The verifier also requires the compiled Platform API runtime contract, production composition and
-stable secret-file reader, so the API cannot be released with only its process entrypoint present.
+stable secret-file reader, so the API cannot be released with only its process entrypoint present. Before TypeScript emission,
+the compiler-graph gate proves that every module `infrastructure/dev` source is excluded and fails if production code imports one.
 
 ## Idempotency, failure, and recovery
 The same commit/lock inputs must produce a traceable artifact; release rollback selects a previous verified digest.

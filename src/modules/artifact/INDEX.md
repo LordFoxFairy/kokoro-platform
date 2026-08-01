@@ -11,7 +11,8 @@ security epoch. Every accepted replay creates a distinct durable redemption audi
 stored in audit records. The public contract currently has no HEAD or ETag field, so only GET 200/206/416 is emitted; the S3
 adapter still uses private HEAD + `If-Match` and content-digest checks as its integrity fence.
 
-`infrastructure/dev` contains deterministic in-memory adapters for tests and explicit local development only. Production
+`infrastructure/dev` contains deterministic in-memory adapters for tests and explicit local development only. They are not
+re-exported by the module's production barrel and are excluded from the production TypeScript compiler graph. Production
 composition must use durable PostgreSQL authorization state and a private object-store adapter and must reject these fakes.
 
 The S3-compatible adapter promotes to an immutable ready key with conditional writes, then opens that exact version through
