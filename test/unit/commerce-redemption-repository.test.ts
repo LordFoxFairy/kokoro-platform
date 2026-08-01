@@ -14,8 +14,8 @@ describe("PostgresRedemptionRepository preview", () => {
   it("uses snake-case HMAC lookup DTOs and expands frozen output cardinality", async () => {
     const calls: { statement: string; values: readonly unknown[] }[] = [];
     const outputRows = [
-      { outputLineId: "term", outputKind: "subscription_term" as const, ordinal: 1, cardinality: 1, planVersionRef: "plan-v1", creditProgramRevisionRef: null, creditProgramRevisionVersion: null, creditProgramRevisionDigest: null, bucketClass: null, unit: null, amount: null, creditExpiresAfterSeconds: null, entitlementTemplateRevisionRef: null, capabilityKey: null, safeLabel: null, entitlementExpiresAfterSeconds: null },
-      { outputLineId: "credits", outputKind: "credit_grant" as const, ordinal: 2, cardinality: 2, planVersionRef: null, creditProgramRevisionRef: "credit-v1", creditProgramRevisionVersion: 1n, creditProgramRevisionDigest: "c".repeat(64), bucketClass: "permanent" as const, unit: "credit", amount: "100", creditExpiresAfterSeconds: null, entitlementTemplateRevisionRef: null, capabilityKey: null, safeLabel: null, entitlementExpiresAfterSeconds: null },
+      { outputLineId: "term", outputKind: "subscription_term" as const, ordinal: 1, cardinality: 1, ownerRevision: 1n, ownerRevisionDigest: "d".repeat(64), planVersionRef: "plan-v1", creditProgramRevisionRef: null, creditProgramRevisionVersion: null, creditProgramRevisionDigest: null, bucketClass: null, unit: null, amount: null, creditExpiresAfterSeconds: null, entitlementTemplateRevisionRef: null, capabilityKey: null, safeLabel: null, entitlementExpiresAfterSeconds: null },
+      { outputLineId: "credits", outputKind: "credit_grant" as const, ordinal: 2, cardinality: 2, ownerRevision: 1n, ownerRevisionDigest: "c".repeat(64), planVersionRef: null, creditProgramRevisionRef: "credit-v1", creditProgramRevisionVersion: 1n, creditProgramRevisionDigest: "c".repeat(64), bucketClass: "permanent" as const, unit: "credit", amount: "100", creditExpiresAfterSeconds: null, entitlementTemplateRevisionRef: null, capabilityKey: null, safeLabel: null, entitlementExpiresAfterSeconds: null },
     ];
     const outputPlanDigest = publishedFulfillmentOutputPlanDigest({
       siteId: "site-1",
@@ -83,6 +83,7 @@ describe("PostgresRedemptionRepository preview", () => {
     async (bucketClass) => {
       const outputRows = [{
         outputLineId: "credits", outputKind: "credit_grant" as const, ordinal: 1, cardinality: 1,
+        ownerRevision: 1n, ownerRevisionDigest: "c".repeat(64),
         planVersionRef: null, creditProgramRevisionRef: "credit-v1", creditProgramRevisionVersion: 1n,
         creditProgramRevisionDigest: "c".repeat(64), bucketClass, unit: "credit",
         amount: "100", creditExpiresAfterSeconds: 86400n, entitlementTemplateRevisionRef: null,

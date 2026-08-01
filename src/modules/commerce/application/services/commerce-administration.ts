@@ -102,12 +102,11 @@ export class CommerceAdministrationService {
       outputs, legalTermRefs,
     });
     const offerDigest = digest({ version: 1, ...payload });
-    const outputPlanDigest = digest({ version: 1, outputs });
     const command = commandIdentity(input, actor.subjectId, "commerce.offer.publish", offerDigest);
     const result = await this.dependencies.unitOfWork.execute(
       { context: input.context, operation: command.operation },
       (transaction) => this.dependencies.repository.publishOffer(transaction, {
-        ...actor, command, ...payload, offerDigest, outputPlanDigest,
+        ...actor, command, ...payload, offerDigest,
         planVersion: planVersion === null ? null : {
           ...planVersion, revisionDigest: digest({ version: 1, ...planVersion }),
         },

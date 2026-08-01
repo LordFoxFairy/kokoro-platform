@@ -226,6 +226,7 @@ CREATE TABLE platform.credit_grant_program_revision (
   UNIQUE(site_ref,program_ref,revision),
   UNIQUE(site_ref,revision_digest),
   UNIQUE(credit_program_revision_ref,site_ref),
+  UNIQUE(credit_program_revision_ref,site_ref,revision,revision_digest),
   CHECK(
     (ux_bucket_class='permanent' AND window_kind='none'
       AND calendar_zone IS NULL AND window_anchor IS NULL AND expires_after_seconds IS NULL)
@@ -271,7 +272,8 @@ CREATE TABLE platform.commerce_fulfillment_program_revision (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(site_ref,program_ref,revision),
   UNIQUE(site_ref,output_plan_digest),
-  UNIQUE(fulfillment_program_revision_ref,site_ref)
+  UNIQUE(fulfillment_program_revision_ref,site_ref),
+  UNIQUE(fulfillment_program_revision_ref,site_ref,revision,output_plan_digest)
 );
 
 CREATE TABLE platform.commerce_fulfillment_program_output (
@@ -686,6 +688,8 @@ CREATE TABLE platform.credit_grant (
   site_ref TEXT NOT NULL,
   billing_account_ref TEXT NOT NULL,
   credit_program_revision_ref TEXT NOT NULL,
+  credit_program_revision BIGINT NOT NULL CHECK(credit_program_revision > 0),
+  credit_program_revision_digest CHAR(64) NOT NULL CHECK(credit_program_revision_digest ~ '^[a-f0-9]{64}$'),
   source_type TEXT NOT NULL CHECK(source_type IN ('redemption','payment','admin_grant','program_window')),
   source_ref TEXT NOT NULL CHECK(length(source_ref) BETWEEN 1 AND 256),
   source_window_key TEXT NOT NULL DEFAULT '' CHECK(length(source_window_key) <= 256),
@@ -707,8 +711,10 @@ CREATE TABLE platform.credit_grant (
     REFERENCES platform.credit_account(
       credit_account_ref,site_ref,billing_account_ref,unit,liability_merchant_account_ref
     ),
-  FOREIGN KEY(credit_program_revision_ref,site_ref)
-    REFERENCES platform.credit_grant_program_revision(credit_program_revision_ref,site_ref),
+  FOREIGN KEY(credit_program_revision_ref,site_ref,credit_program_revision,credit_program_revision_digest)
+    REFERENCES platform.credit_grant_program_revision(
+      credit_program_revision_ref,site_ref,revision,revision_digest
+    ),
   CHECK((ux_bucket_class='permanent' AND expires_at IS NULL) OR (ux_bucket_class<>'permanent' AND expires_at IS NOT NULL)),
   CHECK(expires_at IS NULL OR expires_at > effective_at)
 );
@@ -1163,17 +1169,21 @@ CREATE TABLE platform.commerce_fulfillment_transaction (
   purpose TEXT NOT NULL,
   cycle_key TEXT NOT NULL,
   idempotency_key CHAR(64) NOT NULL UNIQUE CHECK(idempotency_key ~ '^[a-f0-9]{64}$'),
+  source_version BIGINT NOT NULL CHECK(source_version > 0),
+  source_digest CHAR(64) NOT NULL CHECK(source_digest ~ '^[a-f0-9]{64}$'),
+  acquired_at TIMESTAMPTZ NOT NULL,
   product_version_ref TEXT NOT NULL,
   plan_version_ref TEXT,
   offering_version_ref TEXT NOT NULL,
-  fulfillment_program_version_ref TEXT NOT NULL,
-  output_plan_digest CHAR(64) NOT NULL CHECK (output_plan_digest ~ '^[a-f0-9]{64}$'),
-  acquisition_snapshot_digest CHAR(64) NOT NULL CHECK(acquisition_snapshot_digest ~ '^[a-f0-9]{64}$'),
+  fulfillment_program_revision_ref TEXT NOT NULL,
+  fulfillment_program_revision BIGINT NOT NULL CHECK(fulfillment_program_revision > 0),
+  fulfillment_program_digest CHAR(64) NOT NULL CHECK(fulfillment_program_digest ~ '^[a-f0-9]{64}$'),
   pricing_snapshot_ref TEXT CHECK(pricing_snapshot_ref IS NULL OR length(pricing_snapshot_ref) BETWEEN 1 AND 256),
-  output_set_digest CHAR(64) CHECK (output_set_digest IS NULL OR output_set_digest ~ '^[a-f0-9]{64}$'),
-  result_digest CHAR(64) CHECK (result_digest IS NULL OR result_digest ~ '^[a-f0-9]{64}$'),
-  status TEXT NOT NULL CHECK (status IN ('running','succeeded','failed')),
-  completed_at TIMESTAMPTZ,
+  output_set_digest CHAR(64) NOT NULL CHECK(output_set_digest ~ '^[a-f0-9]{64}$'),
+  state TEXT NOT NULL CHECK(state='committed'),
+  transaction_version BIGINT NOT NULL CHECK(transaction_version=1),
+  transaction_digest CHAR(64) NOT NULL CHECK(transaction_digest ~ '^[a-f0-9]{64}$'),
+  committed_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(site_ref,source_type,source_id,purpose,cycle_key),
   UNIQUE(fulfillment_id,site_ref),
@@ -1181,10 +1191,11 @@ CREATE TABLE platform.commerce_fulfillment_transaction (
     REFERENCES platform.commerce_command(command_id,site_ref),
   FOREIGN KEY(billing_account_ref,site_ref)
     REFERENCES platform.commerce_billing_account(billing_account_ref,site_ref),
-  CHECK (
-    (status='running' AND output_set_digest IS NULL AND result_digest IS NULL AND completed_at IS NULL)
-    OR (status IN ('succeeded','failed') AND output_set_digest IS NOT NULL AND result_digest IS NOT NULL AND completed_at IS NOT NULL)
-  ),
+  FOREIGN KEY(fulfillment_program_revision_ref,site_ref,fulfillment_program_revision,fulfillment_program_digest)
+    REFERENCES platform.commerce_fulfillment_program_revision(
+      fulfillment_program_revision_ref,site_ref,revision,output_plan_digest
+    ),
+  CHECK(committed_at >= acquired_at),
   CHECK(source_type<>'payment' OR pricing_snapshot_ref IS NOT NULL)
 );
 CREATE INDEX commerce_fulfillment_account_idx
@@ -1229,6 +1240,7 @@ CREATE TABLE platform.commerce_fulfillment_actual_output (
   output_digest CHAR(64) NOT NULL CHECK(output_digest ~ '^[a-f0-9]{64}$'),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY(fulfillment_id,output_line_id,occurrence),
+  UNIQUE(fulfillment_id,output_ref),
   UNIQUE(fulfillment_id,output_kind,output_ref,output_version,output_digest),
   CHECK (occurrence BETWEEN 1 AND cardinality),
   FOREIGN KEY(fulfillment_id,output_line_id,output_ordinal,cardinality,template_revision,output_kind)
@@ -1266,14 +1278,16 @@ CREATE FUNCTION platform.assert_commerce_output_plan_contiguous() RETURNS TRIGGE
 LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
 DECLARE
   line_count INTEGER;
+  total_cardinality INTEGER;
   min_ordinal INTEGER;
   max_ordinal INTEGER;
 BEGIN
-  SELECT count(*),min(ordinal),max(ordinal)
-    INTO line_count,min_ordinal,max_ordinal
+  SELECT count(*),COALESCE(sum(cardinality),0),min(ordinal),max(ordinal)
+    INTO line_count,total_cardinality,min_ordinal,max_ordinal
   FROM platform.commerce_fulfillment_output_plan
   WHERE fulfillment_id=NEW.fulfillment_id;
-  IF line_count < 1 OR line_count > 32 OR min_ordinal <> 1 OR max_ordinal <> line_count THEN
+  IF line_count < 1 OR line_count > 32 OR total_cardinality < 1 OR total_cardinality > 32
+     OR min_ordinal <> 1 OR max_ordinal <> line_count THEN
     RAISE EXCEPTION 'OUTPUT_ORDINAL_NOT_CONTINUOUS' USING ERRCODE='23514';
   END IF;
   RETURN NULL;
@@ -1293,31 +1307,10 @@ BEGIN
   RETURN NEW;
 END $$;
 
-CREATE FUNCTION platform.guard_commerce_fulfillment_transition() RETURNS TRIGGER
+CREATE FUNCTION platform.assert_commerce_fulfillment_committed() RETURNS TRIGGER
 LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
 BEGIN
-  IF TG_OP='INSERT' THEN
-    IF NEW.status<>'running' OR NEW.output_set_digest IS NOT NULL OR NEW.result_digest IS NOT NULL OR NEW.completed_at IS NOT NULL THEN
-      RAISE EXCEPTION 'FULFILLMENT_INITIAL_STATE_INVALID' USING ERRCODE='23514';
-    END IF;
-    RETURN NEW;
-  END IF;
-  IF OLD.status <> 'running' OR NEW.status NOT IN ('succeeded','failed') THEN
-    RAISE EXCEPTION 'FULFILLMENT_STATUS_TRANSITION_INVALID' USING ERRCODE='23514';
-  END IF;
-  IF ROW(OLD.fulfillment_id,OLD.command_id,OLD.site_ref,OLD.billing_account_ref,OLD.source_type,OLD.source_id,OLD.purpose,
-         OLD.cycle_key,OLD.idempotency_key,OLD.product_version_ref,OLD.plan_version_ref,OLD.offering_version_ref,
-         OLD.fulfillment_program_version_ref,OLD.output_plan_digest,OLD.acquisition_snapshot_digest,
-         OLD.pricing_snapshot_ref,OLD.created_at)
-     IS DISTINCT FROM
-     ROW(NEW.fulfillment_id,NEW.command_id,NEW.site_ref,NEW.billing_account_ref,NEW.source_type,NEW.source_id,NEW.purpose,
-         NEW.cycle_key,NEW.idempotency_key,NEW.product_version_ref,NEW.plan_version_ref,NEW.offering_version_ref,
-         NEW.fulfillment_program_version_ref,NEW.output_plan_digest,NEW.acquisition_snapshot_digest,
-         NEW.pricing_snapshot_ref,NEW.created_at) THEN
-    RAISE EXCEPTION 'FULFILLMENT_IDENTITY_IMMUTABLE' USING ERRCODE='23000';
-  END IF;
-  IF NEW.status='succeeded' AND (
-    NOT EXISTS (
+  IF NEW.state<>'committed' OR NEW.transaction_version<>1 OR NOT EXISTS (
       SELECT 1 FROM platform.commerce_fulfillment_output_plan
       WHERE fulfillment_id=NEW.fulfillment_id
     ) OR EXISTS (
@@ -2171,6 +2164,9 @@ CREATE TRIGGER commerce_output_plan_immutable
 CREATE TRIGGER commerce_actual_output_immutable
   BEFORE UPDATE OR DELETE ON platform.commerce_fulfillment_actual_output
   FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE TRIGGER commerce_fulfillment_transaction_immutable
+  BEFORE UPDATE OR DELETE ON platform.commerce_fulfillment_transaction
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
 CREATE TRIGGER commerce_plan_version_immutable
   BEFORE UPDATE OR DELETE ON platform.commerce_catalog_plan_version
   FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
@@ -2223,9 +2219,10 @@ CREATE CONSTRAINT TRIGGER commerce_output_plan_contiguous
 CREATE TRIGGER commerce_command_update_guard
   BEFORE UPDATE ON platform.commerce_command
   FOR EACH ROW EXECUTE FUNCTION platform.guard_commerce_command_update();
-CREATE TRIGGER commerce_fulfillment_transition
-  BEFORE INSERT OR UPDATE ON platform.commerce_fulfillment_transaction
-  FOR EACH ROW EXECUTE FUNCTION platform.guard_commerce_fulfillment_transition();
+CREATE CONSTRAINT TRIGGER commerce_fulfillment_committed
+  AFTER INSERT ON platform.commerce_fulfillment_transaction
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION platform.assert_commerce_fulfillment_committed();
 CREATE TRIGGER commerce_code_transition
   BEFORE UPDATE ON platform.commerce_redeem_code
   FOR EACH ROW EXECUTE FUNCTION platform.guard_commerce_code_transition();
@@ -2404,7 +2401,7 @@ REVOKE ALL ON FUNCTION platform.commerce_iana_zone_is_valid(TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.reject_commerce_immutable_mutation() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.assert_commerce_output_plan_contiguous() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.guard_commerce_command_update() FROM PUBLIC;
-REVOKE ALL ON FUNCTION platform.guard_commerce_fulfillment_transition() FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.assert_commerce_fulfillment_committed() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.guard_commerce_code_transition() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.guard_commerce_preview_transition() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.assert_credit_journal_transaction_balanced() FROM PUBLIC;

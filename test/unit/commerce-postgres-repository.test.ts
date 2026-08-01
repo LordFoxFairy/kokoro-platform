@@ -47,7 +47,7 @@ describe("PostgresCommerceRepository", () => {
       const lease = issuePlatformTransaction(sql);
       try {
         await expect(new PostgresCommerceRepository().claimCommand(lease.transaction, identity)).rejects.toThrow(
-          conflict === "command" ? "COMMAND_IDENTITY_CONFLICT" : "IDEMPOTENCY_CONFLICT",
+          "IDEMPOTENCY_CONFLICT",
         );
         expect(statements.some((statement) => statement.includes("commerce_command"))).toBe(false);
       } finally { revokePlatformTransaction(lease); }
@@ -58,9 +58,12 @@ describe("PostgresCommerceRepository", () => {
     const statements: string[] = [];
     const lease = issuePlatformTransaction({ query: async () => [], execute: async (statement) => { statements.push(statement); return 1; } });
     try {
-      await expect(new PostgresCommerceRepository().recordExpectedOutputPlan(lease.transaction, "00000000-0000-7000-8000-000000000001", [
-        { outputLineId: "first", ordinal: 2, cardinality: 1, templateRevision: "v1", outputKind: "credit_grant", disposition: "required" },
-      ])).rejects.toThrow("OUTPUT_ORDINAL_NOT_CONTINUOUS");
+      await expect(new PostgresCommerceRepository().commitFulfillment(lease.transaction, {
+        claim: {} as never,
+        plan: [{ outputLineId: "first", ordinal: 2, cardinality: 1, templateRevision: "v1",
+          outputKind: "credit_grant", disposition: "required" }],
+        outputs: [],
+      })).rejects.toThrow("OUTPUT_ORDINAL_NOT_CONTINUOUS");
       expect(statements).toEqual([]);
     } finally { revokePlatformTransaction(lease); }
   });

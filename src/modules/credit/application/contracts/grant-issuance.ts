@@ -42,6 +42,8 @@ export type CreditGrantIssue = Readonly<{
   outputOrdinal: number;
   occurrence: number;
   creditProgramRevisionRef: string;
+  creditProgramRevision: bigint;
+  creditProgramRevisionDigest: string;
   sourceType: CreditGrantSourceType;
   sourceRef: string;
   businessOperationKey: string;

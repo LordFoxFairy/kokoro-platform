@@ -73,6 +73,7 @@ type ProgramConfirmationRow = Record<string, unknown> & {
   planVersionRef: string | null;
   productRevisionDigest: string;
   fulfillmentProgramRevisionRef: string;
+  fulfillmentProgramRevision: bigint | string;
   outputPlanDigest: string;
   stackingScope: string | null;
   termAction: RedemptionSafeTerms["term"]["action"] | null;
@@ -82,8 +83,7 @@ type ProgramConfirmationRow = Record<string, unknown> & {
 type OutputRow = Record<string, unknown> & FulfillmentOutputDefinition;
 
 type CommerceFulfillmentWriter = Pick<CommerceRepository,
-  "claimFulfillment" | "recordExpectedOutputPlan" | "recordActualOutputs" |
-  "completeFulfillment" | "linkOutboxEvent" | "recordAudit">;
+  "claimFulfillment" | "commitFulfillment" | "linkOutboxEvent" | "recordAudit">;
 
 type Dependencies = Readonly<{
   creditGrants: CreditGrantIssuancePort;
@@ -242,11 +242,15 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
         grants: outputs.flatMap((output) => output.outputKind !== "credit_grant" ? [] :
           Array.from({ length: output.cardinality }, (_, index) => {
             if (output.creditProgramRevisionRef === null || output.bucketClass === null || output.amount === null ||
+                output.creditProgramRevisionVersion === null || output.creditProgramRevisionDigest === null ||
                 output.burnPriority === null || output.scopePolicy === null) throw new Error("REDEMPTION_OUTPUT_INVALID");
             const occurrence = index + 1;
             return Object.freeze({ account: fulfillmentCreditAccountIdentity(input.siteId, preview.billingAccountId, output),
               outputLineId: output.outputLineId, outputOrdinal: output.ordinal, occurrence,
-              creditProgramRevisionRef: output.creditProgramRevisionRef, sourceType: "redemption" as const,
+              creditProgramRevisionRef: output.creditProgramRevisionRef,
+              creditProgramRevision: output.creditProgramRevisionVersion,
+              creditProgramRevisionDigest: output.creditProgramRevisionDigest,
+              sourceType: "redemption" as const,
               sourceRef: `${source.idempotencyKey}:${output.outputLineId}:${occurrence}`,
               businessOperationKey: `fulfillment:${source.idempotencyKey}:${output.outputLineId}:${occurrence}`,
               bucketClass: output.bucketClass, amount: output.amount, burnPriority: output.burnPriority,
@@ -326,9 +330,8 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
       productVersionRef: safeTerms.productVersionRef,
       planVersionRef: safeTerms.planVersionRef,
       offeringVersionRef: preview.redemptionProgramRevisionRef,
-      fulfillmentProgramVersionRef: preview.fulfillmentProgramRevisionRef,
-      outputPlanDigest: preview.outputPlanDigest,
-      acquisitionSnapshotDigest: digest({
+      sourceVersion: 1n,
+      sourceDigest: digest({
         version: 1,
         sourceType: "redemption",
         productRevisionDigest: preview.productRevisionDigest,
@@ -336,6 +339,10 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
         outputPlanDigest: preview.outputPlanDigest,
         safeTerms,
       }),
+      acquiredAt: effectAt,
+      fulfillmentProgramRevisionRef: preview.fulfillmentProgramRevisionRef,
+      fulfillmentProgramRevision: BigInt(program.fulfillmentProgramRevision),
+      fulfillmentProgramDigest: preview.outputPlanDigest,
       pricingSnapshotRef: null,
       outputPlan,
       materialization: Object.freeze({
@@ -805,6 +812,7 @@ const PROGRAM_FOR_CONFIRM_SQL = `
          product_version.product_version_ref AS "productVersionRef",plan_version.plan_ref AS "planRef",
          plan_version.plan_version_ref AS "planVersionRef",product_version.revision_digest AS "productRevisionDigest",
          program.fulfillment_program_revision_ref AS "fulfillmentProgramRevisionRef",
+         fulfillment.revision AS "fulfillmentProgramRevision",
          fulfillment.output_plan_digest AS "outputPlanDigest",plan_version.stacking_scope AS "stackingScope"
          ,plan_version.term_action AS "termAction",plan_version.term_seconds AS "termSeconds"
   FROM platform.commerce_redemption_program_availability availability
@@ -879,6 +887,8 @@ const OUTPUT_FOR_CONFIRM_SQL = `
          output.credit_program_revision_ref AS "creditProgramRevisionRef",
          output.credit_program_revision_version AS "creditProgramRevisionVersion",
          output.credit_program_revision_digest AS "creditProgramRevisionDigest",
+         COALESCE(plan.revision,entitlement.revision,output.credit_program_revision_version) AS "ownerRevision",
+         COALESCE(plan.revision_digest,entitlement.revision_digest,output.credit_program_revision_digest) AS "ownerRevisionDigest",
          NULL::text AS "bucketClass",NULL::text AS unit,NULL::text AS amount,
          NULL::bigint AS "creditExpiresAfterSeconds",NULL::text AS "liabilityMerchantAccountId",
          NULL::integer AS "burnPriority",NULL::jsonb AS "scopePolicy",
@@ -888,8 +898,11 @@ const OUTPUT_FOR_CONFIRM_SQL = `
   FROM platform.commerce_fulfillment_program_output output
   LEFT JOIN platform.commerce_entitlement_template_revision entitlement
     ON entitlement.entitlement_template_revision_ref=output.entitlement_template_revision_ref AND entitlement.site_ref=$2
+  LEFT JOIN platform.commerce_catalog_plan_version plan
+    ON plan.plan_version_ref=output.plan_version_ref AND plan.site_ref=$2
   WHERE output.fulfillment_program_revision_ref=$1 AND output.site_ref=$2
     AND (output.output_kind<>'entitlement_grant' OR entitlement.entitlement_template_revision_ref IS NOT NULL)
+    AND (output.output_kind<>'subscription_term' OR plan.plan_version_ref IS NOT NULL)
   ORDER BY output.ordinal`;
 
 const CONFIRMATION_COMMAND_SQL = `
@@ -927,7 +940,7 @@ const REDEMPTION_RECEIPT_SQL = `
     ON plan_version.plan_version_ref=redemption.plan_version_ref AND plan_version.site_ref=redemption.site_ref
   WHERE redemption.command_id=$1 AND redemption.site_ref=$2
     AND redemption.state IN ('fulfilled','reversed','reconciliation_required')
-    AND fulfillment.status='succeeded'`;
+    AND fulfillment.state='committed'`;
 
 const REDEMPTION_RECEIPT_BY_ID_SQL = `
   SELECT redemption.command_id AS "commandId",redemption.redemption_id AS "redemptionId",
@@ -949,7 +962,7 @@ const REDEMPTION_RECEIPT_BY_ID_SQL = `
   WHERE redemption.redemption_id=$1::uuid AND redemption.site_ref=$2
     AND command.actor_kind='user' AND command.actor_subject=$3 AND command.actor_generation=$4::bigint
     AND redemption.state IN ('fulfilled','reversed','reconciliation_required')
-    AND fulfillment.status='succeeded'`;
+    AND fulfillment.state='committed'`;
 
 const REDEMPTION_OUTPUT_RECEIPT_SQL = `
   SELECT actual.output_kind AS kind,actual.output_line_id AS "outputLineId",

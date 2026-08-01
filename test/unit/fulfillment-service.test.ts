@@ -6,7 +6,7 @@ import { issuePlatformTransaction, revokePlatformTransaction } from
 const outputPlanDigest = "a".repeat(64);
 const acquisitionSnapshotDigest = "b".repeat(64);
 const outputSetDigest = "c".repeat(64);
-const resultDigest = "d".repeat(64);
+const transactionDigest = "d".repeat(64);
 
 describe("FulfillmentService", () => {
   it("is the only issuer and commits a frozen output receipt", async () => {
@@ -17,24 +17,22 @@ describe("FulfillmentService", () => {
           calls.push(`claim:${claim.source.idempotencyKey}`);
           return { disposition: "execute" as const, fulfillmentId: claim.fulfillmentId };
         },
-        recordExpectedOutputPlan: async () => { calls.push("plan"); },
-        recordActualOutputs: async () => { calls.push("actual"); },
-        completeFulfillment: async () => { calls.push("complete"); },
+        commitFulfillment: async (_transaction, commit) => {
+          calls.push("commit");
+          return { fulfillmentId: commit.claim.fulfillmentId, transactionVersion: 1 as const,
+            transactionDigest, outputSetDigest, outputs: commit.outputs.map((output) => ({
+              kind: output.outputKind === "subscription" ? "subscription_term" as const : output.outputKind,
+              outputLineId: output.outputLineId, outputOrdinal: output.outputOrdinal,
+              occurrence: output.occurrence, resourceRef: output.outputRef,
+              templateRevisionRef: output.templateRevision, outputVersion: output.outputVersion,
+              outputDigest: output.outputDigest,
+            })) };
+        },
       },
       issuer: {
         issue: async () => {
           calls.push("issue");
           return {
-            outputs: [{
-              kind: "credit_grant" as const,
-              outputLineId: "credits",
-              outputOrdinal: 1,
-              occurrence: 1,
-              resourceRef: "grant-1",
-              templateRevisionRef: "credits-v1",
-              outputVersion: 1 as const,
-              outputDigest: "e".repeat(64),
-            }],
             actual: [{
               outputLineId: "credits",
               outputOrdinal: 1,
@@ -55,7 +53,8 @@ describe("FulfillmentService", () => {
 
       expect(receipt).toMatchObject({ fulfillmentId: "00000000-0000-7000-8000-000000000001" });
       expect(receipt.outputSetDigest).toMatch(/^[a-f0-9]{64}$/u);
-      expect(calls.map((call) => call.split(":")[0])).toEqual(["claim", "plan", "issue", "actual", "complete"]);
+      expect(receipt).toMatchObject({ transactionVersion: 1, transactionDigest });
+      expect(calls.map((call) => call.split(":")[0])).toEqual(["claim", "issue", "commit"]);
     } finally {
       revokePlatformTransaction(lease);
     }
@@ -66,7 +65,8 @@ describe("FulfillmentService", () => {
     const replay = Object.freeze({
       fulfillmentId: "00000000-0000-7000-8000-000000000009",
       outputSetDigest,
-      resultDigest,
+      transactionVersion: 1 as const,
+      transactionDigest,
       outputs: Object.freeze([{ kind: "credit_grant" as const, outputLineId: "credits",
         outputOrdinal: 1, occurrence: 1, resourceRef: "grant-9", templateRevisionRef: "credits-v1",
         outputVersion: 1 as const, outputDigest: "e".repeat(64) }]),
@@ -74,9 +74,7 @@ describe("FulfillmentService", () => {
     const service = new FulfillmentService({
       repository: {
         claimFulfillment: async () => ({ disposition: "replay" as const, receipt: replay }),
-        recordExpectedOutputPlan: async () => { throw new Error("PLAN_MUST_NOT_REPEAT"); },
-        recordActualOutputs: async () => { throw new Error("ACTUAL_MUST_NOT_REPEAT"); },
-        completeFulfillment: async () => { throw new Error("COMPLETION_MUST_NOT_REPEAT"); },
+        commitFulfillment: async () => { throw new Error("COMMIT_MUST_NOT_REPEAT"); },
       },
       issuer: { issue: async () => { issueCount += 1; throw new Error("ISSUE_MUST_NOT_REPEAT"); } },
     });
@@ -111,9 +109,12 @@ function input(overrides: Readonly<{
     productVersionRef: "product-v1",
     planVersionRef: null,
     offeringVersionRef: "offer-v1",
-    fulfillmentProgramVersionRef: "fulfillment-v1",
-    outputPlanDigest,
-    acquisitionSnapshotDigest,
+    sourceVersion: 1n,
+    sourceDigest: acquisitionSnapshotDigest,
+    acquiredAt: "2026-07-30T02:00:00.000Z",
+    fulfillmentProgramRevisionRef: "fulfillment-v1",
+    fulfillmentProgramRevision: 1n,
+    fulfillmentProgramDigest: outputPlanDigest,
     pricingSnapshotRef: overrides.pricingSnapshotRef,
     outputPlan: [{ outputLineId: "credits", ordinal: 1, cardinality: 1,
       templateRevision: "credits-v1", outputKind: "credit_grant" as const, disposition: "required" as const }],

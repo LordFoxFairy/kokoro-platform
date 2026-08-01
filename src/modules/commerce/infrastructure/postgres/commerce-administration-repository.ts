@@ -4,6 +4,7 @@ import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/plat
 import { commerceCanonicalJson } from "../../domain/canonical-json.js";
 import type { CommerceAdministrationRepository, CommerceAdminActor } from "../../application/contracts/commerce-administration-repository.js";
 import type { CreditGrantProgramPort } from "../../../credit/application/contracts/grant-program.js";
+import { canonicalFulfillmentProgramDigest } from "../../domain/fulfillment-program.js";
 
 export class PostgresCommerceAdministrationRepository implements CommerceAdministrationRepository {
   constructor(private readonly creditPrograms: CreditGrantProgramPort,
@@ -93,18 +94,49 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
           input.planVersion.revisionDigest, catalogEpoch, occurredAt],
       ), "COMMERCE_PLAN_VERSION_PERSIST_FAILED");
     }
-    await exactlyOne(sql.execute(
-      `INSERT INTO platform.commerce_fulfillment_program_revision
-       (fulfillment_program_revision_ref,site_ref,program_ref,revision,output_plan_digest,catalog_epoch,published_at)
-       VALUES ($1,$2,$3,$4::bigint,$5,$6::bigint,$7::timestamptz)`,
-      [input.fulfillmentProgramRevisionRef, input.siteId, input.fulfillmentProgramRef,
-        input.fulfillmentProgramRevision, input.outputPlanDigest, catalogEpoch, occurredAt],
-    ), "COMMERCE_FULFILLMENT_PROGRAM_PERSIST_FAILED");
     const creditRefs = [...new Set(input.outputs.filter((output) => output.outputKind === "credit_grant")
       .map((output) => output.targetRevisionRef))];
     const creditPrograms = creditRefs.length === 0 ? [] : await this.creditPrograms.resolveRefs(transaction,
       { siteId: input.siteId, revisionRefs: creditRefs });
     const creditByRef = new Map(creditPrograms.map((program) => [program.revisionRef, program]));
+    const commerceOwnerRefs = [...new Set(input.outputs.filter((output) => output.outputKind !== "credit_grant")
+      .map((output) => output.targetRevisionRef))];
+    const commerceOwners = commerceOwnerRefs.length === 0 ? [] : await sql.query<Record<string, unknown> & {
+      revisionRef: string; revision: bigint; revisionDigest: string;
+    }>(
+      `SELECT owner.revision_ref AS "revisionRef",owner.revision,owner.revision_digest AS "revisionDigest"
+       FROM (
+         SELECT plan_version_ref AS revision_ref,revision,revision_digest
+         FROM platform.commerce_catalog_plan_version WHERE site_ref=$1
+         UNION ALL
+         SELECT entitlement_template_revision_ref,revision,revision_digest
+         FROM platform.commerce_entitlement_template_revision WHERE site_ref=$1
+       ) owner
+       WHERE owner.revision_ref=ANY($2::text[])`,
+      [input.siteId, commerceOwnerRefs],
+    );
+    if (commerceOwners.length !== commerceOwnerRefs.length) throw new Error("COMMERCE_OUTPUT_OWNER_TARGET_MISMATCH");
+    const commerceByRef = new Map(commerceOwners.map((owner) => [owner.revisionRef, owner]));
+    const outputPlanDigest = canonicalFulfillmentProgramDigest({ siteId: input.siteId,
+      fulfillmentProgramRevisionRef: input.fulfillmentProgramRevisionRef,
+      lines: input.outputs.map((output) => {
+        const owner = output.outputKind === "credit_grant" ? creditByRef.get(output.targetRevisionRef) :
+          commerceByRef.get(output.targetRevisionRef);
+        if (owner === undefined) throw new Error("COMMERCE_OUTPUT_OWNER_TARGET_MISMATCH");
+        return { outputLineId: output.outputLineId, outputOrdinal: output.ordinal,
+          occurrenceCount: output.cardinality, outputKind: output.outputKind,
+          owner: { kind: output.outputKind === "subscription_term" ? "subscription_term_policy" as const :
+            output.outputKind === "entitlement_grant" ? "entitlement_template" as const : "credit_program" as const,
+          revisionRef: output.targetRevisionRef, revision: BigInt(owner.revision),
+          revisionDigest: owner.revisionDigest } };
+      }) });
+    await exactlyOne(sql.execute(
+      `INSERT INTO platform.commerce_fulfillment_program_revision
+       (fulfillment_program_revision_ref,site_ref,program_ref,revision,output_plan_digest,catalog_epoch,published_at)
+       VALUES ($1,$2,$3,$4::bigint,$5,$6::bigint,$7::timestamptz)`,
+      [input.fulfillmentProgramRevisionRef, input.siteId, input.fulfillmentProgramRef,
+        input.fulfillmentProgramRevision, outputPlanDigest, catalogEpoch, occurredAt],
+    ), "COMMERCE_FULFILLMENT_PROGRAM_PERSIST_FAILED");
     await exactlyCount(sql.execute(
       `INSERT INTO platform.commerce_fulfillment_program_output
        (fulfillment_program_revision_ref,site_ref,output_line_id,ordinal,cardinality,output_kind,

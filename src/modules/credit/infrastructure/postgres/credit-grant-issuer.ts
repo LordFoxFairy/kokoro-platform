@@ -49,6 +49,9 @@ export class PostgresCreditGrantIssuer implements CreditGrantIssuancePort {
     const sourceRefs = new Set<string>();
     const operationKeys = new Set<string>();
     const outputIdentities = new Set<string>();
+    const lineToOrdinal = new Map<string, number>();
+    const ordinalToLine = new Map<number, string>();
+    const occurrences = new Map<string, number[]>();
     for (const grant of grants) {
       const identity = grant.account;
       identities.set(creditAccountAdvisoryKey(identity), identity);
@@ -58,6 +61,18 @@ export class PostgresCreditGrantIssuer implements CreditGrantIssuancePort {
       sourceRefs.add(`${grant.sourceType}:${grant.sourceRef}`);
       operationKeys.add(grant.businessOperationKey);
       outputIdentities.add(outputIdentity);
+      const knownOrdinal = lineToOrdinal.get(grant.outputLineId);
+      const knownLine = ordinalToLine.get(grant.outputOrdinal);
+      if ((knownOrdinal !== undefined && knownOrdinal !== grant.outputOrdinal) ||
+          (knownLine !== undefined && knownLine !== grant.outputLineId)) {
+        throw new Error("CREDIT_GRANT_OUTPUT_TOPOLOGY_INVALID");
+      }
+      lineToOrdinal.set(grant.outputLineId, grant.outputOrdinal);
+      ordinalToLine.set(grant.outputOrdinal, grant.outputLineId);
+      occurrences.set(grant.outputLineId, [...(occurrences.get(grant.outputLineId) ?? []), grant.occurrence]);
+    }
+    for (const values of occurrences.values()) {
+      if (values.some((value, index) => value !== index + 1)) throw new Error("CREDIT_GRANT_OUTPUT_TOPOLOGY_INVALID");
     }
     const accounts = new Map<string, PreparedState["accounts"] extends Map<string, infer Value> ? Value : never>();
     for (const key of [...identities.keys()].sort(compareCanonical)) {
@@ -118,12 +133,14 @@ export class PostgresCreditGrantIssuer implements CreditGrantIssuancePort {
       const created = await sql.execute(
         `INSERT INTO platform.credit_grant
          (credit_grant_id,credit_account_ref,site_ref,billing_account_ref,credit_program_revision_ref,
+          credit_program_revision,credit_program_revision_digest,
           source_type,source_ref,issuance_journal_transaction_ref,ux_bucket_class,unit,
           liability_merchant_account_ref,original_amount,burn_priority,scope_policy,effective_at,expires_at,issued_at)
-         VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8::uuid,$9,$10,$11,$12::numeric,$13,$14::jsonb,
-                 $15::timestamptz,$16::timestamptz,$15::timestamptz)`,
+         VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6::bigint,$7,$8,$9,$10::uuid,$11,$12,$13,$14::numeric,$15,$16::jsonb,
+                 $17::timestamptz,$18::timestamptz,$17::timestamptz)`,
         [creditGrantRef, account.creditAccountId, grant.account.siteId, grant.account.billingAccountId,
-          grant.creditProgramRevisionRef, grant.sourceType, grant.sourceRef, journalTransactionRef, grant.bucketClass,
+          grant.creditProgramRevisionRef, grant.creditProgramRevision, grant.creditProgramRevisionDigest,
+          grant.sourceType, grant.sourceRef, journalTransactionRef, grant.bucketClass,
           grant.account.unit, grant.account.liabilityMerchantAccountId, grant.amount, grant.burnPriority,
           JSON.stringify(grant.scopePolicy), grant.effectiveAt, grant.expiresAt],
       );
@@ -164,6 +181,8 @@ function validateGrant(grant: CreditGrantIssue): CreditGrantIssue {
   validateIdentity(grant.account);
   bounded(grant.outputLineId, 128, "CREDIT_GRANT_OUTPUT_LINE_INVALID");
   bounded(grant.creditProgramRevisionRef, 256, "CREDIT_GRANT_PROGRAM_INVALID");
+  if (grant.creditProgramRevision < 1n || grant.creditProgramRevision > 18_446_744_073_709_551_615n ||
+      !/^[a-f0-9]{64}$/u.test(grant.creditProgramRevisionDigest)) throw new Error("CREDIT_GRANT_PROGRAM_INVALID");
   bounded(grant.sourceRef, 256, "CREDIT_GRANT_SOURCE_REF_INVALID");
   bounded(grant.businessOperationKey, 256, "CREDIT_GRANT_OPERATION_KEY_INVALID");
   if (!Number.isSafeInteger(grant.occurrence) || grant.occurrence < 1) throw new Error("CREDIT_GRANT_OCCURRENCE_INVALID");
@@ -317,7 +336,10 @@ function lengthDelimited(value: string): string {
 }
 
 function issuanceIntentDigest(commandId: string, grants: readonly CreditGrantIssue[]): string {
-  return sha256(canonicalJson({ version: 1, commandId, grants }));
+  return sha256(canonicalJson({ version: 1, commandId, grants: grants.map((grant) => ({
+    ...grant,
+    creditProgramRevision: grant.creditProgramRevision.toString(),
+  })) }));
 }
 
 function creditGrantOutputDigest(input: Readonly<{ creditGrantRef: CreditGrantRef; grant: CreditGrantIssue }>): string {

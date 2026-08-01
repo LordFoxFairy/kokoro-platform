@@ -42,6 +42,8 @@ type OutputRow = Record<string, unknown> & {
   creditProgramRevisionRef: string | null;
   creditProgramRevisionVersion: bigint | null;
   creditProgramRevisionDigest: string | null;
+  ownerRevision: bigint;
+  ownerRevisionDigest: string;
   bucketClass: "daily" | "period" | "permanent" | null;
   unit: string | null;
   amount: string | null;
@@ -396,6 +398,8 @@ const OUTPUT_SQL = `
          output.credit_program_revision_ref AS "creditProgramRevisionRef",
          output.credit_program_revision_version AS "creditProgramRevisionVersion",
          output.credit_program_revision_digest AS "creditProgramRevisionDigest",
+         COALESCE(plan.revision,entitlement.revision,output.credit_program_revision_version) AS "ownerRevision",
+         COALESCE(plan.revision_digest,entitlement.revision_digest,output.credit_program_revision_digest) AS "ownerRevisionDigest",
          NULL::text AS "bucketClass",NULL::text AS unit,NULL::text AS amount,
          NULL::bigint AS "creditExpiresAfterSeconds",
          output.entitlement_template_revision_ref AS "entitlementTemplateRevisionRef",
@@ -405,6 +409,9 @@ const OUTPUT_SQL = `
   LEFT JOIN platform.commerce_entitlement_template_revision entitlement
     ON entitlement.entitlement_template_revision_ref=output.entitlement_template_revision_ref
       AND entitlement.site_ref=$2
+  LEFT JOIN platform.commerce_catalog_plan_version plan
+    ON plan.plan_version_ref=output.plan_version_ref AND plan.site_ref=$2
   WHERE output.fulfillment_program_revision_ref=$1 AND output.site_ref=$2
     AND (output.output_kind<>'entitlement_grant' OR entitlement.entitlement_template_revision_ref IS NOT NULL)
+    AND (output.output_kind<>'subscription_term' OR plan.plan_version_ref IS NOT NULL)
   ORDER BY output.ordinal`;

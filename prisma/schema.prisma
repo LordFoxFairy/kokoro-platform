@@ -2341,26 +2341,33 @@ model CommerceBillingAccountMembership {
 }
 
 model CommerceFulfillmentTransaction {
-  fulfillmentId                String    @id @map("fulfillment_id") @db.Uuid
-  commandId                    String?   @map("command_id")
-  siteRef                      String    @map("site_ref")
-  billingAccountRef            String    @map("billing_account_ref")
-  sourceType                   String    @map("source_type")
-  sourceId                     String    @map("source_id")
+  fulfillmentId                String   @id @map("fulfillment_id") @db.Uuid
+  commandId                    String?  @map("command_id")
+  siteRef                      String   @map("site_ref")
+  billingAccountRef            String   @map("billing_account_ref")
+  sourceType                   String   @map("source_type")
+  sourceId                     String   @map("source_id")
   purpose                      String
-  cycleKey                     String    @map("cycle_key")
-  productVersionRef            String    @map("product_version_ref")
-  planVersionRef               String?   @map("plan_version_ref")
-  offeringVersionRef           String    @map("offering_version_ref")
-  fulfillmentProgramVersionRef String    @map("fulfillment_program_version_ref")
-  outputPlanDigest             String    @map("output_plan_digest") @db.Char(64)
-  outputSetDigest              String?   @map("output_set_digest") @db.Char(64)
-  resultDigest                 String?   @map("result_digest") @db.Char(64)
-  status                       String
-  completedAt                  DateTime? @map("completed_at") @db.Timestamptz(6)
-  createdAt                    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  cycleKey                     String   @map("cycle_key")
+  idempotencyKey               String   @unique @map("idempotency_key") @db.Char(64)
+  sourceVersion                BigInt   @map("source_version")
+  sourceDigest                 String   @map("source_digest") @db.Char(64)
+  acquiredAt                   DateTime @map("acquired_at") @db.Timestamptz(6)
+  productVersionRef            String   @map("product_version_ref")
+  planVersionRef               String?  @map("plan_version_ref")
+  offeringVersionRef           String   @map("offering_version_ref")
+  fulfillmentProgramRevisionRef String  @map("fulfillment_program_revision_ref")
+  fulfillmentProgramRevision  BigInt   @map("fulfillment_program_revision")
+  fulfillmentProgramDigest    String   @map("fulfillment_program_digest") @db.Char(64)
+  pricingSnapshotRef           String?  @map("pricing_snapshot_ref")
+  outputSetDigest              String   @map("output_set_digest") @db.Char(64)
+  state                        String
+  transactionVersion          BigInt   @map("transaction_version")
+  transactionDigest           String   @map("transaction_digest") @db.Char(64)
+  committedAt                 DateTime @map("committed_at") @db.Timestamptz(6)
+  createdAt                   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  @@unique([sourceType, sourceId, purpose, cycleKey])
+  @@unique([siteRef, sourceType, sourceId, purpose, cycleKey])
   @@index([siteRef, billingAccountRef])
   @@map("commerce_fulfillment_transaction")
   @@schema("platform")
@@ -2377,7 +2384,7 @@ model CommerceFulfillmentOutputPlan {
 
   @@id([fulfillmentId, outputLineId])
   @@unique([fulfillmentId, ordinal])
-  @@unique([fulfillmentId, outputLineId, cardinality, templateRevision, outputKind])
+  @@unique([fulfillmentId, outputLineId, ordinal, cardinality, templateRevision, outputKind])
   @@map("commerce_fulfillment_output_plan")
   @@schema("platform")
 }
@@ -2385,15 +2392,19 @@ model CommerceFulfillmentOutputPlan {
 model CommerceFulfillmentActualOutput {
   fulfillmentId    String   @map("fulfillment_id") @db.Uuid
   outputLineId     String   @map("output_line_id")
+  outputOrdinal    Int      @map("output_ordinal")
   occurrence       Int
   cardinality      Int
   templateRevision String   @map("template_revision")
   outputKind       String   @map("output_kind")
   outputRef        String   @map("output_ref")
+  outputVersion    BigInt   @map("output_version")
+  outputDigest     String   @map("output_digest") @db.Char(64)
   createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@id([fulfillmentId, outputLineId, occurrence])
-  @@unique([fulfillmentId, outputKind, outputRef])
+  @@unique([fulfillmentId, outputRef])
+  @@unique([fulfillmentId, outputKind, outputRef, outputVersion, outputDigest])
   @@map("commerce_fulfillment_actual_output")
   @@schema("platform")
 }

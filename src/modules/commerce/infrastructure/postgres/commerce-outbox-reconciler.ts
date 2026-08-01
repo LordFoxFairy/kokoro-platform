@@ -74,7 +74,7 @@ export class PostgresCommerceOutboxProjection implements CommerceOutboxProjectio
          ON fulfillment.fulfillment_id=redemption.fulfillment_ref AND fulfillment.site_ref=redemption.site_ref
        WHERE redemption.redemption_id=$1::uuid AND redemption.site_ref=$2 AND redemption.command_id=$3
          AND redemption.fulfillment_ref=$4::uuid AND redemption.state='fulfilled'
-         AND fulfillment.status='succeeded'`,
+         AND fulfillment.state='committed'`,
       [event.redemptionId, event.siteId, event.commandId, event.fulfillmentId],
     );
     const row = rows[0];

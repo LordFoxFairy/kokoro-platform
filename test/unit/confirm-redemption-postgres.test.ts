@@ -94,9 +94,10 @@ describe("PostgresRedemptionConfirmationRepository", () => {
           commerceCalls.push("start");
           return { disposition: "execute", fulfillmentId: claim.fulfillmentId };
         },
-        recordExpectedOutputPlan: async () => { commerceCalls.push("plan"); },
-        recordActualOutputs: async () => { commerceCalls.push("actual"); },
-        completeFulfillment: async () => { commerceCalls.push("complete"); },
+        commitFulfillment: async (_transaction, commit) => {
+          commerceCalls.push("commit");
+          return commerceReceipt(commit.claim.fulfillmentId, commit.outputs);
+        },
         linkOutboxEvent: async () => { commerceCalls.push("link"); },
         recordAudit: async (_transaction, audit) => { commerceCalls.push("audit"); audits.push(audit); },
       },
@@ -112,7 +113,7 @@ describe("PostgresRedemptionConfirmationRepository", () => {
         outputs: [{ kind: "entitlement_grant", outputLineId: "entitlement",
           templateRevisionRef: "entitlement-v1" }],
       } });
-      expect(commerceCalls).toEqual(["start", "plan", "actual", "complete", "link", "audit"]);
+      expect(commerceCalls).toEqual(["start", "commit", "link", "audit"]);
       expect(statements.find((statement) => statement.includes("UPDATE platform.commerce_redeem_code")))
         .toContain("state='available'");
       expect(statements.find((statement) => statement.includes("UPDATE platform.commerce_redemption_preview")))
@@ -183,8 +184,8 @@ describe("PostgresRedemptionConfirmationRepository", () => {
       expect(joined).toContain("customer_available");
       expect(joined).toMatch(/UPDATE platform\.commerce_redeem_code[\s\S]+INSERT INTO platform\.credit_grant[\s\S]+INSERT INTO platform\.credit_journal_transaction/u);
       const grantInsert = executions.find(({ statement }) => statement.includes("INSERT INTO platform.credit_grant"))!;
-      expect(grantInsert.values[14]).toBe("2026-07-29T01:00:00.000Z");
-      expect(grantInsert.values[15]).toBeNull();
+      expect(grantInsert.values[16]).toBe("2026-07-29T01:00:00.000Z");
+      expect(grantInsert.values[17]).toBeNull();
     } finally {
       revokePlatformTransaction(lease);
     }
@@ -594,6 +595,7 @@ function validPreviewRow(
 function entitlementOutput() {
   return {
     outputLineId: "entitlement", outputKind: "entitlement_grant" as const, ordinal: 1, cardinality: 1,
+    ownerRevision: 1n, ownerRevisionDigest: "e".repeat(64),
     planVersionRef: null, creditProgramRevisionRef: null, creditProgramRevisionVersion: null,
     creditProgramRevisionDigest: null, bucketClass: null, unit: null, amount: null,
     creditExpiresAfterSeconds: null, entitlementTemplateRevisionRef: "entitlement-v1",
@@ -604,6 +606,7 @@ function entitlementOutput() {
 function creditOutput() {
   return {
     outputLineId: "credits", outputKind: "credit_grant" as const, ordinal: 1, cardinality: 1,
+    ownerRevision: 1n, ownerRevisionDigest: "c".repeat(64),
     planVersionRef: null, creditProgramRevisionRef: "credit-v1", creditProgramRevisionVersion: 1n,
     creditProgramRevisionDigest: "c".repeat(64), bucketClass: "permanent" as const,
     unit: "credit", amount: "100", creditExpiresAfterSeconds: null,
@@ -619,6 +622,7 @@ function creditOutput() {
 function subscriptionOutput() {
   return {
     outputLineId: "term", outputKind: "subscription_term" as const, ordinal: 1, cardinality: 1,
+    ownerRevision: 1n, ownerRevisionDigest: "d".repeat(64),
     planVersionRef: "plan-v1", creditProgramRevisionRef: null, creditProgramRevisionVersion: null,
     creditProgramRevisionDigest: null, bucketClass: null,
     unit: null, amount: null, creditExpiresAfterSeconds: null,
@@ -668,6 +672,7 @@ function programRow(preview: ReturnType<typeof previewRow>) {
     planVersionRef: preview.safeTerms.planVersionRef,
     productRevisionDigest: preview.productRevisionDigest,
     fulfillmentProgramRevisionRef: preview.fulfillmentProgramRevisionRef,
+    fulfillmentProgramRevision: 1n,
     outputPlanDigest: preview.outputPlanDigest, stackingScope: null,
   };
 }
@@ -681,12 +686,28 @@ function noOpCommerce() {
   return {
     claimFulfillment: async (_transaction: unknown, claim: { fulfillmentId: string }) =>
       ({ disposition: "execute" as const, fulfillmentId: claim.fulfillmentId }),
-    recordExpectedOutputPlan: async () => undefined,
-    recordActualOutputs: async () => undefined,
-    completeFulfillment: async () => undefined,
+    commitFulfillment: async (_transaction: unknown, commit: { claim: { fulfillmentId: string };
+      outputs: Parameters<typeof commerceReceipt>[1] }) =>
+      commerceReceipt(commit.claim.fulfillmentId, commit.outputs),
     linkOutboxEvent: async () => undefined,
     recordAudit: async () => undefined,
   };
+}
+
+function commerceReceipt(
+  fulfillmentId: string,
+  outputs: readonly Readonly<{ outputKind: "subscription" | "subscription_term" | "entitlement_grant" | "credit_grant";
+    outputLineId: string; outputOrdinal: number; occurrence: number; outputRef: string;
+    templateRevision: string; outputVersion: 1; outputDigest: string }>[],
+) {
+  const receipts = outputs.map((output) => Object.freeze({
+    kind: output.outputKind === "subscription" ? "subscription_term" as const : output.outputKind,
+    outputLineId: output.outputLineId, outputOrdinal: output.outputOrdinal, occurrence: output.occurrence,
+    resourceRef: output.outputRef, templateRevisionRef: output.templateRevision,
+    outputVersion: output.outputVersion, outputDigest: output.outputDigest,
+  }));
+  return Object.freeze({ fulfillmentId, transactionVersion: 1 as const,
+    transactionDigest: "f".repeat(64), outputSetDigest: outputSetDigest(receipts), outputs: receipts });
 }
 
 function outputSetDigest(outputs: readonly Record<string, unknown>[]): string {

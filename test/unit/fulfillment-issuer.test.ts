@@ -42,8 +42,9 @@ describe("PostgresFulfillmentIssuer", () => {
         }),
         snapshot: createFrozenFulfillmentSnapshot({
           sourceType: "payment", productVersionRef: "product-v1", planVersionRef: null,
-          offeringVersionRef: "offer-v1", fulfillmentProgramVersionRef: "fulfillment-v1",
-          outputPlanDigest: "a".repeat(64), acquisitionSnapshotDigest: "b".repeat(64),
+          offeringVersionRef: "offer-v1", sourceVersion: 1n, sourceDigest: "b".repeat(64),
+          acquiredAt: "2026-07-29T01:00:00.000Z", fulfillmentProgramRevisionRef: "fulfillment-v1",
+          fulfillmentProgramRevision: 1n, fulfillmentProgramDigest: "a".repeat(64),
           pricingSnapshotRef: "price-v1",
         }),
         materialization: {
@@ -60,7 +61,7 @@ describe("PostgresFulfillmentIssuer", () => {
       });
 
       const grant = executions.find(({ statement }) => statement.includes("INSERT INTO platform.credit_grant"));
-      expect(grant?.values[5]).toBe("payment");
+      expect(grant?.values[7]).toBe("payment");
       const journal = executions.find(({ statement }) => statement.includes("INSERT INTO platform.credit_journal_transaction"));
       expect(journal?.values[4]).toMatch(/^fulfillment:[a-f0-9]{64}:credits:1$/u);
     } finally {
@@ -97,8 +98,10 @@ describe("PostgresFulfillmentIssuer", () => {
         source: createFulfillmentSourceIdentity({ siteId: "site-a", sourceType: "redemption", sourceRef: "code-1",
           purpose: "acquisition", cycleKey: "once" }),
         snapshot: createFrozenFulfillmentSnapshot({ sourceType: "redemption", productVersionRef: "product-v1",
-          planVersionRef: null, offeringVersionRef: "offer-v1", fulfillmentProgramVersionRef: "fulfillment-v1",
-          outputPlanDigest: "a".repeat(64), acquisitionSnapshotDigest: "b".repeat(64), pricingSnapshotRef: null }),
+          planVersionRef: null, offeringVersionRef: "offer-v1", sourceVersion: 1n,
+          sourceDigest: "b".repeat(64), acquiredAt: "2026-07-29T01:00:00.000Z",
+          fulfillmentProgramRevisionRef: "fulfillment-v1", fulfillmentProgramRevision: 1n,
+          fulfillmentProgramDigest: "a".repeat(64), pricingSnapshotRef: null }),
         materialization: {
           siteId: "site-a", effectAt: "2026-07-29T01:00:00.000Z", outputs: [output], nextRef: referenceFactory(),
           creditGrantPreparation: preparation.preparation, subscription: null, subscriptionTerm: null,
@@ -114,6 +117,7 @@ describe("PostgresFulfillmentIssuer", () => {
 function creditOutput(): FulfillmentOutputDefinition {
   return Object.freeze({
     outputLineId: "credits", outputKind: "credit_grant", ordinal: 1, cardinality: 1,
+    ownerRevision: 1n, ownerRevisionDigest: "c".repeat(64),
     planVersionRef: null, creditProgramRevisionRef: "credit-v1", bucketClass: "permanent",
     creditProgramRevisionVersion: 1n, creditProgramRevisionDigest: "c".repeat(64),
     unit: "credit", amount: "100", creditExpiresAfterSeconds: null,
@@ -130,7 +134,9 @@ function creditIssue(output: FulfillmentOutputDefinition, identity: ReturnType<t
   const source = createFulfillmentSourceIdentity({ siteId: "site-a", sourceType,
     sourceRef: sourceType === "payment" ? "payment-settlement-1" : "code-1", purpose: "acquisition", cycleKey: "once" });
   return { account: identity, outputLineId: output.outputLineId, outputOrdinal: output.ordinal, occurrence: 1,
-    creditProgramRevisionRef: output.creditProgramRevisionRef!, sourceType,
+    creditProgramRevisionRef: output.creditProgramRevisionRef!,
+    creditProgramRevision: output.creditProgramRevisionVersion!,
+    creditProgramRevisionDigest: output.creditProgramRevisionDigest!, sourceType,
     sourceRef: `${source.idempotencyKey}:credits:1`, businessOperationKey: `fulfillment:${source.idempotencyKey}:credits:1`,
     bucketClass: output.bucketClass!, amount: output.amount!, burnPriority: output.burnPriority!,
     scopePolicy: output.scopePolicy!, effectiveAt: "2026-07-29T01:00:00.000Z", expiresAt: null } as const;

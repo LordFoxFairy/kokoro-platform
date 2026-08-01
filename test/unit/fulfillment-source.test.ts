@@ -39,9 +39,9 @@ describe("Fulfillment acquisition identity", () => {
       productVersionRef: "product-v1",
       planVersionRef: "plan-v1",
       offeringVersionRef: "offer-v1",
-      fulfillmentProgramVersionRef: "fulfillment-v1",
-      outputPlanDigest: digest("a"),
-      acquisitionSnapshotDigest: digest("b"),
+      sourceVersion: 1n, sourceDigest: digest("b"), acquiredAt: "2026-07-30T02:00:00.000Z",
+      fulfillmentProgramRevisionRef: "fulfillment-v1", fulfillmentProgramRevision: 1n,
+      fulfillmentProgramDigest: digest("a"),
       pricingSnapshotRef: null,
     })).toThrow("PAYMENT_PRICING_SNAPSHOT_REQUIRED");
 
@@ -50,9 +50,9 @@ describe("Fulfillment acquisition identity", () => {
       productVersionRef: "product-v1",
       planVersionRef: "plan-v1",
       offeringVersionRef: "offer-v1",
-      fulfillmentProgramVersionRef: "fulfillment-v1",
-      outputPlanDigest: digest("a"),
-      acquisitionSnapshotDigest: digest("b"),
+      sourceVersion: 1n, sourceDigest: digest("b"), acquiredAt: "2026-07-30T02:00:00.000Z",
+      fulfillmentProgramRevisionRef: "fulfillment-v1", fulfillmentProgramRevision: 1n,
+      fulfillmentProgramDigest: digest("a"),
       pricingSnapshotRef: "price-snapshot-v3",
     })).toMatchObject({ pricingSnapshotRef: "price-snapshot-v3" });
   });

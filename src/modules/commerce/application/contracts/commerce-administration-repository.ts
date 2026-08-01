@@ -86,7 +86,6 @@ export interface CommerceAdministrationRepository {
     fulfillmentProgramRevisionRef: string;
     fulfillmentProgramRef: string;
     fulfillmentProgramRevision: string;
-    outputPlanDigest: string;
     outputs: readonly Readonly<{
       outputLineId: string;
       ordinal: number;

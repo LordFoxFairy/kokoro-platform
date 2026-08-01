@@ -171,6 +171,8 @@ function grant() {
     outputOrdinal: 1,
     occurrence: 1,
     creditProgramRevisionRef: "credit-v1",
+    creditProgramRevision: 1n,
+    creditProgramRevisionDigest: "c".repeat(64),
     sourceType: "redemption",
     sourceRef: "fulfillment-key:credits:1",
     businessOperationKey: "fulfillment:fulfillment-key:credits:1",

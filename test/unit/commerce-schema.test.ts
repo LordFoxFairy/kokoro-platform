@@ -31,7 +31,7 @@ describe("Wave 2A Commerce authority schema", () => {
   it("creates the authoritative command identity shape in the initial transaction kernel", () => {
     expect(transactionKernelMigration).toContain("command_id TEXT PRIMARY KEY");
     expect(transactionKernelMigration).toContain("[a-f0-9]{32}");
-    expect(transactionKernelMigration).toContain("-7[a-f0-9]{3}-[89ab]");
+    expect(transactionKernelMigration).toContain("-[47][a-f0-9]{3}-[89ab]");
     expect(identityMigration).not.toContain("ALTER COLUMN command_id TYPE");
     expect(migration).not.toContain("ALTER COLUMN command_id TYPE TEXT");
   });
@@ -46,7 +46,9 @@ describe("Wave 2A Commerce authority schema", () => {
 
   it("makes acquisition-source replay the only fulfillment issuance fence", () => {
     expect(migration).toContain("idempotency_key CHAR(64) NOT NULL UNIQUE");
-    expect(migration).toContain("acquisition_snapshot_digest CHAR(64) NOT NULL");
+    expect(migration).toContain("source_version BIGINT NOT NULL");
+    expect(migration).toContain("source_digest CHAR(64) NOT NULL");
+    expect(migration).toContain("acquired_at TIMESTAMPTZ NOT NULL");
     expect(migration).toContain("pricing_snapshot_ref TEXT");
     expect(migration).toContain("source_type IN ('redemption','payment','admin_grant','program_window')");
     expect(compactMigration).toContain("source_type<>'payment' OR pricing_snapshot_ref IS NOT NULL");
@@ -105,8 +107,15 @@ describe("Wave 2A Commerce authority schema", () => {
     expect(migration).not.toContain("reserved_by_preview");
   });
 
-  it("makes output truth and audit append-only and validates the exact set at success", () => {
+  it("makes output truth and the canonical committed transaction append-only", () => {
     expect(migration).toContain("commerce_output_plan_contiguous");
+    expect(migration).toContain("total_cardinality > 32");
+    expect(migration).toContain("state TEXT NOT NULL CHECK(state='committed')");
+    expect(migration).toContain("transaction_version BIGINT NOT NULL CHECK(transaction_version=1)");
+    expect(migration).toContain("transaction_digest CHAR(64) NOT NULL");
+    expect(migration).toContain("UNIQUE(fulfillment_id,output_ref)");
+    expect(migration).toContain("commerce_fulfillment_transaction_immutable");
+    expect(migration).not.toMatch(/status IN \('running','succeeded','failed'\)/u);
     expect(migration).toContain("commerce_command_update_guard");
     expect(migration).toContain("FULFILLMENT_OUTPUT_SET_INVALID");
     expect(migration).toContain("CREATE TABLE platform.commerce_audit_entry");

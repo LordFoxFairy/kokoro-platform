@@ -15,12 +15,15 @@ export type FulfillmentSourceIdentity = Readonly<{
 }>;
 
 export type FrozenFulfillmentSnapshot = Readonly<{
+  sourceVersion: bigint;
+  sourceDigest: string;
+  acquiredAt: string;
   productVersionRef: string;
   planVersionRef: string | null;
   offeringVersionRef: string;
-  fulfillmentProgramVersionRef: string;
-  outputPlanDigest: string;
-  acquisitionSnapshotDigest: string;
+  fulfillmentProgramRevisionRef: string;
+  fulfillmentProgramRevision: bigint;
+  fulfillmentProgramDigest: string;
   pricingSnapshotRef: string | null;
 }>;
 
@@ -53,21 +56,24 @@ export function createFrozenFulfillmentSnapshot(input: FrozenFulfillmentSnapshot
   sourceType: FulfillmentSourceType;
 }>): FrozenFulfillmentSnapshot {
   const snapshot = Object.freeze({
+    sourceVersion: positiveVersion(input.sourceVersion, "FULFILLMENT_SOURCE_VERSION_INVALID"),
+    sourceDigest: sha256(input.sourceDigest, "FULFILLMENT_SOURCE_DIGEST_INVALID"),
+    acquiredAt: instant(input.acquiredAt, "FULFILLMENT_ACQUIRED_AT_INVALID"),
     productVersionRef: bounded(input.productVersionRef, 256, "FULFILLMENT_PRODUCT_VERSION_INVALID"),
     planVersionRef: input.planVersionRef === null
       ? null
       : bounded(input.planVersionRef, 256, "FULFILLMENT_PLAN_VERSION_INVALID"),
     offeringVersionRef: bounded(input.offeringVersionRef, 256, "FULFILLMENT_OFFERING_VERSION_INVALID"),
-    fulfillmentProgramVersionRef: bounded(
-      input.fulfillmentProgramVersionRef,
+    fulfillmentProgramRevisionRef: bounded(
+      input.fulfillmentProgramRevisionRef,
       256,
-      "FULFILLMENT_PROGRAM_VERSION_INVALID",
+      "FULFILLMENT_PROGRAM_REVISION_REF_INVALID",
     ),
-    outputPlanDigest: sha256(input.outputPlanDigest, "FULFILLMENT_OUTPUT_PLAN_DIGEST_INVALID"),
-    acquisitionSnapshotDigest: sha256(
-      input.acquisitionSnapshotDigest,
-      "FULFILLMENT_ACQUISITION_SNAPSHOT_DIGEST_INVALID",
+    fulfillmentProgramRevision: positiveVersion(
+      input.fulfillmentProgramRevision,
+      "FULFILLMENT_PROGRAM_REVISION_INVALID",
     ),
+    fulfillmentProgramDigest: sha256(input.fulfillmentProgramDigest, "FULFILLMENT_PROGRAM_DIGEST_INVALID"),
     pricingSnapshotRef: input.pricingSnapshotRef === null
       ? null
       : bounded(input.pricingSnapshotRef, 256, "FULFILLMENT_PRICING_SNAPSHOT_INVALID"),
@@ -87,5 +93,16 @@ function bounded(value: string, maximum: number, code: string): string {
 
 function sha256(value: string, code: string): string {
   if (!SHA256.test(value)) throw new Error(code);
+  return value;
+}
+
+function positiveVersion(value: bigint, code: string): bigint {
+  if (value < 1n || value > 18_446_744_073_709_551_615n) throw new Error(code);
+  return value;
+}
+
+function instant(value: string, code: string): string {
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString() !== value) throw new Error(code);
   return value;
 }

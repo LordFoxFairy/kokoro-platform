@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
 import type { ActualFulfillmentOutput, FulfillmentOutputLine } from "../../domain/output-line.js";
 import { compileFulfillmentOutputPlan } from "../../domain/output-line.js";
@@ -9,11 +8,9 @@ import {
   type FulfillmentSourceIdentity,
   type FulfillmentSourceType,
 } from "../../domain/fulfillment-source.js";
-import { commerceCanonicalJson } from "../../domain/canonical-json.js";
 import type {
   ClaimFulfillmentInput,
   FulfillmentClaim,
-  FulfillmentOutputReceipt,
   FulfillmentReceipt,
 } from "../contracts/repository.js";
 
@@ -21,21 +18,11 @@ export type { FulfillmentOutputReceipt, FulfillmentReceipt } from "../contracts/
 
 export interface FulfillmentRepositoryPort {
   claimFulfillment(transaction: PlatformTransaction, input: ClaimFulfillmentInput): Promise<FulfillmentClaim>;
-  recordExpectedOutputPlan(
-    transaction: PlatformTransaction,
-    fulfillmentId: string,
-    plan: readonly FulfillmentOutputLine[],
-  ): Promise<void>;
-  recordActualOutputs(
-    transaction: PlatformTransaction,
-    fulfillmentId: string,
-    outputs: readonly ActualFulfillmentOutput[],
-    plan: readonly FulfillmentOutputLine[],
-  ): Promise<void>;
-  completeFulfillment(
-    transaction: PlatformTransaction,
-    input: Readonly<{ fulfillmentId: string; outputSetDigest: string; resultDigest: string }>,
-  ): Promise<void>;
+  commitFulfillment(transaction: PlatformTransaction, input: Readonly<{
+    claim: ClaimFulfillmentInput;
+    plan: readonly FulfillmentOutputLine[];
+    outputs: readonly ActualFulfillmentOutput[];
+  }>): Promise<FulfillmentReceipt>;
 }
 
 export interface FulfillmentIssuer<TMaterialization> {
@@ -50,7 +37,6 @@ export interface FulfillmentIssuer<TMaterialization> {
       materialization: TMaterialization;
     }>,
   ): Promise<Readonly<{
-    outputs: readonly FulfillmentOutputReceipt[];
     actual: readonly ActualFulfillmentOutput[];
   }>>;
 }
@@ -67,9 +53,12 @@ export type FulfillmentExecutionInput<TMaterialization> = Readonly<{
   productVersionRef: string;
   planVersionRef: string | null;
   offeringVersionRef: string;
-  fulfillmentProgramVersionRef: string;
-  outputPlanDigest: string;
-  acquisitionSnapshotDigest: string;
+  sourceVersion: bigint;
+  sourceDigest: string;
+  acquiredAt: string;
+  fulfillmentProgramRevisionRef: string;
+  fulfillmentProgramRevision: bigint;
+  fulfillmentProgramDigest: string;
   pricingSnapshotRef: string | null;
   outputPlan: readonly FulfillmentOutputLine[];
   materialization: TMaterialization;
@@ -91,9 +80,12 @@ export class FulfillmentService<TMaterialization> {
       productVersionRef: input.productVersionRef,
       planVersionRef: input.planVersionRef,
       offeringVersionRef: input.offeringVersionRef,
-      fulfillmentProgramVersionRef: input.fulfillmentProgramVersionRef,
-      outputPlanDigest: input.outputPlanDigest,
-      acquisitionSnapshotDigest: input.acquisitionSnapshotDigest,
+      sourceVersion: input.sourceVersion,
+      sourceDigest: input.sourceDigest,
+      acquiredAt: input.acquiredAt,
+      fulfillmentProgramRevisionRef: input.fulfillmentProgramRevisionRef,
+      fulfillmentProgramRevision: input.fulfillmentProgramRevision,
+      fulfillmentProgramDigest: input.fulfillmentProgramDigest,
       pricingSnapshotRef: input.pricingSnapshotRef,
     });
     const outputPlan = compileFulfillmentOutputPlan(input.outputPlan);
@@ -107,7 +99,6 @@ export class FulfillmentService<TMaterialization> {
     if (claim.disposition === "replay") return claim.receipt;
     if (claim.fulfillmentId !== input.fulfillmentId) throw new Error("FULFILLMENT_CLAIM_ID_MISMATCH");
 
-    await this.dependencies.repository.recordExpectedOutputPlan(transaction, input.fulfillmentId, outputPlan);
     const issued = await this.dependencies.issuer.issue(transaction, {
       fulfillmentId: input.fulfillmentId,
       commandId: input.commandId,
@@ -116,29 +107,11 @@ export class FulfillmentService<TMaterialization> {
       snapshot,
       materialization: input.materialization,
     });
-    await this.dependencies.repository.recordActualOutputs(
-      transaction,
-      input.fulfillmentId,
-      issued.actual,
-      outputPlan,
-    );
-    const outputs = Object.freeze(issued.outputs.map((output) => Object.freeze({ ...output })));
-    const outputSetDigest = digest({ version: 1, outputs });
-    const resultDigest = digest({
-      version: 1,
-      fulfillmentId: input.fulfillmentId,
-      outputSetDigest,
-      outputCount: outputs.length,
+    return this.dependencies.repository.commitFulfillment(transaction, {
+      claim: { fulfillmentId: input.fulfillmentId, commandId: input.commandId,
+        billingAccountId: input.billingAccountId, source, snapshot },
+      plan: outputPlan,
+      outputs: issued.actual,
     });
-    await this.dependencies.repository.completeFulfillment(transaction, {
-      fulfillmentId: input.fulfillmentId,
-      outputSetDigest,
-      resultDigest,
-    });
-    return Object.freeze({ fulfillmentId: input.fulfillmentId, outputSetDigest, resultDigest, outputs });
   }
-}
-
-function digest(value: Parameters<typeof commerceCanonicalJson>[0]): string {
-  return createHash("sha256").update(commerceCanonicalJson(value), "utf8").digest("hex");
 }

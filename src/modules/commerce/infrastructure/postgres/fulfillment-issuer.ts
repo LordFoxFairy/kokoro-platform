@@ -24,6 +24,8 @@ export type FulfillmentOutputDefinition = Readonly<{
   creditProgramRevisionRef: string | null;
   creditProgramRevisionVersion: bigint | null;
   creditProgramRevisionDigest: string | null;
+  ownerRevision: bigint;
+  ownerRevisionDigest: string;
   bucketClass: "daily" | "period" | "permanent" | null;
   unit: string | null;
   amount: string | null;
@@ -150,6 +152,8 @@ export class PostgresFulfillmentIssuer implements FulfillmentIssuer<PostgresFulf
             outputOrdinal: output.ordinal,
             occurrence,
             creditProgramRevisionRef: output.creditProgramRevisionRef,
+            creditProgramRevision: output.creditProgramRevisionVersion!,
+            creditProgramRevisionDigest: output.creditProgramRevisionDigest!,
             sourceType: context.source.sourceType,
             sourceRef,
             businessOperationKey: `fulfillment:${context.source.idempotencyKey}:${output.outputLineId}:${occurrence}`,

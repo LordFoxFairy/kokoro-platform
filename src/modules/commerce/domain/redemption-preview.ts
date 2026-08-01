@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import { commerceCanonicalJson } from "./canonical-json.js";
+import { canonicalFulfillmentProgramDigest } from "./fulfillment-program.js";
 
 export const redemptionSafeTermsSchema = z.strictObject({
   productRef: z.string().min(1).max(256),
@@ -77,6 +78,8 @@ export interface PublishedFulfillmentOutputLine {
   readonly creditProgramRevisionRef: string | null;
   readonly creditProgramRevisionVersion: bigint | null;
   readonly creditProgramRevisionDigest: string | null;
+  readonly ownerRevision: bigint;
+  readonly ownerRevisionDigest: string;
 }
 
 export function publishedFulfillmentOutputPlanDigest(input: Readonly<{
@@ -84,22 +87,14 @@ export function publishedFulfillmentOutputPlanDigest(input: Readonly<{
   fulfillmentProgramRevisionRef: string;
   lines: readonly PublishedFulfillmentOutputLine[];
 }>): string {
-  return createHash("sha256").update(commerceCanonicalJson({
-    version: 1,
-    siteId: input.siteId,
+  return canonicalFulfillmentProgramDigest({ siteId: input.siteId,
     fulfillmentProgramRevisionRef: input.fulfillmentProgramRevisionRef,
-    lines: input.lines.map((line) => ({
-      outputLineId: line.outputLineId,
-      ordinal: line.ordinal,
-      cardinality: line.cardinality,
-      outputKind: line.outputKind,
-      planVersionRef: line.planVersionRef,
-      entitlementTemplateRevisionRef: line.entitlementTemplateRevisionRef,
-      creditProgramRevisionRef: line.creditProgramRevisionRef,
-      creditProgramRevisionVersion: line.creditProgramRevisionVersion?.toString() ?? null,
-      creditProgramRevisionDigest: line.creditProgramRevisionDigest,
-    })),
-  }), "utf8").digest("hex");
+    lines: input.lines.map((line) => ({ outputLineId: line.outputLineId, outputOrdinal: line.ordinal,
+      occurrenceCount: line.cardinality, outputKind: line.outputKind,
+      owner: { kind: line.outputKind === "subscription_term" ? "subscription_term_policy" :
+        line.outputKind === "entitlement_grant" ? "entitlement_template" : "credit_program",
+      revisionRef: line.planVersionRef ?? line.entitlementTemplateRevisionRef ?? line.creditProgramRevisionRef!,
+      revision: line.ownerRevision, revisionDigest: line.ownerRevisionDigest } })) });
 }
 
 export interface StoredRedemptionPreview extends RedemptionPreviewCandidate {

@@ -128,8 +128,8 @@ export class PostgresAccountReadRepository implements AccountReadRepository {
        SELECT clock_timestamp() AS "asOf",txid_current()::text AS revision,fulfillment.fulfillment_id::text AS "fulfillmentId",
               version.product_ref AS "productRef",version.product_version_ref AS "productVersionRef",version.safe_label AS "safeLabel",
               product.kind,version.plan_version_ref AS "planVersionRef",plan.plan_ref AS "planRef",plan.safe_label AS "planSafeLabel",
-              fulfillment.source_type AS "sourceType",fulfillment.source_id AS "sourceId",fulfillment.completed_at AS "acquiredAt",
-              fulfillment.completed_at AS "effectiveAt",
+              fulfillment.source_type AS "sourceType",fulfillment.source_id AS "sourceId",fulfillment.acquired_at AS "acquiredAt",
+              fulfillment.acquired_at AS "effectiveAt",
               CASE WHEN product.kind='subscription' THEN max(term.ends_at)
                    WHEN bool_or(grant.expires_at IS NULL) THEN NULL ELSE max(grant.expires_at) END AS "expiresAt",
               redemption.state AS "sourceState",
@@ -143,15 +143,23 @@ export class PostgresAccountReadRepository implements AccountReadRepository {
        JOIN platform.commerce_catalog_product_version version ON version.product_version_ref=fulfillment.product_version_ref AND version.site_ref=fulfillment.site_ref
        JOIN platform.commerce_catalog_product product ON product.product_ref=version.product_ref AND product.site_ref=version.site_ref
        LEFT JOIN platform.commerce_catalog_plan_version plan ON plan.plan_version_ref=version.plan_version_ref AND plan.site_ref=version.site_ref
-       LEFT JOIN platform.credit_grant grant ON grant.site_ref=fulfillment.site_ref AND grant.source_type=fulfillment.source_type AND grant.source_ref=fulfillment.source_id
-       LEFT JOIN platform.commerce_entitlement_grant entitlement ON entitlement.site_ref=fulfillment.site_ref AND entitlement.source_type=fulfillment.source_type AND entitlement.source_ref=fulfillment.source_id
+       LEFT JOIN platform.commerce_fulfillment_actual_output actual
+         ON actual.fulfillment_id=fulfillment.fulfillment_id
+       LEFT JOIN platform.credit_grant grant
+         ON actual.output_kind='credit_grant' AND grant.site_ref=fulfillment.site_ref
+        AND grant.credit_grant_id::text=actual.output_ref
+       LEFT JOIN platform.commerce_entitlement_grant entitlement
+         ON actual.output_kind='entitlement_grant' AND entitlement.site_ref=fulfillment.site_ref
+        AND entitlement.entitlement_grant_ref::text=actual.output_ref
        LEFT JOIN platform.commerce_entitlement_revocation revocation ON revocation.site_ref=entitlement.site_ref AND revocation.entitlement_grant_ref=entitlement.entitlement_grant_ref
-       LEFT JOIN platform.commerce_subscription_term term ON term.site_ref=fulfillment.site_ref AND term.source_type=fulfillment.source_type AND term.source_ref=fulfillment.source_id
+       LEFT JOIN platform.commerce_subscription_term term
+         ON actual.output_kind='subscription_term' AND term.site_ref=fulfillment.site_ref
+        AND term.subscription_term_ref::text=actual.output_ref
        LEFT JOIN platform.commerce_redemption redemption ON fulfillment.source_type='redemption' AND redemption.site_ref=fulfillment.site_ref AND redemption.redemption_id::text=fulfillment.source_id
-       WHERE fulfillment.site_ref=$1 AND fulfillment.status='succeeded'
+       WHERE fulfillment.site_ref=$1 AND fulfillment.state='committed'
        GROUP BY fulfillment.fulfillment_id,version.product_ref,version.product_version_ref,version.safe_label,product.kind,
                 version.plan_version_ref,plan.plan_ref,plan.safe_label,redemption.state
-       ORDER BY fulfillment.completed_at DESC,fulfillment.fulfillment_id`,
+       ORDER BY fulfillment.committed_at DESC,fulfillment.fulfillment_id`,
       [input.siteId, input.subjectId, input.subjectGeneration],
     );
     const first = rows[0];

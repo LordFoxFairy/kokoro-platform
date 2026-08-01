@@ -34,8 +34,9 @@ export type FulfillmentOutputReceipt = Readonly<{
 
 export type FulfillmentReceipt = Readonly<{
   fulfillmentId: string;
+  transactionVersion: 1;
+  transactionDigest: string;
   outputSetDigest: string;
-  resultDigest: string;
   outputs: readonly FulfillmentOutputReceipt[];
 }>;
 
@@ -55,9 +56,11 @@ export interface CommerceRepository {
   claimCommand(transaction: PlatformTransaction, identity: CommerceCommandIdentity): Promise<CommerceCommandClaim>;
   completeCommand(transaction: PlatformTransaction, identity: CommerceCommandIdentity, outcome: CommerceTerminalOutcome): Promise<void>;
   claimFulfillment(transaction: PlatformTransaction, input: ClaimFulfillmentInput): Promise<FulfillmentClaim>;
-  recordExpectedOutputPlan(transaction: PlatformTransaction, fulfillmentId: string, plan: readonly FulfillmentOutputLine[]): Promise<void>;
-  recordActualOutputs(transaction: PlatformTransaction, fulfillmentId: string, outputs: readonly ActualFulfillmentOutput[], plan: readonly FulfillmentOutputLine[]): Promise<void>;
-  completeFulfillment(transaction: PlatformTransaction, input: { readonly fulfillmentId: string; readonly outputSetDigest: string; readonly resultDigest: string }): Promise<void>;
+  commitFulfillment(transaction: PlatformTransaction, input: Readonly<{
+    claim: ClaimFulfillmentInput;
+    plan: readonly FulfillmentOutputLine[];
+    outputs: readonly ActualFulfillmentOutput[];
+  }>): Promise<FulfillmentReceipt>;
   linkOutboxEvent(transaction: PlatformTransaction, commandId: string, eventId: string): Promise<void>;
   recordAudit(transaction: PlatformTransaction, input: { readonly auditId: string; readonly commandId: string; readonly siteId: string; readonly eventType: string; readonly payloadDigest: string }): Promise<void>;
 }
