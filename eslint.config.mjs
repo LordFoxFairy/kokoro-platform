@@ -13,6 +13,7 @@ export default [
       "**/out/**",
       "**/build/**",
       "**/generated/**",
+      "src/interfaces/connect/generated-product-catalog-publication/**",
       "**/next-env.d.ts",
       "**/*.tsbuildinfo",
       "kokoro-platform-admin/**",

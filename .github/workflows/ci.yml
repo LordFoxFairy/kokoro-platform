@@ -17,6 +17,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: generate database clients
         run: pnpm db:generate
+      - name: verify Root Product Catalog schema mirrors
+        run: pnpm contract:check-product-publication
       - name: production dependency audit
         run: pnpm audit --prod
       - name: lint

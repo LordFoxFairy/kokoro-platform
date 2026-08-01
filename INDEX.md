@@ -19,7 +19,7 @@ receives broad authority-table UPDATE. There is no MySQL authority mode, dual wr
 
 ## Responsibilities
 
-Own shared Site, identity, model-control, credit, commerce, capability, and privileged Admin business facts in a modular TypeScript service repository.
+Own shared Site, identity, Product Catalog publication, model-control, credit, commerce, capability, and privileged Admin business facts in a modular TypeScript service repository.
 
 ## Non-responsibilities
 
@@ -28,11 +28,16 @@ Platform does not execute Agent graphs, own Session messages/SSE, render Site We
 ## Public boundary
 
 Ordinary Site product traffic uses the bounded public HTTP/JSON BFF contract. Privileged control planes use Root-owned
-Protobuf/Connect contracts: Admin Identity/Query/Commerce/Credit/Site Provisioning/Model Control, Session Admission and Asset Eligibility, Hub capability
+Protobuf/Connect contracts: Admin Identity/Query/Commerce/Credit/Site Provisioning/Model Control and the declared-only Product Catalog publication provider, Session Admission and Asset Eligibility, Hub capability
 publication/runtime, and Agent Model Gateway. The legacy Admin Auth provider remains implemented without a current official Web consumer. Same-Platform bounded contexts never self-RPC; application ports and one scoped
 transaction coordinate local owners. Root `src/index.ts` exposes only the Platform composition surface, and
 `deploy/docker/Dockerfile` builds the closed runtime artifact. `platform-hub-connect` selects the private Hub
 Connect entrypoint independently from the `@kokoro/hub` HTTP process.
+
+Product Catalog publication owns global immutable Product/Surface and product-level LaunchProfile
+revisions. Its provider code is mounted but remains contract-only and fail-closed because the current
+Root wire supplies only immutable bindings, not authenticated canonical document bytes. It must not
+receive runtime traffic until the Root-owned signed bundle resolver and compatibility evidence exist.
 
 Artifact metadata, capability issuance and revocation stay on the generated JSON control plane. Capability redemption uses a
 dedicated non-JSON streaming handler and independently selectable `platform-artifact-data-plane` process. That process pins the

@@ -522,7 +522,7 @@ deployables:
       permissions: typed-admin-control-plane-transactions
       ddl: forbidden
     inboundContracts: []
-    declaredInboundContracts: [platform-admin-connect]
+    declaredInboundContracts: [platform-admin-connect, platform-product-catalog-publication]
     activationAuthorized: false
     runtimeTraffic: false
     outboundContracts: []

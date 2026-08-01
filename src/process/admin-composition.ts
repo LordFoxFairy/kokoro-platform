@@ -21,6 +21,8 @@ import { SiteProvisioningService } from
   "../interfaces/connect/generated-site-provisioning/kokoro/platform/site/v1/site_provisioning_pb.js";
 import { ModelControlService } from
   "../interfaces/connect/generated-model-control/kokoro/platform/model/v1/model_control_pb.js";
+import { ProductCatalogPublicationService } from
+  "../interfaces/connect/generated-product-catalog-publication/kokoro/platform/product/v1/product_catalog_publication_pb.js";
 import { PlatformUnitOfWork } from "../shared/unit-of-work/index.js";
 import { CommandReceiptRepository } from "../shared/outbox-inbox/receipt.js";
 import { OutboxRepository } from "../shared/outbox-inbox/outbox.js";
@@ -93,6 +95,12 @@ import { createProductModelOptionAdministrationComposition } from
   "./model-option-admin-composition.js";
 import { PostgresModelControlAdminReader } from
   "../modules/model-control/infrastructure/postgres/model-control-admin-reader.js";
+import type { ProductPublicationDocumentResolver } from
+  "../modules/product-catalog/application/contracts/product-publication-document-resolver.js";
+import { createProductCatalogPublicationConnectService } from
+  "../modules/product-catalog/interfaces/connect/product-catalog-publication-service.js";
+import { createProductCatalogAdministrationComposition } from
+  "./product-catalog-admin-composition.js";
 
 export type AdminRequestListener = (
   request: Http2ServerRequest,
@@ -119,6 +127,7 @@ export async function createAdminProductionComposition(input: Readonly<{
   database: PlatformTransactionalDatabaseClient;
   environment?: Readonly<Record<string, string | undefined>>;
   clock?: () => Date;
+  productPublicationDocuments?: ProductPublicationDocumentResolver;
 }>): Promise<AdminProductionComposition> {
   const environment = input.environment ?? process.env;
   const [tls, peers, oidcClients, transactionKey, cursorKey, keyRing,
@@ -270,6 +279,14 @@ export async function createAdminProductionComposition(input: Readonly<{
     reader: new PostgresModelControlAdminReader(input.database),
     cursors,
   });
+  const productCatalogOwner = createProductCatalogAdministrationComposition(
+    input.database,
+    input.productPublicationDocuments,
+  );
+  const productCatalogService = createProductCatalogPublicationConnectService({
+    owner: productCatalogOwner,
+    resolver,
+  });
   const connect = connectNodeAdapter({
     routes: (router) => {
       router.service(AdminIdentityService, identityService);
@@ -278,6 +295,7 @@ export async function createAdminProductionComposition(input: Readonly<{
       router.service(SiteLifecycleService, siteLifecycleService);
       router.service(SiteProvisioningService, siteProvisioningService);
       router.service(ModelControlService, modelControlService);
+      router.service(ProductCatalogPublicationService, productCatalogService);
       router.service(AdminCommerceService, commerceService);
       router.service(AdminCreditService, creditService);
     },

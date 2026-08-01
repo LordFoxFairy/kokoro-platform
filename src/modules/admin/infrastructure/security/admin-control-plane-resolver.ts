@@ -65,6 +65,10 @@ export type ModelControlAdminOperation =
   | "model.option.materialize"
   | "model.site-release-catalog.publish";
 
+export type ProductCatalogPublicationAdminOperation =
+  | "product.catalog.publish"
+  | "product.launch-profile.publish";
+
 export class AdminControlPlaneResolver implements
   AdminIdentityTransportResolver, VerifiedAdminOperatorContextResolver, AdminQueryResolver {
   constructor(private readonly dependencies: Readonly<{
@@ -275,6 +279,47 @@ export class AdminControlPlaneResolver implements
         [request.operation],
         request.purpose,
         request.contextScopes,
+      ),
+    });
+  }
+
+  async resolveProductCatalogPublicationCommand(
+    claimed: AuthenticatedOperatorCommandContext,
+    transport: HandlerContext,
+    request: Readonly<{
+      operation: ProductCatalogPublicationAdminOperation;
+      resourceRefs: readonly string[];
+    }>,
+  ): Promise<Readonly<{
+    context: VerifiedRequestSecurityContext;
+    axes: VerifiedAuthenticatedAdminAxes;
+  }>> {
+    const authenticated = await this.authenticate(claimed, transport);
+    const requested = scopeFromWire(claimed.scope);
+    if (requested.kind !== "global") {
+      throw new Error("PRODUCT_PUBLICATION_GLOBAL_SCOPE_REQUIRED");
+    }
+    this.authorizeScope(
+      authenticated,
+      requested,
+      request.operation,
+      request.operation,
+      null,
+      request.resourceRefs,
+      [],
+      true,
+    );
+    return Object.freeze({
+      axes: axes(authenticated.session),
+      context: await this.context(
+        authenticated.session,
+        request.operation,
+        null,
+        scopeLabels(requested),
+        claimed.command?.commandId ?? "",
+        [request.operation],
+        request.operation,
+        ["admin:global", request.operation],
       ),
     });
   }

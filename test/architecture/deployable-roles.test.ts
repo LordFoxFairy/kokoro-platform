@@ -1072,6 +1072,7 @@ function authority(roleName: string): Record<string, unknown> {
     canUpdateCommerceCatalogEpoch: roleName === "platform_admin",
     canExecuteAdminAuthorityChange: false,
     hasRequiredModelOptionFunctions: true,
+    hasRequiredProductCatalogPrivileges: true,
     canSelectModelCatalogTable: roleName === "platform_admin",
     canReadModelSensitiveColumn: false,
     hasUnexpectedPlatformPrivilege: false,

@@ -17,6 +17,7 @@ const platformModules = [
   "model-control",
   "model-gateway",
   "policy",
+  "product-catalog",
   "site",
 ];
 const allowedModuleEntries = new Set([

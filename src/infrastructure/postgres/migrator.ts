@@ -2281,6 +2281,15 @@ async function grantFoundationPrivileges(
       await client.query(`GRANT SELECT ON TABLE ${ASSET_TABLES} TO ${identifier}`);
       await client.query(`GRANT SELECT ON TABLE ${MODEL_ADMIN_READ_TABLES} TO ${identifier}`);
       await client.query(
+        `GRANT SELECT, INSERT ON TABLE platform.product_surface_catalog_revision, platform.launch_product_profile_revision, platform.product_catalog_publication_audit TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT SELECT ON TABLE platform.product_catalog_publication_head TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT UPDATE(head_revision,head_ref,head_digest,updated_at) ON TABLE platform.product_catalog_publication_head TO ${identifier}`,
+      );
+      await client.query(
         `GRANT SELECT(import_id,source_digest,source_reference,counts,imported_at) ON TABLE platform.model_inventory_import TO ${identifier}`,
       );
       await client.query(
@@ -2712,6 +2721,10 @@ const PLATFORM_RUNTIME_TABLES = [
   "platform.site_release_model_catalog_publication",
   "platform.site_release_model_catalog_surface",
   "platform.site_release_model_catalog_option",
+  "platform.product_catalog_publication_head",
+  "platform.product_surface_catalog_revision",
+  "platform.launch_product_profile_revision",
+  "platform.product_catalog_publication_audit",
   SITE_TABLES,
   AUTHORIZATION_TABLES,
   IDENTITY_TABLES,
@@ -2777,6 +2790,7 @@ async function assertPostMigrationAuthority(
         row.canUpdateCommerceCatalogEpoch !== (row.roleName === adminRole) ||
         row.canExecuteAdminAuthorityChange !== false ||
         row.hasRequiredModelOptionFunctions !== true ||
+        row.hasRequiredProductCatalogPrivileges !== true ||
         row.canSelectModelCatalogTable !== (row.roleName === adminRole) ||
         row.canReadModelSensitiveColumn !== false ||
         row.hasUnexpectedPlatformPrivilege !== false,
@@ -3215,6 +3229,28 @@ const POST_MIGRATION_AUTHORITY_SQL = `
              ])
              AND has_table_privilege(runtime_role.rolname,model_relation.oid,'SELECT')
          ) END AS "canSelectModelCatalogTable"
+         ,CASE WHEN runtime_role.rolname=$4 THEN
+           has_table_privilege(runtime_role.rolname,'platform.product_catalog_publication_head','SELECT')
+           AND has_column_privilege(runtime_role.rolname,'platform.product_catalog_publication_head','head_revision','UPDATE')
+           AND has_column_privilege(runtime_role.rolname,'platform.product_catalog_publication_head','head_ref','UPDATE')
+           AND has_column_privilege(runtime_role.rolname,'platform.product_catalog_publication_head','head_digest','UPDATE')
+           AND has_column_privilege(runtime_role.rolname,'platform.product_catalog_publication_head','updated_at','UPDATE')
+           AND NOT has_table_privilege(runtime_role.rolname,'platform.product_catalog_publication_head','INSERT,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+           AND has_table_privilege(runtime_role.rolname,'platform.product_surface_catalog_revision','SELECT')
+           AND has_table_privilege(runtime_role.rolname,'platform.product_surface_catalog_revision','INSERT')
+           AND NOT has_table_privilege(runtime_role.rolname,'platform.product_surface_catalog_revision','UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+           AND has_table_privilege(runtime_role.rolname,'platform.launch_product_profile_revision','SELECT')
+           AND has_table_privilege(runtime_role.rolname,'platform.launch_product_profile_revision','INSERT')
+           AND NOT has_table_privilege(runtime_role.rolname,'platform.launch_product_profile_revision','UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+           AND has_table_privilege(runtime_role.rolname,'platform.product_catalog_publication_audit','SELECT')
+           AND has_table_privilege(runtime_role.rolname,'platform.product_catalog_publication_audit','INSERT')
+           AND NOT has_table_privilege(runtime_role.rolname,'platform.product_catalog_publication_audit','UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+         ELSE
+           NOT has_table_privilege(runtime_role.rolname,'platform.product_catalog_publication_head','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+           AND NOT has_table_privilege(runtime_role.rolname,'platform.product_surface_catalog_revision','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+           AND NOT has_table_privilege(runtime_role.rolname,'platform.launch_product_profile_revision','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+           AND NOT has_table_privilege(runtime_role.rolname,'platform.product_catalog_publication_audit','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+         END AS "hasRequiredProductCatalogPrivileges"
          ,(has_column_privilege(runtime_role.rolname,'platform.model_inventory_import','canonical_payload','SELECT')
            OR has_column_privilege(runtime_role.rolname,'platform.model_provider_snapshot','secret_ref','SELECT'))
            AS "canReadModelSensitiveColumn"
@@ -3242,6 +3278,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                'model_option_materialized_revision','model_option_role_binding',
                'site_release_model_catalog_publication',
                'site_release_model_catalog_surface','site_release_model_catalog_option'
+               ,'product_catalog_publication_head','product_surface_catalog_revision',
+               'launch_product_profile_revision','product_catalog_publication_audit'
                ,'identity_account','identity_password_credential','identity_login_identifier',
                'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
                'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
