@@ -145,6 +145,11 @@ describe("Memory public PostgreSQL authority", () => {
       revisionRef: firstRevisionRef, expectedRevision: 2 });
     expect(restored).toMatchObject({ kind: "restored", revision: 3n,
       restoredFromRevisionRef: firstRevisionRef, committedSpaceVersion: 4n });
+    const activeHistory = await reads.history({ context, entryRef });
+    expect(activeHistory.items.find(({ revisionRef }) => revisionRef === restored.revisionRef))
+      .toMatchObject({ state: "available", restorable: false });
+    expect(activeHistory.items.find(({ revisionRef }) => revisionRef === firstRevisionRef))
+      .toMatchObject({ state: "available", restorable: true });
     const prioritized = await owner.setPriority({ context, commandRef: `priority-a-${suffix}`, entryRef,
       expectedEntryVersion: 3n, prioritized: true });
     expect(prioritized).toMatchObject({ prioritized: true, committedSpaceVersion: 5n });

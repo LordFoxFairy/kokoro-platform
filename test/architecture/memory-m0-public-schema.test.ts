@@ -86,6 +86,20 @@ describe("Memory M0.1 public database authority", () => {
     );
   });
 
+  it("keeps the Prisma command receipt result mirror aligned with the applied SQL shape", () => {
+    const receiptModel = schema.slice(schema.indexOf("model MemoryCommandReceipt {"),
+      schema.indexOf("model MemoryPublicCommandInbox {"));
+    expect(receiptModel).toMatch(
+      /resultRestoredFromRevisionRef\s+String\?\s+@map\("result_restored_from_revision_ref"\)/u,
+    );
+    expect(receiptModel).toMatch(
+      /resultPrioritized\s+Boolean\?\s+@map\("result_prioritized"\)/u,
+    );
+    expect(receiptModel).toMatch(
+      /resultChanged\s+Boolean\?\s+@map\("result_changed"\)/u,
+    );
+  });
+
   it("pins three actual least-privilege login OIDs while runtime remains grant-free", () => {
     const provision = readFileSync(join(process.cwd(), "scripts/ci/provision-platform-postgres.sql"), "utf8");
     for (const role of ["platform_memory_public", "platform_memory_runtime", "platform_memory_worker"]) {

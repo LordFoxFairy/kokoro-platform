@@ -186,7 +186,8 @@ export class MemoryPublicReadOwner {
       siteRef: owner.context.siteRef, spaceRef: memorySpaceRef(owner.spaceRef),
       entryRef: memoryEntryRef(entry.entryRef), revisionRef: memoryRevisionRef(row.revisionRef),
     }, protectedContent: row.protectedContent });
-    return Object.freeze({ ...base, state: "available" as const, restorable: true,
+    return Object.freeze({ ...base, state: "available" as const,
+      restorable: row.revision < entry.revision,
       content: decodeContent(plaintext), supersedesRevisionRef: row.supersedesRevisionRef,
       validFrom: row.validFrom, validTo: row.validTo });
   }

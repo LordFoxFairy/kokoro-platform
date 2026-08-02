@@ -145,6 +145,21 @@ describe("MemoryPublicReadOwner", () => {
       typeof value === "bigint" ? value.toString() : value))).toBeLessThanOrEqual(262_144);
   });
 
+  it("marks only available revisions older than the current head as restorable", async () => {
+    const current = { ...entry("entry-a", false, "2026-07-31T11:00:00.000Z"),
+      revision: 3n, currentRevisionRef: "revision-3" };
+    repository.listHistory = async () => ({ entry: current, revisions: [revision(3),
+      { ...revision(2), protectedContent: null }, revision(1)] });
+    const result = await createOwner(repository, cursors, lease)
+      .history({ context, entryRef: "entry-a" });
+    expect(result.items).toEqual([
+      expect.objectContaining({ revisionRef: "revision-3", state: "available", restorable: false }),
+      { revision: 2, revisionRef: "revision-2", reason: "corrected",
+        recordedAt: "2026-07-31T11:00:00.000Z", state: "purged", restorable: false },
+      expect.objectContaining({ revisionRef: "revision-1", state: "available", restorable: true }),
+    ]);
+  });
+
   it("never reveals retained payload bytes after the entry is logically revoked", async () => {
     let revealCalls = 0;
     const revoked = { ...entry("entry-a", false, "2026-07-31T10:00:00.000Z"),
@@ -180,7 +195,8 @@ describe("MemoryPublicReadOwner", () => {
 
   it("measures the complete history envelope just below and above the UTF-8 cap", async () => {
     const revisions = boundaryRevisions();
-    repository.listHistory = async () => ({ entry: rows[0]!, revisions });
+    repository.listHistory = async () => ({ entry: { ...rows[0]!, revision: 16n,
+      currentRevisionRef: "revision-16" }, revisions });
     for (const target of [MAX_RESPONSE_BYTES - 1, MAX_RESPONSE_BYTES + 1]) {
       const contents = exactContents(target, revisions.length,
         (candidate) => historyEnvelope(revisions, candidate));
@@ -314,15 +330,16 @@ function entryView(row: MemoryPublicEntryRecord, content: string) {
 }
 
 function historyEnvelope(revisions: readonly MemoryPublicRevisionRecord[], contents: readonly string[]) {
+  const currentRevision = revisions[0]?.revision ?? 0n;
   return { entryRef: "entry-a",
-    items: revisions.map((row, index) => revisionView(row, contents[index]!)),
+    items: revisions.map((row, index) => revisionView(row, contents[index]!, currentRevision)),
     ownerSnapshot: { snapshotRef: "snapshot-00000001", spaceVersion: 7n },
     pageInfo: { hasMore: false, nextCursor: null } };
 }
 
-function revisionView(row: MemoryPublicRevisionRecord, content: string) {
+function revisionView(row: MemoryPublicRevisionRecord, content: string, currentRevision: bigint) {
   return { revision: Number(row.revision), revisionRef: row.revisionRef, reason: row.reason,
-    recordedAt: row.recordedAt, state: "available", restorable: true, content,
+    recordedAt: row.recordedAt, state: "available", restorable: row.revision < currentRevision, content,
     supersedesRevisionRef: row.supersedesRevisionRef, validFrom: row.validFrom,
     validTo: row.validTo };
 }

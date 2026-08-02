@@ -67,6 +67,8 @@ Forget/reset synchronously create a deterministic purge manifest and expose only
 `revoked_purge_pending`/`purged` tombstone, so revoked plaintext cannot be returned through detail, history, or restore while the
 physical deletion worker remains feature-off. History keeps immutable revision identity/reason/time headers after logical
 revocation, but projects every retained payload as content-free `purged` and non-restorable before physical deletion.
+For an active entry, the available current head is also non-restorable; only an available revision strictly older than that
+head can be restored as a new successor revision.
 `platform_memory_runtime` still receives zero Platform schema, table, sequence, or
 routine grants. `platform_memory_worker` receives only
 Platform schema usage and the four fixed-search-path purge routines. Purge claims first terminalize at most 100 exhausted queued
