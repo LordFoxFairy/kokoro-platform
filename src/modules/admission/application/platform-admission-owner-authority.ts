@@ -294,7 +294,7 @@ export interface AdmissionBudgetOwnerPort {
       outcomeUnknownEvidenceRef?: string | undefined;
       terminalEvidenceRef?: string | undefined;
       terminalEvidenceDigest?: string | undefined;
-      terminalOutcome?: "completed" | "failed" | undefined;
+      terminalOutcome?: "completed" | "canceled" | "failed" | undefined;
       sessionId: string;
       launchId: string;
       runId: string;
@@ -391,7 +391,7 @@ export type AdmissionExecutionEvidence =
   | Readonly<{ kind: "not_found" }>
   | Readonly<{ kind: "execution_observed"; safeStatusRef?: string | undefined }>
   | Readonly<{ kind: "terminal_observed"; terminalEvidenceRef: string; terminalEvidenceDigest: string;
-      terminalOutcome: "completed" | "failed"; safeStatusRef?: string | undefined }>;
+      terminalOutcome: "completed" | "canceled" | "failed"; safeStatusRef?: string | undefined }>;
 
 export interface AdmissionExecutionEvidenceOwnerPort {
   resolve(

@@ -9,7 +9,7 @@ CREATE TABLE platform.admission_verified_terminal_evidence (
   session_ref TEXT NOT NULL CHECK(length(session_ref) BETWEEN 1 AND 256),
   launch_ref TEXT NOT NULL CHECK(length(launch_ref) BETWEEN 1 AND 256),
   terminal_evidence_ref TEXT NOT NULL CHECK(length(terminal_evidence_ref) BETWEEN 1 AND 256),
-  terminal_outcome TEXT NOT NULL CHECK(terminal_outcome IN ('completed','failed')),
+  terminal_outcome TEXT NOT NULL CHECK(terminal_outcome IN ('completed','canceled','failed')),
   terminal_evidence_digest CHAR(64) NOT NULL CHECK(terminal_evidence_digest ~ '^[a-f0-9]{64}$'),
   verified_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY(site_ref,run_ref),
@@ -416,7 +416,7 @@ CREATE FUNCTION platform.record_admission_verified_terminal_evidence(
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$
 DECLARE prior platform.admission_verified_terminal_evidence%ROWTYPE;
 BEGIN
-  IF SESSION_USER<>'platform_admission' OR p_terminal_outcome NOT IN ('completed','failed')
+  IF SESSION_USER<>'platform_admission' OR p_terminal_outcome NOT IN ('completed','canceled','failed')
     OR p_terminal_evidence_digest !~ '^[a-f0-9]{64}$'
     OR p_site_ref IS NULL OR p_run_ref IS NULL OR p_manifest_ref IS NULL OR p_session_ref IS NULL
     OR p_launch_ref IS NULL OR p_terminal_evidence_ref IS NULL THEN
@@ -482,7 +482,7 @@ BEGIN
     IF NOT platform.credit_direct_root_json_exact_keys(p_owner_proof,
       ARRAY['kind','sourceRef','terminalEvidenceRef','terminalEvidenceDigest','outcome','proofDigest',
         'manifestRef','sessionId','launchId'])
-      OR p_owner_proof->>'outcome' NOT IN ('completed','failed')
+      OR p_owner_proof->>'outcome' NOT IN ('completed','canceled','failed')
       OR NOT platform.credit_direct_root_is_reference(p_owner_proof->>'sourceRef',256)
       OR NOT platform.credit_direct_root_is_reference(p_owner_proof->>'terminalEvidenceRef',256)
       OR NOT platform.credit_direct_root_is_reference(p_owner_proof->>'manifestRef',256)

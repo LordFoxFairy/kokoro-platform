@@ -23,14 +23,17 @@ import {
 const runId = "run-a";
 const evidenceRef = "agent-execution-evidence:v1:terminal-a";
 
-function terminalEvidence(overrides: Readonly<Record<string, unknown>> = {}) {
+function terminalEvidence(
+  overrides: Readonly<Record<string, unknown>> = {},
+  status: RunCompletedEvidenceStatus = RunCompletedEvidenceStatus.COMPLETED,
+) {
   const canonicalPayload = toBinary(
     DurableExecutionCanonicalPayloadV1Schema,
     create(DurableExecutionCanonicalPayloadV1Schema, {
       payload: {
         case: "runCompleted",
         value: create(RunCompletedEvidenceV1Schema, {
-          status: RunCompletedEvidenceStatus.COMPLETED,
+          status,
           tokenUsage: { inputTokens: 5n, outputTokens: 8n },
         }),
       },
@@ -61,6 +64,16 @@ function transportWithEvidence(overrides: Readonly<Record<string, unknown>> = {}
       }),
       getRunDurableCheckpoint: () => create(GetRunDurableCheckpointResponseSchema, {
         outcome: { case: "evidence", value: terminalEvidence(overrides) },
+      }),
+    });
+  });
+}
+
+function transportWithCompletedStatus(status: RunCompletedEvidenceStatus) {
+  return createRouterTransport((router) => {
+    router.service(AgentExecutionEvidenceService, {
+      getDurableExecutionEvidence: () => create(GetDurableExecutionEvidenceResponseSchema, {
+        outcome: { case: "evidence", value: terminalEvidence({}, status) },
       }),
     });
   });
@@ -107,6 +120,23 @@ describe("Agent durable execution-evidence consumer", () => {
       siteId: "site-a", sessionId: "session-a", launchId: "launch-a", runId,
     }, new AbortController().signal)).resolves.toMatchObject({ kind: "terminal_observed" });
     expect({ exactCalls, checkpointCalls }).toEqual({ exactCalls: 0, checkpointCalls: 1 });
+  });
+
+  it("preserves a canceled terminal owner outcome instead of misclassifying it as completed", async () => {
+    const client = createAgentExecutionEvidenceClientForTransport(
+      transportWithCompletedStatus(RunCompletedEvidenceStatus.CANCELLED),
+    );
+
+    await expect(client.resolve({
+      siteId: "site-a",
+      sessionId: "session-a",
+      launchId: "launch-a",
+      runId,
+      terminalOwnerEvidenceRef: evidenceRef,
+    }, new AbortController().signal)).resolves.toMatchObject({
+      kind: "terminal_observed",
+      terminalOutcome: "canceled",
+    });
   });
 
   it("returns not_found and fails closed on identity, digest, or typed-payload mismatch", async () => {

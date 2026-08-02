@@ -8,6 +8,7 @@ import {
   DurableExecutionCanonicalPayloadV1Schema,
   DurableExecutionEvidenceKind,
   DurableExecutionEvidenceSchema,
+  RunCompletedEvidenceStatus,
   type DurableExecutionCanonicalPayloadV1,
   type DurableExecutionEvidence,
 } from "./generated-agent-evidence/kokoro/agent/execution/v1/agent_execution_evidence_pb.js";
@@ -155,9 +156,7 @@ function mapEvidence(
         kind: "terminal_observed" as const,
         terminalEvidenceRef: evidence.evidenceRef,
         terminalEvidenceDigest: evidence.payloadSha256,
-        terminalOutcome: evidence.kind === DurableExecutionEvidenceKind.RUN_COMPLETED
-          ? "completed" as const
-          : "failed" as const,
+        terminalOutcome: terminalOutcome(evidence.kind, canonical),
         safeStatusRef: evidence.evidenceRef,
       })
     : Object.freeze({
@@ -180,6 +179,17 @@ function kindMatchesPayload(
 
 function terminalKind(kind: DurableExecutionEvidenceKind): boolean {
   return kind === DurableExecutionEvidenceKind.RUN_COMPLETED || kind === DurableExecutionEvidenceKind.RUN_FAILED;
+}
+
+function terminalOutcome(
+  kind: DurableExecutionEvidenceKind,
+  canonical: DurableExecutionCanonicalPayloadV1,
+): "completed" | "canceled" | "failed" {
+  if (kind === DurableExecutionEvidenceKind.RUN_FAILED) return "failed";
+  if (canonical.payload.case !== "runCompleted") throw invalidResponse();
+  return canonical.payload.value.status === RunCompletedEvidenceStatus.CANCELLED
+    ? "canceled"
+    : "completed";
 }
 
 function exactEvidenceRef(first: string | undefined, second: string | undefined): string | undefined {

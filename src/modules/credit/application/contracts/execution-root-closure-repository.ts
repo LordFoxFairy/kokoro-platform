@@ -21,7 +21,7 @@ export type AdmissionExecutionRootOwnerProof = Readonly<{
   sourceRef: string;
   terminalEvidenceRef: string;
   terminalEvidenceDigest: string;
-  outcome: "completed" | "failed";
+  outcome: "completed" | "canceled" | "failed";
   proofDigest: string;
   manifestRef: string;
   sessionId: string;
