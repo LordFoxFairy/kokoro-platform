@@ -67,7 +67,7 @@ describe("PostgresMemoryPublicRepository", () => {
       operation: "list_entries", candidateSpaceRef: "memory-space:owner",
       now: "2026-07-31T12:00:00.000Z" });
     await repository.listEntries(lease.transaction, { owner: { context,
-      spaceRef: "space-user-1", spaceVersion: 7n }, category: null, source: null,
+      spaceRef: "space-user-1", spaceVersion: 7n }, category: null, source: "import",
       after: null, limit: 51 });
     await repository.getEntry(lease.transaction, { owner: { context,
       spaceRef: "space-user-1", spaceVersion: 7n }, entryRef: "entry-1" });
@@ -85,6 +85,9 @@ describe("PostgresMemoryPublicRepository", () => {
       expect(sql).not.toMatch(/\b(?:FROM|JOIN|UPDATE|INSERT INTO|DELETE FROM)\s+platform\.memory_/iu);
       expect(sql).not.toContain("memory_assert_public_owner_authority");
     }
+    const listCall = statements.find(({ sql }) =>
+      sql.includes("platform.memory_public_list_entries($1"));
+    expect(listCall?.values[7]).toBe("import");
   });
 
   it("maps every mutation to a closed prepare/commit routine pair", async () => {

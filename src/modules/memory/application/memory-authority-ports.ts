@@ -395,8 +395,14 @@ export interface MemoryPublicRepository {
 export type MemoryPublicCursor = Readonly<{
   kind: "entries" | "history";
   context: MemoryPublicPersonalContext;
-  category: MemoryCategory | null;
-  source: "explicit" | "import" | null;
+  filter: Readonly<{
+    /** Public state is an implicit constant, not a caller-selectable query parameter. */
+    state: "active";
+    /** null is the canonical all-categories representation. */
+    category: MemoryCategory | null;
+    /** null is the canonical all-sources representation. */
+    source: "explicit" | "import" | null;
+  }>;
   order: "priority_updated_entry_desc" | "revision_desc";
   spaceVersion: bigint;
   snapshotRef: string;

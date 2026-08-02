@@ -6,6 +6,7 @@ import {
   type MemoryPublicCursorCodec,
   type MemoryPublicEntryRecord,
   type MemoryPublicRepository,
+  type MemoryPublicRevisionRecord,
 } from "../../src/modules/memory/index.js";
 import { createProtectedMemoryContent } from "../../src/modules/memory/index.js";
 import { issuePlatformTransaction, revokePlatformTransaction,
@@ -16,6 +17,7 @@ const context = memoryPublicPersonalContext({ siteRef: "site-alpha", subjectRef:
 const protectedContent = createProtectedMemoryContent({ envelopeVersion: 1,
   ciphertext: new Uint8Array([1]), keyRevision: "key-r1", nonce: new Uint8Array(12),
   authenticationTag: new Uint8Array(16), aadDigest: "a".repeat(64) });
+const MAX_RESPONSE_BYTES = 262_144;
 
 describe("MemoryPublicReadOwner", () => {
   let lease: PlatformTransactionLease;
@@ -57,8 +59,9 @@ describe("MemoryPublicReadOwner", () => {
     expect(first.ownerSnapshot).toEqual({ snapshotRef: expect.any(String), spaceVersion: 7n });
     expect(first.items.map(({ entryRef }) => entryRef)).toEqual(["entry-a", "entry-b"]);
     expect(first.pageInfo).toEqual({ hasMore: true, nextCursor: "sealed-cursor" });
-    expect(encoded[0]).toMatchObject({ kind: "entries", context, category: "fact",
-      source: "explicit", order: "priority_updated_entry_desc", spaceVersion: 7n,
+    expect(encoded[0]).toMatchObject({ kind: "entries", context,
+      filter: { state: "active", category: "fact", source: "explicit" },
+      order: "priority_updated_entry_desc", spaceVersion: 7n,
       snapshotRef: first.ownerSnapshot.snapshotRef, prioritized: false, entryRef: "entry-b" });
 
     decoded = { ...(encoded[0] as object), expiresAt: "2026-07-31T12:05:00.000Z" };
@@ -68,8 +71,17 @@ describe("MemoryPublicReadOwner", () => {
     expect(continued.ownerSnapshot).toEqual(first.ownerSnapshot);
   });
 
+  it("normalizes absent list filters to the implicit-active all-values cursor binding", async () => {
+    rows.push(entry("entry-c", false, "2026-07-31T09:00:00.000Z"));
+    await createOwner(repository, cursors, lease).list({ context, limit: 2 });
+    expect(encoded[0]).toMatchObject({
+      filter: { state: "active", category: null, source: null },
+    });
+  });
+
   it("rejects a continuation when the monotonic owner version changed", async () => {
-    decoded = { kind: "entries", context, category: null, source: null,
+    decoded = { kind: "entries", context,
+      filter: { state: "active", category: null, source: null },
       order: "priority_updated_entry_desc", spaceVersion: 6n, snapshotRef: "snapshot-old",
       prioritized: false, updatedAt: "2026-07-31T10:00:00.000Z", entryRef: "entry-b",
       expiresAt: "2026-07-31T12:05:00.000Z" };
@@ -132,6 +144,90 @@ describe("MemoryPublicReadOwner", () => {
     expect(Buffer.byteLength(JSON.stringify(result, (_key, value) =>
       typeof value === "bigint" ? value.toString() : value))).toBeLessThanOrEqual(262_144);
   });
+
+  it("measures the complete list envelope just below and above the UTF-8 cap", async () => {
+    rows = boundaryEntries();
+    for (const target of [MAX_RESPONSE_BYTES - 1, MAX_RESPONSE_BYTES + 1]) {
+      const contents = exactContents(target, rows.length, (candidate) => listEnvelope(rows, candidate));
+      const contentByRevisionRef = new Map(rows.map((row, index) =>
+        [row.currentRevisionRef, contents[index]!] as const));
+      expect(responseBytes(listEnvelope(rows, contents))).toBe(target);
+      const result = await createOwner(repository, cursors, lease, { contentByRevisionRef })
+        .list({ context, limit: rows.length });
+      expect(responseBytes(result)).toBeLessThanOrEqual(MAX_RESPONSE_BYTES);
+      if (target < MAX_RESPONSE_BYTES) {
+        expect(result.items).toHaveLength(rows.length);
+        expect(result.pageInfo).toEqual({ hasMore: false, nextCursor: null });
+      } else {
+        expect(result.items).toHaveLength(rows.length - 1);
+        expect(result.pageInfo).toEqual({ hasMore: true, nextCursor: "sealed-cursor" });
+      }
+    }
+  });
+
+  it("measures the complete history envelope just below and above the UTF-8 cap", async () => {
+    const revisions = boundaryRevisions();
+    repository.listHistory = async () => ({ entry: rows[0]!, revisions });
+    for (const target of [MAX_RESPONSE_BYTES - 1, MAX_RESPONSE_BYTES + 1]) {
+      const contents = exactContents(target, revisions.length,
+        (candidate) => historyEnvelope(revisions, candidate));
+      const contentByRevisionRef = new Map(revisions.map((revision, index) =>
+        [revision.revisionRef, contents[index]!] as const));
+      expect(responseBytes(historyEnvelope(revisions, contents))).toBe(target);
+      const result = await createOwner(repository, cursors, lease, { contentByRevisionRef })
+        .history({ context, entryRef: "entry-a", limit: revisions.length });
+      expect(responseBytes(result)).toBeLessThanOrEqual(MAX_RESPONSE_BYTES);
+      if (target < MAX_RESPONSE_BYTES) {
+        expect(result.items).toHaveLength(revisions.length);
+        expect(result.pageInfo).toEqual({ hasMore: false, nextCursor: null });
+      } else {
+        expect(result.items).toHaveLength(revisions.length - 1);
+        expect(result.pageInfo).toEqual({ hasMore: true, nextCursor: "sealed-cursor" });
+      }
+    }
+  });
+
+  it("fails closed when one list or history item cannot fit by itself", async () => {
+    const oversized = "x".repeat(MAX_RESPONSE_BYTES);
+    rows = [entry("entry-oversized", false, "2026-07-31T11:00:00.000Z")];
+    let contentByRevisionRef = new Map([[rows[0]!.currentRevisionRef, oversized]]);
+    await expect(createOwner(repository, cursors, lease, { contentByRevisionRef })
+      .list({ context, limit: 1 })).rejects.toEqual(
+      new MemoryApplicationError("MEMORY_PERSISTENCE_CONFLICT"),
+    );
+
+    const revisions = [revision(1)];
+    repository.listHistory = async () => ({ entry: rows[0]!, revisions });
+    contentByRevisionRef = new Map([[revisions[0]!.revisionRef, oversized]]);
+    await expect(createOwner(repository, cursors, lease, { contentByRevisionRef })
+      .history({ context, entryRef: "entry-oversized", limit: 1 })).rejects.toEqual(
+      new MemoryApplicationError("MEMORY_PERSISTENCE_CONFLICT"),
+    );
+  });
+
+  it("fails closed when the continuation cursor alone would exceed the response cap", async () => {
+    rows = [entry("entry-b", false, "2026-07-31T11:00:00.000Z"),
+      entry("entry-a", false, "2026-07-31T10:00:00.000Z")];
+    cursors.encode = (value) => { encoded.push(value); return "c".repeat(MAX_RESPONSE_BYTES); };
+    await expect(createOwner(repository, cursors, lease).list({ context, limit: 1 })).rejects.toEqual(
+      new MemoryApplicationError("MEMORY_PERSISTENCE_CONFLICT"),
+    );
+  });
+
+  it("returns complete bounded envelopes for empty list and history pages", async () => {
+    rows = [];
+    const owner = createOwner(repository, cursors, lease);
+    const list = await owner.list({ context });
+    expect(list).toMatchObject({ items: [], pageInfo: { hasMore: false, nextCursor: null } });
+    expect(responseBytes(list)).toBeLessThanOrEqual(MAX_RESPONSE_BYTES);
+
+    repository.listHistory = async () => ({
+      entry: entry("entry-empty", false, "2026-07-31T11:00:00.000Z"), revisions: [],
+    });
+    const history = await owner.history({ context, entryRef: "entry-empty" });
+    expect(history).toMatchObject({ items: [], pageInfo: { hasMore: false, nextCursor: null } });
+    expect(responseBytes(history)).toBeLessThanOrEqual(MAX_RESPONSE_BYTES);
+  });
 });
 
 function entry(entryRef: string, prioritized: boolean, updatedAt: string): MemoryPublicEntryRecord {
@@ -142,11 +238,79 @@ function entry(entryRef: string, prioritized: boolean, updatedAt: string): Memor
 }
 
 function createOwner(repository: MemoryPublicRepository, cursors: MemoryPublicCursorCodec,
-  lease: PlatformTransactionLease) {
+  lease: PlatformTransactionLease, options: Readonly<{
+    contentByRevisionRef?: ReadonlyMap<string, string>;
+  }> = {}) {
   return new MemoryPublicReadOwner({ repository, cursors,
     protector: { protect: async () => protectedContent,
-      reveal: async () => new TextEncoder().encode("safe content") },
+      reveal: async ({ binding }) => new TextEncoder().encode(
+        options.contentByRevisionRef?.get(binding.revisionRef) ?? "safe content",
+      ) },
     unitOfWork: { execute: async (_fence, work) => work(lease.transaction) },
     clock: () => new Date("2026-07-31T12:00:00.000Z"),
     reference: () => "snapshot-00000001" });
+}
+
+function boundaryEntries(): MemoryPublicEntryRecord[] {
+  return Array.from({ length: 16 }, (_, index) => entry(`entry-${16 - index}`, false,
+    new Date(Date.parse("2026-07-31T11:00:00.000Z") - index * 1_000).toISOString()));
+}
+
+function revision(number: number): MemoryPublicRevisionRecord {
+  return Object.freeze({ revision: BigInt(number), revisionRef: `revision-${number}`,
+    reason: number === 1 ? "explicit" as const : "corrected" as const,
+    supersedesRevisionRef: number === 1 ? null : `revision-${number - 1}`,
+    restoredFromRevisionRef: null, validFrom: null, validTo: null,
+    recordedAt: "2026-07-31T11:00:00.000Z", protectedContent });
+}
+
+function boundaryRevisions(): MemoryPublicRevisionRecord[] {
+  return Array.from({ length: 16 }, (_, index) => revision(16 - index));
+}
+
+function exactContents(targetBytes: number, count: number,
+  envelope: (contents: readonly string[]) => unknown): string[] {
+  const contents = Array.from({ length: count }, (_, index) =>
+    index === count - 1 ? "" : "x".repeat(16_384));
+  const remainder = targetBytes - responseBytes(envelope(contents));
+  if (remainder < 0 || remainder > 16_384) throw new Error("MEMORY_TEST_BOUNDARY_FIXTURE_INVALID");
+  contents[count - 1] = "x".repeat(remainder);
+  if (responseBytes(envelope(contents)) !== targetBytes) {
+    throw new Error("MEMORY_TEST_BOUNDARY_FIXTURE_INVALID");
+  }
+  return contents;
+}
+
+function listEnvelope(entries: readonly MemoryPublicEntryRecord[], contents: readonly string[]) {
+  return { items: entries.map((row, index) => entryView(row, contents[index]!)),
+    ownerSnapshot: { snapshotRef: "snapshot-00000001", spaceVersion: 7n },
+    pageInfo: { hasMore: false, nextCursor: null } };
+}
+
+function entryView(row: MemoryPublicEntryRecord, content: string) {
+  return { entryRef: row.entryRef, entryVersion: row.entryVersion, state: "active",
+    scopeKind: "user", category: row.category, content, prioritized: row.prioritized,
+    revision: Number(row.revision), currentRevisionRef: row.currentRevisionRef,
+    validFrom: row.validFrom, validTo: row.validTo, source: { sourceKind: row.sourceKind,
+      state: row.sourceState, safeLabel: row.safeSourceLabel }, createdAt: row.createdAt,
+    updatedAt: row.updatedAt };
+}
+
+function historyEnvelope(revisions: readonly MemoryPublicRevisionRecord[], contents: readonly string[]) {
+  return { entryRef: "entry-a",
+    items: revisions.map((row, index) => revisionView(row, contents[index]!)),
+    ownerSnapshot: { snapshotRef: "snapshot-00000001", spaceVersion: 7n },
+    pageInfo: { hasMore: false, nextCursor: null } };
+}
+
+function revisionView(row: MemoryPublicRevisionRecord, content: string) {
+  return { revision: Number(row.revision), revisionRef: row.revisionRef, reason: row.reason,
+    recordedAt: row.recordedAt, state: "available", restorable: true, content,
+    supersedesRevisionRef: row.supersedesRevisionRef, validFrom: row.validFrom,
+    validTo: row.validTo };
+}
+
+function responseBytes(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value, (_key, item) =>
+    typeof item === "bigint" ? item.toString() : item), "utf8");
 }

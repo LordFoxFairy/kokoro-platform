@@ -149,6 +149,30 @@ describe("Memory M0.1 public database authority", () => {
     }
   });
 
+  it("filters the implicit-active list by exact current-revision provenance", () => {
+    const listRoutine = ownerMigration.slice(
+      ownerMigration.indexOf("CREATE FUNCTION platform.memory_public_list_entries("),
+      ownerMigration.indexOf("CREATE FUNCTION platform.memory_public_get_entry("),
+    );
+    expect(listRoutine).toContain("JOIN platform.memory_revision current_revision");
+    expect(listRoutine).toContain(
+      "JOIN LATERAL (SELECT source_kind FROM platform.memory_provenance provenance_row",
+    );
+    expect(listRoutine).toContain(
+      "$8='explicit' AND current_revision.reason<>'imported'",
+    );
+    expect(listRoutine).toContain(
+      "current_provenance.source_kind='authenticated_user_command'",
+    );
+    expect(listRoutine).toContain(
+      "$8='import' AND current_revision.reason='imported'",
+    );
+    expect(ownerMigration).toContain(
+      "WHEN revision.reason='imported' THEN 'import'",
+    );
+    expect(listRoutine).not.toContain("($8 IS NULL OR $8='explicit')");
+  });
+
   it("checks an existing pinned OID inventory after locking but before migration execution", () => {
     const lockIndex = migrator.indexOf("pg_advisory_lock");
     const pinnedPreflightIndex = migrator.indexOf("assertMemoryRolePinnedIdentityPreflight");

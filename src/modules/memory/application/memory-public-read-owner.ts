@@ -33,29 +33,22 @@ export class MemoryPublicReadOwner {
     const limit = boundedLimit(input.limit);
     const category = input.category ?? null;
     const source = input.source ?? null;
+    const filter = activeFilter(category, source);
     const cursor = input.cursor === undefined ? null : this.#cursor(input.cursor, {
-      kind: "entries", context, category, source, order: "priority_updated_entry_desc",
+      kind: "entries", context, filter, order: "priority_updated_entry_desc",
     }, now);
     return this.dependencies.unitOfWork.execute({ operation: "memory.list" }, async (transaction) => {
       const owner = await this.#owner(transaction, context, "list_entries", now);
       assertCurrentSnapshot(owner, cursor);
-      const rows = await this.dependencies.repository.listEntries(transaction, { owner, category, source,
+      const rows = await this.dependencies.repository.listEntries(transaction, { owner,
+        category: filter.category, source: filter.source,
         after: cursor === null ? null : { prioritized: requiredBoolean(cursor.prioritized),
           updatedAt: requiredString(cursor.updatedAt), entryRef: cursor.entryRef }, limit: limit + 1 });
-      assertEntryRows(rows, category, source);
+      assertEntryRows(rows, filter.category, filter.source);
       const snapshotRef = cursor?.snapshotRef ?? this.#reference();
       const expiresAt = cursor?.expiresAt ?? new Date(new Date(now).getTime() +
         MEMORY_PUBLIC_SNAPSHOT_TTL_MS).toISOString();
-      const visible = await this.#boundedEntries(owner, rows, limit);
-      const hasMore = rows.length > visible.length;
-      const last = visible.at(-1)?.record;
-      return Object.freeze({ items: visible.map(({ view }) => view), ownerSnapshot: Object.freeze({
-        snapshotRef, spaceVersion: owner.spaceVersion,
-      }), pageInfo: Object.freeze({ hasMore, nextCursor: hasMore && last !== undefined
-        ? this.dependencies.cursors.encode({ kind: "entries", context, category, source,
-          order: "priority_updated_entry_desc", spaceVersion: owner.spaceVersion, snapshotRef,
-          prioritized: last.prioritized, updatedAt: last.updatedAt, entryRef: last.entryRef, expiresAt })
-        : null }) });
+      return this.#boundedEntries(owner, rows, limit, filter, snapshotRef, expiresAt);
     });
   }
 
@@ -79,8 +72,9 @@ export class MemoryPublicReadOwner {
     const entryRef = reference(input.entryRef);
     const now = this.#now();
     const limit = boundedLimit(input.limit);
+    const filter = activeFilter(null, null);
     const cursor = input.cursor === undefined ? null : this.#cursor(input.cursor, {
-      kind: "history", context, category: null, source: null, order: "revision_desc", entryRef,
+      kind: "history", context, filter, order: "revision_desc", entryRef,
     }, now);
     return this.dependencies.unitOfWork.execute({ operation: "memory.history" }, async (transaction) => {
       const owner = await this.#owner(transaction, context, "list_history", now);
@@ -92,41 +86,61 @@ export class MemoryPublicReadOwner {
       const snapshotRef = cursor?.snapshotRef ?? this.#reference();
       const expiresAt = cursor?.expiresAt ?? new Date(new Date(now).getTime() +
         MEMORY_PUBLIC_SNAPSHOT_TTL_MS).toISOString();
-      const visible = await this.#boundedRevisions(owner, page.entry, page.revisions, limit);
-      const hasMore = page.revisions.length > visible.length;
-      const last = visible.at(-1)?.record;
-      return Object.freeze({ entryRef, items: visible.map(({ view }) => view),
-        ownerSnapshot: Object.freeze({ snapshotRef, spaceVersion: owner.spaceVersion }),
-        pageInfo: Object.freeze({ hasMore, nextCursor: hasMore && last !== undefined
-          ? this.dependencies.cursors.encode({ kind: "history", context, category: null, source: null,
-            order: "revision_desc", spaceVersion: owner.spaceVersion, snapshotRef, entryRef,
-            revision: last.revision, expiresAt }) : null }) });
+      return this.#boundedRevisions(owner, page.entry, page.revisions, limit, filter, snapshotRef,
+        expiresAt);
     });
   }
 
   async #boundedEntries(owner: MemoryPublicResolvedOwner, rows: readonly MemoryPublicEntryRecord[],
-    limit: number) {
-    const result: Array<Readonly<{ record: MemoryPublicEntryRecord; view: MemoryPublicEntryView }>> = [];
+    limit: number, filter: MemoryPublicCursor["filter"], snapshotRef: string, expiresAt: string) {
+    const candidates: Array<Readonly<{
+      record: MemoryPublicEntryRecord; view: MemoryPublicEntryView;
+    }>> = [];
     for (const row of rows.slice(0, limit)) {
-      const candidate = Object.freeze({ record: row, view: await this.#entryView(owner, row) });
-      if (encodedBytes([...result, candidate].map(({ view }) => view)) >
-          MEMORY_PUBLIC_MAX_RESPONSE_UTF8_BYTES) break;
-      result.push(candidate);
+      candidates.push(Object.freeze({ record: row, view: await this.#entryView(owner, row) }));
     }
-    return result;
+    for (let count = candidates.length; count >= (rows.length === 0 ? 0 : 1); count -= 1) {
+      const visible = candidates.slice(0, count);
+      const hasMore = rows.length > count;
+      const last = visible.at(-1)?.record;
+      const nextCursor = hasMore && last !== undefined
+        ? this.dependencies.cursors.encode({ kind: "entries", context: owner.context, filter,
+          order: "priority_updated_entry_desc", spaceVersion: owner.spaceVersion, snapshotRef,
+          prioritized: last.prioritized, updatedAt: last.updatedAt, entryRef: last.entryRef,
+          expiresAt }) : null;
+      const response = Object.freeze({ items: visible.map(({ view }) => view),
+        ownerSnapshot: Object.freeze({ snapshotRef, spaceVersion: owner.spaceVersion }),
+        pageInfo: Object.freeze({ hasMore, nextCursor }) });
+      if (encodedBytes(response) <= MEMORY_PUBLIC_MAX_RESPONSE_UTF8_BYTES) return response;
+    }
+    throw new MemoryApplicationError("MEMORY_PERSISTENCE_CONFLICT");
   }
 
   async #boundedRevisions(owner: MemoryPublicResolvedOwner, entry: MemoryPublicEntryRecord,
-    rows: readonly MemoryPublicRevisionRecord[], limit: number) {
-    const result: Array<Readonly<{ record: MemoryPublicRevisionRecord; view: MemoryPublicRevisionView }>> = [];
+    rows: readonly MemoryPublicRevisionRecord[], limit: number, filter: MemoryPublicCursor["filter"],
+    snapshotRef: string, expiresAt: string) {
+    const candidates: Array<Readonly<{
+      record: MemoryPublicRevisionRecord; view: MemoryPublicRevisionView;
+    }>> = [];
     for (const row of rows.slice(0, limit)) {
       const view = await this.#revisionView(owner, entry.entryRef, row);
-      const candidate = Object.freeze({ record: row, view });
-      if (encodedBytes([...result, candidate].map(({ view }) => view)) >
-          MEMORY_PUBLIC_MAX_RESPONSE_UTF8_BYTES) break;
-      result.push(candidate);
+      candidates.push(Object.freeze({ record: row, view }));
     }
-    return result;
+    for (let count = candidates.length; count >= (rows.length === 0 ? 0 : 1); count -= 1) {
+      const visible = candidates.slice(0, count);
+      const hasMore = rows.length > count;
+      const last = visible.at(-1)?.record;
+      const nextCursor = hasMore && last !== undefined
+        ? this.dependencies.cursors.encode({ kind: "history", context: owner.context, filter,
+          order: "revision_desc", spaceVersion: owner.spaceVersion, snapshotRef,
+          entryRef: entry.entryRef, revision: last.revision, expiresAt }) : null;
+      const response = Object.freeze({ entryRef: entry.entryRef,
+        items: visible.map(({ view }) => view),
+        ownerSnapshot: Object.freeze({ snapshotRef, spaceVersion: owner.spaceVersion }),
+        pageInfo: Object.freeze({ hasMore, nextCursor }) });
+      if (encodedBytes(response) <= MEMORY_PUBLIC_MAX_RESPONSE_UTF8_BYTES) return response;
+    }
+    throw new MemoryApplicationError("MEMORY_PERSISTENCE_CONFLICT");
   }
 
   async #entryView(owner: MemoryPublicResolvedOwner, row: MemoryPublicEntryRecord):
@@ -193,7 +207,7 @@ export class MemoryPublicReadOwner {
       throw new MemoryApplicationError("MEMORY_PAGE_CURSOR_INVALID");
     }
     if (cursor.kind !== expected.kind || !sameContext(cursor.context, expected.context) ||
-      cursor.category !== expected.category || cursor.source !== expected.source ||
+      !sameFilter(cursor.filter, expected.filter) ||
       cursor.order !== expected.order || (expected.entryRef !== undefined &&
         cursor.entryRef !== expected.entryRef) || new Date(cursor.expiresAt).getTime() <= new Date(now).getTime()) {
       throw new MemoryApplicationError("MEMORY_PAGE_CURSOR_INVALID");
@@ -256,6 +270,16 @@ function sameContext(left: MemoryPublicPersonalContext, right: MemoryPublicPerso
   return left.siteRef === right.siteRef && left.subjectRef === right.subjectRef &&
     left.subjectGeneration === right.subjectGeneration &&
     left.featurePolicyRevisionRef === right.featurePolicyRevisionRef;
+}
+function activeFilter(category: MemoryPublicCursor["filter"]["category"],
+  source: MemoryPublicCursor["filter"]["source"]): MemoryPublicCursor["filter"] {
+  return Object.freeze({ state: "active", category, source });
+}
+function sameFilter(value: unknown, expected: MemoryPublicCursor["filter"]): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value as Readonly<Record<string, unknown>>;
+  return Object.keys(record).length === 3 && record.state === "active" &&
+    record.category === expected.category && record.source === expected.source;
 }
 function reference(value: unknown): string {
   if (typeof value !== "string" || value.length < 3 || value.length > 256 || /[\0\r\n]/u.test(value)) {

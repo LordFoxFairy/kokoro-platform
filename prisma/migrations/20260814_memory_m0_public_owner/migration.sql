@@ -552,9 +552,11 @@ SELECT jsonb_strip_nulls(jsonb_build_object(
     'envelopeVersion',payload.envelope_version,'keyRevision',payload.protection_key_revision,
     'nonce',encode(payload.nonce,'base64'),'ciphertext',encode(payload.protected_ciphertext,'base64'),
     'authenticationTag',encode(payload.authentication_tag,'base64'),'aadDigest',payload.aad_digest) END,
-  'sourceKind',CASE WHEN provenance.source_kind='authenticated_user_command' THEN 'explicit' ELSE 'import' END,
+  'sourceKind',CASE WHEN revision.reason='imported' THEN 'import'
+    WHEN provenance.source_kind='authenticated_user_command' THEN 'explicit' ELSE NULL END,
   'sourceState','current','safeSourceLabel',
-    CASE WHEN provenance.source_kind='authenticated_user_command' THEN 'Saved by you' ELSE 'Imported memory' END,
+    CASE WHEN revision.reason='imported' THEN 'Imported memory'
+      WHEN provenance.source_kind='authenticated_user_command' THEN 'Saved by you' ELSE NULL END,
   'purgeReceiptRef',purge.purge_job_ref,
   'revokedAt',CASE WHEN purge.state IS DISTINCT FROM 'completed' THEN
     to_char(purge.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') ELSE NULL END,
@@ -1019,12 +1021,28 @@ BEGIN
     INTO result FROM (SELECT candidate.* FROM platform.memory_entry candidate
       JOIN platform.memory_space space ON space.site_ref=candidate.site_ref
         AND space.space_ref=candidate.space_ref
+      JOIN platform.memory_revision current_revision
+        ON current_revision.site_ref=candidate.site_ref
+       AND current_revision.space_ref=candidate.space_ref
+       AND current_revision.entry_ref=candidate.entry_ref
+       AND current_revision.revision=candidate.current_revision
+       AND current_revision.revision_ref=candidate.current_revision_ref
+      JOIN LATERAL (SELECT source_kind FROM platform.memory_provenance provenance_row
+        WHERE provenance_row.site_ref=current_revision.site_ref
+          AND provenance_row.space_ref=current_revision.space_ref
+          AND provenance_row.entry_ref=current_revision.entry_ref
+          AND provenance_row.revision=current_revision.revision
+          AND provenance_row.revision_ref=current_revision.revision_ref
+        ORDER BY provenance_row.provenance_ref LIMIT 1) current_provenance ON true
      WHERE candidate.site_ref=$1 AND candidate.space_ref=$5 AND candidate.state='active'
        AND candidate.space_generation=space.space_generation
        AND candidate.learning_generation=space.learning_generation
        AND candidate.revocation_epoch<=space.revocation_epoch
        AND ($7 IS NULL OR candidate.category=$7)
-       AND ($8 IS NULL OR $8='explicit')
+       AND ($8 IS NULL
+         OR ($8='explicit' AND current_revision.reason<>'imported'
+           AND current_provenance.source_kind='authenticated_user_command')
+         OR ($8='import' AND current_revision.reason='imported'))
        AND ($9 IS NULL OR (candidate.prioritized,candidate.updated_at,candidate.entry_ref)<
          ($9,$10,$11))
      ORDER BY candidate.prioritized DESC,candidate.updated_at DESC,candidate.entry_ref DESC

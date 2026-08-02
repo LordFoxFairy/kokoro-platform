@@ -60,7 +60,10 @@ state digest inside PostgreSQL before persistence. The verifier key-ring is priv
 in a dedicated schema with no runtime-role or `PUBLIC` authority. JSON results use closed decoders and canonical UTC instants.
 Owner reads carry
 monotonic space versions and sealed snapshots; database read routines independently enforce current generation and revocation
-fences. Forget/reset synchronously create a deterministic purge manifest and expose only a content-free
+fences. Public list state is the implicit constant `active`; callers may narrow only by category and the exact source derived from
+the current revision/provenance (`explicit` or `import`), while absent category/source values are canonically bound as all-values in the sealed
+cursor. Complete list/history envelopes, including snapshot and continuation metadata, stay within the 262144-byte UTF-8 cap.
+Forget/reset synchronously create a deterministic purge manifest and expose only a content-free
 `revoked_purge_pending`/`purged` tombstone, so revoked plaintext cannot be returned through detail, history, or restore while the
 physical deletion worker remains feature-off. `platform_memory_runtime` still receives zero Platform schema, table, sequence, or
 routine grants. `platform_memory_worker` receives only
