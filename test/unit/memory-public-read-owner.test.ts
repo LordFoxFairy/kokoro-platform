@@ -145,6 +145,19 @@ describe("MemoryPublicReadOwner", () => {
       typeof value === "bigint" ? value.toString() : value))).toBeLessThanOrEqual(262_144);
   });
 
+  it("never reveals retained payload bytes after the entry is logically revoked", async () => {
+    let revealCalls = 0;
+    const revoked = { ...entry("entry-a", false, "2026-07-31T10:00:00.000Z"),
+      state: "revoked_purge_pending" as const, protectedContent: null,
+      purgeReceiptRef: "purge-receipt-a", revokedAt: "2026-07-31T11:00:00.000Z" };
+    repository.listHistory = async () => ({ entry: revoked, revisions: [revision(1)] });
+    const result = await createOwner(repository, cursors, lease, { onReveal: () => { revealCalls += 1; } })
+      .history({ context, entryRef: "entry-a" });
+    expect(result.items).toEqual([{ revision: 1, revisionRef: "revision-1", reason: "explicit",
+      recordedAt: "2026-07-31T11:00:00.000Z", state: "purged", restorable: false }]);
+    expect(revealCalls).toBe(0);
+  });
+
   it("measures the complete list envelope just below and above the UTF-8 cap", async () => {
     rows = boundaryEntries();
     for (const target of [MAX_RESPONSE_BYTES - 1, MAX_RESPONSE_BYTES + 1]) {
@@ -240,12 +253,16 @@ function entry(entryRef: string, prioritized: boolean, updatedAt: string): Memor
 function createOwner(repository: MemoryPublicRepository, cursors: MemoryPublicCursorCodec,
   lease: PlatformTransactionLease, options: Readonly<{
     contentByRevisionRef?: ReadonlyMap<string, string>;
+    onReveal?: () => void;
   }> = {}) {
   return new MemoryPublicReadOwner({ repository, cursors,
     protector: { protect: async () => protectedContent,
-      reveal: async ({ binding }) => new TextEncoder().encode(
-        options.contentByRevisionRef?.get(binding.revisionRef) ?? "safe content",
-      ) },
+      reveal: async ({ binding }) => {
+        options.onReveal?.();
+        return new TextEncoder().encode(
+          options.contentByRevisionRef?.get(binding.revisionRef) ?? "safe content",
+        );
+      } },
     unitOfWork: { execute: async (_fence, work) => work(lease.transaction) },
     clock: () => new Date("2026-07-31T12:00:00.000Z"),
     reference: () => "snapshot-00000001" });

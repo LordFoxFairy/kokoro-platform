@@ -600,7 +600,12 @@ SELECT jsonb_build_object('revision',revision.revision::TEXT,'revisionRef',revis
   'validTo',CASE WHEN revision.valid_to IS NULL THEN NULL ELSE
     to_char(revision.valid_to AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END,
   'recordedAt',to_char(revision.recorded_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-  'protectedContent',CASE WHEN payload.revision_ref IS NULL THEN NULL ELSE jsonb_build_object(
+  'protectedContent',CASE WHEN entry.state<>'active'
+      OR entry.feature_policy_revision_ref<>space.feature_policy_revision_ref
+      OR entry.space_generation<>space.space_generation
+      OR entry.learning_generation<>space.learning_generation
+      OR entry.revocation_epoch>space.revocation_epoch OR payload.revision_ref IS NULL THEN NULL
+    ELSE jsonb_build_object(
     'envelopeVersion',payload.envelope_version,'keyRevision',payload.protection_key_revision,
     'nonce',encode(payload.nonce,'base64'),'ciphertext',encode(payload.protected_ciphertext,'base64'),
     'authenticationTag',encode(payload.authentication_tag,'base64'),'aadDigest',payload.aad_digest) END)
@@ -612,13 +617,17 @@ JOIN platform.memory_space space ON space.site_ref=entry.site_ref
 LEFT JOIN platform.memory_revision_payload payload ON payload.site_ref=revision.site_ref
  AND payload.space_ref=revision.space_ref AND payload.entry_ref=revision.entry_ref
  AND payload.revision=revision.revision AND payload.revision_ref=revision.revision_ref
+LEFT JOIN LATERAL (SELECT job.purge_job_ref FROM platform.memory_purge_job job
+  WHERE job.site_ref=entry.site_ref AND job.space_ref=entry.space_ref
+    AND (job.entry_ref=entry.entry_ref OR job.entry_ref IS NULL)
+  ORDER BY job.created_at DESC,job.purge_job_ref DESC LIMIT 1) purge ON true
 WHERE revision.site_ref=p_site_ref AND revision.space_ref=p_space_ref
  AND revision.entry_ref=p_entry_ref AND revision.revision=p_revision
- AND entry.state='active' AND space.state='active'
- AND entry.feature_policy_revision_ref=space.feature_policy_revision_ref
- AND entry.space_generation=space.space_generation
- AND entry.learning_generation=space.learning_generation
- AND entry.revocation_epoch<=space.revocation_epoch
+ AND space.state='active' AND ((entry.state='active'
+   AND entry.feature_policy_revision_ref=space.feature_policy_revision_ref
+   AND entry.space_generation=space.space_generation
+   AND entry.learning_generation=space.learning_generation
+   AND entry.revocation_epoch<=space.revocation_epoch) OR purge.purge_job_ref IS NOT NULL)
 $$;
 REVOKE ALL ON FUNCTION platform.memory_public_revision_json(TEXT,TEXT,TEXT,BIGINT) FROM PUBLIC;
 
@@ -1074,9 +1083,6 @@ BEGIN
   END IF;
   entry_result:=platform.memory_public_entry_json($1,$5,$7);
   IF entry_result IS NULL THEN RETURN NULL; END IF;
-  IF entry_result->>'state'<>'active' THEN
-    RETURN jsonb_build_object('entry',entry_result,'revisions','[]'::JSONB);
-  END IF;
   SELECT COALESCE(jsonb_agg(platform.memory_public_revision_json(revision.site_ref,
     revision.space_ref,revision.entry_ref,revision.revision) ORDER BY revision.revision DESC),'[]')
     INTO revisions_result FROM (SELECT candidate.* FROM platform.memory_revision candidate

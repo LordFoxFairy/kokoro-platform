@@ -215,6 +215,14 @@ describe("Memory public PostgreSQL authority", () => {
       entry: { state: "revoked_purge_pending", purgeReceiptRef: expect.any(String),
         revokedAt: expect.stringMatching(/\.\d{3}Z$/u) },
     });
+    const forgottenHistory = await reads.history({ context, entryRef: first.entryRef! });
+    expect(forgottenHistory.items).toEqual([expect.objectContaining({
+      revisionRef: first.revisionRef, state: "purged", restorable: false,
+    })]);
+    expect(forgottenHistory.items[0]).not.toHaveProperty("content");
+    await expect(owner.restore({ context, commandRef: `restore-forgotten-${suffix}`,
+      entryRef: first.entryRef!, revisionRef: first.revisionRef!, expectedRevision: 1 }))
+      .rejects.toThrow();
     await expect(reads.get({ context, entryRef: sibling.entryRef! })).resolves.toMatchObject({
       entry: { state: "active", content: "restored memory" },
     });
@@ -222,6 +230,12 @@ describe("Memory public PostgreSQL authority", () => {
     await expect(reads.get({ context, entryRef: sibling.entryRef! })).resolves.toMatchObject({
       entry: { state: "revoked_purge_pending", purgeReceiptRef: expect.any(String) },
     });
+    await expect(reads.list({ context })).resolves.toMatchObject({ items: [] });
+    const resetHistory = await reads.history({ context, entryRef: sibling.entryRef! });
+    expect(resetHistory.items).toEqual([expect.objectContaining({
+      revisionRef: sibling.revisionRef, state: "purged", restorable: false,
+    })]);
+    expect(resetHistory.items[0]).not.toHaveProperty("content");
     const pendingPayloads = await bootstrap.query<{ payload_count: string }>(
       `SELECT count(*)::text AS payload_count FROM platform.memory_revision_payload payload
        JOIN platform.memory_purge_revision_target target

@@ -72,6 +72,20 @@ describe("Memory M0.1 public database authority", () => {
     }
   });
 
+  it("keeps the Prisma command inbox mirror aligned with the applied SQL shape", () => {
+    const inboxModel = schema.slice(schema.indexOf("model MemoryPublicCommandInbox {"),
+      schema.indexOf("model MemoryImportJob {"));
+    expect(inboxModel).toMatch(
+      /requestPayloadKeyRevision\s+String\s+@map\("request_payload_key_revision"\)/u,
+    );
+    expect(inboxModel).toMatch(
+      /requestPayloadDigest\s+String\s+@map\("request_payload_digest"\) @db\.Char\(64\)/u,
+    );
+    expect(inboxModel).toMatch(
+      /resultChanged\s+Boolean\?\s+@map\("result_changed"\)/u,
+    );
+  });
+
   it("pins three actual least-privilege login OIDs while runtime remains grant-free", () => {
     const provision = readFileSync(join(process.cwd(), "scripts/ci/provision-platform-postgres.sql"), "utf8");
     for (const role of ["platform_memory_public", "platform_memory_runtime", "platform_memory_worker"]) {
@@ -171,6 +185,28 @@ describe("Memory M0.1 public database authority", () => {
       "WHEN revision.reason='imported' THEN 'import'",
     );
     expect(listRoutine).not.toContain("($8 IS NULL OR $8='explicit')");
+  });
+
+  it("returns content-free revision headers after forget or reset without enabling restore", () => {
+    const revisionJson = ownerMigration.slice(
+      ownerMigration.indexOf("CREATE FUNCTION platform.memory_public_revision_json("),
+      ownerMigration.indexOf("CREATE FUNCTION platform.memory_public_commit_validated_core_internal("),
+    );
+    const historyRoutine = ownerMigration.slice(
+      ownerMigration.indexOf("CREATE FUNCTION platform.memory_public_list_entry_history("),
+      ownerMigration.indexOf("CREATE FUNCTION platform.memory_public_get_restorable_revision("),
+    );
+    const restoreRoutine = ownerMigration.slice(
+      ownerMigration.indexOf("CREATE FUNCTION platform.memory_public_get_restorable_revision("),
+      ownerMigration.indexOf("CREATE FUNCTION platform.memory_public_prepare_remember("),
+    );
+    expect(revisionJson).toContain("WHEN entry.state<>'active'");
+    expect(revisionJson).toContain("THEN NULL");
+    expect(revisionJson).toContain("purge.purge_job_ref IS NOT NULL");
+    expect(historyRoutine).not.toContain("'revisions','[]'::JSONB");
+    expect(historyRoutine).toContain("memory_public_revision_json");
+    expect(restoreRoutine).toContain("entry.state='active'");
+    expect(restoreRoutine).toContain("revision.revision<entry.current_revision");
   });
 
   it("checks an existing pinned OID inventory after locking but before migration execution", () => {

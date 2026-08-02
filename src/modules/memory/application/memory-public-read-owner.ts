@@ -123,7 +123,7 @@ export class MemoryPublicReadOwner {
       record: MemoryPublicRevisionRecord; view: MemoryPublicRevisionView;
     }>> = [];
     for (const row of rows.slice(0, limit)) {
-      const view = await this.#revisionView(owner, entry.entryRef, row);
+      const view = await this.#revisionView(owner, entry, row);
       candidates.push(Object.freeze({ record: row, view }));
     }
     for (let count = candidates.length; count >= (rows.length === 0 ? 0 : 1); count -= 1) {
@@ -175,15 +175,16 @@ export class MemoryPublicReadOwner {
         safeLabel: row.safeSourceLabel }), createdAt: row.createdAt, updatedAt: row.updatedAt });
   }
 
-  async #revisionView(owner: MemoryPublicResolvedOwner, entryRef: string,
+  async #revisionView(owner: MemoryPublicResolvedOwner, entry: MemoryPublicEntryRecord,
     row: MemoryPublicRevisionRecord): Promise<MemoryPublicRevisionView> {
     const base = { revision: Number(row.revision), revisionRef: row.revisionRef,
       reason: row.reason, recordedAt: row.recordedAt };
-    if (row.protectedContent === null) return Object.freeze({ ...base, state: "purged" as const,
-      restorable: false as const });
+    if (entry.state !== "active" || row.protectedContent === null) {
+      return Object.freeze({ ...base, state: "purged" as const, restorable: false as const });
+    }
     const plaintext = await this.dependencies.protector.reveal({ binding: {
       siteRef: owner.context.siteRef, spaceRef: memorySpaceRef(owner.spaceRef),
-      entryRef: memoryEntryRef(entryRef), revisionRef: memoryRevisionRef(row.revisionRef),
+      entryRef: memoryEntryRef(entry.entryRef), revisionRef: memoryRevisionRef(row.revisionRef),
     }, protectedContent: row.protectedContent });
     return Object.freeze({ ...base, state: "available" as const, restorable: true,
       content: decodeContent(plaintext), supersedesRevisionRef: row.supersedesRevisionRef,

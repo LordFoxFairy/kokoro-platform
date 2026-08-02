@@ -65,7 +65,9 @@ the current revision/provenance (`explicit` or `import`), while absent category/
 cursor. Complete list/history envelopes, including snapshot and continuation metadata, stay within the 262144-byte UTF-8 cap.
 Forget/reset synchronously create a deterministic purge manifest and expose only a content-free
 `revoked_purge_pending`/`purged` tombstone, so revoked plaintext cannot be returned through detail, history, or restore while the
-physical deletion worker remains feature-off. `platform_memory_runtime` still receives zero Platform schema, table, sequence, or
+physical deletion worker remains feature-off. History keeps immutable revision identity/reason/time headers after logical
+revocation, but projects every retained payload as content-free `purged` and non-restorable before physical deletion.
+`platform_memory_runtime` still receives zero Platform schema, table, sequence, or
 routine grants. `platform_memory_worker` receives only
 Platform schema usage and the four fixed-search-path purge routines. Purge claims first terminalize at most 100 exhausted queued
 or expired leased/running jobs, clear their lease material, and then select only a sub-limit candidate so one exhausted job cannot
