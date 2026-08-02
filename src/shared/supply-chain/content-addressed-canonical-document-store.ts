@@ -20,7 +20,10 @@ export class ContentAddressedCanonicalDocumentStore {
     this.#maximumBytes = maximumBytes;
   }
 
-  async read(digest: string, expectedContract: string): Promise<ResolvedCanonicalDocument> {
+  async read(
+    digest: string,
+    expected: string | Readonly<{ field: string; value: string }>,
+  ): Promise<ResolvedCanonicalDocument> {
     const digestHex = hex(digest);
     const path = resolve(this.#root, "sha256", `${digestHex}.json`);
     const handle = await openNoFollow(path);
@@ -41,7 +44,11 @@ export class ContentAddressedCanonicalDocumentStore {
       } catch {
         throw new Error("PUBLICATION_DOCUMENT_JSON_INVALID");
       }
-      if (contract(parsedDocument) !== expectedContract) throw new Error("PUBLICATION_DOCUMENT_KIND_MISMATCH");
+      const discriminator = typeof expected === "string"
+        ? { field: "contract", value: expected } : expected;
+      if (field(parsedDocument, discriminator.field) !== discriminator.value) {
+        throw new Error("PUBLICATION_DOCUMENT_KIND_MISMATCH");
+      }
       return Object.freeze({ canonicalBytes: new Uint8Array(bytes), parsedDocument, digest });
     } finally {
       await handle.close();
@@ -64,7 +71,7 @@ function hex(value: string): string {
   if (match?.[1] === undefined) throw new Error("PUBLICATION_DOCUMENT_DIGEST_INVALID");
   return match[1];
 }
-function contract(value: unknown): unknown {
+function field(value: unknown, name: string): unknown {
   return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Readonly<Record<string, unknown>>).contract : undefined;
+    ? (value as Readonly<Record<string, unknown>>)[name] : undefined;
 }

@@ -17,6 +17,7 @@ interface CandidateRow extends Record<string, unknown> {
   candidateRef: string;
   candidateVersion: string;
   candidateAuthorizationEpoch: string;
+  currentAuthorizationEpoch: string;
   candidateDigest: string;
   siteRef: string;
   environment: string;
@@ -66,16 +67,23 @@ implements SitePublicationAuthorityRepository {
 
   async loadCandidateForUpdate(transaction: PlatformTransaction, candidateRef: string) {
     const rows = await resolvePlatformTransaction(transaction).query<CandidateRow>(
-      `SELECT candidate_ref AS "candidateRef",candidate_version::text AS "candidateVersion",
-              candidate_authorization_epoch::text AS "candidateAuthorizationEpoch",
-              candidate_digest AS "candidateDigest",site_ref AS "siteRef",environment,state,
+      `SELECT candidate.candidate_ref AS "candidateRef",
+              candidate.candidate_version::text AS "candidateVersion",
+              candidate.candidate_authorization_epoch::text AS "candidateAuthorizationEpoch",
+              authorization.authorization_epoch::text AS "currentAuthorizationEpoch",
+              candidate.candidate_digest AS "candidateDigest",candidate.site_ref AS "siteRef",
+              candidate.environment,authorization.state,
               profile_ref AS "profileRef",profile_revision::text AS "profileRevision",
               profile_digest AS "profileDigest",catalog_ref AS "catalogRef",
               catalog_revision::text AS "catalogRevision",catalog_digest AS "catalogDigest",
               business_bindings_digest AS "businessBindingsDigest",
               canonical_payload AS "canonicalPayload",canonical_bytes AS "canonicalBytes"
-       FROM platform.site_release_candidate_authority
-       WHERE candidate_ref=$1 ORDER BY candidate_version DESC LIMIT 1 FOR UPDATE`, [candidateRef],
+       FROM platform.site_release_candidate_authority candidate
+       JOIN platform.site_release_candidate_authorization authorization
+         ON authorization.candidate_ref=candidate.candidate_ref
+        AND authorization.candidate_version=candidate.candidate_version
+       WHERE candidate.candidate_ref=$1 ORDER BY candidate.candidate_version DESC LIMIT 1
+       FOR UPDATE OF candidate,authorization`, [candidateRef],
     );
     return rows[0] === undefined ? null : candidate(rows[0]);
   }
@@ -102,12 +110,20 @@ implements SitePublicationAuthorityRepository {
         candidate.businessBindingsDigest, JSON.stringify(candidate.document), candidate.canonicalBytes,
         commandId],
     );
+    await resolvePlatformTransaction(transaction).execute(
+      `INSERT INTO platform.site_release_candidate_authorization
+       (candidate_ref,candidate_version,candidate_digest,authorization_epoch,state,updated_by_command_id)
+       VALUES ($1,$2::numeric(20,0),$3,$4::numeric(20,0),'authorized',$5)`,
+      [candidate.binding.ref, candidate.binding.version.toString(), candidate.binding.digest,
+        candidate.binding.authorizationEpoch.toString(), commandId],
+    );
   }
 
   async loadNodeForUpdate(
     transaction: PlatformTransaction,
     kind: SitePublicationNodeKind,
     candidateRef: string,
+    candidateVersion: bigint,
   ): Promise<SitePublicationNode | null> {
     const rows = await resolvePlatformTransaction(transaction).query<NodeRow>(
       `SELECT publication_kind AS "publicationKind",revision_ref AS "revisionRef",
@@ -117,7 +133,9 @@ implements SitePublicationAuthorityRepository {
               candidate_digest AS "candidateDigest",site_ref AS "siteRef",
               canonical_payload AS "canonicalPayload",canonical_bytes AS "canonicalBytes"
        FROM platform.site_publication_revision
-       WHERE publication_kind=$1 AND candidate_ref=$2 FOR UPDATE`, [kind, candidateRef],
+       WHERE publication_kind=$1 AND candidate_ref=$2
+         AND candidate_version=$3::numeric(20,0) FOR UPDATE`,
+      [kind, candidateRef, candidateVersion.toString()],
     );
     return rows[0] === undefined ? null : node(rows[0]);
   }
@@ -155,7 +173,8 @@ function candidate(row: CandidateRow): SiteReleaseCandidateAuthority {
     businessBindingsDigest: row.businessBindingsDigest,
   }, { canonicalBytes: bytes(row.canonicalBytes), parsedDocument: row.canonicalPayload,
     digest: row.candidateDigest });
-  return row.state === "authorized" ? resolved : Object.freeze({ ...resolved, state: "revoked" });
+  return row.state === "authorized" && row.currentAuthorizationEpoch === row.candidateAuthorizationEpoch
+    ? resolved : Object.freeze({ ...resolved, state: "revoked" });
 }
 
 function node(row: NodeRow): SitePublicationNode {

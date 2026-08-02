@@ -23,9 +23,14 @@ export interface SiteReleaseCandidateAssemblyPort {
   ): Promise<ResolvedCanonicalDocument>;
 }
 
+export type SitePublicationDocumentKind =
+  | Exclude<SitePublicationNodeKind, "site-release">
+  | "compiled-web-manifest"
+  | "web-artifact-provenance";
+
 export interface SitePublicationDocumentResolver {
   resolve(input: Readonly<{
-    kind: Exclude<SitePublicationNodeKind, "site-release">;
+    kind: SitePublicationDocumentKind;
     binding: ImmutableRevisionBinding;
   }>): Promise<ResolvedCanonicalDocument>;
 }
@@ -38,6 +43,66 @@ export interface SiteReleaseAssemblyPort {
       predecessors: Readonly<Partial<Record<SitePublicationNodeKind, SitePublicationNode>>>;
     }>,
   ): Promise<Readonly<{ binding: ImmutableRevisionBinding; source: ResolvedCanonicalDocument }>>;
+}
+
+export interface SiteWebBuildIntentAssemblyPort {
+  issue(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      candidate: SiteReleaseCandidateAuthority;
+      binding: ImmutableRevisionBinding;
+      predecessors: Readonly<Partial<Record<SitePublicationNodeKind, SitePublicationNode>>>;
+    }>,
+  ): Promise<ResolvedCanonicalDocument>;
+}
+
+export interface SiteWebBuildIntentIssuerAuthorityPort {
+  resolve(
+    transaction: PlatformTransaction,
+    input: Readonly<{ siteRef: string; environment: string }>,
+  ): Promise<Readonly<{
+    webCompositionRegistry: ImmutableRevisionBinding;
+    webBuildToolchain: ImmutableRevisionBinding;
+    contractFloor: readonly Readonly<{ contractRef: string; minimumMajor: bigint }>[];
+    issuerRef: string;
+    producerRegistry: Readonly<{ ref: string; digest: string }>;
+    producerRegistryEpoch: bigint;
+    trustPolicy: Readonly<{ ref: string; digest: string }>;
+    trustPolicyEpoch: bigint;
+    signingKeyId: string;
+    keyVersion: bigint;
+    publicKeyFingerprint: string;
+    keyValidFrom: string;
+    keyValidUntil: string;
+  }>>;
+}
+
+export interface SiteReleaseEvidenceAdmissionPort {
+  verify(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      candidate: SiteReleaseCandidateAuthority;
+      compiledWebManifest: ImmutableRevisionBinding;
+      webArtifactProvenance: ImmutableRevisionBinding;
+      webArtifactDigest: string;
+      artifactInspectionEvidence: ImmutableRevisionBinding;
+      journeyEvidence: ImmutableRevisionBinding;
+      securityEvidence: ImmutableRevisionBinding;
+      predecessors: Readonly<Partial<Record<SitePublicationNodeKind, SitePublicationNode>>>;
+      producerIdentityRef: string;
+    }>,
+  ): Promise<Readonly<{ binding: ImmutableRevisionBinding; source: ResolvedCanonicalDocument }>>;
+}
+
+export interface SiteReleaseCertificationAdmissionPort {
+  verify(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      binding: ImmutableRevisionBinding;
+      candidate: SiteReleaseCandidateAuthority;
+      predecessors: Readonly<Partial<Record<SitePublicationNodeKind, SitePublicationNode>>>;
+    }>,
+  ): Promise<ResolvedCanonicalDocument>;
 }
 
 export interface SitePublicationAuthorityRepository {
@@ -59,6 +124,7 @@ export interface SitePublicationAuthorityRepository {
     transaction: PlatformTransaction,
     kind: SitePublicationNodeKind,
     candidateRef: string,
+    candidateVersion: bigint,
   ): Promise<SitePublicationNode | null>;
   insertNode(
     transaction: PlatformTransaction,

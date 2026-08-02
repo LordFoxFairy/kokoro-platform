@@ -43,9 +43,15 @@ stored as exact candidate-bound immutable nodes. Operators approve references on
 separate producer kind and RLS path. Content-addressed documents are opened by digest with no ref-derived path,
 no symlink following and bounded stable reads, then revalidated against Root JSON Schemas and canonical SHA-256.
 
-`site_active_release_pointer` is a generation aggregate separate from immutable SiteRelease. Rollback is intended
-to CAS this pointer to an older immutable release; begin/pre-CAS authority snapshots and eligibility evidence have
-dedicated immutable tables. The old caller-authored `site_release` record is not a source or fallback for the new
-authority and receives no bridge or dual-write. Transport/composition and lifecycle integration must use the new
-generated `platform-site-publication@v1` / evidence mirrors before publication is exposed; the existing
-`SiteProvisioningService.publishSiteRelease` remains fail closed until that mount is complete.
+`site_active_release_pointer` is a generation aggregate separate from immutable SiteRelease. Rollback CASes this
+pointer to an older immutable release; begin/pre-CAS snapshots freeze certification revocation, producer registry,
+trust policy and signing-key heads. A changed head or generation fails closed, while eligibility evidence and the
+pointer mutation commit atomically in the lifecycle owner's transaction. The old caller-authored `site_release`
+record is not a source or fallback and receives no bridge or dual-write.
+
+The operator and machine Connect adapters are separate: operators cannot author workload evidence and the evidence
+workload cannot authorize, certify, publish or activate. Ed25519 DSSE admission verifies provenance and certification
+against transaction-local producer/key/trust authority ports before immutable persistence. Production composition
+requires concrete EffectiveAccess, issuer, evidence-trust and certification-trust owners; no unavailable default or
+self-RPC is accepted. Root `platform-site-publication@v1` still incorrectly asks the caller for the digest of the
+Platform-issued WebBuildIntent, so that one RPC remains deliberately fail closed pending the hard-cut contract.

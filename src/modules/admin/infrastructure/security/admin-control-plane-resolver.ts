@@ -69,6 +69,14 @@ export type ProductCatalogPublicationAdminOperation =
   | "product.catalog.publish"
   | "product.launch-profile.publish";
 
+export type SitePublicationAdminOperation =
+  | "site.release-candidate.authorize"
+  | "site.surface-inventory.publish"
+  | "site.web-build-material-bundle.publish"
+  | "site.web-build-intent.publish"
+  | "site.release-certification.publish"
+  | "site.release.publish";
+
 export class AdminControlPlaneResolver implements
   AdminIdentityTransportResolver, VerifiedAdminOperatorContextResolver, AdminQueryResolver {
   constructor(private readonly dependencies: Readonly<{
@@ -321,6 +329,31 @@ export class AdminControlPlaneResolver implements
         request.operation,
         ["admin:global", request.operation],
       ),
+    });
+  }
+
+  async resolveSitePublicationCommand(
+    claimed: AuthenticatedOperatorCommandContext,
+    transport: HandlerContext,
+    request: Readonly<{
+      operation: SitePublicationAdminOperation;
+      siteRef: string;
+      resourceRefs: readonly string[];
+    }>,
+  ): Promise<Readonly<{
+    context: VerifiedRequestSecurityContext;
+    axes: VerifiedAuthenticatedAdminAxes;
+  }>> {
+    const authenticated = await this.authenticate(claimed, transport);
+    const requested = scopeFromWire(claimed.scope);
+    if (requested.kind !== "site") throw new Error("SITE_PUBLICATION_SITE_SCOPE_REQUIRED");
+    this.authorizeScope(authenticated, requested, request.operation, request.operation,
+      request.siteRef, [request.siteRef, ...request.resourceRefs], [], true);
+    return Object.freeze({
+      axes: axes(authenticated.session),
+      context: await this.context(authenticated.session, request.operation, request.siteRef,
+        scopeLabels(requested), claimed.command?.commandId ?? "", [request.operation],
+        request.operation, ["admin:site", request.operation]),
     });
   }
 

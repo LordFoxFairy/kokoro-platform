@@ -4,8 +4,11 @@ import type { SiteAuthorityJournal } from "../contracts/site-authority-ports.js"
 import type {
   SitePublicationAuthorityRepository,
   SitePublicationDocumentResolver,
+  SiteReleaseCertificationAdmissionPort,
+  SiteReleaseEvidenceAdmissionPort,
   SiteReleaseAssemblyPort,
   SiteReleaseCandidateAssemblyPort,
+  SiteWebBuildIntentAssemblyPort,
 } from "../contracts/site-publication-authority-ports.js";
 import { createSiteAuthorityCommand } from "../site-command.js";
 import {
@@ -26,6 +29,9 @@ export class SitePublicationAuthorityService {
     private readonly journal: SiteAuthorityJournal,
     private readonly candidates: SiteReleaseCandidateAssemblyPort,
     private readonly documents: SitePublicationDocumentResolver,
+    private readonly intents: SiteWebBuildIntentAssemblyPort,
+    private readonly evidence: SiteReleaseEvidenceAdmissionPort,
+    private readonly certifications: SiteReleaseCertificationAdmissionPort,
     private readonly releases: SiteReleaseAssemblyPort,
   ) {}
 
@@ -71,8 +77,10 @@ export class SitePublicationAuthorityService {
     reason: string;
     producerKind: "operator-approved" | "platform-issued" | "workload-attested" | "certifier-signed";
   }>, context: VerifiedRequestSecurityContext) {
-    if (input.producerKind === "workload-attested") workload(context, input.siteRef);
-    else operator(context, input.siteRef);
+    if (input.producerKind === "workload-attested") {
+      throw new Error("SITE_PUBLICATION_EVIDENCE_REQUIRES_ADMISSION_PATH");
+    }
+    operator(context, input.siteRef);
     const command = createSiteAuthorityCommand(`site.${input.kind}.publish`, input.siteRef,
       input, context, effect(input));
     return this.unitOfWork.execute({ context, operation: command.operation }, async (transaction) => {
@@ -83,15 +91,61 @@ export class SitePublicationAuthorityService {
       }
       exactCandidate(candidate.binding, input.candidate);
       const existing = await this.repository.loadNodeForUpdate(transaction, input.kind,
-        input.candidate.ref);
+        input.candidate.ref, input.candidate.version);
       if (disposition === "replay") return nodeReplay(existing, input);
       if (existing !== null) throw new Error("SITE_PUBLICATION_NODE_ALREADY_EXISTS");
-      const predecessors = await this.predecessors(transaction, input.candidate.ref);
-      const source = await this.documents.resolve({ kind: input.kind, binding: input.binding });
+      const predecessors = await this.predecessors(transaction, input.candidate);
+      const source = input.kind === "web-build-intent"
+        ? await this.intents.issue(transaction, { candidate, binding: input.binding, predecessors })
+        : input.kind === "release-certification"
+          ? await this.certifications.verify(transaction, {
+            candidate,
+            binding: input.binding,
+            predecessors,
+          })
+          : await this.documents.resolve({ kind: input.kind, binding: input.binding });
       const node = admitSitePublicationNode(input.kind, {
         binding: input.binding, source, candidate, predecessors,
       });
       await this.repository.insertNode(transaction, node, input.producerKind, command.commandId);
+      const receipt = { siteRef: input.siteRef, state: "published", replayed: false } as const;
+      await this.journal.succeed(transaction, command, receipt, context);
+      return Object.freeze({ binding: node.binding, ...receipt });
+    });
+  }
+
+  recordEvidence(input: CommandInput & Readonly<{
+    siteRef: string;
+    candidate: CandidateAuthorityBinding;
+    compiledWebManifest: ImmutableRevisionBinding;
+    webArtifactProvenance: ImmutableRevisionBinding;
+    webArtifactDigest: string;
+    artifactInspectionEvidence: ImmutableRevisionBinding;
+    journeyEvidence: ImmutableRevisionBinding;
+    securityEvidence: ImmutableRevisionBinding;
+    producerIdentityRef: string;
+    reason: string;
+  }>, context: VerifiedRequestSecurityContext) {
+    workload(context, input.siteRef);
+    const command = createSiteAuthorityCommand("site.release-evidence.publish", input.siteRef,
+      input, context, effect(input));
+    return this.unitOfWork.execute({ context, operation: command.operation }, async (transaction) => {
+      const disposition = await this.journal.begin(transaction, command);
+      const candidate = await this.repository.loadCandidateForUpdate(transaction, input.candidate.ref);
+      if (candidate === null || candidate.siteRef !== input.siteRef) {
+        throw new Error("SITE_PUBLICATION_CANDIDATE_NOT_FOUND");
+      }
+      exactCandidate(candidate.binding, input.candidate);
+      const existing = await this.repository.loadNodeForUpdate(transaction, "release-evidence",
+        input.candidate.ref, input.candidate.version);
+      if (disposition === "replay") return nodeReplay(existing, { ...input, kind: "release-evidence" });
+      if (existing !== null) throw new Error("SITE_PUBLICATION_RELEASE_EVIDENCE_ALREADY_EXISTS");
+      const predecessors = await this.predecessors(transaction, input.candidate);
+      const verified = await this.evidence.verify(transaction, { ...input, candidate, predecessors });
+      const node = admitSitePublicationNode("release-evidence", {
+        binding: verified.binding, source: verified.source, candidate, predecessors,
+      });
+      await this.repository.insertNode(transaction, node, "workload-attested", command.commandId);
       const receipt = { siteRef: input.siteRef, state: "published", replayed: false } as const;
       await this.journal.succeed(transaction, command, receipt, context);
       return Object.freeze({ binding: node.binding, ...receipt });
@@ -112,10 +166,10 @@ export class SitePublicationAuthorityService {
       }
       exactCandidate(candidate.binding, input.candidate);
       const existing = await this.repository.loadNodeForUpdate(transaction, "site-release",
-        input.candidate.ref);
+        input.candidate.ref, input.candidate.version);
       if (disposition === "replay") return nodeReplay(existing, { ...input, kind: "site-release" });
       if (existing !== null) throw new Error("SITE_PUBLICATION_SITE_RELEASE_ALREADY_EXISTS");
-      const predecessors = await this.predecessors(transaction, input.candidate.ref);
+      const predecessors = await this.predecessors(transaction, input.candidate);
       const assembled = await this.releases.assemble(transaction, { candidate, predecessors });
       const node = admitSitePublicationNode("site-release", {
         binding: assembled.binding, source: assembled.source, candidate, predecessors,
@@ -127,11 +181,14 @@ export class SitePublicationAuthorityService {
     });
   }
 
-  private async predecessors(transaction: Parameters<SitePublicationAuthorityRepository["loadNodeForUpdate"]>[0], candidateRef: string) {
+  private async predecessors(
+    transaction: Parameters<SitePublicationAuthorityRepository["loadNodeForUpdate"]>[0],
+    candidate: CandidateAuthorityBinding,
+  ) {
     const kinds: readonly SitePublicationNodeKind[] = ["surface-inventory", "web-build-material-bundle",
       "web-build-intent", "release-evidence", "release-certification"];
     const values = await Promise.all(kinds.map(async (kind) => [kind,
-      await this.repository.loadNodeForUpdate(transaction, kind, candidateRef)] as const));
+      await this.repository.loadNodeForUpdate(transaction, kind, candidate.ref, candidate.version)] as const));
     return Object.fromEntries(values.filter((entry): entry is readonly [SitePublicationNodeKind, SitePublicationNode] =>
       entry[1] !== null));
   }

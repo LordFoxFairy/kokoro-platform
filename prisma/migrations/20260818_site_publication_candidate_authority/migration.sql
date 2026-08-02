@@ -13,7 +13,7 @@ CREATE TABLE platform.site_release_candidate_authority (
   candidate_digest CHAR(71) NOT NULL CHECK (candidate_digest ~ '^sha256:[0-9a-f]{64}$'),
   site_ref TEXT NOT NULL REFERENCES platform.site(site_ref),
   environment TEXT NOT NULL CHECK (environment IN ('development','preview','staging','production')),
-  state TEXT NOT NULL CHECK (state IN ('authorized','revoked')),
+  state TEXT NOT NULL CHECK (state='authorized'),
   profile_ref TEXT NOT NULL,
   profile_revision NUMERIC(20,0) NOT NULL
     CHECK (profile_revision BETWEEN 1 AND 18446744073709551615),
@@ -28,13 +28,26 @@ CREATE TABLE platform.site_release_candidate_authority (
   canonical_bytes BYTEA NOT NULL CHECK (octet_length(canonical_bytes) BETWEEN 2 AND 4194304),
   authorized_by_command_id TEXT NOT NULL UNIQUE REFERENCES platform.command_receipt(command_id),
   authorized_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-  revoked_at TIMESTAMPTZ,
   PRIMARY KEY (candidate_ref,candidate_version),
-  UNIQUE (candidate_ref,candidate_version,candidate_authorization_epoch,candidate_digest),
-  CHECK ((state='authorized' AND revoked_at IS NULL) OR (state='revoked' AND revoked_at IS NOT NULL))
+  UNIQUE (candidate_ref,candidate_version,candidate_digest),
+  UNIQUE (candidate_ref,candidate_version,candidate_authorization_epoch,candidate_digest)
 );
-CREATE UNIQUE INDEX site_one_authorized_release_candidate
-  ON platform.site_release_candidate_authority(site_ref,environment) WHERE state='authorized';
+
+CREATE TABLE platform.site_release_candidate_authorization (
+  candidate_ref TEXT NOT NULL,
+  candidate_version NUMERIC(20,0) NOT NULL,
+  candidate_digest CHAR(71) NOT NULL,
+  authorization_epoch NUMERIC(20,0) NOT NULL
+    CHECK (authorization_epoch BETWEEN 1 AND 18446744073709551615),
+  state TEXT NOT NULL CHECK (state IN ('authorized','revoked')),
+  updated_by_command_id TEXT NOT NULL REFERENCES platform.command_receipt(command_id),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (candidate_ref,candidate_version),
+  FOREIGN KEY (candidate_ref,candidate_version,candidate_digest)
+    REFERENCES platform.site_release_candidate_authority(
+      candidate_ref,candidate_version,candidate_digest
+    )
+);
 
 CREATE TABLE platform.site_publication_revision (
   publication_kind TEXT NOT NULL CHECK (publication_kind IN (
@@ -93,22 +106,30 @@ CREATE TABLE platform.site_activation_authority_snapshot (
   attempt_ref TEXT NOT NULL,
   phase TEXT NOT NULL CHECK (phase IN ('begin','pre-cas')),
   site_ref TEXT NOT NULL REFERENCES platform.site(site_ref),
-  environment TEXT NOT NULL,
+  environment TEXT NOT NULL CHECK (environment IN ('development','preview','staging','production')),
   candidate_ref TEXT NOT NULL,
-  candidate_version NUMERIC(20,0) NOT NULL,
-  candidate_authorization_epoch NUMERIC(20,0) NOT NULL,
-  candidate_digest CHAR(71) NOT NULL,
+  candidate_version NUMERIC(20,0) NOT NULL
+    CHECK (candidate_version BETWEEN 1 AND 18446744073709551615),
+  candidate_authorization_epoch NUMERIC(20,0) NOT NULL
+    CHECK (candidate_authorization_epoch BETWEEN 1 AND 18446744073709551615),
+  candidate_digest CHAR(71) NOT NULL CHECK (candidate_digest ~ '^sha256:[0-9a-f]{64}$'),
   release_kind TEXT NOT NULL DEFAULT 'site-release' CHECK (release_kind='site-release'),
   release_ref TEXT NOT NULL,
-  release_revision NUMERIC(20,0) NOT NULL,
-  release_digest CHAR(71) NOT NULL,
-  certification_revocation_epoch NUMERIC(20,0) NOT NULL,
-  producer_registry_head_digest CHAR(71) NOT NULL,
-  trust_policy_head_digest CHAR(71) NOT NULL,
-  signing_key_head_digest CHAR(71) NOT NULL,
-  active_pointer_generation NUMERIC(20,0) NOT NULL,
-  attempt_digest CHAR(71) NOT NULL,
-  snapshot_digest CHAR(71) NOT NULL,
+  release_revision NUMERIC(20,0) NOT NULL
+    CHECK (release_revision BETWEEN 1 AND 18446744073709551615),
+  release_digest CHAR(71) NOT NULL CHECK (release_digest ~ '^sha256:[0-9a-f]{64}$'),
+  certification_revocation_epoch NUMERIC(20,0) NOT NULL
+    CHECK (certification_revocation_epoch BETWEEN 0 AND 18446744073709551615),
+  producer_registry_head_digest CHAR(71) NOT NULL
+    CHECK (producer_registry_head_digest ~ '^sha256:[0-9a-f]{64}$'),
+  trust_policy_head_digest CHAR(71) NOT NULL
+    CHECK (trust_policy_head_digest ~ '^sha256:[0-9a-f]{64}$'),
+  signing_key_head_digest CHAR(71) NOT NULL
+    CHECK (signing_key_head_digest ~ '^sha256:[0-9a-f]{64}$'),
+  active_pointer_generation NUMERIC(20,0) NOT NULL
+    CHECK (active_pointer_generation BETWEEN 0 AND 18446744073709551615),
+  attempt_digest CHAR(71) NOT NULL CHECK (attempt_digest ~ '^sha256:[0-9a-f]{64}$'),
+  snapshot_digest CHAR(71) NOT NULL CHECK (snapshot_digest ~ '^sha256:[0-9a-f]{64}$'),
   observed_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (attempt_ref,phase),
   UNIQUE (snapshot_digest),
@@ -126,7 +147,8 @@ CREATE TABLE platform.site_activation_eligibility_evidence (
     REFERENCES platform.site_activation_authority_snapshot(snapshot_digest),
   pre_cas_snapshot_digest CHAR(71) NOT NULL UNIQUE
     REFERENCES platform.site_activation_authority_snapshot(snapshot_digest),
-  eligibility_digest CHAR(71) NOT NULL UNIQUE,
+  eligibility_digest CHAR(71) NOT NULL UNIQUE
+    CHECK (eligibility_digest ~ '^sha256:[0-9a-f]{64}$'),
   evaluated_at TIMESTAMPTZ NOT NULL,
   CHECK (begin_snapshot_digest<>pre_cas_snapshot_digest)
 );
@@ -140,6 +162,22 @@ $$;
 CREATE TRIGGER site_release_candidate_authority_immutable
   BEFORE UPDATE OR DELETE ON platform.site_release_candidate_authority
   FOR EACH ROW EXECUTE FUNCTION platform.reject_immutable_site_publication_authority_mutation();
+
+CREATE FUNCTION platform.site_candidate_authorization_epoch_guard()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.candidate_ref<>OLD.candidate_ref OR NEW.candidate_version<>OLD.candidate_version OR
+     NEW.candidate_digest<>OLD.candidate_digest OR OLD.state<>'authorized' OR NEW.state<>'revoked' OR
+     NEW.authorization_epoch<=OLD.authorization_epoch OR
+     NEW.updated_by_command_id=OLD.updated_by_command_id OR NEW.updated_at<=OLD.updated_at THEN
+    RAISE EXCEPTION 'SITE_CANDIDATE_AUTHORIZATION_TRANSITION_INVALID';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER site_candidate_authorization_epoch_guard
+  BEFORE UPDATE ON platform.site_release_candidate_authorization
+  FOR EACH ROW EXECUTE FUNCTION platform.site_candidate_authorization_epoch_guard();
 CREATE TRIGGER site_publication_revision_immutable
   BEFORE UPDATE OR DELETE ON platform.site_publication_revision
   FOR EACH ROW EXECUTE FUNCTION platform.reject_immutable_site_publication_authority_mutation();
@@ -152,6 +190,8 @@ CREATE TRIGGER site_activation_eligibility_evidence_immutable
 
 ALTER TABLE platform.site_release_candidate_authority ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform.site_release_candidate_authority FORCE ROW LEVEL SECURITY;
+ALTER TABLE platform.site_release_candidate_authorization ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.site_release_candidate_authorization FORCE ROW LEVEL SECURITY;
 ALTER TABLE platform.site_publication_revision ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform.site_publication_revision FORCE ROW LEVEL SECURITY;
 ALTER TABLE platform.site_active_release_pointer ENABLE ROW LEVEL SECURITY;
@@ -164,20 +204,51 @@ ALTER TABLE platform.site_activation_eligibility_evidence FORCE ROW LEVEL SECURI
 CREATE POLICY site_release_candidate_scope ON platform.site_release_candidate_authority
   USING (site_ref=NULLIF(current_setting('app.site_id',true),'') AND
     environment=current_setting('app.environment',true) AND
-    current_setting('app.workload_kind',true)='platform_admin' AND
-    current_setting('app.actor_kind',true)='operator')
+    ((current_setting('app.workload_kind',true)='platform_admin' AND
+      current_setting('app.actor_kind',true)='operator') OR
+     (current_setting('app.workload_kind',true)='platform_worker' AND
+      current_setting('app.actor_kind',true)='workload' AND
+      current_setting('app.operation',true) IN
+        ('site.release-evidence.publish','site.activation.commit'))))
   WITH CHECK (site_ref=NULLIF(current_setting('app.site_id',true),'') AND
     environment=current_setting('app.environment',true) AND
     current_setting('app.workload_kind',true)='platform_admin' AND
     current_setting('app.actor_kind',true)='operator' AND
     current_setting('app.operation',true)='site.release-candidate.authorize');
+CREATE POLICY site_release_candidate_authorization_scope
+  ON platform.site_release_candidate_authorization
+  USING (EXISTS (SELECT 1 FROM platform.site_release_candidate_authority candidate
+    WHERE candidate.candidate_ref=site_release_candidate_authorization.candidate_ref
+      AND candidate.candidate_version=site_release_candidate_authorization.candidate_version
+      AND candidate.site_ref=NULLIF(current_setting('app.site_id',true),'')
+      AND candidate.environment=current_setting('app.environment',true)
+      AND ((current_setting('app.workload_kind',true)='platform_admin' AND
+            current_setting('app.actor_kind',true)='operator') OR
+           (current_setting('app.workload_kind',true)='platform_worker' AND
+            current_setting('app.actor_kind',true)='workload' AND
+            current_setting('app.operation',true) IN
+              ('site.release-evidence.publish','site.activation.commit')))))
+  WITH CHECK (EXISTS (SELECT 1 FROM platform.site_release_candidate_authority candidate
+    WHERE candidate.candidate_ref=site_release_candidate_authorization.candidate_ref
+      AND candidate.candidate_version=site_release_candidate_authorization.candidate_version
+      AND candidate.site_ref=NULLIF(current_setting('app.site_id',true),'')
+      AND candidate.environment=current_setting('app.environment',true)
+      AND current_setting('app.workload_kind',true)='platform_admin'
+      AND current_setting('app.actor_kind',true)='operator'
+      AND ((current_setting('app.operation',true)='site.release-candidate.authorize' AND
+            site_release_candidate_authorization.state='authorized' AND
+            site_release_candidate_authorization.authorization_epoch=
+              candidate.candidate_authorization_epoch) OR
+           (current_setting('app.operation',true)='site.release-candidate.revoke' AND
+            site_release_candidate_authorization.state='revoked'))));
 CREATE POLICY site_publication_revision_scope ON platform.site_publication_revision
   USING (site_ref=NULLIF(current_setting('app.site_id',true),'') AND (
     (current_setting('app.workload_kind',true)='platform_admin' AND
      current_setting('app.actor_kind',true)='operator') OR
     (current_setting('app.workload_kind',true)='platform_worker' AND
      current_setting('app.actor_kind',true)='workload' AND
-     producer_kind='workload-attested')
+     current_setting('app.operation',true) IN
+       ('site.release-evidence.publish','site.activation.commit'))
   ))
   WITH CHECK (site_ref=NULLIF(current_setting('app.site_id',true),'') AND (
     (current_setting('app.workload_kind',true)='platform_admin' AND
@@ -191,45 +262,74 @@ CREATE POLICY site_publication_revision_scope ON platform.site_publication_revis
 CREATE POLICY site_active_release_pointer_scope ON platform.site_active_release_pointer
   USING (site_ref=NULLIF(current_setting('app.site_id',true),'') AND
     environment=current_setting('app.environment',true) AND
-    current_setting('app.workload_kind',true) IN ('platform_admin','platform_worker'))
+    ((current_setting('app.workload_kind',true)='platform_admin' AND
+      current_setting('app.actor_kind',true)='operator' AND
+      current_setting('app.operation',true)='site.activation.begin') OR
+     (current_setting('app.workload_kind',true)='platform_worker' AND
+      current_setting('app.actor_kind',true)='workload' AND
+      current_setting('app.operation',true)='site.activation.commit')))
   WITH CHECK (site_ref=NULLIF(current_setting('app.site_id',true),'') AND
     environment=current_setting('app.environment',true) AND
-    current_setting('app.workload_kind',true)='platform_worker' AND
-    current_setting('app.actor_kind',true)='workload' AND
-    current_setting('app.operation',true)='site.activation.commit');
+    ((current_setting('app.workload_kind',true)='platform_worker' AND
+      current_setting('app.actor_kind',true)='workload' AND
+      current_setting('app.operation',true)='site.activation.commit') OR
+     (current_setting('app.workload_kind',true)='platform_admin' AND
+      current_setting('app.actor_kind',true)='operator' AND
+      current_setting('app.operation',true)='site.activation.begin' AND
+      generation=0 AND active_release_ref IS NULL)));
 CREATE POLICY site_activation_snapshot_scope ON platform.site_activation_authority_snapshot
   USING (site_ref=NULLIF(current_setting('app.site_id',true),'') AND
     environment=current_setting('app.environment',true) AND
-    current_setting('app.workload_kind',true) IN ('platform_admin','platform_worker'))
+    ((current_setting('app.workload_kind',true)='platform_admin' AND
+      current_setting('app.actor_kind',true)='operator' AND
+      current_setting('app.operation',true)='site.activation.begin') OR
+     (current_setting('app.workload_kind',true)='platform_worker' AND
+      current_setting('app.actor_kind',true)='workload' AND
+      current_setting('app.operation',true)='site.activation.commit')))
   WITH CHECK (site_ref=NULLIF(current_setting('app.site_id',true),'') AND
     environment=current_setting('app.environment',true) AND
-    current_setting('app.workload_kind',true)='platform_worker' AND
-    current_setting('app.actor_kind',true)='workload' AND
-    current_setting('app.operation',true)='site.activation.commit');
+    ((current_setting('app.workload_kind',true)='platform_worker' AND
+      current_setting('app.actor_kind',true)='workload' AND
+      current_setting('app.operation',true)='site.activation.commit' AND phase='pre-cas') OR
+     (current_setting('app.workload_kind',true)='platform_admin' AND
+      current_setting('app.actor_kind',true)='operator' AND
+      current_setting('app.operation',true)='site.activation.begin' AND phase='begin')));
 CREATE POLICY site_activation_eligibility_scope ON platform.site_activation_eligibility_evidence
   USING (EXISTS (SELECT 1 FROM platform.site_activation_authority_snapshot snapshot
     WHERE snapshot.attempt_ref=site_activation_eligibility_evidence.attempt_ref
       AND snapshot.site_ref=NULLIF(current_setting('app.site_id',true),'')
-      AND snapshot.environment=current_setting('app.environment',true)))
+      AND snapshot.environment=current_setting('app.environment',true)
+      AND ((current_setting('app.workload_kind',true)='platform_admin' AND
+            current_setting('app.actor_kind',true)='operator') OR
+           (current_setting('app.workload_kind',true)='platform_worker' AND
+            current_setting('app.actor_kind',true)='workload' AND
+            current_setting('app.operation',true)='site.activation.commit'))))
   WITH CHECK (EXISTS (SELECT 1 FROM platform.site_activation_authority_snapshot snapshot
     WHERE snapshot.attempt_ref=site_activation_eligibility_evidence.attempt_ref
       AND snapshot.site_ref=NULLIF(current_setting('app.site_id',true),'')
-      AND snapshot.environment=current_setting('app.environment',true)));
+      AND snapshot.environment=current_setting('app.environment',true)
+      AND current_setting('app.workload_kind',true)='platform_worker'
+      AND current_setting('app.actor_kind',true)='workload'
+      AND current_setting('app.operation',true)='site.activation.commit'));
 
 REVOKE ALL ON TABLE platform.site_release_candidate_authority FROM PUBLIC;
+REVOKE ALL ON TABLE platform.site_release_candidate_authorization FROM PUBLIC;
 REVOKE ALL ON TABLE platform.site_publication_revision FROM PUBLIC;
 REVOKE ALL ON TABLE platform.site_active_release_pointer FROM PUBLIC;
 REVOKE ALL ON TABLE platform.site_activation_authority_snapshot FROM PUBLIC;
 REVOKE ALL ON TABLE platform.site_activation_eligibility_evidence FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.reject_immutable_site_publication_authority_mutation() FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.site_candidate_authorization_epoch_guard() FROM PUBLIC;
 
 GRANT SELECT,INSERT ON platform.site_release_candidate_authority TO platform_admin;
+GRANT SELECT,INSERT,UPDATE ON platform.site_release_candidate_authorization TO platform_admin;
 GRANT SELECT,INSERT ON platform.site_publication_revision TO platform_admin;
 GRANT SELECT ON platform.site_release_candidate_authority TO platform_worker;
+GRANT SELECT ON platform.site_release_candidate_authorization TO platform_worker;
 GRANT SELECT,INSERT ON platform.site_publication_revision TO platform_worker;
-GRANT SELECT ON platform.site_active_release_pointer TO platform_admin;
+GRANT SELECT,INSERT ON platform.site_active_release_pointer TO platform_admin;
 GRANT SELECT,INSERT,UPDATE ON platform.site_active_release_pointer TO platform_worker;
-GRANT SELECT ON platform.site_activation_authority_snapshot TO platform_admin;
+GRANT SELECT,INSERT ON platform.site_activation_authority_snapshot TO platform_admin;
 GRANT SELECT,INSERT ON platform.site_activation_authority_snapshot TO platform_worker;
 GRANT SELECT ON platform.site_activation_eligibility_evidence TO platform_admin;
 GRANT SELECT,INSERT ON platform.site_activation_eligibility_evidence TO platform_worker;

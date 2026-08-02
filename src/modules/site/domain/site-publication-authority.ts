@@ -155,28 +155,55 @@ export function admitSitePublicationNode(
       throw new Error(`SITE_PUBLICATION_${predecessor.kind.toUpperCase().replaceAll("-", "_")}_MISMATCH`);
     }
   }
+  assertCrossNodeEvidence(kind, document, input.predecessors);
   return deepFreeze({ kind, binding: input.binding, candidate: input.candidate.binding,
     siteRef: input.candidate.siteRef, document: verified.parsedDocument,
     canonicalBytes: verified.canonicalBytes });
 }
 
 function predecessorBindings(kind: SitePublicationNodeKind, document: Readonly<Record<string, unknown>>) {
-  const fields: Readonly<Partial<Record<SitePublicationNodeKind, string>>> = {
-    "web-build-intent": "surfaceInventory",
-    "release-evidence": "webBuildIntent",
-    "release-certification": "webBuildIntent",
-    "site-release": "releaseCertification",
+  const dependencies: Readonly<Partial<Record<SitePublicationNodeKind,
+    readonly Readonly<{ kind: SitePublicationNodeKind; field: string }>[]>>> = {
+    "web-build-intent": [
+      { kind: "surface-inventory", field: "surfaceInventory" },
+      { kind: "web-build-material-bundle", field: "webBuildMaterialBundle" },
+    ],
+    "release-evidence": [{ kind: "web-build-intent", field: "webBuildIntent" }],
+    "release-certification": [
+      { kind: "surface-inventory", field: "surfaceInventory" },
+      { kind: "web-build-intent", field: "webBuildIntent" },
+      { kind: "release-evidence", field: "evidenceBundle" },
+    ],
+    "site-release": [
+      { kind: "surface-inventory", field: "surfaceInventory" },
+      { kind: "web-build-intent", field: "webBuildIntent" },
+      { kind: "release-certification", field: "releaseCertification" },
+    ],
   };
-  const predecessorKind: Readonly<Partial<Record<SitePublicationNodeKind, SitePublicationNodeKind>>> = {
-    "web-build-intent": "surface-inventory",
-    "release-evidence": "web-build-intent",
-    "release-certification": "web-build-intent",
-    "site-release": "release-certification",
-  };
-  const field = fields[kind];
-  const targetKind = predecessorKind[kind];
-  if (field === undefined || targetKind === undefined) return [];
-  return [{ kind: targetKind, binding: wireRevision(document[field], "SITE_PUBLICATION_PREDECESSOR_INVALID") }];
+  return (dependencies[kind] ?? []).map((dependency) => ({
+    kind: dependency.kind,
+    binding: wireRevision(document[dependency.field], "SITE_PUBLICATION_PREDECESSOR_INVALID"),
+  }));
+}
+
+function assertCrossNodeEvidence(
+  kind: SitePublicationNodeKind,
+  document: Readonly<Record<string, unknown>>,
+  predecessors: Readonly<Partial<Record<SitePublicationNodeKind, SitePublicationNode>>>,
+): void {
+  if (kind !== "release-certification") return;
+  const evidence = predecessors["release-evidence"];
+  if (evidence === undefined) throw new Error("SITE_PUBLICATION_RELEASE_EVIDENCE_MISMATCH");
+  const evidenceDocument = record(evidence.document, "SITE_PUBLICATION_RELEASE_EVIDENCE_INVALID");
+  assertWireRevision(document.compiledWebManifest,
+    wireRevision(evidenceDocument.compiledWebManifest, "SITE_PUBLICATION_RELEASE_EVIDENCE_INVALID"),
+    "SITE_PUBLICATION_COMPILED_WEB_MANIFEST_MISMATCH");
+  assertWireRevision(document.webArtifactProvenance,
+    wireRevision(evidenceDocument.webArtifactProvenance, "SITE_PUBLICATION_RELEASE_EVIDENCE_INVALID"),
+    "SITE_PUBLICATION_WEB_ARTIFACT_PROVENANCE_MISMATCH");
+  if (document.webArtifactDigest !== evidenceDocument.webArtifactDigest) {
+    throw new Error("SITE_PUBLICATION_WEB_ARTIFACT_DIGEST_MISMATCH");
+  }
 }
 
 function assertDocumentIdentity(
