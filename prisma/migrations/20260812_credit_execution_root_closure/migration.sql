@@ -2,13 +2,15 @@ SET statement_timeout = '30s';
 SET lock_timeout = '5s';
 SET idle_in_transaction_session_timeout = '30s';
 
-CREATE TABLE platform.credit_direct_media_root_closure_receipt (
+CREATE TABLE platform.credit_execution_root_closure_receipt (
   allocation_closure_receipt_ref UUID PRIMARY KEY,
   site_ref TEXT NOT NULL,
-  media_operation_ref TEXT NOT NULL CHECK(length(media_operation_ref) BETWEEN 1 AND 256),
+  source_kind TEXT NOT NULL CHECK(source_kind IN ('media_operation','admission_run')),
+  source_ref TEXT NOT NULL CHECK(length(source_ref) BETWEEN 1 AND 256),
+  owner_proof_digest CHAR(64) NOT NULL CHECK(owner_proof_digest ~ '^[a-f0-9]{64}$'),
   business_operation_key TEXT NOT NULL CHECK(length(business_operation_key) BETWEEN 1 AND 256),
   request_digest CHAR(64) NOT NULL CHECK(request_digest ~ '^[a-f0-9]{64}$'),
-  effect_closure_receipt_ref TEXT NOT NULL CHECK(length(effect_closure_receipt_ref) BETWEEN 1 AND 256),
+  terminal_evidence_ref TEXT NOT NULL CHECK(length(terminal_evidence_ref) BETWEEN 1 AND 256),
   outcome TEXT NOT NULL CHECK(outcome IN ('completed','partial','failed','canceled')),
   execution_manifest_ref TEXT NOT NULL CHECK(length(execution_manifest_ref) BETWEEN 1 AND 256),
   authorization_segment_ref UUID NOT NULL,
@@ -38,7 +40,7 @@ CREATE TABLE platform.credit_direct_media_root_closure_receipt (
   recorded_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(site_ref,business_operation_key),
-  UNIQUE(site_ref,media_operation_ref),
+  UNIQUE(site_ref,source_kind,source_ref),
   UNIQUE(allocation_closure_receipt_ref,site_ref),
   FOREIGN KEY(execution_budget_root_ref,site_ref)
     REFERENCES platform.credit_execution_budget_root(execution_budget_root_ref,site_ref),
@@ -65,11 +67,14 @@ CREATE TABLE platform.credit_direct_media_root_closure_receipt (
   CHECK((released_amount=0)=(release_journal_transaction_ref IS NULL))
 );
 
-CREATE TABLE platform.credit_direct_media_root_reconciliation (
+CREATE TABLE platform.credit_execution_root_reconciliation (
   reconciliation_receipt_ref UUID PRIMARY KEY,
   reconciliation_allocation_revision_ref UUID NOT NULL UNIQUE,
   site_ref TEXT NOT NULL,
-  media_operation_ref TEXT NOT NULL CHECK(length(media_operation_ref) BETWEEN 1 AND 256),
+  source_kind TEXT NOT NULL CHECK(source_kind IN ('media_operation','admission_run')),
+  source_ref TEXT NOT NULL CHECK(length(source_ref) BETWEEN 1 AND 256),
+  owner_proof_digest CHAR(64) NOT NULL CHECK(owner_proof_digest ~ '^[a-f0-9]{64}$'),
+  terminal_evidence_ref TEXT NOT NULL CHECK(length(terminal_evidence_ref) BETWEEN 1 AND 256),
   execution_budget_root_ref UUID NOT NULL,
   root_allocation_ref UUID NOT NULL,
   root_hold_ref UUID NOT NULL,
@@ -87,7 +92,7 @@ CREATE TABLE platform.credit_direct_media_root_reconciliation (
   observed_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(site_ref,business_operation_key),
-  UNIQUE(site_ref,media_operation_ref),
+  UNIQUE(site_ref,source_kind,source_ref),
   FOREIGN KEY(execution_budget_root_ref,site_ref)
     REFERENCES platform.credit_execution_budget_root(execution_budget_root_ref,site_ref),
   FOREIGN KEY(root_allocation_ref,site_ref)
@@ -102,31 +107,33 @@ CREATE TABLE platform.credit_direct_media_root_reconciliation (
   CHECK(reconciliation_receipt_ref<>reconciliation_allocation_revision_ref)
 );
 
-ALTER TABLE platform.credit_direct_media_root_closure_receipt ENABLE ROW LEVEL SECURITY;
-ALTER TABLE platform.credit_direct_media_root_closure_receipt FORCE ROW LEVEL SECURITY;
-ALTER TABLE platform.credit_direct_media_root_reconciliation ENABLE ROW LEVEL SECURITY;
-ALTER TABLE platform.credit_direct_media_root_reconciliation FORCE ROW LEVEL SECURITY;
-REVOKE ALL ON TABLE platform.credit_direct_media_root_closure_receipt,
-  platform.credit_direct_media_root_reconciliation FROM PUBLIC;
-CREATE POLICY credit_direct_root_closure_definer
-  ON platform.credit_direct_media_root_closure_receipt TO platform_migrator
-  USING(SESSION_USER='platform_media_worker') WITH CHECK(SESSION_USER='platform_media_worker');
-CREATE POLICY credit_direct_root_reconciliation_definer
-  ON platform.credit_direct_media_root_reconciliation TO platform_migrator
-  USING(SESSION_USER='platform_media_worker') WITH CHECK(SESSION_USER='platform_media_worker');
+ALTER TABLE platform.credit_execution_root_closure_receipt ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.credit_execution_root_closure_receipt FORCE ROW LEVEL SECURITY;
+ALTER TABLE platform.credit_execution_root_reconciliation ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.credit_execution_root_reconciliation FORCE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE platform.credit_execution_root_closure_receipt,
+  platform.credit_execution_root_reconciliation FROM PUBLIC;
+CREATE POLICY credit_execution_root_closure_definer
+  ON platform.credit_execution_root_closure_receipt TO platform_migrator
+  USING(SESSION_USER IN ('platform_media_worker','platform_admission'))
+  WITH CHECK(SESSION_USER IN ('platform_media_worker','platform_admission'));
+CREATE POLICY credit_execution_root_reconciliation_definer
+  ON platform.credit_execution_root_reconciliation TO platform_migrator
+  USING(SESSION_USER IN ('platform_media_worker','platform_admission'))
+  WITH CHECK(SESSION_USER IN ('platform_media_worker','platform_admission'));
 
-CREATE FUNCTION platform.reject_credit_direct_media_root_fact_mutation() RETURNS TRIGGER
+CREATE FUNCTION platform.reject_credit_execution_root_fact_mutation() RETURNS TRIGGER
 LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
 BEGIN
-  RAISE EXCEPTION 'CREDIT_DIRECT_MEDIA_ROOT_FACT_IMMUTABLE' USING ERRCODE='23000';
+  RAISE EXCEPTION 'CREDIT_EXECUTION_ROOT_FACT_IMMUTABLE' USING ERRCODE='23000';
 END $$;
-CREATE TRIGGER credit_direct_media_root_closure_immutable
-  BEFORE UPDATE OR DELETE ON platform.credit_direct_media_root_closure_receipt
-  FOR EACH ROW EXECUTE FUNCTION platform.reject_credit_direct_media_root_fact_mutation();
-CREATE TRIGGER credit_direct_media_root_reconciliation_immutable
-  BEFORE UPDATE OR DELETE ON platform.credit_direct_media_root_reconciliation
-  FOR EACH ROW EXECUTE FUNCTION platform.reject_credit_direct_media_root_fact_mutation();
-REVOKE ALL ON FUNCTION platform.reject_credit_direct_media_root_fact_mutation() FROM PUBLIC;
+CREATE TRIGGER credit_execution_root_closure_immutable
+  BEFORE UPDATE OR DELETE ON platform.credit_execution_root_closure_receipt
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_credit_execution_root_fact_mutation();
+CREATE TRIGGER credit_execution_root_reconciliation_immutable
+  BEFORE UPDATE OR DELETE ON platform.credit_execution_root_reconciliation
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_credit_execution_root_fact_mutation();
+REVOKE ALL ON FUNCTION platform.reject_credit_execution_root_fact_mutation() FROM PUBLIC;
 
 CREATE FUNCTION platform.credit_direct_root_json_exact_keys(p_value JSONB,p_expected TEXT[])
 RETURNS BOOLEAN
@@ -182,8 +189,7 @@ CREATE FUNCTION platform.credit_direct_root_commit_values_canonical(p_record JSO
 RETURNS BOOLEAN
 LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,platform AS $$
   SELECT COALESCE(
-    platform.credit_direct_root_is_canonical_positive_bigint(
-      p_record#>>'{identity,workerLease,leaseEpoch}')
+    p_record#>>'{identity,ownerProof,proofDigest}' ~ '^[a-f0-9]{64}$'
     AND platform.credit_direct_root_is_canonical_uuid(
       p_record#>>'{command,budget,executionBudgetRootRef}')
     AND platform.credit_direct_root_is_canonical_uuid(p_record#>>'{command,budget,rootHoldRef}')
@@ -265,8 +271,7 @@ CREATE FUNCTION platform.credit_direct_root_reconciliation_values_canonical(p_re
 RETURNS BOOLEAN
 LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,platform AS $$
   SELECT COALESCE(
-    platform.credit_direct_root_is_canonical_positive_bigint(
-      p_record#>>'{identity,workerLease,leaseEpoch}')
+    p_record#>>'{identity,ownerProof,proofDigest}' ~ '^[a-f0-9]{64}$'
     AND platform.credit_direct_root_is_canonical_uuid(
       p_record#>>'{command,budget,executionBudgetRootRef}')
     AND platform.credit_direct_root_is_canonical_uuid(p_record#>>'{command,budget,rootHoldRef}')
@@ -320,13 +325,15 @@ LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,platform AS $$
 $$;
 REVOKE ALL ON FUNCTION platform.credit_direct_root_reconciliation_values_canonical(JSONB) FROM PUBLIC;
 
-CREATE FUNCTION platform.credit_direct_root_lock_outcome(p_site_ref TEXT,p_operation_ref TEXT)
+CREATE FUNCTION platform.credit_direct_root_lock_outcome(
+  p_site_ref TEXT,p_source_kind TEXT,p_source_ref TEXT
+)
 RETURNS VOID
 LANGUAGE sql SET search_path=pg_catalog,platform AS $$
   SELECT pg_advisory_xact_lock(hashtextextended(
-    'kokoro.credit.direct-media-root.outcome.v1'||chr(0)||p_site_ref||chr(0)||p_operation_ref,0))
+    'kokoro.credit.execution-root.outcome.v1'||chr(0)||p_site_ref||chr(0)||p_source_kind||chr(0)||p_source_ref,0))
 $$;
-REVOKE ALL ON FUNCTION platform.credit_direct_root_lock_outcome(TEXT,TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.credit_direct_root_lock_outcome(TEXT,TEXT,TEXT) FROM PUBLIC;
 
 CREATE FUNCTION platform.credit_direct_root_framed_digest(VARIADIC p_values TEXT[])
 RETURNS CHAR(64)
@@ -339,15 +346,73 @@ LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,platform AS $$
 $$;
 REVOKE ALL ON FUNCTION platform.credit_direct_root_framed_digest(VARIADIC TEXT[]) FROM PUBLIC;
 
-CREATE FUNCTION platform.direct_media_root_closure_receipt_json(
-  receipt platform.credit_direct_media_root_closure_receipt
+CREATE FUNCTION platform.assert_execution_root_owner_proof(
+  p_site_ref TEXT,p_owner_proof JSONB
+) RETURNS VOID
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$
+DECLARE expected_digest CHAR(64); matched BOOLEAN;
+BEGIN
+  IF jsonb_typeof(p_owner_proof)<>'object'
+    OR p_owner_proof->>'proofDigest' !~ '^[a-f0-9]{64}$' THEN
+    RAISE EXCEPTION 'CREDIT_EXECUTION_ROOT_OWNER_PROOF_INVALID';
+  END IF;
+  IF p_owner_proof->>'kind'='media_operation' THEN
+    IF NOT platform.credit_direct_root_json_exact_keys(p_owner_proof,
+      ARRAY['kind','sourceRef','terminalEvidenceRef','outcome','proofDigest','workerLease'])
+      OR NOT platform.credit_direct_root_json_exact_keys(p_owner_proof->'workerLease',
+        ARRAY['taskRef','leaseEpoch','leaseTokenHash'])
+      OR NOT platform.credit_direct_root_is_canonical_positive_bigint(
+        p_owner_proof#>>'{workerLease,leaseEpoch}')
+      OR p_owner_proof#>>'{workerLease,leaseTokenHash}' !~ '^[a-f0-9]{64}$'
+      OR p_owner_proof->>'outcome' NOT IN ('completed','partial','failed','canceled') THEN
+      RAISE EXCEPTION 'CREDIT_EXECUTION_ROOT_OWNER_PROOF_INVALID';
+    END IF;
+    PERFORM platform.assert_media_image_worker_lease(
+      p_owner_proof#>>'{workerLease,taskRef}',p_owner_proof->>'sourceRef',
+      (p_owner_proof#>>'{workerLease,leaseEpoch}')::BIGINT,
+      p_owner_proof#>>'{workerLease,leaseTokenHash}');
+    expected_digest := platform.credit_direct_root_framed_digest(VARIADIC ARRAY[
+      'kokoro.platform.credit.owner-proof.media.v1',p_owner_proof->>'sourceRef',
+      p_owner_proof->>'terminalEvidenceRef',p_owner_proof->>'outcome',
+      p_owner_proof#>>'{workerLease,taskRef}',p_owner_proof#>>'{workerLease,leaseEpoch}',
+      p_owner_proof#>>'{workerLease,leaseTokenHash}']);
+  ELSIF p_owner_proof->>'kind'='admission_run' THEN
+    IF NOT platform.credit_direct_root_json_exact_keys(p_owner_proof,
+      ARRAY['kind','sourceRef','terminalEvidenceRef','outcome','proofDigest','manifestRef','sessionId','launchId'])
+      OR p_owner_proof->>'outcome' NOT IN ('completed','failed') THEN
+      RAISE EXCEPTION 'CREDIT_EXECUTION_ROOT_OWNER_PROOF_INVALID';
+    END IF;
+    SELECT TRUE INTO matched FROM platform.admission_execution_manifest manifest
+     WHERE manifest.site_id=p_site_ref
+       AND manifest.run_id=p_owner_proof->>'sourceRef'
+       AND manifest.manifest_ref=p_owner_proof->>'manifestRef'
+       AND manifest.session_id=p_owner_proof->>'sessionId'
+       AND manifest.launch_id=p_owner_proof->>'launchId'
+       AND manifest.state IN ('committed','reconciliation_required');
+    IF NOT FOUND THEN RAISE EXCEPTION 'CREDIT_EXECUTION_ROOT_OWNER_PROOF_INVALID'; END IF;
+    expected_digest := platform.credit_direct_root_framed_digest(VARIADIC ARRAY[
+      'kokoro.platform.credit.owner-proof.admission.v1',p_owner_proof->>'sourceRef',
+      p_owner_proof->>'terminalEvidenceRef',p_owner_proof->>'outcome',
+      p_owner_proof->>'manifestRef',p_owner_proof->>'sessionId',p_owner_proof->>'launchId']);
+  ELSE
+    RAISE EXCEPTION 'CREDIT_EXECUTION_ROOT_OWNER_PROOF_INVALID';
+  END IF;
+  IF expected_digest IS DISTINCT FROM p_owner_proof->>'proofDigest' THEN
+    RAISE EXCEPTION 'CREDIT_EXECUTION_ROOT_OWNER_PROOF_DIGEST_INVALID';
+  END IF;
+END $$;
+REVOKE ALL ON FUNCTION platform.assert_execution_root_owner_proof(TEXT,JSONB) FROM PUBLIC;
+
+CREATE FUNCTION platform.execution_root_closure_receipt_json(
+  receipt platform.credit_execution_root_closure_receipt
 ) RETURNS JSONB
 LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,platform AS $$
   SELECT jsonb_build_object(
     'allocationClosureReceiptRef',receipt.allocation_closure_receipt_ref::TEXT,
-    'siteId',receipt.site_ref,'operationRef',receipt.media_operation_ref,
+    'siteId',receipt.site_ref,'sourceKind',receipt.source_kind,'sourceRef',receipt.source_ref,
+    'ownerProofDigest',receipt.owner_proof_digest,
     'businessOperationKey',receipt.business_operation_key,'requestDigest',receipt.request_digest,
-    'effectClosureReceiptRef',receipt.effect_closure_receipt_ref,'outcome',receipt.outcome,
+    'terminalEvidenceRef',receipt.terminal_evidence_ref,'outcome',receipt.outcome,
     'executionManifestRef',receipt.execution_manifest_ref,
     'authorizationSegmentRef',receipt.authorization_segment_ref::TEXT,
     'authorizationSegmentVersion',receipt.authorization_segment_version::TEXT,
@@ -363,43 +428,46 @@ LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,platform AS $$
     'recordedAt',to_char(receipt.recorded_at AT TIME ZONE 'UTC',
       'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
 $$;
-REVOKE ALL ON FUNCTION platform.direct_media_root_closure_receipt_json(
-  platform.credit_direct_media_root_closure_receipt) FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.execution_root_closure_receipt_json(
+  platform.credit_execution_root_closure_receipt) FROM PUBLIC;
 
-CREATE FUNCTION platform.find_direct_media_root_closure(
-  p_site_ref TEXT,p_media_operation_ref TEXT,p_business_operation_key TEXT,p_request_digest CHAR(64),
-  p_task_ref TEXT,p_lease_epoch BIGINT,p_lease_token_hash CHAR(64)
+CREATE FUNCTION platform.find_execution_root_closure(
+  p_site_ref TEXT,p_owner_proof JSONB,p_business_operation_key TEXT,p_request_digest CHAR(64)
 ) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$
-DECLARE closure_prior platform.credit_direct_media_root_closure_receipt%ROWTYPE;
-  reconciliation_prior platform.credit_direct_media_root_reconciliation%ROWTYPE;
+DECLARE closure_prior platform.credit_execution_root_closure_receipt%ROWTYPE;
+  reconciliation_prior platform.credit_execution_root_reconciliation%ROWTYPE;
   closure_found BOOLEAN; reconciliation_found BOOLEAN;
 BEGIN
-  PERFORM platform.assert_media_image_worker_lease(
-    p_task_ref,p_media_operation_ref,p_lease_epoch,p_lease_token_hash);
-  SELECT * INTO closure_prior FROM platform.credit_direct_media_root_closure_receipt
+  SELECT * INTO closure_prior FROM platform.credit_execution_root_closure_receipt
    WHERE site_ref=p_site_ref
-     AND (business_operation_key=p_business_operation_key OR media_operation_ref=p_media_operation_ref);
+     AND (business_operation_key=p_business_operation_key OR
+       (source_kind=p_owner_proof->>'kind' AND source_ref=p_owner_proof->>'sourceRef'));
   closure_found := FOUND;
-  SELECT * INTO reconciliation_prior FROM platform.credit_direct_media_root_reconciliation
+  SELECT * INTO reconciliation_prior FROM platform.credit_execution_root_reconciliation
    WHERE site_ref=p_site_ref
-     AND (business_operation_key=p_business_operation_key OR media_operation_ref=p_media_operation_ref);
+     AND (business_operation_key=p_business_operation_key OR
+       (source_kind=p_owner_proof->>'kind' AND source_ref=p_owner_proof->>'sourceRef'));
   reconciliation_found := FOUND;
   IF closure_found AND reconciliation_found THEN
     RAISE EXCEPTION 'CREDIT_DIRECT_ROOT_OUTCOME_EXCLUSIVITY_VIOLATION';
   END IF;
   IF closure_found THEN
     IF closure_prior.business_operation_key<>p_business_operation_key
-      OR closure_prior.media_operation_ref<>p_media_operation_ref
+      OR closure_prior.source_kind<>p_owner_proof->>'kind'
+      OR closure_prior.source_ref<>p_owner_proof->>'sourceRef'
+      OR closure_prior.owner_proof_digest<>p_owner_proof->>'proofDigest'
       OR closure_prior.request_digest<>p_request_digest THEN
       RETURN jsonb_build_object('kind','conflict');
     END IF;
     RETURN jsonb_build_object('kind','replayed','value',
-      platform.direct_media_root_closure_receipt_json(closure_prior));
+      platform.execution_root_closure_receipt_json(closure_prior));
   END IF;
   IF reconciliation_found THEN
     IF reconciliation_prior.business_operation_key<>p_business_operation_key
-      OR reconciliation_prior.media_operation_ref<>p_media_operation_ref
+      OR reconciliation_prior.source_kind<>p_owner_proof->>'kind'
+      OR reconciliation_prior.source_ref<>p_owner_proof->>'sourceRef'
+      OR reconciliation_prior.owner_proof_digest<>p_owner_proof->>'proofDigest'
       OR reconciliation_prior.request_digest<>p_request_digest THEN
       RETURN jsonb_build_object('kind','conflict');
     END IF;
@@ -407,26 +475,64 @@ BEGIN
       'reconciliationReceiptRef',reconciliation_prior.reconciliation_receipt_ref::TEXT,
       'code',reconciliation_prior.code);
   END IF;
+  -- Durable exact-digest outcomes replay after the source projection becomes terminal.
+  -- New outcomes still require a live source-owner proof before any Credit lock or mutation.
+  PERFORM platform.assert_execution_root_owner_proof(p_site_ref,p_owner_proof);
   RETURN jsonb_build_object('kind','none');
 END $$;
-REVOKE ALL ON FUNCTION platform.find_direct_media_root_closure(
-  TEXT,TEXT,TEXT,CHAR,TEXT,BIGINT,CHAR) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION platform.find_direct_media_root_closure(
-  TEXT,TEXT,TEXT,CHAR,TEXT,BIGINT,CHAR) TO platform_media_worker;
+REVOKE ALL ON FUNCTION platform.find_execution_root_closure(TEXT,JSONB,TEXT,CHAR) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION platform.find_execution_root_closure(TEXT,JSONB,TEXT,CHAR)
+  TO platform_media_worker,platform_admission;
 
-CREATE FUNCTION platform.lock_direct_media_root_closure(
-  p_site_ref TEXT,p_operation_ref TEXT,p_execution_budget_root_ref UUID,
+CREATE FUNCTION platform.lock_execution_root_closure(
+  p_site_ref TEXT,p_owner_proof JSONB,p_execution_budget_root_ref UUID,
   p_root_allocation_ref UUID,p_root_hold_ref UUID,p_authorization_segment_ref UUID,p_settlement_ref UUID,
   p_execution_manifest_ref TEXT,p_root_allocation_revision BIGINT,p_root_allocation_epoch BIGINT,
-  p_authorization_segment_version BIGINT,p_reserved_ceiling NUMERIC,p_unit TEXT,
-  p_task_ref TEXT,p_lease_epoch BIGINT,p_lease_token_hash CHAR(64)
+  p_authorization_segment_version BIGINT,p_reserved_ceiling NUMERIC,p_unit TEXT
 ) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$
 DECLARE context RECORD; sources JSONB; open_children BIGINT; open_segments BIGINT; open_attempts BIGINT;
 BEGIN
-  PERFORM platform.assert_media_image_worker_lease(
-    p_task_ref,p_operation_ref,p_lease_epoch,p_lease_token_hash);
-  PERFORM platform.credit_direct_root_lock_outcome(p_site_ref,p_operation_ref);
+  PERFORM platform.assert_execution_root_owner_proof(p_site_ref,p_owner_proof);
+  PERFORM platform.credit_direct_root_lock_outcome(
+    p_site_ref,p_owner_proof->>'kind',p_owner_proof->>'sourceRef');
+  WITH source_authority AS (
+    SELECT 'media_operation'::TEXT AS source_kind,operation.operation_ref AS source_ref,
+           operation.credit_execution_budget_root_ref AS execution_budget_root_ref,
+           operation.credit_root_allocation_ref AS root_allocation_ref,
+           operation.credit_root_hold_ref AS root_hold_ref,
+           operation.credit_authorization_segment_ref AS authorization_segment_ref,
+           operation.credit_execution_manifest_ref AS execution_manifest_ref,
+           operation.credit_root_allocation_revision AS root_allocation_revision,
+           operation.credit_root_allocation_epoch AS root_allocation_epoch,
+           operation.credit_authorization_segment_version AS authorization_segment_version,
+           operation.credit_reserved_ceiling AS reserved_ceiling,operation.credit_unit AS unit
+      FROM platform.media_operation operation
+     WHERE p_owner_proof->>'kind'='media_operation' AND operation.site_ref=p_site_ref
+       AND operation.operation_ref=p_owner_proof->>'sourceRef'
+       AND operation.credit_budget_kind='direct_root'
+    UNION ALL
+    SELECT 'admission_run'::TEXT,manifest.run_id,root.execution_budget_root_ref,
+           root.root_allocation_ref,root.credit_hold_ref,segment.authorization_segment_ref,
+           manifest.manifest_ref,segment.prepared_against_allocation_revision,
+           segment.allocation_epoch,segment.aggregate_version,root.reserved_ceiling,root.unit
+      FROM platform.admission_execution_manifest manifest
+      JOIN platform.credit_execution_budget_root root
+        ON root.site_ref=manifest.site_id
+       AND root.execution_budget_root_ref=manifest.execution_budget_root_ref
+       AND root.credit_hold_ref=manifest.root_hold_ref
+      JOIN platform.credit_authorization_segment segment
+        ON segment.site_ref=manifest.site_id
+       AND segment.authorization_segment_ref=manifest.authorization_segment_ref
+       AND segment.execution_budget_root_ref=root.execution_budget_root_ref
+       AND segment.budget_allocation_ref=root.root_allocation_ref
+     WHERE p_owner_proof->>'kind'='admission_run' AND manifest.site_id=p_site_ref
+       AND manifest.run_id=p_owner_proof->>'sourceRef'
+       AND manifest.manifest_ref=p_owner_proof->>'manifestRef'
+       AND manifest.session_id=p_owner_proof->>'sessionId'
+       AND manifest.launch_id=p_owner_proof->>'launchId'
+       AND manifest.state IN ('committed','reconciliation_required') AND segment.state='settled'
+  )
   SELECT root.state AS root_state,root.aggregate_version,root.billing_account_ref,
          root.credit_account_ref,root.liability_merchant_account_ref,
          hold.state AS hold_state,hold.fence_epoch,hold.reserved_amount,hold.captured_amount,
@@ -434,20 +540,20 @@ BEGIN
          revision.unassigned_stock,revision.active_child_reserved_stock,revision.committed_stock,
          revision.captured_cumulative,revision.returned_to_parent_cumulative,
          revision.state AS allocation_state,
-         operation.credit_execution_manifest_ref,operation.credit_root_allocation_revision,
-         operation.credit_root_allocation_epoch,operation.credit_authorization_segment_version,
-         operation.credit_reserved_ceiling,operation.credit_unit,
+         authority.source_kind,authority.source_ref,authority.execution_manifest_ref,
+         authority.root_allocation_revision,authority.root_allocation_epoch,
+         authority.authorization_segment_version,authority.reserved_ceiling,authority.unit,
          settlement.authorization_segment_ref,settlement.execution_budget_root_ref AS settlement_root_ref,
          settlement.budget_allocation_ref AS settlement_allocation_ref,
          settlement.credit_hold_ref AS settlement_hold_ref,settlement.unit AS settlement_unit,
          settlement.customer_amount,settlement.closure_ref,settlement.closure_revision,
          settlement.platform_exposure_amount,settlement.rating_snapshot_ref
     INTO context
-    FROM platform.media_operation operation
+    FROM source_authority authority
     JOIN platform.credit_execution_budget_root root
-      ON root.site_ref=operation.site_ref
-     AND root.execution_budget_root_ref=operation.credit_execution_budget_root_ref
-     AND root.execution_root_ref=operation.operation_ref
+      ON root.site_ref=p_site_ref
+     AND root.execution_budget_root_ref=authority.execution_budget_root_ref
+     AND root.execution_root_ref=authority.source_ref
     JOIN platform.credit_hold hold ON hold.credit_hold_ref=root.credit_hold_ref AND hold.site_ref=root.site_ref
     JOIN platform.credit_budget_allocation allocation
       ON allocation.budget_allocation_ref=root.root_allocation_ref AND allocation.site_ref=root.site_ref
@@ -459,23 +565,26 @@ BEGIN
      AND segment.execution_budget_root_ref=root.execution_budget_root_ref
      AND segment.budget_allocation_ref=allocation.budget_allocation_ref
      AND segment.credit_hold_ref=hold.credit_hold_ref
-     AND segment.execution_manifest_ref=operation.credit_execution_manifest_ref
-     AND segment.maximum_amount=p_reserved_ceiling AND segment.state='settled'
+     AND segment.execution_manifest_ref=authority.execution_manifest_ref
+     AND segment.state='settled'
     JOIN platform.credit_usage_settlement settlement
       ON settlement.settlement_ref=p_settlement_ref AND settlement.site_ref=root.site_ref
      AND settlement.authorization_segment_ref=segment.authorization_segment_ref
     JOIN platform.credit_rating_snapshot snapshot
       ON snapshot.rating_snapshot_ref=settlement.rating_snapshot_ref AND snapshot.site_ref=root.site_ref
      AND snapshot.authorization_segment_ref=segment.authorization_segment_ref
-   WHERE operation.site_ref=p_site_ref AND operation.operation_ref=p_operation_ref
-     AND operation.credit_budget_kind='direct_root'
-     AND operation.credit_execution_budget_root_ref=p_execution_budget_root_ref
-     AND operation.credit_root_allocation_ref=p_root_allocation_ref
-     AND operation.credit_root_hold_ref=p_root_hold_ref
-     AND operation.credit_authorization_segment_ref=p_authorization_segment_ref
+   WHERE authority.execution_budget_root_ref=p_execution_budget_root_ref
+     AND authority.root_allocation_ref=p_root_allocation_ref
+     AND authority.root_hold_ref=p_root_hold_ref
+     AND authority.authorization_segment_ref=p_authorization_segment_ref
+     AND authority.execution_manifest_ref=p_execution_manifest_ref
+     AND authority.root_allocation_revision=p_root_allocation_revision
+     AND authority.root_allocation_epoch=p_root_allocation_epoch
+     AND authority.authorization_segment_version=p_authorization_segment_version
+     AND authority.reserved_ceiling=p_reserved_ceiling AND authority.unit=p_unit
      AND root.root_allocation_ref=p_root_allocation_ref AND root.credit_hold_ref=p_root_hold_ref
      AND allocation.is_root AND allocation.parent_allocation_ref IS NULL AND allocation.audience='root'
-   FOR UPDATE OF operation,root,hold,allocation,revision,segment,settlement;
+   FOR UPDATE OF root,hold,allocation,revision,segment,settlement;
   IF NOT FOUND THEN RETURN NULL; END IF;
 
   SELECT count(*) INTO open_children FROM platform.credit_budget_allocation child
@@ -506,7 +615,7 @@ BEGIN
        GROUP BY allocation.credit_grant_id,allocation.allocation_ordinal,allocation.allocated_amount
     ) source;
   RETURN jsonb_build_object(
-    'siteId',p_site_ref,'operationRef',p_operation_ref,
+    'siteId',p_site_ref,'sourceKind',context.source_kind,'sourceRef',context.source_ref,
     'executionBudgetRootRef',p_execution_budget_root_ref::TEXT,
     'rootState',context.root_state,'rootVersion',context.aggregate_version::TEXT,
     'billingAccountId',context.billing_account_ref,'creditAccountId',context.credit_account_ref::TEXT,
@@ -515,11 +624,11 @@ BEGIN
     'holdFenceEpoch',context.fence_epoch::TEXT,'holdReservedAmount',context.reserved_amount::TEXT,
     'holdCapturedAmount',context.captured_amount::TEXT,'holdReleasedAmount',context.released_amount::TEXT,
     'rootAllocationRef',p_root_allocation_ref::TEXT,
-    'operationBudget',jsonb_build_object('executionManifestRef',context.credit_execution_manifest_ref,
-      'rootAllocationRevision',context.credit_root_allocation_revision::TEXT,
-      'rootAllocationEpoch',context.credit_root_allocation_epoch::TEXT,
-      'authorizationSegmentVersion',context.credit_authorization_segment_version::TEXT,
-      'reservedCeiling',context.credit_reserved_ceiling::TEXT,'unit',context.credit_unit),
+    'sourceBudget',jsonb_build_object('executionManifestRef',context.execution_manifest_ref,
+      'rootAllocationRevision',context.root_allocation_revision::TEXT,
+      'rootAllocationEpoch',context.root_allocation_epoch::TEXT,
+      'authorizationSegmentVersion',context.authorization_segment_version::TEXT,
+      'reservedCeiling',context.reserved_ceiling::TEXT,'unit',context.unit),
     'allocation',jsonb_build_object('revision',context.revision::TEXT,
       'allocationEpoch',context.allocation_epoch::TEXT,'creditCeiling',context.credit_ceiling::TEXT,
       'unassignedStock',context.unassigned_stock::TEXT,
@@ -539,17 +648,16 @@ BEGIN
       'ratingSnapshotRef',context.rating_snapshot_ref::TEXT),
     'holdAllocations',sources);
 END $$;
-REVOKE ALL ON FUNCTION platform.lock_direct_media_root_closure(
-  TEXT,TEXT,UUID,UUID,UUID,UUID,UUID,TEXT,BIGINT,BIGINT,BIGINT,NUMERIC,TEXT,TEXT,BIGINT,CHAR)
-  FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION platform.lock_direct_media_root_closure(
-  TEXT,TEXT,UUID,UUID,UUID,UUID,UUID,TEXT,BIGINT,BIGINT,BIGINT,NUMERIC,TEXT,TEXT,BIGINT,CHAR)
-  TO platform_media_worker;
+REVOKE ALL ON FUNCTION platform.lock_execution_root_closure(
+  TEXT,JSONB,UUID,UUID,UUID,UUID,UUID,TEXT,BIGINT,BIGINT,BIGINT,NUMERIC,TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION platform.lock_execution_root_closure(
+  TEXT,JSONB,UUID,UUID,UUID,UUID,UUID,TEXT,BIGINT,BIGINT,BIGINT,NUMERIC,TEXT)
+  TO platform_media_worker,platform_admission;
 
-CREATE FUNCTION platform.commit_direct_media_root_closure(p_record JSONB) RETURNS JSONB
+CREATE FUNCTION platform.commit_execution_root_closure(p_record JSONB) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$
-DECLARE prior platform.credit_direct_media_root_closure_receipt%ROWTYPE;
-  identity JSONB; worker_lease JSONB; command JSONB; budget JSONB; settlement JSONB;
+DECLARE prior platform.credit_execution_root_closure_receipt%ROWTYPE;
+  identity JSONB; owner_proof JSONB; command JSONB; budget JSONB; settlement JSONB;
   result JSONB; allocation JSONB; receipt JSONB; context JSONB; release JSONB; source RECORD;
   entry_ordinal INTEGER := 0; release_total NUMERIC(38,0) := 0;
   captured NUMERIC(38,0); released NUMERIC(38,0); release_ref UUID;
@@ -560,11 +668,9 @@ BEGIN
   IF octet_length(p_record::TEXT)>131072
     OR NOT platform.credit_direct_root_json_exact_keys(p_record,ARRAY['identity','command','result'])
     OR NOT platform.credit_direct_root_json_exact_keys(p_record->'identity',
-      ARRAY['siteId','operationRef','businessOperationKey','requestDigest','workerLease'])
-    OR NOT platform.credit_direct_root_json_exact_keys(p_record#>'{identity,workerLease}',
-      ARRAY['taskRef','leaseEpoch','leaseTokenHash'])
+      ARRAY['siteId','ownerProof','businessOperationKey','requestDigest'])
     OR NOT platform.credit_direct_root_json_exact_keys(p_record->'command',
-      ARRAY['effectClosureReceiptRef','outcome','budget','settlement'])
+      ARRAY['terminalEvidenceRef','outcome','budget','settlement'])
     OR NOT platform.credit_direct_root_json_exact_keys(p_record#>'{command,budget}',ARRAY[
       'executionBudgetRootRef','executionManifestRef','rootHoldRef','rootAllocationRef',
       'rootAllocationRevision','rootAllocationEpoch','authorizationSegmentRef',
@@ -582,8 +688,9 @@ BEGIN
     OR jsonb_typeof(p_record#>'{result,releases}')<>'array'
     OR jsonb_array_length(p_record#>'{result,releases}')>16
     OR NOT platform.credit_direct_root_json_exact_keys(p_record#>'{result,receipt}',ARRAY[
-      'allocationClosureReceiptRef','siteId','operationRef','businessOperationKey','requestDigest',
-      'effectClosureReceiptRef','settlementRef','executionBudgetRootRef','rootAllocationRef','rootHoldRef',
+      'allocationClosureReceiptRef','siteId','sourceKind','sourceRef','ownerProofDigest',
+      'businessOperationKey','requestDigest','terminalEvidenceRef','settlementRef',
+      'executionBudgetRootRef','rootAllocationRef','rootHoldRef',
       'capturedAmount','releasedAmount','unit','outcome','executionManifestRef',
       'authorizationSegmentRef','authorizationSegmentVersion','settlementClosureRef',
       'settlementClosureRevision','platformExposureAmount','ratingSnapshotRef','receiptDigest','recordedAt']) THEN
@@ -592,13 +699,14 @@ BEGIN
   IF NOT platform.credit_direct_root_commit_values_canonical(p_record) THEN
     RAISE EXCEPTION 'CREDIT_DIRECT_ROOT_CANONICAL_VALUE_INVALID';
   END IF;
-  identity := p_record->'identity'; worker_lease := identity->'workerLease'; command := p_record->'command';
+  identity := p_record->'identity'; owner_proof := identity->'ownerProof'; command := p_record->'command';
   budget := command->'budget'; settlement := command->'settlement'; result := p_record->'result';
   allocation := result->'allocation'; receipt := result->'receipt';
   IF identity->>'requestDigest' !~ '^[a-f0-9]{64}$'
-    OR worker_lease->>'leaseTokenHash' !~ '^[a-f0-9]{64}$'
-    OR (worker_lease->>'leaseEpoch')::BIGINT<=0
+    OR owner_proof->>'proofDigest' !~ '^[a-f0-9]{64}$'
     OR command->>'outcome' NOT IN ('completed','partial','failed','canceled')
+    OR command->>'outcome' IS DISTINCT FROM owner_proof->>'outcome'
+    OR command->>'terminalEvidenceRef' IS DISTINCT FROM owner_proof->>'terminalEvidenceRef'
     OR settlement->>'state'<>'settled' THEN
     RAISE EXCEPTION 'CREDIT_DIRECT_ROOT_COMMAND_VALUE_INVALID';
   END IF;
@@ -622,62 +730,65 @@ BEGIN
       RAISE EXCEPTION 'CREDIT_DIRECT_ROOT_RELEASE_SOURCE_INVALID';
     END IF;
   END LOOP;
-  PERFORM platform.assert_media_image_worker_lease(worker_lease->>'taskRef',identity->>'operationRef',
-    (worker_lease->>'leaseEpoch')::BIGINT,worker_lease->>'leaseTokenHash');
-  PERFORM platform.credit_direct_root_lock_outcome(identity->>'siteId',identity->>'operationRef');
+  PERFORM platform.assert_execution_root_owner_proof(identity->>'siteId',owner_proof);
+  PERFORM platform.credit_direct_root_lock_outcome(
+    identity->>'siteId',owner_proof->>'kind',owner_proof->>'sourceRef');
   expected_request_digest := platform.credit_direct_root_framed_digest(VARIADIC ARRAY[
-    'kokoro.platform.credit.direct-media-root.request.v1',identity->>'siteId',identity->>'operationRef',
+    'kokoro.platform.credit.execution-root.request.v1',identity->>'siteId',owner_proof->>'kind',
+    owner_proof->>'sourceRef',owner_proof->>'terminalEvidenceRef',owner_proof->>'outcome',
+    owner_proof->>'proofDigest',
     budget->>'executionBudgetRootRef',budget->>'executionManifestRef',budget->>'rootHoldRef',
     budget->>'rootAllocationRef',budget->>'rootAllocationRevision',budget->>'rootAllocationEpoch',
     budget->>'authorizationSegmentRef',budget->>'authorizationSegmentVersion',
-    budget->>'reservedCeiling',budget->>'unit',command->>'effectClosureReceiptRef',command->>'outcome',
-    settlement->>'settlementRef',settlement->>'authorizationSegmentRef',settlement->>'closureRef',
+    budget->>'reservedCeiling',budget->>'unit',settlement->>'settlementRef',
+    settlement->>'authorizationSegmentRef',settlement->>'closureRef',
     settlement->>'closureRevision',settlement->>'state',settlement->>'customerAmount',
     settlement->>'platformExposureAmount']);
   IF expected_request_digest IS DISTINCT FROM identity->>'requestDigest' THEN
     RAISE EXCEPTION 'CREDIT_DIRECT_ROOT_REQUEST_DIGEST_INVALID';
   END IF;
-  SELECT * INTO prior FROM platform.credit_direct_media_root_closure_receipt
+  SELECT * INTO prior FROM platform.credit_execution_root_closure_receipt
    WHERE site_ref=identity->>'siteId'
      AND (business_operation_key=identity->>'businessOperationKey'
-       OR media_operation_ref=identity->>'operationRef') FOR UPDATE;
+       OR (source_kind=owner_proof->>'kind' AND source_ref=owner_proof->>'sourceRef')) FOR UPDATE;
   IF FOUND THEN
     IF prior.business_operation_key<>identity->>'businessOperationKey'
-      OR prior.media_operation_ref<>identity->>'operationRef'
+      OR prior.source_kind<>owner_proof->>'kind'
+      OR prior.source_ref<>owner_proof->>'sourceRef'
+      OR prior.owner_proof_digest<>owner_proof->>'proofDigest'
       OR prior.request_digest<>identity->>'requestDigest' THEN
       RETURN jsonb_build_object('kind','conflict');
     END IF;
-    RETURN jsonb_build_object('kind','replayed','value',platform.direct_media_root_closure_receipt_json(prior));
+    RETURN jsonb_build_object('kind','replayed','value',platform.execution_root_closure_receipt_json(prior));
   END IF;
-  IF EXISTS (SELECT 1 FROM platform.credit_direct_media_root_reconciliation
+  IF EXISTS (SELECT 1 FROM platform.credit_execution_root_reconciliation
     WHERE site_ref=identity->>'siteId'
       AND (business_operation_key=identity->>'businessOperationKey'
-        OR media_operation_ref=identity->>'operationRef')) THEN
+        OR (source_kind=owner_proof->>'kind' AND source_ref=owner_proof->>'sourceRef'))) THEN
     RETURN jsonb_build_object('kind','conflict');
   END IF;
-  context := platform.lock_direct_media_root_closure(
-    identity->>'siteId',identity->>'operationRef',(budget->>'executionBudgetRootRef')::UUID,
+  context := platform.lock_execution_root_closure(
+    identity->>'siteId',owner_proof,(budget->>'executionBudgetRootRef')::UUID,
     (budget->>'rootAllocationRef')::UUID,(budget->>'rootHoldRef')::UUID,
     (budget->>'authorizationSegmentRef')::UUID,(settlement->>'settlementRef')::UUID,
     budget->>'executionManifestRef',(budget->>'rootAllocationRevision')::BIGINT,
     (budget->>'rootAllocationEpoch')::BIGINT,(budget->>'authorizationSegmentVersion')::BIGINT,
-    (budget->>'reservedCeiling')::NUMERIC,budget->>'unit',worker_lease->>'taskRef',
-    (worker_lease->>'leaseEpoch')::BIGINT,worker_lease->>'leaseTokenHash');
+    (budget->>'reservedCeiling')::NUMERIC,budget->>'unit');
   IF context IS NULL THEN RAISE EXCEPTION 'CREDIT_DIRECT_ROOT_CONTEXT_NOT_FOUND'; END IF;
   captured := (result->>'capturedAmount')::NUMERIC;
   released := (result->>'releasedAmount')::NUMERIC;
   IF context->>'rootState'<>'open' OR context->>'holdState'<>'open'
     OR context#>>'{allocation,state}'<>'active'
-    OR budget->>'executionManifestRef'<>context#>>'{operationBudget,executionManifestRef}'
+    OR budget->>'executionManifestRef'<>context#>>'{sourceBudget,executionManifestRef}'
     OR (budget->>'rootAllocationRevision')::BIGINT<>
-      (context#>>'{operationBudget,rootAllocationRevision}')::BIGINT
+      (context#>>'{sourceBudget,rootAllocationRevision}')::BIGINT
     OR (budget->>'rootAllocationEpoch')::BIGINT<>
-      (context#>>'{operationBudget,rootAllocationEpoch}')::BIGINT
+      (context#>>'{sourceBudget,rootAllocationEpoch}')::BIGINT
     OR (budget->>'authorizationSegmentVersion')::BIGINT<>
-      (context#>>'{operationBudget,authorizationSegmentVersion}')::BIGINT
+      (context#>>'{sourceBudget,authorizationSegmentVersion}')::BIGINT
     OR (budget->>'reservedCeiling')::NUMERIC<>
-      (context#>>'{operationBudget,reservedCeiling}')::NUMERIC
-    OR budget->>'unit'<>context#>>'{operationBudget,unit}'
+      (context#>>'{sourceBudget,reservedCeiling}')::NUMERIC
+    OR budget->>'unit'<>context#>>'{sourceBudget,unit}'
     OR result->>'rootState'<>'settled'
     OR result->>'holdState' IS DISTINCT FROM
       (CASE WHEN captured=0 THEN 'released' ELSE 'settled' END)
@@ -708,8 +819,11 @@ BEGIN
       (context#>>'{settlement,platformExposureAmount}')::NUMERIC
     OR receipt->>'businessOperationKey'<>identity->>'businessOperationKey'
     OR receipt->>'requestDigest'<>identity->>'requestDigest'
-    OR receipt->>'siteId'<>context->>'siteId' OR receipt->>'operationRef'<>context->>'operationRef'
-    OR receipt->>'effectClosureReceiptRef'<>command->>'effectClosureReceiptRef'
+    OR receipt->>'siteId'<>context->>'siteId'
+    OR receipt->>'sourceKind'<>context->>'sourceKind'
+    OR receipt->>'sourceRef'<>context->>'sourceRef'
+    OR receipt->>'ownerProofDigest'<>owner_proof->>'proofDigest'
+    OR receipt->>'terminalEvidenceRef'<>command->>'terminalEvidenceRef'
     OR receipt->>'outcome'<>command->>'outcome'
     OR receipt->>'executionManifestRef'<>budget->>'executionManifestRef'
     OR receipt->>'authorizationSegmentRef'<>budget->>'authorizationSegmentRef'
@@ -728,9 +842,10 @@ BEGIN
     RAISE EXCEPTION 'CREDIT_DIRECT_ROOT_COMMIT_FENCE_INVALID';
   END IF;
   expected_receipt_digest := platform.credit_direct_root_framed_digest(VARIADIC ARRAY[
-    'kokoro.platform.credit.direct-media-root.receipt.v1',receipt->>'allocationClosureReceiptRef',
-    receipt->>'siteId',receipt->>'operationRef',receipt->>'businessOperationKey',receipt->>'requestDigest',
-    receipt->>'effectClosureReceiptRef',receipt->>'settlementRef',receipt->>'executionBudgetRootRef',
+    'kokoro.platform.credit.execution-root.receipt.v1',receipt->>'allocationClosureReceiptRef',
+    receipt->>'siteId',receipt->>'sourceKind',receipt->>'sourceRef',receipt->>'ownerProofDigest',
+    receipt->>'businessOperationKey',receipt->>'requestDigest',receipt->>'terminalEvidenceRef',
+    receipt->>'settlementRef',receipt->>'executionBudgetRootRef',
     receipt->>'rootAllocationRef',receipt->>'rootHoldRef',receipt->>'capturedAmount',
     receipt->>'releasedAmount',receipt->>'unit',receipt->>'outcome',receipt->>'executionManifestRef',
     receipt->>'authorizationSegmentRef',receipt->>'authorizationSegmentVersion',
@@ -864,16 +979,18 @@ BEGIN
    WHERE execution_budget_root_ref=(context->>'executionBudgetRootRef')::UUID AND site_ref=context->>'siteId'
      AND state='open' AND aggregate_version=(context->>'rootVersion')::BIGINT;
   IF NOT FOUND THEN RAISE EXCEPTION 'CREDIT_DIRECT_ROOT_ROOT_CAS_LOST'; END IF;
-  INSERT INTO platform.credit_direct_media_root_closure_receipt(
-    allocation_closure_receipt_ref,site_ref,media_operation_ref,business_operation_key,request_digest,
-    effect_closure_receipt_ref,outcome,execution_manifest_ref,authorization_segment_ref,
+  INSERT INTO platform.credit_execution_root_closure_receipt(
+    allocation_closure_receipt_ref,site_ref,source_kind,source_ref,owner_proof_digest,
+    business_operation_key,request_digest,terminal_evidence_ref,outcome,
+    execution_manifest_ref,authorization_segment_ref,
     authorization_segment_version,settlement_ref,settlement_closure_ref,settlement_closure_revision,
     platform_exposure_amount,rating_snapshot_ref,execution_budget_root_ref,root_allocation_ref,root_hold_ref,
     allocation_before_revision,allocation_after_revision,allocation_before_epoch,allocation_after_epoch,
     root_before_version,root_after_version,hold_before_fence,hold_after_fence,captured_amount,released_amount,
     reserved_ceiling,unit,release_journal_transaction_ref,receipt_digest,recorded_at)
-  VALUES ((receipt->>'allocationClosureReceiptRef')::UUID,receipt->>'siteId',receipt->>'operationRef',
-    receipt->>'businessOperationKey',receipt->>'requestDigest',receipt->>'effectClosureReceiptRef',
+  VALUES ((receipt->>'allocationClosureReceiptRef')::UUID,receipt->>'siteId',receipt->>'sourceKind',
+    receipt->>'sourceRef',receipt->>'ownerProofDigest',receipt->>'businessOperationKey',
+    receipt->>'requestDigest',receipt->>'terminalEvidenceRef',
     receipt->>'outcome',receipt->>'executionManifestRef',(receipt->>'authorizationSegmentRef')::UUID,
     (receipt->>'authorizationSegmentVersion')::BIGINT,(receipt->>'settlementRef')::UUID,
     (receipt->>'settlementClosureRef')::UUID,(receipt->>'settlementClosureRevision')::BIGINT,
@@ -886,15 +1003,16 @@ BEGIN
     (result->>'holdFenceEpoch')::BIGINT,captured,released,(context->>'holdReservedAmount')::NUMERIC,
     receipt->>'unit',release_ref,receipt->>'receiptDigest',(receipt->>'recordedAt')::TIMESTAMPTZ)
   RETURNING * INTO prior;
-  RETURN jsonb_build_object('kind','accepted','value',platform.direct_media_root_closure_receipt_json(prior));
+  RETURN jsonb_build_object('kind','accepted','value',platform.execution_root_closure_receipt_json(prior));
 END $$;
-REVOKE ALL ON FUNCTION platform.commit_direct_media_root_closure(JSONB) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION platform.commit_direct_media_root_closure(JSONB) TO platform_media_worker;
+REVOKE ALL ON FUNCTION platform.commit_execution_root_closure(JSONB) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION platform.commit_execution_root_closure(JSONB)
+  TO platform_media_worker,platform_admission;
 
-CREATE FUNCTION platform.mark_direct_media_root_reconciliation(p_record JSONB) RETURNS JSONB
+CREATE FUNCTION platform.mark_execution_root_reconciliation(p_record JSONB) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$
-DECLARE prior platform.credit_direct_media_root_reconciliation%ROWTYPE;
-  identity JSONB; worker_lease JSONB; command JSONB; budget JSONB; settlement JSONB;
+DECLARE prior platform.credit_execution_root_reconciliation%ROWTYPE;
+  identity JSONB; owner_proof JSONB; command JSONB; budget JSONB; settlement JSONB;
   authority JSONB; result JSONB; context JSONB; expected_request_digest CHAR(64);
   authority_mismatch BOOLEAN; rating_mismatch BOOLEAN; source_mismatch BOOLEAN;
   source_allocated NUMERIC(38,0); source_captured NUMERIC(38,0);
@@ -902,11 +1020,9 @@ BEGIN
   IF octet_length(p_record::TEXT)>65536
     OR NOT platform.credit_direct_root_json_exact_keys(p_record,ARRAY['identity','command','authority','result'])
     OR NOT platform.credit_direct_root_json_exact_keys(p_record->'identity',
-      ARRAY['siteId','operationRef','businessOperationKey','requestDigest','workerLease'])
-    OR NOT platform.credit_direct_root_json_exact_keys(p_record#>'{identity,workerLease}',
-      ARRAY['taskRef','leaseEpoch','leaseTokenHash'])
+      ARRAY['siteId','ownerProof','businessOperationKey','requestDigest'])
     OR NOT platform.credit_direct_root_json_exact_keys(p_record->'command',
-      ARRAY['effectClosureReceiptRef','outcome','budget','settlement'])
+      ARRAY['terminalEvidenceRef','outcome','budget','settlement'])
     OR NOT platform.credit_direct_root_json_exact_keys(p_record#>'{command,budget}',ARRAY[
       'executionBudgetRootRef','executionManifestRef','rootHoldRef','rootAllocationRef',
       'rootAllocationRevision','rootAllocationEpoch','authorizationSegmentRef',
@@ -926,16 +1042,17 @@ BEGIN
   IF NOT platform.credit_direct_root_reconciliation_values_canonical(p_record) THEN
     RAISE EXCEPTION 'CREDIT_DIRECT_ROOT_CANONICAL_VALUE_INVALID';
   END IF;
-  identity := p_record->'identity'; worker_lease := identity->'workerLease'; command := p_record->'command';
+  identity := p_record->'identity'; owner_proof := identity->'ownerProof'; command := p_record->'command';
   budget := command->'budget'; settlement := command->'settlement'; authority := p_record->'authority';
   result := p_record->'result';
   IF identity->>'requestDigest' !~ '^[a-f0-9]{64}$'
-    OR worker_lease->>'leaseTokenHash' !~ '^[a-f0-9]{64}$'
-    OR (worker_lease->>'leaseEpoch')::BIGINT<=0
+    OR owner_proof->>'proofDigest' !~ '^[a-f0-9]{64}$'
     OR command->>'outcome' NOT IN ('completed','partial','failed','canceled')
+    OR command->>'outcome' IS DISTINCT FROM owner_proof->>'outcome'
+    OR command->>'terminalEvidenceRef' IS DISTINCT FROM owner_proof->>'terminalEvidenceRef'
     OR settlement->>'state'<>'settled'
-    OR result->>'code' NOT IN ('CREDIT_DIRECT_ROOT_AUTHORITY_MISMATCH',
-      'CREDIT_DIRECT_ROOT_RATING_MISMATCH','CREDIT_DIRECT_ROOT_HOLD_SOURCE_MISMATCH') THEN
+    OR result->>'code' NOT IN ('CREDIT_EXECUTION_ROOT_SOURCE_AUTHORITY_MISMATCH',
+      'CREDIT_EXECUTION_ROOT_RATING_MISMATCH','CREDIT_EXECUTION_ROOT_HOLD_SOURCE_MISMATCH') THEN
     RAISE EXCEPTION 'CREDIT_DIRECT_ROOT_RECONCILIATION_VALUE_INVALID';
   END IF;
   IF result->>'observedAt' !~
@@ -946,47 +1063,50 @@ BEGIN
       'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') IS DISTINCT FROM result->>'observedAt' THEN
     RAISE EXCEPTION 'CREDIT_DIRECT_ROOT_TIMESTAMP_INVALID';
   END IF;
-  PERFORM platform.assert_media_image_worker_lease(worker_lease->>'taskRef',identity->>'operationRef',
-    (worker_lease->>'leaseEpoch')::BIGINT,worker_lease->>'leaseTokenHash');
-  PERFORM platform.credit_direct_root_lock_outcome(identity->>'siteId',identity->>'operationRef');
+  PERFORM platform.assert_execution_root_owner_proof(identity->>'siteId',owner_proof);
+  PERFORM platform.credit_direct_root_lock_outcome(
+    identity->>'siteId',owner_proof->>'kind',owner_proof->>'sourceRef');
   expected_request_digest := platform.credit_direct_root_framed_digest(VARIADIC ARRAY[
-    'kokoro.platform.credit.direct-media-root.request.v1',identity->>'siteId',identity->>'operationRef',
+    'kokoro.platform.credit.execution-root.request.v1',identity->>'siteId',owner_proof->>'kind',
+    owner_proof->>'sourceRef',owner_proof->>'terminalEvidenceRef',owner_proof->>'outcome',
+    owner_proof->>'proofDigest',
     budget->>'executionBudgetRootRef',budget->>'executionManifestRef',budget->>'rootHoldRef',
     budget->>'rootAllocationRef',budget->>'rootAllocationRevision',budget->>'rootAllocationEpoch',
     budget->>'authorizationSegmentRef',budget->>'authorizationSegmentVersion',
-    budget->>'reservedCeiling',budget->>'unit',command->>'effectClosureReceiptRef',command->>'outcome',
-    settlement->>'settlementRef',settlement->>'authorizationSegmentRef',settlement->>'closureRef',
+    budget->>'reservedCeiling',budget->>'unit',settlement->>'settlementRef',
+    settlement->>'authorizationSegmentRef',settlement->>'closureRef',
     settlement->>'closureRevision',settlement->>'state',settlement->>'customerAmount',
     settlement->>'platformExposureAmount']);
   IF expected_request_digest IS DISTINCT FROM identity->>'requestDigest' THEN
     RAISE EXCEPTION 'CREDIT_DIRECT_ROOT_REQUEST_DIGEST_INVALID';
   END IF;
-  SELECT * INTO prior FROM platform.credit_direct_media_root_reconciliation
+  SELECT * INTO prior FROM platform.credit_execution_root_reconciliation
    WHERE site_ref=identity->>'siteId'
      AND (business_operation_key=identity->>'businessOperationKey'
-       OR media_operation_ref=identity->>'operationRef') FOR UPDATE;
+       OR (source_kind=owner_proof->>'kind' AND source_ref=owner_proof->>'sourceRef')) FOR UPDATE;
   IF FOUND THEN
     IF prior.business_operation_key<>identity->>'businessOperationKey'
-      OR prior.media_operation_ref<>identity->>'operationRef'
+      OR prior.source_kind<>owner_proof->>'kind'
+      OR prior.source_ref<>owner_proof->>'sourceRef'
+      OR prior.owner_proof_digest<>owner_proof->>'proofDigest'
       OR prior.request_digest<>identity->>'requestDigest' OR prior.code<>result->>'code' THEN
       RAISE EXCEPTION 'CREDIT_DIRECT_ROOT_RECONCILIATION_CONFLICT';
     END IF;
     RETURN jsonb_build_object('kind','replayed');
   END IF;
-  IF EXISTS (SELECT 1 FROM platform.credit_direct_media_root_closure_receipt
+  IF EXISTS (SELECT 1 FROM platform.credit_execution_root_closure_receipt
     WHERE site_ref=identity->>'siteId'
       AND (business_operation_key=identity->>'businessOperationKey'
-        OR media_operation_ref=identity->>'operationRef')) THEN
+        OR (source_kind=owner_proof->>'kind' AND source_ref=owner_proof->>'sourceRef'))) THEN
     RAISE EXCEPTION 'CREDIT_DIRECT_ROOT_OUTCOME_CONFLICT';
   END IF;
-  context := platform.lock_direct_media_root_closure(
-    identity->>'siteId',identity->>'operationRef',(authority->>'executionBudgetRootRef')::UUID,
+  context := platform.lock_execution_root_closure(
+    identity->>'siteId',owner_proof,(authority->>'executionBudgetRootRef')::UUID,
     (authority->>'rootAllocationRef')::UUID,(authority->>'rootHoldRef')::UUID,
     (authority->>'authorizationSegmentRef')::UUID,(authority->>'settlementRef')::UUID,
     authority->>'executionManifestRef',(authority->>'rootAllocationRevision')::BIGINT,
     (authority->>'rootAllocationEpoch')::BIGINT,(authority->>'authorizationSegmentVersion')::BIGINT,
-    (authority->>'reservedCeiling')::NUMERIC,authority->>'unit',worker_lease->>'taskRef',
-    (worker_lease->>'leaseEpoch')::BIGINT,worker_lease->>'leaseTokenHash');
+    (authority->>'reservedCeiling')::NUMERIC,authority->>'unit');
   IF context IS NULL THEN RAISE EXCEPTION 'CREDIT_DIRECT_ROOT_RECONCILIATION_CONTEXT_NOT_FOUND'; END IF;
   IF context->>'rootState' NOT IN ('open','closing')
     OR context->>'holdState' NOT IN ('open','closing')
@@ -994,22 +1114,24 @@ BEGIN
     RAISE EXCEPTION 'CREDIT_DIRECT_ROOT_RECONCILIATION_TERMINAL_REGRESSION';
   END IF;
   IF authority->>'expectedRootState'<>context->>'rootState'
-    OR identity->>'siteId'<>context->>'siteId' OR identity->>'operationRef'<>context->>'operationRef'
+    OR identity->>'siteId'<>context->>'siteId'
+    OR owner_proof->>'kind'<>context->>'sourceKind'
+    OR owner_proof->>'sourceRef'<>context->>'sourceRef'
     OR authority->>'executionBudgetRootRef'<>context->>'executionBudgetRootRef'
     OR authority->>'rootAllocationRef'<>context->>'rootAllocationRef'
     OR authority->>'rootHoldRef'<>context->>'creditHoldRef'
     OR authority->>'authorizationSegmentRef'<>context#>>'{settlement,authorizationSegmentRef}'
     OR authority->>'settlementRef'<>context#>>'{settlement,settlementRef}'
-    OR authority->>'executionManifestRef'<>context#>>'{operationBudget,executionManifestRef}'
+    OR authority->>'executionManifestRef'<>context#>>'{sourceBudget,executionManifestRef}'
     OR (authority->>'rootAllocationRevision')::BIGINT<>
-      (context#>>'{operationBudget,rootAllocationRevision}')::BIGINT
+      (context#>>'{sourceBudget,rootAllocationRevision}')::BIGINT
     OR (authority->>'rootAllocationEpoch')::BIGINT<>
-      (context#>>'{operationBudget,rootAllocationEpoch}')::BIGINT
+      (context#>>'{sourceBudget,rootAllocationEpoch}')::BIGINT
     OR (authority->>'authorizationSegmentVersion')::BIGINT<>
-      (context#>>'{operationBudget,authorizationSegmentVersion}')::BIGINT
+      (context#>>'{sourceBudget,authorizationSegmentVersion}')::BIGINT
     OR (authority->>'reservedCeiling')::NUMERIC<>
-      (context#>>'{operationBudget,reservedCeiling}')::NUMERIC
-    OR authority->>'unit'<>context#>>'{operationBudget,unit}'
+      (context#>>'{sourceBudget,reservedCeiling}')::NUMERIC
+    OR authority->>'unit'<>context#>>'{sourceBudget,unit}'
     OR (authority->>'expectedRootVersion')::BIGINT<>(context->>'rootVersion')::BIGINT
     OR authority->>'expectedHoldState'<>context->>'holdState'
     OR (authority->>'expectedHoldFenceEpoch')::BIGINT<>(context->>'holdFenceEpoch')::BIGINT
@@ -1025,16 +1147,16 @@ BEGIN
     OR budget->>'rootAllocationRef' IS DISTINCT FROM context->>'rootAllocationRef'
     OR budget->>'rootHoldRef' IS DISTINCT FROM context->>'creditHoldRef'
     OR budget->>'authorizationSegmentRef' IS DISTINCT FROM context#>>'{settlement,authorizationSegmentRef}'
-    OR budget->>'executionManifestRef' IS DISTINCT FROM context#>>'{operationBudget,executionManifestRef}'
+    OR budget->>'executionManifestRef' IS DISTINCT FROM context#>>'{sourceBudget,executionManifestRef}'
     OR (budget->>'rootAllocationRevision')::BIGINT IS DISTINCT FROM
-      (context#>>'{operationBudget,rootAllocationRevision}')::BIGINT
+      (context#>>'{sourceBudget,rootAllocationRevision}')::BIGINT
     OR (budget->>'rootAllocationEpoch')::BIGINT IS DISTINCT FROM
-      (context#>>'{operationBudget,rootAllocationEpoch}')::BIGINT
+      (context#>>'{sourceBudget,rootAllocationEpoch}')::BIGINT
     OR (budget->>'authorizationSegmentVersion')::BIGINT IS DISTINCT FROM
-      (context#>>'{operationBudget,authorizationSegmentVersion}')::BIGINT
+      (context#>>'{sourceBudget,authorizationSegmentVersion}')::BIGINT
     OR (budget->>'reservedCeiling')::NUMERIC IS DISTINCT FROM
-      (context#>>'{operationBudget,reservedCeiling}')::NUMERIC
-    OR budget->>'unit' IS DISTINCT FROM context#>>'{operationBudget,unit}'
+      (context#>>'{sourceBudget,reservedCeiling}')::NUMERIC
+    OR budget->>'unit' IS DISTINCT FROM context#>>'{sourceBudget,unit}'
     OR settlement->>'settlementRef' IS DISTINCT FROM context#>>'{settlement,settlementRef}'
     OR settlement->>'authorizationSegmentRef' IS DISTINCT FROM
       context#>>'{settlement,authorizationSegmentRef}'
@@ -1052,7 +1174,7 @@ BEGIN
       (context->>'holdCapturedAmount')::NUMERIC
     OR (context#>>'{allocation,capturedCumulative}')::NUMERIC+
       (context#>>'{allocation,unassignedStock}')::NUMERIC IS DISTINCT FROM
-      (context#>>'{operationBudget,reservedCeiling}')::NUMERIC
+      (context#>>'{sourceBudget,reservedCeiling}')::NUMERIC
     OR (context->>'holdCapturedAmount')::NUMERIC+(context->>'holdReleasedAmount')::NUMERIC+
       (context#>>'{allocation,unassignedStock}')::NUMERIC IS DISTINCT FROM
       (context->>'holdReservedAmount')::NUMERIC;
@@ -1065,9 +1187,9 @@ BEGIN
   source_mismatch := source_mismatch
     OR source_allocated IS DISTINCT FROM (context->>'holdReservedAmount')::NUMERIC
     OR source_captured IS DISTINCT FROM (context#>>'{allocation,capturedCumulative}')::NUMERIC;
-  IF (result->>'code'='CREDIT_DIRECT_ROOT_AUTHORITY_MISMATCH' AND authority_mismatch IS NOT TRUE)
-    OR (result->>'code'='CREDIT_DIRECT_ROOT_RATING_MISMATCH' AND rating_mismatch IS NOT TRUE)
-    OR (result->>'code'='CREDIT_DIRECT_ROOT_HOLD_SOURCE_MISMATCH' AND source_mismatch IS NOT TRUE) THEN
+  IF (result->>'code'='CREDIT_EXECUTION_ROOT_SOURCE_AUTHORITY_MISMATCH' AND authority_mismatch IS NOT TRUE)
+    OR (result->>'code'='CREDIT_EXECUTION_ROOT_RATING_MISMATCH' AND rating_mismatch IS NOT TRUE)
+    OR (result->>'code'='CREDIT_EXECUTION_ROOT_HOLD_SOURCE_MISMATCH' AND source_mismatch IS NOT TRUE) THEN
     RAISE EXCEPTION 'CREDIT_DIRECT_ROOT_RECONCILIATION_EVIDENCE_INVALID';
   END IF;
   INSERT INTO platform.credit_budget_allocation_revision(
@@ -1101,14 +1223,17 @@ BEGIN
      AND state=authority->>'expectedHoldState'
      AND fence_epoch=(authority->>'expectedHoldFenceEpoch')::BIGINT;
   IF NOT FOUND THEN RAISE EXCEPTION 'CREDIT_DIRECT_ROOT_RECONCILIATION_HOLD_CAS_LOST'; END IF;
-  INSERT INTO platform.credit_direct_media_root_reconciliation(
-    reconciliation_receipt_ref,reconciliation_allocation_revision_ref,site_ref,media_operation_ref,
+  INSERT INTO platform.credit_execution_root_reconciliation(
+    reconciliation_receipt_ref,reconciliation_allocation_revision_ref,site_ref,
+    source_kind,source_ref,owner_proof_digest,terminal_evidence_ref,
     execution_budget_root_ref,root_allocation_ref,root_hold_ref,
     allocation_before_revision,allocation_after_revision,allocation_before_epoch,allocation_after_epoch,
     root_before_version,root_after_version,hold_before_fence,hold_after_fence,
     business_operation_key,request_digest,code,observed_at)
   VALUES ((result->>'reconciliationReceiptRef')::UUID,
-    (result->>'reconciliationAllocationRevisionRef')::UUID,context->>'siteId',context->>'operationRef',
+    (result->>'reconciliationAllocationRevisionRef')::UUID,context->>'siteId',
+    context->>'sourceKind',context->>'sourceRef',owner_proof->>'proofDigest',
+    owner_proof->>'terminalEvidenceRef',
     (context->>'executionBudgetRootRef')::UUID,(context->>'rootAllocationRef')::UUID,
     (context->>'creditHoldRef')::UUID,(context#>>'{allocation,revision}')::BIGINT,
     (context#>>'{allocation,revision}')::BIGINT+1,(context#>>'{allocation,allocationEpoch}')::BIGINT,
@@ -1118,8 +1243,11 @@ BEGIN
     result->>'code',(result->>'observedAt')::TIMESTAMPTZ);
   RETURN jsonb_build_object('kind','accepted');
 END $$;
-REVOKE ALL ON FUNCTION platform.mark_direct_media_root_reconciliation(JSONB) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION platform.mark_direct_media_root_reconciliation(JSONB) TO platform_media_worker;
+REVOKE ALL ON FUNCTION platform.mark_execution_root_reconciliation(JSONB) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION platform.mark_execution_root_reconciliation(JSONB)
+  TO platform_media_worker,platform_admission;
 
 GRANT USAGE ON SCHEMA platform TO platform_media_worker;
+GRANT USAGE ON SCHEMA platform TO platform_admission;
 REVOKE CREATE ON SCHEMA platform FROM platform_media_worker;
+REVOKE CREATE ON SCHEMA platform FROM platform_admission;

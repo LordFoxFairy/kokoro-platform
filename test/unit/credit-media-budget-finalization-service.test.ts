@@ -16,7 +16,7 @@ describe("CreditMediaBudgetFinalizationService", () => {
     } })) };
     const service = new CreditMediaBudgetFinalizationService({ usage, repository: repository as never,
       runBudget: runBudget as never,
-      directRoot: directCloser(), clock: () => new Date(NOW), reference: references() });
+      rootClosure: rootCloser(), clock: () => new Date(NOW), reference: references() });
     const lease = issuePlatformTransaction({ query: async () => [], execute: async () => 1 });
     try {
       await expect(service.finalize(lease.transaction, childCommand())).resolves.toEqual({
@@ -59,7 +59,7 @@ describe("CreditMediaBudgetFinalizationService", () => {
     const runBudget = { returnChildAllocation: vi.fn() };
     const service = new CreditMediaBudgetFinalizationService({ usage, repository: repository as never,
       runBudget: runBudget as never,
-      directRoot: directCloser(), clock: () => new Date(NOW), reference: references() });
+      rootClosure: rootCloser(), clock: () => new Date(NOW), reference: references() });
     const lease = issuePlatformTransaction({ query: async () => [], execute: async () => 1 });
     try {
       await expect(service.finalize(lease.transaction, childCommand({ evidenceKind: "unavailable",
@@ -81,11 +81,11 @@ describe("CreditMediaBudgetFinalizationService", () => {
       closureRef: String(input.closureRef), closureRevision: 1n, state: "settled" as const,
       customerAmount: 0n, platformExposureAmount: 0n,
     } }));
-    const directRoot = directCloser();
+    const rootClosure = rootCloser();
     const service = new CreditMediaBudgetFinalizationService({ usage,
       repository: { lockMediaChildAllocation: vi.fn() } as never,
       runBudget: { returnChildAllocation: vi.fn() } as never,
-      directRoot, clock: () => new Date(NOW), reference: references() });
+      rootClosure, clock: () => new Date(NOW), reference: references() });
     const lease = issuePlatformTransaction({ query: async () => [], execute: async () => 1 });
     try {
       const command = childCommand();
@@ -102,9 +102,10 @@ describe("CreditMediaBudgetFinalizationService", () => {
       expect(usage.finalizeAttempt).not.toHaveBeenCalled();
       expect(usage.settleUsageSegment).toHaveBeenCalledWith(lease.transaction,
         expect.objectContaining({ evidenceRefs: [] }));
-      expect(directRoot.close).toHaveBeenCalledOnce();
-      expect(directRoot.close).toHaveBeenCalledWith(lease.transaction, expect.objectContaining({
-        workerLease: command.workerLease,
+      expect(rootClosure.close).toHaveBeenCalledOnce();
+      expect(rootClosure.close).toHaveBeenCalledWith(lease.transaction, expect.objectContaining({
+        ownerProof: expect.objectContaining({ kind: "media_operation", sourceRef: command.operationRef,
+          terminalEvidenceRef: command.effectClosureReceiptRef, workerLease: command.workerLease }),
       }));
     } finally { revokePlatformTransaction(lease); }
   });
@@ -128,7 +129,7 @@ describe("CreditMediaBudgetFinalizationService", () => {
       allocationReturnReceiptRef: "allocation-return:one", returnedAmount: 60n, capturedAmount: 40n,
     } })) };
     const service = new CreditMediaBudgetFinalizationService({ usage: usage as never, repository: repository as never,
-      runBudget: runBudget as never, directRoot: directCloser(), clock: () => new Date(NOW) });
+      runBudget: runBudget as never, rootClosure: rootCloser(), clock: () => new Date(NOW) });
     const lease = issuePlatformTransaction({ query: async () => [], execute: async () => 1 });
     try {
       await service.finalize(lease.transaction, childCommand());
@@ -159,7 +160,7 @@ function usageOwner() {
   };
 }
 
-function directCloser() {
+function rootCloser() {
   return { close: vi.fn(async (_transaction, input: Readonly<{ settlement: { customerAmount: bigint } }>) => ({
     kind: "accepted" as const, value: { allocationClosureReceiptRef: "direct-close:one",
       capturedAmount: input.settlement.customerAmount, releasedAmount: 100n - input.settlement.customerAmount },

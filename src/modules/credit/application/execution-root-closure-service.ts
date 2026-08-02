@@ -1,32 +1,67 @@
 import { createHash } from "node:crypto";
-import {
-  deriveDirectMediaRootClosureRequestDigest,
-  type DirectMediaRootClosureAuthority,
-} from "./media-budget-finalization-service.js";
 import type {
-  DirectMediaRootClosureIdentity,
-  DirectMediaRootClosureReceipt,
-  DirectMediaRootClosureRepository,
-  StoredDirectMediaRootClosure,
-} from "./contracts/direct-media-root-closure-repository.js";
+  ExecutionRootClosureIdentity,
+  ExecutionRootClosureReceipt,
+  ExecutionRootClosureRepository,
+  ExecutionRootOwnerProof,
+  StoredExecutionRootClosureContext,
+} from "./contracts/execution-root-closure-repository.js";
 import {
   ExecutionRootClosureAuthority,
-  type ExecutionRootClosureCode,
   type StoredExecutionRootClosure,
 } from "./execution-root-closure-authority.js";
+import type { PlatformTransaction } from "../../../shared/unit-of-work/index.js";
 
-type ClosureInput = Parameters<DirectMediaRootClosureAuthority["close"]>[1];
-type ReferenceKind = "direct-root-closure" | "allocation-revision" | "release-journal" |
+export type ExecutionRootClosureRequest = Readonly<{
+  siteId: string;
+  ownerProof: ExecutionRootOwnerProof;
+  budget: Readonly<{
+    kind: "direct_root";
+    executionBudgetRootRef: string;
+    executionManifestRef: string;
+    rootHoldRef: string;
+    rootAllocationRef: string;
+    rootAllocationRevision: bigint;
+    rootAllocationEpoch: bigint;
+    authorizationSegmentRef: string;
+    authorizationSegmentVersion: bigint;
+    reservedCeiling: bigint;
+    unit: string;
+  }>;
+  settlement: Readonly<{
+    settlementRef: string;
+    authorizationSegmentRef: string;
+    closureRef: string;
+    closureRevision: bigint;
+    state: "settled";
+    customerAmount: bigint;
+    platformExposureAmount: bigint;
+  }>;
+  businessOperationKey: string;
+  requestDigest: string;
+}>;
+
+export interface ExecutionRootClosurePort {
+  close(transaction: PlatformTransaction, input: ExecutionRootClosureRequest): Promise<
+    | Readonly<{ kind: "accepted" | "replayed"; value: Readonly<{
+        allocationClosureReceiptRef: string; capturedAmount: bigint; releasedAmount: bigint }> }>
+    | Readonly<{ kind: "reconciliation_required" | "conflict" | "not_found" | "invalid_state";
+        code?: string; reconciliationReceiptRef?: string }>
+  >;
+}
+
+type ClosureInput = ExecutionRootClosureRequest;
+type ReferenceKind = "execution-root-closure" | "allocation-revision" | "release-journal" |
   "reconciliation" | "reconciliation-allocation-revision";
 
-/** Credit-owned terminal authority. It consumes a persisted Rating settlement and never prices Media state. */
-export class DirectMediaRootClosureService implements DirectMediaRootClosureAuthority {
+/** Credit-owned terminal authority. Owner proof is verified before this source-neutral policy is entered. */
+export class ExecutionRootClosureService implements ExecutionRootClosurePort {
   readonly #clock: () => Date;
   readonly #reference: (kind: ReferenceKind, stableSeed: string) => string;
   readonly #rootClosure = new ExecutionRootClosureAuthority();
 
   constructor(private readonly dependencies: Readonly<{
-    repository: DirectMediaRootClosureRepository;
+    repository: ExecutionRootClosureRepository;
     clock?: () => Date;
     reference?: (kind: ReferenceKind, stableSeed: string) => string;
   }>) {
@@ -34,53 +69,46 @@ export class DirectMediaRootClosureService implements DirectMediaRootClosureAuth
     this.#reference = dependencies.reference ?? stableUuid;
   }
 
-  async close(transaction: Parameters<DirectMediaRootClosureAuthority["close"]>[0], input: ClosureInput) {
+  async close(transaction: PlatformTransaction, input: ClosureInput) {
     validateInput(input);
-    const identity = Object.freeze({ siteId: input.siteId, operationRef: input.operationRef,
+    const identity = Object.freeze({ siteId: input.siteId, ownerProof: input.ownerProof,
       businessOperationKey: input.businessOperationKey,
-      requestDigest: input.requestDigest, workerLease: input.workerLease }) satisfies DirectMediaRootClosureIdentity;
+      requestDigest: input.requestDigest }) satisfies ExecutionRootClosureIdentity;
     const prior = await this.dependencies.repository.findClosure(transaction, identity);
     if (prior.kind !== "none") return closureOutcome(prior);
     const current = await this.dependencies.repository.lockRootClosure(transaction, {
-      siteId: input.siteId, operationRef: input.operationRef,
-      executionBudgetRootRef: input.budget.executionBudgetRootRef,
-      rootAllocationRef: input.budget.rootAllocationRef, rootHoldRef: input.budget.rootHoldRef,
-      authorizationSegmentRef: input.budget.authorizationSegmentRef,
-      settlementRef: input.settlement.settlementRef,
-      executionManifestRef: input.budget.executionManifestRef,
-      rootAllocationRevision: input.budget.rootAllocationRevision,
-      rootAllocationEpoch: input.budget.rootAllocationEpoch,
-      authorizationSegmentVersion: input.budget.authorizationSegmentVersion,
-      reservedCeiling: input.budget.reservedCeiling, unit: input.budget.unit,
-      workerLease: input.workerLease,
+      identity, budget: input.budget, settlementRef: input.settlement.settlementRef,
     });
     const raced = await this.dependencies.repository.findClosure(transaction, identity);
     if (raced.kind !== "none") return closureOutcome(raced);
     if (current === null) return Object.freeze({ kind: "not_found" as const });
     const decision = this.#rootClosure.decide(toStoredExecutionRoot(current), {
       siteId: input.siteId,
-      sourceRef: input.operationRef,
+      sourceRef: input.ownerProof.sourceRef,
       budget: input.budget,
       settlement: input.settlement,
     });
     if (decision.kind === "invalid_state") {
-      return Object.freeze({ kind: "invalid_state" as const, code: directMediaCode(decision.code) });
+      return Object.freeze({ kind: "invalid_state" as const,
+        code: `CREDIT_EXECUTION_ROOT_${decision.code}` });
     }
     if (decision.kind === "reconciliation_required") {
-      return this.#reconcile(transaction, current, input, directMediaCode(decision.code));
+      return this.#reconcile(transaction, identity, current, input,
+        `CREDIT_EXECUTION_ROOT_${decision.code}`);
     }
     const { allocation, rootState, rootVersion, holdState, holdFenceEpoch,
       capturedAmount, releasedAmount, releases } = decision.value;
     const recordedAt = now(this.#clock());
-    const receiptRef = this.#reference("direct-root-closure", input.businessOperationKey);
+    const receiptRef = this.#reference("execution-root-closure", input.businessOperationKey);
     const receiptBase = Object.freeze({ allocationClosureReceiptRef: receiptRef,
-      siteId: input.siteId, operationRef: input.operationRef,
+      siteId: input.siteId, sourceKind: input.ownerProof.kind, sourceRef: input.ownerProof.sourceRef,
+      ownerProofDigest: input.ownerProof.proofDigest,
       businessOperationKey: input.businessOperationKey, requestDigest: input.requestDigest,
-      effectClosureReceiptRef: input.effectClosureReceiptRef,
+      terminalEvidenceRef: input.ownerProof.terminalEvidenceRef,
       settlementRef: input.settlement.settlementRef,
       executionBudgetRootRef: input.budget.executionBudgetRootRef,
       rootAllocationRef: input.budget.rootAllocationRef, rootHoldRef: input.budget.rootHoldRef,
-      capturedAmount, releasedAmount, unit: input.budget.unit, outcome: input.outcome,
+      capturedAmount, releasedAmount, unit: input.budget.unit, outcome: input.ownerProof.outcome,
       executionManifestRef: input.budget.executionManifestRef,
       authorizationSegmentRef: input.budget.authorizationSegmentRef,
       authorizationSegmentVersion: input.budget.authorizationSegmentVersion,
@@ -88,8 +116,8 @@ export class DirectMediaRootClosureService implements DirectMediaRootClosureAuth
       settlementClosureRevision: input.settlement.closureRevision,
       platformExposureAmount: input.settlement.platformExposureAmount,
       ratingSnapshotRef: current.settlement.ratingSnapshotRef, recordedAt });
-    const receipt: DirectMediaRootClosureReceipt = Object.freeze({ ...receiptBase,
-      receiptDigest: directRootReceiptDigest(receiptBase) });
+    const receipt: ExecutionRootClosureReceipt = Object.freeze({ ...receiptBase,
+      receiptDigest: executionRootReceiptDigest(receiptBase) });
     const releaseEntriesDigest = releasedAmount === 0n ? null : digestJournalPostings(current, releases);
     return closureOutcome(await this.dependencies.repository.persistClosure(transaction, Object.freeze({
       identity, current, allocation,
@@ -105,27 +133,26 @@ export class DirectMediaRootClosureService implements DirectMediaRootClosureAuth
   }
 
   async #reconcile(
-    transaction: Parameters<DirectMediaRootClosureAuthority["close"]>[0],
-    current: StoredDirectMediaRootClosure,
+    transaction: PlatformTransaction,
+    identity: ExecutionRootClosureIdentity,
+    current: StoredExecutionRootClosureContext,
     input: ClosureInput,
     code: string,
   ) {
     const reconciliationReceiptRef = this.#reference("reconciliation", input.businessOperationKey);
     await this.dependencies.repository.markReconciliationRequired(transaction, {
-      current, reconciliationReceiptRef,
+      identity, current, reconciliationReceiptRef,
       reconciliationAllocationRevisionRef: this.#reference("reconciliation-allocation-revision",
         input.businessOperationKey),
-      workerLease: input.workerLease, command: closureCommand(input),
-      businessOperationKey: input.businessOperationKey,
-      requestDigest: input.requestDigest, code, observedAt: now(this.#clock()),
+      command: closureCommand(input), code, observedAt: now(this.#clock()),
     });
     return Object.freeze({ kind: "reconciliation_required" as const, reconciliationReceiptRef, code });
   }
 }
 
 function closureCommand(input: ClosureInput) {
-  return Object.freeze({ effectClosureReceiptRef: input.effectClosureReceiptRef,
-    outcome: input.outcome,
+  return Object.freeze({ terminalEvidenceRef: input.ownerProof.terminalEvidenceRef,
+    outcome: input.ownerProof.outcome,
     budget: Object.freeze({ executionBudgetRootRef: input.budget.executionBudgetRootRef,
       executionManifestRef: input.budget.executionManifestRef,
       rootHoldRef: input.budget.rootHoldRef, rootAllocationRef: input.budget.rootAllocationRef,
@@ -144,7 +171,7 @@ function closureCommand(input: ClosureInput) {
 function closureOutcome(input:
   | Readonly<{ kind: "conflict"; code: "REQUEST_DIGEST_CONFLICT" }>
   | Readonly<{ kind: "reconciliation_required"; reconciliationReceiptRef: string; code: string }>
-  | Readonly<{ kind: "accepted" | "replayed"; value: DirectMediaRootClosureReceipt }>) {
+  | Readonly<{ kind: "accepted" | "replayed"; value: ExecutionRootClosureReceipt }>) {
   if (input.kind === "conflict" || input.kind === "reconciliation_required") return input;
   return Object.freeze({ kind: input.kind, value: Object.freeze({
     allocationClosureReceiptRef: input.value.allocationClosureReceiptRef,
@@ -154,33 +181,33 @@ function closureOutcome(input:
 }
 
 function validateInput(input: ClosureInput): void {
-  [input.siteId, input.operationRef, input.effectClosureReceiptRef, input.businessOperationKey,
+  [input.siteId, input.ownerProof.sourceRef, input.ownerProof.terminalEvidenceRef,
+    input.businessOperationKey,
     input.budget.executionBudgetRootRef, input.budget.rootAllocationRef, input.budget.rootHoldRef,
     input.budget.authorizationSegmentRef, input.budget.executionManifestRef, input.budget.unit,
-    input.workerLease.taskRef, input.settlement.settlementRef,
     input.settlement.authorizationSegmentRef, input.settlement.closureRef].forEach(reference);
   digest(input.requestDigest);
-  digest(input.workerLease.leaseTokenHash);
+  digest(input.ownerProof.proofDigest);
   if (input.budget.kind !== "direct_root" || input.budget.reservedCeiling <= 0n ||
       input.budget.rootAllocationRevision <= 0n || input.budget.rootAllocationEpoch <= 0n ||
-      input.budget.authorizationSegmentVersion <= 0n || input.workerLease.leaseEpoch <= 0n ||
+      input.budget.authorizationSegmentVersion <= 0n ||
       input.settlement.state !== "settled" || input.settlement.closureRevision <= 0n ||
       input.settlement.customerAmount < 0n || input.settlement.platformExposureAmount < 0n) {
-    throw new Error("CREDIT_DIRECT_ROOT_CLOSURE_COMMAND_INVALID");
+    throw new Error("CREDIT_EXECUTION_ROOT_CLOSURE_COMMAND_INVALID");
   }
-  if (input.requestDigest !== deriveDirectMediaRootClosureRequestDigest(input)) {
-    throw new Error("CREDIT_DIRECT_ROOT_REQUEST_DIGEST_INVALID");
+  if (input.requestDigest !== deriveExecutionRootClosureRequestDigest(input)) {
+    throw new Error("CREDIT_EXECUTION_ROOT_REQUEST_DIGEST_INVALID");
   }
 }
 
 function stableUuid(kind: ReferenceKind, stableSeed: string): string {
   reference(stableSeed);
-  const raw = createHash("sha256").update("kokoro.platform.credit.direct-root-closure.v1\0")
+  const raw = createHash("sha256").update("kokoro.platform.credit.execution-root-closure.v1\0")
     .update(kind).update("\0").update(stableSeed).digest("hex");
   const variant = ((Number.parseInt(raw[16]!, 16) & 0x3) | 0x8).toString(16);
   return `${raw.slice(0, 8)}-${raw.slice(8, 12)}-7${raw.slice(13, 16)}-${variant}${raw.slice(17, 20)}-${raw.slice(20, 32)}`;
 }
-function digestJournalPostings(current: StoredDirectMediaRootClosure,
+function digestJournalPostings(current: StoredExecutionRootClosureContext,
   releases: readonly Readonly<{ creditGrantId: string; ordinal: number; amount: bigint }>[]): string {
   const rows: string[] = [];
   for (const release of releases) {
@@ -193,10 +220,11 @@ function digestJournalPostings(current: StoredDirectMediaRootClosure,
   }
   return createHash("sha256").update(rows.join("\n")).digest("hex");
 }
-function directRootReceiptDigest(receipt: Omit<DirectMediaRootClosureReceipt, "receiptDigest">): string {
-  return framedDigest("kokoro.platform.credit.direct-media-root.receipt.v1", [
-    receipt.allocationClosureReceiptRef, receipt.siteId, receipt.operationRef,
-    receipt.businessOperationKey, receipt.requestDigest, receipt.effectClosureReceiptRef,
+function executionRootReceiptDigest(receipt: Omit<ExecutionRootClosureReceipt, "receiptDigest">): string {
+  return framedDigest("kokoro.platform.credit.execution-root.receipt.v1", [
+    receipt.allocationClosureReceiptRef, receipt.siteId, receipt.sourceKind, receipt.sourceRef,
+    receipt.ownerProofDigest, receipt.businessOperationKey, receipt.requestDigest,
+    receipt.terminalEvidenceRef,
     receipt.settlementRef, receipt.executionBudgetRootRef, receipt.rootAllocationRef,
     receipt.rootHoldRef, receipt.capturedAmount.toString(), receipt.releasedAmount.toString(),
     receipt.unit, receipt.outcome, receipt.executionManifestRef, receipt.authorizationSegmentRef,
@@ -210,22 +238,22 @@ function framedDigest(domain: string, values: readonly string[]): string {
     `${Buffer.byteLength(value, "utf8")}:${value}`).join("|")).digest("hex");
 }
 function now(value: Date): string {
-  if (!Number.isFinite(value.getTime())) throw new Error("CREDIT_DIRECT_ROOT_CLOCK_INVALID");
+  if (!Number.isFinite(value.getTime())) throw new Error("CREDIT_EXECUTION_ROOT_CLOCK_INVALID");
   return value.toISOString();
 }
 function reference(value: string): void {
   if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/u.test(value)) {
-    throw new Error("CREDIT_DIRECT_ROOT_REFERENCE_INVALID");
+    throw new Error("CREDIT_EXECUTION_ROOT_REFERENCE_INVALID");
   }
 }
 function digest(value: string): void {
-  if (!/^[a-f0-9]{64}$/u.test(value)) throw new Error("CREDIT_DIRECT_ROOT_DIGEST_INVALID");
+  if (!/^[a-f0-9]{64}$/u.test(value)) throw new Error("CREDIT_EXECUTION_ROOT_DIGEST_INVALID");
 }
 
-function toStoredExecutionRoot(current: StoredDirectMediaRootClosure): StoredExecutionRootClosure {
+function toStoredExecutionRoot(current: StoredExecutionRootClosureContext): StoredExecutionRootClosure {
   return Object.freeze({
     siteId: current.siteId,
-    sourceRef: current.operationRef,
+    sourceRef: current.sourceRef,
     executionBudgetRootRef: current.executionBudgetRootRef,
     rootState: current.rootState,
     rootVersion: current.rootVersion,
@@ -236,7 +264,7 @@ function toStoredExecutionRoot(current: StoredDirectMediaRootClosure): StoredExe
     holdCapturedAmount: current.holdCapturedAmount,
     holdReleasedAmount: current.holdReleasedAmount,
     rootAllocationRef: current.rootAllocationRef,
-    sourceBudget: current.operationBudget,
+    sourceBudget: current.sourceBudget,
     allocation: current.allocation,
     openChildCount: current.openChildCount,
     openSegmentCount: current.openSegmentCount,
@@ -246,17 +274,18 @@ function toStoredExecutionRoot(current: StoredDirectMediaRootClosure): StoredExe
   });
 }
 
-const DIRECT_MEDIA_CODES: Readonly<Record<ExecutionRootClosureCode, string>> = Object.freeze({
-  ROOT_NOT_OPEN: "CREDIT_DIRECT_ROOT_NOT_OPEN",
-  SOURCE_AUTHORITY_MISMATCH: "CREDIT_DIRECT_ROOT_AUTHORITY_MISMATCH",
-  CHILD_PENDING: "CREDIT_DIRECT_ROOT_CHILD_PENDING",
-  SEGMENT_PENDING: "CREDIT_DIRECT_ROOT_SEGMENT_PENDING",
-  ATTEMPT_PENDING: "CREDIT_DIRECT_ROOT_ATTEMPT_PENDING",
-  FENCE_EXHAUSTED: "CREDIT_DIRECT_ROOT_FENCE_EXHAUSTED",
-  RATING_MISMATCH: "CREDIT_DIRECT_ROOT_RATING_MISMATCH",
-  HOLD_SOURCE_MISMATCH: "CREDIT_DIRECT_ROOT_HOLD_SOURCE_MISMATCH",
-});
-
-function directMediaCode(code: ExecutionRootClosureCode): string {
-  return DIRECT_MEDIA_CODES[code];
+export function deriveExecutionRootClosureRequestDigest(input: Omit<ClosureInput, "requestDigest"> |
+  ClosureInput): string {
+  const budget = input.budget;
+  const settlement = input.settlement;
+  return framedDigest("kokoro.platform.credit.execution-root.request.v1", [
+    input.siteId, input.ownerProof.kind, input.ownerProof.sourceRef,
+    input.ownerProof.terminalEvidenceRef, input.ownerProof.outcome, input.ownerProof.proofDigest,
+    budget.executionBudgetRootRef, budget.executionManifestRef, budget.rootHoldRef,
+    budget.rootAllocationRef, budget.rootAllocationRevision.toString(), budget.rootAllocationEpoch.toString(),
+    budget.authorizationSegmentRef, budget.authorizationSegmentVersion.toString(),
+    budget.reservedCeiling.toString(), budget.unit, settlement.settlementRef,
+    settlement.authorizationSegmentRef, settlement.closureRef, settlement.closureRevision.toString(),
+    settlement.state, settlement.customerAmount.toString(), settlement.platformExposureAmount.toString(),
+  ]);
 }

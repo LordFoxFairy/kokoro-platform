@@ -1,27 +1,30 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
-const migrationPath = "prisma/migrations/20260812_credit_direct_media_root_closure/migration.sql";
+const migrationPath = "prisma/migrations/20260812_credit_execution_root_closure/migration.sql";
 
-describe("Credit direct Media root closure schema", () => {
+describe("Credit execution root closure schema", () => {
   it("keeps closure receipts immutable, conserved and fenced", async () => {
     const migration = await readFile(migrationPath, "utf8");
-    expect(migration).toContain("credit_direct_media_root_closure_receipt");
+    expect(migration).toContain("credit_execution_root_closure_receipt");
     expect(migration).toContain("captured_amount+released_amount=reserved_ceiling");
     expect(migration).toContain("allocation_after_revision=allocation_before_revision+1");
     expect(migration).toContain("hold_after_fence=hold_before_fence+1");
-    expect(migration).toContain("CREDIT_DIRECT_MEDIA_ROOT_FACT_IMMUTABLE");
+    expect(migration).toContain("CREDIT_EXECUTION_ROOT_FACT_IMMUTABLE");
     expect(migration).not.toMatch(/refund/iu);
   });
 
-  it("exposes only exact worker definer routines and no Credit table privileges", async () => {
+  it("exposes exact definer routines to verified Media and Admission owners only", async () => {
     const migration = await readFile(migrationPath, "utf8");
-    for (const routine of ["find_direct_media_root_closure", "lock_direct_media_root_closure",
-      "commit_direct_media_root_closure", "mark_direct_media_root_reconciliation"]) {
+    for (const routine of ["find_execution_root_closure", "lock_execution_root_closure",
+      "commit_execution_root_closure", "mark_execution_root_reconciliation"]) {
       expect(migration).toContain(`platform.${routine}`);
     }
+    expect(migration).toContain("platform.assert_execution_root_owner_proof");
     expect(migration).toContain("PERFORM platform.assert_media_image_worker_lease(");
+    expect(migration).toContain("platform.admission_execution_manifest");
     expect(migration).toContain("TO platform_media_worker");
+    expect(migration).toContain("platform_admission");
     expect(migration).not.toMatch(
       /GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE|TRUNCATE)[\s\S]{0,200}\bTO\s+platform_media_worker\b/iu,
     );
@@ -53,19 +56,19 @@ describe("Credit direct Media root closure schema", () => {
     expect(migration).toContain("context->>'holdState' NOT IN ('open','closing')");
     expect(migration).toContain("context#>>'{allocation,state}' NOT IN ('active','returning')");
     expect(migration).toContain("CREDIT_DIRECT_ROOT_RECONCILIATION_EVIDENCE_INVALID");
-    expect(migration).toContain("CREDIT_DIRECT_ROOT_AUTHORITY_MISMATCH");
-    expect(migration).toContain("CREDIT_DIRECT_ROOT_RATING_MISMATCH");
-    expect(migration).toContain("CREDIT_DIRECT_ROOT_HOLD_SOURCE_MISMATCH");
+    expect(migration).toContain("CREDIT_EXECUTION_ROOT_SOURCE_AUTHORITY_MISMATCH");
+    expect(migration).toContain("CREDIT_EXECUTION_ROOT_RATING_MISMATCH");
+    expect(migration).toContain("CREDIT_EXECUTION_ROOT_HOLD_SOURCE_MISMATCH");
   });
 
   it("looks up closure and reconciliation as one exclusive durable outcome", async () => {
     const migration = await readFile(migrationPath, "utf8");
     const lookup = migration.slice(
-      migration.indexOf("CREATE FUNCTION platform.find_direct_media_root_closure"),
-      migration.indexOf("CREATE FUNCTION platform.lock_direct_media_root_closure"),
+      migration.indexOf("CREATE FUNCTION platform.find_execution_root_closure"),
+      migration.indexOf("CREATE FUNCTION platform.lock_execution_root_closure"),
     );
-    expect(lookup).toContain("credit_direct_media_root_closure_receipt");
-    expect(lookup).toContain("credit_direct_media_root_reconciliation");
+    expect(lookup).toContain("credit_execution_root_closure_receipt");
+    expect(lookup).toContain("credit_execution_root_reconciliation");
     expect(lookup).toContain("reconciliationReceiptRef");
     expect(lookup).toContain("reconciliation_required");
     expect(lookup).toContain("CREDIT_DIRECT_ROOT_OUTCOME_EXCLUSIVITY_VIOLATION");
@@ -84,7 +87,7 @@ describe("Credit direct Media root closure schema", () => {
 
   it("locks and revalidates every financial fence before terminal mutation", async () => {
     const migration = await readFile(migrationPath, "utf8");
-    expect(migration).toMatch(/FOR UPDATE OF (?:operation,)?root,hold,allocation,revision,segment,settlement/iu);
+    expect(migration).toMatch(/FOR UPDATE OF root,hold,allocation,revision,segment,settlement/iu);
     expect(migration).toContain("openChildCount");
     expect(migration).toContain("openSegmentCount");
     expect(migration).toContain("openAttemptCount");
@@ -93,21 +96,22 @@ describe("Credit direct Media root closure schema", () => {
     expect(migration).toContain("customer_available");
   });
 
-  it("binds the frozen admission segment version without mistaking it for the evolved settlement head", async () => {
+  it("binds each source budget without duplicating the common Credit mutation", async () => {
     const migration = await readFile(migrationPath, "utf8");
     expect(migration).not.toContain(
       "operation.credit_authorization_segment_version=p_authorization_segment_version",
     );
     expect(migration).toContain(
-      "'authorizationSegmentVersion',context.credit_authorization_segment_version::TEXT",
+      "'authorizationSegmentVersion',context.authorization_segment_version::TEXT",
     );
-    expect(migration).not.toContain("segment.aggregate_version=p_authorization_segment_version");
+    expect(migration).toContain("segment.allocation_epoch,segment.aggregate_version");
     expect(migration).toContain("segment.state='settled'");
     expect(migration).toContain(
-      "segment.execution_manifest_ref=operation.credit_execution_manifest_ref",
+      "segment.execution_manifest_ref=authority.execution_manifest_ref",
     );
     expect(migration).not.toContain(
       "operation.credit_execution_manifest_ref=p_execution_manifest_ref",
     );
+    expect(migration.match(/INSERT INTO platform\.credit_journal_transaction/gu)).toHaveLength(1);
   });
 });

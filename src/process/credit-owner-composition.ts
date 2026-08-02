@@ -10,11 +10,16 @@ import { canonicalCreditProgramDefinitionFromBytes } from
   "../modules/credit/infrastructure/protobuf/credit-program-codec.js";
 import type { CreditProgramCatalogReader, CreditProgramCatalogReadTransactionHost } from
   "../modules/credit/application/contracts/credit-program-catalog-reader.js";
+import { ExecutionRootClosureService } from
+  "../modules/credit/application/execution-root-closure-service.js";
+import { PostgresExecutionRootClosureRepository } from
+  "../modules/credit/infrastructure/postgres/execution-root-closure-repository.js";
 
 /** Credit-owned application ports only; transport/auth adapters bind outside this composition. */
 export interface CreditOwnerComposition {
   readonly programCatalog: CreditProgramCatalogService;
   readonly programCatalogReader: CreditProgramCatalogReader;
+  readonly executionRootClosure: ExecutionRootClosureService;
 }
 
 export function createCreditOwnerComposition(input: Readonly<{
@@ -31,5 +36,8 @@ export function createCreditOwnerComposition(input: Readonly<{
       ...(input.clock === undefined ? {} : { clock: input.clock }),
     }),
     programCatalogReader: new PostgresCreditProgramCatalogReader(input.queryHost),
+    executionRootClosure: new ExecutionRootClosureService({
+      repository: new PostgresExecutionRootClosureRepository(),
+    }),
   });
 }

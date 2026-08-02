@@ -293,6 +293,10 @@ export interface AdmissionBudgetOwnerPort {
       requestDigest: string;
       outcomeUnknownEvidenceRef?: string | undefined;
       terminalEvidenceRef?: string | undefined;
+      terminalOutcome?: "completed" | "failed" | undefined;
+      sessionId: string;
+      launchId: string;
+      runId: string;
     }>,
   ): Promise<
     | Readonly<{
@@ -385,7 +389,8 @@ export interface AdmissionLifecycleOwnerPort {
 export type AdmissionExecutionEvidence =
   | Readonly<{ kind: "not_found" }>
   | Readonly<{ kind: "execution_observed"; safeStatusRef?: string | undefined }>
-  | Readonly<{ kind: "terminal_observed"; terminalEvidenceRef: string; safeStatusRef?: string | undefined }>;
+  | Readonly<{ kind: "terminal_observed"; terminalEvidenceRef: string;
+      terminalOutcome: "completed" | "failed"; safeStatusRef?: string | undefined }>;
 
 export interface AdmissionExecutionEvidenceOwnerPort {
   resolve(
@@ -905,6 +910,10 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
           commandId: command.commandId,
           requestDigest: command.requestDigest,
           terminalEvidenceRef: executionEvidence.terminalEvidenceRef,
+          terminalOutcome: executionEvidence.terminalOutcome,
+          sessionId: locked.sessionId,
+          launchId: locked.launchId,
+          runId: locked.runId,
         });
         const changed = budget.kind === "settled"
           ? await this.#ports.lifecycle.settle(transaction, locked, budget.segmentVersion)
@@ -930,6 +939,9 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         commandId: command.commandId,
         requestDigest: command.requestDigest,
         outcomeUnknownEvidenceRef: dispatchEvidence.evidenceRef,
+        sessionId: locked.sessionId,
+        launchId: locked.launchId,
+        runId: locked.runId,
       });
       const changed = budget.kind === "settled"
         ? await this.#ports.lifecycle.settle(transaction, locked, budget.segmentVersion)

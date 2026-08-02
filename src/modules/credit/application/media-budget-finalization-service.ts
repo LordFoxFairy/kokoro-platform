@@ -4,6 +4,12 @@ import type { AttemptUsageEvidence, UsageAttemptOutcome, UsageDimension } from "
 import type { UsageSettlementService } from "./usage-settlement-service.js";
 import type { CreditAuthorityRepository } from "./contracts/credit-authority-repository.js";
 import type { RunBudgetAuthority } from "./contracts/run-budget-authority.js";
+import { verifyMediaExecutionRootOwnerProof } from
+  "./contracts/execution-root-closure-repository.js";
+import {
+  deriveExecutionRootClosureRequestDigest,
+  type ExecutionRootClosurePort,
+} from "./execution-root-closure-service.js";
 
 export type CreditMediaBudgetBinding = Readonly<{
   kind: "agent_child";
@@ -81,8 +87,6 @@ export type CreditMediaFinancialClosure = Readonly<{
 
 export type CreditMediaUsageOwner = Pick<UsageSettlementService, "finalizeAttempt" | "settleUsageSegment">;
 
-type Accepted<T> = Readonly<{ kind: "accepted"; value: T }> | Readonly<{ kind: "replayed"; value: T }>;
-
 type UsageSettlementOutcome = Awaited<ReturnType<UsageSettlementService["settleUsageSegment"]>>;
 type UsageSettlement = Extract<UsageSettlementOutcome, { kind: "accepted" | "replayed" }>["value"];
 
@@ -91,25 +95,6 @@ export type CreditMediaWorkerLease = Readonly<{
   leaseEpoch: bigint;
   leaseTokenHash: string;
 }>;
-
-export interface DirectMediaRootClosureAuthority {
-  close(transaction: PlatformTransaction, input: Readonly<{
-    siteId: string;
-    operationRef: string;
-    workerLease: CreditMediaWorkerLease;
-    budget: Extract<CreditMediaBudgetBinding, { kind: "direct_root" }>;
-    effectClosureReceiptRef: string;
-    outcome: "completed" | "partial" | "failed" | "canceled";
-    settlement: UsageSettlement;
-    businessOperationKey: string;
-    requestDigest: string;
-  }>): Promise<Accepted<Readonly<{
-    allocationClosureReceiptRef: string;
-    capturedAmount: bigint;
-    releasedAmount: bigint;
-  }>> | Readonly<{ kind: "reconciliation_required" | "conflict" | "not_found" | "invalid_state";
-    code?: string; reconciliationReceiptRef?: string }>>;
-}
 
 type CreditMediaChildRepository = Pick<CreditAuthorityRepository, "lockMediaChildAllocation">;
 type CreditMediaRunBudgetOwner = Pick<RunBudgetAuthority, "returnChildAllocation">;
@@ -126,7 +111,7 @@ export class CreditMediaBudgetFinalizationService {
     usage: CreditMediaUsageOwner;
     repository: CreditMediaChildRepository;
     runBudget: CreditMediaRunBudgetOwner;
-    directRoot: DirectMediaRootClosureAuthority;
+    rootClosure: ExecutionRootClosurePort;
     reference: CreditMediaReferenceFactory;
     clock: () => Date;
   }>;
@@ -135,7 +120,7 @@ export class CreditMediaBudgetFinalizationService {
     usage: CreditMediaUsageOwner;
     repository: CreditMediaChildRepository;
     runBudget: CreditMediaRunBudgetOwner;
-    directRoot: DirectMediaRootClosureAuthority;
+    rootClosure: ExecutionRootClosurePort;
     reference?: CreditMediaReferenceFactory;
     clock?: () => Date;
   }>) {
@@ -225,15 +210,19 @@ export class CreditMediaBudgetFinalizationService {
         settlement.closureRevision !== 1n) throw new Error("CREDIT_MEDIA_SETTLEMENT_RECEIPT_INVALID");
 
     if (input.budget.kind === "direct_root") {
-      const closed = await this.#dependencies.directRoot.close(transaction, {
-        siteId: input.siteId, operationRef: input.operationRef, workerLease: input.workerLease,
-        budget: input.budget,
-        effectClosureReceiptRef: input.effectClosureReceiptRef, outcome: input.outcome, settlement,
+      const ownerProof = verifyMediaExecutionRootOwnerProof({
+        sourceRef: input.operationRef,
+        terminalEvidenceRef: input.effectClosureReceiptRef,
+        outcome: input.outcome,
+        workerLease: input.workerLease,
+      });
+      const closure = {
+        siteId: input.siteId, ownerProof, budget: input.budget, settlement,
         businessOperationKey: operationKey("media-root-close", input.operationRef,
           input.effectClosureReceiptRef),
-        requestDigest: deriveDirectMediaRootClosureRequestDigest({ siteId: input.siteId,
-          operationRef: input.operationRef, budget: input.budget,
-          effectClosureReceiptRef: input.effectClosureReceiptRef, outcome: input.outcome, settlement }),
+      };
+      const closed = await this.#dependencies.rootClosure.close(transaction, {
+        ...closure, requestDigest: deriveExecutionRootClosureRequestDigest(closure),
       });
       if (closed.kind !== "accepted" && closed.kind !== "replayed") {
         return reconciliation(("reconciliationReceiptRef" in closed
@@ -334,32 +323,6 @@ function validateCommand(input: Readonly<{ siteId: string; operationRef: string;
       throw new Error("CREDIT_MEDIA_ATTEMPT_INVALID");
     }
   }
-}
-
-export function deriveDirectMediaRootClosureRequestDigest(input: Readonly<{
-  siteId: string;
-  operationRef: string;
-  budget: Extract<CreditMediaBudgetBinding, { kind: "direct_root" }>;
-  effectClosureReceiptRef: string;
-  outcome: "completed" | "partial" | "failed" | "canceled";
-  settlement: UsageSettlement;
-}>): string {
-  const budget = input.budget;
-  const settlement = input.settlement;
-  return framedDigest("kokoro.platform.credit.direct-media-root.request.v1", [
-    input.siteId, input.operationRef, budget.executionBudgetRootRef, budget.executionManifestRef,
-    budget.rootHoldRef, budget.rootAllocationRef, budget.rootAllocationRevision.toString(),
-    budget.rootAllocationEpoch.toString(), budget.authorizationSegmentRef,
-    budget.authorizationSegmentVersion.toString(), budget.reservedCeiling.toString(), budget.unit,
-    input.effectClosureReceiptRef, input.outcome, settlement.settlementRef,
-    settlement.authorizationSegmentRef, settlement.closureRef, settlement.closureRevision.toString(),
-    settlement.state, settlement.customerAmount.toString(), settlement.platformExposureAmount.toString(),
-  ]);
-}
-
-function framedDigest(domain: string, values: readonly string[]): string {
-  return createHash("sha256").update([domain, ...values].map((value) =>
-    `${Buffer.byteLength(value, "utf8")}:${value}`).join("|")).digest("hex");
 }
 
 function canonicalNow(clock: Date): string {

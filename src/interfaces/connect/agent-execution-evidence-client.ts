@@ -154,6 +154,9 @@ function mapEvidence(
     ? Object.freeze({
         kind: "terminal_observed" as const,
         terminalEvidenceRef: evidence.evidenceRef,
+        terminalOutcome: evidence.kind === DurableExecutionEvidenceKind.RUN_COMPLETED
+          ? "completed" as const
+          : "failed" as const,
         safeStatusRef: evidence.evidenceRef,
       })
     : Object.freeze({

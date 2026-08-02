@@ -5,6 +5,13 @@ import { CHAT_ATTACHMENT_PURPOSE } from "../../../asset/domain/asset-purpose.js"
 import { applyAssetOwnerScope } from "../../../asset/infrastructure/postgres/asset-owner-scope.js";
 import { CreditService } from "../../../credit/application/credit-service.js";
 import { UsageSettlementService } from "../../../credit/application/usage-settlement-service.js";
+import {
+  deriveExecutionRootClosureRequestDigest,
+  ExecutionRootClosureService,
+  type ExecutionRootClosurePort,
+} from "../../../credit/application/execution-root-closure-service.js";
+import { verifyAdmissionExecutionRootOwnerProof } from
+  "../../../credit/application/contracts/execution-root-closure-repository.js";
 import type {
   CreditAuthorityOutcome,
   RunBudgetAuthority,
@@ -12,6 +19,8 @@ import type {
 } from "../../../credit/application/contracts/run-budget-authority.js";
 import { PostgresCreditAuthorityRepository } from "../../../credit/infrastructure/postgres/credit-authority-repository.js";
 import { PostgresUsageSettlementRepository } from "../../../credit/infrastructure/postgres/usage-settlement-repository.js";
+import { PostgresExecutionRootClosureRepository } from
+  "../../../credit/infrastructure/postgres/execution-root-closure-repository.js";
 import type {
   AdmissionAssetOwnerPort,
   AdmissionBudgetOwnerPort,
@@ -58,6 +67,18 @@ interface SegmentAuthorityRow extends Record<string, unknown> {
   readonly segmentVersion: unknown;
 }
 
+interface AdmissionRootBudgetRow extends Record<string, unknown> {
+  readonly executionBudgetRootRef: unknown;
+  readonly rootAllocationRef: unknown;
+  readonly rootHoldRef: unknown;
+  readonly rootAllocationRevision: unknown;
+  readonly rootAllocationEpoch: unknown;
+  readonly authorizationSegmentRef: unknown;
+  readonly authorizationSegmentVersion: unknown;
+  readonly reservedCeiling: unknown;
+  readonly unit: unknown;
+}
+
 type ReserveResolution = Awaited<ReturnType<AdmissionBudgetOwnerPort["reserveRoot"]>>;
 
 /** Adapts Admission orchestration to the sole native W2A RunBudgetAuthority. */
@@ -68,6 +89,9 @@ export class PostgresAdmissionBudgetOwner implements AdmissionBudgetOwnerPort {
     }),
     private readonly usageSettlement: Pick<UsageSettlementService, "settleUsageSegment"> = new UsageSettlementService({
       repository: new PostgresUsageSettlementRepository(),
+    }),
+    private readonly rootClosure: ExecutionRootClosurePort = new ExecutionRootClosureService({
+      repository: new PostgresExecutionRootClosureRepository(),
     }),
   ) {}
 
@@ -301,6 +325,42 @@ export class PostgresAdmissionBudgetOwner implements AdmissionBudgetOwnerPort {
       ) throw new Error("ADMISSION_USAGE_SETTLEMENT_CORRUPT");
       const authority = await loadSegmentAuthority(transaction, input);
       if (authority.state !== "settled") throw new Error("ADMISSION_USAGE_SEGMENT_NOT_SETTLED");
+      if (input.terminalOutcome === undefined || input.sessionId === undefined ||
+          input.launchId === undefined || input.runId === undefined) {
+        throw new Error("ADMISSION_EXECUTION_ROOT_OWNER_PROOF_REQUIRED");
+      }
+      const ownerProof = verifyAdmissionExecutionRootOwnerProof({
+        sourceRef: input.runId,
+        terminalEvidenceRef: input.terminalEvidenceRef,
+        outcome: input.terminalOutcome,
+        manifestRef: input.manifestRef,
+        sessionId: input.sessionId,
+        launchId: input.launchId,
+      });
+      const budget = await loadAdmissionRootBudget(transaction, input, authority.segmentVersion);
+      const closureIdentity = {
+        siteId: input.siteId,
+        ownerProof,
+        budget,
+        settlement: outcome.value,
+        businessOperationKey: `admission-root-close:${digestCanonical({
+          siteId: input.siteId,
+          runId: input.runId,
+          terminalEvidenceRef: input.terminalEvidenceRef,
+        })}`,
+      };
+      const root = await this.rootClosure.close(transaction, {
+        ...closureIdentity,
+        requestDigest: deriveExecutionRootClosureRequestDigest(closureIdentity),
+      });
+      if (root.kind === "reconciliation_required") {
+        return Object.freeze({ kind: "reconciliation_required" as const,
+          segmentVersion: authority.segmentVersion });
+      }
+      if (root.kind !== "accepted" && root.kind !== "replayed") {
+        const code = "code" in root ? root.code : undefined;
+        throw new Error(`ADMISSION_EXECUTION_ROOT_CLOSURE_${code ?? root.kind.toUpperCase()}`);
+      }
       return Object.freeze({
         kind: "settled",
         segmentVersion: authority.segmentVersion,
@@ -451,6 +511,62 @@ async function requireCreditReconciliation(
     authorizationSegmentRef: input.authorizationSegmentRef,
     expectedSegmentVersion: current.segmentVersion,
   }, "reconciliation_required").segmentVersion;
+}
+
+async function loadAdmissionRootBudget(
+  transaction: Parameters<AdmissionBudgetOwnerPort["reconcileRoot"]>[0],
+  input: Parameters<AdmissionBudgetOwnerPort["reconcileRoot"]>[1],
+  authorizationSegmentVersion: bigint,
+) {
+  const rows = await resolvePlatformTransaction(transaction).query<AdmissionRootBudgetRow>(
+    `SELECT root.execution_budget_root_ref::text AS "executionBudgetRootRef",
+            root.root_allocation_ref::text AS "rootAllocationRef",
+            root.credit_hold_ref::text AS "rootHoldRef",
+            segment.prepared_against_allocation_revision::text AS "rootAllocationRevision",
+            segment.allocation_epoch::text AS "rootAllocationEpoch",
+            segment.authorization_segment_ref::text AS "authorizationSegmentRef",
+            segment.aggregate_version::text AS "authorizationSegmentVersion",
+            root.reserved_ceiling::text AS "reservedCeiling",root.unit
+       FROM platform.admission_execution_manifest manifest
+       JOIN platform.credit_execution_budget_root root
+         ON root.site_ref=manifest.site_id
+        AND root.execution_budget_root_ref=manifest.execution_budget_root_ref
+        AND root.credit_hold_ref=manifest.root_hold_ref
+       JOIN platform.credit_authorization_segment segment
+         ON segment.site_ref=manifest.site_id
+        AND segment.authorization_segment_ref=manifest.authorization_segment_ref
+        AND segment.execution_budget_root_ref=root.execution_budget_root_ref
+        AND segment.budget_allocation_ref=root.root_allocation_ref
+      WHERE manifest.site_id=$1 AND manifest.manifest_ref=$2
+        AND manifest.authorization_segment_ref=$3::uuid
+        AND segment.state='settled' AND segment.aggregate_version=$4::bigint
+      FOR UPDATE OF root,segment`,
+    [input.siteId, input.manifestRef, input.authorizationSegmentRef,
+      authorizationSegmentVersion.toString()],
+  );
+  const row = only(rows, "ADMISSION_EXECUTION_ROOT_BUDGET_AMBIGUOUS");
+  if (row === undefined) throw new Error("ADMISSION_EXECUTION_ROOT_BUDGET_NOT_FOUND");
+  const textFields = [row.executionBudgetRootRef, row.rootAllocationRef, row.rootHoldRef,
+    row.authorizationSegmentRef, row.unit];
+  const integerFields = [row.rootAllocationRevision, row.rootAllocationEpoch,
+    row.authorizationSegmentVersion, row.reservedCeiling];
+  if (textFields.some((value) => !ownerRef(value)) || integerFields.some((value) =>
+    typeof value !== "string" || !/^[1-9][0-9]*$/u.test(value))) {
+    throw new Error("ADMISSION_EXECUTION_ROOT_BUDGET_CORRUPT");
+  }
+  return Object.freeze({
+    kind: "direct_root" as const,
+    executionBudgetRootRef: row.executionBudgetRootRef as string,
+    executionManifestRef: input.manifestRef,
+    rootHoldRef: row.rootHoldRef as string,
+    rootAllocationRef: row.rootAllocationRef as string,
+    rootAllocationRevision: BigInt(row.rootAllocationRevision as string),
+    rootAllocationEpoch: BigInt(row.rootAllocationEpoch as string),
+    authorizationSegmentRef: row.authorizationSegmentRef as string,
+    authorizationSegmentVersion: BigInt(row.authorizationSegmentVersion as string),
+    reservedCeiling: BigInt(row.reservedCeiling as string),
+    unit: row.unit as string,
+  });
 }
 
 async function loadSegmentAuthority(

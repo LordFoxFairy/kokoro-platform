@@ -79,6 +79,7 @@ describe("Agent durable execution-evidence consumer", () => {
     }, new AbortController().signal)).resolves.toEqual({
       kind: "terminal_observed",
       terminalEvidenceRef: evidenceRef,
+      terminalOutcome: "completed",
       safeStatusRef: evidenceRef,
     });
   });

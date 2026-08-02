@@ -885,7 +885,7 @@ describe("Platform PostgreSQL foundation", () => {
       const closureBudget = closureCommand.budget as Record<string, unknown>;
       closureBudget.executionBudgetRootRef = "00000000-0000-7000-8000-0000000000AA";
       await expect(bootstrap.query(
-        "SELECT platform.commit_direct_media_root_closure($1::jsonb)",
+        "SELECT platform.commit_execution_root_closure($1::jsonb)",
         [JSON.stringify(closure)],
       )).rejects.toThrow("CREDIT_DIRECT_ROOT_CANONICAL_VALUE_INVALID");
 
@@ -894,15 +894,15 @@ describe("Platform PostgreSQL foundation", () => {
       const reconciliationBudget = reconciliationCommand.budget as Record<string, unknown>;
       reconciliationBudget.reservedCeiling = "1e2";
       await expect(bootstrap.query(
-        "SELECT platform.mark_direct_media_root_reconciliation($1::jsonb)",
+        "SELECT platform.mark_execution_root_reconciliation($1::jsonb)",
         [JSON.stringify(reconciliation)],
       )).rejects.toThrow("CREDIT_DIRECT_ROOT_CANONICAL_VALUE_INVALID");
 
       const { rows } = await bootstrap.query<{ closure_count: string; reconciliation_count: string }>(
         `SELECT
-           (SELECT count(*)::text FROM platform.credit_direct_media_root_closure_receipt
+           (SELECT count(*)::text FROM platform.credit_execution_root_closure_receipt
              WHERE business_operation_key='canonical-regression:one') AS closure_count,
-           (SELECT count(*)::text FROM platform.credit_direct_media_root_reconciliation
+           (SELECT count(*)::text FROM platform.credit_execution_root_reconciliation
              WHERE business_operation_key='canonical-regression:one') AS reconciliation_count`,
       );
       expect(rows[0]).toEqual({ closure_count: "0", reconciliation_count: "0" });
@@ -3031,10 +3031,15 @@ function requireLeasedDatabaseUrl(value: string | undefined): string {
 
 function directRootCanonicalPayload(kind: "closure" | "reconciliation"): Record<string, unknown> {
   const identity = {
-    siteId: "site:canonical-regression", operationRef: "media:canonical-regression",
+    siteId: "site:canonical-regression",
     businessOperationKey: "canonical-regression:one", requestDigest: "a".repeat(64),
-    workerLease: { taskRef: "task:canonical-regression", leaseEpoch: "1",
-      leaseTokenHash: "b".repeat(64) },
+    ownerProof: {
+      kind: "media_operation", sourceRef: "media:canonical-regression",
+      terminalEvidenceRef: "effect:canonical-regression", outcome: "completed",
+      proofDigest: "c".repeat(64),
+      workerLease: { taskRef: "task:canonical-regression", leaseEpoch: "1",
+        leaseTokenHash: "b".repeat(64) },
+    },
   };
   const budget = {
     executionBudgetRootRef: "00000000-0000-7000-8000-000000000001",
@@ -3052,7 +3057,7 @@ function directRootCanonicalPayload(kind: "closure" | "reconciliation"): Record<
     closureRevision: "1", state: "settled", customerAmount: "25",
     platformExposureAmount: "0",
   };
-  const command = { effectClosureReceiptRef: "effect:canonical-regression",
+  const command = { terminalEvidenceRef: "effect:canonical-regression",
     outcome: "completed", budget, settlement };
   if (kind === "reconciliation") return { identity, command,
     authority: {
@@ -3069,7 +3074,7 @@ function directRootCanonicalPayload(kind: "closure" | "reconciliation"): Record<
     result: {
       reconciliationReceiptRef: "00000000-0000-7000-8000-000000000007",
       reconciliationAllocationRevisionRef: "00000000-0000-7000-8000-000000000008",
-      code: "CREDIT_DIRECT_ROOT_RATING_MISMATCH", observedAt: "2026-08-12T12:00:00.000Z",
+      code: "CREDIT_EXECUTION_ROOT_RATING_MISMATCH", observedAt: "2026-08-12T12:00:00.000Z",
     },
   };
   return { identity, command, result: {
@@ -3082,9 +3087,10 @@ function directRootCanonicalPayload(kind: "closure" | "reconciliation"): Record<
     releaseJournalTransactionRef: null, releaseEntriesDigest: null,
     receipt: {
       allocationClosureReceiptRef: "00000000-0000-7000-8000-000000000007",
-      siteId: identity.siteId, operationRef: identity.operationRef,
+      siteId: identity.siteId, sourceKind: identity.ownerProof.kind,
+      sourceRef: identity.ownerProof.sourceRef, ownerProofDigest: identity.ownerProof.proofDigest,
       businessOperationKey: identity.businessOperationKey, requestDigest: identity.requestDigest,
-      effectClosureReceiptRef: command.effectClosureReceiptRef,
+      terminalEvidenceRef: command.terminalEvidenceRef,
       settlementRef: settlement.settlementRef, executionBudgetRootRef: budget.executionBudgetRootRef,
       rootAllocationRef: budget.rootAllocationRef, rootHoldRef: budget.rootHoldRef,
       capturedAmount: "25", releasedAmount: "75", unit: "credit_micros",

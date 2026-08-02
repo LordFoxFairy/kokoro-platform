@@ -1,16 +1,19 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { DirectMediaRootClosureService } from
-  "../../src/modules/credit/application/direct-media-root-closure-service.js";
+import {
+  deriveExecutionRootClosureRequestDigest,
+  ExecutionRootClosureService,
+  type ExecutionRootClosureRequest,
+} from "../../src/modules/credit/application/execution-root-closure-service.js";
 import { ExecutionRootClosureAuthority } from
   "../../src/modules/credit/application/execution-root-closure-authority.js";
-import { deriveDirectMediaRootClosureRequestDigest, type DirectMediaRootClosureAuthority } from
-  "../../src/modules/credit/application/media-budget-finalization-service.js";
 import type {
-  DirectMediaRootClosureReceipt,
-  DirectMediaRootClosureRepository,
-  StoredDirectMediaRootClosure,
-} from "../../src/modules/credit/application/contracts/direct-media-root-closure-repository.js";
+  ExecutionRootClosureReceipt,
+  ExecutionRootClosureRepository,
+  StoredExecutionRootClosureContext,
+} from "../../src/modules/credit/application/contracts/execution-root-closure-repository.js";
+import { verifyMediaExecutionRootOwnerProof } from
+  "../../src/modules/credit/application/contracts/execution-root-closure-repository.js";
 import { issuePlatformTransaction, revokePlatformTransaction } from
   "../../src/shared/unit-of-work/platform-transaction.js";
 
@@ -18,26 +21,26 @@ const transactionLease = () => issuePlatformTransaction({
   query: async () => [],
   execute: async () => 0,
 });
-type ClosureInput = Parameters<DirectMediaRootClosureAuthority["close"]>[1];
+type ClosureInput = ExecutionRootClosureRequest;
 
-describe("Credit direct Media root closure", () => {
+describe("Credit execution root closure", () => {
   it("keeps the framed request digest stable across TypeScript and PostgreSQL", () => {
     expect(command().requestDigest).toBe(
-      "2ac3cd0a3e29d76512d0b5ca06a223d1ac14818700ad4244dd1f38f176e3bc25",
+      "ee20077db02ca6f095c5b4ac45034913b36461b6556ba6006e7e500c201d1646",
     );
   });
 
   it("terminals the exact root and releases only the uncaptured original Hold sources", async () => {
     const current = openRoot();
     const repository = fakeRepository(current);
-    const service = new DirectMediaRootClosureService({ repository,
+    const service = new ExecutionRootClosureService({ repository,
       clock: () => new Date("2026-08-12T12:00:00.000Z"), reference: stableReference });
     const lease = transactionLease();
     try {
       await expect(service.close(lease.transaction, command())).resolves.toEqual({
         kind: "accepted",
         value: {
-          allocationClosureReceiptRef: stableReference("direct-root-closure", command().businessOperationKey),
+          allocationClosureReceiptRef: stableReference("execution-root-closure", command().businessOperationKey),
           capturedAmount: 25n,
           releasedAmount: 75n,
         },
@@ -64,7 +67,7 @@ describe("Credit direct Media root closure", () => {
   it("replays the stable closure receipt without locking or writing again", async () => {
     const prior = receipt();
     const repository = fakeRepository(openRoot(), prior);
-    const service = new DirectMediaRootClosureService({ repository,
+    const service = new ExecutionRootClosureService({ repository,
       clock: () => new Date("2026-08-12T12:00:00.000Z"), reference: stableReference });
     const lease = transactionLease();
     try {
@@ -79,7 +82,7 @@ describe("Credit direct Media root closure", () => {
   });
 
   it("replays the exact canonical timestamp and digest emitted by the accepted receipt", async () => {
-    const acceptedReceipts: DirectMediaRootClosureReceipt[] = [];
+    const acceptedReceipts: ExecutionRootClosureReceipt[] = [];
     const repository = fakeRepository(openRoot());
     vi.mocked(repository.findClosure).mockImplementation(async () => acceptedReceipts[0] === undefined
       ? { kind: "none" as const } : { kind: "replayed" as const, value: acceptedReceipts[0] });
@@ -87,7 +90,7 @@ describe("Credit direct Media root closure", () => {
       acceptedReceipts.push(record.receipt);
       return { kind: "accepted" as const, value: record.receipt };
     });
-    const service = new DirectMediaRootClosureService({ repository,
+    const service = new ExecutionRootClosureService({ repository,
       clock: () => new Date("2026-08-12T12:00:00.000Z"), reference: stableReference });
     const lease = transactionLease();
     try {
@@ -104,7 +107,7 @@ describe("Credit direct Media root closure", () => {
     const expected = Object.freeze({
       kind: "reconciliation_required" as const,
       reconciliationReceiptRef: stableReference("reconciliation", command().businessOperationKey),
-      code: "CREDIT_DIRECT_ROOT_RATING_MISMATCH",
+      code: "CREDIT_EXECUTION_ROOT_RATING_MISMATCH",
     });
     let persisted = false;
     const base = fakeRepository({ ...openRoot(), settlement: {
@@ -116,8 +119,8 @@ describe("Credit direct Media root closure", () => {
         ? expected
         : { kind: "none" as const }),
       markReconciliationRequired: vi.fn(async () => { persisted = true; }),
-    } as unknown as DirectMediaRootClosureRepository;
-    const service = new DirectMediaRootClosureService({ repository,
+    } as unknown as ExecutionRootClosureRepository;
+    const service = new ExecutionRootClosureService({ repository,
       clock: () => new Date("2026-08-12T12:00:00.000Z"), reference: stableReference });
     const lease = transactionLease();
     try {
@@ -135,15 +138,15 @@ describe("Credit direct Media root closure", () => {
     const expected = Object.freeze({
       kind: "reconciliation_required" as const,
       reconciliationReceiptRef: stableReference("reconciliation", command().businessOperationKey),
-      code: "CREDIT_DIRECT_ROOT_RATING_MISMATCH",
+      code: "CREDIT_EXECUTION_ROOT_RATING_MISMATCH",
     });
     let lookups = 0;
     const base = fakeRepository(openRoot());
     const repository = {
       ...base,
       findClosure: vi.fn(async () => ++lookups === 1 ? { kind: "none" as const } : expected),
-    } as unknown as DirectMediaRootClosureRepository;
-    const service = new DirectMediaRootClosureService({ repository,
+    } as unknown as ExecutionRootClosureRepository;
+    const service = new ExecutionRootClosureService({ repository,
       clock: () => new Date("2026-08-12T12:00:00.000Z"), reference: stableReference });
     const lease = transactionLease();
     try {
@@ -161,7 +164,7 @@ describe("Credit direct Media root closure", () => {
       findClosure: vi.fn(async () => ({ kind: "conflict" as const,
         code: "REQUEST_DIGEST_CONFLICT" as const })),
     };
-    const service = new DirectMediaRootClosureService({ repository,
+    const service = new ExecutionRootClosureService({ repository,
       clock: () => new Date("2026-08-12T12:00:00.000Z"), reference: stableReference });
     const lease = transactionLease();
     try {
@@ -181,7 +184,7 @@ describe("Credit direct Media root closure", () => {
       holdAllocations: current.holdAllocations.map((source) => ({ ...source,
         netCustomerAmount: source.allocatedAmount })),
     });
-    const service = new DirectMediaRootClosureService({ repository,
+    const service = new ExecutionRootClosureService({ repository,
       clock: () => new Date("2026-08-12T12:00:00.000Z"), reference: stableReference });
     const lease = transactionLease();
     try {
@@ -198,12 +201,12 @@ describe("Credit direct Media root closure", () => {
 
   it("fails closed while any descendant, Segment or attempt remains open", async () => {
     const repository = fakeRepository({ ...openRoot(), openAttemptCount: 1n });
-    const service = new DirectMediaRootClosureService({ repository,
+    const service = new ExecutionRootClosureService({ repository,
       clock: () => new Date("2026-08-12T12:00:00.000Z"), reference: stableReference });
     const lease = transactionLease();
     try {
       await expect(service.close(lease.transaction, command())).resolves.toEqual({
-        kind: "invalid_state", code: "CREDIT_DIRECT_ROOT_ATTEMPT_PENDING",
+        kind: "invalid_state", code: "CREDIT_EXECUTION_ROOT_ATTEMPT_PENDING",
       });
       expect(repository.persistClosure).not.toHaveBeenCalled();
     } finally { revokePlatformTransaction(lease); }
@@ -213,7 +216,7 @@ describe("Credit direct Media root closure", () => {
     const repository = fakeRepository({ ...openRoot(), settlement: {
       ...openRoot().settlement, customerAmount: 24n,
     } });
-    const service = new DirectMediaRootClosureService({ repository,
+    const service = new ExecutionRootClosureService({ repository,
       clock: () => new Date("2026-08-12T12:00:00.000Z"), reference: stableReference });
     const lease = transactionLease();
     try {
@@ -222,7 +225,7 @@ describe("Credit direct Media root closure", () => {
         settlement: { ...base.settlement, customerAmount: 24n } });
       await expect(service.close(lease.transaction, input)).resolves.toEqual({
         kind: "reconciliation_required",
-        code: "CREDIT_DIRECT_ROOT_RATING_MISMATCH",
+        code: "CREDIT_EXECUTION_ROOT_RATING_MISMATCH",
         reconciliationReceiptRef: stableReference("reconciliation", command().businessOperationKey),
       });
       expect(repository.markReconciliationRequired).toHaveBeenCalledOnce();
@@ -234,12 +237,12 @@ describe("Credit direct Media root closure", () => {
     const current = openRoot();
     const repository = fakeRepository({ ...current, holdAllocations: current.holdAllocations.map(
       (source, index) => index === 0 ? { ...source, netCustomerAmount: 24n } : source) });
-    const service = new DirectMediaRootClosureService({ repository,
+    const service = new ExecutionRootClosureService({ repository,
       clock: () => new Date("2026-08-12T12:00:00.000Z"), reference: stableReference });
     const lease = transactionLease();
     try {
       await expect(service.close(lease.transaction, command())).resolves.toMatchObject({
-        kind: "reconciliation_required", code: "CREDIT_DIRECT_ROOT_HOLD_SOURCE_MISMATCH",
+        kind: "reconciliation_required", code: "CREDIT_EXECUTION_ROOT_HOLD_SOURCE_MISMATCH",
       });
       expect(repository.persistClosure).not.toHaveBeenCalled();
     } finally { revokePlatformTransaction(lease); }
@@ -247,15 +250,15 @@ describe("Credit direct Media root closure", () => {
 
   it("reconciles when the frozen Media budget authority no longer matches the close command", async () => {
     const current = openRoot();
-    const repository = fakeRepository({ ...current, operationBudget: {
-      ...current.operationBudget, executionManifestRef: "manifest:stale",
+    const repository = fakeRepository({ ...current, sourceBudget: {
+      ...current.sourceBudget, executionManifestRef: "manifest:stale",
     } });
-    const service = new DirectMediaRootClosureService({ repository,
+    const service = new ExecutionRootClosureService({ repository,
       clock: () => new Date("2026-08-12T12:00:00.000Z"), reference: stableReference });
     const lease = transactionLease();
     try {
       await expect(service.close(lease.transaction, command())).resolves.toMatchObject({
-        kind: "reconciliation_required", code: "CREDIT_DIRECT_ROOT_AUTHORITY_MISMATCH",
+        kind: "reconciliation_required", code: "CREDIT_EXECUTION_ROOT_SOURCE_AUTHORITY_MISMATCH",
       });
       const reconciliation = vi.mocked(repository.markReconciliationRequired).mock.calls[0]?.[1];
       expect(reconciliation?.reconciliationAllocationRevisionRef).not.toBe(
@@ -266,7 +269,7 @@ describe("Credit direct Media root closure", () => {
   it("reconciles when the durable Rating closure or platform exposure differs", async () => {
     const current = openRoot();
     const repository = fakeRepository(current);
-    const service = new DirectMediaRootClosureService({ repository,
+    const service = new ExecutionRootClosureService({ repository,
       clock: () => new Date("2026-08-12T12:00:00.000Z"), reference: stableReference });
     const lease = transactionLease();
     try {
@@ -275,7 +278,7 @@ describe("Credit direct Media root closure", () => {
         ...base.settlement, closureRevision: 2n, platformExposureAmount: 1n,
       } });
       await expect(service.close(lease.transaction, changed)).resolves.toMatchObject({
-        kind: "reconciliation_required", code: "CREDIT_DIRECT_ROOT_AUTHORITY_MISMATCH",
+        kind: "reconciliation_required", code: "CREDIT_EXECUTION_ROOT_SOURCE_AUTHORITY_MISMATCH",
       });
     } finally { revokePlatformTransaction(lease); }
   });
@@ -283,13 +286,13 @@ describe("Credit direct Media root closure", () => {
   it("does not regress an already-terminal root into reconciliation", async () => {
     const current = openRoot();
     const repository = fakeRepository({ ...current, rootState: "settled",
-      operationBudget: { ...current.operationBudget, executionManifestRef: "manifest:stale" } });
-    const service = new DirectMediaRootClosureService({ repository,
+      sourceBudget: { ...current.sourceBudget, executionManifestRef: "manifest:stale" } });
+    const service = new ExecutionRootClosureService({ repository,
       clock: () => new Date("2026-08-12T12:00:00.000Z"), reference: stableReference });
     const lease = transactionLease();
     try {
       await expect(service.close(lease.transaction, command())).resolves.toEqual({
-        kind: "invalid_state", code: "CREDIT_DIRECT_ROOT_NOT_OPEN",
+        kind: "invalid_state", code: "CREDIT_EXECUTION_ROOT_ROOT_NOT_OPEN",
       });
       expect(repository.markReconciliationRequired).not.toHaveBeenCalled();
     } finally { revokePlatformTransaction(lease); }
@@ -297,12 +300,12 @@ describe("Credit direct Media root closure", () => {
 
   it("rejects a non-canonical request digest before consulting durable Credit state", async () => {
     const repository = fakeRepository(openRoot());
-    const service = new DirectMediaRootClosureService({ repository,
+    const service = new ExecutionRootClosureService({ repository,
       clock: () => new Date("2026-08-12T12:00:00.000Z"), reference: stableReference });
     const lease = transactionLease();
     try {
       await expect(service.close(lease.transaction, { ...command(), requestDigest: "a".repeat(64) }))
-        .rejects.toThrow("CREDIT_DIRECT_ROOT_REQUEST_DIGEST_INVALID");
+        .rejects.toThrow("CREDIT_EXECUTION_ROOT_REQUEST_DIGEST_INVALID");
       expect(repository.findClosure).not.toHaveBeenCalled();
     } finally { revokePlatformTransaction(lease); }
   });
@@ -322,7 +325,7 @@ describe("Credit direct Media root closure", () => {
       holdCapturedAmount: media.holdCapturedAmount,
       holdReleasedAmount: media.holdReleasedAmount,
       rootAllocationRef: media.rootAllocationRef,
-      sourceBudget: media.operationBudget,
+      sourceBudget: media.sourceBudget,
       allocation: media.allocation,
       openChildCount: media.openChildCount,
       openSegmentCount: media.openSegmentCount,
@@ -344,8 +347,13 @@ describe("Credit direct Media root closure", () => {
 
 function command(): ClosureInput {
   return withRequestDigest({
-    siteId: "site:one", operationRef: "media-operation:one",
-    workerLease: { taskRef: "task:one", leaseEpoch: 7n, leaseTokenHash: "c".repeat(64) },
+    siteId: "site:one",
+    ownerProof: verifyMediaExecutionRootOwnerProof({
+      sourceRef: "media-operation:one",
+      terminalEvidenceRef: "media-terminal:one",
+      outcome: "completed",
+      workerLease: { taskRef: "task:one", leaseEpoch: 7n, leaseTokenHash: "c".repeat(64) },
+    }),
     budget: {
       kind: "direct_root" as const,
       executionBudgetRootRef: "00000000-0000-7000-8000-000000000001",
@@ -356,7 +364,6 @@ function command(): ClosureInput {
       authorizationSegmentRef: "00000000-0000-7000-8000-000000000004",
       authorizationSegmentVersion: 5n, reservedCeiling: 100n, unit: "credit_micros",
     },
-    effectClosureReceiptRef: "media-terminal:one", outcome: "completed" as const,
     settlement: {
       settlementRef: "00000000-0000-7000-8000-000000000005",
       authorizationSegmentRef: "00000000-0000-7000-8000-000000000004",
@@ -369,12 +376,12 @@ function command(): ClosureInput {
 }
 
 function withRequestDigest(input: Omit<ClosureInput, "requestDigest"> | ClosureInput): ClosureInput {
-  return { ...input, requestDigest: deriveDirectMediaRootClosureRequestDigest(input) };
+  return { ...input, requestDigest: deriveExecutionRootClosureRequestDigest(input) };
 }
 
-function openRoot(): StoredDirectMediaRootClosure {
+function openRoot(): StoredExecutionRootClosureContext {
   return Object.freeze({
-    siteId: "site:one", operationRef: "media-operation:one",
+    siteId: "site:one", sourceKind: "media_operation", sourceRef: "media-operation:one",
     executionBudgetRootRef: "00000000-0000-7000-8000-000000000001",
     rootState: "open", rootVersion: 1n,
     billingAccountId: "billing:one",
@@ -384,7 +391,7 @@ function openRoot(): StoredDirectMediaRootClosure {
     holdState: "open", holdFenceEpoch: 1n, holdReservedAmount: 100n,
     holdCapturedAmount: 25n, holdReleasedAmount: 0n,
     rootAllocationRef: "00000000-0000-7000-8000-000000000003",
-    operationBudget: { executionManifestRef: "manifest:one", rootAllocationRevision: 2n,
+    sourceBudget: { executionManifestRef: "manifest:one", rootAllocationRevision: 2n,
       rootAllocationEpoch: 1n, authorizationSegmentVersion: 5n,
       reservedCeiling: 100n, unit: "credit_micros" },
     allocation: { revision: 3n, allocationEpoch: 1n, creditCeiling: 100n,
@@ -411,10 +418,11 @@ function openRoot(): StoredDirectMediaRootClosure {
 
 function receipt() {
   return Object.freeze({ allocationClosureReceiptRef:
-    stableReference("direct-root-closure", command().businessOperationKey),
-  siteId: "site:one", operationRef: "media-operation:one",
+    stableReference("execution-root-closure", command().businessOperationKey),
+  siteId: "site:one", sourceKind: "media_operation" as const, sourceRef: "media-operation:one",
+  ownerProofDigest: command().ownerProof.proofDigest,
   businessOperationKey: command().businessOperationKey, requestDigest: "a".repeat(64),
-  effectClosureReceiptRef: "media-terminal:one",
+  terminalEvidenceRef: "media-terminal:one",
   settlementRef: "00000000-0000-7000-8000-000000000005",
   executionBudgetRootRef: "00000000-0000-7000-8000-000000000001",
   rootAllocationRef: "00000000-0000-7000-8000-000000000003",
@@ -429,8 +437,8 @@ function receipt() {
   receiptDigest: "b".repeat(64), recordedAt: "2026-08-12T12:00:00.000Z" });
 }
 
-function fakeRepository(current: StoredDirectMediaRootClosure,
-  prior: ReturnType<typeof receipt> | null = null): DirectMediaRootClosureRepository {
+function fakeRepository(current: StoredExecutionRootClosureContext,
+  prior: ReturnType<typeof receipt> | null = null): ExecutionRootClosureRepository {
   return {
     findClosure: vi.fn(async () => prior === null ? { kind: "none" as const }
       : { kind: "replayed" as const, value: prior }),
@@ -441,7 +449,7 @@ function fakeRepository(current: StoredDirectMediaRootClosure,
   };
 }
 
-function stableReference(kind: "direct-root-closure" | "allocation-revision" |
+function stableReference(kind: "execution-root-closure" | "allocation-revision" |
   "release-journal" | "reconciliation" | "reconciliation-allocation-revision", seed: string): string {
   const value = createHash("sha256").update(`${kind}\0${seed}`).digest("hex");
   return `${value.slice(0, 8)}-${value.slice(8, 12)}-7${value.slice(13, 16)}-8${value.slice(17, 20)}-${value.slice(20, 32)}`;

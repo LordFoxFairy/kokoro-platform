@@ -5,6 +5,8 @@ import {
   PostgresAdmissionBudgetOwner,
 } from "../../src/modules/admission/infrastructure/postgres/admission-credit-asset-owners.js";
 import type { RunBudgetAuthority } from "../../src/modules/credit/application/contracts/run-budget-authority.js";
+import type { ExecutionRootClosurePort } from
+  "../../src/modules/credit/application/execution-root-closure-service.js";
 import {
   issuePlatformTransaction,
   revokePlatformTransaction,
@@ -56,6 +58,14 @@ class OwnerSql implements PlatformSqlTransaction {
       ratedAmount: "125", unit: "credit_micros",
       ratingSnapshotRef: "44444444-4444-4444-8444-444444444444",
     }] as unknown as Row[];
+    if (statement.includes("admission_execution_manifest")) return [{
+      executionBudgetRootRef: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      rootAllocationRef: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      rootHoldRef: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      rootAllocationRevision: "1", rootAllocationEpoch: "1",
+      authorizationSegmentRef: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      authorizationSegmentVersion: "4", reservedCeiling: "100000", unit: "credit_micros",
+    }] as unknown as Row[];
     if (statement.includes("set_config('app.subject_id'")) return [];
     if (statement.includes("aggregate_version::text")) {
       const authority = this.segmentAuthorities[Math.min(this.#segmentAuthorityIndex,
@@ -97,6 +107,19 @@ function fakeCredit(): RunBudgetAuthority {
     })),
     deriveChildAllocation: vi.fn(async () => ({ kind: "not_found" as const })),
     returnChildAllocation: vi.fn(async () => ({ kind: "not_found" as const })),
+  };
+}
+
+function fakeRootClosure(): ExecutionRootClosurePort {
+  return {
+    close: vi.fn(async () => ({
+      kind: "accepted" as const,
+      value: {
+        allocationClosureReceiptRef: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        capturedAmount: 125n,
+        releasedAmount: 99875n,
+      },
+    })),
   };
 }
 
@@ -152,11 +175,12 @@ describe("native Admission Credit and Asset owners", () => {
         platformExposureAmount: 0n,
       },
     })) };
-    const owner = new PostgresAdmissionBudgetOwner(credit, usageSettlement);
+    const rootClosure = fakeRootClosure();
+    const owner = new PostgresAdmissionBudgetOwner(credit, usageSettlement, rootClosure);
     const base = {
       siteId: "site-a", rootHoldRef: "hold-a", authorizationSegmentRef: "segment-a",
       manifestRef: "manifest-a", expectedSegmentVersion: 1n, commandId: "command-a",
-      requestDigest: "d".repeat(64),
+      requestDigest: "d".repeat(64), sessionId: "session-a", launchId: "launch-a", runId: "run-a",
     };
     try {
       await owner.commitRoot(lease.transaction, base);
@@ -167,7 +191,7 @@ describe("native Admission Credit and Asset owners", () => {
         ...base, outcomeUnknownEvidenceRef: "dispatch-unknown-a",
       })).resolves.toEqual({ kind: "reconciliation_required", segmentVersion: 2n });
       await expect(owner.reconcileRoot(lease.transaction, {
-        ...base, terminalEvidenceRef: "terminal-a",
+        ...base, terminalEvidenceRef: "terminal-a", terminalOutcome: "completed",
       })).resolves.toEqual({
         kind: "settled",
         segmentVersion: 4n,
@@ -193,6 +217,16 @@ describe("native Admission Credit and Asset owners", () => {
           executionManifestRef: "manifest-a",
         }),
       );
+      expect(rootClosure.close).toHaveBeenCalledWith(lease.transaction, expect.objectContaining({
+        siteId: "site-a",
+        ownerProof: expect.objectContaining({
+          kind: "admission_run", sourceRef: "run-a", terminalEvidenceRef: "terminal-a",
+          outcome: "completed", manifestRef: "manifest-a", sessionId: "session-a", launchId: "launch-a",
+        }),
+        budget: expect.objectContaining({
+          kind: "direct_root", authorizationSegmentVersion: 4n, reservedCeiling: 100000n,
+        }),
+      }));
     } finally {
       revokePlatformTransaction(lease);
     }
@@ -210,6 +244,7 @@ describe("native Admission Credit and Asset owners", () => {
         siteId: "site-a", rootHoldRef: "hold-a", authorizationSegmentRef: "segment-a",
         manifestRef: "manifest-a", expectedSegmentVersion: 1n, commandId: "command-a",
         requestDigest: "d".repeat(64), terminalEvidenceRef: "terminal-a",
+        sessionId: "session-a", launchId: "launch-a", runId: "run-a",
       })).resolves.toEqual({ kind: "reconciliation_required", segmentVersion: 2n });
       expect(credit.reconcileAuthorizationSegment).toHaveBeenCalledWith(lease.transaction,
         expect.objectContaining({ ownerEvidence: { kind: "outcome_unknown",
@@ -233,6 +268,7 @@ describe("native Admission Credit and Asset owners", () => {
         siteId: "site-a", rootHoldRef: "hold-a", authorizationSegmentRef: "segment-a",
         manifestRef: "manifest-a", expectedSegmentVersion: 2n, commandId: "command-a",
         requestDigest: "d".repeat(64), terminalEvidenceRef: "terminal-a",
+        sessionId: "session-a", launchId: "launch-a", runId: "run-a",
       })).resolves.toEqual({ kind: "reconciliation_required", segmentVersion: 4n });
       expect(credit.reconcileAuthorizationSegment).toHaveBeenCalledWith(lease.transaction,
         expect.objectContaining({ expectedSegmentVersion: 3n }));
