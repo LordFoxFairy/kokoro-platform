@@ -43,7 +43,7 @@ import { snapshotExactMemoryRecord } from "./runtime-validation.js";
 const memoryCategories = Object.freeze(["fact", "preference", "profile"] as const);
 export type MemoryCategory = (typeof memoryCategories)[number];
 export type MemoryEntryState = "active" | "deleted";
-export type MemoryRevisionReason = "explicit" | "corrected";
+export type MemoryRevisionReason = "explicit" | "corrected" | "restored";
 
 export type MemoryEntry = Readonly<{
   siteRef: SiteRef;
@@ -54,6 +54,7 @@ export type MemoryEntry = Readonly<{
   currentRevisionRef: MemoryRevisionRef;
   state: MemoryEntryState;
   category: MemoryCategory;
+  prioritized: boolean;
   featurePolicyRevisionRef: FeaturePolicyRevisionRef;
   spaceGeneration: SpaceGeneration;
   learningGeneration: LearningGeneration;
@@ -72,7 +73,10 @@ export type MemoryRevision = Readonly<{
   protectedContent: ProtectedMemoryContent;
   reason: MemoryRevisionReason;
   supersedesRevisionRef: MemoryRevisionRef | null;
+  restoredFromRevisionRef: MemoryRevisionRef | null;
   featurePolicyRevisionRef: FeaturePolicyRevisionRef;
+  validFrom: MemoryInstant | null;
+  validTo: MemoryInstant | null;
   recordedAt: MemoryInstant;
 }>;
 
@@ -102,7 +106,7 @@ export type RememberedMemory = Readonly<{
 export function createRememberedMemory(value: unknown): RememberedMemory {
   const record = snapshotExactMemoryRecord(value, ["space", "entryRef", "revisionRef", "provenanceRef",
     "sourceCommandRef", "sourceDigest", "protectedContent", "category", "featurePolicyRevisionRef",
-    "actorAuthorization", "recordedAt"], "MEMORY_ENTRY_INVALID");
+    "actorAuthorization", "validFrom", "validTo", "recordedAt"], "MEMORY_ENTRY_INVALID");
   const space = rehydrateMemorySpace(record.space);
   assertActiveSpace(space);
   const actorAuthorization = rehydrateMemoryActorAuthorization(record.actorAuthorization);
@@ -118,18 +122,23 @@ export function createRememberedMemory(value: unknown): RememberedMemory {
   const entryRef = memoryEntryRef(record.entryRef);
   const revisionRef = memoryRevisionRef(record.revisionRef);
   const recordedAt = memoryInstant(record.recordedAt);
+  const validFrom = nullableInstant(record.validFrom);
+  const validTo = nullableInstant(record.validTo);
+  assertValidityRange(validFrom, validTo);
   if (recordedAt < space.updatedAt) throw new MemoryDomainError("MEMORY_INSTANT_INVALID");
   const category = memoryCategory(record.category);
   const entry = rehydrateMemoryEntry({
     siteRef, spaceRef: space.spaceRef, entryRef, version: 1n, currentRevision: 1n,
-    currentRevisionRef: revisionRef, state: "active", category, featurePolicyRevisionRef,
+    currentRevisionRef: revisionRef, state: "active", category, prioritized: false,
+    featurePolicyRevisionRef,
     spaceGeneration: space.spaceGeneration, learningGeneration: space.learningGeneration,
     revocationEpoch: space.revocationEpoch, createdAt: recordedAt, updatedAt: recordedAt,
     deletedAt: null,
   });
   const revision = Object.freeze({ siteRef, spaceRef: space.spaceRef, entryRef, revisionRef,
     revision: memoryRevisionNumber(1n), protectedContent: record.protectedContent,
-    reason: "explicit" as const, supersedesRevisionRef: null, featurePolicyRevisionRef, recordedAt });
+    reason: "explicit" as const, supersedesRevisionRef: null, restoredFromRevisionRef: null,
+    featurePolicyRevisionRef, validFrom, validTo, recordedAt });
   const provenance = provenanceFor(record, actorAuthorization, siteRef, space.spaceRef, entryRef,
     revisionRef, recordedAt);
   return Object.freeze({ entry, revision, provenance });
@@ -137,7 +146,8 @@ export function createRememberedMemory(value: unknown): RememberedMemory {
 
 export function rehydrateMemoryEntry(value: unknown): MemoryEntry {
   const record = snapshotExactMemoryRecord(value, ["siteRef", "spaceRef", "entryRef", "version",
-    "currentRevision", "currentRevisionRef", "state", "category", "featurePolicyRevisionRef",
+    "currentRevision", "currentRevisionRef", "state", "category", "prioritized",
+    "featurePolicyRevisionRef",
     "spaceGeneration", "learningGeneration", "revocationEpoch", "createdAt", "updatedAt", "deletedAt"],
   "MEMORY_ENTRY_INVALID");
   const state = memoryEntryState(record.state);
@@ -153,7 +163,7 @@ export function rehydrateMemoryEntry(value: unknown): MemoryEntry {
     entryRef: memoryEntryRef(record.entryRef), version: memoryAggregateVersion(record.version),
     currentRevision: memoryRevisionNumber(record.currentRevision),
     currentRevisionRef: memoryRevisionRef(record.currentRevisionRef), state,
-    category: memoryCategory(record.category),
+    category: memoryCategory(record.category), prioritized: memoryBoolean(record.prioritized),
     featurePolicyRevisionRef: memoryFeaturePolicyRevisionRef(record.featurePolicyRevisionRef),
     spaceGeneration: memorySpaceGeneration(record.spaceGeneration),
     learningGeneration: memoryLearningGeneration(record.learningGeneration),
@@ -164,8 +174,8 @@ export function rehydrateMemoryEntry(value: unknown): MemoryEntry {
 export function correctMemoryEntry(value: unknown): RememberedMemory {
   const record = snapshotExactMemoryRecord(value, ["space", "entry", "expectedVersion",
     "expectedCurrentRevision", "revisionRef", "provenanceRef", "sourceCommandRef", "sourceDigest",
-    "protectedContent",
-    "featurePolicyRevisionRef", "actorAuthorization", "recordedAt"], "MEMORY_ENTRY_INVALID");
+    "protectedContent", "featurePolicyRevisionRef", "actorAuthorization", "validFrom", "validTo",
+    "recordedAt"], "MEMORY_ENTRY_INVALID");
   const space = rehydrateMemorySpace(record.space);
   const entry = rehydrateMemoryEntry(record.entry);
   if (space.state !== "active") throw new MemoryDomainError("MEMORY_SPACE_STATE_CONFLICT");
@@ -191,6 +201,9 @@ export function correctMemoryEntry(value: unknown): RememberedMemory {
     throw new MemoryDomainError("MEMORY_SCOPE_INVALID");
   }
   const recordedAt = memoryInstant(record.recordedAt);
+  const validFrom = nullableInstant(record.validFrom);
+  const validTo = nullableInstant(record.validTo);
+  assertValidityRange(validFrom, validTo);
   if (recordedAt < entry.updatedAt || recordedAt < space.updatedAt) {
     throw new MemoryDomainError("MEMORY_INSTANT_INVALID");
   }
@@ -202,7 +215,8 @@ export function correctMemoryEntry(value: unknown): RememberedMemory {
   const revision = Object.freeze({ siteRef: entry.siteRef, spaceRef: entry.spaceRef,
     entryRef: entry.entryRef, revisionRef, revision: nextRevision,
     protectedContent: record.protectedContent, reason: "corrected" as const,
-    supersedesRevisionRef: entry.currentRevisionRef, featurePolicyRevisionRef, recordedAt });
+    supersedesRevisionRef: entry.currentRevisionRef, restoredFromRevisionRef: null,
+    featurePolicyRevisionRef, validFrom, validTo, recordedAt });
   const provenance = provenanceFor(record, actorAuthorization, entry.siteRef, entry.spaceRef, entry.entryRef,
     revisionRef, recordedAt);
   return Object.freeze({ entry: nextEntry, revision, provenance });
@@ -233,6 +247,85 @@ export function forgetMemoryEntry(value: unknown): Readonly<{ space: MemorySpace
     revocationEpoch: nextSpace.revocationEpoch, state: "deleted",
     updatedAt: forgottenAt, deletedAt: forgottenAt });
   return Object.freeze({ space: nextSpace, entry: nextEntry });
+}
+
+export function restoreMemoryEntry(value: unknown): RememberedMemory {
+  const record = snapshotExactMemoryRecord(value, ["space", "entry", "expectedVersion",
+    "expectedCurrentRevision", "revisionRef", "restoredFromRevisionRef", "restoredFromRevision",
+    "provenanceRef", "sourceCommandRef", "sourceDigest", "protectedContent",
+    "featurePolicyRevisionRef", "actorAuthorization", "validFrom", "validTo", "recordedAt"],
+  "MEMORY_ENTRY_INVALID");
+  const space = rehydrateMemorySpace(record.space);
+  const entry = rehydrateMemoryEntry(record.entry);
+  assertActiveSpace(space);
+  assertCurrentEntryFence(space, entry);
+  if (entry.state !== "active" || entry.version !== memoryAggregateVersion(record.expectedVersion) ||
+    entry.currentRevision !== memoryRevisionNumber(record.expectedCurrentRevision)) {
+    throw new MemoryDomainError("MEMORY_VERSION_CONFLICT");
+  }
+  const restoredFromRevision = memoryRevisionNumber(record.restoredFromRevision);
+  const restoredFromRevisionRef = memoryRevisionRef(record.restoredFromRevisionRef);
+  if (restoredFromRevision >= entry.currentRevision ||
+    restoredFromRevisionRef === entry.currentRevisionRef) {
+    throw new MemoryDomainError("MEMORY_REVISION_CONFLICT");
+  }
+  const featurePolicyRevisionRef = memoryFeaturePolicyRevisionRef(record.featurePolicyRevisionRef);
+  if (entry.featurePolicyRevisionRef !== featurePolicyRevisionRef ||
+    space.featurePolicyRevisionRef !== featurePolicyRevisionRef) {
+    throw new MemoryDomainError("MEMORY_FEATURE_POLICY_CONFLICT");
+  }
+  assertProtectedMemoryContent(record.protectedContent);
+  const actorAuthorization = rehydrateMemoryActorAuthorization(record.actorAuthorization);
+  if (!memoryActorAuthorizesBinding(actorAuthorization, space.binding)) {
+    throw new MemoryDomainError("MEMORY_SCOPE_INVALID");
+  }
+  const recordedAt = memoryInstant(record.recordedAt);
+  const validFrom = nullableInstant(record.validFrom);
+  const validTo = nullableInstant(record.validTo);
+  assertValidityRange(validFrom, validTo);
+  if (recordedAt < entry.updatedAt || recordedAt < space.updatedAt) {
+    throw new MemoryDomainError("MEMORY_INSTANT_INVALID");
+  }
+  const revisionRef = memoryRevisionRef(record.revisionRef);
+  const nextRevision = incrementMemoryInt8(entry.currentRevision);
+  const nextEntry = rehydrateMemoryEntry({ ...entry, version: incrementMemoryInt8(entry.version),
+    currentRevision: nextRevision, currentRevisionRef: revisionRef, updatedAt: recordedAt });
+  const revision = Object.freeze({ siteRef: entry.siteRef, spaceRef: entry.spaceRef,
+    entryRef: entry.entryRef, revisionRef, revision: nextRevision,
+    protectedContent: record.protectedContent, reason: "restored" as const,
+    supersedesRevisionRef: entry.currentRevisionRef, restoredFromRevisionRef,
+    featurePolicyRevisionRef, validFrom, validTo, recordedAt });
+  const provenance = provenanceFor(record, actorAuthorization, entry.siteRef, entry.spaceRef,
+    entry.entryRef, revisionRef, recordedAt);
+  return Object.freeze({ entry: nextEntry, revision, provenance });
+}
+
+export function setMemoryEntryPriority(value: unknown): Readonly<{
+  space: MemorySpace; entry: MemoryEntry; changed: boolean;
+}> {
+  const record = snapshotExactMemoryRecord(value, ["space", "entry", "expectedSpaceVersion",
+    "expectedEntryVersion", "prioritized", "changedAt"], "MEMORY_ENTRY_INVALID");
+  const space = rehydrateMemorySpace(record.space);
+  const entry = rehydrateMemoryEntry(record.entry);
+  assertActiveSpace(space);
+  assertCurrentEntryFence(space, entry);
+  if (entry.state !== "active" || space.version !== memoryAggregateVersion(record.expectedSpaceVersion) ||
+    entry.version !== memoryAggregateVersion(record.expectedEntryVersion)) {
+    throw new MemoryDomainError("MEMORY_VERSION_CONFLICT");
+  }
+  const prioritized = memoryBoolean(record.prioritized);
+  if (entry.prioritized === prioritized) return Object.freeze({ space, entry, changed: false });
+  const changedAt = memoryInstant(record.changedAt);
+  if (changedAt < space.updatedAt || changedAt < entry.updatedAt) {
+    throw new MemoryDomainError("MEMORY_INSTANT_INVALID");
+  }
+  return Object.freeze({
+    space: rehydrateMemorySpace({ ...space, version: incrementMemoryInt8(space.version),
+      updatedAt: changedAt }),
+    entry: rehydrateMemoryEntry({ ...entry, version: incrementMemoryInt8(entry.version),
+      prioritized, updatedAt: changedAt }),
+    changed: true,
+  });
 }
 
 export function assertCurrentEntryFence(space: MemorySpace, entry: MemoryEntry): void {
@@ -273,4 +366,19 @@ function memoryCategory(value: unknown): MemoryCategory {
 function memoryEntryState(value: unknown): MemoryEntryState {
   if (value !== "active" && value !== "deleted") throw new MemoryDomainError("MEMORY_ENTRY_INVALID");
   return value;
+}
+
+function memoryBoolean(value: unknown): boolean {
+  if (typeof value !== "boolean") throw new MemoryDomainError("MEMORY_ENTRY_INVALID");
+  return value;
+}
+
+function nullableInstant(value: unknown): MemoryInstant | null {
+  return value === null ? null : memoryInstant(value);
+}
+
+function assertValidityRange(validFrom: MemoryInstant | null, validTo: MemoryInstant | null): void {
+  if (validFrom !== null && validTo !== null && validTo <= validFrom) {
+    throw new MemoryDomainError("MEMORY_INSTANT_INVALID");
+  }
 }

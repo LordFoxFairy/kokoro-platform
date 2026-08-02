@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { PostgresMemoryPublicRepository, createProtectedMemoryContent, memoryPublicPersonalContext } from
+import { PostgresMemoryPublicRepository, createMemoryReplayRequestVerifier,
+  createProtectedMemoryContent, memoryPublicPersonalContext } from
   "../../src/modules/memory/index.js";
 import { issuePlatformTransaction, revokePlatformTransaction,
   type PlatformSqlTransaction, type PlatformTransactionLease } from
@@ -33,7 +34,9 @@ describe("PostgresMemoryPublicRepository", () => {
             prepareRef: `memory-prepare:${"c".repeat(64)}`,
             expectedStateDigest: "d".repeat(64),
             spaceState: needsSpace ? spaceState() : null,
-            entryState: needsEntry ? entryState() : null } }] as unknown as Row[];
+            entryState: needsEntry ? entryState() : null,
+            restoreRevisionState: prepare === "restore" ? { revision: "1",
+              revisionRef: "revision-source", validFrom: null, validTo: null } : null } }] as unknown as Row[];
         }
         const commit = /memory_public_commit_(remember|correct|restore|prioritize|deprioritize|forget|reset)/u
           .exec(statement)?.[1];
@@ -52,7 +55,9 @@ describe("PostgresMemoryPublicRepository", () => {
     lease = issuePlatformTransaction(sql);
     repository = new PostgresMemoryPublicRepository({ issue: async () => ({
       keyRevision: "memory-transition-r1", digest: "f".repeat(64),
-    }) });
+    }) }, createMemoryReplayRequestVerifier({ active: {
+      keyRevision: "memory-replay-r1", key: new Uint8Array(32).fill(7),
+    } }));
   });
 
   afterEach(() => revokePlatformTransaction(lease));
@@ -90,13 +95,16 @@ describe("PostgresMemoryPublicRepository", () => {
       await repository.executeCommand(lease.transaction, {
         operation, context, commandRef: `command-${operation}`, requestDigest: "a".repeat(64),
         requestDigestKeyRevision: "memory-command-hmac-r1",
+        requestPayloadDigest: "9".repeat(64), requestPayloadKeyRevision: "memory-replay-r1",
         spaceRef: "space-user-1", entryRef: operation === "reset" ? null : "entry-1",
         revisionRef: operation === "remember" || operation === "correct" || operation === "restore"
           ? `revision-${operation}` : null,
         provenanceRef: operation === "remember" || operation === "correct" || operation === "restore"
           ? `provenance-${operation}` : null,
-        category: "fact", protectedContent: protectedContent(), expectedRevision: 1,
+        category: "fact", protectedContent: protectedContent(), expectedRevision: 2,
         expectedEntryVersion: 1n, prioritized: operation === "prioritize",
+        restoredFromRevisionRef: operation === "restore" ? "revision-source" : undefined,
+        validFrom: null, validTo: null,
         recordedAt: "2026-07-31T12:00:00.000Z",
       } as never);
     }
@@ -122,6 +130,31 @@ describe("PostgresMemoryPublicRepository", () => {
       safeSourceLabel: "Saved by you", unexpected: true } }];
     await expect(repository.getEntry(lease.transaction, { owner: { context,
       spaceRef: "space-user-1", spaceVersion: 7n }, entryRef: "entry-1" })).rejects.toThrow();
+  });
+
+  it("rejects invalid owner persistence metadata", async () => {
+    rows = [{ result: { spaceRef: "space-user-1", spaceVersion: "7", persisted: "yes" } }];
+    await expect(repository.resolveOwner(lease.transaction, { context,
+      operation: "get_entry", candidateSpaceRef: "space-user-1",
+      now: "2026-07-31T12:00:00.000Z" })).rejects.toThrow(
+      "MEMORY_PERSISTENCE_CONFLICT",
+    );
+  });
+
+  it("rejects protected content on a revoked tombstone", async () => {
+    rows = [{ result: { entryRef: "entry-1", entryVersion: "2", category: "fact",
+      state: "revoked_purge_pending", prioritized: false, revision: "1",
+      currentRevisionRef: "revision-1", reason: "explicit", validFrom: null, validTo: null,
+      createdAt: "2026-07-31T12:00:00+00:00", updatedAt: "2026-07-31T12:00:00+00:00",
+      protectedContent: { envelopeVersion: 1, keyRevision: "memory-key-r1",
+        nonce: Buffer.alloc(12).toString("base64"), ciphertext: Buffer.from([1]).toString("base64"),
+        authenticationTag: Buffer.alloc(16).toString("base64"), aadDigest: "e".repeat(64) },
+      sourceKind: "explicit", sourceState: "unavailable", safeSourceLabel: "Removed",
+      revokedAt: "2026-07-31T12:00:00+00:00" } }];
+    await expect(repository.getEntry(lease.transaction, { owner: { context,
+      spaceRef: "space-user-1", spaceVersion: 7n }, entryRef: "entry-1" })).rejects.toThrow(
+      "MEMORY_PERSISTENCE_CONFLICT",
+    );
   });
 
   it("normalizes PostgreSQL timestamps and omits absent optional result fields", async () => {
@@ -181,7 +214,8 @@ function spaceState() {
 }
 function entryState() {
   return { siteRef: "site-alpha", spaceRef: "space-user-1", entryRef: "entry-1", version: "1",
-    currentRevision: "1", currentRevisionRef: "revision-current", state: "active", category: "fact",
+    currentRevision: "2", currentRevisionRef: "revision-current", state: "active", category: "fact",
+    prioritized: false,
     featurePolicyRevisionRef: "feature-policy-r7", spaceGeneration: "1", learningGeneration: "1",
     revocationEpoch: "1", createdAt: "2026-07-31T11:00:00.000Z",
     updatedAt: "2026-07-31T11:00:00.000Z", deletedAt: null };

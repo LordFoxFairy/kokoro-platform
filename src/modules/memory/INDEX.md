@@ -53,17 +53,18 @@ owner's implicit `PUBLIC EXECUTE`. Superusers already bypass the runtime authori
 table or sequence authority. Its forced-RLS policies are restricted to that exact login, while every routine revalidates the
 current Site, Subject generation, active release and exact feature-policy revision before returning or committing owner data.
 Prepare records bind a keyed, revisioned command fingerprint, a random prepare reference and the exact locked-state digest.
-Remember, correct, forget and reset transitions are produced only by `MemoryAuthorityService`; every commit is bound to the full
+Remember, correct, restore, priority, forget and reset transitions are produced only by `MemoryAuthorityService`; every commit is
+bound to the full
 canonical command/transition proposal by a domain-separated HMAC authority receipt, then independently checked against the live
 state digest inside PostgreSQL before persistence. The verifier key-ring is private to the owner functions, and `pgcrypto` lives
-in a dedicated schema with no runtime-role or `PUBLIC` authority. Restore and priority are explicit database-computed extension
-transitions under the same receipt and CAS boundary. JSON results use closed decoders and canonical UTC instants. Owner reads carry
+in a dedicated schema with no runtime-role or `PUBLIC` authority. JSON results use closed decoders and canonical UTC instants.
+Owner reads carry
 monotonic space versions and sealed snapshots; database read routines independently enforce current generation and revocation
 fences. Forget/reset synchronously create a deterministic purge manifest and expose only a content-free
 `revoked_purge_pending`/`purged` tombstone, so revoked plaintext cannot be returned through detail, history, or restore while the
 physical deletion worker remains feature-off. `platform_memory_runtime` still receives zero Platform schema, table, sequence, or
 routine grants. `platform_memory_worker` receives only
-Platform schema usage and the three fixed-search-path purge routines. Purge claims first terminalize at most 100 exhausted queued
+Platform schema usage and the four fixed-search-path purge routines. Purge claims first terminalize at most 100 exhausted queued
 or expired leased/running jobs, clear their lease material, and then select only a sub-limit candidate so one exhausted job cannot
 starve the queue. All three retain PostgreSQL's shared ambient `public`
 schema `USAGE` only; they receive no `public` schema `CREATE`, object, sequence, or routine authority.

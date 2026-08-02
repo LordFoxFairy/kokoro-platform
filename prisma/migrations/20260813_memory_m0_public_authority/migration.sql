@@ -476,11 +476,10 @@ BEGIN
      AND payload.entry_ref=p_entry_ref AND payload.revision=p_revision
      AND payload.revision_ref=p_revision_ref;
   GET DIAGNOSTICS removed=ROW_COUNT;
-  IF removed<>1 THEN RAISE EXCEPTION 'MEMORY_PURGE_TARGET_PAYLOAD_MISSING'; END IF;
   UPDATE platform.memory_purge_revision_target target SET deleted_at=statement_timestamp()
    WHERE target.site_ref=p_site_ref AND target.purge_job_ref=p_purge_job_ref
      AND target.target_ordinal=target_row.target_ordinal;
-  RETURN 'deleted';
+  RETURN CASE WHEN removed=1 THEN 'deleted' ELSE 'already_cleared' END;
 END $$;
 REVOKE ALL ON FUNCTION platform.memory_worker_delete_revision_payload(
   TEXT,TEXT,TEXT,TEXT,BIGINT,TEXT,BIGINT,CHAR) FROM PUBLIC;
@@ -535,6 +534,52 @@ REVOKE ALL ON FUNCTION platform.memory_worker_record_purge_receipt(
   TEXT,TEXT,TEXT,TEXT,TEXT,CHAR,BIGINT,CHAR) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION platform.memory_worker_record_purge_receipt(
   TEXT,TEXT,TEXT,TEXT,TEXT,CHAR,BIGINT,CHAR) TO platform_memory_worker;
+
+CREATE FUNCTION platform.memory_worker_finalize_purge(
+  p_site_ref TEXT,p_purge_job_ref TEXT,p_lease_epoch BIGINT,p_lease_token_hash CHAR(64)
+) RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$
+DECLARE job_row platform.memory_purge_job%ROWTYPE;
+  expected_receipts BIGINT; completed_receipts BIGINT;
+BEGIN
+  PERFORM platform.assert_memory_database_role('worker');
+  SELECT * INTO STRICT job_row FROM platform.memory_purge_job job
+   WHERE job.site_ref=p_site_ref AND job.purge_job_ref=p_purge_job_ref FOR UPDATE;
+  IF job_row.state='completed' THEN RETURN 'already_completed'; END IF;
+  IF job_row.state NOT IN ('leased','running') OR job_row.lease_epoch<>p_lease_epoch
+    OR job_row.lease_token_hash<>p_lease_token_hash
+    OR job_row.lease_expires_at<=statement_timestamp() THEN
+    RAISE EXCEPTION 'MEMORY_PURGE_LEASE_FENCE_INVALID';
+  END IF;
+  IF (SELECT count(*) FROM platform.memory_purge_revision_target target
+      WHERE target.site_ref=p_site_ref AND target.purge_job_ref=p_purge_job_ref)
+      <>job_row.revision_target_count
+    OR EXISTS (SELECT 1 FROM platform.memory_purge_revision_target target
+      WHERE target.site_ref=p_site_ref AND target.purge_job_ref=p_purge_job_ref
+        AND target.deleted_at IS NULL) THEN
+    RAISE EXCEPTION 'MEMORY_PURGE_REVISION_TARGETS_INCOMPLETE';
+  END IF;
+  SELECT count(*) INTO expected_receipts FROM platform.memory_purge_participant_manifest manifest
+   WHERE manifest.manifest_version=job_row.frozen_manifest_version;
+  SELECT count(*) INTO completed_receipts
+    FROM platform.memory_purge_participant_manifest manifest
+    JOIN platform.memory_purge_participant_receipt receipt
+      ON receipt.site_ref=p_site_ref AND receipt.purge_job_ref=p_purge_job_ref
+     AND receipt.manifest_version=manifest.manifest_version
+     AND receipt.participant_key=manifest.participant_key
+     AND ((manifest.m0_applicability='applicable' AND receipt.status='completed')
+       OR (manifest.m0_applicability='not_applicable' AND receipt.status='not_applicable'))
+   WHERE manifest.manifest_version=job_row.frozen_manifest_version;
+  IF expected_receipts=0 OR completed_receipts<>expected_receipts THEN
+    RAISE EXCEPTION 'MEMORY_PURGE_PARTICIPANT_RECEIPTS_INCOMPLETE';
+  END IF;
+  UPDATE platform.memory_purge_job SET state='completed',lease_token_hash=NULL,worker_id=NULL,
+    lease_expires_at=NULL,updated_at=statement_timestamp()
+   WHERE site_ref=p_site_ref AND purge_job_ref=p_purge_job_ref;
+  RETURN 'completed';
+END $$;
+REVOKE ALL ON FUNCTION platform.memory_worker_finalize_purge(TEXT,TEXT,BIGINT,CHAR) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION platform.memory_worker_finalize_purge(TEXT,TEXT,BIGINT,CHAR)
+  TO platform_memory_worker;
 
 ALTER TABLE platform.memory_revision_payload ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform.memory_revision_payload FORCE ROW LEVEL SECURITY;

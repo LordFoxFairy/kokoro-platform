@@ -70,6 +70,8 @@ function rememberCommand(overrides: Readonly<Record<string, unknown>> = {}) {
     protectedContent: protectedContent(),
     category: "preference" as const,
     featurePolicyRevisionRef: "feature-policy-r7",
+    validFrom: null,
+    validTo: null,
     recordedAt: "2026-07-30T12:00:00.000Z",
     ...overrides,
   };
@@ -123,6 +125,17 @@ class FakeMemoryRepository implements MemoryAuthorityRepository {
     return this.entries.get(`${siteRef}:${spaceRef}:${entryRef}`) ?? null;
   }
 
+  async loadRestorableRevisionForUpdate(_transaction:
+    Parameters<MemoryAuthorityRepository["loadRestorableRevisionForUpdate"]>[0],
+    _siteRef: Parameters<MemoryAuthorityRepository["loadRestorableRevisionForUpdate"]>[1],
+    _spaceRef: Parameters<MemoryAuthorityRepository["loadRestorableRevisionForUpdate"]>[2],
+    _entryRef: Parameters<MemoryAuthorityRepository["loadRestorableRevisionForUpdate"]>[3],
+    revisionRef: Parameters<MemoryAuthorityRepository["loadRestorableRevisionForUpdate"]>[4]) {
+    const revision = this.revisions.find((candidate) => candidate.revisionRef === revisionRef);
+    return revision === undefined ? null : Object.freeze({ revision: revision.revision,
+      revisionRef: revision.revisionRef, validFrom: revision.validFrom, validTo: revision.validTo });
+  }
+
   async claimReceipt(_transaction: Parameters<MemoryAuthorityRepository["claimReceipt"]>[0],
     identity: MemoryCommandReceiptIdentity): Promise<MemoryReceiptClaim> {
     const key = receiptKey(identity);
@@ -158,6 +171,24 @@ class FakeMemoryRepository implements MemoryAuthorityRepository {
     this.entries.set(key, remembered.entry);
     this.revisions.push(remembered.revision);
     this.provenances.push(remembered.provenance);
+  }
+
+  async saveRestoredMemory(transaction: Parameters<MemoryAuthorityRepository["saveRestoredMemory"]>[0],
+    expected: Parameters<MemoryAuthorityRepository["saveRestoredMemory"]>[1],
+    remembered: RememberedMemory): Promise<void> {
+    await this.saveCorrectedMemory(transaction, expected, remembered);
+  }
+
+  async saveEntryPriority(_transaction: Parameters<MemoryAuthorityRepository["saveEntryPriority"]>[0],
+    expected: Parameters<MemoryAuthorityRepository["saveEntryPriority"]>[1],
+    space: MemorySpace, entry: MemoryEntry): Promise<void> {
+    const spaceKey = `${entry.siteRef}:${space.spaceRef}`;
+    const entryKey = `${entry.siteRef}:${entry.spaceRef}:${entry.entryRef}`;
+    if (this.spaces.get(spaceKey)?.version !== expected.spaceVersion ||
+      this.entries.get(entryKey)?.version !== expected.entryVersion) throw new Error("fake CAS failed");
+    this.mutationCount += 1;
+    this.spaces.set(spaceKey, space);
+    this.entries.set(entryKey, entry);
   }
 
   async saveForgottenMemory(_transaction: Parameters<MemoryAuthorityRepository["saveForgottenMemory"]>[0],

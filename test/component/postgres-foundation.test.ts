@@ -333,7 +333,7 @@ describe("Platform PostgreSQL foundation", () => {
           platform_schema_create: false, relation_acl_count: "0", routine_acl_count: "0" },
         { role_name: memoryRoleNames.worker, public_schema_usage: true,
           public_schema_create: false, platform_schema_usage: true,
-          platform_schema_create: false, relation_acl_count: "0", routine_acl_count: "3" },
+          platform_schema_create: false, relation_acl_count: "0", routine_acl_count: "4" },
       ]);
 
       for (const client of [publicClient, runtimeClient, workerClient]) {
@@ -393,11 +393,13 @@ describe("Platform PostgreSQL foundation", () => {
       await bootstrap.query(
         `INSERT INTO platform.memory_public_command_inbox
            (site_ref,command_ref,owner_scope_kind,owner_subject_ref,owner_subject_generation,
-            operation,request_digest,request_digest_key_revision,state,prepare_ref,
+            operation,request_digest,request_digest_key_revision,request_payload_digest,
+            request_payload_key_revision,state,prepare_ref,
             expected_state_digest,created_at)
-         VALUES ($1,$2,'user',$3,1,'reset',$4,'memory-command-hmac-r1','accepted',
+         VALUES ($1,$2,'user',$3,1,'reset',$4,'memory-command-hmac-r1',$6,
+           'memory-replay-r1','accepted',
            'foundation-purge-prepare',$5,statement_timestamp())`,
-        [siteRef, purgeCommandRef, subjectRef, "c".repeat(64), "e".repeat(64)],
+        [siteRef, purgeCommandRef, subjectRef, "c".repeat(64), "e".repeat(64), "a".repeat(64)],
       );
       for (const [commandRef, digest] of [
         [exhaustedPurgeCommandRef, "8".repeat(64)],
@@ -406,11 +408,13 @@ describe("Platform PostgreSQL foundation", () => {
         await bootstrap.query(
           `INSERT INTO platform.memory_public_command_inbox
              (site_ref,command_ref,owner_scope_kind,owner_subject_ref,owner_subject_generation,
-              operation,request_digest,request_digest_key_revision,state,prepare_ref,
+              operation,request_digest,request_digest_key_revision,request_payload_digest,
+              request_payload_key_revision,state,prepare_ref,
               expected_state_digest,created_at)
-           VALUES ($1,$2,'user',$3,1,'reset',$4,'memory-command-hmac-r1','accepted',
+           VALUES ($1,$2,'user',$3,1,'reset',$4,'memory-command-hmac-r1',$6,
+             'memory-replay-r1','accepted',
              'foundation-exhausted-prepare',$5,statement_timestamp())`,
-          [siteRef, commandRef, subjectRef, digest, "f".repeat(64)],
+          [siteRef, commandRef, subjectRef, digest, "f".repeat(64), "b".repeat(64)],
         );
       }
       await bootstrap.query(
@@ -505,6 +509,34 @@ describe("Platform PostgreSQL foundation", () => {
           $1,$2,'revision_payload','completed',$3,$4::char(64),1,$5::char(64))`,
         [siteRef, purgeJobRef, `receipt-${suffix}`, "1".repeat(64), leaseTokenHash],
       )).resolves.toMatchObject({ rowCount: 1 });
+      for (const [participant, status] of [
+        ["public_presentation_cache", "completed"],
+        ["import_quarantine_object", "completed"],
+        ["export_object", "completed"],
+        ["command_outbox_payload", "completed"],
+        ["backup_object_gc", "completed"],
+        ["lexical_index", "not_applicable"],
+        ["selection_snapshot", "not_applicable"],
+        ["context_use", "not_applicable"],
+        ["proposal_payload", "not_applicable"],
+        ["embedding", "not_applicable"],
+        ["ga_checkpoint_evidence", "not_applicable"],
+      ] as const) {
+        await expect(workerClient.query(
+          `SELECT platform.memory_worker_record_purge_receipt(
+            $1,$2,$3,$4,$5,$6::char(64),1,$7::char(64))`,
+          [siteRef, purgeJobRef, participant, status, `receipt-${participant}-${suffix}`,
+            createHash("sha256").update(participant).digest("hex"), leaseTokenHash],
+        )).resolves.toMatchObject({ rowCount: 1 });
+      }
+      await expect(workerClient.query(
+        `SELECT platform.memory_worker_finalize_purge($1,$2,1,$3::char(64)) AS outcome`,
+        [siteRef, purgeJobRef, leaseTokenHash],
+      )).resolves.toMatchObject({ rows: [{ outcome: "completed" }] });
+      await expect(workerClient.query(
+        `SELECT platform.memory_worker_finalize_purge($1,$2,1,$3::char(64)) AS outcome`,
+        [siteRef, purgeJobRef, leaseTokenHash],
+      )).resolves.toMatchObject({ rows: [{ outcome: "already_completed" }] });
 
       const pinnedPreflightClient = new Client({ connectionString: migratorDatabaseUrl });
       await pinnedPreflightClient.connect();

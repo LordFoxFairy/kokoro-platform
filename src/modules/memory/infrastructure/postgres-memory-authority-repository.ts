@@ -78,7 +78,7 @@ export class PostgresMemoryAuthorityRepository implements MemoryAuthorityReposit
     const rows = await resolvePlatformTransaction(transaction).query<EntryRow>(
       `SELECT site_ref AS "siteRef",space_ref AS "spaceRef",entry_ref AS "entryRef",
               version::text AS version,current_revision::text AS "currentRevision",
-              current_revision_ref AS "currentRevisionRef",state,category,
+              current_revision_ref AS "currentRevisionRef",state,category,prioritized,
               feature_policy_revision_ref AS "featurePolicyRevisionRef",
               space_generation::text AS "spaceGeneration",
               learning_generation::text AS "learningGeneration",
@@ -90,6 +90,28 @@ export class PostgresMemoryAuthorityRepository implements MemoryAuthorityReposit
     );
     if (rows.length > 1) throw new MemoryApplicationError("MEMORY_PERSISTENCE_CONFLICT");
     return rows[0] === undefined ? null : decodeEntry(rows[0]);
+  }
+
+  async loadRestorableRevisionForUpdate(transaction: PlatformTransaction, siteRef: SiteRef,
+    spaceRef: MemorySpaceRef, entryRef: MemoryEntryRef, revisionRef: MemoryRevision["revisionRef"]):
+    Promise<Readonly<{ revision: MemoryRevisionNumber; revisionRef: MemoryRevision["revisionRef"];
+      validFrom: string | null; validTo: string | null }> | null> {
+    const rows = await resolvePlatformTransaction(transaction).query<Readonly<{
+      revision: unknown; revisionRef: unknown; validFrom: unknown; validTo: unknown;
+    }>>(
+      `SELECT revision::text AS revision,revision_ref AS "revisionRef",
+              valid_from AS "validFrom",valid_to AS "validTo"
+       FROM platform.memory_revision
+       WHERE site_ref=$1 AND space_ref=$2 AND entry_ref=$3 AND revision_ref=$4 FOR UPDATE`,
+      [siteRef, spaceRef, entryRef, revisionRef]);
+    if (rows.length > 1) throw new MemoryApplicationError("MEMORY_PERSISTENCE_CONFLICT");
+    const row = rows[0];
+    return row === undefined ? null : Object.freeze({
+      revision: memoryRevisionNumber(dbInt8(row.revision)),
+      revisionRef: memoryRevisionRef(persistenceRequiredString(row.revisionRef)),
+      validFrom: row.validFrom === null ? null : dbInstant(row.validFrom),
+      validTo: row.validTo === null ? null : dbInstant(row.validTo),
+    });
   }
 
   async claimReceipt(transaction: PlatformTransaction,
@@ -107,6 +129,8 @@ export class PostgresMemoryAuthorityRepository implements MemoryAuthorityReposit
               result_space_ref AS "resultSpaceRef",result_space_version::text AS "resultSpaceVersion",
               result_entry_ref AS "resultEntryRef",result_entry_version::text AS "resultEntryVersion",
               result_revision_ref AS "resultRevisionRef",result_revision::text AS "resultRevision",
+              result_restored_from_revision_ref AS "resultRestoredFromRevisionRef",
+              result_prioritized AS "resultPrioritized",result_changed AS "resultChanged",
               result_space_generation::text AS "resultSpaceGeneration",
               result_learning_generation::text AS "resultLearningGeneration",
               result_revocation_epoch::text AS "resultRevocationEpoch",
@@ -149,17 +173,19 @@ export class PostgresMemoryAuthorityRepository implements MemoryAuthorityReposit
         caller_authorization_epoch,command_ref,operation,request_digest,result_kind,
         result_space_ref,result_space_version,
         result_entry_ref,result_entry_version,result_revision_ref,result_revision,
+        result_restored_from_revision_ref,result_prioritized,result_changed,
         result_space_generation,result_learning_generation,result_revocation_epoch,
         result_minimum_source_origin_seq,result_learning_state,result_use_state,
         result_previous_feature_policy_revision_ref,result_feature_policy_revision_ref,recorded_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,
-         $23,$24,$25,$26,$27,clock_timestamp())`,
+         $23,$24,$25,$26,$27,$28,$29,$30,clock_timestamp())`,
       [owner.siteRef, owner.ownerScopeKind, owner.ownerSubjectRef, owner.ownerSubjectGeneration,
         owner.ownerProjectRef, owner.callerSubjectRef, owner.callerSubjectGeneration,
         owner.callerMembershipEpoch, owner.callerAuthorizationEpoch, identity.commandRef,
         identity.operation, identity.requestDigest, columns.resultKind, columns.resultSpaceRef,
         columns.resultSpaceVersion, columns.resultEntryRef, columns.resultEntryVersion,
-        columns.resultRevisionRef, columns.resultRevision, columns.resultSpaceGeneration,
+        columns.resultRevisionRef, columns.resultRevision, columns.resultRestoredFromRevisionRef,
+        columns.resultPrioritized, columns.resultChanged, columns.resultSpaceGeneration,
         columns.resultLearningGeneration, columns.resultRevocationEpoch,
         columns.resultMinimumSourceOriginSequence, columns.resultLearningState, columns.resultUseState,
         columns.resultPreviousFeaturePolicyRevisionRef, columns.resultFeaturePolicyRevisionRef],
@@ -174,9 +200,9 @@ export class PostgresMemoryAuthorityRepository implements MemoryAuthorityReposit
     const insertedEntry = await sql.execute(
       `INSERT INTO platform.memory_entry
        (site_ref,space_ref,entry_ref,version,current_revision,current_revision_ref,state,category,
-        feature_policy_revision_ref,space_generation,learning_generation,revocation_epoch,
+        prioritized,feature_policy_revision_ref,space_generation,learning_generation,revocation_epoch,
         created_at,updated_at,deleted_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::timestamptz,$14::timestamptz,$15::timestamptz)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::timestamptz,$15::timestamptz,$16::timestamptz)`,
       entryValues(remembered.entry),
     );
     if (insertedEntry !== 1) throw new MemoryApplicationError("MEMORY_PERSISTENCE_CONFLICT");
@@ -200,6 +226,30 @@ export class PostgresMemoryAuthorityRepository implements MemoryAuthorityReposit
         corrected.entry.entryRef, expected.entryVersion, expected.currentRevision],
     );
     if (updated !== 1) throw new MemoryApplicationError("MEMORY_PERSISTENCE_CONFLICT");
+  }
+
+  async saveRestoredMemory(transaction: PlatformTransaction,
+    expected: Readonly<{ spaceVersion: AggregateVersion; entryVersion: AggregateVersion;
+      currentRevision: MemoryRevisionNumber }>, restored: RememberedMemory): Promise<void> {
+    void expected.spaceVersion;
+    await this.saveCorrectedMemory(transaction, {
+      entryVersion: expected.entryVersion, currentRevision: expected.currentRevision,
+    }, restored);
+  }
+
+  async saveEntryPriority(transaction: PlatformTransaction,
+    expected: Readonly<{ spaceVersion: AggregateVersion; entryVersion: AggregateVersion }>,
+    space: MemorySpace, entry: MemoryEntry): Promise<void> {
+    const sql = resolvePlatformTransaction(transaction);
+    if (await updateSpace(sql, expected.spaceVersion, space) !== 1) {
+      throw new MemoryApplicationError("MEMORY_PERSISTENCE_CONFLICT");
+    }
+    const entryUpdated = await sql.execute(
+      `UPDATE platform.memory_entry SET version=$1,prioritized=$2,updated_at=$3::timestamptz
+       WHERE site_ref=$4 AND space_ref=$5 AND entry_ref=$6 AND version=$7 AND state='active'`,
+      [entry.version, entry.prioritized, entry.updatedAt, entry.siteRef, entry.spaceRef,
+        entry.entryRef, expected.entryVersion]);
+    if (entryUpdated !== 1) throw new MemoryApplicationError("MEMORY_PERSISTENCE_CONFLICT");
   }
 
   async saveForgottenMemory(transaction: PlatformTransaction,
@@ -273,12 +323,14 @@ async function insertRevision(sql: Sql, revision: MemoryRevision): Promise<void>
   const inserted = await sql.execute(
     `INSERT INTO platform.memory_revision
      (site_ref,space_ref,entry_ref,revision,revision_ref,reason,supersedes_revision,
-      supersedes_revision_ref,feature_policy_revision_ref,recorded_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::timestamptz)`,
+      supersedes_revision_ref,restored_from_revision_ref,feature_policy_revision_ref,
+      valid_from,valid_to,recorded_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::timestamptz,$12::timestamptz,$13::timestamptz)`,
     [revision.siteRef, revision.spaceRef, revision.entryRef, revision.revision, revision.revisionRef,
       revision.reason,
       revision.supersedesRevisionRef === null ? null : revision.revision - 1n,
-      revision.supersedesRevisionRef, revision.featurePolicyRevisionRef, revision.recordedAt],
+      revision.supersedesRevisionRef, revision.restoredFromRevisionRef,
+      revision.featurePolicyRevisionRef, revision.validFrom, revision.validTo, revision.recordedAt],
   );
   if (inserted !== 1) throw new MemoryApplicationError("MEMORY_PERSISTENCE_CONFLICT");
   const payloadInserted = await sql.execute(
@@ -327,7 +379,8 @@ function updateSpace(sql: Sql, expectedVersion: AggregateVersion, space: MemoryS
 
 function entryValues(entry: MemoryEntry): readonly unknown[] {
   return [entry.siteRef, entry.spaceRef, entry.entryRef, entry.version, entry.currentRevision,
-    entry.currentRevisionRef, entry.state, entry.category, entry.featurePolicyRevisionRef,
+    entry.currentRevisionRef, entry.state, entry.category, entry.prioritized,
+    entry.featurePolicyRevisionRef,
     entry.spaceGeneration, entry.learningGeneration, entry.revocationEpoch, entry.createdAt,
     entry.updatedAt, entry.deletedAt];
 }
@@ -394,6 +447,7 @@ function decodeEntry(row: EntryRow): MemoryEntry {
   return rehydrateMemoryEntry({ siteRef: row.siteRef, spaceRef: row.spaceRef, entryRef: row.entryRef,
     version: dbInt8(row.version), currentRevision: dbInt8(row.currentRevision),
     currentRevisionRef: row.currentRevisionRef, state: row.state, category: row.category,
+    prioritized: row.prioritized,
     featurePolicyRevisionRef: row.featurePolicyRevisionRef,
     spaceGeneration: dbInt8(row.spaceGeneration), learningGeneration: dbInt8(row.learningGeneration),
     revocationEpoch: dbInt8(row.revocationEpoch), createdAt: dbInstant(row.createdAt),
@@ -406,16 +460,36 @@ function decodeReceiptResult(row: ReceiptRow): MemoryCommandResult {
   switch (row.resultKind) {
     case "remembered":
     case "corrected":
+    case "restored":
       requireNull(row.resultSpaceGeneration, row.resultLearningGeneration, row.resultRevocationEpoch,
         row.resultMinimumSourceOriginSequence, row.resultLearningState, row.resultUseState,
-        row.resultPreviousFeaturePolicyRevisionRef, row.resultFeaturePolicyRevisionRef);
+        row.resultPreviousFeaturePolicyRevisionRef, row.resultFeaturePolicyRevisionRef,
+        row.resultPrioritized, row.resultChanged);
       return Object.freeze({ kind: row.resultKind, spaceRef, spaceVersion,
         entryRef: memoryEntryRef(requiredString(row.resultEntryRef)),
         entryVersion: memoryAggregateVersion(dbRequiredInt8(row.resultEntryVersion)),
         revisionRef: memoryRevisionRef(requiredString(row.resultRevisionRef)),
-        revision: memoryRevisionNumber(dbRequiredInt8(row.resultRevision)) });
+        revision: memoryRevisionNumber(dbRequiredInt8(row.resultRevision)),
+        ...(row.resultKind === "restored" ? { restoredFromRevisionRef:
+          memoryRevisionRef(requiredString(row.resultRestoredFromRevisionRef)) }
+          : (requireNull(row.resultRestoredFromRevisionRef), {})) });
+    case "prioritized":
+    case "deprioritized":
+      requireNull(row.resultRevisionRef, row.resultRevision, row.resultRestoredFromRevisionRef,
+        row.resultSpaceGeneration, row.resultLearningGeneration, row.resultRevocationEpoch,
+        row.resultMinimumSourceOriginSequence, row.resultLearningState, row.resultUseState,
+        row.resultPreviousFeaturePolicyRevisionRef, row.resultFeaturePolicyRevisionRef);
+      if (typeof row.resultPrioritized !== "boolean" || typeof row.resultChanged !== "boolean" ||
+        row.resultPrioritized !== (row.resultKind === "prioritized")) {
+        throw new MemoryApplicationError("MEMORY_RECEIPT_INVALID");
+      }
+      return Object.freeze({ kind: row.resultKind, spaceRef, spaceVersion,
+        entryRef: memoryEntryRef(requiredString(row.resultEntryRef)),
+        entryVersion: memoryAggregateVersion(dbRequiredInt8(row.resultEntryVersion)),
+        prioritized: row.resultPrioritized, changed: row.resultChanged });
     case "forgotten":
-      requireNull(row.resultRevisionRef, row.resultRevision, row.resultSpaceGeneration,
+      requireNull(row.resultRevisionRef, row.resultRevision, row.resultRestoredFromRevisionRef,
+        row.resultPrioritized, row.resultChanged, row.resultSpaceGeneration,
         row.resultLearningGeneration, row.resultMinimumSourceOriginSequence,
         row.resultLearningState, row.resultUseState, row.resultPreviousFeaturePolicyRevisionRef,
         row.resultFeaturePolicyRevisionRef);
@@ -429,6 +503,7 @@ function decodeReceiptResult(row: ReceiptRow): MemoryCommandResult {
     case "use_resumed":
     case "reset":
       requireNull(row.resultEntryRef, row.resultEntryVersion, row.resultRevisionRef, row.resultRevision,
+        row.resultRestoredFromRevisionRef, row.resultPrioritized, row.resultChanged,
         row.resultPreviousFeaturePolicyRevisionRef, row.resultFeaturePolicyRevisionRef);
       return Object.freeze({ kind: row.resultKind, spaceRef, spaceVersion,
         spaceGeneration: memorySpaceGeneration(dbRequiredInt8(row.resultSpaceGeneration)),
@@ -438,7 +513,8 @@ function decodeReceiptResult(row: ReceiptRow): MemoryCommandResult {
           memorySourceOriginSequence(dbRequiredInt8(row.resultMinimumSourceOriginSequence)),
         learningState: controlState(row.resultLearningState), useState: controlState(row.resultUseState) });
     case "policy_rebound": {
-      requireNull(row.resultEntryRef, row.resultEntryVersion, row.resultRevisionRef, row.resultRevision);
+      requireNull(row.resultEntryRef, row.resultEntryVersion, row.resultRevisionRef, row.resultRevision,
+        row.resultRestoredFromRevisionRef, row.resultPrioritized, row.resultChanged);
       const previousPolicy = memoryFeaturePolicyRevisionRef(
         requiredString(row.resultPreviousFeaturePolicyRevisionRef));
       const nextPolicy = memoryFeaturePolicyRevisionRef(requiredString(row.resultFeaturePolicyRevisionRef));
@@ -472,7 +548,8 @@ function decodeReceiptStoredIdentity(row: ReceiptRow): Readonly<{
   operation: MemoryCommandReceiptIdentity["operation"];
   requestDigest: string;
 }> {
-  const operations = ["remember", "correct", "forget", "pause_learning", "resume_learning",
+  const operations = ["remember", "correct", "restore", "prioritize", "deprioritize", "forget",
+    "pause_learning", "resume_learning",
     "pause_use", "resume_use", "reset", "rebind_policy"] as const;
   if (typeof row.operation !== "string" ||
     !operations.includes(row.operation as (typeof operations)[number]) ||
@@ -489,6 +566,9 @@ function resultKindForOperation(
   switch (operation) {
     case "remember": return "remembered";
     case "correct": return "corrected";
+    case "restore": return "restored";
+    case "prioritize": return "prioritized";
+    case "deprioritize": return "deprioritized";
     case "forget": return "forgotten";
     case "pause_learning": return "learning_paused";
     case "resume_learning": return "learning_resumed";
@@ -502,16 +582,31 @@ function resultKindForOperation(
 function receiptResultColumns(result: MemoryCommandResult): ReceiptResultColumns {
   switch (result.kind) {
     case "remembered":
-    case "corrected": return Object.freeze({ resultKind: result.kind, resultSpaceRef: result.spaceRef,
+    case "corrected":
+    case "restored": return Object.freeze({ resultKind: result.kind, resultSpaceRef: result.spaceRef,
       resultSpaceVersion: result.spaceVersion, resultEntryRef: result.entryRef,
       resultEntryVersion: result.entryVersion, resultRevisionRef: result.revisionRef,
-      resultRevision: result.revision, resultSpaceGeneration: null, resultLearningGeneration: null,
+      resultRevision: result.revision,
+      resultRestoredFromRevisionRef: result.kind === "restored"
+        ? result.restoredFromRevisionRef ?? null : null,
+      resultPrioritized: null, resultChanged: null,
+      resultSpaceGeneration: null, resultLearningGeneration: null,
       resultRevocationEpoch: null, resultMinimumSourceOriginSequence: null,
       resultLearningState: null, resultUseState: null,
+      resultPreviousFeaturePolicyRevisionRef: null, resultFeaturePolicyRevisionRef: null });
+    case "prioritized":
+    case "deprioritized": return Object.freeze({ resultKind: result.kind,
+      resultSpaceRef: result.spaceRef, resultSpaceVersion: result.spaceVersion,
+      resultEntryRef: result.entryRef, resultEntryVersion: result.entryVersion,
+      resultRevisionRef: null, resultRevision: null, resultRestoredFromRevisionRef: null,
+      resultPrioritized: result.prioritized, resultChanged: result.changed,
+      resultSpaceGeneration: null, resultLearningGeneration: null, resultRevocationEpoch: null,
+      resultMinimumSourceOriginSequence: null, resultLearningState: null, resultUseState: null,
       resultPreviousFeaturePolicyRevisionRef: null, resultFeaturePolicyRevisionRef: null });
     case "forgotten": return Object.freeze({ resultKind: result.kind, resultSpaceRef: result.spaceRef,
       resultSpaceVersion: result.spaceVersion, resultEntryRef: result.entryRef,
       resultEntryVersion: result.entryVersion, resultRevisionRef: null, resultRevision: null,
+      resultRestoredFromRevisionRef: null, resultPrioritized: null, resultChanged: null,
       resultSpaceGeneration: null, resultLearningGeneration: null,
       resultRevocationEpoch: result.revocationEpoch, resultMinimumSourceOriginSequence: null,
       resultLearningState: null, resultUseState: null,
@@ -523,6 +618,7 @@ function receiptResultColumns(result: MemoryCommandResult): ReceiptResultColumns
     case "reset": return Object.freeze({ resultKind: result.kind, resultSpaceRef: result.spaceRef,
       resultSpaceVersion: result.spaceVersion, resultEntryRef: null, resultEntryVersion: null,
       resultRevisionRef: null, resultRevision: null, resultSpaceGeneration: result.spaceGeneration,
+      resultRestoredFromRevisionRef: null, resultPrioritized: null, resultChanged: null,
       resultLearningGeneration: result.learningGeneration, resultRevocationEpoch: result.revocationEpoch,
       resultMinimumSourceOriginSequence: result.minimumLearnableSourceOriginSequence,
       resultLearningState: result.learningState, resultUseState: result.useState,
@@ -530,6 +626,7 @@ function receiptResultColumns(result: MemoryCommandResult): ReceiptResultColumns
     case "policy_rebound": return Object.freeze({ resultKind: result.kind,
       resultSpaceRef: result.spaceRef, resultSpaceVersion: result.spaceVersion,
       resultEntryRef: null, resultEntryVersion: null, resultRevisionRef: null, resultRevision: null,
+      resultRestoredFromRevisionRef: null, resultPrioritized: null, resultChanged: null,
       resultSpaceGeneration: result.spaceGeneration, resultLearningGeneration: result.learningGeneration,
       resultRevocationEpoch: result.revocationEpoch,
       resultMinimumSourceOriginSequence: result.minimumLearnableSourceOriginSequence,
@@ -617,7 +714,8 @@ type SpaceRow = Readonly<Record<string, unknown> & {
 }>;
 type EntryRow = Readonly<Record<string, unknown> & {
   siteRef: unknown; spaceRef: unknown; entryRef: unknown; version: unknown; currentRevision: unknown;
-  currentRevisionRef: unknown; state: unknown; category: unknown; featurePolicyRevisionRef: unknown;
+  currentRevisionRef: unknown; state: unknown; category: unknown; prioritized: unknown;
+  featurePolicyRevisionRef: unknown;
   spaceGeneration: unknown; learningGeneration: unknown; revocationEpoch: unknown;
   createdAt: unknown; updatedAt: unknown; deletedAt: unknown;
 }>;
@@ -625,7 +723,8 @@ type ReceiptRow = Readonly<Record<string, unknown> & {
   operation: unknown; requestDigest: unknown; resultKind: unknown; resultSpaceRef: unknown;
   resultSpaceVersion: unknown;
   resultEntryRef: unknown; resultEntryVersion: unknown; resultRevisionRef: unknown;
-  resultRevision: unknown; resultSpaceGeneration: unknown; resultLearningGeneration: unknown;
+  resultRevision: unknown; resultRestoredFromRevisionRef: unknown; resultPrioritized: unknown;
+  resultChanged: unknown; resultSpaceGeneration: unknown; resultLearningGeneration: unknown;
   resultRevocationEpoch: unknown; resultMinimumSourceOriginSequence: unknown;
   resultLearningState: unknown; resultUseState: unknown;
   resultPreviousFeaturePolicyRevisionRef: unknown; resultFeaturePolicyRevisionRef: unknown;
@@ -647,6 +746,8 @@ type ReceiptResultColumns = Readonly<{
   resultKind: MemoryCommandResult["kind"]; resultSpaceRef: MemorySpaceRef;
   resultSpaceVersion: bigint; resultEntryRef: string | null; resultEntryVersion: bigint | null;
   resultRevisionRef: string | null; resultRevision: bigint | null;
+  resultRestoredFromRevisionRef: string | null; resultPrioritized: boolean | null;
+  resultChanged: boolean | null;
   resultSpaceGeneration: bigint | null; resultLearningGeneration: bigint | null;
   resultRevocationEpoch: bigint | null; resultMinimumSourceOriginSequence: bigint | null;
   resultLearningState: "active" | "paused" | null; resultUseState: "active" | "paused" | null;

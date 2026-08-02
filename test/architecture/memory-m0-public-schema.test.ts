@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 const migrationPath = join(process.cwd(),
   "prisma/migrations/20260813_memory_m0_public_authority/migration.sql");
 const migration = readFileSync(migrationPath, "utf8");
+const ownerMigration = readFileSync(join(process.cwd(),
+  "prisma/migrations/20260814_memory_m0_public_owner/migration.sql"), "utf8");
 const schema = readFileSync(join(process.cwd(), "prisma/schema.prisma"), "utf8");
 const migrator = readFileSync(
   join(process.cwd(), "src/infrastructure/postgres/migrator.ts"),
@@ -94,7 +96,7 @@ describe("Memory M0.1 public database authority", () => {
 
   it("keeps public and runtime feature-off while exposing only the exact worker purge routines", () => {
     for (const routine of ["memory_worker_claim_purge", "memory_worker_delete_revision_payload",
-      "memory_worker_record_purge_receipt"]) {
+      "memory_worker_record_purge_receipt", "memory_worker_finalize_purge"]) {
       expect(migration).toContain(`CREATE FUNCTION platform.${routine}`);
       expect(migration).toContain(`REVOKE ALL ON FUNCTION platform.${routine}`);
     }
@@ -124,6 +126,27 @@ describe("Memory M0.1 public database authority", () => {
       "ownsAnyDatabase", "ownsAnySchema", "ownsAnyRelation", "ownsAnySequence",
       "ownsAnyRoutine", "ownsAnyType",
     ]) expect(migrator).toContain(ownershipFact);
+    expect(migrator).toContain("memoryMigratorIdentity");
+    expect(migrator).toContain("routine.proowner IS DISTINCT FROM migrator_identity.oid");
+  });
+
+  it("persists all seven public mutations only from service-computed transitions", () => {
+    expect(ownerMigration).not.toContain("memory_public_commit_extension_internal");
+    const validatedCore = ownerMigration.slice(
+      ownerMigration.indexOf("CREATE FUNCTION platform.memory_public_commit_validated_core_internal"),
+      ownerMigration.indexOf("CREATE FUNCTION platform.memory_public_resolve_owner"),
+    );
+    for (const operation of ["remember", "correct", "restore", "prioritize", "deprioritize",
+      "forget", "reset"]) {
+      expect(validatedCore).toContain(`'${operation}'`);
+      const wrapper = ownerMigration.slice(
+        ownerMigration.indexOf(`CREATE FUNCTION platform.memory_public_commit_${operation}`),
+        ownerMigration.indexOf("$$;", ownerMigration.indexOf(
+          `CREATE FUNCTION platform.memory_public_commit_${operation}`,
+        )) + 3,
+      );
+      expect(wrapper).toContain("memory_public_commit_validated_core_internal");
+    }
   });
 
   it("checks an existing pinned OID inventory after locking but before migration execution", () => {

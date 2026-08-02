@@ -3,7 +3,8 @@ import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runPlatformMigrations } from "../../src/infrastructure/postgres/migrator.js";
 import { MemoryPublicOwner, MemoryPublicReadOwner, PostgresMemoryPublicRepository,
-  createMemoryTransitionAuthority, createProtectedMemoryContent, memoryPublicPersonalContext,
+  createMemoryReplayRequestVerifier, createMemoryTransitionAuthority, createProtectedMemoryContent,
+  memoryPublicPersonalContext,
   type MemoryPublicUnitOfWork } from "../../src/modules/memory/index.js";
 import { issuePlatformTransaction, revokePlatformTransaction } from
   "../../src/shared/unit-of-work/platform-transaction.js";
@@ -44,7 +45,9 @@ describe("Memory public PostgreSQL authority", () => {
     );
     repository = new PostgresMemoryPublicRepository(createMemoryTransitionAuthority({
       keyRevision: "memory-transition-r1", key: authorityKey,
-    }));
+    }), createMemoryReplayRequestVerifier({ active: {
+      keyRevision: "memory-replay-r1", key: new Uint8Array(32).fill(29),
+    } }));
     const unitOfWork = postgresUnitOfWork(publicClient);
     const protector = {
       protect: async () => {
@@ -173,9 +176,11 @@ describe("Memory public PostgreSQL authority", () => {
     const spaceRef = owner.rows[0]?.space_ref;
     if (spaceRef === undefined) throw new Error("MEMORY_TEST_OWNER_SPACE_MISSING");
     const prepare = await publicClient.query<{ result: Record<string, unknown> }>(
-      `SELECT platform.memory_public_prepare_remember($1,$2,1,$3,$4,$5::char(64),$6,$7,$8,$9) AS result`,
+      `SELECT platform.memory_public_prepare_remember($1,$2,1,$3,$4,$5::char(64),$6,
+        $7::char(64),$8,$9,$10,$11) AS result`,
       [siteRef, subjectRef, policyRef, commandRef, "b".repeat(64), "memory-command-r1",
-        spaceRef, `memory-entry:${"2".repeat(64)}`, `memory-revision:${"3".repeat(64)}`],
+        "c".repeat(64), "memory-replay-r1", spaceRef,
+        `memory-entry:${"2".repeat(64)}`, `memory-revision:${"3".repeat(64)}`],
     );
     expect(prepare.rows[0]?.result).toMatchObject({ decision: "claimed" });
     await expect(publicClient.query("SELECT platform.memory_public_commit_remember($1::jsonb)",

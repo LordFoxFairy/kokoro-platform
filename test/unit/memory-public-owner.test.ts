@@ -29,11 +29,7 @@ describe("MemoryPublicOwner", () => {
     recovery = "none";
     repository = {
       recoverCommand: async (_transaction, identity) => {
-        events.push(`recover:${identity.requestDigestKeyRevision}`);
-        if (recovery === "rotated" && identity.requestDigestKeyRevision !== "memory-command-hmac-r0") {
-          return Object.freeze({ kind: "digest_mismatch" as const,
-            requestDigestKeyRevision: "memory-command-hmac-r0" });
-        }
+        events.push("recover");
         if (recovery === "replay" || recovery === "rotated") {
           return Object.freeze({ kind: "replay" as const, result: Object.freeze({
             kind: identity.operation === "restore" ? "restored" as const : "entry" as const,
@@ -44,7 +40,14 @@ describe("MemoryPublicOwner", () => {
             committedSpaceVersion: 9n,
           }) });
         }
-        return Object.freeze({ kind: "continue" as const });
+        return Object.freeze({ kind: "continue" as const,
+          requestPayloadKeyRevision: "memory-replay-r1", requestPayloadDigest: "c".repeat(64) });
+      },
+      claimCommand: async (_transaction, identity) => {
+        events.push(`claim:${identity.requestDigestKeyRevision}`);
+        return Object.freeze({ kind: "continue" as const,
+          requestPayloadKeyRevision: identity.requestPayloadKeyRevision,
+          requestPayloadDigest: identity.requestPayloadDigest });
       },
       executeCommand: async (_transaction, command) => {
         events.push("persist");
@@ -79,7 +82,8 @@ describe("MemoryPublicOwner", () => {
       category: "preference", content: "Prefers concise technical answers.",
       validFrom: null, validTo: null });
 
-    expect(events).toEqual(["transaction", "recover:memory-command-hmac-r1", "admit", "protect",
+    expect(events).toEqual(["transaction", "recover", "transaction", "claim:memory-command-hmac-r1",
+      "admit", "protect",
       "transaction", "persist"]);
     expect(result).toMatchObject({ kind: "entry", committedSpaceVersion: 2n });
     expect(commands).toHaveLength(1);
@@ -98,7 +102,8 @@ describe("MemoryPublicOwner", () => {
     await expect(owner.remember({ context, commandRef: "command-secret-1", category: "fact",
       content: "api_key=secret-value", validFrom: null, validTo: null }))
       .rejects.toEqual(new MemoryApplicationError("MEMORY_CONTENT_POLICY_REJECTED"));
-    expect(events).toEqual(["transaction", "recover:memory-command-hmac-r1", "admit"]);
+    expect(events).toEqual(["transaction", "recover", "transaction", "claim:memory-command-hmac-r1",
+      "admit"]);
 
     await expect(owner.remember({ context: { ...context, projectRef: "project-alpha" } as never,
       commandRef: "command-project-1", category: "fact", content: "ordinary fact",
@@ -148,8 +153,7 @@ describe("MemoryPublicOwner", () => {
       entryRef: "entry-1", expectedRevision: 2, content: "replacement",
       validFrom: null, validTo: null });
     expect(replay).toMatchObject({ replayed: true, committedSpaceVersion: 9n });
-    expect(events).toEqual(["transaction", "recover:memory-command-hmac-r1",
-      "transaction", "recover:memory-command-hmac-r0"]);
+    expect(events).toEqual(["transaction", "recover"]);
     expect(commands).toEqual([]);
   });
 

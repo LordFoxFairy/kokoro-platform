@@ -119,6 +119,9 @@ REVOKE ALL ON FUNCTION platform.validate_memory_entry_current_fence() FROM PUBLI
 
 ALTER TABLE platform.memory_command_receipt
   ADD COLUMN request_digest_key_revision TEXT,
+  ADD COLUMN result_restored_from_revision_ref TEXT,
+  ADD COLUMN result_prioritized BOOLEAN,
+  ADD COLUMN result_changed BOOLEAN,
   ADD CONSTRAINT memory_command_receipt_public_revision_bound_check
     CHECK (result_revision IS NULL OR result_revision<=2147483647),
   DROP CONSTRAINT memory_command_receipt_operation_check,
@@ -139,7 +142,9 @@ ALTER TABLE platform.memory_command_receipt
       AND result_revocation_epoch IS NULL AND result_minimum_source_origin_seq IS NULL
       AND result_learning_state IS NULL AND result_use_state IS NULL
       AND result_previous_feature_policy_revision_ref IS NULL
-      AND result_feature_policy_revision_ref IS NULL)
+      AND result_feature_policy_revision_ref IS NULL
+      AND (result_kind='restored')=(result_restored_from_revision_ref IS NOT NULL)
+      AND result_prioritized IS NULL AND result_changed IS NULL)
     OR
     (result_kind IN ('prioritized','deprioritized')
       AND result_entry_ref IS NOT NULL AND result_entry_version IS NOT NULL
@@ -148,7 +153,9 @@ ALTER TABLE platform.memory_command_receipt
       AND result_revocation_epoch IS NULL AND result_minimum_source_origin_seq IS NULL
       AND result_learning_state IS NULL AND result_use_state IS NULL
       AND result_previous_feature_policy_revision_ref IS NULL
-      AND result_feature_policy_revision_ref IS NULL)
+      AND result_feature_policy_revision_ref IS NULL
+      AND result_restored_from_revision_ref IS NULL
+      AND result_prioritized=(result_kind='prioritized') AND result_changed IS NOT NULL)
     OR
     (result_kind='forgotten' AND result_entry_ref IS NOT NULL AND result_entry_version IS NOT NULL
       AND result_revision_ref IS NULL AND result_revision IS NULL
@@ -156,7 +163,9 @@ ALTER TABLE platform.memory_command_receipt
       AND result_revocation_epoch IS NOT NULL AND result_minimum_source_origin_seq IS NULL
       AND result_learning_state IS NULL AND result_use_state IS NULL
       AND result_previous_feature_policy_revision_ref IS NULL
-      AND result_feature_policy_revision_ref IS NULL)
+      AND result_feature_policy_revision_ref IS NULL
+      AND result_restored_from_revision_ref IS NULL
+      AND result_prioritized IS NULL AND result_changed IS NULL)
     OR
     (result_kind IN ('learning_paused','learning_resumed','use_paused','use_resumed','reset')
       AND result_entry_ref IS NULL AND result_entry_version IS NULL
@@ -165,7 +174,9 @@ ALTER TABLE platform.memory_command_receipt
       AND result_revocation_epoch IS NOT NULL AND result_minimum_source_origin_seq IS NOT NULL
       AND result_learning_state IS NOT NULL AND result_use_state IS NOT NULL
       AND result_previous_feature_policy_revision_ref IS NULL
-      AND result_feature_policy_revision_ref IS NULL)
+      AND result_feature_policy_revision_ref IS NULL
+      AND result_restored_from_revision_ref IS NULL
+      AND result_prioritized IS NULL AND result_changed IS NULL)
     OR
     (result_kind='policy_rebound' AND result_entry_ref IS NULL AND result_entry_version IS NULL
       AND result_revision_ref IS NULL AND result_revision IS NULL
@@ -174,6 +185,8 @@ ALTER TABLE platform.memory_command_receipt
       AND result_learning_state='paused' AND result_use_state='paused'
       AND result_previous_feature_policy_revision_ref IS NOT NULL
       AND result_feature_policy_revision_ref IS NOT NULL
+      AND result_restored_from_revision_ref IS NULL
+      AND result_prioritized IS NULL AND result_changed IS NULL
       AND result_previous_feature_policy_revision_ref<>result_feature_policy_revision_ref)
   ),
   ADD CONSTRAINT memory_command_receipt_operation_result_check CHECK (
@@ -193,6 +206,9 @@ ALTER TABLE platform.memory_command_receipt
 
 ALTER TABLE platform.memory_public_command_inbox
   ADD COLUMN request_digest_key_revision TEXT NOT NULL,
+  ADD COLUMN request_payload_key_revision TEXT NOT NULL,
+  ADD COLUMN request_payload_digest CHAR(64) NOT NULL
+    CHECK (request_payload_digest ~ '^[a-f0-9]{64}$'),
   ADD COLUMN prepare_ref TEXT,
   ADD COLUMN expected_state_digest CHAR(64)
     CHECK (expected_state_digest IS NULL OR expected_state_digest ~ '^[a-f0-9]{64}$'),
@@ -203,6 +219,7 @@ ALTER TABLE platform.memory_public_command_inbox
   ADD COLUMN result_revision_ref TEXT,
   ADD COLUMN result_restored_from_revision_ref TEXT,
   ADD COLUMN result_prioritized BOOLEAN,
+  ADD COLUMN result_changed BOOLEAN,
   ADD COLUMN authority_key_revision TEXT,
   ADD COLUMN authority_payload_digest CHAR(64)
     CHECK (authority_payload_digest IS NULL OR authority_payload_digest ~ '^[a-f0-9]{64}$'),
@@ -215,6 +232,7 @@ ALTER TABLE platform.memory_public_command_inbox
       AND result_ref IS NULL AND result_entry_ref IS NULL AND result_entry_version IS NULL
       AND result_revision IS NULL AND result_revision_ref IS NULL
       AND result_restored_from_revision_ref IS NULL AND result_prioritized IS NULL
+      AND result_changed IS NULL
       AND authority_key_revision IS NULL AND authority_payload_digest IS NULL)
   ),
   ADD CONSTRAINT memory_public_command_prepare_shape_check CHECK (
@@ -233,23 +251,28 @@ ALTER TABLE platform.memory_public_command_inbox
     (operation IN ('remember','correct') AND safe_result_kind='entry'
       AND result_entry_ref IS NOT NULL AND result_entry_version IS NOT NULL
       AND result_revision IS NOT NULL AND result_revision_ref IS NOT NULL
-      AND result_restored_from_revision_ref IS NULL AND result_prioritized IS NULL)
+      AND result_restored_from_revision_ref IS NULL AND result_prioritized IS NULL
+      AND result_changed IS NULL)
     OR (operation='restore' AND safe_result_kind='restored'
       AND result_entry_ref IS NOT NULL AND result_entry_version IS NOT NULL
       AND result_revision IS NOT NULL AND result_revision_ref IS NOT NULL
-      AND result_restored_from_revision_ref IS NOT NULL AND result_prioritized IS NULL)
+      AND result_restored_from_revision_ref IS NOT NULL AND result_prioritized IS NULL
+      AND result_changed IS NULL)
     OR (operation IN ('prioritize','deprioritize') AND safe_result_kind='entry'
       AND result_entry_ref IS NOT NULL AND result_entry_version IS NOT NULL
       AND result_revision IS NULL AND result_revision_ref IS NULL
-      AND result_restored_from_revision_ref IS NULL AND result_prioritized IS NOT NULL)
+      AND result_restored_from_revision_ref IS NULL AND result_prioritized IS NOT NULL
+      AND result_changed IS NOT NULL)
     OR (operation='forget' AND safe_result_kind='purge'
       AND result_entry_ref IS NOT NULL AND result_entry_version IS NOT NULL
       AND result_revision IS NULL AND result_revision_ref IS NULL
-      AND result_restored_from_revision_ref IS NULL AND result_prioritized IS NULL)
+      AND result_restored_from_revision_ref IS NULL AND result_prioritized IS NULL
+      AND result_changed IS NULL)
     OR (operation='reset' AND safe_result_kind='purge'
       AND result_entry_ref IS NULL AND result_entry_version IS NULL
       AND result_revision IS NULL AND result_revision_ref IS NULL
-      AND result_restored_from_revision_ref IS NULL AND result_prioritized IS NULL)
+      AND result_restored_from_revision_ref IS NULL AND result_prioritized IS NULL
+      AND result_changed IS NULL)
   );
 
 CREATE TABLE platform.memory_transition_authority_key (
@@ -378,7 +401,7 @@ CREATE FUNCTION platform.memory_public_entry_state_internal(
 SELECT jsonb_build_object('siteRef',entry.site_ref,'spaceRef',entry.space_ref,
   'entryRef',entry.entry_ref,'version',entry.version::TEXT,
   'currentRevision',entry.current_revision::TEXT,'currentRevisionRef',entry.current_revision_ref,
-  'state',entry.state,'category',entry.category,
+  'state',entry.state,'category',entry.category,'prioritized',entry.prioritized,
   'featurePolicyRevisionRef',entry.feature_policy_revision_ref,
   'spaceGeneration',entry.space_generation::TEXT,
   'learningGeneration',entry.learning_generation::TEXT,
@@ -392,20 +415,41 @@ FROM platform.memory_entry entry WHERE entry.site_ref=p_site_ref
 $$;
 REVOKE ALL ON FUNCTION platform.memory_public_entry_state_internal(TEXT,TEXT,TEXT) FROM PUBLIC;
 
+CREATE FUNCTION platform.memory_public_restore_revision_state_internal(
+  p_site_ref TEXT,p_space_ref TEXT,p_entry_ref TEXT,p_revision_ref TEXT
+) RETURNS JSONB LANGUAGE sql STABLE SET search_path=pg_catalog,platform AS $$
+SELECT jsonb_build_object('revision',revision.revision::TEXT,
+  'revisionRef',revision.revision_ref,
+  'validFrom',CASE WHEN revision.valid_from IS NULL THEN NULL ELSE
+    to_char(revision.valid_from AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END,
+  'validTo',CASE WHEN revision.valid_to IS NULL THEN NULL ELSE
+    to_char(revision.valid_to AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END)
+FROM platform.memory_revision revision
+WHERE revision.site_ref=p_site_ref AND revision.space_ref=p_space_ref
+  AND revision.entry_ref=p_entry_ref AND revision.revision_ref=p_revision_ref
+$$;
+REVOKE ALL ON FUNCTION platform.memory_public_restore_revision_state_internal(TEXT,TEXT,TEXT,TEXT)
+  FROM PUBLIC;
+
 CREATE FUNCTION platform.memory_public_prepare_command_internal(
   p_operation TEXT,p_site_ref TEXT,p_subject_ref TEXT,p_subject_generation BIGINT,
   p_feature_policy_revision_ref TEXT,p_command_ref TEXT,p_request_digest CHAR(64),
-  p_request_digest_key_revision TEXT,p_space_ref TEXT,p_entry_ref TEXT,p_revision_ref TEXT
+  p_request_digest_key_revision TEXT,p_request_payload_digest CHAR(64),
+  p_request_payload_key_revision TEXT,p_space_ref TEXT,p_entry_ref TEXT,p_revision_ref TEXT
 ) RETURNS JSONB LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
 DECLARE owner_result JSONB; inbox_row platform.memory_public_command_inbox%ROWTYPE;
-  space_state JSONB; entry_state JSONB; v_state_digest CHAR(64); v_prepare_ref TEXT;
+  space_state JSONB; entry_state JSONB; restore_revision_state JSONB;
+  v_state_digest CHAR(64); v_prepare_ref TEXT;
   had_inbox BOOLEAN;
 BEGIN
   IF p_operation NOT IN ('remember','correct','restore','prioritize','deprioritize','forget','reset')
     OR p_command_ref IS NULL OR length(p_command_ref) NOT BETWEEN 3 AND 256
-    OR p_request_digest !~ '^[a-f0-9]{64}$'
-    OR p_request_digest_key_revision IS NULL
-    OR length(p_request_digest_key_revision) NOT BETWEEN 3 AND 128 THEN
+    OR p_request_payload_digest !~ '^[a-f0-9]{64}$'
+    OR p_request_payload_key_revision IS NULL
+    OR length(p_request_payload_key_revision) NOT BETWEEN 3 AND 128
+    OR (p_request_digest IS NULL)<>(p_request_digest_key_revision IS NULL)
+    OR (p_request_digest IS NOT NULL AND (p_request_digest !~ '^[a-f0-9]{64}$'
+      OR length(p_request_digest_key_revision) NOT BETWEEN 3 AND 128)) THEN
     RAISE EXCEPTION 'MEMORY_PUBLIC_COMMAND_INVALID';
   END IF;
   PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
@@ -418,33 +462,45 @@ BEGIN
     IF inbox_row.owner_scope_kind<>'user' OR inbox_row.owner_subject_ref<>p_subject_ref
       OR inbox_row.owner_subject_generation<>p_subject_generation
       OR inbox_row.owner_project_ref IS NOT NULL OR inbox_row.operation<>p_operation THEN
-      RETURN jsonb_build_object('decision','digest_conflict');
+      RETURN jsonb_build_object('decision','payload_conflict');
     END IF;
-    IF inbox_row.request_digest<>p_request_digest
-      OR inbox_row.request_digest_key_revision<>p_request_digest_key_revision THEN
-      RETURN jsonb_build_object('decision','digest_conflict',
-        'requestDigestKeyRevision',inbox_row.request_digest_key_revision);
+    IF inbox_row.request_payload_key_revision<>p_request_payload_key_revision THEN
+      RETURN jsonb_build_object('decision','payload_key_mismatch',
+        'requestPayloadKeyRevision',inbox_row.request_payload_key_revision);
+    END IF;
+    IF inbox_row.request_payload_digest<>p_request_payload_digest THEN
+      RETURN jsonb_build_object('decision','payload_conflict');
     END IF;
     IF inbox_row.state='completed' THEN
       RETURN jsonb_strip_nulls(jsonb_build_object('decision','replay','kind',inbox_row.safe_result_kind,
-        'spaceRef',p_space_ref,
-        'committedSpaceVersion',inbox_row.committed_space_version::TEXT,
-        'entryRef',inbox_row.result_entry_ref,
-        'entryVersion',inbox_row.result_entry_version::TEXT,
-        'revision',inbox_row.result_revision::TEXT,
-        'revisionRef',inbox_row.result_revision_ref,
+        'spaceRef',p_space_ref,'committedSpaceVersion',inbox_row.committed_space_version::TEXT,
+        'entryRef',inbox_row.result_entry_ref,'entryVersion',inbox_row.result_entry_version::TEXT,
+        'revision',inbox_row.result_revision::TEXT,'revisionRef',inbox_row.result_revision_ref,
         'restoredFromRevisionRef',inbox_row.result_restored_from_revision_ref,
-        'prioritized',inbox_row.result_prioritized));
+        'prioritized',inbox_row.result_prioritized,'changed',inbox_row.result_changed));
+    END IF;
+    IF p_request_digest IS NULL THEN
+      RETURN jsonb_build_object('decision','fingerprint_required');
+    END IF;
+    IF inbox_row.request_digest<>p_request_digest OR
+      inbox_row.request_digest_key_revision<>p_request_digest_key_revision THEN
+      RETURN jsonb_build_object('decision','digest_conflict',
+        'requestDigestKeyRevision',inbox_row.request_digest_key_revision);
     END IF;
     IF inbox_row.state<>'accepted' THEN RETURN jsonb_build_object('decision','outcome_unknown'); END IF;
+  ELSIF p_request_digest IS NULL THEN
+    RETURN jsonb_build_object('decision','fingerprint_required');
   END IF;
   owner_result:=platform.memory_public_personal_owner_internal(p_site_ref,p_subject_ref,
     p_subject_generation,p_feature_policy_revision_ref,p_space_ref);
   space_state:=platform.memory_public_space_state_internal(p_site_ref,p_space_ref);
   entry_state:=CASE WHEN p_operation IN ('correct','restore','prioritize','deprioritize','forget')
     THEN platform.memory_public_entry_state_internal(p_site_ref,p_space_ref,p_entry_ref) ELSE NULL END;
+  restore_revision_state:=CASE WHEN p_operation='restore' THEN
+    platform.memory_public_restore_revision_state_internal(p_site_ref,p_space_ref,p_entry_ref,
+      p_revision_ref) ELSE NULL END;
   v_state_digest:=encode(sha256(convert_to(jsonb_build_object('operation',p_operation,
-    'space',space_state,'entry',entry_state)::TEXT,'UTF8')),'hex');
+    'space',space_state,'entry',entry_state,'restoreRevision',restore_revision_state)::TEXT,'UTF8')),'hex');
   v_prepare_ref:='memory-prepare:'||encode(sha256(convert_to(concat_ws(E'\x1f',p_site_ref,
     p_command_ref,v_state_digest,clock_timestamp()::TEXT,random()::TEXT),'UTF8')),'hex');
   IF had_inbox THEN
@@ -453,17 +509,19 @@ BEGIN
   ELSE
     INSERT INTO platform.memory_public_command_inbox(site_ref,command_ref,owner_scope_kind,
       owner_subject_ref,owner_subject_generation,owner_project_ref,operation,request_digest,
-      request_digest_key_revision,state,prepare_ref,expected_state_digest,created_at)
+      request_digest_key_revision,request_payload_digest,request_payload_key_revision,
+      state,prepare_ref,expected_state_digest,created_at)
     VALUES (p_site_ref,p_command_ref,'user',p_subject_ref,p_subject_generation,NULL,
-      p_operation,p_request_digest,p_request_digest_key_revision,'accepted',v_prepare_ref,
+      p_operation,p_request_digest,p_request_digest_key_revision,p_request_payload_digest,
+      p_request_payload_key_revision,'accepted',v_prepare_ref,
       v_state_digest,statement_timestamp());
   END IF;
   RETURN owner_result || jsonb_build_object('decision','claimed','entryRef',p_entry_ref,
     'revisionRef',p_revision_ref,'prepareRef',v_prepare_ref,'expectedStateDigest',v_state_digest,
-    'spaceState',space_state,'entryState',entry_state);
+    'spaceState',space_state,'entryState',entry_state,'restoreRevisionState',restore_revision_state);
 END $$;
 REVOKE ALL ON FUNCTION platform.memory_public_prepare_command_internal(
-  TEXT,TEXT,TEXT,BIGINT,TEXT,TEXT,CHAR,TEXT,TEXT,TEXT,TEXT) FROM PUBLIC;
+  TEXT,TEXT,TEXT,BIGINT,TEXT,TEXT,CHAR,TEXT,CHAR,TEXT,TEXT,TEXT,TEXT) FROM PUBLIC;
 
 CREATE FUNCTION platform.memory_public_entry_json(
   p_site_ref TEXT,p_space_ref TEXT,p_entry_ref TEXT
@@ -562,161 +620,6 @@ WHERE revision.site_ref=p_site_ref AND revision.space_ref=p_space_ref
 $$;
 REVOKE ALL ON FUNCTION platform.memory_public_revision_json(TEXT,TEXT,TEXT,BIGINT) FROM PUBLIC;
 
-CREATE FUNCTION platform.memory_public_commit_extension_internal(
-  p_operation TEXT,p_payload JSONB
-) RETURNS JSONB LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
-DECLARE
-  v_command JSONB:=p_payload->'command'; v_context JSONB:=v_command->'context';
-  v_protected JSONB:=v_command->'protectedContent';
-  v_site_ref TEXT:=v_context->>'siteRef'; v_subject_ref TEXT:=v_context->>'subjectRef';
-  v_subject_generation BIGINT:=(v_context->>'subjectGeneration')::BIGINT;
-  v_policy TEXT:=v_context->>'featurePolicyRevisionRef';
-  v_command_ref TEXT:=v_command->>'commandRef'; v_digest CHAR(64):=v_command->>'requestDigest';
-  v_digest_key_revision TEXT:=v_command->>'requestDigestKeyRevision';
-  v_space_ref TEXT:=v_command->>'spaceRef'; v_entry_ref TEXT:=v_command->>'entryRef';
-  v_revision_ref TEXT:=v_command->>'revisionRef'; v_provenance_ref TEXT:=v_command->>'provenanceRef';
-  v_prepare_ref TEXT:=p_payload->>'prepareRef';
-  v_expected_state_digest CHAR(64):=p_payload->>'expectedStateDigest';
-  v_space platform.memory_space%ROWTYPE; v_entry platform.memory_entry%ROWTYPE;
-  v_space_state JSONB; v_entry_state JSONB; v_live_digest CHAR(64);
-  v_now TIMESTAMPTZ:=(v_command->>'recordedAt')::TIMESTAMPTZ;
-  v_receipt_kind TEXT; v_safe_kind TEXT;
-  v_result_entry_version BIGINT; v_result_revision BIGINT; v_committed BIGINT;
-  v_changed BOOLEAN:=true; v_target_revision BIGINT;
-  v_authority JSONB;
-BEGIN
-  IF p_operation NOT IN ('restore','prioritize','deprioritize')
-    OR v_command->>'operation'<>p_operation OR jsonb_typeof(v_context)<>'object' THEN
-    RAISE EXCEPTION 'MEMORY_PUBLIC_COMMAND_INVALID';
-  END IF;
-  PERFORM platform.memory_public_personal_owner_internal(v_site_ref,v_subject_ref,
-    v_subject_generation,v_policy,v_space_ref);
-  PERFORM 1 FROM platform.memory_public_command_inbox inbox
-   WHERE inbox.site_ref=v_site_ref AND inbox.command_ref=v_command_ref
-     AND inbox.owner_scope_kind='user' AND inbox.owner_subject_ref=v_subject_ref
-     AND inbox.owner_subject_generation=v_subject_generation AND inbox.owner_project_ref IS NULL
-     AND inbox.operation=p_operation AND inbox.request_digest=v_digest
-     AND inbox.request_digest_key_revision=v_digest_key_revision AND inbox.state='accepted'
-     AND inbox.prepare_ref=v_prepare_ref AND inbox.expected_state_digest=v_expected_state_digest
-   FOR UPDATE;
-  IF NOT FOUND THEN RAISE EXCEPTION 'MEMORY_PUBLIC_COMMAND_FENCE_INVALID'; END IF;
-  v_authority:=platform.memory_public_verify_authority_internal(p_payload);
-  SELECT * INTO v_space FROM platform.memory_space space
-   WHERE space.site_ref=v_site_ref AND space.space_ref=v_space_ref FOR UPDATE;
-  SELECT * INTO v_entry FROM platform.memory_entry entry
-   WHERE entry.site_ref=v_site_ref AND entry.space_ref=v_space_ref
-     AND entry.entry_ref=v_entry_ref FOR UPDATE;
-  IF v_space.space_ref IS NULL OR v_entry.entry_ref IS NULL OR v_space.state<>'active'
-    OR v_entry.state<>'active' OR v_entry.feature_policy_revision_ref<>v_space.feature_policy_revision_ref
-    OR v_entry.space_generation<>v_space.space_generation
-    OR v_entry.learning_generation<>v_space.learning_generation
-    OR v_entry.revocation_epoch>v_space.revocation_epoch THEN
-    RAISE EXCEPTION 'MEMORY_PUBLIC_NOT_AVAILABLE';
-  END IF;
-  v_space_state:=platform.memory_public_space_state_internal(v_site_ref,v_space_ref);
-  v_entry_state:=platform.memory_public_entry_state_internal(v_site_ref,v_space_ref,v_entry_ref);
-  v_live_digest:=encode(sha256(convert_to(jsonb_build_object('operation',p_operation,
-    'space',v_space_state,'entry',v_entry_state)::TEXT,'UTF8')),'hex');
-  IF v_live_digest<>v_expected_state_digest THEN RAISE EXCEPTION 'MEMORY_PUBLIC_VERSION_CONFLICT'; END IF;
-
-  IF p_operation='restore' THEN
-    IF v_revision_ref IS NULL OR v_provenance_ref IS NULL OR v_protected IS NULL
-      OR (v_command->>'expectedRevision')::BIGINT<>v_entry.current_revision
-      OR v_entry.current_revision>=2147483647 THEN
-      RAISE EXCEPTION 'MEMORY_PUBLIC_VERSION_CONFLICT';
-    END IF;
-    SELECT revision.revision INTO v_target_revision FROM platform.memory_revision revision
-      JOIN platform.memory_revision_payload payload ON payload.site_ref=revision.site_ref
-        AND payload.space_ref=revision.space_ref AND payload.entry_ref=revision.entry_ref
-        AND payload.revision=revision.revision AND payload.revision_ref=revision.revision_ref
-     WHERE revision.site_ref=v_site_ref AND revision.space_ref=v_space_ref
-       AND revision.entry_ref=v_entry_ref
-       AND revision.revision_ref=v_command->>'restoredFromRevisionRef'
-       AND revision.revision<v_entry.current_revision;
-    IF v_target_revision IS NULL THEN RAISE EXCEPTION 'MEMORY_PUBLIC_NOT_RESTORABLE'; END IF;
-    UPDATE platform.memory_space SET version=version+1,updated_at=v_now
-     WHERE site_ref=v_site_ref AND space_ref=v_space_ref RETURNING version INTO v_committed;
-    v_result_revision:=v_entry.current_revision+1;
-    INSERT INTO platform.memory_revision(site_ref,space_ref,entry_ref,revision,revision_ref,reason,
-      supersedes_revision,supersedes_revision_ref,restored_from_revision_ref,
-      feature_policy_revision_ref,valid_from,valid_to,recorded_at)
-    VALUES (v_site_ref,v_space_ref,v_entry_ref,v_result_revision,v_revision_ref,'restored',
-      v_entry.current_revision,v_entry.current_revision_ref,v_command->>'restoredFromRevisionRef',
-      v_policy,(v_command->>'validFrom')::TIMESTAMPTZ,
-      (v_command->>'validTo')::TIMESTAMPTZ,v_now);
-    INSERT INTO platform.memory_revision_payload(site_ref,space_ref,entry_ref,revision,revision_ref,
-      envelope_version,protection_key_revision,nonce,protected_ciphertext,authentication_tag,
-      aad_digest,protected_at)
-    VALUES (v_site_ref,v_space_ref,v_entry_ref,v_result_revision,v_revision_ref,
-      (v_protected->>'envelopeVersion')::SMALLINT,v_protected->>'keyRevision',
-      decode(v_protected->>'nonce','base64'),decode(v_protected->>'ciphertext','base64'),
-      decode(v_protected->>'authenticationTag','base64'),v_protected->>'aadDigest',v_now);
-    INSERT INTO platform.memory_provenance(site_ref,space_ref,entry_ref,revision,revision_ref,
-      provenance_ref,source_kind,source_ref,source_digest,source_digest_key_revision,
-      actor_subject_ref,actor_subject_generation,actor_project_ref,actor_membership_epoch,
-      actor_authorization_epoch,recorded_at)
-    VALUES (v_site_ref,v_space_ref,v_entry_ref,v_result_revision,v_revision_ref,v_provenance_ref,
-      'authenticated_user_command',v_command_ref,v_digest,v_digest_key_revision,
-      v_subject_ref,v_subject_generation,NULL,NULL,NULL,v_now);
-    UPDATE platform.memory_entry SET version=version+1,current_revision=v_result_revision,
-      current_revision_ref=v_revision_ref,updated_at=v_now
-     WHERE site_ref=v_site_ref AND space_ref=v_space_ref AND entry_ref=v_entry_ref
-     RETURNING version INTO v_result_entry_version;
-    v_receipt_kind:='restored'; v_safe_kind:='restored';
-  ELSE
-    IF (v_command->>'expectedEntryVersion')::BIGINT<>v_entry.version
-      OR (v_command->>'prioritized')::BOOLEAN<>(p_operation='prioritize') THEN
-      RAISE EXCEPTION 'MEMORY_PUBLIC_VERSION_CONFLICT';
-    END IF;
-    IF v_entry.prioritized=(p_operation='prioritize') THEN
-      v_changed:=false; v_committed:=v_space.version; v_result_entry_version:=v_entry.version;
-    ELSE
-      UPDATE platform.memory_space SET version=version+1,updated_at=v_now
-       WHERE site_ref=v_site_ref AND space_ref=v_space_ref RETURNING version INTO v_committed;
-      UPDATE platform.memory_entry SET version=version+1,prioritized=(p_operation='prioritize'),
-        updated_at=v_now WHERE site_ref=v_site_ref AND space_ref=v_space_ref AND entry_ref=v_entry_ref
-        RETURNING version INTO v_result_entry_version;
-    END IF;
-    v_receipt_kind:=CASE WHEN p_operation='prioritize' THEN 'prioritized' ELSE 'deprioritized' END;
-    v_safe_kind:='entry';
-  END IF;
-
-  INSERT INTO platform.memory_command_receipt(site_ref,owner_scope_kind,owner_subject_ref,
-    owner_subject_generation,owner_project_ref,caller_subject_ref,caller_subject_generation,
-    caller_membership_epoch,caller_authorization_epoch,command_ref,operation,request_digest,
-    request_digest_key_revision,result_kind,result_space_ref,result_space_version,result_entry_ref,
-    result_entry_version,result_revision_ref,result_revision,result_space_generation,
-    result_learning_generation,result_revocation_epoch,result_minimum_source_origin_seq,
-    result_learning_state,result_use_state,result_previous_feature_policy_revision_ref,
-    result_feature_policy_revision_ref,recorded_at)
-  VALUES (v_site_ref,'user',v_subject_ref,v_subject_generation,NULL,v_subject_ref,
-    v_subject_generation,NULL,NULL,v_command_ref,p_operation,v_digest,v_digest_key_revision,
-    v_receipt_kind,v_space_ref,v_committed,v_entry_ref,v_result_entry_version,
-    CASE WHEN p_operation='restore' THEN v_revision_ref ELSE NULL END,v_result_revision,
-    NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,v_now);
-  UPDATE platform.memory_public_command_inbox SET state='completed',safe_result_kind=v_safe_kind,
-    result_ref=v_entry_ref,committed_space_version=v_committed,result_entry_ref=v_entry_ref,
-    result_entry_version=v_result_entry_version,result_revision=v_result_revision,
-    result_revision_ref=CASE WHEN p_operation='restore' THEN v_revision_ref ELSE NULL END,
-    result_restored_from_revision_ref=CASE WHEN p_operation='restore'
-      THEN v_command->>'restoredFromRevisionRef' ELSE NULL END,
-    result_prioritized=CASE WHEN p_operation IN ('prioritize','deprioritize')
-      THEN p_operation='prioritize' ELSE NULL END,
-    authority_key_revision=v_authority->>'keyRevision',
-    authority_payload_digest=v_authority->>'payloadDigest',
-    completed_at=v_now
-   WHERE site_ref=v_site_ref AND command_ref=v_command_ref;
-  RETURN jsonb_strip_nulls(jsonb_build_object('decision','committed','kind',v_safe_kind,
-    'committedSpaceVersion',v_committed::TEXT,'entryRef',v_entry_ref,
-    'entryVersion',v_result_entry_version::TEXT,'revision',v_result_revision::TEXT,
-    'revisionRef',CASE WHEN p_operation='restore' THEN v_revision_ref ELSE NULL END,
-    'restoredFromRevisionRef',CASE WHEN p_operation='restore'
-      THEN v_command->>'restoredFromRevisionRef' ELSE NULL END,
-    'prioritized',CASE WHEN p_operation IN ('prioritize','deprioritize')
-      THEN p_operation='prioritize' ELSE NULL END,'changed',v_changed));
-END $$;
-REVOKE ALL ON FUNCTION platform.memory_public_commit_extension_internal(TEXT,JSONB) FROM PUBLIC;
-
 -- Core public mutations are computed by MemoryAuthorityService. This routine performs only
 -- prepare-receipt binding, current-state digest CAS, and persistence of that validated transition.
 CREATE FUNCTION platform.memory_public_commit_validated_core_internal(
@@ -733,14 +636,15 @@ DECLARE
   v_digest_key_revision TEXT:=v_command->>'requestDigestKeyRevision';
   v_prepare_ref TEXT:=p_payload->>'prepareRef';
   v_expected_state_digest CHAR(64):=p_payload->>'expectedStateDigest';
-  v_space_state JSONB; v_entry_state JSONB; v_live_digest CHAR(64);
+  v_space_state JSONB; v_entry_state JSONB; v_restore_revision_state JSONB;
+  v_live_digest CHAR(64);
   v_remembered JSONB; v_entry JSONB; v_revision JSONB; v_provenance JSONB; v_protected JSONB;
   v_result JSONB:=v_transition->'result'; v_committed BIGINT;
   v_safe_kind TEXT; v_receipt_kind TEXT; v_updated BIGINT;
   v_authority JSONB;
   v_purge_job_ref TEXT; v_target_count BIGINT; v_target_digest CHAR(64);
 BEGIN
-  IF p_operation NOT IN ('remember','correct','forget','reset')
+  IF p_operation NOT IN ('remember','correct','restore','prioritize','deprioritize','forget','reset')
     OR v_command->>'operation' IS DISTINCT FROM p_operation
     OR v_transition->>'operation' IS DISTINCT FROM p_operation
     OR jsonb_typeof(v_context) IS DISTINCT FROM 'object'
@@ -755,16 +659,22 @@ BEGIN
      AND inbox.owner_subject_generation=v_subject_generation AND inbox.owner_project_ref IS NULL
      AND inbox.operation=p_operation AND inbox.request_digest=v_digest
      AND inbox.request_digest_key_revision=v_digest_key_revision AND inbox.state='accepted'
+     AND inbox.request_payload_digest=v_command->>'requestPayloadDigest'
+     AND inbox.request_payload_key_revision=v_command->>'requestPayloadKeyRevision'
      AND inbox.prepare_ref=v_prepare_ref
      AND inbox.expected_state_digest=v_expected_state_digest FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'MEMORY_PUBLIC_COMMAND_FENCE_INVALID'; END IF;
   v_authority:=platform.memory_public_verify_authority_internal(p_payload);
 
   v_space_state:=platform.memory_public_space_state_internal(v_site_ref,v_space_ref);
-  v_entry_state:=CASE WHEN p_operation IN ('correct','forget')
+  v_entry_state:=CASE WHEN p_operation IN ('correct','restore','prioritize','deprioritize','forget')
     THEN platform.memory_public_entry_state_internal(v_site_ref,v_space_ref,v_entry_ref) ELSE NULL END;
+  v_restore_revision_state:=CASE WHEN p_operation='restore' THEN
+    platform.memory_public_restore_revision_state_internal(v_site_ref,v_space_ref,v_entry_ref,
+      v_command->>'restoredFromRevisionRef') ELSE NULL END;
   v_live_digest:=encode(sha256(convert_to(jsonb_build_object('operation',p_operation,
-    'space',v_space_state,'entry',v_entry_state)::TEXT,'UTF8')),'hex');
+    'space',v_space_state,'entry',v_entry_state,
+    'restoreRevision',v_restore_revision_state)::TEXT,'UTF8')),'hex');
   IF v_live_digest<>v_expected_state_digest THEN
     RAISE EXCEPTION 'MEMORY_PUBLIC_VERSION_CONFLICT';
   END IF;
@@ -775,9 +685,9 @@ BEGIN
   -- prepare receipt authenticates the command/current state; these bindings prevent a caller
   -- with the dedicated public credential from swapping identities, policy, protected bytes, or
   -- result references between the validated command and the rows persisted below.
-  IF p_operation IN ('remember','correct') THEN
+  IF p_operation IN ('remember','correct','restore') THEN
     v_remembered:=CASE WHEN p_operation='remember' THEN v_transition->'remembered'
-      ELSE v_transition->'corrected' END;
+      WHEN p_operation='correct' THEN v_transition->'corrected' ELSE v_transition->'restored' END;
     v_entry:=v_remembered->'entry'; v_revision:=v_remembered->'revision';
     v_provenance:=v_remembered->'provenance'; v_protected:=v_revision->'protectedContent';
     IF jsonb_typeof(v_entry) IS DISTINCT FROM 'object'
@@ -806,7 +716,21 @@ BEGIN
       OR v_provenance->>'recordedAt' IS DISTINCT FROM v_command->>'recordedAt'
       OR v_protected IS DISTINCT FROM v_command->'protectedContent'
       OR v_result->>'entryRef' IS DISTINCT FROM v_entry_ref
-      OR v_result->>'revisionRef' IS DISTINCT FROM v_command->>'revisionRef' THEN
+      OR v_result->>'revisionRef' IS DISTINCT FROM v_command->>'revisionRef'
+      OR (p_operation='restore' AND (v_revision->>'restoredFromRevisionRef' IS DISTINCT FROM
+        v_command->>'restoredFromRevisionRef' OR v_result->>'restoredFromRevisionRef' IS DISTINCT FROM
+        v_command->>'restoredFromRevisionRef')) THEN
+      RAISE EXCEPTION 'MEMORY_PUBLIC_TRANSITION_INVALID';
+    END IF;
+  ELSIF p_operation IN ('prioritize','deprioritize') THEN
+    v_entry:=v_transition->'entry';
+    IF jsonb_typeof(v_entry) IS DISTINCT FROM 'object'
+      OR v_entry->>'siteRef' IS DISTINCT FROM v_site_ref
+      OR v_entry->>'spaceRef' IS DISTINCT FROM v_space_ref
+      OR v_entry->>'entryRef' IS DISTINCT FROM v_entry_ref
+      OR (v_entry->>'prioritized')::BOOLEAN IS DISTINCT FROM (p_operation='prioritize')
+      OR v_result->>'entryRef' IS DISTINCT FROM v_entry_ref
+      OR (v_result->>'prioritized')::BOOLEAN IS DISTINCT FROM (p_operation='prioritize') THEN
       RAISE EXCEPTION 'MEMORY_PUBLIC_TRANSITION_INVALID';
     END IF;
   ELSIF p_operation='forget' THEN
@@ -819,7 +743,7 @@ BEGIN
       RAISE EXCEPTION 'MEMORY_PUBLIC_TRANSITION_INVALID';
     END IF;
   END IF;
-  IF p_operation IN ('forget','reset') THEN
+  IF p_operation IN ('prioritize','deprioritize','forget','reset') THEN
     IF v_transition->'space'->>'spaceRef' IS DISTINCT FROM v_space_ref
       OR v_transition->'space'->'binding'->>'siteRef' IS DISTINCT FROM v_site_ref
       OR v_transition->'space'->'binding'->>'subjectRef' IS DISTINCT FROM v_subject_ref
@@ -865,8 +789,9 @@ BEGIN
       v_entry->>'featurePolicyRevisionRef',(v_entry->>'spaceGeneration')::BIGINT,
       (v_entry->>'learningGeneration')::BIGINT,(v_entry->>'revocationEpoch')::BIGINT,false,
       (v_entry->>'createdAt')::TIMESTAMPTZ,(v_entry->>'updatedAt')::TIMESTAMPTZ,NULL);
-  ELSIF p_operation='correct' THEN
-    v_remembered:=v_transition->'corrected'; v_entry:=v_remembered->'entry';
+  ELSIF p_operation IN ('correct','restore') THEN
+    v_remembered:=CASE WHEN p_operation='correct' THEN v_transition->'corrected'
+      ELSE v_transition->'restored' END; v_entry:=v_remembered->'entry';
     v_revision:=v_remembered->'revision'; v_provenance:=v_remembered->'provenance';
     v_protected:=v_revision->'protectedContent';
     UPDATE platform.memory_space SET version=v_committed,
@@ -875,6 +800,23 @@ BEGIN
        AND version=(v_space_state->>'version')::BIGINT;
     GET DIAGNOSTICS v_updated=ROW_COUNT;
     IF v_updated<>1 THEN RAISE EXCEPTION 'MEMORY_PUBLIC_VERSION_CONFLICT'; END IF;
+  ELSIF p_operation IN ('prioritize','deprioritize') THEN
+    v_entry:=v_transition->'entry';
+    IF (v_result->>'changed')::BOOLEAN THEN
+      UPDATE platform.memory_space SET version=(v_transition->'space'->>'version')::BIGINT,
+        updated_at=(v_transition->'space'->>'updatedAt')::TIMESTAMPTZ
+       WHERE site_ref=v_site_ref AND space_ref=v_space_ref
+         AND version=(v_transition->'expected'->>'spaceVersion')::BIGINT;
+      GET DIAGNOSTICS v_updated=ROW_COUNT;
+      IF v_updated<>1 THEN RAISE EXCEPTION 'MEMORY_PUBLIC_VERSION_CONFLICT'; END IF;
+      UPDATE platform.memory_entry SET version=(v_entry->>'version')::BIGINT,
+        prioritized=(v_entry->>'prioritized')::BOOLEAN,
+        updated_at=(v_entry->>'updatedAt')::TIMESTAMPTZ
+       WHERE site_ref=v_site_ref AND space_ref=v_space_ref AND entry_ref=v_entry_ref
+         AND version=(v_transition->'expected'->>'entryVersion')::BIGINT AND state='active';
+      GET DIAGNOSTICS v_updated=ROW_COUNT;
+      IF v_updated<>1 THEN RAISE EXCEPTION 'MEMORY_PUBLIC_VERSION_CONFLICT'; END IF;
+    END IF;
   ELSIF p_operation='forget' THEN
     v_entry:=v_transition->'entry';
     UPDATE platform.memory_space SET version=(v_transition->'space'->>'version')::BIGINT,
@@ -914,16 +856,16 @@ BEGIN
     IF v_updated<>1 THEN RAISE EXCEPTION 'MEMORY_PUBLIC_VERSION_CONFLICT'; END IF;
   END IF;
 
-  IF p_operation IN ('remember','correct') THEN
+  IF p_operation IN ('remember','correct','restore') THEN
     INSERT INTO platform.memory_revision(site_ref,space_ref,entry_ref,revision,revision_ref,reason,
       supersedes_revision,supersedes_revision_ref,restored_from_revision_ref,
       feature_policy_revision_ref,valid_from,valid_to,recorded_at)
     VALUES (v_revision->>'siteRef',v_revision->>'spaceRef',v_revision->>'entryRef',
       (v_revision->>'revision')::BIGINT,v_revision->>'revisionRef',v_revision->>'reason',
       CASE WHEN v_revision->>'supersedesRevisionRef' IS NULL THEN NULL
-        ELSE (v_revision->>'revision')::BIGINT-1 END,v_revision->>'supersedesRevisionRef',NULL,
-      v_revision->>'featurePolicyRevisionRef',(v_command->>'validFrom')::TIMESTAMPTZ,
-      (v_command->>'validTo')::TIMESTAMPTZ,
+        ELSE (v_revision->>'revision')::BIGINT-1 END,v_revision->>'supersedesRevisionRef',
+      v_revision->>'restoredFromRevisionRef',v_revision->>'featurePolicyRevisionRef',
+      (v_revision->>'validFrom')::TIMESTAMPTZ,(v_revision->>'validTo')::TIMESTAMPTZ,
       (v_revision->>'recordedAt')::TIMESTAMPTZ);
     INSERT INTO platform.memory_revision_payload(site_ref,space_ref,entry_ref,revision,revision_ref,
       envelope_version,protection_key_revision,nonce,protected_ciphertext,authentication_tag,
@@ -944,7 +886,7 @@ BEGIN
       v_digest,v_digest_key_revision,v_provenance->>'actorSubjectRef',
       (v_provenance->>'actorSubjectGeneration')::BIGINT,NULL,NULL,NULL,
       (v_provenance->>'recordedAt')::TIMESTAMPTZ);
-    IF p_operation='correct' THEN
+    IF p_operation IN ('correct','restore') THEN
       UPDATE platform.memory_entry SET version=(v_entry->>'version')::BIGINT,
         current_revision=(v_entry->>'currentRevision')::BIGINT,
         current_revision_ref=v_entry->>'currentRevisionRef',
@@ -965,6 +907,9 @@ BEGIN
       E'\x1e' ORDER BY target.entry_ref,target.revision),''),'UTF8')),'hex')
       INTO v_target_count,v_target_digest
       FROM platform.memory_revision target
+      JOIN platform.memory_revision_payload payload ON payload.site_ref=target.site_ref
+        AND payload.space_ref=target.space_ref AND payload.entry_ref=target.entry_ref
+        AND payload.revision=target.revision AND payload.revision_ref=target.revision_ref
      WHERE target.site_ref=v_site_ref AND target.space_ref=v_space_ref
        AND (p_operation='reset' OR target.entry_ref=v_entry_ref);
     INSERT INTO platform.memory_purge_job(site_ref,purge_job_ref,command_ref,space_ref,entry_ref,
@@ -989,18 +934,23 @@ BEGIN
       (v_transition->'space'->>'revocationEpoch')::BIGINT,
       (v_command->>'recordedAt')::TIMESTAMPTZ
       FROM platform.memory_revision target
+      JOIN platform.memory_revision_payload payload ON payload.site_ref=target.site_ref
+        AND payload.space_ref=target.space_ref AND payload.entry_ref=target.entry_ref
+        AND payload.revision=target.revision AND payload.revision_ref=target.revision_ref
      WHERE target.site_ref=v_site_ref AND target.space_ref=v_space_ref
        AND (p_operation='reset' OR target.entry_ref=v_entry_ref)
      ORDER BY target.entry_ref,target.revision;
   END IF;
 
   v_receipt_kind:=v_result->>'kind';
-  v_safe_kind:=CASE WHEN p_operation IN ('forget','reset') THEN 'purge' ELSE 'entry' END;
+  v_safe_kind:=CASE WHEN p_operation IN ('forget','reset') THEN 'purge'
+    WHEN p_operation='restore' THEN 'restored' ELSE 'entry' END;
   INSERT INTO platform.memory_command_receipt(site_ref,owner_scope_kind,owner_subject_ref,
     owner_subject_generation,owner_project_ref,caller_subject_ref,caller_subject_generation,
     caller_membership_epoch,caller_authorization_epoch,command_ref,operation,request_digest,
     request_digest_key_revision,result_kind,result_space_ref,result_space_version,result_entry_ref,
-    result_entry_version,result_revision_ref,result_revision,result_space_generation,
+    result_entry_version,result_revision_ref,result_revision,result_restored_from_revision_ref,
+    result_prioritized,result_changed,result_space_generation,
     result_learning_generation,result_revocation_epoch,result_minimum_source_origin_seq,
     result_learning_state,result_use_state,result_previous_feature_policy_revision_ref,
     result_feature_policy_revision_ref,recorded_at)
@@ -1008,7 +958,9 @@ BEGIN
     v_subject_generation,NULL,NULL,v_command_ref,p_operation,v_digest,v_digest_key_revision,
     v_receipt_kind,v_space_ref,v_committed,v_result->>'entryRef',
     (v_result->>'entryVersion')::BIGINT,v_result->>'revisionRef',
-    (v_result->>'revision')::BIGINT,(v_result->>'spaceGeneration')::BIGINT,
+    (v_result->>'revision')::BIGINT,v_result->>'restoredFromRevisionRef',
+    (v_result->>'prioritized')::BOOLEAN,(v_result->>'changed')::BOOLEAN,
+    (v_result->>'spaceGeneration')::BIGINT,
     (v_result->>'learningGeneration')::BIGINT,(v_result->>'revocationEpoch')::BIGINT,
     (v_result->>'minimumLearnableSourceOriginSequence')::BIGINT,v_result->>'learningState',
     v_result->>'useState',NULL,NULL,statement_timestamp());
@@ -1016,7 +968,9 @@ BEGIN
     result_ref=COALESCE(v_result->>'entryRef',v_space_ref),committed_space_version=v_committed,
     result_entry_ref=v_result->>'entryRef',result_entry_version=(v_result->>'entryVersion')::BIGINT,
     result_revision=(v_result->>'revision')::BIGINT,result_revision_ref=v_result->>'revisionRef',
-    result_restored_from_revision_ref=NULL,result_prioritized=NULL,
+    result_restored_from_revision_ref=v_result->>'restoredFromRevisionRef',
+    result_prioritized=(v_result->>'prioritized')::BOOLEAN,
+    result_changed=(v_result->>'changed')::BOOLEAN,
     authority_key_revision=v_authority->>'keyRevision',
     authority_payload_digest=v_authority->>'payloadDigest',
     completed_at=statement_timestamp()
@@ -1024,7 +978,10 @@ BEGIN
   RETURN jsonb_strip_nulls(jsonb_build_object('decision','committed','kind',v_safe_kind,
     'committedSpaceVersion',v_committed::TEXT,'entryRef',v_result->>'entryRef',
     'entryVersion',v_result->>'entryVersion','revision',v_result->>'revision',
-    'revisionRef',v_result->>'revisionRef'));
+    'revisionRef',v_result->>'revisionRef',
+    'restoredFromRevisionRef',v_result->>'restoredFromRevisionRef',
+    'prioritized',(v_result->>'prioritized')::BOOLEAN,
+    'changed',(v_result->>'changed')::BOOLEAN));
 END $$;
 REVOKE ALL ON FUNCTION platform.memory_public_commit_validated_core_internal(TEXT,JSONB) FROM PUBLIC;
 
@@ -1136,34 +1093,34 @@ BEGIN
   RETURN platform.memory_public_revision_json($1,$5,$7,actual_revision);
 END $$;
 
-CREATE FUNCTION platform.memory_public_prepare_remember(TEXT,TEXT,BIGINT,TEXT,TEXT,CHAR(64),TEXT,TEXT,TEXT,TEXT)
+CREATE FUNCTION platform.memory_public_prepare_remember(TEXT,TEXT,BIGINT,TEXT,TEXT,CHAR(64),TEXT,CHAR(64),TEXT,TEXT,TEXT,TEXT)
 RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$ BEGIN
 PERFORM platform.assert_memory_database_role('public'); RETURN platform.memory_public_prepare_command_internal(
-'remember',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10); END $$;
-CREATE FUNCTION platform.memory_public_prepare_correct(TEXT,TEXT,BIGINT,TEXT,TEXT,CHAR(64),TEXT,TEXT,TEXT,TEXT)
+'remember',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12); END $$;
+CREATE FUNCTION platform.memory_public_prepare_correct(TEXT,TEXT,BIGINT,TEXT,TEXT,CHAR(64),TEXT,CHAR(64),TEXT,TEXT,TEXT,TEXT)
 RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$ BEGIN
 PERFORM platform.assert_memory_database_role('public'); RETURN platform.memory_public_prepare_command_internal(
-'correct',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10); END $$;
-CREATE FUNCTION platform.memory_public_prepare_restore(TEXT,TEXT,BIGINT,TEXT,TEXT,CHAR(64),TEXT,TEXT,TEXT,TEXT)
+'correct',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12); END $$;
+CREATE FUNCTION platform.memory_public_prepare_restore(TEXT,TEXT,BIGINT,TEXT,TEXT,CHAR(64),TEXT,CHAR(64),TEXT,TEXT,TEXT,TEXT)
 RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$ BEGIN
 PERFORM platform.assert_memory_database_role('public'); RETURN platform.memory_public_prepare_command_internal(
-'restore',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10); END $$;
-CREATE FUNCTION platform.memory_public_prepare_prioritize(TEXT,TEXT,BIGINT,TEXT,TEXT,CHAR(64),TEXT,TEXT,TEXT,TEXT)
+'restore',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12); END $$;
+CREATE FUNCTION platform.memory_public_prepare_prioritize(TEXT,TEXT,BIGINT,TEXT,TEXT,CHAR(64),TEXT,CHAR(64),TEXT,TEXT,TEXT,TEXT)
 RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$ BEGIN
 PERFORM platform.assert_memory_database_role('public'); RETURN platform.memory_public_prepare_command_internal(
-'prioritize',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10); END $$;
-CREATE FUNCTION platform.memory_public_prepare_deprioritize(TEXT,TEXT,BIGINT,TEXT,TEXT,CHAR(64),TEXT,TEXT,TEXT,TEXT)
+'prioritize',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12); END $$;
+CREATE FUNCTION platform.memory_public_prepare_deprioritize(TEXT,TEXT,BIGINT,TEXT,TEXT,CHAR(64),TEXT,CHAR(64),TEXT,TEXT,TEXT,TEXT)
 RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$ BEGIN
 PERFORM platform.assert_memory_database_role('public'); RETURN platform.memory_public_prepare_command_internal(
-'deprioritize',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10); END $$;
-CREATE FUNCTION platform.memory_public_prepare_forget(TEXT,TEXT,BIGINT,TEXT,TEXT,CHAR(64),TEXT,TEXT,TEXT,TEXT)
+'deprioritize',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12); END $$;
+CREATE FUNCTION platform.memory_public_prepare_forget(TEXT,TEXT,BIGINT,TEXT,TEXT,CHAR(64),TEXT,CHAR(64),TEXT,TEXT,TEXT,TEXT)
 RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$ BEGIN
 PERFORM platform.assert_memory_database_role('public'); RETURN platform.memory_public_prepare_command_internal(
-'forget',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10); END $$;
-CREATE FUNCTION platform.memory_public_prepare_reset(TEXT,TEXT,BIGINT,TEXT,TEXT,CHAR(64),TEXT,TEXT,TEXT,TEXT)
+'forget',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12); END $$;
+CREATE FUNCTION platform.memory_public_prepare_reset(TEXT,TEXT,BIGINT,TEXT,TEXT,CHAR(64),TEXT,CHAR(64),TEXT,TEXT,TEXT,TEXT)
 RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$ BEGIN
 PERFORM platform.assert_memory_database_role('public'); RETURN platform.memory_public_prepare_command_internal(
-'reset',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10); END $$;
+'reset',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12); END $$;
 
 CREATE FUNCTION platform.memory_public_commit_remember(JSONB) RETURNS JSONB LANGUAGE plpgsql
 SECURITY DEFINER SET search_path=pg_catalog,platform AS $$ BEGIN PERFORM platform.assert_memory_database_role('public');
@@ -1173,13 +1130,13 @@ SECURITY DEFINER SET search_path=pg_catalog,platform AS $$ BEGIN PERFORM platfor
 RETURN platform.memory_public_commit_validated_core_internal('correct',$1); END $$;
 CREATE FUNCTION platform.memory_public_commit_restore(JSONB) RETURNS JSONB LANGUAGE plpgsql
 SECURITY DEFINER SET search_path=pg_catalog,platform AS $$ BEGIN PERFORM platform.assert_memory_database_role('public');
-RETURN platform.memory_public_commit_extension_internal('restore',$1); END $$;
+RETURN platform.memory_public_commit_validated_core_internal('restore',$1); END $$;
 CREATE FUNCTION platform.memory_public_commit_prioritize(JSONB) RETURNS JSONB LANGUAGE plpgsql
 SECURITY DEFINER SET search_path=pg_catalog,platform AS $$ BEGIN PERFORM platform.assert_memory_database_role('public');
-RETURN platform.memory_public_commit_extension_internal('prioritize',$1); END $$;
+RETURN platform.memory_public_commit_validated_core_internal('prioritize',$1); END $$;
 CREATE FUNCTION platform.memory_public_commit_deprioritize(JSONB) RETURNS JSONB LANGUAGE plpgsql
 SECURITY DEFINER SET search_path=pg_catalog,platform AS $$ BEGIN PERFORM platform.assert_memory_database_role('public');
-RETURN platform.memory_public_commit_extension_internal('deprioritize',$1); END $$;
+RETURN platform.memory_public_commit_validated_core_internal('deprioritize',$1); END $$;
 CREATE FUNCTION platform.memory_public_commit_forget(JSONB) RETURNS JSONB LANGUAGE plpgsql
 SECURITY DEFINER SET search_path=pg_catalog,platform AS $$ BEGIN PERFORM platform.assert_memory_database_role('public');
 RETURN platform.memory_public_commit_validated_core_internal('forget',$1); END $$;
@@ -1198,13 +1155,13 @@ BEGIN
     'platform.memory_public_get_entry(text,text,bigint,text,text,bigint,text)'::REGPROCEDURE,
     'platform.memory_public_list_entry_history(text,text,bigint,text,text,bigint,text,bigint,integer)'::REGPROCEDURE,
     'platform.memory_public_get_restorable_revision(text,text,bigint,text,text,bigint,text,text,integer)'::REGPROCEDURE,
-    'platform.memory_public_prepare_remember(text,text,bigint,text,text,character,text,text,text,text)'::REGPROCEDURE,
-    'platform.memory_public_prepare_correct(text,text,bigint,text,text,character,text,text,text,text)'::REGPROCEDURE,
-    'platform.memory_public_prepare_restore(text,text,bigint,text,text,character,text,text,text,text)'::REGPROCEDURE,
-    'platform.memory_public_prepare_prioritize(text,text,bigint,text,text,character,text,text,text,text)'::REGPROCEDURE,
-    'platform.memory_public_prepare_deprioritize(text,text,bigint,text,text,character,text,text,text,text)'::REGPROCEDURE,
-    'platform.memory_public_prepare_forget(text,text,bigint,text,text,character,text,text,text,text)'::REGPROCEDURE,
-    'platform.memory_public_prepare_reset(text,text,bigint,text,text,character,text,text,text,text)'::REGPROCEDURE,
+    'platform.memory_public_prepare_remember(text,text,bigint,text,text,character,text,character,text,text,text,text)'::REGPROCEDURE,
+    'platform.memory_public_prepare_correct(text,text,bigint,text,text,character,text,character,text,text,text,text)'::REGPROCEDURE,
+    'platform.memory_public_prepare_restore(text,text,bigint,text,text,character,text,character,text,text,text,text)'::REGPROCEDURE,
+    'platform.memory_public_prepare_prioritize(text,text,bigint,text,text,character,text,character,text,text,text,text)'::REGPROCEDURE,
+    'platform.memory_public_prepare_deprioritize(text,text,bigint,text,text,character,text,character,text,text,text,text)'::REGPROCEDURE,
+    'platform.memory_public_prepare_forget(text,text,bigint,text,text,character,text,character,text,text,text,text)'::REGPROCEDURE,
+    'platform.memory_public_prepare_reset(text,text,bigint,text,text,character,text,character,text,text,text,text)'::REGPROCEDURE,
     'platform.memory_public_commit_remember(jsonb)'::REGPROCEDURE,
     'platform.memory_public_commit_correct(jsonb)'::REGPROCEDURE,
     'platform.memory_public_commit_restore(jsonb)'::REGPROCEDURE,

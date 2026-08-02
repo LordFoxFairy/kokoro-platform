@@ -30,7 +30,10 @@ describe("MemoryPublicReadOwner", () => {
     rows = [entry("entry-a", true, "2026-07-31T11:00:00.000Z"),
       entry("entry-b", false, "2026-07-31T10:00:00.000Z")];
     repository = {
-      recoverCommand: async () => ({ kind: "continue" }),
+      recoverCommand: async () => ({ kind: "continue", requestPayloadKeyRevision: "replay-r1",
+        requestPayloadDigest: "a".repeat(64) }),
+      claimCommand: async () => ({ kind: "continue", requestPayloadKeyRevision: "replay-r1",
+        requestPayloadDigest: "a".repeat(64) }),
       executeCommand: async () => { throw new Error("unused"); },
       resolveOwner: async () => ({ context, spaceRef: "space-user-1", spaceVersion: 7n }),
       listEntries: async () => rows,

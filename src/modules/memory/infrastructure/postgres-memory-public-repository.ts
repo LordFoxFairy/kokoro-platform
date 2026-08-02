@@ -6,11 +6,14 @@ import { MemoryAuthorityService } from "../application/memory-authority-service.
 import type { MemoryAuthorizationFactsPort, MemoryAuthorityRepository, MemoryCommandReceiptIdentity,
   MemoryCommandResult, MemoryPublicCommand, MemoryPublicCommandResult, MemoryPublicEntryRecord,
   MemoryPublicRecoveryIdentity, MemoryPublicRecoveryResult, MemoryPublicRepository,
-  MemoryPublicResolvedOwner, MemoryPublicRevisionRecord, MemoryTransitionAuthorityPort } from
+  MemoryPublicResolvedOwner, MemoryPublicRevisionRecord, MemoryReplayRequestVerifierPort,
+  MemoryTransitionAuthorityPort } from
   "../application/memory-authority-ports.js";
 import { rehydrateMemoryEntry, type MemoryEntry, type RememberedMemory } from
   "../domain/memory-entry.js";
 import { rehydrateMemorySpace, type MemorySpace } from "../domain/memory-space.js";
+import { memoryRevisionNumber, memoryRevisionRef } from "../domain/memory-references.js";
+import type { MemoryRevisionNumber, MemoryRevisionRef } from "../domain/memory-references.js";
 import { createProtectedMemoryContent } from "../domain/protected-memory-content.js";
 
 const PREPARE_ROUTINE = Object.freeze({
@@ -34,23 +37,54 @@ const COMMIT_ROUTINE = Object.freeze({
 
 /** Dedicated public adapter. Every statement invokes one operation-specific, fixed-shape routine. */
 export class PostgresMemoryPublicRepository implements MemoryPublicRepository {
-  constructor(private readonly transitionAuthority: MemoryTransitionAuthorityPort) {}
+  constructor(private readonly transitionAuthority: MemoryTransitionAuthorityPort,
+    private readonly replayVerifier: MemoryReplayRequestVerifierPort) {}
   async recoverCommand(transaction: PlatformTransaction, identity: MemoryPublicRecoveryIdentity):
     Promise<MemoryPublicRecoveryResult> {
+    let proof = this.replayVerifier.issue(identity.fingerprintInput);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const decision = await prepareCommand(transaction, { ...identity, requestDigest: null,
+        requestDigestKeyRevision: null, requestPayloadDigest: proof.digest,
+        requestPayloadKeyRevision: proof.keyRevision });
+      if (decision.decision === "payload_key_mismatch" && attempt === 0) {
+        proof = this.replayVerifier.issue(identity.fingerprintInput,
+          string(decision.requestPayloadKeyRevision, "MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT"));
+        continue;
+      }
+      if (decision.decision === "payload_conflict") {
+        return Object.freeze({ kind: "payload_conflict" as const });
+      }
+      if (decision.decision === "replay") {
+        return Object.freeze({ kind: "replay" as const, result: commandResult(decision, true) });
+      }
+      if (decision.decision !== "fingerprint_required") {
+        throw corrupt("MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT");
+      }
+      return Object.freeze({ kind: "continue" as const,
+        requestPayloadKeyRevision: proof.keyRevision, requestPayloadDigest: proof.digest });
+    }
+    throw new MemoryApplicationError("MEMORY_COMMAND_DIGEST_CONFLICT");
+  }
+
+  async claimCommand(transaction: PlatformTransaction,
+    identity: Parameters<MemoryPublicRepository["claimCommand"]>[1]):
+    ReturnType<MemoryPublicRepository["claimCommand"]> {
     const decision = await prepareCommand(transaction, identity);
+    if (decision.decision === "payload_conflict" || decision.decision === "payload_key_mismatch") {
+      return Object.freeze({ kind: "payload_conflict" as const });
+    }
     if (decision.decision === "digest_conflict") {
-      return typeof decision.requestDigestKeyRevision === "string"
-        ? Object.freeze({ kind: "digest_mismatch" as const,
-          requestDigestKeyRevision: string(decision.requestDigestKeyRevision,
-            "MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT") })
-        : Object.freeze({ kind: "digest_mismatch" as const,
-          requestDigestKeyRevision: identity.requestDigestKeyRevision });
+      return Object.freeze({ kind: "digest_mismatch" as const,
+        requestDigestKeyRevision: string(decision.requestDigestKeyRevision,
+          "MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT") });
     }
     if (decision.decision === "replay") {
       return Object.freeze({ kind: "replay" as const, result: commandResult(decision, true) });
     }
     if (decision.decision !== "claimed") throw corrupt("MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT");
-    return Object.freeze({ kind: "continue" as const });
+    return Object.freeze({ kind: "continue" as const,
+      requestPayloadKeyRevision: identity.requestPayloadKeyRevision,
+      requestPayloadDigest: identity.requestPayloadDigest });
   }
 
   async resolveOwner(transaction: PlatformTransaction,
@@ -108,7 +142,8 @@ export class PostgresMemoryPublicRepository implements MemoryPublicRepository {
     );
     const result = oneResult(rows, "MEMORY_PUBLIC_HISTORY_RECORD_CORRUPT");
     if (result === null) return null;
-    const record = object(result, "MEMORY_PUBLIC_HISTORY_RECORD_CORRUPT");
+    const record = exactObject(result, ["entry", "revisions"] as const,
+      "MEMORY_PUBLIC_HISTORY_RECORD_CORRUPT");
     if (!Array.isArray(record.revisions)) throw corrupt("MEMORY_PUBLIC_HISTORY_RECORD_CORRUPT");
     return Object.freeze({ entry: entryRecord(record.entry),
       revisions: Object.freeze(record.revisions.map(revisionRecord)) });
@@ -136,14 +171,7 @@ export class PostgresMemoryPublicRepository implements MemoryPublicRepository {
     }
     if (decision.decision === "replay") return commandResult(decision, true);
     if (decision.decision !== "claimed") throw corrupt("MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT");
-    const core = command.operation === "remember" || command.operation === "correct" ||
-      command.operation === "forget" || command.operation === "reset";
-    const unsignedCommitPayload = core
-      ? await validatedCoreCommitPayload(transaction, command, decision)
-      : Object.freeze({ command: commandJson(command),
-        prepareRef: string(decision.prepareRef, "MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT"),
-        expectedStateDigest: string(decision.expectedStateDigest,
-          "MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT") });
+    const unsignedCommitPayload = await validatedCoreCommitPayload(transaction, command, decision);
     const canonicalPayload = canonicalJson(unsignedCommitPayload);
     const authority = await this.transitionAuthority.issue({ canonicalPayload });
     if (!/^[A-Za-z0-9_-]{3,128}$/u.test(authority.keyRevision) ||
@@ -161,12 +189,22 @@ export class PostgresMemoryPublicRepository implements MemoryPublicRepository {
   }
 }
 
-async function prepareCommand(transaction: PlatformTransaction, identity: MemoryPublicRecoveryIdentity) {
+type PrepareIdentity = Readonly<Pick<MemoryPublicCommand, "operation" | "context" | "commandRef" |
+  "spaceRef" | "entryRef" | "revisionRef" | "requestPayloadDigest" |
+  "requestPayloadKeyRevision"> & {
+    requestDigest: string | null; requestDigestKeyRevision: string | null;
+    restoredFromRevisionRef?: string;
+  }>;
+
+async function prepareCommand(transaction: PlatformTransaction, identity: PrepareIdentity) {
   const sql = resolvePlatformTransaction(transaction);
   const prepareRows = await sql.query<Record<string, unknown>>(
-    `SELECT platform.${PREPARE_ROUTINE[identity.operation]}($1,$2,$3::bigint,$4,$5,$6,$7,$8,$9,$10) AS result`,
+    `SELECT platform.${PREPARE_ROUTINE[identity.operation]}($1,$2,$3::bigint,$4,$5,$6,$7,$8,$9,$10,$11,$12) AS result`,
     ownerValues(identity.context, [identity.commandRef, identity.requestDigest,
-      identity.requestDigestKeyRevision, identity.spaceRef, identity.entryRef, identity.revisionRef]),
+      identity.requestDigestKeyRevision, identity.requestPayloadDigest,
+      identity.requestPayloadKeyRevision, identity.spaceRef, identity.entryRef,
+      identity.operation === "restore" && identity.restoredFromRevisionRef !== undefined
+        ? identity.restoredFromRevisionRef : identity.revisionRef]),
   );
   const prepared = oneResult(prepareRows, "MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT") ??
     prepareRows[0] ?? null;
@@ -174,7 +212,8 @@ async function prepareCommand(transaction: PlatformTransaction, identity: Memory
   return exactObject(prepared, ["decision", "kind", "spaceRef", "spaceVersion", "persisted",
     "entryRef", "revisionRef", "prepareRef", "expectedStateDigest", "spaceState", "entryState",
     "committedSpaceVersion", "entryVersion", "revision", "restoredFromRevisionRef", "prioritized",
-    "requestDigestKeyRevision"] as const, "MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT");
+    "changed", "requestDigestKeyRevision", "requestPayloadKeyRevision", "restoreRevisionState"] as const,
+  "MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT");
 }
 
 async function validatedCoreCommitPayload(transaction: PlatformTransaction, command: MemoryPublicCommand,
@@ -207,6 +246,7 @@ async function validatedCoreCommitPayload(transaction: PlatformTransaction, comm
         provenanceRef: requiredCommandString(command.provenanceRef), sourceDigest: command.requestDigest,
         protectedContent: requiredProtected(command), category: command.category,
         featurePolicyRevisionRef: command.context.featurePolicyRevisionRef,
+        validFrom: command.validFrom ?? null, validTo: command.validTo ?? null,
         recordedAt: command.recordedAt });
       break;
     case "correct":
@@ -219,6 +259,32 @@ async function validatedCoreCommitPayload(transaction: PlatformTransaction, comm
         revisionRef: requiredCommandString(command.revisionRef),
         provenanceRef: requiredCommandString(command.provenanceRef), sourceDigest: command.requestDigest,
         protectedContent: requiredProtected(command),
+        featurePolicyRevisionRef: command.context.featurePolicyRevisionRef,
+        validFrom: command.validFrom ?? null, validTo: command.validTo ?? null,
+        recordedAt: command.recordedAt });
+      break;
+    case "restore":
+      if (space === null || entry === null) throw new MemoryApplicationError("MEMORY_PUBLIC_NOT_AVAILABLE");
+      await service.restore(transaction, { commandRef: command.commandRef,
+        siteRef: command.context.siteRef, spaceRef: command.spaceRef,
+        expectedSpaceVersion: space.version, entryRef: requiredCommandString(command.entryRef),
+        expectedEntryVersion: entry.version,
+        expectedCurrentRevision: BigInt(requiredExpectedRevision(command.expectedRevision)),
+        revisionRef: requiredCommandString(command.revisionRef),
+        restoredFromRevisionRef: requiredCommandString(command.restoredFromRevisionRef),
+        provenanceRef: requiredCommandString(command.provenanceRef), sourceDigest: command.requestDigest,
+        protectedContent: requiredProtected(command),
+        featurePolicyRevisionRef: command.context.featurePolicyRevisionRef,
+        recordedAt: command.recordedAt });
+      break;
+    case "prioritize":
+    case "deprioritize":
+      if (space === null || entry === null) throw new MemoryApplicationError("MEMORY_PUBLIC_NOT_AVAILABLE");
+      await service.setPriority(transaction, { commandRef: command.commandRef,
+        siteRef: command.context.siteRef, spaceRef: command.spaceRef,
+        expectedSpaceVersion: space.version, entryRef: requiredCommandString(command.entryRef),
+        expectedEntryVersion: command.expectedEntryVersion,
+        prioritized: command.operation === "prioritize",
         featurePolicyRevisionRef: command.context.featurePolicyRevisionRef,
         recordedAt: command.recordedAt });
       break;
@@ -252,6 +318,10 @@ type StagedTransition =
   | Readonly<{ kind: "remember"; newSpace: MemorySpace | null; remembered: RememberedMemory }>
   | Readonly<{ kind: "correct"; expected: Readonly<{ entryVersion: bigint;
       currentRevision: bigint }>; corrected: RememberedMemory }>
+  | Readonly<{ kind: "restore"; expected: Readonly<{ spaceVersion: bigint; entryVersion: bigint;
+      currentRevision: bigint }>; restored: RememberedMemory }>
+  | Readonly<{ kind: "priority"; expected: Readonly<{ spaceVersion: bigint;
+      entryVersion: bigint }>; space: MemorySpace; entry: MemoryEntry }>
   | Readonly<{ kind: "forget"; expected: Readonly<{ spaceVersion: bigint;
       entryVersion: bigint }>; space: MemorySpace; entry: MemoryEntry }>
   | Readonly<{ kind: "reset"; expectedVersion: bigint; space: MemorySpace }>;
@@ -259,6 +329,8 @@ type StagedTransition =
 class StagedMemoryAuthorityRepository implements MemoryAuthorityRepository {
   readonly space: MemorySpace | null;
   readonly entry: MemoryEntry | null;
+  readonly restorable: Readonly<{ revision: MemoryRevisionNumber; revisionRef: MemoryRevisionRef;
+    validFrom: string | null; validTo: string | null }> | null;
   #transition: StagedTransition | null = null;
   #result: MemoryCommandResult | null = null;
 
@@ -267,15 +339,27 @@ class StagedMemoryAuthorityRepository implements MemoryAuthorityRepository {
       ? null : rehydrateMemorySpace(decodeStagedSpace(prepared.spaceState));
     this.entry = prepared.entryState === null || prepared.entryState === undefined
       ? null : rehydrateMemoryEntry(decodeStagedEntry(prepared.entryState));
+    this.restorable = prepared.restoreRevisionState === null ||
+      prepared.restoreRevisionState === undefined ? null
+      : decodeRestorableRevision(prepared.restoreRevisionState);
   }
 
   async loadSpaceAuthorityForUpdate(): Promise<Readonly<{ space: MemorySpace | null;
     parent: MemorySpace | null }>> { return Object.freeze({ space: this.space, parent: null }); }
   async loadSpaceForUpdate(): Promise<MemorySpace | null> { return this.space; }
   async loadEntryForUpdate(): Promise<MemoryEntry | null> { return this.entry; }
+  async loadRestorableRevisionForUpdate(): Promise<typeof this.restorable> { return this.restorable; }
   async claimReceipt(): Promise<Readonly<{ kind: "claimed" }>> { return Object.freeze({ kind: "claimed" }); }
   async completeReceipt(_transaction: PlatformTransaction, _identity: MemoryCommandReceiptIdentity,
-    result: MemoryCommandResult): Promise<void> { this.#result = result; }
+    result: MemoryCommandResult): Promise<void> {
+    if (this.#transition === null && (result.kind === "prioritized" || result.kind === "deprioritized")) {
+      if (this.space === null || this.entry === null) throw corrupt("MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT");
+      this.#transition = Object.freeze({ kind: "priority", expected: Object.freeze({
+        spaceVersion: this.space.version, entryVersion: this.entry.version,
+      }), space: this.space, entry: this.entry });
+    }
+    this.#result = result;
+  }
   async saveRememberedMemory(_transaction: PlatformTransaction, newSpace: MemorySpace | null,
     remembered: RememberedMemory): Promise<void> {
     this.#set(Object.freeze({ kind: "remember", newSpace, remembered }));
@@ -284,6 +368,16 @@ class StagedMemoryAuthorityRepository implements MemoryAuthorityRepository {
     expected: Readonly<{ entryVersion: bigint; currentRevision: bigint }>,
     corrected: RememberedMemory): Promise<void> {
     this.#set(Object.freeze({ kind: "correct", expected, corrected }));
+  }
+  async saveRestoredMemory(_transaction: PlatformTransaction,
+    expected: Readonly<{ spaceVersion: bigint; entryVersion: bigint; currentRevision: bigint }>,
+    restored: RememberedMemory): Promise<void> {
+    this.#set(Object.freeze({ kind: "restore", expected, restored }));
+  }
+  async saveEntryPriority(_transaction: PlatformTransaction,
+    expected: Readonly<{ spaceVersion: bigint; entryVersion: bigint }>,
+    space: MemorySpace, entry: MemoryEntry): Promise<void> {
+    this.#set(Object.freeze({ kind: "priority", expected, space, entry }));
   }
   async saveForgottenMemory(_transaction: PlatformTransaction,
     expected: Readonly<{ spaceVersion: bigint; entryVersion: bigint }>,
@@ -327,6 +421,15 @@ function decodeStagedEntry(value: unknown) {
     revocationEpoch: positive(row.revocationEpoch, "MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT") };
 }
 
+function decodeRestorableRevision(value: unknown) {
+  const row = exactObject(value, ["revision", "revisionRef", "validFrom", "validTo"] as const,
+    "MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT");
+  return Object.freeze({ revision: memoryRevisionNumber(boundedRevision(row.revision,
+    "MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT")),
+  revisionRef: memoryRevisionRef(string(row.revisionRef, "MEMORY_PUBLIC_COMMAND_RECORD_CORRUPT")),
+  validFrom: nullableInstant(row.validFrom), validTo: nullableInstant(row.validTo) });
+}
+
 function ownerValues(context: MemoryPublicResolvedOwner["context"], tail: readonly unknown[]) {
   return [context.siteRef, context.subjectRef, context.subjectGeneration,
     context.featurePolicyRevisionRef, ...tail];
@@ -336,6 +439,7 @@ function ownerRecord(context: MemoryPublicResolvedOwner["context"], value: unkno
   MemoryPublicResolvedOwner {
   const row = exactObject(value, ["spaceRef", "spaceVersion", "persisted"] as const,
     "MEMORY_PUBLIC_OWNER_RECORD_CORRUPT");
+  boolean(row.persisted, "MEMORY_PUBLIC_OWNER_RECORD_CORRUPT");
   return Object.freeze({ context, spaceRef: string(row.spaceRef, "MEMORY_PUBLIC_OWNER_RECORD_CORRUPT"),
     spaceVersion: positive(row.spaceVersion, "MEMORY_PUBLIC_OWNER_RECORD_CORRUPT") });
 }
@@ -347,6 +451,9 @@ function entryRecord(value: unknown): MemoryPublicEntryRecord {
     "revokedAt", "purgedAt"] as const, "MEMORY_PUBLIC_ENTRY_RECORD_CORRUPT");
   const state = enumeration(row.state, ["active", "revoked_purge_pending", "purged"] as const,
     "MEMORY_PUBLIC_ENTRY_RECORD_CORRUPT");
+  if (state !== "active" && row.protectedContent !== null && row.protectedContent !== undefined) {
+    throw corrupt("MEMORY_PUBLIC_ENTRY_RECORD_CORRUPT");
+  }
   const protectedContent = row.protectedContent === null || row.protectedContent === undefined
     ? null : protectedRecord(row.protectedContent);
   return Object.freeze({ entryRef: string(row.entryRef, "MEMORY_PUBLIC_ENTRY_RECORD_CORRUPT"),
@@ -421,15 +528,19 @@ function commandResult(row: Readonly<Record<string, unknown>>, replayed: boolean
     ...(typeof row.restoredFromRevisionRef === "string"
       ? { restoredFromRevisionRef: row.restoredFromRevisionRef } : {}),
     ...(typeof row.prioritized === "boolean" ? { prioritized: row.prioritized } : {}),
+    ...(typeof row.changed === "boolean" ? { changed: row.changed } : {}),
     ...(replayed ? { replayed: true } : {}) });
 }
 
 function serializeCoreTransition(transition: StagedTransition, result: MemoryCommandResult,
   currentSpace: MemorySpace | null): Readonly<Record<string, unknown>> {
   const baseVersion = currentSpace?.version ?? 1n;
-  const committedSpaceVersion = transition.kind === "remember" || transition.kind === "correct"
+  const committedSpaceVersion = transition.kind === "remember" || transition.kind === "correct" ||
+    transition.kind === "restore"
     ? baseVersion + 1n : result.spaceVersion;
-  const common = { operation: transition.kind, committedSpaceVersion: committedSpaceVersion.toString(),
+  const operation = transition.kind === "priority" ? result.kind === "prioritized"
+    ? "prioritize" : "deprioritize" : transition.kind;
+  const common = { operation, committedSpaceVersion: committedSpaceVersion.toString(),
     result: serializeCoreResult(result, committedSpaceVersion) };
   switch (transition.kind) {
     case "remember": return Object.freeze({ ...common,
@@ -440,6 +551,15 @@ function serializeCoreTransition(transition: StagedTransition, result: MemoryCom
       expected: { entryVersion: transition.expected.entryVersion.toString(),
         currentRevision: transition.expected.currentRevision.toString() },
       corrected: serializeRemembered(transition.corrected) });
+    case "restore": return Object.freeze({ ...common,
+      expected: { spaceVersion: transition.expected.spaceVersion.toString(),
+        entryVersion: transition.expected.entryVersion.toString(),
+        currentRevision: transition.expected.currentRevision.toString() },
+      restored: serializeRemembered(transition.restored) });
+    case "priority": return Object.freeze({ ...common,
+      expected: { spaceVersion: transition.expected.spaceVersion.toString(),
+        entryVersion: transition.expected.entryVersion.toString() },
+      space: serializeSpace(transition.space), entry: serializeEntry(transition.entry) });
     case "forget": return Object.freeze({ ...common,
       expected: { spaceVersion: transition.expected.spaceVersion.toString(),
         entryVersion: transition.expected.entryVersion.toString() },

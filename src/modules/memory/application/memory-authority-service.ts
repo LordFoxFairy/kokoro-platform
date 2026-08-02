@@ -3,7 +3,7 @@ import { computeCanonicalMemoryCommandDigest, type MemoryCommandDigestField } fr
   "../domain/memory-command-digest.js";
 import { MemoryDomainError } from "../domain/memory-error.js";
 import { assertCurrentEntryFence, correctMemoryEntry, createRememberedMemory, forgetMemoryEntry,
-  rehydrateMemoryEntry,
+  rehydrateMemoryEntry, restoreMemoryEntry, setMemoryEntryPriority,
   type MemoryEntry, type RememberedMemory } from "../domain/memory-entry.js";
 import {
   memoryAggregateVersion,
@@ -68,9 +68,10 @@ export class MemoryAuthorityService {
   ) {}
 
   async remember(transaction: PlatformTransaction, value: unknown): Promise<MemoryCommandResult> {
-    const record = snapshotExactMemoryRecord(value, ["commandRef", "binding", "spaceRef",
+    const record = snapshotExactMemoryRecord(withDefaultValidity(value), ["commandRef", "binding", "spaceRef",
       "expectedSpaceVersion", "entryRef", "revisionRef", "provenanceRef", "sourceDigest",
-      "protectedContent", "category", "featurePolicyRevisionRef", "recordedAt"],
+      "protectedContent", "category", "featurePolicyRevisionRef", "validFrom", "validTo",
+      "recordedAt"],
     "MEMORY_ENTRY_INVALID");
     const binding = rehydrateMemoryScopeBinding(record.binding);
     const siteRef = memoryBindingSiteRef(binding);
@@ -117,6 +118,8 @@ export class MemoryAuthorityService {
       protectedContent: record.protectedContent,
       category: record.category,
       featurePolicyRevisionRef,
+      validFrom: record.validFrom,
+      validTo: record.validTo,
       actorAuthorization,
       recordedAt: record.recordedAt,
     });
@@ -127,9 +130,10 @@ export class MemoryAuthorityService {
   }
 
   async correct(transaction: PlatformTransaction, value: unknown): Promise<MemoryCommandResult> {
-    const record = snapshotExactMemoryRecord(value, ["commandRef", "siteRef", "spaceRef",
+    const record = snapshotExactMemoryRecord(withDefaultValidity(value), ["commandRef", "siteRef", "spaceRef",
       "expectedSpaceVersion", "entryRef", "expectedEntryVersion", "expectedCurrentRevision", "revisionRef",
-      "provenanceRef", "sourceDigest", "protectedContent", "featurePolicyRevisionRef", "recordedAt"],
+      "provenanceRef", "sourceDigest", "protectedContent", "featurePolicyRevisionRef",
+      "validFrom", "validTo", "recordedAt"],
     "MEMORY_ENTRY_INVALID");
     const siteRef = memorySiteRef(record.siteRef);
     const spaceRef = memorySpaceRef(record.spaceRef);
@@ -156,6 +160,8 @@ export class MemoryAuthorityService {
       sourceDigest: record.sourceDigest,
       protectedContent: record.protectedContent,
       featurePolicyRevisionRef,
+      validFrom: record.validFrom,
+      validTo: record.validTo,
       actorAuthorization,
       recordedAt: record.recordedAt,
     });
@@ -164,6 +170,87 @@ export class MemoryAuthorityService {
       currentRevision: memoryRevisionNumber(record.expectedCurrentRevision),
     }, corrected);
     const result = rememberedResult("corrected", space, corrected);
+    await this.repository.completeReceipt(transaction, identity, result);
+    return result;
+  }
+
+  async restore(transaction: PlatformTransaction, value: unknown): Promise<MemoryCommandResult> {
+    const record = snapshotExactMemoryRecord(value, ["commandRef", "siteRef", "spaceRef",
+      "expectedSpaceVersion", "entryRef", "expectedEntryVersion", "expectedCurrentRevision",
+      "revisionRef", "restoredFromRevisionRef", "provenanceRef", "sourceDigest",
+      "protectedContent", "featurePolicyRevisionRef", "recordedAt"], "MEMORY_ENTRY_INVALID");
+    const siteRef = memorySiteRef(record.siteRef);
+    const spaceRef = memorySpaceRef(record.spaceRef);
+    const entryRef = memoryEntryRef(record.entryRef);
+    const restoredFromRevisionRef = memoryRevisionRef(record.restoredFromRevisionRef);
+    const featurePolicyRevisionRef = memoryFeaturePolicyRevisionRef(record.featurePolicyRevisionRef);
+    const space = await this.requiredSpace(transaction, siteRef, spaceRef);
+    const entry = await this.requiredEntry(transaction, siteRef, spaceRef, entryRef);
+    const historical = await this.repository.loadRestorableRevisionForUpdate(transaction, siteRef,
+      spaceRef, entryRef, restoredFromRevisionRef);
+    if (historical === null) throw new MemoryApplicationError("MEMORY_ENTRY_NOT_FOUND");
+    assertCurrentEntryFence(space, entry);
+    const actorAuthorization = await this.revalidate(transaction, space.binding,
+      featurePolicyRevisionRef);
+    const identity = receiptIdentity(space.binding, actorAuthorization, "restore", record.commandRef,
+      restoreDigest(record, siteRef, spaceRef, featurePolicyRevisionRef));
+    const replay = await this.claim(transaction, identity);
+    if (replay !== null) return replay;
+    assertSpaceMatches(space, space.binding, featurePolicyRevisionRef,
+      positiveVersion(record.expectedSpaceVersion));
+    const restored = restoreMemoryEntry({ space, entry,
+      expectedVersion: record.expectedEntryVersion,
+      expectedCurrentRevision: record.expectedCurrentRevision,
+      revisionRef: record.revisionRef, restoredFromRevisionRef,
+      restoredFromRevision: historical.revision,
+      provenanceRef: record.provenanceRef, sourceCommandRef: identity.commandRef,
+      sourceDigest: record.sourceDigest, protectedContent: record.protectedContent,
+      featurePolicyRevisionRef, actorAuthorization, validFrom: historical.validFrom,
+      validTo: historical.validTo, recordedAt: record.recordedAt });
+    await this.repository.saveRestoredMemory(transaction, {
+      spaceVersion: space.version, entryVersion: entry.version,
+      currentRevision: entry.currentRevision,
+    }, restored);
+    const result = Object.freeze({ ...rememberedResult("restored", space, restored),
+      restoredFromRevisionRef });
+    await this.repository.completeReceipt(transaction, identity, result);
+    return result;
+  }
+
+  async setPriority(transaction: PlatformTransaction, value: unknown): Promise<MemoryCommandResult> {
+    const record = snapshotExactMemoryRecord(value, ["commandRef", "siteRef", "spaceRef",
+      "expectedSpaceVersion", "entryRef", "expectedEntryVersion", "prioritized",
+      "featurePolicyRevisionRef", "recordedAt"], "MEMORY_ENTRY_INVALID");
+    const siteRef = memorySiteRef(record.siteRef);
+    const spaceRef = memorySpaceRef(record.spaceRef);
+    const entryRef = memoryEntryRef(record.entryRef);
+    const featurePolicyRevisionRef = memoryFeaturePolicyRevisionRef(record.featurePolicyRevisionRef);
+    const space = await this.requiredSpace(transaction, siteRef, spaceRef);
+    const entry = await this.requiredEntry(transaction, siteRef, spaceRef, entryRef);
+    assertCurrentEntryFence(space, entry);
+    const actorAuthorization = await this.revalidate(transaction, space.binding,
+      featurePolicyRevisionRef);
+    const prioritized = record.prioritized === true;
+    if (typeof record.prioritized !== "boolean") {
+      throw new MemoryApplicationError("MEMORY_PERSISTENCE_CONFLICT");
+    }
+    const operation = prioritized ? "prioritize" : "deprioritize";
+    const identity = receiptIdentity(space.binding, actorAuthorization, operation, record.commandRef,
+      priorityDigest(record, siteRef, spaceRef, featurePolicyRevisionRef));
+    const replay = await this.claim(transaction, identity);
+    if (replay !== null) return replay;
+    const changed = setMemoryEntryPriority({ space, entry,
+      expectedSpaceVersion: record.expectedSpaceVersion,
+      expectedEntryVersion: record.expectedEntryVersion, prioritized,
+      changedAt: record.recordedAt });
+    if (changed.changed) {
+      await this.repository.saveEntryPriority(transaction, {
+        spaceVersion: space.version, entryVersion: entry.version,
+      }, changed.space, changed.entry);
+    }
+    const result = Object.freeze({ kind: prioritized ? "prioritized" as const : "deprioritized" as const,
+      spaceRef, spaceVersion: changed.space.version, entryRef,
+      entryVersion: changed.entry.version, prioritized, changed: changed.changed });
     await this.repository.completeReceipt(transaction, identity, result);
     return result;
   }
@@ -251,7 +338,8 @@ export class MemoryAuthorityService {
   }
 
   async control(transaction: PlatformTransaction, value: unknown,
-    operation: Exclude<MemoryCommandOperation, "remember" | "correct" | "forget" | "rebind_policy">):
+    operation: Exclude<MemoryCommandOperation, "remember" | "correct" | "restore" | "prioritize" |
+      "deprioritize" | "forget" | "rebind_policy">):
     Promise<MemoryCommandResult> {
     const withCutoff = operation === "resume_learning" || operation === "reset";
     const record = snapshotExactMemoryRecord(value, withCutoff
@@ -382,15 +470,33 @@ function decodeRepositorySpace(value: unknown): MemorySpace {
 function decodeCommandResult(value: unknown): MemoryCommandResult {
   try {
     const snapshot = snapshotMemoryRecord(value, "MEMORY_ENTRY_INVALID");
-    if (snapshot.kind === "remembered" || snapshot.kind === "corrected") {
+    if (snapshot.kind === "remembered" || snapshot.kind === "corrected" ||
+      snapshot.kind === "restored") {
       const record = requireExactMemoryRecord(snapshot, ["kind", "spaceRef", "spaceVersion",
-        "entryRef", "entryVersion", "revisionRef", "revision"], "MEMORY_ENTRY_INVALID");
+        "entryRef", "entryVersion", "revisionRef", "revision",
+        ...(snapshot.kind === "restored" ? ["restoredFromRevisionRef"] : [])],
+      "MEMORY_ENTRY_INVALID");
       return Object.freeze({ kind: snapshot.kind, spaceRef: memorySpaceRef(record.spaceRef),
         spaceVersion: memoryAggregateVersion(record.spaceVersion),
         entryRef: memoryEntryRef(record.entryRef),
         entryVersion: memoryAggregateVersion(record.entryVersion),
         revisionRef: memoryRevisionRef(record.revisionRef),
-        revision: memoryRevisionNumber(record.revision) });
+        revision: memoryRevisionNumber(record.revision),
+        ...(snapshot.kind === "restored" ? { restoredFromRevisionRef:
+          memoryRevisionRef(record.restoredFromRevisionRef) } : {}) });
+    }
+    if (snapshot.kind === "prioritized" || snapshot.kind === "deprioritized") {
+      const record = requireExactMemoryRecord(snapshot, ["kind", "spaceRef", "spaceVersion",
+        "entryRef", "entryVersion", "prioritized", "changed"], "MEMORY_ENTRY_INVALID");
+      if (typeof record.prioritized !== "boolean" || typeof record.changed !== "boolean" ||
+        record.prioritized !== (snapshot.kind === "prioritized")) {
+        throw new MemoryApplicationError("MEMORY_RECEIPT_INVALID");
+      }
+      return Object.freeze({ kind: snapshot.kind, spaceRef: memorySpaceRef(record.spaceRef),
+        spaceVersion: memoryAggregateVersion(record.spaceVersion),
+        entryRef: memoryEntryRef(record.entryRef),
+        entryVersion: memoryAggregateVersion(record.entryVersion),
+        prioritized: record.prioritized, changed: record.changed });
     }
     if (snapshot.kind === "forgotten") {
       const record = requireExactMemoryRecord(snapshot, ["kind", "spaceRef", "spaceVersion",
@@ -452,6 +558,9 @@ function resultKindForOperation(operation: MemoryCommandOperation): MemoryComman
   switch (operation) {
     case "remember": return "remembered";
     case "correct": return "corrected";
+    case "restore": return "restored";
+    case "prioritize": return "prioritized";
+    case "deprioritize": return "deprioritized";
     case "forget": return "forgotten";
     case "pause_learning": return "learning_paused";
     case "resume_learning": return "learning_resumed";
@@ -506,6 +615,8 @@ function rememberDigest(record: Readonly<Record<string, unknown>>, binding: Memo
     ["sourceDigest", memoryDigest(record.sourceDigest)], ...protectedContentDigestFields(record.protectedContent),
     ["category", memoryCategoryForDigest(record.category)],
     ["featurePolicyRevisionRef", featurePolicyRevisionRef],
+    ["validFrom", nullableInstantForDigest(record.validFrom)],
+    ["validTo", nullableInstantForDigest(record.validTo)],
     ["recordedAt", memoryInstant(record.recordedAt)],
   ]);
 }
@@ -521,6 +632,39 @@ function correctDigest(record: Readonly<Record<string, unknown>>, siteRef: SiteR
     ["revisionRef", memoryRevisionRef(record.revisionRef)],
     ["provenanceRef", memoryProvenanceRef(record.provenanceRef)],
     ["sourceDigest", memoryDigest(record.sourceDigest)], ...protectedContentDigestFields(record.protectedContent),
+    ["featurePolicyRevisionRef", featurePolicyRevisionRef],
+    ["validFrom", nullableInstantForDigest(record.validFrom)],
+    ["validTo", nullableInstantForDigest(record.validTo)],
+    ["recordedAt", memoryInstant(record.recordedAt)],
+  ]);
+}
+
+function restoreDigest(record: Readonly<Record<string, unknown>>, siteRef: SiteRef,
+  spaceRef: MemorySpaceRef, featurePolicyRevisionRef: FeaturePolicyRevisionRef) {
+  return computeCanonicalMemoryCommandDigest("restore", [
+    ["siteRef", siteRef], ["spaceRef", spaceRef],
+    ["expectedSpaceVersion", memoryAggregateVersion(record.expectedSpaceVersion)],
+    ["entryRef", memoryEntryRef(record.entryRef)],
+    ["expectedEntryVersion", memoryAggregateVersion(record.expectedEntryVersion)],
+    ["expectedCurrentRevision", memoryRevisionNumber(record.expectedCurrentRevision)],
+    ["revisionRef", memoryRevisionRef(record.revisionRef)],
+    ["restoredFromRevisionRef", memoryRevisionRef(record.restoredFromRevisionRef)],
+    ["provenanceRef", memoryProvenanceRef(record.provenanceRef)],
+    ["sourceDigest", memoryDigest(record.sourceDigest)],
+    ...protectedContentDigestFields(record.protectedContent),
+    ["featurePolicyRevisionRef", featurePolicyRevisionRef],
+    ["recordedAt", memoryInstant(record.recordedAt)],
+  ]);
+}
+
+function priorityDigest(record: Readonly<Record<string, unknown>>, siteRef: SiteRef,
+  spaceRef: MemorySpaceRef, featurePolicyRevisionRef: FeaturePolicyRevisionRef) {
+  return computeCanonicalMemoryCommandDigest(record.prioritized === true ? "prioritize" : "deprioritize", [
+    ["siteRef", siteRef], ["spaceRef", spaceRef],
+    ["expectedSpaceVersion", memoryAggregateVersion(record.expectedSpaceVersion)],
+    ["entryRef", memoryEntryRef(record.entryRef)],
+    ["expectedEntryVersion", memoryAggregateVersion(record.expectedEntryVersion)],
+    ["prioritized", record.prioritized === true ? "true" : "false"],
     ["featurePolicyRevisionRef", featurePolicyRevisionRef],
     ["recordedAt", memoryInstant(record.recordedAt)],
   ]);
@@ -624,15 +768,24 @@ function assertSpaceMatches(space: MemorySpace, binding: MemoryScopeBinding,
   if (space.version !== expectedVersion) throw new MemoryApplicationError("MEMORY_PERSISTENCE_CONFLICT");
 }
 
-function rememberedResult(kind: "remembered" | "corrected", space: MemorySpace,
+function rememberedResult(kind: "remembered" | "corrected" | "restored", space: MemorySpace,
   remembered: RememberedMemory): MemoryCommandResult {
   return Object.freeze({ kind, spaceRef: space.spaceRef, spaceVersion: space.version,
     entryRef: remembered.entry.entryRef, entryVersion: remembered.entry.version,
     revisionRef: remembered.revision.revisionRef, revision: remembered.revision.revision });
 }
 
-function controlResult(operation: Exclude<MemoryCommandOperation, "remember" | "correct" | "forget" |
-  "rebind_policy">,
+function nullableInstantForDigest(value: unknown): string {
+  return value === null ? "null" : memoryInstant(value);
+}
+
+function withDefaultValidity(value: unknown): Readonly<Record<string, unknown>> {
+  const record = snapshotMemoryRecord(value, "MEMORY_ENTRY_INVALID");
+  return Object.freeze({ ...record, validFrom: record.validFrom ?? null, validTo: record.validTo ?? null });
+}
+
+function controlResult(operation: Exclude<MemoryCommandOperation, "remember" | "correct" | "restore" |
+  "prioritize" | "deprioritize" | "forget" | "rebind_policy">,
   space: MemorySpace): MemoryCommandResult {
   const kind = operation === "pause_learning" ? "learning_paused"
     : operation === "resume_learning" ? "learning_resumed"

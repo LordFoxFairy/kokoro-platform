@@ -66,6 +66,7 @@ const MEMORY_WORKER_ROUTINES = Object.freeze([
   "platform.memory_worker_claim_purge(text,character,integer)",
   "platform.memory_worker_delete_revision_payload(text,text,text,text,bigint,text,bigint,character)",
   "platform.memory_worker_record_purge_receipt(text,text,text,text,text,character,bigint,character)",
+  "platform.memory_worker_finalize_purge(text,text,bigint,character)",
 ] as const);
 
 const MEMORY_PUBLIC_ROUTINES = Object.freeze([
@@ -77,13 +78,13 @@ const MEMORY_PUBLIC_ROUTINES = Object.freeze([
   "platform.memory_public_get_entry(text,text,bigint,text,text,bigint,text)",
   "platform.memory_public_list_entry_history(text,text,bigint,text,text,bigint,text,bigint,integer)",
   "platform.memory_public_get_restorable_revision(text,text,bigint,text,text,bigint,text,text,integer)",
-  "platform.memory_public_prepare_remember(text,text,bigint,text,text,character,text,text,text,text)",
-  "platform.memory_public_prepare_correct(text,text,bigint,text,text,character,text,text,text,text)",
-  "platform.memory_public_prepare_restore(text,text,bigint,text,text,character,text,text,text,text)",
-  "platform.memory_public_prepare_prioritize(text,text,bigint,text,text,character,text,text,text,text)",
-  "platform.memory_public_prepare_deprioritize(text,text,bigint,text,text,character,text,text,text,text)",
-  "platform.memory_public_prepare_forget(text,text,bigint,text,text,character,text,text,text,text)",
-  "platform.memory_public_prepare_reset(text,text,bigint,text,text,character,text,text,text,text)",
+  "platform.memory_public_prepare_remember(text,text,bigint,text,text,character,text,character,text,text,text,text)",
+  "platform.memory_public_prepare_correct(text,text,bigint,text,text,character,text,character,text,text,text,text)",
+  "platform.memory_public_prepare_restore(text,text,bigint,text,text,character,text,character,text,text,text,text)",
+  "platform.memory_public_prepare_prioritize(text,text,bigint,text,text,character,text,character,text,text,text,text)",
+  "platform.memory_public_prepare_deprioritize(text,text,bigint,text,text,character,text,character,text,text,text,text)",
+  "platform.memory_public_prepare_forget(text,text,bigint,text,text,character,text,character,text,text,text,text)",
+  "platform.memory_public_prepare_reset(text,text,bigint,text,text,character,text,character,text,text,text,text)",
   "platform.memory_public_commit_remember(jsonb)",
   "platform.memory_public_commit_correct(jsonb)",
   "platform.memory_public_commit_restore(jsonb)",
@@ -1532,7 +1533,8 @@ const MEMORY_ROLE_IDENTITY_TABLE_PREFLIGHT_SQL = `
         'reject_memory_revision_payload_update','reject_memory_public_fact_mutation',
         'guard_memory_purge_revision_target_update','assert_memory_database_role',
         'memory_assert_public_owner_authority','memory_worker_claim_purge',
-        'memory_worker_delete_revision_payload','memory_worker_record_purge_receipt'
+        'memory_worker_delete_revision_payload','memory_worker_record_purge_receipt',
+        'memory_worker_finalize_purge'
       ])
     ) AS "authorityBaselineExists" /* memoryRoleIdentityTablePreflight */`;
 
@@ -1562,6 +1564,11 @@ const MEMORY_ROLE_AUTHORITY_SQL = `
   WITH expected AS (
     SELECT * FROM jsonb_to_recordset($1::jsonb)
       AS expected("roleKind" text,"roleName" text)
+  ), migrator_identity AS (
+    SELECT migrator.oid
+    FROM pg_roles migrator
+    WHERE migrator.rolname=$2 AND migrator.rolname=current_user
+    /* memoryMigratorIdentity */
   ), live AS (
     SELECT expected."roleKind" AS "roleKind",runtime_role.rolname AS "roleName",
       runtime_role.oid AS "roleOid",runtime_role.rolcanlogin AS "canLogin",
@@ -1722,7 +1729,8 @@ const MEMORY_ROLE_AUTHORITY_SQL = `
     SELECT unnest(ARRAY[
       to_regprocedure('platform.memory_worker_claim_purge(text,character,integer)'),
       to_regprocedure('platform.memory_worker_delete_revision_payload(text,text,text,text,bigint,text,bigint,character)'),
-      to_regprocedure('platform.memory_worker_record_purge_receipt(text,text,text,text,text,character,bigint,character)')
+      to_regprocedure('platform.memory_worker_record_purge_receipt(text,text,text,text,text,character,bigint,character)'),
+      to_regprocedure('platform.memory_worker_finalize_purge(text,text,bigint,character)')
     ]) AS oid
   ), expected_public_routine AS (
     SELECT unnest(ARRAY[
@@ -1734,13 +1742,13 @@ const MEMORY_ROLE_AUTHORITY_SQL = `
       to_regprocedure('platform.memory_public_get_entry(text,text,bigint,text,text,bigint,text)'),
       to_regprocedure('platform.memory_public_list_entry_history(text,text,bigint,text,text,bigint,text,bigint,integer)'),
       to_regprocedure('platform.memory_public_get_restorable_revision(text,text,bigint,text,text,bigint,text,text,integer)'),
-      to_regprocedure('platform.memory_public_prepare_remember(text,text,bigint,text,text,character,text,text,text,text)'),
-      to_regprocedure('platform.memory_public_prepare_correct(text,text,bigint,text,text,character,text,text,text,text)'),
-      to_regprocedure('platform.memory_public_prepare_restore(text,text,bigint,text,text,character,text,text,text,text)'),
-      to_regprocedure('platform.memory_public_prepare_prioritize(text,text,bigint,text,text,character,text,text,text,text)'),
-      to_regprocedure('platform.memory_public_prepare_deprioritize(text,text,bigint,text,text,character,text,text,text,text)'),
-      to_regprocedure('platform.memory_public_prepare_forget(text,text,bigint,text,text,character,text,text,text,text)'),
-      to_regprocedure('platform.memory_public_prepare_reset(text,text,bigint,text,text,character,text,text,text,text)'),
+      to_regprocedure('platform.memory_public_prepare_remember(text,text,bigint,text,text,character,text,character,text,text,text,text)'),
+      to_regprocedure('platform.memory_public_prepare_correct(text,text,bigint,text,text,character,text,character,text,text,text,text)'),
+      to_regprocedure('platform.memory_public_prepare_restore(text,text,bigint,text,text,character,text,character,text,text,text,text)'),
+      to_regprocedure('platform.memory_public_prepare_prioritize(text,text,bigint,text,text,character,text,character,text,text,text,text)'),
+      to_regprocedure('platform.memory_public_prepare_deprioritize(text,text,bigint,text,text,character,text,character,text,text,text,text)'),
+      to_regprocedure('platform.memory_public_prepare_forget(text,text,bigint,text,text,character,text,character,text,text,text,text)'),
+      to_regprocedure('platform.memory_public_prepare_reset(text,text,bigint,text,text,character,text,character,text,text,text,text)'),
       to_regprocedure('platform.memory_public_commit_remember(jsonb)'),
       to_regprocedure('platform.memory_public_commit_correct(jsonb)'),
       to_regprocedure('platform.memory_public_commit_restore(jsonb)'),
@@ -1818,6 +1826,17 @@ const MEMORY_ROLE_AUTHORITY_SQL = `
   )
   SELECT (
     (SELECT count(*) FROM live)=3
+    AND (SELECT count(*) FROM migrator_identity)=1
+    AND EXISTS (
+      SELECT 1 FROM migrator_identity
+      JOIN pg_database database_row ON database_row.datdba=migrator_identity.oid
+      WHERE database_row.datname=current_database()
+    )
+    AND EXISTS (
+      SELECT 1 FROM migrator_identity
+      JOIN pg_namespace namespace ON namespace.nspowner=migrator_identity.oid
+      WHERE namespace.nspname='platform'
+    )
     AND NOT EXISTS (
       SELECT 1 FROM live WHERE NOT "canLogin" OR NOT "canConnectDatabase"
         OR "isSuperuser" OR "canCreateDatabase"
@@ -1869,14 +1888,28 @@ const MEMORY_ROLE_AUTHORITY_SQL = `
        EXCEPT SELECT * FROM effective_routine_authority)
     )
     AND NOT EXISTS (SELECT 1 FROM expected_worker_routine WHERE oid IS NULL)
+    AND (SELECT count(*) FROM expected_public_routine)=22
+    AND NOT EXISTS (SELECT 1 FROM expected_public_routine WHERE oid IS NULL)
     AND NOT EXISTS (SELECT 1 FROM default_authority)
     AND NOT EXISTS (SELECT 1 FROM effective_public_default_authority)
     AND NOT EXISTS (SELECT 1 FROM implicit_public_routine_default_authority)
     AND NOT EXISTS (
       SELECT 1 FROM expected_worker_routine expected_routine
       LEFT JOIN pg_proc routine ON routine.oid=expected_routine.oid
-      LEFT JOIN pg_roles owner ON owner.oid=routine.proowner
-      WHERE routine.oid IS NULL OR owner.rolname<>$2 OR NOT routine.prosecdef
+      CROSS JOIN migrator_identity
+      WHERE routine.oid IS NULL
+        OR routine.proowner IS DISTINCT FROM migrator_identity.oid OR NOT routine.prosecdef
+        OR NOT EXISTS (
+          SELECT 1 FROM unnest(COALESCE(routine.proconfig,ARRAY[]::text[])) setting
+          WHERE replace(setting,' ','')='search_path=pg_catalog,platform'
+        )
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM expected_public_routine expected_routine
+      LEFT JOIN pg_proc routine ON routine.oid=expected_routine.oid
+      CROSS JOIN migrator_identity
+      WHERE routine.oid IS NULL
+        OR routine.proowner IS DISTINCT FROM migrator_identity.oid OR NOT routine.prosecdef
         OR NOT EXISTS (
           SELECT 1 FROM unnest(COALESCE(routine.proconfig,ARRAY[]::text[])) setting
           WHERE replace(setting,' ','')='search_path=pg_catalog,platform'

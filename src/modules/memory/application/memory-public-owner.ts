@@ -40,6 +40,7 @@ export class MemoryPublicOwner {
     }, plaintext: content });
     return this.#execute({ operation: "remember", context, commandRef: input.commandRef,
       requestDigest: fingerprint.digest, requestDigestKeyRevision: fingerprint.keyRevision,
+      ...recovered.payloadProof,
       spaceRef, entryRef, revisionRef,
       provenanceRef: memoryPublicDerivedRef("provenance", context, input.commandRef),
       category: input.category, protectedContent, validFrom: validity.validFrom,
@@ -72,6 +73,7 @@ export class MemoryPublicOwner {
     }, plaintext: content });
     return this.#execute({ operation: "correct", context, commandRef: input.commandRef,
       requestDigest: fingerprint.digest, requestDigestKeyRevision: fingerprint.keyRevision,
+      ...recovered.payloadProof,
       spaceRef, entryRef: input.entryRef,
       revisionRef, provenanceRef: memoryPublicDerivedRef("provenance", context, input.commandRef),
       protectedContent, expectedRevision, validFrom: validity.validFrom,
@@ -88,7 +90,7 @@ export class MemoryPublicOwner {
     const fields = { entryRef: input.entryRef, revisionRef: input.revisionRef,
       expectedRevision } as const;
     const recovered = await this.#recover("restore", context, input.commandRef, candidateSpaceRef,
-      input.entryRef, nextRevisionRef, fields);
+      input.entryRef, input.revisionRef, fields);
     if (recovered.result !== null) return recovered.result;
     const fingerprint = recovered.fingerprint;
     const { owner, entry, historical } = await this.#restoreSource(context, input.entryRef,
@@ -112,6 +114,7 @@ export class MemoryPublicOwner {
     const validity = temporalValidity(historical.validFrom, historical.validTo);
     return this.#execute({ operation: "restore", context, commandRef: input.commandRef,
       requestDigest: fingerprint.digest, requestDigestKeyRevision: fingerprint.keyRevision,
+      ...recovered.payloadProof,
       spaceRef: owner.spaceRef, entryRef: input.entryRef, revisionRef: nextRevisionRef,
       provenanceRef: memoryPublicDerivedRef("provenance", context, input.commandRef),
       restoredFromRevisionRef: input.revisionRef, expectedRevision,
@@ -135,6 +138,7 @@ export class MemoryPublicOwner {
     return this.#execute({ operation, context,
       commandRef: input.commandRef, requestDigest: fingerprint.digest,
       requestDigestKeyRevision: fingerprint.keyRevision,
+      ...recovered.payloadProof,
       spaceRef, entryRef: input.entryRef, revisionRef: null,
       expectedEntryVersion: input.expectedEntryVersion, prioritized: input.prioritized,
       recordedAt: this.#now() });
@@ -152,6 +156,7 @@ export class MemoryPublicOwner {
     const fingerprint = recovered.fingerprint;
     return this.#execute({ operation: "forget", context, commandRef: input.commandRef,
       requestDigest: fingerprint.digest, requestDigestKeyRevision: fingerprint.keyRevision,
+      ...recovered.payloadProof,
       spaceRef, entryRef: input.entryRef,
       revisionRef: null, expectedEntryVersion: input.expectedEntryVersion, recordedAt: this.#now() });
   }
@@ -166,6 +171,7 @@ export class MemoryPublicOwner {
     const fingerprint = recovered.fingerprint;
     return this.#execute({ operation: "reset", context, commandRef: input.commandRef,
       requestDigest: fingerprint.digest, requestDigestKeyRevision: fingerprint.keyRevision,
+      ...recovered.payloadProof,
       spaceRef, entryRef: null, revisionRef: null,
       recordedAt: this.#now() });
   }
@@ -180,26 +186,50 @@ export class MemoryPublicOwner {
     fields: Readonly<Record<string, string | number | bigint | boolean | null>>,
     fingerprintOperation: string = operation): Promise<Readonly<{
       fingerprint: Readonly<{ keyRevision: string; digest: string }>;
+      payloadProof: Readonly<{ requestPayloadKeyRevision: string; requestPayloadDigest: string }>;
       result: MemoryPublicCommandResult | null;
     }>> {
+    const identity = { operation, context, commandRef, spaceRef, entryRef, revisionRef,
+      fingerprintInput: Object.freeze({ operation: fingerprintOperation, fields }) } as const;
+    const recovery = await this.dependencies.unitOfWork.execute(
+      { operation: `memory.${operation}.recover` },
+      (transaction) => this.dependencies.repository.recoverCommand(transaction, identity));
+    if (recovery.kind === "payload_conflict") {
+      throw new MemoryApplicationError("MEMORY_COMMAND_DIGEST_CONFLICT");
+    }
+    if (recovery.kind === "replay") {
+      return Object.freeze({ fingerprint: Object.freeze({ keyRevision: "replayed", digest: "0".repeat(64) }),
+        payloadProof: Object.freeze({ requestPayloadKeyRevision: "replayed",
+          requestPayloadDigest: "0".repeat(64) }),
+        result: Object.freeze({ ...recovery.result, replayed: true }) });
+    }
+    const payloadProof = Object.freeze({
+      requestPayloadKeyRevision: recovery.requestPayloadKeyRevision,
+      requestPayloadDigest: recovery.requestPayloadDigest,
+    });
     let fingerprint = await this.#fingerprint(fingerprintOperation, fields);
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const recovered = await this.dependencies.unitOfWork.execute(
-        { operation: `memory.${operation}.recover` },
-        (transaction) => this.dependencies.repository.recoverCommand(transaction, {
-          operation, context, commandRef, requestDigest: fingerprint.digest,
-          requestDigestKeyRevision: fingerprint.keyRevision, spaceRef, entryRef, revisionRef,
+      const claimed = await this.dependencies.unitOfWork.execute(
+        { operation: `memory.${operation}.claim` },
+        (transaction) => this.dependencies.repository.claimCommand(transaction, {
+          ...identity, requestDigest: fingerprint.digest,
+          requestDigestKeyRevision: fingerprint.keyRevision, ...payloadProof,
         }));
-      if (recovered.kind === "continue") return Object.freeze({ fingerprint, result: null });
-      if (recovered.kind === "replay") {
-        return Object.freeze({ fingerprint,
-          result: Object.freeze({ ...recovered.result, replayed: true }) });
+      if (claimed.kind === "continue") {
+        return Object.freeze({ fingerprint, payloadProof, result: null });
       }
-      if (attempt !== 0 || recovered.requestDigestKeyRevision === fingerprint.keyRevision) {
+      if (claimed.kind === "replay") {
+        return Object.freeze({ fingerprint, payloadProof,
+          result: Object.freeze({ ...claimed.result, replayed: true }) });
+      }
+      if (claimed.kind === "payload_conflict") {
+        throw new MemoryApplicationError("MEMORY_COMMAND_DIGEST_CONFLICT");
+      }
+      if (attempt !== 0 || claimed.requestDigestKeyRevision === fingerprint.keyRevision) {
         throw new MemoryApplicationError("MEMORY_COMMAND_DIGEST_CONFLICT");
       }
       fingerprint = await this.#fingerprint(fingerprintOperation, fields,
-        recovered.requestDigestKeyRevision);
+        claimed.requestDigestKeyRevision);
     }
     throw new MemoryApplicationError("MEMORY_COMMAND_DIGEST_CONFLICT");
   }

@@ -27,6 +27,7 @@ export type {
   MemoryPublicRevisionRecord,
   MemoryPublicUnitOfWork,
   MemoryTransitionAuthorityPort,
+  MemoryReplayRequestVerifierPort,
 } from "./application/index.js";
 
 export { MemoryDomainError } from "./domain/memory-error.js";
@@ -83,6 +84,8 @@ export {
   createRememberedMemory,
   forgetMemoryEntry,
   rehydrateMemoryEntry,
+  restoreMemoryEntry,
+  setMemoryEntryPriority,
 } from "./domain/memory-entry.js";
 export type {
   MemoryCategory,
@@ -123,6 +126,10 @@ export { createMemoryContentProtector, parseMemoryContentKeyRing } from
   "./infrastructure/crypto/memory-content-protector.js";
 export { createMemoryTransitionAuthority } from
   "./infrastructure/crypto/memory-transition-authority.js";
+export { createMemoryReplayRequestVerifier } from
+  "./infrastructure/crypto/memory-replay-request-verifier.js";
+export type { MemoryReplayRequestKeyRing } from
+  "./infrastructure/crypto/memory-replay-request-verifier.js";
 export type { MemoryContentKeyRing } from
   "./infrastructure/crypto/memory-content-protector.js";
 

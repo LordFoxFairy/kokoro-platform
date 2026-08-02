@@ -66,6 +66,9 @@ export type MemoryReceiptOwner =
 export type MemoryCommandOperation =
   | "remember"
   | "correct"
+  | "restore"
+  | "prioritize"
+  | "deprioritize"
   | "forget"
   | "pause_learning"
   | "resume_learning"
@@ -85,13 +88,23 @@ export type MemoryCommandReceiptIdentity = Readonly<{
 
 export type MemoryCommandResult =
   | Readonly<{
-      kind: "remembered" | "corrected";
+      kind: "remembered" | "corrected" | "restored";
       spaceRef: MemorySpaceRef;
       spaceVersion: AggregateVersion;
       entryRef: MemoryEntryRef;
       entryVersion: AggregateVersion;
       revisionRef: MemoryRevisionRef;
       revision: MemoryRevisionNumber;
+      restoredFromRevisionRef?: MemoryRevisionRef;
+    }>
+  | Readonly<{
+      kind: "prioritized" | "deprioritized";
+      spaceRef: MemorySpaceRef;
+      spaceVersion: AggregateVersion;
+      entryRef: MemoryEntryRef;
+      entryVersion: AggregateVersion;
+      prioritized: boolean;
+      changed: boolean;
     }>
   | Readonly<{
       kind: "forgotten";
@@ -154,6 +167,18 @@ export interface MemoryAuthorityRepository {
     spaceRef: MemorySpaceRef,
     entryRef: MemoryEntryRef,
   ): Promise<MemoryEntry | null>;
+  loadRestorableRevisionForUpdate(
+    transaction: PlatformTransaction,
+    siteRef: SiteRef,
+    spaceRef: MemorySpaceRef,
+    entryRef: MemoryEntryRef,
+    revisionRef: MemoryRevisionRef,
+  ): Promise<Readonly<{
+    revision: MemoryRevisionNumber;
+    revisionRef: MemoryRevisionRef;
+    validFrom: string | null;
+    validTo: string | null;
+  }> | null>;
   claimReceipt(
     transaction: PlatformTransaction,
     identity: MemoryCommandReceiptIdentity,
@@ -175,6 +200,21 @@ export interface MemoryAuthorityRepository {
       currentRevision: MemoryRevisionNumber;
     }>,
     corrected: RememberedMemory,
+  ): Promise<void>;
+  saveRestoredMemory(
+    transaction: PlatformTransaction,
+    expected: Readonly<{
+      spaceVersion: AggregateVersion;
+      entryVersion: AggregateVersion;
+      currentRevision: MemoryRevisionNumber;
+    }>,
+    restored: RememberedMemory,
+  ): Promise<void>;
+  saveEntryPriority(
+    transaction: PlatformTransaction,
+    expected: Readonly<{ spaceVersion: AggregateVersion; entryVersion: AggregateVersion }>,
+    space: MemorySpace,
+    entry: MemoryEntry,
   ): Promise<void>;
   saveForgottenMemory(
     transaction: PlatformTransaction,
@@ -230,6 +270,8 @@ export type MemoryPublicCommand = Readonly<{
   commandRef: string;
   requestDigest: string;
   requestDigestKeyRevision: string;
+  requestPayloadDigest: string;
+  requestPayloadKeyRevision: string;
   spaceRef: string;
   entryRef: string | null;
   revisionRef: string | null;
@@ -254,6 +296,7 @@ export type MemoryPublicCommandResult = Readonly<{
   revisionRef?: string;
   restoredFromRevisionRef?: string;
   prioritized?: boolean;
+  changed?: boolean;
   replayed?: boolean;
 }>;
 
@@ -261,16 +304,17 @@ export type MemoryPublicRecoveryIdentity = Readonly<{
   operation: MemoryPublicOperation;
   context: MemoryPublicPersonalContext;
   commandRef: string;
-  requestDigest: string;
-  requestDigestKeyRevision: string;
   spaceRef: string;
   entryRef: string | null;
   revisionRef: string | null;
+  fingerprintInput: Readonly<{ operation: string;
+    fields: Readonly<Record<string, string | number | bigint | boolean | null>> }>;
 }>;
 
 export type MemoryPublicRecoveryResult =
-  | Readonly<{ kind: "continue" }>
-  | Readonly<{ kind: "digest_mismatch"; requestDigestKeyRevision: string }>
+  | Readonly<{ kind: "continue"; requestPayloadKeyRevision: string;
+      requestPayloadDigest: string }>
+  | Readonly<{ kind: "payload_conflict" }>
   | Readonly<{ kind: "replay"; result: MemoryPublicCommandResult }>;
 
 export type MemoryPublicResolvedOwner = Readonly<{
@@ -316,6 +360,11 @@ export type MemoryPublicRevisionRecord = Readonly<{
 export interface MemoryPublicRepository {
   recoverCommand(transaction: PlatformTransaction, identity: MemoryPublicRecoveryIdentity):
     Promise<MemoryPublicRecoveryResult>;
+  claimCommand(transaction: PlatformTransaction, identity: MemoryPublicRecoveryIdentity & Readonly<{
+    requestDigest: string; requestDigestKeyRevision: string;
+    requestPayloadKeyRevision: string; requestPayloadDigest: string;
+  }>): Promise<MemoryPublicRecoveryResult |
+    Readonly<{ kind: "digest_mismatch"; requestDigestKeyRevision: string }>>;
   executeCommand(transaction: PlatformTransaction, command: MemoryPublicCommand):
     Promise<MemoryPublicCommandResult>;
   resolveOwner(transaction: PlatformTransaction, input: Readonly<{
@@ -373,6 +422,15 @@ export interface MemoryTransitionAuthorityPort {
     keyRevision: string;
     digest: string;
   }>>;
+}
+
+/**
+ * Local, startup-loaded keyring used only to prove retry payload identity before any mutable
+ * provider, KMS, admission, or owner-state dependency is consulted.
+ */
+export interface MemoryReplayRequestVerifierPort {
+  issue(input: Parameters<MemoryCommandFingerprintPort["fingerprint"]>[0], keyRevision?: string):
+    Readonly<{ keyRevision: string; digest: string }>;
 }
 
 export type { MemoryCommandFingerprintPort, MemoryContentAdmissionPort, MemoryPublicPersonalContext };

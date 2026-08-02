@@ -16,6 +16,7 @@ export type {
   MemoryPayloadBinding,
   MemoryReceiptClaim,
   MemoryReceiptOwner,
+  MemoryReplayRequestVerifierPort,
   MemoryPublicCommand,
   MemoryPublicCommandResult,
   MemoryPublicCursor,
