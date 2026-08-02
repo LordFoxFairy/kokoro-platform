@@ -36,14 +36,12 @@ export const redemptionSafeTermsSchema = z.strictObject({
 export type RedemptionSafeTerms = z.infer<typeof redemptionSafeTermsSchema>;
 
 export const redemptionReleaseCapabilities = Object.freeze({
-  creditGrantBucketClasses: Object.freeze(["permanent", "daily", "period"] as const),
-  calendarWindowCreditAcquisition: true,
+  creditGrantBucketClasses: Object.freeze(["permanent"] as const),
+  calendarWindowCreditAcquisition: false,
 });
 
 export function isSupportedRedemptionSafeTerms(terms: RedemptionSafeTerms): boolean {
-  const hasRecurring = terms.credits.some((credit) => credit.bucketClass !== "permanent");
-  return terms.credits.every((credit) => credit.bucketClass === "permanent" ? credit.expiresAt === null :
-    credit.expiresAt !== null) && (!hasRecurring || (terms.planVersionRef !== null && terms.term.endsAt !== null));
+  return terms.credits.every((credit) => credit.bucketClass === "permanent" && credit.expiresAt === null);
 }
 
 export class RedemptionPolicyError extends Error {

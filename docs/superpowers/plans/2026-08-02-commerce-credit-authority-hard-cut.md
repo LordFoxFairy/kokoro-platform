@@ -37,7 +37,7 @@
 - Move into Commerce: `src/modules/credit/infrastructure/postgres/credit-program-catalog-reader.ts`
 - Move into Commerce: `src/modules/credit/infrastructure/protobuf/credit-program-codec.ts`
 - Replace: `src/process/credit-owner-composition.ts` with Commerce catalog composition under `src/process/commerce-admin-composition.ts`
-- Modify: `prisma/migrations/20260816_credit_program_catalog_owner/migration.sql`
+- Modify: `prisma/migrations/20260816_commerce_credit_program_catalog_owner/migration.sql`
 - Modify: Commerce service, repository, reader, fulfillment, composition, and test imports returned by `rg "grant-program|credit-grant-program" src/modules/commerce src/process test/unit`
 - Delete: `src/modules/credit/application/contracts/grant-program.ts`
 - Delete: `src/modules/credit/infrastructure/postgres/credit-grant-program.ts`

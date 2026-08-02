@@ -1,5 +1,5 @@
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
-import type { CreditGrantScopePolicy } from "./grant-issuance.js";
+import type { CreditGrantScopePolicy } from "../../../credit/application/contracts/grant-issuance.js";
 
 export type CreditGrantProgramRevision = Readonly<{
   revisionRef: string;
@@ -23,7 +23,7 @@ export type CreditGrantProgramTarget = Readonly<{
   revisionDigest: string;
 }>;
 
-/** Credit-owned immutable program catalog; consumers receive only exact revision snapshots. */
+/** Commerce-owned immutable Program catalog; consumers receive only exact revision snapshots. */
 export interface CreditGrantProgramPort {
   resolveTargets(transaction: PlatformTransaction, input: Readonly<{
     siteId: string;

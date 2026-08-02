@@ -5,7 +5,7 @@ import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/plat
 import type {
   CreditGrantProgramAdministrationReader,
   CreditGrantProgramAdministrationRecord,
-} from "../../../credit/application/contracts/grant-program-administration-reader.js";
+} from "../../application/contracts/credit-program-administration-reader.js";
 
 export type CommerceOfferRecord = Readonly<{
   siteId: string; productRef: string; productKind: "free" | "credit_pack" | "subscription" | "bundle";

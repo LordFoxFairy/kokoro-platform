@@ -33,27 +33,27 @@ export class PostgresCreditProgramCatalog implements CreditProgramCatalogReposit
     if (receipt.state !== "pending") throw new Error("CREDIT_PROGRAM_COMMAND_NOT_RETRYABLE");
     const sql = resolvePlatformTransaction(transaction);
     await assertDatabaseCalendarZones(sql, candidate);
-    await sql.execute(`INSERT INTO platform.credit_program_head(program_ref) VALUES ($1)
+    await sql.execute(`INSERT INTO platform.commerce_credit_program_head(program_ref) VALUES ($1)
       ON CONFLICT (program_ref) DO NOTHING`, [candidate.target.programRef]);
     const heads = await sql.query<HeadRow>(`SELECT current_revision::text AS "currentRevision"
-      FROM platform.credit_program_head WHERE program_ref=$1 FOR UPDATE`, [candidate.target.programRef]);
+      FROM platform.commerce_credit_program_head WHERE program_ref=$1 FOR UPDATE`, [candidate.target.programRef]);
     if (heads[0]?.currentRevision !== command.expectedVersion.toString()) {
       throw new Error("CREDIT_PROGRAM_HEAD_CONFLICT");
     }
     const snapshots = await sql.query<SnapshotRow>(`SELECT current_epoch::text AS "currentEpoch",
-      snapshot_digest AS "snapshotDigest" FROM platform.credit_program_catalog_snapshot
+      snapshot_digest AS "snapshotDigest" FROM platform.commerce_credit_program_catalog_snapshot
       WHERE singleton=TRUE FOR UPDATE`);
     const snapshot = snapshots[0];
     if (snapshot === undefined) throw new Error("CREDIT_PROGRAM_SNAPSHOT_MISSING");
     const epoch = BigInt(snapshot.currentEpoch) + 1n;
     const snapshotDigest = advanceCreditProgramCatalogSnapshot(snapshot.snapshotDigest, candidate.target);
-    const changed = await sql.execute(`UPDATE platform.credit_program_head
+    const changed = await sql.execute(`UPDATE platform.commerce_credit_program_head
       SET current_revision=$2::numeric(20,0),current_digest=$3,updated_at=$4::timestamptz
       WHERE program_ref=$1 AND current_revision=$5::numeric(20,0)`,
     [candidate.target.programRef, candidate.target.revision.toString(), candidate.target.revisionDigest,
       candidate.publishedAt, command.expectedVersion.toString()]);
     if (changed !== 1) throw new Error("CREDIT_PROGRAM_HEAD_CONFLICT");
-    exactlyOne(await sql.execute(`INSERT INTO platform.credit_program_revision
+    exactlyOne(await sql.execute(`INSERT INTO platform.commerce_credit_program_catalog_revision
       (program_ref,revision,revision_digest,unit,maximum_program_balance_per_account_minor,reservation_ttl_seconds,
        reconciliation_grace_seconds,allow_negative_balance,accounting_policy_ref,
        definition_bytes,catalog_epoch,published_by,command_id,published_at)
@@ -66,7 +66,7 @@ export class PostgresCreditProgramCatalog implements CreditProgramCatalogReposit
       candidate.definitionBytes, epoch.toString(), command.actorSubjectId, command.commandId,
       candidate.publishedAt]), "CREDIT_PROGRAM_REVISION_PERSIST_FAILED");
     for (const grant of candidate.definition.grants) {
-      exactlyOne(await sql.execute(`INSERT INTO platform.credit_program_grant_rule
+      exactlyOne(await sql.execute(`INSERT INTO platform.commerce_credit_program_grant_rule
         (program_ref,revision,bucket,amount_minor,burn_priority,liability_merchant_account_ref,scope_policy,window_policy)
         VALUES ($1,$2::numeric(20,0),$3,$4::numeric(20,0),$5,$6,$7::jsonb,$8::jsonb)`,
       [candidate.target.programRef, candidate.target.revision.toString(), grant.bucket,
@@ -74,23 +74,23 @@ export class PostgresCreditProgramCatalog implements CreditProgramCatalogReposit
         JSON.stringify(grant.scopePolicy), JSON.stringify(windowPayload(grant.window))]),
       "CREDIT_PROGRAM_RULE_PERSIST_FAILED");
     }
-    exactlyOne(await sql.execute(`UPDATE platform.credit_program_catalog_snapshot
+    exactlyOne(await sql.execute(`UPDATE platform.commerce_credit_program_catalog_snapshot
       SET current_epoch=$1::numeric(20,0),snapshot_digest=$2,updated_at=$3::timestamptz
       WHERE singleton=TRUE`, [epoch.toString(), snapshotDigest, candidate.publishedAt]),
     "CREDIT_PROGRAM_SNAPSHOT_ADVANCE_FAILED");
-    exactlyOne(await sql.execute(`INSERT INTO platform.credit_program_catalog_snapshot_revision
+    exactlyOne(await sql.execute(`INSERT INTO platform.commerce_credit_program_catalog_snapshot_revision
       (epoch,snapshot_ref,snapshot_digest,recorded_at)
       VALUES ($1::numeric(20,0),$2,$3,$4::timestamptz)`, [epoch.toString(),
       `credit-program-snapshot:${epoch.toString()}`, snapshotDigest, candidate.publishedAt]),
     "CREDIT_PROGRAM_SNAPSHOT_REVISION_PERSIST_FAILED");
-    exactlyOne(await sql.execute(`INSERT INTO platform.credit_program_publication_audit
+    exactlyOne(await sql.execute(`INSERT INTO platform.commerce_credit_program_publication_audit
       (command_id,program_ref,revision,revision_digest,expected_version,actor_subject_id,environment,region,reason,replayed,recorded_at)
       VALUES ($1,$2,$3::numeric(20,0),$4,$5::numeric(20,0),$6,$7,$8,$9,FALSE,$10::timestamptz)`,
     [command.commandId, candidate.target.programRef, candidate.target.revision.toString(),
       candidate.target.revisionDigest, command.expectedVersion.toString(), command.actorSubjectId,
       command.environment, command.region, command.reason, candidate.publishedAt]),
     "CREDIT_PROGRAM_AUDIT_PERSIST_FAILED");
-    exactlyOne(await sql.execute(`INSERT INTO platform.credit_program_outbox
+    exactlyOne(await sql.execute(`INSERT INTO platform.commerce_credit_program_outbox
       (event_ref,event_type,program_ref,revision,revision_digest,payload,occurred_at)
       VALUES ($1::uuid,'credit.program.revision-published.v1',$2,$3::numeric(20,0),$4,$5::jsonb,$6::timestamptz)`,
     [randomUUID(), candidate.target.programRef, candidate.target.revision.toString(),
@@ -111,7 +111,7 @@ async function loadExact(transaction: Parameters<CreditProgramCatalogRepository[
   target: Readonly<{ programRef: string; revision: bigint; revisionDigest: string }>) {
   const rows = await resolvePlatformTransaction(transaction).query<RevisionRow>(`SELECT program_ref AS "programRef",
     revision::text,revision_digest AS "revisionDigest",definition_bytes AS "definitionBytes",
-    published_at AS "publishedAt" FROM platform.credit_program_revision
+    published_at AS "publishedAt" FROM platform.commerce_credit_program_catalog_revision
     WHERE program_ref=$1 AND revision=$2::numeric(20,0) AND revision_digest=$3`,
   [target.programRef, target.revision.toString(), target.revisionDigest]);
   const row = rows[0];

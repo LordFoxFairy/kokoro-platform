@@ -3,6 +3,11 @@
 Credit owns Grant, append-only Journal, Hold/allocation and Usage/Rating authority. It does not expose mutable balance
 adjustment APIs through its Admin read plane.
 
+Credit does not own Credit Program product truth. Program domain types, immutable catalog revisions, publication/read services,
+protobuf codec, PostgreSQL catalog facts, window acquisitions, and composition belong to Commerce. Credit accepts only exact
+Program snapshots through its narrow Grant issuance/correction contracts and owns the resulting Account, Grant, Hold, and Journal
+facts.
+
 `application/contracts/grant-issuance.ts` is the sole same-process grant issuance port for sibling bounded contexts. Its PostgreSQL
 adapter locks the natural CreditAccount identity, returns a closed ready/unavailable result, and binds every ready capability to one
 `PlatformTransaction` and one issuance. It alone creates CreditAccount, CreditGrant and the balanced issuance Journal. Scope policy

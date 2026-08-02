@@ -33,7 +33,7 @@ import type {
   CreditGrantIssuancePort,
   PreparedCreditGrantIssuance,
 } from "../../../credit/application/contracts/grant-issuance.js";
-import type { CreditGrantProgramPort } from "../../../credit/application/contracts/grant-program.js";
+import type { CreditGrantProgramPort } from "../../application/contracts/credit-program.js";
 import type { CreditSourceCorrectionPort } from "../../../credit/application/contracts/source-correction.js";
 
 type PreviewConfirmationRow = Record<string, unknown> & {

@@ -8,7 +8,7 @@ import {
 import { publishedFulfillmentOutputPlanDigest } from "../../src/modules/commerce/domain/redemption-preview.js";
 import { RedemptionPolicyError } from "../../src/modules/commerce/domain/redemption-preview.js";
 import type { CreditGrantProgramPort } from
-  "../../src/modules/credit/application/contracts/grant-program.js";
+  "../../src/modules/commerce/application/contracts/credit-program.js";
 
 describe("PostgresRedemptionRepository preview", () => {
   it("uses snake-case HMAC lookup DTOs and expands frozen output cardinality", async () => {

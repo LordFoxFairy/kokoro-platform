@@ -1,23 +1,23 @@
-CREATE TABLE platform.credit_program_catalog_snapshot (
+CREATE TABLE platform.commerce_credit_program_catalog_snapshot (
   singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK(singleton),
   current_epoch NUMERIC(20,0) NOT NULL DEFAULT 0 CHECK(current_epoch>=0),
   snapshot_digest TEXT NOT NULL CHECK(snapshot_digest ~ '^sha256:[0-9a-f]{64}$'),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
-INSERT INTO platform.credit_program_catalog_snapshot(singleton,snapshot_digest)
+INSERT INTO platform.commerce_credit_program_catalog_snapshot(singleton,snapshot_digest)
 VALUES (TRUE,'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
 
-CREATE TABLE platform.credit_program_catalog_snapshot_revision (
+CREATE TABLE platform.commerce_credit_program_catalog_snapshot_revision (
   epoch NUMERIC(20,0) PRIMARY KEY CHECK(epoch>=0),
   snapshot_ref TEXT NOT NULL UNIQUE,
   snapshot_digest TEXT NOT NULL CHECK(snapshot_digest ~ '^sha256:[0-9a-f]{64}$'),
   recorded_at TIMESTAMPTZ NOT NULL
 );
-INSERT INTO platform.credit_program_catalog_snapshot_revision(epoch,snapshot_ref,snapshot_digest,recorded_at)
+INSERT INTO platform.commerce_credit_program_catalog_snapshot_revision(epoch,snapshot_ref,snapshot_digest,recorded_at)
 VALUES (0,'credit-program-snapshot:0','sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
   '-infinity'::timestamptz);
 
-CREATE TABLE platform.credit_program_head (
+CREATE TABLE platform.commerce_credit_program_head (
   program_ref TEXT PRIMARY KEY CHECK(program_ref ~ '^credit-program:[a-z][a-z0-9._-]{1,127}$'),
   current_revision NUMERIC(20,0) NOT NULL DEFAULT 0 CHECK(current_revision>=0),
   current_digest TEXT CHECK(current_digest IS NULL OR current_digest ~ '^sha256:[0-9a-f]{64}$'),
@@ -25,8 +25,8 @@ CREATE TABLE platform.credit_program_head (
   CHECK((current_revision=0 AND current_digest IS NULL) OR (current_revision>0 AND current_digest IS NOT NULL))
 );
 
-CREATE TABLE platform.credit_program_revision (
-  program_ref TEXT NOT NULL REFERENCES platform.credit_program_head(program_ref),
+CREATE TABLE platform.commerce_credit_program_catalog_revision (
+  program_ref TEXT NOT NULL REFERENCES platform.commerce_credit_program_head(program_ref),
   revision NUMERIC(20,0) NOT NULL CHECK(revision>0),
   revision_digest TEXT NOT NULL CHECK(revision_digest ~ '^sha256:[0-9a-f]{64}$'),
   exposure TEXT NOT NULL DEFAULT 'inert' CHECK(exposure='inert'),
@@ -46,7 +46,7 @@ CREATE TABLE platform.credit_program_revision (
   UNIQUE(program_ref,revision,revision_digest)
 );
 
-CREATE TABLE platform.credit_program_grant_rule (
+CREATE TABLE platform.commerce_credit_program_grant_rule (
   program_ref TEXT NOT NULL,
   revision NUMERIC(20,0) NOT NULL,
   bucket TEXT NOT NULL CHECK(bucket IN ('daily','period','permanent')),
@@ -56,13 +56,13 @@ CREATE TABLE platform.credit_program_grant_rule (
   scope_policy JSONB NOT NULL,
   window_policy JSONB NOT NULL,
   PRIMARY KEY(program_ref,revision,bucket),
-  FOREIGN KEY(program_ref,revision) REFERENCES platform.credit_program_revision(program_ref,revision)
+  FOREIGN KEY(program_ref,revision) REFERENCES platform.commerce_credit_program_catalog_revision(program_ref,revision)
 );
 
-CREATE INDEX credit_program_revision_catalog_page
-  ON platform.credit_program_revision(catalog_epoch,program_ref,revision);
+CREATE INDEX commerce_credit_program_revision_catalog_page
+  ON platform.commerce_credit_program_catalog_revision(catalog_epoch,program_ref,revision);
 
-CREATE TABLE platform.credit_program_publication_audit (
+CREATE TABLE platform.commerce_credit_program_publication_audit (
   command_id TEXT PRIMARY KEY REFERENCES platform.command_receipt(command_id),
   program_ref TEXT NOT NULL,
   revision NUMERIC(20,0) NOT NULL,
@@ -75,10 +75,10 @@ CREATE TABLE platform.credit_program_publication_audit (
   replayed BOOLEAN NOT NULL,
   recorded_at TIMESTAMPTZ NOT NULL,
   FOREIGN KEY(program_ref,revision,revision_digest)
-    REFERENCES platform.credit_program_revision(program_ref,revision,revision_digest)
+    REFERENCES platform.commerce_credit_program_catalog_revision(program_ref,revision,revision_digest)
 );
 
-CREATE TABLE platform.credit_program_outbox (
+CREATE TABLE platform.commerce_credit_program_outbox (
   event_ref UUID PRIMARY KEY,
   event_type TEXT NOT NULL CHECK(event_type='credit.program.revision-published.v1'),
   program_ref TEXT NOT NULL,
@@ -101,14 +101,14 @@ CREATE TABLE platform.credit_program_outbox (
   CHECK((delivery_state='dead_letter' AND dead_lettered_at IS NOT NULL) OR
         (delivery_state<>'dead_letter' AND dead_lettered_at IS NULL)),
   FOREIGN KEY(program_ref,revision,revision_digest)
-    REFERENCES platform.credit_program_revision(program_ref,revision,revision_digest)
+    REFERENCES platform.commerce_credit_program_catalog_revision(program_ref,revision,revision_digest)
 );
 
-CREATE TRIGGER credit_program_revision_immutable BEFORE UPDATE OR DELETE
-  ON platform.credit_program_revision FOR EACH ROW EXECUTE FUNCTION platform.reject_immutable_mutation();
-CREATE TRIGGER credit_program_rule_immutable BEFORE UPDATE OR DELETE
-  ON platform.credit_program_grant_rule FOR EACH ROW EXECUTE FUNCTION platform.reject_immutable_mutation();
-CREATE TRIGGER credit_program_snapshot_revision_immutable BEFORE UPDATE OR DELETE
-  ON platform.credit_program_catalog_snapshot_revision FOR EACH ROW EXECUTE FUNCTION platform.reject_immutable_mutation();
-CREATE TRIGGER credit_program_audit_immutable BEFORE UPDATE OR DELETE
-  ON platform.credit_program_publication_audit FOR EACH ROW EXECUTE FUNCTION platform.reject_immutable_mutation();
+CREATE TRIGGER commerce_credit_program_revision_immutable BEFORE UPDATE OR DELETE
+  ON platform.commerce_credit_program_catalog_revision FOR EACH ROW EXECUTE FUNCTION platform.reject_immutable_mutation();
+CREATE TRIGGER commerce_credit_program_rule_immutable BEFORE UPDATE OR DELETE
+  ON platform.commerce_credit_program_grant_rule FOR EACH ROW EXECUTE FUNCTION platform.reject_immutable_mutation();
+CREATE TRIGGER commerce_credit_program_snapshot_revision_immutable BEFORE UPDATE OR DELETE
+  ON platform.commerce_credit_program_catalog_snapshot_revision FOR EACH ROW EXECUTE FUNCTION platform.reject_immutable_mutation();
+CREATE TRIGGER commerce_credit_program_audit_immutable BEFORE UPDATE OR DELETE
+  ON platform.commerce_credit_program_publication_audit FOR EACH ROW EXECUTE FUNCTION platform.reject_immutable_mutation();

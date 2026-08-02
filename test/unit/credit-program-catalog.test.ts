@@ -1,20 +1,20 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { CreditProgramCatalogService } from
-  "../../src/modules/credit/application/credit-program-catalog-service.js";
+  "../../src/modules/commerce/application/credit-program-catalog-service.js";
 import { PostgresCreditProgramCatalogReader } from
-  "../../src/modules/credit/infrastructure/postgres/credit-program-catalog-reader.js";
+  "../../src/modules/commerce/infrastructure/postgres/credit-program-catalog-reader.js";
 import { PostgresCreditProgramCatalog } from
-  "../../src/modules/credit/infrastructure/postgres/credit-program-catalog.js";
+  "../../src/modules/commerce/infrastructure/postgres/credit-program-catalog.js";
 import { canonicalCreditProgramDefinitionFromBytes, encodeCreditProgramDefinition } from
-  "../../src/modules/credit/infrastructure/protobuf/credit-program-codec.js";
+  "../../src/modules/commerce/infrastructure/protobuf/credit-program-codec.js";
 import { issuePlatformTransaction, revokePlatformTransaction } from
   "../../src/shared/unit-of-work/platform-transaction.js";
 import {
   advanceCreditProgramCatalogSnapshot,
   defineCreditProgramRevision,
   type CreditProgramDefinition,
-} from "../../src/modules/credit/domain/credit-program-catalog.js";
+} from "../../src/modules/commerce/domain/credit-program-catalog.js";
 
 const definition: CreditProgramDefinition = Object.freeze({
   unit: "credit_minor",
@@ -34,7 +34,7 @@ const definition: CreditProgramDefinition = Object.freeze({
   accountingPolicyRef: "accounting:standard-credit-v1",
 });
 
-describe("Credit-owned global Program catalog", () => {
+describe("Commerce-owned global Program catalog", () => {
   it("commits the exact catalog mapping, not only reusable definition bytes", () => {
     const empty = `sha256:${createHash("sha256").update("").digest("hex")}`;
     const definitionDigest = `sha256:${"a".repeat(64)}`;
@@ -120,6 +120,10 @@ describe("Credit-owned global Program catalog", () => {
     ] }],
     ["aggregate grant exceeds the per-program account ceiling", { ...definition,
       maximumProgramBalancePerAccountMinor: 599n }],
+    ["permanent expiry exceeds ten Julian years", { ...definition, grants: [
+      { ...definition.grants[1]!, window: { kind: "permanent" as const,
+        expiresAfterSeconds: 315_576_001n } },
+    ] }],
   ])("rejects %s", (_name, malformed) => {
     expect(() => defineCreditProgramRevision({
       programRef: "credit-program:starter", revision: 1n, expectedVersion: 0n,
@@ -202,10 +206,10 @@ describe("Credit-owned global Program catalog", () => {
       work: (transaction: never) => Promise<Result>): Promise<Result> => {
       const lease = issuePlatformTransaction({
         query: async <Row extends Record<string, unknown>>(text: string) => {
-          if (text.includes("credit_program_catalog_snapshot WHERE")) {
+          if (text.includes("commerce_credit_program_catalog_snapshot WHERE")) {
             return [{ currentEpoch: "3", snapshotDigest: `sha256:${"3".repeat(64)}` }] as unknown as Row[];
           }
-          if (text.includes("credit_program_catalog_snapshot_revision")) {
+          if (text.includes("commerce_credit_program_catalog_snapshot_revision")) {
             return [{ epoch: "1", snapshotRef: "credit-program-snapshot:1",
               snapshotDigest: `sha256:${"1".repeat(64)}` }] as unknown as Row[];
           }

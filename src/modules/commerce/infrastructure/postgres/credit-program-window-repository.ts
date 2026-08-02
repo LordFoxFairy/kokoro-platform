@@ -45,7 +45,7 @@ export class PostgresCreditProgramWindowRepository implements CreditProgramWindo
        JOIN platform.commerce_credit_program_enrollment enrollment
          ON enrollment.effective_at<=effect.acquired_at
         AND enrollment.ends_at>effect.acquired_at
-       JOIN platform.credit_grant_program_revision program
+       JOIN platform.commerce_credit_program_revision program
          ON program.credit_program_revision_ref=enrollment.credit_program_revision_ref
         AND program.site_ref=enrollment.site_ref AND program.revision=enrollment.credit_program_revision
         AND program.revision_digest=enrollment.credit_program_revision_digest
@@ -76,7 +76,7 @@ export class PostgresCreditProgramWindowRepository implements CreditProgramWindo
       ).digest("hex");
       const prior = await sql.query<{ present: boolean }>(
         `SELECT EXISTS(
-           SELECT 1 FROM platform.credit_program_window_acquisition
+           SELECT 1 FROM platform.commerce_credit_program_window_acquisition
            WHERE site_ref=$1 AND enrollment_ref=$2::uuid AND window_key=$3
          ) AS present`,
         [row.siteId, row.enrollmentRef, windowKey],
@@ -107,7 +107,7 @@ export class PostgresCreditProgramWindowRepository implements CreditProgramWindo
       throw new Error("CREDIT_WINDOW_GRANT_RECEIPT_INVALID");
     }
     const changed = await resolvePlatformTransaction(transaction).execute(
-      `INSERT INTO platform.credit_program_window_acquisition
+      `INSERT INTO platform.commerce_credit_program_window_acquisition
        (acquisition_ref,site_ref,enrollment_ref,window_key,window_starts_at,window_ends_at,
         credit_grant_ref,acquired_at)
        VALUES ($1::uuid,$2,$3::uuid,$4,$5::timestamptz,$6::timestamptz,$7::uuid,$8::timestamptz)`,

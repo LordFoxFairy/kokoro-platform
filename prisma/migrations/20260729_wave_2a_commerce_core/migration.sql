@@ -203,7 +203,7 @@ BEGIN
   RETURN TRUE;
 END $$;
 
-CREATE TABLE platform.credit_grant_program_revision (
+CREATE TABLE platform.commerce_credit_program_revision (
   credit_program_revision_ref TEXT PRIMARY KEY CHECK(length(credit_program_revision_ref) BETWEEN 1 AND 256),
   site_ref TEXT NOT NULL REFERENCES platform.authorization_site(site_ref),
   program_ref TEXT NOT NULL CHECK(length(program_ref) BETWEEN 1 AND 256),
@@ -238,8 +238,8 @@ CREATE TABLE platform.credit_grant_program_revision (
       AND calendar_zone IS NOT NULL AND window_anchor='subscription-term-start')
   )
 );
-CREATE INDEX credit_grant_program_catalog_page_idx
-  ON platform.credit_grant_program_revision(site_ref,credit_program_revision_ref,catalog_epoch);
+CREATE INDEX commerce_credit_program_catalog_page_idx
+  ON platform.commerce_credit_program_revision(site_ref,credit_program_revision_ref,catalog_epoch);
 
 CREATE TABLE platform.commerce_entitlement_template_revision (
   entitlement_template_revision_ref TEXT PRIMARY KEY CHECK(length(entitlement_template_revision_ref) BETWEEN 1 AND 256),
@@ -296,7 +296,7 @@ CREATE TABLE platform.commerce_fulfillment_program_output (
   FOREIGN KEY(entitlement_template_revision_ref,site_ref)
     REFERENCES platform.commerce_entitlement_template_revision(entitlement_template_revision_ref,site_ref),
   FOREIGN KEY(credit_program_revision_ref,site_ref,credit_program_revision_version,credit_program_revision_digest)
-    REFERENCES platform.credit_grant_program_revision(
+    REFERENCES platform.commerce_credit_program_revision(
       credit_program_revision_ref,site_ref,revision,revision_digest
     ),
   CHECK(
@@ -716,7 +716,7 @@ CREATE TABLE platform.credit_grant (
       credit_account_ref,site_ref,billing_account_ref,unit,liability_merchant_account_ref
     ),
   FOREIGN KEY(credit_program_revision_ref,site_ref,credit_program_revision,credit_program_revision_digest)
-    REFERENCES platform.credit_grant_program_revision(
+    REFERENCES platform.commerce_credit_program_revision(
       credit_program_revision_ref,site_ref,revision,revision_digest
     ),
   CHECK((ux_bucket_class='permanent' AND expires_at IS NULL) OR (ux_bucket_class<>'permanent' AND expires_at IS NOT NULL)),
@@ -752,7 +752,7 @@ CREATE TABLE platform.commerce_credit_program_enrollment (
   FOREIGN KEY(subscription_term_ref,site_ref)
     REFERENCES platform.commerce_subscription_term(subscription_term_ref,site_ref),
   FOREIGN KEY(credit_program_revision_ref,site_ref,credit_program_revision,credit_program_revision_digest)
-    REFERENCES platform.credit_grant_program_revision(
+    REFERENCES platform.commerce_credit_program_revision(
       credit_program_revision_ref,site_ref,revision,revision_digest
     ),
   CHECK(ends_at > effective_at)
@@ -777,7 +777,7 @@ CREATE TABLE platform.commerce_credit_program_enrollment_revocation (
   FOREIGN KEY(command_id,site_ref) REFERENCES platform.commerce_command(command_id,site_ref)
 );
 
-CREATE TABLE platform.credit_program_window_acquisition (
+CREATE TABLE platform.commerce_credit_program_window_acquisition (
   acquisition_ref UUID PRIMARY KEY,
   site_ref TEXT NOT NULL,
   enrollment_ref UUID NOT NULL,
@@ -1582,7 +1582,7 @@ DECLARE
   target_grant_id UUID := NULLIF(payload->>'credit_grant_id','')::UUID;
   target_hold_ref UUID := NULLIF(payload->>'credit_hold_ref','')::UUID;
   grant_fact platform.credit_grant%ROWTYPE;
-  program_fact platform.credit_grant_program_revision%ROWTYPE;
+  program_fact platform.commerce_credit_program_revision%ROWTYPE;
   hold_fact platform.credit_hold%ROWTYPE;
   allocation_fact platform.credit_hold_allocation%ROWTYPE;
   issue_debit NUMERIC(38,0);
@@ -1605,7 +1605,7 @@ BEGIN
   IF target_grant_id IS NOT NULL THEN
     SELECT * INTO grant_fact FROM platform.credit_grant
     WHERE credit_grant_id=target_grant_id;
-    SELECT * INTO program_fact FROM platform.credit_grant_program_revision
+    SELECT * INTO program_fact FROM platform.commerce_credit_program_revision
     WHERE credit_program_revision_ref=grant_fact.credit_program_revision_ref;
     SELECT operation_kind INTO linked_operation_kind
     FROM platform.credit_journal_transaction
@@ -2220,8 +2220,8 @@ CREATE TRIGGER commerce_fulfillment_transaction_immutable
 CREATE TRIGGER commerce_plan_version_immutable
   BEFORE UPDATE OR DELETE ON platform.commerce_catalog_plan_version
   FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
-CREATE TRIGGER credit_grant_program_revision_immutable
-  BEFORE UPDATE OR DELETE ON platform.credit_grant_program_revision
+CREATE TRIGGER commerce_credit_program_revision_immutable
+  BEFORE UPDATE OR DELETE ON platform.commerce_credit_program_revision
   FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
 CREATE TRIGGER commerce_entitlement_template_revision_immutable
   BEFORE UPDATE OR DELETE ON platform.commerce_entitlement_template_revision
@@ -2285,8 +2285,8 @@ CREATE TRIGGER credit_grant_immutable
 CREATE TRIGGER credit_hold_no_delete
   BEFORE DELETE ON platform.credit_hold
   FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
-CREATE TRIGGER credit_program_window_acquisition_immutable
-  BEFORE UPDATE OR DELETE ON platform.credit_program_window_acquisition
+CREATE TRIGGER commerce_credit_program_window_acquisition_immutable
+  BEFORE UPDATE OR DELETE ON platform.commerce_credit_program_window_acquisition
   FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
 CREATE TRIGGER commerce_credit_program_enrollment_immutable
   BEFORE UPDATE OR DELETE ON platform.commerce_credit_program_enrollment
@@ -2412,7 +2412,7 @@ REVOKE ALL ON
   platform.commerce_catalog_product,
   platform.commerce_catalog_plan,
   platform.commerce_catalog_plan_version,
-  platform.credit_grant_program_revision,
+  platform.commerce_credit_program_revision,
   platform.commerce_entitlement_template_revision,
   platform.commerce_fulfillment_program_revision,
   platform.commerce_fulfillment_program_output,
@@ -2435,7 +2435,7 @@ REVOKE ALL ON
   platform.commerce_credit_program_enrollment_revocation,
   platform.credit_account,
   platform.credit_grant,
-  platform.credit_program_window_acquisition,
+  platform.commerce_credit_program_window_acquisition,
   platform.credit_hold,
   platform.credit_hold_allocation,
   platform.credit_journal_transaction,

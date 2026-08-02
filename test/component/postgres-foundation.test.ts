@@ -2718,7 +2718,7 @@ async function insertCreditConcurrencySeed(client: Client, seed: CreditConcurren
       allowUnattributedAgent: true,
     });
     await client.query(
-      `INSERT INTO platform.credit_grant_program_revision
+      `INSERT INTO platform.commerce_credit_program_revision
        (credit_program_revision_ref,site_ref,program_ref,revision,ux_bucket_class,unit,amount,
         burn_priority,scope_policy,liability_merchant_account_ref,window_kind,rollover_policy,
         revision_digest,catalog_epoch,published_at)

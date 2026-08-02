@@ -64,7 +64,7 @@ import { RedemptionQueryService } from "../modules/commerce/application/services
 import { ConfirmRedemptionService } from "../modules/commerce/application/services/confirm-redemption.js";
 import { PostgresRedemptionConfirmationRepository } from "../modules/commerce/infrastructure/postgres/redemption-confirmation-repository.js";
 import { PostgresCreditGrantIssuer } from "../modules/credit/infrastructure/postgres/credit-grant-issuer.js";
-import { PostgresCreditGrantProgram } from "../modules/credit/infrastructure/postgres/credit-grant-program.js";
+import { PostgresCreditGrantProgram } from "../modules/commerce/infrastructure/postgres/credit-program-repository.js";
 import { PostgresCreditSourceCorrection } from "../modules/credit/infrastructure/postgres/source-correction.js";
 import { AccountReadService } from "../modules/commerce/application/services/account-read.js";
 import { PostgresAccountReadRepository } from "../modules/credit/infrastructure/postgres/commerce-account-read-repository.js";

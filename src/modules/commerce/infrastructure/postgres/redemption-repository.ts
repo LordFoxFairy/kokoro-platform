@@ -8,7 +8,7 @@ import {
   type RedemptionSafeTerms,
   type StoredRedemptionPreview,
 } from "../../domain/redemption-preview.js";
-import type { CreditGrantProgramPort } from "../../../credit/application/contracts/grant-program.js";
+import type { CreditGrantProgramPort } from "../../application/contracts/credit-program.js";
 
 type CandidateRow = Record<string, unknown> & {
   codeRef: string;

@@ -1,5 +1,5 @@
 import type { CreditGrantProgramPort, CreditGrantProgramRevision, CreditGrantProgramTarget } from
-  "../../application/contracts/grant-program.js";
+  "../../application/contracts/credit-program.js";
 import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
 
 type ProgramRow = Record<string, unknown> & {
@@ -31,7 +31,7 @@ export class PostgresCreditGrantProgram implements CreditGrantProgramPort {
   async publishRevision(transaction: Parameters<CreditGrantProgramPort["publishRevision"]>[0],
     input: Parameters<CreditGrantProgramPort["publishRevision"]>[1]): Promise<void> {
     const changed = await resolvePlatformTransaction(transaction).execute(
-      `INSERT INTO platform.credit_grant_program_revision
+      `INSERT INTO platform.commerce_credit_program_revision
        (credit_program_revision_ref,site_ref,program_ref,revision,ux_bucket_class,unit,amount,burn_priority,
         scope_policy,liability_merchant_account_ref,window_kind,rollover_policy,calendar_zone,window_anchor,
         expires_after_seconds,revision_digest,catalog_epoch,published_at)
@@ -55,7 +55,7 @@ export class PostgresCreditGrantProgram implements CreditGrantProgramPort {
               revision.liability_merchant_account_ref AS "liabilityMerchantAccountId",
               revision.burn_priority AS "burnPriority",revision.scope_policy AS "scopePolicy"
        FROM jsonb_to_recordset($2::jsonb) AS target(ref TEXT,revision TEXT,digest TEXT)
-       JOIN platform.credit_grant_program_revision revision
+       JOIN platform.commerce_credit_program_revision revision
          ON revision.site_ref=$1 AND revision.credit_program_revision_ref=target.ref
         AND (NOT $3::boolean OR (revision.revision=target.revision::bigint AND revision.revision_digest=target.digest))
        ORDER BY target.ref`,

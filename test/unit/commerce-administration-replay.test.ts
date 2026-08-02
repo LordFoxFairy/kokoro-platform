@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { PostgresCommerceAdministrationRepository } from
   "../../src/modules/commerce/infrastructure/postgres/commerce-administration-repository.js";
 import { PostgresCreditGrantProgram } from
-  "../../src/modules/credit/infrastructure/postgres/credit-grant-program.js";
+  "../../src/modules/commerce/infrastructure/postgres/credit-program-repository.js";
 import { issuePlatformTransaction, revokePlatformTransaction, type PlatformTransaction } from
   "../../src/shared/unit-of-work/platform-transaction.js";
 import { commerceCanonicalJson } from "../../src/modules/commerce/domain/canonical-json.js";

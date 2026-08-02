@@ -5,6 +5,10 @@ const migration = readFileSync(
   new URL("../../prisma/migrations/20260729_wave_2a_commerce_core/migration.sql", import.meta.url),
   "utf8",
 );
+const programCatalogMigration = readFileSync(
+  new URL("../../prisma/migrations/20260816_commerce_credit_program_catalog_owner/migration.sql", import.meta.url),
+  "utf8",
+);
 const identityMigration = readFileSync(
   new URL("../../prisma/migrations/20260729_identity_core/migration.sql", import.meta.url),
   "utf8",
@@ -83,12 +87,27 @@ describe("Wave 2A Commerce authority schema", () => {
     const epochColumns = migration.match(/catalog_epoch BIGINT NOT NULL CHECK\(catalog_epoch > 0\)/gu) ?? [];
     expect(epochColumns).toHaveLength(7);
     expect(migration).toContain("INSERT INTO platform.commerce_catalog_epoch_authority(singleton,current_epoch)");
-    for (const index of ["credit_grant_program_catalog_page_idx",
+    for (const index of ["commerce_credit_program_catalog_page_idx",
       "commerce_entitlement_template_catalog_page_idx", "commerce_product_version_catalog_page_idx",
       "commerce_redemption_program_catalog_page_idx", "commerce_code_batch_catalog_page_idx"]) {
       expect(migration).toContain(`CREATE INDEX ${index}`);
     }
     expect(migrator).toContain("GRANT UPDATE ON TABLE platform.commerce_catalog_epoch_authority");
+  });
+
+  it("owns the global Credit Program catalog under Commerce physical names", () => {
+    for (const table of [
+      "commerce_credit_program_catalog_snapshot",
+      "commerce_credit_program_catalog_snapshot_revision",
+      "commerce_credit_program_head",
+      "commerce_credit_program_catalog_revision",
+      "commerce_credit_program_grant_rule",
+      "commerce_credit_program_publication_audit",
+      "commerce_credit_program_outbox",
+    ]) {
+      expect(programCatalogMigration).toContain(`platform.${table}`);
+    }
+    expect(programCatalogMigration).not.toMatch(/platform\.credit_program_/u);
   });
 
   it("forces default-deny Site RLS across all fresh Commerce and Credit authority tables", () => {
@@ -226,7 +245,10 @@ describe("Wave 2A Commerce authority schema", () => {
   it("binds recurring Credit to immutable enrollments and one acquired absolute window", () => {
     expect(migration).toContain("CREATE TABLE platform.commerce_credit_program_enrollment (");
     expect(migration).toContain("CREATE TABLE platform.commerce_credit_program_enrollment_revocation (");
-    expect(migration).toContain("CREATE TABLE platform.credit_program_window_acquisition (");
+    expect(migration).toContain("CREATE TABLE platform.commerce_credit_program_window_acquisition (");
+    expect(migration).toContain("CREATE TABLE platform.commerce_credit_program_revision (");
+    expect(migration).not.toContain("CREATE TABLE platform.credit_grant_program_revision (");
+    expect(migration).not.toContain("CREATE TABLE platform.credit_program_window_acquisition (");
     expect(migration).toContain("commerce_credit_program_enrollment_immutable");
     expect(compactMigration).toContain("UNIQUE(site_ref,enrollment_ref,window_key)");
     expect(compactMigration).toContain("FOREIGN KEY(credit_grant_ref,site_ref) REFERENCES platform.credit_grant");

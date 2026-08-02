@@ -2184,7 +2184,7 @@ async function grantFoundationPrivileges(
         `GRANT UPDATE ON TABLE platform.authorization_identity_session, ${IDENTITY_MUTABLE_TABLES} TO ${identifier}`,
       );
       await client.query(
-        `GRANT INSERT ON TABLE platform.commerce_command, platform.commerce_subscription, platform.commerce_subscription_term, platform.commerce_subscription_term_revocation, platform.commerce_redemption, platform.commerce_redemption_preview, platform.commerce_redemption_legal_acceptance, platform.commerce_entitlement_grant, platform.commerce_entitlement_revocation, platform.credit_account, platform.credit_grant, platform.credit_program_window_acquisition, platform.credit_hold, platform.credit_hold_allocation, platform.credit_journal_transaction, platform.credit_journal_entry, platform.credit_execution_budget_root, platform.credit_budget_allocation, platform.credit_budget_allocation_revision, platform.credit_allocation_reservation_receipt, platform.credit_allocation_return_receipt, platform.credit_authorization_segment, platform.credit_budget_operation_receipt, platform.commerce_fulfillment_transaction, platform.commerce_fulfillment_output_plan, platform.commerce_fulfillment_actual_output, platform.commerce_command_outbox, platform.commerce_audit_entry TO ${identifier}`,
+        `GRANT INSERT ON TABLE platform.commerce_command, platform.commerce_subscription, platform.commerce_subscription_term, platform.commerce_subscription_term_revocation, platform.commerce_redemption, platform.commerce_redemption_preview, platform.commerce_redemption_legal_acceptance, platform.commerce_entitlement_grant, platform.commerce_entitlement_revocation, platform.credit_account, platform.credit_grant, platform.commerce_credit_program_window_acquisition, platform.credit_hold, platform.credit_hold_allocation, platform.credit_journal_transaction, platform.credit_journal_entry, platform.credit_execution_budget_root, platform.credit_budget_allocation, platform.credit_budget_allocation_revision, platform.credit_allocation_reservation_receipt, platform.credit_allocation_return_receipt, platform.credit_authorization_segment, platform.credit_budget_operation_receipt, platform.commerce_fulfillment_transaction, platform.commerce_fulfillment_output_plan, platform.commerce_fulfillment_actual_output, platform.commerce_command_outbox, platform.commerce_audit_entry TO ${identifier}`,
       );
       await client.query(
         `GRANT UPDATE ON TABLE platform.commerce_command, platform.commerce_subscription, platform.commerce_redeem_code, platform.commerce_redemption, platform.commerce_redemption_preview, platform.credit_account, platform.credit_hold, platform.credit_execution_budget_root, platform.credit_authorization_segment, platform.commerce_fulfillment_transaction TO ${identifier}`,
@@ -2302,7 +2302,7 @@ async function grantFoundationPrivileges(
         `GRANT UPDATE ON TABLE platform.admin_approval, platform.admin_post_effect_review, platform.admin_oidc_transaction, platform.admin_operator_session, platform.admin_step_up_transaction TO ${identifier}`,
       );
       await client.query(
-        `GRANT INSERT ON TABLE platform.commerce_command, platform.commerce_catalog_product, platform.commerce_catalog_plan, platform.commerce_catalog_plan_version, platform.credit_grant_program_revision, platform.commerce_entitlement_template_revision, platform.commerce_fulfillment_program_revision, platform.commerce_fulfillment_program_output, platform.commerce_catalog_product_version, platform.commerce_redemption_program_revision, platform.commerce_redemption_program_availability, platform.commerce_code_batch, platform.commerce_redeem_code, platform.commerce_code_batch_approval, platform.commerce_code_secret_export, platform.commerce_audit_entry TO ${identifier}`,
+        `GRANT INSERT ON TABLE platform.commerce_command, platform.commerce_catalog_product, platform.commerce_catalog_plan, platform.commerce_catalog_plan_version, platform.commerce_credit_program_revision, platform.commerce_entitlement_template_revision, platform.commerce_fulfillment_program_revision, platform.commerce_fulfillment_program_output, platform.commerce_catalog_product_version, platform.commerce_redemption_program_revision, platform.commerce_redemption_program_availability, platform.commerce_code_batch, platform.commerce_redeem_code, platform.commerce_code_batch_approval, platform.commerce_code_secret_export, platform.commerce_audit_entry TO ${identifier}`,
       );
       await client.query(
         `GRANT UPDATE ON TABLE platform.commerce_catalog_epoch_authority, platform.commerce_catalog_product, platform.commerce_catalog_plan, platform.commerce_code_batch, platform.commerce_redemption_program_availability TO ${identifier}`,
@@ -2354,7 +2354,7 @@ const COMMERCE_TABLES = [
   "platform.commerce_catalog_product",
   "platform.commerce_catalog_plan",
   "platform.commerce_catalog_plan_version",
-  "platform.credit_grant_program_revision",
+  "platform.commerce_credit_program_revision",
   "platform.commerce_entitlement_template_revision",
   "platform.commerce_fulfillment_program_revision",
   "platform.commerce_fulfillment_program_output",
@@ -2375,7 +2375,7 @@ const COMMERCE_TABLES = [
   "platform.commerce_entitlement_revocation",
   "platform.credit_account",
   "platform.credit_grant",
-  "platform.credit_program_window_acquisition",
+  "platform.commerce_credit_program_window_acquisition",
   "platform.credit_hold",
   "platform.credit_hold_allocation",
   "platform.credit_journal_transaction",
@@ -2879,7 +2879,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            AND (has_table_privilege(runtime_role.rolname, 'platform.commerce_entitlement_revocation', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.commerce_entitlement_revocation', 'INSERT'))
            AND (has_table_privilege(runtime_role.rolname, 'platform.credit_account', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.credit_account', 'INSERT') AND has_table_privilege(runtime_role.rolname, 'platform.credit_account', 'UPDATE'))
            AND (has_table_privilege(runtime_role.rolname, 'platform.credit_grant', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.credit_grant', 'INSERT'))
-           AND (has_table_privilege(runtime_role.rolname, 'platform.credit_program_window_acquisition', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.credit_program_window_acquisition', 'INSERT'))
+           AND (has_table_privilege(runtime_role.rolname, 'platform.commerce_credit_program_window_acquisition', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.commerce_credit_program_window_acquisition', 'INSERT'))
            AND (has_table_privilege(runtime_role.rolname, 'platform.credit_hold', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.credit_hold', 'INSERT') AND has_table_privilege(runtime_role.rolname, 'platform.credit_hold', 'UPDATE'))
            AND (has_table_privilege(runtime_role.rolname, 'platform.credit_hold_allocation', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.credit_hold_allocation', 'INSERT'))
            AND (has_table_privilege(runtime_role.rolname, 'platform.credit_journal_transaction', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.credit_journal_transaction', 'INSERT'))
@@ -3063,7 +3063,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            AND has_table_privilege(runtime_role.rolname, 'platform.authorization_product_binding', 'SELECT')
            AND (has_table_privilege(runtime_role.rolname, 'platform.commerce_billing_account', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.commerce_billing_account', 'INSERT') AND has_table_privilege(runtime_role.rolname, 'platform.commerce_billing_account', 'UPDATE'))
            AND (has_table_privilege(runtime_role.rolname, 'platform.commerce_billing_account_membership', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.commerce_billing_account_membership', 'INSERT') AND has_table_privilege(runtime_role.rolname, 'platform.commerce_billing_account_membership', 'UPDATE'))
-           AND (has_table_privilege(runtime_role.rolname, 'platform.credit_grant_program_revision', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.credit_grant_program_revision', 'INSERT'))
+           AND (has_table_privilege(runtime_role.rolname, 'platform.commerce_credit_program_revision', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.commerce_credit_program_revision', 'INSERT'))
            AND (has_table_privilege(runtime_role.rolname, 'platform.commerce_entitlement_template_revision', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.commerce_entitlement_template_revision', 'INSERT'))
            AND (has_table_privilege(runtime_role.rolname, 'platform.site', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.site', 'INSERT'))
            AND has_any_column_privilege(runtime_role.rolname, 'platform.site', 'UPDATE')
@@ -3300,14 +3300,14 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                'commerce_fulfillment_transaction','commerce_fulfillment_output_plan',
                'commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry',
                'commerce_catalog_product','commerce_catalog_plan','commerce_catalog_plan_version',
-               'credit_grant_program_revision','commerce_entitlement_template_revision',
+               'commerce_credit_program_revision','commerce_entitlement_template_revision',
                'commerce_fulfillment_program_revision','commerce_fulfillment_program_output',
                'commerce_catalog_product_version','commerce_redemption_program_revision',
                'commerce_redemption_program_availability','commerce_subscription','commerce_subscription_term',
                'commerce_subscription_term_revocation','commerce_code_batch','commerce_redeem_code','commerce_code_batch_approval','commerce_code_secret_export',
                'commerce_redemption','commerce_redemption_preview','commerce_redemption_legal_acceptance',
                'commerce_entitlement_grant','commerce_entitlement_revocation','credit_account','credit_grant',
-               'credit_program_window_acquisition','credit_hold','credit_hold_allocation',
+               'commerce_credit_program_window_acquisition','credit_hold','credit_hold_allocation',
                'credit_journal_transaction','credit_journal_entry','credit_execution_budget_root',
                'credit_budget_allocation','credit_budget_allocation_revision',
                'credit_allocation_reservation_receipt','credit_allocation_return_receipt',
@@ -3364,14 +3364,14 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                'commerce_fulfillment_transaction','commerce_fulfillment_output_plan',
                'commerce_fulfillment_actual_output','commerce_command_outbox','commerce_audit_entry',
                'commerce_catalog_product','commerce_catalog_plan','commerce_catalog_plan_version',
-               'credit_grant_program_revision','commerce_entitlement_template_revision',
+               'commerce_credit_program_revision','commerce_entitlement_template_revision',
                'commerce_fulfillment_program_revision','commerce_fulfillment_program_output',
                'commerce_catalog_product_version','commerce_redemption_program_revision',
                'commerce_redemption_program_availability','commerce_subscription','commerce_subscription_term',
                'commerce_subscription_term_revocation','commerce_code_batch','commerce_redeem_code','commerce_code_batch_approval','commerce_code_secret_export',
                'commerce_redemption','commerce_redemption_preview','commerce_redemption_legal_acceptance',
                'commerce_entitlement_grant','commerce_entitlement_revocation','credit_account','credit_grant',
-               'credit_program_window_acquisition','credit_hold','credit_hold_allocation',
+               'commerce_credit_program_window_acquisition','credit_hold','credit_hold_allocation',
                'credit_journal_transaction','credit_journal_entry','credit_execution_budget_root',
                'credit_budget_allocation','credit_budget_allocation_revision',
                'credit_allocation_reservation_receipt','credit_allocation_return_receipt',
@@ -3475,7 +3475,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                      'commerce_subscription','commerce_subscription_term','commerce_subscription_term_revocation',
                      'commerce_redemption','commerce_redemption_preview','commerce_redemption_legal_acceptance',
                      'commerce_entitlement_grant','commerce_entitlement_revocation','credit_account','credit_grant',
-                     'credit_program_window_acquisition','credit_hold','credit_hold_allocation',
+                     'commerce_credit_program_window_acquisition','credit_hold','credit_hold_allocation',
                      'credit_journal_transaction','credit_journal_entry','credit_execution_budget_root',
                      'credit_budget_allocation','credit_budget_allocation_revision',
                      'credit_allocation_reservation_receipt','credit_allocation_return_receipt',
@@ -3495,7 +3495,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                    OR (runtime_role.rolname = $4 AND candidate.relname = ANY(ARRAY[
                      'command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership',
                      'commerce_command','commerce_catalog_product','commerce_catalog_plan','commerce_catalog_plan_version',
-                     'credit_grant_program_revision','commerce_entitlement_template_revision',
+                     'commerce_credit_program_revision','commerce_entitlement_template_revision',
                      'commerce_fulfillment_program_revision','commerce_fulfillment_program_output','commerce_catalog_product_version',
                      'commerce_redemption_program_revision','commerce_redemption_program_availability',
                      'commerce_code_batch','commerce_redeem_code','commerce_code_batch_approval',
@@ -3568,7 +3568,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                      'commerce_subscription','commerce_subscription_term','commerce_subscription_term_revocation',
                      'commerce_redemption','commerce_redemption_preview','commerce_redemption_legal_acceptance',
                      'commerce_entitlement_grant','commerce_entitlement_revocation','credit_account','credit_grant',
-                     'credit_program_window_acquisition','credit_hold','credit_hold_allocation',
+                     'commerce_credit_program_window_acquisition','credit_hold','credit_hold_allocation',
                      'credit_journal_transaction','credit_journal_entry','credit_execution_budget_root',
                      'credit_budget_allocation','credit_budget_allocation_revision',
                      'credit_allocation_reservation_receipt','credit_allocation_return_receipt',
@@ -3588,7 +3588,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                    OR (runtime_role.rolname = $4 AND candidate.relname = ANY(ARRAY[
                      'command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership',
                      'commerce_command','commerce_catalog_product','commerce_catalog_plan','commerce_catalog_plan_version',
-                     'credit_grant_program_revision','commerce_entitlement_template_revision',
+                     'commerce_credit_program_revision','commerce_entitlement_template_revision',
                      'commerce_fulfillment_program_revision','commerce_fulfillment_program_output','commerce_catalog_product_version',
                      'commerce_redemption_program_revision','commerce_redemption_program_availability',
                      'commerce_code_batch','commerce_redeem_code','commerce_code_batch_approval',

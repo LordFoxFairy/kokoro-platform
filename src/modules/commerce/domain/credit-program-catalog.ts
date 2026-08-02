@@ -2,6 +2,18 @@ import { createHash } from "node:crypto";
 
 export type CreditProgramBucket = "daily" | "period" | "permanent";
 
+declare const creditProgramRefBrand: unique symbol;
+declare const creditProgramRevisionBrand: unique symbol;
+declare const creditProgramRevisionDigestBrand: unique symbol;
+
+export type CreditProgramRef = string & Readonly<{ [creditProgramRefBrand]: "CreditProgramRef" }>;
+export type CreditProgramRevision = bigint & Readonly<{
+  [creditProgramRevisionBrand]: "CreditProgramRevision";
+}>;
+export type CreditProgramRevisionDigest = string & Readonly<{
+  [creditProgramRevisionDigestBrand]: "CreditProgramRevisionDigest";
+}>;
+
 export interface CreditProgramScopePolicy {
   readonly version: 1;
   readonly surfaceRefs: readonly string[];
@@ -69,9 +81,9 @@ export class CanonicalCreditProgramDefinition {
 }
 
 export interface CreditProgramRevisionTarget {
-  readonly programRef: string;
-  readonly revision: bigint;
-  readonly revisionDigest: string;
+  readonly programRef: CreditProgramRef;
+  readonly revision: CreditProgramRevision;
+  readonly revisionDigest: CreditProgramRevisionDigest;
 }
 
 export interface PublishedCreditProgramRevision {
@@ -83,7 +95,7 @@ export interface PublishedCreditProgramRevision {
 }
 
 export function advanceCreditProgramCatalogSnapshot(previousDigest: string,
-  target: CreditProgramRevisionTarget): string {
+  target: Readonly<{ programRef: string; revision: bigint; revisionDigest: string }>): string {
   if (!/^sha256:[0-9a-f]{64}$/u.test(previousDigest) ||
       !/^sha256:[0-9a-f]{64}$/u.test(target.revisionDigest) ||
       !/^credit-program:[a-z][a-z0-9._-]{1,127}$/u.test(target.programRef)) {
@@ -106,6 +118,7 @@ export function advanceCreditProgramCatalogSnapshot(previousDigest: string,
 const MAX_UINT64 = 18_446_744_073_709_551_615n;
 const MAX_EXPECTED_VERSION = 9_223_372_036_854_775_807n;
 const MAX_DURATION_SECONDS = 315_576_000_000n;
+const MAX_PERMANENT_EXPIRY_SECONDS = 315_576_000n;
 const BUCKETS = Object.freeze(["daily", "period", "permanent"] as const);
 
 export function defineCreditProgramRevision(input: Readonly<{
@@ -128,9 +141,14 @@ export function defineCreditProgramRevision(input: Readonly<{
   }
   const { definition, definitionBytes } = input.canonicalDefinition;
   const publishedAt = instant(input.publishedAt);
-  const revisionDigest = `sha256:${createHash("sha256").update(definitionBytes).digest("hex")}`;
+  const revisionDigest = `sha256:${createHash("sha256").update(definitionBytes).digest("hex")}` as
+    CreditProgramRevisionDigest;
   return Object.freeze({
-    target: Object.freeze({ programRef: input.programRef, revision: input.revision, revisionDigest }),
+    target: Object.freeze({
+      programRef: input.programRef as CreditProgramRef,
+      revision: input.revision as CreditProgramRevision,
+      revisionDigest,
+    }),
     definition,
     definitionBytes: new Uint8Array(definitionBytes),
     exposure: "inert",
@@ -198,7 +216,8 @@ function validateWindow(bucket: CreditProgramBucket, value: CreditProgramWindow)
     return Object.freeze({ ...value });
   }
   if (value.expiresAfterSeconds !== null) {
-    duration(value.expiresAfterSeconds, "CREDIT_PROGRAM_PERMANENT_EXPIRY_INVALID");
+    boundedDuration(value.expiresAfterSeconds, MAX_PERMANENT_EXPIRY_SECONDS,
+      "CREDIT_PROGRAM_PERMANENT_EXPIRY_INVALID");
   }
   return Object.freeze({ ...value });
 }
@@ -237,7 +256,11 @@ function unsigned(value: bigint, maximum: bigint, code: string): void {
 }
 
 function duration(value: bigint, code: string): void {
-  if (typeof value !== "bigint" || value < 1n || value > MAX_DURATION_SECONDS) throw new Error(code);
+  boundedDuration(value, MAX_DURATION_SECONDS, code);
+}
+
+function boundedDuration(value: bigint, maximum: bigint, code: string): void {
+  if (typeof value !== "bigint" || value < 1n || value > maximum) throw new Error(code);
 }
 
 function instant(value: string): string {

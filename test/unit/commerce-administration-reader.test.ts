@@ -6,7 +6,7 @@ import type { AdminQueryPermit } from
 import { issuePlatformTransaction, revokePlatformTransaction } from
   "../../src/shared/unit-of-work/platform-transaction.js";
 import { PostgresCreditGrantProgramAdministrationReader } from
-  "../../src/modules/credit/infrastructure/postgres/grant-program-administration-reader.js";
+  "../../src/modules/commerce/infrastructure/postgres/credit-program-administration-reader.js";
 
 describe("PostgresCommerceAdministrationReader", () => {
   it("observes a committed catalog epoch and an independent database clock", async () => {
@@ -51,7 +51,7 @@ describe("PostgresCommerceAdministrationReader", () => {
         "site-1", "credits-v1")).resolves.toMatchObject({
         siteId: "site-1", amount: "1000", scopePolicy: { version: 1 }, publishedAt: "2026-07-30T01:00:00.000Z",
       });
-      expect(statements[0]).toContain("FROM platform.credit_grant_program_revision");
+      expect(statements[0]).toContain("FROM platform.commerce_credit_program_revision");
       expect(() => reader.getCreditProgramRevision(permit("commerce.credit-program.read"),
         "site-2", "credits-v1")).toThrow("ADMIN_SITE_SCOPE_DENIED");
       expect(statements).toHaveLength(1);

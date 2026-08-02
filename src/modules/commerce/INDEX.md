@@ -5,6 +5,10 @@ Platform through HTTP/RPC and never exposes a Prisma client to application code.
 
 ## Authority in this slice
 
+- Commerce owns the immutable Credit Program product catalog end to end: branded Program ref/revision/digest values, the
+  discriminated window-policy domain, publication service and contracts, PostgreSQL readers/repositories, canonical protobuf codec,
+  and catalog composition. Its physical facts use the `commerce_credit_program_*` namespace. Credit has no Program catalog,
+  reader, codec, repository, or composition authority.
 - `platform.command_receipt` remains the sole idempotency/result authority. `commerce_command` is a Site/actor/version snapshot
   with a foreign key to that receipt, not a second receipt implementation.
 - BillingAccount and its Site-scoped subject membership are owner facts. User commands resolve membership after the command identity
@@ -40,7 +44,9 @@ Platform through HTTP/RPC and never exposes a Prisma client to application code.
 - `confirmRedemption`, command recovery, and durable receipt reads are public operations. Confirmation re-locks every mutable
   authority, binds the effect to the database clock, claims the Code, and invokes the shared Fulfillment authority atomically. Code
   identity—not a newly generated receipt id—is the stable redemption acquisition source.
-- Permanent programs materialize a `credit_grant` directly. Daily/period programs materialize a Commerce-owned,
+- Public redemption is intentionally permanent-only: preview and confirmation reject daily/period outputs before mutation, and the
+  public runtime does not compose calendar-window acquisition. Permanent programs materialize a `credit_grant` directly.
+  Daily/period programs remain internal, feature-off definitions that materialize a Commerce-owned,
   SubscriptionTerm-bound `credit_program_enrollment`; they never masquerade as a relative-expiry grant. One acquisition may create
   multiple enrollments, and every enrollment/window has a distinct immutable acquisition identity. The window application service
   calls only Credit's `CreditGrantIssuancePort`; PostgreSQL tzdata owns daily local reset boundaries and SubscriptionTerm owns period

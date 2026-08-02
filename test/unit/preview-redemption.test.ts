@@ -11,6 +11,23 @@ import type { PlatformTransaction } from "../../src/shared/unit-of-work/platform
 import type { VerifiedRequestSecurityContext } from "../../src/shared/security-context/index.js";
 import type { CommerceCommandFence } from "../../src/modules/commerce/application/command-fence.js";
 import { CommerceLockSequence } from "../../src/workflows/commerce/lock-order.js";
+import {
+  isSupportedRedemptionSafeTerms,
+  redemptionReleaseCapabilities,
+  type RedemptionSafeTerms,
+} from "../../src/modules/commerce/domain/redemption-preview.js";
+
+describe("redemption release capabilities", () => {
+  it("keeps daily and period Credit feature-off even when term metadata is complete", () => {
+    expect(redemptionReleaseCapabilities).toEqual({
+      creditGrantBucketClasses: ["permanent"],
+      calendarWindowCreditAcquisition: false,
+    });
+    expect(isSupportedRedemptionSafeTerms(safeTerms("permanent"))).toBe(true);
+    expect(isSupportedRedemptionSafeTerms(safeTerms("daily"))).toBe(false);
+    expect(isSupportedRedemptionSafeTerms(safeTerms("period"))).toBe(false);
+  });
+});
 
 describe("PreviewRedemptionService", () => {
   it("derives preview identity and TTL from the repository's DB-authoritative effect time", async () => {
@@ -125,4 +142,16 @@ function context(): VerifiedRequestSecurityContext {
     actor: { kind: "user", subjectId: "subject-1", subjectGeneration: "2" },
     target: { siteId: "site-1", purpose: "previewRedemption" },
   } as VerifiedRequestSecurityContext;
+}
+
+function safeTerms(bucketClass: "daily" | "period" | "permanent"): RedemptionSafeTerms {
+  return {
+    productRef: "product-1", productVersionRef: "product-v1", productKind: "subscription",
+    safeProductLabel: "Subscription", planRef: "plan-1", planVersionRef: "plan-v1", safePlanLabel: "Plan",
+    term: { action: "new_subscription", startsAt: "2026-11-01T05:00:00.000Z",
+      endsAt: "2026-12-01T05:00:00.000Z", automaticRenewal: false },
+    credits: [{ creditProgramRevisionRef: "credit-v1", bucketClass, unit: "credit", amount: "100",
+      expiresAt: bucketClass === "permanent" ? null : "2026-11-02T05:00:00.000Z" }],
+    entitlements: [], legalTermRefs: [],
+  };
 }

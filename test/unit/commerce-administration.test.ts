@@ -5,7 +5,8 @@ import type { CommerceAdministrationRepository } from "../../src/modules/commerc
 import { issuePlatformTransaction, revokePlatformTransaction } from "../../src/shared/unit-of-work/platform-transaction.js";
 import type { VerifiedRequestSecurityContext } from "../../src/shared/security-context/index.js";
 import { PostgresCommerceAdministrationRepository } from "../../src/modules/commerce/infrastructure/postgres/commerce-administration-repository.js";
-import { PostgresCreditGrantProgram } from "../../src/modules/credit/infrastructure/postgres/credit-grant-program.js";
+import { PostgresCreditGrantProgram } from
+  "../../src/modules/commerce/infrastructure/postgres/credit-program-repository.js";
 import { commerceCanonicalJson } from "../../src/modules/commerce/domain/canonical-json.js";
 
 describe("CommerceAdministrationService", () => {
@@ -303,7 +304,7 @@ describe("CommerceAdministrationService", () => {
       })).resolves.toMatchObject({ kind: "committed", result: {
         publishedAt: "2026-07-30T01:00:00.000Z" } });
       expect(statements.some((statement) => statement.includes(
-        "INSERT INTO platform.credit_grant_program_revision"))).toBe(true);
+        "INSERT INTO platform.commerce_credit_program_revision"))).toBe(true);
       expect(statements.some((statement) => statement.includes(
         "UPDATE platform.commerce_catalog_epoch_authority"))).toBe(true);
       expect(statements.some((statement) => statement.includes(

@@ -16,7 +16,7 @@ import {
 import { CommerceLockSequence } from "../../src/workflows/commerce/lock-order.js";
 import { commerceCanonicalJson } from "../../src/modules/commerce/domain/canonical-json.js";
 import type { CreditGrantProgramPort } from
-  "../../src/modules/credit/application/contracts/grant-program.js";
+  "../../src/modules/commerce/application/contracts/credit-program.js";
 
 describe("PostgresRedemptionConfirmationRepository", () => {
   it("rejects an expired Preview before any claim or fulfillment mutation", async () => {

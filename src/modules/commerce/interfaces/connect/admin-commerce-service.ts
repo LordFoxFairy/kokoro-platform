@@ -62,7 +62,7 @@ import type {
   RedemptionProgramRecord,
 } from "../../infrastructure/postgres/commerce-administration-reader.js";
 import type { CreditGrantProgramAdministrationRecord as CreditProgramRevisionRecord } from
-  "../../../credit/application/contracts/grant-program-administration-reader.js";
+  "../../application/contracts/credit-program-administration-reader.js";
 
 export type AdminCommerceConnectService = ServiceImpl<typeof AdminCommerceService>;
 

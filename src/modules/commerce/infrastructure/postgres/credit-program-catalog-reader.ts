@@ -36,14 +36,14 @@ export class PostgresCreditProgramCatalogReader implements CreditProgramCatalogR
     return this.host.read(permit, async (transaction) => {
       const sql = resolvePlatformTransaction(transaction);
       const snapshots = await sql.query<SnapshotRow>(`SELECT current_epoch::text AS "currentEpoch",
-        snapshot_digest AS "snapshotDigest" FROM platform.credit_program_catalog_snapshot WHERE singleton=TRUE`);
+        snapshot_digest AS "snapshotDigest" FROM platform.commerce_credit_program_catalog_snapshot WHERE singleton=TRUE`);
       const observed = snapshot(snapshots[0]);
       const selected = input.snapshot ?? observed;
       if (selected.epoch > observed.epoch) {
         throw new Error("CREDIT_PROGRAM_SNAPSHOT_INVALID");
       }
       const historical = await sql.query<SnapshotRevisionRow>(`SELECT epoch::text,snapshot_ref AS "snapshotRef",
-        snapshot_digest AS "snapshotDigest" FROM platform.credit_program_catalog_snapshot_revision
+        snapshot_digest AS "snapshotDigest" FROM platform.commerce_credit_program_catalog_snapshot_revision
         WHERE epoch=$1::numeric(20,0)`, [selected.epoch.toString()]);
       const persisted = historical[0];
       if (persisted === undefined || persisted.epoch !== selected.epoch.toString() ||
@@ -89,7 +89,7 @@ export class PostgresCreditProgramCatalogReader implements CreditProgramCatalogR
 function projection() {
   return `SELECT program_ref AS "programRef",revision::text,revision_digest AS "revisionDigest",
     definition_bytes AS "definitionBytes",published_at AS "publishedAt",catalog_epoch::text AS "catalogEpoch"
-    FROM platform.credit_program_revision`;
+    FROM platform.commerce_credit_program_catalog_revision`;
 }
 function revision(row: RevisionRow) {
   const value = defineCreditProgramRevision({ programRef: row.programRef, revision: BigInt(row.revision),

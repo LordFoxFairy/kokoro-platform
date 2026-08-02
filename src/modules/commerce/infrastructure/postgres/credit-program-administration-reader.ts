@@ -5,7 +5,7 @@ import type {
   CreditGrantProgramAdministrationPage,
   CreditGrantProgramAdministrationReader,
   CreditGrantProgramAdministrationRecord,
-} from "../../application/contracts/grant-program-administration-reader.js";
+} from "../../application/contracts/credit-program-administration-reader.js";
 
 interface Row extends Record<string, unknown> {
   siteId: string; creditProgramRevisionRef: string; programRef: string; revision: bigint | string;
@@ -55,7 +55,7 @@ function projection(): string {
     revision.calendar_zone AS "calendarZone",revision.window_anchor AS "windowAnchor",
     revision.expires_after_seconds::text AS "expiresAfterSeconds",
     revision.revision_digest AS "revisionDigest",revision.published_at AS "publishedAt"
-    FROM platform.credit_grant_program_revision revision`;
+    FROM platform.commerce_credit_program_revision revision`;
 }
 
 function record(row: Row): CreditGrantProgramAdministrationRecord {

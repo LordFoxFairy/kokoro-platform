@@ -3,7 +3,7 @@ import { CommandReceiptRepository, type CommandReceipt, type JsonValue } from ".
 import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
 import { commerceCanonicalJson } from "../../domain/canonical-json.js";
 import type { CommerceAdministrationRepository, CommerceAdminActor } from "../../application/contracts/commerce-administration-repository.js";
-import type { CreditGrantProgramPort } from "../../../credit/application/contracts/grant-program.js";
+import type { CreditGrantProgramPort } from "../../application/contracts/credit-program.js";
 import { canonicalFulfillmentProgramDigest } from "../../domain/fulfillment-program.js";
 
 export class PostgresCommerceAdministrationRepository implements CommerceAdministrationRepository {

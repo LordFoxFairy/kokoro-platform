@@ -77,7 +77,7 @@ import { createAdminCreditConnectService } from
 import { PostgresAdminCreditReader } from
   "../modules/credit/infrastructure/postgres/admin-credit-reader.js";
 import { PostgresCreditGrantProgramAdministrationReader } from
-  "../modules/credit/infrastructure/postgres/grant-program-administration-reader.js";
+  "../modules/commerce/infrastructure/postgres/credit-program-administration-reader.js";
 import { readBoundedPrivateFile, readBoundedRegularFile } from "./secret-files.js";
 import { createPlatformSiteAdminComposition } from "./site-admin-composition.js";
 import { createSessionAuthorizationEventSigner } from
