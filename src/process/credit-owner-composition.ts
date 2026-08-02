@@ -14,12 +14,33 @@ import { ExecutionRootClosureService } from
   "../modules/credit/application/execution-root-closure-service.js";
 import { PostgresExecutionRootClosureRepository } from
   "../modules/credit/infrastructure/postgres/execution-root-closure-repository.js";
+import { CreditService } from "../modules/credit/application/credit-service.js";
+import { UsageSettlementService } from "../modules/credit/application/usage-settlement-service.js";
+import { PostgresCreditAuthorityRepository } from
+  "../modules/credit/infrastructure/postgres/credit-authority-repository.js";
+import { PostgresUsageSettlementRepository } from
+  "../modules/credit/infrastructure/postgres/usage-settlement-repository.js";
+
+export interface CreditExecutionOwnerFacade {
+  readonly runBudget: CreditService;
+  readonly usageSettlement: UsageSettlementService;
+  readonly executionRootClosure: ExecutionRootClosureService;
+}
+
+export function createCreditExecutionOwnerFacade(): CreditExecutionOwnerFacade {
+  return Object.freeze({
+    runBudget: new CreditService({ repository: new PostgresCreditAuthorityRepository() }),
+    usageSettlement: new UsageSettlementService({ repository: new PostgresUsageSettlementRepository() }),
+    executionRootClosure: new ExecutionRootClosureService({
+      repository: new PostgresExecutionRootClosureRepository(),
+    }),
+  });
+}
 
 /** Credit-owned application ports only; transport/auth adapters bind outside this composition. */
-export interface CreditOwnerComposition {
+export interface CreditOwnerComposition extends CreditExecutionOwnerFacade {
   readonly programCatalog: CreditProgramCatalogService;
   readonly programCatalogReader: CreditProgramCatalogReader;
-  readonly executionRootClosure: ExecutionRootClosureService;
 }
 
 export function createCreditOwnerComposition(input: Readonly<{
@@ -28,7 +49,9 @@ export function createCreditOwnerComposition(input: Readonly<{
   clock?: () => string;
 }>): CreditOwnerComposition {
   const unitOfWork = new PlatformUnitOfWork(input.database);
+  const execution = createCreditExecutionOwnerFacade();
   return Object.freeze({
+    ...execution,
     programCatalog: new CreditProgramCatalogService({
       unitOfWork,
       repository: new PostgresCreditProgramCatalog(),
@@ -36,8 +59,5 @@ export function createCreditOwnerComposition(input: Readonly<{
       ...(input.clock === undefined ? {} : { clock: input.clock }),
     }),
     programCatalogReader: new PostgresCreditProgramCatalogReader(input.queryHost),
-    executionRootClosure: new ExecutionRootClosureService({
-      repository: new PostgresExecutionRootClosureRepository(),
-    }),
   });
 }

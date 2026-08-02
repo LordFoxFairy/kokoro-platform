@@ -53,6 +53,7 @@ import { PostgresAssetOwnerQueryRepository } from
 import { applyAssetOwnerScope } from "../modules/asset/infrastructure/postgres/asset-owner-scope.js";
 import { createAssetEligibilityConnectService } from
   "../modules/asset/interfaces/connect/asset-eligibility-service.js";
+import { createCreditExecutionOwnerFacade } from "./credit-owner-composition.js";
 import { PostgresSessionAccessGrantVerifier } from
   "../modules/authorization/infrastructure/postgres/session-access-grant-verifier.js";
 import { readBoundedPrivateFile, readBoundedRegularFile } from "./secret-files.js";
@@ -143,6 +144,7 @@ export function createPlatformAdmissionOwnerAuthority(input: Readonly<{
   mediaAccessKey: Uint8Array;
   clock?: () => Date;
 }>): PlatformAdmissionOwnerAuthority {
+  const credit = createCreditExecutionOwnerFacade();
   const ports: PlatformAdmissionOwnerPorts = {
     ...input.ownerPorts,
     site: new PostgresAdmissionSiteOwner(),
@@ -153,7 +155,7 @@ export function createPlatformAdmissionOwnerAuthority(input: Readonly<{
     executionBinding: new PostgresAdmissionExecutionBindingOwner(),
     mediaAccess: new PostgresAdmissionMediaAccessOwner(input.mediaAccessKey),
     assets: new PostgresAdmissionAssetOwner(),
-    budget: new PostgresAdmissionBudgetOwner(),
+    budget: new PostgresAdmissionBudgetOwner(credit),
     lifecycle: new PostgresAdmissionLifecycleOwner(),
     unitOfWork: {
       execute: (command, work) => input.database.internalTransaction(

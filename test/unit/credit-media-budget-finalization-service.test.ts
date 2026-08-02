@@ -78,6 +78,7 @@ describe("CreditMediaBudgetFinalizationService", () => {
       input: Readonly<Record<string, unknown>>) => ({ kind: "accepted" as const, value: {
       settlementRef: "00000000-0000-7000-8000-000000000902",
       authorizationSegmentRef: "00000000-0000-7000-8000-000000000013",
+      authorizationSegmentVersion: 3n,
       closureRef: String(input.closureRef), closureRevision: 1n, state: "settled" as const,
       customerAmount: 0n, platformExposureAmount: 0n,
     } }));
@@ -120,6 +121,7 @@ describe("CreditMediaBudgetFinalizationService", () => {
         kind: "replayed" as const, value: {
         settlementRef: "00000000-0000-7000-8000-000000000902",
         authorizationSegmentRef: "00000000-0000-7000-8000-000000000013",
+        authorizationSegmentVersion: 3n,
         closureRef: input.closureRef, closureRevision: 1n, state: "settled" as const,
         customerAmount: 40n, platformExposureAmount: 0n,
       } })),
@@ -154,6 +156,7 @@ function usageOwner() {
       kind: "accepted" as const, value: {
       settlementRef: "00000000-0000-7000-8000-000000000902",
       authorizationSegmentRef: "00000000-0000-7000-8000-000000000013",
+      authorizationSegmentVersion: 3n,
       closureRef: String(input.closureRef), closureRevision: 1n,
       state: "settled" as const, customerAmount: 40n, platformExposureAmount: 0n,
     } })),

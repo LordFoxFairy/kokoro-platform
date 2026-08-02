@@ -206,6 +206,7 @@ function settlementRecord(): UsageSettlementRecord {
       requestDigest: "d".repeat(64) }, context,
     receipt: { settlementRef: "00000000-0000-7000-8000-000000000500",
       authorizationSegmentRef: context.authorizationSegmentRef,
+      authorizationSegmentVersion: 4n,
       closureRef: "00000000-0000-7000-8000-000000000400", closureRevision: 1n,
       state: "settled", customerAmount: 14n, platformExposureAmount: 0n },
     allocation: { ...context.allocation, revision: 3n, unassignedStock: 86n,

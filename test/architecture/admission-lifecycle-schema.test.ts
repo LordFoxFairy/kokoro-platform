@@ -28,7 +28,8 @@ describe("Admission lifecycle schema", () => {
     expect(composition).toContain("runtimePolicy: new PostgresAdmissionRuntimePolicyOwner()");
     expect(composition).toContain("capability: new PostgresAdmissionCapabilityOwner()");
     expect(composition).toContain("assets: new PostgresAdmissionAssetOwner()");
-    expect(composition).toContain("budget: new PostgresAdmissionBudgetOwner()");
+    expect(composition).toContain("const credit = createCreditExecutionOwnerFacade()");
+    expect(composition).toContain("budget: new PostgresAdmissionBudgetOwner(credit)");
     expect(composition).toContain("sessionGrant: new PostgresAdmissionSessionGrantOwner()");
     expect(composition).toContain("executionBinding: new PostgresAdmissionExecutionBindingOwner()");
     expect(schema).not.toContain("@@unique([siteId, namespace])");

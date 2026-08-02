@@ -75,6 +75,10 @@ export class CreditService implements RunBudgetAuthority {
       if (error instanceof CreditDomainError && error.code === "CREDIT_INSUFFICIENT_AVAILABLE") {
         return { kind: "insufficient_credit" };
       }
+      if (error instanceof CreditDomainError &&
+          error.code === "CREDIT_RESERVATION_SOURCE_LIMIT_EXCEEDED") {
+        return { kind: "invalid_state", code: error.code };
+      }
       throw error;
     }
     return this.dependencies.repository.createRootBudgetReservation(transaction, {

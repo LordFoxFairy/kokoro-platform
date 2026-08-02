@@ -22,7 +22,7 @@ describe("Credit execution root closure schema", () => {
     }
     expect(migration).toContain("platform.assert_execution_root_owner_proof");
     expect(migration).toContain("PERFORM platform.assert_media_image_worker_lease(");
-    expect(migration).toContain("platform.admission_execution_manifest");
+    expect(migration).toContain("platform.admission_verified_terminal_evidence");
     expect(migration).toContain("TO platform_media_worker");
     expect(migration).toContain("platform_admission");
     expect(migration).not.toMatch(
@@ -35,7 +35,7 @@ describe("Credit execution root closure schema", () => {
     expect(migration).toContain("credit_direct_root_json_exact_keys");
     expect(migration).toContain("octet_length(p_record::TEXT)");
     expect(migration).not.toContain("pg_column_size(p_record)");
-    expect(migration).toMatch(/jsonb_array_length\([^)]*releases[^)]*\)>16/u);
+    expect(migration).toMatch(/jsonb_array_length\([^)]*releases[^)]*\)>256/u);
     expect(migration).toContain("credit_direct_root_framed_digest");
     expect(migration).toContain("CREDIT_DIRECT_ROOT_REQUEST_DIGEST_INVALID");
     expect(migration).toContain("CREDIT_DIRECT_ROOT_RECEIPT_DIGEST_INVALID");
@@ -67,11 +67,12 @@ describe("Credit execution root closure schema", () => {
       migration.indexOf("CREATE FUNCTION platform.find_execution_root_closure"),
       migration.indexOf("CREATE FUNCTION platform.lock_execution_root_closure"),
     );
-    expect(lookup).toContain("credit_execution_root_closure_receipt");
-    expect(lookup).toContain("credit_execution_root_reconciliation");
+    expect(lookup).toContain("credit_execution_root_outcome");
+    expect(lookup).toContain("outcome_kind='closure'");
+    expect(lookup).toContain("outcome_kind='reconciliation'");
     expect(lookup).toContain("reconciliationReceiptRef");
     expect(lookup).toContain("reconciliation_required");
-    expect(lookup).toContain("CREDIT_DIRECT_ROOT_OUTCOME_EXCLUSIVITY_VIOLATION");
+    expect(lookup).toContain("CREDIT_DIRECT_ROOT_OUTCOME_CORRUPT");
   });
 
   it("rejects non-canonical digest-bound scalar text before any UUID or numeric cast", async () => {
@@ -104,14 +105,66 @@ describe("Credit execution root closure schema", () => {
     expect(migration).toContain(
       "'authorizationSegmentVersion',context.authorization_segment_version::TEXT",
     );
-    expect(migration).toContain("segment.allocation_epoch,segment.aggregate_version");
+    expect(migration).toContain("segment.allocation_epoch AS root_allocation_epoch");
+    expect(migration).toContain("segment.aggregate_version AS authorization_segment_version");
     expect(migration).toContain("segment.state='settled'");
-    expect(migration).toContain(
-      "segment.execution_manifest_ref=authority.execution_manifest_ref",
-    );
+    expect(migration).toContain("segment.execution_manifest_ref=p_execution_manifest_ref");
     expect(migration).not.toContain(
       "operation.credit_execution_manifest_ref=p_execution_manifest_ref",
     );
     expect(migration.match(/INSERT INTO platform\.credit_journal_transaction/gu)).toHaveLength(1);
+  });
+
+  it("hard-binds each proof kind to its exact database principal and durable owner fact", async () => {
+    const migration = await readFile(migrationPath, "utf8");
+    const proof = migration.slice(
+      migration.indexOf("CREATE FUNCTION platform.assert_execution_root_owner_proof"),
+      migration.indexOf("CREATE FUNCTION platform.execution_root_closure_receipt_json"),
+    );
+    expect(proof).toContain("SESSION_USER<>'platform_media_worker'");
+    expect(proof).toContain("SESSION_USER<>'platform_admission'");
+    expect(proof).toContain("platform.admission_verified_terminal_evidence");
+    expect(proof).toContain("terminal_evidence_digest");
+    expect(proof).toContain("credit_direct_root_is_reference");
+  });
+
+  it("registers closure and reconciliation in one globally unique outcome authority", async () => {
+    const migration = await readFile(migrationPath, "utf8");
+    expect(migration).toContain("CREATE TABLE platform.credit_execution_root_outcome");
+    expect(migration).toContain("UNIQUE(site_ref,business_operation_key)");
+    expect(migration).toContain("UNIQUE(site_ref,source_kind,source_ref)");
+    expect(migration).toContain("INSERT INTO platform.credit_execution_root_outcome");
+  });
+
+  it("validates an exact replay envelope without nullable SQL comparisons", async () => {
+    const migration = await readFile(migrationPath, "utf8");
+    const lookup = migration.slice(
+      migration.indexOf("CREATE FUNCTION platform.find_execution_root_closure"),
+      migration.indexOf("CREATE FUNCTION platform.lock_execution_root_closure"),
+    );
+    expect(lookup).toContain("assert_execution_root_owner_proof_envelope");
+    expect(lookup).toContain("IS DISTINCT FROM");
+    expect(lookup).not.toMatch(/\w+\s*<>\s*p_owner_proof/gu);
+  });
+
+  it("derives the exact grant release plan inside Credit and supports more than sixteen sources", async () => {
+    const migration = await readFile(migrationPath, "utf8");
+    expect(migration).toContain("expected_releases");
+    expect(migration).toContain("ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING");
+    expect(migration).toContain("expected_releases IS DISTINCT FROM result->'releases'");
+    expect(migration).not.toMatch(/jsonb_array_length\([^)]*releases[^)]*\)>16/u);
+    expect(migration).toMatch(/jsonb_array_length\([^)]*releases[^)]*\)>256/u);
+  });
+
+  it("loads the canonical root only from Credit-owned facts", async () => {
+    const migration = await readFile(migrationPath, "utf8");
+    const lock = migration.slice(
+      migration.indexOf("CREATE FUNCTION platform.lock_execution_root_closure"),
+      migration.indexOf("CREATE FUNCTION platform.commit_execution_root_closure"),
+    );
+    expect(lock).not.toContain("platform.media_operation");
+    expect(lock).not.toContain("platform.admission_execution_manifest");
+    expect(lock).toContain("segment.aggregate_version");
+    expect(lock).toContain("root.execution_root_ref=p_owner_proof->>'sourceRef'");
   });
 });

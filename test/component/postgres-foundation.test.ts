@@ -911,6 +911,22 @@ describe("Platform PostgreSQL foundation", () => {
     }
   });
 
+  it("rejects a Media execution-root proof presented by the Admission database role", async () => {
+    const admission = new Client({ connectionString: admissionDatabaseUrl });
+    await admission.connect();
+    try {
+      const payload = directRootCanonicalPayload("closure");
+      const identity = payload.identity as Record<string, unknown>;
+      await expect(admission.query(
+        "SELECT platform.find_execution_root_closure($1,$2::jsonb,$3,$4)",
+        [identity.siteId, JSON.stringify(identity.ownerProof), identity.businessOperationKey,
+          identity.requestDigest],
+      )).rejects.toThrow("CREDIT_EXECUTION_ROOT_OWNER_ROLE_INVALID");
+    } finally {
+      await admission.end();
+    }
+  });
+
   it("enforces Artifact owner-query RLS and exact data-plane role OID/routine authority", async () => {
     const suffix = randomUUID();
     const siteRef = `artifact-site-${suffix}`;

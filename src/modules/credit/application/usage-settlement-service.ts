@@ -366,6 +366,7 @@ export class UsageSettlementService {
     const receipt: UsageSettlementReceipt = Object.freeze({
       settlementRef,
       authorizationSegmentRef: input.authorizationSegmentRef,
+      authorizationSegmentVersion: segment?.aggregateVersion ?? context.segment.aggregateVersion,
       closureRef: input.closureRef,
       closureRevision: input.closureRevision,
       state: "settled",

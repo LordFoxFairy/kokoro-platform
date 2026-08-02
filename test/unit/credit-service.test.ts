@@ -71,6 +71,48 @@ describe("CreditService", () => {
     }
   });
 
+  it("supports reservations spanning more than sixteen grants", async () => {
+    const repository = new RecordingCreditRepository();
+    repository.grants = Array.from({ length: 17 }, (_, index) => ({
+      creditGrantId: `grant-${index.toString().padStart(3, "0")}`,
+      availableAmount: 1n,
+      bucketClass: "permanent" as const,
+      expiresAt: null,
+      burnPriority: index,
+      acquiredAt: "2026-01-01T00:00:00.000Z",
+    }));
+    const lease = transactionLease();
+    try {
+      await expect(creditService(repository).reserveRootBudget(lease.transaction, {
+        ...reserveInput(), rootCeiling: 17n, segmentMaximum: 17n,
+      })).resolves.toMatchObject({ kind: "accepted" });
+      expect(repository.reservation?.allocations).toHaveLength(17);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("rejects a reservation that exceeds the canonical release-source bound", async () => {
+    const repository = new RecordingCreditRepository();
+    repository.grants = Array.from({ length: 257 }, (_, index) => ({
+      creditGrantId: `grant-${index.toString().padStart(3, "0")}`,
+      availableAmount: 1n,
+      bucketClass: "permanent" as const,
+      expiresAt: null,
+      burnPriority: index,
+      acquiredAt: "2026-01-01T00:00:00.000Z",
+    }));
+    const lease = transactionLease();
+    try {
+      await expect(creditService(repository).reserveRootBudget(lease.transaction, {
+        ...reserveInput(), rootCeiling: 257n,
+      })).resolves.toEqual({ kind: "invalid_state", code: "CREDIT_RESERVATION_SOURCE_LIMIT_EXCEEDED" });
+      expect(repository.reservation).toBeNull();
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
   it("commits a reserved Segment with exact stock movement and expected-version fencing", async () => {
     const repository = new RecordingCreditRepository();
     repository.loaded = storedSegment();

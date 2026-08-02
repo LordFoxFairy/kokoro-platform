@@ -36,9 +36,10 @@ export class PostgresExecutionRootClosureRepository implements ExecutionRootClos
     const budget = input.budget;
     const result = await call(transaction,
       `SELECT platform.lock_execution_root_closure(
-         $1,$2::jsonb,$3::uuid,$4::uuid,$5::uuid,$6::uuid,$7::uuid,$8,$9::bigint,$10::bigint,
-         $11::bigint,$12::numeric,$13) AS result`,
-      [input.identity.siteId, canonical(input.identity.ownerProof), budget.executionBudgetRootRef,
+         $1,$2::jsonb,$3,$4::uuid,$5::uuid,$6::uuid,$7::uuid,$8::uuid,$9,$10::bigint,$11::bigint,
+         $12::bigint,$13::numeric,$14) AS result`,
+      [input.identity.siteId, canonical(input.identity.ownerProof), input.identity.businessOperationKey,
+        budget.executionBudgetRootRef,
         budget.rootAllocationRef, budget.rootHoldRef, budget.authorizationSegmentRef,
         input.settlementRef, budget.executionManifestRef, budget.rootAllocationRevision.toString(),
         budget.rootAllocationEpoch.toString(), budget.authorizationSegmentVersion.toString(),

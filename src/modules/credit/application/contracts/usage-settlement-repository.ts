@@ -28,6 +28,7 @@ export type UsageEvidenceReceipt = Readonly<{
 export type UsageSettlementReceipt = Readonly<{
   settlementRef: string;
   authorizationSegmentRef: string;
+  authorizationSegmentVersion: bigint;
   closureRef: string;
   closureRevision: bigint;
   state: "settled";

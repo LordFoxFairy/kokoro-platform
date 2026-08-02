@@ -52,6 +52,7 @@ class OwnerSql implements PlatformSqlTransaction {
       evidenceRef: "11111111-1111-4111-8111-111111111111",
     }] as unknown as Row[];
     if (statement.includes("credit_usage_segment_closure")) return [];
+    if (statement.includes("record_admission_verified_terminal_evidence")) return [];
     if (statement.includes("credit_usage_settlement")) return [{
       settlementRef: "22222222-2222-4222-8222-222222222222",
       closureRef: "33333333-3333-4333-8333-333333333333",
@@ -129,7 +130,9 @@ describe("native Admission Credit and Asset owners", () => {
     const lease = issuePlatformTransaction(sql);
     const credit = fakeCredit();
     try {
-      const owner = new PostgresAdmissionBudgetOwner(credit);
+      const owner = new PostgresAdmissionBudgetOwner({ runBudget: credit,
+        usageSettlement: { settleUsageSegment: vi.fn() } as never,
+        executionRootClosure: fakeRootClosure() });
       await expect(owner.reserveRoot(lease.transaction, {
         siteId: "site-a", projectRef: "project-a", launchId: "launch-a", runId: "run-a",
         modelOptionRevisionRef: "model-a", commandId: "command-a",
@@ -168,6 +171,7 @@ describe("native Admission Credit and Asset owners", () => {
       value: {
         settlementRef: "22222222-2222-4222-8222-222222222222",
         authorizationSegmentRef: "segment-a",
+        authorizationSegmentVersion: 4n,
         closureRef: "33333333-3333-4333-8333-333333333333",
         closureRevision: 1n,
         state: "settled" as const,
@@ -176,7 +180,8 @@ describe("native Admission Credit and Asset owners", () => {
       },
     })) };
     const rootClosure = fakeRootClosure();
-    const owner = new PostgresAdmissionBudgetOwner(credit, usageSettlement, rootClosure);
+    const owner = new PostgresAdmissionBudgetOwner({ runBudget: credit, usageSettlement,
+      executionRootClosure: rootClosure });
     const base = {
       siteId: "site-a", rootHoldRef: "hold-a", authorizationSegmentRef: "segment-a",
       manifestRef: "manifest-a", expectedSegmentVersion: 1n, commandId: "command-a",
@@ -191,7 +196,8 @@ describe("native Admission Credit and Asset owners", () => {
         ...base, outcomeUnknownEvidenceRef: "dispatch-unknown-a",
       })).resolves.toEqual({ kind: "reconciliation_required", segmentVersion: 2n });
       await expect(owner.reconcileRoot(lease.transaction, {
-        ...base, terminalEvidenceRef: "terminal-a", terminalOutcome: "completed",
+        ...base, terminalEvidenceRef: "terminal-a", terminalEvidenceDigest: "e".repeat(64),
+        terminalOutcome: "completed",
       })).resolves.toEqual({
         kind: "settled",
         segmentVersion: 4n,
@@ -235,15 +241,16 @@ describe("native Admission Credit and Asset owners", () => {
   it("persists Credit reconciliation when terminal usage is not yet finalizable", async () => {
     const lease = issuePlatformTransaction(new OwnerSql());
     const credit = fakeCredit();
-    const owner = new PostgresAdmissionBudgetOwner(credit, {
+    const owner = new PostgresAdmissionBudgetOwner({ runBudget: credit, usageSettlement: {
       settleUsageSegment: vi.fn(async () => ({ kind: "invalid_state" as const,
         code: "CREDIT_USAGE_ATTEMPTS_NOT_FINALIZED" })),
-    });
+    }, executionRootClosure: fakeRootClosure() });
     try {
       await expect(owner.reconcileRoot(lease.transaction, {
         siteId: "site-a", rootHoldRef: "hold-a", authorizationSegmentRef: "segment-a",
         manifestRef: "manifest-a", expectedSegmentVersion: 1n, commandId: "command-a",
         requestDigest: "d".repeat(64), terminalEvidenceRef: "terminal-a",
+        terminalEvidenceDigest: "e".repeat(64), terminalOutcome: "completed",
         sessionId: "session-a", launchId: "launch-a", runId: "run-a",
       })).resolves.toEqual({ kind: "reconciliation_required", segmentVersion: 2n });
       expect(credit.reconcileAuthorizationSegment).toHaveBeenCalledWith(lease.transaction,
@@ -259,15 +266,16 @@ describe("native Admission Credit and Asset owners", () => {
       { state: "rating_pending", segmentVersion: "3" },
     ]));
     const credit = fakeCredit();
-    const owner = new PostgresAdmissionBudgetOwner(credit, {
+    const owner = new PostgresAdmissionBudgetOwner({ runBudget: credit, usageSettlement: {
       settleUsageSegment: vi.fn(async () => ({ kind: "invalid_state" as const,
         code: "CREDIT_USAGE_ATTEMPTS_NOT_FINALIZED" })),
-    });
+    }, executionRootClosure: fakeRootClosure() });
     try {
       await expect(owner.reconcileRoot(lease.transaction, {
         siteId: "site-a", rootHoldRef: "hold-a", authorizationSegmentRef: "segment-a",
         manifestRef: "manifest-a", expectedSegmentVersion: 2n, commandId: "command-a",
         requestDigest: "d".repeat(64), terminalEvidenceRef: "terminal-a",
+        terminalEvidenceDigest: "e".repeat(64), terminalOutcome: "completed",
         sessionId: "session-a", launchId: "launch-a", runId: "run-a",
       })).resolves.toEqual({ kind: "reconciliation_required", segmentVersion: 4n });
       expect(credit.reconcileAuthorizationSegment).toHaveBeenCalledWith(lease.transaction,

@@ -293,6 +293,7 @@ export interface AdmissionBudgetOwnerPort {
       requestDigest: string;
       outcomeUnknownEvidenceRef?: string | undefined;
       terminalEvidenceRef?: string | undefined;
+      terminalEvidenceDigest?: string | undefined;
       terminalOutcome?: "completed" | "failed" | undefined;
       sessionId: string;
       launchId: string;
@@ -389,7 +390,7 @@ export interface AdmissionLifecycleOwnerPort {
 export type AdmissionExecutionEvidence =
   | Readonly<{ kind: "not_found" }>
   | Readonly<{ kind: "execution_observed"; safeStatusRef?: string | undefined }>
-  | Readonly<{ kind: "terminal_observed"; terminalEvidenceRef: string;
+  | Readonly<{ kind: "terminal_observed"; terminalEvidenceRef: string; terminalEvidenceDigest: string;
       terminalOutcome: "completed" | "failed"; safeStatusRef?: string | undefined }>;
 
 export interface AdmissionExecutionEvidenceOwnerPort {
@@ -910,6 +911,7 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
           commandId: command.commandId,
           requestDigest: command.requestDigest,
           terminalEvidenceRef: executionEvidence.terminalEvidenceRef,
+          terminalEvidenceDigest: executionEvidence.terminalEvidenceDigest,
           terminalOutcome: executionEvidence.terminalOutcome,
           sessionId: locked.sessionId,
           launchId: locked.launchId,

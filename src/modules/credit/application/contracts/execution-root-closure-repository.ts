@@ -20,6 +20,7 @@ export type AdmissionExecutionRootOwnerProof = Readonly<{
   kind: "admission_run";
   sourceRef: string;
   terminalEvidenceRef: string;
+  terminalEvidenceDigest: string;
   outcome: "completed" | "failed";
   proofDigest: string;
   manifestRef: string;
@@ -202,6 +203,7 @@ export function verifyMediaExecutionRootOwnerProof(input: Readonly<{
 export function verifyAdmissionExecutionRootOwnerProof(input: Readonly<{
   sourceRef: string;
   terminalEvidenceRef: string;
+  terminalEvidenceDigest: string;
   outcome: AdmissionExecutionRootOwnerProof["outcome"];
   manifestRef: string;
   sessionId: string;
@@ -209,8 +211,9 @@ export function verifyAdmissionExecutionRootOwnerProof(input: Readonly<{
 }>): AdmissionExecutionRootOwnerProof {
   [input.sourceRef, input.terminalEvidenceRef, input.manifestRef, input.sessionId, input.launchId]
     .forEach(ownerReference);
+  ownerDigest(input.terminalEvidenceDigest);
   const proofDigest = framedOwnerDigest("kokoro.platform.credit.owner-proof.admission.v1", [
-    input.sourceRef, input.terminalEvidenceRef, input.outcome, input.manifestRef,
+    input.sourceRef, input.terminalEvidenceRef, input.terminalEvidenceDigest, input.outcome, input.manifestRef,
     input.sessionId, input.launchId,
   ]);
   return Object.freeze({ kind: "admission_run" as const, ...input, proofDigest }) as

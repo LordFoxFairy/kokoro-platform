@@ -217,7 +217,10 @@ export class CreditMediaBudgetFinalizationService {
         workerLease: input.workerLease,
       });
       const closure = {
-        siteId: input.siteId, ownerProof, budget: input.budget, settlement,
+        siteId: input.siteId, ownerProof,
+        budget: Object.freeze({ ...input.budget,
+          authorizationSegmentVersion: settlement.authorizationSegmentVersion }),
+        settlement,
         businessOperationKey: operationKey("media-root-close", input.operationRef,
           input.effectClosureReceiptRef),
       };

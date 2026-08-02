@@ -760,9 +760,11 @@ function parseReceipt(value: unknown): UsageAttemptReceipt | UsageEvidenceReceip
     return Object.freeze({ evidenceRef: value.evidenceRef, revision: BigInt(value.revision) });
   }
   if (typeof value.settlementRef === "string" && typeof value.authorizationSegmentRef === "string" &&
+      typeof value.authorizationSegmentVersion === "string" &&
       typeof value.closureRef === "string" && typeof value.closureRevision === "string" && value.state === "settled" &&
       typeof value.customerAmount === "string" && typeof value.platformExposureAmount === "string") {
     return Object.freeze({ settlementRef: value.settlementRef, authorizationSegmentRef: value.authorizationSegmentRef,
+      authorizationSegmentVersion: BigInt(value.authorizationSegmentVersion),
       closureRef: value.closureRef, closureRevision: BigInt(value.closureRevision), state: "settled",
       customerAmount: BigInt(value.customerAmount), platformExposureAmount: BigInt(value.platformExposureAmount) });
   }

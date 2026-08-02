@@ -3,13 +3,12 @@ import { AdmissionRetryClass } from "../../../../interfaces/connect/generated/ko
 import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
 import { CHAT_ATTACHMENT_PURPOSE } from "../../../asset/domain/asset-purpose.js";
 import { applyAssetOwnerScope } from "../../../asset/infrastructure/postgres/asset-owner-scope.js";
-import { CreditService } from "../../../credit/application/credit-service.js";
-import { UsageSettlementService } from "../../../credit/application/usage-settlement-service.js";
 import {
   deriveExecutionRootClosureRequestDigest,
-  ExecutionRootClosureService,
   type ExecutionRootClosurePort,
 } from "../../../credit/application/execution-root-closure-service.js";
+import type { UsageSettlementService } from
+  "../../../credit/application/usage-settlement-service.js";
 import { verifyAdmissionExecutionRootOwnerProof } from
   "../../../credit/application/contracts/execution-root-closure-repository.js";
 import type {
@@ -17,10 +16,6 @@ import type {
   RunBudgetAuthority,
   SegmentMutationResult,
 } from "../../../credit/application/contracts/run-budget-authority.js";
-import { PostgresCreditAuthorityRepository } from "../../../credit/infrastructure/postgres/credit-authority-repository.js";
-import { PostgresUsageSettlementRepository } from "../../../credit/infrastructure/postgres/usage-settlement-repository.js";
-import { PostgresExecutionRootClosureRepository } from
-  "../../../credit/infrastructure/postgres/execution-root-closure-repository.js";
 import type {
   AdmissionAssetOwnerPort,
   AdmissionBudgetOwnerPort,
@@ -81,19 +76,15 @@ interface AdmissionRootBudgetRow extends Record<string, unknown> {
 
 type ReserveResolution = Awaited<ReturnType<AdmissionBudgetOwnerPort["reserveRoot"]>>;
 
+export interface AdmissionCreditExecutionFacade {
+  readonly runBudget: RunBudgetAuthority;
+  readonly usageSettlement: Pick<UsageSettlementService, "settleUsageSegment">;
+  readonly executionRootClosure: ExecutionRootClosurePort;
+}
+
 /** Adapts Admission orchestration to the sole native W2A RunBudgetAuthority. */
 export class PostgresAdmissionBudgetOwner implements AdmissionBudgetOwnerPort {
-  constructor(
-    private readonly authority: RunBudgetAuthority = new CreditService({
-      repository: new PostgresCreditAuthorityRepository(),
-    }),
-    private readonly usageSettlement: Pick<UsageSettlementService, "settleUsageSegment"> = new UsageSettlementService({
-      repository: new PostgresUsageSettlementRepository(),
-    }),
-    private readonly rootClosure: ExecutionRootClosurePort = new ExecutionRootClosureService({
-      repository: new PostgresExecutionRootClosureRepository(),
-    }),
-  ) {}
+  constructor(private readonly credit: AdmissionCreditExecutionFacade) {}
 
   async reserveRoot(
     transaction: Parameters<AdmissionBudgetOwnerPort["reserveRoot"]>[0],
@@ -147,7 +138,7 @@ export class PostgresAdmissionBudgetOwner implements AdmissionBudgetOwnerPort {
     if (!ownerRef(billing.billingAccountId) || !ownerRef(billing.creditAccountId)) {
       throw new Error("ADMISSION_BILLING_AUTHORITY_CORRUPT");
     }
-    const outcome = await this.authority.reserveRootBudget(transaction, {
+    const outcome = await this.credit.runBudget.reserveRootBudget(transaction, {
       siteId: input.siteId,
       billingAccountId: billing.billingAccountId,
       creditAccountId: billing.creditAccountId,
@@ -195,7 +186,7 @@ export class PostgresAdmissionBudgetOwner implements AdmissionBudgetOwnerPort {
   ): Promise<Readonly<{ segmentVersion: bigint }>> {
     await assertCreditIdentity(transaction, input);
     const value = requireSegmentOutcome(
-      await this.authority.finalizeAuthorizationSegment(transaction, segmentCommand(input)),
+      await this.credit.runBudget.finalizeAuthorizationSegment(transaction, segmentCommand(input)),
       input,
       "committed",
     );
@@ -208,7 +199,7 @@ export class PostgresAdmissionBudgetOwner implements AdmissionBudgetOwnerPort {
   ): Promise<Readonly<{ segmentVersion: bigint }>> {
     await assertCreditIdentity(transaction, input);
     const value = requireSegmentOutcome(
-      await this.authority.releaseAuthorizationSegment(transaction, {
+      await this.credit.runBudget.releaseAuthorizationSegment(transaction, {
         ...segmentCommand(input),
         noDispatchEvidenceRef: input.noDispatchEvidenceRef,
       }),
@@ -227,11 +218,21 @@ export class PostgresAdmissionBudgetOwner implements AdmissionBudgetOwnerPort {
       if (input.outcomeUnknownEvidenceRef === undefined) {
         throw new Error("ADMISSION_CREDIT_RECONCILIATION_EVIDENCE_REQUIRED");
       }
-      const segmentVersion = await requireCreditReconciliation(transaction, this.authority, input,
+      const segmentVersion = await requireCreditReconciliation(transaction, this.credit.runBudget, input,
         input.outcomeUnknownEvidenceRef);
       return Object.freeze({ kind: "reconciliation_required" as const, segmentVersion });
     }
+    if (input.terminalEvidenceDigest === undefined || input.terminalOutcome === undefined ||
+        !ownerRef(input.sessionId) || !ownerRef(input.launchId) || !ownerRef(input.runId)) {
+      throw new Error("ADMISSION_VERIFIED_TERMINAL_EVIDENCE_REQUIRED");
+    }
     const sql = resolvePlatformTransaction(transaction);
+    await sql.query(
+      `SELECT platform.record_admission_verified_terminal_evidence(
+         $1,$2,$3,$4,$5,$6,$7,$8)`,
+      [input.siteId, input.runId, input.manifestRef, input.sessionId, input.launchId,
+        input.terminalEvidenceRef, input.terminalOutcome, input.terminalEvidenceDigest],
+    );
     const [evidenceRows, priorRows] = await Promise.all([
       sql.query<UsageEvidenceRefRow>(
         `SELECT evidence.evidence_ref::text AS "evidenceRef"
@@ -292,7 +293,7 @@ export class PostgresAdmissionBudgetOwner implements AdmissionBudgetOwnerPort {
       correctionOfClosureRef,
       evidenceRefs,
     });
-    const outcome = await this.usageSettlement.settleUsageSegment(transaction, {
+    const outcome = await this.credit.usageSettlement.settleUsageSegment(transaction, {
       siteId: input.siteId,
       authorizationSegmentRef: input.authorizationSegmentRef,
       executionManifestRef: input.manifestRef,
@@ -325,13 +326,10 @@ export class PostgresAdmissionBudgetOwner implements AdmissionBudgetOwnerPort {
       ) throw new Error("ADMISSION_USAGE_SETTLEMENT_CORRUPT");
       const authority = await loadSegmentAuthority(transaction, input);
       if (authority.state !== "settled") throw new Error("ADMISSION_USAGE_SEGMENT_NOT_SETTLED");
-      if (input.terminalOutcome === undefined || input.sessionId === undefined ||
-          input.launchId === undefined || input.runId === undefined) {
-        throw new Error("ADMISSION_EXECUTION_ROOT_OWNER_PROOF_REQUIRED");
-      }
       const ownerProof = verifyAdmissionExecutionRootOwnerProof({
         sourceRef: input.runId,
         terminalEvidenceRef: input.terminalEvidenceRef,
+        terminalEvidenceDigest: input.terminalEvidenceDigest,
         outcome: input.terminalOutcome,
         manifestRef: input.manifestRef,
         sessionId: input.sessionId,
@@ -349,7 +347,7 @@ export class PostgresAdmissionBudgetOwner implements AdmissionBudgetOwnerPort {
           terminalEvidenceRef: input.terminalEvidenceRef,
         })}`,
       };
-      const root = await this.rootClosure.close(transaction, {
+      const root = await this.credit.executionRootClosure.close(transaction, {
         ...closureIdentity,
         requestDigest: deriveExecutionRootClosureRequestDigest(closureIdentity),
       });
@@ -383,7 +381,7 @@ export class PostgresAdmissionBudgetOwner implements AdmissionBudgetOwnerPort {
         segmentVersion: authority.segmentVersion });
     }
     if (outcome.kind === "invalid_state" && outcome.code === "CREDIT_USAGE_ATTEMPTS_NOT_FINALIZED") {
-      const segmentVersion = await requireCreditReconciliation(transaction, this.authority, input,
+      const segmentVersion = await requireCreditReconciliation(transaction, this.credit.runBudget, input,
         input.terminalEvidenceRef);
       return Object.freeze({ kind: "reconciliation_required" as const, segmentVersion });
     }

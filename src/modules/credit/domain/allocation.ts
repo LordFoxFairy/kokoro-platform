@@ -15,6 +15,8 @@ export type PlannedHoldAllocation = Readonly<{
   ordinal: number;
 }>;
 
+export const MAXIMUM_HOLD_ALLOCATION_SOURCES = 256;
+
 export type BudgetAllocationRevision = Readonly<{
   revision: bigint;
   allocationEpoch: bigint;
@@ -79,6 +81,9 @@ export function planGrantReservation(
   for (const grant of ordered) {
     if (remaining === 0n) break;
     if (grant.availableAmount === 0n) continue;
+    if (plan.length === MAXIMUM_HOLD_ALLOCATION_SOURCES) {
+      throw new CreditDomainError("CREDIT_RESERVATION_SOURCE_LIMIT_EXCEEDED");
+    }
     const amount = grant.availableAmount < remaining ? grant.availableAmount : remaining;
     plan.push(Object.freeze({ creditGrantId: grant.creditGrantId, amount, ordinal: plan.length }));
     remaining -= amount;
