@@ -14,6 +14,8 @@ import {
   SecurityEpochsSchema,
 } from "../../src/interfaces/connect/generated-site-provisioning/kokoro/platform/admin/v2/admin_shared_pb.js";
 import {
+  PublishSiteReleaseEffectSchema,
+  PublishSiteReleaseRequestSchema,
   RegisterSiteEffectSchema,
   RegisterSiteRequestSchema,
 } from "../../src/interfaces/connect/generated-site-provisioning/kokoro/platform/site/v1/site_provisioning_pb.js";
@@ -28,6 +30,42 @@ import { CommandReceiptConflictError } from
   "../../src/shared/outbox-inbox/receipt.js";
 
 describe("SiteProvisioning Connect provider", () => {
+  it("fails candidate publication closed before any owner, resolver, or receipt side effect", async () => {
+    const owner = {
+      registerSite: vi.fn(async () => ({ siteRef: "site:alpha", state: "preview_ready" as const,
+        replayed: false })),
+      publishRelease: vi.fn(async () => ({ siteRef: "site:alpha", state: "ready" as const,
+        replayed: false })),
+    };
+    const resolver = { resolveSiteProvisioningCommand: vi.fn(async () => ({
+      context: Object.freeze({ environment: "production" }) as VerifiedRequestSecurityContext,
+      axes,
+    })) };
+    const receipts = { read: vi.fn(async () => "2026-07-30T12:00:00.000Z") };
+    const service = createSiteProvisioningConnectService({ owner, resolver, receipts });
+    const request = create(PublishSiteReleaseRequestSchema, {
+      context: create(AuthenticatedOperatorCommandContextSchema),
+      siteId: "site:alpha",
+      effect: create(PublishSiteReleaseEffectSchema, {
+        siteReleaseCandidateRef: "site-release-candidate:alpha:1",
+        expectedCandidateVersion: 1n,
+        reason: "publish certified launch candidate",
+      }),
+    });
+
+    const error = await Promise.resolve(service.publishSiteRelease(request, {} as HandlerContext))
+      .catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(ConnectError);
+    expect(ConnectError.from(error).code).toBe(Code.Unimplemented);
+    expect(ConnectError.from(error).rawMessage)
+      .toBe("site release candidate authority not activated");
+    expect(owner.registerSite).not.toHaveBeenCalled();
+    expect(owner.publishRelease).not.toHaveBeenCalled();
+    expect(resolver.resolveSiteProvisioningCommand).not.toHaveBeenCalled();
+    expect(receipts.read).not.toHaveBeenCalled();
+  });
+
   it("returns a typed conflict for command-id drift on the same idempotency key", async () => {
     const context = create(AuthenticatedOperatorCommandContextSchema, {
       command: create(CommandIdentityV2Schema, {
@@ -58,7 +96,6 @@ describe("SiteProvisioning Connect provider", () => {
     const service = createSiteProvisioningConnectService({
       owner: {
         registerSite: vi.fn(async () => { throw new CommandReceiptConflictError("identity"); }),
-        publishRelease: vi.fn(async () => { throw new Error("unexpected"); }),
       },
       resolver: { resolveSiteProvisioningCommand: vi.fn(async () => ({
         context: Object.freeze({ environment: "production" }) as VerifiedRequestSecurityContext, axes,

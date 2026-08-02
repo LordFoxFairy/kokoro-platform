@@ -5,8 +5,6 @@
 import type { GenEnum, GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { enumDesc, fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import { file_buf_validate_validate } from "../../../../buf/validate/validate_pb.js";
-import type { Timestamp } from "@bufbuild/protobuf/wkt";
-import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
 import type { CommandReceiptV2 } from "../../../common/v2/command_envelope_pb.js";
 import { file_kokoro_common_v2_command_envelope } from "../../../common/v2/command_envelope_pb.js";
 import type { AuthenticatedOperatorCommandContext } from "../../admin/v2/admin_shared_pb.js";
@@ -17,7 +15,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file kokoro/platform/site/v1/site_provisioning.proto.
  */
 export const file_kokoro_platform_site_v1_site_provisioning: GenFile = /*@__PURE__*/
-  fileDesc("Ci9rb2tvcm8vcGxhdGZvcm0vc2l0ZS92MS9zaXRlX3Byb3Zpc2lvbmluZy5wcm90bxIXa29rb3JvLnBsYXRmb3JtLnNpdGUudjEiowIKElJlZ2lzdGVyU2l0ZUVmZmVjdBIvCghzaXRlX2tleRgBIAEoCUIdukgachgyFl5bYS16XVthLXowLTktXXsyLDYyfSQSJwoTcHJvamVjdF9iaW5kaW5nX3JlZhgCIAEoCUIKukgHcgUQAxiAAhIiCg5yZXBvc2l0b3J5X3JlZhgDIAEoCUIKukgHcgUQAxiABBI6ChJwcm92aWRlcl9uYW1lc3BhY2UYBCABKAlCHrpIG3IZMhdeW2Etel1bYS16MC05Li1dezEsNjN9JBIoChRwcm92aWRlcl9wcm9qZWN0X3JlZhgFIAEoCUIKukgHcgUQAxiABBIpChV3b3JrbG9hZF9pZGVudGl0eV9yZWYYBiABKAlCCrpIB3IFEAMYgAQizwEKE1JlZ2lzdGVyU2l0ZVJlcXVlc3QSVgoHY29udGV4dBgBIAEoCzI9Lmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5BdXRoZW50aWNhdGVkT3BlcmF0b3JDb21tYW5kQ29udGV4dEIGukgDyAEBEhsKB3NpdGVfaWQYAiABKAlCCrpIB3IFEAMYgAESQwoGZWZmZWN0GAMgASgLMisua29rb3JvLnBsYXRmb3JtLnNpdGUudjEuUmVnaXN0ZXJTaXRlRWZmZWN0Qga6SAPIAQEizAEKFFJlZ2lzdGVyU2l0ZVJlc3BvbnNlEhsKB3NpdGVfaWQYASABKAlCCrpIB3IFEAMYgAESSAoFc3RhdGUYAiABKA4yLS5rb2tvcm8ucGxhdGZvcm0uc2l0ZS52MS5Qcm92aXNpb25lZFNpdGVTdGF0ZUIKukgHggEEEAEgABIQCghyZXBsYXllZBgDIAEoCBI7CgdyZWNlaXB0GAQgASgLMiIua29rb3JvLmNvbW1vbi52Mi5Db21tYW5kUmVjZWlwdFYyQga6SAPIAQEiZAoQU2l0ZUxvY2FsZVBvbGljeRIhCg5kZWZhdWx0X2xvY2FsZRgBIAEoCUIJukgGcgQQARhAEi0KD2FsbG93ZWRfbG9jYWxlcxgCIAMoCUIUukgRkgEOCAEQIBgBIgZyBBABGEAizwEKHVNpdGVSZWxlYXNlQ2VydGlmaWNhdGlvblByb29mEiMKD3NpZ25pbmdfa2V5X3JlZhgBIAEoCUIKukgHcgUQAxiAAhI1Cglpc3N1ZWRfYXQYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wQga6SAPIAQESNgoKZXhwaXJlc19hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBCBrpIA8gBARIaCglzaWduYXR1cmUYBCABKAxCB7pIBHoCaEAilwYKGFB1Ymxpc2hTaXRlUmVsZWFzZUVmZmVjdBIfCgtyZWxlYXNlX3JlZhgBIAEoCUIKukgHcgUQAxiAAhI1ChN3ZWJfYXJ0aWZhY3RfZGlnZXN0GAIgASgJQhi6SBVyEzIOXlswLTlhLWZdezY0fSSYAUASOQoXcmVsZWFzZV9tYW5pZmVzdF9kaWdlc3QYAyABKAlCGLpIFXITMg5eWzAtOWEtZl17NjR9JJgBQBI2ChRjZXJ0aWZpY2F0aW9uX2RpZ2VzdBgEIAEoCUIYukgVchMyDl5bMC05YS1mXXs2NH0kmAFAEiYKEmxhdW5jaF9wcm9maWxlX3JlZhgFIAEoCUIKukgHcgUQAxiAAhIsChhzaXRlX2NvbmZpZ19yZXZpc2lvbl9yZWYYBiABKAlCCrpIB3IFEAMYgAISJgoSbGVnYWxfcmV2aXNpb25fcmVmGAcgASgJQgq6SAdyBRADGIACEisKF2ZlYXR1cmVfcG9saWN5X3JldmlzaW9uGAggASgJQgq6SAdyBRADGIACEiwKGG1vZGVsX29wdGlvbl9jYXRhbG9nX3JlZhgJIAEoCUIKukgHcgUQAxiAAhIlChFhZ2VudF9jYXRhbG9nX3JlZhgKIAEoCUIKukgHcgUQAxiAAhIoChVpZGVudGl0eV9pc3N1ZXJfbGFiZWwYCyABKAlCCbpIBnIEEAEYQBI6CiZpZGVudGl0eV9hdXRoX3N0cmVuZ3RoX3BvbGljeV9yZXZpc2lvbhgMIAEoCUIKukgHcgUQAxiAAhIpChNlbmFibGVkX3N1cmZhY2VfaWRzGA0gAygJQgy6SAmSAQYIARBAGAESSAoNbG9jYWxlX3BvbGljeRgOIAEoCzIpLmtva29yby5wbGF0Zm9ybS5zaXRlLnYxLlNpdGVMb2NhbGVQb2xpY3lCBrpIA8gBARJVCg1jZXJ0aWZpY2F0aW9uGA8gASgLMjYua29rb3JvLnBsYXRmb3JtLnNpdGUudjEuU2l0ZVJlbGVhc2VDZXJ0aWZpY2F0aW9uUHJvb2ZCBrpIA8gBASLbAQoZUHVibGlzaFNpdGVSZWxlYXNlUmVxdWVzdBJWCgdjb250ZXh0GAEgASgLMj0ua29rb3JvLnBsYXRmb3JtLmFkbWluLnYyLkF1dGhlbnRpY2F0ZWRPcGVyYXRvckNvbW1hbmRDb250ZXh0Qga6SAPIAQESGwoHc2l0ZV9pZBgCIAEoCUIKukgHcgUQAxiAARJJCgZlZmZlY3QYAyABKAsyMS5rb2tvcm8ucGxhdGZvcm0uc2l0ZS52MS5QdWJsaXNoU2l0ZVJlbGVhc2VFZmZlY3RCBrpIA8gBASL4AQoaUHVibGlzaFNpdGVSZWxlYXNlUmVzcG9uc2USGwoHc2l0ZV9pZBgBIAEoCUIKukgHcgUQAxiAARIfCgtyZWxlYXNlX3JlZhgCIAEoCUIKukgHcgUQAxiAAhJNCgVzdGF0ZRgDIAEoDjIyLmtva29yby5wbGF0Zm9ybS5zaXRlLnYxLlB1Ymxpc2hlZFNpdGVSZWxlYXNlU3RhdGVCCrpIB4IBBBABIAASEAoIcmVwbGF5ZWQYBCABKAgSOwoHcmVjZWlwdBgFIAEoCzIiLmtva29yby5jb21tb24udjIuQ29tbWFuZFJlY2VpcHRWMkIGukgDyAEBKmgKFFByb3Zpc2lvbmVkU2l0ZVN0YXRlEiYKIlBST1ZJU0lPTkVEX1NJVEVfU1RBVEVfVU5TUEVDSUZJRUQQABIoCiRQUk9WSVNJT05FRF9TSVRFX1NUQVRFX1BSRVZJRVdfUkVBRFkQASpxChlQdWJsaXNoZWRTaXRlUmVsZWFzZVN0YXRlEiwKKFBVQkxJU0hFRF9TSVRFX1JFTEVBU0VfU1RBVEVfVU5TUEVDSUZJRUQQABImCiJQVUJMSVNIRURfU0lURV9SRUxFQVNFX1NUQVRFX1JFQURZEAEyiQIKF1NpdGVQcm92aXNpb25pbmdTZXJ2aWNlEm0KDFJlZ2lzdGVyU2l0ZRIsLmtva29yby5wbGF0Zm9ybS5zaXRlLnYxLlJlZ2lzdGVyU2l0ZVJlcXVlc3QaLS5rb2tvcm8ucGxhdGZvcm0uc2l0ZS52MS5SZWdpc3RlclNpdGVSZXNwb25zZSIAEn8KElB1Ymxpc2hTaXRlUmVsZWFzZRIyLmtva29yby5wbGF0Zm9ybS5zaXRlLnYxLlB1Ymxpc2hTaXRlUmVsZWFzZVJlcXVlc3QaMy5rb2tvcm8ucGxhdGZvcm0uc2l0ZS52MS5QdWJsaXNoU2l0ZVJlbGVhc2VSZXNwb25zZSIAYgZwcm90bzM", [file_buf_validate_validate, file_google_protobuf_timestamp, file_kokoro_common_v2_command_envelope, file_kokoro_platform_admin_v2_admin_shared]);
+  fileDesc("Ci9rb2tvcm8vcGxhdGZvcm0vc2l0ZS92MS9zaXRlX3Byb3Zpc2lvbmluZy5wcm90bxIXa29rb3JvLnBsYXRmb3JtLnNpdGUudjEiowIKElJlZ2lzdGVyU2l0ZUVmZmVjdBIvCghzaXRlX2tleRgBIAEoCUIdukgachgyFl5bYS16XVthLXowLTktXXsyLDYyfSQSJwoTcHJvamVjdF9iaW5kaW5nX3JlZhgCIAEoCUIKukgHcgUQAxiAAhIiCg5yZXBvc2l0b3J5X3JlZhgDIAEoCUIKukgHcgUQAxiABBI6ChJwcm92aWRlcl9uYW1lc3BhY2UYBCABKAlCHrpIG3IZMhdeW2Etel1bYS16MC05Li1dezEsNjN9JBIoChRwcm92aWRlcl9wcm9qZWN0X3JlZhgFIAEoCUIKukgHcgUQAxiABBIpChV3b3JrbG9hZF9pZGVudGl0eV9yZWYYBiABKAlCCrpIB3IFEAMYgAQizwEKE1JlZ2lzdGVyU2l0ZVJlcXVlc3QSVgoHY29udGV4dBgBIAEoCzI9Lmtva29yby5wbGF0Zm9ybS5hZG1pbi52Mi5BdXRoZW50aWNhdGVkT3BlcmF0b3JDb21tYW5kQ29udGV4dEIGukgDyAEBEhsKB3NpdGVfaWQYAiABKAlCCrpIB3IFEAMYgAESQwoGZWZmZWN0GAMgASgLMisua29rb3JvLnBsYXRmb3JtLnNpdGUudjEuUmVnaXN0ZXJTaXRlRWZmZWN0Qga6SAPIAQEizAEKFFJlZ2lzdGVyU2l0ZVJlc3BvbnNlEhsKB3NpdGVfaWQYASABKAlCCrpIB3IFEAMYgAESSAoFc3RhdGUYAiABKA4yLS5rb2tvcm8ucGxhdGZvcm0uc2l0ZS52MS5Qcm92aXNpb25lZFNpdGVTdGF0ZUIKukgHggEEEAEgABIQCghyZXBsYXllZBgDIAEoCBI7CgdyZWNlaXB0GAQgASgLMiIua29rb3JvLmNvbW1vbi52Mi5Db21tYW5kUmVjZWlwdFYyQga6SAPIAQEi5AMKGFB1Ymxpc2hTaXRlUmVsZWFzZUVmZmVjdBIuChpzaXRlX3JlbGVhc2VfY2FuZGlkYXRlX3JlZhgQIAEoCUIKukgHcgUQAxiAAhIrChpleHBlY3RlZF9jYW5kaWRhdGVfdmVyc2lvbhgRIAEoBEIHukgEMgIoARIaCgZyZWFzb24YEiABKAlCCrpIB3IFEAMYgARKBAgBEBBSC3JlbGVhc2VfcmVmUhN3ZWJfYXJ0aWZhY3RfZGlnZXN0UhdyZWxlYXNlX21hbmlmZXN0X2RpZ2VzdFIUY2VydGlmaWNhdGlvbl9kaWdlc3RSEmxhdW5jaF9wcm9maWxlX3JlZlIYc2l0ZV9jb25maWdfcmV2aXNpb25fcmVmUhJsZWdhbF9yZXZpc2lvbl9yZWZSF2ZlYXR1cmVfcG9saWN5X3JldmlzaW9uUhhtb2RlbF9vcHRpb25fY2F0YWxvZ19yZWZSEWFnZW50X2NhdGFsb2dfcmVmUhVpZGVudGl0eV9pc3N1ZXJfbGFiZWxSJmlkZW50aXR5X2F1dGhfc3RyZW5ndGhfcG9saWN5X3JldmlzaW9uUhNlbmFibGVkX3N1cmZhY2VfaWRzUg1sb2NhbGVfcG9saWN5Ug1jZXJ0aWZpY2F0aW9uItsBChlQdWJsaXNoU2l0ZVJlbGVhc2VSZXF1ZXN0ElYKB2NvbnRleHQYASABKAsyPS5rb2tvcm8ucGxhdGZvcm0uYWRtaW4udjIuQXV0aGVudGljYXRlZE9wZXJhdG9yQ29tbWFuZENvbnRleHRCBrpIA8gBARIbCgdzaXRlX2lkGAIgASgJQgq6SAdyBRADGIABEkkKBmVmZmVjdBgDIAEoCzIxLmtva29yby5wbGF0Zm9ybS5zaXRlLnYxLlB1Ymxpc2hTaXRlUmVsZWFzZUVmZmVjdEIGukgDyAEBIvgBChpQdWJsaXNoU2l0ZVJlbGVhc2VSZXNwb25zZRIbCgdzaXRlX2lkGAEgASgJQgq6SAdyBRADGIABEh8KC3JlbGVhc2VfcmVmGAIgASgJQgq6SAdyBRADGIACEk0KBXN0YXRlGAMgASgOMjIua29rb3JvLnBsYXRmb3JtLnNpdGUudjEuUHVibGlzaGVkU2l0ZVJlbGVhc2VTdGF0ZUIKukgHggEEEAEgABIQCghyZXBsYXllZBgEIAEoCBI7CgdyZWNlaXB0GAUgASgLMiIua29rb3JvLmNvbW1vbi52Mi5Db21tYW5kUmVjZWlwdFYyQga6SAPIAQEqaAoUUHJvdmlzaW9uZWRTaXRlU3RhdGUSJgoiUFJPVklTSU9ORURfU0lURV9TVEFURV9VTlNQRUNJRklFRBAAEigKJFBST1ZJU0lPTkVEX1NJVEVfU1RBVEVfUFJFVklFV19SRUFEWRABKnEKGVB1Ymxpc2hlZFNpdGVSZWxlYXNlU3RhdGUSLAooUFVCTElTSEVEX1NJVEVfUkVMRUFTRV9TVEFURV9VTlNQRUNJRklFRBAAEiYKIlBVQkxJU0hFRF9TSVRFX1JFTEVBU0VfU1RBVEVfUkVBRFkQATKJAgoXU2l0ZVByb3Zpc2lvbmluZ1NlcnZpY2USbQoMUmVnaXN0ZXJTaXRlEiwua29rb3JvLnBsYXRmb3JtLnNpdGUudjEuUmVnaXN0ZXJTaXRlUmVxdWVzdBotLmtva29yby5wbGF0Zm9ybS5zaXRlLnYxLlJlZ2lzdGVyU2l0ZVJlc3BvbnNlIgASfwoSUHVibGlzaFNpdGVSZWxlYXNlEjIua29rb3JvLnBsYXRmb3JtLnNpdGUudjEuUHVibGlzaFNpdGVSZWxlYXNlUmVxdWVzdBozLmtva29yby5wbGF0Zm9ybS5zaXRlLnYxLlB1Ymxpc2hTaXRlUmVsZWFzZVJlc3BvbnNlIgBiBnByb3RvMw", [file_buf_validate_validate, file_kokoro_common_v2_command_envelope, file_kokoro_platform_admin_v2_admin_shared]);
 
 /**
  * @generated from message kokoro.platform.site.v1.RegisterSiteEffect
@@ -121,141 +119,23 @@ export const RegisterSiteResponseSchema: GenMessage<RegisterSiteResponse> = /*@_
   messageDesc(file_kokoro_platform_site_v1_site_provisioning, 2);
 
 /**
- * @generated from message kokoro.platform.site.v1.SiteLocalePolicy
- */
-export type SiteLocalePolicy = Message<"kokoro.platform.site.v1.SiteLocalePolicy"> & {
-  /**
-   * @generated from field: string default_locale = 1;
-   */
-  defaultLocale: string;
-
-  /**
-   * @generated from field: repeated string allowed_locales = 2;
-   */
-  allowedLocales: string[];
-};
-
-/**
- * Describes the message kokoro.platform.site.v1.SiteLocalePolicy.
- * Use `create(SiteLocalePolicySchema)` to create a new message.
- */
-export const SiteLocalePolicySchema: GenMessage<SiteLocalePolicy> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_site_v1_site_provisioning, 3);
-
-/**
- * The CI/release authority signs the canonical certification facts. The
- * certification_digest in PublishSiteReleaseEffect is the SHA-256 digest of those
- * facts and is the immutable value retained by Platform.
- *
- * @generated from message kokoro.platform.site.v1.SiteReleaseCertificationProof
- */
-export type SiteReleaseCertificationProof = Message<"kokoro.platform.site.v1.SiteReleaseCertificationProof"> & {
-  /**
-   * @generated from field: string signing_key_ref = 1;
-   */
-  signingKeyRef: string;
-
-  /**
-   * @generated from field: google.protobuf.Timestamp issued_at = 2;
-   */
-  issuedAt?: Timestamp | undefined;
-
-  /**
-   * @generated from field: google.protobuf.Timestamp expires_at = 3;
-   */
-  expiresAt?: Timestamp | undefined;
-
-  /**
-   * @generated from field: bytes signature = 4;
-   */
-  signature: Uint8Array;
-};
-
-/**
- * Describes the message kokoro.platform.site.v1.SiteReleaseCertificationProof.
- * Use `create(SiteReleaseCertificationProofSchema)` to create a new message.
- */
-export const SiteReleaseCertificationProofSchema: GenMessage<SiteReleaseCertificationProof> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_site_v1_site_provisioning, 4);
-
-/**
  * @generated from message kokoro.platform.site.v1.PublishSiteReleaseEffect
  */
 export type PublishSiteReleaseEffect = Message<"kokoro.platform.site.v1.PublishSiteReleaseEffect"> & {
   /**
-   * @generated from field: string release_ref = 1;
+   * @generated from field: string site_release_candidate_ref = 16;
    */
-  releaseRef: string;
+  siteReleaseCandidateRef: string;
 
   /**
-   * @generated from field: string web_artifact_digest = 2;
+   * @generated from field: uint64 expected_candidate_version = 17;
    */
-  webArtifactDigest: string;
+  expectedCandidateVersion: bigint;
 
   /**
-   * @generated from field: string release_manifest_digest = 3;
+   * @generated from field: string reason = 18;
    */
-  releaseManifestDigest: string;
-
-  /**
-   * @generated from field: string certification_digest = 4;
-   */
-  certificationDigest: string;
-
-  /**
-   * @generated from field: string launch_profile_ref = 5;
-   */
-  launchProfileRef: string;
-
-  /**
-   * @generated from field: string site_config_revision_ref = 6;
-   */
-  siteConfigRevisionRef: string;
-
-  /**
-   * @generated from field: string legal_revision_ref = 7;
-   */
-  legalRevisionRef: string;
-
-  /**
-   * @generated from field: string feature_policy_revision = 8;
-   */
-  featurePolicyRevision: string;
-
-  /**
-   * @generated from field: string model_option_catalog_ref = 9;
-   */
-  modelOptionCatalogRef: string;
-
-  /**
-   * @generated from field: string agent_catalog_ref = 10;
-   */
-  agentCatalogRef: string;
-
-  /**
-   * @generated from field: string identity_issuer_label = 11;
-   */
-  identityIssuerLabel: string;
-
-  /**
-   * @generated from field: string identity_auth_strength_policy_revision = 12;
-   */
-  identityAuthStrengthPolicyRevision: string;
-
-  /**
-   * @generated from field: repeated string enabled_surface_ids = 13;
-   */
-  enabledSurfaceIds: string[];
-
-  /**
-   * @generated from field: kokoro.platform.site.v1.SiteLocalePolicy locale_policy = 14;
-   */
-  localePolicy?: SiteLocalePolicy | undefined;
-
-  /**
-   * @generated from field: kokoro.platform.site.v1.SiteReleaseCertificationProof certification = 15;
-   */
-  certification?: SiteReleaseCertificationProof | undefined;
+  reason: string;
 };
 
 /**
@@ -263,7 +143,7 @@ export type PublishSiteReleaseEffect = Message<"kokoro.platform.site.v1.PublishS
  * Use `create(PublishSiteReleaseEffectSchema)` to create a new message.
  */
 export const PublishSiteReleaseEffectSchema: GenMessage<PublishSiteReleaseEffect> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_site_v1_site_provisioning, 5);
+  messageDesc(file_kokoro_platform_site_v1_site_provisioning, 3);
 
 /**
  * @generated from message kokoro.platform.site.v1.PublishSiteReleaseRequest
@@ -290,7 +170,7 @@ export type PublishSiteReleaseRequest = Message<"kokoro.platform.site.v1.Publish
  * Use `create(PublishSiteReleaseRequestSchema)` to create a new message.
  */
 export const PublishSiteReleaseRequestSchema: GenMessage<PublishSiteReleaseRequest> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_site_v1_site_provisioning, 6);
+  messageDesc(file_kokoro_platform_site_v1_site_provisioning, 4);
 
 /**
  * @generated from message kokoro.platform.site.v1.PublishSiteReleaseResponse
@@ -327,7 +207,7 @@ export type PublishSiteReleaseResponse = Message<"kokoro.platform.site.v1.Publis
  * Use `create(PublishSiteReleaseResponseSchema)` to create a new message.
  */
 export const PublishSiteReleaseResponseSchema: GenMessage<PublishSiteReleaseResponse> = /*@__PURE__*/
-  messageDesc(file_kokoro_platform_site_v1_site_provisioning, 7);
+  messageDesc(file_kokoro_platform_site_v1_site_provisioning, 5);
 
 /**
  * @generated from enum kokoro.platform.site.v1.ProvisionedSiteState

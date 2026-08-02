@@ -484,8 +484,7 @@ export function publishSiteReleaseRequestDigest(
     "kokoro.platform.site.v1.SiteProvisioningService/PublishSiteRelease",
     context,
     { typeName: PublishSiteReleaseEffectSchema.typeName, bytes: toBinary(PublishSiteReleaseEffectSchema, effect, { writeUnknownFields: false }) },
-    [siteId, effect.releaseRef, effect.launchProfileRef, effect.modelOptionCatalogRef,
-      effect.agentCatalogRef],
+    [siteId, effect.siteReleaseCandidateRef],
     verified,
   );
 }

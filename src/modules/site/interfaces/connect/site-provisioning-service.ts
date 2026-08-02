@@ -1,5 +1,5 @@
 import { create } from "@bufbuild/protobuf";
-import { type HandlerContext, type ServiceImpl } from "@connectrpc/connect";
+import { Code, ConnectError, type HandlerContext, type ServiceImpl } from "@connectrpc/connect";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import {
   CommandDigestAlgorithmV2,
@@ -11,12 +11,10 @@ import type { AuthenticatedOperatorCommandContext } from
   "../../../../interfaces/connect/generated-site-provisioning/kokoro/platform/admin/v2/admin_shared_pb.js";
 import {
   ProvisionedSiteState,
-  PublishedSiteReleaseState,
   SiteProvisioningService,
 } from
   "../../../../interfaces/connect/generated-site-provisioning/kokoro/platform/site/v1/site_provisioning_pb.js";
 import {
-  publishSiteReleaseRequestDigest,
   registerSiteRequestDigest,
   type VerifiedAuthenticatedAdminAxes,
 } from "../../../../interfaces/connect/generated-site-provisioning/command-envelope-digest.js";
@@ -48,7 +46,7 @@ export interface SiteProvisioningAdminResolver {
 }
 
 export function createSiteProvisioningConnectService(input: Readonly<{
-  owner: Pick<SitePublicationService, "registerSite" | "publishRelease">;
+  owner: Pick<SitePublicationService, "registerSite">;
   resolver: SiteProvisioningAdminResolver;
   receipts: ControlCommandReceiptTimestampReader;
 }>): SiteProvisioningConnectService {
@@ -90,63 +88,11 @@ export function createSiteProvisioningConnectService(input: Readonly<{
       };
     },
 
-    async publishSiteRelease(request, transport) {
-      const context = required(request.context, "SITE_PROVISIONING_CONTEXT_REQUIRED");
-      const effect = required(request.effect, "SITE_RELEASE_EFFECT_REQUIRED");
-      const locale = required(effect.localePolicy, "SITE_RELEASE_LOCALE_POLICY_REQUIRED");
-      const certification = required(effect.certification,
-        "SITE_RELEASE_CERTIFICATION_PROOF_REQUIRED");
-      const verified = await input.resolver.resolveSiteProvisioningCommand(context, transport, {
-        operation: "site.release.publish",
-        siteRef: request.siteId,
-        resourceRefs: [request.siteId, effect.releaseRef, effect.launchProfileRef,
-          effect.modelOptionCatalogRef, effect.agentCatalogRef],
-        scope: "site",
-      });
-      const identity = commandIdentity(context);
-      requireDigest(identity.requestDigest,
-        publishSiteReleaseRequestDigest(context, request.siteId, effect, verified.axes));
-      const result = await withCommandReceiptConflictMapping(() => input.owner.publishRelease({
-        commandId: identity.commandId,
-        idempotencyKey: identity.idempotencyKey,
-        siteRef: request.siteId,
-        releaseRef: effect.releaseRef,
-        webArtifactDigest: effect.webArtifactDigest,
-        releaseManifestDigest: effect.releaseManifestDigest,
-        certificationDigest: effect.certificationDigest,
-        launchProfileRef: effect.launchProfileRef,
-        siteConfigRevisionRef: effect.siteConfigRevisionRef,
-        legalRevisionRef: effect.legalRevisionRef,
-        featurePolicyRevision: effect.featurePolicyRevision,
-        modelOptionCatalogRef: effect.modelOptionCatalogRef,
-        agentCatalogRef: effect.agentCatalogRef,
-        identityIssuerLabel: effect.identityIssuerLabel,
-        identityAuthStrengthPolicyRevision: effect.identityAuthStrengthPolicyRevision,
-        enabledSurfaceIds: effect.enabledSurfaceIds,
-        localePolicy: {
-          defaultLocale: locale.defaultLocale,
-          allowedLocales: locale.allowedLocales,
-        },
-        certificationProof: {
-          signingKeyRef: certification.signingKeyRef,
-          issuedAt: instant(certification.issuedAt,
-            "SITE_RELEASE_CERTIFICATION_ISSUED_AT_REQUIRED"),
-          expiresAt: instant(certification.expiresAt,
-            "SITE_RELEASE_CERTIFICATION_EXPIRES_AT_REQUIRED"),
-          signature: new Uint8Array(certification.signature),
-        },
-      }, verified.context));
-      const recordedAt = await input.receipts.read(verified.context, {
-        commandId: identity.commandId,
-        operation: "site.release.publish",
-      });
-      return {
-        siteId: request.siteId,
-        releaseRef: effect.releaseRef,
-        state: PublishedSiteReleaseState.READY,
-        replayed: result.replayed,
-        receipt: wireReceipt(identity, "site.release.publish", recordedAt),
-      };
+    async publishSiteRelease() {
+      throw new ConnectError(
+        "site release candidate authority not activated",
+        Code.Unimplemented,
+      );
     },
   };
 }
@@ -161,7 +107,7 @@ function commandIdentity(context: AuthenticatedOperatorCommandContext) {
 
 function wireReceipt(
   identity: ReturnType<typeof commandIdentity>,
-  operation: "site.register" | "site.release.publish",
+  operation: "site.register",
   recordedAt: string,
 ) {
   return create(CommandReceiptV2Schema, {
@@ -175,16 +121,6 @@ function wireReceipt(
     state: CommandReceiptStateV2.COMMITTED,
     recordedAt: timestampFromDate(new Date(recordedAt)),
   });
-}
-
-function instant(
-  value: Readonly<{ seconds: bigint; nanos: number }> | undefined,
-  code: string,
-): string {
-  if (value === undefined) throw new Error(code);
-  const millis = Number(value.seconds) * 1000 + Math.floor(value.nanos / 1_000_000);
-  if (!Number.isSafeInteger(millis)) throw new Error(code);
-  return new Date(millis).toISOString();
 }
 
 function siteEnvironment(value: string): "development" | "preview" | "production" {

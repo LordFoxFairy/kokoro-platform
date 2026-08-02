@@ -34,9 +34,11 @@ environment and region plus a canonical command digest. The RPC adapter verifies
 before the state store may persist an observation; state-store code never manufactures Release evidence from the
 local attempt.
 
-Fresh Site creation and immutable SiteRelease publication are exposed only by the typed
-`SiteProvisioningService` on the Admin mTLS listener. Registration requires a Platform-global grant because
-the Site scope does not exist yet; every later release command requires the exact Site scope. Both are
-phishing-resistant step-up mutations. Release certification is a detached Ed25519 attestation from the
-configured `PLATFORM_SITE_RELEASE_CERTIFICATION_KEYS_FILE`; Platform persists only the bound digest and never
-accepts an operator assertion as certification.
+Fresh Site creation is exposed by the typed `SiteProvisioningService` on the Admin mTLS listener and requires
+a Platform-global grant because the Site scope does not exist yet. The release command accepts only the Root-owned
+candidate reference, expected candidate version and operator reason. Until the Platform Candidate Authority can
+lock and revalidate the complete candidate/certification chain, `PublishSiteRelease` returns a stable typed
+`Unimplemented` result before authorization resolution, receipt lookup or any owner/repository call. Never restore
+caller-supplied artifact, manifest, profile, catalog, surface or certification facts, and never remount the legacy
+`SitePublicationService.publishRelease` path. The eventual candidate-backed mutation requires the exact Site scope
+and phishing-resistant step-up authorization.
