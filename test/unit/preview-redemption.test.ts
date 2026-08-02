@@ -10,7 +10,7 @@ import { issuePlatformTransaction, revokePlatformTransaction } from
 import type { PlatformTransaction } from "../../src/shared/unit-of-work/platform-transaction.js";
 import type { VerifiedRequestSecurityContext } from "../../src/shared/security-context/index.js";
 import type { CommerceCommandFence } from "../../src/modules/commerce/application/command-fence.js";
-import { CommerceLockSequence } from "../../src/workflows/commerce/lock-order.js";
+import { CommerceLockSequence } from "../../src/modules/commerce/application/command-lock-order.js";
 import {
   isSupportedRedemptionSafeTerms,
   redemptionReleaseCapabilities,

@@ -6,7 +6,7 @@ import type {
 } from "../../../../interfaces/http/generated/platform-public/types.gen.js";
 import type { VerifiedRequestSecurityContext } from "../../../../shared/security-context/index.js";
 import type { PlatformUnitOfWork } from "../../../../shared/unit-of-work/unit-of-work.js";
-import { authorizeCommerceRead } from "../../../../workflows/commerce/authorize-command.js";
+import type { CommerceReadAuthorizer } from "../command-authorization.js";
 import { CommerceApplicationError } from "../commerce-application-error.js";
 import type { AccountReadRepository } from "../contracts/account-read-repository.js";
 
@@ -14,7 +14,7 @@ export class AccountReadService {
   constructor(private readonly dependencies: Readonly<{
     unitOfWork: Pick<PlatformUnitOfWork, "execute">;
     repository: AccountReadRepository;
-    authorizeRead?: typeof authorizeCommerceRead;
+    authorizeRead: CommerceReadAuthorizer;
     clock?: () => string;
   }>) {}
 
@@ -48,7 +48,7 @@ export class AccountReadService {
     const result = await this.dependencies.unitOfWork.execute(
       { context, operation },
       async (transaction) => {
-        await (this.dependencies.authorizeRead ?? authorizeCommerceRead)(
+        await this.dependencies.authorizeRead(
           transaction, context, operation, (this.dependencies.clock ?? (() => new Date().toISOString()))(),
         );
         return query(transaction, identity);

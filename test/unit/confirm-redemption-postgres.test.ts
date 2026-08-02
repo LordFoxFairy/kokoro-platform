@@ -13,7 +13,7 @@ import {
   type PublishedFulfillmentOutputLine,
 } from
   "../../src/modules/commerce/domain/redemption-preview.js";
-import { CommerceLockSequence } from "../../src/workflows/commerce/lock-order.js";
+import { CommerceLockSequence } from "../../src/modules/commerce/application/command-lock-order.js";
 import { commerceCanonicalJson } from "../../src/modules/commerce/domain/canonical-json.js";
 import type { CreditGrantProgramPort } from
   "../../src/modules/commerce/application/contracts/credit-program.js";

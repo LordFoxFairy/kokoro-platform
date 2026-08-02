@@ -28,7 +28,7 @@ import {
 import { commerceCanonicalJson } from "../../domain/canonical-json.js";
 import type { FulfillmentOutputLine } from "../../domain/output-line.js";
 import { createFulfillmentSourceIdentity } from "../../domain/fulfillment-source.js";
-import type { CommerceLockSequence } from "../../../../workflows/commerce/lock-order.js";
+import type { CommerceLockSequence } from "../../application/command-lock-order.js";
 import type {
   CreditGrantIssuancePort,
   PreparedCreditGrantIssuance,

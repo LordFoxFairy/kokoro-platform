@@ -12,7 +12,7 @@ import { createRedemptionSecretCodec } from
   "../../src/modules/commerce/infrastructure/crypto/redemption-secret-codec.js";
 import { CommerceApplicationError } from
   "../../src/modules/commerce/application/commerce-application-error.js";
-import { CommerceLockSequence } from "../../src/workflows/commerce/lock-order.js";
+import { CommerceLockSequence } from "../../src/modules/commerce/application/command-lock-order.js";
 import { issuePlatformTransaction, revokePlatformTransaction } from
   "../../src/shared/unit-of-work/platform-transaction.js";
 import type { PlatformTransaction } from "../../src/shared/unit-of-work/platform-transaction.js";

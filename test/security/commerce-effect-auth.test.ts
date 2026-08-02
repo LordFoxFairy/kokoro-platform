@@ -1,14 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { authorizeCommerceCommand } from "../../src/workflows/commerce/authorize-command.js";
+import { createCommerceCommandAuthorization } from "../../src/modules/commerce/application/command-authorization.js";
+import { PostgresCommerceCommandAuthorityReader } from "../../src/modules/commerce/infrastructure/postgres/command-authority-reader.js";
 import { issuePlatformTransaction, revokePlatformTransaction, type PlatformSqlTransaction } from "../../src/shared/unit-of-work/platform-transaction.js";
 import { verifyRequestSecurityContext } from "../../src/shared/security-context/request-security-context.js";
+
+const authorization = createCommerceCommandAuthorization(
+  new PostgresCommerceCommandAuthorityReader(),
+);
 
 describe("Commerce effect-point authorization", () => {
   it("fails closed when the verified context has no boundary-issued CSRF evidence", async () => {
     const sql: PlatformSqlTransaction = { query: async () => { throw new Error("MUST_NOT_QUERY"); }, execute: async () => 0 };
     const lease = issuePlatformTransaction(sql);
     try {
-      await expect(authorizeCommerceCommand(lease.transaction, await context(false), "confirmRedemption", "2026-07-28T00:05:00.000Z")).rejects.toThrow("COMMERCE_EFFECT_NOT_AUTHORIZED");
+      await expect(authorization.authorizeCommand(lease.transaction, await context(false), "confirmRedemption", "2026-07-28T00:05:00.000Z")).rejects.toThrow("COMMERCE_EFFECT_NOT_AUTHORIZED");
     } finally { revokePlatformTransaction(lease); }
   });
 
@@ -20,7 +25,7 @@ describe("Commerce effect-point authorization", () => {
     };
     const lease = issuePlatformTransaction(sql);
     try {
-      await expect(authorizeCommerceCommand(lease.transaction, await context(true), "confirmRedemption", "2026-07-28T00:05:00.000Z")).resolves.toMatchObject({ siteId: "site-1", releaseRef: "release-1" });
+      await expect(authorization.authorizeCommand(lease.transaction, await context(true), "confirmRedemption", "2026-07-28T00:05:00.000Z")).resolves.toMatchObject({ siteId: "site-1", releaseRef: "release-1" });
       expect(statements[0]).toContain("FOR UPDATE OF binding,site,release,subject,identity_session");
     } finally { revokePlatformTransaction(lease); }
   });
@@ -32,7 +37,7 @@ describe("Commerce effect-point authorization", () => {
     };
     const lease = issuePlatformTransaction(sql);
     try {
-      await expect(authorizeCommerceCommand(lease.transaction, await context(true), "confirmRedemption", "2026-07-28T00:05:00.000Z")).rejects.toThrow("COMMERCE_EFFECT_NOT_AUTHORIZED");
+      await expect(authorization.authorizeCommand(lease.transaction, await context(true), "confirmRedemption", "2026-07-28T00:05:00.000Z")).rejects.toThrow("COMMERCE_EFFECT_NOT_AUTHORIZED");
     } finally { revokePlatformTransaction(lease); }
   });
 });

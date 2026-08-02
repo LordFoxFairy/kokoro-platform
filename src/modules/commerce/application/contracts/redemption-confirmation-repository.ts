@@ -1,5 +1,5 @@
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
-import type { CommerceLockSequence } from "../../../../workflows/commerce/lock-order.js";
+import type { CommerceLockSequence } from "../command-lock-order.js";
 
 export type RedemptionOutputReceipt = Readonly<{
   kind: "subscription_term" | "entitlement_grant" | "credit_grant" | "credit_program_enrollment";

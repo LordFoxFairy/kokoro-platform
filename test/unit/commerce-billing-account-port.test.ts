@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PostgresCommerceBillingAccountPort } from "../../src/modules/commerce/infrastructure/postgres/subscription-port.js";
-import { CommerceLockSequence } from "../../src/workflows/commerce/lock-order.js";
+import { CommerceLockSequence } from "../../src/modules/commerce/application/command-lock-order.js";
 import { issuePlatformTransaction, revokePlatformTransaction, type PlatformSqlTransaction } from "../../src/shared/unit-of-work/platform-transaction.js";
 
 describe("Commerce BillingAccount authority", () => {

@@ -12,7 +12,7 @@ Platform through HTTP/RPC and never exposes a Prisma client to application code.
 - `platform.command_receipt` remains the sole idempotency/result authority. `commerce_command` is a Site/actor/version snapshot
   with a foreign key to that receipt, not a second receipt implementation.
 - BillingAccount and its Site-scoped subject membership are owner facts. User commands resolve membership after the command identity
-  fence at the BillingAccount node in the shared lock DAG.
+  fence at the BillingAccount node in the Commerce command lock DAG.
 - Fulfillment transaction, frozen expected output lines, actual output occurrences, generic outbox links, and append-only audit entries
   commit in one `PlatformUnitOfWork`.
 - `FulfillmentService` plus the source-neutral `PostgresFulfillmentIssuer` are the Commerce issuance authority. Redemption and Payment
@@ -28,6 +28,22 @@ Platform through HTTP/RPC and never exposes a Prisma client to application code.
   returned Credit receipt multiset must exactly match the frozen fulfillment output plan.
 - The database rejects non-contiguous output plans, output mutation, illegal fulfillment transitions, and successful fulfillment whose
   actual multiset does not exactly satisfy the frozen plan.
+
+## Command policies
+
+`application/command-authorization.ts` and `application/command-lock-order.ts` are Commerce-owned application policies, not
+cross-bounded-context orchestration. Authorization consumes a narrow Commerce authority-reader port; only
+`infrastructure/postgres/command-authority-reader.ts` owns the current-state SQL and row locking. Every effectful command uses the
+same order:
+
+1. validate the branded request context against the command identity;
+2. open one `PlatformUnitOfWork` and claim/lock the generic idempotency receipt;
+3. recheck the live Site, Release, workload binding, Site security/policy epochs, subject, session, and CSRF boundary evidence;
+4. enter only the required nodes of `COMMERCE_LOCK_ORDER` in ascending order;
+5. write business truth, audit, receipt result, and outbox association before the transaction commits.
+
+The CSRF gate recognizes only SHA-256 evidence issued as `csrf_verification` by `kokoro-platform-public`. Until an HTTP boundary
+performs that verification and writes the signed evidence into `VerifiedRequestSecurityContext`, Commerce commands fail closed.
 
 ## Redemption acquisition
 

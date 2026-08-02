@@ -4,8 +4,8 @@ import type { PlatformUnitOfWork } from "../../../shared/unit-of-work/unit-of-wo
 import type { PlatformTransaction } from "../../../shared/unit-of-work/index.js";
 import type { CommerceCommandIdentity } from "../domain/command-identity.js";
 import type { CommerceRepository, CommerceTerminalOutcome } from "./contracts/repository.js";
-import { CommerceLockSequence } from "../../../workflows/commerce/lock-order.js";
-import type { CommerceEffectAuthority } from "../../../workflows/commerce/authorize-command.js";
+import type { CommerceEffectAuthority } from "./command-authorization.js";
+import { CommerceLockSequence } from "./command-lock-order.js";
 
 export interface CommerceCommandExecutionContext {
   readonly transaction: PlatformTransaction;

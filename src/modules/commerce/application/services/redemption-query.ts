@@ -5,13 +5,13 @@ import type { RedemptionReceiptResponse } from
 import type { RedemptionConfirmationRepository } from "../contracts/redemption-confirmation-repository.js";
 import { CommerceApplicationError } from "../commerce-application-error.js";
 import { redemptionCommandView, type ConfirmRedemptionView } from "./confirm-redemption.js";
-import { authorizeCommerceRead } from "../../../../workflows/commerce/authorize-command.js";
+import type { CommerceReadAuthorizer } from "../command-authorization.js";
 
 export class RedemptionQueryService {
   constructor(private readonly dependencies: Readonly<{
     unitOfWork: Pick<PlatformUnitOfWork, "execute">;
     repository: RedemptionConfirmationRepository;
-    authorizeRead?: typeof authorizeCommerceRead;
+    authorizeRead: CommerceReadAuthorizer;
     clock?: () => string;
   }>) {}
 
@@ -23,7 +23,7 @@ export class RedemptionQueryService {
     const recovered = await this.dependencies.unitOfWork.execute(
       { context: input.context, operation: "recoverRedemptionCommand" },
       async (transaction) => {
-        await (this.dependencies.authorizeRead ?? authorizeCommerceRead)(
+        await this.dependencies.authorizeRead(
           transaction, input.context, "recoverRedemptionCommand", (this.dependencies.clock ?? (() => new Date().toISOString()))(),
         );
         return this.dependencies.repository.findConfirmationByIdempotencyKey(transaction, {
@@ -43,7 +43,7 @@ export class RedemptionQueryService {
     const receipt = await this.dependencies.unitOfWork.execute(
       { context: input.context, operation: "getRedemptionReceipt" },
       async (transaction) => {
-        await (this.dependencies.authorizeRead ?? authorizeCommerceRead)(
+        await this.dependencies.authorizeRead(
           transaction, input.context, "getRedemptionReceipt", (this.dependencies.clock ?? (() => new Date().toISOString()))(),
         );
         return this.dependencies.repository.findRedemptionReceipt(transaction, {

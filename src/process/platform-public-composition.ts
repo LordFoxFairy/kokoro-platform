@@ -58,7 +58,8 @@ import { PostgresRedemptionRepository } from "../modules/commerce/infrastructure
 import { PostgresCommerceRepository } from "../modules/commerce/infrastructure/postgres/repository.js";
 import { CommerceCommandFence } from "../modules/commerce/application/command-fence.js";
 import { PreviewRedemptionService } from "../modules/commerce/application/services/preview-redemption.js";
-import { authorizeCommerceCommand } from "../workflows/commerce/authorize-command.js";
+import { createCommerceCommandAuthorization } from "../modules/commerce/application/command-authorization.js";
+import { PostgresCommerceCommandAuthorityReader } from "../modules/commerce/infrastructure/postgres/command-authority-reader.js";
 import { createCommercePublicOperations, COMMERCE_PUBLIC_OPERATION_IDS } from "../modules/commerce/interfaces/http/commerce-public-operations.js";
 import { RedemptionQueryService } from "../modules/commerce/application/services/redemption-query.js";
 import { ConfirmRedemptionService } from "../modules/commerce/application/services/confirm-redemption.js";
@@ -250,6 +251,9 @@ export async function createPlatformPublicProductionComposition(
   const creditPrograms = new PostgresCreditGrantProgram();
   const redemptionRepository = new PostgresRedemptionRepository(creditPrograms);
   const commerceRepository = new PostgresCommerceRepository();
+  const commerceAuthorization = createCommerceCommandAuthorization(
+    new PostgresCommerceCommandAuthorityReader(),
+  );
   const redemptionConfirmationRepository = new PostgresRedemptionConfirmationRepository({
     commerce: commerceRepository,
     creditGrants: new PostgresCreditGrantIssuer(),
@@ -259,7 +263,8 @@ export async function createPlatformPublicProductionComposition(
   const commerceFence = new CommerceCommandFence(
     unitOfWork,
     commerceRepository,
-    (transaction, context, operation) => authorizeCommerceCommand(transaction, context, operation, new Date().toISOString()),
+    (transaction, context, operation) =>
+      commerceAuthorization.authorizeCommand(transaction, context, operation, new Date().toISOString()),
   );
   const commerceOperations = createCommercePublicOperations({
     preview: new PreviewRedemptionService({
@@ -274,8 +279,16 @@ export async function createPlatformPublicProductionComposition(
       repository: redemptionConfirmationRepository,
       secrets: redemptionSecrets,
     }),
-    queries: new RedemptionQueryService({ unitOfWork, repository: redemptionConfirmationRepository }),
-    accountQueries: new AccountReadService({ unitOfWork, repository: new PostgresAccountReadRepository() }),
+    queries: new RedemptionQueryService({
+      unitOfWork,
+      repository: redemptionConfirmationRepository,
+      authorizeRead: commerceAuthorization.authorizeRead,
+    }),
+    accountQueries: new AccountReadService({
+      unitOfWork,
+      repository: new PostgresAccountReadRepository(),
+      authorizeRead: commerceAuthorization.authorizeRead,
+    }),
   });
   const assetUploadRepository = new PostgresAssetUploadRepository();
   const assetQueries = new AssetOwnerQueryService({
