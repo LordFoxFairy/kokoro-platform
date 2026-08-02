@@ -32,7 +32,11 @@ The generic mutable command receipt coordinates begin/outcome only and is never 
 successful publication.
 
 The Root wire contract currently carries only an immutable binding, not its canonical bytes.
-Production therefore defaults to `UnavailableProductPublicationDocumentResolver` and fails closed.
+Production requires `PLATFORM_PUBLICATION_DOCUMENT_ROOT`, a read-only content-addressed mount whose
+objects live at `sha256/<digest>.json`. The resolver never derives a path from caller refs, opens with
+`O_NOFOLLOW`, bounds bytes, verifies a stable file descriptor read, and the owner still revalidates
+canonical I-JSON, Root schema, exact binding and SHA-256 before publication. Tests may inject the same
+narrow resolver port; production no longer boots with a permanently unavailable publication source.
 Activation and runtime traffic remain false until Root supplies an authenticated, signed immutable
 bundle resolver and compatibility evidence covers both publication operations.
 

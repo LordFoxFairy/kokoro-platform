@@ -99,6 +99,8 @@ import { PostgresModelControlAdminReader } from
   "../modules/model-control/infrastructure/postgres/model-control-admin-reader.js";
 import type { ProductPublicationDocumentResolver } from
   "../modules/product-catalog/application/contracts/product-publication-document-resolver.js";
+import { ContentAddressedProductPublicationDocumentResolver } from
+  "../modules/product-catalog/infrastructure/filesystem/content-addressed-product-publication-document-resolver.js";
 import { createProductCatalogPublicationConnectService } from
   "../modules/product-catalog/interfaces/connect/product-catalog-publication-service.js";
 import { createProductCatalogAdministrationComposition } from
@@ -284,7 +286,9 @@ export async function createAdminProductionComposition(input: Readonly<{
   });
   const productCatalogOwner = createProductCatalogAdministrationComposition(
     input.database,
-    input.productPublicationDocuments,
+    input.productPublicationDocuments ?? new ContentAddressedProductPublicationDocumentResolver(
+      required(environment, "PLATFORM_PUBLICATION_DOCUMENT_ROOT"),
+    ),
   );
   const productCatalogService = createProductCatalogPublicationConnectService({
     owner: productCatalogOwner,

@@ -1,0 +1,489 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.kokoro.dev/web-build-intent/v1",
+  "title": "Kokoro Web Build Intent Payload v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schemaRevision",
+    "intentRef",
+    "revision",
+    "siteReleaseCandidate",
+    "siteRef",
+    "environment",
+    "audience",
+    "launchProductProfile",
+    "shellRequirementRefs",
+    "productSurfaceCatalog",
+    "surfaceInventory",
+    "webCompositionRegistry",
+    "webBuildToolchain",
+    "webBuildMaterialBundle",
+    "contractFloor",
+    "modelRequirements",
+    "businessBindings",
+    "issuedAt",
+    "issuer"
+  ],
+  "properties": {
+    "contract": {
+      "const": "kokoro.web-build-intent.v1"
+    },
+    "schemaRevision": {
+      "const": "1"
+    },
+    "intentRef": {
+      "$ref": "#/$defs/ref"
+    },
+    "revision": {
+      "$ref": "#/$defs/positiveDecimal"
+    },
+    "siteReleaseCandidate": {
+      "$ref": "#/$defs/candidateAuthorityBinding"
+    },
+    "siteRef": {
+      "$ref": "#/$defs/ref"
+    },
+    "environment": {
+      "enum": [
+        "development",
+        "preview",
+        "staging",
+        "production"
+      ]
+    },
+    "audience": {
+      "const": "kokoro.web-release-composition.build.v1"
+    },
+    "launchProductProfile": {
+      "$ref": "#/$defs/revisionBinding"
+    },
+    "shellRequirementRefs": {
+      "$ref": "#/$defs/nonEmptyRefSet"
+    },
+    "productSurfaceCatalog": {
+      "$ref": "#/$defs/revisionBinding"
+    },
+    "surfaceInventory": {
+      "$ref": "#/$defs/revisionBinding"
+    },
+    "webCompositionRegistry": {
+      "$ref": "#/$defs/revisionBinding"
+    },
+    "webBuildToolchain": {
+      "$ref": "#/$defs/revisionBinding"
+    },
+    "webBuildMaterialBundle": {
+      "$ref": "#/$defs/revisionBinding"
+    },
+    "contractFloor": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {
+        "$ref": "#/$defs/contractFloor"
+      }
+    },
+    "modelRequirements": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "$ref": "#/$defs/modelRequirement"
+      }
+    },
+    "businessBindings": {
+      "$ref": "#/$defs/businessBindings"
+    },
+    "issuedAt": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "issuer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "issuerRef",
+        "producerRegistry",
+        "producerRegistryEpoch",
+        "trustPolicy",
+        "trustPolicyEpoch",
+        "signingKeyId",
+        "keyVersion",
+        "publicKeyFingerprint",
+        "keyStatus",
+        "keyValidFrom",
+        "keyValidUntil",
+        "signatureAudience",
+        "environment"
+      ],
+      "properties": {
+        "issuerRef": {
+          "$ref": "#/$defs/ref"
+        },
+        "producerRegistry": {
+          "$ref": "#/$defs/digestRef"
+        },
+        "producerRegistryEpoch": {
+          "$ref": "#/$defs/decimal"
+        },
+        "trustPolicy": {
+          "$ref": "#/$defs/digestRef"
+        },
+        "trustPolicyEpoch": {
+          "$ref": "#/$defs/decimal"
+        },
+        "signingKeyId": {
+          "$ref": "#/$defs/ref"
+        },
+        "keyVersion": {
+          "$ref": "#/$defs/decimal"
+        },
+        "publicKeyFingerprint": {
+          "$ref": "#/$defs/digest"
+        },
+        "keyStatus": {
+          "const": "active"
+        },
+        "keyValidFrom": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "keyValidUntil": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "signatureAudience": {
+          "const": "kokoro.web-build-intent.v1"
+        },
+        "environment": {
+          "enum": [
+            "development",
+            "preview",
+            "staging",
+            "production"
+          ]
+        }
+      }
+    }
+  },
+  "$defs": {
+    "ref": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 200,
+      "pattern": "^[a-z][a-z0-9]*(?:[._/-][a-z0-9]+)+$"
+    },
+    "decimal": {
+      "type": "string",
+      "pattern": "^(?:0|[1-9][0-9]*)$",
+      "maxLength": 39
+    },
+    "positiveDecimal": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$",
+      "maxLength": 39
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z$"
+    },
+    "digestRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "digest"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/ref"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "ownerRevisionBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "revision",
+        "digest"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/ref"
+        },
+        "revision": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "ownerRevisionBindingSet": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/ownerRevisionBinding"
+      }
+    },
+    "authIdentityClosure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identityIssuer",
+        "authenticationPolicy",
+        "authorizationPolicy",
+        "closureDigest"
+      ],
+      "properties": {
+        "identityIssuer": {
+          "$ref": "#/$defs/ownerRevisionBinding"
+        },
+        "authenticationPolicy": {
+          "$ref": "#/$defs/ownerRevisionBinding"
+        },
+        "authorizationPolicy": {
+          "$ref": "#/$defs/ownerRevisionBinding"
+        },
+        "closureDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "commerceClosure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "offerRevisions",
+        "offerPriceRevisions",
+        "entitlementTemplateRevisions",
+        "creditProgramRevisions",
+        "closureDigest"
+      ],
+      "properties": {
+        "offerRevisions": {
+          "$ref": "#/$defs/ownerRevisionBindingSet"
+        },
+        "offerPriceRevisions": {
+          "$ref": "#/$defs/ownerRevisionBindingSet"
+        },
+        "entitlementTemplateRevisions": {
+          "$ref": "#/$defs/ownerRevisionBindingSet"
+        },
+        "creditProgramRevisions": {
+          "$ref": "#/$defs/ownerRevisionBindingSet"
+        },
+        "closureDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "hubClosure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capabilityAssignment",
+        "capabilityCatalog",
+        "agentCatalog",
+        "closureDigest"
+      ],
+      "properties": {
+        "capabilityAssignment": {
+          "$ref": "#/$defs/ownerRevisionBinding"
+        },
+        "capabilityCatalog": {
+          "$ref": "#/$defs/ownerRevisionBinding"
+        },
+        "agentCatalog": {
+          "$ref": "#/$defs/ownerRevisionBinding"
+        },
+        "closureDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "businessBindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "webBuildMaterialBundle",
+        "siteConfig",
+        "legalPolicy",
+        "salesPolicy",
+        "assortmentPolicy",
+        "memoryPolicy",
+        "authIdentityClosure",
+        "commerceClosure",
+        "hubClosure"
+      ],
+      "properties": {
+        "webBuildMaterialBundle": {
+          "$ref": "#/$defs/revisionBinding"
+        },
+        "siteConfig": {
+          "$ref": "#/$defs/ownerRevisionBinding"
+        },
+        "legalPolicy": {
+          "$ref": "#/$defs/ownerRevisionBinding"
+        },
+        "salesPolicy": {
+          "$ref": "#/$defs/ownerRevisionBinding"
+        },
+        "assortmentPolicy": {
+          "$ref": "#/$defs/ownerRevisionBinding"
+        },
+        "memoryPolicy": {
+          "$ref": "#/$defs/ownerRevisionBinding"
+        },
+        "authIdentityClosure": {
+          "$ref": "#/$defs/authIdentityClosure"
+        },
+        "commerceClosure": {
+          "$ref": "#/$defs/commerceClosure"
+        },
+        "hubClosure": {
+          "$ref": "#/$defs/hubClosure"
+        }
+      }
+    },
+    "nonEmptyRefSet": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/ref"
+      }
+    },
+    "contractFloor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractRef",
+        "minimumMajor"
+      ],
+      "properties": {
+        "contractRef": {
+          "$ref": "#/$defs/ref"
+        },
+        "minimumMajor": {
+          "$ref": "#/$defs/decimal"
+        }
+      }
+    },
+    "modelRequirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "modelRoleRef",
+        "modelInventory",
+        "modelCatalog"
+      ],
+      "properties": {
+        "modelRoleRef": {
+          "$ref": "#/$defs/ref"
+        },
+        "modelInventory": {
+          "$ref": "#/$defs/digestRef"
+        },
+        "modelCatalog": {
+          "$ref": "#/$defs/digestRef"
+        }
+      }
+    },
+    "dsseEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "payloadType",
+        "payload",
+        "signatures"
+      ],
+      "properties": {
+        "payloadType": {
+          "const": "application/vnd.kokoro.web-build-intent.v1+json"
+        },
+        "payload": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9+/]+={0,2}$",
+          "maxLength": 1398104
+        },
+        "signatures": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "keyid",
+              "sig"
+            ],
+            "properties": {
+              "keyid": {
+                "$ref": "#/$defs/ref"
+              },
+              "sig": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9+/]+={0,2}$",
+                "maxLength": 16384
+              }
+            }
+          }
+        }
+      }
+    },
+    "revisionBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "revision",
+        "digest"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/ref"
+        },
+        "revision": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "candidateAuthorityBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "version",
+        "authorizationEpoch",
+        "digest"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/ref"
+        },
+        "version": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "authorizationEpoch": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.kokoro.dev/web-build-material-bundle/v1",
+  "title": "Kokoro Web Build Material Bundle v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "schemaRevision", "bundleRef", "revision", "siteRef", "brand", "domainPolicy", "localePolicy", "legal", "seo", "publicRuntimeConfig"],
+  "properties": {
+    "contract": {"const": "kokoro.web-build-material-bundle.v1"}, "schemaRevision": {"const": "1"},
+    "bundleRef": {"$ref": "#/$defs/ref"}, "revision": {"$ref": "#/$defs/decimal"}, "siteRef": {"$ref": "#/$defs/ref"},
+    "brand": {"$ref": "#/$defs/brand"}, "domainPolicy": {"$ref": "#/$defs/domainPolicy"},
+    "localePolicy": {"$ref": "#/$defs/localePolicy"}, "legal": {"$ref": "#/$defs/legal"},
+    "seo": {"$ref": "#/$defs/seo"}, "publicRuntimeConfig": {"type": "array", "maxItems": 128, "items": {"$ref": "#/$defs/runtimeConfig"}}
+  },
+  "$defs": {
+    "ref": {"type": "string", "minLength": 3, "maxLength": 160, "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$"},
+    "decimal": {"type": "string", "pattern": "^(?:0|[1-9][0-9]*)$", "maxLength": 39},
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "mediaType": {"type": "string", "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]{0,63}/[a-z0-9][a-z0-9!#$&^_.+-]{0,63}$", "maxLength": 129},
+    "material": {
+      "type": "object", "additionalProperties": false,
+      "required": ["materialRef", "mediaType", "sizeBytes", "digest", "scanEvidenceRef"],
+      "properties": {"materialRef": {"$ref": "#/$defs/ref"}, "mediaType": {"$ref": "#/$defs/mediaType"}, "sizeBytes": {"$ref": "#/$defs/decimal"}, "digest": {"$ref": "#/$defs/digest"}, "scanEvidenceRef": {"$ref": "#/$defs/ref"}}
+    },
+    "token": {
+      "type": "object", "additionalProperties": false, "required": ["tokenRef", "kind", "value"],
+      "properties": {"tokenRef": {"$ref": "#/$defs/ref"}, "kind": {"enum": ["color", "font-family", "font-weight", "length", "radius", "shadow", "text"]}, "value": {"type": "string", "minLength": 1, "maxLength": 512}}
+    },
+    "brand": {
+      "type": "object", "additionalProperties": false,
+      "required": ["displayName", "tokens", "logos", "icons", "publicFonts"],
+      "properties": {"displayName": {"type": "string", "minLength": 1, "maxLength": 120}, "tokens": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/token"}}, "logos": {"type": "array", "maxItems": 16, "items": {"$ref": "#/$defs/material"}}, "icons": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/material"}}, "publicFonts": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/material"}}}
+    },
+    "domainPolicy": {
+      "type": "object", "additionalProperties": false, "required": ["canonicalHost", "canonicalHttpsOrigin", "wwwPolicy"],
+      "properties": {"canonicalHost": {"type": "string", "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$", "maxLength": 253}, "canonicalHttpsOrigin": {"type": "string", "pattern": "^https://(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$", "maxLength": 261}, "wwwPolicy": {"enum": ["canonical", "redirect-to-apex", "redirect-to-www", "absent"]}}
+    },
+    "translation": {"type": "object", "additionalProperties": false, "required": ["locale", "catalog"], "properties": {"locale": {"type": "string", "pattern": "^[a-z]{2,3}(?:-[A-Z][a-z]{3})?(?:-[A-Z]{2}|-[0-9]{3})?$", "maxLength": 35}, "catalog": {"$ref": "#/$defs/material"}}},
+    "localePolicy": {
+      "type": "object", "additionalProperties": false, "required": ["defaultLocale", "translations"],
+      "properties": {"defaultLocale": {"type": "string", "pattern": "^[a-z]{2,3}(?:-[A-Z][a-z]{3})?(?:-[A-Z]{2}|-[0-9]{3})?$", "maxLength": 35}, "translations": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"$ref": "#/$defs/translation"}}}
+    },
+    "legalDocument": {"type": "object", "additionalProperties": false, "required": ["documentRef", "kind", "revision", "content"], "properties": {"documentRef": {"$ref": "#/$defs/ref"}, "kind": {"enum": ["terms", "privacy", "acceptable-use", "cookie", "consent"]}, "revision": {"$ref": "#/$defs/decimal"}, "content": {"$ref": "#/$defs/material"}}},
+    "legal": {"type": "object", "additionalProperties": false, "required": ["documents", "consentPresentationRef", "cookiePresentationRef"], "properties": {"documents": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"$ref": "#/$defs/legalDocument"}}, "consentPresentationRef": {"$ref": "#/$defs/ref"}, "cookiePresentationRef": {"$ref": "#/$defs/ref"}}},
+    "seo": {
+      "type": "object", "additionalProperties": false,
+      "required": ["title", "description", "robotsPolicy", "sitemapPolicy", "socialCards"],
+      "properties": {"title": {"type": "string", "minLength": 1, "maxLength": 120}, "description": {"type": "string", "minLength": 1, "maxLength": 320}, "robotsPolicy": {"enum": ["index-follow", "noindex-follow", "noindex-nofollow"]}, "sitemapPolicy": {"enum": ["generated-enabled-surfaces", "disabled"]}, "socialCards": {"type": "array", "maxItems": 16, "items": {"$ref": "#/$defs/material"}}}
+    },
+    "runtimeConfig": {
+      "type": "object", "additionalProperties": false, "required": ["key", "kind", "value"],
+      "properties": {"key": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$"}, "kind": {"enum": ["boolean", "decimal", "ref", "text"]}, "value": {"type": "string", "minLength": 1, "maxLength": 512}}
+    }
+  }
+}

@@ -1,0 +1,440 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.kokoro.dev/web-artifact-provenance-profile/v1",
+  "title": "Kokoro Web Artifact in-toto SLSA Provenance Profile v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "_type",
+    "provenanceRef",
+    "revision",
+    "subject",
+    "predicateType",
+    "predicate"
+  ],
+  "properties": {
+    "_type": {
+      "const": "https://in-toto.io/Statement/v1"
+    },
+    "provenanceRef": {
+      "$ref": "#/$defs/ref"
+    },
+    "revision": {
+      "$ref": "#/$defs/positiveDecimal"
+    },
+    "subject": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "$ref": "#/$defs/subject"
+      }
+    },
+    "predicateType": {
+      "const": "https://slsa.dev/provenance/v1"
+    },
+    "predicate": {
+      "$ref": "#/$defs/predicate"
+    }
+  },
+  "$defs": {
+    "ref": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 240,
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._/@:-]*$"
+    },
+    "globalUri": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 2048,
+      "pattern": "^(?:git\\+https|oci|pkg|kokoro):(?:[A-Za-z0-9._~!$&'()*+,;=:@/?#-]|%[0-9A-Fa-f]{2})+$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "prefixedDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "digestRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "digest"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/ref"
+        },
+        "digest": {
+          "$ref": "#/$defs/prefixedDigest"
+        }
+      }
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z$"
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "digest"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._/-]+$",
+          "maxLength": 240
+        },
+        "digest": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sha256"
+          ],
+          "properties": {
+            "sha256": {
+              "$ref": "#/$defs/digest"
+            }
+          }
+        }
+      }
+    },
+    "digestSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sha256"
+      ],
+      "properties": {
+        "sha256": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "uri",
+        "digest"
+      ],
+      "properties": {
+        "uri": {
+          "$ref": "#/$defs/globalUri"
+        },
+        "digest": {
+          "$ref": "#/$defs/digestSet"
+        }
+      }
+    },
+    "externalParameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "webBuildIntent",
+        "compiledWebManifest",
+        "siteReleaseCandidate",
+        "siteRef",
+        "toolchain"
+      ],
+      "properties": {
+        "webBuildIntent": {
+          "$ref": "#/$defs/revisionBinding"
+        },
+        "compiledWebManifest": {
+          "$ref": "#/$defs/revisionBinding"
+        },
+        "siteReleaseCandidate": {
+          "$ref": "#/$defs/candidateAuthorityBinding"
+        },
+        "siteRef": {
+          "$ref": "#/$defs/ref"
+        },
+        "toolchain": {
+          "$ref": "#/$defs/revisionBinding"
+        }
+      }
+    },
+    "buildDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "buildType",
+        "externalParameters",
+        "resolvedDependencies"
+      ],
+      "properties": {
+        "buildType": {
+          "const": "https://contracts.kokoro.dev/build-types/site-web/v1"
+        },
+        "externalParameters": {
+          "$ref": "#/$defs/externalParameters"
+        },
+        "resolvedDependencies": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 1024,
+          "items": {
+            "$ref": "#/$defs/resource"
+          }
+        }
+      }
+    },
+    "builder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "producerRegistry",
+        "producerRegistryEpoch",
+        "trustPolicy",
+        "trustPolicyEpoch",
+        "kokoro_signingKeyId",
+        "keyVersion",
+        "publicKeyFingerprint",
+        "keyStatus",
+        "keyValidFrom",
+        "keyValidUntil",
+        "signatureAudience",
+        "environment"
+      ],
+      "properties": {
+        "id": {
+          "const": "https://workloads.kokoro.dev/site-web-attestor/v1"
+        },
+        "producerRegistry": {
+          "$ref": "#/$defs/digestRef"
+        },
+        "producerRegistryEpoch": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]*)$",
+          "maxLength": 39
+        },
+        "trustPolicy": {
+          "$ref": "#/$defs/digestRef"
+        },
+        "trustPolicyEpoch": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]*)$",
+          "maxLength": 39
+        },
+        "kokoro_signingKeyId": {
+          "$ref": "#/$defs/ref"
+        },
+        "keyVersion": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]*)$",
+          "maxLength": 39
+        },
+        "publicKeyFingerprint": {
+          "$ref": "#/$defs/prefixedDigest"
+        },
+        "keyStatus": {
+          "const": "active"
+        },
+        "keyValidFrom": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "keyValidUntil": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "signatureAudience": {
+          "const": "kokoro.web-artifact-provenance.v1"
+        },
+        "environment": {
+          "enum": [
+            "development",
+            "preview",
+            "staging",
+            "production"
+          ]
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "invocationId",
+        "startedOn",
+        "finishedOn"
+      ],
+      "properties": {
+        "invocationId": {
+          "$ref": "#/$defs/ref"
+        },
+        "startedOn": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "finishedOn": {
+          "$ref": "#/$defs/timestamp"
+        }
+      }
+    },
+    "byproduct": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "digest"
+      ],
+      "properties": {
+        "name": {
+          "enum": [
+            "inspection-report",
+            "sbom",
+            "vulnerability-scan",
+            "license-scan",
+            "journey-evidence",
+            "pre-certification-evidence"
+          ]
+        },
+        "digest": {
+          "$ref": "#/$defs/digestSet"
+        }
+      }
+    },
+    "runDetails": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "builder",
+        "metadata",
+        "webArtifactDigest",
+        "byproducts"
+      ],
+      "properties": {
+        "builder": {
+          "$ref": "#/$defs/builder"
+        },
+        "metadata": {
+          "$ref": "#/$defs/metadata"
+        },
+        "webArtifactDigest": {
+          "$ref": "#/$defs/prefixedDigest"
+        },
+        "byproducts": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/byproduct"
+          }
+        }
+      }
+    },
+    "predicate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "buildDefinition",
+        "runDetails"
+      ],
+      "properties": {
+        "buildDefinition": {
+          "$ref": "#/$defs/buildDefinition"
+        },
+        "runDetails": {
+          "$ref": "#/$defs/runDetails"
+        }
+      }
+    },
+    "dsseEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "payloadType",
+        "payload",
+        "signatures"
+      ],
+      "properties": {
+        "payloadType": {
+          "const": "application/vnd.in-toto+json"
+        },
+        "payload": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9+/]+={0,2}$",
+          "maxLength": 2796204
+        },
+        "signatures": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "keyid",
+              "sig"
+            ],
+            "properties": {
+              "keyid": {
+                "$ref": "#/$defs/ref"
+              },
+              "sig": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9+/]+={0,2}$",
+                "maxLength": 16384
+              }
+            }
+          }
+        }
+      }
+    },
+    "positiveDecimal": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$",
+      "maxLength": 39
+    },
+    "revisionBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "revision",
+        "digest"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/ref"
+        },
+        "revision": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "digest": {
+          "$ref": "#/$defs/prefixedDigest"
+        }
+      }
+    },
+    "candidateAuthorityBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "version",
+        "authorizationEpoch",
+        "digest"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/ref"
+        },
+        "version": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "authorizationEpoch": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "digest": {
+          "$ref": "#/$defs/prefixedDigest"
+        }
+      }
+    }
+  }
+}

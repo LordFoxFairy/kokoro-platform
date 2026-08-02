@@ -3,8 +3,6 @@ import { ProductCatalogPublicationService } from
   "../modules/product-catalog/application/services/product-catalog-publication-service.js";
 import type { ProductPublicationDocumentResolver } from
   "../modules/product-catalog/application/contracts/product-publication-document-resolver.js";
-import { UnavailableProductPublicationDocumentResolver } from
-  "../modules/product-catalog/infrastructure/fail-closed/unavailable-product-publication-document-resolver.js";
 import { PostgresProductCatalogPublicationRepository } from
   "../modules/product-catalog/infrastructure/postgres/product-catalog-publication-repository.js";
 import { PostgresProductCatalogPublicationJournal } from
@@ -14,8 +12,7 @@ import type { PlatformTransactionalDatabaseClient } from
 
 export function createProductCatalogAdministrationComposition(
   database: PlatformTransactionalDatabaseClient,
-  documents: ProductPublicationDocumentResolver =
-    new UnavailableProductPublicationDocumentResolver(),
+  documents: ProductPublicationDocumentResolver,
 ) {
   return new ProductCatalogPublicationService(
     new PlatformUnitOfWork(database),

@@ -1,0 +1,184 @@
+import { resolvePlatformTransaction } from
+  "../../../../shared/unit-of-work/platform-transaction.js";
+import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
+import { verifyCanonicalDocument, type CanonicalJsonValue } from
+  "../../../product-catalog/domain/canonical-product-document.js";
+import type { SitePublicationAuthorityRepository } from
+  "../../application/contracts/site-publication-authority-ports.js";
+import {
+  authorizeSiteReleaseCandidate,
+  type CandidateAuthorityBinding,
+  type SitePublicationNode,
+  type SitePublicationNodeKind,
+  type SiteReleaseCandidateAuthority,
+} from "../../domain/site-publication-authority.js";
+
+interface CandidateRow extends Record<string, unknown> {
+  candidateRef: string;
+  candidateVersion: string;
+  candidateAuthorizationEpoch: string;
+  candidateDigest: string;
+  siteRef: string;
+  environment: string;
+  state: "authorized" | "revoked";
+  profileRef: string;
+  profileRevision: string;
+  profileDigest: string;
+  catalogRef: string;
+  catalogRevision: string;
+  catalogDigest: string;
+  businessBindingsDigest: string;
+  canonicalPayload: unknown;
+  canonicalBytes: Uint8Array;
+}
+interface NodeRow extends Record<string, unknown> {
+  publicationKind: SitePublicationNodeKind;
+  revisionRef: string;
+  revision: string;
+  digest: string;
+  candidateRef: string;
+  candidateVersion: string;
+  candidateAuthorizationEpoch: string;
+  candidateDigest: string;
+  siteRef: string;
+  canonicalPayload: unknown;
+  canonicalBytes: Uint8Array;
+}
+
+export class PostgresSitePublicationAuthorityRepository
+implements SitePublicationAuthorityRepository {
+  async assertSiteCanPublish(
+    transaction: PlatformTransaction,
+    siteRef: string,
+    environment: string,
+  ): Promise<void> {
+    const rows = await resolvePlatformTransaction(transaction).query<Record<string, unknown>>(
+      `SELECT 1 FROM platform.site site
+       WHERE site.site_ref=$1 AND site.state NOT IN ('decommissioning','decommissioned')
+         AND EXISTS (
+           SELECT 1 FROM platform.site_project_binding binding
+           WHERE binding.site_ref=site.site_ref AND binding.environment=$2 AND binding.state='active'
+         )
+       FOR UPDATE`, [siteRef, environment],
+    );
+    if (rows.length !== 1) throw new Error("SITE_PUBLICATION_OWNER_UNAVAILABLE");
+  }
+
+  async loadCandidateForUpdate(transaction: PlatformTransaction, candidateRef: string) {
+    const rows = await resolvePlatformTransaction(transaction).query<CandidateRow>(
+      `SELECT candidate_ref AS "candidateRef",candidate_version::text AS "candidateVersion",
+              candidate_authorization_epoch::text AS "candidateAuthorizationEpoch",
+              candidate_digest AS "candidateDigest",site_ref AS "siteRef",environment,state,
+              profile_ref AS "profileRef",profile_revision::text AS "profileRevision",
+              profile_digest AS "profileDigest",catalog_ref AS "catalogRef",
+              catalog_revision::text AS "catalogRevision",catalog_digest AS "catalogDigest",
+              business_bindings_digest AS "businessBindingsDigest",
+              canonical_payload AS "canonicalPayload",canonical_bytes AS "canonicalBytes"
+       FROM platform.site_release_candidate_authority
+       WHERE candidate_ref=$1 ORDER BY candidate_version DESC LIMIT 1 FOR UPDATE`, [candidateRef],
+    );
+    return rows[0] === undefined ? null : candidate(rows[0]);
+  }
+
+  async insertCandidate(
+    transaction: PlatformTransaction,
+    candidate: SiteReleaseCandidateAuthority,
+    commandId: string,
+  ): Promise<void> {
+    await resolvePlatformTransaction(transaction).execute(
+      `INSERT INTO platform.site_release_candidate_authority
+       (candidate_ref,candidate_version,candidate_authorization_epoch,candidate_digest,site_ref,
+        environment,state,profile_ref,profile_revision,profile_digest,catalog_ref,catalog_revision,
+        catalog_digest,business_bindings_digest,canonical_payload,canonical_bytes,
+        authorized_by_command_id)
+       VALUES ($1,$2::numeric(20,0),$3::numeric(20,0),$4,$5,$6,$7,$8,$9::numeric(20,0),$10,
+               $11,$12::numeric(20,0),$13,$14,$15::jsonb,$16,$17)`,
+      [candidate.binding.ref, candidate.binding.version.toString(),
+        candidate.binding.authorizationEpoch.toString(), candidate.binding.digest,
+        candidate.siteRef, candidate.environment, candidate.state,
+        candidate.launchProductProfile.ref, candidate.launchProductProfile.revision.toString(),
+        candidate.launchProductProfile.digest, candidate.productSurfaceCatalog.ref,
+        candidate.productSurfaceCatalog.revision.toString(), candidate.productSurfaceCatalog.digest,
+        candidate.businessBindingsDigest, JSON.stringify(candidate.document), candidate.canonicalBytes,
+        commandId],
+    );
+  }
+
+  async loadNodeForUpdate(
+    transaction: PlatformTransaction,
+    kind: SitePublicationNodeKind,
+    candidateRef: string,
+  ): Promise<SitePublicationNode | null> {
+    const rows = await resolvePlatformTransaction(transaction).query<NodeRow>(
+      `SELECT publication_kind AS "publicationKind",revision_ref AS "revisionRef",
+              revision::text,digest,candidate_ref AS "candidateRef",
+              candidate_version::text AS "candidateVersion",
+              candidate_authorization_epoch::text AS "candidateAuthorizationEpoch",
+              candidate_digest AS "candidateDigest",site_ref AS "siteRef",
+              canonical_payload AS "canonicalPayload",canonical_bytes AS "canonicalBytes"
+       FROM platform.site_publication_revision
+       WHERE publication_kind=$1 AND candidate_ref=$2 FOR UPDATE`, [kind, candidateRef],
+    );
+    return rows[0] === undefined ? null : node(rows[0]);
+  }
+
+  async insertNode(
+    transaction: PlatformTransaction,
+    node: SitePublicationNode,
+    producerKind: "operator-approved" | "platform-issued" | "workload-attested" | "certifier-signed",
+    commandId: string,
+  ): Promise<void> {
+    await resolvePlatformTransaction(transaction).execute(
+      `INSERT INTO platform.site_publication_revision
+       (publication_kind,revision_ref,revision,digest,candidate_ref,candidate_version,
+        candidate_authorization_epoch,candidate_digest,site_ref,producer_kind,canonical_payload,
+        canonical_bytes,command_id)
+       VALUES ($1,$2,$3::numeric(20,0),$4,$5,$6::numeric(20,0),$7::numeric(20,0),$8,$9,$10,
+               $11::jsonb,$12,$13)`,
+      [node.kind, node.binding.ref, node.binding.revision.toString(), node.binding.digest,
+        node.candidate.ref, node.candidate.version.toString(), node.candidate.authorizationEpoch.toString(),
+        node.candidate.digest, node.siteRef, producerKind, JSON.stringify(node.document),
+        node.canonicalBytes, commandId],
+    );
+  }
+}
+
+function candidate(row: CandidateRow): SiteReleaseCandidateAuthority {
+  const resolved = authorizeSiteReleaseCandidate({
+    siteRef: row.siteRef, environment: row.environment, candidateRef: row.candidateRef,
+    expectedCandidateVersion: decimal(row.candidateVersion),
+    candidateAuthorizationEpoch: decimal(row.candidateAuthorizationEpoch),
+    launchProductProfile: { ref: row.profileRef, revision: decimal(row.profileRevision),
+      digest: row.profileDigest },
+    productSurfaceCatalog: { ref: row.catalogRef, revision: decimal(row.catalogRevision),
+      digest: row.catalogDigest },
+    businessBindingsDigest: row.businessBindingsDigest,
+  }, { canonicalBytes: bytes(row.canonicalBytes), parsedDocument: row.canonicalPayload,
+    digest: row.candidateDigest });
+  return row.state === "authorized" ? resolved : Object.freeze({ ...resolved, state: "revoked" });
+}
+
+function node(row: NodeRow): SitePublicationNode {
+  const verified = verifyCanonicalDocument({ canonicalBytes: bytes(row.canonicalBytes),
+    parsedDocument: row.canonicalPayload, digest: row.digest });
+  if (verified.digest !== row.digest) throw new Error("SITE_PUBLICATION_PERSISTED_NODE_DIGEST_INVALID");
+  return Object.freeze({
+    kind: row.publicationKind,
+    binding: Object.freeze({ ref: row.revisionRef, revision: decimal(row.revision), digest: row.digest }),
+    candidate: candidateBinding(row), siteRef: row.siteRef,
+    document: verified.parsedDocument as CanonicalJsonValue,
+    canonicalBytes: verified.canonicalBytes,
+  });
+}
+function candidateBinding(row: NodeRow): CandidateAuthorityBinding {
+  return Object.freeze({ ref: row.candidateRef, version: decimal(row.candidateVersion),
+    authorizationEpoch: decimal(row.candidateAuthorizationEpoch), digest: row.candidateDigest });
+}
+function decimal(value: string): bigint {
+  if (!/^(?:0|[1-9][0-9]*)$/u.test(value)) throw new Error("SITE_PUBLICATION_PERSISTED_DECIMAL_INVALID");
+  return BigInt(value);
+}
+function bytes(value: Uint8Array): Uint8Array {
+  if (!(value instanceof Uint8Array)) throw new Error("SITE_PUBLICATION_PERSISTED_BYTES_INVALID");
+  return new Uint8Array(value);
+}

@@ -1,0 +1,472 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.kokoro.dev/compiled-web-manifest/v1",
+  "title": "Kokoro Compiled Web Manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schemaRevision",
+    "manifestRef",
+    "revision",
+    "webBuildIntent",
+    "siteReleaseCandidate",
+    "compilerRevisionRef",
+    "registry",
+    "catalog",
+    "surfaceInventory",
+    "toolchain",
+    "measuredToolArtifacts",
+    "units",
+    "packages",
+    "routes",
+    "navigation",
+    "bffOperationGroups",
+    "bootstrapRequirements",
+    "advertisedSurfaceRefs",
+    "modelCatalogRequirements",
+    "compiledSourceClosureDigest",
+    "lockfileDigest"
+  ],
+  "properties": {
+    "contract": {
+      "const": "kokoro.compiled-web-manifest.v1"
+    },
+    "schemaRevision": {
+      "const": "1"
+    },
+    "manifestRef": {
+      "$ref": "#/$defs/ref"
+    },
+    "revision": {
+      "$ref": "#/$defs/positiveDecimal"
+    },
+    "webBuildIntent": {
+      "$ref": "#/$defs/revisionBinding"
+    },
+    "siteReleaseCandidate": {
+      "$ref": "#/$defs/candidateAuthorityBinding"
+    },
+    "compilerRevisionRef": {
+      "$ref": "#/$defs/ref"
+    },
+    "registry": {
+      "$ref": "#/$defs/revisionBinding"
+    },
+    "catalog": {
+      "$ref": "#/$defs/revisionBinding"
+    },
+    "surfaceInventory": {
+      "$ref": "#/$defs/revisionBinding"
+    },
+    "toolchain": {
+      "$ref": "#/$defs/revisionBinding"
+    },
+    "measuredToolArtifacts": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 8,
+      "items": {
+        "$ref": "#/$defs/measuredTool"
+      }
+    },
+    "units": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {
+        "$ref": "#/$defs/unit"
+      }
+    },
+    "packages": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 512,
+      "items": {
+        "$ref": "#/$defs/package"
+      }
+    },
+    "routes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1024,
+      "items": {
+        "$ref": "#/$defs/route"
+      }
+    },
+    "navigation": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "$ref": "#/$defs/navigation"
+      }
+    },
+    "bffOperationGroups": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "$ref": "#/$defs/bffGroup"
+      }
+    },
+    "bootstrapRequirements": {
+      "$ref": "#/$defs/refSet"
+    },
+    "advertisedSurfaceRefs": {
+      "$ref": "#/$defs/refSet"
+    },
+    "modelCatalogRequirements": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "$ref": "#/$defs/modelRequirement"
+      }
+    },
+    "compiledSourceClosureDigest": {
+      "$ref": "#/$defs/digest"
+    },
+    "lockfileDigest": {
+      "$ref": "#/$defs/digest"
+    }
+  },
+  "$defs": {
+    "ref": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 200,
+      "pattern": "^[a-z][a-z0-9]*(?:[._/@-][a-z0-9]+)+$"
+    },
+    "decimal": {
+      "type": "string",
+      "pattern": "^(?:0|[1-9][0-9]*)$",
+      "maxLength": 39
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "digestRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "digest"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/ref"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "refSet": {
+      "type": "array",
+      "maxItems": 512,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/ref"
+      }
+    },
+    "measuredTool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "repositoryRef",
+        "digest"
+      ],
+      "properties": {
+        "role": {
+          "enum": [
+            "compiler",
+            "inspector",
+            "build-sandbox",
+            "inspection-sandbox"
+          ]
+        },
+        "repositoryRef": {
+          "$ref": "#/$defs/ref"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "unit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "unitRef",
+        "revision",
+        "kind",
+        "providesSurfaceRefs",
+        "providesShellRequirementRefs",
+        "requiresUnitRefs",
+        "packageRefs"
+      ],
+      "properties": {
+        "unitRef": {
+          "$ref": "#/$defs/ref"
+        },
+        "revision": {
+          "$ref": "#/$defs/decimal"
+        },
+        "kind": {
+          "enum": [
+            "shell",
+            "surface",
+            "dependency"
+          ]
+        },
+        "providesSurfaceRefs": {
+          "$ref": "#/$defs/refSet"
+        },
+        "providesShellRequirementRefs": {
+          "$ref": "#/$defs/refSet"
+        },
+        "requiresUnitRefs": {
+          "$ref": "#/$defs/refSet"
+        },
+        "packageRefs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/ref"
+          }
+        }
+      }
+    },
+    "package": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "packageRef",
+        "name",
+        "version",
+        "digest",
+        "unitRefs"
+      ],
+      "properties": {
+        "packageRef": {
+          "$ref": "#/$defs/ref"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$",
+          "maxLength": 214
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$",
+          "maxLength": 128
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "unitRefs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/ref"
+          }
+        }
+      }
+    },
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "routeRef",
+        "unitRef",
+        "pathname",
+        "kind",
+        "methods",
+        "runtime"
+      ],
+      "properties": {
+        "routeRef": {
+          "$ref": "#/$defs/ref"
+        },
+        "unitRef": {
+          "$ref": "#/$defs/ref"
+        },
+        "pathname": {
+          "type": "string",
+          "pattern": "^/(?:[A-Za-z0-9._~!$&'()*+,;=:@%{}\\[\\]-]+/?)*$",
+          "maxLength": 1024
+        },
+        "kind": {
+          "enum": [
+            "page",
+            "route-handler",
+            "metadata",
+            "redirect"
+          ]
+        },
+        "methods": {
+          "type": "array",
+          "maxItems": 7,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "DELETE",
+              "GET",
+              "HEAD",
+              "OPTIONS",
+              "PATCH",
+              "POST",
+              "PUT"
+            ]
+          }
+        },
+        "runtime": {
+          "enum": [
+            "nodejs",
+            "edge",
+            "static"
+          ]
+        }
+      }
+    },
+    "navigation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "navigationRef",
+        "unitRef",
+        "routeRef",
+        "order"
+      ],
+      "properties": {
+        "navigationRef": {
+          "$ref": "#/$defs/ref"
+        },
+        "unitRef": {
+          "$ref": "#/$defs/ref"
+        },
+        "routeRef": {
+          "$ref": "#/$defs/ref"
+        },
+        "order": {
+          "$ref": "#/$defs/decimal"
+        }
+      }
+    },
+    "operationIdSet": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z][A-Za-z0-9]{2,127}$"
+      }
+    },
+    "bffGroup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "groupRef",
+        "unitRef",
+        "operationFamilyRef",
+        "sameOriginHandlerOperationIds",
+        "downstreamOperationIds"
+      ],
+      "properties": {
+        "groupRef": {
+          "$ref": "#/$defs/ref"
+        },
+        "unitRef": {
+          "$ref": "#/$defs/ref"
+        },
+        "operationFamilyRef": {
+          "$ref": "#/$defs/ref"
+        },
+        "sameOriginHandlerOperationIds": {
+          "$ref": "#/$defs/operationIdSet"
+        },
+        "downstreamOperationIds": {
+          "$ref": "#/$defs/operationIdSet"
+        }
+      }
+    },
+    "modelRequirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "surfaceRef",
+        "modelRoleRef",
+        "modelInventory",
+        "modelCatalog"
+      ],
+      "properties": {
+        "surfaceRef": {
+          "$ref": "#/$defs/ref"
+        },
+        "modelRoleRef": {
+          "$ref": "#/$defs/ref"
+        },
+        "modelInventory": {
+          "$ref": "#/$defs/digestRef"
+        },
+        "modelCatalog": {
+          "$ref": "#/$defs/digestRef"
+        }
+      }
+    },
+    "positiveDecimal": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$",
+      "maxLength": 39
+    },
+    "revisionBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "revision",
+        "digest"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/ref"
+        },
+        "revision": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "candidateAuthorityBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "version",
+        "authorizationEpoch",
+        "digest"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/ref"
+        },
+        "version": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "authorizationEpoch": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    }
+  }
+}

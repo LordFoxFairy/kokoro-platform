@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.kokoro.dev/surface-inventory/v1",
+  "title": "Kokoro Complete Surface Inventory Revision v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schemaRevision",
+    "inventoryRevisionRef",
+    "revision",
+    "siteRef",
+    "siteReleaseCandidate",
+    "launchProductProfile",
+    "productSurfaceCatalog",
+    "compilerRevisionRef",
+    "enabledSurfaceRefs",
+    "disabledSurfaceRefs",
+    "shellRequirementRefs",
+    "generatedAt"
+  ],
+  "properties": {
+    "contract": {
+      "const": "kokoro.surface-inventory.v1"
+    },
+    "schemaRevision": {
+      "const": "1"
+    },
+    "inventoryRevisionRef": {
+      "$ref": "#/$defs/ref"
+    },
+    "revision": {
+      "$ref": "#/$defs/decimal"
+    },
+    "siteRef": {
+      "$ref": "#/$defs/ref"
+    },
+    "siteReleaseCandidate": {
+      "$ref": "#/$defs/candidateAuthorityBinding"
+    },
+    "launchProductProfile": {
+      "$ref": "#/$defs/revisionBinding"
+    },
+    "productSurfaceCatalog": {
+      "$ref": "#/$defs/revisionBinding"
+    },
+    "compilerRevisionRef": {
+      "$ref": "#/$defs/ref"
+    },
+    "enabledSurfaceRefs": {
+      "$ref": "#/$defs/nonEmptyRefSet"
+    },
+    "disabledSurfaceRefs": {
+      "$ref": "#/$defs/refSet"
+    },
+    "shellRequirementRefs": {
+      "$ref": "#/$defs/nonEmptyRefSet"
+    },
+    "generatedAt": {
+      "$ref": "#/$defs/timestamp"
+    }
+  },
+  "$defs": {
+    "ref": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 160,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$"
+    },
+    "decimal": {
+      "type": "string",
+      "pattern": "^(?:0|[1-9][0-9]*)$",
+      "maxLength": 39
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z$"
+    },
+    "digestRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "digest"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/ref"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "refSet": {
+      "type": "array",
+      "maxItems": 512,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/ref"
+      }
+    },
+    "nonEmptyRefSet": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 512,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/ref"
+      }
+    },
+    "positiveDecimal": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$",
+      "maxLength": 39
+    },
+    "revisionBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "revision",
+        "digest"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/ref"
+        },
+        "revision": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "candidateAuthorityBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "version",
+        "authorizationEpoch",
+        "digest"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/ref"
+        },
+        "version": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "authorizationEpoch": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    }
+  }
+}

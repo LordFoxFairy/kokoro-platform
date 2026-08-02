@@ -1,0 +1,384 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.kokoro.dev/site-release/v1",
+  "title": "Kokoro Immutable Site Release v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schemaRevision",
+    "siteReleaseRef",
+    "revision",
+    "state",
+    "siteRef",
+    "environment",
+    "siteReleaseCandidate",
+    "launchProductProfile",
+    "productSurfaceCatalog",
+    "surfaceInventory",
+    "webBuildIntent",
+    "compiledWebManifest",
+    "webArtifactProvenance",
+    "webArtifactDigest",
+    "releaseCertification",
+    "certificationRevocationEpoch",
+    "businessBindings",
+    "bootstrapBindings",
+    "contractFloor",
+    "publishedAt"
+  ],
+  "properties": {
+    "contract": {
+      "const": "kokoro.site-release.v1"
+    },
+    "schemaRevision": {
+      "const": "1"
+    },
+    "siteReleaseRef": {
+      "$ref": "#/$defs/ref"
+    },
+    "revision": {
+      "$ref": "#/$defs/decimal"
+    },
+    "state": {
+      "const": "published"
+    },
+    "siteRef": {
+      "$ref": "#/$defs/ref"
+    },
+    "environment": {
+      "enum": [
+        "development",
+        "preview",
+        "staging",
+        "production"
+      ]
+    },
+    "siteReleaseCandidate": {
+      "$ref": "#/$defs/candidateAuthorityBinding"
+    },
+    "launchProductProfile": {
+      "$ref": "#/$defs/revisionBinding"
+    },
+    "productSurfaceCatalog": {
+      "$ref": "#/$defs/revisionBinding"
+    },
+    "surfaceInventory": {
+      "$ref": "#/$defs/revisionBinding"
+    },
+    "webBuildIntent": {
+      "$ref": "#/$defs/revisionBinding"
+    },
+    "compiledWebManifest": {
+      "$ref": "#/$defs/revisionBinding"
+    },
+    "webArtifactProvenance": {
+      "$ref": "#/$defs/revisionBinding"
+    },
+    "webArtifactDigest": {
+      "$ref": "#/$defs/digest"
+    },
+    "releaseCertification": {
+      "$ref": "#/$defs/revisionBinding"
+    },
+    "certificationRevocationEpoch": {
+      "$ref": "#/$defs/decimal"
+    },
+    "businessBindings": {
+      "$ref": "#/$defs/businessBindings"
+    },
+    "bootstrapBindings": {
+      "$ref": "#/$defs/bootstrapBindings"
+    },
+    "contractFloor": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {
+        "$ref": "#/$defs/contractFloor"
+      }
+    },
+    "publishedAt": {
+      "$ref": "#/$defs/timestamp"
+    }
+  },
+  "$defs": {
+    "ref": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 240,
+      "pattern": "^[a-z][a-z0-9]*(?:[._/-][a-z0-9]+)+$"
+    },
+    "decimal": {
+      "type": "string",
+      "pattern": "^(?:0|[1-9][0-9]*)$",
+      "maxLength": 39
+    },
+    "positiveDecimal": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$",
+      "maxLength": 39
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z$"
+    },
+    "digestRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "digest"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/ref"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "ownerRevisionBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "revision",
+        "digest"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/ref"
+        },
+        "revision": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "ownerRevisionBindingSet": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/ownerRevisionBinding"
+      }
+    },
+    "authIdentityClosure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identityIssuer",
+        "authenticationPolicy",
+        "authorizationPolicy",
+        "closureDigest"
+      ],
+      "properties": {
+        "identityIssuer": {
+          "$ref": "#/$defs/ownerRevisionBinding"
+        },
+        "authenticationPolicy": {
+          "$ref": "#/$defs/ownerRevisionBinding"
+        },
+        "authorizationPolicy": {
+          "$ref": "#/$defs/ownerRevisionBinding"
+        },
+        "closureDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "commerceClosure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "offerRevisions",
+        "offerPriceRevisions",
+        "entitlementTemplateRevisions",
+        "creditProgramRevisions",
+        "closureDigest"
+      ],
+      "properties": {
+        "offerRevisions": {
+          "$ref": "#/$defs/ownerRevisionBindingSet"
+        },
+        "offerPriceRevisions": {
+          "$ref": "#/$defs/ownerRevisionBindingSet"
+        },
+        "entitlementTemplateRevisions": {
+          "$ref": "#/$defs/ownerRevisionBindingSet"
+        },
+        "creditProgramRevisions": {
+          "$ref": "#/$defs/ownerRevisionBindingSet"
+        },
+        "closureDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "hubClosure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capabilityAssignment",
+        "capabilityCatalog",
+        "agentCatalog",
+        "closureDigest"
+      ],
+      "properties": {
+        "capabilityAssignment": {
+          "$ref": "#/$defs/ownerRevisionBinding"
+        },
+        "capabilityCatalog": {
+          "$ref": "#/$defs/ownerRevisionBinding"
+        },
+        "agentCatalog": {
+          "$ref": "#/$defs/ownerRevisionBinding"
+        },
+        "closureDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "businessBindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "webBuildMaterialBundle",
+        "siteConfig",
+        "legalPolicy",
+        "salesPolicy",
+        "assortmentPolicy",
+        "memoryPolicy",
+        "authIdentityClosure",
+        "commerceClosure",
+        "hubClosure"
+      ],
+      "properties": {
+        "webBuildMaterialBundle": {
+          "$ref": "#/$defs/revisionBinding"
+        },
+        "siteConfig": {
+          "$ref": "#/$defs/ownerRevisionBinding"
+        },
+        "legalPolicy": {
+          "$ref": "#/$defs/ownerRevisionBinding"
+        },
+        "salesPolicy": {
+          "$ref": "#/$defs/ownerRevisionBinding"
+        },
+        "assortmentPolicy": {
+          "$ref": "#/$defs/ownerRevisionBinding"
+        },
+        "memoryPolicy": {
+          "$ref": "#/$defs/ownerRevisionBinding"
+        },
+        "authIdentityClosure": {
+          "$ref": "#/$defs/authIdentityClosure"
+        },
+        "commerceClosure": {
+          "$ref": "#/$defs/commerceClosure"
+        },
+        "hubClosure": {
+          "$ref": "#/$defs/hubClosure"
+        }
+      }
+    },
+    "bootstrapBindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "compiledWebManifest",
+        "productSurfaceCatalog",
+        "surfaceInventory",
+        "webCompositionRegistry",
+        "webBuildToolchain"
+      ],
+      "properties": {
+        "compiledWebManifest": {
+          "$ref": "#/$defs/revisionBinding"
+        },
+        "productSurfaceCatalog": {
+          "$ref": "#/$defs/revisionBinding"
+        },
+        "surfaceInventory": {
+          "$ref": "#/$defs/revisionBinding"
+        },
+        "webCompositionRegistry": {
+          "$ref": "#/$defs/revisionBinding"
+        },
+        "webBuildToolchain": {
+          "$ref": "#/$defs/revisionBinding"
+        }
+      }
+    },
+    "contractFloor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractRef",
+        "minimumMajor"
+      ],
+      "properties": {
+        "contractRef": {
+          "$ref": "#/$defs/ref"
+        },
+        "minimumMajor": {
+          "$ref": "#/$defs/decimal"
+        }
+      }
+    },
+    "revisionBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "revision",
+        "digest"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/ref"
+        },
+        "revision": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "candidateAuthorityBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "version",
+        "authorizationEpoch",
+        "digest"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/ref"
+        },
+        "version": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "authorizationEpoch": {
+          "$ref": "#/$defs/positiveDecimal"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    }
+  }
+}
