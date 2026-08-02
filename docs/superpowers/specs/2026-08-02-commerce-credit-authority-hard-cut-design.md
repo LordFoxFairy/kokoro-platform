@@ -94,11 +94,13 @@ The steps are:
 2. return the prior receipt on replay;
 3. insert the immutable Enrollment revocation, preventing future acquisition;
 4. call Credit's correction port for every exact `program_window` Grant;
-5. always append a balanced `grant_revoke` journal transaction for the currently available,
-   unencumbered balance, using Credit's unique `(site,account,business_operation_key)` constraint;
+5. when the currently available, unencumbered balance is greater than zero, append a balanced
+   `grant_revoke` journal transaction for exactly that amount, using Credit's unique
+   `(site,account,business_operation_key)` constraint; never create a zero-amount journal;
 6. when reserved/captured/consumed exposure remains, also create one immutable
    `reconciliation_required` fact unique by Enrollment, linked to the affected Grant/Hold and journal
-   evidence; no unencumbered revoked amount remains spendable;
+   evidence. If available balance is zero, this is the only Credit-side effect. In both paths the
+   Commerce result and receipt close idempotently, and no unencumbered revoked amount remains spendable;
 7. persist a Commerce command receipt, audit entry, and transactional outbox event in the same transaction.
 
 Credit never mutates or deletes a Grant. The correction port returns a discriminated result:
