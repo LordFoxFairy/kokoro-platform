@@ -47,12 +47,15 @@ Database checks enforce:
   non-null term ref/version/digest with a composite foreign key to the frozen term; daily requires all
   term columns null. This avoids nullable `MATCH SIMPLE` foreign keys.
 - Acquisition repeats Site, account, Program ref/revision/digest, absolute window start/end,
-  acquired instant, Enrollment ref, Enrollment effective/end instants, and Grant ref. Its ordinary
+  acquired instant, Enrollment ref, Enrollment effective/end instants, Grant ref, and a non-null
+  `source_type` column constrained to `program_window`. Its ordinary
   composite foreign key targets the Enrollment non-null base key. It is unique by
   `(site,enrollment,window_key)` and by `(site,grant)` so the relation is one window to one Grant.
 - Grant has a composite unique key covering Grant ref, Site, account, Program ref/revision/digest,
   source type/ref/window key, effective/expiry/acquired instants. Acquisition has composite foreign
-  keys to both the Enrollment and Grant keys.
+  keys to both the Enrollment and Grant keys. The Grant foreign key includes Acquisition's fixed
+  source type and is `DEFERRABLE INITIALLY DEFERRED`, so Acquisition-first issuance is legal inside
+  the transaction but an unbound pair cannot commit.
 
 Enrollment, Acquisition, Grant, Program revision, and Subscription Term are guarded by immutable
 update/delete triggers. Each table owner owns its own trigger and trigger function: the Commerce owner
@@ -105,10 +108,12 @@ The steps are:
    `grant_revoke` journal transaction for exactly that amount, using the Grant-specific operation key
    `enrollment-revoke:<enrollment-ref>:grant:<credit-grant-ref>` and Credit's unique
    `(site,account,business_operation_key)` constraint; never create a zero-amount journal;
-6. when reserved/captured/consumed exposure remains, also create one immutable
-   `reconciliation_required` fact unique by Enrollment, linked to the affected Grant/Hold and journal
-   evidence. If available balance is zero, this is the only Credit-side effect. In both paths the
-   Commerce result and receipt close idempotently, and no unencumbered revoked amount remains spendable;
+6. when reserved/captured/consumed exposure remains, Credit returns immutable Grant/Hold/journal
+   evidence in its typed result; Commerce aggregates it and creates the single immutable
+   `reconciliation_required` fact unique by Enrollment. If available balance is zero, Credit writes
+   no journal and only returns reconciliation evidence; the reconciliation fact remains exclusively
+   Commerce-owned. In both paths the Commerce result and receipt close idempotently, and no
+   unencumbered revoked amount remains spendable;
 7. persist a Commerce command receipt, audit entry, and transactional outbox event in the same transaction.
 
 Credit never mutates or deletes a Grant. The correction port returns a discriminated result:
