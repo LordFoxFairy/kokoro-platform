@@ -21,7 +21,9 @@ Commerce represents Program windows as a discriminated union:
 
 - `permanent`: no calendar zone, anchor, enrollment, acquisition, or source window. Its optional
   `expiresAfterSeconds` is the only relative-expiry policy in the model. `null` means non-expiring;
-  otherwise `expiresAt = acquiredAt + expiresAfterSeconds`.
+  otherwise it must be an integer from 1 through 315,576,000 seconds (ten Julian years) and
+  `expiresAt = acquiredAt + expiresAfterSeconds` must remain inside PostgreSQL `timestamptz` and the
+  application's canonical timestamp range.
 - `daily`: an IANA calendar zone plus a canonical local reset time; a Grant is bounded by one acquired absolute daily window.
 - `period`: the authoritative Subscription Term start plus a positive duration; a Grant is bounded by one acquired absolute term window.
 
@@ -40,18 +42,23 @@ Database checks enforce:
 - Period Subscription Terms are immutable version-1 facts with a digest over Site, account, plan
   version, start, and end. Enrollment stores the exact term ref/version/digest; daily Enrollment has
   all three columns null. A composite foreign key binds the period Enrollment to that frozen term.
-- Enrollment has a composite unique key over enrollment ref, Site, account, Program
-  ref/revision/digest, term ref/version/digest, and effective interval.
+- Enrollment has a non-null composite unique base key over enrollment ref, Site, account, Program
+  ref/revision/digest, and effective interval. Its term branch is enforced separately: period requires
+  non-null term ref/version/digest with a composite foreign key to the frozen term; daily requires all
+  term columns null. This avoids nullable `MATCH SIMPLE` foreign keys.
 - Acquisition repeats Site, account, Program ref/revision/digest, absolute window start/end,
-  acquired instant, Enrollment ref, and Grant ref. It is unique by `(site,enrollment,window_key)` and
-  by `(site,grant)` so the relation is one window to one Grant.
+  acquired instant, Enrollment ref, Enrollment effective/end instants, and Grant ref. Its ordinary
+  composite foreign key targets the Enrollment non-null base key. It is unique by
+  `(site,enrollment,window_key)` and by `(site,grant)` so the relation is one window to one Grant.
 - Grant has a composite unique key covering Grant ref, Site, account, Program ref/revision/digest,
   source type/ref/window key, effective/expiry/acquired instants. Acquisition has composite foreign
   keys to both the Enrollment and Grant keys.
 
 Enrollment, Acquisition, Grant, Program revision, and Subscription Term are guarded by immutable
-update/delete triggers. Deferred constraint triggers owned by Credit run after Grant or Acquisition
-insert and at transaction commit, so issuance may insert them in either order while still requiring:
+update/delete triggers. Each table owner owns its own trigger and trigger function: the Commerce owner
+checks Acquisition inserts against Grant and Enrollment; the Credit owner checks Grant inserts against
+Acquisition. Both are deferrable, initially deferred constraint triggers and execute the same
+cross-table predicate at transaction commit, so issuance may insert either side first while still requiring:
 
 - every daily/period Grant has exactly one Acquisition;
 - Acquisition's Grant is `program_window`, `source_ref = enrollment_ref`, and its source-window key,
@@ -70,9 +77,9 @@ Daily resolution never compares a wall-clock timestamp with `acquiredAt`. For ea
 date it derives the UTC offsets in force immediately before and after that date's transition, applies
 each distinct offset to the local anchor, and round-trips each absolute candidate through the named
 zone. Every round-tripping candidate is retained, so both folds of an ambiguous overlap are explicit.
-If no candidate round-trips because the anchor is in a gap, the boundary shifts forward by exactly
-the zone's transition gap and must round-trip to the earliest valid local instant after the requested
-anchor. The resolver then sorts absolute candidates, chooses the greatest boundary not after
+If no candidate round-trips because the anchor is in a gap, the resolver locates the transition's
+first valid local instant after the gap and uses that transition end as the boundary; it does not add
+the gap width to the invalid anchor. The resolver then sorts absolute candidates, chooses the greatest boundary not after
 `acquiredAt`, and chooses the next greater boundary. The selected interval is clipped to Enrollment
 bounds. Tests cover normal dates, non-hour spring-forward gaps, both folds of fall-back overlaps,
 non-hour overlaps, and exact anchors.
@@ -95,7 +102,8 @@ The steps are:
 3. insert the immutable Enrollment revocation, preventing future acquisition;
 4. call Credit's correction port for every exact `program_window` Grant;
 5. when the currently available, unencumbered balance is greater than zero, append a balanced
-   `grant_revoke` journal transaction for exactly that amount, using Credit's unique
+   `grant_revoke` journal transaction for exactly that amount, using the Grant-specific operation key
+   `enrollment-revoke:<enrollment-ref>:grant:<credit-grant-ref>` and Credit's unique
    `(site,account,business_operation_key)` constraint; never create a zero-amount journal;
 6. when reserved/captured/consumed exposure remains, also create one immutable
    `reconciliation_required` fact unique by Enrollment, linked to the affected Grant/Hold and journal
