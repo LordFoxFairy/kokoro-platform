@@ -90,7 +90,7 @@ export interface CommerceAdministrationRepository {
       outputLineId: string;
       ordinal: number;
       cardinality: number;
-      outputKind: "subscription_term" | "entitlement_grant" | "credit_grant";
+      outputKind: "subscription_term" | "entitlement_grant" | "credit_grant" | "credit_program_enrollment";
       targetRevisionRef: string;
     }>[];
     legalTermRefs: readonly string[];

@@ -46,6 +46,7 @@ export type CreditGrantIssue = Readonly<{
   creditProgramRevisionDigest: string;
   sourceType: CreditGrantSourceType;
   sourceRef: string;
+  sourceWindowKey: string;
   businessOperationKey: string;
   bucketClass: "daily" | "period" | "permanent";
   amount: string;
@@ -70,7 +71,7 @@ export interface CreditGrantIssuancePort {
   prepareIssuance(
     transaction: PlatformTransaction,
     input: Readonly<{
-      commandId: string;
+      commandId: string | null;
       grants: readonly CreditGrantIssue[];
     }>,
   ): Promise<PrepareCreditGrantIssuanceResult>;

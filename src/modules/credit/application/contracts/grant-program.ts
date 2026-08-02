@@ -9,6 +9,9 @@ export type CreditGrantProgramRevision = Readonly<{
   unit: string;
   amount: string;
   expiresAfterSeconds: bigint | null;
+  windowKind: "none" | "daily" | "period";
+  calendarZone: string | null;
+  windowAnchor: string | null;
   liabilityMerchantAccountId: string;
   burnPriority: number;
   scopePolicy: CreditGrantScopePolicy;

@@ -12,7 +12,7 @@ export type CommerceOfferRecord = Readonly<{
   productVersionRef: string; revision: bigint; safeLabel: string; planVersionRef: string | null;
   fulfillmentProgramRevisionRef: string;
   outputs: readonly Readonly<{ outputLineId: string; ordinal: number; cardinality: number;
-    outputKind: "subscription_term" | "entitlement_grant" | "credit_grant";
+    outputKind: "subscription_term" | "entitlement_grant" | "credit_grant" | "credit_program_enrollment";
     targetRevisionRef: string }>[];
   legalTermRefs: readonly string[]; publishedAt: string;
 }>;

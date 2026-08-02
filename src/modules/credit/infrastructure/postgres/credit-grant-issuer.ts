@@ -21,7 +21,7 @@ type PreparedState = {
     identity: CreditGrantAccountIdentity;
     account: LockedCreditAccount | null;
   }>>;
-  commandId: string;
+  commandId: string | null;
   grants: readonly CreditGrantIssue[];
   intentDigest: string;
   consumed: boolean;
@@ -42,7 +42,7 @@ export class PostgresCreditGrantIssuer implements CreditGrantIssuancePort {
     transaction: Parameters<CreditGrantIssuancePort["prepareIssuance"]>[0],
     input: Parameters<CreditGrantIssuancePort["prepareIssuance"]>[1],
   ): ReturnType<CreditGrantIssuancePort["prepareIssuance"]> {
-    bounded(input.commandId, 128, "CREDIT_GRANT_COMMAND_INVALID");
+    if (input.commandId !== null) bounded(input.commandId, 128, "CREDIT_GRANT_COMMAND_INVALID");
     if (input.grants.length < 1 || input.grants.length > 32) throw new Error("CREDIT_GRANT_INTENT_SIZE_INVALID");
     const grants = Object.freeze(input.grants.map(validateGrant).sort(compareGrantIdentity));
     const identities = new Map<string, CreditGrantAccountIdentity>();
@@ -134,14 +134,14 @@ export class PostgresCreditGrantIssuer implements CreditGrantIssuancePort {
         `INSERT INTO platform.credit_grant
          (credit_grant_id,credit_account_ref,site_ref,billing_account_ref,credit_program_revision_ref,
           credit_program_revision,credit_program_revision_digest,
-          source_type,source_ref,issuance_journal_transaction_ref,ux_bucket_class,unit,
+          source_type,source_ref,source_window_key,issuance_journal_transaction_ref,ux_bucket_class,unit,
           liability_merchant_account_ref,original_amount,burn_priority,scope_policy,effective_at,expires_at,
           acquired_at,issued_at)
-         VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6::bigint,$7,$8,$9,$10::uuid,$11,$12,$13,$14::numeric,$15,$16::jsonb,
-                 $17::timestamptz,$18::timestamptz,$19::timestamptz,$19::timestamptz)`,
+         VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6::bigint,$7,$8,$9,$10,$11::uuid,$12,$13,$14,$15::numeric,$16,$17::jsonb,
+                 $18::timestamptz,$19::timestamptz,$20::timestamptz,$20::timestamptz)`,
         [creditGrantRef, account.creditAccountId, grant.account.siteId, grant.account.billingAccountId,
           grant.creditProgramRevisionRef, grant.creditProgramRevision, grant.creditProgramRevisionDigest,
-          grant.sourceType, grant.sourceRef, journalTransactionRef, grant.bucketClass,
+          grant.sourceType, grant.sourceRef, grant.sourceWindowKey, journalTransactionRef, grant.bucketClass,
           grant.account.unit, grant.account.liabilityMerchantAccountId, grant.amount, grant.burnPriority,
           JSON.stringify(grant.scopePolicy), grant.effectiveAt, grant.expiresAt, grant.acquiredAt],
       );
@@ -201,11 +201,13 @@ function validateGrant(grant: CreditGrantIssue): CreditGrantIssue {
   if (!(["daily", "period", "permanent"] as const).includes(grant.bucketClass)) {
     throw new Error("CREDIT_GRANT_BUCKET_INVALID");
   }
+  if (grant.sourceWindowKey.length > 256 || (grant.bucketClass === "permanent" ? grant.sourceWindowKey !== "" :
+    grant.sourceWindowKey.length < 1)) throw new Error("CREDIT_GRANT_WINDOW_KEY_INVALID");
   const effectiveAt = Date.parse(grant.effectiveAt);
   const acquiredAt = Date.parse(grant.acquiredAt);
   const expiresAt = grant.expiresAt === null ? null : Date.parse(grant.expiresAt);
-  if (!Number.isFinite(effectiveAt) || !Number.isFinite(acquiredAt) || acquiredAt > effectiveAt ||
-      (expiresAt !== null && (!Number.isFinite(expiresAt) || expiresAt <= effectiveAt))) {
+  if (!Number.isFinite(effectiveAt) || !Number.isFinite(acquiredAt) || acquiredAt < effectiveAt ||
+      (expiresAt !== null && (!Number.isFinite(expiresAt) || expiresAt <= effectiveAt || acquiredAt >= expiresAt))) {
     throw new Error("CREDIT_GRANT_EFFECTIVE_WINDOW_INVALID");
   }
   if ((grant.bucketClass === "permanent") !== (grant.expiresAt === null)) {
@@ -260,7 +262,7 @@ async function recordGrantIssueJournal(
     siteId: string;
     unit: string;
     businessOperationKey: string;
-    commandId: string;
+    commandId: string | null;
     creditGrantRef: CreditGrantRef;
     amount: string;
     occurredAt: string;
@@ -338,7 +340,7 @@ function lengthDelimited(value: string): string {
   return `${Buffer.byteLength(value, "utf8")}:${value}`;
 }
 
-function issuanceIntentDigest(commandId: string, grants: readonly CreditGrantIssue[]): string {
+function issuanceIntentDigest(commandId: string | null, grants: readonly CreditGrantIssue[]): string {
   return sha256(canonicalJson({ version: 1, commandId, grants: grants.map((grant) => ({
     ...grant,
     creditProgramRevision: grant.creditProgramRevision.toString(),

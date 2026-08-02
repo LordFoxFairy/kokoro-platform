@@ -12,7 +12,8 @@ import { commerceCanonicalJson } from "./canonical-json.js";
 const TYPE_NAME = "kokoro.platform.commerce.v1.CanonicalFulfillmentTransactionV1";
 const SHA256 = /^[a-f0-9]{64}$/u;
 
-export type CommittedOutputKind = "subscription_term" | "entitlement_grant" | "credit_grant";
+export type CommittedOutputKind = "subscription_term" | "entitlement_grant" | "credit_grant" |
+  "credit_program_enrollment";
 
 export type FulfillmentOutputCommitment = Readonly<{
   kind: CommittedOutputKind;
@@ -190,6 +191,7 @@ function sourceKind(kind: CanonicalFulfillmentInput["acquisition"]["sourceKind"]
 function outputKind(kind: CommittedOutputKind): CommittedFulfillmentOutputKind {
   if (kind === "subscription_term") return CommittedFulfillmentOutputKind.SUBSCRIPTION_TERM;
   if (kind === "entitlement_grant") return CommittedFulfillmentOutputKind.ENTITLEMENT_GRANT;
+  if (kind === "credit_program_enrollment") return 4 as CommittedFulfillmentOutputKind;
   return CommittedFulfillmentOutputKind.CREDIT_GRANT;
 }
 

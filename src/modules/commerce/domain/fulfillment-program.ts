@@ -12,7 +12,7 @@ export type CanonicalFulfillmentProgramLine = Readonly<{
   outputLineId: string;
   outputOrdinal: number;
   occurrenceCount: number;
-  outputKind: "subscription_term" | "entitlement_grant" | "credit_grant";
+  outputKind: "subscription_term" | "entitlement_grant" | "credit_grant" | "credit_program_enrollment";
   owner: FulfillmentProgramOwnerBinding;
 }>;
 

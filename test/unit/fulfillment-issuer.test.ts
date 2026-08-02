@@ -49,6 +49,7 @@ describe("PostgresFulfillmentIssuer", () => {
         }),
         materialization: {
           siteId: "site-a",
+          subjectId: "subject-a", subjectGeneration: 1n,
           effectAt: "2026-07-29T01:00:00.000Z",
           outputs: [output],
           nextRef: referenceFactory(),
@@ -104,6 +105,7 @@ describe("PostgresFulfillmentIssuer", () => {
           fulfillmentProgramDigest: "a".repeat(64), pricingSnapshotRef: null }),
         materialization: {
           siteId: "site-a", effectAt: "2026-07-29T01:00:00.000Z", outputs: [output], nextRef: referenceFactory(),
+          subjectId: "subject-a", subjectGeneration: 1n,
           creditGrantPreparation: preparation.preparation, subscription: null, subscriptionTerm: null,
           stackingScope: null, planRef: null,
         },
@@ -111,6 +113,46 @@ describe("PostgresFulfillmentIssuer", () => {
     } finally {
       revokePlatformTransaction(lease);
     }
+  });
+
+  it("materializes recurring Credit as a term-bound enrollment without issuing a relative-expiry grant", async () => {
+    const executions: Array<{ statement: string; values: readonly unknown[] }> = [];
+    const creditGrants: CreditGrantIssuancePort = {
+      prepareIssuance: async () => { throw new Error("recurring enrollment must not prepare a grant"); },
+      issuePrepared: async () => { throw new Error("recurring enrollment must not issue a grant"); },
+    };
+    const lease = issuePlatformTransaction({ query: async () => [], execute: async (statement, values) => {
+      executions.push({ statement, values: values ?? [] }); return 1;
+    } });
+    try {
+      const outputs: FulfillmentOutputDefinition[] = [subscriptionOutput(), recurringOutput()];
+      const result = await new PostgresFulfillmentIssuer(creditGrants).issue(lease.transaction, {
+        fulfillmentId: "00000000-0000-7000-8000-000000000001", commandId: "command-1",
+        billingAccountId: "billing-a",
+        source: createFulfillmentSourceIdentity({ siteId: "site-a", sourceType: "redemption", sourceRef: "code-1",
+          purpose: "acquisition", cycleKey: "once" }),
+        snapshot: createFrozenFulfillmentSnapshot({ sourceType: "redemption", productVersionRef: "product-v1",
+          planVersionRef: "plan-v1", offeringVersionRef: "offer-v1", sourceVersion: 1n,
+          sourceDigest: "b".repeat(64), acquiredAt: "2026-08-02T12:00:00.000Z",
+          fulfillmentProgramRevisionRef: "fulfillment-v1", fulfillmentProgramRevision: 1n,
+          fulfillmentProgramDigest: "a".repeat(64), pricingSnapshotRef: null }),
+        materialization: { siteId: "site-a", subjectId: "subject-a", subjectGeneration: 3n,
+          effectAt: "2026-08-02T12:00:00.000Z", outputs, nextRef: referenceFactory(),
+          creditGrantPreparation: null, subscription: { subscriptionId: null, state: null, planRef: null,
+            activeTermEndsAt: null }, subscriptionTerm: { startsAt: "2026-08-02T12:00:00.000Z",
+            endsAt: "2026-09-02T12:00:00.000Z" }, stackingScope: "chat-pro", planRef: "plan-v1" },
+      });
+      expect(result.actual.map((item) => item.outputKind)).toEqual([
+        "subscription_term", "credit_program_enrollment",
+      ]);
+      expect(executions.some(({ statement }) => statement.includes("INSERT INTO platform.credit_grant"))).toBe(false);
+      const enrollment = executions.find(({ statement }) =>
+        statement.includes("INSERT INTO platform.commerce_credit_program_enrollment"));
+      expect(enrollment?.values).toEqual(expect.arrayContaining([
+        "credit-daily-v1", "subject-a", "billing-a",
+      ]));
+      expect(enrollment?.statement).not.toContain("window_kind");
+    } finally { revokePlatformTransaction(lease); }
   });
 });
 
@@ -121,12 +163,40 @@ function creditOutput(): FulfillmentOutputDefinition {
     planVersionRef: null, creditProgramRevisionRef: "credit-v1", bucketClass: "permanent",
     creditProgramRevisionVersion: 1n, creditProgramRevisionDigest: "c".repeat(64),
     unit: "credit", amount: "100", creditExpiresAfterSeconds: null,
+    creditWindowKind: "none", creditCalendarZone: null, creditWindowAnchor: null,
     liabilityMerchantAccountId: "merchant-a", burnPriority: 100,
     scopePolicy: { version: 1 as const, surfaceRefs: ["general.chat"], capabilityKeys: ["general.chat.message"],
       agentRefs: [], allowUnattributedAgent: true },
     entitlementTemplateRevisionRef: null, capabilityKey: null, safeLabel: null,
     entitlementExpiresAfterSeconds: null,
   });
+}
+
+function subscriptionOutput(): FulfillmentOutputDefinition {
+  return Object.freeze({ ...emptyOutput(), outputLineId: "term", outputKind: "subscription_term", ordinal: 1,
+    cardinality: 1, planVersionRef: "plan-v1", ownerRevision: 1n, ownerRevisionDigest: "d".repeat(64) });
+}
+
+function recurringOutput(): FulfillmentOutputDefinition {
+  return Object.freeze({ ...emptyOutput(), outputLineId: "daily-credit", outputKind: "credit_program_enrollment",
+    ordinal: 2, cardinality: 1, creditProgramRevisionRef: "credit-daily-v1",
+    creditProgramRevisionVersion: 1n, creditProgramRevisionDigest: "e".repeat(64),
+    bucketClass: "daily", unit: "credit", amount: "25", creditWindowKind: "daily",
+    creditCalendarZone: "America/New_York", creditWindowAnchor: "daily@00:00:00",
+    liabilityMerchantAccountId: "merchant-a", burnPriority: 10,
+    scopePolicy: { version: 1 as const, surfaceRefs: ["general.chat"], capabilityKeys: ["general.chat.message"],
+      agentRefs: [], allowUnattributedAgent: true } });
+}
+
+function emptyOutput(): FulfillmentOutputDefinition {
+  return { outputLineId: "x", outputKind: "entitlement_grant", ordinal: 1, cardinality: 1,
+    planVersionRef: null, creditProgramRevisionRef: null, creditProgramRevisionVersion: null,
+    creditProgramRevisionDigest: null, ownerRevision: 1n, ownerRevisionDigest: "f".repeat(64),
+    bucketClass: null, unit: null, amount: null, creditExpiresAfterSeconds: null,
+    creditWindowKind: null, creditCalendarZone: null, creditWindowAnchor: null,
+    liabilityMerchantAccountId: null, burnPriority: null, scopePolicy: null,
+    entitlementTemplateRevisionRef: null, capabilityKey: null, safeLabel: null,
+    entitlementExpiresAfterSeconds: null };
 }
 
 function creditIssue(output: FulfillmentOutputDefinition, identity: ReturnType<typeof fulfillmentCreditAccountIdentity>,
@@ -138,6 +208,7 @@ function creditIssue(output: FulfillmentOutputDefinition, identity: ReturnType<t
     creditProgramRevision: output.creditProgramRevisionVersion!,
     creditProgramRevisionDigest: output.creditProgramRevisionDigest!, sourceType,
     sourceRef: `${source.idempotencyKey}:credits:1`, businessOperationKey: `fulfillment:${source.idempotencyKey}:credits:1`,
+    sourceWindowKey: "",
     bucketClass: output.bucketClass!, amount: output.amount!, burnPriority: output.burnPriority!,
     scopePolicy: output.scopePolicy!, acquiredAt: "2026-07-29T01:00:00.000Z",
     effectiveAt: "2026-07-29T01:00:00.000Z", expiresAt: null } as const;

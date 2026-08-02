@@ -1888,7 +1888,8 @@ export const zRedemptionOutputRef = z.strictObject({
     kind: z.enum([
         'subscription_term',
         'entitlement_grant',
-        'credit_grant'
+        'credit_grant',
+        'credit_program_enrollment'
     ]),
     outputLineId: z.string().min(1).max(128),
     outputOrdinal: z.number().int().gte(1).lte(32),

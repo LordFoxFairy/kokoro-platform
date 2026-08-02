@@ -10,6 +10,10 @@ is revalidated and snapshotted at this owner boundary, and malformed, duplicate,
 fail before any Credit mutation. Fulfillment replay is fenced by the caller's durable fulfillment receipt before this port is entered;
 the adapter never treats a unique-constraint violation as idempotent replay.
 
+Recurring Commerce enrollments use the same port with `source_type=program_window` and a non-empty immutable
+`source_window_key`. Permanent acquisition grants require the empty window key. Credit persists that key in the Grant uniqueness
+fence; Commerce owns enrollment and absolute window acquisition facts, while Credit still owns Grant and Journal materialization.
+
 `CreditService` is also the only authority for deriving and returning a Media child allocation inside an existing GA execution
 budget root. `deriveChildAllocation` locks the exact Site/root/root-allocation head, fences the expected revision and epoch, protects
 already-reserved Segment capacity, and atomically moves exact stock from parent `unassignedStock` to

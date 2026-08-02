@@ -61,7 +61,9 @@ describe("Wave 2A Commerce authority schema", () => {
     expect(migration).not.toMatch(/(?:raw|plaintext)_code/iu);
     expect(migration).toContain("FOREIGN KEY(fulfillment_program_revision_ref,site_ref)");
     expect(migration).toContain("FOREIGN KEY(product_version_ref,site_ref,fulfillment_program_revision_ref)");
-    expect(migration).toContain("FOREIGN KEY(credit_program_revision_ref,site_ref)");
+    expect(compactMigration).toContain(
+      "FOREIGN KEY(credit_program_revision_ref,site_ref,credit_program_revision_version,credit_program_revision_digest)",
+    );
     expect(migration).toContain("UNIQUE(site_ref,output_plan_digest)");
   });
 
@@ -219,6 +221,21 @@ describe("Wave 2A Commerce authority schema", () => {
     expect(commerceReader).not.toContain("Intl.DateTimeFormat");
     expect(commerceService).not.toContain("Intl.DateTimeFormat");
     expect(migration).not.toContain("bucket_spend_order");
+  });
+
+  it("binds recurring Credit to immutable enrollments and one acquired absolute window", () => {
+    expect(migration).toContain("CREATE TABLE platform.commerce_credit_program_enrollment (");
+    expect(migration).toContain("CREATE TABLE platform.commerce_credit_program_enrollment_revocation (");
+    expect(migration).toContain("CREATE TABLE platform.credit_program_window_acquisition (");
+    expect(migration).toContain("commerce_credit_program_enrollment_immutable");
+    expect(compactMigration).toContain("UNIQUE(site_ref,enrollment_ref,window_key)");
+    expect(compactMigration).toContain("FOREIGN KEY(credit_grant_ref,site_ref) REFERENCES platform.credit_grant");
+    expect(compactMigration).toContain("CHECK(acquired_at >= window_starts_at AND acquired_at < window_ends_at)");
+    const enrollment = migration.slice(migration.indexOf("CREATE TABLE platform.commerce_credit_program_enrollment ("),
+      migration.indexOf("CREATE TABLE platform.commerce_credit_program_enrollment_revocation ("));
+    expect(enrollment).not.toContain("bucket_class");
+    expect(enrollment).not.toContain("window_kind");
+    expect(enrollment).not.toContain("state TEXT");
   });
 
   it("uses one Unicode-complete safe-label authority for every persisted label", () => {

@@ -35,7 +35,7 @@ type CandidateRow = Record<string, unknown> & {
 
 type OutputRow = Record<string, unknown> & {
   outputLineId: string;
-  outputKind: "subscription_term" | "entitlement_grant" | "credit_grant";
+  outputKind: "subscription_term" | "entitlement_grant" | "credit_grant" | "credit_program_enrollment";
   ordinal: number;
   cardinality: number;
   planVersionRef: string | null;
@@ -48,6 +48,9 @@ type OutputRow = Record<string, unknown> & {
   unit: string | null;
   amount: string | null;
   creditExpiresAfterSeconds: bigint | null;
+  creditWindowKind: "none" | "daily" | "period" | null;
+  creditCalendarZone: string | null;
+  creditWindowAnchor: string | null;
   entitlementTemplateRevisionRef: string | null;
   capabilityKey: string | null;
   safeLabel: string | null;
@@ -214,11 +217,11 @@ function terms(row: CandidateRow, outputs: readonly OutputRow[], now: string): R
     if (output.ordinal !== index + 1 || !Number.isInteger(output.cardinality) || output.cardinality < 1 || output.cardinality > 32) {
       throw new Error("REDEMPTION_PROGRAM_OUTPUT_INVALID");
     }
-    if (output.outputKind === "credit_grant") {
+    if (output.outputKind === "credit_grant" || output.outputKind === "credit_program_enrollment") {
       if (output.creditProgramRevisionRef === null || output.bucketClass === null || output.unit === null || output.amount === null) {
         throw new Error("REDEMPTION_PROGRAM_OUTPUT_INVALID");
       }
-      if (output.bucketClass !== "permanent" || output.creditExpiresAfterSeconds !== null) {
+      if ((output.outputKind === "credit_grant") !== (output.bucketClass === "permanent")) {
         throw new RedemptionPolicyError();
       }
       for (let occurrence = 0; occurrence < output.cardinality; occurrence += 1) {
@@ -227,7 +230,7 @@ function terms(row: CandidateRow, outputs: readonly OutputRow[], now: string): R
           bucketClass: output.bucketClass,
           unit: output.unit,
           amount: output.amount,
-          expiresAt: expiry(now, output.creditExpiresAfterSeconds),
+          expiresAt: output.outputKind === "credit_program_enrollment" ? recurringEnrollmentEnd(row, now) : null,
         }));
       }
     } else if (output.outputKind === "entitlement_grant") {
@@ -281,7 +284,8 @@ function terms(row: CandidateRow, outputs: readonly OutputRow[], now: string): R
 async function resolveCreditOutputs(port: CreditGrantProgramPort,
   transaction: Parameters<RedemptionRepository["resolvePreviewCandidate"]>[0], siteId: string,
   outputs: readonly OutputRow[]): Promise<readonly OutputRow[]> {
-  const creditOutputs = outputs.filter((output) => output.outputKind === "credit_grant");
+  const creditOutputs = outputs.filter((output) => output.outputKind === "credit_grant" ||
+    output.outputKind === "credit_program_enrollment");
   if (creditOutputs.length === 0) return outputs;
   const targets = new Map<string, { revisionRef: string; revision: bigint; revisionDigest: string }>();
   for (const output of creditOutputs) {
@@ -298,12 +302,22 @@ async function resolveCreditOutputs(port: CreditGrantProgramPort,
   const programs = await port.resolveTargets(transaction, { siteId, targets: [...targets.values()] });
   const byRef = new Map(programs.map((program) => [program.revisionRef, program]));
   return Object.freeze(outputs.map((output) => {
-    if (output.outputKind !== "credit_grant") return output;
+    if (output.outputKind !== "credit_grant" && output.outputKind !== "credit_program_enrollment") return output;
     const program = byRef.get(output.creditProgramRevisionRef!);
     if (program === undefined) throw new Error("REDEMPTION_PROGRAM_OUTPUT_INVALID");
     return Object.freeze({ ...output, bucketClass: program.bucketClass, unit: program.unit, amount: program.amount,
-      creditExpiresAfterSeconds: program.expiresAfterSeconds });
+      creditExpiresAfterSeconds: program.expiresAfterSeconds, creditWindowKind: program.windowKind,
+      creditCalendarZone: program.calendarZone, creditWindowAnchor: program.windowAnchor });
   }));
+}
+
+function recurringEnrollmentEnd(row: CandidateRow, now: string): string {
+  if (row.termAction === null || row.termAction === "none" || row.termSeconds === null) {
+    throw new RedemptionPolicyError();
+  }
+  const active = row.activeTermEndsAt === null ? null : instant(row.activeTermEndsAt);
+  const startsAt = row.termAction === "extend_from_max" && active !== null && Date.parse(active) > Date.parse(now) ? active : now;
+  return expiry(startsAt, row.termSeconds)!;
 }
 
 function expiry(now: string, seconds: bigint | null): string | null {
@@ -402,6 +416,7 @@ const OUTPUT_SQL = `
          COALESCE(plan.revision_digest,entitlement.revision_digest,output.credit_program_revision_digest) AS "ownerRevisionDigest",
          NULL::text AS "bucketClass",NULL::text AS unit,NULL::text AS amount,
          NULL::bigint AS "creditExpiresAfterSeconds",
+         NULL::text AS "creditWindowKind",NULL::text AS "creditCalendarZone",NULL::text AS "creditWindowAnchor",
          output.entitlement_template_revision_ref AS "entitlementTemplateRevisionRef",
          entitlement.capability_key AS "capabilityKey",entitlement.safe_label AS "safeLabel",
          entitlement.expires_after_seconds AS "entitlementExpiresAfterSeconds"

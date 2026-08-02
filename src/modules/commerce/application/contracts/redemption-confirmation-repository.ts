@@ -2,7 +2,7 @@ import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.
 import type { CommerceLockSequence } from "../../../../workflows/commerce/lock-order.js";
 
 export type RedemptionOutputReceipt = Readonly<{
-  kind: "subscription_term" | "entitlement_grant" | "credit_grant";
+  kind: "subscription_term" | "entitlement_grant" | "credit_grant" | "credit_program_enrollment";
   outputLineId: string;
   outputOrdinal: number;
   occurrence: number;

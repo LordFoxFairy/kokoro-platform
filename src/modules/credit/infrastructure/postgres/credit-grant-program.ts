@@ -6,6 +6,7 @@ type ProgramRow = Record<string, unknown> & {
   revisionRef: string; revision: bigint | string; revisionDigest: string;
   bucketClass: CreditGrantProgramRevision["bucketClass"]; unit: string; amount: string;
   expiresAfterSeconds: bigint | string | null; liabilityMerchantAccountId: string; burnPriority: number;
+  windowKind: "none" | "daily" | "period"; calendarZone: string | null; windowAnchor: string | null;
   scopePolicy: CreditGrantProgramRevision["scopePolicy"];
 };
 
@@ -49,6 +50,8 @@ export class PostgresCreditGrantProgram implements CreditGrantProgramPort {
       `SELECT revision.credit_program_revision_ref AS "revisionRef",revision.revision,
               revision.revision_digest AS "revisionDigest",revision.ux_bucket_class AS "bucketClass",
               revision.unit,revision.amount::text AS amount,revision.expires_after_seconds AS "expiresAfterSeconds",
+              revision.window_kind AS "windowKind",revision.calendar_zone AS "calendarZone",
+              revision.window_anchor AS "windowAnchor",
               revision.liability_merchant_account_ref AS "liabilityMerchantAccountId",
               revision.burn_priority AS "burnPriority",revision.scope_policy AS "scopePolicy"
        FROM jsonb_to_recordset($2::jsonb) AS target(ref TEXT,revision TEXT,digest TEXT)
@@ -78,7 +81,13 @@ function program(row: ProgramRow): CreditGrantProgramRevision {
       !(["daily", "period", "permanent"] as const).includes(row.bucketClass) || !boundedValue(row.unit, 64) ||
       !/^[1-9][0-9]{0,37}$/u.test(row.amount) || !boundedValue(row.liabilityMerchantAccountId, 256) ||
       !Number.isInteger(row.burnPriority) || row.burnPriority < -2_147_483_648 || row.burnPriority > 2_147_483_647 ||
-      (row.bucketClass === "permanent") !== (expiresAfterSeconds === null)) {
+      (row.bucketClass === "permanent") !== (row.windowKind === "none") ||
+      (row.bucketClass === "daily" && (row.windowKind !== "daily" || row.calendarZone === null ||
+        !/^daily@(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$/u.test(row.windowAnchor ?? ""))) ||
+      (row.bucketClass === "period" && (row.windowKind !== "period" || row.calendarZone === null ||
+        row.windowAnchor !== "subscription-term-start")) ||
+      (row.bucketClass === "permanent" && (row.calendarZone !== null || row.windowAnchor !== null ||
+        expiresAfterSeconds !== null))) {
     throw new Error("CREDIT_PROGRAM_SNAPSHOT_INVALID");
   }
   const scopePolicy = row.scopePolicy;
@@ -90,6 +99,7 @@ function program(row: ProgramRow): CreditGrantProgramRevision {
   if (!scopePolicy.allowUnattributedAgent && agentRefs.length === 0) throw new Error("CREDIT_PROGRAM_SNAPSHOT_INVALID");
   return Object.freeze({ revisionRef: row.revisionRef, revision, revisionDigest: row.revisionDigest,
     bucketClass: row.bucketClass, unit: row.unit, amount: row.amount, expiresAfterSeconds,
+    windowKind: row.windowKind, calendarZone: row.calendarZone, windowAnchor: row.windowAnchor,
     liabilityMerchantAccountId: row.liabilityMerchantAccountId, burnPriority: row.burnPriority,
     scopePolicy: Object.freeze({ version: 1, surfaceRefs, capabilityKeys, agentRefs,
       allowUnattributedAgent: scopePolicy.allowUnattributedAgent }) });

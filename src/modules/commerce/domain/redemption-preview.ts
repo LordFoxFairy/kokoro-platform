@@ -35,18 +35,15 @@ export const redemptionSafeTermsSchema = z.strictObject({
 
 export type RedemptionSafeTerms = z.infer<typeof redemptionSafeTermsSchema>;
 
-/**
- * Redemption is intentionally limited to one-shot, non-expiring credit packs in
- * this release. Daily/period programs require a calendar-window acquisition
- * authority and must not be approximated with a relative expiry grant.
- */
 export const redemptionReleaseCapabilities = Object.freeze({
-  creditGrantBucketClasses: Object.freeze(["permanent"] as const),
-  calendarWindowCreditAcquisition: false,
+  creditGrantBucketClasses: Object.freeze(["permanent", "daily", "period"] as const),
+  calendarWindowCreditAcquisition: true,
 });
 
 export function isSupportedRedemptionSafeTerms(terms: RedemptionSafeTerms): boolean {
-  return terms.credits.every((credit) => credit.bucketClass === "permanent" && credit.expiresAt === null);
+  const hasRecurring = terms.credits.some((credit) => credit.bucketClass !== "permanent");
+  return terms.credits.every((credit) => credit.bucketClass === "permanent" ? credit.expiresAt === null :
+    credit.expiresAt !== null) && (!hasRecurring || (terms.planVersionRef !== null && terms.term.endsAt !== null));
 }
 
 export class RedemptionPolicyError extends Error {
@@ -72,7 +69,7 @@ export interface PublishedFulfillmentOutputLine {
   readonly outputLineId: string;
   readonly ordinal: number;
   readonly cardinality: number;
-  readonly outputKind: "subscription_term" | "entitlement_grant" | "credit_grant";
+  readonly outputKind: "subscription_term" | "entitlement_grant" | "credit_grant" | "credit_program_enrollment";
   readonly planVersionRef: string | null;
   readonly entitlementTemplateRevisionRef: string | null;
   readonly creditProgramRevisionRef: string | null;

@@ -40,9 +40,11 @@ Platform through HTTP/RPC and never exposes a Prisma client to application code.
 - `confirmRedemption`, command recovery, and durable receipt reads are public operations. Confirmation re-locks every mutable
   authority, binds the effect to the database clock, claims the Code, and invokes the shared Fulfillment authority atomically. Code
   identity—not a newly generated receipt id—is the stable redemption acquisition source.
-- The latest release supports permanent Credit packs, immutable non-renewing SubscriptionTerms, and EntitlementGrants. Daily/period
-  Credit programs fail closed in redemption until calendar-window acquisition is a real owner workflow; relative-expiry grants are
-  not used as an approximation.
+- Permanent programs materialize a `credit_grant` directly. Daily/period programs materialize a Commerce-owned,
+  SubscriptionTerm-bound `credit_program_enrollment`; they never masquerade as a relative-expiry grant. One acquisition may create
+  multiple enrollments, and every enrollment/window has a distinct immutable acquisition identity. The window application service
+  calls only Credit's `CreditGrantIssuancePort`; PostgreSQL tzdata owns daily local reset boundaries and SubscriptionTerm owns period
+  anchors. Production worker composition remains fail closed until its exact financial INSERT role is explicitly approved.
 - Fulfilled-redemption outbox events are reconciled by the Platform worker against the durable Redemption and fulfillment projection
   before delivery is completed, with bounded retry and dead-letter handling. The callable runtime immediately confirms and starts a
   one-third-window heartbeat for every lease in the complete claimed batch, including items queued behind a slow delivery. Ownership

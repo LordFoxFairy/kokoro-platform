@@ -125,6 +125,10 @@ function creditPrograms(bucketClass: "daily" | "period" | "permanent" = "permane
       unit: "credit",
       amount: "100",
       expiresAfterSeconds: bucketClass === "permanent" ? null : 86400n,
+      windowKind: bucketClass === "permanent" ? "none" as const : bucketClass,
+      calendarZone: bucketClass === "permanent" ? null : "America/New_York",
+      windowAnchor: bucketClass === "permanent" ? null :
+        bucketClass === "daily" ? "daily@00:00:00" : "subscription-term-start",
       liabilityMerchantAccountId: "merchant-1",
       burnPriority: 100,
       scopePolicy: Object.freeze({ version: 1 as const, surfaceRefs: ["general.chat"],

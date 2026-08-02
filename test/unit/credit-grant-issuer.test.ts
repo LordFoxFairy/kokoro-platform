@@ -175,6 +175,7 @@ function grant() {
     creditProgramRevisionDigest: "c".repeat(64),
     sourceType: "redemption",
     sourceRef: "fulfillment-key:credits:1",
+    sourceWindowKey: "",
     businessOperationKey: "fulfillment:fulfillment-key:credits:1",
     bucketClass: "permanent",
     amount: "100",

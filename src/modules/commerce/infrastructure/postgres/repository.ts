@@ -287,7 +287,8 @@ const FULFILLMENT_OUTPUT_RECEIPT_SQL = `
   WHERE actual.fulfillment_id=$1::uuid
   ORDER BY expected.ordinal,actual.occurrence`;
 
-function committedOutputKind(kind: "subscription" | "subscription_term" | "entitlement_grant" | "credit_grant") {
+function committedOutputKind(kind: "subscription" | "subscription_term" | "entitlement_grant" | "credit_grant" |
+  "credit_program_enrollment") {
   return kind === "subscription" ? "subscription_term" as const : kind;
 }
 

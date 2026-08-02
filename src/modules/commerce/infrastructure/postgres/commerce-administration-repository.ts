@@ -94,12 +94,21 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
           input.planVersion.revisionDigest, catalogEpoch, occurredAt],
       ), "COMMERCE_PLAN_VERSION_PERSIST_FAILED");
     }
-    const creditRefs = [...new Set(input.outputs.filter((output) => output.outputKind === "credit_grant")
+    const creditRefs = [...new Set(input.outputs.filter((output) => output.outputKind === "credit_grant" ||
+      output.outputKind === "credit_program_enrollment")
       .map((output) => output.targetRevisionRef))];
     const creditPrograms = creditRefs.length === 0 ? [] : await this.creditPrograms.resolveRefs(transaction,
       { siteId: input.siteId, revisionRefs: creditRefs });
     const creditByRef = new Map(creditPrograms.map((program) => [program.revisionRef, program]));
-    const commerceOwnerRefs = [...new Set(input.outputs.filter((output) => output.outputKind !== "credit_grant")
+    for (const output of input.outputs) {
+      if (output.outputKind !== "credit_grant" && output.outputKind !== "credit_program_enrollment") continue;
+      const program = creditByRef.get(output.targetRevisionRef);
+      if (program === undefined || (output.outputKind === "credit_grant") !== (program.bucketClass === "permanent")) {
+        throw new Error("COMMERCE_CREDIT_OUTPUT_KIND_MISMATCH");
+      }
+    }
+    const commerceOwnerRefs = [...new Set(input.outputs.filter((output) => output.outputKind !== "credit_grant" &&
+      output.outputKind !== "credit_program_enrollment")
       .map((output) => output.targetRevisionRef))];
     const commerceOwners = commerceOwnerRefs.length === 0 ? [] : await sql.query<Record<string, unknown> & {
       revisionRef: string; revision: bigint; revisionDigest: string;
@@ -120,7 +129,8 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
     const outputPlanDigest = canonicalFulfillmentProgramDigest({ siteId: input.siteId,
       fulfillmentProgramRevisionRef: input.fulfillmentProgramRevisionRef,
       lines: input.outputs.map((output) => {
-        const owner = output.outputKind === "credit_grant" ? creditByRef.get(output.targetRevisionRef) :
+        const owner = output.outputKind === "credit_grant" || output.outputKind === "credit_program_enrollment" ?
+          creditByRef.get(output.targetRevisionRef) :
           commerceByRef.get(output.targetRevisionRef);
         if (owner === undefined) throw new Error("COMMERCE_OUTPUT_OWNER_TARGET_MISMATCH");
         return { outputLineId: output.outputLineId, outputOrdinal: output.ordinal,
@@ -145,9 +155,9 @@ export class PostgresCommerceAdministrationRepository implements CommerceAdminis
        SELECT $1,$2,value.output_line_id,value.ordinal,value.cardinality,value.output_kind,
          CASE WHEN value.output_kind='subscription_term' THEN value.target_revision_ref END,
          CASE WHEN value.output_kind='entitlement_grant' THEN value.target_revision_ref END,
-         CASE WHEN value.output_kind='credit_grant' THEN value.target_revision_ref END,
-         CASE WHEN value.output_kind='credit_grant' THEN value.target_revision_version END,
-         CASE WHEN value.output_kind='credit_grant' THEN value.target_revision_digest END
+         CASE WHEN value.output_kind IN ('credit_grant','credit_program_enrollment') THEN value.target_revision_ref END,
+         CASE WHEN value.output_kind IN ('credit_grant','credit_program_enrollment') THEN value.target_revision_version END,
+         CASE WHEN value.output_kind IN ('credit_grant','credit_program_enrollment') THEN value.target_revision_digest END
        FROM jsonb_to_recordset($3::jsonb) AS value(
          output_line_id TEXT,ordinal INTEGER,cardinality INTEGER,output_kind TEXT,target_revision_ref TEXT,
          target_revision_version BIGINT,target_revision_digest TEXT

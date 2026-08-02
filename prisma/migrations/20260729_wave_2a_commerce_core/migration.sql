@@ -233,10 +233,9 @@ CREATE TABLE platform.credit_grant_program_revision (
     OR (ux_bucket_class='daily' AND window_kind='daily'
       AND calendar_zone IS NOT NULL
       AND window_anchor ~ '^daily@([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$'
-      AND expires_after_seconds IS NOT NULL)
+      AND expires_after_seconds IS NULL)
     OR (ux_bucket_class='period' AND window_kind='period'
-      AND calendar_zone IS NOT NULL AND window_anchor='subscription-term-start'
-      AND expires_after_seconds IS NOT NULL)
+      AND calendar_zone IS NOT NULL AND window_anchor='subscription-term-start')
   )
 );
 CREATE INDEX credit_grant_program_catalog_page_idx
@@ -282,7 +281,7 @@ CREATE TABLE platform.commerce_fulfillment_program_output (
   output_line_id TEXT NOT NULL CHECK(length(output_line_id) BETWEEN 1 AND 128),
   ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 1 AND 32),
   cardinality INTEGER NOT NULL CHECK(cardinality BETWEEN 1 AND 32),
-  output_kind TEXT NOT NULL CHECK(output_kind IN ('subscription_term','entitlement_grant','credit_grant')),
+  output_kind TEXT NOT NULL CHECK(output_kind IN ('subscription_term','entitlement_grant','credit_grant','credit_program_enrollment')),
   plan_version_ref TEXT,
   entitlement_template_revision_ref TEXT,
   credit_program_revision_ref TEXT,
@@ -296,12 +295,16 @@ CREATE TABLE platform.commerce_fulfillment_program_output (
     REFERENCES platform.commerce_catalog_plan_version(plan_version_ref,site_ref),
   FOREIGN KEY(entitlement_template_revision_ref,site_ref)
     REFERENCES platform.commerce_entitlement_template_revision(entitlement_template_revision_ref,site_ref),
+  FOREIGN KEY(credit_program_revision_ref,site_ref,credit_program_revision_version,credit_program_revision_digest)
+    REFERENCES platform.credit_grant_program_revision(
+      credit_program_revision_ref,site_ref,revision,revision_digest
+    ),
   CHECK(
     (output_kind='subscription_term' AND plan_version_ref IS NOT NULL AND entitlement_template_revision_ref IS NULL
       AND credit_program_revision_ref IS NULL AND credit_program_revision_version IS NULL AND credit_program_revision_digest IS NULL)
     OR (output_kind='entitlement_grant' AND plan_version_ref IS NULL AND entitlement_template_revision_ref IS NOT NULL
       AND credit_program_revision_ref IS NULL AND credit_program_revision_version IS NULL AND credit_program_revision_digest IS NULL)
-    OR (output_kind='credit_grant' AND plan_version_ref IS NULL AND entitlement_template_revision_ref IS NULL
+    OR (output_kind IN ('credit_grant','credit_program_enrollment') AND plan_version_ref IS NULL AND entitlement_template_revision_ref IS NULL
       AND credit_program_revision_ref IS NOT NULL AND credit_program_revision_version > 0
       AND credit_program_revision_digest ~ '^[a-f0-9]{64}$')
   )
@@ -702,6 +705,7 @@ CREATE TABLE platform.credit_grant (
   scope_policy JSONB NOT NULL CHECK(platform.valid_credit_scope_policy(scope_policy)),
   effective_at TIMESTAMPTZ NOT NULL,
   expires_at TIMESTAMPTZ,
+  acquired_at TIMESTAMPTZ NOT NULL,
   issued_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(site_ref,source_type,source_ref,credit_program_revision_ref,source_window_key),
@@ -721,24 +725,75 @@ CREATE TABLE platform.credit_grant (
 CREATE INDEX credit_grant_spend_order_idx
   ON platform.credit_grant(credit_account_ref,expires_at ASC NULLS LAST,burn_priority ASC,issued_at ASC,credit_grant_id ASC);
 
+CREATE TABLE platform.commerce_credit_program_enrollment (
+  enrollment_ref UUID PRIMARY KEY,
+  site_ref TEXT NOT NULL,
+  billing_account_ref TEXT NOT NULL,
+  subject_ref TEXT NOT NULL,
+  subject_generation BIGINT NOT NULL CHECK(subject_generation > 0),
+  credit_program_revision_ref TEXT NOT NULL,
+  credit_program_revision BIGINT NOT NULL CHECK(credit_program_revision > 0),
+  credit_program_revision_digest CHAR(64) NOT NULL CHECK(credit_program_revision_digest ~ '^[a-f0-9]{64}$'),
+  subscription_term_ref UUID NOT NULL,
+  source_type TEXT NOT NULL CHECK(source_type IN ('redemption','payment','admin_grant')),
+  source_ref TEXT NOT NULL CHECK(length(source_ref) BETWEEN 1 AND 256),
+  output_line_id TEXT NOT NULL CHECK(length(output_line_id) BETWEEN 1 AND 128),
+  output_ordinal INTEGER NOT NULL CHECK(output_ordinal BETWEEN 1 AND 32),
+  occurrence INTEGER NOT NULL CHECK(occurrence BETWEEN 1 AND 32),
+  effective_at TIMESTAMPTZ NOT NULL,
+  ends_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(site_ref,source_type,source_ref,output_line_id,occurrence),
+  UNIQUE(site_ref,source_type,source_ref,output_ordinal,occurrence),
+  UNIQUE(enrollment_ref,site_ref),
+  FOREIGN KEY(billing_account_ref,site_ref)
+    REFERENCES platform.commerce_billing_account(billing_account_ref,site_ref),
+  FOREIGN KEY(subject_ref,site_ref) REFERENCES platform.authorization_subject(subject_ref,site_ref),
+  FOREIGN KEY(subscription_term_ref,site_ref)
+    REFERENCES platform.commerce_subscription_term(subscription_term_ref,site_ref),
+  FOREIGN KEY(credit_program_revision_ref,site_ref,credit_program_revision,credit_program_revision_digest)
+    REFERENCES platform.credit_grant_program_revision(
+      credit_program_revision_ref,site_ref,revision,revision_digest
+    ),
+  CHECK(ends_at > effective_at)
+);
+CREATE INDEX commerce_credit_program_enrollment_due_idx
+  ON platform.commerce_credit_program_enrollment(effective_at,ends_at,enrollment_ref);
+
+CREATE TABLE platform.commerce_credit_program_enrollment_revocation (
+  revocation_ref UUID PRIMARY KEY,
+  enrollment_ref UUID NOT NULL,
+  site_ref TEXT NOT NULL,
+  source_type TEXT NOT NULL CHECK(source_type IN ('redemption_reversal','admin_correction','program_revocation')),
+  source_ref TEXT NOT NULL CHECK(length(source_ref) BETWEEN 1 AND 256),
+  case_ref TEXT NOT NULL CHECK(length(case_ref) BETWEEN 1 AND 256),
+  command_id TEXT NOT NULL,
+  effective_at TIMESTAMPTZ NOT NULL,
+  revocation_digest CHAR(64) NOT NULL CHECK(revocation_digest ~ '^[a-f0-9]{64}$'),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(site_ref,enrollment_ref),
+  FOREIGN KEY(enrollment_ref,site_ref)
+    REFERENCES platform.commerce_credit_program_enrollment(enrollment_ref,site_ref),
+  FOREIGN KEY(command_id,site_ref) REFERENCES platform.commerce_command(command_id,site_ref)
+);
+
 CREATE TABLE platform.credit_program_window_acquisition (
   acquisition_ref UUID PRIMARY KEY,
   site_ref TEXT NOT NULL,
-  credit_program_revision_ref TEXT NOT NULL,
-  subject_ref TEXT NOT NULL,
-  subject_generation BIGINT NOT NULL CHECK(subject_generation > 0),
-  billing_account_ref TEXT NOT NULL,
+  enrollment_ref UUID NOT NULL,
   window_key TEXT NOT NULL CHECK(length(window_key) BETWEEN 1 AND 256),
-  fulfillment_ref UUID NOT NULL,
+  window_starts_at TIMESTAMPTZ NOT NULL,
+  window_ends_at TIMESTAMPTZ NOT NULL,
+  credit_grant_ref UUID NOT NULL,
   acquired_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(site_ref,credit_program_revision_ref,subject_ref,subject_generation,window_key),
-  UNIQUE(site_ref,fulfillment_ref),
-  FOREIGN KEY(credit_program_revision_ref,site_ref)
-    REFERENCES platform.credit_grant_program_revision(credit_program_revision_ref,site_ref),
-  FOREIGN KEY(subject_ref,site_ref) REFERENCES platform.authorization_subject(subject_ref,site_ref),
-  FOREIGN KEY(billing_account_ref,site_ref)
-    REFERENCES platform.commerce_billing_account(billing_account_ref,site_ref)
+  UNIQUE(site_ref,enrollment_ref,window_key),
+  UNIQUE(site_ref,credit_grant_ref),
+  FOREIGN KEY(enrollment_ref,site_ref)
+    REFERENCES platform.commerce_credit_program_enrollment(enrollment_ref,site_ref),
+  FOREIGN KEY(credit_grant_ref,site_ref) REFERENCES platform.credit_grant(credit_grant_id,site_ref),
+  CHECK(window_ends_at > window_starts_at),
+  CHECK(acquired_at >= window_starts_at AND acquired_at < window_ends_at)
 );
 
 CREATE TABLE platform.credit_hold (
@@ -1205,18 +1260,13 @@ ALTER TABLE platform.commerce_redemption
   ADD CONSTRAINT commerce_redemption_fulfillment_fk
   FOREIGN KEY(fulfillment_ref,site_ref)
   REFERENCES platform.commerce_fulfillment_transaction(fulfillment_id,site_ref);
-ALTER TABLE platform.credit_program_window_acquisition
-  ADD CONSTRAINT credit_program_window_fulfillment_fk
-  FOREIGN KEY(fulfillment_ref,site_ref)
-  REFERENCES platform.commerce_fulfillment_transaction(fulfillment_id,site_ref);
-
 CREATE TABLE platform.commerce_fulfillment_output_plan (
   fulfillment_id UUID NOT NULL REFERENCES platform.commerce_fulfillment_transaction(fulfillment_id),
   output_line_id TEXT NOT NULL CHECK (length(output_line_id) BETWEEN 1 AND 128),
   ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 1 AND 32),
   cardinality INTEGER NOT NULL CHECK (cardinality BETWEEN 0 AND 32),
   template_revision TEXT NOT NULL CHECK (length(template_revision) BETWEEN 1 AND 256),
-  output_kind TEXT NOT NULL CHECK (output_kind IN ('subscription','subscription_term','entitlement_grant','credit_grant')),
+  output_kind TEXT NOT NULL CHECK (output_kind IN ('subscription','subscription_term','entitlement_grant','credit_grant','credit_program_enrollment')),
   disposition TEXT NOT NULL CHECK (disposition IN ('required','optional','forbidden')),
   PRIMARY KEY(fulfillment_id,output_line_id),
   UNIQUE(fulfillment_id,ordinal),
@@ -2238,6 +2288,12 @@ CREATE TRIGGER credit_hold_no_delete
 CREATE TRIGGER credit_program_window_acquisition_immutable
   BEFORE UPDATE OR DELETE ON platform.credit_program_window_acquisition
   FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE TRIGGER commerce_credit_program_enrollment_immutable
+  BEFORE UPDATE OR DELETE ON platform.commerce_credit_program_enrollment
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
+CREATE TRIGGER commerce_credit_program_enrollment_revocation_immutable
+  BEFORE UPDATE OR DELETE ON platform.commerce_credit_program_enrollment_revocation
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
 CREATE TRIGGER credit_hold_allocation_immutable
   BEFORE UPDATE OR DELETE ON platform.credit_hold_allocation
   FOR EACH ROW EXECUTE FUNCTION platform.reject_commerce_immutable_mutation();
@@ -2375,6 +2431,8 @@ REVOKE ALL ON
   platform.commerce_redemption_legal_acceptance,
   platform.commerce_entitlement_grant,
   platform.commerce_entitlement_revocation,
+  platform.commerce_credit_program_enrollment,
+  platform.commerce_credit_program_enrollment_revocation,
   platform.credit_account,
   platform.credit_grant,
   platform.credit_program_window_acquisition,

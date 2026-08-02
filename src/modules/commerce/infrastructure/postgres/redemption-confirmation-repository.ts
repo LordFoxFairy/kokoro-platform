@@ -252,10 +252,11 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
               creditProgramRevisionDigest: output.creditProgramRevisionDigest,
               sourceType: "redemption" as const,
               sourceRef: `${source.idempotencyKey}:${output.outputLineId}:${occurrence}`,
+              sourceWindowKey: "",
               businessOperationKey: `fulfillment:${source.idempotencyKey}:${output.outputLineId}:${occurrence}`,
               bucketClass: output.bucketClass, amount: output.amount, burnPriority: output.burnPriority,
               scopePolicy: output.scopePolicy, acquiredAt: effectAt, effectiveAt: effectAt,
-              expiresAt: expiry(effectAt, output.creditExpiresAfterSeconds) });
+              expiresAt: null });
           })),
       });
       if (prepared.kind === "unavailable") return rejected();
@@ -347,6 +348,8 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
       outputPlan,
       materialization: Object.freeze({
         siteId: input.siteId,
+        subjectId: input.subjectId,
+        subjectGeneration: BigInt(input.subjectGeneration),
         effectAt,
         outputs,
         nextRef,
@@ -656,7 +659,7 @@ function outputsMatchPreview(
           safeLabel: output.safeLabel,
           expiresAt: expiry(instant(preview.createdAt), output.entitlementExpiresAfterSeconds),
         }));
-      } else if (output.outputKind === "credit_grant") {
+      } else if (output.outputKind === "credit_grant" || output.outputKind === "credit_program_enrollment") {
         if (output.creditProgramRevisionRef === null || output.bucketClass === null || output.unit === null || output.amount === null) {
           return false;
         }
@@ -665,7 +668,7 @@ function outputsMatchPreview(
           bucketClass: output.bucketClass,
           unit: output.unit,
           amount: output.amount,
-          expiresAt: expiry(instant(preview.createdAt), output.creditExpiresAfterSeconds),
+          expiresAt: output.outputKind === "credit_program_enrollment" ? safeTerms.term.endsAt : null,
         }));
       } else {
         if (output.cardinality !== 1 || output.planVersionRef !== safeTerms.planVersionRef) return false;
@@ -683,7 +686,7 @@ async function resolveCreditOutputs(port: CreditGrantProgramPort,
   outputs: readonly OutputRow[]): Promise<readonly OutputRow[]> {
   const targets = new Map<string, { revisionRef: string; revision: bigint; revisionDigest: string }>();
   for (const output of outputs) {
-    if (output.outputKind !== "credit_grant") continue;
+    if (output.outputKind !== "credit_grant" && output.outputKind !== "credit_program_enrollment") continue;
     if (output.creditProgramRevisionRef === null || output.creditProgramRevisionVersion === null ||
         output.creditProgramRevisionDigest === null) throw new Error("REDEMPTION_OUTPUT_INVALID");
     const target = { revisionRef: output.creditProgramRevisionRef, revision: BigInt(output.creditProgramRevisionVersion),
@@ -698,11 +701,13 @@ async function resolveCreditOutputs(port: CreditGrantProgramPort,
   const programs = await port.resolveTargets(transaction, { siteId, targets: [...targets.values()] });
   const byRef = new Map(programs.map((program) => [program.revisionRef, program]));
   return Object.freeze(outputs.map((output) => {
-    if (output.outputKind !== "credit_grant") return output;
+    if (output.outputKind !== "credit_grant" && output.outputKind !== "credit_program_enrollment") return output;
     const program = byRef.get(output.creditProgramRevisionRef!);
     if (program === undefined) throw new Error("REDEMPTION_OUTPUT_INVALID");
     return Object.freeze({ ...output, bucketClass: program.bucketClass, unit: program.unit, amount: program.amount,
       creditExpiresAfterSeconds: program.expiresAfterSeconds,
+      creditWindowKind: program.windowKind, creditCalendarZone: program.calendarZone,
+      creditWindowAnchor: program.windowAnchor,
       liabilityMerchantAccountId: program.liabilityMerchantAccountId, burnPriority: program.burnPriority,
       scopePolicy: program.scopePolicy });
   }));
@@ -891,6 +896,7 @@ const OUTPUT_FOR_CONFIRM_SQL = `
          COALESCE(plan.revision_digest,entitlement.revision_digest,output.credit_program_revision_digest) AS "ownerRevisionDigest",
          NULL::text AS "bucketClass",NULL::text AS unit,NULL::text AS amount,
          NULL::bigint AS "creditExpiresAfterSeconds",NULL::text AS "liabilityMerchantAccountId",
+         NULL::text AS "creditWindowKind",NULL::text AS "creditCalendarZone",NULL::text AS "creditWindowAnchor",
          NULL::integer AS "burnPriority",NULL::jsonb AS "scopePolicy",
          output.entitlement_template_revision_ref AS "entitlementTemplateRevisionRef",
          entitlement.capability_key AS "capabilityKey",entitlement.safe_label AS "safeLabel",

@@ -439,7 +439,7 @@ function batchMessage(row: CodeBatchRecord) {
 }
 function outputMessage(output: CommerceOfferRecord["outputs"][number]) {
   const targets = { subscription_term: "planVersionRef", entitlement_grant: "entitlementTemplateRevisionRef",
-    credit_grant: "creditProgramRevisionRef" } as const;
+    credit_grant: "creditProgramRevisionRef", credit_program_enrollment: "creditProgramRevisionRef" } as const;
   return create(FulfillmentOutputDraftSchema, { ...output, outputKind: outputKindToWire(output.outputKind),
     target: { case: targets[output.outputKind], value: output.targetRevisionRef } });
 }
@@ -504,12 +504,14 @@ function outputKindFromWire(value: FulfillmentOutputKind): CommerceOfferRecord["
   if (value === FulfillmentOutputKind.SUBSCRIPTION_TERM) return "subscription_term";
   if (value === FulfillmentOutputKind.ENTITLEMENT_GRANT) return "entitlement_grant";
   if (value === FulfillmentOutputKind.CREDIT_GRANT) return "credit_grant";
+  if (Number(value) === 4) return "credit_program_enrollment";
   throw new Error("COMMERCE_OUTPUT_KIND_INVALID");
 }
 function outputKindToWire(value: CommerceOfferRecord["outputs"][number]["outputKind"]): FulfillmentOutputKind {
   return { subscription_term: FulfillmentOutputKind.SUBSCRIPTION_TERM,
     entitlement_grant: FulfillmentOutputKind.ENTITLEMENT_GRANT,
-    credit_grant: FulfillmentOutputKind.CREDIT_GRANT }[value];
+    credit_grant: FulfillmentOutputKind.CREDIT_GRANT,
+    credit_program_enrollment: 4 as FulfillmentOutputKind }[value];
 }
 function batchStateToWire(value: CodeBatchRecord["state"]): CodeBatchState {
   return { draft: CodeBatchState.DRAFT, active: CodeBatchState.ACTIVE, suspended: CodeBatchState.SUSPENDED,

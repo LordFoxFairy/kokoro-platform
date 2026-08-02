@@ -22,7 +22,7 @@ export interface CommerceTerminalOutcome {
 }
 
 export type FulfillmentOutputReceipt = Readonly<{
-  kind: "subscription_term" | "entitlement_grant" | "credit_grant";
+  kind: "subscription_term" | "entitlement_grant" | "credit_grant" | "credit_program_enrollment";
   outputLineId: string;
   outputOrdinal: number;
   occurrence: number;

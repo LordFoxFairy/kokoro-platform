@@ -83,7 +83,7 @@ export class CommerceAdministrationService {
     fulfillmentProgramRevisionRef: string; fulfillmentProgramRef: string;
     fulfillmentProgramRevision: string;
     outputs: readonly Readonly<{ outputLineId: string; ordinal: number; cardinality: number;
-      outputKind: "subscription_term" | "entitlement_grant" | "credit_grant";
+      outputKind: "subscription_term" | "entitlement_grant" | "credit_grant" | "credit_program_enrollment";
       targetRevisionRef: string }>[];
     legalTermRefs: readonly string[];
   }>) {
@@ -313,11 +313,12 @@ function creditWindow(bucket: "daily" | "period" | "permanent", rolloverPolicy: 
   }
   if (calendarZone === null || !canonicalIanaZone(calendarZone) || windowAnchor === null ||
       (bucket === "daily" && !/^daily@(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$/u.test(windowAnchor)) ||
-      (bucket === "period" && windowAnchor !== "subscription-term-start") || expiresAfterSeconds === null) {
+      (bucket === "period" && windowAnchor !== "subscription-term-start") ||
+      (bucket === "daily" && expiresAfterSeconds !== null)) {
     throw new Error("COMMERCE_CREDIT_WINDOW_INVALID");
   }
-  let expiry: string;
-  try { expiry = positiveInteger(expiresAfterSeconds); }
+  let expiry: string | null = null;
+  try { expiry = expiresAfterSeconds === null ? null : positiveInteger(expiresAfterSeconds); }
   catch { throw new Error("COMMERCE_CREDIT_WINDOW_INVALID"); }
   return Object.freeze({ windowKind: bucket, rolloverPolicy, calendarZone, windowAnchor,
     expiresAfterSeconds: expiry });
@@ -343,7 +344,8 @@ function validatePlanVersion(value: Readonly<{ planRef: string; planVersionRef: 
     termAction: value.termAction, termSeconds, stackingScope: bounded(value.stackingScope) });
 }
 function validateOutputs(values: readonly Readonly<{ outputLineId: string; ordinal: number; cardinality: number;
-  outputKind: "subscription_term" | "entitlement_grant" | "credit_grant"; targetRevisionRef: string }>[]) {
+  outputKind: "subscription_term" | "entitlement_grant" | "credit_grant" | "credit_program_enrollment";
+  targetRevisionRef: string }>[]) {
   if (values.length < 1 || values.length > 32 ||
       values.reduce((total, value) => total + value.cardinality, 0) > 32) {
     throw new Error("COMMERCE_OFFER_OUTPUTS_INVALID");
@@ -380,5 +382,8 @@ function validateProductShape(
   if (productKind === "credit_pack" && (planVersion !== null ||
     !outputs.some((output) => output.outputKind === "credit_grant"))) {
     throw new Error("COMMERCE_CREDIT_PACK_OUTPUT_REQUIRED");
+  }
+  if (outputs.some((output) => output.outputKind === "credit_program_enrollment") && planVersion === null) {
+    throw new Error("COMMERCE_RECURRING_CREDIT_PLAN_REQUIRED");
   }
 }

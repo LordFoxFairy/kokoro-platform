@@ -17,7 +17,7 @@ import type {
 
 export type FulfillmentOutputDefinition = Readonly<{
   outputLineId: string;
-  outputKind: "subscription_term" | "entitlement_grant" | "credit_grant";
+  outputKind: "subscription_term" | "entitlement_grant" | "credit_grant" | "credit_program_enrollment";
   ordinal: number;
   cardinality: number;
   planVersionRef: string | null;
@@ -30,6 +30,9 @@ export type FulfillmentOutputDefinition = Readonly<{
   unit: string | null;
   amount: string | null;
   creditExpiresAfterSeconds: bigint | null;
+  creditWindowKind: "none" | "daily" | "period" | null;
+  creditCalendarZone: string | null;
+  creditWindowAnchor: string | null;
   liabilityMerchantAccountId: string | null;
   burnPriority: number | null;
   scopePolicy: Readonly<{
@@ -54,6 +57,8 @@ export type PreparedFulfillmentSubscription = Readonly<{
 
 export type PostgresFulfillmentMaterialization = Readonly<{
   siteId: string;
+  subjectId: string;
+  subjectGeneration: bigint;
   effectAt: string;
   outputs: readonly FulfillmentOutputDefinition[];
   nextRef: (purpose: string) => string;
@@ -89,6 +94,7 @@ export class PostgresFulfillmentIssuer implements FulfillmentIssuer<PostgresFulf
     const ordered: OrderedFulfillmentOutput[] = [];
     const creditIssues: CreditGrantIssue[] = [];
     let subscriptionId = materialization.subscription?.subscriptionId ?? null;
+    let subscriptionTermId: string | null = null;
     if (materialization.subscription !== null) {
       if (materialization.stackingScope === null || materialization.planRef === null) {
         throw new Error("FULFILLMENT_SUBSCRIPTION_PLAN_INVALID");
@@ -111,6 +117,23 @@ export class PostgresFulfillmentIssuer implements FulfillmentIssuer<PostgresFulf
         );
         if (reactivated !== 1) throw new Error("FULFILLMENT_SUBSCRIPTION_REACTIVATION_CONFLICT");
       }
+    }
+    if (materialization.subscriptionTerm !== null) {
+      if (materialization.planRef === null || subscriptionId === null) {
+        throw new Error("FULFILLMENT_SUBSCRIPTION_TERM_INVALID");
+      }
+      subscriptionTermId = materialization.nextRef("subscription_term");
+      const created = await sql.execute(
+        `INSERT INTO platform.commerce_subscription_term
+         (subscription_term_ref,subscription_ref,site_ref,billing_account_ref,plan_version_ref,
+          source_type,source_ref,starts_at,ends_at)
+         VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8::timestamptz,$9::timestamptz)`,
+        [subscriptionTermId, subscriptionId, materialization.siteId, context.billingAccountId,
+          materialization.planRef, context.source.sourceType,
+          outputSourceRef(context.source.idempotencyKey, "subscription-term-owner", 1),
+          materialization.subscriptionTerm.startsAt, materialization.subscriptionTerm.endsAt],
+      );
+      if (created !== 1) throw new Error("FULFILLMENT_SUBSCRIPTION_TERM_CREATE_FAILED");
     }
     for (const output of materialization.outputs) {
       for (let occurrence = 1; occurrence <= output.cardinality; occurrence += 1) {
@@ -138,9 +161,44 @@ export class PostgresFulfillmentIssuer implements FulfillmentIssuer<PostgresFulf
             actual: actualCommitment("entitlement_grant", output, occurrence, outputRef,
               output.entitlementTemplateRevisionRef),
           }));
+        } else if (output.outputKind === "credit_program_enrollment") {
+          if (output.creditProgramRevisionRef === null || output.creditProgramRevisionVersion === null ||
+              output.creditProgramRevisionDigest === null || output.bucketClass === null ||
+              output.bucketClass === "permanent" || output.creditWindowKind === null ||
+              output.creditWindowKind === "none" || output.creditCalendarZone === null ||
+              output.creditWindowAnchor === null || subscriptionTermId === null ||
+              materialization.subscriptionTerm === null) {
+            throw new Error("FULFILLMENT_CREDIT_ENROLLMENT_INVALID");
+          }
+          const outputRef = materialization.nextRef("credit_program_enrollment");
+          const created = await sql.execute(
+            `INSERT INTO platform.commerce_credit_program_enrollment
+             (enrollment_ref,site_ref,billing_account_ref,subject_ref,subject_generation,
+              credit_program_revision_ref,credit_program_revision,credit_program_revision_digest,
+              subscription_term_ref,source_type,source_ref,output_line_id,output_ordinal,occurrence,
+              effective_at,ends_at)
+             VALUES ($1::uuid,$2,$3,$4,$5::bigint,$6,$7::bigint,$8,$9::uuid,$10,$11,$12,$13,$14,
+                     $15::timestamptz,$16::timestamptz)`,
+            [outputRef, materialization.siteId, context.billingAccountId, materialization.subjectId,
+              materialization.subjectGeneration, output.creditProgramRevisionRef,
+              output.creditProgramRevisionVersion.toString(), output.creditProgramRevisionDigest,
+              subscriptionTermId, context.source.sourceType,
+              outputSourceRef(context.source.idempotencyKey, output.outputLineId, occurrence),
+              output.outputLineId, output.ordinal, occurrence,
+              materialization.subscriptionTerm.startsAt, materialization.subscriptionTerm.endsAt],
+          );
+          if (created !== 1) throw new Error("FULFILLMENT_CREDIT_ENROLLMENT_CREATE_FAILED");
+          ordered.push(Object.freeze({
+            kind: "materialized" as const,
+            receipt: outputCommitment("credit_program_enrollment", output, occurrence, outputRef,
+              output.creditProgramRevisionRef),
+            actual: actualCommitment("credit_program_enrollment", output, occurrence, outputRef,
+              output.creditProgramRevisionRef),
+          }));
         } else if (output.outputKind === "credit_grant") {
           if (output.creditProgramRevisionRef === null || output.bucketClass === null || output.unit === null ||
-            output.amount === null || output.liabilityMerchantAccountId === null || output.burnPriority === null ||
+              output.amount === null || output.liabilityMerchantAccountId === null || output.burnPriority === null ||
+              output.bucketClass !== "permanent" || output.creditWindowKind !== "none" ||
             output.scopePolicy === null) {
             throw new Error("FULFILLMENT_OUTPUT_INVALID");
           }
@@ -156,6 +214,7 @@ export class PostgresFulfillmentIssuer implements FulfillmentIssuer<PostgresFulf
             creditProgramRevisionDigest: output.creditProgramRevisionDigest!,
             sourceType: context.source.sourceType,
             sourceRef,
+            sourceWindowKey: "",
             businessOperationKey: `fulfillment:${context.source.idempotencyKey}:${output.outputLineId}:${occurrence}`,
             bucketClass: output.bucketClass,
             amount: output.amount,
@@ -168,21 +227,11 @@ export class PostgresFulfillmentIssuer implements FulfillmentIssuer<PostgresFulf
           ordered.push(Object.freeze({ kind: "credit_pending" as const, outputLineId: output.outputLineId,
             occurrence, creditProgramRevisionRef: output.creditProgramRevisionRef }));
         } else {
-          if (output.planVersionRef === null || subscriptionId === null || materialization.subscriptionTerm === null) {
+          if (output.planVersionRef === null || subscriptionId === null || materialization.subscriptionTerm === null ||
+              subscriptionTermId === null) {
             throw new Error("FULFILLMENT_OUTPUT_INVALID");
           }
-          const outputRef = materialization.nextRef("subscription_term");
-          const created = await sql.execute(
-            `INSERT INTO platform.commerce_subscription_term
-             (subscription_term_ref,subscription_ref,site_ref,billing_account_ref,plan_version_ref,
-              source_type,source_ref,starts_at,ends_at)
-             VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8::timestamptz,$9::timestamptz)`,
-            [outputRef, subscriptionId, materialization.siteId, context.billingAccountId,
-              output.planVersionRef, context.source.sourceType,
-              outputSourceRef(context.source.idempotencyKey, output.outputLineId, occurrence),
-              materialization.subscriptionTerm.startsAt, materialization.subscriptionTerm.endsAt],
-          );
-          if (created !== 1) throw new Error("FULFILLMENT_SUBSCRIPTION_TERM_CREATE_FAILED");
+          const outputRef = subscriptionTermId;
           ordered.push(Object.freeze({
             kind: "materialized" as const,
             receipt: outputCommitment("subscription_term", output, occurrence, outputRef, output.planVersionRef),
@@ -272,7 +321,7 @@ function expiry(start: string, seconds: bigint | null): string | null {
 }
 
 function outputCommitment(
-  kind: "subscription_term" | "entitlement_grant",
+  kind: "subscription_term" | "entitlement_grant" | "credit_program_enrollment",
   output: FulfillmentOutputDefinition,
   occurrence: number,
   resourceRef: string,
@@ -286,7 +335,7 @@ function outputCommitment(
 }
 
 function actualCommitment(
-  outputKind: "subscription_term" | "entitlement_grant",
+  outputKind: "subscription_term" | "entitlement_grant" | "credit_program_enrollment",
   output: FulfillmentOutputDefinition,
   occurrence: number,
   outputRef: string,

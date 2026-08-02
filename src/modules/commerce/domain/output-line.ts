@@ -1,4 +1,5 @@
-export type FulfillmentOutputKind = "subscription" | "subscription_term" | "entitlement_grant" | "credit_grant";
+export type FulfillmentOutputKind = "subscription" | "subscription_term" | "entitlement_grant" |
+  "credit_grant" | "credit_program_enrollment";
 export type OutputDisposition = "required" | "optional" | "forbidden";
 
 export interface FulfillmentOutputLine {

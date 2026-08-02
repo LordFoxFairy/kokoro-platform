@@ -184,8 +184,8 @@ describe("PostgresRedemptionConfirmationRepository", () => {
       expect(joined).toContain("customer_available");
       expect(joined).toMatch(/UPDATE platform\.commerce_redeem_code[\s\S]+INSERT INTO platform\.credit_grant[\s\S]+INSERT INTO platform\.credit_journal_transaction/u);
       const grantInsert = executions.find(({ statement }) => statement.includes("INSERT INTO platform.credit_grant"))!;
-      expect(grantInsert.values[16]).toBe("2026-07-29T01:00:00.000Z");
-      expect(grantInsert.values[17]).toBeNull();
+      expect(grantInsert.values[17]).toBe("2026-07-29T01:00:00.000Z");
+      expect(grantInsert.values[18]).toBeNull();
     } finally {
       revokePlatformTransaction(lease);
     }
@@ -640,6 +640,7 @@ function creditPrograms(): CreditGrantProgramPort {
       unit: "credit",
       amount: "100",
       expiresAfterSeconds: null,
+      windowKind: "none" as const, calendarZone: null, windowAnchor: null,
       liabilityMerchantAccountId: "merchant-1",
       burnPriority: 100,
       scopePolicy: Object.freeze({ version: 1 as const, surfaceRefs: ["general.chat"],
@@ -653,6 +654,7 @@ function creditPrograms(): CreditGrantProgramPort {
       unit: "credit",
       amount: "100",
       expiresAfterSeconds: null,
+      windowKind: "none" as const, calendarZone: null, windowAnchor: null,
       liabilityMerchantAccountId: "merchant-1",
       burnPriority: 100,
       scopePolicy: Object.freeze({ version: 1 as const, surfaceRefs: ["general.chat"],
@@ -696,7 +698,8 @@ function noOpCommerce() {
 
 function commerceReceipt(
   fulfillmentId: string,
-  outputs: readonly Readonly<{ outputKind: "subscription" | "subscription_term" | "entitlement_grant" | "credit_grant";
+  outputs: readonly Readonly<{ outputKind: "subscription" | "subscription_term" | "entitlement_grant" | "credit_grant" |
+    "credit_program_enrollment";
     outputLineId: string; outputOrdinal: number; occurrence: number; outputRef: string;
     templateRevision: string; outputVersion: 1; outputDigest: string }>[],
 ) {
